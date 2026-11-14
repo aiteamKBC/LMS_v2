@@ -62,9 +62,11 @@ def main():
     markdown = parser.parse_args().markdown
     with psycopg.connect(db_url(), row_factory=dict_row) as conn:
         with conn.cursor() as cur:
-            learners = cur.execute("""SELECT id, aptem_id, full_name,
-                coach_name FROM \"Learner\".learners
-                WHERE group_id=%s AND programme_id=%s ORDER BY aptem_id""", [GROUP_ID, PROGRAMME_ID]).fetchall()
+            learners = cur.execute("""SELECT l.id, l.aptem_id, l.full_name,
+                c.name AS coach_name
+                FROM \"Learner\".learners l
+                LEFT JOIN curriculum.coaches c ON c.id = l.coach_id
+                WHERE l.group_id=%s AND l.programme_id=%s ORDER BY l.aptem_id""", [GROUP_ID, PROGRAMME_ID]).fetchall()
             if len(learners) != 27:
                 raise ValueError(f"Expected 27 canonical Ray members, found {len(learners)}")
             learner_ids = [r["id"] for r in learners]

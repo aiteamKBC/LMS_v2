@@ -98,7 +98,34 @@ def resolve_verified_target(record):
     return target
 
 
-def _verify_source_and_overlay(record, event, profile, source):
+def _canonical_profile_id(record, *, expected_enrolment_id=None, for_update=False):
+    """Resolve a Calendar learner through the reviewed identity link."""
+    # Offline policy tests use an unsaved namespace-only object. Persisted
+    # CoachCalendarEvent rows always have a primary key and go through the
+    # database link below.
+    if getattr(record, "pk", None) in (None, ""):
+        value = getattr(record, "learner_profile_id", getattr(record, "learner_id", None))
+        if value in (None, ""):
+            raise MeetingOwnershipError('MEETING_OWNERSHIP_SOURCE_CONFLICT')
+        return int(value)
+    from .calendar_identity import CalendarLearnerIdentityError, resolve_profile_identity
+
+    try:
+        identity = resolve_profile_identity(
+            record.pk,
+            expected_enrolment_id=expected_enrolment_id,
+            expected_raw_learner_id=getattr(record, "learner_id", None),
+            for_update=for_update,
+        )
+    except (CalendarLearnerIdentityError, DatabaseError):
+        raise MeetingOwnershipError('MEETING_OWNERSHIP_SOURCE_CONFLICT') from None
+    try:
+        return int(identity["learner_profile_id"])
+    except (KeyError, TypeError, ValueError):
+        raise MeetingOwnershipError('MEETING_OWNERSHIP_SOURCE_CONFLICT') from None
+
+
+def _verify_source_and_overlay(record, event, profile, source, canonical_profile_id):
     """Called under learner -> source -> calendar locks, before the overlay."""
     from .review_sources import ReviewIdentityConflict, booking_for_imported_review
 
@@ -106,12 +133,12 @@ def _verify_source_and_overlay(record, event, profile, source):
         source_id = int(event.get('reviewId') or 0)
     except (TypeError, ValueError):
         raise MeetingOwnershipError('MEETING_OWNERSHIP_SOURCE_CONFLICT') from None
-    if source_id <= 0 or record.learner_id != int(event.get('learnerId') or 0):
+    if source_id <= 0 or canonical_profile_id != int(event.get('learnerId') or 0):
         raise MeetingOwnershipError('MEETING_OWNERSHIP_SOURCE_CONFLICT')
     family = review_family(source.get('review_type'))
     if (family not in SUPPORTED_FAMILIES or family != review_family(event.get('importedReviewType'))
             or source.get('id') != source_id
-            or source.get('learner_id') != record.learner_id
+            or source.get('learner_id') != canonical_profile_id
             or source.get('completed_date')
             or not initial_local_status(source.get('status'))
             or str(source.get('aptem_review_id')) != str(event.get('aptemReviewId'))
@@ -129,7 +156,7 @@ def _verify_source_and_overlay(record, event, profile, source):
         from .review_rescheduling import previous_bookings
         if previous_bookings(record):
             allowed_statuses.add('in-progress')
-    if overlay and (overlay.learner_id != record.learner_id
+    if overlay and (overlay.learner_id != canonical_profile_id
                     or overlay.event_key != record.event_key
                     or overlay.owner_email.casefold() != record.owner_email.casefold()
                     or overlay.completed_at
@@ -166,24 +193,33 @@ def _finalize_owned_booking(record, warning, event, target):
     if not isinstance(target, VerifiedMeetingTarget):
         raise MeetingOwnershipError('MEETING_OWNERSHIP_PROVIDER_UNVERIFIED')
     with transaction.atomic():
-        lock_learner_calendar(record.learner_id)
         try:
             source_id = int(event.get('reviewId') or 0)
         except (TypeError, ValueError):
             raise MeetingOwnershipError('MEETING_OWNERSHIP_SOURCE_CONFLICT') from None
         if source_id <= 0:
             raise MeetingOwnershipError('MEETING_OWNERSHIP_SOURCE_CONFLICT')
+        canonical_profile_id = _canonical_profile_id(
+            record, expected_enrolment_id=event.get('enrolmentId'),
+        )
+        lock_learner_calendar(canonical_profile_id)
         # Assignment handover also takes the learner calendar lock, then its
         # own Enrolment -> profile order. Do not invert those row locks here.
-        profile, _identity = read_profile(record.learner_id, lock=False)
+        profile, _identity = read_profile(canonical_profile_id, lock=False)
         source = read_source(source_id, lock=True)
         current = CoachCalendarEvent.objects.select_for_update().get(pk=record.pk)
+        current_profile_id = _canonical_profile_id(
+            current,
+            expected_enrolment_id=event.get('enrolmentId'),
+            for_update=True,
+        )
         if (current.sync_state != CoachCalendarEvent.SYNC_SYNCING
                 or current.sync_attempt_count != record.sync_attempt_count
                 or current.last_sync_attempt_at != record.last_sync_attempt_at
                 or current.event_key != record.event_key
                 or current.owner_email != record.owner_email
                 or current.learner_profile_id != record.learner_id
+                or current_profile_id != canonical_profile_id
                 or current.scheduled_date != record.scheduled_date
                 or current.scheduled_time != record.scheduled_time
                 or current.duration_minutes != record.duration_minutes
@@ -191,7 +227,9 @@ def _finalize_owned_booking(record, warning, event, target):
                 or record.graph_event_id != target.graph_event_id
                 or target.calendar_id != record.pk):
             raise MeetingOwnershipError('MEETING_OWNERSHIP_BOOKING_CHANGED')
-        source_id, overlay = _verify_source_and_overlay(current, event, profile, source)
+        source_id, overlay = _verify_source_and_overlay(
+            current, event, profile, source, canonical_profile_id,
+        )
         if (CoachCalendarEvent.objects.filter(graph_event_id=target.graph_event_id,
                                               graph_organizer_email__iexact=record.graph_organizer_email)
                 .exclude(pk=record.pk).exists()):
@@ -215,7 +253,7 @@ def _finalize_owned_booking(record, warning, event, target):
         if ownership:
             if (ownership.state != ImportedMeetingOwnership.STATE_ACTIVE
                     or ownership.source_review_id != source_id
-                    or ownership.learner_profile_id != record.learner_id
+                    or ownership.learner_profile_id != canonical_profile_id
                     or ownership.review_event_key != record.event_key
                     or ownership.owner_email.casefold() != record.owner_email.casefold()
                     or (str(ownership.tenant_id), str(ownership.organizer_id),
@@ -228,7 +266,7 @@ def _finalize_owned_booking(record, warning, event, target):
             ownership.save(update_fields=['overlay', 'booking_fingerprint'])
         else:
             ImportedMeetingOwnership.objects.create(
-                source_review_id=source_id, learner_profile_id=record.learner_id,
+                source_review_id=source_id, learner_profile_id=canonical_profile_id,
                 review_event_key=record.event_key, calendar_event_id=record.pk,
                 overlay=overlay, owner_email=record.owner_email,
                 tenant_id=target.tenant_id, organizer_id=target.organizer_id,
@@ -246,10 +284,13 @@ def require_synced_owner(record, event):
         source_id = int(event.get('reviewId') or 0)
     except (TypeError, ValueError):
         raise MeetingOwnershipError('MEETING_OWNERSHIP_SOURCE_CONFLICT') from None
+    canonical_profile_id = _canonical_profile_id(
+        record, expected_enrolment_id=event.get('enrolmentId'),
+    )
     owner = ImportedMeetingOwnership.objects.filter(calendar_event_id=record.pk).first()
     if (not owner or owner.state != ImportedMeetingOwnership.STATE_ACTIVE
             or owner.source_review_id != source_id
-            or owner.learner_profile_id != record.learner_id
+            or owner.learner_profile_id != canonical_profile_id
             or owner.review_event_key != record.event_key
             or owner.owner_email.casefold() != record.owner_email.casefold()
             or owner.graph_event_id != record.graph_event_id):
@@ -258,15 +299,18 @@ def require_synced_owner(record, event):
 
 def bind_owned_overlay(record, overlay):
     """Link an initialized form to its existing verified meeting under locks."""
+    canonical_profile_id = _canonical_profile_id(record)
     owner = (ImportedMeetingOwnership.objects.select_for_update()
              .filter(calendar_event_id=record.pk).first())
     if (not owner or owner.state != ImportedMeetingOwnership.STATE_ACTIVE
             or owner.source_review_id != overlay.source_review_id
-            or owner.learner_profile_id != overlay.learner_id
+            or owner.learner_profile_id != canonical_profile_id
             or owner.review_event_key != overlay.event_key
             or owner.graph_event_id != record.graph_event_id
             or owner.owner_email.casefold() != overlay.owner_email.casefold()
             or owner.overlay_id not in (None, overlay.pk)):
+        raise MeetingOwnershipError('MEETING_OWNERSHIP_UNVERIFIED')
+    if overlay.learner_id != canonical_profile_id:
         raise MeetingOwnershipError('MEETING_OWNERSHIP_UNVERIFIED')
     if owner.overlay_id is None:
         owner.overlay = overlay
@@ -280,11 +324,12 @@ def required_for_record(record):
     prefix = 'imported-review:'
     if not record.event_key.startswith(prefix):
         return False
+    canonical_profile_id = _canonical_profile_id(record)
     aptem_id = record.event_key[len(prefix):]
     with connections['default'].cursor() as cursor:
         cursor.execute('''SELECT review_type FROM "Learner".reviews
                           WHERE learner_id=%s AND aptem_review_id=%s LIMIT 2''',
-                       [record.learner_id, aptem_id])
+                       [canonical_profile_id, aptem_id])
         rows = cursor.fetchall()
     if len(rows) != 1:
         raise MeetingOwnershipError('MEETING_OWNERSHIP_SOURCE_CONFLICT')
@@ -292,10 +337,11 @@ def required_for_record(record):
 
 
 def require_cancel_owner(record):
+    canonical_profile_id = _canonical_profile_id(record)
     owner = (ImportedMeetingOwnership.objects.select_for_update()
              .filter(calendar_event_id=record.pk).first())
     if (not owner or owner.state != ImportedMeetingOwnership.STATE_ACTIVE
-            or owner.learner_profile_id != record.learner_id
+            or owner.learner_profile_id != canonical_profile_id
             or owner.review_event_key != record.event_key
             or owner.owner_email.casefold() != record.owner_email.casefold()
             or owner.graph_event_id != record.graph_event_id):

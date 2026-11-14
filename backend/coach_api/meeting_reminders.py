@@ -7,14 +7,13 @@ from django.core.cache import cache
 from django.core.exceptions import ValidationError
 from django.core.validators import validate_email
 from django.db import DatabaseError
-from django.db.models.functions import Lower, Trim
 from django.http import JsonResponse
 from django.utils import timezone
 from django.views.decorators.http import require_POST
 
 from coach_api.auth import authenticated_coach_email, coach_access_required
 from coach_api.models import CoachCalendarEvent
-from learner_api.models import LearnerProfile
+from learner_api.models import LearnerProfile, learner_profile_ids_for_coach_email
 from login import email_azure
 
 
@@ -29,8 +28,9 @@ def coach_meeting_reminder(request, event_key):
         ).first()
         if record is None:
             return JsonResponse({'detail': 'Meeting not found.'}, status=404)
-        learner = LearnerProfile.objects.annotate(coach_key=Lower(Trim('coach_email'))).filter(
-            pk=record.learner_profile_id, coach_key=owner,
+        learner = LearnerProfile.objects.filter(
+            pk=record.learner_profile_id,
+            pk__in=learner_profile_ids_for_coach_email(owner),
         ).only('email', 'full_name').first()
     except DatabaseError:
         return JsonResponse({'detail': 'Meeting details are temporarily unavailable.'}, status=503)

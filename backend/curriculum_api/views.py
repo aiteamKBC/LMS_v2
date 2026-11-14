@@ -30422,12 +30422,13 @@ def assigned_learners_for_programme(programme_id, lifecycle_status='', *, strict
                     SELECT l.id, l.enrolment_id, l.full_name, l.email,
                            p.name AS programme, l.programme_status, c.cohort_name AS cohort,
                            g.group_name, l.cohort_id, l.group_id, l.lifecycle_status,
-                           l.coach_name, l.coach_email, l.completed_hours, l.planned_hours,
+                           coach.name AS coach_name, coach.email AS coach_email, l.completed_hours, l.planned_hours,
                            l.target_hours, l.progress_hours, l.progress_variance, l.otjh_status
                     FROM "Learner".learners l
                     LEFT JOIN curriculum.programmes p ON p.programme_id = l.programme_id
                     LEFT JOIN curriculum.cohorts c ON c.cohort_id = l.cohort_id
                     LEFT JOIN curriculum.groups g ON g.group_id = l.group_id
+                    LEFT JOIN curriculum.coaches coach ON coach.id = l.coach_id
                     WHERE l.programme_id = %s {status_sql}
                     ORDER BY lower(l.full_name), l.id
                 """, params)
@@ -32859,15 +32860,9 @@ def curriculum_module_meeting_invitees(request, module_catalogue_id):
     meeting the author had not invited them to. Being in the group is not an
     invitation; having the module on your plan is.
 
-    Two stores hold the same answer and both are read, because either can lag:
-
-    * ``LearnerProfile.learning_plan`` -- the plan as the learner app saves it,
-      the authoritative copy.
-    * ``learner_api.LearnerTrainingPlanModule.module_ref`` -- its normalised
-      mirror, rebuilt by ``learning_plan.sync_learning_plan_mirror``.
-
-    A learner named by either one is assigned; a learner named by neither is
-    not, however their group was placed.
+    The normalized learner-plan module table is the canonical local projection.
+    The raw plan remains on enrolment."Created_users" and is never queried
+    through the removed LearnerProfile mirror column.
 
     Still a starting point for the Attendees field, not a binding assignment --
     the author can edit freely before saving, and only what the form finally
@@ -32888,23 +32883,10 @@ def curriculum_module_meeting_invitees(request, module_catalogue_id):
         .values_list('learner__email', flat=True)
         .distinct()
     )
-    # The plan itself is a JSON list of entries, so this containment filter is a
-    # Postgres jsonb operation. Elsewhere (sqlite in tests) the mirror above is
-    # the only readable copy, which is what the assignment writer keeps in step.
-    plan_emails = []
-    if connection.vendor == 'postgresql':
-        plan_emails = list(
-            LearnerProfile.objects
-            .filter(learning_plan__contains=[{'moduleId': module_catalogue_id}])
-            .exclude(email='')
-            .values_list('email', flat=True)
-            .distinct()
-        )
-
     # One entry per address, first spelling kept, case-insensitively deduped --
-    # the two sources hold the same learner's email with its own capitalisation.
+    # the normalized mirror holds one learner's canonical email.
     attendees = {}
-    for email in (*plan_emails, *mirror_emails):
+    for email in mirror_emails:
         email = clean_str(email)
         if email and email.lower() not in attendees:
             attendees[email.lower()] = email

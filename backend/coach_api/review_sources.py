@@ -123,15 +123,32 @@ def meeting_profile(record):
     translate that identity. Stored participant names/emails remain historical.
     """
     from learner_api.models import EnrolmentUser, LearnerProfile
+    from coach_api.calendar_identity import (
+        CalendarLearnerIdentityError,
+        resolve_profile_identity,
+    )
 
     owner = str(record.owner_email or '').strip().casefold()
     if not owner or not record.learner_profile_id:
         return None
+    if record.event_type in {'mcr', 'progress-review', 'review'}:
+        canonical_profile_id = None
     if record.review_instance_id:
         from curriculum_api.review_instances import get_review_instance
         instance = get_review_instance(record.review_instance_id)
+        try:
+            identity = resolve_profile_identity(
+                record.pk,
+                expected_profile_id=instance.get('learner_id') if instance else None,
+                expected_raw_learner_id=record.learner_id,
+            )
+        except CalendarLearnerIdentityError as exc:
+            raise ReviewIdentityConflict(
+                'The Review Calendar learner identity cannot be verified.'
+            ) from exc
+        canonical_profile_id = identity.get('learner_profile_id')
         if (not instance or instance.get('calendar_event_id') != record.pk
-                or instance.get('learner_id') != record.learner_profile_id
+                or str(instance.get('learner_id')) != str(canonical_profile_id)
                 or instance.get('review_template_id') != record.review_template_id
                 or str(instance.get('coach_email') or '').strip().casefold() != owner):
             raise ReviewIdentityConflict('The Native Review meeting identity is inconsistent.')
@@ -146,11 +163,37 @@ def meeting_profile(record):
         source = EnrolmentUser.all_learners.filter(pk=int(parts[3])).first()
         if not source or source.learner_type != parts[2]:
             raise ReviewIdentityConflict('The legacy meeting learner source is inconsistent.')
+        expected_event_type = 'mcr' if parts[1] == 'mcm' else 'progress-review'
+        if record.event_type != expected_event_type:
+            raise ReviewIdentityConflict('The legacy meeting event family is inconsistent.')
         profile = review_profile_for_source(source)
-        if profile and record.learner_profile_id not in {source.pk, profile.pk}:
+        if profile is None:
+            raise ReviewIdentityConflict('The legacy meeting learner profile is unavailable.')
+        try:
+            identity = resolve_profile_identity(
+                record.pk,
+                expected_profile_id=profile.pk,
+                expected_enrolment_id=source.pk,
+                expected_raw_learner_id=record.learner_id,
+            )
+        except CalendarLearnerIdentityError as exc:
+            raise ReviewIdentityConflict(
+                'The legacy meeting Calendar learner identity is inconsistent.'
+            ) from exc
+        if str(identity.get('learner_profile_id')) != str(profile.pk):
             raise ReviewIdentityConflict('The legacy meeting learner link is inconsistent.')
     else:
-        profile = LearnerProfile.objects.filter(pk=record.learner_profile_id).first()
+        try:
+            identity = resolve_profile_identity(
+                record.pk,
+                expected_raw_learner_id=record.learner_id,
+            )
+        except CalendarLearnerIdentityError as exc:
+            raise ReviewIdentityConflict(
+                'The meeting Calendar learner identity cannot be verified.'
+            ) from exc
+        canonical_profile_id = identity.get('learner_profile_id')
+        profile = LearnerProfile.objects.filter(pk=canonical_profile_id).first()
     if profile and str(profile.coach_email or '').strip().casefold() != owner:
         raise ReviewIdentityConflict('The meeting fallback profile belongs to another coach.')
     return profile
@@ -210,6 +253,7 @@ def linked_overlay(event, overlays):
 def linked_booking(event, records, overlay=None, *, reconciliations=None):
     """Use durable keys, checking the ID space of legacy learner bookings."""
     from . import reconciliation_links
+    from .calendar_identity import CalendarLearnerIdentityError, resolve_profile_identity
     records = list(records)
     if reconciliations is None:
         reconciliations = list(reconciliation_links.active_links(
@@ -227,7 +271,18 @@ def linked_booking(event, records, overlay=None, *, reconciliations=None):
             matches.append(row)
             continue
         exact_key = row.event_key == event["eventKey"] or (overlay is not None and row.event_key == overlay.event_key)
-        profile_owned = str(row.learner_id) == str(event.get("learnerId"))
+        try:
+            calendar_identity_verified = bool(getattr(row, "pk", None)) and bool(
+                resolve_profile_identity(
+                    row.pk,
+                    expected_profile_id=event.get("learnerId"),
+                    expected_enrolment_id=event.get("enrolmentId"),
+                    expected_raw_learner_id=getattr(row, "learner_id", None),
+                )
+            )
+        except (CalendarLearnerIdentityError, DatabaseError, ValueError):
+            calendar_identity_verified = False
+        profile_owned = calendar_identity_verified
         if exact_key and (not profile_owned or row.event_type != event["source"]
                           or row.review_instance_id or row.review_template_id):
             raise ReviewIdentityConflict("The imported Review calendar association is inconsistent.")
@@ -239,7 +294,7 @@ def linked_booking(event, records, overlay=None, *, reconciliations=None):
                   and parts[2] == event.get("learnerType")
                   and parts[3] == str(event.get("enrolmentId"))
                   and parts[5] == event.get("reviewId"))
-        legacy_owned = legacy and str(row.learner_id) in {str(event.get("learnerId")), str(event.get("enrolmentId"))}
+        legacy_owned = legacy and calendar_identity_verified
         if (profile_owned and exact_key) or legacy_owned:
             if overlay and row.owner_email.casefold() != overlay.owner_email.casefold():
                 raise ReviewIdentityConflict("The imported Review booking has a conflicting owner.")
@@ -398,6 +453,23 @@ def _deleted_profile_ids(learner_ids):
     return frozenset(learner_ids) - live
 
 
+def _canonical_calendar_profile_id(record):
+    """Return the profile proved by the Calendar learner-link row."""
+    from django.db import DatabaseError
+
+    from .calendar_identity import CalendarLearnerIdentityError, resolve_profile_identity
+
+    try:
+        identity = resolve_profile_identity(
+            record.pk,
+            expected_raw_learner_id=getattr(record, "learner_id", None),
+        )
+    except (CalendarLearnerIdentityError, DatabaseError, ValueError):
+        return None
+    value = identity.get("learner_profile_id") or identity.get("verified_profile_id")
+    return value if value not in (None, "") else None
+
+
 def standalone_review_records(records, profiles, aptem_profile_ids, *, linked_keys=()):
     """Suppress parallel Aptem reviews, respecting legacy enrolment ID space."""
     identities = {row.id: imported_learner_identity(row) for row in profiles if row.id in aptem_profile_ids}
@@ -410,13 +482,19 @@ def standalone_review_records(records, profiles, aptem_profile_ids, *, linked_ke
     # cannot reach. Learner-made bookings keep the same survive-a-rebuild
     # generosity they have on the learner side and are never dropped here.
     known_profile_ids = {row.id for row in profiles}
+    canonical_ids = {
+        record.pk: _canonical_calendar_profile_id(record)
+        for record in records
+        if record.event_type in REVIEW_CYCLE_EVENT_TYPES
+    }
     unresolved = {
-        record.learner_id
+        canonical_ids.get(record.pk)
         for record in records
         if record.event_type in REVIEW_CYCLE_EVENT_TYPES
         and not (record.idempotency_key or "").startswith("learner-book:")
-        and record.learner_id not in known_profile_ids
-        and record.learner_id not in aptem_profile_ids
+        and canonical_ids.get(record.pk) not in known_profile_ids
+        and canonical_ids.get(record.pk) not in aptem_profile_ids
+        and canonical_ids.get(record.pk) is not None
     }
     deleted_profile_ids = _deleted_profile_ids(unresolved)
     result = []
@@ -428,9 +506,9 @@ def standalone_review_records(records, profiles, aptem_profile_ids, *, linked_ke
             if len(parts) >= 4 and parts[0] == "learner-book":
                 if (parts[2], parts[3]) in enrolments:
                     continue
-            elif record.learner_profile_id in aptem_profile_ids:
+            elif canonical_ids.get(record.pk) in aptem_profile_ids:
                 continue
-            elif record.learner_id in deleted_profile_ids:
+            elif canonical_ids.get(record.pk) in deleted_profile_ids:
                 continue
         result.append(record)
     return result

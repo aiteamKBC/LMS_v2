@@ -11,17 +11,16 @@ import inspect
 import json
 import re
 
-from django.db.models.functions import Lower, Trim
 from django.http import JsonResponse
 from django.utils import timezone
 
 from coach_api.auth import authenticated_coach_email, coach_access_required
 from . import canonical_learning, mobile
-from .models import EnrolmentUser, LearnerProfile
+from .models import EnrolmentUser, LearnerProfile, learner_profile_ids_for_coach_email
 
 PAGE_SIZE = 100
 PROFILE_FIELDS = ("id", "enrolment_id", "full_name", "learner_type", "programme_id",
-                  "cohort_id", "lifecycle_status", "coach_email")
+                  "cohort_id", "lifecycle_status", "coach_id")
 QUIZ_RESULT_FIELDS = frozenset({
     "quizId", "componentId", "componentTitle", "moduleId", "moduleTitle", "attempt",
     "grade", "achievedScore", "totalScore", "passed", "startedAt", "submittedAt",
@@ -58,8 +57,9 @@ def _query(request, allowed=()):
 
 
 def _caseload(request):
-    return (LearnerProfile.objects.annotate(coach_email_key=Lower(Trim("coach_email")))
-            .filter(coach_email_key=authenticated_coach_email(request)))
+    return LearnerProfile.objects.filter(id__in=learner_profile_ids_for_coach_email(
+        authenticated_coach_email(request),
+    ))
 
 
 def _not_found():

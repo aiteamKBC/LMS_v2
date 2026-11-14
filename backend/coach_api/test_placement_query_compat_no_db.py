@@ -9,9 +9,8 @@ field and its feature are deliberately out of scope (BLOCKED).
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
-from django.core.exceptions import FieldDoesNotExist
+from django.core.exceptions import EmptyResultSet, FieldDoesNotExist
 from django.db.models import Q
-from django.db.models.functions import Lower, Trim
 from django.db.models.query import QuerySet
 from django.test import RequestFactory, SimpleTestCase
 
@@ -41,6 +40,8 @@ class RecordedOnly:
         if queryset._result_cache is None:
             try:
                 str(queryset.query)
+            except EmptyResultSet:
+                pass
             except FieldDoesNotExist as error:
                 self.errors.append(str(error))
             queryset._result_cache = []
@@ -57,7 +58,8 @@ def run_recorded(call):
 
 class CaseloadDashboardProjectionTests(SimpleTestCase):
     def test_placement_names_are_replaced_by_ids_and_only_coach_rag_remains_blocked(self):
-        with patch.object(views, 'learner_ksbs_relation_exists', return_value=False):
+        with patch.object(views, 'learner_ksbs_relation_exists', return_value=False), \
+             patch.object(views, 'learner_profile_ids_for_coach_email', return_value=[]):
             recorder, rows = run_recorded(lambda: views.fetch_caseload_dashboard_profiles('Coach@Example.test'))
         fields = set(recorder.calls[0])
         self.assertTrue({'programme_id', 'cohort_id', 'group_id'} <= fields)
@@ -67,36 +69,37 @@ class CaseloadDashboardProjectionTests(SimpleTestCase):
         self.assertEqual(rows, [])
 
     def test_the_projection_compiles_once_coach_rag_is_set_aside(self):
-        with patch.object(views, 'learner_ksbs_relation_exists', return_value=False):
+        with patch.object(views, 'learner_ksbs_relation_exists', return_value=False), \
+             patch.object(views, 'learner_profile_ids_for_coach_email', return_value=[]):
             recorder, _ = run_recorded(lambda: views.fetch_caseload_dashboard_profiles('coach@example.test'))
         fields = [name for name in recorder.calls[0] if name != 'coach_rag']
-        sql = str(LearnerProfile.objects.annotate(coach_email_key=Lower(Trim('coach_email')))
-                  .filter(coach_email_key='coach@example.test').only(*fields).query)
-        for column in ('"programme_id"', '"cohort_id"', '"group_id"', '"coach_email"'):
+        sql = str(LearnerProfile.objects.filter(id__in=[101]).only(*fields).query)
+        for column in ('"programme_id"', '"cohort_id"', '"group_id"', '"coach_id"'):
             self.assertIn(column, sql)
 
 
 class CaseFileShellProjectionTests(SimpleTestCase):
     def test_owner_scoped_shell_uses_ids_and_only_coach_rag_remains_blocked(self):
-        recorder, result = run_recorded(lambda: views.fetch_case_file_shell('coach@example.test', 101))
+        with patch.object(views, 'learner_profile_ids_for_coach_email', return_value=[]):
+            recorder, result = run_recorded(lambda: views.fetch_case_file_shell('coach@example.test', 101))
         fields = set(recorder.calls[0])
-        self.assertTrue({'programme_id', 'cohort_id', 'group_id', 'coach_email'} <= fields)
+        self.assertTrue({'programme_id', 'cohort_id', 'group_id', 'coach_id'} <= fields)
         self.assertTrue(PROPERTY_NAMES.isdisjoint(fields))
         self.assertEqual(fields - concrete(LearnerProfile), {'coach_rag'})
         self.assertEqual(recorder.errors, ["LearnerProfile has no field named 'coach_rag'"])
         self.assertEqual(result, (None, None))                                       # unchanged not-found shape
 
     def test_shell_still_filters_by_learner_and_owning_coach(self):
-        query = (LearnerProfile.objects.annotate(coach_email_key=Lower(Trim('coach_email')))
-                 .filter(id=101, coach_email_key='coach@example.test').only('id', 'programme_id').query)
+        query = LearnerProfile.objects.filter(id=101, id__in=[101]).only('id', 'programme_id').query
         sql = str(query)
-        self.assertIn('LOWER(TRIM("Learner"."learners"."coach_email"))', sql.replace('\n', ' '))
+        self.assertIn('"Learner"."learners"."id"', sql.replace('\n', ' '))
 
 
 class CaseFileContextProjectionTests(SimpleTestCase):
     def context(self, path, profile_only, recorder_calls):
         request = RequestFactory().get(path)
-        with patch.object(case_file, 'authenticated_coach_email', return_value='coach@example.test'):
+        with patch.object(case_file, 'authenticated_coach_email', return_value='coach@example.test'), \
+             patch.object(case_file, 'learner_profile_ids_for_coach_email', return_value=[]):
             recorder, ctx = run_recorded(lambda: case_file.CaseFileContext(request, 101, profile_only=profile_only))
         recorder_calls.extend(recorder.calls)
         return ctx, recorder
@@ -153,8 +156,7 @@ NAMES = {'programme_id': {'P1': 'Level 3 Business'},
 
 
 def caseload_queryset():
-    return LearnerProfile.objects.annotate(coach_email_key=Lower(Trim('coach_email'))).filter(
-        coach_email_key='coach@example.test').exclude(full_name__regex=r'^\s*$')
+    return LearnerProfile.objects.filter(id__in=[101]).exclude(full_name__regex=r'^\s*$')
 
 
 class CaseloadFilterQueryTests(SimpleTestCase):

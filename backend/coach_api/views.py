@@ -91,6 +91,7 @@ from learner_api.models import (
     LearnerProgressEntry,
     LearnerProfile,
     StaffUser,
+    learner_profile_ids_for_coach_email,
     learner_activity_events_relation_exists,
     learner_ksbs_relation_exists,
 )
@@ -1939,8 +1940,9 @@ def fetch_caseload_learner_profiles(owner_email: str) -> list[LearnerProfile | S
     if learner_activity_events_relation_exists(learner_alias):
         prefetches.append("activity_events")
     queryset = (
-        LearnerProfile.objects.annotate(coach_email_key=Lower(Trim("coach_email")))
-        .filter(coach_email_key=requested_owner)
+        LearnerProfile.objects.filter(id__in=learner_profile_ids_for_coach_email(
+            requested_owner, using=learner_alias,
+        ))
         .prefetch_related(*prefetches)
         .order_by("full_name", "id")
     )
@@ -1970,8 +1972,10 @@ def fetch_caseload_learner_profiles_by_ids(owner_email: str, profile_ids: list[i
         prefetches.append("activity_events")
     rows_by_id = {
         int(row.id): row
-        for row in LearnerProfile.objects.annotate(coach_email_key=Lower(Trim("coach_email"))).filter(
-            coach_email_key=requested_owner, id__in=profile_ids,
+        for row in LearnerProfile.objects.filter(
+            id__in=set(profile_ids) & set(learner_profile_ids_for_coach_email(
+                requested_owner, using=learner_alias,
+            )),
         ).prefetch_related(*prefetches)
         if clean_text(row.username)
     }
@@ -2031,8 +2035,9 @@ def fetch_caseload_dashboard_profiles(owner_email: str) -> list[LearnerProfile]:
     if learner_ksbs_relation_exists(learner_alias):
         dashboard_prefetches.insert(0, "assigned_ksbs")
     queryset = (
-        LearnerProfile.objects.annotate(coach_email_key=Lower(Trim("coach_email")))
-        .filter(coach_email_key=requested_owner)
+        LearnerProfile.objects.filter(id__in=learner_profile_ids_for_coach_email(
+            requested_owner, using=learner_alias,
+        ))
         .only(
             "id",
             "full_name",
@@ -2050,8 +2055,7 @@ def fetch_caseload_dashboard_profiles(owner_email: str) -> list[LearnerProfile]:
             "progress_hours",
             "progress_variance",
             "otjh_status",
-            "coach_name",
-            "coach_email",
+            "coach_id",
             "coach_rag",
             "start_date",
             "end_date",
@@ -2081,12 +2085,13 @@ def fetch_caseload_timetable_profiles(owner_email: str) -> list[LearnerProfile]:
     """
     requested_owner = normalize_email(owner_email)
     queryset = (
-        LearnerProfile.objects.annotate(coach_email_key=Lower(Trim("coach_email")))
-        .filter(coach_email_key=requested_owner)
+        LearnerProfile.objects.filter(id__in=learner_profile_ids_for_coach_email(
+            requested_owner,
+        ))
         .only(
             "id", "full_name", "email", "programme_id",
             "programme_status", "cohort_id", "group_id",
-            "lifecycle_status", "coach_name", "coach_email", "start_date", "end_date",
+            "lifecycle_status", "coach_id", "start_date", "end_date",
             "gateway_review_date", "learner_type", "enrolment_id", "aptem_id",
         )
         .order_by("full_name", "id")
@@ -2182,12 +2187,14 @@ def fetch_case_file_shell(owner_email: str, learner_id: int):
     """Load one coach-owned learner and its stable enrolment source only."""
     requested_owner = normalize_email(owner_email)
     profile = (
-        LearnerProfile.objects.annotate(coach_email_key=Lower(Trim("coach_email")))
-        .filter(id=learner_id, coach_email_key=requested_owner)
+        LearnerProfile.objects.filter(
+            id=learner_id,
+            id__in=learner_profile_ids_for_coach_email(requested_owner),
+        )
         .only(
             "id", "full_name", "email", "enrolment_id", "aptem_id", "learner_type",
             "programme_id", "programme_status", "cohort_id", "group_id", "lifecycle_status",
-            "coach_name", "coach_email", "coach_rag", "start_date", "end_date",
+            "coach_id", "coach_rag", "start_date", "end_date",
             "gateway_review_date",
         )
         .first()
@@ -2231,8 +2238,8 @@ def serialize_case_file_shell(profile, source) -> dict:
 
 def fetch_attendance_caseload_rows(owner_email: str, *, learner_id: str | None = None, include_plan: bool = True) -> list[LearnerProfile]:
     requested_owner = normalize_email(owner_email)
-    queryset = LearnerProfile.objects.annotate(coach_email_key=Lower(Trim("coach_email"))).filter(
-        coach_email_key=requested_owner,
+    queryset = LearnerProfile.objects.filter(
+        id__in=learner_profile_ids_for_coach_email(requested_owner),
     )
     if learner_id:
         queryset = queryset.filter(id=learner_id)
@@ -2251,8 +2258,7 @@ def fetch_attendance_caseload_rows(owner_email: str, *, learner_id: str | None =
             "minimum_hours",
             "planned_hours",
             "lifecycle_status",
-            "coach_name",
-            "coach_email",
+            "coach_id",
             "learner_type",
             "enrolment_id",
             "aptem_id",
@@ -2276,8 +2282,10 @@ def fetch_attendance_caseload_rows(owner_email: str, *, learner_id: str | None =
 def fetch_owner_active_learner_profiles(owner_email: str) -> list[LearnerProfile]:
     requested_owner = normalize_email(owner_email)
     queryset = (
-        LearnerProfile.objects.annotate(coach_email_key=Lower(Trim("coach_email")))
-        .filter(lifecycle_status="active", coach_email_key=requested_owner)
+        LearnerProfile.objects.filter(
+            lifecycle_status="active",
+            id__in=learner_profile_ids_for_coach_email(requested_owner),
+        )
         .only(
             "id",
             "full_name",
@@ -2285,8 +2293,7 @@ def fetch_owner_active_learner_profiles(owner_email: str) -> list[LearnerProfile
             "programme_id",
             "cohort_id",
             "group_id",
-            "coach_name",
-            "coach_email",
+            "coach_id",
             "start_date",
             "end_date",
             "gateway_review_date",
@@ -6381,7 +6388,7 @@ def fetch_standalone_event_records(owner_email: str, learner_id: int | None = No
             queryset.filter(
                 ~Q(event_type__in=["mcr", "progress-review"])
                 | Q(event_type__in=["mcr", "progress-review"], idempotency_key__startswith="learner-book:")
-                | ~Q(review_template_id="")
+            | Q(review_template_id__isnull=False) & ~Q(review_template_id="")
                 | Q(event_type__in=["mcr", "progress-review"], status__in=["scheduled", "in-progress", "awaiting-signature", "completed", "cancelled"])
                 | Q(event_type__in=["mcr", "progress-review"], scheduled_date__isnull=False, scheduled_time__isnull=False)
             )
@@ -7087,42 +7094,78 @@ def ensure_review_instance_for_calendar_record(record: CoachCalendarEvent, base_
             "A Review Instance can only be linked when the calendar review is scheduled."
         )
 
-    template_row = require_review_template_for_first_linkage(record.review_template_id)
+    requested_template_id = clean_text(getattr(record, "review_template_id", None)) or clean_text(
+        (base_event or {}).get("reviewTemplateId")
+    )
+    template_row = require_review_template_for_first_linkage(requested_template_id)
     occurrence_source = (base_event or {}).get('occurrenceSource', curriculum_review_instances.OCCURRENCE_SOURCE_GENERATED)
     is_manual = occurrence_source == curriculum_review_instances.OCCURRENCE_SOURCE_MANUAL
     occurrence_ref = (base_event or {}).get('occurrenceRef') if is_manual else None
-    instance = curriculum_review_instances.ensure_review_instance(
-        template_row,
-        learner_id=record.learner_profile_id,
-        learner_kind='',
-        programme_id=template_row.get('programme_id'),
-        occurrence_number=None if is_manual else (record.occurrence_number or record.sequence),
-        target_date=record.target_date,
-        coach_email=record.owner_email,
-        actor=record.owner_email or 'coach',
-        occurrence_source=occurrence_source,
-        occurrence_ref=occurrence_ref,
-    )
-    if not instance:
-        # Defensive invariant: a Curriculum-driven event must never be left
-        # at status=scheduled without a review_instance_id. This is enforced
-        # here rather than as a DB constraint so historical unlinked rows and
-        # non-Curriculum event types are unaffected.
-        raise ReviewTemplateUnavailableError(
-            "This review could not be linked to the Curriculum review engine. Please try scheduling it again."
+    from coach_api.calendar_identity import CalendarLearnerIdentityError, resolve_profile_identity
+
+    # Lock the physical Calendar row before creating the instance.  The
+    # caller may have loaded a stale view row; all checks and both pointers are
+    # committed together or rolled back together.
+    with transaction.atomic():
+        locked_record = CoachCalendarEvent.objects.select_for_update().get(pk=record.pk)
+        requested_template_id = clean_text(getattr(record, "review_template_id", None)) or clean_text(
+            (base_event or {}).get("reviewTemplateId")
         )
-    record.review_instance_id = instance.get('id')
-    record.save(update_fields=["review_instance_id", "review_template_id", "occurrence_number", "updated_at"])
-    curriculum_review_instances.link_calendar_event(instance.get('id'), record.pk, actor=record.owner_email or 'coach')
-    # This runs at the moment the calendar row itself is actually booked (the
-    # caller sets record.status = STATUS_SCHEDULED just before this, then
-    # persists it) -- a real date/time now exists, so the linked review
-    # instance can leave not-scheduled. Nothing before this point ever wrote
-    # review_instances.status at all, so without this the instance would sit
-    # at not-scheduled indefinitely and the scheduled -> in-progress
-    # attendance transition (mark_review_instance_in_progress_from_attendance)
-    # could never engage. Guarded/idempotent in the UPDATE itself.
-    curriculum_review_instances.mark_review_instance_scheduled(instance.get('id'), actor=record.owner_email or 'coach')
+        stored_template_id = clean_text(locked_record.review_template_id)
+        if requested_template_id and stored_template_id and requested_template_id != stored_template_id:
+            raise ReviewTemplateUnavailableError(
+                "The Calendar event's Review template changed while it was being linked."
+            )
+        if requested_template_id and not stored_template_id:
+            # Some legacy callers set the template on their in-memory row just
+            # before invoking this helper. Persist that candidate only while
+            # holding the row lock; the database row remains the authority for
+            # the rest of the operation.
+            locked_record.review_template_id = requested_template_id
+            locked_record.save(update_fields=["review_template_id", "updated_at"])
+        try:
+            identity = resolve_profile_identity(
+                locked_record.pk,
+                expected_raw_learner_id=locked_record.learner_id,
+                for_update=True,
+            )
+        except CalendarLearnerIdentityError as exc:
+            raise ReviewTemplateUnavailableError(str(exc)) from exc
+        learner_id = identity.get('learner_profile_id') or identity.get('verified_profile_id')
+        if str(learner_id) != str((base_event or {}).get('learnerId')):
+            raise ReviewTemplateUnavailableError(
+                "This Calendar event's learner identity could not be verified."
+            )
+        instance = curriculum_review_instances.ensure_review_instance(
+            template_row,
+            learner_id=learner_id,
+            learner_kind='',
+            programme_id=template_row.get('programme_id'),
+            occurrence_number=None if is_manual else (locked_record.occurrence_number or locked_record.sequence),
+            target_date=locked_record.target_date,
+            coach_email=locked_record.owner_email,
+            actor=locked_record.owner_email or 'coach',
+            occurrence_source=occurrence_source,
+            occurrence_ref=occurrence_ref,
+        )
+        if not instance:
+            raise ReviewTemplateUnavailableError(
+                "This review could not be linked to the Curriculum review engine. Please try scheduling it again."
+            )
+        locked_record.review_template_id = template_row.get('id')
+        locked_record.occurrence_number = None if is_manual else (
+            locked_record.occurrence_number or locked_record.sequence
+        )
+        locked_record.save(update_fields=["review_template_id", "occurrence_number", "updated_at"])
+        curriculum_review_instances.link_calendar_event(
+            instance.get('id'), locked_record.pk, actor=locked_record.owner_email or 'coach',
+        )
+        # This runs at the moment the calendar row itself is actually booked;
+        # the guarded update is idempotent and remains inside this transaction.
+        curriculum_review_instances.mark_review_instance_scheduled(
+            instance.get('id'), actor=locked_record.owner_email or 'coach',
+        )
+        record.review_instance_id = instance.get('id')
 
 
 def resolve_review_display_title(event_type: str, review_template_id: str | None) -> str:
@@ -11832,7 +11875,7 @@ def coach_timetable_schedule_event(request):
         event_key=event_key, owner_email__iexact=owner_email,
         event_type__in={"mcr", "progress-review", "review"},
         scheduled_date__isnull=False, scheduled_time__isnull=False,
-    ).exclude(review_instance_id="").exclude(review_instance_id__isnull=True).first()
+    ).exclude(review_instance_id__isnull=True).exclude(review_instance_id="").first()
     try:
         base_event, owner_name = find_generated_timetable_event(owner_email, event_key)
     except DatabaseError:
@@ -12744,9 +12787,11 @@ def dashboard_imported_completed_review_dates(profile_ids, *, owner_email, owner
     """
     from .review_sources import enrich_imported_events
 
-    profiles = list(LearnerProfile.objects.annotate(
-        coach_email_key=Lower(Trim("coach_email")),
-    ).filter(coach_email_key=normalize_email(owner_email), pk__in=profile_ids).only(
+    profiles = list(LearnerProfile.objects.filter(
+        id__in=set(profile_ids) & set(learner_profile_ids_for_coach_email(
+            normalize_email(owner_email), using=get_learner_db_alias(),
+        )),
+    ).only(
         "id", "aptem_id", "enrolment_id", "full_name", "email", "learner_type",
         "programme_id", "cohort_id", "group_id",
     ))
@@ -13311,11 +13356,17 @@ def caseload_counts_by_coach(coach_emails: set[str]) -> dict[str, dict[str, int]
     # Not ``.iterator()``: the pooled connection this runs over rejects the
     # server-side cursor it opens ("portal does not exist"). Three short columns
     # for the coached learners is a small result set to hold.
-    rows = (
-        LearnerProfile.objects.annotate(coach_email_key=Lower(Trim("coach_email")))
-        .filter(coach_email_key__in=sorted(coach_emails))
-        .values_list("coach_email_key", "programme_status", "full_name")
-    )
+    rows = []
+    alias = get_learner_db_alias()
+    with connections[alias].cursor() as cursor:
+        cursor.execute(
+            '''select lower(trim(c.email)), l.programme_status, l.full_name
+                 from "Learner".learners l
+                 join curriculum.coaches c on c.id = l.coach_id
+                where lower(trim(c.email)) = any(%s)''',
+            [sorted(coach_emails)],
+        )
+        rows = cursor.fetchall()
     for email_key, programme_status, full_name in rows:
         # The same "has a name" guard the caseload fetches apply — a row without
         # one is a placeholder and is not counted as a learner anywhere else.
@@ -14018,8 +14069,10 @@ def coach_caseload(request):
         filter_options = None
         if paginated:
             requested_owner = normalize_email(owner_email)
-            queryset = LearnerProfile.objects.annotate(coach_email_key=Lower(Trim("coach_email"))).filter(
-                coach_email_key=requested_owner,
+            queryset = LearnerProfile.objects.filter(
+                id__in=learner_profile_ids_for_coach_email(
+                    requested_owner, using=get_learner_db_alias(),
+                ),
             ).exclude(full_name__regex=r"^\s*$")
             option_queryset = queryset
             # Programme/cohort/group names are LearnerProfile properties, not
@@ -14207,11 +14260,11 @@ def coach_caseload_coach_rag(request, learner_id):
         return JsonResponse({"detail": "Method not allowed."}, status=405)
 
     owner_email = authenticated_coach_email(request)
-    learner_queryset = LearnerProfile.objects.annotate(
-        coach_email_key=Lower(Trim("coach_email")),
-    ).filter(
+    learner_queryset = LearnerProfile.objects.filter(
         id=learner_id,
-        coach_email_key=normalize_email(owner_email),
+        id__in=learner_profile_ids_for_coach_email(
+            normalize_email(owner_email), using=get_learner_db_alias(),
+        ),
     )
 
     if request.method == "GET":
@@ -14812,8 +14865,11 @@ def coach_marking_queue(request, submission_id=None):
     allowed_learner_ids = [
         str(learner_id)
         for learner_id in (
-            LearnerProfile.objects.annotate(coach_email_key=Lower(Trim("coach_email")))
-            .filter(coach_email_key=requested_owner)
+            LearnerProfile.objects.filter(
+                id__in=learner_profile_ids_for_coach_email(
+                    requested_owner, using=get_learner_db_alias(),
+                ),
+            )
             .values_list("enrolment_id", flat=True)
         )
         if learner_id is not None
@@ -16547,6 +16603,18 @@ def coach_review_instance_for_event(request):
         return JsonResponse({"detail": "Imported reviews cannot be opened as native reviews."}, status=409)
     record = CoachCalendarEvent.objects.filter(event_key=event_key, owner_email__iexact=owner_email).first()
     if record and clean_text(record.review_instance_id):
+        from .calendar_identity import CalendarLearnerIdentityError, resolve_profile_identity
+        linked_instance = curriculum_review_instances.get_review_instance(record.review_instance_id)
+        try:
+            resolve_profile_identity(
+                record.pk,
+                expected_profile_id=(linked_instance or {}).get("learner_id"),
+                expected_raw_learner_id=record.learner_id,
+            )
+        except CalendarLearnerIdentityError as exc:
+            return JsonResponse({
+                "detail": str(exc), "code": "REVIEW_CALENDAR_LINK_CONFLICT",
+            }, status=409)
         from .reconciliation_links import for_calendar
         link = for_calendar(record)
         if link:
@@ -16557,10 +16625,33 @@ def coach_review_instance_for_event(request):
     if not base_event:
         return JsonResponse({"detail": "Calendar event not found for this coach."}, status=404)
 
+    canonical_learner_id = int(base_event["learnerId"])
+    if record is not None:
+        from .calendar_identity import CalendarLearnerIdentityError, resolve_profile_identity
+        try:
+            identity = resolve_profile_identity(
+                record.pk,
+                expected_profile_id=base_event.get("learnerId"),
+                expected_raw_learner_id=record.learner_id,
+            )
+            canonical_learner_id = int(
+                identity.get("learner_profile_id") or identity.get("verified_profile_id")
+            )
+        except (CalendarLearnerIdentityError, TypeError, ValueError) as exc:
+            return JsonResponse({
+                "detail": str(exc), "code": "REVIEW_CALENDAR_LINK_CONFLICT",
+            }, status=409)
+        if canonical_learner_id != int(base_event["learnerId"]):
+            return JsonResponse({
+                "detail": "The Calendar learner identity changed. Reload the Review.",
+                "code": "REVIEW_CALENDAR_LINK_CONFLICT",
+            }, status=409)
     try:
-        require_native_review_creation(int(base_event["learnerId"]))
-    except ReviewCreationBlocked as exc:
-        return JsonResponse(exc.policy, status=409)
+        require_native_review_creation(canonical_learner_id)
+    except (ReviewCreationBlocked, ValueError) as exc:
+        if isinstance(exc, ReviewCreationBlocked):
+            return JsonResponse(exc.policy, status=409)
+        return JsonResponse({"detail": str(exc), "code": "REVIEW_CALENDAR_LINK_CONFLICT"}, status=409)
 
     review_template_id = clean_text(base_event.get("reviewTemplateId")) or (record and clean_text(record.review_template_id))
     if not review_template_id:
@@ -16603,39 +16694,57 @@ def coach_review_instance_for_event(request):
                 except (ReviewTemplateUnavailableError, ReviewCreationBlocked) as exc:
                     return JsonResponse(getattr(exc, "policy", {"detail": str(exc)}), status=409)
             else:
-                instance = curriculum_review_instances.ensure_review_instance(
-                    template_row,
-                    learner_id=int(base_event["learnerId"]),
-                    learner_kind='',
-                    programme_id=template_row.get("programme_id"),
-                    occurrence_number=None if is_manual else parse_int(
-                        base_event.get("occurrenceNumber"),
-                        int(base_event.get("sequence") or 1),
-                    ),
-                    target_date=target_date,
-                    coach_email=owner_email,
-                    actor=owner_email or "coach",
-                    occurrence_source=base_event.get(
-                        "occurrenceSource",
-                        curriculum_review_instances.OCCURRENCE_SOURCE_GENERATED,
-                    ),
-                    occurrence_ref=base_event.get("occurrenceRef") if is_manual else None,
-                )
-                if not instance:
-                    return JsonResponse({"detail": "This review could not be opened."}, status=400)
-                record.review_instance_id = instance.get("id")
-                record.save(update_fields=[
-                    "review_template_id", "occurrence_number", "review_instance_id", "updated_at",
-                ])
-                curriculum_review_instances.link_calendar_event(
-                    instance.get("id"), record.pk, actor=owner_email or "coach",
-                )
+                from .calendar_identity import CalendarLearnerIdentityError, resolve_profile_identity
+                try:
+                    with transaction.atomic():
+                        identity = resolve_profile_identity(
+                            record.pk,
+                            expected_raw_learner_id=record.learner_id,
+                            for_update=True,
+                        )
+                        learner_id = identity.get("learner_profile_id") or identity.get("verified_profile_id")
+                        if str(learner_id) != str(canonical_learner_id):
+                            raise CalendarLearnerIdentityError(
+                                "The Calendar event belongs to a different learner profile."
+                            )
+                        instance = curriculum_review_instances.ensure_review_instance(
+                            template_row,
+                            learner_id=canonical_learner_id,
+                            learner_kind='',
+                            programme_id=template_row.get("programme_id"),
+                            occurrence_number=None if is_manual else parse_int(
+                                base_event.get("occurrenceNumber"),
+                                int(base_event.get("sequence") or 1),
+                            ),
+                            target_date=target_date,
+                            coach_email=owner_email,
+                            actor=owner_email or "coach",
+                            occurrence_source=base_event.get(
+                                "occurrenceSource",
+                                curriculum_review_instances.OCCURRENCE_SOURCE_GENERATED,
+                            ),
+                            occurrence_ref=base_event.get("occurrenceRef") if is_manual else None,
+                        )
+                        if not instance:
+                            return JsonResponse({"detail": "This review could not be opened."}, status=400)
+                        record.review_template_id = review_template_id
+                        record.occurrence_number = None if is_manual else parse_int(
+                            base_event.get("occurrenceNumber"), int(base_event.get("sequence") or 1),
+                        )
+                        record.save(update_fields=[
+                            "review_template_id", "occurrence_number", "updated_at",
+                        ])
+                        curriculum_review_instances.link_calendar_event(
+                            instance.get("id"), record.pk, actor=owner_email or "coach",
+                        )
+                except CalendarLearnerIdentityError as exc:
+                    return JsonResponse({"detail": str(exc), "code": "CALENDAR_LEARNER_IDENTITY_CONFLICT"}, status=409)
             record.refresh_from_db()
             return JsonResponse({"instanceId": clean_text(record.review_instance_id)})
 
         instance = curriculum_review_instances.ensure_review_instance(
             template_row,
-            learner_id=int(base_event["learnerId"]),
+            learner_id=canonical_learner_id,
             learner_kind='',
             programme_id=template_row.get("programme_id"),
             occurrence_number=None if is_manual else parse_int(
@@ -17240,8 +17349,13 @@ def coach_review_instance_complete(request, instance_id):
         # editable, or already submitted/completed) or {'fields': [...]}
         # for unanswered required questions -- surface whichever one applies
         # as the headline message so the coach sees why, not a generic string.
-        detail = (errors or {}).get("status", ["This review cannot be completed yet."])[0]
-        return JsonResponse({"detail": detail, "errors": errors}, status=400)
+        errors = errors or {}
+        detail = next(
+            (values[0] for key in ("answers", "status", "fields")
+             for values in [errors.get(key) or []] if values),
+            "This review cannot be completed yet.",
+        )
+        return JsonResponse({"detail": detail, "errors": errors}, status=409 if "answers" in errors else 400)
     instance_row = curriculum_review_instances.get_review_instance(instance_row["id"])
     # Completion already mirrors the verified calendar link in its transaction.
     return JsonResponse(_coach_review_instance_definition(instance_row))

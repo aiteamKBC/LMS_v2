@@ -282,7 +282,7 @@ def active_learners(request):
 
     rows = (
         LearnerProfile.objects.filter(lifecycle_status="active")
-        .only("id", "enrolment_id", "full_name", "email", "programme_id", "coach_name", "cohort_id", "group_id", "start_date", "end_date")
+        .only("id", "enrolment_id", "full_name", "email", "programme_id", "coach_id", "cohort_id", "group_id", "start_date", "end_date")
         .order_by("full_name")
     )
     results = []

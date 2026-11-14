@@ -31,6 +31,18 @@ def event(record):
 
 
 class BookingOnlyCandidateTests(SimpleTestCase):
+    def setUp(self):
+        self.identity = patch(
+            'coach_api.calendar_booking_only._canonical_profile_id',
+            side_effect=lambda record, owner: (
+                owner.id if str(record.learner_profile_id) in {
+                    str(owner.id), str(owner.enrolment_id),
+                } else None
+            ),
+        )
+        self.identity.start()
+        self.addCleanup(self.identity.stop)
+
     @patch('coach_api.reconciliation_links.active_links')
     @patch('curriculum_api.views.fetch_all')
     def test_legacy_key_with_profile_id_requires_exact_native_proof(self, fetch, links):
@@ -124,6 +136,30 @@ class BookingOnlyCandidateTests(SimpleTestCase):
 
 
 class BookingOnlyCalendarIntegrationTests(SimpleTestCase):
+    def setUp(self):
+        self.identity = patch(
+            'coach_api.calendar_booking_only._canonical_profile_id',
+            side_effect=lambda record, owner: (
+                owner.id if str(record.learner_profile_id) in {
+                    str(owner.id), str(owner.enrolment_id),
+                } else None
+            ),
+        )
+        self.identity.start()
+        self.addCleanup(self.identity.stop)
+        self.review_identity = patch(
+            'coach_api.review_sources._canonical_calendar_profile_id',
+            side_effect=lambda record: getattr(record, 'learner_profile_id', None),
+        )
+        self.review_identity.start()
+        self.addCleanup(self.review_identity.stop)
+        self.learner_identity = patch(
+            'learner_api.calendar._calendar_event_profile_id',
+            return_value=7,
+        )
+        self.learner_identity.start()
+        self.addCleanup(self.learner_identity.stop)
+
     def test_coach_only_calendar_opt_in_shows_booking_within_requested_window(self):
         from coach_api.views import collect_generated_timetable
         row, owner = booking(), profile()

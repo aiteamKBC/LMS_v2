@@ -878,9 +878,7 @@ def _load_scoped_submission(request, submission_id):
     Shared by the prompt and draft endpoints so they cannot drift apart on who
     is allowed to see whose work.
     """
-    from django.db.models.functions import Lower, Trim
-
-    from learner_api.models import LearnerProfile
+    from learner_api.models import LearnerProfile, learner_profile_ids_for_coach_email
 
     from .views import (
         MARKING_QUEUE_COLUMNS,
@@ -892,8 +890,9 @@ def _load_scoped_submission(request, submission_id):
     allowed_learner_ids = [
         str(learner_id)
         for learner_id in (
-            LearnerProfile.objects.annotate(coach_email_key=Lower(Trim("coach_email")))
-            .filter(coach_email_key=normalize_email(owner_email))
+            LearnerProfile.objects.filter(id__in=learner_profile_ids_for_coach_email(
+                normalize_email(owner_email),
+            ))
             .values_list("enrolment_id", flat=True)
         )
         if learner_id is not None

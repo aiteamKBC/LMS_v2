@@ -209,8 +209,11 @@ def enrich(payload, account):
             WHERE learner_id IN ({slots}) AND module_id=%s''', [*learner_ids, payload['identifier']])}
     # The existing assignment roster is the membership authority. Ownership is
     # verified again on POST; this capability is only a UI hint.
-    owners = {str(row['id']): row for row in query(f'''SELECT id,enrolment_id,learner_type,coach_email FROM {table('learners')}
-        WHERE id IN ({','.join(['%s'] * len(learner_ids))})''', learner_ids)} if learner_ids else {}
+    owners = {str(row['id']): row for row in query(f'''SELECT l.id,l.enrolment_id,l.learner_type,
+        c.email AS coach_email
+        FROM {table('learners')} l
+        LEFT JOIN curriculum.coaches c ON c.id = l.coach_id
+        WHERE l.id IN ({','.join(['%s'] * len(learner_ids))})''', learner_ids)} if learner_ids else {}
     canonical_records = completion_records(loaded_records, owners, query, table)
     completion_by_component = defaultdict(list)
     hour_rows.clear()

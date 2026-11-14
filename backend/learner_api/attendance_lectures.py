@@ -1166,8 +1166,10 @@ def read_workspace(source, kind, *, monthly=None, monthly_occurrences=None):
     assigned_modules = read_assigned_modules(source)
     mode = read_mode(source, kind)
     with connections['enrolment'].cursor() as cur:
-        cur.execute('''SELECT coach_name,coach_email FROM "Learner".learners
-            WHERE enrolment_id=%s''', [source.id])
+        cur.execute('''SELECT c.name AS coach_name,c.email AS coach_email
+            FROM "Learner".learners l
+            LEFT JOIN curriculum.coaches c ON c.id=l.coach_id
+            WHERE l.enrolment_id=%s''', [source.id])
         profiles = dict_rows(cur)
         coach = (profiles[0].get('coach_name') or profiles[0].get('coach_email') or '') if len(profiles) == 1 else ''
         cur.execute('''SELECT id,attendance_id,status,session_title,created_at,updated_at,

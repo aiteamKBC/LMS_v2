@@ -1,7 +1,6 @@
 """Use the established LMS login, stable enrolment bridge, and current assignments."""
 from dataclasses import dataclass
-from django.db.models.functions import Lower, Trim
-from learner_api.models import LearnerProfile, StaffUser, EnrolmentUser
+from learner_api.models import LearnerProfile, StaffUser, EnrolmentUser, learner_profile_ids_for_coach_email
 from login.models import LoginAccount
 from login.identity import accesses_for_staff
 from login.sessions import authenticate_request, session_unreadable
@@ -99,7 +98,7 @@ def _coach_once(learner, resolved):
 def assigned_learners(viewer):
     if viewer.kind != "coach" or not viewer.email:
         return []
-    profiles = active_profiles().annotate(coach_key=Lower(Trim("coach_email"))).filter(coach_key=viewer.email)
+    profiles = active_profiles().filter(id__in=learner_profile_ids_for_coach_email(viewer.email))
     result, coaches = [], {}
     for learner in eligible_learners(profiles):
         coach = _coach_once(learner, coaches)

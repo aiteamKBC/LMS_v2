@@ -7,6 +7,7 @@ from django.test import SimpleTestCase
 from learner_api.models import EnrolmentUser, LearnerProfile
 from .models import CoachCalendarEvent
 from . import views
+from .calendar_identity import CalendarLearnerIdentityError
 
 
 class MeetingProfileIdentityTests(SimpleTestCase):
@@ -15,6 +16,34 @@ class MeetingProfileIdentityTests(SimpleTestCase):
         self.lookup = self.enterContext(patch.object(LearnerProfile.objects, 'filter', side_effect=self.profiles))
         source_query = self.enterContext(patch.object(EnrolmentUser.all_learners, 'filter'))
         source_query.return_value.first.side_effect = lambda: self.source
+        self.enterContext(patch(
+            'coach_api.calendar_identity.resolve_profile_identity',
+            side_effect=self.calendar_identity,
+        ))
+
+    def calendar_identity(self, event_id, *, expected_profile_id=None,
+                          expected_enrolment_id=None, expected_raw_learner_id=None,
+                          for_update=False):
+        legacy = str(self.record.idempotency_key or '').startswith('learner-book:')
+        raw = (self.record.learner_id
+               if getattr(self.profile, 'id', None) is not None
+               and str(self.record.learner_id) == str(self.profile.id)
+               else self.source.pk if legacy else self.record.learner_id)
+        if expected_raw_learner_id is not None and str(expected_raw_learner_id) != str(raw):
+            raise CalendarLearnerIdentityError('raw learner reference changed')
+        if expected_enrolment_id is not None and str(expected_enrolment_id) != str(self.source.pk):
+            raise CalendarLearnerIdentityError('enrolment changed')
+        profile_id = getattr(self.profile, 'id', None)
+        if expected_profile_id is not None and str(expected_profile_id) != str(profile_id):
+            raise CalendarLearnerIdentityError('profile changed')
+        return {
+            'calendar_event_id': event_id,
+            'raw_learner_id': raw,
+            'identity_kind': 'enrolment' if legacy else 'profile',
+            'learner_profile_id': profile_id,
+            'enrolment_id': self.source.pk,
+            'verified_profile_id': profile_id,
+        }
 
     def reset_rows(self):
         self.profile = SimpleNamespace(id=800, pk=800, enrolment_id=200, aptem_id=9000,

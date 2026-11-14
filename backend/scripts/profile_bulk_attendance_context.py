@@ -116,7 +116,7 @@ if __name__ == '__main__':
             stack.enter_context(patch.object(psycopg, 'connect', readonly_connect))
             for connection in connections.all():
                 stack.enter_context(connection.execute_wrapper(query))
-            profile = LearnerProfile.objects.only('id', 'coach_email').get(pk=int(sys.argv[1]))
+            profile = LearnerProfile.objects.only('id', 'coach_id').get(pk=int(sys.argv[1]))
             owner = profile.coach_email
             _, placements = loading.attendance_placements(owner)
             placement = next(row for row in placements if row['id'] == str(profile.id))

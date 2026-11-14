@@ -41,7 +41,10 @@ class NativeReviewEmailIdentityTests(SimpleTestCase):
         mirror = mirror or profile()
         query = Mock()
         query.order_by.return_value = rows
+        identity = lambda row, **_kwargs: mirror.id if getattr(row, "review_instance_id", "") else None
         with patch.object(calendar.CoachCalendarEvent.objects, "filter", return_value=query), \
+             patch.object(calendar, "_calendar_event_profile_id", side_effect=identity), \
+             patch.object(calendar, "_calendar_event_profile_is_verified", return_value=True), \
              patch("curriculum_api.review_instances.list_review_instances_for_learner",
                    return_value=instances if instances is not None else [instance()]) as read, \
              patch.object(calendar, "_curriculum_cycle_events",
@@ -74,6 +77,8 @@ class NativeReviewEmailIdentityTests(SimpleTestCase):
         query = Mock()
         query.order_by.return_value = [row]
         with patch.object(calendar.CoachCalendarEvent.objects, "filter", return_value=query), \
+             patch.object(calendar, "_calendar_event_profile_id", return_value=42), \
+             patch.object(calendar, "_calendar_event_profile_is_verified", return_value=True), \
              patch("curriculum_api.review_instances.list_review_instances_for_learner", return_value=[instance()]), \
              patch.object(calendar, "_generated_cycle_events", return_value=[generated]), \
              patch.object(calendar, "_serialize_event",
@@ -99,6 +104,12 @@ class NativeReviewEmailIdentityTests(SimpleTestCase):
         result, _ = self.calendar_rows([row], instances=[instance(learner_id=17)])
         self.assertEqual(result, [])
 
+    def test_canonical_profile_link_survives_a_raw_enrolment_number(self):
+        row = booking()
+        row.learner_profile_id = 17  # Legacy Calendar value; canonical link is profile 42.
+        result, _ = self.calendar_rows([row], instances=[instance(learner_id=42)])
+        self.assertEqual(result, [row])
+
     def test_stale_email_requires_verified_enrolment_link(self):
         result, _ = self.calendar_rows([booking()], mirror=profile(enrolment_id=None))
         self.assertEqual(result, [])
@@ -120,6 +131,8 @@ class NativeReviewEmailIdentityTests(SimpleTestCase):
         query.order_by.return_value = [row]
         with patch.object(calendar.CoachCalendarEvent.objects, "filter", return_value=query), \
              patch.object(calendar, "review_profile_for_source", return_value=mirror), \
+             patch.object(calendar, "_calendar_event_profile_id", return_value=mirror.id), \
+             patch.object(calendar, "_email_names_another_learner", return_value=False), \
              patch("curriculum_api.review_instances.list_review_instances_for_learner") as native, \
              patch("learner_api.imported_review_calendar.imported_events_for_learner",
                    return_value=[{"reviewSource": "aptem", "eventKey": "imported-review:808"}]) as imported:
@@ -135,6 +148,8 @@ class NativeReviewEmailIdentityTests(SimpleTestCase):
         model.all_learners.filter.return_value.first.return_value = source
         with patch.object(calendar, "SOURCE_MODELS", {"commercial": model}), \
              patch.object(calendar, "_calendar_profile", return_value=mirror), \
+             patch.object(calendar, "_calendar_event_profile_id", return_value=mirror.id), \
+             patch.object(calendar, "_calendar_event_profile_is_verified", return_value=True), \
              patch.object(calendar.CoachCalendarEvent.objects, "filter") as events, \
              patch("coach_api.reconciliation_links.for_calendar", return_value=None), \
              patch("curriculum_api.review_instances.get_review_instance") as read:

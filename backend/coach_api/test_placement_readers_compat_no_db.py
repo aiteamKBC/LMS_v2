@@ -38,6 +38,17 @@ def fake_connection(rows=(), description=None):
 class CoachProfileProjectionTests(SimpleTestCase):
     """Each fixed LearnerProfile projection compiles and loads the placement ids."""
 
+    def setUp(self):
+        # Ownership now comes from the canonical coach_id -> coaches join. Keep
+        # this projection suite database-free by supplying that read explicitly.
+        self.enterContext(patch.object(
+            views, 'learner_profile_ids_for_coach_email', return_value=[1, 2],
+        ))
+        self.enterContext(patch.object(
+            __import__('learner_api.models', fromlist=['learner_profile_ids_for_coach_email']),
+            'learner_profile_ids_for_coach_email', return_value=[1, 2],
+        ))
+
     def assert_projection(self, call, ids=('programme_id', 'cohort_id', 'group_id')):
         recorder, _ = run_recorded(call)
         fields = set(recorder.calls[0])

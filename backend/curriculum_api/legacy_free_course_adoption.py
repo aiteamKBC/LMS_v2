@@ -72,7 +72,7 @@ def adoption_snapshot():
     # the owner, reached from each history row through its own profile.
     owner_by_profile = history_owners(progress)
     owner_ids = {row['id'] for row in learners} | set(owner_by_profile.values())
-    profiles = list(LearnerProfile.objects.filter(enrolment_id__in=owner_ids).values('id', 'enrolment_id', 'learning_plan'))
+    profiles = list(LearnerProfile.objects.filter(enrolment_id__in=owner_ids).values('id', 'enrolment_id'))
     profiles_by_owner = defaultdict(list)
     for profile in profiles:
         profiles_by_owner[profile['enrolment_id']].append(profile['id'])

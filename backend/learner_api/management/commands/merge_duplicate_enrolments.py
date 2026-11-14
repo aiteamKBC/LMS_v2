@@ -77,8 +77,10 @@ class Command(BaseCommand):
 
     def _mirror(self, cur, email):
         cur.execute(
-            'select id, enrolment_id, lifecycle_status, coach_email '
-            'from "Learner".learners where email_normalized = lower(btrim(%s))', [email],
+            'select l.id, l.enrolment_id, l.lifecycle_status, c.email as coach_email '
+            'from "Learner".learners l '
+            'left join curriculum.coaches c on c.id = l.coach_id '
+            'where l.email_normalized = lower(btrim(%s))', [email],
         )
         columns = [c[0] for c in cur.description]
         row = cur.fetchone()

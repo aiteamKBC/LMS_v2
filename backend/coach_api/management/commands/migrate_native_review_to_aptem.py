@@ -178,6 +178,7 @@ class Command(BaseCommand):
         return instance, snapshot, answers
 
     def _native_learner_email(self, instance):
+        """Legacy diagnostic only; email is never an identity proof."""
         from coach_api.models import CoachCalendarEvent
 
         event_id = instance.get("calendar_event_id")
@@ -204,11 +205,39 @@ class Command(BaseCommand):
         from learner_api.models import EnrolmentUser, LearnerProfile
         from coach_api.models import ImportedReviewInstance
         from coach_api.review_sources import source_for_learner
+        from coach_api.calendar_identity import CalendarLearnerIdentityError, resolve_profile_identity
 
         profile_id = definition["instance"]["learnerId"]
         profile = LearnerProfile.objects.filter(pk=profile_id).first()
         if profile is None:
             raise CommandError(f"The imported review's learner profile {profile_id} is missing.")
+        if str(native_instance.get("learner_id")) != str(profile_id):
+            raise CommandError(
+                "The native and imported reviews resolve to different learner profiles. "
+                "Refusing to move answers between learners."
+            )
+        event_id = native_instance.get("calendar_event_id")
+        if not event_id:
+            raise CommandError(
+                "The native review has no Calendar event. A verified Calendar learner "
+                "link is required before migration."
+            )
+        try:
+            identity_link = resolve_profile_identity(
+                event_id,
+                expected_profile_id=profile_id,
+                expected_raw_learner_id=native_instance.get("learner_id"),
+            )
+        except CalendarLearnerIdentityError as exc:
+            raise CommandError(
+                f"The native review Calendar event is not verified for learner {profile_id}: {exc}"
+            ) from exc
+        linked_profile_id = identity_link.get("learner_profile_id") or identity_link.get("verified_profile_id")
+        if str(linked_profile_id) != str(profile_id):
+            raise CommandError(
+                "The native Calendar link resolves to a different learner profile. "
+                "Refusing to move answers between learners."
+            )
         source = (EnrolmentUser.all_learners.filter(pk=profile.enrolment_id).first()
                   if profile.enrolment_id else None)
         identity = source_for_learner(source, profile)
@@ -216,19 +245,6 @@ class Command(BaseCommand):
             raise CommandError(
                 f"Learner {profile_id} resolves to review source '{identity.kind}', not 'aptem'. "
                 "This command only moves work onto an Aptem-owned review."
-            )
-        if _text(profile.coach_email).casefold() != _text(owner).casefold():
-            raise CommandError(
-                f"Learner {profile_id} is assigned to {profile.coach_email}, not {owner}."
-            )
-        # The native row may point at a deleted profile ID, so identity is
-        # confirmed on the stored learner email rather than on that number.
-        stored_email = self._native_learner_email(native_instance)
-        profile_email = _text(profile.email).casefold()
-        if stored_email and profile_email and stored_email != profile_email:
-            raise CommandError(
-                "The native review belongs to a different learner email than the imported "
-                "review's learner. Refusing to move work between learners."
             )
         if not definition.get("canInitialize") and not definition.get("migratedForm"):
             raise CommandError(

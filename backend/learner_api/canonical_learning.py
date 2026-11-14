@@ -87,13 +87,14 @@ def require_profile(learner_id):
 
 def profile(learner_id):
     records = query('''SELECT l.id,l.enrolment_id,l.aptem_id,l.programme_id,l.full_name AS name,
-        p.name AS programme,l.coach_name,l.coach_email,l.email,l.start_date,l.end_date,l.learner_type,
+        p.name AS programme,c.name AS coach_name,c.email AS coach_email,l.email,l.start_date,l.end_date,l.learner_type,
         u.id AS account_record_id,u."Email" AS account_email,u.aptem_id AS account_aptem_id,
         l.planned_hours AS programme_planned_hours,l.learner_start_date,l.learner_end_date,
         EXISTS(SELECT 1 FROM "Learner".progress_transfer_requests t WHERE t.enrolment_id=l.enrolment_id) AS progress_transfer_active
         FROM "Learner".learners l
         LEFT JOIN enrolment."Created_users" u ON u.id=l.enrolment_id
         LEFT JOIN curriculum.programmes p ON p.programme_id=l.programme_id
+        LEFT JOIN curriculum.coaches c ON c.id=l.coach_id
         WHERE l.enrolment_id=%s''', [learner_id])
     if not records:
         return None
@@ -127,9 +128,12 @@ def programme_planned_hours(learner_id, *, owner=None):
 
 def profile_by_aptem(aptem_id):
     """For already-authorized Audit callers; never use an Aptem ID as a PK."""
-    records = query('''SELECT id,enrolment_id,aptem_id,programme_id,full_name AS name,
-        programme,coach_name,coach_email,email,start_date,end_date,learner_type
-        FROM "Learner".learners WHERE aptem_id=%s''', [aptem_id])
+    records = query('''SELECT l.id,l.enrolment_id,l.aptem_id,l.programme_id,l.full_name AS name,
+        p.name AS programme,c.name AS coach_name,c.email AS coach_email,l.email,l.start_date,l.end_date,l.learner_type
+        FROM "Learner".learners l
+        LEFT JOIN curriculum.programmes p ON p.programme_id=l.programme_id
+        LEFT JOIN curriculum.coaches c ON c.id=l.coach_id
+        WHERE l.aptem_id=%s''', [aptem_id])
     if len(records) != 1:
         raise ServiceError('The consolidated learner identity needs review.', 'identity_review_required', 409)
     return records[0]
@@ -1532,13 +1536,14 @@ def metrics_bulk(learner_ids, *, learner_workspace=False, include_ksb_points=Fal
         return {}
 
     owners = query('''SELECT l.id,l.enrolment_id,l.aptem_id,l.programme_id,l.full_name AS name,
-        p.name AS programme,l.coach_name,l.coach_email,l.email,l.start_date,l.end_date,l.learner_type,
+        p.name AS programme,c.name AS coach_name,c.email AS coach_email,l.email,l.start_date,l.end_date,l.learner_type,
         u.id AS account_record_id,u."Email" AS account_email,u.aptem_id AS account_aptem_id,
         l.planned_hours AS programme_planned_hours,l.learner_start_date,l.learner_end_date,
         EXISTS(SELECT 1 FROM "Learner".progress_transfer_requests t WHERE t.enrolment_id=l.enrolment_id) AS progress_transfer_active
         FROM "Learner".learners l
         LEFT JOIN enrolment."Created_users" u ON u.id=l.enrolment_id
         LEFT JOIN curriculum.programmes p ON p.programme_id=l.programme_id
+        LEFT JOIN curriculum.coaches c ON c.id=l.coach_id
         WHERE l.enrolment_id=ANY(%s)''', [enrolment_ids])
     owner_candidates = {}
     for owner in owners:

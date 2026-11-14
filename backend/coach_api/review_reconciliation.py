@@ -91,6 +91,26 @@ def read_profile(profile_id, *, lock=False):
     return profile, decision
 
 
+def calendar_profile_id(record, *, for_update=False):
+    """Resolve a Calendar row to the canonical learner profile id."""
+    from .calendar_identity import CalendarLearnerIdentityError, resolve_profile_identity
+
+    try:
+        identity = resolve_profile_identity(
+            record.pk,
+            expected_raw_learner_id=getattr(record, "learner_id", None),
+            for_update=for_update,
+        )
+    except (CalendarLearnerIdentityError, DatabaseError) as exc:
+        raise ReconciliationConflict(
+            "The Calendar learner identity is unavailable or unresolved."
+        ) from exc
+    try:
+        return int(identity["learner_profile_id"])
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ReconciliationConflict("The Calendar learner profile identity is invalid.") from exc
+
+
 def dependency_counts(record):
     result = {}
     # Dependencies are reported, not retargeted. IDs/URLs/answers are not output.
@@ -153,8 +173,9 @@ def _inspect(calendar_event_id, source_review_id, *, lock=False, learners=None):
             or record.status != "scheduled" or record.sync_state != "synced"
             or not record.graph_event_id or not record.meeting_link or not record.graph_organizer_email):
         raise ReconciliationConflict("A verified, unstarted Native MCM booking with preserved meeting identity is required.", code="INVALID_NATIVE_STATE")
+    canonical_profile_id = calendar_profile_id(record, for_update=lock)
     instance = engine.get_review_instance(record.review_instance_id, for_update=lock)
-    if (not instance or instance.get("learner_id") != record.learner_id
+    if (not instance or str(instance.get("learner_id")) != str(canonical_profile_id)
             or instance.get("calendar_event_id") != record.pk
             or instance.get("review_template_id") != record.review_template_id
             or str(instance.get("coach_email", "")).casefold() != record.owner_email.casefold()):
@@ -164,7 +185,7 @@ def _inspect(calendar_event_id, source_review_id, *, lock=False, learners=None):
     if not type_row or type_row.get("code") != "mcm":
         raise ReconciliationConflict("The Native template family must be MCM.", code="INVALID_NATIVE_STATE")
     _empty_native(record, instance)
-    profile, decision = read_profile(record.learner_id, lock=lock)
+    profile, decision = read_profile(canonical_profile_id, lock=lock)
     source = read_source(source_review_id, lock=lock)
     data = source.get("review_data") or {}
     source_aptem_id = str(data.get("aptem_learner_id") or (data.get("live_odata") or {}).get("LearnerId") or "").strip()
@@ -238,7 +259,7 @@ def apply(*, calendar_event_id, source_review_id, actor_id, reason, validate_loc
             from .views import lock_learner_calendar
             owner_record = CoachCalendarEvent.objects.filter(pk=calendar_event_id).first()
             if owner_record:
-                lock_learner_calendar(owner_record.learner_profile_id)
+                lock_learner_calendar(calendar_profile_id(owner_record))
             # Repeat approvals remain a no-op even after imported work starts.
             record = CoachCalendarEvent.objects.select_for_update().filter(pk=calendar_event_id).first()
             if record:
@@ -248,6 +269,7 @@ def apply(*, calendar_event_id, source_review_id, actor_id, reason, validate_loc
                         raise ReconciliationConflict("Booking already has another applied source.")
                     return {"status": "APPLIED", "id": current.pk, "idempotent": True}
             record, source, overlay, definition, _ = _inspect(calendar_event_id, source_review_id, lock=True)
+            canonical_profile_id = calendar_profile_id(record, for_update=True)
             # Explicit batch policies recheck their candidate set only after
             # the canonical parent/Native/source locks, before any pair write.
             if validate_locked is not None:
@@ -266,7 +288,7 @@ def apply(*, calendar_event_id, source_review_id, actor_id, reason, validate_loc
                 overlay.status = "scheduled"
                 overlay.save(update_fields=["status", "updated_at"])
             link = ReviewSourceReconciliation.objects.create(
-                learner_profile_id=record.learner_profile_id, calendar_event_id=record.pk,
+                learner_profile_id=canonical_profile_id, calendar_event_id=record.pk,
                 native_review_instance_id=record.review_instance_id, native_template_id=record.review_template_id,
                 native_event_key=record.event_key, source_review_id=source["id"], aptem_review_id=source["aptem_review_id"],
                 overlay=overlay, approved_by=actor.pk, approved_at=timezone.now(), reason=reason.strip(),
@@ -290,7 +312,7 @@ def reverse(*, reconciliation_id, actor_id, reason):
         require_reconciliation_schema()
         prior = ReviewSourceReconciliation.objects.get(pk=reconciliation_id)
         from .views import lock_learner_calendar
-        lock_learner_calendar(prior.learner_profile_id)
+        lock_learner_calendar(calendar_profile_id(prior))
         record = CoachCalendarEvent.objects.select_for_update().get(pk=prior.calendar_event_id)
         link = ReviewSourceReconciliation.objects.select_for_update().get(pk=prior.pk)
         if link.status == "REVERSED":
@@ -319,13 +341,14 @@ def candidates(*, calendar_event_id, actor_id):
     require_operator(actor_id)
     require_reconciliation_schema()
     record = CoachCalendarEvent.objects.get(pk=calendar_event_id)
-    read_profile(record.learner_profile_id)
+    canonical_profile_id = calendar_profile_id(record)
+    read_profile(canonical_profile_id)
     with connection.cursor() as cursor:
         cursor.execute('SELECT id, aptem_review_id, review_type, status, planned_scheduled_date '
-                       'FROM "Learner".reviews WHERE learner_id=%s ORDER BY id', [record.learner_profile_id])
+                       'FROM "Learner".reviews WHERE learner_id=%s ORDER BY id', [canonical_profile_id])
         rows = [dict(zip([col[0] for col in cursor.description], row)) for row in cursor.fetchall()]
     from .migrated_reviews import review_family
-    return {"calendarEventId": record.pk, "learnerProfileId": record.learner_profile_id,
+    return {"calendarEventId": record.pk, "learnerProfileId": canonical_profile_id,
             "nativeInstanceId": record.review_instance_id, "dependencies": dependency_counts(record),
             "candidates": [row for row in rows if review_family(row["review_type"]) == "MCM"],
             "warning": "Candidates are not approved. Select an exact source review ID and run preview."}

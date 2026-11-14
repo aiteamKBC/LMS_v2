@@ -83,7 +83,9 @@ def _block(row, classification, detail):
 def _inventory(learner_id=None):
     """Only durable Native bookings; imported legacy keys have no Native ID."""
     from learner_api.models import LearnerProfile, EnrolmentUser
-    records = CoachCalendarEvent.objects.filter(event_type="mcr").exclude(review_instance_id="")
+    records = (CoachCalendarEvent.objects.filter(event_type="mcr")
+               .exclude(review_instance_id__isnull=True)
+               .exclude(review_instance_id=""))
     if learner_id is not None:
         records = records.filter(learner_profile_id=learner_id)
     records = list(records.order_by("id"))

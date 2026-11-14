@@ -734,9 +734,9 @@ def sync_learning_plan_mirror(source, *, strict=False):
     That is still the record of truth; this copies it outwards so the surfaces
     that already read those tables can see what a learner is assigned:
 
-    * ``"Learner".learners.learning_plan`` -- the mirror every coach, marking
-      and reporting surface reads. Previously they had no way to see a learner's
-      plan without joining back to enrolment.
+    * normalized ``LearnerTrainingPlanModule``/week/component rows -- the
+      profile-side assignment mirror used by coach, marking and reporting
+      surfaces. ``Created_users.Learning_plan`` remains the editable source.
     * ``Created_users`` Modules/Weeks/Components -- the legacy title columns,
       kept in step so they cannot describe a plan the learner no longer has.
 
@@ -744,8 +744,8 @@ def sync_learning_plan_mirror(source, *, strict=False):
     learner's own "My learning" page uses, so the mirror shows what the learner
     sees rather than a second opinion assembled here.
 
-    An unassigned plan writes an empty mirror rather than being skipped: a
-    learner whose plan was cleared must not keep a stale copy of it.
+    An unassigned plan clears the normalized mirror rather than being skipped:
+    a learner whose plan was cleared must not keep stale module rows.
 
     Returns the number of modules mirrored, or 0 if the mirror could not be
     written. Never raises, for the same reason ``advance_learner`` does not: the
@@ -764,21 +764,15 @@ def sync_learning_plan_mirror(source, *, strict=False):
         plan = get_training_plan(source) or []
         modules_csv, weeks_csv, components_csv = _plan_titles(plan)
 
-        # Matched on enrolment_id, never on a LearnerProfile pk held from before
-        # a sync_active_user call: that reference goes stale, and updating by it
-        # silently missed 367 rows when the coach assignment did the same thing.
-        mirrors = LearnerProfile.objects.filter(enrolment_id=source.pk)
-        mirrors.update(learning_plan=plan or None)
-        # The jsonb above is what reports read; the learner's own "My learning"
-        # page reads LearnerProfile.training_plan, which is assembled from the
-        # plan_modules/weeks/components child rows. Both have to be written, or
-        # the plan is stored and the learner is still shown an empty page.
-        profile = mirrors.first()
+        # Learner.learners has no denormalised learning_plan column in the new
+        # schema.  The source enrolment row and normalized plan child tables
+        # are authoritative; never issue an UPDATE against the removed mirror.
+        profile = LearnerProfile.objects.filter(enrolment_id=source.pk).first()
         if profile is None and _s(getattr(source, "programme_status", "")).casefold() == "active":
             # Imported Active rows never pass through the activation hook.
             # This is a plan write, so provision the missing owner explicitly.
-            ensure_active_learner_profile(source)
-        elif profile is not None:
+            profile = ensure_active_learner_profile(source)
+        if profile is not None:
             replace_training_plan(profile, plan)
         EnrolmentUser.all_learners.filter(pk=source.pk).update(
             modules=modules_csv,

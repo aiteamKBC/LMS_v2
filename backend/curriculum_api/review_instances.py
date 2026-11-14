@@ -1407,9 +1407,57 @@ def mark_review_instance_in_progress_manually(instance_row, *, reason_code, note
 
 @native_write
 def link_calendar_event(instance_id, calendar_event_id, *, actor='system'):
-    return curriculum_views.update_rows(REVIEW_INSTANCES_TABLE, 'id = %s', [instance_id], {
-        'calendar_event_id': calendar_event_id, 'updated_by': actor, 'updated_at': datetime.utcnow(),
-    })
+    """Link a native Review Instance and Calendar row exactly once.
+
+    Both directions are written while the two parent rows are locked.  An
+    existing different link is a conflict; repeating the same request is
+    idempotent.  The reviewed Calendar learner-link row is the only accepted
+    source of the profile identity.
+    """
+    from coach_api.calendar_identity import resolve_profile_identity
+    from coach_api.models import CoachCalendarEvent
+
+    with transaction.atomic():
+        instance = get_review_instance(instance_id, for_update=True)
+        if not instance:
+            raise ValueError('Review Instance not found.')
+        calendar = CoachCalendarEvent.objects.select_for_update().filter(
+            pk=calendar_event_id,
+        ).first()
+        if calendar is None:
+            raise ValueError('Calendar event not found.')
+
+        identity = resolve_profile_identity(
+            calendar_event_id,
+            expected_profile_id=instance.get('learner_id'),
+            expected_raw_learner_id=calendar.learner_id,
+            for_update=True,
+        )
+        if str(identity.get('learner_profile_id')) != str(instance.get('learner_id')):
+            raise ValueError('The Calendar event learner identity is inconsistent.')
+        instance_calendar_id = curriculum_views.clean_str(instance.get('calendar_event_id'))
+        if instance_calendar_id and str(instance_calendar_id) != str(calendar_event_id):
+            raise ValueError('This Review Instance is already linked to another Calendar event.')
+        reverse_instance_id = curriculum_views.clean_str(calendar.review_instance_id)
+        if reverse_instance_id and reverse_instance_id != curriculum_views.clean_str(instance_id):
+            raise ValueError('This Calendar event is already linked to another Review Instance.')
+
+        template_id = curriculum_views.clean_str(instance.get('review_template_id'))
+        calendar_template_id = curriculum_views.clean_str(calendar.review_template_id)
+        if calendar_template_id and calendar_template_id != template_id:
+            raise ValueError('The Calendar event uses a different Review template.')
+
+        calendar.review_instance_id = str(instance_id)
+        calendar.review_template_id = template_id or calendar_template_id or None
+        calendar.save(update_fields=['review_instance_id', 'review_template_id', 'updated_at'])
+        rows = curriculum_views.update_rows(REVIEW_INSTANCES_TABLE, 'id = %s', [instance_id], {
+            'calendar_event_id': calendar_event_id,
+            'updated_by': actor,
+            'updated_at': datetime.utcnow(),
+        })
+        if not rows:
+            raise ValueError('Review Instance disappeared while linking the Calendar event.')
+        return rows
 
 
 # -------------------------------------------------------------- form + answers
@@ -2051,15 +2099,32 @@ def save_review_instance_answers(instance_row, answers, *, actor='system'):
 
 def _save_review_instance_answers_locked(instance_row, answers, *, actor):
     """Merge answer values while the caller holds the instance row lock."""
-    instance_row = _refresh_locked_editable_definition_snapshot(instance_row, actor=actor)
-    snapshot = curriculum_views.as_json_value(instance_row.get('definition_snapshot'), {})
+    if answers is None:
+        answers = {}
+    if not isinstance(answers, dict):
+        raise ValueError('Answers must be an object keyed by field id.')
+    # Validate the complete payload against the effective frozen definition
+    # before refreshing or inserting anything. An unknown key must not leave a
+    # definition snapshot write behind while the answer itself is rejected.
+    stored_snapshot = curriculum_views.as_json_value(instance_row.get('definition_snapshot'), {})
+    effective_snapshot = effective_review_definition_snapshot(
+        instance_row, snapshot=stored_snapshot,
+    )
     valid_field_ids = {
         field.get('id')
-        for field in _flatten_snapshot_fields(snapshot.get('sections', []))
+        for field in _flatten_snapshot_fields(effective_snapshot.get('sections', []))
     }
-    for field_id, value in (answers or {}).items():
-        if field_id not in valid_field_ids:
-            continue
+    unknown_field_ids = sorted(
+        str(field_id) for field_id in answers
+        if field_id not in valid_field_ids
+    )
+    if unknown_field_ids:
+        raise ValueError(
+            'Unknown Review field id(s): ' + ', '.join(unknown_field_ids)
+        )
+    instance_row = _refresh_locked_editable_definition_snapshot(instance_row, actor=actor)
+    snapshot = curriculum_views.as_json_value(instance_row.get('definition_snapshot'), {})
+    for field_id, value in answers.items():
         existing_rows = curriculum_views.fetch_all(
             f'select * from {curriculum_views.table_name(REVIEW_INSTANCE_ANSWERS_TABLE)} '
             f'where review_instance_id = %s and field_id = %s',
@@ -2278,11 +2343,21 @@ def _locked_linked_calendar_for_mirror(instance_row):
             'The linked Calendar event does not point back to this Review Instance; '
             'review reconciliation is required.'
         )
-    if str(calendar.learner_profile_id) != str(instance_row.get('learner_id')):
-        raise ValueError(
-            'The linked Calendar event belongs to a different learner; '
-            'review reconciliation is required.'
+    try:
+        from coach_api.calendar_identity import resolve_profile_identity
+        identity = resolve_profile_identity(
+            calendar_event_id,
+            expected_profile_id=instance_row.get('learner_id'),
+            expected_raw_learner_id=calendar.learner_id,
+            for_update=True,
         )
+        if str(identity.get('learner_profile_id')) != str(instance_row.get('learner_id')):
+            raise ValueError('The Calendar event learner identity is inconsistent.')
+    except ValueError as exc:
+        raise ValueError(
+            'The linked Calendar event learner identity is inconsistent; '
+            'review reconciliation is required.'
+        ) from exc
     template_id = curriculum_views.clean_str(instance_row.get('review_template_id'))
     calendar_template_id = curriculum_views.clean_str(calendar.review_template_id)
     if template_id and calendar_template_id and template_id != calendar_template_id:
@@ -2469,7 +2544,24 @@ def complete_review_instance(instance_row, *, actor='system', answers=None):
         if calendar is not None and calendar.status not in editable_statuses:
             return False, {'status': ['The linked Calendar status changed. Reload this review.']}
         if answers is not None:
-            locked = _save_review_instance_answers_locked(locked, answers, actor=actor)
+            try:
+                # Keep a savepoint around the answer merge so a PostgreSQL FK,
+                # unique, or trigger failure does not poison the surrounding
+                # completion transaction and cannot be reported as success.
+                with transaction.atomic():
+                    locked = _save_review_instance_answers_locked(locked, answers, actor=actor)
+            except IntegrityError as exc:
+                return False, {'answers': [_review_answer_integrity_message(exc)]}
+            except ValueError as exc:
+                # Validation must fail the same way for draft saves and final
+                # completion. In particular, an unknown field id is never
+                # silently discarded and must not leave a successful status
+                # response after the answer savepoint rolls back.
+                return False, {'answers': [str(exc)]}
+            except DatabaseError as exc:
+                if 'answer template does not match review instance' in str(exc).lower():
+                    return False, {'answers': ['The answer template does not match this review instance.']}
+                raise
         else:
             locked = _refresh_locked_editable_definition_snapshot(locked, actor=actor)
 

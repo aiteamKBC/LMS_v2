@@ -74,6 +74,12 @@ class ReviewSourceSeparationTests(SimpleTestCase):
         mappings = patch("coach_api.reconciliation_schema.CompatibleReconciliationQuerySet.filter")
         query = mappings.start().return_value
         self.addCleanup(mappings.stop)
+        identity = patch(
+            "coach_api.review_sources._canonical_calendar_profile_id",
+            side_effect=lambda record: getattr(record, "learner_id", None),
+        )
+        identity.start()
+        self.addCleanup(identity.stop)
         query.first.return_value = None
         query.select_related.return_value.first.return_value = None
         query.select_related.return_value.__iter__.return_value = iter(())

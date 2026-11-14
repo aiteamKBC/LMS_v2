@@ -44,7 +44,8 @@ def initialize_imported_review(owner_email, definition):
         from learner_api.models import LearnerProfile
         learner_id = definition['instance']['learnerId']
         lock_learner_calendar(learner_id)
-        current_owner = LearnerProfile.objects.filter(pk=learner_id).values_list('coach_email', flat=True).first()
+        profile = LearnerProfile.objects.filter(pk=learner_id).first()
+        current_owner = getattr(profile, 'coach_email', '') if profile is not None else ''
         if str(current_owner or '').strip().casefold() != owner_email.strip().casefold():
             raise ValueError('The learner assignment changed. Reload before initializing this review.')
         if ImportedReviewInstance.objects.filter(learner_profile_id=learner_id, source_review_id=source_id).exclude(

@@ -4,7 +4,6 @@ import re
 from zoneinfo import ZoneInfo,ZoneInfoNotFoundError
 from django.core import signing
 from django.db import DatabaseError
-from django.db.models.functions import Lower,Trim
 from django.views.decorators.http import require_GET
 from learner_api.constants import ACCESS_COACH,ACCESS_CURRICULUM,ACCESS_SUPER_ADMIN
 from learner_api.models import LearnerProfile
@@ -30,8 +29,16 @@ def additional_attendees(event,known):
     emails.discard('')
     if not emails:
         return []
-    return list(LearnerProfile.objects.annotate(address=Lower(Trim('email'))).filter(address__in=emails)
-      .values('id','email','full_name','coach_email','learner_type'))
+    rows = LearnerProfile.objects.filter(email_normalized__in=emails).only(
+        'id', 'email', 'full_name', 'coach_id', 'learner_type',
+    )
+    return [
+        {
+            'id': row.id, 'email': row.email, 'full_name': row.full_name,
+            'coach_email': row.coach_email, 'learner_type': row.learner_type,
+        }
+        for row in rows
+    ]
 
 
 @require_GET

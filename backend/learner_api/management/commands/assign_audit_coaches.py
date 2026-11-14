@@ -10,10 +10,10 @@ Two places, because they do different jobs
 ``enrolment."Created_users".Coach_name/Coach_email`` is the enrolment-side
 record: what the directory shows, and what survives a mirror being rebuilt.
 
-``"Learner".learners.coach_email`` is what the coach workspace actually reads --
-the caseload, the marking queue and the timetable all scope on it. Writing only
-to the enrolment table would look right in the directory while every coach's
-workspace stayed empty, which is the failure worth avoiding here.
+``"Learner".learners.coach_id`` joined to ``curriculum.coaches`` is what the
+coach workspace actually reads -- the caseload, the marking queue and the
+timetable all scope on it. Writing only to the enrolment table would leave the
+profile assignment stale.
 
 Most imported learners have no mirror row yet (it is created on activation), so
 one is created via ``sync_active_user`` before the coach is written. That is the
@@ -164,7 +164,7 @@ class Command(BaseCommand):
 
     def _write(self, planned, staff, grant_to):
         from learner_api.active_users import sync_active_user
-        from learner_api.models import EnrolmentUser, LearnerProfile
+        from learner_api.models import EnrolmentUser, LearnerProfile, coach_id_for_email
 
         enrolment_updated = mirrors_created = mirrors_updated = 0
         mirror_errors = []
@@ -220,9 +220,10 @@ class Command(BaseCommand):
                     # can be stale, and updating by its pk silently missed 367
                     # rows the first time this ran. Matching on enrolment_id
                     # writes to whatever mirror actually exists now.
+                    coach_id = coach_id_for_email(coach_email, using="enrolment")
                     LearnerProfile.objects.filter(
                         enrolment_id=row["enrolment_id"]
-                    ).update(coach_name=coach_name, coach_email=coach_email)
+                    ).update(coach_id=coach_id)
 
                 if grant_to:
                     # Only staff with no grant at all; an existing role is never

@@ -71,7 +71,7 @@ class Command(BaseCommand):
                 int(profile.enrolment_id): profile
                 for profile in LearnerProfile.objects.using("enrolment")
                 .filter(enrolment_id__isnull=False)
-                .only("enrolment_id", "planned_hours", "start_date", "end_date", "coach_email")
+                .only("enrolment_id", "planned_hours", "start_date", "end_date", "coach_id")
             }
         except DatabaseError as exc:
             raise CommandError(f"Could not read the enrolment SSOT: {exc}") from exc

@@ -22,7 +22,7 @@ from django.db.models.functions import Lower, Trim
 from django.db import connections, close_old_connections
 from old_otjh.repository import request_read_scope
 
-from learner_api.models import LearnerProfile, EnrolmentUser
+from learner_api.models import LearnerProfile, EnrolmentUser, learner_profile_ids_for_coach_email
 from learner_api import canonical_learning
 from learner_api.projection_performance import measure_projection
 from .auth import authenticated_coach_email, coach_access_required
@@ -77,10 +77,9 @@ class CaseFileContext:
         self.profile_only = profile_only
         fields = PROFILE_FIELDS if profile_only else (
             *PROFILE_FIELDS, 'cohort_id', 'lifecycle_status',
-            'coach_name', 'coach_email', 'coach_rag', 'start_date', 'end_date', 'gateway_review_date')
+            'coach_id', 'coach_rag', 'start_date', 'end_date', 'gateway_review_date')
         self.profile = (LearnerProfile.objects
-                        .annotate(coach_email_key=Lower(Trim('coach_email')))
-                        .filter(id=learner_id, coach_email_key=self.coach)
+                        .filter(id=learner_id, id__in=learner_profile_ids_for_coach_email(self.coach))
                         .only(*fields).first())
         self.responses = {}
         self._source_loaded = False

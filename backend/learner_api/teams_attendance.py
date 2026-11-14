@@ -324,7 +324,7 @@ def fetch_verified_teams_attendance_rows(
                 identity_learners_by_email = {
                     _email(learner.email): learner
                     for learner in LearnerProfile.objects.using(database).filter(identity_filter).only(
-                        'id', 'enrolment_id', 'full_name', 'email', 'coach_name',
+                        'id', 'enrolment_id', 'full_name', 'email', 'coach_id',
                     )
                     if _email(learner.email)
                 }
@@ -440,7 +440,7 @@ def fetch_verified_teams_attendance_rows(
             _email(learner.email): learner
             for learner in LearnerProfile.objects.using(database).filter(
                 email_normalized__in=matching_emails,
-            ).only('id', 'enrolment_id', 'full_name', 'email', 'coach_name')
+            ).only('id', 'enrolment_id', 'full_name', 'email', 'coach_id')
         }
     learners_by_email = {email: learner for email, learner in matching_learners.items() if email in all_expected_emails}
     if not learners_by_email:

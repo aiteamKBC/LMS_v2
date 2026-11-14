@@ -228,6 +228,7 @@ class Command(BaseCommand):
                 "curriculum.review_instance_answers",
                 "curriculum.review_instance_signatures",
                 "curriculum.review_instance_manual_overrides",
+                "curriculum.review_instance_reopens",
             ):
                 cursor.execute("select to_regclass(%s)", [relation])
                 if cursor.fetchone()[0]:
@@ -259,6 +260,7 @@ class Command(BaseCommand):
             "curriculum.review_instance_answers": "review_answer",
             "curriculum.review_instance_signatures": "review_signature",
             "curriculum.review_instance_manual_overrides": "review_manual_override",
+            "curriculum.review_instance_reopens": "review_reopen",
         }
         with connections[database].cursor() as cursor:
             cursor.execute("select to_regclass(%s)", [BACKUP_RELATION])
@@ -418,6 +420,17 @@ class Command(BaseCommand):
         deleted = {}
         with transaction.atomic(using=database):
             with connections[database].cursor() as cursor:
+                cursor.execute(
+                    'select id from "Learner".coach_calendar_event '
+                    "where review_instance_id = any(%s) and not (id = any(%s))",
+                    [instance_ids, ids],
+                )
+                outside_links = [row[0] for row in cursor.fetchall()]
+                if outside_links:
+                    raise CommandError(
+                        "ABORT: a Test Review Instance is referenced by a Calendar "
+                        f"row outside the allowlist: {outside_links}."
+                    )
                 for relation in DEPENDENT_RELATIONS:
                     cursor.execute("select to_regclass(%s)", [relation])
                     if cursor.fetchone()[0]:
@@ -431,6 +444,7 @@ class Command(BaseCommand):
                     "curriculum.review_instance_manual_overrides",
                     "curriculum.review_instance_signatures",
                     "curriculum.review_instance_answers",
+                    "curriculum.review_instance_reopens",
                 ):
                     cursor.execute("select to_regclass(%s)", [relation])
                     if cursor.fetchone()[0]:
@@ -439,6 +453,22 @@ class Command(BaseCommand):
                             [instance_ids],
                         )
                         deleted[relation] = cursor.rowcount
+                # New PostgreSQL constraints make both sides of the
+                # Review<->Calendar relationship restrictive. Clear the
+                # reverse Calendar pointers first, then the instance pointer,
+                # before deleting either primary row.
+                cursor.execute(
+                    'update "Learner".coach_calendar_event '
+                    "set review_instance_id = null, review_template_id = null "
+                    "where id = any(%s)",
+                    [ids],
+                )
+                cursor.execute(
+                    "update curriculum.review_instances "
+                    "set calendar_event_id = null "
+                    "where id = any(%s)",
+                    [instance_ids],
+                )
                 cursor.execute(
                     "delete from curriculum.review_instances where id = any(%s)",
                     [instance_ids],

@@ -5,6 +5,25 @@ signatures or stored booking fields are created or changed by this projection.
 """
 
 
+def _canonical_profile_id(record, profile):
+    """Resolve a Calendar row through the reviewed learner-link table."""
+    from django.db import DatabaseError
+
+    from .calendar_identity import CalendarLearnerIdentityError, resolve_profile_identity
+
+    try:
+        identity = resolve_profile_identity(
+            record.pk,
+            expected_profile_id=profile.id,
+            expected_enrolment_id=getattr(profile, "enrolment_id", None),
+            expected_raw_learner_id=getattr(record, "learner_id", None),
+        )
+    except (CalendarLearnerIdentityError, DatabaseError, ValueError):
+        return None
+    value = identity.get("learner_profile_id") or identity.get("verified_profile_id")
+    return value if value not in (None, "") else None
+
+
 def booking_only_candidates(records, profiles, aptem_profile_ids, *, events=(), linked_keys=(), native_instances=()):
     instances = {row['id']: row for row in native_instances}
     keys = set(linked_keys)
@@ -32,6 +51,8 @@ def booking_only_candidates(records, profiles, aptem_profile_ids, *, events=(), 
         for profile in profiles:
             if profile.id not in aptem_profile_ids:
                 continue
+            if str(_canonical_profile_id(record, profile)) != str(profile.id):
+                continue
             # Some older learner-book operations saved the profile ID after
             # creating a Native instance. Its exact persisted association is
             # stronger evidence than the key prefix's legacy ID convention.
@@ -45,7 +66,12 @@ def booking_only_candidates(records, profiles, aptem_profile_ids, *, events=(), 
             )
             use_enrolment_id = enrolment_booking and not native_matches
             expected = getattr(profile, 'enrolment_id', None) if use_enrolment_id else profile.id
-            if expected is None or str(record.learner_profile_id) != str(expected):
+            if expected is None:
+                continue
+            if use_enrolment_id and str(record.learner_profile_id) != str(expected):
+                # The key's legacy namespace is only an additional consistency
+                # check. Ownership itself was already proven by the canonical
+                # Calendar learner link above.
                 continue
             if enrolment_booking and len(parts) >= 4 and parts[2] in {'commercial', 'apprenticeship'}:
                 if parts[2] != profile.learner_type or (use_enrolment_id and parts[3] != str(expected)):
@@ -68,10 +94,14 @@ def unlinked_review_bookings(records, profiles, aptem_profile_ids, *, events=(),
     records, profiles = list(records), list(profiles)
     owners = {profile.id: profile for profile in profiles if profile.id in aptem_profile_ids}
     proof_instance_ids = sorted({record.review_instance_id for record in records
-        if record.learner_profile_id in owners and record.review_instance_id and record.review_template_id
-        and ((record.idempotency_key or '').startswith('learner-book:')
-             or (record.learner_email or '').strip().casefold()
-             != (owners[record.learner_profile_id].email or '').strip().casefold())})
+        if record.review_instance_id and record.review_template_id
+        and any(
+            _canonical_profile_id(record, profile) == profile.id
+            and ((record.idempotency_key or '').startswith('learner-book:')
+                 or (record.learner_email or '').strip().casefold()
+                 != (profile.email or '').strip().casefold())
+            for profile in owners.values()
+        )})
     instances = []
     if proof_instance_ids:
         from curriculum_api import views as curriculum_views

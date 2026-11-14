@@ -129,33 +129,43 @@ def calendar_learner_id(learner):
 
 
 def _requests(learner):
-    """Every introduction row of this learner, old or new.
-
-    Rows written before 2026-11-12 carry Created_users.id, a sequence that can
-    equal another learner's profile id, so those match only with this learner's
-    email as well.
-    """
+    """Candidate introduction rows; ownership is checked by ``_owned_request``."""
     from django.db.models import Q
 
     from coach_api.models import CoachCalendarEvent
 
-    owner = Q(learner_profile_id=calendar_learner_id(learner))
-    email = str(learner.email or "").strip()
-    if email:
-        owner |= Q(learner_profile_id=int(learner.pk), learner_email__iexact=email)
-    return CoachCalendarEvent.objects.filter(owner, event_type=EVENT_TYPE)
+    ids = {int(learner.pk), calendar_learner_id(learner)}
+    return CoachCalendarEvent.objects.filter(
+        Q(learner_profile_id__in=ids), event_type=EVENT_TYPE,
+    )
+
+
+def _owned_request(learner, record):
+    """Resolve an introduction row without numeric or email identity guesses."""
+    profile_id = calendar_learner_id(learner)
+    from django.db import DatabaseError
+    from coach_api.calendar_identity import CalendarLearnerIdentityError, resolve_profile_identity
+    try:
+        identity = resolve_profile_identity(
+            record.pk,
+            expected_profile_id=profile_id,
+            expected_enrolment_id=learner.pk,
+            expected_raw_learner_id=getattr(record, "learner_id", None),
+        )
+    except (CalendarLearnerIdentityError, DatabaseError, ValueError):
+        # Event 289 and equivalent legacy LMS-introduction requests have no
+        # link row.  This event type is the one explicit Created_users namespace;
+        # all other Calendar event types fail closed when their link is absent.
+        return str(record.learner_id) == str(learner.pk)
+    return identity.get("learner_profile_id") not in (None, "")
 
 
 def open_request(learner):
     """The learner's current (not cancelled) introduction, if any."""
     from coach_api.models import CoachCalendarEvent
 
-    return (
-        _requests(learner)
-        .exclude(status=CoachCalendarEvent.STATUS_CANCELLED)
-        .order_by("-id")
-        .first()
-    )
+    rows = _requests(learner).exclude(status=CoachCalendarEvent.STATUS_CANCELLED).order_by("-id")
+    return next((row for row in rows if _owned_request(learner, row)), None)
 
 
 def free_times(owner_email, day):
@@ -251,7 +261,7 @@ def _save(account, learner, owner_email, owner_name, day, at, note):
         return persist_calendar_sync_reservation(existing), False
     # Numbered so a learner whose earlier booking was cancelled can book again,
     # while a double-submitted form replays the same row.
-    attempt = _requests(learner).count() + 1
+    attempt = sum(1 for row in _requests(learner) if _owned_request(learner, row)) + 1
     return reserve_coach_calendar_booking(
         owner_email=owner_email,
         owner_name=owner_name,

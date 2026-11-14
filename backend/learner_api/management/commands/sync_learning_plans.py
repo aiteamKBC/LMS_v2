@@ -3,8 +3,8 @@
 The plan staff edit lives on ``enrolment."Created_users"."Learning_plan"``.
 This copies it to the two places that had no view of it:
 
-* ``"Learner".learners.learning_plan`` -- what every coach, marking and
-  reporting surface reads.
+* normalized ``LearnerTrainingPlanModule``/week/component rows -- what coach,
+  marking and reporting surfaces read from the profile side.
 * ``Created_users`` Modules/Weeks/Components -- the legacy comma-joined title
   columns, so they cannot describe a plan the learner no longer has.
 
@@ -29,7 +29,7 @@ from learner_api.models import EnrolmentUser, LearnerProfile
 
 
 class Command(BaseCommand):
-    help = "Mirror each learner's assigned learning plan into Learner.learners and the legacy columns."
+    help = "Rebuild each learner's normalized plan rows and legacy title columns."
 
     def add_arguments(self, parser):
         parser.add_argument(

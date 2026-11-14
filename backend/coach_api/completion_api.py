@@ -2,13 +2,12 @@
 import json
 from datetime import timedelta
 from django.db import DatabaseError
-from django.db.models.functions import Lower,Trim
 from django.http import JsonResponse
 from django.utils import timezone
 from django.views.decorators.http import require_http_methods
 from django.views.decorators.csrf import csrf_protect
 from learner_api.constants import ACCESS_COACH
-from learner_api.models import LearnerProfile
+from learner_api.models import LearnerProfile, learner_profile_ids_for_coach_email
 from login.permissions import require_access
 from .recordings_api import _staff
 from login.identity import accesses_for_staff
@@ -34,8 +33,9 @@ def completion_notifications(request):
             return response({'error':'Completion notifications belong to the signed-in coach.'},403)
         owner=str(staff.email or '').strip().lower()
         now=timezone.now()
-        roster=LearnerProfile.objects.annotate(coach=Lower(Trim('coach_email')),address=Lower(Trim('email'))).filter(
-            coach=owner).values_list('address',flat=True)
+        roster=LearnerProfile.objects.filter(
+            id__in=learner_profile_ids_for_coach_email(owner),
+        ).values_list('email', flat=True)
         rows=Reminder.objects.filter(session__owner_email=owner,cancelled_at=None,dismissed_at=None,
             session__learner_email__in=roster,
             session__state='action-required',session__checked_at__gte=now-timedelta(hours=1),due_at__lte=now)

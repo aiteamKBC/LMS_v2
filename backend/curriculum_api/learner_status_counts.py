@@ -55,16 +55,15 @@ def learner_facts(module_ids):
     plan_join = ''
     params = []
     if module_ids:
-        if 'learning_plan' not in columns:
-            raise DatabaseError('Module membership is unavailable.')
-        plan_select = "membership.explicit, membership.module_ids, jsonb_typeof(p.learning_plan::jsonb) = 'string' AS ambiguous"
+        plan_select = "membership.explicit, membership.module_ids, jsonb_typeof(source.\"Learning_plan\"::jsonb) = 'string' AS ambiguous"
         plan_join = """
+            LEFT JOIN enrolment."Created_users" source ON source.id = p.enrolment_id
             LEFT JOIN LATERAL (
                 SELECT coalesce(bool_or(entry->>'assignmentMode' = 'explicit'), false) AS explicit,
                        coalesce(array_agg(DISTINCT entry->>'moduleId')
                            FILTER (WHERE entry->>'moduleId' = ANY(%s)), ARRAY[]::text[]) AS module_ids
-                FROM jsonb_array_elements(CASE WHEN jsonb_typeof(p.learning_plan::jsonb) = 'array'
-                     THEN p.learning_plan::jsonb ELSE '[]'::jsonb END) entry
+                FROM jsonb_array_elements(CASE WHEN jsonb_typeof(source."Learning_plan"::jsonb) = 'array'
+                     THEN source."Learning_plan"::jsonb ELSE '[]'::jsonb END) entry
             ) membership ON true
         """
         params.append(sorted(module_ids))
@@ -80,8 +79,17 @@ def learner_facts(module_ids):
         rows = [dict(zip(names, row)) for row in cursor.fetchall()]
     ambiguous = [row['id'] for row in rows if row['ambiguous']]
     if ambiguous:
-        from learner_api.models import LearnerProfile
-        plans = {profile.pk: profile.learning_plan for profile in LearnerProfile.objects.only('id', 'learning_plan').filter(pk__in=ambiguous)}
+        from learner_api.models import EnrolmentUser, LearnerProfile
+        enrolment_by_profile = dict(LearnerProfile.objects.filter(
+            pk__in=ambiguous,
+        ).values_list('id', 'enrolment_id'))
+        plans_by_enrolment = dict(EnrolmentUser.all_learners.filter(
+            pk__in=[value for value in enrolment_by_profile.values() if value is not None],
+        ).values_list('id', 'learning_plan'))
+        plans = {
+            profile_id: plans_by_enrolment.get(enrolment_id)
+            for profile_id, enrolment_id in enrolment_by_profile.items()
+        }
         for row in rows:
             if row['ambiguous']:
                 row['explicit'], row['module_ids'] = plan_membership(plans.get(row['id']), module_ids)

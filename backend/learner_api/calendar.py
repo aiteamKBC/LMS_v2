@@ -291,7 +291,15 @@ def _belongs_to_current_cycle(record, mirror):
         return True
     if _s(getattr(record, "idempotency_key", "")).startswith("learner-book:"):
         return True
-    return str(record.learner_profile_id or "") in ("", str(mirror.id))
+    # ``coach_calendar_event.learner_id`` is a legacy/raw value.  The caller
+    # already checked ownership through the canonical link table, and this
+    # second guard must use the same source so an enrolment ID cannot hide a
+    # booking whose link resolves to the current profile.
+    return _calendar_event_profile_id(
+        record,
+        expected_profile_id=mirror.id,
+        expected_enrolment_id=getattr(mirror, "enrolment_id", None),
+    ) == mirror.id
 
 
 def _verified_native_review_booking(learner, mirror, record, instance, emails):
@@ -299,8 +307,15 @@ def _verified_native_review_booking(learner, mirror, record, instance, emails):
     if (mirror is None or not instance
             or record.event_type not in {"mcr", "progress-review", "review"}
             or not _s(getattr(record, "review_instance_id", ""))
-            or not _s(getattr(record, "review_template_id", ""))
-            or str(record.learner_profile_id) != str(mirror.id)):
+            or not _s(getattr(record, "review_template_id", ""))):
+        return False
+    # ``coach_calendar_event.learner_id`` is a legacy/raw Calendar value.  A
+    # numeric match with the profile (or with Created_users) is not proof of
+    # identity because those sequences are independent.  The reviewed link
+    # table is the only source accepted for a Native Review booking.
+    expected_enrolment_id = getattr(mirror, "enrolment_id", None) or getattr(learner, "pk", None)
+    if not _calendar_event_profile_is_verified(
+            record, mirror.id, expected_enrolment_id=expected_enrolment_id):
         return False
     source_id = getattr(mirror, "enrolment_id", None)
     if source_id is not None and str(source_id) != str(learner.pk):
@@ -319,6 +334,35 @@ def _verified_native_review_booking(learner, mirror, record, instance, emails):
             != _s(getattr(record, "owner_email", "")).strip().casefold()):
         return False
     return True
+
+
+def _calendar_event_profile_id(record, *, expected_profile_id=None,
+                               expected_enrolment_id=None):
+    """Resolve a Calendar row through the canonical learner-link table."""
+    try:
+        from coach_api.calendar_identity import resolve_profile_identity
+        identity = resolve_profile_identity(
+            record.pk,
+            expected_profile_id=expected_profile_id,
+            expected_enrolment_id=expected_enrolment_id,
+            expected_raw_learner_id=getattr(record, "learner_id", None),
+        )
+    except (ValueError, DatabaseError):
+        return None
+    value = identity.get("learner_profile_id")
+    return value if value not in (None, "") else None
+
+
+def _calendar_event_profile_is_verified(record, profile_id, *, expected_enrolment_id=None):
+    """Return whether a Calendar row resolves to the expected profile."""
+    try:
+        return _calendar_event_profile_id(
+            record,
+            expected_profile_id=profile_id,
+            expected_enrolment_id=expected_enrolment_id,
+        ) is not None
+    except (ValueError, DatabaseError):
+        return False
 
 
 def _generated_cycle_events(learner, mirror, stored_by_key, *, month=None):
@@ -668,11 +712,16 @@ def coaching_events_for_learner(learner, mirror, *, month=None, only_sources=Non
         email = _s(getattr(record, 'learner_email', '')).strip().casefold()
         # Created_users and learner profiles have different ID sequences.
         # A matching number must never override another learner's email.
-        expected_id = learner.pk if _s(getattr(record, 'idempotency_key', '')).startswith('learner-book:') else getattr(mirror, 'id', None)
-        imported_owned = (review_source.kind == "aptem" and mirror is not None
-                          and record.event_type in {"mcr", "progress-review"}
-                          and str(record.learner_profile_id) in {str(mirror.id), str(learner.pk)}
-                          and not _email_names_another_learner(record, emails))
+        imported_owned = False
+        if (review_source.kind == "aptem" and mirror is not None
+                and record.event_type in {"mcr", "progress-review"}):
+            imported_owned = (
+                _calendar_event_profile_id(
+                    record,
+                    expected_profile_id=mirror.id,
+                    expected_enrolment_id=getattr(mirror, "enrolment_id", None) or learner.pk,
+                ) is not None
+            )
         if (review_source.kind == "curriculum"
                 and record.event_type in {"mcr", "progress-review", "review"}
                 and _s(getattr(record, "review_instance_id", ""))):
@@ -680,8 +729,23 @@ def coaching_events_for_learner(learner, mirror, *, month=None, only_sources=Non
                 learner, mirror, record,
                 native_instances.get(str(record.review_instance_id)), emails,
             )
+        elif (record.event_type in {"mcr", "progress-review", "review", "first-session"}
+              or _s(getattr(record, "idempotency_key", "")).startswith("learner-book:")):
+            expected_profile_id = getattr(mirror, "id", None)
+            belongs = _calendar_event_profile_id(
+                record,
+                expected_profile_id=expected_profile_id,
+                expected_enrolment_id=getattr(mirror, "enrolment_id", None) or learner.pk,
+            ) is not None
         else:
-            belongs = imported_owned or (email in emails if email else expected_id is not None and str(record.learner_id) == str(expected_id))
+            # The onboarding writers intentionally use Created_users.id and
+            # the historical LMS-introduction row can have no link at all.
+            # Those event types have an explicit source namespace; every other
+            # Calendar row must use the canonical link above.
+            explicit_source_namespace = record.event_type in {
+                *ONBOARDING_REVIEW_TYPES, "lms-introduction",
+            }
+            belongs = explicit_source_namespace and str(record.learner_id) == str(learner.pk)
         if belongs and _belongs_to_current_cycle(record, mirror):
             records.append(record)
     if review_source.kind == "aptem":
@@ -998,34 +1062,18 @@ def _resolve_assignment_month_progress_review_occurrence(learner, mirror):
 
 
 def _record_owner_ids(record, *, created_user_id, profile_id):
-    """The learner ids this learner may be stored under on ``record``.
+    """Return only the explicit source namespace for onboarding rows.
 
-    Created_users.id and the Learner profile id are independent sequences, so
-    a number only means something in the id space its row was written in:
-
-    * Review rows -- linked to a Review Instance, or a coach-generated
-      programme-cycle slot -- carry the profile id, the same id as
-      curriculum.review_instances.learner_id. Only that id is compared.
-    * Onboarding reviews are always written with Created_users.id
-      (calendar_learner_id in learner_calendar_book), so only that id is
-      compared.
-    * Rows written by the learner's own booking flow (``learner-book:`` keys)
-      and first-session rows have no single id space: bookings stored
-      Created_users.id before 2026-09-08 and the profile id since, and
-      first_session.py still stores Created_users.id. They keep both ids until
-      the stored rows are checked.
+    Calendar rows in every other namespace use the reviewed
+    ``Coach.coach_calendar_event_learner_link`` resolver before ownership is
+    considered; a colliding number is never sufficient.
     """
     event_type = _s(record.event_type)
-    booked_by_learner = _s(getattr(record, "idempotency_key", "")).startswith("learner-book:")
-    if _s(getattr(record, "review_instance_id", "")) or (
-        event_type in ("mcr", "progress-review", "review") and not booked_by_learner
-    ):
-        ids = {profile_id}
-    elif event_type in ONBOARDING_REVIEW_TYPES:
-        ids = {created_user_id}
-    else:
-        ids = {created_user_id, profile_id}
-    return {str(value) for value in ids if value is not None}
+    if event_type in {*ONBOARDING_REVIEW_TYPES, "lms-introduction"}:
+        return {str(created_user_id)} if created_user_id is not None else set()
+    # Review, first-session and learner-book rows are resolved by the
+    # canonical Calendar learner-link table before this helper is reached.
+    return set()
 
 
 def _profile_id_for_enrolment(enrolment_id):
@@ -1063,7 +1111,19 @@ def _learner_calendar_record(kind, pk, event_key):
     mirror = _calendar_profile(learner, pk)
     existing = CoachCalendarEvent.objects.filter(event_key=event_key).first()
     review_source = source_for_learner(learner, mirror)
+    if existing and mirror and (
+            existing.event_type in {"mcr", "progress-review", "review", "first-session"}
+            or _s(getattr(existing, "idempotency_key", "")).startswith("learner-book:")):
+        if _calendar_event_profile_id(
+                existing,
+                expected_profile_id=mirror.id,
+                expected_enrolment_id=getattr(mirror, "enrolment_id", None) or pk,
+        ) is None:
+            return None
     if existing and mirror and str(existing.learner_profile_id) == str(mirror.id):
+        if (existing.event_type in {"mcr", "progress-review", "review"}
+                and not _calendar_event_profile_is_verified(existing, mirror.id)):
+            return None
         from coach_api.reconciliation_links import for_calendar
         link = for_calendar(existing)
         if link:
@@ -1106,12 +1166,24 @@ def _learner_calendar_record(kind, pk, event_key):
     if not record or (review_source.kind == "aptem"
                       and record.event_type in {"mcr", "progress-review", "review"}):
         return None
-    if _s(record.learner_email).strip().casefold() in emails:
+    if (record.event_type in {"mcr", "progress-review", "review", "first-session"}
+            or _s(getattr(record, "idempotency_key", "")).startswith("learner-book:")):
+        if _calendar_event_profile_id(
+                record,
+                expected_profile_id=getattr(mirror, "id", None),
+                expected_enrolment_id=getattr(mirror, "enrolment_id", None) or pk,
+        ) is None:
+            return None
         return record
-    owner_ids = _record_owner_ids(record, created_user_id=pk, profile_id=mirror.id if mirror else None)
-    if str(record.learner_profile_id or "") in owner_ids and not _email_names_another_learner(record, emails):
-        return record
-    return None
+    if record.event_type in {*ONBOARDING_REVIEW_TYPES, "lms-introduction"}:
+        return record if str(record.learner_id) == str(pk) else None
+    if mirror is None:
+        return None
+    return record if _calendar_event_profile_id(
+        record,
+        expected_profile_id=mirror.id,
+        expected_enrolment_id=getattr(mirror, "enrolment_id", None) or pk,
+    ) is not None else None
 
 
 def _follow_first_session_start_date(kind, pk, record, scheduled_date):
@@ -1201,9 +1273,8 @@ def learner_calendar_event_review(request, kind, pk, event_key):
         # still reaches this endpoint through the generated event key. Resolve
         # that same instance by its stable identity instead of returning a
         # blank template preview. review_instances.learner_id is the learner's
-        # profile id (see _record_owner_ids), so only that id is looked up --
-        # Created_users.id is a different sequence and may equal someone
-        # else's profile id.
+        # profile id, so only that id is looked up. Created_users.id is a
+        # different sequence and may equal someone else's profile id.
         model = SOURCE_MODELS.get(kind)
         learner = model.all_learners.filter(pk=pk).first() if model else None
         mirror = _calendar_profile(learner, pk) if learner is not None else None
@@ -1878,14 +1949,21 @@ def learner_calendar_book(request, kind, pk):
             try:
                 # Rows written before 2026-11-12 may carry Created_users.id; the
                 # email keeps that number from naming another learner's profile.
-                owner = Q(learner_profile_id=pk, learner_email__iexact=_s(learner.email).strip())
                 profile_id = mirror.id if mirror is not None else _profile_id_for_enrolment(pk)
+                candidate_ids = {pk}
                 if profile_id is not None:
-                    owner |= Q(learner_profile_id=profile_id)
-                existing = (
-                    CoachCalendarEvent.objects.filter(owner, event_type=FIRST_SESSION_TYPE)
-                    .exclude(status=CoachCalendarEvent.STATUS_CANCELLED)
-                    .exists()
+                    candidate_ids.add(profile_id)
+                candidates = CoachCalendarEvent.objects.filter(
+                    learner_profile_id__in=candidate_ids,
+                    event_type=FIRST_SESSION_TYPE,
+                ).exclude(status=CoachCalendarEvent.STATUS_CANCELLED)
+                existing = any(
+                    _calendar_event_profile_id(
+                        row,
+                        expected_profile_id=profile_id,
+                        expected_enrolment_id=pk,
+                    ) is not None
+                    for row in candidates
                 )
             except DatabaseError as exc:
                 logger.exception("learner_calendar_book: first-session check failed")
@@ -2067,7 +2145,7 @@ def learner_calendar_book(request, kind, pk):
             return _error(message, status_code)
         payload = {**payload, "eventKey": resolved_event_key}
     requires_coach_approval = session_type in COACH_APPROVAL_TYPES and not is_onboarding_review
-    # Onboarding reviews stay under Created_users.id (see _record_owner_ids).
+    # Onboarding reviews stay under Created_users.id by explicit event design.
     # Everything else is filed under the profile id -- the first session too,
     # which is booked before the profile is Active -- so the stored number
     # names one learner. Created_users.id remains only for a learner with no
@@ -2986,11 +3064,29 @@ def learner_first_session(request, kind, pk):
         learner = model.all_learners.filter(pk=pk).first()
         if learner is None:
             return _error("Learner not found.", 404)
-        record = (
-            CoachCalendarEvent.objects.filter(learner_profile_id=pk, event_type=FIRST_SESSION_TYPE)
+        mirror = _calendar_profile(learner, pk)
+        candidate_ids = {pk}
+        if mirror is not None:
+            candidate_ids.add(mirror.id)
+        records = (
+            CoachCalendarEvent.objects.filter(
+                learner_profile_id__in=candidate_ids,
+                event_type=FIRST_SESSION_TYPE,
+            )
             .exclude(status=CoachCalendarEvent.STATUS_CANCELLED)
             .order_by("-sequence")
-            .first()
+        )
+        profile_id = mirror.id if mirror is not None else _profile_id_for_enrolment(pk)
+        record = next(
+            (
+                row for row in records
+                if _calendar_event_profile_id(
+                    row,
+                    expected_profile_id=profile_id,
+                    expected_enrolment_id=pk,
+                ) is not None
+            ),
+            None,
         )
     except DatabaseError as exc:
         logger.exception("learner_first_session: lookup failed")

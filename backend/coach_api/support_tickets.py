@@ -127,9 +127,11 @@ def caseload_learners(owner_email: str) -> list[LearnerProfile]:
     """The coach's caseload as the dashboard shows it."""
     from coach_api.views import is_hidden_caseload_programme_status
 
+    from learner_api.models import learner_profile_ids_for_coach_email
     rows = (
-        LearnerProfile.objects.annotate(coach_email_key=Lower(Trim("coach_email")))
-        .filter(coach_email_key=_normalize_email(owner_email))
+        LearnerProfile.objects.filter(id__in=learner_profile_ids_for_coach_email(
+            _normalize_email(owner_email),
+        ))
         .only("id", "enrolment_id", "full_name", "email", "programme_id", "cohort_id", "group_id", "programme_status")
         .order_by("full_name", "id")
     )

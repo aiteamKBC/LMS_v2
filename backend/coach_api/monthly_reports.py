@@ -14,13 +14,12 @@ wrong one silently matches nothing.
 import logging
 
 from django.db import DatabaseError, connections
-from django.db.models.functions import Lower, Trim
 from django.http import JsonResponse
 from django.views.decorators.http import require_GET
 
 from coach_api.auth import authenticated_coach_email, coach_access_required
 from coach_api.errors import coach_error
-from learner_api.models import LearnerProfile
+from learner_api.models import LearnerProfile, learner_profile_ids_for_coach_email
 from learner_api.monthly_reports import (
     MONTH_KEY_RE,
     SELECT_COLUMNS,
@@ -39,8 +38,9 @@ def _allowed_learner_ids(owner_email):
     return [
         str(learner_id)
         for learner_id in (
-            LearnerProfile.objects.annotate(coach_email_key=Lower(Trim("coach_email")))
-            .filter(coach_email_key=_normalize_email(owner_email))
+            LearnerProfile.objects.filter(id__in=learner_profile_ids_for_coach_email(
+                _normalize_email(owner_email),
+            ))
             .values_list("enrolment_id", flat=True)
         )
         if learner_id is not None

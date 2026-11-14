@@ -69,6 +69,8 @@ class RecordingCursor:
         self.statements.append((normalised, params))
         if normalised.startswith("select to_regclass"):
             self._rows = [("present",)]
+        elif normalised.startswith('select id from "learner".coach_calendar_event'):
+            self._rows = []
         elif (
             normalised.startswith("select count(*)")
             and "learning_reflection_submissions" in normalised
@@ -84,6 +86,9 @@ class RecordingCursor:
 
     def fetchone(self):
         return self._rows[0]
+
+    def fetchall(self):
+        return self._rows
 
     def __enter__(self):
         return self

@@ -1146,14 +1146,6 @@ def _save_shifted_plan(learner, shifted_plan, from_id="", to_id=""):
 
     mirrored = False
     if profile is not None and target is not None:
-        if not _replace_json_plan_module(
-            LearnerProfile, profile.pk, "learning_plan", profile.learning_plan,
-            from_id, target, explicit,
-        ):
-            LearnerProfile.objects.filter(pk=profile.pk).update(
-                learning_plan=shifted_plan or None,
-            )
-        profile.learning_plan = shifted_plan or None
         mirrored = _replace_mirrored_module(profile, from_id, target)
 
     _sync_legacy_titles_from_json(learner, plan_field)

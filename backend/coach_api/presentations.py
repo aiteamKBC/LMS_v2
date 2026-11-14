@@ -58,9 +58,10 @@ def _official(request, submission_id):
     rows = query('''SELECT s.learner_kind,s.learner_id,s.activity_id,s.full_submission,s.submitted_at
         FROM "Learner".learning_reflection_submissions s
         JOIN "Learner".learners l ON l.enrolment_id::text=s.learner_id AND l.learner_type=s.learner_kind
+        JOIN curriculum.coaches c ON c.id=l.coach_id
         JOIN enrolment."Created_users" u ON u.id=l.enrolment_id AND lower(btrim(u."Email"))=lower(btrim(l.email))
         WHERE s.id=%s AND s.activity_type='assignment' AND s.status<>'draft'
-          AND lower(btrim(l.coach_email))=%s
+          AND lower(btrim(c.email))=%s
           AND NOT EXISTS (SELECT 1 FROM "Learner".learners other
                           WHERE other.enrolment_id=l.enrolment_id AND other.id<>l.id)
         LIMIT 2''', [str(submission_id), request.coach_email])

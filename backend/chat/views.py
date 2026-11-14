@@ -205,7 +205,7 @@ def _demo_chat_identity(email, learner_source_id=None):
 
 
 def _ensure_assigned_coach_conversation(learner):
-    profile = LearnerProfile.objects.filter(pk=learner.pk).only("coach_email").first()
+    profile = LearnerProfile.objects.filter(pk=learner.pk).first()
     coach_email = _clean_text(getattr(profile, "coach_email", ""))
     if not coach_email:
         raise ChatIdentityError("This learner does not have an assigned coach email.")

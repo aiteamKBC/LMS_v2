@@ -499,10 +499,8 @@ def coach_owns_learner(account, learner_id):
             or not learner_id or learner_id <= 0):
         return False
     from django.db import DatabaseError
-    from django.db.models.functions import Lower, Trim
-
     from learner_api.constants import ACCESS_COACH
-    from learner_api.models import LearnerProfile, StaffUser
+    from learner_api.models import LearnerProfile, StaffUser, learner_profile_ids_for_coach_email
     from .identity import accesses_for_staff
     from .security import normalize_email
 
@@ -512,8 +510,10 @@ def coach_owns_learner(account, learner_id):
         email = normalize_email(getattr(staff, "email", ""))
         if not staff or not email or ACCESS_COACH not in accesses_for_staff(staff):
             return False
-        return (LearnerProfile.objects.annotate(coach_email_key=Lower(Trim("coach_email")))
-                .filter(coach_email_key=email, enrolment_id=learner_id).exists())
+        return LearnerProfile.objects.filter(
+            id__in=learner_profile_ids_for_coach_email(email),
+            enrolment_id=learner_id,
+        ).exists()
     except DatabaseError:
         return False
 

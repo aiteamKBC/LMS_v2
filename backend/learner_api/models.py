@@ -21,7 +21,7 @@ import json
 import uuid
 from functools import cached_property, lru_cache
 
-from django.db import DatabaseError, connections, models
+from django.db import DatabaseError, connections, models, router
 from django.db.models.functions import Lower, Trim
 from system_audit.writes import AuditedQuerySet
 from config.cache_versions import VersionBumpQuerySetMixin
@@ -48,6 +48,37 @@ class SafeJSONField(models.JSONField):
 
 LEARNER_ACTIVITY_EVENTS_RELATION = '"Learner"."learner_activity_events"'
 LEARNER_KSBS_RELATION = '"Learner"."learner_ksbs"'
+
+
+def learner_profile_ids_for_coach_email(email, *, using=None):
+    """Resolve coach ownership through Learner.learners.coach_id."""
+    value = str(email or '').strip().casefold()
+    if not value:
+        return []
+    using = using or router.db_for_read(LearnerProfile) or 'default'
+    with connections[using].cursor() as cursor:
+        cursor.execute(
+            '''select l.id
+                 from "Learner".learners l
+                 join curriculum.coaches c on c.id = l.coach_id
+                where lower(trim(c.email)) = %s''',
+            [value],
+        )
+        return [row[0] for row in cursor.fetchall()]
+
+
+def coach_id_for_email(email, *, using=None):
+    value = str(email or '').strip().casefold()
+    if not value:
+        return None
+    using = using or router.db_for_read(LearnerProfile) or 'default'
+    with connections[using].cursor() as cursor:
+        cursor.execute(
+            'select id from curriculum.coaches where lower(trim(email)) = %s limit 2',
+            [value],
+        )
+        rows = cursor.fetchall()
+    return rows[0][0] if len(rows) == 1 else None
 
 
 @lru_cache(maxsize=None)
@@ -286,10 +317,9 @@ class EnrolmentUser(models.Model):
     # originally provisioned, while Last_audit stores the same value as bigint.
     aptem_id = models.TextField(db_column="aptem_id", null=True, blank=True)
 
-    # The coach this learner is assigned to, on the enrolment side. The coach
-    # workspace itself scopes on Learner.learners.coach_email -- these are the
-    # enrolment record, kept in step by assign_audit_coaches, so the assignment
-    # survives a mirror being rebuilt.
+    # The coach assignment is kept on the enrolment source. The profile-side
+    # workspace resolves its canonical coach_id through curriculum.coaches, so
+    # the assignment survives a profile mirror rebuild.
     coach_name = models.TextField(db_column="Coach_name", null=True, blank=True)
     coach_email = models.TextField(db_column="Coach_email", null=True, blank=True)
 
@@ -667,6 +697,10 @@ class LearnerProfile(models.Model):
     # for profiles whose enrolment record has since been deleted.
     enrolment_id = models.BigIntegerField(null=True, blank=True, db_index=True)
 
+    # Canonical assignment to curriculum.coaches. Display details are
+    # resolved from that table rather than duplicated on Learner.learners.
+    coach_id = models.CharField(max_length=128, null=True, blank=True, db_index=True)
+
     # Legacy profile fallback for the external Aptem identity.  Newer records
     # carry the same value on enrolment."Created_users"; readers must prefer
     # that stable enrolment bridge and only use this column when the enrolment
@@ -699,9 +733,6 @@ class LearnerProfile(models.Model):
     progress_hours = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
     progress_variance = models.DecimalField(max_digits=10, decimal_places=4, null=True, blank=True)
     otjh_status = models.CharField(max_length=50, blank=True)
-    coach_name = models.TextField(blank=True)
-    coach_email = models.EmailField(max_length=320, blank=True)
-
     # What a coach has actually decided about this learner's work. Recomputed
     # from Learner.learning_reflection_submissions after every marking decision
     # (learner_api.marking_tally) rather than incremented, so a changed decision
@@ -711,16 +742,6 @@ class LearnerProfile(models.Model):
     accepted_reflections = models.IntegerField(default=0)
     rejected_reflections = models.IntegerField(default=0)
 
-    # The learner's assigned plan -- the modules, weeks and components their
-    # "My learning" page shows -- mirrored from
-    # enrolment."Created_users"."Learning_plan", which stays the record staff
-    # edit. Held here because every coach and reporting surface already reads
-    # this table and had no way to see what a learner was actually assigned
-    # without joining back to enrolment. Kept in step by
-    # learning_plan.sync_learning_plan_mirror on every save of the plan; null
-    # means no plan has been assigned, which for most learners is the honest
-    # answer rather than a missing mirror.
-    learning_plan = models.JSONField(null=True, blank=True)
     # Programme and individual learner dates are distinct physical date columns.
     learner_start_date = models.DateField(null=True, blank=True)
     learner_end_date = models.DateField(null=True, blank=True)
@@ -738,6 +759,18 @@ class LearnerProfile(models.Model):
 
     objects = models.Manager.from_queryset(LearnerProfileQuerySet)()
 
+    def __init__(self, *args, **kwargs):
+        # Keep profile-shaped test doubles and legacy adapters readable without
+        # mapping columns that no longer exist in Learner.learners.
+        legacy = {
+            key: kwargs.pop(key, None)
+            for key in ('coach_name', 'coach_email', 'learning_plan')
+            if key in kwargs
+        }
+        super().__init__(*args, **kwargs)
+        for key, value in legacy.items():
+            setattr(self, f'_legacy_{key}', value)
+
     def save(self, *args, **kwargs):
         self.__dict__.pop('_placement_names', None)
         return super().save(*args, **kwargs)
@@ -746,6 +779,61 @@ class LearnerProfile(models.Model):
         super().refresh_from_db(*args, **kwargs)
         self.__dict__.pop('_educational_placement', None)
         self.__dict__.pop('_placement_names', None)
+        for key in ('coach_name', 'coach_email', 'learning_plan'):
+            self.__dict__.pop(f'_legacy_{key}', None)
+
+    def _canonical_coach_contact(self):
+        if hasattr(self, '_legacy_coach_name') or hasattr(self, '_legacy_coach_email'):
+            return (
+                getattr(self, '_legacy_coach_name', '') or '',
+                getattr(self, '_legacy_coach_email', '') or '',
+            )
+        if not self.coach_id:
+            return '', ''
+        alias = self._state.db or 'default'
+        try:
+            with connections[alias].cursor() as cursor:
+                cursor.execute(
+                    'select name, email from curriculum.coaches where id = %s',
+                    [self.coach_id],
+                )
+                row = cursor.fetchone()
+        except DatabaseError:
+            return '', ''
+        return (row[0] or '', row[1] or '') if row else ('', '')
+
+    @property
+    def coach_name(self):
+        return self._canonical_coach_contact()[0]
+
+    @coach_name.setter
+    def coach_name(self, value):
+        self._legacy_coach_name = value or ''
+
+    @property
+    def coach_email(self):
+        return self._canonical_coach_contact()[1]
+
+    @coach_email.setter
+    def coach_email(self, value):
+        self._legacy_coach_email = value or ''
+
+    @property
+    def learning_plan(self):
+        if hasattr(self, '_legacy_learning_plan'):
+            return self._legacy_learning_plan
+        if not self.enrolment_id:
+            return None
+        try:
+            return EnrolmentUser.all_learners.filter(pk=self.enrolment_id).values_list(
+                'learning_plan', flat=True,
+            ).first()
+        except DatabaseError:
+            return None
+
+    @learning_plan.setter
+    def learning_plan(self, value):
+        self._legacy_learning_plan = value
 
     @cached_property
     def _placement_names(self):

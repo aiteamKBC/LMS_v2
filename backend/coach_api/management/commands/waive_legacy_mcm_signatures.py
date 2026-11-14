@@ -49,7 +49,8 @@ def validate_review(overlay, owner, cutoff, calendar, source, *, already_waived=
             or not source or review_family(source[0]) != "MCM"
             or (overlay.template_snapshot.get("templateSource") or {}).get("family") != "MCM"):
         raise CommandError("Review identity or MCM family does not match the approved scope.")
-    assigned = LearnerProfile.objects.filter(pk=overlay.learner_id).values_list("coach_email", flat=True).first()
+    profile = LearnerProfile.objects.filter(pk=overlay.learner_id).first()
+    assigned = getattr(profile, "coach_email", "") if profile is not None else ""
     if str(assigned or "").strip().casefold() != owner:
         raise CommandError("The learner is no longer assigned to the selected coach.")
     statuses = {"not-scheduled", "scheduled", "in-progress", "awaiting-signature"}

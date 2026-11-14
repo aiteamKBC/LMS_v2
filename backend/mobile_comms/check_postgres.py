@@ -38,7 +38,22 @@ with connection.cursor() as cur:
     assert cur.fetchone()==(settings.DATABASES['default']['NAME'],'127.0.0.1','127.0.0.1')
     cur.execute("SELECT count(*) FROM information_schema.tables WHERE table_schema NOT IN ('pg_catalog','information_schema')")
     assert cur.fetchone()[0]==0,'Refusing a non-empty database'
-    for schema in ['login','Learner','enrolment']:cur.execute('CREATE SCHEMA "'+schema+'"')
+    for schema in ['login','Learner','enrolment','curriculum']:cur.execute('CREATE SCHEMA "'+schema+'"')
+    cur.execute('''CREATE TABLE curriculum.coaches (
+        id varchar(128) PRIMARY KEY,
+        name text,
+        email text,
+        status text
+    )''')
+    cur.execute('''CREATE TABLE curriculum.cohorts (
+        cohort_id varchar(128) PRIMARY KEY,
+        cohort_name text NOT NULL,
+        programme_id varchar(255)
+    )''')
+    cur.executemany(
+        "INSERT INTO curriculum.cohorts (cohort_id, cohort_name) VALUES (%s, %s)",
+        [('c1', 'Class One'), ('c2', 'Class Two')],
+    )
 MigrationExecutor(connection).migrate([('mobile_comms','0001_initial')])
 with connection.schema_editor() as editor:
     for model in [EnrolmentUser,LearnerProfile,StaffUser,LoginAccount,LoginSession]:editor.create_model(model)
@@ -47,7 +62,7 @@ def learner(source_id,profile_id,cohort,kind='apprenticeship'):
     EnrolmentUser.all_learners.create(id=source_id,learner_type=kind,email=f'synthetic{source_id}@example.test')
     LearnerProfile.objects.create(id=profile_id,enrolment_id=source_id,lifecycle_status='active',
         full_name=f'Synthetic {source_id}',email=f'synthetic{source_id}@example.test',cohort_id=cohort,
-        learner_type=kind,coach_email='coach@example.test')
+        learner_type=kind)
     return LoginAccount.objects.create(subject_type='learner',subject_id=source_id,role='learner',email=f'synthetic{source_id}@example.test')
 a=learner(101,5001,'c1');b=learner(102,5002,'c1','commercial');other=learner(103,101,'c2')
 # Production uses transaction pooling; a named cursor cannot survive across
@@ -58,6 +73,9 @@ pa=identity.principal_for_account(a);pb=identity.principal_for_account(b)
 assert pa.subject_id==101 and pa.cohort_id=='c1' and pb.kind=='learner'
 assert {x['id'] for x in identity.peer_directory(pa)}=={'102'}
 staff=StaffUser.objects.create(id=201,email='coach@example.test',access='coach')
+with connection.cursor() as cur:
+    cur.execute("INSERT INTO curriculum.coaches (id, name, email, status) VALUES ('201', 'Coach', %s, 'active')", [staff.email])
+LearnerProfile.objects.filter(enrolment_id__in=[101, 102, 103]).update(coach_id='201')
 coach=LoginAccount.objects.create(subject_type='staff',subject_id=201,role='staff',email='coach@example.test')
 pc=identity.principal_for_account(coach);assert identity.coach_for(pa).account_id==coach.pk
 t=Thread.objects.create(key='peer',kind='peer',learner_a=101,learner_b=102,cohort_id='c1')
@@ -119,12 +137,17 @@ assert sender.send.call_count==2,'Only the remaining unread message is dispatche
 # Class participation is shared by the class, while direct messages remain
 # limited to each coach's own assignments. Exercise the real identity queries.
 staff_b=StaffUser.objects.create(id=202,email='other-coach@example.test',access='coach')
+with connection.cursor() as cur:
+    cur.execute("INSERT INTO curriculum.coaches (id, name, email, status) VALUES ('202', 'Other Coach', %s, 'active')", [staff_b.email])
 coach_b=LoginAccount.objects.create(subject_type='staff',subject_id=202,role='staff',email=staff_b.email)
 pcb=identity.principal_for_account(coach_b)
 StaffUser.objects.filter(pk=201).update(email=' Coach@Example.Test ')
-LearnerProfile.objects.filter(enrolment_id=101).update(coach_email=' COACH@EXAMPLE.TEST ',cohort='Class One')
-LearnerProfile.objects.filter(enrolment_id=102).update(coach_email=staff_b.email,cohort_id=' c1 ',cohort='Class One')
-LearnerProfile.objects.filter(enrolment_id=103).update(cohort='Class Two')
+from learner_api.models import coach_id_for_email
+coach_a_id = coach_id_for_email(' COACH@EXAMPLE.TEST ')
+coach_b_id = coach_id_for_email(staff_b.email)
+assert coach_a_id and coach_b_id
+LearnerProfile.objects.filter(enrolment_id=101).update(coach_id=coach_a_id)
+LearnerProfile.objects.filter(enrolment_id=102).update(coach_id=coach_b_id,cohort_id=' c1 ')
 assert {x['id'] for x in identity.peer_directory(pc)}=={'101','103'}
 assert {x['id'] for x in identity.cohort_directory(pc)}=={'c1','c2'}
 assert {x['id'] for x in identity.cohort_directory(pcb)}=={'c1'}
@@ -152,7 +175,7 @@ Preference.objects.update_or_create(account_id=coach.pk,defaults={'categories':p
 coach_session=LoginSession.objects.create(account=coach,token_hash='b'*64,expires_at=timezone.now()+timedelta(hours=1))
 coach_device=Device.objects.create(account_id=coach.pk,session_id=str(coach_session.pk),token='synthetic-coach-device-token')
 pending=Delivery.objects.create(notification=notice,device=coach_device)
-LearnerProfile.objects.filter(enrolment_id=101).update(coach_email=staff_b.email)
+LearnerProfile.objects.filter(enrolment_id=101).update(coach_id=coach_b_id)
 assert {x['id'] for x in identity.cohort_directory(pc)}=={'c2'}
 assert call_as(pc,views.messages,thread_id=group.pk).status_code==403
 assert call_as(pc,views.messages,{'body':'Must not save','clientId':str(uuid.uuid4())},thread_id=group.pk).status_code==403
@@ -163,7 +186,7 @@ blocked_sender=Mock()
 assert worker.dispatch_one(pending.pk,blocked_sender,timezone.now())=='suppressed'
 blocked_sender.send.assert_not_called()
 # An ambiguous source/profile link must not grant class access.
-duplicate=LearnerProfile.objects.create(id=5004,enrolment_id=103,lifecycle_status='active',cohort_id='c2',coach_email='coach@example.test')
+duplicate=LearnerProfile.objects.create(id=5004,enrolment_id=103,lifecycle_status='active',cohort_id='c2',coach_id=coach_a_id)
 assert identity.cohort_directory(pc)==[]
 LearnerProfile.objects.filter(pk=duplicate.pk).update(lifecycle_status='withdrawn')
 # An expired/removed coach permission must be rechecked even for a stale principal.

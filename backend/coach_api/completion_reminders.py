@@ -6,8 +6,7 @@ from urllib.parse import urlsplit
 from zoneinfo import ZoneInfo
 
 from django.conf import settings
-from django.db import transaction, router
-from django.db.models.functions import Lower,Trim
+from django.db import transaction, router, connections
 from django.utils import timezone
 from learner_api.constants import ACCESS_COACH
 from learner_api.models import StaffUser,LearnerProfile
@@ -31,9 +30,16 @@ def reconcile(data, owners, since, now):
     # current caseload by server-owned email; never trust a numeric coincidence.
     emails={row['learner_email'] for row in data['sessions'] if row.get('learner_email')}
     ownership={}
-    for profile in LearnerProfile.objects.annotate(address=Lower(Trim('email')),coach=Lower(Trim('coach_email'))).filter(
-            address__in=emails).values('address','coach'):
-        ownership.setdefault(profile['address'],set()).add(profile['coach'])
+    with connections['default'].cursor() as cursor:
+        cursor.execute(
+            '''select lower(trim(l.email)), lower(trim(c.email))
+                 from "Learner".learners l
+                 join curriculum.coaches c on c.id = l.coach_id
+                where lower(trim(l.email)) = any(%s)''',
+            [sorted(emails)],
+        )
+        for address, coach in cursor.fetchall():
+            ownership.setdefault(address, set()).add(coach)
     database = router.db_for_write(Session) or 'default'
     with transaction.atomic(using=database):
         # Read/write batches, never a query loop per meeting. Keep delivery and

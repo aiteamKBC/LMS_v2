@@ -281,6 +281,76 @@ def _review_has_saved_answers(review_id):
     return bool(rows)
 
 
+def _review_definition_signature(sections):
+    """Return the editable shape of a review definition.
+
+    Stable section and field IDs are included so replacing a field with a new
+    field that happens to have the same label is structural. Generated
+    timestamps are excluded. The coach editor sends the complete section tree
+    for every PATCH, including a name-only edit; comparing the actual shape
+    lets that request update metadata without deleting and recreating fields
+    that already have answers.
+    """
+    def jsonish(value):
+        if isinstance(value, dict):
+            return tuple(sorted((str(key), jsonish(item)) for key, item in value.items()))
+        if isinstance(value, (list, tuple)):
+            return tuple(jsonish(item) for item in value)
+        return value
+
+    def field_signature(field):
+        field_type = field.get('field_type') or field.get('fieldType') or 'text'
+        configuration = field.get('configuration') or {}
+        yes = field.get('yes_fields') if 'yes_fields' in field else field.get('yesFields')
+        no = field.get('no_fields') if 'no_fields' in field else field.get('noFields')
+        return (
+            field.get('id') or '',
+            field.get('title') or '',
+            field_type,
+            bool(field.get('required')),
+            jsonish(configuration),
+            tuple(field_signature(child) for child in (yes or [])),
+            tuple(field_signature(child) for child in (no or [])),
+        )
+
+    return tuple(
+        (
+            section.get('id') or '',
+            section.get('title') or '',
+            int(section.get('estimated_minutes', section.get('estimatedMinutes', 0)) or 0),
+            bool(section.get('enabled', True)),
+            tuple(field_signature(field) for field in (section.get('fields') or [])),
+        )
+        for section in (sections or [])
+    )
+
+
+def _review_definition_changed(review_id, sections):
+    current = assemble_review_sections(review_id)
+    return _review_definition_signature(current) != _review_definition_signature(sections)
+
+
+def _lock_review_edit(review_id):
+    """Lock the template and its instances before deciding whether fields may change.
+
+    Answer writers lock their review instance first. Taking the same instance
+    locks here closes the check-then-delete race under PostgreSQL; SQLite keeps
+    the same query shape without emitting unsupported ``FOR UPDATE``.
+    """
+    lock = ' for update' if connection.vendor == 'postgresql' else ''
+    rows = curriculum_views.fetch_all(
+        f'select * from {curriculum_views.table_name(REVIEW_TEMPLATES_TABLE)} '
+        f'where id = %s and deleted_at is null{lock}', [review_id],
+    )
+    if not rows:
+        return None, False
+    curriculum_views.fetch_all(
+        f'select id from {curriculum_views.table_name("review_instances")} '
+        f'where review_template_id = %s{lock}', [review_id],
+    )
+    return rows[0], _review_has_saved_answers(review_id)
+
+
 # ------------------------------------------------------------------ payload
 
 def review_field_payload(row, children_of):
@@ -987,11 +1057,6 @@ def update_review(review_id, payload, *, actor='system'):
         return None, errors
 
     sections = cleaned.pop('_sections')
-    if sections is not None and _review_has_saved_answers(review_id):
-        return None, {
-            '_': 'This Review has saved answers. Create a new template or archive this one before changing its Sections or Fields.',
-            'code': 'REVIEW_TEMPLATE_LOCKED',
-        }
     updates = dict(cleaned)
     if 'applicable_statuses' in updates:
         updates['applicable_statuses'] = curriculum_views.json_db_value(updates['applicable_statuses'])
@@ -1000,14 +1065,40 @@ def update_review(review_id, payload, *, actor='system'):
     updates['updated_by'] = actor
     updates['updated_at'] = datetime.utcnow()
 
-    with transaction.atomic():
-        if updates:
-            curriculum_views.update_rows(REVIEW_TEMPLATES_TABLE, 'id = %s', [review_id], updates)
-        if sections is not None:
-            field_count = save_review_sections(review_id, sections)
-            curriculum_views.update_rows(REVIEW_TEMPLATES_TABLE, 'id = %s', [review_id], {
-                'field_count': field_count, 'updated_at': datetime.utcnow(),
-            })
+    try:
+        with transaction.atomic():
+            locked_row, has_answers = _lock_review_edit(review_id)
+            if locked_row is None:
+                return None, {'_': 'Review not found.'}
+
+            sections_changed = sections is not None and _review_definition_changed(review_id, sections)
+            if sections_changed and has_answers:
+                return None, {
+                    '_': 'This Review has saved answers. Create a new template or archive this one before changing its Sections or Fields.',
+                    'code': 'REVIEW_TEMPLATE_LOCKED',
+                }
+
+            if updates:
+                curriculum_views.update_rows(REVIEW_TEMPLATES_TABLE, 'id = %s', [review_id], updates)
+            # A complete but unchanged section tree is a normal frontend
+            # payload, not permission to replace fields.  This preserves all
+            # answer, signature and historical references.
+            if sections_changed:
+                field_count = save_review_sections(review_id, sections)
+                curriculum_views.update_rows(REVIEW_TEMPLATES_TABLE, 'id = %s', [review_id], {
+                    'field_count': field_count, 'updated_at': datetime.utcnow(),
+                })
+    except DatabaseError as exc:
+        # A concurrent answer insert can still win between the instance locks
+        # and a DDL/RESTRICT check on PostgreSQL. Return the same stable
+        # conflict contract instead of leaking a 500 or partially saving the
+        # metadata transaction.
+        if 'foreign key' in str(exc).lower() or 'restrict' in str(exc).lower():
+            return None, {
+                '_': 'This Review has saved answers. Create a new template or archive this one before changing its Sections or Fields.',
+                'code': 'REVIEW_TEMPLATE_LOCKED',
+            }
+        raise
 
     curriculum_views.invalidate_curriculum_cache()
     return review_id, None

@@ -16,7 +16,7 @@ from django.views.decorators.gzip import gzip_page
 from django.views.decorators.clickjacking import xframe_options_sameorigin
 
 from learner_api.constants import ACCESS_COACH, ACCESS_CURRICULUM, ACCESS_SUPER_ADMIN
-from learner_api.models import LearnerProfile, StaffUser, EnrolmentUser
+from learner_api.models import LearnerProfile, StaffUser, EnrolmentUser, learner_profile_ids_for_coach_email
 from login.identity import accesses_for_staff
 from login.permissions import require_access
 
@@ -66,8 +66,14 @@ def _coaches():
 def _learners(owner=None):
     rows = LearnerProfile.objects.all()
     if owner is not None:
-        rows = rows.annotate(owner_key=Lower(Trim('coach_email'))).filter(owner_key=owner)
-    return list(rows.order_by('full_name', 'id').values('id', 'email', 'full_name', 'coach_email', 'learner_type'))
+        rows = rows.filter(id__in=learner_profile_ids_for_coach_email(owner))
+    return [
+        {
+            'id': row.id, 'email': row.email, 'full_name': row.full_name,
+            'coach_email': row.coach_email, 'learner_type': row.learner_type,
+        }
+        for row in rows.order_by('full_name', 'id')
+    ]
 
 
 def _bookings(owner, start, end):
@@ -464,11 +470,13 @@ def _saved_session_evidence(request, record, job, *, part='all'):
         learner_ids = None
         if part != 'attendance' and not grants & {ACCESS_CURRICULUM, ACCESS_SUPER_ADMIN}:
             owner = _email(staff.email)
-            profiles = LearnerProfile.objects.annotate(owner_key=Lower(Trim('coach_email')),
-                enrolment_aptem=Subquery(EnrolmentUser.objects.filter(id=OuterRef('enrolment_id')).values('aptem_id')[:1])
-                ).filter(owner_key=owner).values('aptem_id', 'enrolment_aptem')
-            learner_ids = sorted({int(value) for row in profiles
-                if (value := row['enrolment_aptem'] if row['enrolment_aptem'] not in (None, '') else row['aptem_id']) is not None
+            profile_ids = learner_profile_ids_for_coach_email(owner)
+            profiles = LearnerProfile.objects.filter(id__in=profile_ids).values_list('aptem_id', 'enrolment_id')
+            enrolment_aptem = dict(EnrolmentUser.objects.filter(
+                id__in=[enrolment_id for _aptem_id, enrolment_id in profiles if enrolment_id]
+            ).values_list('id', 'aptem_id'))
+            learner_ids = sorted({int(value) for aptem_id, enrolment_id in profiles
+                if (value := enrolment_aptem.get(enrolment_id) or aptem_id) is not None
                 and str(value).isdecimal() and int(value) > 0})
         return saved_evidence(record, job, learner_ids=learner_ids, part=part)
     except DatabaseError:

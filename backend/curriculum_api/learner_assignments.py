@@ -13,7 +13,7 @@ from learner_api import learning_plan as plans
 from learner_api.placement_links import with_placements, placement_ids, RELATIONS, CACHE
 from learner_api.active_users import hydrate_training_plan
 from learner_api.mappers import get_training_plan, stored_training_plan, training_plan_field
-from learner_api.models import EnrolmentUser, LearnerProfile
+from learner_api.models import EnrolmentUser, LearnerProfile, LearnerTrainingPlanModule
 
 logger = logging.getLogger(__name__)
 
@@ -266,8 +266,11 @@ def module_learner_assignments(request, identifier):
 def module_assignment_roster(module_id, placement_learners, lifecycle_status=''):
     """Include direct module membership without broadening programme/cohort rosters."""
     placed = {str(row['id']): row for row in placement_learners}
+    direct_ids = LearnerTrainingPlanModule.objects.filter(
+        module_ref=module_id,
+    ).values_list('learner_id', flat=True)
     profiles = LearnerProfile.objects.select_related(*RELATIONS).filter(
-        Q(pk__in=list(placed)) | Q(learning_plan__contains=[{'moduleId': module_id}])
+        Q(pk__in=list(placed)) | Q(pk__in=direct_ids)
     )
     if lifecycle_status:
         profiles = profiles.filter(lifecycle_status__iexact=lifecycle_status)

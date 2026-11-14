@@ -2091,12 +2091,6 @@ def sync_active_user(source):
         "phone_number": _s(getattr(source, "phone_number", "")),
         "lifecycle_status": "active" if status.lower() == ACTIVE_STATUS else status.lower() or "inactive",
         "programme_status": status,
-        # The assigned plan, mirrored on every upsert so a profile created here
-        # arrives with it rather than staying blank until the plan is next
-        # edited. Same resolver the learner's own "My learning" page uses; None
-        # when nothing is assigned, which is the honest state for a learner
-        # whose programme has no live modules.
-        "learning_plan": get_training_plan(source) or None,
         "start_date": start_date,
         "end_date": end_date,
         "gateway_review_date": end_date - timedelta(days=90) if end_date else None,
@@ -2116,7 +2110,9 @@ def sync_active_user(source):
                 defaults["aptem_id"] = int(normalised_aptem_id)
             # Preserve legacy profile-only assignments, but copy an explicit
             # assignment (including an unassignment) on activation and rebuild.
-            defaults.update(source_coach(source) or {})
+            source_assignment = source_coach(source) or {}
+            from .models import coach_id_for_email
+            defaults["coach_id"] = coach_id_for_email(source_assignment.get("coach_email"))
             # The profile was resolved by its explicit enrolment link above.
             # Whether found or about to be created, it belongs to this source row.
             defaults["enrolment_id"] = source.id

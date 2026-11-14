@@ -42,12 +42,8 @@ def learner_progress_changed(sender, instance, using, **kwargs):
     learner = learner.fields_cache.get("learner") if learner is not None else None
     coach_email = getattr(learner, "coach_email", "") if learner is not None else ""
     if not coach_email and getattr(instance, "learner_id", None):
-        coach_email = (
-            LearnerProfile.objects.using(using)
-            .filter(pk=instance.learner_id)
-            .values_list("coach_email", flat=True)
-            .first()
-        )
+        profile = LearnerProfile.objects.using(using).filter(pk=instance.learner_id).first()
+        coach_email = getattr(profile, "coach_email", "") if profile is not None else ""
     _enqueue_after_commit(coach_email, using=using, reason="learner-progress")
 
 

@@ -31,7 +31,8 @@ def endpoint(view):
 def caseload(email):
     return query('''SELECT l.enrolment_id AS id,l.learner_type AS kind,l.full_name AS name,l.programme
         FROM "Learner".learners l JOIN enrolment."Created_users" u ON u.id=l.enrolment_id
-        WHERE lower(btrim(l.coach_email))=%s AND lower(btrim(l.email))=lower(btrim(u."Email"))
+        JOIN curriculum.coaches c ON c.id=l.coach_id
+        WHERE lower(btrim(c.email))=%s AND lower(btrim(l.email))=lower(btrim(u."Email"))
           AND l.learner_type IN ('commercial','apprenticeship')
         ORDER BY l.full_name,l.id''', [normalize(email)])
 
@@ -55,7 +56,7 @@ def activities(request):
                 'accepted': ['accepted', 'partial'], 'referred': ['referred', 'rejected']}
     if status not in statuses:
         raise ServiceError('Choose a valid activity status.')
-    clauses = ["s.activity_type='extra_activity'", "s.status<>'draft'", 'lower(btrim(l.coach_email))=%s']
+    clauses = ["s.activity_type='extra_activity'", "s.status<>'draft'", 'lower(btrim(c.email))=%s']
     params = [normalize(request.coach_email)]
     if request.GET.get('learner'):
         clauses.append('s.learner_id=%s'); params.append(request.GET['learner'])
@@ -67,7 +68,8 @@ def activities(request):
     if statuses[status]:
         clauses.append('s.status=ANY(%s)'); params.append(statuses[status])
     source = '''FROM "Learner".learning_reflection_submissions s JOIN "Learner".learners l
-        ON l.enrolment_id::text=s.learner_id AND l.learner_type=s.learner_kind WHERE ''' + ' AND '.join(clauses)
+        ON l.enrolment_id::text=s.learner_id AND l.learner_type=s.learner_kind
+        JOIN curriculum.coaches c ON c.id=l.coach_id WHERE ''' + ' AND '.join(clauses)
     count = query('SELECT count(*) AS count ' + source, params)[0]['count']
     rows = query('''SELECT s.id,s.learner_id AS "learnerId",s.learner_kind AS "learnerKind",
         s.learner_name AS learner,s.activity_title AS title,s.status,s.actual_time_hours AS hours,

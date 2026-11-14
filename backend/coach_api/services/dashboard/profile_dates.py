@@ -9,10 +9,15 @@ def fetch_dashboard_profile_dates(owner_email, profile_ids):
     from coach_api import views as domain
 
     with dashboard_stage("caseload_query") as stats:
-        rows = list(domain.LearnerProfile.objects.annotate(
-            coach_email_key=domain.Lower(domain.Trim("coach_email")),
+        rows = list(domain.LearnerProfile.objects.filter(
+            id__in=set(profile_ids) & set(domain.learner_profile_ids_for_coach_email(
+                domain.normalize_email(owner_email),
+            )),
+        ).annotate(
             username_key=domain.Trim("full_name"),
-        ).filter(coach_email_key=domain.normalize_email(owner_email), pk__in=profile_ids)
+        ).filter(
+            pk__in=profile_ids,
+        )
             .exclude(username_key__isnull=True).exclude(username_key="")
             .values("id", "programme_status", "enrolment_id", *PROFILE_WINDOW_FIELDS))
         stats["row_count"] = len(rows)
