@@ -279,7 +279,9 @@ describe('learner loading and recovery', () => {
     expect(hero.queryByText('31 January 2027')).not.toBeInTheDocument();
     expect(hero.queryByText('2 February 2026')).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole('tab', { name: 'Overview' }));
-    const chart = within(await screen.findByRole('region', { name: 'Off-the-job hours by month' }));
+    // Overview loads its code-split tab and data on demand. This checks the
+    // programme dates/values, not the cold module-import time under suite load.
+    const chart = within(await screen.findByRole('region', { name: 'Off-the-job hours by month' }, { timeout: 3_000 }));
     expect(await chart.findByRole('button', {
       name: 'January 2026: target 3 hours, submitted 0 hours, completed 1.5 hours',
     })).toBeVisible();

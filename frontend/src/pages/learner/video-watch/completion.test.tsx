@@ -102,6 +102,7 @@ async function finish() {
 }
 
 beforeEach(() => {
+  clearAllCachedResources();
   vi.resetAllMocks();
   vi.mocked(readWebPointPlan).mockResolvedValue({ weeks: {} });
   programmeRead.loading = false;
@@ -121,7 +122,7 @@ beforeEach(() => {
   vi.mocked(fetchEvidence).mockResolvedValue([]);
   vi.mocked(loadLearningReflectionSubmission).mockResolvedValue(null);
 });
-afterEach(() => { cleanup(); vi.restoreAllMocks(); });
+afterEach(() => { cleanup(); clearAllCachedResources(); vi.restoreAllMocks(); });
 
 it.each(['commercial', 'apprenticeship'].flatMap(kind =>
   ['reading', 'video', 'assignment', 'live_session'].map(type => ({ kind, type })),
@@ -540,11 +541,12 @@ it('does not count a failed reading preview as reading time', async () => {
   vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible');
   let now = 0;
   vi.spyOn(performance, 'now').mockImplementation(() => now);
-  vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('', { status: 404 }));
+  const request = vi.spyOn(globalThis, 'fetch').mockImplementation(async () => new Response('', { status: 404 }));
   const reading = { ...first, type: 'reading', component: 'Reading', resourceUrl: '/curriculum_api/curriculum/uploads/sample.pdf' };
   vi.mocked(fetchLearnerDetail).mockResolvedValue({ ...detail(), components: [reading] } as unknown as LearnerDetail);
   const { unmount } = mount();
   await screen.findByText('This file could not be found on the server. Please let your coach or the curriculum team know.');
+  expect(request).toHaveBeenCalledWith(expect.stringContaining('sample.pdf'), expect.anything());
   now = 60000;
   unmount();
   const saved = JSON.parse(localStorage.getItem('learner_activity_timer:v1:apprenticeship:1:C1')!);
