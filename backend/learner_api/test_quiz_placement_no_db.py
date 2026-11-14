@@ -5,6 +5,7 @@ from pathlib import Path
 from types import SimpleNamespace
 import unittest
 from unittest.mock import MagicMock, patch
+
 from curriculum_api.learning_storage import read_sql
 
 
@@ -15,6 +16,8 @@ class QuizPlacementTests(unittest.TestCase):
         self.addCleanup(guard.stop)
         self.cursor = MagicMock()
         connection = MagicMock()
+        connection.vendor = 'sqlite'
+        self.cursor.db = connection
         connection.cursor.return_value.__enter__.return_value = self.cursor
         self.scope = {'connections': {'enrolment': connection}, 'DatabaseError': RuntimeError,
                       'read_sql': read_sql,

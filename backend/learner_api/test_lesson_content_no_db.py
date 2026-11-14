@@ -23,7 +23,10 @@ STORED_HTML = ("<h2 class='title'>Week 1</h2><ol><li>One</li></ol>"
 class LessonContentReadTests(SimpleTestCase):
     def read(self, rows, component_id='V1', plan=({'moduleId': 'M1'},), setting=reader._lesson_content):
         cursor = ScriptedCursor([rows])
-        with patch.object(reader, 'connections', {'enrolment': ScriptedConnection(cursor)}), \
+        connection = ScriptedConnection(cursor)
+        connection.vendor = 'sqlite'
+        cursor.db = connection
+        with patch.object(reader, 'connections', {'enrolment': connection}), \
                 patch.object(reader, 'effective_training_plan', return_value=list(plan)), \
                 patch.object(cursor, 'execute', wraps=cursor.execute) as execute:
             result = setting(SimpleNamespace(), component_id)
