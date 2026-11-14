@@ -51,6 +51,7 @@
 .mediaPanel::before { position: absolute; z-index: -1; inset: 0; background: #f8f5fc; clip-path: polygon(18px 0, 100% 0, 100% 100%, 0 100%); content: ''; }
 .coverFrame { position: absolute; inset: 0; display: flex; overflow: hidden; clip-path: polygon(18px 0, 100% 0, 100% 100%, 0 100%); }
 .cover { display: block; min-width: 0; min-height: 0; width: 100%; height: 100%; object-fit: cover; object-position: 50% 35%; opacity: 1; }
+.coverFallback { display: flex; width: 100%; height: 100%; flex-direction: column; align-items: center; justify-content: center; gap: 6px; padding: 12px 20px; background: #f8f5fc; color: #665873; font-size: 14px; text-align: center; }
 .cardMain { min-width: 0; }
 .cardHeader { display: flex; min-width: 0; align-items: center; gap: 10px; padding-right: 36px; }
 .coverHeader .cardHeader { padding-right: 0; }

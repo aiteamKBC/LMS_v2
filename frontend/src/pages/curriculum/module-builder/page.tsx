@@ -8579,6 +8579,17 @@ function ReadOnlyMetricChip({ label, value, suffix, tone }: {
   );
 }
 
+function CatalogueCover({ url, title }: { url: string; title: string }) {
+  const [failed, setFailed] = useState(false);
+
+  if (failed) return <div role="img" aria-label={`Cover unavailable for ${title}`} className={catalogueStyles.coverFallback}>
+    <AppIcon name="ri-image-line" size={28} aria-hidden="true" />
+    <span>Image unavailable</span>
+  </div>;
+
+  return <img src={url} alt={`Cover for ${title}`} className={catalogueStyles.cover} loading="lazy" decoding="async" onError={() => setFailed(true)} />;
+}
+
 function CatalogueDescription({ text }: { text: string }) {
   const [expanded, setExpanded] = useState(false);
   const descriptionId = useId();
@@ -8698,7 +8709,7 @@ function ModuleCatalogueCard({
             <AppIcon name={module.coverImage ? 'ri-image-edit-line' : 'ri-image-add-line'} size={17} />
           </button>
           {module.coverImage && <div className={catalogueStyles.coverFrame}>
-            <img src={module.coverImage} alt={`Cover for ${module.title}`} className={catalogueStyles.cover} loading="lazy" decoding="async" />
+            <CatalogueCover key={module.coverImage} url={module.coverImage} title={module.title} />
           </div>}
         </div>
       </header>

@@ -1,4 +1,4 @@
-import { act, render, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { createMemoryRouter, MemoryRouter, RouterProvider, useLocation } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -363,6 +363,27 @@ describe('Module Builder delivery catalogue', { timeout: 15000 }, () => {
     await userEvent.click(cardFor('Data Foundations').getByRole('button', { name: 'Change image' }));
     expect(screen.getByTestId('module-form-defaults')).toHaveAttribute('data-editing-id', 'MOD-1');
     expect(vi.mocked(fetch).mock.calls.every(([, init]) => !init?.method || init.method === 'GET')).toBe(true);
+  });
+
+  it('replaces a failed cover locally and recovers when that module gets a new image URL', async () => {
+    modules = modules.map(module => ({ ...module, coverImage: module.id === 'MOD-1' ? '/missing-cover.png' : '/other-cover.png' }));
+    const view = await renderCatalogue();
+    await cardFor('Data Foundations').findByRole('button', { name: 'Data Foundations: 3 learners' });
+    const reads = vi.mocked(fetch).mock.calls.length;
+    fireEvent.error(cardFor('Data Foundations').getByRole('img', { name: 'Cover for Data Foundations' }));
+    expect(cardFor('Data Foundations').getByRole('img', { name: 'Cover unavailable for Data Foundations' })).toHaveTextContent('Image unavailable');
+    expect(cardFor('Data Foundations').queryByRole('img', { name: 'Cover for Data Foundations' })).not.toBeInTheDocument();
+    expect(cardFor('Network Basics').getByRole('img', { name: 'Cover for Network Basics' })).toHaveAttribute('src', '/other-cover.png');
+    expect(cardFor('Data Foundations').getByRole('button', { name: 'Change image' })).toBeEnabled();
+    expect(vi.mocked(fetch).mock.calls).toHaveLength(reads);
+
+    modules = modules.map(module => module.id === 'MOD-1' ? { ...module, coverImage: '/replacement-cover.png' } : module);
+    const { default: ModuleBuilder } = await import('../page');
+    view.rerender(<MemoryRouter initialEntries={['/curriculum/module-builder']}><ModuleBuilder /></MemoryRouter>);
+    expect(cardFor('Data Foundations').getByRole('img', { name: 'Cover for Data Foundations' })).toHaveAttribute('src', '/replacement-cover.png');
+    expect(cardFor('Data Foundations').queryByRole('img', { name: 'Cover unavailable for Data Foundations' })).not.toBeInTheDocument();
+    await userEvent.click(cardFor('Data Foundations').getByRole('button', { name: 'Change image' }));
+    expect(screen.getByTestId('module-form-defaults')).toHaveAttribute('data-editing-id', 'MOD-1');
   });
 
   it('retains all delivery scopes and dates when one catalogue module runs in multiple groups', async () => {
