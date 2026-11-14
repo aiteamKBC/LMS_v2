@@ -9371,7 +9371,7 @@ function DeliveryScopeValue({ usage }: { usage: ModuleDeliveryUsage }) {
             {cohort}
           </Link>
         ) : (
-          <span>{cohort}</span>
+          <span title={cohort}>{cohort}</span>
         )}
       </span>}
       {group && <span className={catalogueStyles.scopePart}>
@@ -9385,7 +9385,7 @@ function DeliveryScopeValue({ usage }: { usage: ModuleDeliveryUsage }) {
             {group}
           </Link>
         ) : (
-          <span>{group}</span>
+          <span title={group}>{group}</span>
         )}
       </span>}
     </span>

@@ -47,10 +47,10 @@
 .cardHeading { position: relative; padding: 10px 16px 8px; }
 .coverHeader { display: grid; grid-template-columns: minmax(0, 1fr) clamp(240px, 30cqw, 435px); align-items: center; gap: 14px; padding: 0 0 0 16px; }
 .coverHeader .cardMain { padding: 10px 0 8px; }
-.mediaPanel { position: relative; isolation: isolate; display: flex; min-height: 214px; align-self: stretch; align-items: center; justify-content: center; padding: 6px 8px 6px 24px; }
+.mediaPanel { position: relative; isolation: isolate; display: flex; min-height: 214px; align-self: stretch; align-items: center; justify-content: center; }
 .mediaPanel::before { position: absolute; z-index: -1; inset: 0; background: #f8f5fc; clip-path: polygon(18px 0, 100% 0, 100% 100%, 0 100%); content: ''; }
-.coverFrame { display: flex; width: 100%; height: 202px; overflow: hidden; align-items: center; justify-content: center; }
-.cover { display: block; min-width: 0; min-height: 0; max-width: 100%; max-height: 100%; width: 100%; height: 100%; object-fit: contain; opacity: 1; }
+.coverFrame { position: absolute; inset: 0; display: flex; overflow: hidden; clip-path: polygon(18px 0, 100% 0, 100% 100%, 0 100%); }
+.cover { display: block; min-width: 0; min-height: 0; width: 100%; height: 100%; object-fit: cover; object-position: 50% 35%; opacity: 1; }
 .cardMain { min-width: 0; }
 .cardHeader { display: flex; min-width: 0; align-items: center; gap: 10px; padding-right: 36px; }
 .coverHeader .cardHeader { padding-right: 0; }
@@ -94,14 +94,14 @@
 .metric strong { display: inline; color: #241b35; font-size: 16px; font-weight: 700; line-height: 1.5; }
 .metric > span > span { margin-left: 5px; color: #554a65; font-size: 14px; }
 .hours { color: #572780; }
-.deliveryRows { display: grid; min-width: 0; max-width: 1100px; gap: 6px; }
+.deliveryRows { display: grid; min-width: 0; gap: 6px; }
 .deliveryRow { display: grid; min-width: 0; grid-template-columns: minmax(0, 1.8fr) minmax(0, 1.05fr) minmax(180px, .65fr); align-items: start; gap: 6px 10px; }
 .deliveryScope { min-width: 0; grid-column: 1; }
-.scopeValues { display: grid; min-width: 0; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px 16px; }
-.scopePart { display: block; min-width: 0; color: #342046; font-size: 14px; font-weight: 600; line-height: 1.5; overflow-wrap: anywhere; }
+.scopeValues { display: grid; min-width: 0; grid-template-columns: minmax(0, .6fr) minmax(0, 1.4fr); gap: 6px 16px; }
+.scopePart { display: flex; min-width: 0; align-items: baseline; gap: 5px; color: #342046; font-size: 14px; font-weight: 600; line-height: 1.5; }
 .scopePart:only-child { grid-column: 1 / -1; }
-.scopePart > a, .scopePart > span:last-child:not(.scopeLabel) { max-width: 100%; }
-.scopeLabel { margin-inline-end: 5px; color: #665873; font-size: 13px; font-weight: 500; }
+.scopePart > a, .scopePart > span:last-child:not(.scopeLabel) { display: block; min-width: 0; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.scopeLabel { flex-shrink: 0; color: #665873; font-size: 13px; font-weight: 500; }
 .scopeLabel::after { content: ':'; }
 .deliveryFact { display: grid; max-width: 100%; grid-template-columns: 14px max-content minmax(0, 1fr); align-content: start; align-items: baseline; gap: 0 5px; }
 .deliveryFact[data-fact="Runs"] { grid-column: 2; }
@@ -146,8 +146,7 @@
 @container (max-width: 650px) {
   .cardHeading { padding: 10px 12px 6px; }
   .coverHeader { grid-template-columns: minmax(0, 1fr) clamp(112px, 40cqw, 160px); align-items: start; gap: 5px 10px; padding: 0 0 6px 12px; }
-  .mediaPanel { grid-column: 2; grid-row: 1; min-height: 150px; padding: 28px 6px 6px 18px; }
-  .coverFrame { height: 116px; }
+  .mediaPanel { grid-column: 2; grid-row: 1; min-height: 150px; }
   .coverHeader .cardMain { display: contents; }
   .coverHeader .cardHeader { grid-column: 1; grid-row: 1; padding-top: 10px; }
   .coverHeader .cardBody { grid-column: 1 / -1; padding-right: 12px; }
