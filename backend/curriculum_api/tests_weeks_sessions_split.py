@@ -15,10 +15,10 @@ import json
 from datetime import datetime
 
 from curriculum_api import views
-from curriculum_api.tests import CurriculumPersistenceHarness
+from curriculum_api.tests import CurriculumPersistenceTransactionHarness
 
 
-class WeeksAndSessionsAreStoredApart(CurriculumPersistenceHarness):
+class WeeksAndSessionsAreStoredApart(CurriculumPersistenceTransactionHarness):
     """The counts a module carries, and which of them each feature reads."""
 
     def create_module(self, *, week_days='Monday, Thursday', weeks=5, sessions=10):
