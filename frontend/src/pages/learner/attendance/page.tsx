@@ -1,5 +1,5 @@
 import { invalidateLearnerReads } from '@/api/learnerRead';
-import { useCallback, useMemo, useRef, useState, type CSSProperties } from 'react';
+import { useCallback, useMemo, useState, type CSSProperties } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { AppIcon } from '@/components/feature/AppIcon';
@@ -8,7 +8,6 @@ import { useMyLearner } from '@/hooks/useMyLearner';
 import { useLiveLearnerRead } from '@/hooks/useLiveLearnerRead';
 import { learningSchedule } from '@/api/learnerOverview';
 import { useRefreshOnReturn } from '@/hooks/useRefreshOnReturn';
-import { useLearnerWorkspaceAccess } from '@/hooks/useLearnerWorkspaceAccess';
 import { RowsSkeleton } from '@/components/feature/Skeletons';
 import { PageContainer } from '@/components/ui/PageContainer';
 import { Panel } from '@/components/ui/Panel';
@@ -17,7 +16,7 @@ import { LearnerLoadError } from '@/components/feature/LearnerLoadError';
 import type { PageTabItem } from '@/components/ui/PageTabs';
 import { RowAction } from '@/components/ui/ActionRow';
 import {
-  confirmAttendance, fetchAttendanceWorkspace, isManuallyConfirmedLecture, peekAttendanceWorkspace,
+  fetchAttendanceWorkspace, isManuallyConfirmedLecture, peekAttendanceWorkspace,
   type AttendanceLecture,
 } from '@/api/attendanceLectures';
 import AbsenceReportForm from './components/AbsenceReportForm';
@@ -47,7 +46,6 @@ function joinErrorMessage(reason: string) {
 
 export default function AttendancePage() {
   const learner = useMyLearner();
-  const access = useLearnerWorkspaceAccess(learner.id);
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const joinError = searchParams.get('joinError');
@@ -69,23 +67,16 @@ export default function AttendancePage() {
   const [catchup, setCatchup] = useState<AttendanceLecture | null>(null);
   const [catchupBooking, setCatchupBooking] = useState<LearnerCalendarEvent | null>(null);
   const [bookingBusy, setBookingBusy] = useState(false);
-  const [attendBusy, setAttendBusy] = useState(false);
-  const attendInFlight = useRef(false);
   const [attendError, setAttendError] = useState('');
   const [attendNotice, setAttendNotice] = useState('');
-  const [confirmations, setConfirmations] = useState<Record<string, number>>({});
   const allLectures = useMemo(() => {
     const modules = [...(data?.modules || []), ...(schedule.data?.modules || []).map(module => ({
       id: `native:${module.id}`, title: module.title,
     }))];
-    return attendanceLecturesForDisplay(data?.lectures || [], modules).map(row => {
-      const minutes = confirmations[`${learner.kind}:${learner.id}:${row.id}`];
-      return minutes == null ? row : { ...row, status: 'completed' as const, attendanceConfirmed: true,
-        creditedMinutes: minutes, canReportAbsence: false, catchupStatus: null };
-    });
-  }, [data, schedule.data, confirmations, learner.kind, learner.id]);
+    return attendanceLecturesForDisplay(data?.lectures || [], modules);
+  }, [data, schedule.data]);
   const now = useLectureClock(allLectures);
-  const featured = featuredLecture(allLectures, now, data?.timeZone);
+  const featured = featuredLecture(allLectures, now, data?.timeZone, schedule.data?.modules);
   const today = learningToday();
   const currentModule = useMemo(() => {
     if (!schedule.data) return null;
@@ -144,18 +135,6 @@ export default function AttendancePage() {
     const search = new URLSearchParams({ source: log.sourceRef });
     navigate(`/learner/monthly-logs/${learner.kind}/${learner.id}/${log.month}?${search}`);
   };
-  const attend = async (row: AttendanceLecture) => {
-    if (attendInFlight.current || !access.canProgress) return;
-    attendInFlight.current = true;
-    setAttendBusy(true); setAttendError(''); setAttendNotice('');
-    try {
-      const result = await confirmAttendance(learner.kind, learner.id, row.id);
-      setConfirmations(current => ({ ...current, [`${learner.kind}:${learner.id}:${row.id}`]: result.creditedMinutes }));
-      setAttendNotice(`Attendance recorded for ${row.title}. ${result.creditedHours} ${result.creditedHours === 1 ? 'hour' : 'hours'} credited.`);
-      read.refresh();
-    } catch (error) { setAttendError(error instanceof Error ? error.message : 'Could not save attendance. Please try again.'); }
-    finally { attendInFlight.current = false; setAttendBusy(false); }
-  };
   // Links a catch-up to the reported absence: an existing booking the learner picks,
   // or (passed in) one just booked here, which is linked straight away.
   const saveCatchup = async (booking: LearnerCalendarEvent | null = catchupBooking): Promise<boolean> => {
@@ -199,8 +178,7 @@ export default function AttendancePage() {
         Lectures could not refresh. Showing the last loaded record. <button onClick={read.refresh} className="font-semibold underline">Retry</button>
       </div>}
       {read.loading ? <Panel><RowsSkeleton rows={6} /></Panel> : !data ? <LearnerLoadError error={read.error || 'Could not load lectures.'} onRetry={read.refresh} /> : <>
-        <FeaturedLecture lecture={featured} now={now} timeZone={data.timeZone} busy={attendBusy} canAttend={access.canProgress}
-          error={attendError} notice={attendNotice} onAttend={attend} onReport={setReport} />
+        <FeaturedLecture lecture={featured} now={now} timeZone={data.timeZone} error={attendError} notice={attendNotice} />
         <div className={styles.workspace}>
           <div className={styles.mainColumn}>
             <Panel className={styles.overview}>

@@ -1,19 +1,49 @@
 import { useEffect, useState } from 'react';
 import type { AttendanceLecture } from '@/api/attendanceLectures';
+import type { PlanModule } from '@/api/trainingPlanDashboard';
+import { deliveryDateKey, deliveryWeekEnd } from '@/lib/deliveryWeek';
 
 export function lectureToday(now: number, timeZone = 'Europe/London'): string {
   return new Intl.DateTimeFormat('en-CA', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit' }).format(now);
 }
 
-export function featuredLecture(lectures: AttendanceLecture[], now: number, timeZone?: string): AttendanceLecture | null {
+/** Keep a delivered session available through its training week, including recordings. */
+export function featuredLecture(lectures: AttendanceLecture[], now: number, timeZone?: string,
+  modules: Pick<PlanModule, 'id' | 'curriculumSlots'>[] = []): AttendanceLecture | null {
   const today = lectureToday(now, timeZone);
-  const candidates = lectures.filter(row => row.date === today ||
-    (row.date > today && row.status === 'upcoming'));
-  const priority = (row: AttendanceLecture) => row.date !== today ? 4 :
-    ['completed', 'late'].includes(row.status) ? 3 : isLectureLive(row, now) ? 0 :
-      !row.endsAt || Date.parse(row.endsAt) > now ? 1 : 2;
-  return candidates.sort((a, b) => priority(a) - priority(b) ||
-    `${a.date} ${a.startTime}`.localeCompare(`${b.date} ${b.startTime}`) || a.id.localeCompare(b.id))[0] || null;
+  const candidates = lectures.filter(row => row.status !== 'cancelled' && deliveryDateKey(row.date))
+    .sort((a, b) => `${a.date} ${a.startTime}`.localeCompare(`${b.date} ${b.startTime}`) || a.id.localeCompare(b.id));
+  const liveRows = candidates.filter(row => isLectureLive(row, now));
+  const live = liveRows.find(row => !['completed', 'late'].includes(row.status)) || liveRows[0];
+  if (live) return live;
+
+  const currentWeeks = new Map(modules.map(module => {
+    const slots = (module.curriculumSlots || []).filter(slot => deliveryDateKey(slot.date))
+      .slice().sort((a, b) => a.date.localeCompare(b.date));
+    const slot = slots.filter(item => item.date <= today).at(-1);
+    const end = slot && deliveryWeekEnd(slot.date);
+    const next = slot && slots.find(item => item.date > slot.date);
+    const moduleKey: string = `native:${module.id}`;
+    return [moduleKey, { hasSlots: slots.length > 0,
+      start: slot?.date, end, next: next?.date, teaching: slot?.type === 'live-session' }] as const;
+  }));
+  const current = candidates.filter(row => {
+    const week = currentWeeks.get(row.moduleId);
+    if (week?.hasSlots) {
+      return week.teaching && week.start && week.end && today <= week.end
+        && (!week.next || today < week.next) && row.date >= week.start && row.date <= week.end
+        && (!week.next || row.date < week.next);
+    }
+    // Older payloads have no slot spine: the lecture's own delivery date anchors its seven days.
+    const end = deliveryWeekEnd(row.date);
+    return row.date <= today && end != null && today <= end;
+  });
+  const upcoming = (row: AttendanceLecture) => {
+    if (row.date < today || ['completed', 'late'].includes(row.status)) return false;
+    const end = Date.parse(row.endsAt || '');
+    return !Number.isFinite(end) || end > now;
+  };
+  return current.find(upcoming) || current.at(-1) || candidates.find(upcoming) || null;
 }
 
 export function isLectureLive(lecture: AttendanceLecture, now: number): boolean {
