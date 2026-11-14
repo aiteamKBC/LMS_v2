@@ -79,10 +79,10 @@ describe('connected student home', () => {
     vi.setSystemTime(new Date('2026-10-14T09:00:00Z'));
     state.events = [
       { id: 'native:a', type: 'assignment', title: 'My assignment', date: '2026-10-19' },
-      { id: 's1', type: 'session', title: 'First lecture', date: '2026-10-20T08:00:00+00:00' },
+      { id: 's1', type: 'session', title: 'First lecture', date: '2026-10-20T08:00:00+00:00', componentId: 'LIVE-W2' },
       { id: 'r', type: 'review', title: 'My progress review', date: '2026-10-21T10:00:00+01:00', booked: true },
-      { id: 's2', type: 'session', title: 'Second lecture', date: '2026-10-22T08:00:00+00:00' },
-      { id: 's3', type: 'session', title: 'Friday lecture', date: '2026-10-23T13:00:00+00:00' },
+      { id: 's2', type: 'session', title: 'Second lecture', date: '2026-10-22T08:00:00+00:00', componentId: 'LIVE-W3' },
+      { id: 's3', type: 'session', title: 'Friday lecture', date: '2026-10-23T13:00:00+00:00', componentId: 'LIVE-W4' },
     ];
     page();
     const upcoming = within(screen.getByRole('complementary', { name: 'Upcoming' }));
@@ -91,16 +91,30 @@ describe('connected student home', () => {
       ['Upcoming assignment', 'Upcoming lecture', 'Upcoming review', 'Upcoming lecture', 'Upcoming lecture']);
     expect(within(rows[0]).getByRole('link')).toHaveAttribute('href', '/learner/monthly-submission');
     expect(within(rows[0]).getByRole('link')).toHaveTextContent('Assignment due');
-    expect(within(rows[1]).getByRole('link')).toHaveAttribute('href', '/learner/attendance');
+    expect(within(rows[1]).getByRole('link')).toHaveAttribute('href', '/learner/component/apprenticeship/71/LIVE-W2');
     expect(within(rows[1]).getByRole('link')).toHaveTextContent('Learning session');
     expect(within(rows[2]).getByRole('link')).toHaveTextContent('My progress reviewProgress review');
     expect(within(rows[2]).getByRole('link')).toHaveAttribute('href', '/learner/calendar');
     expect(within(rows[1]).getByText('20 Oct')).toBeInTheDocument();
     expect(within(rows[4]).getByText('Fri')).toBeInTheDocument();
     expect(within(rows[4]).getByRole('link')).toHaveTextContent('Friday lecture');
+    expect(within(rows[3]).getByRole('link')).toHaveAttribute('href', '/learner/component/apprenticeship/71/LIVE-W3');
+    fireEvent.click(within(rows[4]).getByRole('link'));
+    expect(screen.getByTestId('destination')).toHaveTextContent('/learner/component/apprenticeship/71/LIVE-W4');
     expect(upcoming.getByRole('link', { name: 'View all upcoming events' })).toHaveAttribute('href', '/learner/calendar');
     fireEvent.click(within(rows[2]).getByRole('link'));
     expect(screen.getByTestId('destination')).toHaveTextContent('/learner/calendar');
+  });
+  it.each(['admin', 'staff'])('opens the selected learner live component from a %s preview', async role => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-10-14T09:00:00Z'));
+    state.role = role;
+    state.events = [{ id: 's1', type: 'session', title: 'Next lecture', date: '2026-10-20T09:00:00Z', componentId: 'LIVE-502' }];
+    workspace('/workspace/learner/commercial/502');
+    await screen.findByRole('heading', { name: 'Alex' });
+    const upcoming = within(screen.getByRole('complementary', { name: 'Upcoming' }));
+    fireEvent.click(upcoming.getByRole('link', { name: /Next lecture/ }));
+    expect(screen.getByTestId('destination')).toHaveTextContent('/learner/component/commercial/502/LIVE-502');
   });
   it.each([1, 2])('shows only the %i events the server returned, without placeholder rows', count => {
     vi.useFakeTimers({ toFake: ['Date'] });
