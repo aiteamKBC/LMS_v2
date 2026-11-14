@@ -6,6 +6,7 @@ import * as Router from 'react-router-dom';
 import { MemoryRouter, Routes, Route } from 'react-router-dom';
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
+import Swal from 'sweetalert2';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { AppIcon } from '@/components/feature/AppIcon';
@@ -179,7 +180,15 @@ beforeEach(() => {
   vi.stubGlobal('IntersectionObserver', class { observe() {} disconnect() {} unobserve() {} });
   vi.spyOn(console, 'error').mockImplementation(() => {});
 });
-afterEach(() => { cleanup(); clearAllCachedResources(); vi.useRealTimers(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
+async function cleanupPage() {
+  // SweetAlert owns a portal outside React's root. Unmount the page first so
+  // restoring focus cannot start another read, then restore the document's
+  // accessibility state before the next page is rendered.
+  await act(async () => { cleanup(); });
+  Swal.close();
+  await waitFor(() => expect(document.querySelector('.swal2-container')).not.toBeInTheDocument());
+}
+afterEach(async () => { await cleanupPage(); clearAllCachedResources(); vi.useRealTimers(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
 describe('every learner page', () => {
   it.each(Object.keys(modules).sort().flatMap(file => (['commercial', 'apprenticeship'] as const).map(kind => ({ file, kind }))))('$kind $file renders with empty server data and survives a service failure', async ({ file, kind }) => {
@@ -189,7 +198,7 @@ describe('every learner page', () => {
     const pattern = routes.get(file) || '/learner/test-page';
     const path = pattern.replace(/:kind/g, kind).replace(/:id\b/g, '125').replace(/:\w+/g, '1');
     for (const fail of [false, true]) {
-      cleanup(); clearAllCachedResources();
+      await cleanupPage(); clearAllCachedResources();
       const missing: string[] = [];
       vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
         const url = String(input);
@@ -210,6 +219,10 @@ describe('every learner page', () => {
       // Transient GET failures intentionally retry once after 600 ms. Allow
       // both attempts to settle before asserting the terminal error/empty UI.
       await waitFor(() => expect(document.querySelector('.kbc-skeleton')).not.toBeInTheDocument(), { timeout: 3_000 });
+      if (fail && file.endsWith('/feedback/page.tsx')) {
+        expect(await screen.findByRole('dialog', { name: 'Could not load feedback' }, { timeout: 3_000 }))
+          .toHaveTextContent('Service unavailable. Please try again.');
+      }
       expect(missing, `Unmodelled reads in ${file}: ${missing.join(", ")}`).toEqual([]);
       expect(document.body.textContent?.trim()).not.toBe('');
       expect(screen.queryByLabelText('Loading page')).not.toBeInTheDocument();
