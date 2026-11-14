@@ -46,7 +46,7 @@ from .learner_detail import (
     component_audio_url,
 )
 from .mappers import _normalize_free_courses, _s
-from .models import LearnerFreeCourseProgress
+from .free_course_progress import completed_component_refs, save_completion
 from .free_course_records import progress_owner
 from .free_course_catalogue import builder_free_courses
 from .learning_plan import _effective_plan_ids, request_preset_cache
@@ -192,11 +192,7 @@ def free_courses(request, kind, pk):
     # the progress table has not been provisioned yet, the course tree must still
     # render (just with nothing ticked) rather than failing the whole page.
     try:
-        completed_refs = set(
-            LearnerFreeCourseProgress.objects
-            .filter(learner_id=progress_owner(source))
-            .values_list("component_ref", flat=True)
-        )
+        completed_refs = completed_component_refs(progress_owner(source))
     except DatabaseError:
         completed_refs = set()
 
@@ -298,11 +294,9 @@ def complete_free_course_activity(request, kind, pk):
         return _error("Activity not found.", 404)
 
     try:
-        LearnerFreeCourseProgress.objects.get_or_create(
-            learner_id=progress_owner(source),
-            component_ref=component_id,
-            defaults={"free_course_ref": free_course_ref, "completed_at": timezone.now()},
-        )
+        saved = save_completion(progress_owner(source), component_id, free_course_ref, timezone.now())
+        if not saved:
+            return _error("This progress record is archived or belongs to another course.", 409)
     except DatabaseError:
         return _error("Could not save your progress. Please try again.", 503)
 
@@ -401,11 +395,9 @@ def submit_free_course_quiz(request, kind, pk, component_id):
 
     if passed:
         try:
-            LearnerFreeCourseProgress.objects.get_or_create(
-                learner_id=progress_owner(source),
-                component_ref=component_id,
-                defaults={"free_course_ref": free_course_ref, "completed_at": timezone.now()},
-            )
+            saved = save_completion(progress_owner(source), component_id, free_course_ref, timezone.now())
+            if not saved:
+                return _error("This progress record is archived or belongs to another course.", 409)
         except DatabaseError:
             return _error("Your quiz was graded but could not be saved. Please try again.", 503)
 
