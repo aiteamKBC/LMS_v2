@@ -1115,3 +1115,53 @@
   .learningPage .list .cardButton > div:first-child { width: 100%; }
   .learningPage .list .cardBody { grid-template-areas: "eyebrow" "title" "details" "cohort" "progress" "action"; grid-template-columns: minmax(0, 1fr); }
 }
+
+/* The angled Module Builder cover, with the learner's existing content only. */
+.learningPage :is(.list, .grid) .moduleCard { border-radius: 12px; background: var(--kbc-surface, #fff); }
+.learningPage :is(.list, .grid) .moduleCard:is(:hover, :focus-within) {
+  border-color: var(--subject-accent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--subject-accent) 25%, transparent), 0 0 12px -5px color-mix(in srgb, var(--subject-accent) 38%, transparent);
+}
+.learningPage :is(.list, .grid) .moduleCard[data-source='legacy'] { background: linear-gradient(105deg, #fffaf3, #fffdf9); }
+.learningPage :is(.list, .grid) .moduleCard .moduleCover { position: relative; overflow: hidden; background: var(--learner-soft, #f8f5fc); }
+.learningPage :is(.list, .grid) .moduleCard .moduleCover .cover { width: 100%; height: 100%; }
+.learningPage :is(.list, .grid) .moduleCard .courseCoverImage { display: block; width: 100%; height: 100%; object-fit: cover; object-position: 50% 35%; }
+.learningPage :is(.list, .grid) .moduleCard .defaultCoverImage { object-fit: contain; }
+.learningPage :is(.list, .grid) .moduleCard .cardMetaRow { justify-content: flex-start; gap: 6px 8px; }
+.learningPage :is(.list, .grid) .moduleCard .sourceBadge { flex-shrink: 1; white-space: normal; text-align: left; }
+.learningPage :is(.list, .grid) .moduleCard .status { position: static; padding: 3px 8px; border-radius: 6px; font-size: 12px; box-shadow: none; }
+.learningPage :is(.list, .grid) .moduleCard .cardTitle { display: block; height: auto; min-height: 0; max-height: none; margin: 0; overflow: visible; font-size: 20px !important; line-height: 1.4; }
+.learningPage :is(.list, .grid) .moduleCard .cardCohort { margin: 0; font-size: 12px; line-height: 1.5; }
+.learningPage :is(.list, .grid) .moduleCard .moduleDetails { display: grid; min-width: 0; gap: 12px; border: 0; background: transparent; overflow: visible; }
+.learningPage :is(.list, .grid) .moduleCard .moduleDetails > div { display: block; padding: 0; border: 0; }
+.learningPage :is(.list, .grid) .moduleCard .moduleDetails dt { display: flex; align-items: center; gap: 5px; margin: 0; color: var(--kbc-muted, #697a8b); font-size: 11px; font-weight: 500; line-height: 1.4; text-transform: none; letter-spacing: normal; }
+.learningPage :is(.list, .grid) .moduleCard .moduleDetails dt svg { flex-shrink: 0; color: var(--subject-ink); }
+.learningPage :is(.list, .grid) .moduleCard .moduleDetails dd { margin-top: 4px; color: var(--kbc-text, #1c3048); font-size: 13px; font-weight: 600; line-height: 1.5; white-space: normal; overflow-wrap: anywhere; }
+.learningPage .list .moduleCard .cardButton { min-height: 225px; flex-direction: row; align-items: stretch; overflow: visible; }
+.learningPage .list .moduleCard .moduleCover:first-child { order: 2; width: clamp(170px, 25%, 300px); height: auto; flex-shrink: 0; align-self: stretch; clip-path: polygon(20px 0, 100% 0, 100% 100%, 0 100%); }
+.learningPage .list .moduleCard .cardBody { order: 1; display: grid; grid-template-areas: 'eyebrow eyebrow' 'title title' 'cohort cohort' 'details details' 'progress action'; grid-template-columns: minmax(0, 1fr) minmax(135px, .48fr); align-content: start; gap: 10px 22px; padding: 18px 20px; }
+.learningPage .list .moduleCard .moduleDetails { grid-template-columns: repeat(4, minmax(0, 1fr)); padding: 10px 0; border-block: 1px solid var(--kbc-border, #e7e1ef); }
+.learningPage .list .moduleCard .cardProgress { align-self: center; }
+.learningPage .list .moduleCard .cardProgress strong { font-size: 14px; }
+.learningPage .list .moduleCard .cardProgress > div > div:first-child { font-size: 12px; }
+.learningPage .list .moduleCard .cardAction { align-self: center; margin: 0; min-height: 42px; font-size: 13px; white-space: normal; }
+.learningPage .grid .moduleCard .moduleCover { width: 100%; height: 170px; flex-shrink: 0; clip-path: polygon(16px 0, 100% 0, 100% calc(100% - 12px), 0 100%); }
+.learningPage .grid .moduleCard .cardBody { gap: 12px; padding: 18px; }
+.learningPage .grid .moduleCard .moduleDetails { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.learningPage .grid .moduleCard .cardDescription { margin: 0; font-size: 13px; }
+.learningPage .grid .moduleCard .cardProgress { padding-top: 4px; }
+.learningPage .grid .moduleCard .cardProgress > div > div:first-child { font-size: 13px; }
+.learningPage .grid .moduleCard .cardProgress strong { font-size: 15px; }
+.learningPage .grid .moduleCard .nextActivity { min-height: 60px; margin-top: 0; }
+.learningPage .grid .moduleCard .nextActivity small { font-size: 11px; }
+.learningPage .grid .moduleCard .nextActivity strong { font-size: 13px; }
+.learningPage .grid .moduleCard .cardAction { margin-top: 0; min-height: 44px; font-size: 14px; }
+@container subjects (max-width: 760px) {
+  .learningPage .list .moduleCard .moduleCover:first-child { width: 160px; }
+  .learningPage .list .moduleCard .cardBody { grid-template-areas: 'eyebrow' 'title' 'cohort' 'details' 'progress' 'action'; grid-template-columns: minmax(0, 1fr); padding: 16px; }
+  .learningPage .list .moduleCard .moduleDetails { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@container subjects (max-width: 480px) {
+  .learningPage .list .moduleCard .cardButton { flex-direction: column; }
+  .learningPage .list .moduleCard .moduleCover:first-child { order: 0; width: 100%; height: 160px; clip-path: polygon(16px 0, 100% 0, 100% calc(100% - 12px), 0 100%); }
+}

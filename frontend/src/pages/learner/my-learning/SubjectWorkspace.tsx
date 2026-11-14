@@ -2,7 +2,7 @@ import { useEffect, useId, useMemo, useState, type MouseEvent } from 'react';
 import { LearnerLoadError } from '@/components/feature/LearnerLoadError';
 import { Notice } from '@/components/ui/Notice';
 import { Link, Navigate, useLocation, useNavigate } from 'react-router-dom';
-import { ArrowRight, Award, BookOpen, CheckCircle2, ChevronLeft, ChevronRight, GraduationCap, Layers3, Loader2, Map as MapIcon, Search } from 'lucide-react';
+import { ArrowRight, Award, BookOpen, CalendarDays, CheckCircle2, ChevronLeft, ChevronRight, GraduationCap, Layers3, Loader2, Map as MapIcon, Search, UserRound, Video } from 'lucide-react';
 import type { LearnerDetail } from '@/api/learnerDetail';
 import type { LearnerMetrics } from '@/api/learnerMetrics';
 import { type StudentActivityItem, type StudentActivityResponse, type SubjectAttemptResult } from '@/api/studentActivity';
@@ -204,7 +204,7 @@ export function SubjectCard({ subject, cover, tone = 'purple', onOpen, template,
   const origin = subject.importedCourseRef || subject.replacementCourseRef ? 'legacy' : subject.source;
   return <article className={`group ${styles.card} ${styles.subjectTheme} ${styles.moduleCard}`} data-tone={tone} data-source={origin}>
     <button type="button" onClick={onOpen} className={styles.cardButton}>
-      <div className="relative w-full"><Cover title={subject.title} url={cover} fallbackUrl={DEFAULT_MODULE_COVER} /></div>
+      <div className={styles.moduleCover}><Cover title={subject.title} url={cover} fallbackUrl={DEFAULT_MODULE_COVER} /></div>
       <div className={styles.cardBody}>
         <div className={styles.cardMetaRow}>
           <span className={styles.sourceBadge} data-source={origin}>
@@ -226,10 +226,10 @@ export function SubjectCard({ subject, cover, tone = 'purple', onOpen, template,
         <h3 className={styles.cardTitle}>{subject.title}</h3>
         <p className={`${styles.cardCohort} mb-2 text-xs text-foreground-500 break-words`}>Cohort: <span className="font-semibold">{planModule?.cohort_name?.trim() || 'Not available'}</span></p>
         <dl className={styles.moduleDetails} aria-label={`${moduleName} module details`}>
-          <div><dt>Tutor</dt><dd>{tutorName}</dd></div>
-          <div><dt>Start date</dt><dd>{startDate}</dd></div>
-          <div><dt>End date</dt><dd>{endDate}</dd></div>
-          <div><dt>Sessions</dt><dd>{sessionCount == null ? 'Not set' : `${sessionCount} ${sessionCount === 1 ? 'session' : 'sessions'}`}</dd></div>
+          <div><dt><UserRound size={14} aria-hidden="true" />Tutor</dt><dd>{tutorName}</dd></div>
+          <div><dt><CalendarDays size={14} aria-hidden="true" />Start date</dt><dd>{startDate}</dd></div>
+          <div><dt><CalendarDays size={14} aria-hidden="true" />End date</dt><dd>{endDate}</dd></div>
+          <div><dt><Video size={14} aria-hidden="true" />Sessions</dt><dd>{sessionCount == null ? 'Not set' : `${sessionCount} ${sessionCount === 1 ? 'session' : 'sessions'}`}</dd></div>
         </dl>
         <p className={styles.cardDescription}>Explore your learning materials and activities.</p>
         <div className={styles.cardProgress}><Progress done={completed} total={total} compact aggregate={subject.aggregateProgress ?? subject.card?.progress} label={`${subject.title} ${subject.source === 'legacy' ? 'previous learning' : 'current plan'} activities progress`} />
