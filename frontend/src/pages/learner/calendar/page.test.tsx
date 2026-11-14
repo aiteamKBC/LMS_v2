@@ -129,21 +129,26 @@ describe('learner calendar actions', () => {
     expect(timer.mock.calls.some(([, delay]) => delay === 105 * 60_000)).toBe(true);
   });
 
-  it.each(['commercial', 'apprenticeship'] as const)('does not offer personal event creation for %s learners and preserves calendar actions', async kind => {
+  it.each(['commercial', 'apprenticeship'] as const)('does not offer personal events or reminder settings for %s learners and preserves calendar actions', async kind => {
     vi.mocked(useLinkedLearner).mockReturnValue({ kind, id: '125' });
+    const requestPermission = vi.fn();
+    vi.stubGlobal('Notification', class { static permission = 'default'; static requestPermission = requestPermission; });
     setup();
     await screen.findAllByRole('button', { name: /Catch-up with your coach/ });
     fireEvent.click(screen.getByRole('button', { name: 'More' }));
     const menu = screen.getByRole('menu', { name: 'Calendar actions' });
     expect(within(menu).queryByRole('menuitem', { name: 'Create Event' })).not.toBeInTheDocument();
     expect(within(menu).getAllByRole('menuitem').map(item => item.textContent)).toEqual([
-      'Connect Personal Calendar', 'Share Calendar', 'Set up Notifications', 'Export All Events',
+      'Connect Personal Calendar', 'Share Calendar', 'Export All Events',
     ]);
     expect(screen.queryByText('Create New Event')).not.toBeInTheDocument();
+    expect(within(menu).queryByRole('menuitem', { name: /Notifications/ })).not.toBeInTheDocument();
+    expect(screen.queryByText('Notification Settings')).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'More' }));
     fireEvent.click(screen.getByRole('button', { name: 'Book Coach Session' }));
     expect(await screen.findByRole('dialog', { name: 'Book a Coach Session' })).toBeVisible();
     expect(bookLearnerCalendarSession).not.toHaveBeenCalled();
+    expect(requestPermission).not.toHaveBeenCalled();
   });
 });
 

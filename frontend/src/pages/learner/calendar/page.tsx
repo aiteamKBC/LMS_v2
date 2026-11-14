@@ -72,13 +72,11 @@ function calendarICSEvent(event: CalendarEvent): ICSEvent {
  * coach session (the primary action) moves in here so the toolbar stays a
  * single row instead of a stack of equally-loud buttons. */
 function CalendarMoreMenu({
-  connectedCount, notificationsEnabled, onConnectCalendar, onShare, onNotifications, onExportAll,
+  connectedCount, onConnectCalendar, onShare, onExportAll,
 }: {
   connectedCount: number;
-  notificationsEnabled: boolean;
   onConnectCalendar: () => void;
   onShare: () => void;
-  onNotifications: () => void;
   onExportAll: () => void;
 }) {
   const [open, setOpen] = useState(false);
@@ -95,7 +93,6 @@ function CalendarMoreMenu({
   const items: { label: string; icon: string; onClick: () => void }[] = [
     { label: connectedCount > 0 ? `${connectedCount} calendar${connectedCount === 1 ? '' : 's'} connected` : 'Connect Personal Calendar', icon: connectedCount > 0 ? 'ri-calendar-check-line' : 'ri-calendar-2-line', onClick: onConnectCalendar },
     { label: 'Share Calendar', icon: 'ri-share-line', onClick: onShare },
-    { label: notificationsEnabled ? 'Notifications enabled' : 'Set up Notifications', icon: 'ri-notification-3-line', onClick: onNotifications },
     { label: 'Export All Events', icon: 'ri-download-line', onClick: onExportAll },
   ];
 
@@ -396,11 +393,6 @@ function getEventTimeRange(time: string): { start: number; end: number } {
   return { start: (startH || 0) * 60 + (startM || 0), end: (endH || 0) * 60 + (endM || 0) };
 }
 
-function requestNotificationPermission(): Promise<'default' | 'granted' | 'denied'> {
-  if (!('Notification' in window)) return Promise.resolve('denied' as const);
-  return Notification.requestPermission();
-}
-
 function showNotification(title: string, body: string) {
   if (!('Notification' in window)) return;
   if (Notification.permission === 'granted') {
@@ -615,8 +607,6 @@ function LearnerCalendarBody() {
       ? showEventDetails.eventKey || showEventDetails.id
       : '');
   const [showDayDrawer, setShowDayDrawer] = useState(false);
-  const [notificationPermission, setNotificationPermission] = useState<'default' | 'granted' | 'denied'>('default');
-  const [showNotificationSettings, setShowNotificationSettings] = useState(false);
   const [showShareCalendar, setShowShareCalendar] = useState(false);
   const [publicFeedUrl, setPublicFeedUrl] = useState<string | null>(null);
   const [feedCopied, setFeedCopied] = useState(false);
@@ -955,7 +945,7 @@ function LearnerCalendarBody() {
     }
   }, [location.search, myEvents, calendarLoading, calendarError, importedBooking.target, openBookSession, openRescheduleSession]);
   useEffect(() => {
-    if ('Notification' in window) { setNotificationPermission(Notification.permission); restoreNotifications(); }
+    if ('Notification' in window) restoreNotifications();
   }, []);
 
   useEffect(() => { if (viewMode !== 'monthly') setShowDayDrawer(false); }, [viewMode]);
@@ -1366,7 +1356,6 @@ function LearnerCalendarBody() {
     setTimeout(() => setAddToCalendarToast(null), 2500);
   };
 
-  const handleEnableNotifications = async () => { const result = await requestNotificationPermission(); setNotificationPermission(result); if (result === 'granted') { setAddToCalendarToast('Push notifications enabled!'); setTimeout(() => setAddToCalendarToast(null), 2500); } };
   const handleGeneratePublicFeed = () => {
     try {
       const confirmedEvents = myEvents.filter(ev => ev.status === 'confirmed' && hasCalendarExportTime(ev));
@@ -1757,16 +1746,6 @@ function LearnerCalendarBody() {
         </>
       )}
 
-      {/* ═══════════ NOTIFICATION SETTINGS MODAL ═══════════ */}
-      {showNotificationSettings && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm" onClick={() => setShowNotificationSettings(false)}>
-          <div className="bg-background-50 rounded-2xl p-6 max-w-sm w-full mx-4 shadow-xl animate-in zoom-in-95 duration-200" onClick={(e) => e.stopPropagation()}>
-            <div className="flex items-center justify-between mb-4"><h3 className="text-base font-heading font-bold text-foreground-900">Notification Settings</h3><button onClick={() => setShowNotificationSettings(false)} className="w-8 h-8 rounded-lg flex items-center justify-center text-foreground-400 hover:bg-background-100 cursor-pointer"><AppIcon className="ri-close-line"></AppIcon></button></div>
-            <div className="space-y-4"><div className="flex items-center justify-between"><div><p className="text-sm font-semibold text-foreground-800">Event Reminders</p></div><div className={`w-10 h-6 rounded-full flex items-center px-0.5 transition-smooth cursor-pointer ${notificationPermission === 'granted' ? 'bg-primary-500' : 'bg-background-200'}`} onClick={() => { if (notificationPermission !== 'granted') handleEnableNotifications(); }}><div className={`w-5 h-5 rounded-full bg-white shadow-sm transition-transform duration-200 ${notificationPermission === 'granted' ? 'translate-x-4' : 'translate-x-0'}`}></div></div></div></div>
-          </div>
-        </div>
-      )}
-
       <PageContainer className="learner-calendar-page">
 
         {(schedulingError || importedBooking.error) && <p role="alert" className="mb-4 rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700">{schedulingError || importedBooking.error}</p>}
@@ -1801,10 +1780,8 @@ function LearnerCalendarBody() {
               </button>
               <CalendarMoreMenu
                 connectedCount={calendarConnections.length}
-                notificationsEnabled={notificationPermission === 'granted'}
                 onConnectCalendar={() => { setConnectionError(null); setShowCalendarConnect(true); }}
                 onShare={() => setShowShareCalendar(true)}
-                onNotifications={() => setShowNotificationSettings(true)}
                 onExportAll={handleExportAllICS}
               />
             </>
