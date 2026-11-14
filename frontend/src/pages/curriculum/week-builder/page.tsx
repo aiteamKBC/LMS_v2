@@ -3,6 +3,7 @@ import { componentSessionTitle, type SessionTitleWeek } from '../shared/sessionD
 import { AssignmentTopicsEditor } from '../shared/AssignmentTopicsEditor';
 import { componentFileList, legacyComponentFile, serialiseComponentFiles, type ComponentFile } from '@/lib/componentFiles';
 import { moduleUploadedFiles, withStoredUploads } from './moduleUploadedFiles';
+import { MoveComponentButton } from './MoveComponentButton';
 import { Fragment, Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { DndContext, DragOverlay, KeyboardSensor, PointerSensor, closestCenter, useSensor, useSensors, type DragEndEvent, type DragStartEvent } from '@dnd-kit/core';
@@ -1398,65 +1399,6 @@ function CloneComponentButton({ label, otherWeeks, onDuplicateSameWeek, onCopyTo
             {otherWeeks!.map(week => (
               <button key={week.id} type="button" role="menuitem" onClick={() => { setOpen(false); onCopyToWeek?.(week.id); }} className="flex w-full items-center gap-2 px-3 py-2 text-left text-[11px] font-semibold text-foreground-700 hover:bg-primary-50 hover:text-primary-700">
                 <AppIcon className="ri-arrow-right-up-line text-[13px] text-foreground-400"></AppIcon>
-                <span className="truncate">{week.label}</span>
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
-// Moves the component to another week of the module. A linked live session and
-// its recordings go together from whatever weeks they are in, and the menu
-// names them before anything moves.
-function MoveComponentButton({ label, moveNote, otherWeeks, onMoveToWeek }: {
-  label: string;
-  moveNote: string;
-  otherWeeks: { id: string; label: string }[];
-  onMoveToWeek: (weekId: string) => void;
-}) {
-  const [open, setOpen] = useState(false);
-  const rootRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (!open) return;
-    const closeOnOutsideClick = (event: MouseEvent) => {
-      if (rootRef.current && !rootRef.current.contains(event.target as Node)) setOpen(false);
-    };
-    const closeOnEscape = (event: KeyboardEvent) => { if (event.key === 'Escape') setOpen(false); };
-    document.addEventListener('mousedown', closeOnOutsideClick);
-    window.addEventListener('keydown', closeOnEscape);
-    return () => {
-      document.removeEventListener('mousedown', closeOnOutsideClick);
-      window.removeEventListener('keydown', closeOnEscape);
-    };
-  }, [open]);
-
-  return (
-    <div ref={rootRef} className="relative">
-      <button
-        type="button"
-        aria-label={`Move ${label} to another week`}
-        aria-haspopup="menu"
-        aria-expanded={open}
-        onClick={e => { e.stopPropagation(); setOpen(prev => !prev); }}
-        className="inline-flex h-7 items-center gap-1 rounded-lg px-1.5 text-[10px] font-semibold text-foreground-500 hover:bg-background-100 hover:text-primary-600"
-      >
-        <AppIcon className="ri-drag-move-2-line text-[13px]"></AppIcon>
-        Move
-      </button>
-      {open && (
-        <div role="menu" onClick={e => e.stopPropagation()} className="absolute right-0 top-full z-20 mt-1 w-60 overflow-hidden rounded-xl border border-background-200 bg-background-50 py-1 shadow-xl">
-          <p className="px-3 pb-1 pt-1.5 text-[9px] font-bold uppercase tracking-wide text-foreground-400">Move to another week</p>
-          {moveNote && (
-            <p data-testid="move-component-note" className="px-3 pb-1.5 text-[10px] leading-snug text-purple-700">{moveNote}</p>
-          )}
-          <div className="max-h-48 overflow-y-auto">
-            {otherWeeks.map(week => (
-              <button key={week.id} type="button" role="menuitem" onClick={() => { setOpen(false); onMoveToWeek(week.id); }} className="flex w-full items-center gap-2 px-3 py-2 text-left text-[11px] font-semibold text-foreground-700 hover:bg-primary-50 hover:text-primary-700">
-                <AppIcon className="ri-arrow-right-line text-[13px] text-foreground-400"></AppIcon>
                 <span className="truncate">{week.label}</span>
               </button>
             ))}
