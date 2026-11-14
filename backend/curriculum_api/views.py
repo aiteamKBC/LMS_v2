@@ -20805,7 +20805,7 @@ def apply_module_session_plan_to_weeks(module, group_row, weeks, *, holidays=Non
                 if planned_instant:
                     planned_settings['sessionDateTimeUtc'] = planned_instant
                     planned_settings['teamsStartDateTimeUtc'] = planned_instant
-                if settings.get('teamsCalendarBinding') in {'missing', 'ambiguous'}:
+                if settings.get('teamsCalendarBinding') in {'missing', 'ambiguous', 'unverified'}:
                     # A planned delivery time does not confirm a Microsoft
                     # occurrence. Also clear a stamp left by an older planner.
                     planned_settings['teamsStartDateTimeUtc'] = ''

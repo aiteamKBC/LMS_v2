@@ -1128,7 +1128,7 @@ export function applyModuleWeekSessionPlan(
         // An additional meeting owns its confirmed schedule independently of
         // this week's main delivery slot, including after a week is inserted.
         if (trimmed(settings.extraTeamsMeetingUrl)) return component;
-        const calendarConfirmationPending = ['missing', 'ambiguous'].includes(trimmed(settings.teamsCalendarBinding));
+        const calendarConfirmationPending = ['missing', 'ambiguous', 'unverified'].includes(trimmed(settings.teamsCalendarBinding));
         // A live session runs on the day its week runs on. The date stored on
         // the component is a copy of the plan's, not a second opinion, so it
         // follows the plan whenever the plan moves -- which is what a changed
