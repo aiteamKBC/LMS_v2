@@ -117,23 +117,10 @@ export default function AttendancePage() {
     { value: 'upcoming', label: 'Upcoming', count: counts.upcoming },
   ];
   const openActivities = (row: AttendanceLecture) => {
-    if (row.status === 'upcoming') {
-      const activityHref = row.componentHref ?? row.activities.find(activity => activity.href)?.href;
-      if (activityHref) {
-        navigate(activityHref);
-        return;
-      }
-      const moduleRef = row.moduleId.replace(/^native:/, '');
-      const search = new URLSearchParams({ subject: `current:${moduleRef}` });
-      navigate(`/learner/my-learning/${learner.kind}/${learner.id}?${search}`);
-      return;
-    }
-    const log = row.monthlyLog ?? {
-      month: row.date.slice(0, 7),
-      sourceRef: row.source === 'kbc-attendance' ? `att:${row.sessionId}` : `attendance:${row.sessionId.replace(/^teams:/, '')}`,
-    };
-    const search = new URLSearchParams({ source: log.sourceRef });
-    navigate(`/learner/monthly-logs/${learner.kind}/${learner.id}/${log.month}?${search}`);
+    // The API resolves this exact live-session component by occurrence/module.
+    // Attendance status must not change its destination or pick a different activity.
+    const href = row.componentHref?.trim();
+    if (href) navigate(href);
   };
   // Links a catch-up to the reported absence: an existing booking the learner picks,
   // or (passed in) one just booked here, which is linked straight away.

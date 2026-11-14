@@ -234,6 +234,8 @@ function RecoveryPlanLink({ recovery, recordingHref }: { recovery: NonNullable<A
 
 function LectureRow({ now, row, onOpen, onReport, onCatchup }: { now: number; row: AttendanceLecture; onOpen: (row: AttendanceLecture) => void; onReport: (row: AttendanceLecture) => void; onCatchup: (row: AttendanceLecture) => void }) {
   const titleId = useId();
+  const activityHelpId = `${titleId}-activity-help`;
+  const hasSessionActivity = Boolean(row.componentHref?.trim());
   const joinable = isLectureJoinable(row, now);
   const joinUrl = lectureJoinUrl(row);
   const date = monthKey(row.date) === 'undated' ? null : new Date(`${row.date}T00:00:00`);
@@ -278,8 +280,11 @@ function LectureRow({ now, row, onOpen, onReport, onCatchup }: { now: number; ro
       {row.status === 'cancelled' ? <span className={styles.unmapped}>—</span>
         : joinable ? joinUrl ? <a className={`primary-action ${styles.activityButton}`} href={joinUrl} target="_blank" rel="noopener noreferrer">Join session<AppIcon className="ri-video-chat-line" /></a>
         : <button type="button" className={`primary-action ${styles.activityButton}`} disabled title="The joining link is not available yet.">Join session</button>
-        : <button type="button" className={`primary-action ${styles.activityButton}`} onClick={() => onOpen(row)}>Open Activities<AppIcon className="ri-arrow-right-s-line" /></button>}
+        : <button type="button" className={`primary-action ${styles.activityButton}`} disabled={!hasSessionActivity}
+          aria-describedby={!hasSessionActivity ? activityHelpId : undefined}
+          onClick={() => onOpen(row)}>Open Activities<AppIcon className="ri-arrow-right-s-line" /></button>}
       {row.status !== 'cancelled' && joinable && !joinUrl && <span className={styles.unmapped}>Joining link not available yet</span>}
+      {row.status !== 'cancelled' && !joinable && !hasSessionActivity && <span id={activityHelpId} className={styles.unmapped}>Live session activity not linked yet</span>}
     </div>
   </article>;
 }
