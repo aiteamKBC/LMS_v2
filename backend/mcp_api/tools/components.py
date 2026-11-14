@@ -205,20 +205,29 @@ def _locked_parents(target):
     """Prevent the existing API's missing-parent fallback during the actual save.
 
     These are parameterised reads, never business SQL writes. All writes still go
-    through the authenticated API, within this same default-DB transaction.
+    through the authenticated API, within this same default-DB transaction. A free
+    course owns its rows in native free-course storage, not the module/week tables.
     """
+    from curriculum_api import learning_storage
     from curriculum_api.views import AUTHORING_MODULES_TABLE, AUTHORING_WEEKS_TABLE, authoring_table_name
 
     if not connection.features.has_select_for_update:
         raise ToolError("Component creation requires a database supporting parent row locks.")
     with transaction.atomic(using="default"):
-        with connection.cursor() as cursor:
-            for table, where, params in (
-                (AUTHORING_MODULES_TABLE, "module_catalogue_id = %s", [target["module_id"]]),
-                (AUTHORING_WEEKS_TABLE, "id = %s and module_catalogue_id = %s and week_number = %s",
+        course = learning_storage.course(target["module_id"], lock=True)
+        if course is None:
+            lookups = (
+                (authoring_table_name(AUTHORING_MODULES_TABLE), "module_catalogue_id = %s", [target["module_id"]]),
+                (authoring_table_name(AUTHORING_WEEKS_TABLE),
+                 "id = %s and module_catalogue_id = %s and week_number = %s",
                  [target["week_id"], target["module_id"], target["week_number"]]),
-            ):
-                cursor.execute(f"SELECT 1 FROM {authoring_table_name(table)} WHERE {where} FOR UPDATE", params)
+            )
+        else:
+            lookups = (("curriculum.free_course_weeks", "content_ref = %s and course_id = %s and week_number = %s",
+                        [target["week_id"], course["id"], target["week_number"]]),)
+        with connection.cursor() as cursor:
+            for table, where, params in lookups:
+                cursor.execute(f"SELECT 1 FROM {table} WHERE {where} FOR UPDATE", params)
                 if cursor.fetchone() is None:
                     raise ToolError("The destination module or week no longer exists. Look it up again.")
         yield

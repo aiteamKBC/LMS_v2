@@ -25,7 +25,7 @@ class FreeCourseAssignmentReadTests(SimpleTestCase):
                                           return_value=SimpleNamespace(role='learner', subject_id=7)))
         self.enterContext(patch('login.permissions._auth_gate_enabled', return_value=True))
         self.legacy = self.enterContext(patch.object(view, '_scoped_rows', return_value=({}, [], [])))
-        self.enterContext(patch.object(view, 'LearnerFreeCourseProgress'))
+        self.enterContext(patch.object(view, 'completed_component_refs', return_value=set()))
         self.enterContext(patch.object(view, 'progress_owner', return_value=7))
 
     def read(self, kind='commercial', pk=7):
@@ -77,6 +77,26 @@ class FreeCourseAssignmentReadTests(SimpleTestCase):
     def test_staff_can_read_the_selected_learner(self):
         self.auth.return_value = SimpleNamespace(role='staff')
         self.assertEqual(self.read().status_code, 200)
+
+    def test_archived_completion_returns_a_conflict_instead_of_success(self):
+        self.source.free_courses = [dict(freeCourseId='FC-1', courseName='Standalone skills')]
+        self.legacy.return_value = ({}, [dict(id='WEEK', course_id='FC-1')],
+                                    [dict(id='COMP', free_module_id='WEEK')])
+        with patch.object(view, 'save_completion', return_value=False) as save:
+            request = RequestFactory().post('/', json.dumps({'componentId': 'COMP'}),
+                                            content_type='application/json')
+            response = view.complete_free_course_activity(request, kind='commercial', pk=7)
+        self.assertEqual(response.status_code, 409)
+        self.assertNotIn('completed', json.loads(response.content))
+        self.assertEqual(save.call_args.args[:3], (7, 'COMP', 'FC-1'))
+
+    def test_unassigned_activity_cannot_create_or_reactivate_progress(self):
+        with patch.object(view, 'save_completion') as save:
+            request = RequestFactory().post('/', json.dumps({'componentId': 'UNASSIGNED'}),
+                                            content_type='application/json')
+            response = view.complete_free_course_activity(request, kind='apprenticeship', pk=7)
+        self.assertEqual(response.status_code, 404)
+        save.assert_not_called()
 
 
 class BuilderFreeCourseCatalogueTests(SimpleTestCase):
