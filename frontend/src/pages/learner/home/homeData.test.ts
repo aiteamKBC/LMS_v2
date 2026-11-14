@@ -110,9 +110,9 @@ describe('student home data', () => {
     ] }, now);
     expect(result.map(({ id, kind, detail, href }) => [id, kind, detail, href])).toEqual([
       ['assignment-native:a', 'assignment', 'Assignment due', '/learner/monthly-submission'],
-      ['session-7', 'lecture', 'Learning session', '/learner/attendance'],
+      ['session-7', 'lecture', 'Learning session', '/learner/calendar'],
       ['review-r', 'review', 'Review to be booked', '/learner/calendar'],
-      ['session-8', 'lecture', 'Learning session', '/learner/attendance'],
+      ['session-8', 'lecture', 'Learning session', '/learner/calendar'],
     ]);
     expect(homeUpcomingEvents({ events: [{ id: 'b', type: 'review', title: 'Review', date: '2026-10-23T10:00:00+01:00', booked: true }] },
       now)[0].detail).toBe('Progress review');
@@ -120,6 +120,20 @@ describe('student home data', () => {
   it('handles no Home events', () => {
     expect(homeUpcomingEvents(null)).toEqual([]);
     expect(homeUpcomingEvents({ events: [] })).toEqual([]);
+  });
+  it.each(['apprenticeship', 'commercial'])('uses the resolved component and learner identity for %s sessions', kind => {
+    const events = homeUpcomingEvents({ events: [
+      { id: 'occ-2', type: 'session', title: 'Week 2', date: '2026-10-20T09:00:00Z', componentId: 'LIVE-2' },
+      { id: 'occ-3', type: 'session', title: 'Week 3', date: '2026-10-22T09:00:00Z', componentId: 'LIVE-3' },
+    ] }, new Date('2026-10-14T12:00:00Z'), kind, '71');
+    expect(events.map(event => event.href)).toEqual([
+      `/learner/component/${kind}/71/LIVE-2`, `/learner/component/${kind}/71/LIVE-3`,
+    ]);
+  });
+  it('keeps unmatched sessions on the calendar instead of guessing a component or opening attendance', () => {
+    expect(homeUpcomingEvents({ events: [
+      { id: 'missing', type: 'session', title: 'Not linked', date: '2026-10-20T09:00:00Z' },
+    ] }, new Date('2026-10-14T12:00:00Z'), 'commercial', '71')[0].href).toBe('/learner/calendar');
   });
   it('keeps only next week’s UK Monday to Friday, so a cached response from another week drops out', () => {
     const schedule = { events: [
