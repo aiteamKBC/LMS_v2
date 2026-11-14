@@ -147,12 +147,26 @@ describe('module drawer group-owned scheduling', () => {
     expect(createGroupModule).not.toHaveBeenCalled();
   });
 
+  it('keeps the saved module date window when choosing custom sessions and days', async () => {
+    drawer(moduleFormTarget({
+      id: 'MOD-WINDOW', name: 'Module date window', programmeId: 'PROG-1', cohortId: 'COHORT-1', groupId: 'GROUP-1',
+      weeks: 4, sessionsNumber: 4, weekDays: 'Wednesday',
+      startDate: '2026-09-07', endDate: '2026-10-01', tutor: 'Tutor One',
+    } as CurriculumModule)!);
+    await choose('Sessions per week', '2');
+    await userEvent.click(screen.getByRole('button', { name: 'Thu' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Save module' }));
+    await waitFor(() => expect(updateCurriculumModule).toHaveBeenCalledWith('MOD-WINDOW', expect.objectContaining({
+      scheduleMode: 'custom', startDate: '2026-09-07', endDate: '2026-10-01',
+    })));
+  });
+
   it('reopens Custom and returns to the original once-weekly Group flow when 1 is chosen', async () => {
     drawer(moduleFormTarget({
       id: 'MOD-CUSTOM', name: 'Custom module', programmeId: 'PROG-1', cohortId: 'COHORT-1', groupId: 'GROUP-1',
       scheduleMode: 'custom', weeks: 4, sessionsNumber: 8, weekDays: 'Monday, Thursday',
       weeklySchedule: [{ day: 'Monday', startTime: '09:00', endTime: '11:00' }, { day: 'Thursday', startTime: '18:00', endTime: '19:00' }],
-      startDate: '2026-09-07', endDate: '2026-10-04', tutor: 'Tutor One',
+      startDate: '2026-09-07', endDate: '2026-10-01', tutor: 'Tutor One',
     } as CurriculumModule)!);
     expect(screen.getByRole('combobox', { name: /Sessions per week/i })).toHaveTextContent('2');
     expect(screen.getByLabelText('Thursday start time', { exact: false })).toHaveValue('18:00');
@@ -160,7 +174,7 @@ describe('module drawer group-owned scheduling', () => {
     expect(screen.queryByRole('group', { name: /Delivery days/i })).not.toBeInTheDocument();
     await userEvent.click(screen.getByRole('button', { name: 'Save module' }));
     await waitFor(() => expect(updateCurriculumModule).toHaveBeenCalledWith('MOD-CUSTOM', expect.objectContaining({
-      scheduleMode: 'group', sessionsNumber: 4, weekDays: 'Wednesday', startTime: '10:00', endTime: '12:00',
+      scheduleMode: 'group', sessionsNumber: 4, weekDays: 'Wednesday', startTime: '10:00', endTime: '12:00', endDate: '2026-10-01',
     })));
     expect(vi.mocked(updateCurriculumModule).mock.calls[0][1]).not.toHaveProperty('weeks');
   });

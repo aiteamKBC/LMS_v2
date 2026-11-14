@@ -673,7 +673,6 @@ export function ModuleFormDrawer({
     ])));
     setGroupStartTime(groupPattern?.startTime || '');
     setGroupEndTime(groupPattern?.endTime || '');
-    setTargetEndDate('');
   };
   const scheduleComplete = !selectedGroup || deliveryDaysPerWeek === Number(sessionsPerWeek);
   const weeksEntered = Math.max(0, Number(sessionsNumber) || 0);
@@ -1661,12 +1660,11 @@ export function ModuleFormDrawer({
                 setScheduleMode('custom');
                 setSessionsPerWeek(value);
                 setWeekDays(weekDays.split(',').map(day => day.trim()).filter(Boolean).slice(0, Number(value)).join(', '));
-                setTargetEndDate('');
               }}
             />
           </FormField>
           {scheduleMode === 'custom' && <FormField label="Delivery days" as="group" required hint={`Choose ${sessionsPerWeek} day${sessionsPerWeek === '1' ? '' : 's'} each week (${deliveryDaysPerWeek} selected).`}>
-            <WeekdayControl value={weekDays} maxSelections={Number(sessionsPerWeek)} onChange={value => { setWeekDays(value); setTargetEndDate(''); }} />
+            <WeekdayControl value={weekDays} maxSelections={Number(sessionsPerWeek)} onChange={setWeekDays} />
           </FormField>}
           {scheduleMode === 'custom' && <div className="flex flex-wrap items-center justify-between gap-2">
             <p className="text-[12px] font-semibold text-primary-700">Custom · {sessionsPerWeek} session{sessionsPerWeek === '1' ? '' : 's'} per week · {modulePatternLabel}</p>
