@@ -112,13 +112,15 @@ describe('live lecture action', () => {
 
 describe('featured training week', () => {
   const moduleId = 'native:business';
-  const first = { ...lecture, moduleId, id: 'week-one', date: '2026-09-17',
-    startsAt: '2026-09-17T10:00:00+01:00', endsAt: '2026-09-17T11:00:00+01:00' };
-  const next = { ...first, id: 'week-two', date: '2026-09-24',
+  const first = { ...lecture, moduleId, id: 'week-one', weekId: 'authored-one', date: '2026-09-17',
+    startsAt: '2026-09-17T10:00:00+01:00', endsAt: '2026-09-17T11:00:00+01:00',
+    joinUrl: '/learner_api/session-results/apprenticeship/12/series/sessions/1/join/' };
+  const next = { ...first, id: 'week-two', weekId: 'authored-two', date: '2026-09-24',
     startsAt: '2026-09-24T10:00:00+01:00', endsAt: '2026-09-24T11:00:00+01:00',
+    joinUrl: '/learner_api/session-results/apprenticeship/12/series/sessions/2/join/',
     componentHref: '/learner/component/apprenticeship/12/live-week-two' };
   const modules: Pick<PlanModule, 'id' | 'curriculumSlots'>[] = [{ id: 'business', curriculumSlots: [first, next].map((row, index) => ({
-    slotNumber: index + 1, date: row.date, day: 'Thursday', type: 'live-session', sessionNumber: index + 1, holidays: [],
+    slotNumber: index + 1, weekId: row.weekId, date: row.date, day: 'Thursday', type: 'live-session', sessionNumber: index + 1, holidays: [],
   })) }];
 
   it('retains the finished lecture across Monday until its next training week starts in the business zone', () => {
@@ -135,6 +137,22 @@ describe('featured training week', () => {
     expect(featuredLecture(rows, Date.parse('2026-09-18T12:00:00Z'), undefined, modules)?.id).toBe(extra.id);
     expect(featuredLecture(rows, Date.parse('2026-09-20T12:00:00Z'), undefined, modules)?.id).toBe(extra.id);
     expect(rows.map(row => row.id)).toEqual([next.id, extra.id, first.id]);
+  });
+
+  it.each([
+    { name: 'later', actual: '2026-11-09', nextActual: '2026-11-16', current: '2026-11-15' },
+    { name: 'earlier', actual: '2026-11-05', nextActual: '2026-11-13', current: '2026-11-08' },
+    { name: 'before the next moved week', actual: '2026-11-09', nextActual: '2026-11-12', current: '2026-11-11' },
+  ])('anchors a rescheduled $name occurrence to its actual date and next actual delivery', ({ actual, nextActual, current }) => {
+    const moved = { ...first, date: actual, startsAt: `${actual}T10:00:00Z`, endsAt: `${actual}T11:00:00Z` };
+    const following = { ...next, date: nextActual, startsAt: `${nextActual}T10:00:00Z`, endsAt: `${nextActual}T11:00:00Z` };
+    const plans = [{ ...modules[0], curriculumSlots: modules[0].curriculumSlots!.map((slot, index) => ({
+      ...slot, date: index === 0 ? '2026-11-06' : '2026-11-13',
+    })) }];
+    const before = structuredClone(plans);
+    expect(featuredLecture([moved, following], Date.parse(`${current}T12:00:00Z`), undefined, plans)?.id).toBe(moved.id);
+    expect(featuredLecture([moved, following], Date.parse(`${nextActual}T00:00:00Z`), undefined, plans)?.id).toBe(following.id);
+    expect(plans).toEqual(before);
   });
 
   it('keeps module week windows separate and excludes cancelled and expired lectures', () => {

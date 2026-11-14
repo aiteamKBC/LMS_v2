@@ -18,19 +18,24 @@ export function featuredLecture(lectures: AttendanceLecture[], now: number, time
   if (live) return live;
 
   const currentWeeks = new Map(modules.map(module => {
-    const slots = (module.curriculumSlots || []).filter(slot => deliveryDateKey(slot.date))
-      .slice().sort((a, b) => a.date.localeCompare(b.date));
+    const slots = (module.curriculumSlots || []).filter(slot => deliveryDateKey(slot.date)).map(slot => {
+      // A moved occurrence keeps its authored week identity. Its actual delivery
+      // date, rather than the generated slot date, anchors that week's recordings.
+      const delivered = slot.weekId && candidates.find(row => row.moduleId === `native:${module.id}` && row.weekId === slot.weekId);
+      return { ...slot, date: delivered ? delivered.date : slot.date };
+    }).sort((a, b) => a.date.localeCompare(b.date));
     const slot = slots.filter(item => item.date <= today).at(-1);
     const end = slot && deliveryWeekEnd(slot.date);
     const next = slot && slots.find(item => item.date > slot.date);
     const moduleKey: string = `native:${module.id}`;
-    return [moduleKey, { hasSlots: slots.length > 0,
+    return [moduleKey, { hasSlots: slots.length > 0, id: slot?.weekId,
       start: slot?.date, end, next: next?.date, teaching: slot?.type === 'live-session' }] as const;
   }));
   const current = candidates.filter(row => {
     const week = currentWeeks.get(row.moduleId);
     if (week?.hasSlots) {
       return week.teaching && week.start && week.end && today <= week.end
+        && (!row.weekId || !week.id || row.weekId === week.id)
         && (!week.next || today < week.next) && row.date >= week.start && row.date <= week.end
         && (!week.next || row.date < week.next);
     }
