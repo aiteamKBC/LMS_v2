@@ -58,6 +58,16 @@ def _unassigned_programme(row):
 
 
 def target(kind, target_id):
+    from .learning_storage import course, native_authoring_scope
+
+    # A standalone course's public reference is not an ordinary module row.
+    # Keep status, upload and worker reads on its own authoring projections.
+    native = kind == 'module' and course(target_id) is not None
+    with native_authoring_scope() if native else nullcontext():
+        return _target(kind, target_id)
+
+
+def _target(kind, target_id):
     v = _views()
     if kind == 'module':
         table, key = v.AUTHORING_MODULES_TABLE, 'module_catalogue_id'
