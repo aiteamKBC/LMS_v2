@@ -7,7 +7,12 @@ from django.db import DatabaseError
 from django.test import RequestFactory, SimpleTestCase
 
 from .active_users import sync_active_user
-from .coach_assignment import case_owner_coach, current_coach
+from .coach_assignment import (
+    COACH_UNCHANGED,
+    case_owner_coach,
+    coach_id_for_contact,
+    current_coach,
+)
 from .training_plan_dashboard import read_dashboard
 from .views import enrolment_user_detail, learner_coach
 
@@ -23,7 +28,8 @@ def learner(**overrides):
 def profile():
     # The enrolment id and profile id are deliberately different.
     return SimpleNamespace(pk=901, id=901, enrolment_id=501, lifecycle_status='active',
-                           coach_name='Rewan Yasser', coach_email='rewan@example.com', save=Mock())
+                           coach_id='COACH-OLD', coach_name='Rewan Yasser',
+                           coach_email='rewan@example.com', save=Mock())
 
 
 class CaseOwnerSaveTests(SimpleTestCase):
@@ -42,6 +48,10 @@ class CaseOwnerSaveTests(SimpleTestCase):
         self.staff = self.enterContext(patch('learner_api.coach_assignment.StaffUser.objects.filter'))
         self.staff.return_value.only.return_value.__getitem__.return_value = [
             SimpleNamespace(email='curriculum@example.com')]
+        self.coach_id = self.enterContext(patch(
+            'learner_api.learner_dates.coach_id_for_contact',
+            side_effect=lambda contact: None if not any(contact.values()) else 'COACH-1',
+        ))
 
     def patch(self, view, payload):
         request = RequestFactory().patch('/learner_api/enrolment-users/501/',
@@ -54,9 +64,9 @@ class CaseOwnerSaveTests(SimpleTestCase):
                 self.source.learner_type = kind
                 response = self.patch(enrolment_user_detail, {'caseOwner': 'Test curriculum'})
                 self.assertEqual(response.status_code, 200)
-                for record in (self.source, self.profile):
-                    self.assertEqual(record.coach_name, 'Test curriculum')
-                    self.assertEqual(record.coach_email, 'curriculum@example.com')
+                self.assertEqual(self.source.coach_name, 'Test curriculum')
+                self.assertEqual(self.source.coach_email, 'curriculum@example.com')
+                self.assertEqual(self.profile.coach_id, 'COACH-1')
                 self.assertEqual(self.source.case_owner, 'Test curriculum')
                 self.assertEqual(set(self.source.save.call_args.kwargs['update_fields']),
                                  {'case_owner', 'coach_name', 'coach_email'})
@@ -65,8 +75,8 @@ class CaseOwnerSaveTests(SimpleTestCase):
     def test_clearing_case_owner_removes_the_previous_coach_email(self):
         response = self.patch(enrolment_user_detail, {'caseOwner': ''})
         self.assertEqual(response.status_code, 200)
-        for record in (self.source, self.profile):
-            self.assertEqual((record.coach_name, record.coach_email), ('', ''))
+        self.assertEqual((self.source.coach_name, self.source.coach_email), ('', ''))
+        self.assertIsNone(self.profile.coach_id)
         self.staff.assert_not_called()
 
     def test_assignment_before_activation_is_retained_on_source(self):
@@ -89,14 +99,14 @@ class CaseOwnerSaveTests(SimpleTestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(self.source.case_owner, 'Test curriculum')
         self.assertEqual(self.source.coach_email, 'curriculum@example.com')
-        self.assertEqual(self.profile.coach_email, 'curriculum@example.com')
+        self.assertEqual(self.profile.coach_id, 'COACH-1')
         self.assertEqual(json.loads(response.content), {'coachName': 'Test curriculum',
                                                         'coachEmail': 'curriculum@example.com'})
 
     def test_name_only_picker_change_resolves_new_email(self):
         response = self.patch(learner_coach, {'coachName': 'Test curriculum'})
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(self.profile.coach_email, 'curriculum@example.com')
+        self.assertEqual(self.profile.coach_id, 'COACH-1')
 
     def test_coach_read_prefers_case_owner_over_stale_profile(self):
         self.source.case_owner = 'Test curriculum'
@@ -114,7 +124,7 @@ class CaseOwnerSaveTests(SimpleTestCase):
             response = self.patch(learner_coach, {'coachEmail': 'curriculum@example.com'})
         self.assertEqual(response.status_code, 200)
         self.assertEqual(self.source.case_owner, 'Test curriculum')
-        self.assertEqual(self.profile.coach_name, 'Test curriculum')
+        self.assertEqual(self.profile.coach_id, 'COACH-1')
 
     def test_learner_cannot_change_own_coach(self):
         request = RequestFactory().patch('/learner_api/learners/501/coach/',
@@ -128,6 +138,28 @@ class CaseOwnerSaveTests(SimpleTestCase):
 
 
 class CoachResolutionTests(SimpleTestCase):
+    def test_canonical_coach_resolution_handles_nullable_and_unique_contacts(self):
+        self.assertIs(coach_id_for_contact(None), COACH_UNCHANGED)
+        self.assertIsNone(coach_id_for_contact({"coach_name": "", "coach_email": ""}))
+        with patch('learner_api.coach_assignment.PlacementCoach.objects.using') as using:
+            query = using.return_value.filter.return_value
+            query.filter.return_value.values_list.return_value.__getitem__.return_value = ['COACH-1']
+            self.assertEqual(coach_id_for_contact({
+                'coach_name': 'Test curriculum',
+                'coach_email': 'curriculum@example.com',
+            }), 'COACH-1')
+        using.assert_called_once_with('enrolment')
+        query.filter.assert_called_once_with(email__iexact='curriculum@example.com')
+
+    def test_canonical_coach_resolution_fails_closed_for_unknown_or_ambiguous_contact(self):
+        for matches in ([], ['COACH-1', 'COACH-2']):
+            with self.subTest(matches=matches), \
+                    patch('learner_api.coach_assignment.PlacementCoach.objects.using') as using:
+                query = using.return_value.filter.return_value
+                query.filter.return_value.values_list.return_value.__getitem__.return_value = matches
+                with self.assertRaisesMessage(DatabaseError, 'assignment needs review'):
+                    coach_id_for_contact({'coach_name': 'Ambiguous', 'coach_email': ''})
+
     def test_case_owner_uses_authoritative_staff_email_when_source_is_stale(self):
         source = learner(case_owner='Med Maher', coach_name='Med Maher',
                          coach_email='med.maher@kbc.ac.uk')
@@ -175,18 +207,19 @@ class CoachResolutionTests(SimpleTestCase):
             with self.subTest(name=name):
                 source = learner(case_owner=name, coach_name=name, coach_email=email)
                 with patch('learner_api.apprenticeship_agreement._group_dates', return_value=(None, None, None)), \
-                        patch('learner_api.active_users.get_training_plan', return_value=[]), \
                         patch('learner_api.active_users.transaction.atomic'), \
-                        patch('learner_api.active_users.learner_profile_for_source', return_value=None), \
+                        patch('learner_api.placement_links.placement_profile', return_value=None), \
+                        patch('learner_api.coach_assignment.source_coach_id',
+                              return_value='COACH-1' if name else None), \
                         patch('learner_api.active_users.hydrate_source_training_plan', return_value=[]), \
-                        patch('learner_api.active_users._resolve_linkable_programme_id', return_value=None), \
-                        patch('learner_api.active_users._linkable_placement_ids', return_value=(None, None)), \
                         patch('learner_api.active_users.LearnerProfile.objects.create') as create, \
                         patch('learner_api.active_users.replace_training_plan'), \
                         patch('learner_api.active_users.refresh_learner_ksb_snapshot'):
                     sync_active_user(source)
-                self.assertEqual(create.call_args.kwargs['coach_name'], name)
-                self.assertEqual(create.call_args.kwargs['coach_email'], email)
+                self.assertEqual(create.call_args.kwargs['coach_id'], 'COACH-1' if name else None)
+                self.assertNotIn('coach_name', create.call_args.kwargs)
+                self.assertNotIn('coach_email', create.call_args.kwargs)
+                self.assertNotIn('learning_plan', create.call_args.kwargs)
 
     def test_dashboard_prefers_saved_assignment_and_respects_unassignment(self):
         for name, email in [('Test curriculum', 'curriculum@example.com'), ('', '')]:
@@ -199,8 +232,11 @@ class CoachResolutionTests(SimpleTestCase):
                         patch('learner_api.training_plan_dashboard._builder_subject_metadata', return_value=({}, {})), \
                         patch('learner_api.training_plan_dashboard.assigned_group_coach', return_value='Group coach'), \
                         patch('learner_api.calendar.coaching_events_for_learner', return_value=[]), \
+                        patch('learner_api.training_plan_dashboard.coach_phone', return_value=None), \
                         patch('learner_api.training_plan_dashboard.booking_url', side_effect=lambda value: value or None):
-                    profiles.objects.filter.return_value.first.return_value = profile()
+                    assigned = profile()
+                    assigned.coach_name, assigned.coach_email = name, email
+                    profiles.objects.filter.return_value.only.return_value.first.return_value = assigned
                     result = read_dashboard(source, section='overview')
                 self.assertEqual(result['coach'], {
                     'name': name,

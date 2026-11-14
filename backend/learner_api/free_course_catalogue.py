@@ -1,45 +1,34 @@
-"""Read the standalone catalogue while retaining the normal module identity."""
-from django.db import connection
-from curriculum_api.learning_storage import enabled
+"""Learner/API compatibility projection of the canonical Free Course catalogue."""
+from curriculum_api import free_course_catalogue
 
 
-def builder_free_courses(module_ids=None, *, include_content=True):
-    """Staff may list the catalogue; learner callers must supply owned module ids.
+def builder_free_courses(course_ids=None, *, include_content=True):
+    """Return the established API shape from canonical course identities.
 
-    No provisioning or migration runs on this read. Converted and archived
-    courses continue to have historical rows, but are not standalone offers.
+    ``moduleId`` is retained as an empty compatibility field. A canonical Free
+    Course has no normal-module identity, so callers must use ``freeCourseId``.
     """
-    if module_ids is not None:
-        module_ids = list(dict.fromkeys(module_ids))
-        if not module_ids:
+    if course_ids is not None:
+        course_ids = list(dict.fromkeys(str(value) for value in course_ids if value))
+        if not course_ids:
             return []
-    content_columns = 'f.description, f.cover_image_url' if include_content else "'', ''"
-    native = enabled(connection)
-    reference = 'content_ref' if native else 'module_catalogue_id'
-    query = f"""SELECT f.id, f.content_ref, f.course_name, {content_columns},
-        f.week_count, f.component_count, f.total_otjh
-        FROM curriculum.free_courses f
-        WHERE f.storage_version=2 AND f.managed_by_builder=true
-          AND f.converted_at IS NULL AND f.deleted_at IS NULL
-          AND NOT coalesce((f.authoring_data->>'is_programme_deleted')::boolean, false)
-    """ if native else f"""SELECT f.id, f.module_catalogue_id, f.course_name, {content_columns},
-        f.week_count, f.component_count, m.total_otjh
-        FROM curriculum.free_courses f
-        JOIN curriculum.modules m ON m.module_catalogue_id = f.module_catalogue_id
-        WHERE f.managed_by_builder = true AND f.converted_at IS NULL
-          AND f.deleted_at IS NULL AND m.deleted_at IS NULL
-          AND m.source_type = 'free_course' AND NOT m.is_programme_deleted
-    """
-    params = []
-    if module_ids is not None:
-        query += f' AND f.{reference} = ANY(%s)'
-        params.append(module_ids)
-    query += ' ORDER BY f.display_order, f.course_name, f.id'
-    with connection.cursor() as cursor:
-        cursor.execute(query, params)
-        return [dict(
-            freeCourseId=course_id, moduleId=module_id, courseName=name or '',
-            description=description or '', coverImageUrl=cover or '',
-            weekCount=weeks or 0, activityCount=components or 0,
-            hours=float(hours or 0), weeks=[],
-        ) for course_id, module_id, name, description, cover, weeks, components, hours in cursor.fetchall()]
+    columns = [
+        "id", "course_name", "week_count", "component_count", "total_otjh",
+    ]
+    if include_content:
+        columns.extend(["description", "cover_image_url"])
+    rows = free_course_catalogue.courses(course_ids=course_ids, columns=columns)
+    return [
+        {
+            "freeCourseId": str(row.get("id") or ""),
+            "moduleId": "",
+            "courseName": row.get("course_name") or "",
+            "description": row.get("description") or "",
+            "coverImageUrl": row.get("cover_image_url") or "",
+            "weekCount": row.get("week_count") or 0,
+            "activityCount": row.get("component_count") or 0,
+            "hours": float(row.get("total_otjh") or 0),
+            "weeks": [],
+        }
+        for row in rows
+    ]

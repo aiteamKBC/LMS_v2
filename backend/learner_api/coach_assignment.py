@@ -1,5 +1,10 @@
-"""Resolve the current case owner and keep coach names/emails together."""
-from .models import StaffUser
+"""Resolve the current case owner and canonical learner coach assignment."""
+from django.db import DatabaseError
+
+from .models import PlacementCoach, StaffUser
+
+
+COACH_UNCHANGED = object()
 
 
 def _text(value):
@@ -58,6 +63,28 @@ def source_coach(source):
             return {"coach_name": clean_name, "coach_email": _text(staff.email)}
         return {"coach_name": clean_name, "coach_email": _text(email)}
     return None
+
+
+def coach_id_for_contact(contact, *, using="enrolment"):
+    """Resolve one existing active curriculum Coach without creating data."""
+    if contact is None:
+        return COACH_UNCHANGED
+    name = _text(contact.get("coach_name"))
+    email = _text(contact.get("coach_email"))
+    if not name and not email:
+        return None
+    query = PlacementCoach.objects.using(using).filter(status__iexact="active")
+    if email:
+        matches = list(query.filter(email__iexact=email).values_list("pk", flat=True)[:2])
+    else:
+        matches = list(query.filter(name__iexact=name).values_list("pk", flat=True)[:2])
+    if len(matches) != 1:
+        raise DatabaseError("The learner Coach assignment needs review.")
+    return matches[0]
+
+
+def source_coach_id(source, *, using="enrolment"):
+    return coach_id_for_contact(source_coach(source), using=using)
 
 
 def current_coach(source, profile=None, historical=None):

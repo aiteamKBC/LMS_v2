@@ -30,6 +30,20 @@ JSON_COLUMNS = {'settings_json', 'ksb_mappings', 'learning_outcomes', 'epa_requi
                 'professional_qualification_outcomes', 'ai_material', 'weekly_schedule',
                 'session_holidays', 'session_overrides', 'module_overview'}
 
+NATIVE_REQUIRED_COLUMNS = (
+    ('free_courses', 'content_ref'),
+    ('free_courses', 'converted_at'),
+    ('free_courses', 'authoring_data'),
+    ('free_courses', 'managed_by_builder'),
+    ('free_courses', 'storage_version'),
+    ('free_course_weeks', 'content_ref'),
+    ('free_course_weeks', 'course_id'),
+    ('free_course_weeks', 'authoring_data'),
+    ('free_programme_components', 'content_ref'),
+    ('free_programme_components', 'free_module_id'),
+    ('free_programme_components', 'authoring_data'),
+)
+
 
 def enabled(db=connection, *, refresh=False):
     if db.vendor != 'postgresql':
@@ -39,8 +53,28 @@ def enabled(db=connection, *, refresh=False):
         return _ready[key]
     if not refresh and monotonic() < _not_ready_until.get(key, 0):
         return False
+    required_values = ','.join(['(%s,%s)'] * len(NATIVE_REQUIRED_COLUMNS))
+    required_params = [value for pair in NATIVE_REQUIRED_COLUMNS for value in pair]
     with db.cursor() as cursor:
-        cursor.execute("SELECT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid=to_regclass('curriculum.free_courses') AND conname='free_courses_native_storage')")
+        cursor.execute(f"""WITH required_columns(table_name,column_name) AS (
+                VALUES {required_values}
+            ), required_views(view_name) AS (
+                SELECT unnest(%s::text[])
+            )
+            SELECT
+                NOT EXISTS (
+                    SELECT 1 FROM required_columns required
+                    WHERE NOT EXISTS (
+                        SELECT 1 FROM information_schema.columns actual
+                        WHERE actual.table_schema='curriculum'
+                          AND actual.table_name=required.table_name
+                          AND actual.column_name=required.column_name
+                    )
+                )
+                AND NOT EXISTS (
+                    SELECT 1 FROM required_views required
+                    WHERE to_regclass('curriculum.' || required.view_name) IS NULL
+                )""", [*required_params, list(NATIVE_VIEWS.values())])
         ready = cursor.fetchone()[0]
     # A worker may have answered requests before the coordinated cutover.
     # Never keep that negative result for its entire lifetime: after migration
