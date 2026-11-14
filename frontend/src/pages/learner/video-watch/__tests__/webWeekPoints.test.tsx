@@ -27,6 +27,26 @@ function sidebar() {
 }
 
 describe('optional curriculum Points', () => {
+  it.each(['commercial', 'apprenticeship'])('preserves Required labels and filtering after Points are reordered (%s)', kind => {
+    state.data!.weeks.W1.points.reverse();
+    const components = rows.map(row => ({ ...row, expectedOtjh: row.componentId === 'READ' ? 1 : 0,
+      pointNumber: ['READ', 'QUIZ'].includes(row.componentId || '') ? 1 : null }));
+    const before = structuredClone(components);
+    const { container } = render(<MemoryRouter><ActivitySidebar weekTitle="Week 1" moduleTitle="Module" weeks={[]}
+      kind={kind} id="7" weekComponents={components} completedIds={new Set()} currentComponentId="READ"
+      routeFor={row => `/activity/${row.componentId}`} /></MemoryRouter>);
+    expect(Array.from(container.querySelectorAll('details > summary')).map(summary => summary.textContent))
+      .toEqual(['Apply the topic1 activities', 'Understand the topic2 activities']);
+    const reading = screen.getByRole('button', { name: /Read the topic/ });
+    expect(within(reading).getByText('Required')).toBeVisible();
+    fireEvent.click(screen.getByRole('button', { name: 'Required only' }));
+    const point = within(screen.getByRole('list', { name: 'Understand the topic activities' }));
+    expect(within(point.getByRole('button', { name: /Read the topic/ })).getByText('Required')).toBeVisible();
+    expect(point.getByRole('button', { name: /Topic quiz/ })).toBeVisible();
+    expect(screen.queryByRole('button', { name: /Watch the demonstration|Week introduction/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole('list', { name: 'Apply the topic activities' })).not.toBeInTheDocument();
+    expect(components).toEqual(before);
+  });
   it('shows assigned activities only inside their named Point and keeps other activities outside', () => {
     sidebar();
     const point = screen.getByRole('list', { name: 'Understand the topic activities' });
