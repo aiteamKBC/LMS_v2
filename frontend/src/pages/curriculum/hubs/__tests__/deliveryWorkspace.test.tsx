@@ -39,11 +39,11 @@ beforeEach(() => {
     sessions: [],
   } });
   Object.assign(sessionRead, { loading: false, error: null, undatedSessionCount: undefined, sessions: [
-    { id: 's1', type: 'Live Session', date: '2026-11-09', startTime: '09:00', status: 'completed' },
-    { id: 's2', type: 'Live Session', date: '2026-11-10', startTime: '09:00' },
-    { id: 's3', type: 'Live Session', date: '2026-11-12', startTime: '09:00' },
-    { id: 's4', type: 'Live Session', date: '2026-11-13', startTime: '11:00' },
-    { id: 's5', type: 'Live Session', date: '2026-11-13', startTime: '15:00' },
+    { id: 's1', moduleCatalogueId: 'm1', type: 'Live Session', date: '2026-11-09', startTime: '09:00', status: 'completed' },
+    { id: 's2', moduleCatalogueId: 'm1', type: 'Live Session', date: '2026-11-10', startTime: '09:00' },
+    { id: 's3', moduleCatalogueId: 'm1', type: 'Live Session', date: '2026-11-12', startTime: '09:00' },
+    { id: 's4', moduleCatalogueId: 'm1', type: 'Live Session', date: '2026-11-13', startTime: '11:00' },
+    { id: 's5', moduleCatalogueId: 'm1', type: 'Live Session', date: '2026-11-13', startTime: '15:00' },
   ] });
   Object.assign(moduleRead, { loading: false, error: '', today: '2026-11-13', data: {
     m1: { source: 'new_lms', startDate: '2026-10-01', lastLiveDate: '2026-12-01' },
@@ -54,6 +54,41 @@ beforeEach(() => {
 afterEach(() => { cleanup(); vi.useRealTimers(); });
 
 describe('Delivery dashboard using existing curriculum reads', () => {
+  it('limits both weeks, daily bars and next live to active modules while keeping the full calendar destination', () => {
+    sessionRead.sessions.push(
+      { id: 'future', moduleCatalogueId: 'm2', type: 'Live Session', date: '2026-11-13', startTime: '10:30' },
+      { id: 'ended', moduleCatalogueId: 'm3', type: 'Live Session', date: '2026-11-13', startTime: '10:40' },
+      { id: 'unknown', moduleCatalogueId: 'unknown', type: 'Live Session', date: '2026-11-13' },
+      { id: 'unlinked', type: 'Live Session', date: '2026-11-13' },
+      { id: 'active-next', moduleId: 'm1', type: 'Live Session', date: '2026-11-16', startTime: '09:00' },
+      { id: 'future-next', moduleCatalogueId: 'm2', type: 'Live Session', date: '2026-11-16' },
+    );
+    const view = renderDelivery();
+    const chart = screen.getByRole('article', { name: 'Scheduled live sessions' });
+    expect(within(chart).getByLabelText('Scheduled live sessions count')).toHaveTextContent(/^5this week$/);
+    expect(within(chart).getByRole('img', { name: /13 Nov 2026: 2;/ })).toBeVisible();
+    expect(within(chart).getByText(/13 Nov \u00b7 11:00 UK/)).toBeVisible();
+    expect(screen.getByText('11 sessions')).toBeVisible();
+    fireEvent.change(screen.getByLabelText('Session week'), { target: { value: '1' } });
+    expect(within(chart).getByLabelText('Scheduled live sessions count')).toHaveTextContent(/^1next week$/);
+    (moduleRead.data!.m1 as { lastLiveDate: string }).lastLiveDate = '2026-11-12';
+    view.rerender(<MemoryRouter><CurriculumDeliveryHub /></MemoryRouter>);
+    expect(within(chart).getByLabelText('Scheduled live sessions count')).toHaveTextContent(/^0next week$/);
+    expect(readers.sessions).toHaveBeenLastCalledWith(expect.any(String));
+  });
+
+  it('waits for active membership and reports unavailable membership without showing a false zero', () => {
+    moduleRead.data = null; moduleRead.loading = true;
+    const view = renderDelivery();
+    const chart = screen.getByRole('article', { name: 'Scheduled live sessions' });
+    expect(chart).toHaveAttribute('aria-busy', 'true');
+    expect(within(chart).getByLabelText('Scheduled live sessions count')).not.toHaveTextContent('0');
+    moduleRead.loading = false; moduleRead.error = 'Activity unavailable';
+    view.rerender(<MemoryRouter><CurriculumDeliveryHub /></MemoryRouter>);
+    expect(within(chart).getByLabelText('Scheduled live sessions count')).toHaveTextContent('Unavailable');
+    expect(screen.getByText('5 sessions')).toBeVisible();
+  });
+
   it('refreshes staffing when a session starts without requesting a data reload', () => {
     vi.setSystemTime(new Date('2026-11-13T10:59:30Z'));
     const reloadSessions = vi.fn(); const reloadActivity = vi.fn();
@@ -72,6 +107,7 @@ describe('Delivery dashboard using existing curriculum reads', () => {
   it('keeps an upcoming overnight session visible when its source-date status says completed', () => {
     vi.setSystemTime(new Date('2026-11-14T01:00:00Z'));
     moduleRead.today = '2026-11-14';
+    (moduleRead.data!.m2 as { startDate: string }).startDate = '2026-11-01';
     sessionRead.sessions = [{ id: 'overnight', type: 'Live Session', date: '2026-11-13', startTime: '23:30',
       timeZone: 'America/New_York', status: 'completed', moduleCatalogueId: 'm2' }];
     renderDelivery();
@@ -80,7 +116,7 @@ describe('Delivery dashboard using existing curriculum reads', () => {
   });
 
   it('shows the UK date and clock in both next-session labels and the weekly chart', () => {
-    sessionRead.sessions = [{ id: 'cairo', type: 'Live Session', date: '2026-11-16', startTime: '00:30', timeZone: 'Africa/Cairo' }];
+    sessionRead.sessions = [{ id: 'cairo', moduleCatalogueId: 'm1', type: 'Live Session', date: '2026-11-16', startTime: '00:30', timeZone: 'Africa/Cairo' }];
     renderDelivery();
     expect(screen.getAllByText(/15 Nov · 22:30 UK/)).toHaveLength(2);
     expect(screen.getByLabelText('Scheduled live sessions count')).toHaveTextContent('1');
@@ -90,7 +126,7 @@ describe('Delivery dashboard using existing curriculum reads', () => {
   });
 
   it('makes an invalid source time zone visible instead of labelling its clock as UK time', () => {
-    sessionRead.sessions = [{ id: 'check', type: 'Live Session', date: '2026-11-13', startTime: '11:00', timeZone: 'Unknown/Zone' }];
+    sessionRead.sessions = [{ id: 'check', moduleCatalogueId: 'm1', type: 'Live Session', date: '2026-11-13', startTime: '11:00', timeZone: 'Unknown/Zone' }];
     renderDelivery();
     expect(screen.getByText('1 live sessions need their time or time zone checked')).toBeVisible();
     expect(screen.queryByText(/13 Nov · 11:00 UK/)).not.toBeInTheDocument();
@@ -171,7 +207,7 @@ describe('Delivery dashboard using existing curriculum reads', () => {
   });
 
   it('switches the selected week without another API read or any calendar write', () => {
-    sessionRead.sessions.push({ id: 'next-week', type: 'Live Session', date: '2026-11-16', startTime: '12:00' });
+    sessionRead.sessions.push({ id: 'next-week', moduleCatalogueId: 'm1', type: 'Live Session', date: '2026-11-16', startTime: '12:00' });
     renderDelivery();
     expect(screen.getByLabelText('Scheduled live sessions count')).toHaveTextContent('5');
     fireEvent.change(screen.getByLabelText('Session week'), { target: { value: '1' } });
@@ -182,7 +218,7 @@ describe('Delivery dashboard using existing curriculum reads', () => {
 
   it('excludes cancelled sessions and other content, deduplicating only repeated session identities', () => {
     sessionRead.sessions.push(
-      { id: 's4', type: 'Live Session', date: '2026-11-13', startTime: '11:00' },
+      { id: 's4', moduleCatalogueId: 'm1', type: 'Live Session', date: '2026-11-13', startTime: '11:00' },
       { id: 'cancelled', type: 'Live Session', date: '2026-11-13', status: 'cancelled' },
       { id: 'quiz', type: 'Quiz', date: '2026-11-13' },
     );
@@ -195,13 +231,13 @@ describe('Delivery dashboard using existing curriculum reads', () => {
   it('shows the server undated count without adding it to scheduled totals or week bars', () => {
     sessionRead.undatedSessionCount = 2;
     renderDelivery();
-    expect(screen.getByText('2 live sessions without a valid date')).toBeVisible();
+    expect(screen.getByText('2 live sessions without a valid date (across the session calendar)')).toBeVisible();
     expect(screen.getByLabelText('Scheduled live sessions count')).toHaveTextContent('5');
     expect(screen.getByText('5 sessions')).toBeVisible();
     expect(screen.getByRole('img', { name: /13 Nov 2026: 2;/ })).toBeVisible();
     fireEvent.change(screen.getByLabelText('Session week'), { target: { value: '1' } });
     expect(screen.getByLabelText('Scheduled live sessions count')).toHaveTextContent(/^0next week$/);
-    expect(screen.getByText('2 live sessions without a valid date')).toBeVisible();
+    expect(screen.getByText('2 live sessions without a valid date (across the session calendar)')).toBeVisible();
   });
 
   it('keeps the undated warning when there are no scheduled rows and a background refresh fails', () => {
@@ -210,14 +246,14 @@ describe('Delivery dashboard using existing curriculum reads', () => {
     sessionRead.error = 'Example refresh failure';
     renderDelivery();
     expect(screen.getByRole('alert')).toHaveTextContent('Example refresh failure');
-    expect(screen.getByText('3 live sessions without a valid date')).toBeVisible();
+    expect(screen.getByText('3 live sessions without a valid date (across the session calendar)')).toBeVisible();
   });
 
   it('shows undated records even when the scheduled calendar is empty', () => {
     sessionRead.sessions = [];
     sessionRead.undatedSessionCount = 2;
     renderDelivery();
-    expect(screen.getByText('2 live sessions without a valid date')).toBeVisible();
+    expect(screen.getByText('2 live sessions without a valid date (across the session calendar)')).toBeVisible();
     expect(screen.getByLabelText('Scheduled live sessions count')).toHaveTextContent(/^0this week$/);
     expect(screen.getByText('0 sessions')).toBeVisible();
     expect(screen.getByRole('img', { name: /^Live sessions by day: 9 Nov 2026: 0;/ })).toBeVisible();
