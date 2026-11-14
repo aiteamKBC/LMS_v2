@@ -323,12 +323,12 @@ function MeetingSettingsFields({ form, patch }: {
       <FormField label="Spoken language" hint="Used for the recording and transcript.">
         <SelectControl value={form.spokenLanguage} onChange={value => patch({ spokenLanguage: value })} options={TEAMS_LANGUAGE_OPTIONS} />
       </FormField>
-      <FormField label="Presenters" hint="Only these people get the presenter role in Teams: they can share and record.">
+      <FormField label="Presenters" hint="Tutor presenters are also saved as co-organizers so they can manage breakout rooms. Use an internal Microsoft 365 account.">
         <EntraPeopleInput label="Presenters" value={form.presenters} onChange={value => patch({ presenters: value })} />
       </FormField>
       <FormField
         label="Co-organisers"
-        hint="Internal Microsoft 365 users who run the meeting with the organiser: start and stop the recording, admit people from the lobby and change the meeting options. Invited automatically."
+        hint="Up to 10 people, including presenters. Co-organizers can manage breakout rooms, admit people from the lobby and change meeting options. Invited automatically."
       >
         <EntraPeopleInput label="Co-organizers" value={form.coOrganizers} onChange={value => patch({ coOrganizers: value })} />
       </FormField>
@@ -395,9 +395,10 @@ export function TeamsMeetingDialogs({ workspace, secondTab }: {
     teamsLoaded, teamsError, createProgress, updateProgress, saveInvitations, addedInvitees, updateDrawer, pushDates, resendSchedule,
     selectedScopeRows, chooseMeetingScope, reattach, externalCalendar, calendarLinksLoading, calendarLinksError,
     comparison, comparing, comparisonError, compareAttendees, publishedInvitees,
-    originalCalendar, originalCalendarBlocked, refreshOriginalCalendar,
+    originalCalendar, originalCalendarBlocked, originalRolesBlocked, refreshOriginalCalendar, refreshPeopleFromTeams, peopleRefreshing, peopleSyncInfo,
   } = workspace;
   const actionBlockedReason = blockedReason
+    || (peopleRefreshing ? 'Wait for people and roles to finish refreshing from Teams.' : '')
     || (!graphConfigured ? 'Microsoft Teams is not connected. Check the Microsoft connection, then try again.' : '')
     || (originalCalendarBlocked ? 'The original calendar is not ready to edit. Check its connection and permissions above, then try again.' : '')
     || (externalCalendar && !selected?.summary ? 'Check this module\'s saved meeting links before updating its existing Teams calendar.' : '')
@@ -446,6 +447,7 @@ export function TeamsMeetingDialogs({ workspace, secondTab }: {
             actions, then the same dialog fills in rather than a second popping up. */}
         {selected && (
           <Modal
+            className="teams-meeting-dialog !mt-0 !max-h-[calc(100dvh-2rem)] sm:!mt-[5vh] sm:!max-h-[90dvh] [&>div>h2]:min-w-0"
             /* Two lines rather than one long "name — Teams meeting" string: the
                module is the subject, its cohort and group are the context. */
             title={(
@@ -466,7 +468,7 @@ export function TeamsMeetingDialogs({ workspace, secondTab }: {
                its own button inside it, so this is hidden rather than left
                there acting on a calendar the reader is not looking at. */
             footer={!teamsLoaded || calendarLinksLoading || calendarLinksError || onSecondTab ? undefined : (
-              <div className="flex w-full flex-wrap items-center justify-end gap-2">
+              <div className="max-h-[40dvh] w-full overflow-y-auto sm:max-h-none sm:overflow-visible flex flex-wrap items-center justify-end gap-2">
                 {actionMessage && <p id={actionFeedbackId} ref={actionFeedbackRef} role="status" aria-live="polite" aria-atomic="true"
                   aria-label="Teams calendar action" tabIndex={-1}
                   className="w-full max-h-32 overflow-y-auto rounded-lg border border-primary-200 bg-primary-50 p-3 text-[12px] font-semibold leading-relaxed text-foreground-700 outline-none focus:ring-2 focus:ring-primary-300">
@@ -506,7 +508,7 @@ export function TeamsMeetingDialogs({ workspace, secondTab }: {
             {externalCalendar && !selected.summary ? (
               <button type="button" disabled className="inline-flex h-10 items-center rounded-lg bg-primary-600 px-4 text-xs font-bold text-white opacity-40">Update Teams calendar</button>
             ) : selected.summary ? (
-                  <div className="flex w-full flex-wrap items-center justify-end gap-2">
+                  <div className="flex w-full flex-wrap items-center justify-end gap-2 [&>button]:h-auto [&>button]:min-h-10 [&>button]:w-full [&>button]:whitespace-normal [&>button]:py-2 [&>button]:text-left sm:[&>button]:w-auto">
                     <button type="button" onClick={() => openCalendarAction('reschedule')}
                       disabled={Boolean(busy) || Boolean(updateProgress) || (Boolean(blockedReason) || originalCalendarBlocked) || detailLoading || detail?.series.id !== selected.summary.liveSessionId || !graphConfigured}
                       className="inline-flex h-10 items-center gap-1.5 rounded-lg border border-background-200 bg-background-50 px-3 text-[12px] font-bold text-foreground-700 transition-colors hover:bg-background-100 disabled:cursor-not-allowed disabled:opacity-40"><AppIcon className="ri-calendar-line text-sm"></AppIcon>Edit session dates</button>
@@ -538,7 +540,7 @@ export function TeamsMeetingDialogs({ workspace, secondTab }: {
                     {updateConfirmOpen && (
                       <div className="w-full rounded-lg border border-amber-200 bg-amber-50 p-3 text-[11px] text-amber-900">
                         <p className="font-bold">Before updating the Teams calendar</p>
-                        <p className="mt-1 leading-relaxed">Teams will move the session dates to the planned schedule. If any date changes, Microsoft sends one update to everyone already invited, and the LMS emails each of them what changed, so Outlook and the email agree. If only the invitations changed, nobody already invited is contacted: the people you add get the Teams invitation and their schedule.</p>
+                        <p className="mt-1 leading-relaxed">Teams will move the session dates to the planned schedule. Microsoft may send calendar updates. This action does not request an LMS email. Use the separate email controls to choose when to send a schedule email.</p>
                         <button type="button" onClick={() => setUpdateConfirmOpen(false)} className="mt-2 font-semibold text-foreground-600 underline">Cancel</button>
                       </div>
                     )}
@@ -952,7 +954,17 @@ export function TeamsMeetingDialogs({ workspace, secondTab }: {
                   <div>
                     <h3 id="teams-invitations-heading" className="text-[11px] font-bold uppercase tracking-wider text-foreground-400">Invitations and meeting settings</h3>
                     <p className="mt-1 text-[11px] text-foreground-500">
-                      Only the people and settings you change here are updated. Session dates and join links stay unchanged. Save without notifying sends no LMS email; Microsoft may still send a calendar update. Save and invite added people also requests invitations and schedule emails for the people you add.
+                      Only the people and settings you change here are updated. Session dates and join links stay unchanged. Save without notifying sends no LMS email; Microsoft may still send a calendar update. Save and email added people also requests LMS schedule emails for the people you add.
+                    </p>
+                    <button type="button" onClick={refreshPeopleFromTeams}
+                      disabled={peopleRefreshing || originalCalendar?.loading || Boolean(busy) || Boolean(blockedReason) || calendarLinksLoading || updateDrawer.saving || Boolean(updateProgress) || !graphConfigured}
+                      className="mt-2 inline-flex min-h-10 max-w-full items-center gap-2 whitespace-normal text-left text-xs font-bold text-primary-700 underline disabled:opacity-50">
+                      <AppIcon className={peopleRefreshing || originalCalendar?.loading ? 'ri-loader-4-line animate-spin' : 'ri-refresh-line'} />
+                      {peopleRefreshing || originalCalendar?.loading ? 'Reading people and roles…' : 'Sync people and roles from Teams'}
+                    </button>
+                    <p role="status" aria-live="polite" className={`mt-1 break-words text-[11px] ${peopleSyncInfo?.status === 'failed' ? 'text-amber-800' : 'text-foreground-500'}`}>
+                      {peopleSyncInfo?.message || 'Roles are checked automatically by the existing session worker. Sync checks this meeting now.'}
+                      {updateDrawer.dirty && ' Your unsaved edits stay on screen until you save or confirm Sync.'}
                     </p>
                   </div>
                   {originalCalendarBlocked && originalCalendar && !originalCalendar.loading && <>
@@ -962,7 +974,11 @@ export function TeamsMeetingDialogs({ workspace, secondTab }: {
                     <ImportedParticipantsPanel key={originalCalendar.id} liveSessionId={originalCalendar.id}
                       savedOrganizer={selected.summary.organizerEmail} />
                   </>}
-                  <fieldset disabled={originalCalendarBlocked} className="grid gap-4 sm:grid-cols-2 disabled:opacity-60">
+                  {originalRolesBlocked && <p role="alert" className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
+                    Microsoft meeting roles are not verified. The saved people below may be incomplete; their Teams permissions have not been removed.
+                    {' '}<button type="button" onClick={refreshOriginalCalendar} className="font-bold underline">Retry role check</button>
+                  </p>}
+                  <fieldset disabled={peopleRefreshing || originalCalendarBlocked || originalRolesBlocked} className="grid min-w-0 gap-4 sm:grid-cols-2 disabled:opacity-60 [&>label]:min-w-0">
                     <FormField label="Organizer Microsoft 365 email" hint="This organizer owns the existing calendar.">
                       <input aria-label="Organizer" readOnly value={updateDrawer.form.organizerEmail}
                         className="h-11 w-full rounded-lg border border-background-200 bg-background-100 px-3 text-[13px]" />
@@ -1022,7 +1038,7 @@ export function TeamsMeetingDialogs({ workspace, secondTab }: {
                   </section>
                   {addedInvitees(selected).length > 0 && (
                     <p role="note" className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-[11px] font-semibold text-amber-900">
-                      Save without notifying saves added people without an LMS email. Microsoft may still send a calendar update. Use Save and invite added people to request their Teams invitation and schedule email.
+                      Save without notifying saves added people without an LMS email. Microsoft may still send a calendar update. Use Save and email added people to request their LMS schedule email.
                     </p>
                   )}
                   <div className="flex flex-wrap items-center justify-end gap-3">
@@ -1030,7 +1046,7 @@ export function TeamsMeetingDialogs({ workspace, secondTab }: {
                     <button
                       type="button"
                       onClick={() => void saveInvitations(selected)}
-                      disabled={!updateDrawer.dirty || updateDrawer.saving || Boolean(busy) || (Boolean(blockedReason) || originalCalendarBlocked) || detailLoading || !graphConfigured}
+                      disabled={peopleRefreshing || !updateDrawer.dirty || updateDrawer.saving || Boolean(busy) || (Boolean(blockedReason) || originalCalendarBlocked || originalRolesBlocked) || detailLoading || !graphConfigured}
                       title="Save people and settings without an LMS email. Microsoft may send a calendar update. Session dates and join links stay unchanged."
                       className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-primary-200 bg-primary-50 px-3 text-[12px] font-bold text-primary-700 transition-smooth hover:bg-primary-100 disabled:cursor-not-allowed disabled:opacity-50"
                     >
@@ -1041,12 +1057,12 @@ export function TeamsMeetingDialogs({ workspace, secondTab }: {
                       <button
                         type="button"
                         onClick={() => void saveInvitations(selected, { invite: true })}
-                        disabled={!updateDrawer.dirty || updateDrawer.saving || Boolean(busy) || (Boolean(blockedReason) || originalCalendarBlocked) || detailLoading || !graphConfigured}
-                        title="Save these changes, then send the Teams invitation and the schedule email to the people you added. Nobody already invited is contacted, and no session date moves."
+                        disabled={peopleRefreshing || !updateDrawer.dirty || updateDrawer.saving || Boolean(busy) || (Boolean(blockedReason) || originalCalendarBlocked || originalRolesBlocked) || detailLoading || !graphConfigured}
+                        title="Save these changes, then send an individual LMS schedule email to the people you added. No LMS email is sent to existing invitees, and no session date moves."
                         className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-primary-600 px-3 text-[12px] font-bold text-white shadow-sm transition-colors hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-50"
                       >
                         <AppIcon className={updateDrawer.saving ? 'ri-loader-4-line animate-spin text-sm' : 'ri-user-add-line text-sm'}></AppIcon>
-                        Save and invite added people
+                        Save and email added people
                       </button>
                     )}
                   </div>

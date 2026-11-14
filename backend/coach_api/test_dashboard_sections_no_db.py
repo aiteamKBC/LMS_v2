@@ -32,6 +32,11 @@ def learner(identity, name, **extra):
 @override_settings(CACHES={"default": {"BACKEND": "django.core.cache.backends.locmem.LocMemCache", "LOCATION": "dashboard-sections"}})
 class DashboardSectionTests(SimpleTestCase):
     def setUp(self):
+        # Projection-store behavior has its own ownership/race tests. Keep this
+        # suite's existing section/paging boundary free of live database reads.
+        overlay = patch('coach_api.activity_plan_snapshots.attach_snapshots')
+        self.plan_overlay = overlay.start()
+        self.addCleanup(overlay.stop)
         cache.clear()
         self.factory = RequestFactory()
         self.payload = {
@@ -420,6 +425,8 @@ class DashboardSectionTests(SimpleTestCase):
         load.assert_called_once_with("coach@example.invalid", "learners")
         refresh.assert_not_called()
         schedule.assert_not_called()
+        self.assertEqual(self.plan_overlay.call_count, 2)
+        self.assertTrue(all(call.args[0] == 'coach@example.invalid' for call in self.plan_overlay.call_args_list))
 
     @patch("coach_api.dashboard_view.schedule_coach_dashboard_refresh")
     @patch("coach_api.dashboard_view.CoachDashboardService.refresh")

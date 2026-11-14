@@ -1,4 +1,5 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { authoredWeekPoints } from '@/api/webWeekPoints';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -9,6 +10,8 @@ import { CurriculumRequestTimeout, ModuleStructureConflictError } from '../modul
 import { fieldKey, projectAvailable } from '../collaborationProtocol';
 import { CurriculumVideoUpload } from '@/pages/curriculum/shared/CurriculumVideoUpload';
 import { coachFetch } from '@/lib/coachFetch';
+
+vi.mock('@/api/webWeekPoints', () => ({ authoredWeekPoints: vi.fn() }));
 
 const collaborationTest = vi.hoisted(() => ({ enabled: false, claim: vi.fn(async () => true) }));
 vi.mock('@/lib/coachFetch', () => ({ coachFetch: vi.fn(async () => new Response(
@@ -78,14 +81,18 @@ vi.mock('@/pages/curriculum/week-builder/weekTemplateData', () => ({
 vi.mock('@/pages/curriculum/shared/components/weekAuthoringLazy', () => ({
   ComponentEditor: ({ component, moduleId }: { component: { id: string; type: string; title: string; settings: Record<string, unknown> }; moduleId: string }) => component.type === 'video'
     ? <CurriculumVideoUpload targetId={moduleId} componentId={component.id} title={component.title} source={String(component.settings.videoUrl || '')} /> : null,
-  WeekComponentRail: ({ components, onChange, onSelectId }: {
+  WeekComponentRail: ({ components, onChange, onSelectId, renderComponentList, selectedId }: {
     components: Array<{ id: string; title: string }>;
     onChange: (components: Array<{ id: string }>) => void;
     onSelectId: (id: string) => void;
+    selectedId: string | null;
+    renderComponentList?: (items: { component: { id: string; title: string }; node: ReactNode }[], searchTerm: string) => ReactNode;
   }) => (
     <>
       <button type="button" onClick={() => onChange([...components].reverse())}>Reorder components</button>
-      {components.map(component => <button key={component.id} type="button" onClick={() => onSelectId(component.id)}>{component.title}</button>)}
+      {renderComponentList
+        ? renderComponentList(components.map(component => ({ component, node: <button type="button" aria-current={selectedId === component.id ? 'true' : undefined} onClick={() => onSelectId(component.id)}>{component.title}</button> })), '')
+        : components.map(component => <button key={component.id} type="button" onClick={() => onSelectId(component.id)}>{component.title}</button>)}
     </>
   ),
   WeekOverviewPanel: () => null,
@@ -256,6 +263,13 @@ async function openWorkspaceSaving() {
 
 describe('Module Builder auto-save', { timeout: 25000 }, () => {
   beforeEach(() => {
+    sessionStorage.clear();
+    vi.mocked(authoredWeekPoints).mockReset();
+    vi.mocked(authoredWeekPoints).mockImplementation(async (moduleId, weekId, saved) => ({
+      moduleId, weekId, editorId: 'synthetic-editor', csrfToken: 'synthetic-token', revision: saved ? saved.revision + 1 : 0,
+      points: saved?.points || [{ id: 'P1', title: 'Explore', componentIds: [] }],
+      activities: [{ id: 'COMPONENT-1', title: 'First reading', type: 'reading' }],
+    }));
     vi.mocked(coachFetch).mockImplementation(async () => new Response(JSON.stringify({ enabled: true, saved: true, import: null }), { status: 200 }));
     clearAllCachedResources();
     collaborationTest.enabled = false;
@@ -273,6 +287,72 @@ describe('Module Builder auto-save', { timeout: 25000 }, () => {
     });
   });
 
+  it('shows draft Points under the expanded course week and opens their activities', async () => {
+    await openWorkspace();
+    fireEvent.change(await screen.findByLabelText('Point 1 name'), { target: { value: 'Week introduction' } });
+    fireEvent.click(screen.getByRole('checkbox', { name: 'First reading' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Collapse Week one' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Expand Week one' }));
+    const nav = within(await screen.findByRole('navigation', { name: 'Week Points navigation' }));
+    fireEvent.click(nav.getByRole('button', { name: 'Week introduction, 1 activity' }));
+    fireEvent.click(nav.getByRole('button', { name: /First component/ }));
+    await waitFor(() => expect(nav.getByRole('button', { name: /First component/ })).toHaveAttribute('aria-current', 'true'));
+    expect(saveModuleStructure).not.toHaveBeenCalled();
+    expect(vi.mocked(authoredWeekPoints).mock.calls.filter(call => call[2])).toHaveLength(0);
+  });
+
+  it('saves Point-only edits through Save module, after the structure write succeeds', async () => {
+    await openWorkspace();
+    fireEvent.change(await screen.findByLabelText('Point 1 name'), { target: { value: 'New point name' } });
+    expect(saveState()).not.toBe('All changes saved');
+    expect(screen.queryByRole('button', { name: 'Save Points' })).not.toBeInTheDocument();
+    const gate = holdNextSave();
+    await userEvent.click(screen.getByTestId('module-builder-save'));
+    await waitFor(() => expect(saveModuleStructure).toHaveBeenCalledOnce());
+    expect(vi.mocked(authoredWeekPoints).mock.calls.filter(call => call[2])).toHaveLength(0);
+    gate.release();
+    await waitFor(() => expect(saveState()).toBe('All changes saved'));
+    expect(authoredWeekPoints).toHaveBeenLastCalledWith('MOD-AUTOSAVE-1', 'WEEK-1', expect.objectContaining({
+      points: [{ id: 'P1', title: 'New point name', componentIds: [] }], revision: 0,
+    }));
+  });
+
+  it('does not write Points when the module save fails', async () => {
+    await openWorkspace();
+    fireEvent.change(await screen.findByLabelText('Point 1 name'), { target: { value: 'Retain me' } });
+    saveModuleStructure.mockRejectedValueOnce(new Error('Module unavailable'));
+    await userEvent.click(screen.getByTestId('module-builder-save'));
+    await screen.findByText('Module unavailable');
+    expect(vi.mocked(authoredWeekPoints).mock.calls.filter(call => call[2])).toHaveLength(0);
+    expect(screen.getByLabelText('Point 1 name')).toHaveValue('Retain me');
+    expect(saveState()).not.toBe('All changes saved');
+  });
+
+  it('reports a partial save and allows retry without losing Points', async () => {
+    await openWorkspace();
+    fireEvent.change(await screen.findByLabelText('Point 1 name'), { target: { value: 'Retry me' } });
+    vi.mocked(authoredWeekPoints).mockRejectedValueOnce(new Error('Points unavailable'));
+    await userEvent.click(screen.getByTestId('module-builder-save'));
+    await screen.findByText(/Module changes saved, but Week Points could not be saved/);
+    expect(saveState()).not.toBe('All changes saved');
+    expect(screen.getByLabelText('Point 1 name')).toHaveValue('Retry me');
+    await userEvent.click(screen.getByTestId('module-builder-save'));
+    await waitFor(() => expect(saveState()).toBe('All changes saved'));
+    const writes = vi.mocked(authoredWeekPoints).mock.calls.filter(call => call[2]);
+    expect(writes).toHaveLength(2);
+    expect(writes[1][2]).toMatchObject({ points: [{ id: 'P1', title: 'Retry me', componentIds: [] }], revision: 0 });
+  });
+
+  it('includes Point-only edits in the existing optional auto-save', async () => {
+    await openWorkspaceSaving();
+    fireEvent.change(await screen.findByLabelText('Point 1 name'), { target: { value: 'Automatically saved' } });
+    await waitFor(() => expect(saveModuleStructure).toHaveBeenCalledOnce(), { timeout: 4000 });
+    await waitFor(() => expect(saveState()).toBe('All changes saved'));
+    expect(authoredWeekPoints).toHaveBeenLastCalledWith('MOD-AUTOSAVE-1', 'WEEK-1', expect.objectContaining({
+      points: [{ id: 'P1', title: 'Automatically saved', componentIds: [] }],
+    }));
+  });
+
   it('opens module settings without requesting a reservation for the derived hours total', async () => {
     collaborationTest.enabled = true;
     await openWorkspace('&settings=1');
@@ -288,6 +368,7 @@ describe('Module Builder auto-save', { timeout: 25000 }, () => {
     video.type = 'video';
     video.settings = { sourceType: 'YouTube', videoUrl: 'https://www.youtube.com/watch?v=abcdefghijk' };
     await openWorkspace('', structure);
+    await userEvent.click(await screen.findByRole('button', { name: 'Other components, 2 activities' }));
     await userEvent.click(screen.getByText('First component'));
     await userEvent.click(screen.getByTestId('module-builder-save'));
     await waitFor(() => expect(saveModuleStructure).toHaveBeenCalledTimes(1));
@@ -300,6 +381,7 @@ describe('Module Builder auto-save', { timeout: 25000 }, () => {
     const structure = storedStructure();
     structure.weekStructure[0].components[0].type = 'video';
     await openWorkspace('', structure);
+    await userEvent.click(await screen.findByRole('button', { name: 'Other components, 2 activities' }));
     await userEvent.click(screen.getByText('First component'));
     await screen.findByText('Uploading to Bunny');
     await userEvent.click(screen.getByTestId('module-builder-save'));
@@ -398,6 +480,7 @@ describe('Module Builder auto-save', { timeout: 25000 }, () => {
       return { ...module, structureRevision: 'rev-2' };
     });
     await openWorkspace('', structure);
+    await userEvent.click(await screen.findByRole('button', { name: 'Other components, 2 activities' }));
     await userEvent.click(screen.getByText('First component'));
     const picker = screen.getByLabelText('Upload MP4 to LMS and Bunny');
     expect(picker).toBeEnabled();
@@ -411,15 +494,16 @@ describe('Module Builder auto-save', { timeout: 25000 }, () => {
     expect(saveModuleStructure).toHaveBeenCalledOnce();
   });
 
-  it('saves an independent reorder while retaining a reserved title and unsaved navigation guard', async () => {
+  it.each([false, true])('saves an independent reorder while retaining a reserved title and navigation guard (free course: %s)', async (isFreeCourse) => {
     collaborationTest.enabled = true;
-    const title = await openWorkspace();
+    const title = await openWorkspace('', { ...storedStructure(), isFreeCourse } as ReturnType<typeof storedStructure>);
     await userEvent.type(title, '!');
     await userEvent.click(screen.getByRole('button', { name: 'Reorder components' }));
     await userEvent.click(screen.getByTestId('module-builder-save'));
     await waitFor(() => expect(saveModuleStructure).toHaveBeenCalledTimes(1));
     expect(saveCalls()[0][1].weekStructure[0].title).toBe('Week one');
     expect(saveCalls()[0][1].weekStructure[0].components.map(c => c.id)).toEqual(['COMPONENT-2', 'COMPONENT-1']);
+    expect(saveModuleStructure.mock.calls[0][1].isFreeCourse).toBe(isFreeCourse);
     await waitFor(() => expect(title).toHaveValue('Week one!'));
     expect(saveState()).toBe('Unsaved changes - press Save');
     await userEvent.click(screen.getByRole('button', { name: 'Back to modules' }));

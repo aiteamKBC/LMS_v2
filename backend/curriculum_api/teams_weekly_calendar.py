@@ -77,6 +77,7 @@ def save_weekday_calendar(payload, graph_settings, series=None):
     """
     from coach_api.views import microsoft_graph_request
     from . import views as v
+    from .teams_presenter_roles import roles_changed
     series = series or {}
     if not v.has_column(v.LIVE_SESSIONS_TABLE, 'calendar_series'):
         return v.json_error('Apply curriculum migration 0063 before creating separate Teams series.', status=409)
@@ -92,6 +93,12 @@ def save_weekday_calendar(payload, graph_settings, series=None):
         **payload,
         'hideAttendees': True,
     }
+    promote_presenters = not series.get('id') or roles_changed(
+        v.teams_series_email_list(combined.get('presenters')),
+        v.teams_series_email_list(combined.get('coOrganizers')),
+        v.teams_series_email_list(series.get('presenters')),
+        v.teams_series_email_list(series.get('co_organizers')),
+    )
     # A change to the meeting's dates is announced to everyone already invited
     # when the author asked for it (``notifyAttendees``), exactly as on a shared
     # series: the per-day date writes are silent, and the announcement is the
@@ -151,7 +158,9 @@ def save_weekday_calendar(payload, graph_settings, series=None):
                 'repeat': 'weekly' if len(items) > 1 else 'none', 'repeatOccurrences': len(items),
                 'transactionId': f"{combined.get('transactionId') or 'TEAMS-' + str(combined.get('moduleCatalogueId') or series.get('id'))}-{day}",
             }
-            event_body, invited_people, presenters, co_organizers, stored_attendees, start, duration, repeat, count = v.teams_event_payload(day_payload, graph_settings)
+            event_body, invited_people, presenters, co_organizers, stored_attendees, start, duration, repeat, count = v.teams_event_payload(
+                day_payload, graph_settings, promote_presenters=promote_presenters,
+            )
             event_body.setdefault('recurrence', None)
             prepared.append((day, day_payload, event_body, invited_people, stored_attendees, presenters, co_organizers))
         if co_organizers and not v.has_column(v.LIVE_SESSIONS_TABLE, 'co_organizers'):
@@ -210,6 +219,13 @@ def save_weekday_calendar(payload, graph_settings, series=None):
                 verify_calendar(microsoft_graph_request, owner, event_id, targets, previous.get('joinUrl') or '',
                                 day_payload['repeat'] != 'none')
             except CalendarMismatch as mismatch:
+                if mismatch.code == 'teams_attendee_privacy_unconfirmed':
+                    return v.json_error(
+                        'Attendee email privacy is not confirmed on the original Teams calendar. '
+                        'The invitations were not saved and no invitation was sent. '
+                        'Updating session dates does not resolve this privacy check.',
+                        status=409, code=mismatch.code, detail=str(mismatch), liveSessionId=live_id,
+                    )
                 return v.json_error(
                     'The Teams calendar dates no longer match the dates saved here, so the invitations were not '
                     'saved. Nothing was changed in Teams. Update the Teams calendar dates first, then save the '

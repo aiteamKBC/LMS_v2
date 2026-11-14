@@ -56,7 +56,7 @@ def main():
         with connection.cursor() as cursor:
             cursor.execute('''CREATE SCHEMA curriculum;
                 CREATE TABLE curriculum.modules (
-                    module_catalogue_id text PRIMARY KEY, title text, programme_id text, programme_name text,
+                    module_catalogue_id text PRIMARY KEY, title text, source_type text, programme_id text, programme_name text,
                     cohort_id text, cohort_name text, group_id text, group_name text,
                     deleted_at timestamptz, is_programme_deleted boolean DEFAULT false);
                 CREATE TABLE curriculum.week_templates (

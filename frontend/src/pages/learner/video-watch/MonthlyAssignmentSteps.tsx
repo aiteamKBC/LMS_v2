@@ -292,7 +292,7 @@ export function MonthlyAssignmentSteps({ step, data, onChange, answers, onAnswer
       }}>Add link</button></fieldset>
       </section>
       <section className="space-y-4 border-t border-slate-200 pt-6">
-        <div><h4 className="text-base font-semibold text-slate-900">Attached evidence ({data.evidence.length})</h4><p className="mt-1 text-sm text-slate-600">These items are included in your submission. Linking them to answer points is optional.</p></div>
+        <div><h4 className="text-base font-semibold text-slate-900">Attached evidence ({data.evidence.length})</h4><p className="mt-1 text-sm text-slate-600">These items are included in your submission. Remove an old version here and attach the correct file above. Files kept with earlier submissions remain in your evidence library.</p></div>
         {data.evidence.length === 0 && <p className="rounded-xl border border-dashed border-slate-300 p-5 text-sm text-slate-500">No evidence attached. This is optional; you can continue without adding files or links.</p>}
         {data.evidence.map(entry => <article key={entry.id} className="overflow-hidden rounded-2xl border border-slate-200 bg-white">
           <div className="flex flex-wrap items-start justify-between gap-3 border-b border-slate-200 bg-slate-50 p-4 sm:px-5">
@@ -311,7 +311,7 @@ export function MonthlyAssignmentSteps({ step, data, onChange, answers, onAnswer
       <section className="space-y-4 rounded-2xl border border-slate-200 bg-slate-50 p-4 sm:p-6" aria-label="Learning time" data-quality-target="hours" tabIndex={-1}>
         <div className="flex flex-wrap items-center justify-between gap-3"><h4 className="font-semibold text-slate-900">Your learning time</h4><span className="rounded-full border border-slate-200 bg-white px-3 py-1 text-sm">Planned: {plannedOtjh == null ? 'Not set' : `${plannedOtjh} hours`}</span></div>
         {disabled && !data.timeEntries?.length ? <fieldset disabled>{timeControl}</fieldset> :
-          <AssignmentTimeEntries kind={kind} learnerId={learnerId} dailyLimit={payload().activityType !== 'extra_activity' && !parsePersonalLearning(learnerId)} month={data.month} entries={data.timeEntries || []} disabled={disabled} onChange={timeEntries => patch({ timeEntries })} />}
+          <AssignmentTimeEntries kind={kind} learnerId={learnerId} showInitialTopic={payload().activityType !== 'extra_activity'} dailyLimit={payload().activityType !== 'extra_activity' && !parsePersonalLearning(learnerId)} month={data.month} entries={data.timeEntries || []} disabled={disabled} onChange={timeEntries => patch({ timeEntries })} />}
         {check('paidHours', 'This learning was completed during paid working hours.')}
       </section>
       <section className="rounded-2xl border border-blue-200 bg-blue-50 p-4 sm:p-5">

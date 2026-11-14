@@ -196,6 +196,7 @@ class Command(BaseCommand):
         # that quirk here would be a second place for it to be wrong. The model
         # already carries the mapping.
         from learner_api.models import EnrolmentUser
+        from learner_api.active_users import ensure_active_learner_profile
 
         try:
             with transaction.atomic(using="enrolment"):
@@ -224,8 +225,10 @@ class Command(BaseCommand):
                             aptem_id=aptem_id,
                         )
                         updated += 1
+                        ensure_active_learner_profile(
+                            EnrolmentUser.all_learners.get(pk=existing[key]))
                         continue
-                    EnrolmentUser.objects.create(
+                    source = EnrolmentUser.objects.create(
                         username=name,
                         email=email,
                         programme=programme,
@@ -239,6 +242,7 @@ class Command(BaseCommand):
                         programme_status=IMPORT_DEFAULTS["Programme_status"],
                         invite_to_platform=IMPORT_DEFAULTS["Invite_to_platform"],
                     )
+                    ensure_active_learner_profile(source)
                     created += 1
         except DatabaseError as exc:
             self.stderr.write(self.style.ERROR(f"Import failed and was rolled back: {exc}"))

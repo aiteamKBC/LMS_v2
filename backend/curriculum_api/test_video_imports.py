@@ -64,6 +64,58 @@ class VideoImportTests(TestCase):
         self.assertEqual(result.status, 'failed')
         self.client.create.assert_not_called()
 
+    def test_large_youtube_video_reaches_bunny_for_programme_and_free_course(self):
+        from .video_sources import MAX_VIDEO_BYTES, download_video
+
+        source = 'https://www.youtube.com/watch?v=abcdefghijk'
+        self.component['settings_json']['videoUrl'] = source
+        free_scope = {'free_course_module_id': 'MOD1', 'free_course_name': 'Independent study',
+                      'course_type': 'free_course', 'collection_name': 'Free course'}
+        self.client.free_course_collection.return_value = 'free-collection'
+        for scope, collection in ((SCOPE, 'collection'), (free_scope, 'free-collection')):
+            with self.subTest(free=bool(scope.get('free_course_module_id'))):
+                # Simulate a large seekable video without allocating hundreds of MB.
+                stream = Mock(wraps=io.BytesIO(MP4))
+                stream.tell.return_value = MAX_VIDEO_BYTES + 1
+                with patch.object(imports, 'BunnyStream', return_value=self.client), \
+                     patch.object(imports, 'download_video', side_effect=download_video), \
+                     patch('curriculum_api.youtube_download.download_youtube', return_value=nullcontext(stream)), \
+                     patch.object(imports, '_matches_current_source', return_value=True):
+                    asset = imports.enqueue('module', 'MOD1', self.component, scope)
+                    result = imports.process(asset.pk)
+                self.assertEqual((result.status, result.error), ('ready', ''))
+                self.assertEqual(result.collection_id, collection)
+                self.client.upload.assert_called_once_with(VIDEO_ID, stream)
+                self.assertEqual(self.component['settings_json']['videoUrl'], source)
+                self.client.reset_mock()
+
+    def test_large_non_youtube_video_remains_subject_to_upload_limit(self):
+        from .video_sources import MAX_VIDEO_BYTES
+
+        stream = Mock(wraps=io.BytesIO(MP4))
+        stream.tell.return_value = MAX_VIDEO_BYTES + 1
+        with patch.object(imports, 'BunnyStream', return_value=self.client), \
+             patch.object(imports, 'download_video', return_value=nullcontext(stream)):
+            result = imports.process(self.asset().pk)
+        self.assertEqual(result.status, 'failed')
+        self.assertIn('300 MB', result.error)
+        self.client.create.assert_not_called()
+        self.client.upload.assert_not_called()
+
+    def test_empty_or_non_video_youtube_download_never_reaches_bunny(self):
+        from .video_sources import download_video
+
+        self.component['settings_json']['videoUrl'] = 'https://www.youtube.com/watch?v=abcdefghijk'
+        for content in (b'', b'<html>sign in</html>'):
+            with self.subTest(content=content), \
+                 patch.object(imports, 'BunnyStream', return_value=self.client), \
+                 patch.object(imports, 'download_video', side_effect=download_video), \
+                 patch('curriculum_api.youtube_download.download_youtube', return_value=nullcontext(io.BytesIO(content))):
+                result = imports.process(self.asset().pk)
+                self.assertEqual(result.status, 'failed')
+                self.client.create.assert_not_called()
+                self.client.upload.assert_not_called()
+
     def test_empty_or_already_bunny_source_is_not_queued(self):
         for source in ('', playback_url('798153', VIDEO_ID)):
             self.assertIsNone(imports.enqueue('module', 'MOD1', {**self.component, 'settings_json': {'videoUrl': source}}, SCOPE))
@@ -294,7 +346,193 @@ class VideoImportTests(TestCase):
         target.assert_not_called()
 
 
+class FreeCourseVideoImportTests(TestCase):
+    def setUp(self):
+        self.scope = {'module_id': 'FREE1', 'module_title': 'Independent study',
+                      'free_course_module_id': 'FREE1', 'free_course_name': 'Independent study',
+                      'course_type': 'free_course', 'collection_name': 'Free course'}
+        self.component = {'id': 'COMP1', 'type': 'video', 'title': 'Introduction',
+                          'settings_json': {'videoUrl': SOURCE, 'requiredProgressPercentage': 80}}
+        self.bunny = Mock()
+        self.bunny.free_course_collection.return_value = 'free-collection'
+        self.bunny.find_import.return_value = None
+        self.bunny.create.return_value = {'guid': VIDEO_ID}
+        self.bunny.video.return_value = {'guid': VIDEO_ID, 'status': 4}
+        self.enterContext(patch.object(imports, 'BunnyStream', return_value=self.bunny))
+        self.enterContext(patch.object(imports, 'target', return_value=('components', [self.component], self.scope)))
+        self.download = self.enterContext(patch.object(imports, 'download_video', side_effect=lambda _: nullcontext(io.BytesIO(MP4))))
+
+    def asset(self, **overrides):
+        return imports.enqueue('module', 'FREE1', {**self.component, **overrides}, self.scope)
+
+    def test_link_and_device_video_complete_without_programme_and_preserve_source(self):
+        for device in (False, True):
+            with self.subTest(device=device):
+                original = json.loads(json.dumps(self.component))
+                asset = self.asset()
+                result = imports.process(asset.id, io.BytesIO(MP4) if device else None)
+                self.assertEqual(result.status, 'ready')
+                self.assertEqual(result.collection_id, 'free-collection')
+                self.assertEqual(self.component, original)
+                self.bunny.collection.assert_not_called()
+                # Repeated processing does not duplicate the completed video.
+                imports.process(asset.id)
+                self.assertEqual(self.bunny.create.call_count, 1)
+                self.bunny.metadata.assert_called_once_with(VIDEO_ID, {**self.scope, 'component_id': 'COMP1'}, 'Introduction')
+                CurriculumVideoImport.objects.all().delete()
+                self.bunny.reset_mock()
+
+    def test_components_from_different_courses_share_collection_but_not_import_identity(self):
+        first = self.asset()
+        self.assertEqual(imports._import_collection(first, self.bunny), 'free-collection')
+        second = self.asset(id='COMP2')
+        self.assertEqual(imports._import_collection(second, self.bunny), 'free-collection')
+        self.bunny.free_course_collection.assert_called_once_with()
+        other_scope = {**self.scope, 'free_course_module_id': 'FREE2', 'free_course_name': 'Other course'}
+        other = imports.enqueue('module', 'FREE2', self.component, other_scope)
+        self.assertEqual(imports._import_collection(other, self.bunny), 'free-collection')
+        self.bunny.free_course_collection.assert_called_once_with()
+        self.assertNotEqual(first.id, other.id)
+        self.assertEqual(other.scope['free_course_name'], 'Other course')
+
+    def test_another_library_resolves_its_own_shared_collection(self):
+        first = self.asset()
+        self.assertEqual(imports._import_collection(first, self.bunny), 'free-collection')
+        other = self.asset(id='COMP2')
+        other.library_id = '99'
+        other.save(update_fields=['library_id'])
+        self.bunny.free_course_collection.return_value = 'other-library-collection'
+        self.assertEqual(imports._import_collection(other, self.bunny), 'other-library-collection')
+        self.assertEqual(self.bunny.free_course_collection.call_count, 2)
+
+    def test_resave_repairs_old_failed_scope_without_new_import_or_changed_source(self):
+        old_scope = {'module_id': 'FREE1', 'module_title': 'Independent study'}
+        old = imports.enqueue('module', 'FREE1', self.component, old_scope)
+        old.status, old.error = 'failed', 'The programme must match exactly one collection.'
+        old.save()
+        repaired = imports.enqueue_saved_video('module', 'FREE1', self.component, self.scope)
+        self.assertEqual(repaired.id, old.id)
+        self.assertEqual(repaired.status, 'queued')
+        self.assertEqual(repaired.scope, self.scope)
+        self.assertEqual(repaired.source_at_start, SOURCE)
+        self.assertEqual(imports.process(repaired.id).status, 'ready')
+        self.assertEqual(CurriculumVideoImport.objects.count(), 1)
+
+    def test_collection_failure_is_visible_without_creating_video_or_overwriting_settings(self):
+        self.bunny.free_course_collection.side_effect = VideoImportError('Bunny could not be reached.')
+        asset = self.asset()
+        result = imports.process(asset.id)
+        self.assertEqual(result.status, 'failed')
+        self.assertEqual(result.error, 'Bunny could not be reached.')
+        self.assertEqual(result.collection_id, '')
+        self.bunny.create.assert_not_called()
+        self.assertEqual(self.component['settings_json']['videoUrl'], SOURCE)
+
+    def test_pending_course_named_destination_is_replaced_before_upload(self):
+        old_scope = {key: value for key, value in self.scope.items() if key not in ('course_type', 'collection_name')}
+        old = imports.enqueue('module', 'FREE1', self.component, old_scope)
+        old.collection_id = 'old-course-named-collection'
+        old.save(update_fields=['collection_id'])
+        result = imports.process(old.id)
+        self.assertEqual(result.status, 'ready')
+        self.assertEqual(result.collection_id, 'free-collection')
+        self.assertEqual(result.scope['course_type'], 'free_course')
+        self.bunny.create.assert_called_once_with(old.id, 'Introduction', 'free-collection', scope=self.scope)
+
+    def test_resave_clears_old_destination_only_for_an_unuploaded_import(self):
+        old_scope = {key: value for key, value in self.scope.items() if key not in ('course_type', 'collection_name')}
+        old = imports.enqueue('module', 'FREE1', self.component, old_scope)
+        old.status, old.collection_id = 'failed', 'old-course-named-collection'
+        old.save()
+        retried = imports.enqueue_saved_video('module', 'FREE1', self.component, self.scope)
+        self.assertEqual(retried.id, old.id)
+        self.assertEqual(retried.collection_id, '')
+        self.assertEqual(retried.scope['collection_name'], 'Free course')
+        retried.status, retried.video_id, retried.collection_id = 'ready', VIDEO_ID, 'stored-collection'
+        retried.save()
+        same = imports.enqueue_saved_video('module', 'FREE1', self.component, self.scope)
+        self.assertEqual((same.video_id, same.collection_id, same.status), (VIDEO_ID, 'stored-collection', 'ready'))
+
+
 class VideoImportScopeTests(TestCase):
+    def test_free_course_scope_comes_from_saved_module_type_and_name(self):
+        for source_type, free in [('free_course', True), ('module_authoring', False)]:
+            placement = {} if free else SCOPE
+            views = Mock()
+            views.authoring_fetch_all.side_effect = [
+                [{'module_catalogue_id': 'FREE1', 'title': 'Independent study', 'source_type': source_type, **placement}],
+                [{'id': 'COMP1', 'type': 'video'}],
+            ]
+            with patch.object(imports, '_views', return_value=views):
+                _, _, scope = imports.target('module', 'FREE1')
+            self.assertEqual(scope.get('free_course_module_id'), 'FREE1' if free else None)
+            self.assertEqual(scope.get('free_course_name'), 'Independent study' if free else None)
+            self.assertEqual(scope.get('course_type'), 'free_course' if free else None)
+            self.assertEqual(scope.get('collection_name'), 'Free course' if free else None)
+            self.assertEqual([scope[k] for k in ('programme_id', 'cohort_id', 'group_id')],
+                             [placement.get(k, '') for k in ('programme_id', 'cohort_id', 'group_id')])
+
+    def test_unassigned_programme_routes_saved_course_to_shared_collection(self):
+        for programme in (None, '', 'Unassigned', ' Unassigned   programme ', 'NOT ASSIGNED', 'Not assigned program'):
+            with self.subTest(programme=programme):
+                parent = {'module_catalogue_id': 'MOD1', 'title': 'Independent study',
+                          'source_type': 'module_authoring', 'programme_id': None, 'programme_name': programme}
+                views = Mock()
+                views.authoring_fetch_all.side_effect = [[parent], []]
+                with patch.object(imports, '_views', return_value=views):
+                    _, _, scope = imports.target('module', 'MOD1')
+                self.assertEqual(scope['free_course_module_id'], 'MOD1')
+                self.assertEqual(scope['free_course_name'], 'Independent study')
+                self.assertEqual(scope['course_type'], 'free_course')
+                self.assertEqual(scope['collection_name'], 'Free course')
+                self.assertEqual(scope['programme_name'], programme or '')
+                self.assertEqual(parent['source_type'], 'module_authoring')
+
+    def test_real_programme_identity_prevents_unassigned_fallback(self):
+        for placement in (
+            {'programme_id': 'PROG-PCP-L6', 'programme_name': 'Unassigned programme'},
+            {'programme_id': None, 'programme_name': 'Project Controls Professional Level 6'},
+            {'programme_id': None, 'programme_name': 'Unassigned creative studies'},
+        ):
+            with self.subTest(placement=placement):
+                views = Mock()
+                views.authoring_fetch_all.side_effect = [
+                    [{'module_catalogue_id': 'MOD1', 'title': 'MSP', **placement}], []]
+                with patch.object(imports, '_views', return_value=views):
+                    _, _, scope = imports.target('module', 'MOD1')
+                self.assertNotIn('free_course_module_id', scope)
+
+    def test_attached_week_uses_unassigned_course_name_but_not_for_a_programme_module(self):
+        for placement, free in (({}, True), (SCOPE, False)):
+            views = Mock()
+            views.authoring_fetch_all.side_effect = [
+                [{'id': 'W1', 'module_catalogue_id': 'MOD1', 'title': 'Week One'}], [],
+                [{'module_catalogue_id': 'MOD1', 'title': 'Independent study', **placement}],
+            ]
+            with patch.object(imports, '_views', return_value=views):
+                _, _, scope = imports.target('template', 'W1')
+            self.assertEqual(scope.get('free_course_name'), 'Independent study' if free else None)
+            self.assertEqual(scope.get('collection_name'), 'Free course' if free else None)
+
+    def test_unattached_week_template_is_not_mistaken_for_a_course(self):
+        views = Mock()
+        views.authoring_fetch_all.side_effect = [[{'id': 'W1', 'title': 'Week One'}], []]
+        with patch.object(imports, '_views', return_value=views):
+            _, _, scope = imports.target('template', 'W1')
+        self.assertNotIn('free_course_module_id', scope)
+
+    def test_free_course_template_uses_parent_course_name(self):
+        views = Mock()
+        views.authoring_fetch_all.side_effect = [
+            [{'id': 'W1', 'module_catalogue_id': 'FREE1', 'title': 'Week One'}],
+            [{'id': 'COMP1', 'type': 'video'}],
+            [{'module_catalogue_id': 'FREE1', 'title': 'Independent study', 'source_type': 'free_course'}],
+        ]
+        with patch.object(imports, '_views', return_value=views):
+            _, _, scope = imports.target('template', 'W1')
+        self.assertEqual(scope['free_course_module_id'], 'FREE1')
+        self.assertEqual(scope['free_course_name'], 'Independent study')
+
     def test_template_prefix_uses_assigned_module_instead_of_week_title(self):
         views = Mock()
         views.AUTHORING_MODULES_TABLE = 'modules'
@@ -322,6 +560,75 @@ class VideoImportScopeTests(TestCase):
             _, _, scope = imports.target('module', 'MOD1')
         self.assertEqual(scope['module_title'], 'MSP')
         self.assertEqual(scope['programme_id'], SCOPE['programme_id'])
+
+
+class UnassignedCourseVideoTests(TestCase):
+    def setUp(self):
+        self.module = {'module_catalogue_id': 'MOD1', 'title': 'Independent study',
+                       'source_type': 'module_authoring', 'programme_id': None,
+                       'programme_name': 'Unassigned programme'}
+        self.component = {'id': 'COMP1', 'type': 'video', 'title': 'Introduction',
+                          'settings_json': {'videoUrl': SOURCE, 'requiredProgressPercentage': 80}}
+        views = Mock(AUTHORING_MODULES_TABLE='modules', AUTHORING_COMPONENTS_TABLE='components')
+        views.authoring_fetch_all.side_effect = lambda table, *args, **kwargs: (
+            [self.module] if table == 'modules' else [self.component])
+        self.enterContext(patch.object(imports, '_views', return_value=views))
+        self.bunny = Mock()
+        self.bunny.free_course_collection.return_value = 'free-collection'
+        self.bunny.find_import.return_value = None
+        self.bunny.create.return_value = {'guid': VIDEO_ID}
+        self.bunny.video.return_value = {'guid': VIDEO_ID, 'status': 4}
+        self.enterContext(patch.object(imports, 'BunnyStream', return_value=self.bunny))
+        self.enterContext(patch.object(imports, 'download_video', side_effect=lambda _: nullcontext(io.BytesIO(MP4))))
+
+    def test_link_and_mp4_use_shared_collection_and_keep_source_and_module_unchanged(self):
+        for file_hash in ('', 'synthetic-mp4-hash'):
+            with self.subTest(device=bool(file_hash)):
+                original = json.loads(json.dumps((self.module, self.component)))
+                _, _, scope = imports.target('module', 'MOD1')
+                asset = imports.enqueue('module', 'MOD1', self.component, scope, file_hash=file_hash)
+                result = imports.process(asset.pk, io.BytesIO(MP4) if file_hash else None)
+                self.assertEqual((result.status, result.collection_id), ('ready', 'free-collection'))
+                self.bunny.collection.assert_not_called()
+                self.bunny.create.assert_called_once_with(asset.pk, 'Introduction', 'free-collection', scope=scope)
+                self.bunny.metadata.assert_called_once_with(VIDEO_ID, {**scope, 'component_id': 'COMP1'}, 'Introduction')
+                self.assertEqual(scope['free_course_name'], 'Independent study')
+                self.assertEqual(scope['course_type'], 'free_course')
+                self.assertEqual([self.module, self.component], original)
+                self.bunny.reset_mock()
+
+    def test_saving_failed_unassigned_import_repairs_same_request_but_keeps_existing_remote_copy(self):
+        _, _, scope = imports.target('module', 'MOD1')
+        previous_scope = {key: value for key, value in scope.items()
+                          if key not in ('free_course_module_id', 'free_course_name', 'course_type', 'collection_name')}
+        old = imports.enqueue('module', 'MOD1', self.component, previous_scope)
+        old.status, old.error, old.collection_id = 'failed', 'Programme collection not found.', 'wrong-collection'
+        old.save()
+        retried = imports.enqueue_saved_video('module', 'MOD1', self.component, scope)
+        self.assertEqual((retried.pk, retried.status, retried.collection_id), (old.pk, 'queued', ''))
+        self.assertEqual(imports.process(retried.pk).status, 'ready')
+        self.assertEqual(CurriculumVideoImport.objects.count(), 1)
+        self.bunny.reset_mock()
+        same = imports.enqueue_saved_video('module', 'MOD1', self.component, scope)
+        result = imports.process(same.pk)
+        self.assertEqual((result.video_id, result.collection_id), (VIDEO_ID, 'free-collection'))
+        self.bunny.create.assert_not_called()
+        self.bunny.free_course_collection.assert_not_called()
+
+    def test_database_source_event_can_queue_unassigned_course_without_waiting_for_programme(self):
+        from . import video_changes
+        from .models import CurriculumVideoChange
+        event = CurriculumVideoChange.objects.create(
+            target_kind='module', target_id='MOD1', component_id='COMP1',
+            settings=self.component['settings_json'], previous_settings={},
+        )
+        with patch.object(imports, 'enabled', return_value=True):
+            self.assertEqual(video_changes.capture_pending(), 1)
+        asset = CurriculumVideoImport.objects.get()
+        self.assertEqual(asset.scope['collection_name'], 'Free course')
+        self.assertEqual(asset.scope['free_course_name'], 'Independent study')
+        self.assertFalse(CurriculumVideoChange.objects.filter(pk=event.pk).exists())
+        self.bunny.create.assert_not_called()
 
 
 class VideoImportAccessTests(TestCase):

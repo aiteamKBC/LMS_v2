@@ -62,7 +62,8 @@ import {
 import { MEDIA_SOURCE_TYPES, componentLooksUnedited, normaliseVideoSourceType, providerForVideoSourceType, type ComponentSettingValue } from '@/pages/curriculum/module-builder/componentAuthoringModel';
 // Round-trip this week's components to Excel for ChatGPT KSB mapping. xlsx is
 // dynamically imported inside the helpers, so it stays off this page's bundle.
-import { buildKsbMappingPrompt, describeKsbImport, exportWeekKsbWorkbook, importWeekKsbWorkbook } from '@/pages/curriculum/module-builder/ksbExcel';
+import { buildKsbMappingPrompt, ksbImportNotice, exportWeekKsbWorkbook, importWeekKsbWorkbook } from '@/pages/curriculum/module-builder/ksbExcel';
+import { reviewKsbImport } from '@/pages/curriculum/module-builder/ksbImportReview';
 import { KsbExcelPanel } from '@/pages/curriculum/module-builder/KsbExcelPanel';
 import { GroupPlacementPanel, type PlacementResult } from './PlaceComponentDrawer';
 import { moduleCountForGroup } from '../shared/entities/groupModuleMatch';
@@ -70,6 +71,7 @@ import { loadModuleStructure, saveModuleStructure, manualLiveSessionLinkSettings
 import { liveSessionDriftCause } from '@/pages/curriculum/shared/entities/liveSessionDriftCause';
 import { LiveSessionScheduleEditor } from '@/pages/curriculum/module-builder/LiveSessionScheduleEditor';
 import { LiveSessionArtifactsPanel, ModuleLiveSessionResults } from '@/pages/curriculum/shared/entities/liveSessionArtifacts';
+import { authoredSessionGroups } from '@/pages/curriculum/shared/entities/sessionActivityPresentation';
 import { RichTextDraft } from '@/pages/curriculum/module-builder/RichTextEditor';
 import { formatDateLabel } from '@/pages/curriculum/shared/entities/model';
 import {
@@ -608,6 +610,7 @@ export function TemplateEditor({ initial, isNew, onClose, returnToPrevious = fal
 
   const savedSnapshot = useRef(JSON.stringify(initial));
   const ksbImportInputRef = useRef<HTMLInputElement>(null);
+  const ksbImportBusyRef = useRef(false);
 
   // Points are never hand-edited — they always mirror the Engagement points
   // rule for the component's type (e.g. a live session's points come from the
@@ -811,16 +814,26 @@ export function TemplateEditor({ initial, isNew, onClose, returnToPrevious = fal
   };
 
   const importKsbSheet = async (file: File) => {
+    if (ksbImportBusyRef.current) return;
+    ksbImportBusyRef.current = true;
+    const snapshot = JSON.stringify(template);
     try {
-      const { components, summary } = await importWeekKsbWorkbook(file, template.components);
+      const { components, summary, cancelled } = await importWeekKsbWorkbook(file, template.components, undefined, {
+        review: reviewKsbImport,
+        weekTitle: template.title,
+        isCurrent: () => JSON.stringify(templateRef.current) === snapshot,
+      });
+      if (cancelled) return;
       if (!summary.rowsWithKsbs) {
         showCurriculumAlert({ title: 'No KSBs found', text: 'Fill the KSBs column in the sheet before re-uploading.', icon: 'warning' });
         return;
       }
-      update(prev => ({ ...prev, components }));
-      showCurriculumAlert({ title: 'KSB sheet imported', text: describeKsbImport(summary), icon: 'success' });
+      if (summary.componentsUpdated) update(prev => ({ ...prev, components }));
+      showCurriculumAlert(ksbImportNotice(summary));
     } catch (err) {
       showCurriculumAlert({ title: 'Import failed', text: err instanceof Error ? err.message : undefined, icon: 'error' });
+    } finally {
+      ksbImportBusyRef.current = false;
     }
   };
 
@@ -951,7 +964,7 @@ export function TemplateEditor({ initial, isNew, onClose, returnToPrevious = fal
         {/* Inspector — the wide working canvas */}
         <div>
           {selected ? (
-            <ComponentEditor key={selected.id} component={selected} displayWeek={template} onChange={patch => patchComponent(selected.id, patch)} onBack={() => setSelectedId(null)} groupOptions={groupOptions} rulePoints={pointsByType[selected.type]} weekScope={weekScope} recordingLinks={templateRecordingLinks} videoTemplateId={template.id} />
+            <ComponentEditor key={selected.id} component={selected} displayWeek={template} onChange={patch => patchComponent(selected.id, patch)} onBack={() => setSelectedId(null)} onSelectComponent={setSelectedId} groupOptions={groupOptions} rulePoints={pointsByType[selected.type]} weekScope={weekScope} recordingLinks={templateRecordingLinks} videoTemplateId={template.id} />
           ) : (
             <WeekOverviewPanel
               components={template.components}
@@ -1103,6 +1116,15 @@ interface RailNodeProps {
   linkLabel?: string;
   /** What else moves with this component, in words; empty when it moves alone. */
   moveNote?: string;
+  recordings?: ModuleComponent[];
+  recordingActions?: {
+    selectedId: string | null;
+    onSelect: (id: string) => void;
+    onDelete: (id: string) => void;
+    onDuplicate: (component: ModuleComponent) => void;
+    onCopy?: (component: ModuleComponent, weekId: string) => void;
+    onMove?: (component: ModuleComponent, weekId: string) => void;
+  };
 }
 
 // Sortable wrapper — @dnd-kit gives smooth transforms + keyboard support, and
@@ -1117,7 +1139,7 @@ function SortableRailNode(props: RailNodeProps) {
   );
 }
 
-function RailNodeCard({ component, displayWeek, index, selected, focused = false, issues, nested = false, weekSessionDate, holidayDates, dateDrift, dragging, onSelect, onDuplicate, onDelete, otherWeeks, onCopyToWeek, onMoveToWeek, linkLabel = '', moveNote = '', handleProps }: RailNodeProps & { dragging?: boolean; handleProps?: Record<string, unknown> }) {
+function RailNodeCard({ component, displayWeek, index, selected, focused = false, issues, nested = false, weekSessionDate, holidayDates, dateDrift, dragging, onSelect, onDuplicate, onDelete, otherWeeks, onCopyToWeek, onMoveToWeek, linkLabel = '', moveNote = '', recordings = [], recordingActions, handleProps }: RailNodeProps & { dragging?: boolean; handleProps?: Record<string, unknown> }) {
   const displayTitle = componentSessionTitle(component, displayWeek, component.title || weekTypeLabel(component.type));
   const definition = getComponentDefinition(component.type);
   const tone = toneFor(component.type);
@@ -1185,7 +1207,7 @@ function RailNodeCard({ component, displayWeek, index, selected, focused = false
             </span>
           )}
           <span className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[10px] text-foreground-400">
-            <span className={`font-semibold ${tone.text}`}>{weekTypeLabel(component.type)}</span>
+            <span className={`font-semibold ${tone.text}`}>{recordings.length ? 'Live session & recording' : weekTypeLabel(component.type)}</span>
             <span className="tabular-nums">{formatHoursMinutes(component.expectedOtjh)}</span>
             <span className="tabular-nums">{component.points}pts</span>
             {component.ksbMappings.length > 0 && <span className="tabular-nums">{component.ksbMappings.length} KSB</span>}
@@ -1215,7 +1237,7 @@ function RailNodeCard({ component, displayWeek, index, selected, focused = false
               </span>
             )}
             {weekDate && <span className="tabular-nums text-foreground-300">week: {formatDateLabel(weekDate)}</span>}
-            {linkLabel && (
+            {linkLabel && !recordings.length && (
               <span
                 data-testid="component-link-label"
                 title={linkLabel === 'Not linked'
@@ -1242,6 +1264,32 @@ function RailNodeCard({ component, displayWeek, index, selected, focused = false
             )}
           </span>
         </span>
+        {recordings.length > 0 && recordingActions && (
+          <div className={`min-w-0 space-y-1 border-t border-background-200 pt-2 ${nested ? 'col-span-3' : 'basis-full'}`}>
+            <button type="button" aria-pressed={recordingActions.selectedId === component.id}
+              onClick={event => { event.stopPropagation(); onSelect?.(); }}
+              className="flex min-h-9 w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-[12px] font-semibold text-primary-700 hover:bg-primary-50">
+              <AppIcon className="ri-group-line" />Live session settings
+            </button>
+            {recordings.map(recording => (
+              <div key={recording.id} id={`node-${recording.id}`} data-testid="grouped-session-recording" className={`flex min-w-0 flex-wrap items-center gap-1 rounded-lg border px-2 py-1 ${recordingActions.selectedId === recording.id ? 'border-primary-300 bg-primary-50' : 'border-background-200 bg-background-50'}`}>
+                <button type="button" aria-pressed={recordingActions.selectedId === recording.id}
+                  onClick={event => { event.stopPropagation(); recordingActions.onSelect(recording.id); }}
+                  className="min-h-9 min-w-0 flex-1 text-left text-[12px] font-semibold text-primary-700">
+                  <span className="flex items-center gap-2"><AppIcon className="ri-record-circle-line shrink-0" />{recordings.length === 1 ? 'Recording settings' : recording.title || 'Recording settings'}</span>
+                  <span className="mt-0.5 block text-[10px] font-normal text-foreground-500">{formatHoursMinutes(recording.expectedOtjh)} · {recording.points}pts · {recording.ksbMappings.length} KSB{validateWeekComponent(recording).length > 0 ? ` · ${validateWeekComponent(recording).length} to fix` : ''}</span>
+                </button>
+                <CloneComponentButton label={recording.title || 'Session Recording'} otherWeeks={otherWeeks}
+                  onDuplicateSameWeek={() => recordingActions.onDuplicate(recording)}
+                  onCopyToWeek={recordingActions.onCopy ? targetWeekId => recordingActions.onCopy?.(recording, targetWeekId) : undefined} />
+                {recordingActions.onMove && otherWeeks?.length ? <MoveComponentButton label={recording.title || 'Session Recording'} otherWeeks={otherWeeks} moveNote={moveNote}
+                  onMoveToWeek={targetWeekId => recordingActions.onMove?.(recording, targetWeekId)} /> : null}
+                <button type="button" aria-label={`Delete ${recording.title || 'Session Recording'}`} onClick={event => { event.stopPropagation(); recordingActions.onDelete(recording.id); }}
+                  className="grid h-8 w-8 shrink-0 place-items-center rounded-lg text-foreground-400 hover:bg-red-100 hover:text-red-600"><AppIcon className="ri-delete-bin-line" /></button>
+              </div>
+            ))}
+          </div>
+        )}
         {(onDuplicate || onDelete) && (
           <span className={`flex shrink-0 items-center gap-0.5 ${nested ? 'col-span-3 justify-end border-t border-background-200 pt-1' : ''}`}>
             {onDuplicate && (
@@ -1543,6 +1591,10 @@ function ComponentTypePickerDialog({ atIndex, componentCount, onPick, onClose, o
 // list (and whatever persistence — save-to-template vs save-to-module — sits
 // on top of it), via a single `onChange(nextComponents)` callback.
 export interface WeekComponentRailProps {
+  /** Optional presentation of the same editable rows, without slicing mutation state. */
+  renderComponentList?: (items: { component: ModuleComponent; members: ModuleComponent[]; node: ReactNode }[], searchTerm: string) => ReactNode;
+  /** Keep presentation-only session groups inside the author's Point boundaries. */
+  componentSectionKey?: (componentId: string) => string | null;
   selfStudyOnly?: boolean;
   weekId: string;
   displayWeek?: SessionTitleWeek;
@@ -1591,7 +1643,7 @@ export interface WeekComponentRailProps {
   recordingLinks?: RecordingLinkContext;
 }
 
-export function WeekComponentRail({ weekId, displayWeek, components, selectedId, focusedId = '', onSelectId, onChange, pointsByType, variant = 'standalone', weekSessionDate, holidayDates, dateDriftByComponentId, onReuseComponents, otherWeeks, onCopyComponentToWeek, onMoveComponentToWeek, recordingLinks, selfStudyOnly = false }: WeekComponentRailProps) {
+export function WeekComponentRail({ renderComponentList, componentSectionKey, weekId, displayWeek, components, selectedId, focusedId = '', onSelectId, onChange, pointsByType, variant = 'standalone', weekSessionDate, holidayDates, dateDriftByComponentId, onReuseComponents, otherWeeks, onCopyComponentToWeek, onMoveComponentToWeek, recordingLinks, selfStudyOnly = false }: WeekComponentRailProps) {
   const [pickerIndex, setPickerIndex] = useState<number | null>(null);
   const [activeDragId, setActiveDragId] = useState<string | null>(null);
   const [componentSearch, setComponentSearch] = useState('');
@@ -1683,12 +1735,53 @@ export function WeekComponentRail({ weekId, displayWeek, components, selectedId,
   };
   const activeComponent = components.find(c => c.id === activeDragId) || null;
   const searchTerm = componentSearch.trim().toLocaleLowerCase();
-  const visibleComponents = searchTerm
-    ? components.filter(component => [componentSessionTitle(component, displayWeek), component.title, component.description, component.type, weekTypeLabel(component.type)]
-      .some(value => value.toLocaleLowerCase().includes(searchTerm)))
-    : components;
+  const authoredGroups = authoredSessionGroups(components, recordingLinks?.moduleId);
+  const sessionGroups = componentSectionKey ? authoredGroups.flatMap(group => {
+    const section = componentSectionKey(group.primary.id);
+    const recordings = group.recordings.filter(recording => componentSectionKey(recording.id) === section);
+    const separate = group.recordings.filter(recording => componentSectionKey(recording.id) !== section);
+    return [{ primary: group.primary, recordings }, ...separate.map(primary => ({ primary, recordings: [] }))];
+  }).sort((left, right) => components.indexOf(left.primary) - components.indexOf(right.primary)) : authoredGroups;
+  const visibleGroups = searchTerm
+    ? sessionGroups.filter(group => [group.primary, ...group.recordings].some(component =>
+      [componentSessionTitle(component, displayWeek), component.title, component.description, component.type, weekTypeLabel(component.type)]
+        .some(value => value.toLocaleLowerCase().includes(searchTerm))))
+    : sessionGroups;
+  const visibleComponents = visibleGroups.map(group => group.primary);
 
   const nested = variant === 'nested';
+  const componentRows = visibleGroups.map(({ primary: component, recordings }, index) => ({ component, members: [component, ...recordings], node: (
+    <Fragment key={component.id}>
+      <SortableRailNode
+        component={component}
+        displayWeek={displayWeek}
+        nested={nested}
+        index={index}
+        selected={component.id === selectedId || recordings.some(recording => recording.id === selectedId)}
+        focused={component.id === focusedId || recordings.some(recording => recording.id === focusedId)}
+        onSelect={() => onSelectId(component.id)}
+        onDuplicate={() => duplicateComponent(component)}
+        onDelete={() => removeComponent(component.id)}
+        otherWeeks={otherWeeks}
+        onCopyToWeek={targetWeekId => onCopyComponentToWeek?.(component, targetWeekId)}
+        onMoveToWeek={onMoveComponentToWeek ? targetWeekId => onMoveComponentToWeek(component, targetWeekId) : undefined}
+        linkLabel={linkLabel(component)}
+        moveNote={moveNote(component)}
+        issues={validateWeekComponent(component).length}
+        weekSessionDate={weekSessionDate}
+        holidayDates={holidayDates}
+        dateDrift={dateDriftByComponentId?.get(component.id)}
+        recordings={recordings}
+        recordingActions={{ selectedId, onSelect: onSelectId, onDelete: removeComponent, onDuplicate: duplicateComponent,
+          onCopy: onCopyComponentToWeek, onMove: onMoveComponentToWeek }}
+      />
+      {!searchTerm && (() => {
+        const nextGroup = visibleGroups[index + 1];
+        const insertionIndex = nextGroup ? components.indexOf(nextGroup.primary) : components.length;
+        return <InsertionZone active={pickerIndex === insertionIndex} onOpen={() => setPickerIndex(insertionIndex)} last={index === visibleComponents.length - 1} />;
+      })()}
+    </Fragment>
+  ) }));
 
   return (
     <div className={nested ? 'min-w-0' : 'min-w-0 lg:sticky lg:top-6 rounded-2xl border border-background-200 bg-background-50 p-4 sm:p-5'}>
@@ -1727,6 +1820,7 @@ export function WeekComponentRail({ weekId, displayWeek, components, selectedId,
 
       {components.length === 0 && pickerIndex === null ? (
         <div className="mt-3">
+          {renderComponentList?.([], searchTerm)}
           <button onClick={() => setPickerIndex(0)} className="w-full rounded-xl border-2 border-dashed border-background-300 bg-background-50 py-10 text-center hover:border-primary-300 hover:bg-primary-50/40 transition-all group">
             <span className="grid place-items-center w-11 h-11 mx-auto rounded-full bg-primary-500 text-white text-xl group-hover:scale-110 transition-transform"><AppIcon className="ri-add-line"></AppIcon></span>
             <p className="mt-3 text-[13px] font-bold text-foreground-800">Add the first component</p>
@@ -1746,31 +1840,7 @@ export function WeekComponentRail({ weekId, displayWeek, components, selectedId,
                 <p className="rounded-xl border border-dashed border-background-300 px-3 py-6 text-center text-[11px] font-medium text-foreground-500">No components match “{componentSearch.trim()}”.</p>
               ) : <>
               {!searchTerm && <InsertionZone active={pickerIndex === 0} onOpen={() => setPickerIndex(0)} first />}
-              {visibleComponents.map((component, index) => (
-                <Fragment key={component.id}>
-                  <SortableRailNode
-                    component={component}
-                    displayWeek={displayWeek}
-                    nested={nested}
-                    index={index}
-                    selected={component.id === selectedId}
-                    focused={component.id === focusedId}
-                    onSelect={() => onSelectId(component.id)}
-                    onDuplicate={() => duplicateComponent(component)}
-                    onDelete={() => removeComponent(component.id)}
-                    otherWeeks={otherWeeks}
-                    onCopyToWeek={targetWeekId => onCopyComponentToWeek?.(component, targetWeekId)}
-                    onMoveToWeek={onMoveComponentToWeek ? targetWeekId => onMoveComponentToWeek(component, targetWeekId) : undefined}
-                    linkLabel={linkLabel(component)}
-                    moveNote={moveNote(component)}
-                    issues={validateWeekComponent(component).length}
-                    weekSessionDate={weekSessionDate}
-                    holidayDates={holidayDates}
-                    dateDrift={dateDriftByComponentId?.get(component.id)}
-                  />
-                  {!searchTerm && <InsertionZone active={pickerIndex === index + 1} onOpen={() => setPickerIndex(index + 1)} last={index === visibleComponents.length - 1} />}
-                </Fragment>
-              ))}
+              {renderComponentList ? renderComponentList(componentRows, searchTerm) : componentRows.map(item => item.node)}
               </>}
             </div>
           </SortableContext>
@@ -2035,7 +2105,7 @@ export interface ComponentBodyProps {
   recordingLinks?: RecordingLinkContext;
 }
 
-export function ComponentEditor({ component, displayWeek, onChange, onBack, groupOptions, rulePoints, weekScope, weekSessionDate, weekSessionTime, uploadResource, moduleId, recordingLinks, videoTemplateId, selfStudyOnly = false }: { component: ModuleComponent; displayWeek?: SessionTitleWeek; onChange: (patch: Partial<ModuleComponent>) => void; onBack: () => void; groupOptions: GroupOption[]; rulePoints?: number; weekScope: WeekScope; weekSessionDate?: string; weekSessionTime?: string; uploadResource?: WeekComponentUploader; moduleId?: string; recordingLinks?: RecordingLinkContext; videoTemplateId?: string; selfStudyOnly?: boolean }) {
+export function ComponentEditor({ component, displayWeek, onChange, onBack, onSelectComponent, groupOptions, rulePoints, weekScope, weekSessionDate, weekSessionTime, uploadResource, moduleId, recordingLinks, videoTemplateId, selfStudyOnly = false }: { component: ModuleComponent; displayWeek?: SessionTitleWeek; onChange: (patch: Partial<ModuleComponent>) => void; onBack: () => void; onSelectComponent?: (id: string) => void; groupOptions: GroupOption[]; rulePoints?: number; weekScope: WeekScope; weekSessionDate?: string; weekSessionTime?: string; uploadResource?: WeekComponentUploader; moduleId?: string; recordingLinks?: RecordingLinkContext; videoTemplateId?: string; selfStudyOnly?: boolean }) {
   const editorRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     const editor = editorRef.current;
@@ -2052,6 +2122,10 @@ export function ComponentEditor({ component, displayWeek, onChange, onBack, grou
       : { ...component.settings, [key]: value },
   });
   const bodyProps: ComponentBodyProps = { component, onChange, setSetting, groupOptions, rulePoints, weekScope, weekSessionDate, weekSessionTime, uploadResource, moduleId, recordingLinks, videoTemplateId, selfStudyOnly };
+  const sessionWeek = recordingLinks?.weeks.find(week => week.components.some(item => item.id === component.id));
+  const sessionGroup = sessionWeek && authoredSessionGroups(sessionWeek.components, recordingLinks?.moduleId)
+    .find(group => group.recordings.length > 0 && (group.primary.id === component.id || group.recordings.some(item => item.id === component.id)));
+  const sessionComponent = sessionGroup?.primary || component;
 
   return (
     <div ref={editorRef} tabIndex={-1} role="region" aria-label="Component editor" className="scroll-mt-6 rounded-2xl border border-background-200 bg-background-50 overflow-hidden">
@@ -2060,13 +2134,23 @@ export function ComponentEditor({ component, displayWeek, onChange, onBack, grou
         <span className={`grid place-items-center w-11 h-11 rounded-xl text-white ${tone.marker}`}><AppIcon className={`${definition.icon} text-xl`}></AppIcon></span>
         <div className="flex-1 min-w-0">
           <p className={`text-[10px] font-bold uppercase tracking-[0.12em] ${tone.text}`}>{definition.group}</p>
-          <p onMouseEnter={showFullTextWhenTruncated} className="text-[16px] font-heading font-black text-foreground-950 leading-tight truncate">{componentSessionTitle(component, displayWeek, component.title || weekTypeLabel(component.type))}</p>
+          <p onMouseEnter={showFullTextWhenTruncated} className="text-[16px] font-heading font-black text-foreground-950 leading-tight truncate">{componentSessionTitle(sessionComponent, displayWeek, sessionComponent.title || weekTypeLabel(sessionComponent.type))}</p>
         </div>
         <span className={`shrink-0 inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[10px] font-bold ${issues.length ? 'bg-amber-100 text-amber-700' : 'bg-emerald-100 text-emerald-700'}`}>
           <AppIcon className={issues.length ? 'ri-error-warning-fill' : 'ri-checkbox-circle-fill'}></AppIcon>{issues.length ? `${issues.length} to fix` : 'Valid'}
         </span>
       </div>
 
+      {sessionGroup && onSelectComponent && (
+        <nav aria-label="Session sections" className="flex flex-wrap gap-2 border-b border-background-200 px-5 py-3">
+          {[sessionGroup.primary, ...sessionGroup.recordings].map(item => (
+            <button key={item.id} type="button" aria-pressed={component.id === item.id} onClick={() => onSelectComponent(item.id)}
+              className={`min-h-10 rounded-lg border px-3 py-2 text-[12px] font-semibold ${component.id === item.id ? 'border-primary-300 bg-primary-50 text-primary-800' : 'border-background-200 text-foreground-600 hover:bg-background-100'}`}>
+              {item.type === 'live-session' ? 'Live session' : sessionGroup.recordings.length === 1 ? 'Recording settings' : item.title || 'Recording settings'}
+            </button>
+          ))}
+        </nav>
+      )}
       <div className="divide-y divide-background-200">
         {component.type === 'live-session' ? <LiveSessionBody {...bodyProps} />
           : component.type === 'video' ? <VideoBody {...bodyProps} />

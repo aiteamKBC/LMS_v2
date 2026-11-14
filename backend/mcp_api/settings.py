@@ -32,6 +32,26 @@ def component_creation_enabled():
     return os.environ.get("MCP_COMPONENT_CREATION_ENABLED", "0").strip().lower() in _ENABLED_VALUES
 
 
+def quiz_creation_enabled():
+    """Draft quiz creation (questions, link, KSB mappings) is independently default-off."""
+    return os.environ.get("MCP_QUIZ_CREATION_ENABLED", "0").strip().lower() in _ENABLED_VALUES
+
+
+def content_editing_enabled():
+    """KSB mapping changes and Reading lesson text on existing components (Step 9), default off."""
+    return os.environ.get("MCP_CONTENT_EDITING_ENABLED", "0").strip().lower() in _ENABLED_VALUES
+
+
+def file_uploads_enabled():
+    """Reading/PowerPoint/podcast file uploads into existing components, default off."""
+    return os.environ.get("MCP_FILE_UPLOADS_ENABLED", "0").strip().lower() in _ENABLED_VALUES
+
+
+def structure_creation_enabled():
+    """Creating programmes, cohorts, groups and module skeletons (Step 10), default off."""
+    return os.environ.get("MCP_STRUCTURE_CREATION_ENABLED", "0").strip().lower() in _ENABLED_VALUES
+
+
 def pilot_account_ids():
     """Optional account restriction; a configured nonmatching list fails closed."""
     raw = os.environ.get("MCP_PILOT_ACCOUNT_IDS", "").strip()

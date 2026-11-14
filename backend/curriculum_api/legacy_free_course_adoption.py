@@ -67,6 +67,14 @@ def adoption_snapshot():
     learners = list(EnrolmentUser.all_learners.filter(pk__in=selected_ids).values(
         'id', 'free_courses', 'learning_plan', 'training_plan'))
     progress = list(LearnerFreeCourseProgress.objects.filter(free_course_ref__in=course_ids).values())
+    from learner_api.free_course_records import profile_progress_enabled
+    if progress and profile_progress_enabled():
+        enrolments = dict(LearnerProfile.objects.filter(pk__in={row['learner_id'] for row in progress})
+                          .values_list('pk', 'enrolment_id'))
+        for row in progress:
+            if not enrolments.get(row['learner_id']):
+                raise ValueError('Historical free-course progress has no linked enrolment identity.')
+            row['learner_id'] = enrolments[row['learner_id']]
     owner_ids = {row['id'] for row in learners} | {row['learner_id'] for row in progress}
     profiles = list(LearnerProfile.objects.filter(enrolment_id__in=owner_ids).values('id', 'enrolment_id', 'learning_plan'))
     profiles_by_owner = defaultdict(list)
@@ -134,7 +142,9 @@ def adopt_learners(snapshot):
         with transaction.atomic(using=alias):
             learner = EnrolmentUser.all_learners.select_for_update().get(pk=owner_id)
             profiles = list(LearnerProfile.objects.select_for_update().filter(enrolment_id=owner_id))
-            history = list(LearnerFreeCourseProgress.objects.filter(learner_id=owner_id, free_course_ref__in=mapping).values())
+            from learner_api.free_course_records import progress_owner
+            history = list(LearnerFreeCourseProgress.objects.filter(
+                learner_id=progress_owner(learner), free_course_ref__in=mapping).values())
             if history and len(profiles) != 1:
                 raise ValueError('Historical learner identity changed during adoption.')
             for completion in history:
@@ -153,6 +163,8 @@ def adopt_learners(snapshot):
                         actual_basis=%s, source_payload=%s::jsonb WHERE id=%s AND learner_id=%s''',
                         [ledger['source_system'], ledger['activity_status'], ledger['accepted'], ledger['actual_seconds'],
                          ledger['actual_basis'], json.dumps(ledger['source_payload']), entry.pk, profiles[0].pk])
+                from learner_api.progress_cache import bump_learners
+                bump_learners([profiles[0].pk], using=alias)
                 imported += 1
             old = learner.free_courses if isinstance(learner.free_courses, list) else []
             selected = [item for item in old if isinstance(item, dict) and item.get('freeCourseId') in mapping]

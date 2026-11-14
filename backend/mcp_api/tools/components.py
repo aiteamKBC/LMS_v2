@@ -37,6 +37,61 @@ DEFAULTS = {
 }
 
 
+#: Stands in for the programme of a free-course module (``source_type = 'free_course'``),
+#: which belongs to none. It has no KSB standard, so KSB tools refuse free courses.
+FREE_COURSE_PROGRAMME = {"id": "", "name": "", "status": "active", "ksbProfileSourceId": ""}
+
+
+def is_free_course(module):
+    return module.get("isFreeCourse") is True or str(module.get("sourceType") or "") == "free_course"
+
+
+def live_learner_count(module_id):
+    """How many learners have the module on their training plan -- a count, never who.
+
+    Authored modules have no draft/published state (``curriculum.modules`` has no
+    status column, so the structure read always says "draft"); being on a learner's
+    plan is what makes a module live. ``learner_training_plan_modules`` is the LMS's
+    own record of that, and small enough to count on every preview. None if unreadable.
+    """
+    from django.db import DatabaseError
+    from learner_api.models import LearnerTrainingPlanModule
+
+    try:
+        return LearnerTrainingPlanModule.objects.filter(module_ref=module_id).values("learner_id").distinct().count()
+    except DatabaseError:
+        return None
+
+
+class LiveModuleWarning:
+    """Mixin for write tools whose payload names a ``module_id``: warn before writing to a live module."""
+
+    def preview_warnings(self, request, payload):
+        if not payload.get("module_id"):
+            return []
+        count = live_learner_count(payload["module_id"])
+        if count is None:
+            return ["Could not check whether learners are using this module; treat it as live."]
+        if count:
+            return [f"LIVE MODULE: {count} learner(s) have this module on their training plan. They will see "
+                    "this change as soon as it is saved."]
+        return []
+
+
+def stored_duration(component):
+    """The component's own ``settings.durationMinutes``, to send back on every component PATCH.
+
+    The LMS PATCH re-derives ``durationMinutes`` from ``duration``, which reads as
+    expected hours x 60 when the stored value is 0 (``component_builder_response``).
+    Sending the stored value keeps a single-field edit from changing it.
+    """
+    settings = component.get("settings") if isinstance(component.get("settings"), dict) else {}
+    try:
+        return max(0, int(settings.get("durationMinutes") or 0))
+    except (TypeError, ValueError):
+        return 0
+
+
 def _id(value):
     value = str(value or "").strip()
     if not re.fullmatch(r"[\w-]+", value, re.ASCII) or value.startswith("training-module-"):
@@ -48,20 +103,25 @@ def _title_key(value):
     return " ".join(str(value or "").split()).casefold()
 
 
-def draft_module(request, arguments):
+def draft_module(request, arguments, *, enabled=component_creation_enabled, feature="component creation"):
     """The flag-checked ``(programme, module)`` for a draft module of that programme, read without cache."""
-    if not component_creation_enabled():
-        raise ToolError("MCP component creation is not enabled. Ask an administrator to enable the component pilot.")
+    if not enabled():
+        raise ToolError(f"MCP {feature} is not enabled. Ask an administrator to enable the {feature} pilot.")
     module_id = _id(arguments.get("module_id"))
-    programme = _programme_by_id(request, _id(arguments.get("programme_id")))
-    if _archived(programme):
-        raise ToolError("Choose an active programme.")
     _, module = call_api(request, "GET", f"{CURRICULUM}/modules/{module_id}/structure/", query={"skipCache": "1"})
     if (not isinstance(module, dict) or _archived(module) or module.get("isDeleted")
             or module.get("status") != "draft"):
         raise ToolError("Components can only be created in an existing draft module.")
     if str(module.get("catalogueId") or module.get("moduleCatalogueId") or "") != module_id:
         raise ToolError("Choose the saved module's own catalogue id, not an alias.")
+    if is_free_course(module):
+        # A free course is a standalone module in no programme.
+        if str(arguments.get("programme_id") or "").strip():
+            raise ToolError("That module is a free course and belongs to no programme. Leave programme_id out.")
+        return dict(FREE_COURSE_PROGRAMME), module
+    programme = _programme_by_id(request, _id(arguments.get("programme_id")))
+    if _archived(programme):
+        raise ToolError("Choose an active programme.")
     if str(module.get("programmeId") or "") not in {
         str(programme.get("id") or ""), str(programme.get("sourceId") or ""),
     } - {""}:
@@ -145,26 +205,35 @@ def _locked_parents(target):
     """Prevent the existing API's missing-parent fallback during the actual save.
 
     These are parameterised reads, never business SQL writes. All writes still go
-    through the authenticated API, within this same default-DB transaction.
+    through the authenticated API, within this same default-DB transaction. A free
+    course owns its rows in native free-course storage, not the module/week tables.
     """
+    from curriculum_api import learning_storage
     from curriculum_api.views import AUTHORING_MODULES_TABLE, AUTHORING_WEEKS_TABLE, authoring_table_name
 
     if not connection.features.has_select_for_update:
         raise ToolError("Component creation requires a database supporting parent row locks.")
     with transaction.atomic(using="default"):
-        with connection.cursor() as cursor:
-            for table, where, params in (
-                (AUTHORING_MODULES_TABLE, "module_catalogue_id = %s", [target["module_id"]]),
-                (AUTHORING_WEEKS_TABLE, "id = %s and module_catalogue_id = %s and week_number = %s",
+        course = learning_storage.course(target["module_id"], lock=True)
+        if course is None:
+            lookups = (
+                (authoring_table_name(AUTHORING_MODULES_TABLE), "module_catalogue_id = %s", [target["module_id"]]),
+                (authoring_table_name(AUTHORING_WEEKS_TABLE),
+                 "id = %s and module_catalogue_id = %s and week_number = %s",
                  [target["week_id"], target["module_id"], target["week_number"]]),
-            ):
-                cursor.execute(f"SELECT 1 FROM {authoring_table_name(table)} WHERE {where} FOR UPDATE", params)
+            )
+        else:
+            lookups = (("curriculum.free_course_weeks", "content_ref = %s and course_id = %s and week_number = %s",
+                        [target["week_id"], course["id"], target["week_number"]]),)
+        with connection.cursor() as cursor:
+            for table, where, params in lookups:
+                cursor.execute(f"SELECT 1 FROM {table} WHERE {where} FOR UPDATE", params)
                 if cursor.fetchone() is None:
                     raise ToolError("The destination module or week no longer exists. Look it up again.")
         yield
 
 
-class CreateComponent(WriteTool):
+class CreateComponent(LiveModuleWarning, WriteTool):
     name = NAME
     description = (
         "Preview creation of one non-Teams content component in an existing draft module and week. "
@@ -180,7 +249,7 @@ class CreateComponent(WriteTool):
         "description": {"type": "string", "maxLength": 10000},
         "expected_otjh": {"type": "number", "minimum": 0},
         "points": {"type": "integer", "minimum": 0},
-    }, "required": ["programme_id", "module_id", "week_id", "type", "title"], "additionalProperties": False}
+    }, "required": ["module_id", "week_id", "type", "title"], "additionalProperties": False}
 
     def validate(self, request, arguments):
         from curriculum_api.views import validate_component_authoring_payload
@@ -195,7 +264,8 @@ class CreateComponent(WriteTool):
         target = _target(request, {**arguments, "title": title})
         defaults = DEFAULTS[arguments["type"]]
         payload = {
-            **{key: arguments[key] for key in ("programme_id", "module_id", "week_id", "type")},
+            **{key: arguments[key] for key in ("module_id", "week_id", "type")},
+            "programme_id": str(arguments.get("programme_id") or "").strip(),
             "title": title, "description": arguments.get("description", "").strip(),
             "expected_otjh": arguments.get("expected_otjh", defaults[0]),
             "points": arguments.get("points", defaults[1]), "target": target,

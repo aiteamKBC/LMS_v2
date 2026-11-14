@@ -142,3 +142,20 @@ class VideoChangeTests(TestCase):
         with patch.object(imports, 'target') as target:
             self.assertEqual(changes.capture_pending(), 0)
         target.assert_not_called()
+
+    def test_free_course_is_queued_without_programme_cohort_or_group(self):
+        self.event()
+        scope = {'module_id': 'MOD1', 'free_course_module_id': 'MOD1', 'free_course_name': 'Independent study'}
+        with patch.object(imports, 'target', return_value=('components', [self.component], scope)):
+            changes.capture_pending()
+        self.assertEqual(CurriculumVideoImport.objects.get().scope, scope)
+        self.assertFalse(CurriculumVideoChange.objects.exists())
+
+    def test_unnamed_free_course_keeps_event_for_retry(self):
+        change = self.event()
+        scope = {'free_course_module_id': 'MOD1', 'free_course_name': '   '}
+        with patch.object(imports, 'target', return_value=('components', [self.component], scope)):
+            changes.capture_pending()
+        change.refresh_from_db()
+        self.assertIn('name for this free course', change.error)
+        self.assertFalse(CurriculumVideoImport.objects.exists())

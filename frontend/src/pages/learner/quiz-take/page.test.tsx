@@ -8,9 +8,10 @@ import { useState } from 'react';
 
 const mocks = vi.hoisted(() => ({
   detail: vi.fn(), quiz: vi.fn(), start: vi.fn(), submit: vi.fn(), checkpoint: vi.fn(),
-  generateReading: vi.fn(), completeReading: vi.fn(), reflectionTimeSeconds: undefined as number | undefined,
+  generateReading: vi.fn(), completeReading: vi.fn(), loadReflection: vi.fn(), reflectionTimeSeconds: undefined as number | undefined,
 }));
 vi.mock('@/api/learnerDetail', () => ({ fetchLearnerDetail: mocks.detail }));
+vi.mock('@/api/webWeekPoints', () => ({ readWebPointPlan: vi.fn().mockResolvedValue({ weeks: {} }) }));
 vi.mock('@/api/quizzes', () => ({
   fetchQuiz: mocks.quiz,
   submitQuizAttempt: mocks.submit,
@@ -18,6 +19,7 @@ vi.mock('@/api/quizzes', () => ({
   completeQuizReading: mocks.completeReading,
 }));
 vi.mock('@/api/timeTracking', () => ({ startTimeTracking: mocks.start, checkpointTimeTracking: mocks.checkpoint }));
+vi.mock('@/api/reflectionSubmission', () => ({ loadLearningReflectionSubmission: mocks.loadReflection }));
 vi.mock('@/hooks/useMyLearner', () => ({ rememberLearner: vi.fn() }));
 vi.mock('@/hooks/useLearnerWorkspaceAccess', () => ({ useLearnerWorkspaceAccess: () => ({ canProgress: true }) }));
 vi.mock('@/hooks/useComponentAccessWindow', () => ({ useComponentAccessWindow: () => ({ open: true }) }));
@@ -33,11 +35,12 @@ vi.mock('@/components/feature/ReflectionWindow.helpers', () => ({
 }));
 const detail = { modules: [], week: [], ksbs: [], componentProgress: [], videoProgress: [], quizAttempts: [], components: [{ quizMeta: { quizId: 1 }, reflectionRequired: false }] };
 function Location() { return <span data-testid="location">{useLocation().pathname}</span>; }
-const renderPage = (kind = 'commercial') => render(<MemoryRouter initialEntries={[`/quiz/${kind}/501/1`]}><Location /><Routes><Route path="/quiz/:kind/:id/:quizId" element={<QuizTakePage />} /></Routes></MemoryRouter>);
+const renderPage = (kind = 'commercial', search = '') => render(<MemoryRouter initialEntries={[`/quiz/${kind}/501/1${search}`]}><Location /><Routes><Route path="/quiz/:kind/:id/:quizId" element={<QuizTakePage />} /></Routes></MemoryRouter>);
 
 describe('quiz requirements loading', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.loadReflection.mockResolvedValue(null);
     mocks.reflectionTimeSeconds = undefined;
     mocks.quiz.mockResolvedValue({ id: 1, title: 'Campaign quiz', questions: [{ id: 1, text: 'Choose an outcome', points: 1, type: 'single_choice', answers: [{ id: 1, text: 'Measured outcome' }] }] });
     mocks.start.mockResolvedValue({ trackingToken: 'test', startedAt: '2026-09-13T00:00:00Z' });
@@ -64,6 +67,34 @@ describe('quiz requirements loading', () => {
       },
     });
   });
+  it.each(['commercial', 'apprenticeship'])('shows the %s quiz mappings from the requested module and week', async kind => {
+    const mapped = (module: string, week: string, code: string) => ({
+      quizMeta: { quizId: 1 }, module, week,
+      ksbMappings: [{ code, description: `${code} description`, weight: 20, classification: 'main' }],
+    });
+    mocks.detail.mockResolvedValue({ ...detail, components: [
+      mapped('Other', 'Week 2', 'K99'), mapped('Marketing', 'Week 1', 'S99'),
+      mapped('Marketing', 'Week 2', 'K1'),
+    ] });
+    renderPage(kind, '?module=Marketing&week=Week%202');
+    const panel = await screen.findByRole('region', { name: 'Mapped KSBs' });
+    expect(panel).toHaveTextContent('K1 description');
+    expect(panel).not.toHaveTextContent(/K99|S99/);
+    expect(mocks.start).not.toHaveBeenCalled();
+  });
+
+  it.each(['commercial', 'apprenticeship'])('reopens the %s quiz reflection using the original quiz submission identity', async kind => {
+    mocks.detail.mockResolvedValue({ ...detail, quizAttempts: [{ quizId: 1, attempt: 1, submittedAt: '2026-10-01T09:00:00Z', passed: true }] });
+    mocks.loadReflection.mockResolvedValue({ status: 'accepted', learningReflection: 'Saved quiz learning.', coachFeedback: 'Quiz reflection accepted.' });
+    renderPage(kind);
+    fireEvent.click(await screen.findByRole('button', { name: 'View saved reflection' }));
+    expect(await screen.findByText('Saved quiz learning.')).toBeVisible();
+    expect(screen.getByText('Quiz reflection accepted.')).toBeVisible();
+    expect(mocks.loadReflection).toHaveBeenCalledWith({ learnerKind: kind, learnerId: '501', activityType: 'quiz', activityId: 'quiz-1' }, { revalidate: true });
+    expect(mocks.submit).not.toHaveBeenCalled();
+    expect(mocks.start).not.toHaveBeenCalled();
+  });
+
   it.each([
     ['commercial', true], ['apprenticeship', true], ['commercial', false], ['apprenticeship', false],
   ] as const)('saves %s quiz answers when rewards are unavailable (previously enabled: %s)', async (kind, rewardTracking) => {
@@ -84,6 +115,7 @@ describe('quiz requirements loading', () => {
     fireEvent.click(screen.getByRole('button', { name: /Measured outcome/ }));
     fireEvent.click(screen.getByRole('button', { name: 'Finish Quiz' }));
     expect(await screen.findByText(/Quiz Passed/)).toBeVisible();
+    expect(screen.queryByRole('button', { name: /back to training plan/i })).not.toBeInTheDocument();
     expect(screen.getByText('Your time and progress were saved. Study-time points are not enabled for this activity.')).toBeVisible();
     expect(mocks.submit).toHaveBeenCalledWith(1, kind, '501', expect.objectContaining({
       trackingToken: 'original-token', answers: { '1': 1 }, timeTakenSeconds: 0,

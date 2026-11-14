@@ -405,6 +405,7 @@ INSTALLED_APPS = [
     'knowledge_base',
     'chat',
     'mobile_comms',
+    'integrations',
     # One shared projection table, one transactional outbox and one short-lived
     # performance-sample table for aggregate screens across every workspace.
     'read_models',
@@ -440,6 +441,7 @@ MIDDLEWARE = [
     # A successful write to a learner's /learner_api/.../<kind>/<pk>/ paths
     # invalidates their cached dashboard/My Learning reads (learner_api/response_cache.py).
     'learner_api.response_cache.LearnerReadCacheMiddleware',
+    'coach_api.activity_plan_events.ActivityPlanInvalidationMiddleware',
     # Rejects anonymous callers on the API prefixes before any view runs. Must
     # sit after LoginSessionMiddleware so the session is already resolved, and
     # before anything that would act on the request. Answers only "is there a
@@ -482,6 +484,11 @@ ROOT_URLCONF = 'config.urls'
 
 # Enable only after the owner applies the reviewed SQL metadata tables.
 OLD_OTJH_ENABLED = os.environ.get('OLD_OTJH_ENABLED', 'false').lower() == 'true'
+INTEGRATIONS_TEST_MODE = USE_SQLITE_FOR_TESTS
+# The presentation workspace is independent of the optional persistent HR
+# connector. Enable the latter only after its isolated SQL schema is reviewed
+# and provisioned; existing learner/employer workflows never consult it.
+BREATHE_INTEGRATIONS_ENABLED = os.environ.get('BREATHE_INTEGRATIONS_ENABLED', 'false').lower() == 'true'
 # Optional email-keyed overrides for the bundled public coach booking catalogue.
 # Parsing/validation stays local so links never delay record access.
 OLD_OTJH_COACH_BOOKING_URLS = os.environ.get('OLD_OTJH_COACH_BOOKING_URLS', '{}')

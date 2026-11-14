@@ -114,8 +114,10 @@ describe('calendar exports', () => {
 
   it('records the device zone on a personal event rather than assuming UK time', async () => {
     const download = vi.spyOn(ics, 'downloadICS').mockImplementation(() => {});
-    const options = new Intl.DateTimeFormat().resolvedOptions();
-    vi.spyOn(Intl.DateTimeFormat.prototype, 'resolvedOptions').mockReturnValue({ ...options, timeZone: 'Africa/Cairo' });
+    const NativeDateTimeFormat = Intl.DateTimeFormat;
+    vi.spyOn(Intl, 'DateTimeFormat').mockImplementation(function (locales, options) {
+      return new NativeDateTimeFormat(locales, { timeZone: 'Africa/Cairo', ...options });
+    });
     setup([]);
     await waitFor(() => expect(fetchLearnerCalendarEvents).toHaveBeenCalled());
     fireEvent.click(screen.getByRole('button', { name: 'More' }));

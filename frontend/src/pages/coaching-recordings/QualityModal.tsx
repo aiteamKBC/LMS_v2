@@ -14,6 +14,8 @@ export default function QualityModal({ title, children, footer, onClose, suspend
     document.body.style.overflow = 'hidden'; button.current?.focus();
     const nodes = () => Array.from(panel.current?.querySelectorAll<HTMLElement>('button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled), a[href], [tabindex="0"]') ?? []);
     const key = (event: KeyboardEvent) => {
+      // An open dropdown consumes Escape before the enclosing review does.
+      if (event.defaultPrevented) return;
       if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); close.current(); }
       if (event.key === 'Tab') {
         const controls = nodes(), first = controls[0], last = controls.at(-1);
@@ -21,7 +23,18 @@ export default function QualityModal({ title, children, footer, onClose, suspend
         else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
       }
     };
-    const focus = (event: FocusEvent) => { if (event.target instanceof Node && !panel.current?.contains(event.target)) button.current?.focus(); };
+    const focus = (event: FocusEvent) => {
+      const target = event.target;
+      if (!(target instanceof Node) || panel.current?.contains(target)) return;
+      // Select menus are portaled to the body. Only accept a popup owned by
+      // an expanded combobox in this modal; unrelated page controls stay out.
+      const ownsFocus = Array.from(panel.current?.querySelectorAll('[role="combobox"][aria-expanded="true"][aria-controls]') ?? [])
+        .some(control => {
+          const list = document.getElementById(control.getAttribute('aria-controls')!);
+          return list?.getAttribute('role') === 'listbox' && list.parentElement?.contains(target);
+        });
+      if (!ownsFocus) button.current?.focus();
+    };
     document.addEventListener('keydown', key); document.addEventListener('focusin', focus);
     return () => { document.removeEventListener('keydown', key); document.removeEventListener('focusin', focus); document.body.style.overflow = overflow; if (trigger?.isConnected) trigger.focus(); };
   }, [suspended]);

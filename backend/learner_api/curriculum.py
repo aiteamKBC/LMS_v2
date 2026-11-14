@@ -28,6 +28,7 @@ from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 
 from curriculum_api.week_visibility import visible_child_sql, visible_week_sql
+from curriculum_api.learning_storage import read_sql
 
 from .ksb_sources import PROFILE, STANDARD, parse_source, resolve_source
 
@@ -38,7 +39,7 @@ def _conn():
 
 def _rows(sql, params=None):
     with _conn().cursor() as cur:
-        cur.execute(sql, params or [])
+        cur.execute(read_sql(sql, _conn()), params or [])
         cols = [c[0] for c in cur.description]
         return [dict(zip(cols, row)) for row in cur.fetchall()]
 

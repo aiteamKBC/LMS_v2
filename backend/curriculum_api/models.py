@@ -5,7 +5,7 @@ from django.utils import timezone
 
 
 class QRAttendance(models.Model):
-    """Independent email-submitted evidence; never grants attendance or hours.
+    """Independent email-submitted evidence used by the final learner register.
 
     Identity fields are scalar snapshots. The migration installs real database
     foreign keys because the external enrolment/curriculum tables are unmanaged.
@@ -402,6 +402,16 @@ class LiveSessionLearnerAttendance(models.Model):
     attendance_report_id = models.TextField(blank=True, default='')
     first_join_at = models.DateTimeField(blank=True, null=True)
     last_leave_at = models.DateTimeField(blank=True, null=True)
+    attendance_basis = models.CharField(max_length=16, default='teams')
+    teams_attendance_status = models.CharField(max_length=16, null=True, blank=True)
+    attendance_source_occurrence_id = models.CharField(max_length=128, null=True, blank=True)
+    parallel_source_occurrence_id = models.CharField(max_length=128, null=True, blank=True)
+    parallel_source_module_id = models.CharField(max_length=128, null=True, blank=True)
+    parallel_previous_status = models.CharField(max_length=16, null=True, blank=True)
+    parallel_previous_basis = models.CharField(max_length=16, null=True, blank=True)
+    parallel_created = models.BooleanField(default=False)
+    qr_attendance_id = models.BigIntegerField(null=True, blank=True)
+    qr_confirmed_at = models.DateTimeField(null=True, blank=True)
     calculated_at = models.DateTimeField()
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)

@@ -259,6 +259,10 @@ export function fetchLearnerMeetingArtifacts(kind: LearnerKind, learnerId: strin
   return request<CoachMeetingArtifactsResponse>(`${BASE}/${kind}/${learnerId}/events/${encodeURIComponent(eventKey)}/artifacts/`, { signal, credentials: 'include' });
 }
 
+export function fetchLearnerMeetingRecordings(kind: LearnerKind, learnerId: string, eventKey: string, signal?: AbortSignal): Promise<CoachMeetingArtifactsResponse> {
+  return request<CoachMeetingArtifactsResponse>(`${BASE}/${kind}/${learnerId}/events/${encodeURIComponent(eventKey)}/artifacts/?recordings_only=1`, { signal, credentials: 'include' });
+}
+
 export function learnerMeetingArtifactContentUrl(kind: LearnerKind, learnerId: string, eventKey: string, artifactType: string, artifactId: string, options: { preview?: boolean } = {}): string {
   const base = `${BASE}/${kind}/${learnerId}/events/${encodeURIComponent(eventKey)}/artifacts/${encodeURIComponent(artifactType)}/${encodeURIComponent(artifactId)}/content/`;
   return options.preview ? `${base}?preview=1` : base;

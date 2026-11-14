@@ -40,6 +40,7 @@ from django.views.decorators.gzip import gzip_page
 from django.views.decorators.clickjacking import xframe_options_sameorigin
 from login.permissions import require_role
 from .weekly_schedule import module_weekly_schedule, merged_weekly_schedule
+from .learning_storage import native_only, with_course_storage
 from .course_pricing import API_FIELDS as COURSE_PRICING_FIELDS, pricing_payload, pricing_values
 from .teams_weekly_calendar import calendar_groups, save_weekday_calendar, stored_calendar_series, graph_event_utc
 from .teams_options_retry import microsoft_update_summary
@@ -108,12 +109,19 @@ CURRICULUM_LEARNER_DATA_TTL_SECONDS = 60
 # load -- it asks for `?visibility=all` and the default in the same burst, and
 # each used to pay for its own full read.
 #
-# The TTL is deliberately short. The win is entirely within one page load, so a
-# minute covers it, while keeping the window in which a write from another
-# worker could be missed far below the payload TTL. A write in this process
-# clears the rows with everything else; a write in another one bumps the shared
-# epoch, which invalidates them here too whenever Redis is configured.
-CURRICULUM_ROWS_CACHE_TTL_SECONDS = 60
+# Shared between processes (Valkey) and compressed. The shared epoch is what
+# retires them after a write, in this process or another, so the TTL only
+# bounds how long an unused generation lingers; 300 s, like every shared copy
+# (CURRICULUM_SHARED_TTL_SECONDS). It used to be a 60 s process-local copy,
+# which every worker re-read from Neon each minute.
+CURRICULUM_ROWS_CACHE_TTL_SECONDS = 300
+# The SHARED (Valkey) copy of any payload expires after at most this long; the
+# process copy keeps the payload's own TTL. Freshness comes from the epoch,
+# which retires a generation's keys by changing them, not by deleting them: a
+# retired generation simply lingers until its TTL. At hundreds of bumps a day a
+# 1800 s shared TTL kept 15-30 dead generations (~1.8 GB) in Valkey and pushed
+# out live keys. 300 s keeps at most a handful.
+CURRICULUM_SHARED_TTL_SECONDS = int(os.environ.get('CURRICULUM_SHARED_TTL_SECONDS', '300'))
 _CURRICULUM_CACHE = {}
 _CURRICULUM_CACHE_LOCK = threading.Lock()
 # One lock per payload key, so concurrent misses on the same key rebuild once
@@ -169,8 +177,19 @@ SOFT_DELETE_COLUMNS = {'deleted_at', 'deleted_by', 'deleted_via_parent'}
 SUPPORTED_KSB_WEIGHT_CLASSES = {'hard', 'soft', 'possible'}
 
 
-def invalidate_curriculum_cache():
+def invalidate_curriculum_cache(content_scope=None):
+    """Retire curriculum caches after a write.
+
+    ``content_scope='all'`` is for a writer that changed modules, weeks,
+    components or KSB mappings by raw SQL, which no write helper reported: it
+    also retires every module's learner content entries (content_cache). Writes
+    made through the helpers below retire only their own modules' entries, by
+    themselves, so the default leaves learner content alone.
+    """
     global _CURRICULUM_CACHE_EPOCH
+    if content_scope == 'all':
+        from . import content_cache
+        content_cache.retire_all()
     with _CURRICULUM_CACHE_LOCK:
         # Programme-scoped entries stay: their generation is checked on every
         # read, and the bump this write owes retires exactly the ones it touched.
@@ -374,6 +393,7 @@ def scoped_curriculum_read(fn):
         bound.apply_defaults()
         key = (
             fn.__qualname__,
+            native_only(),
             _scope_memo_key(tuple(bound.arguments.items())),
         )
         hash(key)
@@ -647,10 +667,15 @@ def begin_curriculum_write_scope():
     _CURRICULUM_EPOCH_BUMP.read_model_queued = False
     from .module_live import begin_request
     begin_request()
+    from . import content_cache
+    content_cache.begin_write_scope()
 
 
 def end_curriculum_write_scope(scopes=None):
     """Make the request's one bump, if anything in it invalidated."""
+    from . import content_cache
+    # The modules this request wrote: one version move each, after the view.
+    content_cache.end_write_scope()
     pending = getattr(_CURRICULUM_EPOCH_BUMP, 'pending', False)
     _CURRICULUM_EPOCH_BUMP.scoped = False
     _CURRICULUM_EPOCH_BUMP.pending = False
@@ -741,7 +766,7 @@ def curriculum_build_lock(key):
         return lock
 
 
-def cached_curriculum_value(key, factory, force=False, ttl=None, shared=True, scope=None, fingerprint=None):
+def cached_curriculum_value(key, factory, force=False, ttl=None, shared=True, scope=None, fingerprint=None, compress=False):
     """The cached payload for ``key``, rebuilding it when it is not there.
 
     ``force`` skips both cache layers and rebuilds from the database, then stores
@@ -754,11 +779,11 @@ def cached_curriculum_value(key, factory, force=False, ttl=None, shared=True, sc
     new group or programme that does not appear until the page is reloaded enough
     times to land on the worker that took the write.
 
-    ``shared=False`` keeps a value in this process only, for one that is large
-    and cheap to reassemble but expensive to fetch -- the raw curriculum rows.
-    Round-tripping those through Redis costs more in pickling than the read it
-    saves, and every worker warms its own copy in a second anyway. The shared
-    epoch is still honoured, so a write elsewhere still invalidates it.
+    ``shared=False`` keeps a value in this process only. The shared epoch is
+    still honoured, so a write elsewhere still invalidates it.
+
+    ``compress`` stores the shared copy zlib-compressed (the process copy stays
+    as built), for a large value such as the raw curriculum rows.
 
     ``scope`` is a programme id for a payload about that programme alone. Its
     generation is then the programme's own counter plus the unscoped one (see
@@ -822,6 +847,8 @@ def cached_curriculum_value(key, factory, force=False, ttl=None, shared=True, sc
     shared_key = shared_curriculum_cache_key(key, shared_epoch)
     try:
         shared_value = None if (force or not shared) else cache.get(shared_key)
+        if shared_value is not None and compress:
+            shared_value = _unpack_shared(shared_value)
     except Exception:
         logger.warning('Unable to read shared curriculum payload cache.', exc_info=True)
         shared_value = None
@@ -873,6 +900,12 @@ def cached_curriculum_value(key, factory, force=False, ttl=None, shared=True, sc
                 if acquired:
                     break
                 waited, holder_gone = shared_build.wait_for_value(cache, shared_key)
+                if waited is not None and compress:
+                    try:
+                        waited = _unpack_shared(waited)
+                    except Exception:
+                        logger.warning('Discarding an unreadable shared curriculum payload.', exc_info=True)
+                        waited, holder_gone = None, True
                 if waited is not None:
                     with _CURRICULUM_CACHE_LOCK:
                         _CURRICULUM_CACHE[key] = {
@@ -917,7 +950,8 @@ def cached_curriculum_value(key, factory, force=False, ttl=None, shared=True, sc
                 # This key includes the generation: a concurrent invalidation
                 # retires it even if this network write finishes afterwards.
                 try:
-                    cache.set(shared_key, value, timeout=ttl)
+                    cache.set(shared_key, _pack_shared(value) if compress else value,
+                              timeout=min(ttl, CURRICULUM_SHARED_TTL_SECONDS))
                 except Exception:
                     logger.warning('Unable to populate shared curriculum payload cache.', exc_info=True)
         finally:
@@ -925,6 +959,18 @@ def cached_curriculum_value(key, factory, force=False, ttl=None, shared=True, sc
             # value already there.
             shared_build.release(cache, shared_key, build_token)
     return value
+
+
+def _pack_shared(value):
+    import pickle
+    import zlib
+    return zlib.compress(pickle.dumps(value, protocol=pickle.HIGHEST_PROTOCOL), 1)
+
+
+def _unpack_shared(blob):
+    import pickle
+    import zlib
+    return pickle.loads(zlib.decompress(blob))
 
 
 def request_bypasses_curriculum_cache(request):
@@ -1133,6 +1179,10 @@ def table_name(table):
 
 
 def column_names(table):
+    if native_only():
+        from .free_course_contract import COLUMNS
+        if table in COLUMNS:
+            return {name for name, _ in COLUMNS[table]}
     cache_key = f'{CURRICULUM_SCHEMA}.{table}'
     if cache_key in _TABLE_COLUMNS_CACHE:
         return _TABLE_COLUMNS_CACHE[cache_key]
@@ -2271,7 +2321,7 @@ def teams_calendar_subject(payload, series=None):
     )
 
 
-def teams_event_payload(payload, graph_settings):
+def teams_event_payload(payload, graph_settings, *, promote_presenters=True):
     title = teams_calendar_subject(payload)
     local_start_raw = clean_str(payload.get('localStartDateTime'))
     utc_start_raw = clean_str(payload.get('startDateTimeUtc'))
@@ -2290,10 +2340,15 @@ def teams_event_payload(payload, graph_settings):
         raise ValueError('Unsupported repeat option.')
     occurrences = max(1, min(52, int(payload.get('repeatOccurrences') or 12)))
     co_organizers = teams_attendee_emails(payload.get('coOrganizers'))
-    co_organizer_set = set(co_organizers)
     # A co-organiser may also be listed as a presenter. Teams gives each person
     # one role (co-organiser wins), so keeping both only keeps the author's list.
     presenters = teams_attendee_emails(payload.get('presenters'))
+    if promote_presenters:
+        from .teams_presenter_roles import presenter_co_organizers
+        co_organizers = presenter_co_organizers(
+            presenters, co_organizers, payload.get('organizerEmail') or teams_meeting_default_organizer(),
+        )
+    co_organizer_set = set(co_organizers)
     elevated = co_organizer_set | set(presenters)
     attendees = [
         email for email in teams_attendee_emails(payload.get('attendees'))
@@ -3064,44 +3119,15 @@ def teams_newly_invited(stored, invited):
 
 
 def forward_teams_invitation(request, owner_key, event_ids, recipients, comment=''):
-    """Send the meeting to the people a people-only save just added.
+    """Microsoft forwarding is disabled; optional email is sent by the LMS.
 
-    Microsoft's invitation preference is per write, never per person: the silent
-    attendee patch that keeps an update out of every existing invitee's mailbox
-    keeps it out of the new learner's too, and a meeting only reaches somebody's
-    calendar when something is sent to them. Forwarding is the one call Graph
-    offers that reaches named recipients alone, so the people already invited
-    stay unbothered while the person just added still gets a real Teams
-    invitation rather than only a link in an email.
-
-    Failures come back as warnings instead of raising: the calendar is already
-    saved and verified by the time this runs, and a mailbox refusing a forward
-    must not undo it or hide itself.
+    This prevents explicit /forward calls. It does not certify suppression of
+    the messages Exchange may generate from an event PATCH.
     """
-    warnings = []
     if not recipients:
-        return warnings
-    payload = {'ToRecipients': [{'emailAddress': {'address': clean_str(email)}} for email in recipients]}
-    if comment:
-        payload['Comment'] = comment
-    for event_id in dict.fromkeys(clean_str(value) for value in event_ids):
-        if not event_id:
-            continue
-        try:
-            request(
-                'POST',
-                f'users/{owner_key}/events/{urllib_parse.quote(event_id, safe="")}/forward',
-                payload=payload,
-            )
-        except (RuntimeError, ValueError) as exc:
-            warnings.append({
-                'code': 'teams_invitation_not_forwarded',
-                'message': 'Microsoft did not send the meeting invitation to everyone this save added. '
-                           'They are on the meeting and receive the LMS schedule email; forward the '
-                           'invitation from the calendar if it is still missing from theirs.',
-                'detail': str(exc),
-            })
-    return warnings
+        return []
+    return [{'code': 'teams_calendar_mail_disabled',
+             'message': 'No Microsoft invitation was requested. Use the LMS email option if you want to email the people added.'}]
 
 
 def reschedule_single_live_session_occurrence(
@@ -4190,7 +4216,9 @@ def with_schedule_change_notice(response, live_session_id, before, request=None,
     body['changeNotice'] = issue_change_notice(live_session_id, before, held_schedule_snapshot(live_session_id),
                                                notice_id=clean_str(body.get('changeId')) or None)
     from .teams_week_meeting import may_send_schedule_email
-    if request is not None and may_send_schedule_email(request):
+    from .teams_notification_preferences import lms_email_requested
+    body['lmsEmailRequested'] = bool(lms_email_requested(request) and may_send_schedule_email(request))
+    if body['lmsEmailRequested']:
         from .teams_schedule_delivery import send_change_emails, send_creation_emails
         added = []
         if series_before is not None:
@@ -4320,11 +4348,14 @@ def curriculum_teams_meeting_schedule(request, live_session_id):
             teams_attendee_emails(payload['coOrganizers'])
             if 'coOrganizers' in payload else stored_co_organizers
         )
-        co_organizer_set = set(co_organizers)
         presenters = (
             teams_attendee_emails(payload['presenters'])
             if 'presenters' in payload else stored_presenters
         )
+        from .teams_presenter_roles import presenter_co_organizers, roles_changed
+        if roles_changed(presenters, co_organizers, stored_presenters, stored_co_organizers):
+            co_organizers = presenter_co_organizers(presenters, co_organizers, organizer)
+        co_organizer_set = set(co_organizers)
         elevated = co_organizer_set | set(presenters)
         attendees = [
             email for email in (
@@ -4424,6 +4455,13 @@ def curriculum_teams_meeting_schedule(request, live_session_id):
         except CalendarMismatch as mismatch:
             # A known difference is the reason to update. Read failures still abort.
             if people_only:
+                if mismatch.code == 'teams_attendee_privacy_unconfirmed':
+                    return json_error(
+                        'Attendee email privacy is not confirmed on the original Teams calendar. '
+                        'The invitations were not saved and no invitation was sent. '
+                        'Updating session dates does not resolve this privacy check.',
+                        status=409, code=mismatch.code, detail=str(mismatch), liveSessionId=live_session_id,
+                    )
                 # Except on a people-only save, which must never touch a date.
                 # Repairing the drift here would move, or re-create, sessions
                 # as a side effect of saving who is invited. Nothing has been
@@ -4761,6 +4799,9 @@ def curriculum_teams_meeting_schedule(request, live_session_id):
     if unresolved_components:
         warnings.append({'code': 'teams_component_binding_missing',
                          'message': f'{len(unresolved_components)} existing session link(s) were preserved because their calendar occurrence could not be matched. Review Calendar health before changing those sessions.'})
+    # Keep actual permission/settings failures ahead of the informational mail policy notice.
+    mail_notices = [item for item in warnings if item.get('code') == 'teams_calendar_mail_disabled']
+    warnings = [item for item in warnings if item.get('code') != 'teams_calendar_mail_disabled']
     return with_schedule_change_notice(JsonResponse({
         'updated': True,
         'meeting': {
@@ -4777,7 +4818,7 @@ def curriculum_teams_meeting_schedule(request, live_session_id):
             'presenters': presenters,
             'coOrganizers': co_organizers,
         },
-        'warnings': [*warnings, *[reported_failure(item) for item in option_failures]],
+        'warnings': [*warnings, *[reported_failure(item) for item in option_failures], *mail_notices],
         # The onlineMeeting options, reported apart from the invitation: which
         # groups this save sent, whether Microsoft took them, and what is still
         # unapplied from this or an earlier save.
@@ -5426,6 +5467,16 @@ def curriculum_teams_meeting_artifact_content(request, live_session_id, artifact
             from .session_bunny import recording_player
             if bunny_recording(artifact.get('metadata')).get('state') != 'ready':
                 return json_error('This Bunny recording is still being prepared. Please try again later.', status=409)
+            if request.GET.get('preview') != '1':
+                # Curriculum's existing Download links use this older endpoint.
+                # Share the staff-authenticated original-file delivery; a DRM
+                # rendition is only a playback source, not a downloadable MP4.
+                from copy import copy
+                from .session_results import admin_content
+                download_request = copy(request)
+                download_request.GET = request.GET.copy()
+                download_request.GET['download'] = '1'
+                return admin_content(download_request, live_session_id, artifact_id)
             try:
                 # Legacy callers expect an MP4, including native video previews.
                 # Serve Bunny's protected rendition without reverting to Microsoft/Azure.
@@ -5714,6 +5765,47 @@ def note_live_rows(table, rows):
         note_rows(table, rows)
     except Exception:
         logger.debug('Unable to note a write for live sync.', exc_info=True)
+    # Learner content entries of these rows' modules (never raises; on any
+    # doubt it retires all modules).
+    from . import content_cache
+    content_cache.note_rows(table, rows)
+
+
+def note_previous_content_modules(table, *, where_sql=None, where_params=None, key_columns=None, payloads=()):
+    """Before a write that sets module_catalogue_id, retire the rows' CURRENT modules.
+
+    The rows a write returns name only the module they now belong to; a row
+    moved out of a module must retire that module's cached content too. Read
+    with the write's own WHERE or key, so it costs one small query, and only
+    for writes that can move a row.
+    """
+    from . import content_cache
+    bare = str(table or '').split('.')[-1].strip('"')
+    if bare not in content_cache.CONTENT_TABLES or bare == AUTHORING_MODULES_TABLE:
+        return
+    if not any('module_catalogue_id' in (payload or {}) for payload in payloads):
+        return
+    if connection.vendor != 'postgresql':
+        content_cache.retire_all()
+        return
+    try:
+        if where_sql is not None:
+            rows = fetch_all(f'select distinct module_catalogue_id from {table_name(table)} where {where_sql}',
+                             list(where_params or []))
+        elif list(key_columns or []) == ['id']:
+            ids = [payload.get('id') for payload in payloads if payload and payload.get('id') not in (None, '')]
+            if not ids:
+                return
+            rows = fetch_all(f'select distinct module_catalogue_id from {table_name(table)} where id = any(%s)',
+                             [ids])
+        else:
+            content_cache.retire_all()
+            return
+        content_cache.note_modules(row['module_catalogue_id'] for row in rows)
+    except Exception:
+        logger.warning('Unable to read the modules a write moves rows from; retiring all content.',
+                       exc_info=True)
+        content_cache.retire_all()
 
 
 def insert_row(table, payload):
@@ -5761,8 +5853,13 @@ def update_rows(table, where_sql, where_params, payload, allow_null_columns=None
     values = filtered_payload(table, payload, allow_null_columns=allow_null_columns)
     if not values:
         raise ValueError(f'No writable columns found for {table}.')
+    if native_only():
+        from .free_course_contract import COLUMNS
+        if table in COLUMNS:
+            return update_authoring_rows(table, where_sql, where_params, values)
     assignments = ', '.join(f'{quote_ident(column)} = %s' for column in values)
     query = f'update {table_name(table)} set {assignments} where {where_sql} returning *'
+    note_previous_content_modules(table, where_sql=where_sql, where_params=where_params, payloads=[values])
     rows = execute_returning(query, [*values.values(), *where_params])
     versioning.record_rows(table, rows)
     note_live_rows(table, rows)
@@ -8268,6 +8365,10 @@ def set_programme_modules_ksb_source(programme_values, source_value):
                 ''',
                 [*params, *raw_targets],
             )
+            # Raw SQL across a programme's modules: no helper reported it.
+            # Rare, so retiring every module's learner content costs little.
+            from . import content_cache
+            content_cache.retire_all()
             return cursor.rowcount
     updated = 0
     for module in authoring_fetch_all(AUTHORING_MODULES_TABLE):
@@ -10986,6 +11087,7 @@ def delivery_slots_by_catalogue(
 
 def authoring_session_links_by_catalogue(
     module_catalogue_ids, *, modules_by_catalogue=None, groups_by_id=None, holidays_by_cohort=None,
+    week_rows=None, component_rows=None,
 ):
     """Every authored live session of each module, in course-structure order.
 
@@ -11024,7 +11126,7 @@ def authoring_session_links_by_catalogue(
         return {}
     try:
         placeholders = ','.join(['%s'] * len(module_catalogue_ids))
-        week_rows = active_week_rows(authoring_fetch_all(
+        week_rows = active_week_rows(week_rows if week_rows is not None else authoring_fetch_all(
             AUTHORING_WEEKS_TABLE,
             f'module_catalogue_id in ({placeholders})',
             module_catalogue_ids,
@@ -11033,7 +11135,7 @@ def authoring_session_links_by_catalogue(
         # Full rows, because `settings_json` is where a component's own date
         # lives -- affordable only because the type filter runs in SQL and
         # leaves roughly one row per week instead of the whole 24 MB column.
-        component_rows = active_component_rows(authoring_fetch_all(
+        component_rows = active_component_rows(component_rows if component_rows is not None else authoring_fetch_all(
             AUTHORING_COMPONENTS_TABLE,
             f'module_catalogue_id in ({placeholders}) and {LIVE_SESSION_TYPE_SQL}',
             module_catalogue_ids,
@@ -11591,7 +11693,7 @@ def cohort_holiday_period_end(cohort):
     return format_date(calculate_cohort_end_date(start_date, months))
 
 
-def build_sessions_from_authoring_modules(authoring_module_rows, holidays_by_cohort=None, groups_by_id=None):
+def build_sessions_from_authoring_modules(authoring_module_rows, holidays_by_cohort=None, groups_by_id=None, *, session_links=None):
     """The live sessions each authored module delivers, from its own structure.
 
     **One live-session component is one session.** The course structure decides
@@ -11627,7 +11729,7 @@ def build_sessions_from_authoring_modules(authoring_module_rows, holidays_by_coh
     # `module_delivery_row` takes a group that delivers on no day at its word --
     # so every primary would come back undated. The planner reads the real
     # group rows instead.
-    live_sessions_by_catalogue = authoring_session_links_by_catalogue(
+    live_sessions_by_catalogue = session_links if session_links is not None else authoring_session_links_by_catalogue(
         [clean_str(module.get('module_catalogue_id')) for module in modules],
         modules_by_catalogue={clean_str(module.get('module_catalogue_id')): module for module in modules},
         holidays_by_cohort=holidays_by_cohort,
@@ -12874,7 +12976,8 @@ def get_cached_curriculum_rows(compact=False, force=False):
         lambda: get_curriculum_rows(compact=compact),
         force=force,
         ttl=CURRICULUM_ROWS_CACHE_TTL_SECONDS,
-        shared=False,
+        shared=True,
+        compress=True,
     )
 
 
@@ -14837,7 +14940,7 @@ def authoring_component_counts_by_catalogue():
             params.extend(retired)
         rows = fetch_all(
             f'select {quote_ident("module_catalogue_id")} as catalogue_id, count(*) as total '
-            f'from {authoring_table_name(AUTHORING_COMPONENTS_TABLE)} '
+            f'from {learning_read_table(AUTHORING_COMPONENTS_TABLE)} '
             f'where {" and ".join(clauses)} '
             f'group by {quote_ident("module_catalogue_id")}',
             params,
@@ -14947,6 +15050,9 @@ def ensure_module_authoring_tables():
     path below, which still owns the DDL.
     """
     global _AUTHORING_TABLES_READY
+    if native_only():
+        schema_gate.require_tables('free_courses', 'free_course_weeks', 'free_programme_components')
+        return
     if _AUTHORING_TABLES_READY:
         return
     if not schema_gate.runtime_bootstrap_allowed():
@@ -15864,12 +15970,17 @@ def authoring_select_sql(table, where_sql='', order_sql='', *, ensure_tables=Tru
         select_list = ', '.join(quote_ident(column) for column in wanted) if wanted else '*'
     else:
         select_list = '*'
-    query = f'select {select_list} from {authoring_table_name(table)}'
+    query = f'select {select_list} from {learning_read_table(table)}'
     if where_sql:
         query += f' where {where_sql}'
     if order_sql:
         query += f' order by {order_sql}'
     return query
+
+
+def learning_read_table(table):
+    from .learning_storage import read_table
+    return read_table(table)
 
 
 # Off unless set: measured 2026-10-21 against a Neon branch through the pooler,
@@ -16164,7 +16275,8 @@ def free_programme_fetch_all(table, where_sql='', params=None, order_sql='', col
     """
     ensure_free_programme_tables()
     selection = ', '.join(quote_ident(column) for column in columns) if columns else '*'
-    query = f'select {selection} from {authoring_table_name(table)}'
+    from .learning_storage import free_read_table
+    query = f'select {selection} from {free_read_table(table)}'
     if where_sql:
         query += f' where {where_sql}'
     if order_sql:
@@ -16209,6 +16321,7 @@ def free_programme_delete(table, where_sql, params=None):
         cursor.execute(f'delete from {authoring_table_name(table)} where {where_sql}', params or [])
 
 
+@with_course_storage
 def authoring_upsert(table, key_columns, payload, allow_null_columns=None):
     """Insert-or-update one authoring row.
 
@@ -16228,6 +16341,12 @@ def authoring_upsert(table, key_columns, payload, allow_null_columns=None):
     values['updated_at'] = datetime.utcnow()
     if 'created_at' not in values:
         values['created_at'] = datetime.utcnow()
+    from .learning_storage import upsert as save_free_row
+    independent = save_free_row(table, values)
+    if independent is not None:
+        versioning.record_rows(table, [independent])
+        note_live_rows(table, [independent])
+        return independent
     columns = list(values.keys())
     placeholders = ', '.join(['%s'] * len(columns))
     update_columns = [column for column in columns if column not in set(key_columns) | {'created_at'}]
@@ -16247,6 +16366,7 @@ def authoring_upsert(table, key_columns, payload, allow_null_columns=None):
             f'values ({placeholders})'
         )
     key_value = ' '.join(clean_str(values.get(column)) for column in key_columns)
+    note_previous_content_modules(table, key_columns=key_columns, payloads=[values])
     with connection.cursor() as cursor:
         cursor.execute(query, [values[column] for column in columns])
         if connection.vendor == 'postgresql':
@@ -16265,6 +16385,7 @@ def authoring_upsert(table, key_columns, payload, allow_null_columns=None):
     return saved
 
 
+@with_course_storage
 def authoring_bulk_upsert(table, key_columns, payloads, batch_size=100):
     ensure_module_authoring_tables()
     writable = column_names(table)
@@ -16278,9 +16399,24 @@ def authoring_bulk_upsert(table, key_columns, payloads, batch_size=100):
         if payload
     ]
     payloads = [payload for payload in payloads if payload]
+    note_previous_content_modules(table, key_columns=key_columns, payloads=payloads)
     if not payloads:
         return
     now = datetime.utcnow()
+    from .learning_storage import upsert as save_free_row
+    ordinary, independent = [], []
+    for payload in payloads:
+        row = save_free_row(table, {'created_at': now, 'updated_at': now, **payload})
+        if row is None:
+            ordinary.append(payload)
+        else:
+            independent.append(row)
+    if independent:
+        versioning.record_rows(table, independent)
+        note_live_rows(table, independent)
+    payloads = ordinary
+    if not payloads:
+        return
     all_columns = []
     seen_columns = set()
     for payload in payloads:
@@ -16484,13 +16620,24 @@ def update_authoring_rows(table, where_sql, where_params, payload):
     assignments = ', '.join(f'{quote_ident(column)} = %s' for column in columns)
     params = [payload[column] for column in columns] + list(where_params)
     key_value = ' '.join(clean_str(value) for value in where_params)
+    note_previous_content_modules(table, where_sql=where_sql, where_params=where_params,
+                                  payloads=[{column: payload[column] for column in columns}])
+    from .learning_storage import update as update_free_rows
+    independent = update_free_rows(table, where_sql, where_params, {key: payload[key] for key in columns})
+    if native_only():
+        from .free_course_contract import COLUMNS
+        if table in COLUMNS:
+            log_curriculum_storage('update', table, rows=independent, entity_id=key_value)
+            versioning.record_rows(table, independent)
+            note_live_rows(table, independent)
+            return independent
     with connection.cursor() as cursor:
         if connection.vendor == 'postgresql':
             cursor.execute(
                 f'update {authoring_table_name(table)} set {assignments} where {where_sql} returning *',
                 params,
             )
-            rows = rows_as_dicts(cursor)
+            rows = rows_as_dicts(cursor) + independent
             log_curriculum_storage('update', table, rows=rows, entity_id=key_value)
             versioning.record_rows(table, rows)
             note_live_rows(table, rows)
@@ -17504,6 +17651,7 @@ def mapping_response(row):
     }
 
 
+@with_course_storage
 def authoring_module_exists(module_catalogue_id):
     rows = authoring_fetch_all(AUTHORING_MODULES_TABLE, 'module_catalogue_id = %s', [module_catalogue_id])
     return rows[0] if rows else None
@@ -18177,7 +18325,7 @@ def component_summary_source_rows(catalogue_ids):
     if 'is_programme_deleted' in columns:
         clauses.append(f'{quote_ident("is_programme_deleted")} is not true')
     where = ' and '.join(f'({clause})' for clause in clauses)
-    table = authoring_table_name(AUTHORING_COMPONENTS_TABLE)
+    table = learning_read_table(AUTHORING_COMPONENTS_TABLE)
     settings = quote_ident('settings_json')
     # Every column active_component_rows() and the bucket key read; a column
     # this table does not carry is selected as null, as a row without it reads.
@@ -18424,7 +18572,7 @@ def library_component_rows(*, search='', types=None, programme_ids=None, origins
             quote_ident(column) for column in LIBRARY_LIST_COLUMNS
             if has_column(AUTHORING_COMPONENTS_TABLE, column)
         )
-    query = f'select {columns} from {authoring_table_name(AUTHORING_COMPONENTS_TABLE)}'
+    query = f'select {columns} from {learning_read_table(AUTHORING_COMPONENTS_TABLE)}'
     if where_sql:
         query += f' where {where_sql}'
     query += ' order by updated_at desc, display_order, id limit %s offset %s'
@@ -20797,6 +20945,7 @@ STRUCTURE_REVISION_SOURCES = (
 )
 
 
+@with_course_storage
 def module_structure_revision(module_catalogue_id, *, source_rows=None):
     """Fingerprint of everything a structure PATCH would replace.
 
@@ -20940,6 +21089,9 @@ def lock_module_structure_row(module_catalogue_id):
     """
     if connection.vendor != 'postgresql':
         return
+    from .learning_storage import course
+    if course(clean_str(module_catalogue_id), lock=True):
+        return
     with connection.cursor() as cursor:
         cursor.execute(
             'select 1 from %s where %s = %%s for update'
@@ -21031,6 +21183,13 @@ def lock_record_row(table, where_sql, params):
     """
     if connection.vendor != 'postgresql':
         return
+    if native_only():
+        from .learning_storage import course, free_rows
+        from .free_course_contract import COLUMNS
+        if table in COLUMNS:
+            for row in free_rows(table, where_sql, params):
+                course(row['module_catalogue_id'], lock=True)
+            return
     with connection.cursor() as cursor:
         cursor.execute(
             'select 1 from %s where %s for update' % (table_name(table), where_sql),
@@ -21111,6 +21270,7 @@ def week_template_revision(template_id):
     ))
 
 
+@with_course_storage
 def module_record_revision(identifier):
     """Fingerprint of the module a drawer PATCH writes.
 
@@ -21364,6 +21524,7 @@ def row_in_module_archive(row, markers, bounds=None):
         return True
 
 
+@with_course_storage
 def read_module_structure_with_revision(module_catalogue_id):
     """Read each owned row once for both the editable payload and its guard.
 
@@ -21415,6 +21576,7 @@ def with_item_fingerprints(payload):
     return {**payload, 'itemFingerprints': structure_fingerprints(payload)}
 
 
+@with_course_storage
 def get_authoring_structure_payload(module_catalogue_id, include_archived=False, *, source_rows=None):
     """The module's authored structure.
 
@@ -21770,7 +21932,7 @@ def live_component_rows_without_content(module_ids):
     if 'is_programme_deleted' in columns:
         clauses.append(f'component.{quote_ident("is_programme_deleted")} is not true')
     where = ' and '.join(f'({clause})' for clause in clauses)
-    table = f'{authoring_table_name(AUTHORING_COMPONENTS_TABLE)} as component'
+    table = f'{learning_read_table(AUTHORING_COMPONENTS_TABLE)} as component'
     # The order first, from the ids alone, then the rows in id batches. Paging
     # the row query with LIMIT/OFFSET made Postgres sort -- and so strip --
     # every row ahead of the offset again on each page: ~21 s for the largest
@@ -22141,7 +22303,7 @@ def authoring_module_content_counts():
     ]
     query = (
         f'select {", ".join(group_columns)}, count(*) as {quote_ident("row_count")} '
-        f'from {authoring_table_name(AUTHORING_COMPONENTS_TABLE)}'
+        f'from {learning_read_table(AUTHORING_COMPONENTS_TABLE)}'
         + (f' where {where_sql}' if where_sql else '')
         + f' group by {", ".join(group_columns)}'
     )
@@ -22156,7 +22318,7 @@ def authoring_module_content_counts():
     )
     query = (
         f'select {quote_ident("module_catalogue_id")}, {quote_ident("ksb_code")} '
-        f'from {authoring_table_name(AUTHORING_KSB_MAPPINGS_TABLE)}'
+        f'from {learning_read_table(AUTHORING_KSB_MAPPINGS_TABLE)}'
         + (f' where {where_sql}' if where_sql else '')
         + f' group by {quote_ident("module_catalogue_id")}, {quote_ident("ksb_code")}'
     )
@@ -23470,6 +23632,7 @@ MODULE_ARCHIVED_SAVE_REFUSED = (
 )
 
 
+@with_course_storage
 def save_module_authoring_structure(
     module_catalogue_id, payload, *, repair_links=True, write_changed_only=False,
     light=False, stored_rows=None, stored_structure=None, build_result=True,
@@ -24017,6 +24180,8 @@ def save_module_authoring_structure(
             calendar = calendars[0]
             occurrences = authoring_fetch_all(LIVE_SESSION_OCCURRENCES_TABLE, "live_session_id = %s and status not in ('cancelled', 'superseded')", [calendar['id']], 'session_number')
             attach_teams_meeting_to_module_weeks(module_catalogue_id, calendar, live_session_row_to_component_settings(calendar), occurrences)
+    from .learning_storage import refresh_totals
+    refresh_totals(module_catalogue_id)
     invalidate_curriculum_cache()
     if not build_result:
         return {'catalogueId': module_catalogue_id, 'qualityChecklist': checklist}
@@ -24616,6 +24781,7 @@ def archive_module_child_quizzes(module_catalogue_id, *, include_deleted_childre
     return archive_ids
 
 
+@with_course_storage
 def delete_module_authoring_structure(module_catalogue_id):
     module_catalogue_id = clean_str(module_catalogue_id)
     ensure_module_authoring_tables()
@@ -26754,6 +26920,7 @@ def curriculum_modules(request):
 
 
 @csrf_exempt
+@with_course_storage
 def curriculum_module_collection(request):
     if request.method == 'GET':
         return curriculum_modules(request)
@@ -26763,13 +26930,20 @@ def curriculum_module_collection(request):
     payload = json_body(request)
     if payload is None:
         return json_error('Invalid JSON body.')
+    from .learning_storage import creation_unavailable_response, is_free_course_payload
+    storage_error = creation_unavailable_response(payload)
+    if storage_error is not None:
+        return storage_error
+    is_free_course = is_free_course_payload(payload)
+    if is_free_course:
+        payload = {**payload, 'isFreeCourse': True}
     try:
         module_weekly_schedule(payload)
     except ValueError as exc:
         return json_error(str(exc), fields=['weeklySchedule'])
     module_type = clean_str(payload.get('moduleType') or payload.get('module_type') or payload.get('sourceType') or payload.get('source_type')).lower()
     has_authoring_shape = bool(payload.get('weekStructure') is not None or payload.get('completionCriteria') is not None or payload.get('advancedDetails') is not None)
-    is_authoring_request = module_type in {'authoring', 'module_builder', 'builder'} or (payload.get('title') and (not payload.get('name') or has_authoring_shape))
+    is_authoring_request = is_free_course or module_type in {'authoring', 'module_builder', 'builder'} or (payload.get('title') and (not payload.get('name') or has_authoring_shape))
     if is_authoring_request:
         requested_catalogue_id = first_clean_payload_value(payload, 'catalogueId', 'moduleCatalogueId', 'module_catalogue_id')
         module_catalogue_id = find_existing_authoring_catalogue_id_for_payload(payload) or unique_module_catalogue_id(requested_catalogue_id)
@@ -26779,7 +26953,7 @@ def curriculum_module_collection(request):
             # is the archive's Restore, which brings its weeks back with it.
             module_catalogue_id = unique_module_catalogue_id()
         existing_live_module = authoring_module_exists(module_catalogue_id)
-        if existing_live_module and (existing_live_module.get('source_type') == 'free_course') != (payload.get('isFreeCourse') is True):
+        if existing_live_module and (existing_live_module.get('source_type') == 'free_course') != is_free_course:
             return json_error('This identifier belongs to a different course type. Create a new course instead.', status=400)
         if existing_live_module and truthy(payload.get('duplicateDestination') or payload.get('duplicate_destination')):
             # A duplicate is its own module. Matching it to a same-titled module
@@ -26805,7 +26979,7 @@ def curriculum_module_collection(request):
             }, status=200)
         module_payload = {
             'catalogueId': module_catalogue_id,
-            'isFreeCourse': payload.get('isFreeCourse') is True,
+            'isFreeCourse': is_free_course,
             **{key: payload[key] for key in COURSE_PRICING_FIELDS if key in payload},
             'programmeId': payload.get('programmeId') or payload.get('programme') or payload.get('programmeName'),
             'programmeName': payload.get('programmeName') or payload.get('programme') or 'Unassigned programme',
@@ -27169,6 +27343,7 @@ def curriculum_module_structure_resolve(request):
 
 
 @csrf_exempt
+@with_course_storage
 def curriculum_module_structure(request, module_catalogue_id):
     module_catalogue_id = clean_str(module_catalogue_id)
     # Existence-first, so a request for a stored module does not summarise every
@@ -27251,6 +27426,13 @@ def curriculum_module_structure(request, module_catalogue_id):
     payload = json_body(request)
     if payload is None:
         return json_error('Invalid JSON body.')
+    if not stored_catalogue_id:
+        # The Builder can create its first saved draft through this PATCH as
+        # well as through the collection POST. Guard both before any write.
+        from .learning_storage import creation_unavailable_response
+        storage_error = creation_unavailable_response(payload)
+        if storage_error is not None:
+            return storage_error
     try:
         module_weekly_schedule(payload)
     except ValueError as exc:
@@ -32520,6 +32702,7 @@ def curriculum_readiness_validation(request):
 
 
 @csrf_exempt
+@with_course_storage
 def curriculum_module_component_detail(request, module_catalogue_id, component_id):
     if request.method != 'DELETE':
         return json_error('Method not allowed.', status=405)
@@ -32542,6 +32725,7 @@ def curriculum_module_component_detail(request, module_catalogue_id, component_i
 
 
 @csrf_exempt
+@with_course_storage
 def curriculum_module_week_detail(request, module_catalogue_id, week_id):
     if request.method != 'DELETE':
         return json_error('Method not allowed.', status=405)
@@ -32604,6 +32788,7 @@ def _update_module_cover(request, identifier, payload):
 
 
 @csrf_exempt
+@with_course_storage
 def curriculum_module_detail(request, identifier):
     if request.method not in {'PATCH', 'DELETE'}:
         return json_error('Method not allowed.', status=405)
@@ -34746,6 +34931,7 @@ def curriculum_archived_module_structure(request, module_catalogue_id):
 
 
 @csrf_exempt
+@with_course_storage
 def curriculum_module_restore(request, identifier):
     """Take a module, and everything archived under it, back out of the archive."""
     if request.method != 'POST':
@@ -35453,6 +35639,13 @@ def curriculum_sessions(request):
             session for session in payload['sessions']
             if requested in (clean_str(session.get('moduleCatalogueId')), clean_str(session.get('moduleId')))
         ])
+    if curriculum_visibility(request) == 'operational':
+        # Training rows are projected from these same normalized authoring
+        # modules, so prefer_authoring_module_sessions discards their generated
+        # copies. Read the surviving authored sessions without building learner
+        # counts, programme/KSB statistics and every module's content first.
+        from .delivery_dashboard import calendar_sessions
+        return calendar_sessions(request)
     return curriculum_collection_response(get_cached_payload(request), 'sessions')
 
 

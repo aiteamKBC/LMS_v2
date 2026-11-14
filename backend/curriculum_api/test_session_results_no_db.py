@@ -1774,6 +1774,7 @@ class ArchiveWorkerTests(unittest.TestCase):
                   'saved_name': 'existing/module/session/recording.mp4' if exists else None}]]),
             'storage_client': lambda: client, 'CONTAINER': 'session-recordings', 'archive_prefix': archive_prefix,
             'transcript_text': transcript_text, 'transcript_timing_ready': lambda artifact: timed,
+            'artifact_metadata': artifact_metadata,
             'save_transcript_timing': Mock(), 'TransferProgress': Mock(), 'byte_count': byte_count,
             'save_archive': Mock(), 'tempfile': tempfile, 'sleep': Mock(),
             'copy_matched_recording': Mock(return_value=False),

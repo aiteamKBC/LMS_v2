@@ -29,5 +29,5 @@ export function offScheduleRunSentence(run: OffScheduleRun, when: (iso: string) 
 /** A short label for a table cell, with the full sentence kept for its title. */
 export function offScheduleRunLabel(runs: OffScheduleRun[] = []): string {
   if (!runs.length) return '';
-  return runs.length === 1 ? 'A Teams call on another day was ignored' : `${runs.length} Teams calls on other days were ignored`;
+  return runs.length === 1 ? '1 link use outside this session' : `${runs.length} link uses outside this session`;
 }

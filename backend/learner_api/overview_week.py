@@ -19,6 +19,7 @@ from old_otjh.service import ServiceError
 from .learner_detail import SOURCE_MODELS
 from .models import LearnerProfile
 from . import canonical_learning
+from . import subject_cache
 from .student_activity import CURRENT_SUBJECTS_SQL, _direct_progress_records, _direct_progress_otjh
 
 
@@ -403,8 +404,7 @@ def read_overview_subjects(source, profile):
                 .exclude(kind='activity_event')
                 .values('kind', 'passed', 'component_ref', 'quiz_ref')]
     with connections['enrolment'].cursor() as cur:
-        cur.execute(CURRENT_SUBJECTS_SQL, [source.pk])
-        assigned = cur.fetchall()
+        assigned = subject_cache.subject_rows(cur, CURRENT_SUBJECTS_SQL, source.pk)
         cur.execute('''SELECT c.id,c.module_catalogue_id AS module_id,m.title AS module_title,
             coalesce((SELECT q.quiz_id::text FROM curriculum.quiz_component_links q
                       WHERE q.component_id=c.id ORDER BY q.id LIMIT 1),
@@ -459,6 +459,23 @@ def builder_components(native):
     return [component for _, component in found]
 
 
+def read_current_modules(source, now=None):
+    """Continue Learning needs delivery dates, not the full progress/attendance card."""
+    canonical_learning.require_profile(source.pk)
+    start, end = week_bounds(now)
+    with connections['enrolment'].cursor() as cur:
+        cur.execute(HOME_SUBJECTS_SQL, [source.pk])
+        module_ids = [mid for mid, _title, current in cur.fetchall() if current]
+        cur.execute(component_sql("'[]'::jsonb", builder_columns=True), [module_ids])
+        native = rows(cur)
+        dates = read_builder_activity_dates(cur, module_ids, components=builder_components(native))
+        for row in native:
+            row.update(dates.get(str(row['id'])) or activity_schedule(row['title'], section_title=row['section_title']))
+    week = summarise_week([], native, [], set(), {}, start, end)
+    return {'weekStart': start.isoformat(), 'weekEnd': end.isoformat(),
+            'modules': [{key: module[key] for key in ('id', 'title', 'weekLabels')} for module in week['modules']]}
+
+
 def read_week(source, now=None, *, home_kind=None, dashboard_kind=None, home_summary=False, plan_only=False, monthly_hours_only=False):
     """``home_summary`` is Student Home's compact projection of the ``home`` section.
 
@@ -486,8 +503,7 @@ def read_week(source, now=None, *, home_kind=None, dashboard_kind=None, home_sum
                 else _direct_progress_records(source.pk))
     attendance_module_ids = None
     with connections['enrolment'].cursor() as cur:
-        cur.execute(HOME_SUBJECTS_SQL if home_kind else CURRENT_SUBJECTS_SQL, [source.pk])
-        subject_rows = cur.fetchall()
+        subject_rows = subject_cache.subject_rows(cur, HOME_SUBJECTS_SQL if home_kind else CURRENT_SUBJECTS_SQL, source.pk)
         if home_kind:
             assigned = [(module_id, title) for module_id, title, current in subject_rows if current]
             attendance_module_ids = [module_id for module_id, _title, _current in subject_rows]
@@ -581,7 +597,7 @@ def overview_week(request, kind, pk):
     read_model_status = None
     try:
         with measure_projection('overview-week', kind=kind, learner_id=pk, section=section) as measurement:
-            if section not in (None, 'home', 'dashboard', 'home-summary'):
+            if section not in (None, 'home', 'dashboard', 'home-summary', 'current-modules'):
                 return JsonResponse({'error': 'Invalid overview section.'}, status=400)
             home = section == 'home'
             home_summary = section == 'home-summary'
@@ -601,7 +617,9 @@ def overview_week(request, kind, pk):
                 if source is None:
                     source = model.all_learners.only(*fields).get(pk=pk)
                 with measurement.stage(section or 'overview'):
-                    if home:
+                    if section == 'current-modules':
+                        payload = read_current_modules(source)
+                    elif home:
                         payload = read_week(source, home_kind=kind)
                     elif home_summary:
                         payload = read_week(source, home_kind=kind, home_summary=True)

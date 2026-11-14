@@ -1,5 +1,5 @@
 import { fireEvent, render, screen, within } from '@testing-library/react';
-import { MemoryRouter } from 'react-router-dom';
+import { MemoryRouter, useLocation } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ReactNode } from 'react';
 import { mayAccessRoute } from '@/lib/routeAccess';
@@ -12,6 +12,7 @@ import {
   type FirstSessionBookingFilters,
 } from '@/api/firstSessionBookings';
 
+vi.mock('@/pages/users/presentation/EnrolmentPage', () => ({ EnrolmentPage: ({ children }: { children: ReactNode }) => <main>{children}</main> }));
 vi.mock('@/pages/admin/_shared/AdminPage', () => ({
   AdminPage: ({ children }: { children: ReactNode }) => <main>{children}</main>,
   DataPanel: ({ loading, error, empty, emptyMessage, onRetry, children }: { loading: boolean; error: string | null; empty?: boolean; emptyMessage?: string; onRetry?: () => void; children: ReactNode }) =>
@@ -63,8 +64,12 @@ function respond(body: unknown, ok = true, status = 200) {
   return vi.fn().mockResolvedValue({ ok, status, json: () => Promise.resolve(body) });
 }
 
+function CurrentQuery() {
+  return <output data-testid="query">{useLocation().search}</output>;
+}
+
 function renderPage(path = '/users/first-sessions') {
-  return render(<MemoryRouter initialEntries={[path]}><FirstSessionBookingsPage /></MemoryRouter>);
+  return render(<MemoryRouter initialEntries={[path]}><FirstSessionBookingsPage /><CurrentQuery /></MemoryRouter>);
 }
 
 beforeEach(() => {
@@ -119,6 +124,8 @@ describe('First sessions page', () => {
     expect(within(failed).getByText('Teams sync failed')).toBeInTheDocument();
     expect(within(failed).getByText('No link')).toBeInTheDocument();
     expect(within(table).getByText('Cancelled')).toBeInTheDocument();
+    const statuses = screen.getByRole('group', { name: 'Filter by session status' });
+    expect(within(statuses).getAllByRole('button').map(button => button.textContent)).toEqual(['All 3', 'Scheduled 1', 'Teams sync failed 1']);
     const scheduled = within(table).getByRole('link', { name: 'Alex Example' }).closest('tr')!;
     expect(within(scheduled).getByText('Tue, 6 Oct 2026')).toBeInTheDocument();
     expect(within(scheduled).getByText('10:00 UK time · 60 min')).toBeInTheDocument();
@@ -131,13 +138,14 @@ describe('First sessions page', () => {
 
     const table = await screen.findByRole('table');
     expect(within(table).getAllByRole('row')).toHaveLength(2);
-    expect(screen.getByLabelText('Programme')).toHaveValue('Project Management');
+    expect(screen.getByRole('combobox', { name: 'Programme' })).toHaveTextContent('Project Management');
 
     fireEvent.click(screen.getByRole('button', { name: 'Clear filters' }));
     expect(within(screen.getByRole('table')).getAllByRole('row')).toHaveLength(4);
     expect(screen.getByRole('button', { name: 'Clear filters' })).toBeDisabled();
 
-    fireEvent.change(screen.getByLabelText('Case owner'), { target: { value: 'olivia@example.org' } });
+    fireEvent.click(screen.getByRole('combobox', { name: 'Case owner' }));
+    fireEvent.click(screen.getByRole('option', { name: 'Olivia Owner' }));
     fireEvent.change(screen.getByLabelText('Session from'), { target: { value: '2026-10-01' } });
     const filtered = within(screen.getByRole('table')).getAllByRole('row');
     expect(filtered).toHaveLength(2);
@@ -145,6 +153,40 @@ describe('First sessions page', () => {
 
     fireEvent.change(screen.getByLabelText('Booked to'), { target: { value: '2026-09-19' } });
     expect(screen.getByText('No first-session bookings match these filters.')).toBeInTheDocument();
+  });
+
+  it('searches owner options, selects by keyboard and preserves unrelated URL filters', async () => {
+    const bookings = Array.from({ length: 10 }, (_, index) => booking({
+      id: index + 1, learnerId: index + 100, learnerName: `Example Learner ${index + 1}`,
+      caseOwner: { name: `Owner ${index + 1}`, email: `owner${index + 1}@example.org` },
+    }));
+    vi.stubGlobal('fetch', respond({ count: bookings.length, results: bookings }));
+    renderPage('/users/first-sessions?programme=Data%20Technician&keep=example');
+    await screen.findByRole('table');
+    const owner = screen.getByRole('combobox', { name: 'Case owner' });
+    fireEvent.click(owner);
+    const search = screen.getByRole('textbox', { name: 'Search case owners…' });
+    fireEvent.change(search, { target: { value: 'Owner 9' } });
+    expect(screen.getAllByRole('option')).toHaveLength(1);
+    fireEvent.keyDown(search, { key: 'Enter' });
+    expect(owner).toHaveTextContent('Owner 9');
+    expect(owner).toHaveFocus();
+    expect(screen.queryByRole('listbox')).not.toBeInTheDocument();
+    expect(within(screen.getByRole('table')).getAllByRole('row')).toHaveLength(2);
+    expect(screen.getByRole('link', { name: 'Example Learner 9' })).toBeInTheDocument();
+    const query = new URLSearchParams(screen.getByTestId('query').textContent ?? '');
+    expect(query.get('caseOwner')).toBe('owner9@example.org');
+    expect(query.get('programme')).toBe('Data Technician');
+    expect(query.get('keep')).toBe('example');
+    fireEvent.click(owner);
+    fireEvent.keyDown(screen.getByRole('textbox', { name: 'Search case owners…' }), { key: 'Escape' });
+    expect(owner).toHaveTextContent('Owner 9');
+    expect(owner).toHaveFocus();
+    fireEvent.click(screen.getByRole('button', { name: 'Clear filters' }));
+    expect(owner).toHaveTextContent('All case owners');
+    expect(screen.getByRole('combobox', { name: 'Programme' })).toHaveTextContent('All programmes');
+    expect(screen.getByTestId('query')).toHaveTextContent('?keep=example');
+    expect(within(screen.getByRole('table')).getAllByRole('row')).toHaveLength(11);
   });
 
   it('shows the server error with a retry, rather than an empty list', async () => {
@@ -159,6 +201,40 @@ describe('First sessions page', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
     expect(await screen.findByRole('link', { name: 'Alex Example' })).toBeInTheDocument();
     expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('combines status and date filters, shows matching status counts, and clears them together', async () => {
+    const fetchMock = respond({ count: 3, results: rows });
+    vi.stubGlobal('fetch', fetchMock);
+    renderPage('/users/first-sessions?state=sync-failed&programme=Project%20Management&keep=1');
+
+    await screen.findByRole('table');
+    const statuses = screen.getByRole('group', { name: 'Filter by session status' });
+    expect(within(statuses).getByRole('button', { name: 'Teams sync failed 1' })).toHaveAttribute('aria-pressed', 'true');
+    expect(within(statuses).getByRole('button', { name: 'Scheduled 0' })).toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: 'Alex Example' })).not.toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Sam Sample' })).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText('Booked from'), { target: { value: '2026-09-01' } });
+    expect(screen.getByText('No first-session bookings match these filters.')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Clear filters' }));
+    expect(within(statuses).getByRole('button', { name: 'All 3' })).toHaveAttribute('aria-pressed', 'true');
+    expect(within(screen.getByRole('table')).getAllByRole('row')).toHaveLength(4);
+    expect(screen.getByRole('button', { name: 'Clear filters' })).toBeDisabled();
+
+    fireEvent.click(within(statuses).getByRole('button', { name: 'Scheduled 1' }));
+    expect(within(screen.getByRole('table')).getAllByRole('row')).toHaveLength(2);
+    expect(screen.getByRole('link', { name: 'Alex Example' })).toBeInTheDocument();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps unrecognised server states visible and filterable without relabelling them', async () => {
+    vi.stubGlobal('fetch', respond({ count: 1, results: [booking({ state: 'manual-check' })] }));
+    renderPage('/users/first-sessions?state=manual-check');
+    await screen.findByRole('table');
+    expect(screen.getByRole('button', { name: 'manual check 1' })).toHaveAttribute('aria-pressed', 'true');
+    expect(within(screen.getByRole('table')).getByText('manual check')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Schedule first session/ })).not.toBeInTheDocument();
   });
 });
 

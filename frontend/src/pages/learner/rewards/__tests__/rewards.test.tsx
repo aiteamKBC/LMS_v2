@@ -11,6 +11,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { MemoryRouter } from 'react-router-dom';
 import { AppIcon } from '@/components/feature/AppIcon';
 
 // unplugin-auto-import injects `AppIcon` as a bare global at Vite build time;
@@ -69,7 +70,7 @@ beforeEach(() => {
 });
 
 function renderPage() {
-  return render(<LearnerRewardsPage />);
+  return render(<MemoryRouter initialEntries={['/workspace/learner/commercial/19']}><LearnerRewardsPage /></MemoryRouter>);
 }
 
 describe('learner rewards page', () => {

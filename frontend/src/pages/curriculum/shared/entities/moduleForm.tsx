@@ -270,7 +270,7 @@ export function ModuleFormDrawer({
   // module really can share a tutor (a co-taught slot), and the backend
   // already accepts `allowTutorConflict` for exactly that -- this is just the
   // first screen that surfaces it instead of stopping at the 409.
-  const [tutorConflictGroup, setTutorConflictGroup] = useState<{ groupId: string; groupName: string } | null>(null);
+  const [tutorConflictGroup, setTutorConflictGroup] = useState<{ groupId: string; groupName: string; message: string } | null>(null);
   // Groups already attached (or explicitly overridden) in this submit session,
   // so retrying after "Book anyway" does not re-create the ones that already
   // succeeded before the refusal.
@@ -778,6 +778,12 @@ export function ModuleFormDrawer({
   );
   const tutorVerdict = verdictFor(tutor);
   const tutorClash = tutorVerdict && !tutorVerdict.available ? tutorVerdict : null;
+  const tutorOverrideScope = JSON.stringify([tutor, conflictSlot, groupIds, endDate]);
+  useEffect(() => {
+    // A choice to keep a busy tutor only applies to that tutor and timetable.
+    overrideGroupIds.current.clear();
+    setTutorConflictGroup(null);
+  }, [tutorOverrideScope]);
   const tutorVerdicts = useMemo(
     () => tutorNames.map(tutorName => ({ tutorName, verdict: verdictFor(tutorName) })),
     // `verdictFor` closes over the roster, so it changes exactly when the answers
@@ -1085,16 +1091,8 @@ export function ModuleFormDrawer({
       // already carries one is not frozen out of being renamed or re-dated,
       // which is the line the save draws too.
       if (groupDeliveryDayMissing && assigningTutor) { setError(groupDeliveryDayMessage); return; }
-      // Pre-empted rather than sent: the save enforces this and would refuse, so
-      // firing it only trades an instant answer for a round-trip and the same
-      // refusal. The clash itself is spelled out under the Tutor field, so this is
-      // the pointer to it rather than a second copy of it.
-      if (tutorClash) {
-        setError(
-          `${tutorClash.tutor} is already teaching in this slot. Change the tutor, the delivery day or the time - the clashing sessions are listed under Tutor.`,
-        );
-        return;
-      }
+      // A known clash is shown under Tutor. Saving keeps that selection;
+      // unknown or newly created clashes still come back from the server.
     }
     const weeks = Math.max(1, Math.round(Number(sessionsNumber) || 1));
     const primaryWeekDays = canonicalDeliveryDays(selectedGroup?.weekDays || '');
@@ -1206,7 +1204,9 @@ export function ModuleFormDrawer({
          endDate: endDate || undefined,
         sessionsNumber: Math.round(weeks * Math.max(1, groupDeliveryDays)),
         weeks,
-        allowTutorConflict: overrideGroupIds.current.has(group.id) || undefined,
+        allowTutorConflict: overrideGroupIds.current.has(group.id)
+          || (sameIdentifier(group.id, primaryGroupId) && Boolean(tutorClash) && !checkingTutors)
+          || undefined,
         tutor: tutor || undefined,
         weeklySchedule: groupSchedule,
         weekDays: groupWeekDays || undefined,
@@ -1226,6 +1226,7 @@ export function ModuleFormDrawer({
     let savingHoursAfterDetails = false;
     try {
       if (module) {
+        failingGroup = selectedGroup || null;
         // Only sent when this drawer actually changed it. The Weeks box is
         // seeded from the module's stored week count and falls back to 1 when
         // the module carries none -- an imported module, most often -- and
@@ -1257,6 +1258,8 @@ export function ModuleFormDrawer({
           startDate: startDate || undefined,
           endDate: endDate || undefined,
           tutor,
+          allowTutorConflict: overrideGroupIds.current.has(primaryGroupId || module.id)
+            || (Boolean(tutorClash) && !checkingTutors) || undefined,
           programmeId: programme ? programmeIdentity(programme) : programmeId || undefined,
           programmeName: programme?.name || undefined,
           cohortId: cohortId || undefined,
@@ -1439,8 +1442,11 @@ export function ModuleFormDrawer({
         + (tutorConflictMessage(err)
         || curriculumErrorMessage(err, err instanceof Error ? err.message : 'The module could not be saved.')),
       );
-      if (isTutorConflictError(err) && failingGroup) {
-        setTutorConflictGroup({ groupId: failingGroup.id, groupName: failingGroup.name });
+      if (isTutorConflictError(err)) {
+        setError(null);
+        setTutorConflictGroup({ groupId: failingGroup?.id || module?.id || '',
+          groupName: failingGroup?.name || trimmed,
+          message: `${err.data.tutor || tutor} is already teaching another module at this time.` });
       }
     } finally {
       setSaving(false);
@@ -1690,7 +1696,7 @@ export function ModuleFormDrawer({
           <p className="text-[12px] text-foreground-500">Each day repeats at its own time every week. {weeksEntered} weeks × {sessionsPerWeek} sessions = {Math.round(weeksEntered * Number(sessionsPerWeek))} sessions. Different times use separate Teams series and links.</p>
         </div>
       )}
-      <div className="grid gap-4 sm:grid-cols-2">
+      {!isFreeCourse && <div className="grid gap-4 sm:grid-cols-2">
         <DatePickerField
           label="Start date"
           required={Boolean(selectedGroups.length)}
@@ -1723,7 +1729,7 @@ export function ModuleFormDrawer({
                 : `${weeksEntered} week${weeksEntered === 1 ? '' : 's'} from the start date, one session a week. Recalculated from the group's delivery days and holidays when you assign it.`
           }
         />
-      </div>
+      </div>}
       {showSchedule && (
         <>
           <FormField label="Tutor" required={Boolean(selectedGroups.length)} hint={tutorHint}>
@@ -1813,11 +1819,10 @@ export function ModuleFormDrawer({
             />
           )}
           {tutorConflictGroup && (
-            <div className="flex items-start justify-between gap-3 rounded-xl border border-red-200 bg-red-50 px-3.5 py-3">
-              <p className="text-[12px] leading-5 text-red-700">
-                The save was refused because of that clash. If this is a deliberate
-                co-taught slot for {tutorConflictGroup.groupName}, you can book the tutor
-                anyway and save regardless.
+            <div role="status" className="flex flex-wrap items-start justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50 px-3.5 py-3">
+              <p className="text-[12px] leading-5 text-amber-800">
+                {tutorConflictGroup.message} You can keep this tutor for {tutorConflictGroup.groupName}
+                {' '}and save anyway, or choose another tutor.
               </p>
               <button
                 type="button"

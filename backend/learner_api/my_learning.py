@@ -17,6 +17,7 @@ from django.views.decorators.http import require_GET
 from login.permissions import learner_self_or_staff
 from old_otjh.service import ServiceError
 from curriculum_api.week_visibility import visible_child_sql, visible_week_sql
+from curriculum_api.learning_storage import read_sql
 
 from .response_cache import cached_learner_read
 from . import canonical_learning as canonical
@@ -45,17 +46,17 @@ def catalogue_module_rows(cur, ids, *, identity_metadata):
     from .training_plan_dashboard import rows, plan_module, is_educational_live_session_week
     from .student_activity import _builder_cover_url
     from .subject_origins import imported_course_links
-    cur.execute('''SELECT m.module_catalogue_id AS id,m.title,m.cover_image_url,
+    cur.execute(read_sql('''SELECT m.module_catalogue_id AS id,m.title,m.cover_image_url,
         m.start_date,m.end_date,m.tutor_name,m.programme_id,m.programme_name,
         m.cohort_name,m.group_name,m.total_otjh,m.sessions_number,m.source_type,m.source_id,
         m.session_week_day,m.session_start_time,m.session_end_time,m.cohort_id,
         to_jsonb(m)->'session_overrides' AS session_overrides
         FROM curriculum.modules m WHERE m.module_catalogue_id=ANY(%s)
           AND (m.deleted_at IS NULL OR COALESCE(m.deleted_via_parent,'')<>'')
-        ORDER BY m.title''',[ids])
+        ORDER BY m.title''', cur.db),[ids])
     found = rows(cur)
     modules = {r['id']:plan_module({**r,'weeks_number':None}) for r in found}
-    cur.execute(f'''WITH live_counts AS (
+    cur.execute(read_sql(f'''WITH live_counts AS (
         SELECT c.module_catalogue_id,c.week_id,count(*) AS live_session_count
         FROM curriculum.components c WHERE c.module_catalogue_id=ANY(%s)
           AND lower(replace(coalesce(c.type,''),'-','_'))='live_session'
@@ -67,13 +68,14 @@ def catalogue_module_rows(cur, ids, *, identity_metadata):
           ON live_counts.module_catalogue_id=w.module_catalogue_id AND live_counts.week_id=w.id
         WHERE w.module_catalogue_id=ANY(%s)
           AND {visible_week_sql('w')}
-        ORDER BY w.display_order,w.week_number,w.id''',[ids,ids])
+        ORDER BY w.display_order,w.week_number,w.id''', cur.db),[ids,ids])
     weeks = rows(cur)
     for week in weeks:
         module = modules.get(week['module_catalogue_id'])
         if module and is_educational_live_session_week(week['title']):
             module['educational_session_count'] += max(0,int(week['live_session_count'] or 0))
     identity_metadata.update(module_titles={r['id']:r['title'] for r in found},
+        free_course_module_ids=[r['id'] for r in found if r.get('source_type') == 'free_course'],
         weeks=[(r['id'],r['module_catalogue_id'],r['title'],r['week_number'],r['display_order']) for r in weeks],
         covers={f"current:{r['id']}":_builder_cover_url(r.get('cover_image_url')) for r in found},
         quiz_modules={r['id']:{'module':r['title'],'programmeId':r.get('programme_id') or '',
@@ -94,6 +96,28 @@ def session_instant(value):
     except (ValueError, TypeError):
         return None
     return (at.replace(tzinfo=timezone.utc) if at.tzinfo is None else at).astimezone(timezone.utc)
+
+
+def last_activity_at(record):
+    """Saved learner work only; authored/upload dates never anchor a resume."""
+    if not record.get('startedAt') and record.get('timeTrackingSource') in {'verified_teams_attendance', 'manual_attendance'}:
+        return None
+    instants = [at for key in ('startedAt', 'submittedAt', 'started_at', 'submitted_at',
+                              'reporting_started_at', 'reporting_ended_at')
+                if (at := session_instant(record.get(key))) is not None]
+    return max(instants).isoformat() if instants else None
+
+
+def native_activity_times(native):
+    times = {}
+    for bucket in ('quizAttempts', 'videoProgress', 'componentProgress'):
+        for record in native.get(bucket, []):
+            key = ('component', str(record['componentId'])) if record.get('componentId') else (
+                ('quiz', str(record['quizId'])) if record.get('quizId') is not None else None)
+            at = last_activity_at(record)
+            if key and at:
+                times[key] = max(times.get(key, ''), at)
+    return times
 
 
 def course_facts(owner, records, courses):
@@ -133,6 +157,9 @@ def course_facts(owner, records, courses):
             course = str(definition['source_course_ref'])
             key = (course, definition['source_activity_id'])
             retain_learner_schedule(definition, record, completed=is_done)
+            at = last_activity_at(record) if is_started or is_done else None
+            if at:
+                definition['_last_activity_at'] = max(definition.get('_last_activity_at', ''), at)
             if is_started:
                 started.add(key)
             record_ids[key].add(record_id)
@@ -198,7 +225,7 @@ def next_title(items, today):
     return next((i['title'] for i in entries if not i['completed']), None)
 
 
-def assemble_cards(native, current, courses, definitions, done, started, hours, metadata, records, modules, credits, *, search=None, include_activity_items=False):
+def assemble_cards(native, current, courses, definitions, done, started, hours, metadata, records, modules, credits, *, search=None, include_activity_items=False, show_current_replacements=False):
     """Programme-wide counts with the same explicit import/replacement identities as My Learning."""
     from .progress_transfer_policy import merged_percent
     from .progress_demo import credit as demo_credit
@@ -218,8 +245,10 @@ def assemble_cards(native, current, courses, definitions, done, started, hours, 
             'source_activity_id': int(ident) if ident.isdigit() else 0, 'catalogue_kind': kind,
             'completed': (course, ref) in done, 'started': (course, ref) in started,
             '_course_ref': course, 'title': d['source_activity_title'], 'section_title': d.get('source_section_title'),
-            'schedule': display_schedule(d) or {}, 'position': d.get('position') or 0})
+            'schedule': display_schedule(d) or {}, 'position': d.get('position') or 0,
+            'lastActivityAt': d.get('_last_activity_at')})
     native_component_count = len(native.get('components', []))
+    activity_times = native_activity_times(native) if search is None else {}
     components = [*native.get('components', []), *native.get('retiredQuizComponents', [])]
     from .replacement_learning import project_approved_learning, approved_retained_components
     components = project_approved_learning(components, metadata['replacement_settings'], metadata.get('progress_transfers', []))
@@ -240,7 +269,13 @@ def assemble_cards(native, current, courses, definitions, done, started, hours, 
     approved = {f"current:{item['moduleId']}": item for item in transfers if item['status'] == 'approved'}
     links = {**metadata['imported_courses'], **metadata['replacement_courses']}
     uses = Counter(links.values())
-    replaced = {ref for ref, old in links.items() if old in by_id and uses[old] == 1 and ref not in approved}
+    # My Learning exposes authored successors with their own native progress.
+    # Exact imports still use the original catalogue; transfer/directory callers
+    # retain their existing population unless they opt into this display choice.
+    replaced = {ref for ref, old in links.items() if old in by_id and uses[old] == 1 and ref not in approved
+                and (not show_current_replacements or ref in metadata['imported_courses'])}
+    replacement_groups = {old: ref for ref, old in metadata['replacement_courses'].items()
+                          if show_current_replacements and uses[old] == 1 and ref not in replaced}
     from .imported_course_continuation import continuation_components
     continuations = continuation_components(metadata,
         {ref: subject['_items'] for ref, subject in by_id.items()}, components, metadata['activity_dates'])
@@ -285,7 +320,10 @@ def assemble_cards(native, current, courses, definitions, done, started, hours, 
                     placement.update(month=raw[:7],week_start=monday.isoformat(),week_end=(monday+timedelta(days=6)).isoformat())
             if delivery:
                 placement['delivery_week'] = delivery
+        saved_at = max(activity_times.get(('component', str(c.get('componentId'))), ''),
+                       activity_times.get(('quiz', str((c.get('quizMeta') or {}).get('quizId'))), '')) or None
         subject['_items'].append(dict(id=ident, title=c.get('component') or '', completed=native_done(c, native) if search is None else False,
+            lastActivityAt=saved_at,
             position=index, week=c.get('week'), weekId=c.get('weekId'), schedule=placement, component=c,
             started=(c.get('componentId') in attempted_components or str((c.get('quizMeta') or {}).get('quizId')) in attempted_quizzes) if c.get('isQuiz') else False))
     titles = {s['title'].strip().casefold() for s in by_id.values()} | skipped_titles
@@ -322,7 +360,7 @@ def assemble_cards(native, current, courses, definitions, done, started, hours, 
         imported = subject['source'] == 'legacy' and subject['id'] in metadata['imported_courses'].values()
         if imported:
             module = None
-        group = metadata['previous_learning_groups'].get(subject['id'])
+        group = metadata['previous_learning_groups'].get(subject['id']) or replacement_groups.get(subject['id'])
         if subject['source'] == 'legacy' and group in by_id and by_id[group]['source'] == 'current':
             subject['previousLearningFor'] = group
         if metadata['imported_courses'].get(subject['id']):
@@ -338,6 +376,9 @@ def assemble_cards(native, current, courses, definitions, done, started, hours, 
             finalTestPassed=any(i.get('component', {}).get('isQuiz') and 'final' in i['title'].lower() and native_done({k:v for k,v in i['component'].items() if k not in ('previousLearning','attendanceCompleted')}, native) for i in items),
             planModule={k: module.get(k) for k in ('start_date','end_date','tutor_name','total_otjh','educational_session_count','programme_name','cohort_name','group_name')} if module else None,
             actualHours=subject.pop('_hours',None) if subject['source'] == 'legacy' or subject.get('replacementCourseRef') else progress.get(subject.get('moduleId'), {}).get('hours', {}).get('actual'))
+        saved_at = max((i.get('lastActivityAt') or '' for i in items), default='')
+        if saved_at:
+            subject['lastActivityAt'] = saved_at
         demo = demo_credit(next((course for course in courses if subject['id'] == f"legacy:{course['source_course_ref']}"), None))
         if demo:
             subject.update(demo, status='In progress' if demo['progress'] else 'Upcoming')
@@ -368,15 +409,17 @@ def assemble_cards(native, current, courses, definitions, done, started, hours, 
                 completed=bool(item['completed']), schedule=item.get('schedule') or {},
             ) for item in items]
         cards.append(subject)
+    return cards, {} if search is not None else card_totals(cards)
+
+
+def card_totals(cards):
     def totals(source):
         rows = [c for c in cards if c['source'] == source]
         total, complete = sum(c['activityCount'] for c in rows), sum(c['completedActivityCount'] for c in rows)
         weighted = sum(c['progress'] * c['activityCount'] for c in rows)
         return {'subjects': len(rows), 'total': total, 'completed': complete, 'percent': round(weighted/total, 2) if total else 0}
-    if search is not None:
-        return cards, {}
-    return cards, {'current': totals('current'), 'previous': totals('legacy'),
-                   'subjectCount': sum(not c.get('previousLearningFor') for c in cards)}
+    return {'current': totals('current'), 'previous': totals('legacy'),
+            'subjectCount': sum(not c.get('previousLearningFor') for c in cards)}
 
 
 def load_context(source, owner, subject_id=None, *, purpose='catalogue', records_override=None, include_personal_replacements=False):
@@ -460,9 +503,9 @@ def load_context(source, owner, subject_id=None, *, purpose='catalogue', records
             covers = resolved['covers']
             builder = {f'current:{mid}': {'id':mid, 'title':modules[mid]['title']} for mid in resolved['module_titles']}
         elif purpose == 'search':
-            cur.execute('''SELECT m.module_catalogue_id,m.title FROM curriculum.modules m
+            cur.execute(read_sql('''SELECT m.module_catalogue_id,m.title FROM curriculum.modules m
                 WHERE (m.deleted_at IS NULL OR COALESCE(m.deleted_via_parent,'')<>'')
-                  AND m.module_catalogue_id=ANY(%s)''',[ids])
+                  AND m.module_catalogue_id=ANY(%s)''', connections['enrolment']),[ids])
             from .subject_content import clean_text
             covers, builder = {}, {f'current:{mid}':{'id':mid,'title':clean_text(title)} for mid,title in cur.fetchall()}
         else:
@@ -489,12 +532,12 @@ def load_context(source, owner, subject_id=None, *, purpose='catalogue', records
             if c.get('componentId') and c.get('moduleId') in settings_modules))
         if settings_ids and purpose != 'search':
             with projection_stage('replacement_settings'):
-                cur.execute('''SELECT id,jsonb_build_object('legacySettings',
+                cur.execute(read_sql('''SELECT id,jsonb_build_object('legacySettings',
                     CASE WHEN jsonb_typeof(settings_json->'legacySettings')='object' THEN
                         jsonb_build_object('sourceLessonId',settings_json->'legacySettings'->'sourceLessonId',
                                            'sourceMaterialKey',settings_json->'legacySettings'->'sourceMaterialKey')
                     ELSE settings_json->'legacySettings' END)
-                    FROM curriculum.components WHERE module_catalogue_id=ANY(%s) AND id=ANY(%s)''',
+                    FROM curriculum.components WHERE module_catalogue_id=ANY(%s) AND id=ANY(%s)''', connections['enrolment']),
                     [settings_modules, settings_ids])
                 settings = dict(cur.fetchall())
         with projection_stage('activity_dates'):
@@ -504,7 +547,8 @@ def load_context(source, owner, subject_id=None, *, purpose='catalogue', records
         definitions, done, started, hours, record_ids = course_facts(owner, records, selected_courses)
     metadata = dict(covers=covers, builder_subjects=builder, current_subjects=current, activity_dates=dates,
         imported_courses=imports, replacement_courses=replacements, previous_learning_groups=groups,
-        replacement_settings=settings, record_ids=record_ids, modules=modules)
+        replacement_settings=settings, record_ids=record_ids, modules=modules,
+        free_course_module_ids=resolved.get('free_course_module_ids', []) if resolved is not None else [])
     metadata['progress_transfers'] = transfers
     return assigned, ids, records, native, courses, definitions, done, started, hours, metadata, credits
 
@@ -514,7 +558,15 @@ def read_catalogue(source, kind, owner, *, upcoming_only=False):
     assigned, ids, records, native, courses, definitions, done, started, hours, metadata, credits = load_context(source, owner)
     modules = metadata['modules']
     with projection_stage('card_aggregation'):
-        cards, summary = assemble_cards(native, metadata['current_subjects'], courses, definitions, done, started, hours, metadata, records, modules, credits)
+        cards, summary = assemble_cards(native, metadata['current_subjects'], courses, definitions, done, started, hours, metadata, records, modules, credits,
+                                       show_current_replacements=True)
+        # Standalone assignments open from Free courses. Keep their ownership,
+        # content and actual-hours records intact; this is only the My courses list.
+        free_ids = set(metadata.get('free_course_module_ids', []))
+        if free_ids:
+            cards = [card for card in cards if (card.get('moduleId') or (
+                card['id'][8:] if card['id'].startswith('current:') else None)) not in free_ids]
+            summary = card_totals(cards)
     if upcoming_only:
         # Reuse native completion before selecting deadlines, just as the
         # initial catalogue does. No cover or programme metric reads on expansion.
@@ -623,7 +675,7 @@ def read_search(source, owner, term, offset):
         ORDER BY c.source_course_ref''', [[c['id'] for c in courses],term,excluded]) if courses else []
     legacy_matches = {f"legacy:{int(row['source_course_ref'])}" for row in found}
     cards, _ = assemble_cards(native,metadata['current_subjects'],courses,definitions,done,started,hours,
-        metadata,records,metadata['modules'] or {},credits,search=term.lower())
+        metadata,records,metadata['modules'] or {},credits,search=term.lower(),show_current_replacements=True)
     matches = [dict(id=c['id']) for c in cards if c['_matches'] or c['id'] in legacy_matches]
     return dict(matches=matches[offset:offset+50], nextOffset=offset+50 if len(matches)>offset+50 else None)
 
@@ -668,13 +720,19 @@ def read_module(source, kind, owner, subject_id):
     transfers = metadata.get('progress_transfers', [])
     approved = {f"current:{item['moduleId']}": item for item in transfers if item['status'] == 'approved'}
     old = links.get(subject_id)
-    if old in owned and Counter(links.values())[old] == 1 and subject_id not in approved:
+    if subject_id in metadata['imported_courses'] and old in owned and Counter(links.values())[old] == 1 and subject_id not in approved:
         subject_id = old
     mid = subject_id[8:] if subject_id.startswith('current:') else owned.get(subject_id,{}).get('curriculum_module_ref')
     scope_ids = [mid] if mid in ids else []
     course_refs = [str(owned[subject_id]['source_course_ref'])] if subject_id.startswith('legacy:') else []
     activity = canonical.source_subjects(source.pk,summarize_activities,owner=owner,records=records,
         include_totals=False,course_ids=course_refs,module_ids=[]) if course_refs else None
+    if activity:
+        record_times = {str(record['id']): last_activity_at(record) for record in records}
+        for item in activity['activities']:
+            saved_at = max((record_times.get(str(ref)) or '' for ref in item.get('record_ids', [])), default='')
+            if saved_at:
+                item['last_activity_at'] = saved_at
     demo_course = owned.get(subject_id)
     if activity and (demo_course or {}).get('demo_progress'):
         excluded = set(demo_course['demo_progress']['excluded_activity_refs'])
@@ -691,10 +749,10 @@ def read_module(source, kind, owner, subject_id):
                 candidate_ids = [ident for ident, placement in continuation_dates.items()
                                  if teaching_date(placement) > cutoff['afterDate']]
                 if candidate_ids:
-                    cur.execute(f'''SELECT DISTINCT c.week_id FROM curriculum.components c
+                    cur.execute(read_sql(f'''SELECT DISTINCT c.week_id FROM curriculum.components c
                         JOIN curriculum.weeks w ON w.id=c.week_id AND w.module_catalogue_id=c.module_catalogue_id
                         WHERE c.module_catalogue_id=ANY(%s) AND c.id=ANY(%s)
-                          AND {visible_child_sql('c')} AND {visible_week_sql('w')}''', [scope_ids,candidate_ids])
+                          AND {visible_child_sql('c')} AND {visible_week_sql('w')}''', connections['enrolment']), [scope_ids,candidate_ids])
                     continuation_weeks = [row[0] for row in cur.fetchall()]
     selected = copy(source)
     native_scope_ids = scope_ids if subject_id.startswith('current:') or continuation_weeks else []

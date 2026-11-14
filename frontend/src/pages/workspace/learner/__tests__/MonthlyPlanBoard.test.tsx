@@ -5,6 +5,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { dashboardMonthlyFixture } from '@/test/dashboardMonthlyFixture';
 import { MonthlyPlanBoard } from '../MonthlyPlanBoard';
 import { coachFetch } from '@/lib/coachFetch';
+import { clearAllCachedResources } from '@/api/cachedRequest';
+import { useDashboardMonthly } from '@/hooks/useDashboardMonthly';
 
 const actions = vi.hoisted(() => ({ booking: vi.fn(), absence: vi.fn(), catchup: vi.fn() }));
 vi.mock('@/lib/coachFetch', () => ({ coachFetch: vi.fn() }));
@@ -18,7 +20,7 @@ vi.mock('@/pages/learner/attendance/components/AbsenceReportForm', () => ({ defa
 vi.mock('@/pages/learner/attendance/components/CatchupBooking', () => ({ default: (props: { onSelect: (event: { eventKey: string }) => void }) => {
   actions.catchup(props); return <><p>Catch-up options</p><button onClick={() => props.onSelect({ eventKey: 'catch-up:selected' })}>Select catch-up</button></>;
 } }));
-afterEach(() => { cleanup(); vi.clearAllMocks(); vi.useRealTimers(); });
+afterEach(() => { cleanup(); clearAllCachedResources(); vi.clearAllMocks(); vi.restoreAllMocks(); vi.unstubAllGlobals(); vi.useRealTimers(); });
 
 const review = { id: 'progress-review:r1', title: 'Progress review', date: '20 Oct', time: '60 min', status: 'Not booked',
   tooltip: 'Review coach', formHref: '/learner/progress-reviews/progress-review%3Ar1?kind=commercial&learner=265', attendHref: null,
@@ -34,6 +36,90 @@ function display(payload = dashboardMonthlyFixture()) {
 }
 
 describe('compact Monthly board keeps existing presentation and actions', () => {
+  it.each(['commercial', 'apprenticeship'] as const)('picks up background attendance hours for %s without submitting the activity', async kind => {
+    vi.useFakeTimers(); vi.setSystemTime(new Date('2026-10-20T09:00:00Z'));
+    let attendanceArrived = false;
+    const reads = vi.fn(async (input: RequestInfo | URL) => {
+      expect(String(input)).toBe(`/learner_api/dashboard/${kind}/265/monthly/plan/?month=2026-10`);
+      const payload = dashboardMonthlyFixture();
+      payload.refreshAt = new Date(Date.now() + 60_000).toISOString();
+      payload.summary.achievedHours = attendanceArrived ? '2 hrs' : '0 hrs';
+      payload.summary.difference = attendanceArrived ? '-48 hrs' : '-50 hrs';
+      return new Response(JSON.stringify(payload));
+    });
+    vi.stubGlobal('fetch', reads);
+    function SyncedBoard() {
+      const read = useDashboardMonthly(kind, '265', '2026-10');
+      return read.data ? <MonthlyPlanBoard payload={read.data} kind={kind} learnerId="265"
+        onRefresh={read.refresh} refreshing={read.refreshing} onMonthChange={vi.fn()} /> : null;
+    }
+    const view = render(<MemoryRouter><SyncedBoard /></MemoryRouter>);
+    await act(async () => {});
+    expect(screen.getByText('0 hrs')).toBeVisible();
+    attendanceArrived = true;
+    // The response cache expires before the server refresh deadline. An
+    // unrelated render must not pretend that an idle request is still loading.
+    await act(async () => { await vi.advanceTimersByTimeAsync(45_000); });
+    view.rerender(<MemoryRouter><SyncedBoard /></MemoryRouter>);
+    await act(async () => { await vi.advanceTimersByTimeAsync(15_000); });
+    expect(screen.getByText('2 hrs')).toBeVisible();
+    expect(screen.getByText('-48 hrs')).toBeVisible();
+    expect(reads).toHaveBeenCalledTimes(2);
+    expect(reads.mock.calls.every(call => String(call[0]).includes(`/monthly/plan/?month=2026-10`))).toBe(true);
+    expect(coachFetch).not.toHaveBeenCalled();
+  });
+
+  it('waits while the browser is hidden and refreshes an overdue report when visible', () => {
+    vi.useFakeTimers(); vi.setSystemTime(new Date('2026-10-20T09:00:00Z'));
+    const visibility = vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('hidden');
+    const payload = dashboardMonthlyFixture(); payload.refreshAt = '2026-10-20T09:00:10Z';
+    const { onRefresh } = display(payload);
+    act(() => vi.advanceTimersByTime(60_000));
+    expect(onRefresh).not.toHaveBeenCalled();
+    visibility.mockReturnValue('visible');
+    fireEvent(document, new Event('visibilitychange'));
+    act(() => vi.advanceTimersByTime(0));
+    expect(onRefresh).toHaveBeenCalledOnce();
+  });
+
+  it.each(['2026-10-20T09:00:10Z', '2026-10-20T09:00:15Z'])('bounds automatic retries with an expired response deadline of %s', refreshAt => {
+    vi.useFakeTimers(); vi.setSystemTime(new Date('2026-10-20T09:00:20Z'));
+    const payload = dashboardMonthlyFixture(); payload.refreshAt = '2026-10-20T09:00:10Z';
+    const onRefresh = vi.fn(), onMonthChange = vi.fn();
+    const board = (refreshing: boolean) => <MemoryRouter><MonthlyPlanBoard payload={payload} kind="commercial" learnerId="265"
+      onRefresh={onRefresh} refreshing={refreshing} onMonthChange={onMonthChange} /></MemoryRouter>;
+    const { rerender } = render(board(false));
+    act(() => vi.advanceTimersByTime(0));
+    expect(onRefresh).toHaveBeenCalledOnce();
+    rerender(board(true));
+    // A successful response can also be expired on arrival when the browser
+    // clock is ahead. A newer deadline must not restart an immediate loop.
+    payload.refreshAt = refreshAt;
+    rerender(board(false));
+    act(() => vi.advanceTimersByTime(59_999));
+    expect(onRefresh).toHaveBeenCalledOnce();
+    act(() => vi.advanceTimersByTime(1));
+    expect(onRefresh).toHaveBeenCalledTimes(2);
+  });
+
+  it('still respects an earlier future session boundary after a successful refresh', () => {
+    vi.useFakeTimers(); vi.setSystemTime(new Date('2026-10-20T09:00:00Z'));
+    const payload = dashboardMonthlyFixture(); payload.refreshAt = '2026-10-20T09:00:10Z';
+    const onRefresh = vi.fn(), onMonthChange = vi.fn();
+    const board = (refreshing: boolean) => <MemoryRouter><MonthlyPlanBoard payload={payload} kind="commercial" learnerId="265"
+      onRefresh={onRefresh} refreshing={refreshing} onMonthChange={onMonthChange} /></MemoryRouter>;
+    const { rerender } = render(board(false));
+    act(() => vi.advanceTimersByTime(10_000));
+    expect(onRefresh).toHaveBeenCalledOnce();
+    rerender(board(true));
+    payload.refreshAt = '2026-10-20T09:00:20Z';
+    rerender(board(false));
+    act(() => vi.advanceTimersByTime(9_999));
+    expect(onRefresh).toHaveBeenCalledOnce();
+    act(() => vi.advanceTimersByTime(1));
+    expect(onRefresh).toHaveBeenCalledTimes(2);
+  });
+
   it('does not launch another expired-deadline refresh during an ongoing read', () => {
     vi.useFakeTimers(); vi.setSystemTime(new Date('2026-10-20T09:00:20Z'));
     const payload = dashboardMonthlyFixture(); payload.refreshAt = '2026-10-20T09:00:10Z';
@@ -75,6 +161,14 @@ describe('compact Monthly board keeps existing presentation and actions', () => 
     expect(onMonthChange).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole('button', { name: 'Next month' }));
     expect(onMonthChange).toHaveBeenCalledWith('2026-11');
+  });
+
+  it('links achieved hours to the selected learner monthly log', () => {
+    display(dashboardMonthlyFixture('2026-11'));
+
+    expect(screen.getByRole('link', { name: 'View monthly log' })).toHaveAttribute(
+      'href', '/learner/monthly-logs/commercial/265/2026-11',
+    );
   });
 
   it('preserves form navigation, booking identity/learner and refresh after review booking', () => {

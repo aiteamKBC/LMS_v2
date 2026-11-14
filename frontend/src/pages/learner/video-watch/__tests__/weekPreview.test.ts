@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { placeActivity, toggleExpandedWeek, weekComponentRows, weekMonthHeadings, type SidebarWeek } from '../weekPreview';
+import { placeActivity, toggleExpandedWeek, weekComponentRows, weekDisplayLabel, weekMonthHeadings, type SidebarWeek } from '../weekPreview';
 import type { JourneyComponent } from '@/utils/learnerJourney';
 import type { LearnerDetail } from '@/api/learnerDetail';
 
@@ -86,6 +86,28 @@ describe('toggleExpandedWeek', () => {
 
   it('moves to another week directly, without a closed step in between', () => {
     expect(toggleExpandedWeek('Week 4', 'Week 6')).toBe('Week 6');
+  });
+});
+
+describe('week display labels', () => {
+  it('numbers named weeks in module order and leaves their source titles intact', () => {
+    const weeks = [{ week: 'London Master Class Event' }, { week: 'L1: Social media' }, { week: 'L2: Influencers' }];
+    expect(weeks.map((_, index) => weekDisplayLabel(weeks, index, true))).toEqual([
+      'Week 1 · London Master Class Event', 'Week 2 · L1: Social media', 'Week 3 · L2: Influencers',
+    ]);
+    expect(weeks[2].week).toBe('L2: Influencers');
+  });
+
+  it('keeps existing week numbers without adding a second prefix', () => {
+    const weeks = [{ week: 'Week 3' }, { week: 'Week 7 · Influencers' }];
+    expect(weeks.map((_, index) => weekDisplayLabel(weeks, index, true))).toEqual(['Week 3', 'Week 7 · Influencers']);
+  });
+
+  it('keeps introduction and additional sections separate from teaching-week numbering', () => {
+    const weeks = ['Introduction', 'Workshop', 'Extra activities', 'Workshop', 'Module assessments'].map(week => ({ week }));
+    expect(weeks.map((_, index) => weekDisplayLabel(weeks, index, true))).toEqual([
+      'Introduction', 'Week 1 · Workshop', 'Extra activities', 'Week 2 · Workshop', 'Module assessments',
+    ]);
   });
 });
 

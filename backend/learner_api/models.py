@@ -24,6 +24,7 @@ from functools import lru_cache
 from django.db import DatabaseError, connections, models
 from django.db.models.functions import Lower, Trim
 from system_audit.writes import AuditedQuerySet
+from config.cache_versions import VersionBumpQuerySetMixin
 
 
 class SafeJSONField(models.JSONField):
@@ -176,8 +177,12 @@ def _progress_entry_activity(entry):
     return item
 
 
-class LearnerTypeQuerySet(AuditedQuerySet):
-    """Queryset for the merged learner table, scoped by "Learner_type"."""
+class LearnerTypeQuerySet(VersionBumpQuerySetMixin, AuditedQuerySet):
+    """Queryset for the merged learner table, scoped by "Learner_type".
+
+    Bulk writes retire the learners' cached subject rows
+    (learner_api.subject_cache) as well as being audited.
+    """
 
     def apprenticeship(self):
         return self.filter(learner_type="apprenticeship")
@@ -216,7 +221,9 @@ class EnrolmentUser(models.Model):
     # `objects` is scoped to apprenticeship learners; `all_learners` spans both
     # kinds (used by lookups that resolve a learner by id regardless of type).
     objects = ApprenticeshipManager()
-    all_learners = models.Manager()
+    # Same queryset as the scoped managers (no filter): bulk writes are audited
+    # as before and also retire cached subject rows.
+    all_learners = models.Manager.from_queryset(LearnerTypeQuerySet)()
 
     id = models.AutoField(primary_key=True, db_column="id")
     # Aptem's learner identifier. It is the bridge to the read-only
@@ -389,6 +396,14 @@ class EnrolmentUser(models.Model):
     documents = models.JSONField(db_column="Documents", null=True, blank=True)
     subscription_details = models.JSONField(db_column="Subscription_details", null=True, blank=True)
 
+    @classmethod
+    def cache_version_fields(cls):
+        return ("id",)
+
+    @classmethod
+    def cache_version_targets(cls, rows, fields=None):
+        return {"lplan": [row["id"] if isinstance(row, dict) else row.pk for row in rows]}
+
     class Meta:
         managed = False
         # Emitted by Django as "enrolment"."Created_users".
@@ -524,6 +539,14 @@ class StaffUser(models.Model):
         return f"{self.username or 'Unnamed'} <{self.email or 'no-email'}> [{self.position or 'no position'}]"
 
 
+class LearnerProfileQuerySet(VersionBumpQuerySetMixin, AuditedQuerySet):
+    """Bulk writes retire the linked learners' cached subject rows."""
+
+
+class LearnerPlanModuleQuerySet(VersionBumpQuerySetMixin, AuditedQuerySet):
+    """Bulk writes (the mirror rebuild) retire the learner's cached subject rows."""
+
+
 class LearnerProfile(models.Model):
     """Permanent learner identity shared by active and inactive workflows."""
 
@@ -652,6 +675,19 @@ class LearnerProfile(models.Model):
     # Django supply the timestamps itself.
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
+
+    objects = models.Manager.from_queryset(LearnerProfileQuerySet)()
+
+    @classmethod
+    def cache_version_fields(cls):
+        return ("enrolment_id",)
+
+    @classmethod
+    def cache_version_targets(cls, rows, fields=None):
+        ids = [row["enrolment_id"] if isinstance(row, dict) else row.enrolment_id for row in rows]
+        if fields and fields.get("enrolment_id") is not None:
+            ids.append(fields["enrolment_id"])  # the learner it is being linked to
+        return {"lplan": ids}
 
     class Meta:
         managed = False
@@ -980,6 +1016,22 @@ class LearnerTrainingPlanModule(models.Model):
     module_ref = models.TextField(null=True, blank=True)
     module_title = models.TextField(blank=True)
 
+    objects = models.Manager.from_queryset(LearnerPlanModuleQuerySet)()
+
+    @classmethod
+    def cache_version_fields(cls):
+        return ("learner_id",)
+
+    @classmethod
+    def cache_version_targets(cls, rows, fields=None):
+        profile_ids = {row["learner_id"] if isinstance(row, dict) else row.learner_id for row in rows}
+        profile_ids.discard(None)
+        if not profile_ids:
+            return {}
+        # The subject read joins this mirror through learners.enrolment_id.
+        enrolment_ids = LearnerProfile.objects.filter(pk__in=profile_ids).values_list("enrolment_id", flat=True)
+        return {"lplan": list(enrolment_ids)}
+
     class Meta:
         managed = False
         db_table = 'Learner"."learner_training_plan_modules'
@@ -1019,17 +1071,11 @@ class LearnerTrainingPlanComponent(models.Model):
 
 
 class LearnerFreeCourse(models.Model):
-    """Free courses assigned to a learner — the Learner-schema read mirror.
+    """Assignments to native curriculum.free_courses, including Builder courses.
 
-    The enrolment-side source of truth is EnrolmentUser.free_courses
-    (Created_users."Free_courses" jsonb). This flat table mirrors it exactly the
-    way learner_training_plan_modules mirrors the module plan: FK to
-    LearnerProfile, kept in step by learning_plan.sync_learning_plan_mirror and
-    rebuilt at activation. Deliberately carries NO hours, KSBs or component tree
-    — a free course is a pure assignment. free_course_ref is the
-    curriculum.free_courses id (a plain reference, like module_ref), not a
-    cross-schema FK.
-    """
+    Synced from enrolment selections and the effective plan at activation/save.
+    Database migration 0026 enforces the cross-schema course relationship.
+    Assignment records do not themselves award hours."""
     learner = models.ForeignKey(LearnerProfile, on_delete=models.CASCADE, related_name="free_courses")
     position = models.PositiveIntegerField()
     free_course_ref = models.TextField(null=True, blank=True)
@@ -1042,25 +1088,26 @@ class LearnerFreeCourse(models.Model):
 
 
 class LearnerFreeCourseProgress(models.Model):
-    """A learner's completion of a single free-course activity.
+    """Native free-course progress, keyed by LearnerProfile.id.
 
-    Deliberately its OWN store, separate from Training_plan_progress and the KSB
-    snapshot: free-course completion is shown on the free-courses page and must
-    NEVER enter OTJH totals, the KSB snapshot or the programme's overall
-    progress. Keyed by the enrolment learner id (Created_users.id — the same id
-    the learner-facing endpoints resolve from the session for both learner
-    kinds) and the curriculum component id (FREECOMP-…), so it needs no
-    LearnerProfile row (commercial learners may not have one).
-    """
+    Migration 0026 translates legacy enrolment IDs before adding the learner,
+    course and component relationships. Attempts and actual hours remain in
+    learner_progress_entries; this index never awards hours independently.
+    Migration 0027 also retains incomplete and archived imported rows; use
+    free_course_progress helpers to read completions and preserve their state."""
     learner_id = models.BigIntegerField()
     component_ref = models.TextField()
     free_course_ref = models.TextField(null=True, blank=True)
-    completed_at = models.DateTimeField()
+    completed_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         managed = False
         db_table = 'Learner"."learner_free_course_progress'
         unique_together = (("learner_id", "component_ref"),)
+
+
+class LearnerProgressQuerySet(VersionBumpQuerySetMixin, AuditedQuerySet):
+    """Bulk writes retire the learner's cached progress rows (learner_api.progress_cache)."""
 
 
 class LearnerProgressEntry(models.Model):
@@ -1126,6 +1173,19 @@ class LearnerProgressEntry(models.Model):
     # active learner progress, hours and KSB projections.
     deleted_at = models.DateTimeField(null=True, blank=True)
 
+    objects = models.Manager.from_queryset(LearnerProgressQuerySet)()
+
+    @classmethod
+    def cache_version_fields(cls):
+        return ("learner_id",)
+
+    @classmethod
+    def cache_version_targets(cls, rows, fields=None):
+        ids = [row["learner_id"] if isinstance(row, dict) else row.learner_id for row in rows]
+        if fields and fields.get("learner_id") is not None:
+            ids.append(getattr(fields["learner_id"], "pk", fields["learner_id"]))
+        return {"lprog": ids}
+
     class Meta:
         managed = False
         db_table = 'Learner"."learner_progress_entries'
@@ -1143,6 +1203,21 @@ class LearnerProgressKsb(models.Model):
     classification = models.CharField(max_length=32, blank=True, default='')
     weight = models.DecimalField(max_digits=5, decimal_places=2, null=True, blank=True)
     weight_class = models.CharField(max_length=32, blank=True, default='')
+
+    objects = models.Manager.from_queryset(LearnerProgressQuerySet)()
+
+    @classmethod
+    def cache_version_fields(cls):
+        return ("progress_id",)
+
+    @classmethod
+    def cache_version_targets(cls, rows, fields=None):
+        progress_ids = {row["progress_id"] if isinstance(row, dict) else row.progress_id for row in rows}
+        progress_ids.discard(None)
+        if not progress_ids:
+            return {}
+        learners = LearnerProgressEntry.objects.filter(pk__in=progress_ids).values_list("learner_id", flat=True)
+        return {"lprog": list(learners)}
 
     class Meta:
         managed = False

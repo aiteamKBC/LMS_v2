@@ -1,4 +1,4 @@
-import { useEffect, useState, type CSSProperties } from 'react';
+import { useEffect, useRef, useState, type CSSProperties } from 'react';
 import { Link } from 'react-router-dom';
 import { ArrowRight, ChevronLeft, ChevronRight, Clock3, Equal, FileText, GraduationCap, Target, TrendingDown, TrendingUp } from 'lucide-react';
 import type { LearnerKind } from '@/api/learnerDetail';
@@ -22,16 +22,38 @@ export function MonthlyPlanBoard({ payload, kind, learnerId, onRefresh, onMonthC
   refreshing: boolean; onMonthChange: (month: string) => void;
   active?: boolean;
 }) {
+  const lastAutomaticRefresh = useRef<{ key: string; at: number } | null>(null);
+  const refreshKey = JSON.stringify([kind, learnerId, payload.month]);
   useEffect(() => {
     if (!active || refreshing) return;
     const deadline = Date.parse(payload.refreshAt);
-    const timer = window.setTimeout(onRefresh, Math.min(Math.max(0, deadline - Date.now()), 2_147_483_647));
-    return () => window.clearTimeout(timer);
-  }, [payload.refreshAt, onRefresh, active, refreshing]);
+    let timer: number | undefined;
+    const schedule = () => {
+      window.clearTimeout(timer);
+      if (document.visibilityState === 'hidden') return;
+      // A failed read or clock skew can leave a deadline already expired.
+      // Bound retries even when a successful read returns a newer stale date.
+      const previous = lastAutomaticRefresh.current;
+      const nextAttempt = previous?.key === refreshKey && deadline <= Date.now() ? previous.at + 60_000 : deadline;
+      timer = window.setTimeout(() => {
+        lastAutomaticRefresh.current = { key: refreshKey, at: Date.now() };
+        onRefresh();
+      }, Math.min(Math.max(0, Math.max(deadline, nextAttempt) - Date.now()), 2_147_483_647));
+    };
+    schedule();
+    document.addEventListener('visibilitychange', schedule);
+    window.addEventListener('focus', schedule);
+    return () => {
+      window.clearTimeout(timer);
+      document.removeEventListener('visibilitychange', schedule);
+      window.removeEventListener('focus', schedule);
+    };
+  }, [payload.refreshAt, refreshKey, onRefresh, active, refreshing]);
   const canGoPrevious = !!payload.navigation.previous;
   const canGoNext = !!payload.navigation.next;
   const shiftMonth = (step: number) => { const month = step < 0 ? payload.navigation.previous : payload.navigation.next; if (month) onMonthChange(month); };
   const summary = payload.summary;
+  const monthlyLogHref = `/learner/monthly-logs/${kind}/${learnerId}/${payload.month}`;
   const differenceIcons = { down: <TrendingDown size={20} />, up: <TrendingUp size={20} />, equal: <Equal size={20} /> };
   const monthMetricCells = [
     { label: 'Required hours', value: summary.requiredHours, icon: <Target size={20} />, tone: undefined },
@@ -71,7 +93,9 @@ export function MonthlyPlanBoard({ payload, kind, learnerId, onRefresh, onMonthC
     <section className={`${board.card} ${board.metrics}`} aria-label="Progress this month">
       {monthMetricCells.map(cell => <div key={cell.label} className={board.metric}>
         <span className={board.metricRing} data-empty={cell.value === 'Not available' || undefined} aria-hidden="true">{cell.value === 'Not available' ? '--' : cell.icon}</span>
-        <div><span>{cell.label}</span><strong data-tone={cell.value === 'Not available' ? undefined : cell.tone}>{cell.value}</strong></div>
+        <div><span>{cell.label}</span><strong data-tone={cell.value === 'Not available' ? undefined : cell.tone}>{cell.value}</strong>
+          {cell.label === 'Achieved hours' && <Link className={board.outlineAction} to={monthlyLogHref}>View monthly log</Link>}
+        </div>
       </div>)}
       <div className={board.metric}>
         <span className={`${board.metricRing} ${board.metricIcon}`} aria-hidden="true"><GraduationCap size={20} /></span>

@@ -214,6 +214,38 @@ class ReviewSourceSeparationTests(SimpleTestCase):
         parallel = booking('parallel-native', idempotency_key='')
         self.assertEqual(standalone_review_records([imported, native, support, parallel], [profile()], {21}), [native, support])
 
+    def test_generated_slot_for_a_deleted_profile_is_hidden_from_the_coach(self):
+        """A cycle slot left behind by a rebuilt profile is unreachable for its
+        learner, so the coach must not be offered it either."""
+        from coach_api.review_sources import standalone_review_records
+        from learner_api.models import LearnerProfile
+
+        orphan = booking('review:664:REV-1:1', learner_id=664, idempotency_key='')
+        live_native = booking('review:22:REV-1:1', learner_id=22, idempotency_key='')
+        learner_booked = booking('review:665:REV-1:1', learner_id=665,
+            idempotency_key='learner-book:mcm:commercial:665:2026-11:901')
+        manager = MagicMock()
+        manager.filter.return_value.values_list.return_value = [22]
+        with patch.object(LearnerProfile, 'objects', manager):
+            kept = standalone_review_records(
+                [orphan, live_native, learner_booked], [profile()], {21})
+        # Only the two learner IDs the caller could not already account for are
+        # looked up, and only the one with no profile row is dropped.
+        manager.filter.assert_called_once_with(pk__in=[22, 664])
+        self.assertEqual(kept, [live_native, learner_booked])
+
+    def test_resolvable_review_rows_never_query_for_deleted_profiles(self):
+        from coach_api.review_sources import standalone_review_records
+        from learner_api.models import LearnerProfile
+
+        manager = MagicMock()
+        with patch.object(LearnerProfile, 'objects', manager):
+            kept = standalone_review_records(
+                [booking('review:21:REV-1:1', learner_id=21, idempotency_key=''),
+                 booking('support', event_type='student-support')], [profile()], {21})
+        manager.filter.assert_not_called()
+        self.assertEqual([record.event_key for record in kept], ['support'])
+
     def test_local_completion_enriches_without_mutating_source_or_meeting(self):
         event, record, local = base_event(), booking(status="completed"), overlay()
         snapshot = lambda obj: {key: value for key, value in obj.__dict__.items() if key != "_state"}

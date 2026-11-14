@@ -215,6 +215,12 @@ def rule_for(path):
     # retain their session/role gates. The view owns CSRF and programme checks.
     if path == '/curriculum_api/qr-attendance/':
         return None
+    # Breathe sync triggers may be called by a scheduler without a browser
+    # session. The integration view performs its own session-or-HMAC check and
+    # then applies tenant connection scope, so the prefix gate must leave the
+    # request available to that view.
+    if path.startswith(('/integrations_api/', '/login_api/hr-integrations/')):
+        return None
     # Email approval authenticates with an expiring, single-use signed request.
     # Exact path only: the learner's attendance APIs still require a session.
     if path == '/learner_api/attendance-mode/review/':

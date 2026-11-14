@@ -17,18 +17,20 @@ adapted to plain CSRF-exempt JSON views keyed on kind+id.
     GET  /learner_api/evidence/<kind>/<pk>/<file_id>/download/
     DELETE /learner_api/evidence/<kind>/<pk>/<file_id>/   (own file, pre-submission)
 """
+from curriculum_api.learning_storage import read_sql
 import json
 import logging
 from pathlib import Path
 import uuid
 
 from django.conf import settings
-from django.db import DatabaseError, connections
+from django.db import DatabaseError, connections, transaction
 from django.http import JsonResponse
 from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
 
 from .evidence_tables import ensure_evidence_tables
+from .evidence_retention import retained_by_submission
 from .evidence_storage import (
     azure_configured, upload_to_quarantine, move_blob, blob_url, get_download_sas,
     delete_blob,
@@ -42,6 +44,7 @@ VALID_KINDS = {"commercial", "apprenticeship"}
 #: Returned when the marking lookup itself fails. Distinct from "" (never
 #: submitted) so a database problem locks the file rather than unlocking it.
 MARKING_STATUS_UNKNOWN = "unknown"
+EDITABLE_EVIDENCE_STATUSES = {"", "draft", "rejected", "referred"}
 #: What a learner may upload as evidence. Browsers send the type, so this is
 #: keyed on it — but a browser with no mapping for .docx sends
 #: application/octet-stream, and Windows sometimes sends the legacy
@@ -182,7 +185,7 @@ def _evidence_lineage(kind, learner_id, section_ref):
         return lineage
     try:
         with _conn().cursor() as cur:
-            cur.execute("select id from curriculum.components where id = %s limit 1", [section_ref])
+            cur.execute(read_sql("select id from curriculum.components where id = %s limit 1", cur.db), [section_ref])
             if cur.fetchone():
                 lineage["component_ref"] = section_ref
             learner_ids = _learner_profile_ids_for_source(cur, learner_id)
@@ -360,9 +363,10 @@ def list_evidence(request, kind, pk):
     # Whether each file may still be removed, answered the same way delete_evidence
     # answers it, so the page never offers a Remove the server will refuse.
     #
-    # Cached per section: every file under one activity shares its answer, and
-    # an assignment can carry several.
+    # Cache the activity status; retained attempts can still protect individual
+    # files while the next draft remains editable.
     marking_by_section = {}
+    retained_submissions = _evidence_submissions(kind, pk) if rows else []
 
     def _marking(section_ref):
         if section_ref not in marking_by_section:
@@ -381,7 +385,7 @@ def list_evidence(request, kind, pk):
             # what was submitted for marking and is no longer the learner's to
             # withdraw. The UI hides Remove on this rather than offering an
             # action the server will refuse.
-            "canDelete": _marking(r[6]) == "",
+            "canDelete": _can_delete_evidence(_marking(r[6]), retained_submissions, str(r[0]), r[1], r[6]),
             # The coach's decision on the activity this file belongs to, or ""
             # when it has not been handed in. Distinct from `status` above,
             # which is the malware-scan verdict: a file can be stored and clean
@@ -474,31 +478,56 @@ def _marking_status(kind, learner_id, section_ref):
 
 
 def _is_submitted_for_marking(kind, learner_id, section_ref):
-    """Whether this activity has been handed to a coach, so its evidence is
-    no longer the learner's to withdraw.
+    """Whether the current activity is locked for review.
 
     Expressed in terms of _marking_status so the list endpoint and the delete
     gate cannot drift apart: both ask one function the same question, and a
     change to the rule lands in one place.
     """
-    return _marking_status(kind, learner_id, section_ref) != ""
+    return _marking_status(kind, learner_id, section_ref) not in EDITABLE_EVIDENCE_STATUSES
+
+
+def _evidence_submissions(kind, learner_id):
+    """Read only this owner's submissions; library files can be reused elsewhere."""
+    try:
+        with _conn().cursor() as cur:
+            profile_ids = _learner_profile_ids_for_source(cur, learner_id)
+            candidates = sorted({str(learner_id), *(profile_ids or [])})
+            cur.execute(
+                '''select activity_id, status, full_submission, evidence_files
+                     from "Learner"."learning_reflection_submissions"
+                    where learner_kind = %s and learner_id::text = any(%s)''',
+                [kind, candidates],
+            )
+            return cur.fetchall()
+    except DatabaseError:
+        logger.warning("Could not verify evidence submission history.")
+        return None
+
+
+def _can_delete_evidence(marking_status, submissions, file_id, filename, section_ref):
+    if marking_status not in EDITABLE_EVIDENCE_STATUSES or submissions is None:
+        return False
+    try:
+        return not retained_by_submission(submissions, file_id, filename, section_ref)
+    except (ValueError, TypeError):
+        logger.warning("Could not verify saved evidence references.")
+        return False
 
 
 @csrf_exempt
 # Portfolio removal uses the same owner/admin permission as uploads.
 @learner_self_or_admin(kwarg="pk")
+@transaction.atomic(using="enrolment")
 def delete_evidence(request, kind, pk, file_id):
     """Remove one of the learner's own evidence files.
 
     Lets a learner correct a mistaken upload — the frontend's "reupload" is this
     delete followed by an ordinary upload, so there is no separate replace path.
 
-    Refused once the file is attached to a submitted progress entry: from that
-    point an assessor may be marking against it, and deleting it would pull the
-    evidence out from under the marking queue. That link is re-derived here as
-    well as read off the row, because the row's `progress_entry_id` is captured
-    at upload time — null for the normal case of uploading *before* finishing
-    the component, which is exactly the case that must stay deletable.
+    Refused during review or acceptance, and when a saved attempt references
+    this file. Draft saves alone do not lock uploads. Returning a submission
+    allows a new draft, while the evidence in its earlier attempt stays intact.
     """
     if request.method != "DELETE":
         return _error("Method not allowed.", 405)
@@ -506,12 +535,18 @@ def delete_evidence(request, kind, pk, file_id):
         return _error("Unknown learner kind.", 400)
     ensure_evidence_tables()
 
+    # Assignment saves take the same lock before recording a submitted attempt.
+    # Serialize the retention check with those saves, including the first one.
+    from .assignment_hours import lock_assignment_hours
+    with _conn().cursor() as cur:
+        lock_assignment_hours(cur, kind, str(pk))
+
     # Scoping the lookup by learner is the ownership check: another learner's
     # file id simply does not resolve here.
     try:
         with _conn().cursor() as cur:
             cur.execute(
-                'select blob_name, container, section_ref, progress_entry_id '
+                'select blob_name, container, section_ref, progress_entry_id, original_filename '
                 'from "Learner"."evidence_files" '
                 "where id = %s and learner_kind = %s and learner_id = %s",
                 [str(file_id), kind, str(pk)],
@@ -523,9 +558,11 @@ def delete_evidence(request, kind, pk, file_id):
 
     if not row:
         return _error("Evidence not found.", 404)
-    blob_name, container, section_ref, progress_entry_id = row
+    blob_name, container, section_ref, progress_entry_id, filename = row
 
-    if _is_submitted_for_marking(kind, pk, section_ref):
+    if _is_submitted_for_marking(kind, pk, section_ref) or not _can_delete_evidence(
+        "", _evidence_submissions(kind, pk), str(file_id), filename, section_ref,
+    ):
         return _error(
             "This file has been submitted for marking and can no longer be removed. "
             "Ask your tutor if it needs to be replaced.",

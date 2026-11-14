@@ -7,9 +7,17 @@ import {
   loadLearningReflectionSubmission,
   type LearningReflectionSubmissionInput,
   type StoredLearningReflectionSubmission,
+  type LectureReflectionTime,
+  type ReflectionTimeOperation,
 } from '@/api/reflectionSubmission';
 import { useReflectionAutosave } from './useReflectionAutosave';
 import { useManualTimeConfirmation } from '@/hooks/useManualTimeConfirmation';
+import { CompletionTimeDialog } from './CompletionTimeDialog';
+import { CompletionValidationError } from '@/lib/completionValidation';
+import type { WorkingHoursHoliday } from '@/lib/componentAccessWindow';
+import { ActivityRetakeTimeDialog } from './ActivityRetakeTimeDialog';
+import { applyActivityTime, type ActivityTimeChoice } from '@/lib/activityTimeDecision';
+import { reflectionKsbOptions } from './ReflectionWindow.ksbs';
 
 
 /** Normalise stored completion clocks. Older records use MM:SS (and may have
@@ -46,7 +54,8 @@ const KSB_GROUPS = [
   { key: 'B', label: 'Behaviours' },
 ] as const;
 
-type KsbGroupKey = (typeof KSB_GROUPS)[number]['key'];
+const KSB_FILTERS = [{ key: 'all', label: 'All KSBs' }, ...KSB_GROUPS] as const;
+type KsbFilterKey = (typeof KSB_FILTERS)[number]['key'];
 
 const BENEFITS = [
   'Improved productivity',
@@ -81,6 +90,8 @@ interface ReflectionSubmission {
   signedDeclaration?: boolean;
   timeTakenSeconds?: number;
   timeEntrySource?: 'input';
+  additionalReflectionSeconds?: number;
+  reflectionTimeChoice?: ActivityTimeChoice;
 }
 
 export function ReflectionWindow(props: Parameters<typeof ReflectionWindowForm>[0]) {
@@ -94,6 +105,11 @@ function ReflectionWindowForm({
   actualTimeUnit = 'hours',
   selectedTimeSeconds,
   selectedTimeSource,
+  readOnlyTime = false,
+  allowAdditionalTime = false,
+  additionalTimeAvailable = true,
+  initialTab = 'learning',
+  workingHoursHolidays = [],
   noun = 'quiz',
   submitting,
   submitError,
@@ -136,6 +152,13 @@ function ReflectionWindowForm({
   /** Timer/Input duration already selected on the activity completion screen. */
   selectedTimeSeconds?: number;
   selectedTimeSource?: 'timer' | 'input';
+  /** A reflection added separately must not edit or re-submit session time. */
+  readOnlyTime?: boolean;
+  allowAdditionalTime?: boolean;
+  /** Additional time follows an existing completion or attendance credit. */
+  additionalTimeAvailable?: boolean;
+  initialTab?: TabId;
+  workingHoursHolidays?: WorkingHoursHoliday[];
   noun?: string;
   submitting: boolean;
   submitError: string | null;
@@ -163,9 +186,16 @@ function ReflectionWindowForm({
     plannedHoursProp != null && Number.isFinite(plannedHoursProp) && plannedHoursProp > 0
       ? String(Number((inMinutes ? plannedHoursProp * 60 : plannedHoursProp).toFixed(2)))
       : '';
-  const [tab, setTab] = useState<TabId>('learning');
+  const [tab, setTab] = useState<TabId>(initialTab);
   const [reflection, setReflection] = useState('');
-  const [selectedKsbs, setSelectedKsbs] = useState<string[]>([]);
+  // Start new reflections with the curriculum mapping selected. Restoring a
+  // saved draft below remains authoritative, including an empty selection.
+  const [selectedKsbs, setSelectedKsbs] = useState<string[]>(() => {
+    const programmeCodes = new Set(learnerKsbs.map(item => item.code));
+    return autoKsbs?.filter(item => !programmeCodes.size || programmeCodes.has(item.code))
+      .map(item => item.code) ?? [];
+  });
+  const [savedKsbWeights, setSavedKsbWeights] = useState<Record<string, number>>({});
   const [ksbExplanations, setKsbExplanations] = useState<Record<string, string>>({});
   const [confidenceBefore, setConfidenceBefore] = useState<Record<string, number>>({});
   const [confidenceAfter, setConfidenceAfter] = useState<Record<string, number>>({});
@@ -176,7 +206,7 @@ function ReflectionWindowForm({
   const [coachVisibilityConfirmed, setCoachVisibilityConfirmed] = useState(false);
   const [selectedBenefits, setSelectedBenefits] = useState<string[]>([]);
   const [benefitExplanation, setBenefitExplanation] = useState('');
-  const [actualTime, setActualTime] = useState(plannedHours);
+  const [actualTime, setActualTime] = useState(readOnlyTime && allowAdditionalTime ? '' : plannedHours);
   const [dateCompleted, setDateCompleted] = useState(new Date().toISOString().split('T')[0]);
   const [paidHours, setPaidHours] = useState('yes');
   const [otjhConfirmed, setOtjhConfirmed] = useState(false);
@@ -184,6 +214,12 @@ function ReflectionWindowForm({
   const [aiChecked, setAiChecked] = useState(false);
   const [editedClock, setEditedClock] = useState<string | null>(null);
   const [timeEdited, setTimeEdited] = useState(false);
+  const [addTime, setAddTime] = useState(false);
+  const [additionalMinutes, setAdditionalMinutes] = useState('');
+  const [timeReceipt, setTimeReceipt] = useState<LectureReflectionTime | null>(null);
+  const [timeOperation, setTimeOperation] = useState<ReflectionTimeOperation | null>(null);
+  const [timeChoicesOpen, setTimeChoicesOpen] = useState(false);
+  const [timeCorrection, setTimeCorrection] = useState<CompletionValidationError | null>(null);
   const [recording, setRecording] = useState(false);
   const [voiceProcessing, setVoiceProcessing] = useState(false);
   const [voiceError, setVoiceError] = useState('');
@@ -193,13 +229,15 @@ function ReflectionWindowForm({
   const [reflectionSaving, setReflectionSaving] = useState(false);
   const [reflectionSaveError, setReflectionSaveError] = useState('');
   const [submissionStatus, setSubmissionStatus] = useState('');
+  const [submittedSnapshot, setSubmittedSnapshot] = useState<string | null>(null);
   // Accepted reflections are historical, read-only records. A new activity
   // selection must not replace their saved duration when they are reopened.
   const initialSelectedSeconds = submissionStatus !== 'accepted'
     && selectedTimeSeconds != null && Number.isFinite(selectedTimeSeconds)
     ? Math.max(0, Math.floor(selectedTimeSeconds)) : null;
   const usesClock = initialSelectedSeconds != null;
-  const clockValue = editedClock ?? (usesClock ? formatClock(initialSelectedSeconds) : '');
+  const clockValue = readOnlyTime && allowAdditionalTime && usesClock ? formatClock(initialSelectedSeconds)
+    : editedClock ?? (usesClock ? formatClock(initialSelectedSeconds) : '');
   const selectedSeconds = usesClock && /^\d+:[0-5]\d:[0-5]\d$/.test(clockValue)
     ? parseClockSeconds(clockValue) : null;
   const actualTimeHours = () => {
@@ -227,35 +265,43 @@ function ReflectionWindowForm({
   const [localRecoveryAvailable, setLocalRecoveryAvailable] = useState(true);
 
   const hasAuthoredKsbs = Array.isArray(autoKsbs) && autoKsbs.length > 0;
-  // Pick relevant codes, not one from every K/S/B category. Authored mappings
-  // constrain the choices; otherwise offer the programme's KSBs.
-  const selectingFromProgramme = !hasAuthoredKsbs;
-  const availableKsbs = useMemo(() => hasAuthoredKsbs ? autoKsbs! : learnerKsbs.map(item => ({
-    code: item.code, description: item.description, weight: 0, classification: 'possible',
-  })), [autoKsbs, hasAuthoredKsbs, learnerKsbs]);
+  const availableKsbs = useMemo(() => reflectionKsbOptions(
+    learnerKsbs, autoKsbs ?? [], selectedKsbs, savedKsbWeights, submissionStatus === 'accepted',
+  ), [autoKsbs, learnerKsbs, selectedKsbs, savedKsbWeights, submissionStatus]);
+  const selectableKsbs = useMemo(() => availableKsbs.filter(item => !item.savedOnly), [availableKsbs]);
   const selectionRequired = availableKsbs.length > 0;
 
-  const [ksbGroup, setKsbGroup] = useState<KsbGroupKey>('K');
+  const [ksbGroup, setKsbGroup] = useState<KsbFilterKey>('all');
+  const [ksbPickerOpen, setKsbPickerOpen] = useState(false);
+  const [ksbSearch, setKsbSearch] = useState('');
+  const ksbPickerId = useId();
+  const ksbPickerButton = useRef<HTMLButtonElement>(null);
+  const ksbSearchInput = useRef<HTMLInputElement>(null);
+  useEffect(() => { if (ksbPickerOpen) ksbSearchInput.current?.focus(); }, [ksbPickerOpen]);
   const programmeKsbGroups = useMemo(() => {
-    const groups: Record<KsbGroupKey, typeof availableKsbs> = { K: [], S: [], B: [] };
-    for (const item of availableKsbs) {
+    const groups: Record<KsbFilterKey, typeof selectableKsbs> = { all: selectableKsbs, K: [], S: [], B: [] };
+    for (const item of selectableKsbs) {
       const kind = String(item.code || '').trim().charAt(0).toUpperCase();
       // Anything that is not an S or B code is listed with Knowledge so it can
       // still be selected.
       groups[kind === 'S' || kind === 'B' ? kind : 'K'].push(item);
     }
     return groups;
-  }, [availableKsbs]);
+  }, [selectableKsbs]);
   const activeKsbGroup = programmeKsbGroups[ksbGroup].length
     ? ksbGroup
-    : KSB_GROUPS.find(group => programmeKsbGroups[group.key].length)?.key ?? ksbGroup;
+    : 'all';
+  const visibleKsbs = programmeKsbGroups[activeKsbGroup].filter(item =>
+    `${item.code} ${item.description ?? ''}`.toLowerCase().includes(ksbSearch.trim().toLowerCase()));
 
   const mappedKsbs = useMemo(() => {
     return availableKsbs.filter(item => selectedKsbs.includes(item.code));
   }, [availableKsbs, selectedKsbs]);
+  const hasMappedSelection = mappedKsbs.some(item => item.mapped);
 
   const mappedKsbWeightSummary = useMemo(() => mappedKsbs.reduce(
     (summary, item) => {
+      if (!item.mapped) return summary;
       const weight = Number(item.weight) || 0;
       const kind = String(item.code || '').trim().charAt(0).toUpperCase();
       summary.total += weight;
@@ -289,11 +335,14 @@ function ReflectionWindowForm({
   ];
   const evidenceReady = allEvidenceFileNames.length === 0 || coachVisibilityConfirmed;
   const benefitReady = selectedBenefits.length > 0 && Boolean(benefitExplanation.trim());
-  const validTime = usesClock ? selectedSeconds != null
+  const validTime = readOnlyTime && allowAdditionalTime ? true : usesClock ? selectedSeconds != null
     : actualTime.trim() !== '' && Number.isFinite(Number(actualTime)) && Number(actualTime) >= 0;
-  const otjhReady = Boolean(validTime && dateCompleted && paidHours && otjhConfirmed);
+  const additionalSeconds = addTime && (!timeReceipt || timeOperation) ? Math.round(Number(additionalMinutes) * 60) : 0;
+  const validAdditionalTime = !allowAdditionalTime || !addTime || Boolean((additionalTimeAvailable || timeReceipt) && additionalMinutes.trim()
+    && Number.isFinite(Number(additionalMinutes)) && Number(additionalMinutes) > 0 && additionalSeconds <= 8 * 3600);
+  const otjhReady = Boolean(validTime && dateCompleted && paidHours && otjhConfirmed && validAdditionalTime);
   const canSubmit = learningReady && ksbReady && applicationReady && evidenceReady
-    && benefitReady && otjhReady && signedDeclaration;
+    && benefitReady && otjhReady && signedDeclaration && validAdditionalTime;
 
   const readiness: Record<TabId, boolean> = {
     learning: learningReady,
@@ -369,11 +418,20 @@ function ReflectionWindowForm({
     evidenceFiles: allEvidenceFileNames, evidenceConsentConfirmed: coachVisibilityConfirmed,
     selectedBenefits, benefitExplanation, actualTimeHours: actualTimeHours(), reflectionTimeEdited: timeEdited,
     completedDuringPaidHours: paidHours, dateCompleted, otjhConfirmed, signedDeclaration, qualityScore,
+    ...(allowAdditionalTime && (!timeReceipt || timeOperation) ? { additionalReflectionSeconds: additionalSeconds } : {}),
+    ...(timeOperation && addTime ? { reflectionTimeOperation: timeOperation } : {}),
   } : null;
   const draftSerialized = JSON.stringify(draftPayload);
+  const unchangedSubmission = allowAdditionalTime && submissionStatus === 'submitted_for_tutor_review' && submittedSnapshot === draftSerialized;
   const editableDraft = !submissionLocked && submissionStatus !== 'submitted_for_tutor_review';
   const autosave = useReflectionAutosave(draftPayload,
     Boolean(draftKey && loadedDraftKey === draftKey && serverLoaded && !loadingExisting && editableDraft));
+
+  useEffect(() => {
+    if (allowAdditionalTime && serverLoaded && !loadingExisting && submissionStatus === 'submitted_for_tutor_review' && submittedSnapshot === null) {
+      setSubmittedSnapshot(draftSerialized);
+    }
+  }, [allowAdditionalTime, serverLoaded, loadingExisting, submissionStatus, submittedSnapshot, draftSerialized]);
 
   useEffect(() => {
     if (!learnerKind || !learnerId || !evidenceSectionRef) return;
@@ -390,11 +448,14 @@ function ReflectionWindowForm({
     } catch { /* Server loading still works when browser storage is unavailable. */ }
 
     const restore = (saved: Partial<StoredLearningReflectionSubmission> & { tab?: TabId }) => {
-      if (saved.tab && TABS.some(item => item.id === saved.tab)) setTab(saved.tab);
+      if (initialTab !== 'learning') setTab(initialTab);
+      else if (saved.tab && TABS.some(item => item.id === saved.tab)) setTab(saved.tab);
       setSubmissionStatus(saved.status || '');
+      setSubmittedSnapshot(null);
       setCoachFeedback(saved.coachFeedback || null);
       setReflection(saved.learningReflection || '');
       setSelectedKsbs(Array.isArray(saved.ksbCodes) ? saved.ksbCodes : []);
+      setSavedKsbWeights(saved.ksbWeights || {});
       setKsbExplanations(saved.ksbExplanations || {});
       setConfidenceBefore(saved.confidenceBefore || {});
       setConfidenceAfter(saved.confidenceAfter || {});
@@ -404,9 +465,28 @@ function ReflectionWindowForm({
       setCoachVisibilityConfirmed(Boolean(saved.evidenceConsentConfirmed));
       setSelectedBenefits(Array.isArray(saved.selectedBenefits) ? saved.selectedBenefits : []);
       setBenefitExplanation(saved.benefitExplanation || '');
-      setActualTime(savedActualTime(saved.actualTimeHours || '', inMinutes) || plannedHours);
+      setActualTime(savedActualTime(saved.actualTimeHours || '', inMinutes) || (readOnlyTime && allowAdditionalTime ? '' : plannedHours));
       setTimeEdited(Boolean(saved.reflectionTimeEdited));
-      setEditedClock(saved.reflectionTimeEdited && saved.actualTimeHours?.trim() && Number.isFinite(Number(saved.actualTimeHours))
+      if (allowAdditionalTime) {
+        const receipt = saved.lectureReflectionTime || null;
+        const seconds = receipt?.seconds ?? saved.additionalReflectionSeconds ?? 0;
+        setTimeReceipt(receipt);
+        setTimeOperation(null);
+        setAddTime(seconds > 0);
+        setAdditionalMinutes(seconds > 0 ? String(seconds / 60) : '');
+        try {
+          const raw = draftKey ? localStorage.getItem(`${draftKey}:time-action`) : null;
+          const local = raw ? JSON.parse(raw) as { operation: ReflectionTimeOperation; minutes: string } : null;
+          const server = saved.lectureReflectionPendingTime;
+          const pending = [local, server ? { operation: server.operation, minutes: server.seconds > 0 ? String(server.seconds / 60) : '' } : null]
+            .find(value => value?.operation && value.operation.expectedProgressEntryId === (receipt?.progressEntryId || 0)
+              && value.operation.expectedReflectionSeconds === (receipt?.seconds || 0));
+          if (pending && saved.status !== 'accepted') {
+            setTimeOperation(pending.operation); setAddTime(true); setAdditionalMinutes(pending.minutes);
+          }
+        } catch { /* The server record remains authoritative if recovery storage is unavailable. */ }
+      }
+      setEditedClock((readOnlyTime || saved.reflectionTimeEdited) && saved.actualTimeHours?.trim() && Number.isFinite(Number(saved.actualTimeHours))
         ? formatClock(Math.round(Number(saved.actualTimeHours) * 3600)) : null);
       setPaidHours(saved.completedDuringPaidHours || 'yes');
       setDateCompleted(saved.dateCompleted || new Date().toISOString().split('T')[0]);
@@ -455,7 +535,7 @@ function ReflectionWindowForm({
     return () => {
       cancelled = true;
     };
-  }, [evidenceSectionRef, learnerId, learnerKind, noun, plannedHours, inMinutes, draftKey, loadAttempt]);
+  }, [evidenceSectionRef, learnerId, learnerKind, noun, plannedHours, inMinutes, draftKey, loadAttempt, readOnlyTime, allowAdditionalTime, initialTab]);
 
   // Persist each edit locally so leaving the activity does not lose progress.
   // Files themselves are uploaded by the evidence flow; only uploaded names are stored.
@@ -469,18 +549,26 @@ function ReflectionWindowForm({
   }, [draftKey, loadedDraftKey, loadingExisting, submissionStatus, tab, draftSerialized, autosave.saved]);
 
   useEffect(() => {
-    if (!editableDraft || !draftKey || loadedDraftKey !== draftKey || autosave.saved) return;
+    if ((!editableDraft && !timeOperation) || !draftKey || loadedDraftKey !== draftKey || (!timeOperation && autosave.saved)) return;
     const warn = (event: BeforeUnloadEvent) => { event.preventDefault(); event.returnValue = ''; };
     window.addEventListener('beforeunload', warn);
     return () => window.removeEventListener('beforeunload', warn);
-  }, [editableDraft, draftKey, loadedDraftKey, autosave.saved]);
+  }, [editableDraft, draftKey, loadedDraftKey, autosave.saved, timeOperation]);
+
+  useEffect(() => {
+    if (!allowAdditionalTime || !serverLoaded || !draftKey || loadedDraftKey !== draftKey) return;
+    try {
+      if (timeOperation && addTime) localStorage.setItem(`${draftKey}:time-action`, JSON.stringify({ operation: timeOperation, minutes: additionalMinutes }));
+      else localStorage.removeItem(`${draftKey}:time-action`);
+    } catch { setLocalRecoveryAvailable(false); }
+  }, [allowAdditionalTime, serverLoaded, draftKey, loadedDraftKey, timeOperation, addTime, additionalMinutes]);
 
   const handleNext = () => {
     const nextTab = TABS[activeIndex + 1];
     if (nextTab) setTab(nextTab.id);
   };
 
-  const handleSubmit = async (mode: 'draft' | 'submit' = 'submit') => {
+  const handleSubmit = async (mode: 'draft' | 'submit' = 'submit', declaredAt?: string) => {
     if (submissionInFlightRef.current) return;
     if (submissionLocked) {
       setReflectionSaveError('This reflection has already been accepted and can no longer be changed.');
@@ -518,10 +606,18 @@ function ReflectionWindowForm({
       completedDuringPaidHours: paidHours,
       dateCompleted,
       signedDeclaration,
+      ...(allowAdditionalTime ? { additionalReflectionSeconds: additionalSeconds } : {}),
+      ...(timeOperation ? { reflectionTimeChoice: timeOperation.choice } : {}),
     };
 
     submissionInFlightRef.current = true;
-    if (mode === 'submit' && (timeEdited || selectedTimeSource === 'input' || !usesClock)
+    if (mode === 'submit' && allowAdditionalTime && addTime && (!timeReceipt || timeOperation) && !declaredAt
+      && !await confirmTime(additionalSeconds)) {
+      submissionInFlightRef.current = false;
+      setTab('otjh');
+      return;
+    }
+    if (mode === 'submit' && !readOnlyTime && (timeEdited || selectedTimeSource === 'input' || !usesClock)
       && !await confirmTime(selectedSeconds ?? Math.round(Number(actualTimeHours()) * 3600))) {
       submissionInFlightRef.current = false;
       setTab('otjh');
@@ -533,12 +629,27 @@ function ReflectionWindowForm({
     setReflectionSaveError('');
     try {
       const saved = await autosave.save({ ...draftPayload, submissionMode: mode,
+        ...(mode === 'draft' ? { reflectionDraftIntent: 'manual' as const } : {}),
+        ...(declaredAt ? { declaredCompletedAt: declaredAt } : {}),
         ...(mode === 'submit' ? {
           learningReflection: reflection.trim(), applicationText: applicationText.trim(), benefitExplanation: benefitExplanation.trim(),
         } : {}),
       });
+      if (mode === 'draft') {
+        setSubmissionStatus(saved.status || 'draft');
+        setSubmittedSnapshot(null);
+        if ((!saved.status || saved.status === 'draft') && submissionStatus === 'submitted_for_tutor_review') autosave.resume();
+      }
       if (mode === 'submit') {
+        if (saved.lectureReflectionTime) {
+          setTimeReceipt(saved.lectureReflectionTime);
+          setAdditionalMinutes(String(saved.lectureReflectionTime.seconds / 60));
+          setTimeOperation(null);
+          try { if (draftKey) localStorage.removeItem(`${draftKey}:time-action`); } catch { setLocalRecoveryAvailable(false); }
+        }
+        setTimeCorrection(null);
         setSubmissionStatus(saved.status || 'submitted_for_tutor_review');
+        setSubmittedSnapshot(null);
         try { if (draftKey) localStorage.removeItem(draftKey); } catch { /* Storage unavailable. */ }
         await onSubmit(result);
       }
@@ -546,6 +657,7 @@ function ReflectionWindowForm({
       // Draft failures are displayed by autosave and cleared by its next
       // successful retry. Completion failures also need to remain visible.
       if (mode === 'submit') {
+        if (error instanceof CompletionValidationError) setTimeCorrection(error);
         setReflectionSaveError(error instanceof Error ? error.message : 'Could not save the reflection for tutor review.');
         autosave.resume();
       }
@@ -700,14 +812,16 @@ function ReflectionWindowForm({
 
   const timeInput = (location: string) => (
     <div>
-      <Field label={usesClock ? 'Selected activity time' : `Actual time spent (${inMinutes ? 'minutes' : 'hours'})`}>
+      <Field label={readOnlyTime ? 'Recorded session time (reference)' : usesClock ? 'Selected activity time' : `Actual time spent (${inMinutes ? 'minutes' : 'hours'})`}>
         <input
           ref={timeInputRef}
-          type={usesClock ? 'text' : 'number'}
+          type={usesClock || (readOnlyTime && allowAdditionalTime) ? 'text' : 'number'}
           min={usesClock ? undefined : '0'}
           step={usesClock ? undefined : inMinutes ? '1' : '0.25'}
-          value={usesClock ? clockValue : actualTime}
+          value={readOnlyTime && allowAdditionalTime ? timeReceipt ? formatClock(timeReceipt.countedSeconds) : usesClock ? clockValue : 'Not recorded' : usesClock ? clockValue : actualTime}
+          readOnly={readOnlyTime}
           onChange={event => {
+            if (readOnlyTime) return;
             setTimeEdited(true);
             if (usesClock) setEditedClock(event.target.value);
             else setActualTime(event.target.value);
@@ -719,20 +833,69 @@ function ReflectionWindowForm({
         />
       </Field>
       <p id={`${timeHelpId}-${location}`} className="mt-2 text-sm text-foreground-700">
-        {usesClock ? 'Format: hours : minutes : seconds. For 30 minutes, enter 00:30:00.'
+        {readOnlyTime ? allowAdditionalTime ? 'Your existing lecture time is kept. You can add reflection time separately below.' : 'Your session time and attendance stay unchanged. This reflection does not add study hours.'
+          : usesClock ? 'Format: hours : minutes : seconds. For 30 minutes, enter 00:30:00.'
           : inMinutes ? 'Enter minutes. For 30 minutes, enter 30.'
           : 'Enter hours. For 30 minutes, enter 0.5; for 1 hour 30 minutes, enter 1.5.'}
       </p>
-      {!submissionLocked && <p className="mt-1 text-xs text-foreground-500">
+      {!submissionLocked && !readOnlyTime && <p className="mt-1 text-xs text-foreground-500">
         {usesClock && !validTime ? 'Enter hours, minutes and seconds, for example 00:30:00.'
           : 'You can increase or reduce this time. Your final value will be saved.'}
       </p>}
+      {allowAdditionalTime && <div className="mt-4 space-y-2 rounded-xl border border-primary-200 bg-white p-3">
+        <label className="flex items-center gap-2 text-sm font-semibold">
+          <input type="checkbox" checked={addTime} disabled={submissionLocked || Boolean(timeReceipt && !timeOperation) || (!additionalTimeAvailable && !addTime)} onChange={event => {
+            if (!event.target.checked) {
+              setTimeOperation(null); setAddTime(Boolean(timeReceipt)); setAdditionalMinutes(timeReceipt ? String(timeReceipt.seconds / 60) : '');
+              return;
+            }
+            setAddTime(true);
+            if (event.target.checked && !timeOperation) setTimeOperation({ id: crypto.randomUUID(), choice: 'add', reason: '',
+              expectedReflectionSeconds: timeReceipt?.seconds || 0, expectedProgressEntryId: timeReceipt?.progressEntryId || 0 });
+          }} />
+          {timeOperation?.choice === 'correct' ? 'Correct recorded reflection time' : timeOperation?.choice === 'retry'
+            ? 'Record another reflection attempt' : 'Add more learning time for this reflection'}
+        </label>
+        <p className="text-xs text-foreground-600">Enter only reflection writing time. Your lecture time and attendance are kept. Each confirmed time action is recorded once.</p>
+        {!submissionLocked && additionalTimeAvailable && <button type="button" disabled={reflectionSaving || submitting || !serverLoaded}
+          onClick={() => setTimeChoicesOpen(true)} className="rounded-lg border border-primary-300 px-3 py-2 text-sm font-semibold text-primary-700">Manage reflection time</button>}
+        {timeOperation && <button type="button" onClick={() => {
+          setTimeOperation(null); setAddTime(Boolean(timeReceipt)); setAdditionalMinutes(timeReceipt ? String(timeReceipt.seconds / 60) : '');
+        }} className="ml-2 text-sm font-semibold underline">Cancel time action</button>}
+        {submissionLocked && <p className="text-sm text-foreground-700">This reflection is accepted. Ask your coach to review any time correction.</p>}
+        {!additionalTimeAvailable && !timeReceipt && <p className="text-sm text-foreground-700">Complete the lecture through the existing submission or attendance process before adding reflection time. You can still save this reflection without adding time.</p>}
+        {addTime && <Field label={timeOperation && timeOperation.choice !== 'add' ? 'Reflection time for this action (minutes)' : 'Additional reflection time (minutes)'}>
+          <input type="number" min="1" max="480" step="1" value={additionalMinutes} readOnly={submissionLocked || Boolean(timeReceipt && !timeOperation) || !additionalTimeAvailable}
+            onChange={event => { if ((!timeReceipt || timeOperation) && additionalTimeAvailable) setAdditionalMinutes(event.target.value); }}
+            aria-invalid={!validAdditionalTime} className="h-11 w-full rounded-xl border px-3 font-mono text-sm" />
+        </Field>}
+        {addTime && additionalTimeAvailable && !validAdditionalTime && <p role="alert" className="text-sm text-red-700">Enter a reflection duration greater than zero, up to 480 minutes. The combined activity total cannot exceed 8 hours.</p>}
+        {timeReceipt && <p role="status" className="text-sm text-emerald-800">{timeReceipt.seconds / 60} minutes of reflection time have already been added. Saving this reflection again will not add them twice.</p>}
+        {timeOperation && addTime && validAdditionalTime && <p role="status" className="text-sm text-primary-800">
+          {timeOperation.choice === 'correct' ? 'Correction' : timeOperation.choice === 'retry' ? 'Another attempt' : 'Addition'}:
+          {' '}reflection time will be {formatClock(applyActivityTime(timeReceipt?.seconds || 0, additionalSeconds, timeOperation.choice))}.
+          {timeReceipt ? <> Activity total will be {formatClock(Math.max(0, timeReceipt.countedSeconds - timeReceipt.seconds)
+            + applyActivityTime(timeReceipt.seconds, additionalSeconds, timeOperation.choice))}.</>
+            : ' The server will confirm the activity total on submission.'}
+        </p>}
+      </div>}
     </div>
   );
 
   return (
     <div className="w-full bg-[#f7fbff] rounded-2xl border border-[#bcc6d1] shadow-xl overflow-hidden">
       {timeConfirmation}
+      {timeChoicesOpen && <ActivityRetakeTimeDialog previousSeconds={timeReceipt?.seconds || 0}
+        timeLabel="Previously recorded reflection time" notice="These choices affect reflection writing time only. Lecture time and attendance are kept."
+        onClose={() => setTimeChoicesOpen(false)} onChoose={(choice, reason) => {
+          setTimeOperation({ id: crypto.randomUUID(), choice, reason, expectedReflectionSeconds: timeReceipt?.seconds || 0,
+            expectedProgressEntryId: timeReceipt?.progressEntryId || 0 });
+          setAddTime(true); setAdditionalMinutes(choice === 'correct' ? String((timeReceipt?.seconds || 0) / 60) : '');
+          setTimeChoicesOpen(false); setTab('otjh');
+        }} />}
+      {timeCorrection && <CompletionTimeDialog reason={timeCorrection.reason} holidayName={timeCorrection.holidayName}
+        holidays={workingHoursHolidays} submitting={reflectionSaving} serverError={reflectionSaveError}
+        onSubmit={declaredAt => { void handleSubmit('submit', declaredAt); }} onClose={() => setTimeCorrection(null)} />}
       <div className="p-5 md:px-8 md:pt-7 md:pb-5">
         <div className="flex items-start justify-between gap-4">
           <div>
@@ -823,6 +986,10 @@ function ReflectionWindowForm({
         </div>
       )}
 
+      {allowAdditionalTime && submissionStatus === 'submitted_for_tutor_review' && <p role="status" className="border-t border-emerald-200 bg-emerald-50 px-5 py-3 text-sm font-semibold text-emerald-900 md:px-8">
+        Submitted for tutor review. Your reflection is saved and awaiting review.
+      </p>}
+
       <fieldset
         disabled={submissionLocked || loadingExisting || reflectionSaving || submitting}
         className="min-w-0 border-t border-[#d7e0e8] px-5 py-5 disabled:cursor-not-allowed md:px-8 md:py-6"
@@ -888,11 +1055,13 @@ function ReflectionWindowForm({
             <h2 className="text-sm font-semibold text-foreground-900">KSB confidence check</h2>
             <p className="mt-1 text-xs text-foreground-500">
               {selectionRequired
-                ? `Select at least one relevant ${hasAuthoredKsbs ? 'mapped' : 'programme'} KSB this ${noun} developed. You do not need to select from every K, S and B category. Explain and rate only the KSBs you select.`
+                ? hasAuthoredKsbs
+                  ? `Mapped KSBs are selected automatically for a new reflection. Keep at least one relevant KSB this ${noun} developed, then explain and rate your selection.`
+                  : `Select at least one relevant programme KSB this ${noun} developed. You do not need to select from every K, S and B category. Explain and rate only the KSBs you select.`
                 : `Explain each mapped KSB, then rate your confidence before and after this ${noun}.`}
             </p>
 
-            {mappedKsbs.length > 0 && !selectingFromProgramme && (
+            {hasMappedSelection && (
               <div className="mt-4 overflow-hidden rounded-2xl border border-primary-200 bg-gradient-to-r from-primary-50 via-white to-white shadow-sm">
                 <div className="flex flex-col gap-4 p-4 sm:flex-row sm:items-center sm:justify-between">
                   <div>
@@ -921,11 +1090,26 @@ function ReflectionWindowForm({
             {selectionRequired && (
               <div className="mt-4 min-w-0 rounded-xl border border-foreground-200 bg-white p-3">
                 <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-                  <p className="text-xs font-semibold text-foreground-700">{hasAuthoredKsbs ? 'Select the mapped KSBs this activity developed' : 'Select the programme KSBs this activity developed'}</p>
+                  <p className="text-xs font-semibold text-foreground-700">{learnerKsbs.length ? 'Select the programme KSBs this activity developed' : 'Select the mapped KSBs this activity developed'}</p>
                   <span className="shrink-0 text-xs text-foreground-500">{ksbCodes.length} selected</span>
                 </div>
+                {hasAuthoredKsbs && learnerKsbs.length > 0 && <p className="mb-3 text-xs text-foreground-600">
+                  Suggested KSBs are mapped to this activity. You can also choose other KSBs from your programme.
+                </p>}
+                <button ref={ksbPickerButton} type="button" aria-expanded={ksbPickerOpen} aria-controls={ksbPickerId}
+                  onClick={() => setKsbPickerOpen(open => !open)}
+                  className="flex w-full items-center justify-between gap-3 rounded-lg border border-foreground-300 bg-white px-3 py-2.5 text-left text-sm font-semibold text-foreground-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-400">
+                  <span>Choose KSBs</span><AppIcon className={ksbPickerOpen ? 'ri-arrow-up-s-line' : 'ri-arrow-down-s-line'} />
+                </button>
+                {ksbPickerOpen && <div id={ksbPickerId} role="group" aria-label="KSB choices"
+                  onKeyDown={event => { if (event.key === 'Escape') { setKsbPickerOpen(false); ksbPickerButton.current?.focus(); } }}
+                  className="mt-2 rounded-lg border border-foreground-200 p-3">
+                <label htmlFor={`${ksbPickerId}-search`} className="mb-1 block text-xs font-semibold text-foreground-700">Search KSBs</label>
+                <input ref={ksbSearchInput} id={`${ksbPickerId}-search`} type="search" value={ksbSearch}
+                  onChange={event => setKsbSearch(event.target.value)} placeholder="Search by code or description"
+                  className="mb-3 w-full rounded-lg border border-foreground-300 px-3 py-2 text-sm focus:border-primary-400 focus:outline-none" />
                 <div role="tablist" aria-label="KSB type" className="mb-3 inline-flex gap-1 rounded-lg bg-background-100 p-1">
-                  {KSB_GROUPS.map(group => {
+                  {KSB_FILTERS.map(group => {
                     const count = programmeKsbGroups[group.key].length;
                     const selectedCount = programmeKsbGroups[group.key]
                       .filter(item => selectedKsbs.includes(item.code)).length;
@@ -943,7 +1127,7 @@ function ReflectionWindowForm({
                           active ? 'bg-white text-primary-700 shadow-sm' : 'text-foreground-600 hover:text-foreground-900'
                         }`}
                       >
-                        {group.key}
+                        {group.key === 'all' ? 'All' : group.key}
                         <span className="ml-1 font-normal text-foreground-500">
                           {selectedCount > 0 ? `${selectedCount}/${count}` : count}
                         </span>
@@ -951,8 +1135,9 @@ function ReflectionWindowForm({
                     );
                   })}
                 </div>
-                <div role="tabpanel" aria-label={KSB_GROUPS.find(group => group.key === activeKsbGroup)?.label} className="max-h-64 space-y-1.5 overflow-y-auto pr-1">
-                  {programmeKsbGroups[activeKsbGroup].map(item => {
+                <div role="tabpanel" aria-label={KSB_FILTERS.find(group => group.key === activeKsbGroup)?.label} className="max-h-64 space-y-1.5 overflow-y-auto pr-1">
+                  {visibleKsbs.length === 0 && <p role="status" className="p-3 text-sm text-foreground-500">No KSBs match your search in this category.</p>}
+                  {visibleKsbs.map(item => {
                     const selected = selectedKsbs.includes(item.code);
                     return (
                       <label
@@ -976,11 +1161,15 @@ function ReflectionWindowForm({
                         <span className={`shrink-0 rounded-full px-2 py-0.5 text-xs font-semibold ${
                           selected ? 'bg-primary-100 text-primary-700' : 'bg-background-100 text-foreground-600'
                         }`}>{item.code}</span>
-                        <span className="min-w-0 break-words text-xs leading-relaxed text-foreground-600">{item.description}</span>
+                        <span className="min-w-0 break-words text-xs leading-relaxed text-foreground-600">
+                          {item.description || 'Description not available for this KSB.'}
+                          {item.mapped && <span className="mt-1 block text-[10px] font-semibold text-primary-700">Suggested for this activity</span>}
+                        </span>
                       </label>
                     );
                   })}
                 </div>
+                </div>}
               </div>
             )}
 
@@ -999,10 +1188,10 @@ function ReflectionWindowForm({
                     <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                       <div className="flex min-w-0 items-start gap-2">
                         <span className="shrink-0 rounded-full bg-primary-100 px-2 py-1 text-xs font-semibold text-primary-700">{item.code}</span>
-                        <p className="text-xs leading-relaxed text-foreground-600">{item.description}</p>
+                        <p className="text-xs leading-relaxed text-foreground-600">{item.description || 'Description not available for this KSB.'}</p>
                       </div>
                       <div className="flex shrink-0 items-center gap-2">
-                        {!selectingFromProgramme && (
+                        {(item.mapped || (item.savedOnly && item.weight > 0)) && (
                           <span className="rounded-lg bg-primary-50 px-2.5 py-1.5 text-[10px] font-bold text-primary-700 ring-1 ring-primary-100">
                             {formatKsbWeight(item.weight)} weight
                           </span>
@@ -1017,6 +1206,11 @@ function ReflectionWindowForm({
                         </span>
                       </div>
                     </div>
+                  {item.savedOnly && <p className="mt-3 rounded-lg bg-amber-50 p-3 text-xs text-amber-900">
+                    This saved KSB is outside the current programme list. Your explanation and ratings have been kept.
+                    {!submissionLocked && <button type="button" onClick={() => setSelectedKsbs(previous => previous.filter(code => code !== item.code))}
+                      className="ml-2 font-semibold underline">Remove {item.code}</button>}
+                  </p>}
                   <textarea
                     value={ksbExplanations[item.code] || ''}
                     onChange={event => setKsbExplanations(previous => ({ ...previous, [item.code]: event.target.value }))}
@@ -1046,7 +1240,7 @@ function ReflectionWindowForm({
                 <p className="rounded-xl bg-background-100 p-4 text-sm text-foreground-500">
                   {selectionRequired
                     ? 'Select at least one KSB above to explain and rate it.'
-                    : selectingFromProgramme
+                    : !hasAuthoredKsbs
                       ? 'No KSBs are mapped to this activity and your programme has no KSBs to choose from.'
                       : 'No KSBs are mapped to this activity.'}
                 </p>
@@ -1324,7 +1518,7 @@ function ReflectionWindowForm({
           {submissionLocked ? (
             <>Marking status: <strong className="text-emerald-700">Accepted</strong> — this submission is read-only.</>
           ) : (
-            <>Status on submit: <strong>Submitted for tutor review</strong> — KSBs &amp; OTJH stay pending until validated.</>
+            <>Status on submit: <strong>Submitted for coach review</strong> — KSBs &amp; OTJH stay pending until validated.</>
           )}
         </p>
         <div className="flex flex-wrap items-center justify-end gap-2 shrink-0">
@@ -1340,7 +1534,7 @@ function ReflectionWindowForm({
             <>
               <button
                 onClick={() => void handleSubmit('draft')}
-                disabled={loadingExisting || !serverLoaded || reflectionSaving || submitting || evidenceUploading}
+                disabled={loadingExisting || !serverLoaded || reflectionSaving || submitting || evidenceUploading || unchangedSubmission}
                 className="rounded-xl border border-[#cbd5df] bg-[#f8fcff] px-5 py-2.5 text-sm font-medium text-[#142033] shadow-sm disabled:cursor-not-allowed disabled:opacity-50"
               >
                 {autosave.saved ? 'Draft saved' : 'Save draft'}
@@ -1348,12 +1542,12 @@ function ReflectionWindowForm({
               {tab === 'review' ? (
                 <button
                   onClick={() => void handleSubmit()}
-                  disabled={submitting || reflectionSaving || loadingExisting || !serverLoaded || !canSubmit}
+                  disabled={submitting || reflectionSaving || loadingExisting || !serverLoaded || !canSubmit || unchangedSubmission}
                   className="inline-flex items-center gap-2 rounded-xl bg-[#102d52] px-5 py-2.5 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:bg-[#91a0b3]"
                 >
                   {submitting || reflectionSaving
                     ? <><AppIcon className="ri-loader-4-line animate-spin" /> Saving...</>
-                    : <><AppIcon className="ri-edit-line" /> Submit for tutor review</>}
+                    : unchangedSubmission ? 'Submitted for tutor review' : <><AppIcon className="ri-edit-line" /> Submit for tutor review</>}
                 </button>
               ) : (
                 <button

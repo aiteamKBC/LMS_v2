@@ -81,16 +81,35 @@ class NativeLiveProgressEndpointTests(SimpleTestCase):
                 self.assertEqual(response.status_code, status)
         self.builder.assert_not_called()
 
-    def test_admin_view_as_remains_read_only(self):
+    def test_admin_view_as_can_calculate_with_own_attribution(self):
         account = SimpleNamespace(role='admin', subject_type='staff', subject_id=1)
         request = RequestFactory().post('/?viewAsCoach=coach@example.test')
         request.login_account = account
         with patch('login.permissions.authenticate_request', return_value=account), \
              patch('coach_api.auth.StaffUser.objects.filter') as staff, \
-             patch('coach_api.auth._staff_access', return_value='super-admin'):
-            staff.return_value.only.return_value.first.return_value = SimpleNamespace(access='super-admin')
-            self.assertEqual(views.coach_review_instance_progress(request, self.row['id']).status_code, 403)
+             patch('coach_api.auth._staff_access', return_value='super-admin'), \
+             patch('coach_api.auth._find_coach_staff', return_value=SimpleNamespace(email='coach@example.test', id=2)):
+            staff.return_value.only.return_value.first.return_value = SimpleNamespace(
+                id=1, username='Test Admin', email='admin@example.test', access='super-admin')
+            self.assertEqual(views.coach_review_instance_progress(request, self.row['id']).status_code, 200)
+        actor = 'Test Admin (for coach@example.test)'
+        self.assertEqual(self.builder.call_args.kwargs['calculated_by'], actor)
+        self.save.assert_called_once_with(self.row, self.snapshot, actor=actor)
+
+    def test_admin_view_as_cannot_calculate_a_different_coachs_review(self):
+        self.row['coach_email'] = 'other@example.test'
+        account = SimpleNamespace(role='admin', subject_type='staff', subject_id=1)
+        request = RequestFactory().post('/?viewAsCoach=coach@example.test')
+        request.login_account = account
+        with patch('login.permissions.authenticate_request', return_value=account), \
+             patch('coach_api.auth.StaffUser.objects.filter') as staff, \
+             patch('coach_api.auth._staff_access', return_value='super-admin'), \
+             patch('coach_api.auth._find_coach_staff', return_value=SimpleNamespace(email='coach@example.test', id=2)):
+            staff.return_value.only.return_value.first.return_value = SimpleNamespace(
+                id=1, username='Test Admin', email='admin@example.test', access='super-admin')
+            self.assertEqual(views.coach_review_instance_progress(request, self.row['id']).status_code, 404)
         self.builder.assert_not_called()
+        self.save.assert_not_called()
 
     def test_get_is_not_an_implicit_recalculation(self):
         response = unwrap(views.coach_review_instance_progress)(RequestFactory().get('/'), self.row['id'])

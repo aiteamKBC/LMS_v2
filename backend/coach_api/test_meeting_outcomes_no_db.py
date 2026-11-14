@@ -27,6 +27,16 @@ class MeetingOutcomeTests(SimpleTestCase):
         self.annotate(events, attended={'support:2'})
         self.assertEqual([e['meetingOutcome'] for e in events], ['ended', 'completed'])
 
+    def test_review_outcome_uses_ten_minute_attendance_verdict(self):
+        events = [event('mcr:1'), event('pr:2', source='progress-review')]
+        def annotate_reviews(rows, *, now_local):
+            rows[0]['reviewAttendance'] = 'missed'
+            rows[1]['reviewAttendance'] = 'attended'
+        with patch('coach_api.review_attendance_display.annotate_review_attendance', side_effect=annotate_reviews), \
+             patch('coach_api.meeting_outcomes.learner_attended_event_keys', return_value={'mcr:1'}):
+            annotate_meeting_outcomes(events, now=NOW)
+        self.assertEqual([row['meetingOutcome'] for row in events], ['ended', 'completed'])
+
     def test_upcoming_and_unbooked_meetings_have_no_outcome(self):
         events = [event('mcr:1', start='11:30'), event('pr:2', source='progress-review', start=None),
                   event('pr:3', source='progress-review', status='not-scheduled')]

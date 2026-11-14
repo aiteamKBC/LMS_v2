@@ -24,7 +24,6 @@ export default function MonthlySubmissionPage() {
   const [params, setParams] = useSearchParams();
   const nav = roleNavMap.learner;
   const today = assignmentToday();
-  const currentMonth = today.slice(0, 7);
   const datesUnavailable = plan.errors.includes('Assignment dates could not be loaded.');
   const groups = useMemo(() => {
     const months = real ? groupMonthlyAssignments(real, plan.metadata, plan.contract, plan.statuses, plan.submissionCounts) : [];
@@ -32,11 +31,8 @@ export default function MonthlySubmissionPage() {
       if (activity.status === 'draft' || !/^\d{4}-\d{2}$/.test(activity.month) || months.some(item => item.month === activity.month)) continue;
       months.push({ month: activity.month, label: monthName(activity.month), topics: [], planAssignments: [], assignments: [], submitted: 0 });
     }
-    if (months.length && !datesUnavailable && !months.some(item => item.month === currentMonth)) {
-      months.push({ month: currentMonth, label: monthName(currentMonth), topics: [], planAssignments: [], assignments: [], submitted: 0 });
-    }
     return months.sort((a, b) => a.month && b.month ? a.month.localeCompare(b.month) : a.month ? -1 : b.month ? 1 : 0);
-  }, [real, plan.metadata, plan.contract, plan.statuses, plan.submissionCounts, extras.activities, currentMonth, datesUnavailable]);
+  }, [real, plan.metadata, plan.contract, plan.statuses, plan.submissionCounts, extras.activities]);
   const selectionKey = `monthly-assignment-selection:${kind}:${id}`;
   let savedSelection: { month?: string; assignment?: string } | null = null;
   try { savedSelection = JSON.parse(sessionStorage.getItem(selectionKey) || 'null'); } catch { /* Storage may be unavailable. */ }

@@ -138,9 +138,9 @@ describe('employer home dashboard', () => {
     expect(third).toHaveFocus();
     // These surfaces navigate to the existing learner review page; they do not
     // turn a clicked later record into the dashboard's next-action calculation.
-    expect(third).toHaveAttribute('href', '/employers/8/learner/apprenticeship/11?tab=reviews');
+    expect(third).toHaveAttribute('href', '/employers/8/learner/apprenticeship/11?tab=reviews&reviewId=shared-review-3');
     await userEvent.keyboard('{Enter}');
-    expect(screen.getByTestId('path')).toHaveTextContent('/employers/8/learner/apprenticeship/11?tab=reviews');
+    expect(screen.getByTestId('path')).toHaveTextContent('/employers/8/learner/apprenticeship/11?tab=reviews&reviewId=shared-review-3');
   });
 
   it.each(['/employers/8', '/employers/8/reviews'])('keeps Native current-step styling and completed APTEM history unselected on %s', async path => {
@@ -149,8 +149,8 @@ describe('employer home dashboard', () => {
     })], definitions: {} }));
     showPage(path);
     const journey = within(await screen.findByRole('region', { name: 'Progress review journey' }));
-    const native = await journey.findByRole('link', { name: /^Alex Learner: Progress review,/ });
-    const history = await journey.findByRole('link', { name: /^Morgan Learner: Progress review,/ });
+    const native = await journey.findByRole('link', { name: path.endsWith('/reviews') ? /^Alex Learner: Review 1,/ : /^Alex Learner: Progress review,/ });
+    const history = await journey.findByRole('link', { name: path.endsWith('/reviews') ? /^Morgan Learner: Review 1,/ : /^Morgan Learner: Progress review,/ });
     expect(native).toHaveAttribute('aria-current', 'step');
     expect(native).not.toHaveAttribute('data-selection', 'marker');
     expect(history).toHaveAttribute('data-selection', 'marker');
@@ -214,7 +214,7 @@ describe('employer home dashboard', () => {
     expect(table().getByRole('link', { name: 'View Morgan Learner' })).toBeVisible();
     await userEvent.click(screen.getByRole('button', { name: 'Clear filters' }));
     expect(screen.getByRole('heading', { name: 'Your learners (2)' })).toBeVisible();
-    expect(screen.getByRole('searchbox')).toHaveValue('');
+    expect(screen.getByRole('searchbox', { name: 'Search learners' })).toHaveValue('');
     expect(screen.getByRole('combobox', { name: 'Programme' })).toHaveValue('');
   });
 
@@ -424,8 +424,8 @@ describe('employer home dashboard', () => {
     expect(alex.getAllByRole('listitem')).toHaveLength(7);
     expect(alex.getByText('1 of 7 completed')).toBeVisible();
     expect(alex.getByText('1 Oct 2026')).toBeVisible();
-    expect(alex.getByText('Your signature needed')).toBeVisible();
-    expect(alex.getByText('Planned review 5')).toBeVisible();
+    expect(alex.getByRole('link', { name: /Alex Learner: Review 2, Your signature needed,/ })).toBeVisible();
+    expect(alex.getByText('Review 7')).toBeVisible();
     expect(alex.getByRole('link', { name: 'View reviews for Alex Learner' })).toHaveAttribute('href', '/employers/8/learner/apprenticeship/11?tab=reviews');
     expect(screen.getByRole('link', { name: 'View reviews for Morgan Learner' })).toHaveAttribute('href', '/employers/8/learner/commercial/12?tab=reviews');
     expect(screen.getByText('2 of 2 learners')).toBeVisible();
@@ -438,12 +438,12 @@ describe('employer home dashboard', () => {
       makeReview(`${id}-due`, { title: 'Due review', status: 'scheduled', targetDate: '2026-12-01', scheduledDate: '2026-11-01', date: '2026-11-01' }),
     ], definitions: {} }));
     showPage('/employers/8/reviews');
-    await screen.findByRole('link', { name: /Alex Learner: Done review,/ });
+    await screen.findByRole('link', { name: /Alex Learner: Review 1,/ });
     const alex = within(screen.getByRole('article', { name: 'Alex Learner reviews' }));
     const current = alex.getAllByRole('link').filter(link => link.getAttribute('aria-current') === 'step');
     expect(current).toHaveLength(1);
     // The appointment due first, even though the plan puts it last in the timeline.
-    expect(current[0]).toHaveAccessibleName('Alex Learner: Due review, Scheduled, 1 Nov 2026');
+    expect(current[0]).toHaveAccessibleName('Alex Learner: Review 3, Scheduled, 1 Nov 2026');
 
     cleanup();
     showPage();
@@ -467,7 +467,7 @@ describe('employer home dashboard', () => {
     const journey = within(screen.getByRole('region', { name: 'Progress review journey' }));
     for (const name of ['Alex Learner', 'Morgan Learner']) {
       const links = journey.getAllByRole('link', { name: new RegExp(`^${name}: Review`) });
-      expect(links.map(link => link.querySelector('strong')?.textContent)).toEqual(
+      expect(links.map(link => link.getAttribute('aria-label')?.split(',')[0].replace(`${name}: `, ''))).toEqual(
         path.endsWith('/reviews') ? ['Review 1', 'Review 2', 'Review 3', 'Review 4', 'Review 5']
           : ['Review 1', 'Review 2', 'Review 3', 'Review 4']);
       expect(links[0]).toHaveAccessibleName(`${name}: Review 1, Waiting for signatures, 10 Dec 2026`);
@@ -486,7 +486,7 @@ describe('employer home dashboard', () => {
     expect(screen.getByRole('article', { name: 'Morgan Learner reviews' })).toBeVisible();
     expect(screen.queryByRole('article', { name: 'Alex Learner reviews' })).not.toBeInTheDocument();
     expect(screen.getByText('1 of 2 learners')).toBeVisible();
-    await userEvent.type(screen.getByRole('searchbox'), ' missing');
+    await userEvent.type(screen.getByRole('searchbox', { name: 'Search learners' }), ' missing');
     expect(screen.getByRole('heading', { name: 'No matching learners' })).toBeVisible();
     const journey = within(screen.getByRole('region', { name: 'Progress review journey' }));
     await userEvent.click(journey.getByRole('button', { name: 'Clear filters' }));
@@ -654,7 +654,7 @@ describe('employer home dashboard', () => {
     expect(table().getAllByRole('row')).toHaveLength(9);
     await userEvent.click(screen.getByRole('button', { name: 'Next learner page' }));
     expect(table().getAllByRole('row')).toHaveLength(3);
-    fireEvent.change(screen.getByRole('searchbox'), { target: { value: 'Learner 0' } });
+    fireEvent.change(screen.getByRole('searchbox', { name: 'Search learners' }), { target: { value: 'Learner 0' } });
     expect(table().getByRole('link', { name: 'View Learner 0' })).toBeVisible();
   });
 });

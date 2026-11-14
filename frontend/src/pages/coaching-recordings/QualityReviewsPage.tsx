@@ -3,6 +3,7 @@ import { ArrowLeft, ClipboardCheck, RefreshCw } from 'lucide-react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { qualityReviews, qualityForms, invalidateQualityReviews, type QualitySummary, type ReviewList, type QualityFormCard } from '@/api/coachingQualityReviews';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
+import RecordingSelect from './RecordingSelect';
 import { curriculumNavItems } from '@/mocks/navigation';
 import { CALENDAR_TIME_ZONES } from '@/pages/curriculum/recordings/utils';
 import { meetingDate } from './model';
@@ -80,14 +81,20 @@ export default function QualityReviewsPage({ embedded = false }: { embedded?: bo
         <h1 className="mt-2 text-2xl font-bold text-foreground-950">Quality Checks</h1><p className="mt-2 text-sm text-foreground-600">Open a saved review to see its observations, screenshots and action plan. Completed reviews include a PDF.</p></div>
         <button className={button} disabled={loading} onClick={refresh}><RefreshCw size={15} />Refresh reviews</button></header>
       <section aria-label="Quick review filters" className="space-y-4 rounded-xl border border-background-200 bg-white p-4">
-        <label className="grid max-w-xl gap-2 text-xs font-semibold">Quality form<select aria-label="Quality form filter" className={control} value={reviewType} disabled={loading} onChange={event => quick({ reviewType: event.target.value })}><option value="">All forms</option>{formCards.map(card => <option key={card.reviewType} value={card.reviewType}>{card.title}</option>)}{reviewType && !formCards.some(card => card.reviewType === reviewType) && !['MCM','PR'].includes(reviewType) && <option value={reviewType}>Selected saved form</option>}<optgroup label="Previous portfolio reviews"><option value="MCM">MCM · Previous form</option><option value="PR">PR · Previous form</option></optgroup></select></label>
+        <label className="grid max-w-xl gap-2 text-xs font-semibold">Quality form<RecordingSelect ariaLabel="Quality form filter" value={reviewType} disabled={loading} onChange={value => quick({ reviewType: value })}
+          options={[{ value: '', label: 'All forms' }, ...formCards.map(card => ({ value: card.reviewType, label: card.title })),
+            ...(reviewType && !formCards.some(card => card.reviewType === reviewType) && !['MCM','PR'].includes(reviewType) ? [{ value: reviewType, label: 'Selected saved form' }] : []),
+            { value: 'MCM', label: 'MCM · Previous form', group: 'Previous portfolio reviews' },
+            { value: 'PR', label: 'PR · Previous form', group: 'Previous portfolio reviews' },
+          ].filter((option, index, options) => options.findIndex(row => row.value === option.value) === index)} /></label>
         {catalogError && <p role="alert" className="text-xs text-amber-900">{catalogError} Saved reviews remain available.</p>}
         <div role="group" aria-label="Review completion" className="flex flex-wrap items-center gap-2"><span className="mr-2 text-xs font-semibold text-foreground-500">Show</span>{[['','All saved reviews'],['completed','Completed'],['draft','Drafts']].map(([value,label]) => <button key={value} className={`${button} ${status === value && !pdf ? 'border-primary-500 bg-primary-50 text-primary-900' : ''}`} aria-pressed={status === value && !pdf} disabled={loading} onClick={() => quick({ status: value, pdf: '' })}>{label}</button>)}<button className={`${button} ${pdf === 'available' ? 'border-primary-500 bg-primary-50 text-primary-900' : ''}`} aria-pressed={pdf === 'available'} disabled={loading} onClick={() => quick({ pdf: 'available', status: '' })}>With PDF</button></div>
       </section>
       <form noValidate onSubmit={apply} className="space-y-4 rounded-xl border border-background-200 bg-white p-4">
         {filterError && <p role="alert" className="text-sm text-rose-800">{filterError}</p>}
         <div className="grid items-end gap-3 sm:grid-cols-2 lg:grid-cols-[minmax(0,1fr)_minmax(0,2fr)_auto_auto]">
-        <label className="grid gap-1 text-xs font-semibold">Coach<select className={control} value={filters.coachEmail} onChange={event => setFilters({ ...filters, coachEmail: event.target.value })}><option value="">All coaches</option>{coaches.map(coach => <option key={coach.email} value={coach.email}>{coach.name}</option>)}</select></label>
+        <label className="grid gap-1 text-xs font-semibold">Coach<RecordingSelect ariaLabel="Coach" value={filters.coachEmail} onChange={value => setFilters({ ...filters, coachEmail: value })}
+          options={[{ value: '', label: 'All coaches' }, ...coaches.map(coach => ({ value: coach.email, label: coach.name }))]} /></label>
         <label className="grid gap-1 text-xs font-semibold">Learner or meeting<input type="search" placeholder="Search a learner or meeting title" maxLength={200} className={control} value={filters.search} onChange={event => setFilters({ ...filters, search: event.target.value })} /></label>
         <button type="submit" className={`${button} bg-primary-600 text-white`} disabled={loading}>Apply filters</button>
         <button type="button" className={button} disabled={loading} onClick={reset}>Reset filters</button>
@@ -96,9 +103,12 @@ export default function QualityReviewsPage({ embedded = false }: { embedded?: bo
         <div id="quality-extra-filters" hidden={!moreFilters} className={moreFilters ? 'grid items-end gap-3 border-t border-background-200 pt-4 sm:grid-cols-2 lg:grid-cols-5' : ''}>
         <label className="grid gap-1 text-xs font-semibold">From<input required type="date" className={control} value={filters.start} onChange={event => setFilters({ ...filters, start: event.target.value })} /></label>
         <label className="grid gap-1 text-xs font-semibold">To<input required type="date" min={filters.start} className={control} value={filters.end} onChange={event => setFilters({ ...filters, end: event.target.value })} /></label>
-        <label className="grid gap-1 text-xs font-semibold">Review status<select className={control} value={filters.status} onChange={event => setFilters({ ...filters, status: event.target.value })}><option value="completed">Completed</option><option value="draft">Drafts</option><option value="">All saved reviews</option></select></label>
-        <label className="grid gap-1 text-xs font-semibold">Saved PDF<select className={control} value={filters.pdf} onChange={event => setFilters({ ...filters, pdf: event.target.value })}><option value="">All reviews</option><option value="available">Has saved PDF</option><option value="missing">No saved PDF yet</option></select></label>
-        <label className="grid gap-1 text-xs font-semibold">Time zone<select className={control} value={filters.timeZone} onChange={event => setFilters({ ...filters, timeZone: event.target.value })}>{[...new Set([...CALENDAR_TIME_ZONES, filters.timeZone])].map(zone => <option key={zone} value={zone}>{zone}</option>)}</select></label>
+        <label className="grid gap-1 text-xs font-semibold">Review status<RecordingSelect ariaLabel="Review status" value={filters.status} onChange={value => setFilters({ ...filters, status: value })}
+          options={[{ value: 'completed', label: 'Completed' }, { value: 'draft', label: 'Drafts' }, { value: '', label: 'All saved reviews' }]} /></label>
+        <label className="grid gap-1 text-xs font-semibold">Saved PDF<RecordingSelect ariaLabel="Saved PDF" value={filters.pdf} onChange={value => setFilters({ ...filters, pdf: value })}
+          options={[{ value: '', label: 'All reviews' }, { value: 'available', label: 'Has saved PDF' }, { value: 'missing', label: 'No saved PDF yet' }]} /></label>
+        <label className="grid gap-1 text-xs font-semibold">Time zone<RecordingSelect ariaLabel="Time zone" value={filters.timeZone} onChange={value => setFilters({ ...filters, timeZone: value })}
+          options={[...new Set([...CALENDAR_TIME_ZONES, filters.timeZone])].map(value => ({ value, label: value }))} /></label>
         </div>
       </form>
       {error && <div role="alert" className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm">{error} <button className={`${button} ml-2`} onClick={() => setEpoch(value => value + 1)}>Retry reviews</button></div>}

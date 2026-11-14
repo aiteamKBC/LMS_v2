@@ -28,6 +28,9 @@ def revision(record):
 def manual_record(record):
     source = str(record.get('time_tracking_source') or '').lower()
     return (isinstance(record.get('id'), int) and not record.get('deleted_at')
+            # Reflection decisions include a protected lecture baseline. Their
+            # writing time is corrected through Manage reflection time only.
+            and not source.startswith('lecture_reflection:')
             and not record.get('source_system') and record.get('submitted_at') is not None
             and record.get('component_link_source') in {'direct', 'quiz_ref'}
             and record.get('kind') in {'component', 'video', 'quiz'}
@@ -239,6 +242,8 @@ def correct(learner, role, actor, month, progress_id, payload, *, authorize=None
         WHERE id=%s AND learner_id=%s AND deleted_at IS NULL RETURNING *''',
         [seconds, reported, f'{minutes:02d}:{remaining:02d}', seconds, reported,
          encode(metadata), progress_id, owner['id']])
+    from .progress_cache import bump_learners
+    bump_learners([owner['id']])
     timer_and_assessment = ('verified_seconds', 'server_session_seconds', 'time_tracking_session_ref',
                             'time_tracking_calculation', 'time_tracking_source', 'started_at', 'submitted_at',
                             'declared_completed_at', 'accepted', 'passed', 'grade', 'achieved_score',

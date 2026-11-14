@@ -21,6 +21,8 @@ Set deployment configuration through the established secret/configuration mechan
 | `MCP_ENABLED` | Default off. Gates MCP and OAuth endpoints. |
 | `MCP_VIDEO_UPLOADS_ENABLED` | Default off. Independently gates video proposal, apply and status. |
 | `MCP_COMPONENT_CREATION_ENABLED` | Default off. Allows preview/apply of the ten supported non-Teams draft component types, in existing modules/weeks only. |
+| `MCP_QUIZ_CREATION_ENABLED` | Default off. Allows `create_quiz_draft`: a draft quiz with questions, linked to an existing quiz component, plus KSB mappings. |
+| `MCP_CONTENT_EDITING_ENABLED` | Default off. Allows `map_ksbs` (add/change KSB mappings) and `add_lesson_content` (Reading lesson text) on existing components of draft modules. |
 | `MCP_PUBLIC_BASE_URL` | Public HTTPS origin, without `/mcp` or a trailing slash. |
 | `MCP_PILOT_ACCOUNT_IDS` | Comma-separated permitted account ids. Also requires the existing staff/curriculum grant. Configure a restricted list for the pilot. |
 | `MCP_ALLOWED_REDIRECT_HOSTS` | Allowed OAuth callback hosts for the intended clients. |
@@ -98,3 +100,69 @@ account-specific `mcp_video_staging` prefix. The stable LMS playback file is ret
 
 Automated tests use SQLite-only settings, in-memory database fakes, private temporary test files and mocked
 HTTP/storage/Bunny calls. They do not prove a production deployment or a real ChatGPT file transfer.
+
+## Live modules: warning, not a block
+
+Authored modules have no draft/published state. `curriculum.modules` has no status column, so the structure
+read always reports `status: "draft"`, and the tools' "draft module" check does not separate live modules
+from unused ones.
+
+Instead, every write preview counts the learners who have the module on their training plan
+(`Learner.learner_training_plan_modules.module_ref`). This is a count only; no learner is named.
+
+- **Learners found.** The preview warns: "LIVE MODULE: N learner(s) have this module on their training
+  plan…". The write is still allowed after confirmation. This is the owner's decision, made on 2026-11-11.
+- **Count unreadable.** The warning says to treat the module as live.
+- **Not counted.** Learners with progress records only, and no plan entry, are not counted. The progress
+  table (~284k rows) has no index that starts with `module_ref`.
+
+## File uploads and component edits (2026-11-11)
+
+| Setting | Purpose |
+| --- | --- |
+| `MCP_FILE_UPLOADS_ENABLED` | Default off. Allows `save_component_file`: reading, PowerPoint and podcast files uploaded into existing components. |
+
+**`save_component_file`**
+- **Input.** The file comes either attached in the chat (a ChatGPT file reference) or as a pasted public link.
+  Google Drive and SharePoint share links are converted to download links.
+- **Checks.** The file must use an extension the LMS allows for that component type
+  (`COMPONENT_UPLOAD_EXTENSIONS`) and have the matching file signature. Web pages are refused. The limit
+  is 300 MB.
+- **Staging.** At preview the file is staged privately under `mcp_file_staging/<account>/`. `mcp_cleanup` also
+  removes expired file stages.
+- **Upload.** Apply uploads the file through `POST curriculum/components/<id>/upload/`. It then points the
+  component at the file with a revision-checked component PATCH, and reads the result back.
+- **LMS bug found (reported, not fixed).** `_update_component_upload_settings` writes a `settings` key, but the
+  column is `settings_json`. `authoring_upsert` drops the unknown key, so the upload endpoint never attaches
+  the file itself, yet still reports `savedToComponent: true`.
+- **Failed attach.** If the attach fails after the upload, the database rolls back, but the stored file stays
+  in upload storage with nothing pointing at it.
+
+**`update_component`**
+- It changes a component's title, description, expected OTJH or points, and only the fields given. It
+  refuses HTML and refuses a title already used by another component in the same week.
+
+**Every MCP component PATCH also sends `duration`.** The LMS PATCH rebuilds `settings.durationMinutes` from
+`duration`. When `durationMinutes` is 0, that value reads as expected hours × 60, so without `duration` a
+single-field edit would silently set the component's duration (for example, to 120 minutes).
+
+## Structure creation and admin controls (2026-11-11)
+
+| Setting | Purpose |
+| --- | --- |
+| `MCP_STRUCTURE_CREATION_ENABLED` | Default off. Allows `create_programme`, `create_cohort`, `create_group` and `create_module` (Step 10). |
+
+**Super-admin connection controls (Step 11.2)**
+- These are not gated by `MCP_ENABLED`; they work even when it is off.
+- They use the session cookie with CSRF, and only super-admins get in.
+- There is no screen yet; call them from the browser console or a script while signed in.
+
+| Request | What it does |
+| --- | --- |
+| `GET /oauth/admin/tokens?account_id=<id>` | Lists live connections: account, client, when connected and last used, expiry. |
+| `POST /oauth/admin/revoke` `{"account_id": n}` | Revokes every MCP connection of that account. |
+| `POST /oauth/admin/revoke` `{"family_id": "<uuid>"}` | Revokes one connection. |
+| `POST /oauth/admin/clients/<client_id>/disable` | Disables the client and revokes its tokens. |
+
+After restoring a suspended account, revoke all of its connections. This closes the suspend → restore gap from
+the Step 3 review.

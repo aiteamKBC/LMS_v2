@@ -109,16 +109,27 @@ function KsbBar({ metric }: { metric: ReviewKsbProgress | null | undefined }) {
   return <MetricBar label={label} metric={{ actual: null, expected: null, planned: null, ...metric, variancePercent: metric.variancePercent ?? metric.actualPercent - metric.expectedPercent, varianceDirection: metric.varianceDirection ?? (metric.actualPercent >= metric.expectedPercent ? 'above' : 'below') }} tone="blue" />;
 }
 
-function LearningPlanDonut({ metric }: { metric: ReviewProgressMetric }) {
-  const percent = metric?.actualPercent ?? null;
-  const target = clamp(metric?.expectedPercent ?? null);
+function LearningPlanDonut({ metric, coachTarget, coachProgress, requiredProgress }: {
+  metric: ReviewProgressMetric;
+  coachTarget?: ReviewProgressSnapshot['coachProgrammeTarget'];
+  coachProgress?: ReviewProgressSnapshot['coachProgrammeProgress'];
+  requiredProgress?: ReviewProgressSnapshot['requiredProgrammeProgress'];
+}) {
+  const displayMetric = requiredProgress ?? coachProgress ?? metric;
+  const percent = displayMetric?.actualPercent ?? null;
+  const expectedPercent = requiredProgress ? requiredProgress.expectedPercent
+    : coachTarget ? coachTarget.expectedPercent : displayMetric?.expectedPercent ?? null;
+  const varianceMetric = requiredProgress ?? coachProgress ?? coachTarget ?? displayMetric;
+  const target = clamp(expectedPercent);
   const visible = clamp(percent);
   const radius = 66;
   const circumference = 2 * Math.PI * radius;
   return (
     <div className="flex flex-col items-center">
       <p className="mb-5 text-center text-[18px] font-medium text-[#174c67]">Learning Plan Progress</p>
-      <svg width="176" height="176" viewBox="0 0 176 176" role="img" aria-label={`Learning Plan Progress: ${percentLabel(percent)}; target ${percentLabel(metric?.expectedPercent ?? null)}`} className="shrink-0">
+      {requiredProgress ? <p className="mb-3 text-center text-xs text-[#526b80]">Required activities only</p>
+        : coachProgress ? <p className="mb-3 text-center text-xs text-[#526b80]">Main activities only: reading, lectures and quizzes</p> : null}
+      <svg width="176" height="176" viewBox="0 0 176 176" role="img" aria-label={`Learning Plan Progress: ${percentLabel(percent)}; target ${percentLabel(expectedPercent)}`} className="shrink-0">
         <circle cx="88" cy="88" r={radius} fill="none" stroke="#dce4ec" strokeWidth="22" />
         {visible === null ? null : (
           <circle cx="88" cy="88" r={radius} fill="none" stroke="#174ed4" strokeWidth="22" strokeDasharray={`${circumference * visible / 100} ${circumference}`} transform="rotate(-90 88 88)" />
@@ -126,7 +137,10 @@ function LearningPlanDonut({ metric }: { metric: ReviewProgressMetric }) {
         {target === null ? null : <line data-testid="donut-target-marker" x1="88" y1="8" x2="88" y2="36" stroke="black" strokeWidth="3" transform={`rotate(${target * 3.6} 88 88)`} />}
         <text x="88" y="96" textAnchor="middle" className="fill-[#111827] text-[29px] font-medium">{percentLabel(percent)}</text>
       </svg>
-      <p className="mt-2 text-sm text-[#30383d]">Target: {percentLabel(metric?.expectedPercent ?? null)} · <span>{varianceLabel(metric)}</span></p>
+      <p className="mt-2 text-sm text-[#30383d]">Target: {percentLabel(expectedPercent)} · <span>{varianceLabel(varianceMetric)}</span></p>
+      {requiredProgress && requiredProgress.unresolvedActivities > 0
+        ? <p className="mt-2 text-center text-xs text-[#526b80]">Target unavailable: {requiredProgress.unresolvedActivities} required activities need a confirmed scheduled date.</p>
+        : null}
     </div>
   );
 }
@@ -172,6 +186,8 @@ function RagHistory({ entries }: { entries: ReviewRagHistoryEntry[] }) {
 
 export function ReviewProgressPanel({
   snapshot,
+  useCoachProgrammeTarget = false,
+  requireRequiredActivities = false,
   ragHistory = [],
   canCalculate,
   showCalculateAction = canCalculate,
@@ -180,6 +196,11 @@ export function ReviewProgressPanel({
   onCalculate,
 }: {
   snapshot: ReviewProgressSnapshot | null | undefined;
+  /** Only the coach form opts into its saved activity metric. */
+  useCoachProgrammeTarget?: boolean;
+  /** Editable coach reviews must not present an older formula as Required.
+   * Signed/historical reviews keep rendering their frozen calculation. */
+  requireRequiredActivities?: boolean;
   ragHistory?: ReviewRagHistoryEntry[];
   /** False once the review reaches the signature step -- the figures a party
    *  is signing must not move underneath them. */
@@ -219,13 +240,21 @@ export function ReviewProgressPanel({
           </button>
         ) : null}
       </div>
-      {showCalculateAction && !canCalculate && <p id={actionHelpId} className="mt-1 text-xs text-foreground-500 sm:text-right">Available to the assigned Coach only.</p>}
+      {showCalculateAction && !canCalculate && <p id={actionHelpId} className="mt-1 text-xs text-foreground-500 sm:text-right">Available when this Progress Review is editable.</p>}
 
       {snapshot ? (
         <div className="mt-5 overflow-hidden border border-[#ccd5df] bg-white">
           <div className="grid md:grid-cols-[34%_66%]">
             <div className="flex min-h-[350px] items-center justify-center px-5 py-8 md:border-r md:border-[#ccd5df]">
-              <LearningPlanDonut metric={snapshot.programmeProgress} />
+              {useCoachProgrammeTarget && requireRequiredActivities && !snapshot.requiredProgrammeProgress ? (
+                <div role="status" className="text-center">
+                  <p className="text-[18px] font-medium text-[#174c67]">Learning Plan Progress</p>
+                  <p className="mt-3 text-sm text-[#526b80]">Recalculate this review to show progress against Required activities.</p>
+                </div>
+              ) : <LearningPlanDonut metric={snapshot.programmeProgress}
+                coachTarget={useCoachProgrammeTarget ? snapshot.coachProgrammeTarget : undefined}
+                coachProgress={useCoachProgrammeTarget ? snapshot.coachProgrammeProgress : undefined}
+                requiredProgress={useCoachProgrammeTarget ? snapshot.requiredProgrammeProgress : undefined} />}
             </div>
             <div className="grid gap-7 border-t border-[#ccd5df] px-5 py-7 md:border-t-0 md:px-7">
               <KsbBar metric={snapshot.ksbProgress} />

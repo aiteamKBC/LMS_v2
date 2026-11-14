@@ -14,7 +14,7 @@ vi.mock('./page', () => ({ InlineAttachmentPreview: ({ url }: { url: string }) =
 vi.mock('@/api/reflectionSubmission', () => ({
   loadLearningReflectionSubmission: vi.fn(), saveLearningReflectionSubmission: vi.fn(),
 }));
-vi.mock('@/components/feature/AssignmentEvidence', () => ({ AssignmentEvidence: () => <div>Evidence uploader</div> }));
+vi.mock('@/components/feature/AssignmentEvidence', () => ({ AssignmentEvidence: ({ onRemoved }: { onRemoved?: (id: string) => void }) => <div>Evidence uploader<button onClick={() => onRemoved?.('new-file')}>Delete mistaken upload</button></div> }));
 vi.mock('@/api/learnerDetail', () => ({ fetchLearnerDetail: vi.fn().mockResolvedValue({ ksbs: [], activityFeed: [] }) }));
 vi.mock('@/api/learnerCalendar', () => ({ fetchLearnerCalendarEvents: vi.fn().mockResolvedValue({ events: [], bookingCalendar: { coveredYears: [2026], bankHolidays: [] } }), bookLearnerCalendarSession: vi.fn(), fetchLearnerMeetingArtifacts: vi.fn().mockResolvedValue({ artifacts: [] }), learnerMeetingArtifactContentUrl: vi.fn() }));
 vi.mock('@/api/assignmentTopics', () => ({ loadAssignmentTopicStates: vi.fn().mockResolvedValue([]) }));
@@ -63,29 +63,72 @@ function confirmLearning() {
   for (const name of learningDeclarations) fireEvent.click(screen.getByRole('checkbox', { name }));
 }
 
-it('returns to assignment hours for correction before any completion request', async () => {
-  render(<AssignmentSubmissionWizard {...props} initialMonth="2026-10" />);
+it.each(['commercial', 'apprenticeship'] as const)('submits %s assignment hours directly without time confirmation', async kind => {
+  render(<AssignmentSubmissionWizard {...props} kind={kind} initialMonth="2026-10" />);
   await enterTopicTime();
+  fireEvent.change(screen.getByLabelText('Hours 1'), { target: { value: '8' } });
   confirmLearning();
   fireEvent.click(screen.getByRole('button', { name: /Quality checks/ }));
   fireEvent.click(screen.getByRole('button', { name: 'Run quality checks' }));
   await waitFor(() => expect(screen.getByRole('button', { name: 'Submit assignment' })).toBeEnabled());
   fireEvent.click(screen.getByRole('button', { name: 'Submit assignment' }));
-  expect(await screen.findByRole('alertdialog')).toHaveTextContent('3 hours and 30 minutes');
-  expect(props.onSubmitProgress).not.toHaveBeenCalled();
-  fireEvent.click(screen.getByRole('button', { name: 'Edit time' }));
-  expect(await screen.findByLabelText('Hours 1')).toHaveValue(3.5);
-  expect(screen.getByLabelText('Topic 1')).toHaveValue('Research');
-  fireEvent.change(screen.getByLabelText('Hours 1'), { target: { value: '4.9' } });
-  fireEvent.click(screen.getByRole('button', { name: /Quality checks/ }));
+  expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument();
+  await screen.findByText('Submission preview');
+  expect(props.onSubmitProgress).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ timeTakenSeconds: 28800, timeEntrySource: 'input' }));
+  expect(vi.mocked(saveLearningReflectionSubmission).mock.calls.at(-1)?.[0]).toMatchObject({
+    actualTimeHours: '8', plannedOtjh: '2',
+    monthlyAssignment: { timeEntries: [{ topic: 'Research', hours: '8', date: '2026-10-15' }] },
+  });
+  expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument();
+});
+
+it('submits saved manual assignment time without a detailed time table or confirmation', async () => {
+  vi.mocked(loadLearningReflectionSubmission).mockResolvedValue({
+    status: 'draft', actualTimeHours: '8.5', assignmentTimeSource: 'input',
+    monthlyAssignment: {
+      ...emptyMonthlyAssignment([], '2026-10'), step: 7, timeEntries: undefined,
+      plannedReviewed: true, newKnowledge: true, newSkills: true, sharingConsent: true,
+    },
+  } as Awaited<ReturnType<typeof loadLearningReflectionSubmission>>);
+  render(<AssignmentSubmissionWizard {...props} timeSeconds={30600} timeSource="input" />);
+  await screen.findByRole('button', { name: 'Run quality checks' });
   fireEvent.click(screen.getByRole('button', { name: 'Run quality checks' }));
   await waitFor(() => expect(screen.getByRole('button', { name: 'Submit assignment' })).toBeEnabled());
   fireEvent.click(screen.getByRole('button', { name: 'Submit assignment' }));
-  expect(await screen.findByRole('alertdialog')).toHaveTextContent('4 hours and 54 minutes');
-  fireEvent.click(screen.getByRole('button', { name: 'Confirm time' }));
-  await waitFor(() => expect(props.onSubmitProgress).toHaveBeenCalledWith(expect.objectContaining({ timeTakenSeconds: 17640, timeEntrySource: 'input' })));
+  expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument();
+  await screen.findByText('Submission preview');
+  expect(props.onSubmitProgress).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ timeTakenSeconds: 30600, timeEntrySource: 'input' }));
+  expect(vi.mocked(saveLearningReflectionSubmission).mock.calls.at(-1)?.[0].actualTimeHours).toBe('8.5');
 });
 describe('monthly assignment drafts', () => {
+  it('excludes a removed old version from the revised draft without deleting its history', async () => {
+    const monthly = emptyMonthlyAssignment([], '2026-10');
+    monthly.evidence = [{ id: 'old-file', name: 'Old.pdf', points: '' }, { id: 'new-file', name: 'New.pdf', points: '' }];
+    monthly.claims = [{ code: 'K1', explanation: 'Evidence explanation', evidenceIds: ['old-file', 'new-file'] }];
+    const history = [{ number: 1, status: 'rejected', answer: 'Original', coachFeedback: 'Revise', submittedAt: null, reviewedAt: null, reviewedBy: 'Coach' }];
+    vi.mocked(loadLearningReflectionSubmission).mockResolvedValue({ status: 'rejected', monthlyAssignment: monthly, submissionAttempts: history } as Awaited<ReturnType<typeof loadLearningReflectionSubmission>>);
+    render(<AssignmentSubmissionWizard {...props} evidenceFiles={[
+      { id: 'old-file', filename: 'Old.pdf', status: 'approved', sizeBytes: 12, canDelete: false },
+      { id: 'new-file', filename: 'New.pdf', status: 'approved', sizeBytes: 12, canDelete: true },
+    ] as import('@/api/evidence').EvidenceRecord[]} />);
+    fireEvent.click(await screen.findByRole('button', { name: /Evidence & cross-referencing/ }));
+    const old = screen.getByRole('heading', { name: 'Old.pdf' }).closest('article')!;
+    fireEvent.click(within(old).getByRole('button', { name: 'Remove from submission' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save draft' }));
+    await waitFor(() => expect(saveLearningReflectionSubmission).toHaveBeenCalledWith(expect.objectContaining({
+      evidenceFiles: ['New.pdf'], monthlyAssignment: expect.objectContaining({
+        evidence: [{ id: 'new-file', name: 'New.pdf', points: '' }],
+        claims: [expect.objectContaining({ evidenceIds: ['new-file'] })],
+      }),
+    })));
+    expect(screen.getByText('Original')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Delete mistaken upload' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save draft' }));
+    await waitFor(() => expect(saveLearningReflectionSubmission).toHaveBeenLastCalledWith(expect.objectContaining({
+      evidenceFiles: [], monthlyAssignment: expect.objectContaining({ evidence: [], claims: [expect.objectContaining({ evidenceIds: [] })] }),
+    })));
+  });
+
   it('keeps a partially accepted topic locked and shows the question it answered', async () => {
     vi.mocked(loadLearningReflectionSubmission).mockResolvedValue({
       status: 'partial', assignmentTopicId: '2', assignmentQuestion: 'The original Topic 2 question.',
@@ -328,7 +371,7 @@ describe('monthly assignment drafts', () => {
     await waitFor(() => expect(screen.getByRole('button', { name: 'Submit assignment' })).not.toBeDisabled());
     fireEvent.click(screen.getByRole('button', { name: 'Submit assignment' }));
     expect(props.onSubmitProgress).not.toHaveBeenCalled();
-    fireEvent.click(await screen.findByRole('button', { name: 'Confirm time' }));
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument();
     await screen.findByText('Submission preview');
     expect(props.onSubmitProgress).toHaveBeenCalledOnce();
     expect(props.onSubmitProgress).toHaveBeenCalledWith(expect.objectContaining({ timeTakenSeconds: 12600, timeEntrySource: 'input' }));
@@ -349,7 +392,7 @@ describe('monthly assignment drafts', () => {
     vi.mocked(checkMonthlyAssignment).mockResolvedValueOnce([]);
     fireEvent.click(screen.getByRole('button', { name: 'Submit assignment' }));
     expect(props.onSubmitProgress).not.toHaveBeenCalled();
-    fireEvent.click(await screen.findByRole('button', { name: 'Confirm time' }));
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument();
     await screen.findByText(/Complete the outstanding checks/);
     expect(props.onSubmitProgress).not.toHaveBeenCalled();
     expect(screen.queryByText('Submission preview')).not.toBeInTheDocument();
@@ -483,9 +526,15 @@ it.each(['commercial', 'apprenticeship'] as const)('saves a changed %s MCM link 
   await waitFor(() => expect(screen.getByRole('button', { name: 'Submit assignment' })).toBeEnabled());
   expect(vi.mocked(checkMonthlyAssignment).mock.calls.at(-1)?.[0]).toMatchObject({ monthlyAssignment: { meetingKey: newMeeting.eventKey } });
   fireEvent.click(screen.getByRole('button', { name: 'Submit assignment' }));
-  const confirm = await screen.findByRole('button', { name: 'Confirm time' });
-  fireEvent.click(confirm);
-  await waitFor(() => expect(props.onSubmitProgress).toHaveBeenCalledWith(expect.objectContaining({ assignmentTopicId: '2', assignmentAnswer: 'Keep my assignment answer' })));
+  await waitFor(() => expect(props.onSubmitProgress).toHaveBeenCalledWith(expect.objectContaining({
+    assignmentTopicId: '2', assignmentAnswer: 'Keep my assignment answer',
+    timeTakenSeconds: 12600, timeEntrySource: 'input',
+  })));
+  expect(vi.mocked(saveLearningReflectionSubmission).mock.calls.at(-1)?.[0]).toMatchObject({
+    // The wizard saves the draft; the completion callback owns the atomic
+    // declaration and final submission rather than a second reflection POST.
+    actualTimeHours: '3.5', submissionMode: 'draft', otjhConfirmed: false, signedDeclaration: false,
+  });
   expect(vi.mocked(saveLearningReflectionSubmission).mock.calls.at(-1)?.[0].monthlyAssignment.meetingKey).toBe(newMeeting.eventKey);
 });
 

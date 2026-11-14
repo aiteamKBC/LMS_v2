@@ -171,6 +171,8 @@ def register_rows(occurrence, session, profiles, attendance, existing, now):
             "first_join_at": prior.get("first_join_at"),
             "last_leave_at": prior.get("last_leave_at"),
             "calculated_at": now,
+            "attendance_basis": "staff",
+            "teams_attendance_status": prior.get("teams_attendance_status"),
         })
     return rows
 
@@ -203,6 +205,7 @@ def bulk_attendance_live_day(request):
                 .values(
                     "learner_profile_id", "recovery_status", "attended_seconds",
                     "attendance_report_id", "first_join_at", "last_leave_at",
+                    "teams_attendance_status",
                 )
             }
             rows = register_rows(
@@ -210,6 +213,8 @@ def bulk_attendance_live_day(request):
             )
             with connections[database].cursor() as cursor:
                 upsert_live_session_register(cursor, rows)
+            from .parallel_attendance_register import reconcile_parallel_attendance
+            reconcile_parallel_attendance([occurrence['id']], database=database)
             from engagement_api.feedback_delivery import reconcile_feedback_after_attendance_commit
             reconcile_feedback_after_attendance_commit([occurrence['id']], using=database)
     except LiveAttendanceTargetError as exc:

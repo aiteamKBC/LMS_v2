@@ -38,6 +38,110 @@ function snapshot(overrides: Partial<ReviewProgressSnapshot> = {}): ReviewProgre
 }
 
 describe('ReviewProgressPanel reference visual contract', () => {
+  it.each([false, true])('requires a Required snapshot on editable coach forms, including view-as=%s', async viewingAs => {
+    const onCalculate = vi.fn();
+    const saved = snapshot({ programmeProgress: metric(27, 81), coachProgrammeProgress: metric(30, 83) });
+    render(<ReviewProgressPanel snapshot={saved} useCoachProgrammeTarget requireRequiredActivities
+      canCalculate={!viewingAs} showCalculateAction calculating={false} onCalculate={onCalculate} />);
+    expect(screen.getByRole('status')).toHaveTextContent('Recalculate this review to show progress against Required activities.');
+    expect(screen.queryByRole('img', { name: /Learning Plan Progress:/ })).not.toBeInTheDocument();
+    expect(screen.getByRole('img', { name: 'Off-the-job hours progress: 64% against an expected 41%' })).toBeVisible();
+    await userEvent.setup().click(screen.getByRole('button', { name: 'Recalculate' }));
+    expect(onCalculate).toHaveBeenCalledTimes(viewingAs ? 0 : 1);
+  });
+
+  it.each([false, true])('prefers the frozen Required population only in the coach form: %s', useCoachProgrammeTarget => {
+    const saved = snapshot({
+      programmeProgress: metric(17, 81), coachProgrammeProgress: metric(25, 83),
+      coachProgrammeTarget: { formulaVersion: 'scheduled_main_activities_v1', expected: 83,
+        planned: 100, expectedPercent: 83, variancePercent: -58, varianceDirection: 'below' },
+      requiredProgrammeProgress: { ...metric(33.33, 66.67), actual: 1, expected: 2, planned: 3,
+        formulaVersion: 'scheduled_required_activities_v1', unresolvedActivities: 0 },
+    });
+    const before = structuredClone(saved);
+    render(<ReviewProgressPanel snapshot={saved} useCoachProgrammeTarget={useCoachProgrammeTarget}
+      canCalculate={false} calculating={false} onCalculate={vi.fn()} />);
+    expect(screen.getByRole('img', { name: useCoachProgrammeTarget
+      ? 'Learning Plan Progress: 33%; target 67%' : 'Learning Plan Progress: 17%; target 81%' })).toBeVisible();
+    if (useCoachProgrammeTarget) expect(screen.getByText('Required activities only')).toBeVisible();
+    else expect(screen.queryByText('Required activities only')).not.toBeInTheDocument();
+    expect(screen.queryByText('Main activities only: reading, lectures and quizzes')).not.toBeInTheDocument();
+    expect(screen.getByRole('img', { name: 'Off-the-job hours progress: 64% against an expected 41%' })).toBeVisible();
+    expect(saved).toEqual(before);
+  });
+
+  it.each([0, null])('preserves a Required target of %s instead of falling back to Main', expectedPercent => {
+    render(<ReviewProgressPanel snapshot={snapshot({
+      coachProgrammeProgress: metric(25, 83),
+      requiredProgrammeProgress: { ...metric(20, expectedPercent),
+        formulaVersion: 'scheduled_required_activities_v1', unresolvedActivities: expectedPercent === null ? 2 : 0 },
+    })} useCoachProgrammeTarget canCalculate={false} calculating={false} onCalculate={vi.fn()} />);
+    expect(screen.getByRole('img', { name: `Learning Plan Progress: 20%; target ${expectedPercent === null ? 'Not recorded' : '0%'}` })).toBeVisible();
+    if (expectedPercent === null) {
+      expect(screen.queryByTestId('donut-target-marker')).not.toBeInTheDocument();
+      expect(screen.getByText('Target unavailable: 2 required activities need a confirmed scheduled date.')).toBeVisible();
+    }
+  });
+
+  it.each([false, true])('only opts into the main target in the coach form: %s', useCoachProgrammeTarget => {
+    const saved = snapshot({
+      programmeProgress: metric(17, 81),
+      coachProgrammeTarget: { formulaVersion: 'scheduled_main_activities_v1',
+        expected: 3, planned: 5, expectedPercent: 60, variancePercent: -43, varianceDirection: 'below' },
+    });
+    const before = structuredClone(saved);
+    render(<ReviewProgressPanel snapshot={saved} useCoachProgrammeTarget={useCoachProgrammeTarget}
+      canCalculate={false} calculating={false} onCalculate={vi.fn()} />);
+    expect(screen.getByRole('img', { name: `Learning Plan Progress: 17%; target ${useCoachProgrammeTarget ? 60 : 81}%` })).toBeVisible();
+    expect(screen.getByText(`${useCoachProgrammeTarget ? 43 : 64}% Below`)).toBeVisible();
+    expect(screen.getByTestId('donut-target-marker')).toHaveAttribute('transform', `rotate(${(useCoachProgrammeTarget ? 60 : 81) * 3.6} 88 88)`);
+    expect(screen.getByRole('img', { name: 'Off-the-job hours progress: 64% against an expected 41%' })).toBeVisible();
+    expect(saved).toEqual(before);
+  });
+
+  it.each([false, true])('uses Main-only completion and target only on the coach form: %s', useCoachProgrammeTarget => {
+    const saved = snapshot({
+      programmeProgress: metric(17, 81),
+      coachProgrammeTarget: { formulaVersion: 'scheduled_main_activities_v1',
+        expected: 6, planned: 12, expectedPercent: 50,
+        variancePercent: -25, varianceDirection: 'below' },
+      coachProgrammeProgress: { actual: 3, expected: 6, planned: 12,
+        actualPercent: 25, expectedPercent: 50,
+        variancePercent: -25, varianceDirection: 'below' },
+    });
+    render(<ReviewProgressPanel snapshot={saved} useCoachProgrammeTarget={useCoachProgrammeTarget}
+      canCalculate={false} calculating={false} onCalculate={vi.fn()} />);
+    expect(screen.getByRole('img', { name: useCoachProgrammeTarget
+      ? 'Learning Plan Progress: 25%; target 50%' : 'Learning Plan Progress: 17%; target 81%' })).toBeVisible();
+    expect(screen.getByText(`${useCoachProgrammeTarget ? 25 : 64}% Below`)).toBeVisible();
+    const mainLabel = screen.queryByText('Main activities only: reading, lectures and quizzes');
+    if (useCoachProgrammeTarget) expect(mainLabel).toBeVisible();
+    else expect(mainLabel).not.toBeInTheDocument();
+  });
+
+  it('preserves the original target for old snapshots even in the coach form', () => {
+    render(<ReviewProgressPanel snapshot={snapshot()} useCoachProgrammeTarget
+      canCalculate={false} calculating={false} onCalculate={vi.fn()} />);
+    expect(screen.getByRole('img', { name: 'Learning Plan Progress: 28%; target 0%' })).toBeVisible();
+  });
+
+  it.each([0, null])('does not replace an explicit main target of %s with the shared target', expectedPercent => {
+    render(<ReviewProgressPanel snapshot={snapshot({ programmeProgress: metric(17, 81),
+      coachProgrammeTarget: { formulaVersion: 'scheduled_main_activities_v1', expected: 0,
+        planned: expectedPercent === null ? 0 : 5, expectedPercent,
+        variancePercent: expectedPercent === null ? null : 17,
+        varianceDirection: expectedPercent === null ? '' : 'above' },
+    })} useCoachProgrammeTarget canCalculate={false} calculating={false} onCalculate={vi.fn()} />);
+    expect(screen.getByRole('img', { name: `Learning Plan Progress: 17%; target ${expectedPercent === null ? 'Not recorded' : '0%'}` })).toBeVisible();
+    if (expectedPercent === null) {
+      expect(screen.queryByTestId('donut-target-marker')).not.toBeInTheDocument();
+      expect(screen.getByText('Target unavailable')).toBeVisible();
+    } else {
+      expect(screen.getByTestId('donut-target-marker')).toHaveAttribute('transform', 'rotate(0 88 88)');
+      expect(screen.getByText('17% Above')).toBeVisible();
+    }
+  });
+
   it('keeps an unavailable action hidden unless visibility is explicitly requested', () => {
     render(<ReviewProgressPanel snapshot={snapshot()} canCalculate={false} calculating={false} onCalculate={vi.fn()} />);
     expect(screen.queryByRole('button', { name: 'Recalculate' })).not.toBeInTheDocument();
@@ -53,7 +157,7 @@ describe('ReviewProgressPanel reference visual contract', () => {
     </>);
     const button = screen.getByRole('button', { name: hasSnapshot ? 'Recalculate' : 'Calculate' });
     expect(button).toBeDisabled();
-    expect(button).toHaveAccessibleDescription('Available to the assigned Coach only.');
+    expect(button).toHaveAccessibleDescription('Available when this Progress Review is editable.');
     await user.click(button);
     await user.click(screen.getByRole('button', { name: 'Before progress' }));
     await user.tab();

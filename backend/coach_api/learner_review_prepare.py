@@ -19,14 +19,35 @@ class _ReviewNotFound(Exception):
     pass
 
 
+def _preview_caseload_error(account, profile):
+    """A coach may preview only their own caseload; an admin is unscoped.
+
+    Coaches sign in as ``staff`` (login.models.ROLE_CHOICES has no separate
+    coach role), so the role alone cannot authorize this read. Ownership is
+    the learner profile's assigned coach, the same field every other coach
+    scope uses -- never a learner id supplied in the URL.
+    """
+    if account.role == "admin":
+        return None
+    assigned = str(getattr(profile, "coach_email", "") or "").strip().casefold()
+    if not assigned or assigned != str(account.email or "").strip().casefold():
+        return JsonResponse({"detail": "This learner is not on your caseload."}, status=403)
+    return None
+
+
 @require_GET
 def preview_learner_review(request, review_id, kind, pk):
-    """Admins can inspect a learner's form without initializing or saving it."""
+    """Read a learner's form without initializing or saving it.
+
+    Admins may read any learner; a coach may read their own caseload. Both are
+    read-only: nothing here initializes an overlay, writes answers or
+    signatures, or touches the Aptem source.
+    """
     account = authenticate_request(request)
     if account is None:
         return JsonResponse({"detail": "Sign in to view this review."}, status=401)
-    if account.role != "admin":
-        return JsonResponse({"detail": "This preview is available to administrators only."}, status=403)
+    if account.role not in {"admin", "staff"}:
+        return JsonResponse({"detail": "This preview is available to staff only."}, status=403)
     if not review_id.startswith("imported-review:"):
         return JsonResponse({"detail": "Review not found."}, status=404)
     from learner_api.learner_detail import SOURCE_MODELS
@@ -40,6 +61,9 @@ def preview_learner_review(request, review_id, kind, pk):
         return JsonResponse({"detail": "The learner's Review identity could not be verified."}, status=409)
     if profile is None or source_for_learner(learner, profile).kind != "aptem":
         return JsonResponse({"detail": "Review not found."}, status=404)
+    denied = _preview_caseload_error(account, profile)
+    if denied is not None:
+        return denied
     from .views import _imported_review_definition
     overlays = list(ImportedReviewInstance.objects.filter(
         event_key=review_id, learner_id=profile.pk, source_review_id__isnull=False,

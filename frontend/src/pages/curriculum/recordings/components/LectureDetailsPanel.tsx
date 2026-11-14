@@ -5,8 +5,12 @@ import {
   lectureReadyCount,
 } from "@/pages/curriculum/recordings/utils";
 import LectureAttendance from './LectureAttendance';
+import LectureTranscript from './LectureTranscript';
 import RecordingItem from "@/pages/curriculum/recordings/components/RecordingItem";
 import { lazy, Suspense, useMemo, useState } from 'react';
+import { ShieldCheck, Video } from 'lucide-react';
+import RecordingsDetailsHeader from '@/components/feature/RecordingsDetailsHeader';
+import detailsStyles from '@/components/feature/RecordingsDetails.module.css';
 const QualityReviewDialog = lazy(() => import('@/pages/coaching-recordings/QualityReviewDialog'));
 
 interface LectureDetailsPanelProps {
@@ -44,34 +48,19 @@ export default function LectureDetailsPanel({
   return (
     <><aside
       aria-label="Lecture details"
-      className="fixed inset-y-0 right-0 z-50 flex w-full max-w-md flex-col overflow-hidden border-l border-background-200 bg-background-50 shadow-2xl animate-slide-in-right"
+      className={`${detailsStyles.drawer} animate-slide-in-right`}
     >
-      <div className="flex items-start justify-between gap-3 border-b border-background-200 p-4">
-        <div className="min-w-0">
-          <p className="text-xs font-semibold uppercase tracking-wide text-primary-600">Lecture details</p>
-          <h2 className="mt-1 font-heading text-base font-bold leading-snug text-foreground-950">
-            {lecture.title}
-          </h2>
-        </div>
-        <button
-          type="button"
-          onClick={onClose}
-          aria-label="Close details panel"
-          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-foreground-500 transition-colors hover:bg-background-100 hover:text-foreground-900"
-        >
-          <i className="ri-close-line text-lg" aria-hidden="true"></i>
-        </button>
-      </div>
+      <RecordingsDetailsHeader eyebrow="Lecture details" title={lecture.title} closeLabel="Close details panel" onClose={onClose} />
 
-      <div className="flex-1 overflow-y-auto p-4 scrollbar-slim">
+      <div className={`${detailsStyles.body} scrollbar-slim`}>
         {lecture.archived && <p className="rounded-md bg-slate-100 px-3 py-2 text-xs text-slate-700">Archived module. Its saved recordings remain available.</p>}
         {lecture.statusReason && <p role="status" className="rounded-md bg-amber-50 px-3 py-2 text-xs text-amber-900">{lecture.statusReason}</p>}
         {lecture.joinUrl && ['upcoming', 'inProgress'].includes(lecture.status) && <a href={lecture.joinUrl} target="_blank" rel="noopener noreferrer"
           className="mt-3 inline-flex rounded-md bg-primary-600 px-3 py-2 text-sm font-semibold text-white">Open Teams meeting</a>}
 
-        <dl className="mt-4 grid grid-cols-2 gap-x-4 gap-y-3">
+        <dl className={detailsStyles.metadata}>
           {details.map((item) => (
-            <div key={item.label} className="min-w-0">
+            <div key={item.label} className={item.label === 'Week' ? detailsStyles.wide : 'min-w-0'}>
               <dt className="text-[11px] font-semibold uppercase tracking-wide text-foreground-400">
                 {item.label}
               </dt>
@@ -80,9 +69,9 @@ export default function LectureDetailsPanel({
           ))}
         </dl>
 
-        <div className="mt-5 flex items-center justify-between border-t border-background-200 pt-4">
-          <h3 className="font-heading text-sm font-bold text-foreground-950">Recordings</h3>
-          <span className="text-xs font-medium text-foreground-600">
+        <div className={detailsStyles.sectionHeading}>
+          <h3><Video size={16} aria-hidden="true" />Recordings</h3>
+          <span className={detailsStyles.count}>
             {total === 0 ? "None" : `${readyCount} of ${total} ready`}
           </span>
         </div>
@@ -108,17 +97,19 @@ export default function LectureDetailsPanel({
           )}
         </div>
 
-        <div className="mt-5"><LectureAttendance key={`${lecture.id}:${timeZone}`} lecture={lecture} timeZone={timeZone} /></div>
+        {teachingLecture && <LectureTranscript key={`${teachingLecture.moduleId}:${teachingLecture.seriesId}:${teachingLecture.occurrenceId}`} scope={teachingLecture} />}
 
-        <section className="mt-5 rounded-xl border border-primary-200 bg-primary-50 p-4" aria-label="Teaching quality check">
-          <h3 className="text-sm font-bold text-foreground-950">Teaching Quality Check</h3>
+        <div className={detailsStyles.attendance}><LectureAttendance key={`${lecture.id}:${timeZone}`} lecture={lecture} timeZone={timeZone} /></div>
+
+        <section className={detailsStyles.quality} aria-label="Teaching quality check">
+          <h3><ShieldCheck size={16} aria-hidden="true" />Teaching Quality Check</h3>
           <p className="mt-1 text-xs leading-5 text-foreground-600">Teaching Session Feedback Form · One review for the lecture and tutor.</p>
-          {teachingLecture ? <button type="button" onClick={() => setQualityOpen(true)} className="mt-3 rounded-lg bg-primary-600 px-3 py-2 text-xs font-semibold text-white hover:bg-primary-700">Open teaching quality check</button>
+          {teachingLecture ? <button type="button" onClick={() => setQualityOpen(true)} className={`${detailsStyles.primary} mt-3`}>Open teaching quality check</button>
             : <p className="mt-2 text-xs text-foreground-600">A saved lecture is required before its teaching review can be opened.</p>}
         </section>
 
-        <p className="mt-5 flex items-start gap-2 rounded-md bg-secondary-50 px-3 py-2.5 text-[11px] leading-relaxed text-secondary-900">
-          <i className="ri-shield-check-line mt-0.5 text-sm" aria-hidden="true"></i>
+        <p className={detailsStyles.notice}>
+          <ShieldCheck size={14} aria-hidden="true" />
           Downloads are served by the LMS archive through an authenticated request. Only recordings marked
           Ready have a saved file available.
         </p>

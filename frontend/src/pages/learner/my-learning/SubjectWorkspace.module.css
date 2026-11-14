@@ -73,7 +73,23 @@
   color: #fff;
 }
 
-:global([data-theme='dark']) .learningPage .sourceTabs button[aria-selected='true'] {
+:global([data-theme='dark'] .dashboard-theme .workspace-main) .learningPage .sourceTabs button[aria-selected='true'] {
+  background: #5e378d;
+  color: #fff;
+}
+
+:global([data-theme='dark']) .learningPage .teachingToggle {
+  background: #283b56;
+  border-color: var(--kbc-border);
+}
+
+:global([data-theme='dark'] .dashboard-theme .workspace-main) .learningPage :is(.sourceTabs, .teachingToggle) button:not([aria-selected='true']):not([aria-pressed='true']) {
+  background: #392a4b;
+  border-color: #60477c;
+  color: #eadcf9;
+}
+
+:global([data-theme='dark']) .learningPage .teachingToggle button[aria-pressed='true'] {
   background: #5e378d;
   color: #fff;
 }
@@ -200,6 +216,7 @@
 }
 
 .coverLarge { height: 180px; }
+.cover .courseCoverImage { object-fit: contain; background: #f8f6fb; }
 .coverFallback { background: linear-gradient(120deg, var(--learner-soft, #f6f8fb), var(--learner-accent-soft, #f0eaf8)); }
 .coverOrbit {
   position: absolute;
@@ -422,9 +439,19 @@
 .stat .progressRing { display: grid; flex: 0 0 auto; place-items: center; width: 65px; height: 65px; border-radius: 50%; background: conic-gradient(var(--learner-purple, #673ab7) var(--kbc-ring-progress), #edf0f5 0); }
 .progressRing span { display: grid; place-items: center; width: 52px; height: 52px; border-radius: 50%; background: #fff; color: var(--learner-navy, #182d48); font-size: 15px; font-weight: 750; }
 .toolbar { display: grid; grid-template-columns: minmax(180px, 1fr) minmax(145px, .65fr) minmax(145px, .65fr) auto; align-items: end; gap: 12px; margin: 0 0 22px; }
-.sourceTabs { grid-column: 1 / -1; display: inline-flex; width: fit-content; padding: 3px; border: 1px solid #ded7ef; border-radius: 10px; background: #f5f1fc; }
-.sourceTabs button { min-height: 34px; padding: 7px 18px; border-radius: 7px; color: #62458a; font-size: 12px; font-weight: 700; }
-.sourceTabs button[aria-selected='true'] { background: var(--learner-purple, #673ab7); color: #fff; box-shadow: 0 2px 6px #673ab72b; }
+.filterGroups { grid-column: 1 / -1; display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: center; justify-self: center; width: min(100%, 1052px); gap: 18px 16px; min-width: 0; container: filterRow / inline-size; }
+.sectionFilter { display: flex; flex: 0 1 auto; align-items: center; justify-content: center; width: max-content; max-width: 100%; min-width: 0; }
+.sourceFilter, .teachingFilter { display: flex; flex: 1 1 270px; flex-direction: column; align-items: flex-start; width: min(100%, 348px); gap: 6px; min-width: 0; max-width: 348px; color: #637388; font-size: 12px; font-weight: 600; }
+.sourceTabs { display: flex; max-width: 100%; width: 100%; gap: 4px; padding: 3px; border: 1px solid #ded7ef; border-radius: 10px; background: #fff; }
+:global(.dashboard-theme .workspace-main) .learningPage .sourceTabs button { flex: 1; min-width: 0; min-height: 34px; padding: 7px 8px; border: 1px solid #ddd0ef; border-radius: 7px; background: #fff; color: #59368e; font-size: 12px; font-weight: 700; white-space: nowrap; cursor: pointer; }
+:global(.dashboard-theme .workspace-main) .learningPage .sourceTabs button[aria-selected='true'] { border-color: var(--learner-purple, #673ab7); background: var(--learner-purple, #673ab7); color: #fff; box-shadow: 0 2px 6px #673ab72b; }
+:global(.dashboard-theme .workspace-main) .learningPage .sourceTabs button:not([aria-selected='true']):hover { background: #e2d4f4; }
+:global(.dashboard-theme .workspace-main) .learningPage .sourceTabs button:focus-visible { outline: 2px solid var(--learner-purple, #673ab7); outline-offset: 2px; }
+.teachingToggle { display: flex; width: 100%; gap: 4px; padding: 3px; border: 1px solid #ded7ef; border-radius: 12px; background: #fff; }
+.learningPage .teachingToggle button { flex: 1; min-width: 0; min-height: 38px; padding: 8px 12px; border: 1px solid #ddd0ef; border-radius: 9px; background: #fff; color: #59368e; font-size: 12px; font-weight: 700; white-space: nowrap; cursor: pointer; }
+.learningPage .teachingToggle button[aria-pressed='true'] { border-color: var(--learner-purple, #673ab7); background: var(--learner-purple, #673ab7); color: #fff; box-shadow: 0 2px 7px #673ab72b; }
+.learningPage .teachingToggle button:not([aria-pressed='true']):hover { background: #e2d4f4; }
+.learningPage .teachingToggle button:focus-visible { outline: 2px solid var(--learner-purple, #673ab7); outline-offset: 2px; }
 .search { display: flex; align-items: center; flex: 1 1 220px; gap: 10px; height: 43px; padding: 0 13px; border: 1px solid #dfe6ee; border-radius: 9px; background: #fff; color: #637388; }
 .search input { min-width: 0; width: 100%; height: 100%; outline: none; background: transparent; color: var(--learner-navy, #182d48); font-size: 13px; }
 .search:focus-within { outline: 2px solid var(--learner-purple, #673ab7); outline-offset: 2px; }
@@ -606,6 +633,13 @@
 .workspace button:focus-visible, .workspace a:focus-visible, .workspace select:focus-visible { outline: 2px solid var(--learner-purple, #673ab7); outline-offset: 3px; }
 
 @container subjects (min-width: 1160px) { .grid { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
+@container filterRow (min-width: 900px) {
+  .filterGroupsWithSections .sourceFilter, .filterGroupsWithSections .teachingFilter { position: relative; }
+  .filterGroupsWithSections .sourceFilter::before, .filterGroupsWithSections .teachingFilter::before {
+    content: ''; position: absolute; left: -9px; bottom: 2px; width: 2px; height: 36px;
+    border-radius: 2px; background: var(--learner-purple, #673ab7); opacity: .55;
+  }
+}
 @container learning (max-width: 1280px) {
   .catalogueLayout { grid-template-columns: minmax(0, 1fr); }
   .catalogueAside { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -844,6 +878,11 @@
 .learningPage .heroTag { top: 16px; right: 16px; font-size: 8px; }
 .learningPage .journeyDots { bottom: 13px; left: 24px; }
 .learningPage .catalogueTabs { margin: 8px 0 12px; }
+.learningPage .sectionFilter .catalogueTabs { width: max-content; max-width: 100%; margin: 0; padding-bottom: 0; overflow: visible; }
+@container filterRow (max-width: 300px) {
+  .sectionFilter { flex-basis: 100%; width: 100%; }
+  .learningPage .sectionFilter .catalogueTabs { width: 100%; flex-wrap: wrap; justify-content: center; }
+}
 .learningPage .stats { gap: 10px; margin-bottom: 12px; }
 .learningPage .stat {
   min-height: 78px;
@@ -859,10 +898,12 @@
 .learningPage .progressRing span { width: 34px; height: 34px; }
 .learningPage .catalogueLayout { gap: 16px; grid-template-columns: minmax(0, 1fr) minmax(250px, 280px); }
 .learningPage .catalogueAside { gap: 12px; }
-.learningPage .toolbar { gap: 9px; margin-bottom: 14px; grid-template-columns: minmax(170px, 1fr) minmax(130px, .52fr) minmax(145px, .56fr) auto; }
+.learningPage .toolbar { gap: 16px; margin: 24px 0; grid-template-columns: minmax(170px, 1fr) minmax(130px, .52fr) minmax(145px, .56fr) auto; }
 .learningPage .search { height: 38px; }
 .learningPage .selectLabel { gap: 2px; font-size: 10px; }
 .learningPage .selectLabel select { height: 38px; font-size: 11px; }
+.learningPage .sourceFilter, .learningPage .teachingFilter { gap: 6px; font-size: 10px; }
+.learningPage .teachingToggle button { min-height: 34px; padding: 6px 10px; font-size: 11px; }
 .learningPage .viewToggle button { min-height: 30px; padding: 6px 9px; }
 .learningPage .subjectHeading { margin-bottom: 10px; }
 .learningPage .subjectHeading h2 { font-size: 17px !important; }
@@ -931,7 +972,7 @@
 .learningPage .asidePanel h2 svg { color: var(--learner-purple, #673ab7); }
 .learningPage .asideTextButton { display: inline-flex; align-items: center; gap: 3px; color: var(--learner-purple, #673ab7); font-size: 10px; font-weight: 650; }
 .learningPage .continueSubject { gap: 9px; margin-top: 10px; padding-top: 10px; }
-.learningPage .continueSubject img { width: 56px; height: 60px; flex: 0 0 auto; object-fit: cover; border-radius: 6px; }
+.learningPage .continueSubject img { width: 56px; height: 60px; flex: 0 0 auto; object-fit: contain; border-radius: 6px; background: #f8f6fb; }
 .learningPage .continueSubject img.defaultCoverImage { object-fit: contain; background: #faf8fc; }
 .learningPage .continueSubject > div { min-width: 0; flex: 1; }
 .learningPage .continueSubject b { flex: 0 0 auto; font-size: 11px; color: #22256f; }
@@ -983,6 +1024,9 @@
   .learningPage .stats { grid-template-columns: minmax(0, 1fr); }
   .learningPage .toolbar { grid-template-columns: minmax(0, 1fr); }
   .learningPage .toolbar .search, .learningPage .viewToggle { grid-column: 1; }
+  .learningPage .sourceFilter, .learningPage .teachingFilter { width: 100%; }
+  .learningPage .sourceTabs { width: 100%; }
+  :global(.dashboard-theme .workspace-main) .learningPage .sourceTabs button { flex: 1; min-width: 0; padding-inline: 6px; }
 }
 @media (max-width: 700px) {
   .learningPage .hero { flex-direction: column; }
@@ -1024,6 +1068,9 @@
 .learningPage .grid .moduleCard .status { font-size: 14px; }
 
 /* The list uses the same readable hierarchy while keeping its compact rows. */
+/* Nested current/previous records must not each fill the whole group's height. */
+.learningPage .list .moduleCard,
+.learningPage .grid > section .moduleCard { height: auto; }
 .learningPage .list .cardButton { height: auto; min-height: 157px; flex-basis: auto; }
 .learningPage .list .cardButton > div:first-child { width: 136px; height: auto; }
 .learningPage .list .cover { height: 100%; min-height: 0; }
@@ -1067,4 +1114,54 @@
   .learningPage .list .cardButton { height: auto; flex-basis: auto; flex-direction: column; }
   .learningPage .list .cardButton > div:first-child { width: 100%; }
   .learningPage .list .cardBody { grid-template-areas: "eyebrow" "title" "details" "cohort" "progress" "action"; grid-template-columns: minmax(0, 1fr); }
+}
+
+/* The angled Module Builder cover, with the learner's existing content only. */
+.learningPage :is(.list, .grid) .moduleCard { border-radius: 12px; background: var(--kbc-surface, #fff); }
+.learningPage :is(.list, .grid) .moduleCard:is(:hover, :focus-within) {
+  border-color: var(--subject-accent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--subject-accent) 25%, transparent), 0 0 12px -5px color-mix(in srgb, var(--subject-accent) 38%, transparent);
+}
+.learningPage :is(.list, .grid) .moduleCard[data-source='legacy'] { background: linear-gradient(105deg, #fffaf3, #fffdf9); }
+.learningPage :is(.list, .grid) .moduleCard .moduleCover { position: relative; overflow: hidden; background: var(--learner-soft, #f8f5fc); }
+.learningPage :is(.list, .grid) .moduleCard .moduleCover .cover { width: 100%; height: 100%; }
+.learningPage :is(.list, .grid) .moduleCard .moduleCover img { display: block; width: 100%; height: 100%; object-fit: cover; object-position: 50% 35%; }
+.learningPage :is(.list, .grid) .moduleCard .moduleCover .defaultCoverImage { object-fit: contain; }
+.learningPage :is(.list, .grid) .moduleCard .cardMetaRow { justify-content: flex-start; gap: 6px 8px; }
+.learningPage :is(.list, .grid) .moduleCard .sourceBadge { flex-shrink: 1; white-space: normal; text-align: left; }
+.learningPage :is(.list, .grid) .moduleCard .status { position: static; padding: 3px 8px; border-radius: 6px; font-size: 12px; box-shadow: none; }
+.learningPage :is(.list, .grid) .moduleCard .cardTitle { display: block; height: auto; min-height: 0; max-height: none; margin: 0; overflow: visible; font-size: 20px !important; line-height: 1.4; }
+.learningPage :is(.list, .grid) .moduleCard .cardCohort { margin: 0; font-size: 12px; line-height: 1.5; }
+.learningPage :is(.list, .grid) .moduleCard .moduleDetails { display: grid; min-width: 0; gap: 12px; border: 0; background: transparent; overflow: visible; }
+.learningPage :is(.list, .grid) .moduleCard .moduleDetails > div { display: block; padding: 0; border: 0; }
+.learningPage :is(.list, .grid) .moduleCard .moduleDetails dt { display: flex; align-items: center; gap: 5px; margin: 0; color: var(--kbc-muted, #697a8b); font-size: 11px; font-weight: 500; line-height: 1.4; text-transform: none; letter-spacing: normal; }
+.learningPage :is(.list, .grid) .moduleCard .moduleDetails dt svg { flex-shrink: 0; color: var(--subject-ink); }
+.learningPage :is(.list, .grid) .moduleCard .moduleDetails dd { margin-top: 4px; color: var(--kbc-text, #1c3048); font-size: 13px; font-weight: 600; line-height: 1.5; white-space: normal; overflow-wrap: anywhere; }
+.learningPage .list .moduleCard .cardButton { min-height: 225px; flex-direction: row; align-items: stretch; overflow: visible; }
+.learningPage .list .moduleCard .moduleCover:first-child { order: 2; width: clamp(170px, 25%, 300px); height: auto; flex-shrink: 0; align-self: stretch; clip-path: polygon(20px 0, 100% 0, 100% 100%, 0 100%); }
+.learningPage .list .moduleCard .cardBody { order: 1; display: grid; grid-template-areas: 'eyebrow eyebrow' 'title title' 'cohort cohort' 'details details' 'progress action'; grid-template-columns: minmax(0, 1fr) minmax(135px, .48fr); align-content: start; gap: 10px 22px; padding: 18px 20px; }
+.learningPage .list .moduleCard .moduleDetails { grid-template-columns: repeat(4, minmax(0, 1fr)); padding: 10px 0; border-block: 1px solid var(--kbc-border, #e7e1ef); }
+.learningPage .list .moduleCard .cardProgress { align-self: center; }
+.learningPage .list .moduleCard .cardProgress strong { font-size: 14px; }
+.learningPage .list .moduleCard .cardProgress > div > div:first-child { font-size: 12px; }
+.learningPage .list .moduleCard .cardAction { align-self: center; margin: 0; min-height: 42px; font-size: 13px; white-space: normal; }
+.learningPage .grid .moduleCard .moduleCover { width: 100%; height: 170px; flex-shrink: 0; clip-path: polygon(16px 0, 100% 0, 100% calc(100% - 12px), 0 100%); }
+.learningPage .grid .moduleCard .cardBody { gap: 12px; padding: 18px; }
+.learningPage .grid .moduleCard .moduleDetails { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.learningPage .grid .moduleCard .cardDescription { margin: 0; font-size: 13px; }
+.learningPage .grid .moduleCard .cardProgress { padding-top: 4px; }
+.learningPage .grid .moduleCard .cardProgress > div > div:first-child { font-size: 13px; }
+.learningPage .grid .moduleCard .cardProgress strong { font-size: 15px; }
+.learningPage .grid .moduleCard .nextActivity { min-height: 60px; margin-top: 0; }
+.learningPage .grid .moduleCard .nextActivity small { font-size: 11px; }
+.learningPage .grid .moduleCard .nextActivity strong { font-size: 13px; }
+.learningPage .grid .moduleCard .cardAction { margin-top: 0; min-height: 44px; font-size: 14px; }
+@container subjects (max-width: 760px) {
+  .learningPage .list .moduleCard .moduleCover:first-child { width: 160px; }
+  .learningPage .list .moduleCard .cardBody { grid-template-areas: 'eyebrow' 'title' 'cohort' 'details' 'progress' 'action'; grid-template-columns: minmax(0, 1fr); padding: 16px; }
+  .learningPage .list .moduleCard .moduleDetails { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@container subjects (max-width: 480px) {
+  .learningPage .list .moduleCard .cardButton { flex-direction: column; }
+  .learningPage .list .moduleCard .moduleCover:first-child { order: 0; width: 100%; height: 160px; clip-path: polygon(16px 0, 100% 0, 100% calc(100% - 12px), 0 100%); }
 }

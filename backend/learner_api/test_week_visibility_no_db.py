@@ -54,7 +54,7 @@ CHILD_READER_PATHS = {
     'learner_api/dashboard_header.py': 1,
     'learner_api/dashboard_metrics.py': 4,
     'learner_api/dashboard_training.py': 1,
-    'learner_api/learner_detail.py': 7,
+    'learner_api/learner_detail.py': 9,  # +2: the shared ksb_mappings read (content_cache)
     'learner_api/live_session_progress.py': 1,
     'learner_api/mobile.py': 2,
     'learner_api/module_shift.py': 2,
@@ -126,8 +126,11 @@ class WeekReaderPathTests(SimpleTestCase):
 
     def test_live_resolution_reads_weeks_through_the_shared_rule(self):
         cursor = ScriptedCursor([[('MOD-1', 'Module 1')], [], []])
+        connection = ScriptedConnection(cursor)
+        connection.vendor = 'sqlite'
+        cursor.db = connection
         weeks = [{'module': 'Module 1', 'week': 'Week 1', 'moduleId': 'MOD-1', 'weekId': 'WEEK-1'}]
-        with patch.object(detail, 'connections', {'enrolment': ScriptedConnection(cursor)}):
+        with patch.object(detail, 'connections', {'enrolment': connection}):
             detail._resolve_from_master(['Module 1'], weeks, [])
         week_query = cursor.queries[1]
         self.assertIn('FROM curriculum.weeks', week_query)

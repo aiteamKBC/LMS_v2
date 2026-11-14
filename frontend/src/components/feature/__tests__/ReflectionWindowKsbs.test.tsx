@@ -32,6 +32,8 @@ function renderWindow(autoKsbs: ComponentKsbMapping[] | undefined, learnerKsbs =
     />,
   );
   fireEvent.click(screen.getByRole('button', { name: 'KSBs' }));
+  const picker = screen.queryByRole('button', { name: 'Choose KSBs' });
+  if (picker) fireEvent.click(picker);
 }
 
 describe('ReflectionWindow KSB tab', () => {
@@ -60,6 +62,8 @@ describe('ReflectionWindow KSB tab', () => {
   it('groups programme KSBs into K, S and B tabs', () => {
     renderWindow([], [...programmeKsbs, { code: 'S3', type: 'S', number: '3', description: 'Data analysis' }]);
 
+    expect(screen.getByRole('tab', { name: /All\s*3/ })).toHaveAttribute('aria-selected', 'true');
+    fireEvent.click(screen.getByRole('tab', { name: /K\s*1/ }));
     expect(screen.getByRole('tab', { name: /K\s*1/ })).toHaveAttribute('aria-selected', 'true');
     expect(screen.getByRole('tab', { name: /B\s*0/ })).toBeDisabled();
     expect(screen.getByRole('checkbox', { name: /K1/ })).toBeInTheDocument();
@@ -101,14 +105,21 @@ describe('ReflectionWindow KSB tab', () => {
     expect(screen.getByText('Selected KSBs explained and rated (any K, S or B)').closest('p')).toHaveClass('text-emerald-700');
   });
 
-  it('shows only the authored KSBs when the component has a mapping', () => {
+  it('preselects authored KSBs while offering the whole programme without inventing evidence', () => {
     renderWindow([{ code: 'S2', description: 'Campaign planning', weight: 40, classification: 'primary' }]);
 
-    expect(screen.queryByText('Select the programme KSBs this activity developed')).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole('checkbox', { name: /S2\s*Campaign planning/ }));
+    expect(screen.getByText('Select the programme KSBs this activity developed')).toBeInTheDocument();
+    expect(screen.getByRole('checkbox', { name: /K1\s*Marketing principles/ })).toBeInTheDocument();
+    expect(screen.getByRole('checkbox', { name: /S2\s*Campaign planning/ })).toBeChecked();
     expect(screen.getByPlaceholderText(/Why is S2 relevant/)).toBeInTheDocument();
+    expect(screen.getByPlaceholderText(/Why is S2 relevant/)).toHaveValue('');
+    expect(screen.getAllByText('Not rated')).toHaveLength(2);
     expect(screen.queryByPlaceholderText(/Why is K1 relevant/)).not.toBeInTheDocument();
     expect(screen.getByText('40% weight')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('checkbox', { name: /K1\s*Marketing principles/ }));
+    expect(screen.getByPlaceholderText(/Why is K1 relevant/)).toBeInTheDocument();
+    expect(screen.getAllByText(/weight$/)).toHaveLength(2); // Summary label and S2's authored weight only.
+    expect(screen.queryByText('0% weight')).not.toBeInTheDocument();
   });
 
   it('requires only the selected K code even when the activity also maps S and B codes', () => {
@@ -116,8 +127,12 @@ describe('ReflectionWindow KSB tab', () => {
       { code: 'K1', description: 'Marketing principles', weight: 20, classification: 'primary' },
       { code: 'S2', description: 'Campaign planning', weight: 30, classification: 'primary' },
       { code: 'B1', description: 'Professional behaviour', weight: 10, classification: 'primary' },
-    ]);
-    fireEvent.click(screen.getByRole('checkbox', { name: /K1\s*Marketing principles/ }));
+    ], [...programmeKsbs, { code: 'B1', type: 'B', number: '1', description: 'Professional behaviour' }]);
+    // Authored K/S/B codes now start selected; the learner can narrow them.
+    fireEvent.click(screen.getByRole('tab', { name: /S\s*1\/1/ }));
+    fireEvent.click(screen.getByRole('checkbox', { name: /S2/ }));
+    fireEvent.click(screen.getByRole('tab', { name: /B\s*1\/1/ }));
+    fireEvent.click(screen.getByRole('checkbox', { name: /B1/ }));
     fireEvent.change(screen.getByPlaceholderText(/Why is K1 relevant/), { target: { value: 'The reading developed my knowledge.' } });
     for (const slider of screen.getAllByRole('slider')) fireEvent.change(slider, { target: { value: '4' } });
     expect(screen.queryByPlaceholderText(/Why is S2 relevant/)).not.toBeInTheDocument();
@@ -133,5 +148,77 @@ describe('ReflectionWindow KSB tab', () => {
       .toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Review' }));
     expect(screen.getByText('No mapped KSBs to rate').closest('p')).toHaveClass('text-emerald-700');
+  });
+
+  it('shows the ticket K7/S5 descriptions from the programme in choices and explanation cards', () => {
+    renderWindow([
+      { code: 'K7', description: null, weight: 20, classification: 'main' },
+      { code: 'S5', description: '', weight: 40, classification: 'secondary' },
+    ], [
+      { code: 'K7', type: 'K', number: '7', description: 'Understand legal and regulatory frameworks.' },
+      { code: 'S5', type: 'S', number: '5', description: 'Collaborate with clients and stakeholders.' },
+      { code: 'B1', type: 'B', number: '1', description: 'Act professionally.' },
+    ]);
+    expect(screen.getAllByText('Suggested for this activity')).toHaveLength(2);
+    expect(screen.getByRole('checkbox', { name: /K7\s*Understand legal/ })).toBeChecked();
+    expect(screen.getByRole('checkbox', { name: /S5\s*Collaborate/ })).toBeChecked();
+    expect(screen.getAllByText('Understand legal and regulatory frameworks.')).toHaveLength(2);
+    expect(screen.getAllByText('Collaborate with clients and stakeholders.')).toHaveLength(2);
+    expect(screen.getByText('60%')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('checkbox', { name: /B1\s*Act professionally/ }));
+    expect(screen.getByPlaceholderText(/Why is B1 relevant/)).toBeInTheDocument();
+    expect(screen.getByText('60%')).toBeInTheDocument();
+    expect(screen.queryByText('0% weight')).not.toBeInTheDocument();
+  });
+
+  it('uses the current programme wording ahead of an outdated activity description', () => {
+    renderWindow([{ code: 'K1', description: 'Outdated wording', weight: 20, classification: 'main' }]);
+    expect(screen.queryByText('Outdated wording')).not.toBeInTheDocument();
+    expect(screen.getByRole('checkbox', { name: /K1\s*Marketing principles/ })).toBeChecked();
+    expect(screen.getAllByText('Marketing principles')).toHaveLength(2);
+  });
+
+  it('does not offer activity mappings from outside the learner programme', () => {
+    renderWindow([{ code: 'K99', description: 'Another programme', weight: 50, classification: 'main' }]);
+    expect(screen.queryByRole('checkbox', { name: /K99/ })).not.toBeInTheDocument();
+    expect(screen.queryByPlaceholderText(/Why is K99 relevant/)).not.toBeInTheDocument();
+    expect(screen.queryByText('50% weight')).not.toBeInTheDocument();
+    expect(screen.getByRole('checkbox', { name: /K1/ })).toBeInTheDocument();
+  });
+
+  it('searches code and description without losing selections when a search is empty', () => {
+    renderWindow([]);
+    const search = screen.getByRole('searchbox', { name: 'Search KSBs' });
+    expect(search).toHaveFocus();
+    fireEvent.change(search, { target: { value: 's2' } });
+    expect(screen.queryByRole('checkbox', { name: /K1/ })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('checkbox', { name: /S2/ }));
+    fireEvent.change(search, { target: { value: 'no matching wording' } });
+    expect(screen.getByRole('status')).toHaveTextContent('No KSBs match your search');
+    expect(screen.getByPlaceholderText(/Why is S2 relevant/)).toBeInTheDocument();
+    fireEvent.change(search, { target: { value: 'MARKETING' } });
+    expect(screen.getByRole('checkbox', { name: /K1/ })).toBeInTheDocument();
+    fireEvent.change(search, { target: { value: '' } });
+    expect(screen.getByRole('checkbox', { name: /S2/ })).toBeChecked();
+  });
+
+  it('closes with Escape, returns keyboard focus, and retains choices when reopened', () => {
+    renderWindow([]);
+    fireEvent.click(screen.getByRole('checkbox', { name: /K1/ }));
+    fireEvent.keyDown(screen.getByRole('searchbox'), { key: 'Escape' });
+    const toggle = screen.getByRole('button', { name: 'Choose KSBs' });
+    expect(toggle).toHaveAttribute('aria-expanded', 'false');
+    expect(toggle).toHaveFocus();
+    expect(screen.queryByRole('checkbox')).not.toBeInTheDocument();
+    expect(screen.getByPlaceholderText(/Why is K1 relevant/)).toBeInTheDocument();
+    fireEvent.click(toggle);
+    expect(screen.getByRole('checkbox', { name: /K1/ })).toBeChecked();
+  });
+
+  it('preserves the mapped-only flow without a programme catalogue and explains a missing description', () => {
+    renderWindow([{ code: 'K7', description: null, weight: 20, classification: 'main' }], []);
+    expect(screen.getByRole('checkbox', { name: /K7\s*Description not available/ })).toBeChecked();
+    expect(screen.getAllByText('Description not available for this KSB.')).toHaveLength(2);
+    expect(screen.getByText('20% weight')).toBeInTheDocument();
   });
 });

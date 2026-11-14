@@ -18,6 +18,7 @@ from django.db import DatabaseError, IntegrityError, connections
 from django.http import JsonResponse
 from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
+from curriculum_api.learning_storage import read_table
 
 from .active_users import ComponentReferenceError, save_progress_record, sync_active_user
 from .identity import learner_profile_for_source
@@ -75,9 +76,10 @@ def _component_meta(component_id):
     """Live (type, title) for a component (curriculum.components).
     Returns (None, None) if not found / on error."""
     try:
-        with connections["enrolment"].cursor() as cur:
+        database = connections["enrolment"]
+        with database.cursor() as cur:
             cur.execute(
-                "SELECT type, title FROM curriculum.components WHERE id = %s",
+                f"SELECT type, title FROM {read_table('components', database)} WHERE id = %s",
                 [component_id],
             )
             row = cur.fetchone()
@@ -150,9 +152,10 @@ def _assignment_form_ready(component_id, kind, learner_id, assignment_topic=""):
 
 def _component_ksb_mappings(component_id):
     try:
-        with connections["enrolment"].cursor() as cur:
+        database = connections["enrolment"]
+        with database.cursor() as cur:
             cur.execute(
-                "SELECT ksb_mappings FROM curriculum.components WHERE id = %s LIMIT 1",
+                f"SELECT ksb_mappings FROM {read_table('components', database)} WHERE id = %s LIMIT 1",
                 [component_id],
             )
             row = cur.fetchone()
@@ -177,7 +180,7 @@ def _component_ksb_mappings(component_id):
                 return mappings
 
             cur.execute(
-                "SELECT ksb_code, weight FROM curriculum.ksb_mappings "
+                f"SELECT ksb_code, weight FROM {read_table('ksb_mappings', database)} "
                 "WHERE component_id = %s AND ksb_code IS NOT NULL AND ksb_code <> '' "
                 "AND deleted_at IS NULL AND COALESCE(is_programme_deleted, false) = false "
                 "ORDER BY ksb_code",

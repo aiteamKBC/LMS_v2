@@ -5,9 +5,10 @@ import { reviewAttendanceLinks, type AttendanceLinkContext, type AttendanceLinkC
 const button = 'rounded-md border border-primary-200 bg-white px-3 py-1.5 text-xs font-semibold text-primary-700 hover:bg-primary-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary-500 disabled:opacity-50';
 const auditTime = (value: string) => new Date(value).toLocaleString('en-GB', { timeZone: 'Europe/London' }) + ' (UK)';
 
-export function ReviewAttendanceEditor({ eventKey, attendance, children }: {
+export function ReviewAttendanceEditor({ eventKey, attendance, onLinkChange, children }: {
   eventKey: string;
   attendance: CoachMeetingAttendanceSummary | null;
+  onLinkChange?: () => void;
   children: (attendance: CoachMeetingAttendanceSummary | null, controls: (row: CoachMeetingAttendanceTrackerRow) => ReactNode) => ReactNode;
 }) {
   const [context, setContext] = useState<AttendanceLinkContext | null>(null);
@@ -41,6 +42,7 @@ export function ReviewAttendanceEditor({ eventKey, attendance, children }: {
       const result = await reviewAttendanceLinks(eventKey, change);
       if (generation.current === current) {
         setContext(result); setSelection(null); setUndoId(null); setReason('');
+        onLinkChange?.();
       }
     } catch (e) {
       if (generation.current === current) setError(e instanceof Error ? e.message : 'Attendance correction failed.');

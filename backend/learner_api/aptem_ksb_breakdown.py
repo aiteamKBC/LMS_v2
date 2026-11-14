@@ -45,17 +45,20 @@ def read_breakdown(connection, learner_id, *, code=None):
     """The primary learner_id scopes coverage for every learner type."""
     with connection.cursor() as cursor:
         code_filter = ' AND k.ksb_code=%s' if code is not None else ''
-        cursor.execute('''SELECT p.id,p.learner_id,p.component_title,p.activity_status,
+        sql = ('''SELECT p.id,p.learner_id,p.component_title,p.activity_status,
                 p.accepted,p.deleted_at,p.source_system,k.ksb_code,k.ksb_description,
                 p.component_type,p.kind,p.module_title,p.submitted_at,p.reporting_ended_at
             FROM "Learner".learner_progress_entries p
             JOIN "Learner".learner_progress_ksbs k ON k.progress_id=p.id''' + and_not_excluded('k', connection) + '''
             WHERE p.learner_id=%s AND p.deleted_at IS NULL
-            ''' + code_filter + ' ORDER BY p.id,k.position', [learner_id, code] if code is not None else [learner_id])
+            ''' + code_filter + ' ORDER BY p.id,k.position')
+        from .progress_cache import rows as cached_rows
+        fetched = cached_rows(cursor, sql, [learner_id, code] if code is not None else [learner_id], learner_id,
+                              extra_params=[getattr(connection, 'alias', ''), code])
         fields = ('id', 'learner_id', 'component_title', 'activity_status', 'accepted',
                   'deleted_at', 'source_system', 'ksb_code', 'ksb_description',
                   'component_type', 'kind', 'module_title', 'submitted_at', 'reporting_ended_at')
-        entries = [dict(zip(fields, row)) for row in cursor.fetchall()]
+        entries = [dict(zip(fields, row)) for row in fetched]
     return build_progress_breakdown(learner_id, entries)
 
 

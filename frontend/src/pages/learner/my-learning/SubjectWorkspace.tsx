@@ -1,6 +1,8 @@
 import { useEffect, useId, useMemo, useState, type MouseEvent } from 'react';
+import { LearnerLoadError } from '@/components/feature/LearnerLoadError';
+import { Notice } from '@/components/ui/Notice';
 import { Link, Navigate, useLocation, useNavigate } from 'react-router-dom';
-import { ArrowRight, Award, BookOpen, CheckCircle2, ChevronLeft, ChevronRight, GraduationCap, Layers3, Loader2, Map as MapIcon, Search } from 'lucide-react';
+import { ArrowRight, Award, BookOpen, CalendarDays, CheckCircle2, ChevronLeft, ChevronRight, GraduationCap, Layers3, Loader2, Map as MapIcon, Search, UserRound, Video } from 'lucide-react';
 import type { LearnerDetail } from '@/api/learnerDetail';
 import type { LearnerMetrics } from '@/api/learnerMetrics';
 import { type StudentActivityItem, type StudentActivityResponse, type SubjectAttemptResult } from '@/api/studentActivity';
@@ -21,6 +23,7 @@ import type { PlanModule, PlanModuleProgress, PlanSession } from '@/api/training
 import { buildUnifiedLearningSummary, type SubjectEntry, type Subject, type CoverMetadata } from './learningSummary';
 import { PreviousLearningNotice } from './PreviousLearningNotice';
 import { SubjectActivityWorkspace } from './SubjectActivityWorkspace';
+import { nextIncompleteActivity } from './resumeLearning';
 import { resolveSubjectWeek } from './subjectLearning';
 import { subjectActivityHours } from '@/utils/activityPlan';
 import { ActivityPlanDetails } from '../video-watch/ActivityPlanDetails';
@@ -74,7 +77,7 @@ export function Cover({ title, url, large = false, fallbackUrl }: { title: strin
   useEffect(() => setFailed(false), [url]);
   const imageUrl = url && !failed ? url : fallbackUrl;
   return <div className={`${styles.cover} ${large ? styles.coverLarge : ''}`}>
-    {imageUrl ? <img src={imageUrl} alt={`${title} cover`} loading="lazy" decoding="async" onError={() => setFailed(true)} className={`h-full w-full object-cover motion-safe:transition-transform motion-safe:duration-500 motion-safe:group-hover:scale-105 ${imageUrl === fallbackUrl ? styles.defaultCoverImage : ''}`} /> : <div className={`${styles.coverFallback} flex h-full ${large ? 'items-center justify-center' : 'items-end p-4'}`}>
+    {imageUrl ? <img src={imageUrl} alt={`${title} cover`} loading="lazy" decoding="async" onError={() => setFailed(true)} className={`${styles.courseCoverImage} h-full w-full object-contain motion-safe:transition-[filter] motion-safe:duration-500 motion-safe:group-hover:brightness-[1.03] ${imageUrl === fallbackUrl ? styles.defaultCoverImage : ''}`} /> : <div className={`${styles.coverFallback} flex h-full ${large ? 'items-center justify-center' : 'items-end p-4'}`}>
       <div aria-hidden="true" className={styles.coverOrbit} />
       <span className={`${styles.coverSymbol} relative flex items-center justify-center rounded-2xl border border-white/90 bg-white/85 text-primary-600 shadow-sm ${large ? 'h-16 w-16' : 'h-11 w-11'}`}><BookOpen className={large ? 'h-8 w-8' : 'h-5 w-5'} strokeWidth={1.7} aria-hidden="true" /></span>
     </div>}
@@ -201,7 +204,7 @@ export function SubjectCard({ subject, cover, tone = 'purple', onOpen, template,
   const origin = subject.importedCourseRef || subject.replacementCourseRef ? 'legacy' : subject.source;
   return <article className={`group ${styles.card} ${styles.subjectTheme} ${styles.moduleCard}`} data-tone={tone} data-source={origin}>
     <button type="button" onClick={onOpen} className={styles.cardButton}>
-      <div className="relative w-full"><Cover title={subject.title} url={cover} fallbackUrl={DEFAULT_MODULE_COVER} /></div>
+      <div className={styles.moduleCover}><Cover title={subject.title} url={cover} fallbackUrl={DEFAULT_MODULE_COVER} /></div>
       <div className={styles.cardBody}>
         <div className={styles.cardMetaRow}>
           <span className={styles.sourceBadge} data-source={origin}>
@@ -223,10 +226,10 @@ export function SubjectCard({ subject, cover, tone = 'purple', onOpen, template,
         <h3 className={styles.cardTitle}>{subject.title}</h3>
         <p className={`${styles.cardCohort} mb-2 text-xs text-foreground-500 break-words`}>Cohort: <span className="font-semibold">{planModule?.cohort_name?.trim() || 'Not available'}</span></p>
         <dl className={styles.moduleDetails} aria-label={`${moduleName} module details`}>
-          <div><dt>Tutor</dt><dd>{tutorName}</dd></div>
-          <div><dt>Start date</dt><dd>{startDate}</dd></div>
-          <div><dt>End date</dt><dd>{endDate}</dd></div>
-          <div><dt>Sessions</dt><dd>{sessionCount == null ? 'Not set' : `${sessionCount} ${sessionCount === 1 ? 'session' : 'sessions'}`}</dd></div>
+          <div><dt><UserRound size={14} aria-hidden="true" />Tutor</dt><dd>{tutorName}</dd></div>
+          <div><dt><CalendarDays size={14} aria-hidden="true" />Start date</dt><dd>{startDate}</dd></div>
+          <div><dt><CalendarDays size={14} aria-hidden="true" />End date</dt><dd>{endDate}</dd></div>
+          <div><dt><Video size={14} aria-hidden="true" />Sessions</dt><dd>{sessionCount == null ? 'Not set' : `${sessionCount} ${sessionCount === 1 ? 'session' : 'sessions'}`}</dd></div>
         </dl>
         <p className={styles.cardDescription}>Explore your learning materials and activities.</p>
         <div className={styles.cardProgress}><Progress done={completed} total={total} compact aggregate={subject.aggregateProgress ?? subject.card?.progress} label={`${subject.title} ${subject.source === 'legacy' ? 'previous learning' : 'current plan'} activities progress`} />
@@ -309,9 +312,10 @@ export function StudentActivityPanel({ data: incomingData, loading, error, onRet
   const selected = routeParams.get('subject') || routeParams.get('module');
   const selectedWeek = routeParams.get('week');
   const continueCurrentWeek = selectedWeek === 'current';
+  const resume = routeParams.get('resume') === '1';
   const select = (subject?: string, week?: string) => {
     const params = new URLSearchParams(location.search);
-    params.delete('module'); params.delete('week'); params.delete('subject'); params.delete('activity');
+    params.delete('module'); params.delete('week'); params.delete('subject'); params.delete('activity'); params.delete('resume');
     if (subject) params.set('subject', subject);
     if (week) params.set('week', week);
     navigate({ pathname: location.pathname, search: params.toString() });
@@ -426,12 +430,20 @@ export function StudentActivityPanel({ data: incomingData, loading, error, onRet
   const total = summary.activityCount;
   const done = summary.completedActivityCount;
   const percent = summary.percent;
-  if (!displayed && (error || imageError)) return <div role="alert" className="rounded-2xl border bg-white p-6"><p className="font-semibold">Could not load your subjects</p><p className="mt-2 text-sm text-foreground-500">{error || imageError}</p><button onClick={error ? onRetry : retryMetadata} className="mt-4 rounded-lg border px-4 py-2 text-sm font-semibold">Try again</button></div>;
+  if (!displayed && (error || imageError)) return <LearnerLoadError title="Could not load your subjects" error={error || imageError} onRetry={error ? onRetry : retryMetadata} />;
   if (!displayed) return <SubjectCardsSkeleton />;
+  if (resume && active && !requestedActivity && !loading && !error && !imageError) {
+    const target = nextIncompleteActivity(active);
+    if (target) {
+      const href = nativeHref(target.activity, kind, learnerId)
+        || `${learningHref('catalogue', kind, learnerId, active.id, target.week.id)}&activity=${encodeURIComponent(target.activity.id)}`;
+      return <Navigate to={href} replace />;
+    }
+  }
   if (requestedActivity && !activityTarget) return <div role="alert" className={styles.empty}><p>{activityMatches.length > 1 ? 'This evidence matches more than one learning activity. Choose the correct module to review it.' : 'This evidence activity is not available in My Learning.'}</p><button onClick={() => select()}>View modules</button></div>;
   // Catalogue links open the existing player directly. Imported-only courses
   // and weeks awaiting content keep their material browser available.
-  const openingActivity = !requestedActivity && active && !active.replacementCourseRef && view === 'catalogue' && (!selectedWeek || activeWeek)
+  const openingActivity = !resume && !requestedActivity && active && !active.replacementCourseRef && view === 'catalogue' && (!selectedWeek || activeWeek)
     ? subjectOpeningActivity(active, activeWeek) : undefined;
   const openingHref = openingActivity ? nativeHref(openingActivity, kind, learnerId) : null;
   if (openingHref) return <Navigate to={openingHref} replace />;
@@ -441,9 +453,9 @@ export function StudentActivityPanel({ data: incomingData, loading, error, onRet
     {active && view === 'catalogue' && <header className="flex flex-wrap items-end justify-between gap-4"><div><p className="text-xs font-semibold uppercase tracking-widest text-primary-600">My learning</p><h2 className="mt-1 text-2xl font-bold text-foreground-900">{active.title}</h2></div>
       <label className={`${styles.search} w-full min-w-0 sm:max-w-xs`}><Search size={17} aria-hidden="true" /><input aria-label="Search modules or activities" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search subjects or activities" /></label>
     </header>}
-    {imageError && <p role="alert" className="text-sm text-amber-800">{imageError} <button onClick={retryMetadata} className="font-semibold underline">Try again</button></p>}
-    {error && <p role="alert" className="rounded-xl bg-amber-50 p-3 text-sm text-amber-800">{error} <button onClick={onRetry} className="font-semibold underline">Try again</button></p>}
-    {data?.source_status === 'historical' && data.verification_status !== 'verified' && <p role="status" className="rounded-xl bg-amber-50 p-3 text-sm text-amber-800">Showing saved previous learning. The latest results could not be verified. <button onClick={onRetry} className="font-semibold underline">Try again</button></p>}
+    {imageError && <LearnerLoadError title="Some subject details could not be refreshed" error={imageError} onRetry={retryMetadata} />}
+    {error && <LearnerLoadError title="Your learning information could not be refreshed" error={error} onRetry={onRetry} />}
+    {data?.source_status === 'historical' && data.verification_status !== 'verified' && <Notice tone="attention" role="status" title="Showing saved previous learning" actions={<button type="button" onClick={onRetry} className="min-h-11 rounded-lg border border-primary-200 px-4 py-2 text-sm font-semibold text-primary-700">Try again</button>}>The latest results could not be verified.</Notice>}
     {selected && !active && <p role="alert" className={styles.empty}>This module is not available in your learning plan. <button onClick={() => select()}>Show your modules</button></p>}
     {view === 'map' && <div className={styles.mapToolbar}>
       <label className={styles.selectLabel}>Module<select aria-label="Filter by module" value={active?.id || ''} onChange={event => { setSearch(''); select(event.target.value); }}><option value="" disabled>{scheduleLoading ? 'Finding your current module…' : 'Choose a module'}</option>{subjects.map(subject => <option key={subject.id} value={subject.id}>{subject.title}{planSelection.entries.some(entry => entry.subject.id === subject.id) ? ` · ${planLabel}` : ''}</option>)}</select></label>

@@ -110,6 +110,9 @@ class Command(BaseCommand):
                             {'settings_json': views.json_db_value({**row, field: updated})},
                         )
 
+        if changed and not dry_run:
+            # Retire cached curriculum payloads and learner content rows.
+            views.invalidate_curriculum_cache()
         verb = 'would change' if dry_run else 'changed'
         self.stdout.write(self.style.SUCCESS(
             f'{checked} components checked; {changed} {verb}; '

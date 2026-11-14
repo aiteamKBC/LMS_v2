@@ -581,6 +581,7 @@ export interface RoutePermissionMap {
 }
 
 export const ROUTE_PERMISSIONS: RoutePermissionMap[] = [
+  { path: '/users/my-courses', allowedRoles: ['tenant-admin', 'super-admin'] },
   { path: '/users/progress-transfers', allowedRoles: ['tenant-admin', 'super-admin'] },
   { path: '/curriculum/progress-transfers', allowedRoles: ['tenant-admin', 'super-admin'] },
   { path: '/', allowedRoles: ['*'] },

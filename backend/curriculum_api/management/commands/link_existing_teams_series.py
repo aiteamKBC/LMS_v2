@@ -314,6 +314,12 @@ class Command(BaseCommand):
                     or sorted(linked_ids) != sorted(row['id'] for row in occurrences)
                     or any(row[1] != join_url or row[2] != join_url for row in linked_rows)):
                 raise CommandError('The week links failed verification; transaction rolled back.')
+            # The components above were written with raw SQL. Inside the
+            # transaction, so the shared epoch moves only if the link commits;
+            # every cached curriculum payload and content row is then retired.
+            from curriculum_api import content_cache
+            content_cache.note_modules([module_id])  # components updated by raw SQL
+            v.invalidate_curriculum_cache()
         linked_count = len(linked_ids)
         self.stdout.write(f'LINKED module={module_id} series={series_id} '
                           f'sessions={saved_count} week links={linked_count}; recording sync queued.')

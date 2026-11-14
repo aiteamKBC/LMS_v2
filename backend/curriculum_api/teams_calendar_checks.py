@@ -7,6 +7,12 @@ from config.time_zones import local_clock_to_utc
 
 class CalendarMismatch(RuntimeError):
     """Microsoft answered, but its calendar differs from the reviewed plan."""
+    code = 'teams_schedule_drift'
+
+
+class CalendarPrivacyMismatch(CalendarMismatch):
+    """Invitation privacy is unconfirmed; changing session dates cannot fix it."""
+    code = 'teams_attendee_privacy_unconfirmed'
 
 
 def utc_datetime(value):
@@ -171,7 +177,7 @@ def verify_calendar(request, owner, event_id, targets, expected_join_url='', rec
     if expected_join_url and expected_join_url != join_url:
         raise CalendarMismatch('Microsoft returned a different join link. Invitations were not updated.')
     if event.get('hideAttendees') is not True:
-        raise CalendarMismatch('Microsoft has not confirmed attendee privacy. Invitations were not updated.')
+        raise CalendarPrivacyMismatch('Microsoft has not confirmed attendee privacy. Invitations were not updated.')
     if recurring:
         query = urlencode({'startDateTime': (targets[0]['start'] - timedelta(days=7)).isoformat(),
                            'endDateTime': (targets[-1]['end'] + timedelta(days=7)).isoformat(), '$top': 200})
@@ -192,7 +198,7 @@ def verify_calendar(request, owner, event_id, targets, expected_join_url='', rec
         if match.get('isCancelled') or (match.get('onlineMeeting') or {}).get('joinUrl') != join_url:
             raise CalendarMismatch(f"Session {target['session_number']} does not have the reviewed Teams join link.")
         if match.get('hideAttendees') is False:
-            raise CalendarMismatch(f"Session {target['session_number']} exposes its attendee list.")
+            raise CalendarPrivacyMismatch(f"Session {target['session_number']} exposes its attendee list.")
         available.remove(match)
     # A slot Microsoft holds that the plan does not -- weekly filler in a gap, a
     # week handed to its own additional meeting, a session dropped from the

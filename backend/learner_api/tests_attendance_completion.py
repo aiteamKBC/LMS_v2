@@ -35,6 +35,8 @@ class AttendanceCompletionTests(SimpleTestCase):
         self.assertEqual(set(params[1]), {'C1', 'C2'})
         self.assertEqual(cursor.execute.call_count, 1)
         self.assertTrue(sql.lstrip().startswith('SELECT'))
+        self.assertIn("r.qr_attendance_id IS NOT NULL", sql)
+        self.assertIn("r.attendance_basis IN ('qr','teams_qr')", sql)
 
     def test_missing_verified_evidence_clears_untrusted_flags(self):
         connection = MagicMock()

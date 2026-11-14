@@ -169,7 +169,10 @@ def reconcile_component_links(series_id):
                                [json.dumps(identity), component_id, module_id])
                 changed += cursor.rowcount
     if changed:
+        from curriculum_api import content_cache
         from curriculum_api.views import invalidate_curriculum_cache
+        # Components updated by raw SQL above: retire this module's content.
+        content_cache.note_modules([module_id])
         invalidate_curriculum_cache()
         logging.getLogger(__name__).info('Linked %s live-session components to saved Teams occurrences', changed)
     return changed

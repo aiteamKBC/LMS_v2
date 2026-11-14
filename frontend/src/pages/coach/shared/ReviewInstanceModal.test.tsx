@@ -2383,19 +2383,81 @@ function snapshotFixture(overrides: Partial<ReviewProgressSnapshot> = {}): Revie
     weeksElapsed: 100,
     ksbProgress: { available: true, title: 'Project controls professional Apprenticeship Standard (v1.0) (Level 6)', actualPercent: 73, expectedPercent: 100, variancePercent: -27, varianceDirection: 'below' },
     programmeProgress: { actual: 28, expected: 30, planned: 100, actualPercent: 28, expectedPercent: 30, variancePercent: -2, varianceDirection: 'below' },
+    requiredProgrammeProgress: { formulaVersion: 'scheduled_required_activities_v1', unresolvedActivities: 0,
+      actual: 28, expected: 30, planned: 100, actualPercent: 28, expectedPercent: 30, variancePercent: -2, varianceDirection: 'below' },
     offTheJobHours: { actual: 64, expected: 52, planned: 100, actualPercent: 64, expectedPercent: 52, variancePercent: 12, varianceDirection: 'above' },
     ...overrides,
   };
 }
 
 describe('Progress Review learning progress snapshot', () => {
-  it.each([false, true])('keeps Native admin calculation hidden with snapshot=%s', async hasSnapshot => {
+  it.each(['native', 'migrated'])('shows Required completion and target after Calculate on a %s coach form without changing answers or hours', async kind => {
+    const initial = kind === 'native' ? progressReviewDefinition() : {
+      ...migratedPrDefinition('in-progress', 'PR'), canCalculateProgress: true,
+      progressVersion: 'v1', answerVersion: 'v1', progressSnapshot: null,
+    };
+    const saved = snapshotFixture({
+      coachProgrammeTarget: { formulaVersion: 'scheduled_main_activities_v1', expected: 1, planned: 5,
+        expectedPercent: 20, variancePercent: 8, varianceDirection: 'above' },
+      requiredProgrammeProgress: { formulaVersion: 'scheduled_required_activities_v1', unresolvedActivities: 0,
+        actual: 4, expected: 6, planned: 12, actualPercent: 33.33, expectedPercent: 50,
+        variancePercent: -16.67, varianceDirection: 'below' },
+    });
+    vi.mocked(fetchReviewInstanceForm).mockResolvedValue(initial);
+    const response = { ...initial, progressSnapshot: saved, progressVersion: 'v2' };
+    vi.mocked(calculateReviewInstanceProgress).mockResolvedValue(response);
+    vi.mocked(calculateMigratedReviewProgress).mockResolvedValue(response);
+    mount(initial.instance.id);
+    fireEvent.change(await screen.findByRole('textbox'), { target: { value: 'Unsaved answer' } });
+    fireEvent.click(await screen.findByRole('button', { name: 'Calculate' }));
+    expect(await screen.findByRole('img', { name: 'Learning Plan Progress: 33%; target 50%' })).toBeVisible();
+    expect(screen.getByText('Required activities only')).toBeVisible();
+    expect(screen.getByText('17% Below')).toBeVisible();
+    expect(screen.getByDisplayValue('Unsaved answer')).toBeVisible();
+    expect(screen.getByText('64%')).toBeVisible();
+    expect(screen.getByText('12% Above')).toBeVisible();
+    expect(saved.programmeProgress.expectedPercent).toBe(30);
+  });
+
+  it.each(['native', 'migrated'])('does not show an old target as current Required progress on an editable %s form', async kind => {
+    const saved = snapshotFixture({ requiredProgrammeProgress: undefined });
+    const initial = kind === 'native' ? progressReviewDefinition('in-progress', saved) : {
+      ...migratedPrDefinition('scheduled', 'PR'), progressSnapshot: saved, canCalculateProgress: true,
+      progressVersion: 'v1', answerVersion: 'v1',
+    };
+    vi.mocked(fetchReviewInstanceForm).mockResolvedValue(initial);
+    mount(initial.instance.id);
+    expect(await screen.findByText('Recalculate this review to show progress against Required activities.')).toBeVisible();
+    expect(screen.queryByRole('img', { name: /Learning Plan Progress:/ })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Recalculate' })).toBeEnabled();
+    expect(calculateReviewInstanceProgress).not.toHaveBeenCalled();
+    expect(calculateMigratedReviewProgress).not.toHaveBeenCalled();
+  });
+
+  it.each(['native', 'migrated'])('preserves a completed %s review with its older formula', async kind => {
+    const saved = snapshotFixture({ requiredProgrammeProgress: undefined });
+    const initial = kind === 'native' ? progressReviewDefinition('completed', saved) : {
+      ...migratedPrDefinition('completed', 'PR'), progressSnapshot: saved, canCalculateProgress: false,
+    };
+    vi.mocked(fetchReviewInstanceForm).mockResolvedValue(initial);
+    mount(initial.instance.id);
+    expect(await screen.findByRole('img', { name: 'Learning Plan Progress: 28%; target 30%' })).toBeVisible();
+    expect(screen.queryByText('Recalculate this review to show progress against Required activities.')).not.toBeInTheDocument();
+    expect(calculateReviewInstanceProgress).not.toHaveBeenCalled();
+    expect(calculateMigratedReviewProgress).not.toHaveBeenCalled();
+  });
+
+  it.each([false, true])('lets the admin calculate a native review with snapshot=%s', async hasSnapshot => {
     coachMode.isViewingAsCoach = true;
     vi.mocked(fetchReviewInstanceForm).mockResolvedValue(progressReviewDefinition('in-progress', hasSnapshot ? snapshotFixture() : null));
+    vi.mocked(calculateReviewInstanceProgress).mockResolvedValue(progressReviewDefinition('in-progress', snapshotFixture()));
     mount();
     await screen.findByRole('region', { name: 'Learning progress' });
-    expect(screen.queryByRole('button', { name: /^(Calculate|Recalculate)$/ })).not.toBeInTheDocument();
+    const button = screen.getByRole('button', { name: hasSnapshot ? 'Recalculate' : 'Calculate' });
+    expect(button).toBeEnabled();
     expect(calculateReviewInstanceProgress).not.toHaveBeenCalled();
+    fireEvent.click(button);
+    await waitFor(() => expect(calculateReviewInstanceProgress).toHaveBeenCalledWith('instance-1'));
   });
 
   it('offers Calculate only on a Progress Review, and never calculates on its own when the form opens', async () => {
@@ -2520,7 +2582,7 @@ describe('migrated progress snapshot', () => {
     expect(button).toBeVisible();
     expect(button).toBeDisabled();
     expect(button).toHaveAttribute('disabled');
-    expect(button).toHaveAccessibleDescription('Available to the assigned Coach only.');
+    expect(button).toHaveAccessibleDescription('Available when this Progress Review is editable.');
     expect(screen.queryByText('No progress was calculated for this review.')).not.toBeInTheDocument();
     const readsBefore = vi.mocked(fetchReviewInstanceForm).mock.calls.length;
     await user.click(button);
@@ -2627,32 +2689,28 @@ describe('migrated progress snapshot', () => {
 
   it.each([
     ['PR', false], ['PR', true], ['PR_SKILLS_RADAR', false], ['PR_SKILLS_RADAR', true],
-  ] as const)('shows inert admin %s calculation with snapshot=%s', async (family, hasSnapshot) => {
-    const user = userEvent.setup();
+  ] as const)('lets the admin calculate an initialized %s review with snapshot=%s', async (family, hasSnapshot) => {
     coachMode.isViewingAsCoach = true;
     const initial = { ...migratedProgress(family, 'in-progress', hasSnapshot ? snapshotFixture() : null),
-      readOnly: true, canCalculateProgress: false };
+      readOnly: true, canCalculateProgress: true };
     vi.mocked(fetchReviewInstanceForm).mockResolvedValue(initial);
+    vi.mocked(calculateMigratedReviewProgress).mockResolvedValue({ ...initial, progressSnapshot: snapshotFixture(), progressVersion: 'v2' });
     mount(initial.instance.id);
     const button = await screen.findByRole('button', { name: hasSnapshot ? 'Recalculate' : 'Calculate' });
-    expect(button).toBeDisabled();
-    expect(button).toHaveAccessibleDescription('Available to the assigned Coach only.');
-    await user.click(button);
-    button.focus();
-    expect(button).not.toHaveFocus();
-    await user.keyboard('{Enter} ');
-    expect(calculateMigratedReviewProgress).not.toHaveBeenCalled();
+    expect(button).toBeEnabled();
+    fireEvent.click(button);
+    await waitFor(() => expect(calculateMigratedReviewProgress).toHaveBeenCalledWith(initial.instance.id, 'v1'));
     expect(calculateReviewInstanceProgress).not.toHaveBeenCalled();
     expect(saveReviewInstanceAnswers).not.toHaveBeenCalled();
-    if (hasSnapshot) expect(screen.getByText('64%')).toBeVisible();
+    expect(screen.getByText('64%')).toBeVisible();
   });
 
-  it.each(['not-scheduled', 'scheduled'])('shows disabled admin calculation on an initialized %s review', async status => {
+  it.each(['not-scheduled', 'scheduled'])('allows admin calculation on an initialized %s review', async status => {
     coachMode.isViewingAsCoach = true;
-    const initial = { ...migratedProgress('PR', status), canCalculateProgress: false };
+    const initial = { ...migratedProgress('PR', status), readOnly: true };
     vi.mocked(fetchReviewInstanceForm).mockResolvedValue(initial);
     mount(initial.instance.id);
-    expect(await screen.findByRole('button', { name: 'Calculate' })).toBeDisabled();
+    expect(await screen.findByRole('button', { name: 'Calculate' })).toBeEnabled();
     expect(startMigratedReview).not.toHaveBeenCalled();
     expect(bookMigratedReview).not.toHaveBeenCalled();
   });

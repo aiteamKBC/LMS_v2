@@ -3,7 +3,7 @@ import { QRCodeSVG } from 'qrcode.react';
 import { CheckCircle2, Download, Layers, Link, LoaderCircle, Mail, QrCode, Search } from 'lucide-react';
 import { SelectMenu } from '@/components/feature/SelectField';
 import { qrAttendanceApi, type QRConfiguration, type QRConfirmation, type QRLecture, type QRModule } from '@/api/qrAttendance';
-import { attendanceDayMessage, lectureDate } from './dates';
+import { attendanceDayMessage, lectureDate, lectureSchedule } from './dates';
 import { LectureCards } from './LectureCards';
 import './attendance.css';
 
@@ -25,6 +25,7 @@ export default function QRAttendancePage() {
   const [modules, setModules] = useState<QRModule[]>([]);
   const [moduleCandidates, setModuleCandidates] = useState<string[]>([]);
   const [suggestions, setSuggestions] = useState<QRLecture[]>([]);
+  const [otherGroupLectures, setOtherGroupLectures] = useState<QRLecture[]>([]);
   const [lectures, setLectures] = useState<QRLecture[]>([]);
   const [moduleId, setModuleId] = useState('');
   const [occurrenceId, setOccurrenceId] = useState('');
@@ -43,6 +44,10 @@ export default function QRAttendancePage() {
   const selected = lectures.find(item => item.id === occurrenceId && config && !attendanceDayMessage(item, config.timeZone, now));
   const suggestedModules = modules.filter(item => moduleCandidates.includes(item.id));
   const availableSuggestions = config ? suggestions.filter(item => !attendanceDayMessage(item, config.timeZone, now)) : [];
+  const availableOtherGroups = config && moduleId ? otherGroupLectures.filter(item =>
+    item.matchingModuleIds?.includes(moduleId) && !attendanceDayMessage(item, config.timeZone, now)) : [];
+  const resultIsOtherGroup = Boolean(result && otherGroupLectures.some(item =>
+    item.moduleId === moduleId && item.id === occurrenceId));
 
   function serverNow() {
     return clock.current.instant + performance.now() - clock.current.receivedAt;
@@ -74,7 +79,7 @@ export default function QRAttendancePage() {
 
   function resetEmail(value: string) {
     revision.current += 1;
-    setEmail(value); setIdentified(false); setModules([]); setModuleCandidates([]); setSuggestions([]); setLectures([]);
+    setEmail(value); setIdentified(false); setModules([]); setModuleCandidates([]); setSuggestions([]); setOtherGroupLectures([]); setLectures([]);
     setModuleId(''); setOccurrenceId(''); setResult(null); setLectureError('');
     if (config) setError('');
     setLoading(false); setLoadingLectures(false);
@@ -112,7 +117,7 @@ export default function QRAttendancePage() {
     const ticket = ++revision.current;
     const normalized = email.trim();
     setLoading(true); setIdentified(false); setError(''); setResult(null);
-    setModules([]); setModuleCandidates([]); setSuggestions([]); setModuleId(''); setOccurrenceId(''); setLectures([]);
+    setModules([]); setModuleCandidates([]); setSuggestions([]); setOtherGroupLectures([]); setModuleId(''); setOccurrenceId(''); setLectures([]);
     setLoadingLectures(false); setLectureError('');
     try {
       const response = await qrAttendanceApi.lookup(config.csrfToken, normalized);
@@ -121,7 +126,7 @@ export default function QRAttendancePage() {
       setModuleCandidates([...candidates]);
       setIdentified(true); setModules([...response.modules.filter(item => candidates.has(item.id)),
         ...response.modules.filter(item => !candidates.has(item.id))]);
-      setSuggestions(response.suggestions); setLoading(false);
+      setSuggestions(response.suggestions); setOtherGroupLectures(response.otherGroupLectures || []); setLoading(false);
       const legacy = response.suggestions.length === 1 ? response.suggestions[0] : null;
       const selection = response.selection ?? (legacy ? { moduleId: legacy.moduleId, occurrenceId: legacy.id } : null);
       if (selection?.moduleId && response.modules.some(item => item.id === selection.moduleId)) {
@@ -217,6 +222,30 @@ export default function QRAttendancePage() {
               </div>
             </div>}
             {identified && !modules.length && <p role="status" className="text-sm leading-6 text-foreground-600">No curriculum modules are available for your programme. Please contact the college.</p>}
+            {identified && config && availableOtherGroups.length > 0 && <details className="qr-module-suggestions qr-other-groups" aria-labelledby="qr-other-groups-label">
+              <summary id="qr-other-groups-label" className="text-sm font-semibold">Other groups available today ({availableOtherGroups.length})</summary>
+              <p className="mt-1 text-xs text-foreground-600">Choose a lecture, then confirm your attendance below.</p>
+              <p className="mt-1 text-xs text-foreground-600">Choosing another group does not automatically make up your original lecture.</p>
+              <div className="qr-module-suggestion-list">
+                {availableOtherGroups.map(item => {
+                  const module = modules.find(option => option.id === item.moduleId);
+                  const schedule = lectureSchedule(item, config.timeZone);
+                  return <button key={`${item.moduleId}:${item.id}`} type="button"
+                    aria-pressed={moduleId === item.moduleId && selected?.id === item.id}
+                    disabled={saving || loading || loadingLectures}
+                    onClick={() => void chooseModule(item.moduleId, item.id)} className="qr-module-suggestion">
+                    <Layers aria-hidden="true" size={18} className="shrink-0" />
+                    <span className="min-w-0 flex-1">
+                      <span className="block font-semibold">{module?.title || item.title}</span>
+                      {module?.title && item.title !== module.title && <span className="qr-module-suggestion-detail">{item.title}</span>}
+                      <span className="qr-module-suggestion-detail">{[item.group, item.cohort].filter(Boolean).join(' · ')}</span>
+                      <span className="qr-module-suggestion-detail">{schedule.date} · {schedule.time}</span>
+                    </span>
+                    <span className="text-xs font-semibold">Choose lecture</span>
+                  </button>;
+                })}
+              </div>
+            </details>}
             {availableSuggestions.length > 1 && config && <div className="rounded-xl border border-primary-100 bg-primary-50/50 p-3">
               <p className="text-sm font-semibold text-primary-800">Suggested lectures</p>
               <p className="mt-1 text-xs text-foreground-600">Choose a suggestion, or select any module above.</p>
@@ -245,7 +274,10 @@ export default function QRAttendancePage() {
             {saving ? 'Confirming…' : 'Confirm Attendance'}
           </button>
         </form>
-        {result && <div role="status" className="mt-5 flex items-start gap-3 rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm font-semibold leading-6 text-emerald-800"><CheckCircle2 aria-hidden="true" size={20} className="mt-0.5 shrink-0" />{result.message}</div>}
+        {result && <div role="status" className="mt-5 flex items-start gap-3 rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm font-semibold leading-6 text-emerald-800"><CheckCircle2 aria-hidden="true" size={20} className="mt-0.5 shrink-0" /><div>
+          <p>{result.message}</p>
+          {resultIsOtherGroup && <p className="mt-2 font-normal">This lecture is with another group. It may not count as a replacement for your original lecture if they are different sessions.</p>}
+        </div></div>}
         {error && <div role="alert" className="mt-5 rounded-xl border border-red-200 bg-red-50 p-4 text-sm leading-6 text-red-700">{error}{!config && <button type="button" className="ml-2 inline-flex min-h-11 items-center px-2 font-semibold underline focus-visible:ring-2 focus-visible:ring-red-500" onClick={() => window.location.reload()}>Reload</button>}</div>}
       </section>
       {config && <details className="qr-attendance-sharing mx-auto mt-5 border-t border-primary-200/50 px-3 text-sm text-foreground-700">

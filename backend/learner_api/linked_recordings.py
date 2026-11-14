@@ -125,6 +125,10 @@ def resolve_linked_recordings(comps_by_week, remote_sessions=None, *, merge=None
             number = session.get('teamsSessionNumber')
             date = _text(session.get('sessionDate'))[:10]
             recording = dict(row)
+            # Display grouping only. Keep both canonical activities and their
+            # own completion, hours, requirements and access checks unchanged.
+            if same_module:
+                recording['linkedSessionComponentId'] = link[1]
             if date:
                 recording['sessionDate'] = date
             if series and number and date:

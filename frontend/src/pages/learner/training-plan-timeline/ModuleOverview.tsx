@@ -1,4 +1,5 @@
 import { Link } from 'react-router-dom';
+import { LearnerLoadError } from '@/components/feature/LearnerLoadError';
 import { useCaseFileModuleDetail } from '@/features/coach/case-file/hooks/useCaseFileModuleDetail';
 import type { ReactNode } from 'react';
 import { ArrowRight, CalendarDays, Clock3, GraduationCap, Layers3, Target, Users, type LucideIcon } from 'lucide-react';
@@ -30,7 +31,7 @@ export function ModuleOverview({ module, hasModules, coachName, href, canOpenAct
   const studyHoursProgress = detail?.total_otjh != null && module?.actual != null
     ? percent(module.actual, detail.total_otjh) : null;
   return <section className={`${styles.panel} ${layout.overview} ${simple ? layout.simpleOverview : ''}`} aria-label="Module overview">
-    {focused?.error && <p role="alert">{focused.error} <button type="button" onClick={focused.refresh}>Retry module details</button></p>}
+    {focused?.error && <LearnerLoadError title="Could not load the latest module details" error={focused.error} onRetry={focused.refresh} retryLabel="Retry module details" />}
     <div className={styles.panelHeading}>
       <div><p className={styles.eyebrow}>In focus</p><h2>Module overview</h2></div>
       {canOpenActivities && module && <Link className={styles.primary} to={href}>Go to module<ArrowRight size={15} /></Link>}
