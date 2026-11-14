@@ -80,7 +80,7 @@ TEAMS_OWNED_SETTING_KEYS = frozenset({
 # Values chosen as a set, compared whole. Half of one is a value neither
 # editor chose. Paths with list ids replaced by `*`.
 ATOMIC_PATTERNS = frozenset({
-    'weeklySchedule', 'sessionHolidays', 'epaRequirements', 'qualificationOutcomes',
+    'weeklySchedule', 'scheduleMode', 'sessionHolidays', 'epaRequirements', 'qualificationOutcomes',
     'moduleKsbMappings',
     'weekStructure[*].learningOutcomes',
     'weekStructure[*].ksbMappings',

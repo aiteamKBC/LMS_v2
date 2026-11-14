@@ -132,6 +132,7 @@ COLUMNS = {
         ('price', 'numeric(10,2)'),
         ('currency', 'character varying(3)'),
         ('module_overview', 'jsonb'),
+        ('schedule_mode', 'character varying(16)'),
     ),
     'weeks': (
         ('id', 'character varying(128)'),

@@ -21,6 +21,28 @@ beforeEach(() => {
   vi.mocked(loadModuleStructure).mockResolvedValue(null);
 });
 
+it('updates the existing series with both custom sessions inside each week and their own durations', async () => {
+  const sessions = ['2026-09-07', '2026-09-10', '2026-09-14', '2026-09-17'].map((date, index) => ({
+    date, sessionNumber: index + 1, weekNumber: Math.floor(index / 2) + 1,
+    startTime: index % 2 ? '18:00' : '09:00', endTime: index % 2 ? '19:00' : '11:00', durationMinutes: index % 2 ? 60 : 120,
+  }));
+  vi.mocked(fetchModuleSessionPlan).mockResolvedValue({ sessions } as never);
+  vi.mocked(loadModuleStructure).mockResolvedValue({ sessionsNumber: 4, weeks: 2, weekStructure: [1, 2].map(weekNumber => ({
+    weekNumber, components: [1, 2].map(index => ({ id: `${weekNumber}-${index}`, type: 'live-session', settings: { teamsMeetingScope: 'main' } })),
+  })) } as never);
+  vi.mocked(fetchCurriculumTeamsMeetingSummaries).mockResolvedValue([
+    { moduleCatalogueId: 'MOD-CUSTOM', liveSessionId: 'LIVE-KEEP', eventId: 'EVENT-KEEP', organizerEmail: 'organizer@example.invalid', timeZone: 'Europe/London' },
+  ] as never);
+  await pushModulePlanToTeams({ moduleCatalogueId: 'MOD-CUSTOM', weeks: 2 });
+  expect(updateTeamsMeetingSchedule).toHaveBeenCalledOnce();
+  expect(updateTeamsMeetingSchedule).toHaveBeenCalledWith('LIVE-KEEP', expect.objectContaining({
+    eventId: 'EVENT-KEEP', repeat: 'weekly', repeatOccurrences: 4,
+    scheduledOccurrences: sessions.map((session, index) => ({
+      sessionNumber: index + 1, startDateTimeUtc: `${session.date}T${index % 2 ? '17' : '08'}:00:00.000Z`, durationMinutes: session.durationMinutes,
+    })),
+  }));
+});
+
 it('never sends a week delivered by an additional meeting, or one not yet assigned to either calendar', async () => {
   const live = (id: string, settings: Record<string, unknown>) => ({ id, type: 'live-session', title: id, settings });
   vi.mocked(loadModuleStructure).mockResolvedValue({ weekStructure: [
