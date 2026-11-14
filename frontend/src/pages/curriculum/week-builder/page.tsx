@@ -6,9 +6,11 @@ import { moduleUploadedFiles, withStoredUploads } from './moduleUploadedFiles';
 import { MoveComponentButton } from './MoveComponentButton';
 import { Fragment, Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
-import { DndContext, DragOverlay, KeyboardSensor, PointerSensor, closestCenter, useSensor, useSensors, type DragEndEvent, type DragStartEvent } from '@dnd-kit/core';
+import { DndContext, DragOverlay, KeyboardSensor, PointerSensor, closestCenter, pointerWithin, useSensor, useSensors, type CollisionDetection, type DragEndEvent, type DragStartEvent } from '@dnd-kit/core';
+import type { WebPoint } from '@/api/webWeekPoints';
+import { assignPointComponents, movePointComponents, pointOfComponent } from '../module-builder/weekPointStructure';
 import { SortableContext, sortableKeyboardCoordinates, useSortable, verticalListSortingStrategy } from '@dnd-kit/sortable';
-import { restrictToParentElement, restrictToVerticalAxis } from '@dnd-kit/modifiers';
+import { restrictToFirstScrollableAncestor, restrictToVerticalAxis } from '@dnd-kit/modifiers';
 import { CSS } from '@dnd-kit/utilities';
 import DOMPurify from 'dompurify';
 import { useNavigate, useSearchParams } from 'react-router-dom';
@@ -1129,7 +1131,9 @@ interface RailNodeProps {
 }
 
 // Sortable wrapper — @dnd-kit gives smooth transforms + keyboard support, and
-// the drag is contained (vertical, within the rail) via modifiers on the context.
+// the drag is contained (vertical, within the rail's scroll area) via modifiers
+// on the context. A Point's list item wraps just one row, so the immediate
+// parent cannot be the boundary for reordering components.
 function SortableRailNode(props: RailNodeProps) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: props.component.id });
   const style = { transform: CSS.Transform.toString(transform), transition };
@@ -1532,9 +1536,19 @@ function ComponentTypePickerDialog({ atIndex, componentCount, onPick, onClose, o
 // add/duplicate/remove/reorder UI state; the parent owns the actual component
 // list (and whatever persistence — save-to-template vs save-to-module — sits
 // on top of it), via a single `onChange(nextComponents)` callback.
+const pointCollisionDetection: CollisionDetection = args => {
+  const cards = args.droppableContainers.filter(container => container.data.current?.kind !== 'week-point-target');
+  const hits = pointerWithin({ ...args, droppableContainers: cards });
+  if (hits.length) return hits;
+  const sections = args.droppableContainers.filter(container => container.data.current?.kind === 'week-point-target');
+  const sectionHits = pointerWithin({ ...args, droppableContainers: sections });
+  return sectionHits.length ? sectionHits : closestCenter({ ...args, droppableContainers: cards });
+};
+
 export interface WeekComponentRailProps {
   /** Optional presentation of the same editable rows, without slicing mutation state. */
-  renderComponentList?: (items: { component: ModuleComponent; members: ModuleComponent[]; node: ReactNode }[], searchTerm: string) => ReactNode;
+  renderComponentList?: (items: { component: ModuleComponent; members: ModuleComponent[]; node: ReactNode }[], searchTerm: string, actions: { addComponent: (pointId: string) => void }) => ReactNode;
+  pointStructure?: { points: WebPoint[]; onChange: (points: WebPoint[]) => void };
   /** Keep presentation-only session groups inside the author's Point boundaries. */
   componentSectionKey?: (componentId: string) => string | null;
   selfStudyOnly?: boolean;
@@ -1585,14 +1599,24 @@ export interface WeekComponentRailProps {
   recordingLinks?: RecordingLinkContext;
 }
 
-export function WeekComponentRail({ renderComponentList, componentSectionKey, weekId, displayWeek, components, selectedId, focusedId = '', onSelectId, onChange, pointsByType, variant = 'standalone', weekSessionDate, holidayDates, dateDriftByComponentId, onReuseComponents, otherWeeks, onCopyComponentToWeek, onMoveComponentToWeek, recordingLinks, selfStudyOnly = false }: WeekComponentRailProps) {
+export function WeekComponentRail({ renderComponentList, componentSectionKey, pointStructure, weekId, displayWeek, components, selectedId, focusedId = '', onSelectId, onChange, pointsByType, variant = 'standalone', weekSessionDate, holidayDates, dateDriftByComponentId, onReuseComponents, otherWeeks, onCopyComponentToWeek, onMoveComponentToWeek, recordingLinks, selfStudyOnly = false }: WeekComponentRailProps) {
   const [pickerIndex, setPickerIndex] = useState<number | null>(null);
+  const [pickerPointId, setPickerPointId] = useState<string | null>(null);
   const [activeDragId, setActiveDragId] = useState<string | null>(null);
   const [componentSearch, setComponentSearch] = useState('');
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
   );
+  const openPicker = (index: number, pointId: string | null = null) => {
+    setPickerPointId(pointId);
+    setPickerIndex(index);
+  };
+  const listActions = { addComponent: (pointId: string) => {
+    const memberIds = new Set(pointStructure?.points.find(point => point.id === pointId)?.componentIds || []);
+    const last = components.reduce((at, component, index) => memberIds.has(component.id) ? index : at, -1);
+    openPicker(last < 0 ? components.length : last + 1, pointId);
+  } };
 
   const addComponentAt = (type: ModuleComponentType, index: number) => {
     const component = createEmptyComponent(weekId, type, components.length + 1);
@@ -1608,8 +1632,10 @@ export function WeekComponentRail({ renderComponentList, componentSectionKey, we
     const next = [...components];
     next.splice(index, 0, ...added);
     onChange(next);
+    if (pointStructure && pickerPointId) pointStructure.onChange(assignPointComponents(pointStructure.points, pickerPointId, added.map(item => item.id), next));
     onSelectId(component.id);
     setPickerIndex(null);
+    setPickerPointId(null);
   };
 
   const duplicateComponent = (component: ModuleComponent) => {
@@ -1618,6 +1644,8 @@ export function WeekComponentRail({ renderComponentList, componentSectionKey, we
     const next = [...components];
     next.splice(index + 1, 0, clone);
     onChange(next);
+    const pointId = pointStructure && pointOfComponent(pointStructure.points, component.id);
+    if (pointStructure && pointId) pointStructure.onChange(assignPointComponents(pointStructure.points, pointId, [clone.id], next));
     onSelectId(clone.id);
   };
 
@@ -1646,7 +1674,13 @@ export function WeekComponentRail({ renderComponentList, componentSectionKey, we
       : { sameWeek: [], otherWeeks: [] };
     const recordings = [...sameWeek, ...elsewhere.map(item => item.recording)];
     const remove = (withRecordings: boolean) => {
-      onChange(removeComponentFromWeek(components, id, withRecordings));
+      const next = removeComponentFromWeek(components, id, withRecordings);
+      onChange(next);
+      if (pointStructure) {
+        const retained = new Set(next.map(item => item.id));
+        const removed = new Set(components.filter(item => !retained.has(item.id)).map(item => item.id));
+        pointStructure.onChange(pointStructure.points.map(point => ({ ...point, componentIds: point.componentIds.filter(member => !removed.has(member)) })));
+      }
       if (elsewhere.length && withRecordings && recordingLinks?.removeComponents) {
         recordingLinks.removeComponents(elsewhere.map(item => item.recording.id));
       } else {
@@ -1672,6 +1706,20 @@ export function WeekComponentRail({ renderComponentList, componentSectionKey, we
     setActiveDragId(null);
     const { active, over } = event;
     if (!over || active.id === over.id) return;
+    if (pointStructure) {
+      const source = visibleGroups.find(group => group.primary.id === String(active.id));
+      if (!source) return;
+      const target = visibleGroups.find(group => group.primary.id === String(over.id));
+      if (!target && over.data.current?.kind !== 'week-point-target') return;
+      const targetPointId = over.data.current?.kind === 'week-point-target'
+        ? over.data.current.pointId : pointOfComponent(pointStructure.points, String(over.id));
+      const moved = movePointComponents(components, pointStructure.points,
+        [source.primary, ...source.recordings].map(item => item.id), targetPointId,
+        target ? [target.primary, ...target.recordings].map(item => item.id) : []);
+      onChange(moved.components);
+      pointStructure.onChange(moved.points);
+      return;
+    }
     // A linked recording follows its live session wherever the session is dropped.
     onChange(keepRecordingsWithTheirSession(reorderComponents(components, String(active.id), String(over.id))));
   };
@@ -1684,11 +1732,19 @@ export function WeekComponentRail({ renderComponentList, componentSectionKey, we
     const separate = group.recordings.filter(recording => componentSectionKey(recording.id) !== section);
     return [{ primary: group.primary, recordings }, ...separate.map(primary => ({ primary, recordings: [] }))];
   }).sort((left, right) => components.indexOf(left.primary) - components.indexOf(right.primary)) : authoredGroups;
-  const visibleGroups = searchTerm
+  const matchingGroups = searchTerm
     ? sessionGroups.filter(group => [group.primary, ...group.recordings].some(component =>
       [componentSessionTitle(component, displayWeek), component.title, component.description, component.type, weekTypeLabel(component.type)]
         .some(value => value.toLocaleLowerCase().includes(searchTerm))))
     : sessionGroups;
+  const visibleGroups = pointStructure ? [...matchingGroups].sort((left, right) => {
+    const sectionIndex = (id: string) => {
+      const index = pointStructure.points.findIndex(point => point.componentIds.includes(id));
+      return index < 0 ? pointStructure.points.length : index;
+    };
+    return sectionIndex(left.primary.id) - sectionIndex(right.primary.id)
+      || components.indexOf(left.primary) - components.indexOf(right.primary);
+  }) : matchingGroups;
   const visibleComponents = visibleGroups.map(group => group.primary);
 
   const nested = variant === 'nested';
@@ -1719,8 +1775,9 @@ export function WeekComponentRail({ renderComponentList, componentSectionKey, we
       />
       {!searchTerm && (() => {
         const nextGroup = visibleGroups[index + 1];
-        const insertionIndex = nextGroup ? components.indexOf(nextGroup.primary) : components.length;
-        return <InsertionZone active={pickerIndex === insertionIndex} onOpen={() => setPickerIndex(insertionIndex)} last={index === visibleComponents.length - 1} />;
+        const insertionIndex = pointStructure ? components.indexOf(recordings[recordings.length - 1] || component) + 1
+          : nextGroup ? components.indexOf(nextGroup.primary) : components.length;
+        return <InsertionZone active={pickerIndex === insertionIndex} onOpen={() => openPicker(insertionIndex, pointStructure ? pointOfComponent(pointStructure.points, component.id) : null)} last={index === visibleComponents.length - 1} />;
       })()}
     </Fragment>
   ) }));
@@ -1739,7 +1796,7 @@ export function WeekComponentRail({ renderComponentList, componentSectionKey, we
             {!nested && <p className="text-[10px] font-medium text-foreground-400">Select a component to edit it, or add another.</p>}
             <div className="flex items-center gap-2">
               {onReuseComponents && <ReuseComponentsButton onClick={onReuseComponents} />}
-              <button type="button" onClick={() => setPickerIndex(components.length)} className="inline-flex h-8 items-center gap-1.5 rounded-lg bg-primary-500 px-3 text-[11px] font-bold text-white shadow-sm transition-smooth hover:bg-primary-600">
+              <button type="button" onClick={() => openPicker(components.length)} className="inline-flex h-8 items-center gap-1.5 rounded-lg bg-primary-500 px-3 text-[11px] font-bold text-white shadow-sm transition-smooth hover:bg-primary-600">
                 <AppIcon className="ri-add-line"></AppIcon>
                 Add component
               </button>
@@ -1762,8 +1819,8 @@ export function WeekComponentRail({ renderComponentList, componentSectionKey, we
 
       {components.length === 0 && pickerIndex === null ? (
         <div className="mt-3">
-          {renderComponentList?.([], searchTerm)}
-          <button onClick={() => setPickerIndex(0)} className="w-full rounded-xl border-2 border-dashed border-background-300 bg-background-50 py-10 text-center hover:border-primary-300 hover:bg-primary-50/40 transition-all group">
+          {renderComponentList?.([], searchTerm, listActions)}
+          <button onClick={() => openPicker(0)} className="w-full rounded-xl border-2 border-dashed border-background-300 bg-background-50 py-10 text-center hover:border-primary-300 hover:bg-primary-50/40 transition-all group">
             <span className="grid place-items-center w-11 h-11 mx-auto rounded-full bg-primary-500 text-white text-xl group-hover:scale-110 transition-transform"><AppIcon className="ri-add-line"></AppIcon></span>
             <p className="mt-3 text-[13px] font-bold text-foreground-800">Add the first component</p>
             <p className="text-[11px] text-foreground-400">Choose a live session, recording, learning material or assessment.</p>
@@ -1775,14 +1832,14 @@ export function WeekComponentRail({ renderComponentList, componentSectionKey, we
           )}
         </div>
       ) : (
-        <DndContext sensors={sensors} collisionDetection={closestCenter} onDragStart={onDragStart} onDragEnd={onDragEnd} onDragCancel={() => setActiveDragId(null)} modifiers={[restrictToVerticalAxis, restrictToParentElement]}>
+        <DndContext sensors={sensors} collisionDetection={pointStructure ? pointCollisionDetection : closestCenter} onDragStart={onDragStart} onDragEnd={onDragEnd} onDragCancel={() => setActiveDragId(null)} modifiers={[restrictToVerticalAxis, restrictToFirstScrollableAncestor]}>
           <SortableContext items={visibleComponents.map(c => c.id)} strategy={verticalListSortingStrategy}>
             <div className="mt-2 max-h-[calc(100vh-15rem)] overflow-y-auto overflow-x-hidden px-1.5 py-1.5">
               {visibleComponents.length === 0 && searchTerm ? (
                 <p className="rounded-xl border border-dashed border-background-300 px-3 py-6 text-center text-[11px] font-medium text-foreground-500">No components match “{componentSearch.trim()}”.</p>
               ) : <>
-              {!searchTerm && <InsertionZone active={pickerIndex === 0} onOpen={() => setPickerIndex(0)} first />}
-              {renderComponentList ? renderComponentList(componentRows, searchTerm) : componentRows.map(item => item.node)}
+              {!searchTerm && <InsertionZone active={pickerIndex === 0} onOpen={() => openPicker(0)} first />}
+              {renderComponentList ? renderComponentList(componentRows, searchTerm, listActions) : componentRows.map(item => item.node)}
               </>}
             </div>
           </SortableContext>
@@ -1798,7 +1855,7 @@ export function WeekComponentRail({ renderComponentList, componentSectionKey, we
           componentCount={components.length}
           onPick={type => addComponentAt(type, pickerIndex)}
           onClose={() => setPickerIndex(null)}
-          onReuse={onReuseComponents ? () => {
+          onReuse={!pickerPointId && onReuseComponents ? () => {
             setPickerIndex(null);
             onReuseComponents();
           } : undefined}
