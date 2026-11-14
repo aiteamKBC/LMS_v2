@@ -100,7 +100,7 @@ def main(argv=None):
         md5((to_jsonb(m)-'cover_image_url'-'updated_at')::text)
         from curriculum.modules m where module_catalogue_id=any(%s)
         and deleted_at is null and is_programme_deleted is not true
-        and lower(coalesce(to_jsonb(m)->>'status',''))<>'archived'
+        and lower(trim(coalesce(to_jsonb(m)->>'status','')))<>'archived'
         and lower(trim(coalesce(to_jsonb(m)->>'is_archived',''))) not in ('1','true','yes','y','on')"""
     # Use Django's configured driver/parameters directly. A standalone data
     # operation needs neither application setup nor a web-worker connection pool.
