@@ -13,6 +13,7 @@ from .attendance_rules import INVALID, attendance_outcome
 
 
 def read_components(module_ids):
+    from curriculum_api.schema_compat import active_condition
     from curriculum_api.week_visibility import visible_child_sql, visible_week_sql
     with connections['enrolment'].cursor() as cursor:
         cursor.execute(f'''SELECT c.id,c.module_catalogue_id,c.title,c.type,
@@ -23,7 +24,7 @@ def read_components(module_ids):
             WHERE c.module_catalogue_id=ANY(%s)
               AND lower(replace(btrim(c.type),'-','_')) IN ('live_session','recording_placeholder')
               AND {visible_child_sql('c')} AND {visible_week_sql('w')}
-              AND m.deleted_at IS NULL AND NOT coalesce(m.is_programme_deleted,false)
+              AND {active_condition('m')}
             ORDER BY c.id''', [list(module_ids)])
         rows = cursor.fetchall()
     import json

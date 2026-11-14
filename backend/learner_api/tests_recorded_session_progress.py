@@ -1,12 +1,12 @@
 """Recorded delivery regressions; database and external transports are mocked."""
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from django.test import SimpleTestCase
 
 from .live_session_progress import read_live_credits, supplement_component_progress, supplement_module_hours
-from .recorded_session_progress import project_recorded_credits
+from .recorded_session_progress import project_recorded_credits, read_components
 
 NOW = datetime(2026, 11, 10, 12, tzinfo=timezone.utc)
 END = NOW - timedelta(days=1)
@@ -36,6 +36,23 @@ def evidence(**changes):
 def credit(**changes):
     return dict(componentId='LIVE', moduleId='M1', hours=2, title='Synthetic live session',
                 submittedAt=END.isoformat(), verifiedSeconds=7200) | changes
+
+
+class RecordedComponentQueryTests(SimpleTestCase):
+    def test_uses_the_canonical_module_lifecycle_without_removed_columns(self):
+        from curriculum_api.schema_compat import active_condition
+
+        connection = MagicMock()
+        cursor = connection.cursor.return_value.__enter__.return_value
+        cursor.fetchall.return_value = []
+        with patch('learner_api.recorded_session_progress.connections', {'enrolment': connection}):
+            self.assertEqual(read_components(['M1']), [])
+
+        sql, params = cursor.execute.call_args.args
+        self.assertIn(active_condition('m'), sql)
+        self.assertNotIn('m.deleted_at', sql)
+        self.assertNotIn('m.is_programme_deleted', sql)
+        self.assertEqual(params, [['M1']])
 
 
 class RecordedSessionProgressTests(SimpleTestCase):
