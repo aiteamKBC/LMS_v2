@@ -1,0 +1,186 @@
+{
+  "version": 1,
+  "snapshotDate": "2026-11-13",
+  "covers": [
+    {
+      "moduleId": "MOD-20260921085217095815146F2085A499",
+      "title": "AI In Marketing",
+      "asset": "assets/module-covers/2026-11-13/01-ai-in-marketing-0bf709f2.webp",
+      "sha256": "e82792314560766aeba1098cadc03032235f277f184413bdef400b6be0b9d35f"
+    },
+    {
+      "moduleId": "MOD-20260921085233798880517CB0D243D0",
+      "title": "AI In Marketing",
+      "asset": "assets/module-covers/2026-11-13/02-ai-in-marketing-fdbe9b3f.webp",
+      "sha256": "96856333858b7b186ced8452654c26eac091154992c70e58a480cb2ae302d80c"
+    },
+    {
+      "moduleId": "MOD-202609211343157699387AACDDCD8A5B",
+      "title": "AI In Marketing",
+      "asset": "assets/module-covers/2026-11-13/03-ai-in-marketing-d8f0284e.webp",
+      "sha256": "1795a80eb731dfae6b726387f2ee964663fd824f058cdb87c7edba8bb6eab5ec"
+    },
+    {
+      "moduleId": "MOD-20260912131150211624",
+      "title": "Commercial Intelligence",
+      "asset": "assets/module-covers/2026-11-13/04-commercial-intelligence-767d4926.webp",
+      "sha256": "b7758ae84ef357b0a888f28aa7a56a123775447463ed4a17eab43fd4f1bfa824"
+    },
+    {
+      "moduleId": "MOD-20261002145217180409FC6342F2CE88",
+      "title": "Commercial Intelligence",
+      "asset": "assets/module-covers/2026-11-13/05-commercial-intelligence-78373999.webp",
+      "sha256": "04b74410f63d6eb82fd7fd5d6f75ce122f85aecb9440d90b4f5624c6b2a7ed4a"
+    },
+    {
+      "moduleId": "MOD-202610030949476057995921FD6A1D0C",
+      "title": "Commercial Intelligence",
+      "asset": "assets/module-covers/2026-11-13/06-commercial-intelligence-53a5ce71.webp",
+      "sha256": "213fbd807910153103881cb39632e9c7c1bfada6fcab27137f0c2b741d8b6642"
+    },
+    {
+      "moduleId": "MOD-20260911124647037289",
+      "title": "Customer Journey Optimisation",
+      "asset": "assets/module-covers/2026-11-13/07-customer-journey-optimisation-9086b285.webp",
+      "sha256": "f3ba72aefb38fe2dbad074d50ac451ab8be33714834aa94ff81f01dbe3105ca3"
+    },
+    {
+      "moduleId": "MOD-202609301354380952694569FE544702",
+      "title": "Customer Journey Optimisation",
+      "asset": "assets/module-covers/2026-11-13/08-customer-journey-optimisation-2ec18e9e.webp",
+      "sha256": "dc120fe136a27d48ba517c3ac10733520d6b8366febd6f6ebbe02d8c796f5996"
+    },
+    {
+      "moduleId": "MOD-20260930110509069516DE05CBE11E6E",
+      "title": "Managing Successful Programmes: Project Controls for Transformational Change",
+      "asset": "assets/module-covers/2026-11-13/09-managing-successful-programmes-project-controls-for-transformational-c-3d551bc1.webp",
+      "sha256": "9f0d2ac8f942c95689129daef6a19b7387548b47943d27bccb03ed0af10c58a2"
+    },
+    {
+      "moduleId": "MOD-20260913231851931737",
+      "title": "MarTech Foundations \u2014 TEST",
+      "asset": "assets/module-covers/2026-11-13/10-martech-foundations-test-f319e80d.webp",
+      "sha256": "a3b9c7bdd1e8dad18ee0abd67a9bd7312866f0531c6f91145968296db6bb51fd"
+    },
+    {
+      "moduleId": "MOD-20260912105734147219",
+      "title": "Marketing Impact and Planning",
+      "asset": "assets/module-covers/2026-11-13/11-marketing-impact-and-planning-5d623004.webp",
+      "sha256": "175f290c25c20d2a3e66de932de8eaa075ac7d12cf05866b8b13803d40f002b6"
+    },
+    {
+      "moduleId": "MOD-20260912130830641004",
+      "title": "Marketing Strategy&Planning",
+      "asset": "assets/module-covers/2026-11-13/12-marketing-strategy-planning-436f12e9.webp",
+      "sha256": "82b79fdeb245379477f88c032392314603df72da0282c0d564a6111ed93aaeeb"
+    },
+    {
+      "moduleId": "MOD-202610011453094831311A09A17AA0FE",
+      "title": "Marketing Strategy&Planning",
+      "asset": "assets/module-covers/2026-11-13/13-marketing-strategy-planning-34a23725.webp",
+      "sha256": "361a6b57cb30688a9898c7949ab1d26dc8251e0da740ac9722eb23fef2ca18cf"
+    },
+    {
+      "moduleId": "MOD-20260915120636149383B681A6F2D5CF",
+      "title": "Martech - Fri",
+      "asset": "assets/module-covers/2026-11-13/14-martech-fri-01e7841c.webp",
+      "sha256": "c51361e89e2d8577864565a0dbe46a4d03b62bc01b6ad10cd7a56226da2699c9"
+    },
+    {
+      "moduleId": "MOD-2026091512020150578265761A284979",
+      "title": "Martech - Thur",
+      "asset": "assets/module-covers/2026-11-13/15-martech-thur-bf8a7564.webp",
+      "sha256": "be2bdb180b23ffba2d20882b0d79cee9dbfb5026360e2512f9bbabe2e7a09ffb"
+    },
+    {
+      "moduleId": "MOD-20261001105703419367E214F45713C3",
+      "title": "PMI-SP Scheduling Professional",
+      "asset": "assets/module-covers/2026-11-13/16-pmi-sp-scheduling-professional-fb74153d.webp",
+      "sha256": "39168f96ea3072a49ec2fcc28f0a73af967caedb49336fd880830881005eca4f"
+    },
+    {
+      "moduleId": "MOD-20260912111853582488",
+      "title": "Project Management Professional",
+      "asset": "assets/module-covers/2026-11-13/17-project-management-professional-111dd557.webp",
+      "sha256": "dc130ba9bd23be0c5590ad2e9c371ce2899553f15e9fc12fe15e0060204069a7"
+    },
+    {
+      "moduleId": "MOD-2026100515431556507953E93B17DF67",
+      "title": "Project Management Professional copy",
+      "asset": "assets/module-covers/2026-11-13/18-project-management-professional-copy-1439d2fd.webp",
+      "sha256": "f7229766e1882873c6235c913b32bfde678109561b2894a1e63e446010c16def"
+    },
+    {
+      "moduleId": "MOD-202610290940226451730757D1447F42",
+      "title": "Ray-Project Management Office(PMO)",
+      "asset": "assets/module-covers/2026-11-13/19-ray-project-management-office-pmo-fe08d17d.webp",
+      "sha256": "75239fecb77d1d70f6eee0a52bc192d2b34a2d94c39faeb595c5c9a48205f455"
+    },
+    {
+      "moduleId": "MOD-20260822F0AC1422DF9E",
+      "title": "Ray-Project Management Professional-June 2026",
+      "asset": "assets/module-covers/2026-11-13/20-ray-project-management-professional-june-2026-54d8fbc1.webp",
+      "sha256": "3fc0623f54d7a1f517769ab91cc47d050d2ca123c70a4a5f40bc0fa21983a6cf"
+    },
+    {
+      "moduleId": "MOD-20260916132543446957B40D238B7516",
+      "title": "Risk Management",
+      "asset": "assets/module-covers/2026-11-13/21-risk-management-452bf876.webp",
+      "sha256": "07352212e29f448ecac6c20fe6178cc97668ef1908e6b85e848c29e901efdb66"
+    },
+    {
+      "moduleId": "MOD-20260921081039161503EB58ACC4DD01",
+      "title": "Social Media",
+      "asset": "assets/module-covers/2026-11-13/22-social-media-dd45c2db.webp",
+      "sha256": "6bb9c06b7b616b8dc7f48f36c40c84d0994c75c7d51cda7391d7d9462d301479"
+    },
+    {
+      "moduleId": "MOD-202609211208476573216D584A576BEF",
+      "title": "Social Media",
+      "asset": "assets/module-covers/2026-11-13/23-social-media-68f49cf3.webp",
+      "sha256": "2f82d7a014090a51e40e5aded1aa0475aa633789a7aae633cfb2bae34d00950b"
+    },
+    {
+      "moduleId": "MOD-KBC-PMP-M01-SMR",
+      "title": "Stakeholder Management & Reporting",
+      "asset": "assets/module-covers/2026-11-13/24-stakeholder-management-reporting-2e70362b.webp",
+      "sha256": "5aed03621455a256cf5d097f56d1d1f956ca98f3d3aa173e167b4c838e43819c"
+    },
+    {
+      "moduleId": "MOD-202610042359447369635E44A6808359",
+      "title": "Stakeholder Management &Reporting",
+      "asset": "assets/module-covers/2026-11-13/25-stakeholder-management-reporting-14aab291.webp",
+      "sha256": "d7ac7388464e9ac8707ef4e1fecd9390a33ab7a8a4327fae893d4538feea6695"
+    },
+    {
+      "moduleId": "MOD-20261029093006054077DEFAEF52A90B",
+      "title": "Steve-Project Planning and Control(PPC)",
+      "asset": "assets/module-covers/2026-11-13/26-steve-project-planning-and-control-ppc-48c76732.webp",
+      "sha256": "56141ed102c3868219a09e44488d1a348f8b60be4f8259cb249f3fe716fb6746"
+    },
+    {
+      "moduleId": "MOD-202610131355227809620D16D4918531",
+      "title": "Test Teamss",
+      "asset": "assets/module-covers/2026-11-13/27-test-teamss-b6ed9319.webp",
+      "sha256": "5133fd142b57db91bd9c9790d279802403463b051a2e294de6520061db12793e"
+    },
+    {
+      "moduleId": "MOD-20260905133403098046",
+      "title": "Test-cover",
+      "asset": "assets/module-covers/2026-11-13/28-test-cover-e8a38fdd.webp",
+      "sha256": "13c68692b8643f3db9e807aaf97acc2fe785aa127388f8fee67b305ebd9d805f"
+    },
+    {
+      "moduleId": "MOD-20260915191751498012EE30BEC07D4B",
+      "title": "khaled",
+      "asset": "assets/module-covers/2026-11-13/29-khaled-a9407b23.webp",
+      "sha256": "82a4e520d2dda4ff8fa758c74db46a7f5a80d7a5d32c119feb9554ab81dd2504"
+    },
+    {
+      "moduleId": "MOD-2026091520135989929632B93CE23AB6",
+      "title": "khalido 16",
+      "asset": "assets/module-covers/2026-11-13/30-khalido-16-3b2911ec.webp",
+      "sha256": "15dcf7ea7c91dae089a0442193f9170225d20c72636f200116ce25a46757f076"
+    }
+  ]
+}

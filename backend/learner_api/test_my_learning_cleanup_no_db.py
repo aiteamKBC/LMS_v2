@@ -26,7 +26,8 @@ class MyLearningScheduleTests(unittest.TestCase):
         canonical = SimpleNamespace(targets_for=forbidden, entries_for=Mock(return_value=[]))
         module = {'id': 'M1', 'title': 'One', 'educational_session_count': 0,
                   'description': 'unused', 'learning_outcomes': []}
-        scope = dict(__package__='learner_api', defaultdict=defaultdict,
+        from curriculum_api.learning_storage import read_sql
+        scope = dict(__package__='learner_api', defaultdict=defaultdict, read_sql=read_sql,
             datetime=datetime, timezone=timezone, canonical_learning=canonical, date_only=lambda v: v,
             LearnerProfile=SimpleNamespace(objects=forbidden), connections={'enrolment': connection},
             plan_module_ids=Mock(return_value=(['M1'], {})),

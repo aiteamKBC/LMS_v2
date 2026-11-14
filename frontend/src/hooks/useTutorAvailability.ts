@@ -8,12 +8,9 @@ import {
 /**
  * Who is already teaching in the slot the user is filling in.
  *
- * A tutor cannot take two modules that run at the same time, and the save
- * refuses one that would. Finding that out *from* the refusal is the worst
- * moment to find it out — the form is already filled in and the choice was never
- * going to work. This asks the same question ahead of the write so a screen can
- * mark the busy names in the picker and explain the clash while it is still one
- * click to avoid.
+ * Ask about overlapping sessions before saving so the picker can warn about
+ * busy tutors. The author can keep a busy tutor and deliberately override the
+ * conflict, or choose somebody else.
  *
  * The whole roster comes back in one request rather than one call per tutor:
  * the answer changes with the *slot*, not with the name, so re-asking per name
@@ -66,7 +63,7 @@ export function useTutorAvailability(
   options: { enabled?: boolean } = {},
 ): TutorAvailability {
   const enabled = options.enabled !== false && Boolean(slot);
-  const [state, setState] = useState<Omit<TutorAvailability, 'verdictFor'>>(EMPTY);
+  const [state, setState] = useState<Omit<TutorAvailability, 'verdictFor'> & { queryKey: string }>({ ...EMPTY, queryKey: '' });
 
   // The slot is rebuilt on every render by most callers, so the effect keys off
   // its contents rather than its identity — otherwise every keystroke in an
@@ -80,6 +77,7 @@ export function useTutorAvailability(
       slot.startTime,
       slot.endTime,
       slot.moduleCatalogueId,
+      slot.groupId,
       // Part of the slot, not decoration: the cohort's ticked holidays move the
       // session dates, so a changed cohort (or a changed tick) is a changed
       // question. Left out, the picker kept answering about the old dates.
@@ -92,7 +90,7 @@ export function useTutorAvailability(
 
   useEffect(() => {
     if (!key) {
-      setState(EMPTY);
+      setState({ ...EMPTY, queryKey: '' });
       return undefined;
     }
     let live = true;
@@ -112,6 +110,7 @@ export function useTutorAvailability(
             if (name && !byTutor.has(name)) byTutor.set(name, item);
           });
           setState({
+            queryKey: key,
             byTutor,
             sessionDates: response.sessionDates,
             bookable: response.bookable,
@@ -123,7 +122,7 @@ export function useTutorAvailability(
           // Advisory only: a failed preview must never block the form -- the save
           // still enforces the rule. But it is reported as failed, not as an
           // empty answer, so no name is shown as free on the strength of it.
-          if (live) setState({ ...EMPTY, loading: false, failed: true });
+          if (live) setState({ ...EMPTY, queryKey: key, loading: false, failed: true });
         });
     }, DEBOUNCE_MS);
     return () => { live = false; clearTimeout(timer); };
@@ -134,9 +133,9 @@ export function useTutorAvailability(
   // in an unrelated field.
   const verdictFor = useCallback((tutor: string) => {
     const name = tutorAvailabilityKey(tutor);
-    if (!name || !state.bookable) return null;
+    if (!name || !state.bookable || state.loading || state.queryKey !== key) return null;
     return state.byTutor.get(name) || null;
-  }, [state.bookable, state.byTutor]);
+  }, [key, state.bookable, state.byTutor, state.loading, state.queryKey]);
 
-  return { ...state, verdictFor };
+  return { ...(state.queryKey === key ? state : { ...EMPTY, loading: enabled }), verdictFor };
 }

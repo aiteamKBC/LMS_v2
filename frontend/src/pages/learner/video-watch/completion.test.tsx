@@ -108,6 +108,7 @@ async function finish() {
 }
 
 beforeEach(() => {
+  clearAllCachedResources();
   vi.resetAllMocks();
   vi.mocked(readWebPointPlan).mockResolvedValue({ weeks: {} });
   programmeRead.loading = false;
@@ -128,7 +129,39 @@ beforeEach(() => {
   vi.mocked(fetchEvidence).mockResolvedValue([]);
   vi.mocked(loadLearningReflectionSubmission).mockResolvedValue(null);
 });
-afterEach(() => { cleanup(); vi.restoreAllMocks(); });
+afterEach(() => { cleanup(); clearAllCachedResources(); vi.restoreAllMocks(); });
+
+it.each(['commercial', 'apprenticeship'].flatMap(kind =>
+  ['reading', 'video', 'assignment', 'live_session'].map(type => ({ kind, type })),
+))('shows only the opened $type component mappings for a $kind learner', async ({ kind, type }) => {
+  const mapped = { ...first, type, contentHtml: '<p>Synthetic lesson</p>',
+    videoUrl: 'https://example.test/lesson.mp4', assignmentBrief: 'Synthetic assignment',
+    ksbMappings: [
+      { code: 'K1', description: 'Authored knowledge', classification: 'main', weight: 20 },
+      { code: 'S2', description: null, classification: 'main', weight: 30 },
+    ],
+  };
+  vi.mocked(fetchLearnerDetail).mockResolvedValue({ ...detail(), components: [mapped,
+    { ...second, ksbMappings: [{ code: 'K99', description: 'Other activity', weight: 10, classification: 'main' }] },
+  ], ksbs: [
+    { code: 'K1', description: 'Programme description', type: 'K', number: '1' },
+    { code: 'S2', description: 'Programme skill description', type: 'S', number: '2' },
+    { code: 'B99', description: 'Unmapped programme behaviour', type: 'B', number: '99' },
+  ] } as LearnerDetail);
+  mount('C1', kind);
+  const panel = await screen.findByRole('region', { name: 'Mapped KSBs' });
+  expect(within(panel).getAllByRole('listitem')).toHaveLength(2);
+  expect(panel).toHaveTextContent('K1Authored knowledge');
+  expect(panel).toHaveTextContent('S2Programme skill description');
+  expect(panel).not.toHaveTextContent(/K99|B99|Programme description/);
+  expect(submitComponentProgress).not.toHaveBeenCalled();
+});
+
+it('does not substitute programme KSBs when the activity has no mapping', async () => {
+  mount();
+  await screen.findByRole('heading', { name: 'Live Teams Session 1' });
+  expect(screen.queryByRole('region', { name: 'Mapped KSBs' })).not.toBeInTheDocument();
+});
 
 const lectureDraft = (kind = 'apprenticeship') => ({
   id: 'R-LECTURE', status: 'draft', activityId: 'C1', activityType: 'session', learnerKind: kind, learnerId: '1',
@@ -515,11 +548,12 @@ it('does not count a failed reading preview as reading time', async () => {
   vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible');
   let now = 0;
   vi.spyOn(performance, 'now').mockImplementation(() => now);
-  vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('', { status: 404 }));
+  const request = vi.spyOn(globalThis, 'fetch').mockImplementation(async () => new Response('', { status: 404 }));
   const reading = { ...first, type: 'reading', component: 'Reading', resourceUrl: '/curriculum_api/curriculum/uploads/sample.pdf' };
   vi.mocked(fetchLearnerDetail).mockResolvedValue({ ...detail(), components: [reading] } as unknown as LearnerDetail);
   const { unmount } = mount();
   await screen.findByText('This file could not be found on the server. Please let your coach or the curriculum team know.');
+  expect(request).toHaveBeenCalledWith(expect.stringContaining('sample.pdf'), expect.anything());
   now = 60000;
   unmount();
   const saved = JSON.parse(localStorage.getItem('learner_activity_timer:v1:apprenticeship:1:C1')!);

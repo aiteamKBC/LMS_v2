@@ -12,9 +12,11 @@ import unittest
 from contextlib import contextmanager, nullcontext
 from pathlib import Path
 from types import SimpleNamespace
+from curriculum_api.learning_storage import read_sql
 
 
 class LookupConnection:
+    vendor = 'sqlite'
     def __init__(self, database):
         self.database = database
 
@@ -36,7 +38,7 @@ class LookupConnection:
             return cursor.execute(translated.replace('%%', '%'), values)
 
         try:
-            yield SimpleNamespace(execute=execute, fetchone=cursor.fetchone, fetchall=cursor.fetchall)
+            yield SimpleNamespace(db=self, execute=execute, fetchone=cursor.fetchone, fetchall=cursor.fetchall)
         finally:
             cursor.close()
 
@@ -67,6 +69,7 @@ class ProgrammeKsbResolutionTests(unittest.TestCase):
         self.marketing_ksbs = [{'code': 'K1', 'description': 'Marketing knowledge'}]
         self.sources = {'standard:project': self.project_ksbs, 'standard:marketing': self.marketing_ksbs}
         self.scope = {
+            'read_sql': read_sql,
             'connections': {'enrolment': LookupConnection(self.db)},
             'transaction': SimpleNamespace(atomic=lambda **_: nullcontext()),
             'DatabaseError': sqlite3.DatabaseError,

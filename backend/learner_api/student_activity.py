@@ -1,4 +1,5 @@
 """Learner-scoped view over the historical Last_audit activity mirror."""
+from curriculum_api.learning_storage import read_sql
 
 import json
 import re
@@ -786,11 +787,11 @@ def _effective_current_subjects(cursor, learner_id):
     module_ids = _effective_plan_ids(learner, {})
     if not module_ids:
         return []
-    cursor.execute('''
+    cursor.execute(read_sql('''
         SELECT module_catalogue_id,title
         FROM curriculum.modules
         WHERE module_catalogue_id=ANY(%s)
-    ''', [module_ids])
+    ''', cursor.db), [module_ids])
     titles = {module_id: title for module_id, title in cursor.fetchall()}
     return [
         {'id': module_id, 'title': titles[module_id]}

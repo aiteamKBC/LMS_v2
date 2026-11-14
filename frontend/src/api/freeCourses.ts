@@ -11,6 +11,8 @@ import type { Quiz } from './quizzes';
 // /learner_api/free-courses/<kind>/<pk>/. Free courses carry no hours, KSBs or
 // progress by design, so the list is deliberately a lightweight summary. The
 // authored week/activity tree is fetched only after a learner opens one course.
+// Builder courses carry a moduleId and open the normal learning workspace; only
+// legacy courses use the tree and isolated completion endpoints in this client.
 // ============================================================================
 
 /** One openable activity inside a free-course week. */
@@ -53,6 +55,11 @@ export interface FreeCourse {
   description: string;
   coverImageUrl: string;
   weeks: FreeCourseWeek[];
+  /** Normal plan identity: use the module workspace for progress and hours. */
+  moduleId?: string;
+  weekCount?: number;
+  activityCount?: number;
+  hours?: number;
 }
 
 export interface FreeCourseSummary {
@@ -64,6 +71,8 @@ export interface FreeCourseSummary {
   activityCount: number;
   completedActivities: number;
   progressPercentage: number;
+  /** Builder courses open the normal module workspace rather than the free-course detail view. */
+  moduleId?: string;
 }
 
 const BASE = '/learner_api/free-courses';
@@ -82,7 +91,7 @@ const freeCourseDetailResource = createCachedResource<FreeCourse>('learner-free-
 
 /** Lightweight cards for the free courses currently assigned to this learner. */
 export function fetchLearnerFreeCourses(kind: LearnerKind, id: string, force = false): Promise<FreeCourseSummary[]> {
-  return freeCoursesResource.read(`${kind}:${id}`, { force });
+  return freeCoursesResource.read(`${kind}:${id}`, { force, revalidate: true });
 }
 
 /** Render a revisit immediately, without a loading-frame flash. */

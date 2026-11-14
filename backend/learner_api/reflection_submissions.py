@@ -50,7 +50,8 @@ def _component_ksb_weights(component_ref):
         return {}
     try:
         with connections["enrolment"].cursor() as cur:
-            cur.execute("select ksb_mappings from curriculum.components where id = %s limit 1", [component_ref])
+            from curriculum_api.learning_storage import read_table
+            cur.execute(f"select ksb_mappings from {read_table('components', cur.db)} where id = %s limit 1", [component_ref])
             row = cur.fetchone()
     except DatabaseError:
         return {}
@@ -125,7 +126,8 @@ def _reflection_lineage(learner_id, activity_id):
         return lineage
     try:
         with connections["enrolment"].cursor() as cur:
-            cur.execute("select id from curriculum.components where id = %s limit 1", [component_ref])
+            from curriculum_api.learning_storage import read_table
+            cur.execute(f"select id from {read_table('components', cur.db)} where id = %s limit 1", [component_ref])
             if cur.fetchone():
                 lineage["component_ref"] = component_ref
             learner_ids = _learner_profile_ids_for_source(cur, learner_id)

@@ -22,6 +22,7 @@ from curriculum_api.canonical_read_sql import component_ksb_mappings_sql, curren
 from curriculum_api.programme_name_sql import programme_name_sql
 from curriculum_api.schema_compat import inactive_condition
 from curriculum_api.week_visibility import visible_child_sql, visible_week_sql
+from curriculum_api.learning_storage import read_sql
 
 from .retake_timing import attempt_order, selected_attempt
 from .mappers import ValidationError, get_training_plan, training_plan_field
@@ -334,7 +335,7 @@ def component_reference_exists(component_id):
         try:
             with connections[alias].cursor() as cursor:
                 cursor.execute(
-                    "select 1 from curriculum.components where id = %s limit 1",
+                    read_sql("select 1 from curriculum.components where id = %s limit 1", connections[alias]),
                     [component_id],
                 )
                 reachable = True
@@ -399,7 +400,7 @@ def component_reference_state(component_id):
     for alias in ("default", "enrolment"):
         try:
             with connections[alias].cursor() as cursor:
-                cursor.execute(_COMPONENT_LINEAGE_DELETED_SQL, [component_id])
+                cursor.execute(read_sql(_COMPONENT_LINEAGE_DELETED_SQL, connections[alias]), [component_id])
                 row = cursor.fetchone()
         except DatabaseError as exc:
             last_error = exc
@@ -830,7 +831,7 @@ def hydrate_training_plan(plan, *, strict=False):
         # owns learner records when the two connections are split in production.
         with connections["default"].cursor() as cursor:
             cursor.execute(
-                """
+                read_sql("""
                 SELECT m.module_catalogue_id, m.title,
                        m.start_date, m.end_date, m.sessions_number,
                        m.session_week_day, m.cohort_id,
@@ -844,7 +845,7 @@ def hydrate_training_plan(plan, *, strict=False):
                 WHERE m.module_catalogue_id = ANY(%s) OR m.title = ANY(%s)
                 ORDER BY m.module_catalogue_id, w.display_order, w.week_number,
                          c.display_order, c.id
-                """,
+                """, cursor.db),
                 [module_ids, module_titles],
             )
             rows = cursor.fetchall()
@@ -1443,6 +1444,8 @@ def save_progress_record(learner, record, activity=None, *, monthly_assignment=F
 
             transaction.on_commit(_award_engagement_points, using="enrolment")
 
+        from .free_course_records import record_completion
+        record_completion(learner, progress)
         return progress
 
 
@@ -1628,7 +1631,7 @@ def _resolve_programme_id(programme="", training_plan=None):
         try:
             with connections["enrolment"].cursor() as cursor:
                 cursor.execute(
-                    "SELECT COALESCE(NULLIF(programme_id, ''), NULLIF(name, '')) AS programme_id "
+                    read_sql("SELECT COALESCE(NULLIF(programme_id, ''), NULLIF(name, '')) AS programme_id "
                     "FROM curriculum.programmes "
                     "WHERE lower(btrim(COALESCE(name, ''))) = lower(%s) "
                     "   OR lower(btrim(COALESCE(programme_id, ''))) = lower(%s) "
@@ -1642,7 +1645,7 @@ def _resolve_programme_id(programme="", training_plan=None):
                     "    CASE WHEN programme_id IN ("
                     "        SELECT module.programme_id FROM curriculum.modules module "
                     "        WHERE module.module_catalogue_id = ANY(%s)"
-                    "    ) THEN 0 ELSE 1 END, updated_at DESC NULLS LAST LIMIT 1",
+                    "    ) THEN 0 ELSE 1 END, updated_at DESC NULLS LAST LIMIT 1", cursor.db),
                     [programme, programme, programme, programme, programme, module_ids],
                 )
                 row = cursor.fetchone()
@@ -1656,9 +1659,9 @@ def _resolve_programme_id(programme="", training_plan=None):
         try:
             with connections["enrolment"].cursor() as cursor:
                 cursor.execute(
-                    "SELECT DISTINCT programme_id FROM curriculum.modules "
+                    read_sql("SELECT DISTINCT programme_id FROM curriculum.modules "
                     "WHERE module_catalogue_id = ANY(%s) AND programme_id IS NOT NULL AND programme_id <> '' "
-                    "ORDER BY programme_id LIMIT 2",
+                    "ORDER BY programme_id LIMIT 2", cursor.db),
                     [module_ids],
                 )
                 rows = cursor.fetchall()
@@ -1693,9 +1696,9 @@ def _resolve_linkable_programme_id(programme="", training_plan=None):
         try:
             with connections["enrolment"].cursor() as cursor:
                 cursor.execute(
-                    "SELECT DISTINCT programme_id FROM curriculum.modules "
+                    read_sql("SELECT DISTINCT programme_id FROM curriculum.modules "
                     "WHERE module_catalogue_id = ANY(%s) "
-                    "  AND programme_id IS NOT NULL AND programme_id <> ''",
+                    "  AND programme_id IS NOT NULL AND programme_id <> ''", cursor.db),
                     [module_ids],
                 )
                 rows = cursor.fetchall()
@@ -1877,7 +1880,7 @@ def _fetch_ksb_items_from_plan_mappings(programme_id="", programme="", training_
         # caller's transaction, only this query.
         with transaction.atomic(using="enrolment"), connections["enrolment"].cursor() as cursor:
             cursor.execute(
-                "SELECT DISTINCT ON (upper(mapping.ksb_code)) "
+                read_sql("SELECT DISTINCT ON (upper(mapping.ksb_code)) "
                 "       upper(mapping.ksb_code) AS code, "
                 "       COALESCE(NULLIF(mapping.ksb_description, ''), '') AS description "
                 "FROM curriculum.ksb_mappings mapping "
@@ -1899,7 +1902,7 @@ def _fetch_ksb_items_from_plan_mappings(programme_id="", programme="", training_
                 "             ELSE 3 "
                 "         END, "
                 "         mapping.weight DESC, "
-                "         mapping.ksb_description",
+                "         mapping.ksb_description", cursor.db),
                 [module_ids, programme_id, programme, programme_id, programme, programme],
             )
             rows = cursor.fetchall()
@@ -1944,7 +1947,7 @@ def _resolve_ksb_profile_source_id(programme_id="", programme="", training_plan=
             if not module_ids:
                 return ""
             cursor.execute(
-                "SELECT COALESCE(NULLIF(module.ksb_profile_source_id, ''), '') "
+                read_sql("SELECT COALESCE(NULLIF(module.ksb_profile_source_id, ''), '') "
                 "FROM curriculum.modules module "
                 "WHERE module.module_catalogue_id = ANY(%s) "
                 "  AND module.ksb_profile_source_id IS NOT NULL "
@@ -1955,7 +1958,7 @@ def _resolve_ksb_profile_source_id(programme_id="", programme="", training_plan=
                 "     OR " + programme_name_sql('module') + " = %s "
                 "     OR %s LIKE " + programme_name_sql('module') + " || ' %%'"
                 "  ) "
-                "ORDER BY module.updated_at DESC NULLS LAST LIMIT 1",
+                "ORDER BY module.updated_at DESC NULLS LAST LIMIT 1", cursor.db),
                 [module_ids, programme_id, programme, programme_id, programme, programme],
             )
             row = cursor.fetchone()

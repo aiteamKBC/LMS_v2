@@ -47,6 +47,49 @@ it.each(['commercial', 'apprenticeship'] as const)('restores %s KSB choices with
     learningReflection: 'Saved reflection' }));
 });
 
+const authoredKsbs = [
+  { code: 'K1', description: 'Mapped knowledge', classification: 'main', weight: 20 },
+  { code: 'S2', description: 'Mapped skill', classification: 'main', weight: 30 },
+];
+
+it.each(['commercial', 'apprenticeship'] as const)('starts a new %s reflection with its mapped KSBs and saves a later deselection', async learnerKind => {
+  const view = render(<ReflectionWindow {...props} learnerKind={learnerKind} autoKsbs={authoredKsbs} />);
+  await settle();
+  fireEvent.click(screen.getByRole('button', { name: 'KSBs' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Choose KSBs' }));
+  expect(screen.getByRole('checkbox', { name: /K1/ })).toBeChecked();
+  fireEvent.click(screen.getByRole('tab', { name: /S\s*1\/1/ }));
+  expect(screen.getByRole('checkbox', { name: /S2/ })).toBeChecked();
+  await tick();
+  expect(mocks.save).toHaveBeenLastCalledWith(expect.objectContaining({
+    submissionMode: 'draft', ksbCodes: ['K1', 'S2'], ksbWeights: { K1: 20, S2: 30 },
+    ksbExplanations: {}, confidenceBefore: {}, confidenceAfter: {},
+  }));
+  fireEvent.click(screen.getByRole('checkbox', { name: /S2/ }));
+  view.rerender(<ReflectionWindow {...props} learnerKind={learnerKind} autoKsbs={[...authoredKsbs]} />);
+  expect(screen.getByRole('checkbox', { name: /S2/ })).not.toBeChecked();
+  await tick();
+  expect(mocks.save).toHaveBeenLastCalledWith(expect.objectContaining({ ksbCodes: ['K1'] }));
+});
+
+it.each([
+  { source: 'server', codes: ['K1'] }, { source: 'server', codes: [] },
+  { source: 'browser', codes: ['K1'] }, { source: 'browser', codes: [] },
+])('preserves the $source selection $codes when curriculum mappings are available', async ({ source, codes }) => {
+  const draft = { status: 'draft', ksbCodes: codes, learningReflection: 'Saved answer' };
+  if (source === 'server') mocks.load.mockResolvedValue(draft);
+  else localStorage.setItem(draftKey, JSON.stringify(draft));
+  render(<ReflectionWindow {...props} autoKsbs={authoredKsbs} />);
+  await settle();
+  fireEvent.click(screen.getByRole('button', { name: 'KSBs' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Choose KSBs' }));
+  expect(screen.getByRole('checkbox', { name: /K1/ })).toHaveProperty('checked', codes.includes('K1'));
+  fireEvent.click(screen.getByRole('tab', { name: /^S/ }));
+  expect(screen.getByRole('checkbox', { name: /S2/ })).not.toBeChecked();
+  await tick();
+  expect(mocks.save).toHaveBeenLastCalledWith(expect.objectContaining({ ksbCodes: codes, learningReflection: 'Saved answer' }));
+});
+
 it.each(['commercial', 'apprenticeship'] as const)('saves and reopens %s programme choices beyond activity mappings without adding weight', async learnerKind => {
   const ksbs = [
     { code: 'K1', type: 'K', number: '1', description: 'Programme knowledge' },
@@ -59,7 +102,7 @@ it.each(['commercial', 'apprenticeship'] as const)('saves and reopens %s program
   changeAnswer('My saved learning');
   fireEvent.click(screen.getByRole('button', { name: 'KSBs' }));
   fireEvent.click(screen.getByRole('button', { name: 'Choose KSBs' }));
-  fireEvent.click(screen.getByRole('checkbox', { name: /K1/ }));
+  expect(screen.getByRole('checkbox', { name: /K1/ })).toBeChecked();
   fireEvent.click(screen.getByRole('checkbox', { name: /S2/ }));
   fireEvent.change(screen.getByPlaceholderText(/Why is S2 relevant/), { target: { value: 'My own evidence for this skill.' } });
   fireEvent.change(screen.getByRole('slider', { name: 'S2: Confidence before' }), { target: { value: '2' } });

@@ -9,6 +9,7 @@ from .archive_index import curriculum_archive_index
 from .programme_ksb_stats_batch import curriculum_programmes_ksb_stats
 from .record_snapshots import curriculum_record_snapshot
 from .free_course_conversion import convert_free_course
+from . import free_course_authoring
 from .module_live import curriculum_live, curriculum_module_changes
 from .module_collaboration import collaboration_configuration
 from .module_uploads import module_uploaded_files
@@ -55,10 +56,12 @@ from .teaching_quality import teaching_review
 from .recordings_transcript_pdf import lecture_transcript
 from .module_hours import module_target
 from .catalogue_activity import catalogue_activity
-from . import free_course_authoring_views, free_course_quiz_views
+from . import delivery_dashboard, free_course_authoring_views, free_course_quiz_views
 
 
 urlpatterns = [
+    path('curriculum/delivery-dashboard/', delivery_dashboard.overview, name='curriculum-delivery-dashboard'),
+    path('curriculum/delivery-dashboard/sessions/', delivery_dashboard.sessions, name='curriculum-delivery-dashboard-sessions'),
     path(
         'curriculum/free-courses/authoring/',
         free_course_authoring_views.catalogue,
@@ -172,6 +175,13 @@ urlpatterns = [
     path('curriculum/programmes/reorder/', views.curriculum_programme_reorder, name='curriculum-programmes-reorder'),
     # Several cards' KSB numbers at once (?ids=a,b). Before <identifier> for the same reason.
     path('curriculum/programmes/ksb-stats/', curriculum_programmes_ksb_stats, name='curriculum-programmes-ksb-stats'),
+    path('curriculum/free-courses/', free_course_authoring.catalogue, name='free-course-catalogue'),
+    path('curriculum/free-courses/<str:course_id>/structure/', free_course_authoring.authoring, name='free-course-structure'),
+    path('curriculum/free-courses/<str:course_id>/collaboration/', free_course_authoring.authoring, {'kind': 'collaboration'}, name='free-course-collaboration'),
+    path('curriculum/free-courses/<str:course_id>/weeks/', free_course_authoring.authoring, {'kind': 'week'}, name='free-course-weeks'),
+    path('curriculum/free-courses/<str:course_id>/weeks/<str:item_id>/', free_course_authoring.authoring, {'kind': 'week'}, name='free-course-week'),
+    path('curriculum/free-courses/<str:course_id>/components/', free_course_authoring.authoring, {'kind': 'component'}, name='free-course-components'),
+    path('curriculum/free-courses/<str:course_id>/components/<str:item_id>/', free_course_authoring.authoring, {'kind': 'component'}, name='free-course-component'),
     path('curriculum/free-programmes/<str:programme_id>/modules/', views.curriculum_free_programme_modules, name='curriculum-free-programme-modules'),
     path('curriculum/free-programmes/<str:programme_id>/convert/', views.curriculum_free_programme_convert, name='curriculum-free-programme-convert'),
     path('curriculum/free-programmes/<str:programme_id>/import-module/', views.curriculum_free_programme_import_module, name='curriculum-free-programme-import-module'),

@@ -11,11 +11,15 @@ import GroupWorkspacePage from '../page';
 vi.mock('@/components/feature/WorkspaceShell', () => ({
   WorkspaceShell: ({ children }: { children: ReactNode }) => <div>{children}</div>,
 }));
+vi.mock('@/pages/curriculum/shared/entities/recordSnapshot', () => ({
+  fetchCurriculumRecordSnapshot: vi.fn(async () => ({ record: null, revision: 'module-v1' })),
+}));
 vi.mock('@/components/feature/CurriculumSweetAlert', () => ({
   showCurriculumAlert: vi.fn(),
   showCurriculumConfirm: vi.fn(async () => false),
 }));
-vi.mock('@/pages/curriculum/module-builder/moduleAuthoringData', () => ({
+vi.mock('@/pages/curriculum/module-builder/moduleAuthoringData', async importOriginal => ({
+  ...(await importOriginal<typeof import('@/pages/curriculum/module-builder/moduleAuthoringData')>()),
   createNewModule: vi.fn(),
 }));
 vi.mock('@/lib/curriculumApi', async importOriginal => ({
@@ -94,11 +98,11 @@ describe('group module actions', () => {
     await userEvent.type(name, 'Updated foundations');
     await userEvent.click(screen.getByRole('button', { name: 'Save module' }));
     await waitFor(() => expect(updateCurriculumModule).toHaveBeenCalledTimes(1));
-    expect(updateCurriculumModule).toHaveBeenCalledWith('MOD-2', expect.objectContaining({
-      name: 'Updated foundations', notes: 'Notes for module 2', status: 'published',
-      color: '#123456', groupId: 'GROUP-1', cohortId: 'COHORT-1', tutor: 'Tutor One',
-      sessionsNumber: 1, startDate: '2026-09-02', endDate: '2026-09-02',
-    }));
+    // Renaming sends only the name and concurrency token. Stored delivery,
+    // tutor, dates and authored content remain owned by the existing record.
+    expect(updateCurriculumModule).toHaveBeenCalledWith('MOD-2', {
+      name: 'Updated foundations', expectedRevision: 'module-v1',
+    });
     expect(createGroupModule).not.toHaveBeenCalled();
     expect(reload).toHaveBeenCalledWith({ silent: true });
     await waitFor(() => expect(screen.queryByRole('heading', { name: 'Edit module' })).not.toBeInTheDocument());

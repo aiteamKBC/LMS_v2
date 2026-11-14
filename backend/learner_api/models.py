@@ -1229,10 +1229,13 @@ class LearnerFreeCourse(models.Model):
     """Canonical Free Course assignment owned by ``Learner.learners``.
 
     This table, not ``Created_users.Free_courses``, is the learner-facing
-    assignment source. It deliberately carries no hours, KSBs or component
-    tree. ``free_course_title`` is retained only because it exists in the
-    schema; readers resolve the official title from
+    assignment source. Includes both legacy free courses and Builder courses
+    (which carry a ``moduleId`` for workspace navigation). It deliberately
+    carries no hours, KSBs or component tree. ``free_course_title`` is retained
+    only because it exists in the schema; readers resolve the official title from
     ``curriculum.free_courses.course_name``.
+    Database migration 0026 enforces the cross-schema course relationship.
+    Assignment records do not themselves award hours.
     """
     learner = models.ForeignKey(LearnerProfile, on_delete=models.CASCADE, related_name="free_courses")
     position = models.PositiveIntegerField()
@@ -1250,13 +1253,15 @@ FREE_PROGRESS_INACTIVE = "inactive"
 
 
 class LearnerFreeCourseProgress(models.Model):
-    """A learner's completion of a single free-course activity.
+    """Achieved native free-course components, keyed by LearnerProfile.id.
 
     Deliberately its OWN store, separate from Training_plan_progress and the KSB
     snapshot: free-course completion is shown on the free-courses page and must
     NEVER enter OTJH totals, the KSB snapshot or the programme's overall
     progress. Ownership is the canonical ``Learner.learners`` row; the URL's
     enrolment id must be resolved before this model is queried.
+    Migration 0026 translates legacy enrolment IDs. Attempts and actual hours
+    remain in learner_progress_entries; this index never awards hours independently.
     """
     learner = models.ForeignKey(
         LearnerProfile,

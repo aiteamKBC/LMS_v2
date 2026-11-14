@@ -63,14 +63,13 @@ describe('Learner Case File tab request characterization', () => {
     });
   });
 
-  it('starts all four dashboard-plan dependencies while the page-level plan hook is enabled', async () => {
+  it('starts the three dashboard-plan dependencies without the unused contract reader', async () => {
     const { result } = renderHook(() => useDashboardPlan('apprenticeship', '5170', true));
     await waitFor(() => expect(result.current.loading).toBe(false));
 
     expect(calls).toEqual([
       'overview-week',
       'training-plan:overview',
-      'training-plan:contract',
       'monthly-logs',
     ]);
   });
@@ -93,7 +92,7 @@ describe('Learner Case File tab request characterization', () => {
     rerender({ requested: true });
 
     expect(calls).toEqual([
-      'overview-week', 'training-plan:overview', 'training-plan:contract', 'monthly-logs',
+      'overview-week', 'training-plan:overview', 'monthly-logs',
     ]);
   });
 
@@ -107,7 +106,7 @@ describe('Learner Case File tab request characterization', () => {
     await waitFor(() => {
       expect(mocks.weekRead).toHaveBeenCalledTimes(2);
       expect(mocks.scheduleRead).toHaveBeenCalledTimes(2);
-      expect(mocks.contract).toHaveBeenCalledTimes(2);
+      expect(mocks.contract).not.toHaveBeenCalled();
       expect(mocks.monthlyLogs).toHaveBeenCalledTimes(2);
     });
   });

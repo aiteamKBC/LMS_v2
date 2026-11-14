@@ -36,7 +36,9 @@ class CoachDashboardService:
     # Older snapshots may legitimately contain ``--`` dates, so they must not
     # be served as if they were current after the serializer is corrected.
     # v21 uses completion timestamps for both PR/MCM, including legacy aliases.
-    SCHEMA_VERSION = 21
+    # v22 adds catalogue-based Main activity progress to the learner table.
+    # v23 restores all recorded activities in the coach table.
+    SCHEMA_VERSION = 23
 
     def build(self) -> dict:
         """Read the persistent projection; build once only if it is absent."""
@@ -101,7 +103,7 @@ class CoachDashboardService:
         rows_by_id = {str(row.id): row for row in rows}
         snapshot_version = (payload.get("readModel") or {}).get("version")
         review_dates = {}
-        if rows and snapshot_version is not None and snapshot_version < self.SCHEMA_VERSION:
+        if rows and snapshot_version is not None and snapshot_version < 21:
             # Correct old scheduled-date metrics while the normal refresh queues.
             review_dates = saved_completed_review_dates(
                 rows, owner_email=self.context.owner_email,

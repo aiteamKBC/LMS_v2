@@ -9,6 +9,18 @@ vi.mock('@/api/moduleCatalogueActivity', () => ({ fetchModuleCatalogueActivity: 
 describe('current module teaching, independent of publication and learner progress', () => {
   beforeEach(() => { clearAllCachedResources(); vi.mocked(fetchModuleCatalogueActivity).mockReset(); });
   const today = '2026-11-01';
+  it('lets Delivery revalidate on return from an edit while preserving the catalogue default cache', async () => {
+    vi.mocked(fetchModuleCatalogueActivity).mockResolvedValue({ A: { source: 'new_lms', startDate: '2026-10-01', lastLiveDate: '2026-12-01' } });
+    const first = renderHook(() => useCatalogueActivity('delivery-dashboard', 'staff-1'));
+    await waitFor(() => expect(first.result.current.data?.A).toBeDefined()); first.unmount();
+    const cached = renderHook(() => useCatalogueActivity('delivery-dashboard', 'staff-1'));
+    await waitFor(() => expect(cached.result.current.loading).toBe(false)); cached.unmount();
+    expect(fetchModuleCatalogueActivity).toHaveBeenCalledTimes(1);
+    vi.mocked(fetchModuleCatalogueActivity).mockResolvedValue({});
+    const refreshed = renderHook(() => useCatalogueActivity('delivery-dashboard', 'staff-1', { revalidateOnMount: true }));
+    await waitFor(() => expect(refreshed.result.current.data).toEqual({}));
+    expect(fetchModuleCatalogueActivity).toHaveBeenCalledTimes(2); refreshed.unmount();
+  });
   it('requires a known start and a live teaching date that has not passed', () => {
     expect(catalogueModuleActive(undefined, today)).toBe(false);
     expect(catalogueModuleActive({ source: 'old_lms', startDate: '', lastLiveDate: '2026-11-05' }, today)).toBe(false);

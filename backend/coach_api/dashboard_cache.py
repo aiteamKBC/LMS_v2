@@ -15,7 +15,8 @@ from django.utils import timezone
 logger = logging.getLogger(__name__)
 # v4 carries the API-owned OTJH target-to-date/RAG fields.  A namespace bump
 # prevents an older browser/API payload from being served without them.
-CACHE_NAMESPACE = "coach-dashboard-summary:v5"
+# v7 restores all recorded activities in the learner-table section.
+CACHE_NAMESPACE = "coach-dashboard-summary:v7"
 SECTION_NAMES = ("summary", "learners", "meetings", "risk")
 
 

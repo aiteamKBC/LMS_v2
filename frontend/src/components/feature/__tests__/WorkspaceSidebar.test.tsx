@@ -196,7 +196,7 @@ it('gives a workspace borrowing the learner look one working Sign out', () => {
   expect(sidebar.style.width).toBe('240px');
   expect(shell.style.getPropertyValue('--kbc-sidebar-width')).toBe('240px');
 
-  fireEvent.click(within(sidebar).getByRole('button', { name: 'Collapse learner navigation' }));
+  fireEvent.click(within(sidebar).getByRole('button', { name: 'Collapse Employer navigation' }));
   expect(sidebar.style.width).toBe('64px');
   expect(shell.style.getPropertyValue('--kbc-sidebar-width')).toBe('64px');
   expect(localStorage.getItem('kbc_learner_sidebar_collapsed')).toBe('true');
@@ -223,7 +223,12 @@ it.each(['/users', '/users/42', '/users/42/wizard/introduction', '/employers/8',
     fireEvent.click(within(sidebar).getByRole('button', { name: 'Expand navigation' }));
     const panel = within(document.getElementById('compliance-secondary-navigation')!);
     expect(panel.getAllByRole('link')).toHaveLength(1);
-    expect(panel.getByRole('link', { name: 'Users' })).toHaveAttribute('href', '/users');
+    // The secondary panel previews the active destination, or the first
+    // available destination when this shared screen is outside /users.
+    const preview = path.startsWith('/users')
+      ? roleNavMap.apprentice.items.find(item => item.href === '/users')!
+      : roleNavMap.apprentice.items[0];
+    expect(panel.getByRole('link', { name: preview.label })).toHaveAttribute('href', preview.href);
     expect(panel.queryByRole('link', { name: 'Roles' })).toBeNull();
     expect(screen.getByTestId('route')).toHaveTextContent(path);
   },

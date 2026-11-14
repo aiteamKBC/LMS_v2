@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
-import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, within, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import Page from './page';
 import {
@@ -225,7 +225,8 @@ it('says staff will send the link when the invitation email could not be sent', 
 it('sends an applicant who already has an account to sign in or Forgot password', async () => {
   vi.mocked(submitApprenticeshipApplication).mockResolvedValue({ eligible: true, reasons: [], outcome: 'existingAccount' });
   await submitProgramme();
-  expect(await heading('You already have an account')).toHaveFocus();
+  const resultHeading = await heading('You already have an account');
+  await waitFor(() => expect(resultHeading).toHaveFocus());
   expect(screen.getByRole('link', { name: 'sign in' })).toHaveAttribute('href', '/login');
   expect(screen.getByRole('link', { name: 'Forgot password' })).toHaveAttribute('href', '/forgot-password');
 });

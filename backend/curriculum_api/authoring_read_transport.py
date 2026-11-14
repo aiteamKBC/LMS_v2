@@ -49,7 +49,7 @@ def _compact_rows(table, where_sql, params, order_sql, selected, *, fingerprint_
     extras = [value for value in (rank_sql, fingerprint_sql) if value]
     query = (
         f'select {result_fields}{", " + ", ".join(extras) if extras else ""} '
-        f'from {read_source(table)} where {where_sql} order by {order_sql}'
+        f'from {views.learning_read_table(table)} where {where_sql} order by {order_sql}'
     )
     with views.connection.cursor() as cursor:
         cursor.execute(query, params)

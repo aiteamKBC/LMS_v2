@@ -14,7 +14,9 @@ from datetime import date
 from unittest.mock import patch
 
 from curriculum_api import views
-from curriculum_api.tests import CurriculumPersistenceHarness, staff_directory, staff_user_row
+from curriculum_api.tests import (
+    CurriculumPersistenceHarness, CurriculumPersistenceTransactionHarness, staff_directory, staff_user_row,
+)
 
 
 class ClockAndSlotTests(CurriculumPersistenceHarness):
@@ -69,7 +71,7 @@ class ClockAndSlotTests(CurriculumPersistenceHarness):
         self.assertEqual(shared, ['2026-09-30', '2026-10-07'])
 
 
-class TutorConflictHarness(CurriculumPersistenceHarness):
+class TutorConflictHarness(CurriculumPersistenceTransactionHarness):
     """Two modules in one group, both able to carry their own tutor and slot."""
 
     #: The people a picker can choose between. Curriculum reads its tutors from
