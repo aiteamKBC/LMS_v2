@@ -7,14 +7,10 @@ export const COACH_SESSION_TYPES = [
   { value: 'progress-review', label: 'PR', icon: 'ri-line-chart-line', desc: 'Progress Review' },
   { value: 'mcr', label: 'MCM', icon: 'ri-calendar-check-line', desc: 'Monthly Coaching Meeting' },
   { value: 'gateway', label: 'Gateway', icon: 'ri-flag-line', desc: 'Gateway review or assessment' },
-  { value: 'other', label: 'Other', icon: 'ri-more-line', desc: 'Request another session type' },
+  { value: 'other', label: 'Other', icon: 'ri-more-line', desc: 'Book another session type' },
 ] as const;
 
 export type CoachSessionRequestType = typeof COACH_SESSION_TYPES[number]['value'];
-
-export const COACH_APPROVAL_SESSION_TYPES: ReadonlySet<BookableSessionType> = new Set([
-  'student-support', 'gateway', 'other',
-]);
 
 export default function CoachSessionTypePicker({ value, onChange }: {
   value: BookableSessionType;

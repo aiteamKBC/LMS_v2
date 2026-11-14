@@ -647,7 +647,7 @@ const SCHEDULABLE_SOURCE_META: Record<SchedulableSource, { description: string; 
     surface: 'from-rose-500/10 via-rose-400/5 to-transparent',
   },
   'student-support': {
-    description: 'Learner support requests waiting for coach approval.',
+    description: 'Learner support sessions and available appointments.',
     icon: 'ri-hand-heart-line',
     accent: 'text-blue-700',
     surface: 'from-blue-500/10 via-blue-400/5 to-transparent',
@@ -666,7 +666,7 @@ function isSchedulableSource(value?: string): value is SchedulableSource {
 
 // Learner-made requests the coach approves by placing them (status not-scheduled).
 function isApprovalRequestSource(source?: string) {
-  return source === 'student-support' || source === 'lms-introduction';
+  return source === 'lms-introduction';
 }
 
 function parseScheduleNavigationIntent(value: unknown): ScheduleNavigationIntent | null {
@@ -3756,7 +3756,7 @@ export default function CoachTimetablePage() {
                   {scheduleModalCompact
                     ? 'This updates the calendar slot and Teams meeting details.'
                     : scheduleNeedsApproval
-                      ? 'Learner support requests become official Teams meetings after coach approval.'
+                      ? 'LMS introduction requests become Teams meetings when scheduled.'
                       : 'This places the session on the coach calendar and updates its Teams meeting details.'}
                 </p>
                 <div className="flex items-center gap-3">
