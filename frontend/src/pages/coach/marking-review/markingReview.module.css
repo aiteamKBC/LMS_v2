@@ -94,6 +94,9 @@
 .previousFeedback { padding: 15px; border-radius: 9px; background: #f2f6fa; }
 .previousFeedback strong { color: var(--navy); font-size: 11px; }
 .previousFeedback p { margin: 7px 0 0; color: #40536d; font-size: 11px; line-height: 1.6; white-space: pre-wrap; }
+.previousFeedbackText { margin: 7px 0 0; color: #40536d; font-size: 11px; line-height: 1.6; white-space: pre-wrap; }
+.previousFeedbackText :is(p, h2, h3, h4) { margin: 0 0 .55em; }
+.previousFeedbackText :is(ul, ol) { margin: .3em 0 .55em 1.35em; padding: 0; }
 .feedbackPanel { margin: 0 26px 26px; padding: 18px; border: 1px solid #cbd8e5; border-radius: 11px; background: #f8fafc; }
 .feedbackHeading { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; }
 .feedbackHeading p { margin: 0; color: #63758e; font-size: 9px; font-weight: 750; letter-spacing: .1em; text-transform: uppercase; }
@@ -108,6 +111,13 @@
 .promptEditor summary span { margin-left: 6px; padding: 3px 6px; border-radius: 5px; background: #fff0cf; color: #8a5b08; font-size: 8px; }
 .promptEditor > p { margin: 8px 0; color: #6c7b8f; font-size: 9px; }
 .promptEditor textarea { width: 100%; resize: vertical; border: 1px solid #c1cedb; border-radius: 8px; background: #fff; padding: 10px; color: #263a56; font: 10px/1.6 ui-monospace, SFMono-Regular, Menlo, monospace; outline: 0; }
+.promptUpload { display: grid; gap: 4px; margin-top: 10px; padding: 10px; border: 1px dashed #b7c9da; border-radius: 8px; background: #f8fbfe; color: #34516e; font-size: 10px; font-weight: 700; }
+.promptUpload span { display: inline-flex; align-items: center; gap: 6px; }
+.promptUpload input { width: 100%; color: #536b84; font-size: 10px; font-weight: 500; }
+.promptUpload small { color: #77869a; font-size: 9px; font-weight: 500; }
+.promptFile { display: flex; align-items: center; gap: 7px; margin-top: 7px; padding: 7px 9px; border-radius: 7px; background: #eaf3fb; color: #284e70; font-size: 10px; }
+.promptFile span { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.promptFile button { color: #b12c38; font-size: 9px; font-weight: 700; }
 .promptMeta { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 7px; color: #77869a; font-size: 8px; }
 .promptMeta button { color: #246fa9; font-size: 9px; font-weight: 700; }
 .decisionRow { display: flex; justify-content: flex-end; gap: 9px; margin-top: 15px; }
@@ -136,6 +146,7 @@
 }
 :global(html[data-theme="dark"]) .hero { border-color: var(--coach-dark-border); }
 :global(html[data-theme="dark"]) :is(.back, .hero h1 + p, .stats span, .queueTitle, .queueMeta, .personRow p, .metrics dt, .answerBlock header span, .sectionHeading p, .evidenceList span, .ksbList small, .historyCard p, .feedbackHeading p, .promptEditor > p, .promptMeta) { color: var(--coach-dark-muted); }
+:global(html[data-theme="dark"]) .previousFeedbackText { color: var(--coach-dark-muted); }
 :global(html[data-theme="dark"]) :is(.judgement, .stats > div, .search, .queueItem, .reviewPanel, .errorState) { border-color: var(--coach-dark-border); background: var(--coach-dark-surface); color: var(--coach-dark-text); box-shadow: none; }
 :global(html[data-theme="dark"]) .queueItem:is(:hover, [aria-current="true"]) { border-color: #637388; background: var(--coach-dark-hover); }
 :global(html[data-theme="dark"]) .tabs { background: var(--coach-dark-soft); }
@@ -144,7 +155,7 @@
 :global(html[data-theme="dark"]) :is(.questionBlock, .answerBlock, .feedbackPanel, .previousFeedback, .declarationGrid span) { border-color: var(--coach-dark-border); background: var(--coach-dark-soft); color: var(--coach-dark-text); }
 :global(html[data-theme="dark"]) .answerBlock header { border-color: var(--coach-dark-border); background: var(--coach-dark-hover); }
 :global(html[data-theme="dark"]) :is(.evidenceList li, .ksbList article, .historyCard, .emptyText) { border-color: var(--coach-dark-border); }
-:global(html[data-theme="dark"]) :is(.feedbackPanel > textarea, .promptEditor textarea) { border-color: var(--coach-dark-border); background: var(--coach-dark-page); color: var(--coach-dark-text); }
+:global(html[data-theme="dark"]) :is(.feedbackPanel > textarea, .promptEditor textarea, .promptUpload) { border-color: var(--coach-dark-border); background: var(--coach-dark-page); color: var(--coach-dark-text); }
 :global(html[data-theme="dark"]) .loading span { border-color: var(--coach-dark-border); background: linear-gradient(90deg, #263f59 25%, #3a5572 50%, #263f59 75%); background-size: 200% 100%; }
 @media (max-width: 1050px) {
   .workspace { grid-template-columns: 280px minmax(0, 1fr); gap: 14px; }

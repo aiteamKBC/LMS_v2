@@ -1,0 +1,16 @@
+.editorShell { overflow: hidden; border: 1px solid #d5dfeb; border-radius: 9px; background: #fff; }
+.toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; padding: 7px 9px; border-bottom: 1px solid #e3e9f0; background: #f5f8fb; }
+.toolbar button { min-width: 30px; min-height: 28px; padding: 4px 7px; border: 1px solid transparent; border-radius: 5px; color: #304764; font-size: 11px; font-weight: 700; }
+.toolbar button:hover:not(:disabled), .toolbar button:focus-visible { border-color: #a8bfd5; background: #eaf3fb; outline: none; }
+.toolbar button:disabled { cursor: not-allowed; opacity: .45; }
+.divider { width: 1px; height: 20px; margin: 0 3px; background: #d5dfeb; }
+.editor { min-height: 176px; padding: 13px; color: #263a57; font-size: 12px; line-height: 1.65; outline: none; }
+.editor:empty::before { color: #9aa8ba; content: attr(data-placeholder); pointer-events: none; }
+.editor p { margin: 0 0 .65em; }
+.editor p:last-child { margin-bottom: 0; }
+.editor h2, .editor h3, .editor h4 { margin: .4em 0 .55em; color: #071b3b; font-weight: 760; line-height: 1.25; }
+.editor h2 { font-size: 1.35em; }
+.editor h3 { font-size: 1.2em; }
+.editor h4 { font-size: 1.05em; }
+.editor ul, .editor ol { margin: .35em 0 .65em 1.4em; padding: 0; }
+.compatibilityValue { position: absolute; width: 1px; height: 1px; overflow: hidden; opacity: 0; pointer-events: none; }

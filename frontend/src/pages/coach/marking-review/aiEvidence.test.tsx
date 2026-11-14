@@ -60,3 +60,16 @@ it('retains unsaved feedback when evidence cannot be loaded', async () => {
   expect(screen.getByLabelText('Review feedback')).toHaveValue('Existing coach feedback');
   expect(screen.queryByText(/AI-assisted draft generated/)).not.toBeInTheDocument();
 });
+
+it('sends an uploaded marking guide with the next draft request', async () => {
+  review('assignment');
+  fireEvent.click(await screen.findByText('AI marking instructions'));
+  const input = screen.getByLabelText(/Upload marking guidance/i);
+  const guide = new File(['Use the programme criteria and explain measurable improvement.'], 'criteria.txt', { type: 'text/plain' });
+  fireEvent.change(input, { target: { files: [guide] } });
+  fireEvent.click(screen.getByRole('button', { name: 'Generate AI draft' }));
+  await screen.findByText(/AI-assisted draft generated/);
+  const request = vi.mocked(coachFetch).mock.calls.find(([, init]) => init?.method === 'POST' && init?.body instanceof FormData);
+  expect(request).toBeTruthy();
+  expect((request?.[1]?.body as FormData).get('promptFile')).toBeTruthy();
+});
