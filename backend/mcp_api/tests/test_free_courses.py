@@ -1,4 +1,4 @@
-"""Free courses: converted free courses are standalone modules (source_type 'free_course') in no programme."""
+"""Canonical Free Course discovery plus retained historical authoring tests."""
 import copy
 from unittest import mock
 
@@ -8,9 +8,8 @@ from mcp_api.tests.test_transport import TransportTestCase, rpc
 from mcp_api.tools import components, read, weeks
 
 ROWS = [
-    {"moduleCatalogueId": "MOD-FREE-1", "name": "GDPR", "isFreeCourse": True, "weeks": 1},
-    {"moduleCatalogueId": "MOD-FREE-2", "name": "Academic Writing", "sourceType": "free_course", "weeks": 2},
-    {"moduleCatalogueId": "MOD-P1", "name": "Marketing", "programmeId": "P1", "weeks": 6},
+    {"id": "FREE-1", "course_name": "GDPR", "description": "Privacy", "week_count": 1},
+    {"id": "FREE-2", "course_name": "Academic Writing", "description": "Writing", "week_count": 2},
 ]
 FREE_MODULE = {"catalogueId": "MOD-FREE-1", "programmeId": "", "programmeName": "Unassigned programme",
                "title": "GDPR", "status": "draft", "isFreeCourse": True, "weekStructure": [
@@ -20,26 +19,24 @@ FREE_MODULE = {"catalogueId": "MOD-FREE-1", "programmeId": "", "programmeName": 
 class FindFreeCoursesTests(TransportTestCase):
     def setUp(self):
         super().setUp()
-        self.queries = []
-        self.enterContext(mock.patch.object(read, "call_api", side_effect=self.api))
-
-    def api(self, request, method, path, *, query=None, json_body=None):
-        self.queries.append((method, path, query))
-        return 200, {"results": ROWS}
+        self.catalogue = self.enterContext(mock.patch.object(
+            read.free_course_catalogue, "courses", return_value=ROWS,
+        ))
 
     def run_tool(self, arguments):
         response = self.post(rpc("tools/call", {"name": "find_free_courses", "arguments": arguments}))
         self.assertEqual(response.status_code, 200, response.content)
         return response.json()["result"]
 
-    def test_lists_only_free_course_modules_with_their_module_ids(self):
+    def test_lists_canonical_courses_with_compatibility_aliases(self):
         data = self.run_tool({})["structuredContent"]
-        self.assertEqual([c["module_id"] for c in data["free_courses"]], ["MOD-FREE-2", "MOD-FREE-1"])
-        self.assertEqual(self.queries, [("GET", "/curriculum_api/curriculum/modules/", {"compact": "1"})])
+        self.assertEqual([c["free_course_id"] for c in data["free_courses"]], ["FREE-2", "FREE-1"])
+        self.assertEqual([c["module_id"] for c in data["free_courses"]], ["FREE-2", "FREE-1"])
+        self.catalogue.assert_called_once_with(columns=["id", "course_name", "description", "week_count"])
 
     def test_query_filters_by_name(self):
         data = self.run_tool({"query": "gdpr"})["structuredContent"]
-        self.assertEqual([c["module_id"] for c in data["free_courses"]], ["MOD-FREE-1"])
+        self.assertEqual([c["free_course_id"] for c in data["free_courses"]], ["FREE-1"])
 
     def test_the_legacy_whole_library_save_is_never_allowlisted(self):
         path = "/curriculum_api/curriculum/free-programmes/FREE-COURSES/modules/"

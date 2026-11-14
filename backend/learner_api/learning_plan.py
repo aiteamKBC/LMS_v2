@@ -93,7 +93,7 @@ def _canonical_free_course_assignments(learner, course_ids=None):
 
     ``addedAt`` remains as an empty compatibility field because
     ``Learner.learner_free_courses`` has no assignment timestamp. Titles never
-    fall back to the mirror's ``free_course_title`` or legacy enrolment JSON.
+    fall back to a copied title or legacy enrolment JSON.
     """
     if course_ids is None:
         course_ids = _canonical_free_course_assignment_ids(learner)

@@ -49,8 +49,6 @@ from .learner_detail import (
 from .free_course_selectors import VALID_LEARNER_KINDS, assigned_course_ids, canonical_learner
 from .mappers import _s
 from .models import FREE_PROGRESS_ACTIVE, LearnerFreeCourseProgress, LearnerProfile
-from .free_course_catalogue import builder_free_courses
-from .learning_plan import _effective_plan_ids, request_preset_cache
 from .quizzes import _fetch_quiz, _grade_question, _scrub_answer_key
 from quiz_api.answer_keys import quiz_submission_error
 
@@ -291,8 +289,8 @@ def free_courses(request, kind, pk):
     """Return lightweight cards for this learner's current assignments.
 
     Component settings, media and quiz metadata are loaded only when one course
-    is opened through :func:`free_course_detail`. Builder courses are included
-    as links to their module workspace (they don't use the tree below).
+    is opened through :func:`free_course_detail`. Canonical assignments are the
+    sole entitlement source; normal Learning Plan modules are unrelated.
     """
     source, error = _resolve_source(kind, pk)
     if error is not None:
@@ -302,15 +300,8 @@ def free_courses(request, kind, pk):
         assigned_ids = assigned_course_ids(source)
     except DatabaseError:
         return _error("Could not read the learner's free course assignments.", 503)
-    try:
-        builder_courses = builder_free_courses(_effective_plan_ids(source, request_preset_cache(source)))
-    except DatabaseError:
-        return _error("Could not read the free course catalogue.", 503)
-    builder_ids = {course['freeCourseId'] for course in builder_courses}
-    # Builder courses link to the workspace; remove them from the legacy-tree path.
-    assigned_ids = [aid for aid in assigned_ids if aid not in builder_ids]
     if not assigned_ids:
-        response = JsonResponse({"freeCourses": builder_courses})
+        response = JsonResponse({"freeCourses": []})
         response["Cache-Control"] = "private, no-store"
         return response
 
@@ -370,7 +361,7 @@ def free_courses(request, kind, pk):
             "progressPercentage": round((completed_count / activity_count) * 100) if activity_count else 0,
         })
 
-    response = JsonResponse({"freeCourses": [*builder_courses, *result]})
+    response = JsonResponse({"freeCourses": result})
     response["Cache-Control"] = "private, no-store"
     return response
 
@@ -520,18 +511,20 @@ def _quiz_owner_is_valid(quiz_id, course_id, week_id):
     """Accept exact canonical ownership or an unchanged legacy normal owner."""
     with connections["enrolment"].cursor() as cursor:
         cursor.execute(
-            "select q.free_course_week_id,q.week_id,"
+            "select q.free_course_week_id,q.week_id,q.status,"
             "count(l.id) filter (where l.free_course_id=%s and l.free_course_week_id=%s "
             "and l.module_catalogue_id is null and l.week_id is null),"
             "count(l.id) filter (where l.free_course_id is not null or l.free_course_week_id is not null) "
             "from curriculum.quizzes q left join curriculum.quiz_course_links l on l.quiz_id=q.id "
-            "where q.id=%s group by q.id,q.free_course_week_id,q.week_id",
+            "where q.id=%s group by q.id,q.free_course_week_id,q.week_id,q.status",
             [course_id, week_id, quiz_id],
         )
         row = cursor.fetchone()
     if not row:
         return False
-    canonical_week, normal_week, exact_links, canonical_links = row
+    canonical_week, normal_week, status, exact_links, canonical_links = row
+    if clean_str(status).lower() != "published":
+        return False
     if canonical_week:
         return str(canonical_week) == week_id and not normal_week and exact_links == 1 and canonical_links == 1
     # The 110 legacy references remain read-only and usable only while they

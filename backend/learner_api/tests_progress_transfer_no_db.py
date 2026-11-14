@@ -164,6 +164,50 @@ class TransferEndpointTests(SimpleTestCase):
             self.assertEqual(api.learner_request(self.request('post', {'confirm': True, 'mappings': []}), kind='commercial', pk=7).status_code, 400)
             create.assert_not_called()
 
+    def test_admin_list_uses_canonical_programme_join_and_preserves_response_contract(self):
+        requested = datetime(2026, 11, 14, 9, 30, tzinfo=timezone.utc)
+        for programme in ('Canonical Programme', None):
+            with self.subTest(programme=programme):
+                cursor = MagicMock()
+                cursor.fetchall.return_value = [
+                    ('00000000-0000-0000-0000-000000000001', 7, 'commercial', 'pending',
+                     requested, None, 'Test Learner', programme, [item()])
+                ]
+                connection = MagicMock()
+                connection.cursor.return_value.__enter__.return_value = cursor
+                with patch.object(api, 'authenticate_request',
+                                  return_value=SimpleNamespace(role='admin', id=9)), \
+                     patch.object(api, 'connections', {'enrolment': connection}):
+                    response = api.admin_requests(self.request())
+
+                self.assertEqual(response.status_code, 200)
+                payload = json.loads(response.content)
+                self.assertEqual(payload['nextOffset'], None)
+                self.assertEqual(payload['requests'], [{
+                    'requestId': '00000000-0000-0000-0000-000000000001',
+                    'learnerId': '7',
+                    'learnerKind': 'commercial',
+                    'status': 'pending',
+                    'requestedAt': requested.isoformat(),
+                    'approvedAt': None,
+                    'learnerName': 'Test Learner',
+                    'programme': programme,
+                    'modules': [{
+                        'courseRef': 'legacy:50',
+                        'moduleId': 'M1',
+                        'oldTitle': 'Old module',
+                        'newTitle': 'New module',
+                        'percent': 40,
+                        'hours': 2,
+                    }],
+                }])
+                cursor.execute.assert_called_once()
+                sql = ' '.join(cursor.execute.call_args.args[0].split())
+                self.assertIn('LEFT JOIN curriculum.programmes p ON p.programme_id=l.programme_id', sql)
+                self.assertIn('l.full_name,p.name,jsonb_agg', sql)
+                self.assertIn('GROUP BY r.id,l.full_name,p.name', sql)
+                self.assertNotRegex(sql, r'\bl\.programme(?:\s|,)')
+
 
 class TransferWorkflowTests(SimpleTestCase):
     def setUp(self):
