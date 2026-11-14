@@ -199,6 +199,26 @@ async function loadCanonicalFreeCourses(signal?: AbortSignal) {
 }
 
 export default function FreeCoursesPage() {
+  return <FreeCoursesWorkspace />;
+}
+
+/**
+ * The free-course catalogue: saved course cards, their add/edit/convert wizards
+ * and the programme import. Module Builder's Free courses tab hosts it
+ * `embedded` (no page shell or hero). `addRequest` opens the Add free course
+ * wizard each time it increases, so the builder's "+ Free course" button
+ * reaches this same form. `search` narrows the cards by title, and
+ * `onCountChange` reports the total and the number shown after the search.
+ * `onAddHandled` lets the host clear its request, so remounting the tab does
+ * not reopen the wizard.
+ */
+export function FreeCoursesWorkspace({ embedded = false, addRequest = 0, search = '', onCountChange, onAddHandled }: {
+  embedded?: boolean;
+  addRequest?: number;
+  search?: string;
+  onCountChange?: (total: number, shown: number) => void;
+  onAddHandled?: () => void;
+} = {}) {
   const [course, setCourse] = useState<FreeCourse>({
     id: '',
     title: '',
@@ -426,7 +446,15 @@ export default function FreeCoursesPage() {
     quizzes: course.components.filter(item => item.kind === 'quiz').length,
   }), [course.components, selectedWeekIds.size]);
 
-  const savedCourseCards = useMemo(() => groupSavedFreeCourses(savedModules, documentsByCourse), [savedModules, documentsByCourse]);
+  const allSavedCourseCards = useMemo(() => groupSavedFreeCourses(savedModules, documentsByCourse), [savedModules, documentsByCourse]);
+  const savedCourseCards = useMemo(() => {
+    const term = search.trim().toLowerCase();
+    if (!term) return allSavedCourseCards;
+    return allSavedCourseCards.filter(card => `${card.title} ${card.description}`.toLowerCase().includes(term));
+  }, [allSavedCourseCards, search]);
+  useEffect(() => {
+    if (!savedCoursesLoading) onCountChange?.(allSavedCourseCards.length, savedCourseCards.length);
+  }, [allSavedCourseCards.length, savedCourseCards.length, savedCoursesLoading, onCountChange]);
 
   const refreshSavedCourses = async () => {
     const { catalogue, documents } = await loadCanonicalFreeCourses();
@@ -484,6 +512,15 @@ export default function FreeCoursesPage() {
     resetDraftCourse();
     setWizardOpen(true);
   };
+
+  useEffect(() => {
+    if (addRequest > 0) {
+      openAddWizard();
+      onAddHandled?.();
+    }
+    // Only a new request opens the wizard; openAddWizard is recreated every render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [addRequest]);
 
   const openEditWizard = (card: SavedFreeCourseCard) => {
     const components = card.weeks.flatMap((week, weekIndex) =>
@@ -1002,53 +1039,7 @@ export default function FreeCoursesPage() {
     }
   };
 
-  return (
-    <WorkspaceShell
-      role="curriculum"
-      roleLabel="Curriculum Designer"
-      navItems={curriculumNavItems}
-      workspaceLabel="Curriculum Studio"
-      pageTitle="Free Courses"
-      pageSubtitle={`${totals.weeks} selected weeks - ${totals.components} components - ${totals.quizzes} quizzes`}
-      userName="Rachel Myers"
-      userRole="Curriculum Designer"
-    >
-      <main className="curriculum-library-page min-h-[calc(100vh-150px)] space-y-4 bg-background-50 px-4 py-4 md:px-6">
-        <WorkspaceHeroBanner
-          className="curriculum-library-hero"
-          decorative
-          eyebrow="Learning resources"
-          title="Free Courses"
-          description="Build short open-access courses from customised video, reading, PowerPoint, audio and quiz components."
-          icon="ri-graduation-cap-line"
-          statIconPosition="leading"
-          stats={[
-            { label: 'Weeks', value: String(totals.weeks), icon: 'ri-calendar-line' },
-            { label: 'Components', value: String(totals.components), icon: 'ri-layout-4-line' },
-            { label: 'Quizzes', value: String(totals.quizzes), icon: 'ri-questionnaire-line' },
-          ]}
-          actions={(
-            <div className="flex flex-wrap items-center gap-2">
-              <button
-                type="button"
-                onClick={openImportPicker}
-                className="inline-flex h-10 items-center justify-center gap-2 rounded-lg border border-primary-300 bg-white/70 px-4 text-sm font-bold text-primary-800 transition hover:bg-white"
-              >
-                <AppIcon name="ri-download-2-line" size={16} />
-                Import from a programme
-              </button>
-              <button
-                type="button"
-                onClick={openAddWizard}
-                className="inline-flex h-10 items-center justify-center gap-2 rounded-lg bg-white px-4 text-sm font-bold text-primary-900 transition hover:bg-primary-50"
-              >
-                <AppIcon name="ri-add-line" size={16} />
-                Add free course
-              </button>
-            </div>
-          )}
-        />
-
+  const listSection = (
         <section className="overflow-hidden rounded-lg border border-background-200 bg-white shadow-sm">
           <div className="border-b border-background-200 bg-background-50 px-5 py-5 md:px-7">
             <div className="mb-3 flex items-center justify-between gap-3">
@@ -1056,7 +1047,19 @@ export default function FreeCoursesPage() {
                 <h2 className="text-sm font-bold uppercase tracking-wide text-foreground-700">Created free courses</h2>
                 <p className="mt-1 text-xs text-foreground-400">Courses saved for the curriculum team.</p>
               </div>
-              {savedCoursesLoading && <AppIcon name="ri-loader-4-line" className="animate-spin text-foreground-400" size={16} />}
+              <div className="flex items-center gap-2">
+                {savedCoursesLoading && <AppIcon name="ri-loader-4-line" className="animate-spin text-foreground-400" size={16} />}
+                {embedded && (
+                  <button
+                    type="button"
+                    onClick={openImportPicker}
+                    className="inline-flex h-9 items-center justify-center gap-2 rounded-lg border border-primary-300 bg-white px-3 text-xs font-bold text-primary-800 transition hover:bg-primary-50"
+                  >
+                    <AppIcon name="ri-download-2-line" size={15} />
+                    Import from a programme
+                  </button>
+                )}
+              </div>
             </div>
             {savedCourseCards.length > 0 ? (
   <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
@@ -1074,8 +1077,17 @@ export default function FreeCoursesPage() {
               !savedCoursesLoading && (
                 <div className="rounded-lg border border-dashed border-background-300 bg-white px-4 py-8 text-center">
                   <AppIcon name="ri-graduation-cap-line" className="mx-auto text-3xl text-foreground-300" />
-                  <p className="mt-2 text-sm font-bold text-foreground-700">No free courses created yet</p>
-                  <p className="mt-1 text-xs text-foreground-400">Use Add free course to build the first one.</p>
+                  {allSavedCourseCards.length > 0 ? (
+                    <>
+                      <p className="mt-2 text-sm font-bold text-foreground-700">No free courses match this search</p>
+                      <p className="mt-1 text-xs text-foreground-400">Clear the search to see all {allSavedCourseCards.length} free courses.</p>
+                    </>
+                  ) : (
+                    <>
+                      <p className="mt-2 text-sm font-bold text-foreground-700">No free courses created yet</p>
+                      <p className="mt-1 text-xs text-foreground-400">Use {embedded ? '+ Free course' : 'Add free course'} to build the first one.</p>
+                    </>
+                  )}
                 </div>
               )
             )}
@@ -1806,6 +1818,58 @@ export default function FreeCoursesPage() {
             </div>
           )}
         </section>
+  );
+
+  if (embedded) return listSection;
+
+  return (
+    <WorkspaceShell
+      role="curriculum"
+      roleLabel="Curriculum Designer"
+      navItems={curriculumNavItems}
+      workspaceLabel="Curriculum Studio"
+      pageTitle="Free Courses"
+      pageSubtitle={`${totals.weeks} selected weeks - ${totals.components} components - ${totals.quizzes} quizzes`}
+      userName="Rachel Myers"
+      userRole="Curriculum Designer"
+    >
+      <main className="curriculum-library-page min-h-[calc(100vh-150px)] space-y-4 bg-background-50 px-4 py-4 md:px-6">
+        <WorkspaceHeroBanner
+          className="curriculum-library-hero"
+          decorative
+          eyebrow="Learning resources"
+          title="Free Courses"
+          description="Build short open-access courses from customised video, reading, PowerPoint, audio and quiz components."
+          icon="ri-graduation-cap-line"
+          statIconPosition="leading"
+          stats={[
+            { label: 'Weeks', value: String(totals.weeks), icon: 'ri-calendar-line' },
+            { label: 'Components', value: String(totals.components), icon: 'ri-layout-4-line' },
+            { label: 'Quizzes', value: String(totals.quizzes), icon: 'ri-questionnaire-line' },
+          ]}
+          actions={(
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={openImportPicker}
+                className="inline-flex h-10 items-center justify-center gap-2 rounded-lg border border-primary-300 bg-white/70 px-4 text-sm font-bold text-primary-800 transition hover:bg-white"
+              >
+                <AppIcon name="ri-download-2-line" size={16} />
+                Import from a programme
+              </button>
+              <button
+                type="button"
+                onClick={openAddWizard}
+                className="inline-flex h-10 items-center justify-center gap-2 rounded-lg bg-white px-4 text-sm font-bold text-primary-900 transition hover:bg-primary-50"
+              >
+                <AppIcon name="ri-add-line" size={16} />
+                Add free course
+              </button>
+            </div>
+          )}
+        />
+
+        {listSection}
       </main>
     </WorkspaceShell>
   );

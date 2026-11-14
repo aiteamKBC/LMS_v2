@@ -121,6 +121,9 @@ def context(email):
     student.group_id = placement['group_id'] or ''
     student.cohort_id = placement['cohort_id'] or ''
     student.qr_group = group
+    # The learner profile(s) linked to this enrolment: module membership is read
+    # through them. More than one is ambiguous and assigns nothing.
+    student.profile_ids = {row['id'] for row in profiles if row.get('id') is not None}
     return student, programme_id, placement, catalog, eligible
 
 
@@ -231,13 +234,19 @@ def lecture_options(module_id, catalog, eligible, *, now=None, loaded_occurrence
 
 
 def effective_assignments(student, eligible):
-    from learner_api.learning_plan import _effective_plan_ids, _module_ids_from_column
-    group = student.qr_group
-    preset = (group.get('module_ids') or []) if group else []
-    preset = _module_ids_from_column(preset)
-    preset = [key for key in preset if key in eligible and eligible[key].get('learner_roster_mode') != 'manual']
-    key = ('group_id', student.group_id) if student.group_id else (clean(student.programme), clean(student.group))
-    return set(_effective_plan_ids(student, {key: preset})) & eligible.keys()
+    """The eligible modules this learner is assigned to, for suggestions only.
+
+    Read from the normalized plan records through the roster's own rule
+    (attendance_membership). No legacy Learning_plan/Training_plan fallback:
+    without exactly one linked learner profile nothing is assigned, and the
+    learner still chooses any eligible module manually.
+    """
+    from .attendance_membership import assigned_module_ids_by_profile
+    profile_ids = getattr(student, 'profile_ids', None) or set()
+    if len(profile_ids) != 1:
+        return set()
+    profile_id = next(iter(profile_ids))
+    return set(assigned_module_ids_by_profile([profile_id], eligible.keys()).get(int(profile_id), set())) & eligible.keys()
 
 
 def normal_placement(module, placement):

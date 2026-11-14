@@ -22,11 +22,13 @@ def plan_membership(value, wanted):
             {str(entry.get('moduleId')) for entry in entries if str(entry.get('moduleId')) in wanted})
 
 
-def learner_facts(module_ids):
+def learner_facts(module_ids, profile_ids=None):
     """One small row per learner, with placement labels but no personal names.
 
     Module membership is reduced inside Postgres. Only the rare JSON-string
     plans take the roster's Python parsing path, and only for those learners.
+    ``profile_ids`` limits the read to those ``"Learner".learners`` ids (an
+    attendance check asks about one learner, not the whole directory).
     """
     from . import views
     if views.connection.vendor != 'postgresql' or not views.learner_schema_table_exists('learners'):
@@ -51,6 +53,7 @@ def learner_facts(module_ids):
             name_selects.append(f'NULL AS {label}')
     identity = ', '.join(f"coalesce(p.{column}, '') AS {column}" if column in columns
                          else f"'' AS {column}" for column in ('programme_id', 'cohort_id', 'group_id'))
+    identity += ', p.enrolment_id AS enrolment_id' if 'enrolment_id' in columns else ', NULL AS enrolment_id'
     plan_select = 'false AS explicit, ARRAY[]::text[] AS module_ids, false AS ambiguous'
     plan_join = ''
     params = []
@@ -67,12 +70,17 @@ def learner_facts(module_ids):
         """
         params.append(sorted(module_ids))
     programme_status = "nullif(btrim(p.programme_status), '')," if 'programme_status' in columns else ''
+    where = ''
+    if profile_ids is not None:
+        where = 'WHERE p.id = ANY(%s)'
+        params.append(sorted({int(value) for value in profile_ids}))
     with views.connection.cursor() as cursor:
         cursor.execute(f"""
             SELECT p.id, {', '.join(name_selects)}, {identity},
                    coalesce(nullif(btrim(p.lifecycle_status), ''), {programme_status} 'unknown') AS status,
                    {plan_select}
             FROM "Learner"."learners" p {' '.join(name_joins)} {plan_join}
+            {where}
         """, params)
         names = [column[0] for column in cursor.description]
         rows = [dict(zip(names, row)) for row in cursor.fetchall()]
@@ -125,11 +133,17 @@ def placement_lineages(scope, identifiers):
     return result
 
 
-def counts_for_lineages(lineages, facts, programme_candidates):
-    """The same ID-first placement narrowing and explicit-module overrides as rosters."""
+def members_for_lineages(lineages, facts, programme_candidates):
+    """Indexes into `facts` of the learners each found lineage holds.
+
+    The single membership rule: the card's count and the "Assign learners to
+    module" drawer's assigned list both come from here, so they cannot disagree.
+    A learner with saved plan rows is a member only if those rows carry the
+    module; a learner with none inherits it from their placement, unless the
+    module's roster is manual.
+    """
     from . import views
-    result, placements, totals = {}, {}, {}
-    facts = list(facts)
+    result, placements = {}, {}
     direct = defaultdict(set)
     explicit, ambiguous = set(), set()
     for index, fact in enumerate(facts):
@@ -166,10 +180,21 @@ def counts_for_lineages(lineages, facts, programme_candidates):
             # String plans can contribute direct memberships only inside the
             # inherited placement, just as the authoritative roster permits.
             members = (placed - explicit) | (direct[module_id] - ambiguous) | (direct[module_id] & placed)
-        membership_key = frozenset(members)
+        result[identifier] = frozenset(members)
+    return result
+
+
+def counts_for_lineages(lineages, facts, programme_candidates):
+    """The same ID-first placement narrowing and explicit-module overrides as rosters."""
+    facts = list(facts)
+    result, totals = {}, {}
+    for identifier, membership_key in members_for_lineages(lineages, facts, programme_candidates).items():
+        if membership_key is None:
+            result[identifier] = None
+            continue
         if membership_key not in totals:
             counts, seen = Counter(), set()
-            for index in sorted(members):
+            for index in sorted(membership_key):
                 fact = facts[index]
                 learner_id = str(fact['id'])
                 if learner_id not in seen:
@@ -190,3 +215,50 @@ def status_counts(scope, identifiers):
         if not any(lineage.get('found') for lineage in lineages.values()):
             return {identifier: None for identifier in identifiers}
         return counts_for_lineages(lineages, learner_facts(module_ids), candidates)
+
+
+def module_member_enrolment_ids(module_id):
+    """Enrolment ids of the learners `status_counts('module', ...)` counts.
+
+    None when the module is not found. Learners with no linked enrolment row
+    cannot appear in the enrolment-keyed drawer and are left out.
+    """
+    from . import views
+    with views.curriculum_read_scope(targeted_child_reads=True):
+        lineages = placement_lineages('module', [module_id])
+        lineage = lineages.get(module_id) or {}
+        if not lineage.get('found'):
+            return None
+        programme_id = views.scope_programme_identifier(lineage)
+        candidates = {programme_id: views.programme_identity_candidates(programme_id)} if programme_id else {}
+        facts = learner_facts({str(lineage.get('moduleCatalogueId') or module_id)})
+        members = members_for_lineages({module_id: lineage}, facts, candidates)[module_id] or frozenset()
+        return {str(facts[index]['enrolment_id']) for index in members if facts[index].get('enrolment_id')}
+
+
+def module_member_enrolment_ids_by_module(module_ids):
+    """{module id: enrolment ids of its members} for several modules in one read.
+
+    Same rule as `module_member_enrolment_ids`. A module that is not found maps
+    to an empty set, so callers can treat "unknown" and "nobody" alike.
+    """
+    from . import views
+    module_ids = sorted({str(value).strip() for value in module_ids or () if str(value or '').strip()})
+    result = {module_id: set() for module_id in module_ids}
+    if not module_ids:
+        return result
+    with views.curriculum_read_scope(targeted_child_reads=True):
+        found = {key: lineage for key, lineage in placement_lineages('module', module_ids).items()
+                 if lineage.get('found')}
+        if not found:
+            return result
+        programme_ids = {views.scope_programme_identifier(lineage) for lineage in found.values()}
+        candidates = {identifier: views.programme_identity_candidates(identifier)
+                      for identifier in programme_ids if identifier}
+        facts = learner_facts({str(lineage.get('moduleCatalogueId') or key) for key, lineage in found.items()})
+        members = members_for_lineages(found, facts, candidates)
+    for module_id, indexes in members.items():
+        if module_id in result:
+            result[module_id] = {str(facts[index]['enrolment_id']) for index in indexes or ()
+                                 if facts[index].get('enrolment_id')}
+    return result

@@ -84,3 +84,48 @@ class BulkParallelRecoveryTests(SimpleTestCase):
               'total_attendance_seconds': 0}],
             {'guest@example.invalid': 10},
         ), [])
+
+
+class BulkParallelRecoveryMembershipSourceTests(SimpleTestCase):
+    """parallel_recovery_links reads membership from the normalized plan records."""
+
+    def test_only_learners_assigned_in_the_new_records_get_recovery(self):
+        from datetime import datetime, timezone as dt_timezone
+        from types import SimpleNamespace
+        from unittest import mock
+
+        from . import bulk_attendance_live_recovery as recovery
+
+        originals = [
+            # 10 is assigned to own-group in the normalized records.
+            {'learner_profile_id': 10, 'occurrence_id': 'six', 'module_catalogue_id': 'own-group', 'attendance_status': 'absent'},
+            # 20 may hold own-group only in a legacy JSON plan: no normalized record.
+            {'learner_profile_id': 20, 'occurrence_id': 'six', 'module_catalogue_id': 'own-group', 'attendance_status': 'absent'},
+        ]
+        guest = [{'learner_profile_id': pid, 'occurrence_id': 'nine', 'attendance_status': 'present'} for pid in (10, 20)]
+        register = mock.MagicMock()
+        register.objects.using.return_value.filter.return_value.values.return_value = guest
+        profiles = mock.MagicMock()
+        profiles.objects.using.return_value.filter.return_value.only.return_value = [
+            SimpleNamespace(id=10, enrolment_id=110, email='ten@example.invalid'),
+            SimpleNamespace(id=20, enrolment_id=120, email='twenty@example.invalid'),
+        ]
+        raw = mock.MagicMock()
+        raw.objects.using.return_value.filter.return_value.values.return_value = []
+        occurrences = mock.MagicMock()
+        occurrences.objects.using.return_value.filter.return_value.values.return_value = [
+            {'id': 'six', 'scheduled_start': datetime(2026, 10, 6, 9, tzinfo=dt_timezone.utc)}]
+        with mock.patch.object(recovery, 'LiveSessionLearnerAttendance', register), \
+             mock.patch.object(recovery, 'LearnerProfile', profiles), \
+             mock.patch.object(recovery, 'LiveSessionAttendance', raw), \
+             mock.patch.object(recovery, 'LiveSessionOccurrence', occurrences), \
+             mock.patch.object(recovery, 'completed_alternatives_by_occurrence',
+                               return_value={'six': [{'id': 'nine', 'moduleCatalogueId': 'other-group'}]}), \
+             mock.patch.object(recovery, 'assigned_module_ids_by_profile',
+                               return_value={10: {'own-group'}, 20: set()}) as membership:
+            covered, guests = recovery.parallel_recovery_links(originals, complete=True, database='default')
+        self.assertEqual(covered, {(10, 'six'): {'effectiveAttendance': 'present', 'recoveryOccurrenceId': 'nine'}})
+        self.assertNotIn((20, 'six'), covered)
+        self.assertNotIn((20, 'nine'), guests)
+        # Asked about exactly the compared modules for the possible learners.
+        membership.assert_called_once_with({10, 20}, {'own-group', 'other-group'})

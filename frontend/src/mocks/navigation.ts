@@ -281,7 +281,6 @@ export const curriculumNavItems: SidebarNavItem[] = [
     href: '/curriculum/library',
     matchPaths: [
       '/curriculum/week-builder',
-      '/curriculum/free-courses',
       '/curriculum/standards',
       '/curriculum/quiz-xml',
       '/curriculum/knowledge-base',

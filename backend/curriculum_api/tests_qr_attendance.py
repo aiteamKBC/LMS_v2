@@ -45,14 +45,20 @@ class QRPolicyTests(SimpleTestCase):
         self.assertEqual(connections['default'].settings_dict['ENGINE'], 'django.db.backends.sqlite3')
         self.assertEqual(connections['default'].settings_dict['NAME'], ':memory:')
         cache.clear()
-        self.student = SimpleNamespace(id=17, pk=17, programme='Programme One', group='G1',
-            training_plan=None, learning_plan=[{'moduleId': 'M1', 'assignmentMode': 'explicit'}])
+        self.student = SimpleNamespace(id=17, pk=17, programme='Programme One', group='G1')
+        # Module membership as the normalized plan records report it for this
+        # learner's profile (70). QR reads nothing from the legacy JSON plan.
+        self.assigned = {'M1'}
+        self.membership = self.enterContext(mock.patch(
+            'curriculum_api.attendance_membership.assigned_module_ids_by_profile',
+            side_effect=lambda profile_ids, module_ids: {
+                int(profile_id): self.assigned & set(module_ids) for profile_id in profile_ids}))
         self.mods = [module(), module('M2', group='G2', cohort='C2'), module('OTHER', 'P2', 'G3', 'C3')]
         self.occs = [occurrence(), occurrence('O2', 'M2', offset=100), occurrence('O3', 'OTHER')]
         self.components = []
         for name, result in (
             ('students', [self.student]),
-            ('placements', [dict(programme_id='P1', group_id='G1', cohort_id='C1')]),
+            ('placements', [dict(id=70, programme_id='P1', group_id='G1', cohort_id='C1')]),
             ('programmes', [dict(id='P1', name='Programme One'), dict(id='P2', name='Programme Two')]),
             ('modules', self.mods),
             ('groups', [dict(id='G1', programme_id='P1', cohort_id='C1', module_ids=['M1']),
@@ -156,7 +162,7 @@ class QRPolicyTests(SimpleTestCase):
         self.assertEqual([row['id'] for row in result['suggestions']], ['O1'])
 
     def test_no_assignment_or_current_lecture_does_not_hide_modules(self):
-        self.student.learning_plan = []
+        self.assigned = set()
         for item in self.occs:
             item['scheduled_start'] += timedelta(days=5)
             item['scheduled_end'] += timedelta(days=5)
@@ -164,8 +170,8 @@ class QRPolicyTests(SimpleTestCase):
         self.assertEqual(len(result['modules']), 2)
         self.assertEqual(result['suggestions'], [])
 
-    def test_commercial_training_plan_is_used_only_for_suggestion(self):
-        self.student.training_plan = [{'moduleId': 'M2', 'assignmentMode': 'explicit'}]
+    def test_assigned_module_is_used_only_for_suggestion(self):
+        self.assigned = {'M2'}
         self.occs[1] = occurrence('O2', 'M2')
         result = qr.lookup('student@example.test')
         self.assertEqual(result['suggestions'][0]['moduleId'], 'M2')
@@ -413,7 +419,7 @@ class QRPolicyTests(SimpleTestCase):
 
     def test_multiple_current_modules_do_not_choose_alphabetically(self):
         self.mods.append(module('AA'))
-        self.student.learning_plan.append({'moduleId': 'AA', 'assignmentMode': 'explicit'})
+        self.assigned.add('AA')
         self.occs.append(occurrence('OAA', source='AA'))
         result = qr.lookup('student@example.test')
         self.assertEqual(result['selection'], {'moduleId': None, 'occurrenceId': None})
@@ -421,7 +427,7 @@ class QRPolicyTests(SimpleTestCase):
 
     def test_multiple_current_windows_without_lectures_remain_ambiguous(self):
         self.mods.append(module('AA'))
-        self.student.learning_plan.append({'moduleId': 'AA', 'assignmentMode': 'explicit'})
+        self.assigned.add('AA')
         self.occs.clear()
         for row in (self.mods[0], self.mods[-1]):
             row.update(start_date=NOW.date(), end_date=NOW.date()+timedelta(days=1))
@@ -430,7 +436,7 @@ class QRPolicyTests(SimpleTestCase):
         self.assertEqual(set(result['moduleCandidates']), {'M1', 'AA'})
 
     def test_normal_placement_running_lecture_outranks_other_assigned_delivery(self):
-        self.student.learning_plan.append({'moduleId': 'M2', 'assignmentMode': 'explicit'})
+        self.assigned.add('M2')
         self.occs[1] = occurrence('O2', 'M2')
         self.assertEqual(qr.lookup('student@example.test')['selection']['moduleId'], 'M1')
         self.occs[0] = occurrence(offset=4)
@@ -439,7 +445,7 @@ class QRPolicyTests(SimpleTestCase):
 
     def test_assigned_other_group_today_is_suggested_even_before_or_after_session(self):
         self.mods[1] = module('M2', group='G2', cohort='C1')
-        self.student.learning_plan = [{'moduleId': 'M2', 'assignmentMode': 'explicit'}]
+        self.assigned = {'M2'}
         for offset in (-4, 4):
             with self.subTest(offset=offset):
                 self.occs[1] = occurrence('O2', 'M2', offset=offset)
@@ -451,7 +457,7 @@ class QRPolicyTests(SimpleTestCase):
 
     def test_equal_other_group_lectures_today_require_manual_choice(self):
         self.mods[1] = module('M2', group='G2', cohort='C1')
-        self.student.learning_plan = [{'moduleId': 'M2', 'assignmentMode': 'explicit'}]
+        self.assigned = {'M2'}
         self.occs[1] = occurrence('O2', 'M2', offset=4)
         self.occs.append(occurrence('O3', 'M2', offset=5))
         result = qr.lookup('student@example.test')
@@ -460,7 +466,7 @@ class QRPolicyTests(SimpleTestCase):
 
     def test_own_group_today_is_preferred_to_other_group_today(self):
         self.mods[1] = module('M2', group='G2', cohort='C1')
-        self.student.learning_plan.append({'moduleId': 'M2', 'assignmentMode': 'explicit'})
+        self.assigned.add('M2')
         self.occs[0] = occurrence(offset=4)
         self.occs[1] = occurrence('O2', 'M2', offset=4)
         self.assertEqual(qr.lookup('student@example.test')['selection'],
@@ -494,27 +500,32 @@ class QRPolicyTests(SimpleTestCase):
         self.assertEqual(result['otherGroupLectures'][0]['matchingModuleIds'], ['M2'])
 
     def test_explicit_and_empty_plans_do_not_inherit_unassigned_group_suggestions(self):
-        self.student.learning_plan = [{'moduleId': 'M2', 'assignmentMode': 'explicit'}]
+        self.assigned = {'M2'}
         self.assertEqual(qr.lookup('student@example.test')['suggestions'], [])
-        self.student.learning_plan = []
+        self.assigned = set()
         self.assertEqual(qr.lookup('student@example.test')['moduleCandidates'], [])
         self.assertEqual(len(qr.lookup('student@example.test')['modules']), 2)
         self.assertEqual(len(self.lectures('M1')), 1)
 
-    def test_unsaved_plan_uses_verified_legacy_group_preset_and_cohort(self):
+    def test_no_linked_profile_assigns_nothing_without_legacy_plan_fallback(self):
+        # Intentional change: membership comes only from the normalized plan
+        # records through the learner profile. An enrolment with no linked
+        # profile is assigned nothing (no legacy Learning_plan/group-preset
+        # fallback). The legacy names still resolve the placement, and every
+        # programme module stays selectable by hand.
         store.placements.return_value = []
-        self.student.learning_plan = None
         self.student.group = ' group one '
         self.student.cohort = ' cohort one '
         store.groups.return_value[0]['group_name'] = 'Group One'
         store.cohorts.return_value[0]['cohort_name'] = 'Cohort One'
         result = qr.lookup('student@example.test')
-        self.assertEqual(result['selection'], {'moduleId': 'M1', 'occurrenceId': 'O1'})
+        self.assertEqual(result['selection'], {'moduleId': None, 'occurrenceId': None})
+        self.assertEqual(len(result['modules']), 2)
         self.assertEqual(qr.context('student@example.test')[2]['group_id'], 'G1')
+        self.membership.assert_not_called()
 
     def test_ambiguous_legacy_group_does_not_invent_assignment(self):
         store.placements.return_value = []
-        self.student.learning_plan = None
         self.student.group = 'Repeated group'
         for row in store.groups.return_value:
             row['group_name'] = 'Repeated group'
@@ -532,7 +543,7 @@ class QRPolicyTests(SimpleTestCase):
     def test_shared_alias_ties_do_not_choose_the_lowest_module_id(self):
         self.mods.append(module('ALIAS'))
         self.mods[-1]['shared_source'] = 'M1'
-        self.student.learning_plan.append({'moduleId': 'ALIAS', 'assignmentMode': 'explicit'})
+        self.assigned.add('ALIAS')
         result = qr.lookup('student@example.test')
         self.assertIsNone(result['selection']['moduleId'])
         self.assertEqual(set(result['moduleCandidates']), {'ALIAS', 'M1'})
