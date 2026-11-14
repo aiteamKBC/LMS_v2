@@ -200,8 +200,7 @@ describe('Attendance lecture workspace', () => {
     expect(screen.getByText('Attended', { selector: 'p' }).parentElement).toHaveTextContent('2');
     expect(screen.getByText('Absent', { selector: 'p' }).parentElement).toHaveTextContent('0');
     expect(screen.getAllByRole('article')).toHaveLength(2);
-    fireEvent.click(within(screen.getByRole('article', { name: 'MSP first lecture' })).getByRole('button', { name: 'Open Activities' }));
-    expect(screen.getByTestId('location')).toHaveTextContent(`/learner/monthly-logs/${kind}/12/2026-09?source=att%3Amsp-first`);
+    expect(within(screen.getByRole('article', { name: 'MSP first lecture' })).getByRole('button', { name: 'Open Activities' })).toBeDisabled();
     fireEvent.change(select, { target: { value: 'native:msp' } });
     expect(screen.getByTitle(title)).toHaveTextContent(title);
     expect(screen.getAllByRole('article')).toHaveLength(14);
@@ -242,8 +241,7 @@ describe('Attendance lecture workspace', () => {
     expect(screen.getByText('Total Lectures').parentElement).toHaveTextContent('3');
     expect(screen.getByText('Absent', { selector: 'p' }).parentElement).toHaveTextContent('1');
 
-    fireEvent.click(within(screen.getByRole('article', { name: 'Original G1 lecture' })).getByRole('button', { name: 'Open Activities' }));
-    expect(screen.getByTestId('location')).toHaveTextContent(`/learner/monthly-logs/${kind}/12/2026-09?source=att%3Aoriginal-g1`);
+    expect(within(screen.getByRole('article', { name: 'Original G1 lecture' })).getByRole('button', { name: 'Open Activities' })).toBeDisabled();
     fireEvent.change(select, { target: { value: 'native:g2' } });
     expect(screen.getAllByRole('article')).toHaveLength(1);
     expect(screen.getByRole('article', { name: 'Separate G2 lecture' })).toBeInTheDocument();
@@ -268,8 +266,7 @@ describe('Attendance lecture workspace', () => {
     expect(within(select).getAllByRole('option')).toHaveLength(2);
     expect(screen.getByText('50% attendance')).toBeInTheDocument();
     expect(screen.getAllByRole('article')).toHaveLength(2);
-    fireEvent.click(within(screen.getByRole('article', { name: 'Historical lecture' })).getByRole('button', { name: 'Open Activities' }));
-    expect(screen.getByTestId('location')).toHaveTextContent(`/learner/monthly-logs/${kind}/12/2026-09?source=att%3Ahistorical`);
+    expect(within(screen.getByRole('article', { name: 'Historical lecture' })).getByRole('button', { name: 'Open Activities' })).toBeDisabled();
     expect(payload).toEqual(original);
     expect(posts).toEqual([]);
   });
@@ -672,11 +669,15 @@ describe('Attendance lecture workspace', () => {
     expect(lectureCounts(lectures)).toEqual({ all: 3, attended: 2, absent: 1, covered: 1, upcoming: 0, rate: 67 });
   });
 
-  it('opens the same attendance source in Monthly Logs and searches KSBs', async () => {
+  it('explains an unlinked lecture without navigating to a different activity or Monthly Logs and still searches KSBs', async () => {
     mount();
     const row = await screen.findByRole('article', { name: 'Missed lecture' });
-    fireEvent.click(within(row).getByRole('button', { name: 'Open Activities' }));
-    expect(screen.getByTestId('location')).toHaveTextContent('/learner/monthly-logs/apprenticeship/12/2026-09?source=att%3Alegacy-one');
+    const before = screen.getByTestId('location').textContent;
+    const open = within(row).getByRole('button', { name: 'Open Activities' });
+    expect(open).toBeDisabled();
+    expect(open).toHaveAccessibleDescription('Live session activity not linked yet');
+    fireEvent.click(open);
+    expect(screen.getByTestId('location').textContent).toBe(before);
     expect(screen.queryByText('Activity content 4')).not.toBeInTheDocument();
     expect(posts).toEqual([]);
     fireEvent.change(screen.getByLabelText('Search lectures'), { target: { value: 'K99' } });
@@ -684,17 +685,56 @@ describe('Attendance lecture workspace', () => {
   });
 
   it.each([
-    { source: 'microsoft-teams' as const, sessionId: 'teams:occ-8', expected: 'attendance:occ-8', month: '2026-09' },
-    { source: 'kbc-attendance' as const, sessionId: '92_A&B', expected: 'att:92_A&B', month: '2026-08',
+    { source: 'microsoft-teams' as const, sessionId: 'teams:occ-8' },
+    { source: 'kbc-attendance' as const, sessionId: '92_A&B',
       monthlyLog: { month: '2026-08', sourceRef: 'att:92_A&B' } },
-  ])('preserves the exact source and report month for $source', async ({ expected, month, ...overrides }) => {
-    payload.lectures = [lecture(overrides)];
+  ])('opens the exact linked component instead of the attendance record for $source', async overrides => {
+    const componentHref = '/learner/component/apprenticeship/12/live-session-9';
+    payload.lectures = [lecture({ ...overrides, componentHref })];
+    const original = structuredClone(payload);
     mount();
     const row = await screen.findByRole('article', { name: 'First lecture' });
     fireEvent.click(within(row).getByRole('button', { name: 'Open Activities' }));
     const destination = new URL(screen.getByTestId('location').textContent!, 'http://localhost');
-    expect(destination.pathname).toBe(`/learner/monthly-logs/apprenticeship/12/${month}`);
-    expect(destination.searchParams.get('source')).toBe(expected);
+    expect(destination.pathname).toBe(componentHref);
+    expect(destination.searchParams.has('source')).toBe(false);
+    expect(payload).toEqual(original);
+    expect(posts).toEqual([]);
+  });
+
+  describe.each(['apprenticeship', 'commercial'] as const)('%s live-session activity navigation', kind => {
+    it.each(['upcoming', 'completed', 'late', 'absent', 'in_progress', 'pending', 'unmarked', 'awaiting_recording'] as const)(
+      'opens the same exact component for a %s lecture without changing attendance or hours', async status => {
+        learnerIdentity.kind = kind;
+        const componentHref = `/learner/component/${kind}/12/exact-live-session`;
+        payload.lectures = [lecture({ status, source: 'microsoft-teams', componentHref,
+          activities: [{ id: 'other', type: 'video', title: 'Different activity', completed: false,
+            href: `/learner/component/${kind}/12/unrelated-video` }] })];
+        const original = structuredClone(payload);
+        mount();
+        const row = await screen.findByRole('article', { name: 'First lecture' });
+        const open = within(row).getByRole('button', { name: 'Open Activities' });
+        expect(open).toBeEnabled();
+        fireEvent.click(open);
+        expect(screen.getByTestId('location').textContent).toBe(componentHref);
+        expect(payload).toEqual(original);
+        expect(posts).toEqual([]);
+      });
+
+    it('keeps identical lecture titles bound to their own session component', async () => {
+      learnerIdentity.kind = kind;
+      payload.lectures = [
+        lecture({ id: 'week-one', title: 'Weekly session', date: '2026-09-01', componentHref: `/learner/component/${kind}/12/week-one` }),
+        lecture({ id: 'week-two', title: 'Weekly session', date: '2026-09-08', componentHref: `/learner/component/${kind}/12/week-two` }),
+      ];
+      mount();
+      const rows = await screen.findAllByRole('article', { name: 'Weekly session' });
+      const secondWeek = rows.find(row => row.querySelector('time')?.dateTime === '2026-09-08');
+      expect(secondWeek).toBeDefined();
+      fireEvent.click(within(secondWeek!).getByRole('button', { name: 'Open Activities' }));
+      expect(screen.getByTestId('location').textContent).toBe(`/learner/component/${kind}/12/week-two`);
+      expect(posts).toEqual([]);
+    });
   });
 
   it('opens an upcoming lecture in its exact My Learning component', async () => {
@@ -707,16 +747,20 @@ describe('Attendance lecture workspace', () => {
     expect(screen.getByTestId('location')).not.toHaveTextContent('/monthly-logs/');
   });
 
-  it('keeps an unmapped upcoming lecture in its My Learning module instead of Monthly Logs', async () => {
+  it.each([undefined, '', '   '])('does not substitute another activity or the module when a session link is missing (%s)', async componentHref => {
     payload.lectures = [lecture({ status: 'upcoming', date: '2027-01-10', source: 'microsoft-teams',
-      sessionId: 'teams:unmapped', moduleId: 'native:test-teams' })];
+      sessionId: 'teams:unmapped', moduleId: 'native:test-teams', componentHref,
+      activities: [{ id: 'video', title: 'Different activity', type: 'video', completed: false,
+        href: '/learner/component/apprenticeship/12/not-this-session' }] })];
     mount();
     const row = await screen.findByRole('article', { name: 'First lecture' });
-    fireEvent.click(within(row).getByRole('button', { name: 'Open Activities' }));
-    const destination = new URL(screen.getByTestId('location').textContent!, 'http://localhost');
-    expect(destination.pathname).toBe('/learner/my-learning/apprenticeship/12');
-    expect(destination.searchParams.get('subject')).toBe('current:test-teams');
-    expect(destination.pathname).not.toContain('/monthly-logs/');
+    const before = screen.getByTestId('location').textContent;
+    const open = within(row).getByRole('button', { name: 'Open Activities' });
+    expect(open).toBeDisabled();
+    expect(open).toHaveAccessibleDescription('Live session activity not linked yet');
+    fireEvent.click(open);
+    expect(screen.getByTestId('location').textContent).toBe(before);
+    expect(posts).toEqual([]);
   });
 
   describe.each(['apprenticeship', 'commercial'])('%s attendance mode is read-only', kind => {
