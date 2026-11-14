@@ -2,7 +2,7 @@ import { TIME_ZONE_LABEL, todayIso } from '@/pages/curriculum/recordings/utils';
 import type { MatchFilter, MeetingFilter } from './model';
 import type { Period } from '@/pages/curriculum/recordings/filters';
 
-export type EvidenceTab = 'recordings' | 'transcript' | 'analysis';
+export type EvidenceTab = 'overview' | 'recordings' | 'attendance' | 'transcript' | 'analysis' | 'quality';
 export interface CoachingLocation {
   date: string; period: Period; zone: string; coach: string; learner: string; phase: MeetingFilter;
   family: string; match: MatchFilter; lectures: boolean; meeting: string; occurrenceDate: string; tab: EvidenceTab;
@@ -24,7 +24,7 @@ export function readLocation(params: URLSearchParams): CoachingLocation {
     family: member(params.get('type'), lectures ? ['all', 'MCM', 'PR', 'SUPPORT', 'OTHER', 'LECTURE'] : ['all', 'MCM', 'PR', 'SUPPORT', 'OTHER'], 'all'),
     match: member(params.get('match'), ['all', 'matched', 'review'], 'all'), lectures,
     meeting: (params.get('meeting') ?? '').slice(0, 128), occurrenceDate: validDay(params.get('on') ?? '') ? params.get('on')! : validDate ? date : todayIso(zone),
-    tab: member(params.get('tab'), ['recordings', 'transcript', 'analysis'], 'recordings') };
+    tab: member(params.get('tab'), ['overview', 'recordings', 'attendance', 'transcript', 'analysis', 'quality'], 'recordings') };
 }
 export function writeLocation(value: CoachingLocation): URLSearchParams {
   const result = new URLSearchParams({ date: value.date, view: value.period, zone: value.zone, status: value.phase });

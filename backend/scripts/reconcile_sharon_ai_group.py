@@ -111,11 +111,12 @@ def insert_row(cur, table: str, values: dict[str, Any]) -> int:
 
 def state(cur) -> dict[str, Any]:
     roster_rows = cur.execute(
-        '''SELECT l.id,l.enrolment_id,l.programme_id,l.aptem_id,l.full_name,l.programme,
-                  t.module_ref AS curriculum_module_id
+        '''SELECT l.id,l.enrolment_id,l.programme_id,l.aptem_id,l.full_name,
+                  programme.name AS programme,t.curriculum_module_id
            FROM "Learner".learners l
+           LEFT JOIN curriculum.programmes programme ON programme.programme_id=l.programme_id
            LEFT JOIN "Learner".learner_training_plan_modules t
-             ON t.learner_id=l.id AND t.module_ref=%s
+             ON t.learner_id=l.id AND t.curriculum_module_id=%s
            WHERE l.aptem_id=ANY(%s)
            ORDER BY l.aptem_id''',
         [MODULE_ID, list(ROSTER)],

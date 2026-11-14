@@ -9,6 +9,9 @@ import { CurriculumDeliveryHub } from '../../hubs/page';
 vi.mock('@/components/feature/WorkspaceShell', () => ({ WorkspaceShell: ({ children }: { children: ReactNode }) => <div>{children}</div> }));
 vi.mock('@/hooks/useCurriculumData', () => ({ useCurriculumData: () => ({ data: {}, loading: false, error: '' }) }));
 vi.mock('@/hooks/useCurriculumProgrammes', () => ({ useCurriculumProgrammes: () => ({ programmes: [], loading: false, error: '' }) }));
+vi.mock('@/hooks/useAuth', () => ({ useAuth: () => ({ auth: { account: { id: -1, role: 'staff', access: 'curriculum' }, tenant: null } }) }));
+vi.mock('../../hubs/useDeliverySessions', () => ({ useDeliverySessions: () => ({ sessions: [], loading: false, error: null }) }));
+vi.mock('../../hubs/useDeliveryData', () => ({ useDeliveryOverview: () => ({ data: null, loading: false, error: null }) }));
 
 describe('Coach and tutor recordings entry points', () => {
   it('offers exactly two destinations and keeps their existing recording URLs', () => {
@@ -16,9 +19,15 @@ describe('Coach and tutor recordings entry points', () => {
     expect(screen.getAllByRole('link')).toHaveLength(2);
     expect(screen.getByRole('link', { name: /Coach Meetings & Recordings/ })).toHaveAttribute('href', '/curriculum/coaching-recordings');
     expect(screen.getByRole('link', { name: /Tutor Session Recordings/ })).toHaveAttribute('href', '/curriculum/recordings');
-    const entry = curriculumNavItems.find(item => item.href === '/curriculum/recordings-hub');
-    expect(entry?.label).toBe('Coach & Tutor Recordings');
-    expect(entry?.matchPaths).toEqual(expect.arrayContaining(['/curriculum/recordings', '/curriculum/coaching-recordings']));
+  });
+  it('keeps all recording destinations in the existing permissioned sidebar group', () => {
+    const entry = curriculumNavItems.find(item => item.id === 'curriculum-coaching-recordings');
+    expect(entry?.label).toBe('Recordings');
+    expect(entry?.children?.map(({ id, label, href }) => ({ id, label, href }))).toEqual([
+      { id: 'curriculum-recordings-hub', label: 'Recordings hub', href: '/curriculum/recordings-hub' },
+      { id: 'curriculum-tutor-recordings', label: 'Tutor session recordings', href: '/curriculum/recordings' },
+      { id: 'curriculum-coach-meetings', label: 'Coach meetings', href: '/curriculum/coaching-recordings' },
+    ]);
     expect(curriculumNavItems.find(item => item.href === '/curriculum/delivery')?.matchPaths).not.toContain('/curriculum/recordings');
   });
   it('removes the recording shortcuts from Delivery and preserves its scheduling destinations', () => {

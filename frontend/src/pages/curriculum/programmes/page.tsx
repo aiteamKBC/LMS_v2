@@ -31,12 +31,10 @@ import {
   fetchCurriculumProgrammeKsbCoverage,
   fetchCurriculumProgrammeLearnerKsbSummary,
   fetchCurriculumKsbSetSummaries,
-  fetchCurriculumKsbSourceDefinitions,
   fetchCurriculumStandards,
   saveCurriculumProgrammeOrder,
   updateCurriculumCohort,
   updateCurriculumGroup,
-  updateCurriculumKsbFramework,
   updateCurriculumModule,
   updateCurriculumProgramme,
   type CurriculumCohort,
@@ -47,7 +45,6 @@ import {
   type CurriculumKsbEntry,
   type CurriculumKsbSet,
   type CurriculumKsbSetSummary,
-  type CurriculumKsbSourceDefinitions,
   type CurriculumKsbDefinition,
   type CurriculumKsbTraceMapping,
   type CurriculumGroup,
@@ -85,7 +82,6 @@ type ProgrammeKsbSet = CurriculumKsbSet | CurriculumKsbSetSummary;
 type ProgrammeKsbSourceReview = {
   programme: CurriculumProgramme;
   source: ProgrammeAppliedKsbSource;
-  ksbSet?: CurriculumKsbSourceDefinitions;
   standard?: CurriculumStandard;
   loading?: boolean;
   error?: string;
@@ -399,7 +395,6 @@ function CurriculumProgrammesContent() {
   const [learnerImpactError, setLearnerImpactError] = useState<string | null>(null);
   const [sourceReview, setSourceReview] = useState<ProgrammeKsbSourceReview | null>(null);
   const [ksbSets, setKsbSets] = useState<ProgrammeKsbSet[]>([]);
-  const [reviewDefinitions, setReviewDefinitions] = useState<CurriculumKsbSourceDefinitions[]>([]);
   const reviewRequest = useRef(0);
   const [standards, setStandards] = useState<CurriculumStandard[]>([]);
   const [ksbSourcesLoading, setKsbSourcesLoading] = useState(true);
@@ -442,7 +437,7 @@ function CurriculumProgrammesContent() {
     [listedProgrammes],
   );
   const { data: curriculumData, reload: reloadCurriculumData } = useCurriculumData({ autoLoad: false, compact: true, includeHolidays: true, refreshModules: true, compactModules: true });
-  const ksbDescriptions = useMemo(() => buildProgrammeKsbDescriptionLookup(reviewDefinitions, standards), [reviewDefinitions, standards]);
+  const ksbDescriptions = useMemo(() => buildProgrammeKsbDescriptionLookup(standards), [standards]);
 
   const loadKsbSources = useCallback(async (signal?: AbortSignal) => {
     setKsbSourcesLoading(true);
@@ -757,22 +752,13 @@ function CurriculumProgrammesContent() {
     const programmeId = programme.sourceId || programme.id;
     setReviewProgramme(programme);
     setReviewItems([]);
-    setReviewDefinitions([]);
     setReviewError(null);
     setReviewLoading(true);
     try {
+      // Descriptions come from the standards (see ksbDescriptions); the
+      // curriculum database keeps no KSB profiles to read them from.
       const coverage = await fetchCurriculumProgrammeKsbCoverage(programmeId, { view: 'items' });
-      const sourceIds = uniqueTextValues([
-        programme.ksbProfileSourceId || '',
-        ...(coverage.items || []).map(item => String(item.sourceId || item.source_id || '')),
-      ]).filter(id => !id.startsWith('standard:'));
-      const profiles = new Map(sourceIds.flatMap(id => {
-        const source = findProgrammeKsbSetBySourceId(ksbSets, id.replace(/^(profile|framework):/i, ''));
-        return source ? [[ksbSourceIdForProgrammeCard(source), source] as const] : [];
-      }));
-      const definitions = await Promise.all(Array.from(profiles.keys()).map(id => fetchCurriculumKsbSourceDefinitions(id)));
       if (request !== reviewRequest.current) return;
-      setReviewDefinitions(definitions);
       setReviewItems((coverage.items || []).filter(isReadableAppliedKsbCoverageItem));
     } catch (err) {
       if (request !== reviewRequest.current) return;
@@ -798,74 +784,30 @@ function CurriculumProgrammesContent() {
     }
   };
 
-  // `options.sets` is for a source that has only just been created: the state
-  // holding the KSB sets cannot have caught up inside the same call, and this
-  // would otherwise fail to find a profile that certainly exists.
-  const applyProgrammeKsbSource = async (
-    programme: CurriculumProgramme,
-    sourceValue: string,
-    options: { sets?: ProgrammeKsbSet[] } = {},
-  ) => {
-    const [kind, id] = sourceValue.split(':');
+  // A programme takes its KSBs from an apprenticeship standard: the curriculum
+  // database keeps no KSB profiles, so `standard:<id>` is the only source.
+  const applyProgrammeKsbSource = async (programme: CurriculumProgramme, sourceValue: string) => {
+    const [, id] = sourceValue.split(':');
     const programmeId = programme.sourceId || programme.id;
     if (!programmeId || !id) return;
-    const availableSets = options.sets || ksbSets;
     setApplyingKsbSource(true);
     try {
       // Compact is safe: this page's only use of curriculumData.modules is the KSB
       // source cascade below, which reads name/colour/notes plus identity fields.
       const modulesForCascade = curriculumData?.modules?.length ? curriculumData.modules : await fetchCurriculumModules(undefined, { compact: true });
-      if (kind === 'profile') {
-        const profile = availableSets.find(set => ksbSourceIdForProgrammeCard(set) === id || set.frameworkId === id || set.ksbProfileId === id);
-        if (!profile) throw new Error('Selected KSB profile could not be found.');
-        const selectedProfileId = ksbSourceIdForProgrammeCard(profile);
-        const programmeCandidates = uniqueTextValues([programmeId, programme.id, programme.sourceId, programme.name]);
-        const previouslyLinkedProfiles = availableSets.filter(set => {
-          if (ksbSourceIdForProgrammeCard(set) === selectedProfileId) return false;
-          const linkedProgrammeIds = uniqueTextValues([set.programmeId, ...(set.programmeIds || [])]);
-          return programmeCandidates.some(candidate => linkedProgrammeIds.some(linked => normalise(linked) === normalise(candidate)));
-        });
-        await Promise.all(previouslyLinkedProfiles.map(set => {
-          const nextProgrammeIds = uniqueTextValues([...(set.programmeIds || []), set.programmeId])
-            .filter(value => !programmeCandidates.some(candidate => normalise(candidate) === normalise(value)));
-          return updateCurriculumKsbFramework(ksbSourceIdForProgrammeCard(set), {
-            programmeId: nextProgrammeIds[0] || '',
-            programmeIds: nextProgrammeIds,
-            name: set.standard || set.programmeName || 'KSB profile',
-          });
-        }));
-        const nextProgrammeIds = uniqueTextValues([...(profile.programmeIds || []), programmeId, programme.name]);
-        await updateCurriculumKsbFramework(selectedProfileId, {
-          programmeId,
-          programmeIds: nextProgrammeIds,
-          name: profile.standard || profile.programmeName || programme.standard || programme.name,
-        });
-        await updateCurriculumProgramme(programmeId, {
-          name: programme.name,
-          standard: programme.standard || profile.standard || profile.programmeName || programme.name,
-          level: programme.level,
-          color: programme.color,
-          description: programme.description,
-          structureType: programme.structureType,
-          ksbProfileSourceId: selectedProfileId,
-        });
-        setProgrammeSourceOverrides(previous => new Map(previous).set(programmeId, selectedProfileId));
-        await cascadeKsbSourceToProgrammeModules(programme, modulesForCascade, selectedProfileId);
-      } else {
-        const standard = standards.find(item => item.id === id);
-        if (!standard) throw new Error('Selected standard could not be found.');
-        await updateCurriculumProgramme(programmeId, {
-          name: programme.name,
-          standard: standard.name,
-          level: standard.levelValue || standard.level,
-          color: programme.color,
-          description: programme.description,
-          structureType: programme.structureType,
-          ksbProfileSourceId: `standard:${standard.id}`,
-        });
-        setProgrammeSourceOverrides(previous => new Map(previous).set(programmeId, `standard:${standard.id}`));
-        await cascadeKsbSourceToProgrammeModules(programme, modulesForCascade, `standard:${standard.id}`);
-      }
+      const standard = standards.find(item => item.id === id);
+      if (!standard) throw new Error('Selected standard could not be found.');
+      await updateCurriculumProgramme(programmeId, {
+        name: programme.name,
+        standard: standard.name,
+        level: standard.levelValue || standard.level,
+        color: programme.color,
+        description: programme.description,
+        structureType: programme.structureType,
+        ksbProfileSourceId: `standard:${standard.id}`,
+      });
+      setProgrammeSourceOverrides(previous => new Map(previous).set(programmeId, `standard:${standard.id}`));
+      await cascadeKsbSourceToProgrammeModules(programme, modulesForCascade, `standard:${standard.id}`);
       // Refresh in parallel and silently: the source override is already applied
       // optimistically above, so the cards should not collapse to skeletons while
       // the uncached programme/tree requests come back.
@@ -883,7 +825,7 @@ function CurriculumProgrammesContent() {
         newProgrammeDeliveryTarget
         && normalise(newProgrammeDeliveryTarget.sourceId || newProgrammeDeliveryTarget.id) === normalise(programmeId),
       );
-      const appliedToast = showProgrammeSwalToast('KSB Source applied', `${programme.name} will now use the selected ${kind === 'profile' ? 'KSB profile' : 'standard'} for coverage.`, 'success');
+      const appliedToast = showProgrammeSwalToast('KSB Source applied', `${programme.name} will now use the selected standard for coverage.`, 'success');
       setApplyProgramme(null);
       if (shouldOpenDelivery) {
         setNewProgrammeDeliveryTarget(null);
@@ -900,7 +842,6 @@ function CurriculumProgrammesContent() {
   const unapplyProgrammeKsbSource = async (programme: CurriculumProgramme, source: ProgrammeAppliedKsbSource) => {
     const programmeId = programme.sourceId || programme.id;
     if (!programmeId || !source.value) return;
-    const [kind, id] = source.value.split(':');
     const confirmed = await showCurriculumConfirm({
       title: 'Unapply KSB Source?',
       text: `${programme.name} will no longer be measured against ${source.title}. Existing component KSB mappings will not be deleted.`,
@@ -927,19 +868,6 @@ function CurriculumProgrammesContent() {
     setApplyProgramme(null);
     setSourceReview(null);
     void (async () => {
-      if (kind === 'profile') {
-        const profile = findProgrammeKsbSetBySourceId(ksbSets, id);
-        if (profile) {
-          const programmeCandidates = uniqueTextValues([programmeId, programme.id, programme.sourceId, programme.name]);
-          const nextProgrammeIds = uniqueTextValues([...(profile.programmeIds || []), profile.programmeId])
-            .filter(value => !programmeCandidates.some(candidate => normalise(candidate) === normalise(value)));
-          await updateCurriculumKsbFramework(ksbSourceIdForProgrammeCard(profile), {
-            programmeId: nextProgrammeIds[0] || '',
-            programmeIds: nextProgrammeIds,
-            name: profile.standard || profile.programmeName || 'KSB profile',
-          });
-        }
-      }
       const [nextKsbSets, nextStandards] = await Promise.all([
         fetchCurriculumKsbSetSummaries().catch(() => ksbSets),
         fetchCurriculumStandards().catch(() => standards),
@@ -972,20 +900,6 @@ function CurriculumProgrammesContent() {
       return;
     }
     const [kind, id] = source.value.split(':');
-    if (kind === 'profile') {
-      const ksbSet = findProgrammeKsbSetBySourceId(ksbSets, id);
-      if (ksbSet) {
-        const pending: ProgrammeKsbSourceReview = { programme, source, loading: true };
-        setSourceReview(pending);
-        try {
-          const definitions = await fetchCurriculumKsbSourceDefinitions(ksbSourceIdForProgrammeCard(ksbSet));
-          setSourceReview(current => current === pending ? { programme, source, ksbSet: definitions } : current);
-        } catch (err) {
-          setSourceReview(current => current === pending ? { programme, source, error: err instanceof Error ? err.message : 'Unable to load KSB definitions.' } : current);
-        }
-        return;
-      }
-    }
     if (kind === 'standard') {
       const standard = standards.find(item => normalise(item.id) === normalise(id));
       if (standard) {
@@ -993,7 +907,7 @@ function CurriculumProgrammesContent() {
         return;
       }
     }
-    void showProgrammeSwalToast('KSB Source not found', 'The selected KSB profile could not be loaded yet. Try refreshing the page.', 'error');
+    void showProgrammeSwalToast('KSB Source not found', 'The selected standard could not be loaded yet. Try refreshing the page.', 'error');
   };
 
   return (
@@ -2826,7 +2740,6 @@ function flattenProgrammeKsbEntries(entries: CurriculumKsbDefinition[], parentCo
 }
 
 function programmeKsbSourceItems(review: ProgrammeKsbSourceReview): ProgrammeKsbSourceItem[] {
-  if (review.ksbSet) return flattenProgrammeKsbEntries(review.ksbSet.ksbs || []);
   const standardKsbs = review.standard?.ksbs || review.standard?.sampleKsbs || [];
   return standardKsbs.map((entry, index) => {
     const code = programmeKsbCode(entry.code);
@@ -2988,29 +2901,8 @@ function addProgrammeKsbDescription(lookup: Map<string, string>, code: string, d
   });
 }
 
-function buildProgrammeKsbDescriptionLookup(ksbSets: CurriculumKsbSourceDefinitions[], standards: CurriculumStandard[]) {
+function buildProgrammeKsbDescriptionLookup(standards: CurriculumStandard[]) {
   const lookup = new Map<string, string>();
-  const visitEntry = (entry: CurriculumKsbDefinition & { children?: CurriculumKsbDefinition[] }, sourceType = '', sourceId = '') => {
-    [entry.code, entry.rawCode, entry.fullCode].filter(Boolean).forEach(code => {
-      addProgrammeKsbDescription(lookup, String(code), entry.description || entry.title, sourceType, sourceId);
-    });
-    (entry.children || []).forEach(child => visitEntry(child, sourceType, sourceId));
-  };
-  ksbSets.forEach(set => {
-    const sourceIds = [
-      set.frameworkId,
-      set.ksbProfileId,
-      set.profileId ? String(set.profileId) : '',
-      set.profileId ? `KSBP-${set.profileId}` : '',
-      set.programmeId,
-      set.programmeName,
-      set.standard,
-    ].map(value => String(value || '').trim()).filter(Boolean);
-    set.ksbs.forEach(entry => {
-      sourceIds.forEach(sourceId => visitEntry(entry as CurriculumKsbEntry & { children?: CurriculumKsbEntry[] }, 'framework', sourceId));
-      visitEntry(entry as CurriculumKsbEntry & { children?: CurriculumKsbEntry[] });
-    });
-  });
   standards.forEach(standard => {
     const sourceIds = [standard.id, standard.code, standard.standardRef, standard.name].filter(Boolean);
     (standard.ksbs || standard.sampleKsbs || []).forEach(entry => {

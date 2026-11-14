@@ -26,7 +26,9 @@ class MissingLearningIdentityTests(SimpleTestCase):
         self.profiles = self.enterContext(patch.object(active_users, "LearnerProfile"))
         self.profiles.objects.filter.return_value.first.return_value = None
         self.atomic = self.enterContext(patch.object(active_users.transaction, "atomic"))
-        self.legacy = self.enterContext(patch.object(active_users, "learner_profile_for_source", return_value=None))
+        self.legacy = self.enterContext(patch(
+            "learner_api.identity.learner_profile_for_source", return_value=None
+        ))
         self.sync = self.enterContext(patch.object(active_users, "sync_active_user", return_value=self.profile))
         self.validate = self.enterContext(patch.object(canonical_learning, "require_profile", return_value={"id": 9001}))
 
@@ -81,15 +83,12 @@ class ActiveProfileAptemTests(SimpleTestCase):
     def sync(self, value, existing=None):
         source = learner(programme_status="Active", aptem_id=value)
         with patch("learner_api.apprenticeship_agreement._group_dates", return_value=(None, None, None)), \
-             patch("learner_api.coach_assignment.source_coach", return_value={}), \
+             patch("learner_api.coach_assignment.source_coach_id", return_value=None), \
              patch.object(active_users.transaction, "atomic"), \
-             patch.object(active_users, "learner_profile_for_source", return_value=existing), \
+             patch("learner_api.placement_links.placement_profile", return_value=existing), \
              patch.object(active_users, "hydrate_source_training_plan", return_value=source.learning_plan), \
-             patch.object(active_users, "_resolve_linkable_programme_id", return_value=None), \
-             patch.object(active_users, "_linkable_placement_ids", return_value=(None, None)), \
              patch.object(active_users, "LearnerProfile") as model, \
              patch.object(active_users, "replace_training_plan"), \
-             patch.object(active_users, "replace_free_courses"), \
              patch.object(active_users, "refresh_learner_ksb_snapshot"):
             result = active_users.sync_active_user(source)
         return result, model
@@ -119,13 +118,17 @@ class ActiveProfileAptemTests(SimpleTestCase):
 class ActiveIdentityWritePathTests(SimpleTestCase):
     def test_native_creation_with_active_status_provisions_the_owner(self):
         source = learner(programme_status="Active")
-        with patch.object(views, "cohort_delivery_window", return_value=(None, None, None)), \
+        with patch.object(views, "validate_placement"), \
+             patch.object(views, "cohort_delivery_window", return_value=(None, None, None)), \
+             patch.object(views.transaction, "atomic"), \
              patch.object(EnrolmentUser.all_learners, "create", return_value=source), \
+             patch.object(views, "sync_active_user"), \
+             patch.object(views, "placement_profile", return_value=SimpleNamespace(pk=9001)), \
              patch.object(views, "advance_learner"), \
              patch.object(views, "to_list_row", return_value={}), \
              patch.object(views, "_send_platform_invitation", return_value={}), \
              patch.object(active_users, "ensure_active_learner_profile") as ensure:
-            views._create_enrolment_user(RequestFactory().post("/"), {})
+            views._create_enrolment_user(RequestFactory().post("/"), {"programme_id": "PROGRAMME-1"})
         ensure.assert_called_once_with(source)
 
     def test_plan_save_repairs_missing_active_owner_without_replacing_hydrated_children(self):
@@ -133,9 +136,8 @@ class ActiveIdentityWritePathTests(SimpleTestCase):
         with patch.object(learning_plan, "EnrolmentUser"), \
              patch("learner_api.models.LearnerProfile") as profiles, \
              patch.object(active_users, "ensure_active_learner_profile") as ensure, \
-             patch.object(active_users, "replace_training_plan") as replace, \
-             patch.object(active_users, "replace_free_courses"):
-            profiles.objects.filter.return_value.first.return_value = None
+             patch.object(active_users, "replace_training_plan") as replace:
+            profiles.objects.only.return_value.filter.return_value.first.return_value = None
             self.assertEqual(learning_plan.sync_learning_plan_mirror(source, strict=True), 1)
         ensure.assert_called_once_with(source)
         replace.assert_not_called()
@@ -144,8 +146,9 @@ class ActiveIdentityWritePathTests(SimpleTestCase):
         source = learner(programme_status="Delivery")
         with patch.object(learning_plan, "EnrolmentUser"), \
              patch("learner_api.models.LearnerProfile") as profiles, \
-             patch.object(active_users, "ensure_active_learner_profile") as ensure:
-            profiles.objects.filter.return_value.first.return_value = None
+             patch.object(active_users, "ensure_active_learner_profile") as ensure, \
+             patch.object(active_users, "replace_training_plan"):
+            profiles.objects.only.return_value.filter.return_value.first.return_value = None
             learning_plan.sync_learning_plan_mirror(source, strict=True)
         ensure.assert_not_called()
 

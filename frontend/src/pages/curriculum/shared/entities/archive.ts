@@ -368,7 +368,7 @@ export async function permanentlyDeleteProgrammeWithConfirm(
   ].filter(Boolean).join(', ');
   return showCurriculumConfirm({
     title: 'Delete permanently?',
-    text: `${programme.name} is removed from the database and cannot be restored.${beneath ? ` Everything beneath it goes too (${beneath}).` : ''} Learner accounts and progress are never touched.`,
+    text: `${programme.name} is removed from the database and cannot be restored.${beneath ? ` Its ${beneath} go too.` : ''} If its modules still hold weeks or components, the delete is refused and the programme stays archived, because authored content is never deleted. Learner accounts and progress are never touched.`,
     icon: 'warning',
     confirmButtonText: 'Delete permanently',
     onConfirm: async () => {

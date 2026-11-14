@@ -69,6 +69,23 @@ def spans(page):
 
 
 class MigratedPdfPresentationTests(SimpleTestCase):
+    def test_coach_only_main_target_does_not_change_native_or_migrated_exports(self):
+        review = sample_review('PR')
+        definition = progress_review_definition(deepcopy(review.progress_snapshot))
+        native_before = fitz.open(stream=build_mcm_pdf(definition, SAMPLE_INFORMATION), filetype='pdf')
+        migrated_before = document(review)
+        coach_target = {'formulaVersion': 'scheduled_main_activities_v1',
+                        'expected': 1, 'planned': 5, 'expectedPercent': 20,
+                        'variancePercent': 8, 'varianceDirection': 'above'}
+        definition['progressSnapshot']['coachProgrammeTarget'] = deepcopy(coach_target)
+        review.progress_snapshot['coachProgrammeTarget'] = deepcopy(coach_target)
+        native_after = fitz.open(stream=build_mcm_pdf(definition, SAMPLE_INFORMATION), filetype='pdf')
+        migrated_after = document(review)
+        for before, after in ((native_before, native_after), (migrated_before, migrated_after)):
+            self.assertEqual(text_of(before), text_of(after))
+            self.assertEqual([p.get_pixmap().samples for p in before],
+                             [p.get_pixmap().samples for p in after])
+
     def test_all_families_use_native_geometry_branding_typography_and_page_numbers(self):
         reference = fitz.open(stream=build_mcm_pdf(progress_review_definition(saved_snapshot()), SAMPLE_INFORMATION), filetype="pdf")
         native_header = next(s for s in spans(reference[0]) if s["text"] == "Review")

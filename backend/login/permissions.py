@@ -510,8 +510,11 @@ def coach_owns_learner(account, learner_id):
         email = normalize_email(getattr(staff, "email", ""))
         if not staff or not email or ACCESS_COACH not in accesses_for_staff(staff):
             return False
+        profile_ids = learner_profile_ids_for_coach_email(email)
+        if not profile_ids:
+            return False
         return LearnerProfile.objects.filter(
-            id__in=learner_profile_ids_for_coach_email(email),
+            id__in=profile_ids,
             enrolment_id=learner_id,
         ).exists()
     except DatabaseError:

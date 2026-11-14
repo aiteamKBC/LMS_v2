@@ -18,7 +18,7 @@ def retained_live_component_ids(stored):
     from . import views
     return {row['id'] for row in views.authoring_fetch_all(
         views.AUTHORING_COMPONENTS_TABLE,
-        "module_catalogue_id = %s and type = 'live_session' and deleted_at is null",
+        "module_catalogue_id = %s and type = 'live_session' and lower(btrim(coalesce(status, ''))) <> 'inactive'",
         [stored['module_catalogue_id']], columns=['id'],
     )}
 

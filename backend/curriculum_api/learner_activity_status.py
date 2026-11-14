@@ -18,6 +18,7 @@ from config.working_hours import UK, WORKING_DAY_START, WORKING_DAY_END, WORKING
 from login.permissions import require_access, _accesses_of
 from old_otjh.service import ServiceError
 from learner_api.canonical_learning import counts_as_completed, input_activity_date
+from learner_api.learner_coach_columns import owner_coach_sql
 from learner_api.current_learning import source_payload_metadata
 from . import curriculum_names, schema_gate
 from . import learner_activity_attendance as attendance
@@ -209,11 +210,9 @@ def enrich(payload, account):
             WHERE learner_id IN ({slots}) AND module_id=%s''', [*learner_ids, payload['identifier']])}
     # The existing assignment roster is the membership authority. Ownership is
     # verified again on POST; this capability is only a UI hint.
-    owners = {str(row['id']): row for row in query(f'''SELECT l.id,l.enrolment_id,l.learner_type,
-        c.email AS coach_email
-        FROM {table('learners')} l
-        LEFT JOIN curriculum.coaches c ON c.id = l.coach_id
-        WHERE l.id IN ({','.join(['%s'] * len(learner_ids))})''', learner_ids)} if learner_ids else {}
+    owners = {str(row['id']): row for row in query(f'''SELECT id,enrolment_id,learner_type,
+        {owner_coach_sql('learner')} FROM {table('learners')} learner
+        WHERE id IN ({','.join(['%s'] * len(learner_ids))})''', learner_ids)} if learner_ids else {}
     canonical_records = completion_records(loaded_records, owners, query, table)
     completion_by_component = defaultdict(list)
     hour_rows.clear()

@@ -56,7 +56,7 @@ class TeamsAttendanceModuleRosterTests(SimpleTestCase):
 
         self.assertEqual(result["MOD-1"], {"learner@example.test"})
         self.assertEqual(result["MOD-2"], {"second@example.test"})
-        queryset.filter.assert_called_once_with(module_ref__in={"MOD-1", "MOD-2"})
+        queryset.filter.assert_called_once_with(curriculum_module_id__in={"MOD-1", "MOD-2"})
 
     def test_replaced_attendance_sources_map_destination_to_source_report(self):
         cursor = MagicMock()

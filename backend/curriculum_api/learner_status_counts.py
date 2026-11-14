@@ -55,17 +55,32 @@ def learner_facts(module_ids):
     plan_join = ''
     params = []
     if module_ids:
-        plan_select = "membership.explicit, membership.module_ids, jsonb_typeof(source.\"Learning_plan\"::jsonb) = 'string' AS ambiguous"
-        plan_join = """
-            LEFT JOIN enrolment."Created_users" source ON source.id = p.enrolment_id
-            LEFT JOIN LATERAL (
-                SELECT coalesce(bool_or(entry->>'assignmentMode' = 'explicit'), false) AS explicit,
-                       coalesce(array_agg(DISTINCT entry->>'moduleId')
-                           FILTER (WHERE entry->>'moduleId' = ANY(%s)), ARRAY[]::text[]) AS module_ids
-                FROM jsonb_array_elements(CASE WHEN jsonb_typeof(source."Learning_plan"::jsonb) = 'array'
-                     THEN source."Learning_plan"::jsonb ELSE '[]'::jsonb END) entry
-            ) membership ON true
-        """
+        if views.learner_schema_table_exists('learner_training_plan_modules'):
+            # New schema: the normalized learner plan is authoritative.
+            plan_select = "coalesce(membership.explicit,false) AS explicit, coalesce(membership.module_ids,ARRAY[]::text[]) AS module_ids, false AS ambiguous"
+            plan_join = """
+                LEFT JOIN LATERAL (
+                    SELECT count(*) > 0 AS explicit,
+                           coalesce(array_agg(DISTINCT plan.curriculum_module_id)
+                               FILTER (WHERE plan.curriculum_module_id = ANY(%s)), ARRAY[]::text[]) AS module_ids
+                    FROM "Learner".learner_training_plan_modules plan
+                    WHERE plan.learner_id=p.id
+                ) membership ON true
+            """
+        else:
+            # Legacy schema: retain the enrolment JSON fallback until its
+            # normalized projection has been provisioned.
+            plan_select = "membership.explicit, membership.module_ids, jsonb_typeof(source.\"Learning_plan\"::jsonb) = 'string' AS ambiguous"
+            plan_join = """
+                LEFT JOIN enrolment."Created_users" source ON source.id = p.enrolment_id
+                LEFT JOIN LATERAL (
+                    SELECT coalesce(bool_or(entry->>'assignmentMode' = 'explicit'), false) AS explicit,
+                           coalesce(array_agg(DISTINCT entry->>'moduleId')
+                               FILTER (WHERE entry->>'moduleId' = ANY(%s)), ARRAY[]::text[]) AS module_ids
+                    FROM jsonb_array_elements(CASE WHEN jsonb_typeof(source."Learning_plan"::jsonb) = 'array'
+                         THEN source."Learning_plan"::jsonb ELSE '[]'::jsonb END) entry
+                ) membership ON true
+            """
         params.append(sorted(module_ids))
     programme_status = "nullif(btrim(p.programme_status), '')," if 'programme_status' in columns else ''
     with views.connection.cursor() as cursor:
@@ -77,6 +92,8 @@ def learner_facts(module_ids):
         """, params)
         names = [column[0] for column in cursor.description]
         rows = [dict(zip(names, row)) for row in cursor.fetchall()]
+    # Only legacy JSON-string plans need Python parsing. Normalized rows have
+    # already been reduced by PostgreSQL and are never overwritten here.
     ambiguous = [row['id'] for row in rows if row['ambiguous']]
     if ambiguous:
         from learner_api.models import EnrolmentUser, LearnerProfile

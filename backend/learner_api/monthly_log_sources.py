@@ -7,6 +7,7 @@ from html import escape
 
 from old_otjh.repository import query
 from .active_users import completed_hours_value_from_progress
+from .learner_coach_columns import learner_coach_sql, owner_coach_sql
 
 
 def decoded(value, fallback=None):
@@ -32,21 +33,18 @@ def stable_id(ref):
 
 
 def profile(learner_id):
-    rows = query('''SELECT l.id, c.name AS coach_name, c.email AS coach_email,
-                           l.start_date, l.end_date, l.learner_type
-                      FROM "Learner".learners l
-                 LEFT JOIN curriculum.coaches c ON c.id = l.coach_id
-                     WHERE l.enrolment_id=%s''', [learner_id])
+    rows = query(f'''SELECT id, {owner_coach_sql('learner')}, start_date, end_date, learner_type
+                   FROM "Learner".learners learner WHERE enrolment_id=%s''', [learner_id])
     return rows[0] if len(rows) == 1 else None
 
 
 def learners(email, search):
-    return query('''SELECT u.id, u."Username" AS name, u."Programme" AS programme
+    coach_email = learner_coach_sql('p', 'email')
+    return query(f'''SELECT u.id, u."Username" AS name, u."Programme" AS programme
         FROM enrolment."Created_users" u
         LEFT JOIN "Learner".learners p ON p.enrolment_id=u.id
-        LEFT JOIN curriculum.coaches c ON c.id=p.coach_id
         WHERE p.id IS NOT NULL
-          AND (%s='' OR lower(btrim(c.email))=%s)
+          AND (%s='' OR lower(btrim({coach_email}))=%s)
           AND (%s='' OR u."Username" ILIKE %s OR u."Email" ILIKE %s)
         ORDER BY u."Username", u.id''', [email, email, search, f'%{search}%', f'%{search}%'])
 

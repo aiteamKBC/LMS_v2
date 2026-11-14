@@ -41,6 +41,8 @@ def adapter(query):
                  # KSB exclusion registry: absent here, as on a database the
                  # standards migration has not touched (no filter applied).
                  not_excluded_sql=lambda alias='k', using='default': '1 = 1',
+                 # Learner coach: the copied columns, as on the legacy schema.
+                 owner_coach_sql=lambda alias='l', using='default': f'{alias}.coach_name,{alias}.coach_email',
                  repository=SimpleNamespace(_query_alias=SimpleNamespace(get=lambda: None), DB='enrolment'),
                  current_records=lambda owner, records: records,
                  current_records_bulk=lambda owners, records: {

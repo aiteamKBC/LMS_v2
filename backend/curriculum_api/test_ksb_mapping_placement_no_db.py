@@ -11,13 +11,12 @@ from curriculum_api import views
 
 
 class WhereTests(SimpleTestCase):
-    def where(self, stores, *args, **kwargs):
-        with mock.patch.object(placement, 'stores_placement', return_value=stores), \
-                mock.patch.object(views, 'authoring_table_name', return_value='"curriculum"."components"'):
+    def where(self, *args, **kwargs):
+        with mock.patch.object(views, 'authoring_table_name', return_value='"curriculum"."components"'):
             return placement.where(*args, **kwargs)
 
-    def test_normalised_schema_scopes_through_the_component(self):
-        sql, params = self.where(False, 'MOD-1', week_id='WEEK-1')
+    def test_mappings_are_scoped_through_their_component(self):
+        sql, params = self.where('MOD-1', week_id='WEEK-1')
         self.assertEqual(
             sql,
             'component_id in (select c.id from "curriculum"."components" c '
@@ -27,18 +26,13 @@ class WhereTests(SimpleTestCase):
         self.assertNotIn('ksb_mappings.module_catalogue_id', sql)
 
     def test_components_narrow_the_module_scope(self):
-        sql, params = self.where(False, ['MOD-1', 'MOD-2'], component_ids=['COMP-1'])
+        sql, params = self.where(['MOD-1', 'MOD-2'], component_ids=['COMP-1'])
         self.assertTrue(sql.endswith(' and component_id in (%s)'))
         self.assertEqual(params, ['MOD-1', 'MOD-2', 'COMP-1'])
 
-    def test_a_schema_that_stores_the_placement_uses_its_columns(self):
-        sql, params = self.where(True, 'MOD-1', week_id='WEEK-1')
-        self.assertEqual(sql, 'module_catalogue_id in (%s) and week_id = %s')
-        self.assertEqual(params, ['MOD-1', 'WEEK-1'])
-
     def test_no_scope_selects_nothing(self):
-        self.assertEqual(self.where(False), ('1 = 0', []))
-        self.assertEqual(self.where(False, ['', None]), ('1 = 0', []))
+        self.assertEqual(self.where(), ('1 = 0', []))
+        self.assertEqual(self.where(['', None]), ('1 = 0', []))
 
 
 class StoreComponentMappingsTests(SimpleTestCase):

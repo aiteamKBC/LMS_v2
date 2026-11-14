@@ -110,7 +110,7 @@ export function EntraPeopleInput({ value, onChange, label, single = false, inclu
   };
 
   return (
-    <div className="relative" onKeyDown={event => {
+    <div className="relative min-w-0 max-w-full" onKeyDown={event => {
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'z' && !draft.trim() && undoStack.length) {
         event.preventDefault();
         undoLastRemoval();
@@ -126,19 +126,19 @@ export function EntraPeopleInput({ value, onChange, label, single = false, inclu
       </div>}
       <div className={`flex w-full flex-wrap items-center gap-1.5 rounded-lg border border-background-200 bg-background-50 px-2.5 py-2 focus-within:border-primary-300 ${single ? 'min-h-11' : 'min-h-[84px]'}`}>
         {emails.map((email, index) => (
-          <span key={`${email}-${index}`} className={`inline-flex max-w-full items-center gap-1 rounded-full border px-2 py-1 text-[11px] font-semibold ${isEmail(email) ? 'border-primary-200 bg-primary-50 text-primary-800' : 'border-red-200 bg-red-50 text-red-700'}`}>
-            <button type="button" className="truncate text-left hover:underline" title="Click to edit" onClick={() => {
+          <span key={`${email}-${index}`} className={`inline-flex min-w-0 max-w-full items-center gap-1 rounded-full border px-2 py-1 text-[11px] font-semibold ${isEmail(email) ? 'border-primary-200 bg-primary-50 text-primary-800' : 'border-red-200 bg-red-50 text-red-700'}`}>
+            <button type="button" className="min-w-0 truncate text-left hover:underline" title={`Click to edit ${email}`} onClick={() => {
               setDuplicateNotice('');
               setDraft(email); onChange(emails.filter((_, i) => i !== index).join('\n')); setUndoStack([]); setOpen(true); input.current?.focus();
             }}>{email}</button>
-            <button type="button" aria-label={`Remove ${email}`} className="rounded px-1 hover:bg-black/10" onClick={() => removeAt(index)}>×</button>
+            <button type="button" aria-label={`Remove ${email}`} className="shrink-0 rounded px-1 hover:bg-black/10" onClick={() => removeAt(index)}>×</button>
           </span>
         ))}
         <input ref={input} value={draft} role="combobox" aria-label={label}
           aria-autocomplete="list" aria-expanded={open && people.length > 0} aria-controls={listId}
           aria-activedescendant={active >= 0 && people[active] ? `${listId}-${active}` : undefined}
           placeholder={single && emails.length ? 'Search to replace...' : 'Search Entra by name or email...'}
-          className="min-w-[160px] flex-1 bg-transparent p-1 text-[13px] text-foreground-900 outline-none placeholder:text-foreground-400"
+          className="min-w-0 max-w-full basis-[160px] flex-1 bg-transparent p-1 text-[13px] text-foreground-900 outline-none placeholder:text-foreground-400"
           onChange={event => { setDraft(event.target.value); setError(''); setDuplicateNotice(''); setOpen(true); }}
           onFocus={() => { setError(''); setOpen(true); }}
           onKeyDown={event => {

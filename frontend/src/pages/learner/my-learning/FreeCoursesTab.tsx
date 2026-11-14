@@ -1,5 +1,5 @@
 import { lazy, Suspense, useEffect, useMemo, useState } from 'react';
-import { useLocation, useNavigate } from 'react-router-dom';
+import { Navigate, useLocation, useNavigate } from 'react-router-dom';
 import { ArrowRight, BookOpen, CheckCircle2, ChevronLeft, ChevronRight, FileText, Headphones, HelpCircle, Layers3, Loader2, PenLine, Presentation, Sparkles, Video } from 'lucide-react';
 import { fetchLearnerFreeCourse, fetchLearnerFreeCourses, markFreeCourseActivityComplete, peekLearnerFreeCourses, type FreeCourse, type FreeCourseActivity, type FreeCourseSummary } from '@/api/freeCourses';
 import type { LearnerKind } from '@/api/learnerDetail';
@@ -63,22 +63,23 @@ function CourseProgressBar({ done, total, label }: { done: number; total: number
 }
 
 function FreeCourseCard({ course, tone, onOpen }: { course: FreeCourseSummary; tone: string; onOpen: () => void }) {
-  const activities = course.activityCount;
-  const weeks = course.weekCount;
-  const progress = { done: course.completedActivities, completable: course.activityCount };
-  // Status mirrors SubjectCard using the server's lightweight canonical count.
-  const isComplete = progress.completable > 0 && progress.done === progress.completable;
-  const status = progress.completable === 0 ? 'No activities yet'
+  const activities = course.activityCount ?? 0;
+  const weeks = course.weekCount ?? 0;
+  const done = course.completedActivities ?? 0;
+  const completable = activities;
+  // Status mirrors SubjectCard, using pre-computed summary fields.
+  const isComplete = completable > 0 && done === completable;
+  const status = course.moduleId ? 'Assigned' : completable === 0 ? 'No activities yet'
     : isComplete ? 'Completed'
-    : progress.done > 0 ? 'In progress'
+    : done > 0 ? 'In progress'
     : 'Not started';
-  const actionLabel = isComplete ? 'Review course' : progress.done > 0 ? 'Continue learning' : 'Open course';
+  const actionLabel = isComplete ? 'Review course' : done > 0 ? 'Continue learning' : 'Open course';
   return (
     <article className={`group ${styles.card} ${styles.freeCard} ${styles.subjectTheme}`} data-tone={tone}>
       <button type="button" onClick={onOpen} className={styles.cardButton}>
         <div className="relative w-full">
           <Cover title={course.courseName} url={course.coverImageUrl || undefined} large />
-          <span className={styles.status} data-state={isComplete ? 'complete' : progress.done > 0 ? 'started' : 'new'}>
+          <span className={styles.status} data-state={isComplete ? 'complete' : done > 0 ? 'started' : 'new'}>
             <span aria-hidden="true" className={styles.statusDot} />{status}
           </span>
         </div>
@@ -89,11 +90,13 @@ function FreeCourseCard({ course, tone, onOpen }: { course: FreeCourseSummary; t
           </div>
           <h3 className={styles.cardTitle}>{course.courseName || 'Free course'}</h3>
           <p className={styles.cardDescription}>{course.description || 'Explore this free course and its activities.'}</p>
-          <div className={styles.cardProgress}><CourseProgressBar done={progress.done} total={progress.completable} label={`${course.courseName || 'Free course'} progress`} /></div>
+          <div className={styles.cardProgress}>{course.moduleId
+            ? <p className="text-sm text-foreground-500">Open your course to view activities, hours and progress.</p>
+            : <CourseProgressBar done={done} total={completable} label={`${course.courseName || 'Free course'} progress`} />}</div>
           <span className={styles.nextActivity}>
             {isComplete ? <CheckCircle2 size={20} /> : <BookOpen size={20} />}
             <span>
-              <small>{isComplete ? 'Well done' : progress.done > 0 ? 'Keep going' : 'Get started'}</small>
+              <small>{isComplete ? 'Well done' : done > 0 ? 'Keep going' : 'Get started'}</small>
               <strong>{isComplete ? 'All activities complete' : actionLabel}</strong>
             </span>
             <ChevronRight size={16} />
@@ -303,6 +306,13 @@ export function FreeCoursesTab({ kind, id, readOnly = false }: { kind?: LearnerK
   const params = new URLSearchParams(location.search);
   const selected = params.get('course');
   const activeActivity = params.get('activity');
+  const moduleLocation = (moduleId: string) => {
+    const next = new URLSearchParams(location.search);
+    for (const key of ['mode', 'course', 'module', 'activity', 'week']) next.delete(key);
+    next.set('tab', 'modules');
+    next.set('subject', `current:${moduleId}`);
+    return { pathname: location.pathname, search: next.toString() };
+  };
   const select = (courseId?: string, componentId?: string) => {
     const next = new URLSearchParams(location.search);
     if (courseId) next.set('course', courseId); else next.delete('course');
@@ -415,6 +425,7 @@ export function FreeCoursesTab({ kind, id, readOnly = false }: { kind?: LearnerK
   }
 
   if (activeSummary && active) {
+    if (active.moduleId) return <Navigate to={moduleLocation(active.moduleId)} replace />;
     return (
       <FreeCourseDetail
         course={active}
@@ -439,11 +450,11 @@ export function FreeCoursesTab({ kind, id, readOnly = false }: { kind?: LearnerK
       <header>
         <p className="text-xs font-semibold uppercase tracking-widest text-primary-600">My learning</p>
         <h2 className="mt-1 text-2xl font-bold text-foreground-900">Free courses</h2>
-        <p className="mt-1 text-sm text-foreground-500">Courses assigned to you, outside your programme. No hours or targets — explore them any time.</p>
+        <p className="mt-1 text-sm text-foreground-500">Standalone courses assigned to you. Open a course to continue your learning.</p>
       </header>
       <div className={styles.freeGrid}>
         {courses.map((course) => (
-          <FreeCourseCard key={course.freeCourseId} course={course} tone={tones.get(course.freeCourseId) ?? 'purple'} onOpen={() => select(course.freeCourseId)} />
+          <FreeCourseCard key={course.freeCourseId} course={course} tone={tones.get(course.freeCourseId) ?? 'purple'} onOpen={() => course.moduleId ? navigate(moduleLocation(course.moduleId)) : select(course.freeCourseId)} />
         ))}
       </div>
     </section>

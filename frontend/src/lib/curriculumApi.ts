@@ -70,6 +70,8 @@ export function isRetryableError(error: unknown): boolean {
 
 interface CurriculumRequestInit {
   method?: string;
+  /** Opt in to session CSRF for protected writes, retaining curriculum cache/error handling. */
+  csrf?: boolean;
   credentials?: RequestCredentials;
   headers?: Record<string, string>;
   body?: string;
@@ -615,8 +617,6 @@ export type CurriculumKsbSetSummary = Omit<CurriculumKsbSet, 'ksbs'> & {
 
 export type CurriculumKsbDefinition = Pick<CurriculumKsbEntry,
   'id' | 'code' | 'rawCode' | 'fullCode' | 'parentCode' | 'parentId' | 'displayOrder' | 'title' | 'description' | 'type'>;
-
-export type CurriculumKsbSourceDefinitions = Omit<CurriculumKsbSet, 'ksbs'> & { ksbs: CurriculumKsbDefinition[] };
 
 export interface CurriculumKsbFramework {
   id: string;
@@ -1485,26 +1485,6 @@ export type CurriculumKsbItemInput = {
   title: string;
   description?: string;
   displayOrder?: number;
-};
-
-export type CurriculumKsbFrameworkInput = {
-  name?: string;
-  ksbProfileId?: string;
-  standardSourceId?: string;
-  programmeId?: string;
-  programmeIds?: string[];
-  cohortIds?: string[];
-  groupIds?: string[];
-  moduleCatalogueIds?: string[];
-  programmeName?: string;
-  programme?: string;
-  description?: string;
-  notes?: string;
-  isActive?: boolean;
-  ksbItems?: CurriculumKsbItemInput[];
-  knowledgeCodes?: string[];
-  skillCodes?: string[];
-  behaviourCodes?: string[];
 };
 
 export interface CurriculumCohort {
@@ -3189,7 +3169,7 @@ async function fetchJsonOnce<T>(path: string, init?: CurriculumRequestInit): Pro
   // `revalidate` is destructured out with the other non-fetch options: it is a
   // client-cache directive only and must not reach the backend, or it would
   // force the same rebuild `skipCache` does.
-  const { timeoutMs: _timeoutMs, signal: callerSignal, skipCache: _skipCache, revalidate: _revalidate, abandonSignal: _abandonSignal, onDispatch: _onDispatch, ...fetchInit } = init || {};
+  const { timeoutMs: _timeoutMs, signal: callerSignal, skipCache: _skipCache, revalidate: _revalidate, abandonSignal: _abandonSignal, onDispatch: _onDispatch, csrf, ...fetchInit } = init || {};
   const signal = callerSignal && timeoutController
     ? anySignal([callerSignal, timeoutController.signal])
     : callerSignal || timeoutController?.signal;
@@ -3641,9 +3621,6 @@ export function fetchCurriculumKsbSetSummaries(signal?: AbortSignal): Promise<Cu
   return fetchCollection<CurriculumKsbSetSummary>('/curriculum/ksb-sets/?view=summary&visibility=all', { signal });
 }
 
-export function fetchCurriculumKsbSourceDefinitions(id: string, signal?: AbortSignal): Promise<CurriculumKsbSourceDefinitions> {
-  return fetchJson<CurriculumKsbSourceDefinitions>(`/curriculum/ksb-sets/${encodeURIComponent(id)}/definitions/?visibility=all`, { signal });
-}
 
 function ksbAchievementQuery(params: CurriculumKsbAchievementFilters = {}) {
   const query = new URLSearchParams();
@@ -3705,18 +3682,6 @@ export function updateComponentKsbMapping(mappingId: string, input: Partial<Curr
 
 export function deleteComponentKsbMapping(mappingId: string) {
   return deleteJson<{ deleted: boolean; id: string }>(`/curriculum/ksb-mappings/${encodeURIComponent(mappingId)}/`);
-}
-
-export function createCurriculumKsbFramework(input: CurriculumKsbFrameworkInput) {
-  return postJson<{ created: boolean; framework: CurriculumKsbFramework }>('/curriculum/ksb-frameworks/', input);
-}
-
-export function updateCurriculumKsbFramework(id: string, input: CurriculumKsbFrameworkInput) {
-  return patchJson<{ updated: boolean; id: string }>(`/curriculum/ksb-frameworks/${encodeURIComponent(id)}/`, input);
-}
-
-export function deleteCurriculumKsbFramework(id: string) {
-  return deleteJson<{ deleted: boolean; id: string }>(`/curriculum/ksb-frameworks/${encodeURIComponent(id)}/`);
 }
 
 export interface ImportedMeetingPerson {
@@ -5067,6 +5032,8 @@ export function previewModuleSessionPlan(input: { startDate?: string; numberOfSe
 
 /** The slot a tutor is being asked about. Matches the module's own schedule fields. */
 export interface CurriculumTutorAvailabilityInput {
+  /** The destination group supplies delivery days and times when moving a course. */
+  groupId?: string;
   startDate?: string;
   sessionsNumber?: number | string;
   weeklySchedule?: CurriculumWeeklySession[];
@@ -5153,13 +5120,19 @@ export interface FreeCourseConversionDestination {
   programmeId: string;
   cohortId: string;
   groupId: string;
+  tutor: string;
+  /** Continue after the user has been shown the tutor's scheduling conflict. */
+  allowTutorConflict?: boolean;
 }
 
 export function convertFreeCourseToModule(id: string, destination: FreeCourseConversionDestination) {
-  return postJson<FreeCourseConversionDestination & {
+  // Conversion is CSRF protected, unlike the older authoring write endpoints.
+  return fetchJson<FreeCourseConversionDestination & {
     converted: boolean; moduleCatalogueId: string;
     programmeName: string; cohortName: string; groupName: string;
-  }>(`/curriculum/modules/${encodeURIComponent(id)}/convert-free-course/`, destination);
+  }>(`/curriculum/modules/${encodeURIComponent(id)}/convert-free-course/`, {
+    method: 'POST', body: JSON.stringify(destination), csrf: true,
+  });
 }
 
 /**

@@ -86,17 +86,28 @@ def _canonical_course_names(course_ids):
 
 def _replace_assignment_rows(learner_id, course_ids, course_names):
     manager = LearnerFreeCourse.objects.using(ASSIGNMENT_DB)
-    manager.filter(learner_id=learner_id).delete()
-    manager.bulk_create([
-        LearnerFreeCourse(
-            learner_id=learner_id,
-            position=position,
-            free_course_ref=course_id,
-            # Compatibility snapshot only. Readers use the canonical course.
-            free_course_title=course_names[course_id],
-        )
-        for position, course_id in enumerate(course_ids, 1)
-    ])
+    existing = {
+        row.free_course_ref: row
+        for row in manager.select_for_update().filter(learner_id=learner_id)
+    }
+    changed, created = [], []
+    for position, course_id in enumerate(course_ids, 1):
+        row = existing.pop(course_id, None)
+        if row is None:
+            created.append(LearnerFreeCourse(
+                learner_id=learner_id,
+                position=position,
+                free_course_ref=course_id,
+            ))
+        elif row.position != position:
+            row.position = position
+            changed.append(row)
+    if changed:
+        manager.bulk_update(changed, ["position"])
+    if created:
+        manager.bulk_create(created)
+    if existing:
+        manager.filter(pk__in=[row.pk for row in existing.values()]).delete()
 
 
 def _update_assignments(enrolment_id, learner_type, course_ids, expected_version):

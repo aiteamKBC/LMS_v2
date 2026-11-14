@@ -196,7 +196,7 @@ it('gives a workspace borrowing the learner look one working Sign out', () => {
   expect(sidebar.style.width).toBe('240px');
   expect(shell.style.getPropertyValue('--kbc-sidebar-width')).toBe('240px');
 
-  fireEvent.click(within(sidebar).getByRole('button', { name: 'Collapse learner navigation' }));
+  fireEvent.click(within(sidebar).getByRole('button', { name: 'Collapse Employer navigation' }));
   expect(sidebar.style.width).toBe('64px');
   expect(shell.style.getPropertyValue('--kbc-sidebar-width')).toBe('64px');
   expect(localStorage.getItem('kbc_learner_sidebar_collapsed')).toBe('true');
@@ -223,7 +223,12 @@ it.each(['/users', '/users/42', '/users/42/wizard/introduction', '/employers/8',
     fireEvent.click(within(sidebar).getByRole('button', { name: 'Expand navigation' }));
     const panel = within(document.getElementById('compliance-secondary-navigation')!);
     expect(panel.getAllByRole('link')).toHaveLength(1);
-    expect(panel.getByRole('link', { name: 'Users' })).toHaveAttribute('href', '/users');
+    // The secondary panel previews the active destination, or the first
+    // available destination when this shared screen is outside /users.
+    const preview = path.startsWith('/users')
+      ? roleNavMap.apprentice.items.find(item => item.href === '/users')!
+      : roleNavMap.apprentice.items[0];
+    expect(panel.getByRole('link', { name: preview.label })).toHaveAttribute('href', preview.href);
     expect(panel.queryByRole('link', { name: 'Roles' })).toBeNull();
     expect(screen.getByTestId('route')).toHaveTextContent(path);
   },
@@ -453,6 +458,61 @@ it('uses the learner-style collapsible navigation for Curriculum and keeps Quali
   expect(shell.style.getPropertyValue('--kbc-sidebar-width')).toBe('64px');
   expect(localStorage.getItem('kbc_curriculum_sidebar_collapsed')).toBe('true');
   expect(localStorage.getItem('kbc_learner_sidebar_collapsed')).toBeNull();
+});
+
+it.each([
+  ['/curriculum/recordings-hub', 'Recordings hub'],
+  ['/curriculum/recordings', 'Tutor session recordings'],
+  ['/curriculum/recordings/42', 'Tutor session recordings'],
+  ['/curriculum/coaching-recordings', 'Coach meetings'],
+  ['/curriculum/coaching-recordings/42', 'Coach meetings'],
+])('opens Recordings with only the matching destination selected on %s', (path, label) => {
+  localStorage.setItem('kbc_sidebar_expanded', '[]');
+  const { rail } = showWorkspace('curriculum', path);
+  expect(within(rail).getByRole('button', { name: 'Recordings' })).toHaveAttribute('aria-expanded', 'true');
+  const links = within(rail).getAllByRole('link').filter(link => link.hasAttribute('aria-current'));
+  expect(links).toHaveLength(1);
+  expect(links[0]).toHaveAccessibleName(label);
+});
+
+it('lets Curriculum open each recording destination and toggle the group without changing routes', async () => {
+  const { rail } = showWorkspace('curriculum', '/curriculum/quality');
+  const group = within(rail).getByRole('button', { name: 'Recordings' });
+  fireEvent.click(group);
+  expect(group).toHaveAttribute('aria-expanded', 'false');
+  expect(within(rail).queryByRole('link', { name: 'Tutor session recordings' })).toBeNull();
+  expect(screen.getByTestId('route')).toHaveTextContent('/curriculum/quality');
+  fireEvent.click(group);
+  for (const [name, href] of [
+    ['Recordings hub', '/curriculum/recordings-hub'],
+    ['Coach meetings', '/curriculum/coaching-recordings'],
+    ['Tutor session recordings', '/curriculum/recordings'],
+  ]) {
+    const link = within(rail).getByRole('link', { name });
+    expect(link).toHaveAttribute('href', href);
+    await act(async () => { fireEvent.click(link); });
+    expect(screen.getByTestId('route')).toHaveTextContent(href);
+    expect(link).toHaveAttribute('aria-current', 'page');
+  }
+});
+
+it('keeps the existing Recordings permission gate on the entire group', () => {
+  denied.add('curriculum-coaching-recordings');
+  const { rail } = showWorkspace('curriculum', '/curriculum/quality');
+  expect(within(rail).queryByRole('button', { name: 'Recordings' })).toBeNull();
+  for (const name of ['Recordings hub', 'Tutor session recordings', 'Coach meetings']) {
+    expect(within(rail).queryByRole('link', { name })).toBeNull();
+  }
+  expect(within(rail).getByRole('link', { name: 'Quality' })).toBeVisible();
+});
+
+it('opens a recording destination from the mobile menu and closes the drawer', async () => {
+  showWorkspace('curriculum', '/curriculum/recordings');
+  fireEvent.click(screen.getByRole('button', { name: 'Open mobile navigation' }));
+  const drawer = screen.getByLabelText('Curriculum Designer mobile navigation');
+  await act(async () => { fireEvent.click(within(drawer).getByRole('link', { name: 'Coach meetings' })); });
+  expect(screen.getByTestId('route')).toHaveTextContent('/curriculum/coaching-recordings');
+  expect(drawer).toHaveAttribute('aria-hidden', 'true');
 });
 
 it.each([

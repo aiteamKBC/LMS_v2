@@ -86,25 +86,39 @@ def require_native_review_creation(learner_id):
         raise ReviewCreationBlocked(policy)
 
 
+def _review_profile_queryset():
+    """Profile fields for Review identity/display on the normalized model.
+
+    Current assignments live in the normalized learner training-plan relations;
+    signed Training Plan documents are immutable snapshots. Review source
+    resolution consumes neither, so it must not select the former
+    ``Learner.learners.learning_plan`` mirror.
+    """
+    from learner_api.models import LearnerProfile
+
+    return LearnerProfile.objects.all()
+
+
 def review_profile_for_source(source, profile=None):
     """Resolve without the general identity helper's opportunistic DB writes.
 
     Stable enrolment/Aptem links precede the unique legacy email fallback.
     A conflicting or multiply-owned link is never reclassified as Native.
     """
-    from learner_api.models import EnrolmentUser, LearnerProfile
+    from learner_api.models import EnrolmentUser
 
     source_pk = getattr(source, "pk", None)
     if profile is None:
-        matches = list(LearnerProfile.objects.filter(enrolment_id=source_pk)[:2]) if source_pk else []
+        profiles = _review_profile_queryset()
+        matches = list(profiles.filter(enrolment_id=source_pk)[:2]) if source_pk else []
         if not matches and student_activity_available(getattr(source, "aptem_id", None)):
-            matches = list(LearnerProfile.objects.filter(aptem_id=int(str(source.aptem_id).strip()))[:2])
+            matches = list(profiles.filter(aptem_id=int(str(source.aptem_id).strip()))[:2])
             if any(item.enrolment_id not in (None, source_pk) for item in matches):
                 raise ReviewIdentityConflict("The Aptem profile belongs to another enrolment.")
         if not matches and not student_activity_available(getattr(source, "aptem_id", None)):
             email = str(getattr(source, "email", "") or "").strip()
             if email:
-                matches = list(LearnerProfile.objects.filter(email__iexact=email, enrolment_id__isnull=True)[:2])
+                matches = list(profiles.filter(email__iexact=email, enrolment_id__isnull=True)[:2])
                 if matches and EnrolmentUser.all_learners.filter(email__iexact=email).exclude(pk=source_pk).exists():
                     raise ReviewIdentityConflict("The legacy Review profile is ambiguous.")
         if len(matches) > 1:

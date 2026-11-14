@@ -57,9 +57,12 @@ def _query(request, allowed=()):
 
 
 def _caseload(request):
-    return LearnerProfile.objects.filter(id__in=learner_profile_ids_for_coach_email(
-        authenticated_coach_email(request),
-    ))
+    profile_ids = learner_profile_ids_for_coach_email(authenticated_coach_email(request))
+    if not profile_ids:
+        # Keep an empty owner fail-closed without emitting Django's
+        # EmptyResultSet before the query can be compiled or audited.
+        return LearnerProfile.objects.filter(pk__isnull=True)
+    return LearnerProfile.objects.filter(id__in=profile_ids)
 
 
 def _not_found():

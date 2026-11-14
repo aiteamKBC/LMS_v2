@@ -56,7 +56,7 @@ def sync_pending_captions(*, limit=10, series_ids=()):
             JOIN curriculum.live_sessions s ON s.id=o.live_session_id
             JOIN curriculum.modules m ON m.module_catalogue_id=s.module_catalogue_id
             WHERE o.live_session_id=%s AND o.id=%s AND s.module_catalogue_id=%s
-              AND m.deleted_at IS NULL AND NOT coalesce(m.is_programme_deleted,false)
+              AND lower(btrim(coalesce(m.status,''))) <> 'inactive'
               AND s.status NOT IN ('deleted','cancelled','superseded','failed')
               AND o.status NOT IN ('deleted','cancelled','superseded')''',
             [asset.target_id, asset.scope.get('occurrence_id'), asset.scope.get('module_id')])

@@ -33,8 +33,8 @@ PERFORMANCE_INDEXES = (
     PerformanceIndex("coach_abs_learner_date_idx", '"Coach"."coach_absence_report"', "learner_id, session_date DESC"),
 
     # Learner lists, plans, progress and dashboard feeds.
-    PerformanceIndex("perf_learner_lifecycle_programme_idx", '"Learner"."learners"', "lifecycle_status, programme, id"),
-    PerformanceIndex("perf_learner_coach_email_idx", '"Learner"."learners"', "(lower(btrim(coach_email))), full_name, id"),
+    PerformanceIndex("perf_learner_lifecycle_programme_id_idx", '"Learner"."learners"', "lifecycle_status, programme_id, id"),
+    PerformanceIndex("perf_learner_coach_id_idx", '"Learner"."learners"', "coach_id, full_name, id"),
     PerformanceIndex("perf_plan_module_learner_order_idx", '"Learner"."learner_training_plan_modules"', "learner_id, position, id"),
     PerformanceIndex("perf_plan_week_module_order_idx", '"Learner"."learner_training_plan_weeks"', "plan_module_id, position, id"),
     PerformanceIndex("perf_plan_component_week_order_idx", '"Learner"."learner_training_plan_components"', "plan_week_id, position, id"),

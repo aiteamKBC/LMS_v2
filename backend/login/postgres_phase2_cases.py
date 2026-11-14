@@ -315,13 +315,13 @@ class SubjectCacheCases(unittest.TestCase):
         EnrolmentUser.all_learners.filter(pk=self.first.pk).update(training_plan=None)
         profile = LearnerProfile.objects.create(enrolment_id=self.first.pk, email='a@example.invalid')
         rows = self.assert_changed_after(self.first, lambda: LearnerTrainingPlanModule.objects.bulk_create(
-            [LearnerTrainingPlanModule(learner=profile, position=1, module_ref='MOD-3')]))
+            [LearnerTrainingPlanModule(learner=profile, position=1, curriculum_module_id='MOD-3')]))
         self.assertEqual(rows, [('MOD-3', 'Three')])
         rows = self.assert_changed_after(self.first, lambda: LearnerTrainingPlanModule.objects.filter(
             learner=profile).delete())
         self.assertEqual(rows, [])
 
-        LearnerTrainingPlanModule.objects.create(learner=profile, position=1, module_ref='MOD-2')
+        LearnerTrainingPlanModule.objects.create(learner=profile, position=1, curriculum_module_id='MOD-2')
         EnrolmentUser.all_learners.filter(pk=self.second.pk).update(training_plan=None)
         self.rows(self.first)
         self.rows(self.second)

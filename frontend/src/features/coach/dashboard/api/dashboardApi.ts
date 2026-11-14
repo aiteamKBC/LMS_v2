@@ -5,6 +5,7 @@ import { adaptDashboardLearnerRow, type DashboardLearnerRow } from './dashboardL
 import type { CaseloadApiResponse } from '@/pages/coach/caseload/types';
 import { adaptDashboardMeetings, dashboardMeetingsQuery } from './dashboardMeetings';
 import { dashboardBusinessDate } from './dashboardWeek';
+import { loadActivityPlan } from './activityPlanLoader';
 
 const DASHBOARD_ENDPOINT = '/coach_api/coach/dashboard';
 // Successful bulk datasets live until explicit invalidation or a browser reload.
@@ -16,6 +17,18 @@ export function clearDashboardLearnerPageCache() { learnerPageCache.clear(); lea
 const learnerDateKey = (key: string) => `${key}::${dashboardBusinessDate()}`;
 export function invalidateDashboardLearners(key: string) { learnerPageCache.delete(learnerDateKey(key)); learnerLoadVersions.delete(learnerDateKey(key)); }
 export function getDashboardLearnerPageCache(key: string) { return learnerPageCache.get(learnerDateKey(key)); }
+
+export async function fetchDashboardActivityPlan(learnerId: string, signal: AbortSignal, cacheKey: string) {
+  const key = learnerDateKey(cacheKey);
+  const version = learnerLoadVersions.get(key);
+  const plan = await loadActivityPlan(learnerId, signal);
+  const cached = learnerPageCache.get(key);
+  if (!signal.aborted && cached && version && learnerLoadVersions.get(key) === version) {
+    learnerPageCache.set(key, { ...cached, results: cached.results?.map(row => row.id === learnerId
+      ? { ...row, activityPlan: plan } : row) });
+  }
+  return plan;
+}
 
 export async function fetchCoachDashboard<Response>(signal: AbortSignal): Promise<Response> {
   const response = await fetchDashboardSection<DashboardPopupContract | DashboardSummary | Response>('summary', signal);

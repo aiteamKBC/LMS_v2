@@ -28,8 +28,10 @@ class ForcedReadSharingTests(SimpleTestCase):
             self.assertEqual(views.cached_curriculum_value('k', lambda: 'rebuilt', force=True), 'built at 200')
 
     def test_forced_read_never_takes_a_build_that_began_before_it_asked(self):
-        views.cached_curriculum_value('k', lambda: 'old')
-        self.assertEqual(views.cached_curriculum_value('k', lambda: 'new', force=True), 'new')
+        with patch.object(views.time, 'monotonic', return_value=100.0):
+            views.cached_curriculum_value('k', lambda: 'old')
+        with patch.object(views.time, 'monotonic', return_value=200.0):
+            self.assertEqual(views.cached_curriculum_value('k', lambda: 'new', force=True), 'new')
 
     def test_a_request_that_has_written_never_shares(self):
         views.cached_curriculum_value('k', lambda: 'old')

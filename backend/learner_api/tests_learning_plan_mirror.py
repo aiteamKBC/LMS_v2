@@ -81,24 +81,25 @@ class SyncMirrorTests(SimpleTestCase):
         return count, enrolment, profile, child_rows
 
     def test_the_mirror_gets_the_structured_plan(self):
-        _count, _enrolment, profile, _child = self._sync(PLAN)
+        _count, _enrolment, profile, child = self._sync(PLAN)
 
-        profile.objects.filter.assert_called_with(enrolment_id=19)
-        profile.objects.filter.return_value.update.assert_called_once_with(learning_plan=PLAN)
+        profile.objects.only.assert_called_once_with("id", "enrolment_id")
+        profile.objects.only.return_value.filter.assert_called_with(enrolment_id=19)
+        child.assert_called_once_with(profile.objects.only.return_value.filter.return_value.first.return_value, PLAN)
 
     def test_a_cleared_plan_nulls_the_mirror(self):
         # Not skipped: a learner whose plan was removed must not keep a copy of
         # it in the table every coach surface reads.
-        _count, _enrolment, profile, _child = self._sync([])
+        _count, _enrolment, profile, child = self._sync([])
 
-        profile.objects.filter.return_value.update.assert_called_once_with(learning_plan=None)
+        child.assert_called_once_with(profile.objects.only.return_value.filter.return_value.first.return_value, [])
 
     def test_the_mirror_is_matched_on_enrolment_id(self):
         # Never on a LearnerProfile pk: that reference goes stale after
         # sync_active_user, which silently missed 367 rows once already.
         _count, _enrolment, profile, _child = self._sync(PLAN, pk=101)
 
-        profile.objects.filter.assert_called_with(enrolment_id=101)
+        profile.objects.only.return_value.filter.assert_called_with(enrolment_id=101)
 
     def test_a_learner_with_no_pk_is_left_alone(self):
         self.assertEqual(sync_learning_plan_mirror(None), 0)
@@ -110,7 +111,7 @@ class SyncMirrorTests(SimpleTestCase):
         with patch("learner_api.mappers.get_training_plan", return_value=PLAN), \
                 patch("learner_api.active_users.replace_training_plan"), \
                 patch("learner_api.models.LearnerProfile") as profile:
-            profile.objects.filter.side_effect = DatabaseError("pooler said no")
+            profile.objects.only.side_effect = DatabaseError("pooler said no")
             self.assertEqual(sync_learning_plan_mirror(source), 0)
 
     def test_the_child_rows_the_learner_page_reads_are_written(self):
@@ -158,7 +159,28 @@ class ChildRowBatchingTests(SimpleTestCase):
                 return list(rows)
             return create
 
-        with patch.object(active_users, 'LearnerTrainingPlanModule') as modules,                 patch.object(active_users, 'LearnerTrainingPlanWeek') as weeks,                 patch.object(active_users, 'LearnerTrainingPlanComponent') as components:
+        validated = [
+            {
+                'payload': module,
+                'module_id': module['moduleId'],
+                'weeks': [
+                    {
+                        'payload': week,
+                        'week_id': week['weekId'],
+                        'components': [
+                            {'payload': component, 'component_id': component['componentId']}
+                            for component in week.get('components') or []
+                        ],
+                    }
+                    for week in module.get('weeks') or []
+                ],
+            }
+            for module in plan
+        ]
+        with patch.object(active_users, 'validate_training_plan_relationships', return_value=validated), \
+                patch.object(active_users, 'LearnerTrainingPlanModule') as modules, \
+                patch.object(active_users, 'LearnerTrainingPlanWeek') as weeks, \
+                patch.object(active_users, 'LearnerTrainingPlanComponent') as components:
             modules.side_effect = lambda **kw: type('Row', (), {**kw, 'pk': None})()
             weeks.side_effect = lambda **kw: type('Row', (), {**kw, 'pk': None})()
             components.side_effect = lambda **kw: type('Row', (), {**kw, 'pk': None})()
@@ -184,11 +206,14 @@ class ChildRowBatchingTests(SimpleTestCase):
         _calls, _modules, weeks, components = self._replace(PLAN)
 
         week_rows = weeks.objects.bulk_create.call_args.args[0]
-        self.assertEqual([row.week_ref for row in week_rows], ['WEEK-1', 'WEEK-2'])
+        self.assertEqual([row.curriculum_week_id for row in week_rows], ['WEEK-1', 'WEEK-2'])
         self.assertEqual([row.position for row in week_rows], [1, 2])
         component_rows = components.objects.bulk_create.call_args.args[0]
-        self.assertEqual([row.component_ref for row in component_rows], ['COMP-1', 'COMP-2'])
-        self.assertEqual({row.plan_week.week_ref for row in component_rows}, {'WEEK-1'})
+        self.assertEqual(
+            [row.curriculum_component_id for row in component_rows],
+            ['COMP-1', 'COMP-2'],
+        )
+        self.assertEqual({row.plan_week.curriculum_week_id for row in component_rows}, {'WEEK-1'})
         self.assertEqual([row.position for row in component_rows], [1, 2])
 
     def test_an_empty_plan_clears_without_inserting(self):
@@ -196,3 +221,131 @@ class ChildRowBatchingTests(SimpleTestCase):
 
         self.assertEqual(calls, [])
         modules.objects.filter.return_value.delete.assert_called_once_with()
+
+
+class CanonicalWeekMappingTests(SimpleTestCase):
+    def test_week_model_selects_only_the_canonical_fk_and_curriculum_title(self):
+        from .models import LearnerTrainingPlanWeek
+
+        fields = {field.name: field for field in LearnerTrainingPlanWeek._meta.concrete_fields}
+        self.assertNotIn('week_ref', fields)
+        self.assertNotIn('week_title', fields)
+        self.assertEqual(fields['curriculum_week'].column, 'curriculum_week_id')
+
+        sql = str(LearnerTrainingPlanWeek.objects.all().query)
+        self.assertNotIn('learner_training_plan_weeks"."week_ref', sql)
+        self.assertNotIn('learner_training_plan_weeks"."week_title', sql)
+        self.assertIn('curriculum"."weeks', sql)
+
+    def test_compatibility_properties_use_the_curriculum_relationship(self):
+        from curriculum_api.models import ModuleAuthoringWeek
+        from .models import LearnerTrainingPlanWeek
+
+        curriculum_week = ModuleAuthoringWeek(id='WEEK-1', title='Canonical Week')
+        row = LearnerTrainingPlanWeek(curriculum_week=curriculum_week, position=1)
+
+        self.assertEqual(row.week_ref, 'WEEK-1')
+        self.assertEqual(row.week_title, 'Canonical Week')
+
+
+class CanonicalComponentMappingTests(SimpleTestCase):
+    def test_component_model_selects_only_the_canonical_fk_and_curriculum_title(self):
+        from .models import LearnerTrainingPlanComponent
+
+        fields = {field.name: field for field in LearnerTrainingPlanComponent._meta.concrete_fields}
+        self.assertNotIn('component_ref', fields)
+        self.assertNotIn('component_title', fields)
+        self.assertEqual(fields['curriculum_component'].column, 'curriculum_component_id')
+
+        sql = str(LearnerTrainingPlanComponent.objects.all().query)
+        self.assertNotIn('learner_training_plan_components"."component_ref', sql)
+        self.assertNotIn('learner_training_plan_components"."component_title', sql)
+        self.assertIn('curriculum"."components', sql)
+
+    def test_compatibility_properties_use_the_curriculum_relationship(self):
+        from curriculum_api.models import ModuleAuthoringComponent
+        from .models import LearnerTrainingPlanComponent
+
+        curriculum_component = ModuleAuthoringComponent(id='COMP-1', title='Canonical Component')
+        row = LearnerTrainingPlanComponent(
+            curriculum_component=curriculum_component, position=1,
+        )
+
+        self.assertEqual(row.component_ref, 'COMP-1')
+        self.assertEqual(row.component_title, 'Canonical Component')
+
+
+class CanonicalPlanValidationTests(SimpleTestCase):
+    def _validate(
+        self, plan, *, modules=('MOD-1',),
+        weeks=(('WEEK-1', 'MOD-1'), ('WEEK-2', 'MOD-1')),
+        components=(
+            ('COMP-1', 'WEEK-1', 'MOD-1'),
+            ('COMP-2', 'WEEK-1', 'MOD-1'),
+        ),
+    ):
+        from curriculum_api.models import (
+            ModuleAuthoringComponent,
+            ModuleAuthoringModule,
+            ModuleAuthoringWeek,
+        )
+        from .active_users import validate_training_plan_relationships
+
+        with patch.object(ModuleAuthoringModule, 'objects') as module_objects, \
+                patch.object(ModuleAuthoringWeek, 'objects') as week_objects, \
+                patch.object(ModuleAuthoringComponent, 'objects') as component_objects:
+            module_objects.using.return_value.filter.return_value.values_list.return_value = list(modules)
+            week_objects.using.return_value.filter.return_value.values_list.return_value = list(weeks)
+            component_objects.using.return_value.filter.return_value.values_list.return_value = list(components)
+            return validate_training_plan_relationships(plan)
+
+    def test_valid_plan_preserves_empty_weeks_and_canonical_ids(self):
+        validated = self._validate(PLAN)
+
+        self.assertEqual(validated[0]['module_id'], 'MOD-1')
+        self.assertEqual(
+            [week['week_id'] for week in validated[0]['weeks']],
+            ['WEEK-1', 'WEEK-2'],
+        )
+
+    def test_module_with_zero_weeks_is_valid(self):
+        plan = [{'moduleId': 'MOD-1', 'moduleTitle': 'Canonical title is resolved later', 'weeks': []}]
+
+        validated = self._validate(plan, weeks=(), components=())
+
+        self.assertEqual(validated[0]['module_id'], 'MOD-1')
+        self.assertEqual(validated[0]['weeks'], [])
+
+    def test_rejects_a_week_owned_by_another_module(self):
+        from .mappers import ValidationError
+
+        with self.assertRaisesRegex(ValidationError, "does not belong to module 'MOD-1'"):
+            self._validate(PLAN, weeks=(('WEEK-1', 'MOD-2'), ('WEEK-2', 'MOD-1')))
+
+    def test_rejects_a_component_owned_by_another_week(self):
+        from .mappers import ValidationError
+
+        with self.assertRaisesRegex(ValidationError, "does not belong to week 'WEEK-1'"):
+            self._validate(PLAN, components=(
+                ('COMP-1', 'WEEK-2', 'MOD-1'),
+                ('COMP-2', 'WEEK-1', 'MOD-1'),
+            ))
+
+    def test_rejects_missing_module_and_duplicate_week_before_any_write(self):
+        from . import active_users
+        from .mappers import ValidationError
+
+        with self.assertRaisesRegex(ValidationError, "does not exist in Curriculum"):
+            self._validate(PLAN, modules=())
+
+        duplicate = [{**PLAN[0], 'weeks': [PLAN[0]['weeks'][0], PLAN[0]['weeks'][0]]}]
+        with self.assertRaisesRegex(ValidationError, "appears more than once"):
+            self._validate(duplicate)
+
+        with patch.object(
+            active_users, 'validate_training_plan_relationships',
+            side_effect=ValidationError('invalid canonical relationship'),
+        ), patch.object(active_users, 'LearnerTrainingPlanModule') as modules:
+            with self.assertRaises(ValidationError):
+                active_users.replace_training_plan(object(), PLAN)
+            modules.objects.filter.assert_not_called()

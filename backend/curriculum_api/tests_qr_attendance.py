@@ -636,18 +636,17 @@ class QRComponentReadTests(SimpleTestCase):
         self.cursor.execute("ATTACH DATABASE ':memory:' AS curriculum")
         self.addCleanup(lambda: self.cursor.execute('DETACH DATABASE curriculum'))
         self.cursor.execute('''CREATE TABLE curriculum.weeks (
-            id text, module_catalogue_id text, deleted_at text,
-            is_programme_deleted boolean, library_state text)''')
+            id text, module_catalogue_id text, status text)''')
         self.cursor.execute('''CREATE TABLE curriculum.components (
             id text, week_id text, module_catalogue_id text, title text, settings_json text,
-            type text, deleted_at text, is_programme_deleted boolean, library_state text)''')
-        self.cursor.execute("INSERT INTO curriculum.weeks VALUES ('W1','M1',NULL,false,''), ('W2','M2',NULL,false,'')")
+            type text, status text)''')
+        self.cursor.execute("INSERT INTO curriculum.weeks VALUES ('W1','M1','active'), ('W2','M2','active')")
         for key, module_id, week_id, kind in [('C1', 'M1', 'W1', 'live_session'),
                                               ('C2', 'M2', 'W2', 'live-session'),
                                               ('C3', 'M1', 'W1', 'video'),
                                               ('C4', 'M1', 'W2', 'live_session')]:
-            self.cursor.execute('INSERT INTO curriculum.components VALUES (%s,%s,%s,%s,%s,%s,NULL,false,%s)',
-                                [key, week_id, module_id, f'Authored {key}', '{"teamsOccurrenceId":"O1"}', kind, ''])
+            self.cursor.execute('INSERT INTO curriculum.components VALUES (%s,%s,%s,%s,%s,%s,%s)',
+                                [key, week_id, module_id, f'Authored {key}', '{"teamsOccurrenceId":"O1"}', kind, 'active'])
 
     def test_real_reader_scopes_titles_to_delivery_and_matching_week(self):
         self.assertEqual(store.lecture_components([]), [])
@@ -657,14 +656,13 @@ class QRComponentReadTests(SimpleTestCase):
         components = store.lecture_components(['M1'])
         self.assertEqual(qr.lecture_title(occurrence(), components, ['M1']), 'Authored C1')
 
-    def test_deleted_archived_and_library_components_or_weeks_do_not_supply_titles(self):
+    def test_archived_components_or_weeks_do_not_supply_titles(self):
         for table, key in [('components', 'C1'), ('weeks', 'W1')]:
-            for field, value, reset in [('deleted_at', '2026-11-01', None),
-                                        ('is_programme_deleted', True, False), ('library_state', 'library', '')]:
-                with self.subTest(table=table, field=field):
-                    self.cursor.execute(f'UPDATE curriculum.{table} SET {field}=%s WHERE id=%s', [value, key])
+            for value in ('inactive', 'archived', 'INACTIVE'):
+                with self.subTest(table=table, status=value):
+                    self.cursor.execute(f'UPDATE curriculum.{table} SET status=%s WHERE id=%s', [value, key])
                     self.assertEqual(store.lecture_components(['M1']), [])
-                    self.cursor.execute(f'UPDATE curriculum.{table} SET {field}=%s WHERE id=%s', [reset, key])
+                    self.cursor.execute(f'UPDATE curriculum.{table} SET status=%s WHERE id=%s', ['active', key])
 
 
 class SQLiteCursor:

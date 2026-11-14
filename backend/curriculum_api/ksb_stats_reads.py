@@ -10,20 +10,18 @@ _STRIP_CHARS = ''.join(chr(value) for value in range(0x3100) if chr(value).isspa
 
 def grouped_scope_rows(module_ids):
     """Lossless counts/weights for programme stats, before delivery deduplication."""
-    flags = ('deleted_at', 'is_programme_deleted', 'is_deleted', 'isDeleted', 'isProgrammeDeleted')
+    # 'status' (the archive state) is added to every read by _grouped_rows.
     specs = (
-        (views.AUTHORING_WEEKS_TABLE, ('module_catalogue_id', 'library_state', *flags), views.active_week_rows),
-        # Match COMPONENT_KSB_SCOPE_COLUMNS: do not introduce additional legacy
-        # deletion predicates the existing component reader does not select.
-        (views.AUTHORING_COMPONENTS_TABLE, ('module_catalogue_id', 'type', 'deleted_at', 'is_programme_deleted', 'library_state'), views.active_component_rows),
-        (views.AUTHORING_KSB_MAPPINGS_TABLE, ('module_catalogue_id', 'ksb_code', 'source_type', 'source_id', 'weight', *flags), views.active_mapping_rows),
+        (views.AUTHORING_WEEKS_TABLE, ('module_catalogue_id',), views.active_week_rows),
+        (views.AUTHORING_COMPONENTS_TABLE, COMPONENT_COUNT_FIELDS, views.active_component_rows),
+        (views.AUTHORING_KSB_MAPPINGS_TABLE, ('module_catalogue_id', 'ksb_code', 'source_type', 'source_id', 'weight'), views.active_mapping_rows),
     )
     ids = sorted(set(module_ids))
     return tuple(_grouped_rows(table, fields, active, ids) for table, fields, active in specs)
 
 
-# The component spec above, on its own.
-COMPONENT_COUNT_FIELDS = ('module_catalogue_id', 'type', 'deleted_at', 'is_programme_deleted', 'library_state')
+# The component fields the statistics and the delivery ranking group by.
+COMPONENT_COUNT_FIELDS = ('module_catalogue_id', 'type')
 
 
 def grouped_component_counts(module_ids):
@@ -44,8 +42,8 @@ def grouped_component_counts(module_ids):
 
 def _grouped_rows(table, fields, active, ids):
     # Mappings are read with their component's module and their standard's
-    # code (ksb_mapping_placement); 'status' is the archive flag the
-    # deletion columns stood for, so the active_* filters below see it.
+    # code (ksb_mapping_placement); 'status' is the archive state the active_*
+    # filters below read.
     if archive_state.uses_status(table):
         fields = (*fields, 'status')
     fields = [views.quote_ident(field) for field in fields if ksb_mapping_placement.can_select(table, field)]

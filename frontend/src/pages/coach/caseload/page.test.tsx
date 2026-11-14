@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ReactNode } from 'react';
 import type { CaseloadApiLearner } from './types';
 import { CoachCaseloadContent } from './page';
+import { adaptDashboardLearnerRow } from '@/features/coach/dashboard/api/dashboardLearnerRow';
 
 const { coachFetch, fetchCoachCalendarEvents, authState, coachIdentity } = vi.hoisted(() => ({
   coachFetch: vi.fn(),
@@ -38,10 +39,27 @@ const learner = {
 } satisfies CaseloadApiLearner;
 
 describe('Coach caseload loading', () => {
+  it('shows all recorded activities from the Dashboard response without a Main activity request', async () => {
+    const row = adaptDashboardLearnerRow({
+      id: '7', name: 'Synthetic learner', initials: 'SL', programme: 'Example programme', programmeStatus: 'Active',
+      activities: { completed: 9, total: 9, progress: 100 },
+      otjh: { completed: 12, targetToDate: 15, planned: 100, progress: 80, ragStatus: 'on-track' },
+      attendance: { rate: null }, startDate: null, lastActivity: { date: null }, lastPr: null, lastMcm: null,
+    });
+    render(<MemoryRouter><CoachCaseloadContent embedded embeddedLearners={[row]} /></MemoryRouter>);
+    expect(await screen.findByLabelText('Activities: 100%')).toHaveTextContent('9 / 9');
+    expect(screen.getByTitle('Completed activity records / total activity records (all types)')).toHaveTextContent('9 / 9');
+    expect(screen.getByLabelText('OTJH: 80%')).toHaveTextContent('12h / 15h');
+    expect(screen.getByRole('button', { name: 'Sort by Activities' })).toBeVisible();
+    expect(screen.queryByText('Main activities')).not.toBeInTheDocument();
+    expect(coachFetch).not.toHaveBeenCalled();
+    expect(fetchCoachCalendarEvents).not.toHaveBeenCalled();
+  });
+
   it('opens the learner profile with the exact activity counts shown in the selected table row', async () => {
     function Destination() {
       const location = useLocation();
-      return <output data-testid="destination">{JSON.stringify({ pathname: location.pathname, state: location.state })}</output>;
+      return <output data-testid="destination">{JSON.stringify({ pathname: location.pathname, search: location.search, state: location.state })}</output>;
     }
     render(<MemoryRouter><CoachCaseloadContent embedded embeddedLearners={[{
       ...learner, componentsCompleted: 137, componentsPlanned: 157,
@@ -50,6 +68,7 @@ describe('Coach caseload loading', () => {
     fireEvent.click(await screen.findByRole('button', { name: 'View Profile' }));
     const destination = JSON.parse(screen.getByTestId('destination').textContent || '{}');
     expect(destination.pathname).toBe('/coach/learner-case-file');
+    expect(destination.search).toBe('?id=42');
     expect(destination.state).toMatchObject({ learnerId: '42',
       activitySnapshot: { learnerId: '42', completed: 137, total: 157, percent: 87.26 },
       otjhSnapshot: { learnerId: '42', completed: 70, target: 90, planned: null, percent: 77.77777777777779 },

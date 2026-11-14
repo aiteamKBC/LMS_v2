@@ -22,9 +22,10 @@ from curriculum_api.canonical_read_sql import component_ksb_mappings_sql, curren
 from curriculum_api.programme_name_sql import programme_name_sql
 from curriculum_api.schema_compat import inactive_condition
 from curriculum_api.week_visibility import visible_child_sql, visible_week_sql
+from curriculum_api.learning_storage import read_sql
 
 from .retake_timing import attempt_order, selected_attempt
-from .mappers import get_training_plan, training_plan_field
+from .mappers import ValidationError, get_training_plan, training_plan_field
 from .models import (
     EnrolmentUser,
     KsbDefinition,
@@ -334,7 +335,7 @@ def component_reference_exists(component_id):
         try:
             with connections[alias].cursor() as cursor:
                 cursor.execute(
-                    "select 1 from curriculum.components where id = %s limit 1",
+                    read_sql("select 1 from curriculum.components where id = %s limit 1", connections[alias]),
                     [component_id],
                 )
                 reachable = True
@@ -399,7 +400,7 @@ def component_reference_state(component_id):
     for alias in ("default", "enrolment"):
         try:
             with connections[alias].cursor() as cursor:
-                cursor.execute(_COMPONENT_LINEAGE_DELETED_SQL, [component_id])
+                cursor.execute(read_sql(_COMPONENT_LINEAGE_DELETED_SQL, connections[alias]), [component_id])
                 row = cursor.fetchone()
         except DatabaseError as exc:
             last_error = exc
@@ -624,6 +625,120 @@ def completed_hours_from_progress(progress, components=None):
     return fmt_hours(completed_hours_value_from_progress(progress, components))
 
 
+def validate_training_plan_relationships(plan):
+    """Validate canonical module/week ownership before any mirror rows change."""
+    if plan is None:
+        plan = []
+    if not isinstance(plan, (list, tuple)):
+        raise ValidationError("trainingPlan must be a list.")
+
+    modules = []
+    module_ids = set()
+    week_ids = set()
+    component_ids = set()
+    for module_position, module in enumerate(plan, 1):
+        if not isinstance(module, dict):
+            raise ValidationError(f"Training Plan module {module_position} must be an object.")
+        module_id = _s(module.get("moduleId"))
+        if not module_id:
+            raise ValidationError(f"Training Plan module {module_position} has no moduleId.")
+        if module_id in module_ids:
+            raise ValidationError(f"Module '{module_id}' appears more than once in the Training Plan.")
+        module_ids.add(module_id)
+
+        weeks = []
+        for week_position, week in enumerate(module.get("weeks") or [], 1):
+            if not isinstance(week, dict):
+                raise ValidationError(
+                    f"Week {week_position} in module '{module_id}' must be an object."
+                )
+            week_id = _s(week.get("weekId"))
+            if not week_id:
+                raise ValidationError(
+                    f"Week {week_position} in module '{module_id}' has no weekId."
+                )
+            if week_id in week_ids:
+                raise ValidationError(f"Week '{week_id}' appears more than once in the Training Plan.")
+            week_ids.add(week_id)
+            components = []
+            for component_position, component in enumerate(week.get("components") or [], 1):
+                if not isinstance(component, dict):
+                    raise ValidationError(
+                        f"Component {component_position} in week '{week_id}' must be an object."
+                    )
+                component_id = _s(component.get("componentId"))
+                if not component_id:
+                    raise ValidationError(
+                        f"Component {component_position} in week '{week_id}' has no componentId."
+                    )
+                if component_id in component_ids:
+                    raise ValidationError(
+                        f"Component '{component_id}' appears more than once in the Training Plan."
+                    )
+                component_ids.add(component_id)
+                components.append({"payload": component, "component_id": component_id})
+            weeks.append({"payload": week, "week_id": week_id, "components": components})
+        modules.append({"payload": module, "module_id": module_id, "weeks": weeks})
+
+    if not modules:
+        return []
+
+    from curriculum_api.models import (
+        ModuleAuthoringComponent,
+        ModuleAuthoringModule,
+        ModuleAuthoringWeek,
+    )
+
+    existing_modules = set(
+        ModuleAuthoringModule.objects.using("default")
+        .filter(module_catalogue_id__in=module_ids)
+        .values_list("module_catalogue_id", flat=True)
+    )
+    missing_modules = sorted(module_ids - existing_modules)
+    if missing_modules:
+        raise ValidationError(f"Module '{missing_modules[0]}' does not exist in Curriculum.")
+
+    week_owners = dict(
+        ModuleAuthoringWeek.objects.using("default")
+        .filter(pk__in=week_ids)
+        .values_list("pk", "module_catalogue_id")
+    ) if week_ids else {}
+    for module in modules:
+        for week in module["weeks"]:
+            week_id = week["week_id"]
+            owner = _s(week_owners.get(week_id))
+            if not owner:
+                raise ValidationError(f"Week '{week_id}' does not exist in Curriculum.")
+            if owner != module["module_id"]:
+                raise ValidationError(
+                    f"Week '{week_id}' does not belong to module '{module['module_id']}'."
+                )
+
+    component_owners = {
+        component_id: (_s(week_id), _s(module_id))
+        for component_id, week_id, module_id in (
+            ModuleAuthoringComponent.objects.using("default")
+            .filter(pk__in=component_ids)
+            .values_list("pk", "week_id", "module_catalogue_id")
+        )
+    } if component_ids else {}
+    for module in modules:
+        for week in module["weeks"]:
+            for component in week["components"]:
+                component_id = component["component_id"]
+                owner = component_owners.get(component_id)
+                if owner is None:
+                    raise ValidationError(
+                        f"Component '{component_id}' does not exist in Curriculum."
+                    )
+                if owner != (week["week_id"], module["module_id"]):
+                    raise ValidationError(
+                        f"Component '{component_id}' does not belong to week "
+                        f"'{week['week_id']}' in module '{module['module_id']}'."
+                    )
+    return modules
+
+
 def replace_training_plan(learner, plan):
     """Rebuild the learner's plan_modules/weeks/components mirror.
 
@@ -633,8 +748,10 @@ def replace_training_plan(learner, plan):
     single learner to a module sat there for several seconds against a remote
     database. The rows written are identical; only the number of trips changed.
     """
+    # Validate the complete replacement before the established delete/rebuild.
+    # A stale week id must not clear a valid mirror and fail on the insert.
+    modules = validate_training_plan_relationships(plan)
     LearnerTrainingPlanModule.objects.filter(learner=learner).delete()
-    modules = list(plan or [])
     if not modules:
         return
 
@@ -642,8 +759,7 @@ def replace_training_plan(learner, plan):
         LearnerTrainingPlanModule(
             learner=learner,
             position=module_position,
-            module_ref=_s(module.get("moduleId")) or None,
-            module_title=_s(module.get("moduleTitle")),
+            curriculum_module_id=module["module_id"],
         )
         for module_position, module in enumerate(modules, 1)
     ])
@@ -656,7 +772,7 @@ def replace_training_plan(learner, plan):
     week_plan = [
         (module_row, week_position, week)
         for module_row, module in zip(module_rows, modules)
-        for week_position, week in enumerate(module.get("weeks") or [], 1)
+        for week_position, week in enumerate(module["weeks"], 1)
     ]
     if not week_plan:
         return
@@ -665,8 +781,7 @@ def replace_training_plan(learner, plan):
         LearnerTrainingPlanWeek(
             plan_module=module_row,
             position=week_position,
-            week_ref=_s(week.get("weekId")) or None,
-            week_title=_s(week.get("weekTitle")),
+            curriculum_week_id=week["week_id"],
         )
         for module_row, week_position, week in week_plan
     ])
@@ -682,11 +797,10 @@ def replace_training_plan(learner, plan):
         LearnerTrainingPlanComponent(
             plan_week=week_row,
             position=position,
-            component_ref=_s(component.get("componentId")) or None,
-            component_title=_s(component.get("componentTitle")),
+            curriculum_component_id=component["component_id"],
         )
         for week_row, (_, _, week) in zip(week_rows, week_plan)
-        for position, component in enumerate(week.get("components") or [], 1)
+        for position, component in enumerate(week["components"], 1)
     ], batch_size=1000)
 
 
@@ -717,7 +831,7 @@ def hydrate_training_plan(plan, *, strict=False):
         # owns learner records when the two connections are split in production.
         with connections["default"].cursor() as cursor:
             cursor.execute(
-                """
+                read_sql("""
                 SELECT m.module_catalogue_id, m.title,
                        m.start_date, m.end_date, m.sessions_number,
                        m.session_week_day, m.cohort_id,
@@ -731,7 +845,7 @@ def hydrate_training_plan(plan, *, strict=False):
                 WHERE m.module_catalogue_id = ANY(%s) OR m.title = ANY(%s)
                 ORDER BY m.module_catalogue_id, w.display_order, w.week_number,
                          c.display_order, c.id
-                """,
+                """, cursor.db),
                 [module_ids, module_titles],
             )
             rows = cursor.fetchall()
@@ -1330,6 +1444,8 @@ def save_progress_record(learner, record, activity=None, *, monthly_assignment=F
 
             transaction.on_commit(_award_engagement_points, using="enrolment")
 
+        from .free_course_records import record_completion
+        record_completion(learner, progress)
         return progress
 
 
@@ -1515,7 +1631,7 @@ def _resolve_programme_id(programme="", training_plan=None):
         try:
             with connections["enrolment"].cursor() as cursor:
                 cursor.execute(
-                    "SELECT COALESCE(NULLIF(programme_id, ''), NULLIF(name, '')) AS programme_id "
+                    read_sql("SELECT COALESCE(NULLIF(programme_id, ''), NULLIF(name, '')) AS programme_id "
                     "FROM curriculum.programmes "
                     "WHERE lower(btrim(COALESCE(name, ''))) = lower(%s) "
                     "   OR lower(btrim(COALESCE(programme_id, ''))) = lower(%s) "
@@ -1529,7 +1645,7 @@ def _resolve_programme_id(programme="", training_plan=None):
                     "    CASE WHEN programme_id IN ("
                     "        SELECT module.programme_id FROM curriculum.modules module "
                     "        WHERE module.module_catalogue_id = ANY(%s)"
-                    "    ) THEN 0 ELSE 1 END, updated_at DESC NULLS LAST LIMIT 1",
+                    "    ) THEN 0 ELSE 1 END, updated_at DESC NULLS LAST LIMIT 1", cursor.db),
                     [programme, programme, programme, programme, programme, module_ids],
                 )
                 row = cursor.fetchone()
@@ -1543,9 +1659,9 @@ def _resolve_programme_id(programme="", training_plan=None):
         try:
             with connections["enrolment"].cursor() as cursor:
                 cursor.execute(
-                    "SELECT DISTINCT programme_id FROM curriculum.modules "
+                    read_sql("SELECT DISTINCT programme_id FROM curriculum.modules "
                     "WHERE module_catalogue_id = ANY(%s) AND programme_id IS NOT NULL AND programme_id <> '' "
-                    "ORDER BY programme_id LIMIT 2",
+                    "ORDER BY programme_id LIMIT 2", cursor.db),
                     [module_ids],
                 )
                 rows = cursor.fetchall()
@@ -1580,9 +1696,9 @@ def _resolve_linkable_programme_id(programme="", training_plan=None):
         try:
             with connections["enrolment"].cursor() as cursor:
                 cursor.execute(
-                    "SELECT DISTINCT programme_id FROM curriculum.modules "
+                    read_sql("SELECT DISTINCT programme_id FROM curriculum.modules "
                     "WHERE module_catalogue_id = ANY(%s) "
-                    "  AND programme_id IS NOT NULL AND programme_id <> ''",
+                    "  AND programme_id IS NOT NULL AND programme_id <> ''", cursor.db),
                     [module_ids],
                 )
                 rows = cursor.fetchall()
@@ -1764,7 +1880,7 @@ def _fetch_ksb_items_from_plan_mappings(programme_id="", programme="", training_
         # caller's transaction, only this query.
         with transaction.atomic(using="enrolment"), connections["enrolment"].cursor() as cursor:
             cursor.execute(
-                "SELECT DISTINCT ON (upper(mapping.ksb_code)) "
+                read_sql("SELECT DISTINCT ON (upper(mapping.ksb_code)) "
                 "       upper(mapping.ksb_code) AS code, "
                 "       COALESCE(NULLIF(mapping.ksb_description, ''), '') AS description "
                 "FROM curriculum.ksb_mappings mapping "
@@ -1786,7 +1902,7 @@ def _fetch_ksb_items_from_plan_mappings(programme_id="", programme="", training_
                 "             ELSE 3 "
                 "         END, "
                 "         mapping.weight DESC, "
-                "         mapping.ksb_description",
+                "         mapping.ksb_description", cursor.db),
                 [module_ids, programme_id, programme, programme_id, programme, programme],
             )
             rows = cursor.fetchall()
@@ -1831,7 +1947,7 @@ def _resolve_ksb_profile_source_id(programme_id="", programme="", training_plan=
             if not module_ids:
                 return ""
             cursor.execute(
-                "SELECT COALESCE(NULLIF(module.ksb_profile_source_id, ''), '') "
+                read_sql("SELECT COALESCE(NULLIF(module.ksb_profile_source_id, ''), '') "
                 "FROM curriculum.modules module "
                 "WHERE module.module_catalogue_id = ANY(%s) "
                 "  AND module.ksb_profile_source_id IS NOT NULL "
@@ -1842,7 +1958,7 @@ def _resolve_ksb_profile_source_id(programme_id="", programme="", training_plan=
                 "     OR " + programme_name_sql('module') + " = %s "
                 "     OR %s LIKE " + programme_name_sql('module') + " || ' %%'"
                 "  ) "
-                "ORDER BY module.updated_at DESC NULLS LAST LIMIT 1",
+                "ORDER BY module.updated_at DESC NULLS LAST LIMIT 1", cursor.db),
                 [module_ids, programme_id, programme, programme_id, programme, programme],
             )
             row = cursor.fetchone()
@@ -2071,7 +2187,7 @@ def sync_active_user(source):
     """Upsert one permanent learner and refresh authored plan/KSB child rows."""
     from .apprenticeship_agreement import _group_dates
     from .learner_dates import learner_date_values
-    from .coach_assignment import source_coach
+    from .coach_assignment import COACH_UNCHANGED, source_coach_id
 
     from .placement_links import placement_profile, CACHE, FIELDS
     learner = placement_profile(source)
@@ -2108,11 +2224,12 @@ def sync_active_user(source):
                 if normalised_aptem_id is None:
                     raise DatabaseError("The enrolment Aptem identity needs review.")
                 defaults["aptem_id"] = int(normalised_aptem_id)
-            # Preserve legacy profile-only assignments, but copy an explicit
-            # assignment (including an unassignment) on activation and rebuild.
-            source_assignment = source_coach(source) or {}
-            from .models import coach_id_for_email
-            defaults["coach_id"] = coach_id_for_email(source_assignment.get("coach_email"))
+            # Preserve a profile assignment when the enrolment row carries no
+            # coach intent. An explicit assignment or clear writes only the
+            # canonical FK; copied coach columns no longer exist.
+            resolved_coach_id = source_coach_id(source)
+            if resolved_coach_id is not COACH_UNCHANGED:
+                defaults["coach_id"] = resolved_coach_id
             # The profile was resolved by its explicit enrolment link above.
             # Whether found or about to be created, it belongs to this source row.
             defaults["enrolment_id"] = source.id
@@ -2169,6 +2286,7 @@ def ensure_active_learner_profile(source):
     from django.db.models.functions import Lower, Trim
     from old_otjh.service import ServiceError
     from .canonical_learning import require_profile
+    from .identity import learner_profile_for_source
 
     with transaction.atomic(using="enrolment"):
         source = EnrolmentUser.all_learners.select_for_update().get(pk=source.pk)

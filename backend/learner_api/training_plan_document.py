@@ -37,6 +37,7 @@ from .apprenticeship_agreement import (
 from .learning_plan import _saved_modules, learner_group_module_ids, learner_programme_modules
 from .learner_progression import advance_learner
 from .mappers import _s
+from .planned_learning import learner_type, planned_modules
 from .models import EnrolmentUser, TrainingPlanDocument
 
 logger = logging.getLogger(__name__)
@@ -75,7 +76,7 @@ def _plan_modules(learner):
         if saved
         else learner_group_module_ids(learner)
     )
-    return [catalogue[i] for i in ids if i in catalogue]
+    return planned_modules([catalogue[i] for i in ids if i in catalogue], learner_type(learner))
 
 
 # How a component's `type` reads in the Method column of the printed plan.

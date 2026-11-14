@@ -45,14 +45,16 @@ from curriculum_api.canonical_read_sql import module_expected_otjh_sql
 from .module_placement_sql import module_placement_names_sql
 
 from audit_api.last_audit_ledger_views import _connection as _audit_connection
+from curriculum_api.learning_storage import read_sql
 from login.permissions import learner_self_or_staff, staff_only
 
 from .constants import DELIVERY_PROGRAMME_STATUS
 from .free_course_selectors import assignment_version, assigned_course_ids, canonical_learner
 from .learner_progression import advance_learner
-from .mappers import _s, get_training_plan, stored_training_plan, training_plan_field
+from .mappers import ValidationError, _s, get_training_plan, stored_training_plan, training_plan_field
 from .models import EnrolmentUser, LearnerProfile
 from .placement_links import placement_ids, placement_payload
+from .planned_learning import learner_type, planned_modules
 from .projection_performance import projection_call, projection_operation
 
 logger = logging.getLogger(__name__)
@@ -91,7 +93,7 @@ def _canonical_free_course_assignments(learner, course_ids=None):
 
     ``addedAt`` remains as an empty compatibility field because
     ``Learner.learner_free_courses`` has no assignment timestamp. Titles never
-    fall back to the mirror's ``free_course_title`` or legacy enrolment JSON.
+    fall back to a copied title or legacy enrolment JSON.
     """
     if course_ids is None:
         course_ids = _canonical_free_course_assignment_ids(learner)
@@ -157,7 +159,7 @@ def _rows(sql, params):
     # owned by curriculum_api and migrated on `default`. Not an oversight — see
     # the note in apprenticeship_agreement._group_dates.
     with projection_operation('assignment_query'), connection.cursor() as cursor:
-        cursor.execute(sql, params)
+        cursor.execute(read_sql(sql), params)
         columns = [c[0] for c in cursor.description]
         return [dict(zip(columns, row)) for row in cursor.fetchall()]
 
@@ -217,6 +219,7 @@ def _module_payload(row):
         "startDate": _iso_day(row.get("start_date")),
         "endDate": _iso_day(row.get("end_date")),
         "learnerRosterMode": _s(row.get("learner_roster_mode")) or "inherited",
+        "isFreeCourse": _s(row.get("source_type")) == 'free_course',
     }
 
 
@@ -578,6 +581,7 @@ def _orphan_module(entry):
         "startDate": _iso_day(entry.get("startDate")),
         "endDate": _iso_day(entry.get("endDate")),
         "orphaned": True,
+        "isFreeCourse": entry.get('isFreeCourse') is True,
     }
 
 
@@ -678,18 +682,25 @@ def _meetings(learner):
     return [], "not-eligible" if has_otjh_template else "no-otjh-reviews"
 
 
-def _totals(modules, meetings=None):
+def _totals(modules, meetings=None, *, kind='commercial'):
     """Plan totals. Module hours and meeting hours are reported separately as
     well as combined, so the modal can show each table its own subtotal and
     still print one figure for the whole commitment."""
-    module_hours = round(sum(float(m.get("hours") or 0) for m in modules), 2)
+    core_modules = [module for module in modules if not module.get('isFreeCourse')]
+    free_courses = [module for module in modules if module.get('isFreeCourse')]
+    module_hours = round(sum(float(m.get("hours") or 0) for m in core_modules), 2)
+    free_hours = round(sum(float(m.get('hours') or 0) for m in free_courses), 2)
+    planned_free_hours = round(sum(float(m.get('hours') or 0) for m in planned_modules(free_courses, kind)), 2)
     meeting_hours = round(sum(float(m.get("hours") or 0) for m in (meetings or [])), 2)
     return {
-        "moduleCount": len(modules),
+        "moduleCount": len(core_modules),
         "moduleHours": module_hours,
+        "freeCourseCount": len(free_courses),
+        "freeCourseHours": free_hours,
+        "plannedFreeCourseHours": planned_free_hours,
         "meetingCount": len(meetings or []),
         "meetingHours": meeting_hours,
-        "totalHours": round(module_hours + meeting_hours, 2),
+        "totalHours": round(module_hours + planned_free_hours + meeting_hours, 2),
     }
 
 
@@ -728,15 +739,14 @@ def _plan_titles(plan):
 
 
 def sync_learning_plan_mirror(source, *, strict=False):
-    """Write the learner's assigned plan to the two places that report on it.
+    """Write the learner's assigned plan to normalized learner relations.
 
     The plan staff edit lives on ``enrolment."Created_users"."Learning_plan"``.
     That is still the record of truth; this copies it outwards so the surfaces
     that already read those tables can see what a learner is assigned:
 
-    * normalized ``LearnerTrainingPlanModule``/week/component rows -- the
-      profile-side assignment mirror used by coach, marking and reporting
-      surfaces. ``Created_users.Learning_plan`` remains the editable source.
+    * ``Learner.learner_training_plan_*`` -- the normalized learner-facing
+      assignment used by coach, marking and reporting surfaces.
     * ``Created_users`` Modules/Weeks/Components -- the legacy title columns,
       kept in step so they cannot describe a plan the learner no longer has.
 
@@ -744,8 +754,8 @@ def sync_learning_plan_mirror(source, *, strict=False):
     learner's own "My learning" page uses, so the mirror shows what the learner
     sees rather than a second opinion assembled here.
 
-    An unassigned plan clears the normalized mirror rather than being skipped:
-    a learner whose plan was cleared must not keep stale module rows.
+    An unassigned plan writes an empty mirror rather than being skipped: a
+    learner whose plan was cleared must not keep a stale copy of it.
 
     Returns the number of modules mirrored, or 0 if the mirror could not be
     written. Never raises, for the same reason ``advance_learner`` does not: the
@@ -753,7 +763,7 @@ def sync_learning_plan_mirror(source, *, strict=False):
     not turn a successful staff edit into an error. A lagging mirror is
     recoverable -- ``manage.py sync_learning_plans`` rebuilds it from the plan.
     """
-    from .active_users import ensure_active_learner_profile, replace_free_courses, replace_training_plan
+    from .active_users import ensure_active_learner_profile, replace_training_plan
     from .mappers import get_training_plan
     from .models import LearnerProfile
 
@@ -764,10 +774,11 @@ def sync_learning_plan_mirror(source, *, strict=False):
         plan = get_training_plan(source) or []
         modules_csv, weeks_csv, components_csv = _plan_titles(plan)
 
-        # Learner.learners has no denormalised learning_plan column in the new
-        # schema.  The source enrolment row and normalized plan child tables
-        # are authoritative; never issue an UPDATE against the removed mirror.
-        profile = LearnerProfile.objects.filter(enrolment_id=source.pk).first()
+        # Matched on enrolment_id, never on a LearnerProfile pk held from before
+        # a sync_active_user call: that reference goes stale, and updating by it
+        # silently missed 367 rows when the coach assignment did the same thing.
+        profile = (LearnerProfile.objects.only("id", "enrolment_id")
+                   .filter(enrolment_id=source.pk).first())
         if profile is None and _s(getattr(source, "programme_status", "")).casefold() == "active":
             # Imported Active rows never pass through the activation hook.
             # This is a plan write, so provision the missing owner explicitly.
@@ -779,7 +790,7 @@ def sync_learning_plan_mirror(source, *, strict=False):
             weeks=weeks_csv,
             components=components_csv,
         )
-    except DatabaseError:
+    except (DatabaseError, ValidationError):
         if strict:
             raise
         logger.exception(
@@ -791,6 +802,7 @@ def sync_learning_plan_mirror(source, *, strict=False):
 
 
 def _serialize(learner):
+    from .free_course_catalogue import builder_free_courses
     programme = _s(learner.programme)
     group = _s(learner.group)
 
@@ -886,6 +898,7 @@ def _serialize(learner):
             "cohort": _s(learner.cohort),
             "group": group,
             "programmeStatus": _s(learner.programme_status),
+            "learnerType": learner_type(learner),
         },
         "plan": plan,
         # Canonical relational assignments, deliberately outside
@@ -894,6 +907,7 @@ def _serialize(learner):
         "freeCourseAssignmentVersion": _canonical_free_course_assignment_version(
             learner, free_course_ids,
         ),
+        "standaloneCourses": builder_free_courses(include_content=False),
         "preset": preset,
         # Anything in the catalogue not already on the plan, whichever programme
         # it belongs to. The picker defaults to the learner's own programme and
@@ -909,7 +923,7 @@ def _serialize(learner):
         "meetings": meetings,
         # Why `meetings` is empty, so the table can say so rather than vanish.
         "meetingsReason": meetings_reason,
-        "totals": _totals(plan, meetings),
+        "totals": _totals(plan, meetings, kind=learner_type(learner)),
     }
 
 

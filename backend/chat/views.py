@@ -97,10 +97,12 @@ def _learner_profile_defaults(source, source_email):
         "email": source_email,
         "phone_number": _clean_text(getattr(source, "phone_number", "")),
         "lifecycle_status": lifecycle_status,
-        "programme": _clean_text(getattr(source, "programme", "")),
+        "enrolment_id": getattr(source, "pk", None),
+        "learner_type": _clean_text(getattr(source, "learner_type", "")) or None,
+        "programme_id": getattr(source, "programme_id", None) or None,
         "programme_status": programme_status,
-        "cohort": _clean_text(getattr(source, "cohort", "")),
-        "group_name": _clean_text(getattr(source, "group", "")),
+        "cohort_id": getattr(source, "cohort_id", None) or None,
+        "group_id": getattr(source, "group_id", None) or None,
     }
 
 

@@ -1,10 +1,10 @@
-"""Mirror every learner's assigned plan into the tables that report on it.
+"""Project every learner's assigned plan into normalized learner relations.
 
 The plan staff edit lives on ``enrolment."Created_users"."Learning_plan"``.
 This copies it to the two places that had no view of it:
 
-* normalized ``LearnerTrainingPlanModule``/week/component rows -- what coach,
-  marking and reporting surfaces read from the profile side.
+* ``Learner.learner_training_plan_*`` -- what every coach, marking and
+  reporting surface reads.
 * ``Created_users`` Modules/Weeks/Components -- the legacy comma-joined title
   columns, so they cannot describe a plan the learner no longer has.
 
@@ -29,7 +29,7 @@ from learner_api.models import EnrolmentUser, LearnerProfile
 
 
 class Command(BaseCommand):
-    help = "Rebuild each learner's normalized plan rows and legacy title columns."
+    help = "Project each learner's assigned learning plan into normalized learner relations."
 
     def add_arguments(self, parser):
         parser.add_argument(

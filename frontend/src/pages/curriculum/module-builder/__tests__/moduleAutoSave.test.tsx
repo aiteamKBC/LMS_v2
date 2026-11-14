@@ -1,5 +1,5 @@
 import { authoredWeekPoints } from '@/api/webWeekPoints';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -81,14 +81,18 @@ vi.mock('@/pages/curriculum/week-builder/weekTemplateData', () => ({
 vi.mock('@/pages/curriculum/shared/components/weekAuthoringLazy', () => ({
   ComponentEditor: ({ component, moduleId }: { component: { id: string; type: string; title: string; settings: Record<string, unknown> }; moduleId: string }) => component.type === 'video'
     ? <CurriculumVideoUpload targetId={moduleId} componentId={component.id} title={component.title} source={String(component.settings.videoUrl || '')} /> : null,
-  WeekComponentRail: ({ components, onChange, onSelectId }: {
+  WeekComponentRail: ({ components, onChange, onSelectId, renderComponentList, selectedId }: {
     components: Array<{ id: string; title: string }>;
     onChange: (components: Array<{ id: string }>) => void;
     onSelectId: (id: string) => void;
+    selectedId: string | null;
+    renderComponentList?: (items: { component: { id: string; title: string }; node: ReactNode }[], searchTerm: string) => ReactNode;
   }) => (
     <>
       <button type="button" onClick={() => onChange([...components].reverse())}>Reorder components</button>
-      {components.map(component => <button key={component.id} type="button" onClick={() => onSelectId(component.id)}>{component.title}</button>)}
+      {renderComponentList
+        ? renderComponentList(components.map(component => ({ component, node: <button type="button" aria-current={selectedId === component.id ? 'true' : undefined} onClick={() => onSelectId(component.id)}>{component.title}</button> })), '')
+        : components.map(component => <button key={component.id} type="button" onClick={() => onSelectId(component.id)}>{component.title}</button>)}
     </>
   ),
   WeekOverviewPanel: () => null,
@@ -283,6 +287,20 @@ describe('Module Builder auto-save', { timeout: 25000 }, () => {
     });
   });
 
+  it('shows draft Points under the expanded course week and opens their activities', async () => {
+    await openWorkspace();
+    fireEvent.change(await screen.findByLabelText('Point 1 name'), { target: { value: 'Week introduction' } });
+    fireEvent.click(screen.getByRole('checkbox', { name: 'First reading' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Collapse Week one' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Expand Week one' }));
+    const nav = within(await screen.findByRole('navigation', { name: 'Week Points navigation' }));
+    fireEvent.click(nav.getByRole('button', { name: 'Week introduction, 1 activity' }));
+    fireEvent.click(nav.getByRole('button', { name: /First component/ }));
+    await waitFor(() => expect(nav.getByRole('button', { name: /First component/ })).toHaveAttribute('aria-current', 'true'));
+    expect(saveModuleStructure).not.toHaveBeenCalled();
+    expect(vi.mocked(authoredWeekPoints).mock.calls.filter(call => call[2])).toHaveLength(0);
+  });
+
   it('saves Point-only edits through Save module, after the structure write succeeds', async () => {
     await openWorkspace();
     fireEvent.change(await screen.findByLabelText('Point 1 name'), { target: { value: 'New point name' } });
@@ -350,6 +368,7 @@ describe('Module Builder auto-save', { timeout: 25000 }, () => {
     video.type = 'video';
     video.settings = { sourceType: 'YouTube', videoUrl: 'https://www.youtube.com/watch?v=abcdefghijk' };
     await openWorkspace('', structure);
+    await userEvent.click(await screen.findByRole('button', { name: 'Other components, 2 activities' }));
     await userEvent.click(screen.getByText('First component'));
     await userEvent.click(screen.getByTestId('module-builder-save'));
     await waitFor(() => expect(saveModuleStructure).toHaveBeenCalledTimes(1));
@@ -362,6 +381,7 @@ describe('Module Builder auto-save', { timeout: 25000 }, () => {
     const structure = storedStructure();
     structure.weekStructure[0].components[0].type = 'video';
     await openWorkspace('', structure);
+    await userEvent.click(await screen.findByRole('button', { name: 'Other components, 2 activities' }));
     await userEvent.click(screen.getByText('First component'));
     await screen.findByText('Uploading to Bunny');
     await userEvent.click(screen.getByTestId('module-builder-save'));
@@ -460,6 +480,7 @@ describe('Module Builder auto-save', { timeout: 25000 }, () => {
       return { ...module, structureRevision: 'rev-2' };
     });
     await openWorkspace('', structure);
+    await userEvent.click(await screen.findByRole('button', { name: 'Other components, 2 activities' }));
     await userEvent.click(screen.getByText('First component'));
     const picker = screen.getByLabelText('Upload MP4 to LMS and Bunny');
     expect(picker).toBeEnabled();
@@ -473,15 +494,16 @@ describe('Module Builder auto-save', { timeout: 25000 }, () => {
     expect(saveModuleStructure).toHaveBeenCalledOnce();
   });
 
-  it('saves an independent reorder while retaining a reserved title and unsaved navigation guard', async () => {
+  it.each([false, true])('saves an independent reorder while retaining a reserved title and navigation guard (free course: %s)', async (isFreeCourse) => {
     collaborationTest.enabled = true;
-    const title = await openWorkspace();
+    const title = await openWorkspace('', { ...storedStructure(), isFreeCourse } as ReturnType<typeof storedStructure>);
     await userEvent.type(title, '!');
     await userEvent.click(screen.getByRole('button', { name: 'Reorder components' }));
     await userEvent.click(screen.getByTestId('module-builder-save'));
     await waitFor(() => expect(saveModuleStructure).toHaveBeenCalledTimes(1));
     expect(saveCalls()[0][1].weekStructure[0].title).toBe('Week one');
     expect(saveCalls()[0][1].weekStructure[0].components.map(c => c.id)).toEqual(['COMPONENT-2', 'COMPONENT-1']);
+    expect(saveModuleStructure.mock.calls[0][1].isFreeCourse).toBe(isFreeCourse);
     await waitFor(() => expect(title).toHaveValue('Week one!'));
     expect(saveState()).toBe('Unsaved changes - press Save');
     await userEvent.click(screen.getByRole('button', { name: 'Back to modules' }));

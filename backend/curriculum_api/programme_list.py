@@ -5,24 +5,22 @@ from collections import Counter
 from . import views
 
 
-_DELETION_FIELDS = ('deleted_at', 'is_programme_deleted', 'is_deleted', 'isDeleted', 'isProgrammeDeleted')
+# ``status`` is each row's archive state.
 _MODULE_FIELDS = (
     'module_catalogue_id', 'title', 'programme_id', 'programme_name', 'cohort_id', 'cohort_name',
     'group_id', 'group_name', 'sessions_number', 'weeks_number', 'status', 'tutor_name',
     'start_date', 'end_date', 'weekly_schedule', 'weeklySchedule', 'deliveryMetadata', 'session_week_day', 'weekDays',
-    *_DELETION_FIELDS,
 )
 _GROUP_FIELDS = (
     'group_id', 'group_name', 'programme_id', 'programme_name', 'cohort_id', 'cohort_name',
-    'coach_name', 'status', *_DELETION_FIELDS,
+    'coach_name', 'status',
 )
 _COHORT_FIELDS = (
     'cohort_id', 'cohort_name', 'programme_id', 'programme_name', 'status', 'start_date', 'end_date',
-    *_DELETION_FIELDS,
 )
-# Match the authoritative structure counter's projection, including legacy
-# optional-column semantics. No week descriptions, content or schedules.
-_WEEK_FIELDS = ('module_catalogue_id', 'deleted_at', 'is_programme_deleted', 'library_state')
+# Match the authoritative structure counter's read. No week descriptions,
+# content or schedules.
+_WEEK_FIELDS = ('module_catalogue_id', 'status')
 
 
 def programme_list_sources():

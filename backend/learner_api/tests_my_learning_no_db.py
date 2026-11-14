@@ -220,6 +220,54 @@ class MyLearningAggregateTests(SimpleTestCase):
                 self.assertEqual(visible, [courses[5], courses[6]])
                 self.assertEqual(courses, original)  # historical facts are read-only
 
+    def test_compact_saved_progress_keeps_latest_non_quiz_times_for_resume_only(self):
+        from datetime import datetime, timezone
+        from .weekly_learning import _progress
+        latest = datetime(2026, 11, 11, 10, tzinfo=timezone.utc)
+        older = datetime(2026, 10, 1, 10, tzinfo=timezone.utc)
+        profile = MagicMock()
+        query = profile.progress_entries.filter.return_value.exclude.return_value
+        query.values_list.return_value = [
+            ('component', None, 'C1', None, None, None, latest),
+            ('component', None, 'C1', None, None, None, older),
+            ('video', None, 'VIDEO', None, None, older, latest),
+        ]
+        quizzes, videos, progress = _progress(profile, active_only=True, include_activity_times=True)
+        content = native([component(), component('VIDEO', type='video')])
+        content.update(quizAttempts=quizzes, videoProgress=videos, componentProgress=progress)
+        cards, _ = self.cards(content)
+        self.assertEqual(cards[0]['lastActivityAt'], latest.isoformat())
+        self.assertEqual(progress[0]['submittedAt'], latest.isoformat())
+        self.assertEqual(videos[0]['submittedAt'], latest.isoformat())
+        self.assertNotIn('submittedAt', _progress(profile, active_only=True)[2][0])
+
+    def test_imported_course_resume_uses_owned_saved_work_not_catalogue_creation(self):
+        course = {'id': 3, 'source_course_ref': '50', 'source_course_title': 'Old'}
+        definitions = [{'source_course_ref': '50', 'source_activity_id': 'material:7',
+                        'source_activity_title': 'Owned lesson', 'source_payload': {'created_at': '2026-12-01T10:00:00Z'}}]
+        record = {'id': 1, 'accepted': False, 'actual_seconds': 0, 'activity_status': 'in_progress',
+                  'reporting_started_at': '2026-11-11T10:00:00Z', 'sources': [{'source_system': 'old_lms',
+                      'source_course_ref': '50', 'source_activity_id': 'material:7'}]}
+        with patch.object(canonical, 'query', return_value=definitions):
+            rows, done, started, hours, _ = learning.course_facts({'id': 9}, [record], [course])
+        cards, _ = self.cards(native(), [course], rows, done, started, hours, records=[record])
+        self.assertEqual(next(card for card in cards if card['source'] == 'legacy')['lastActivityAt'], '2026-11-11T10:00:00+00:00')
+
+    def test_resume_time_follows_saved_work_not_uploads_or_automatic_attendance(self):
+        content = native([component('START'), component('NEXT'), component('LIVE', type='live_session', attendanceCompleted=True)])
+        content['componentProgress'] = [
+            {'componentId': 'START', 'kind': 'component', 'submittedAt': '2026-11-11T12:30:00+03:00'},
+            {'componentId': 'NEXT', 'kind': 'component', 'passed': False, 'startedAt': '2026-11-11T10:00:00Z'},
+            {'componentId': 'LIVE', 'kind': 'component', 'submittedAt': '2026-11-12T10:00:00Z',
+             'timeTrackingSource': 'verified_teams_attendance'},
+            {'componentId': 'ANOTHER-MODULE', 'submittedAt': '2026-12-01T10:00:00Z'},
+        ]
+        cards, summary = self.cards(content)
+        self.assertEqual(cards[0]['lastActivityAt'], '2026-11-11T10:00:00+00:00')
+        self.assertEqual(summary['current']['completed'], 2)
+        self.assertEqual(learning.native_activity_times(content)[('component', 'START')], '2026-11-11T09:30:00+00:00')
+        self.assertIsNone(learning.last_activity_at({'created_at': '2026-11-12T10:00:00Z'}))
+
     def test_next_title_uses_the_whole_delivery_week_not_an_individual_material_date(self):
         def item(title, when, placement, completed=False):
             return {'title': title, 'completed': completed, 'position': 1,
@@ -395,7 +443,7 @@ class MyLearningIdentityProjectionTests(SimpleTestCase):
             manager=MagicMock();manager.only.return_value.filter.return_value.first.return_value=profile
             content=native([component()])
             def modules(cur,ids,**kwargs):
-                kwargs['identity_metadata'].update(module_titles={'M1':'One'},weeks=[],covers={},imported_courses={},live_credit_components=[])
+                kwargs['identity_metadata'].update(module_titles={'M1':'One'},weeks=[],covers={},imported_courses={},live_credit_components=[],free_course_module_ids=['M1'])
                 return {'M1':{'id':'M1','title':'One'}}
             with ExitStack() as stack:
                 stack.enter_context(patch.object(models.LearnerProfile,'objects',manager))
@@ -413,12 +461,13 @@ class MyLearningIdentityProjectionTests(SimpleTestCase):
                 import_read=stack.enter_context(patch.object(subject_origins,'read_imported_courses',return_value={}))
                 replacements=stack.enter_context(patch.object(subject_origins,'read_replacement_courses',return_value={}))
                 stack.enter_context(patch.object(previous_learning_groups,'read_previous_learning_groups',return_value={}))
-                learning.load_context(source,{'id':9},selected,
+                context = learning.load_context(source,{'id':9},selected,
                     **({'include_personal_replacements': True} if personal else {}))
             self.assertEqual(replacements.call_args.kwargs, {'include_personal': True} if personal else {})
             entries.assert_called_once_with({'id':9},lineage_only=True,monthly_summary=True,**({'catalogue_summary':True} if selected is None else {'dashboard_metadata':True}))
             self.assertEqual(read.call_args.kwargs['assigned_modules'],[{'moduleId':'M1'}])
             if selected is None:
+                self.assertEqual(context[9]['free_course_module_ids'], ['M1'])
                 module_read.assert_called_once();builder.assert_not_called()
                 import_read.assert_not_called()
                 credits.assert_called_once_with(source,[])
@@ -587,13 +636,15 @@ class MyLearningEndpointTests(SimpleTestCase):
         self.assertEqual(response.status_code,405)
 
 
-def fixture_responses():
+def fixture_responses(*, standalone=False, kind='commercial'):
     """Execute both production projections over one synthetic, mocked source."""
     from . import course_catalogue_display, training_plan_dashboard, weekly_learning, dashboard_training, teams_attendance, live_session_progress, builder_activity_dates, subject_store
     source=SimpleNamespace(pk=7,id=7,email='synthetic@example.test',username='Synthetic learner',programme='Example programme',cohort='',group='',aptem_id=7,_case_file_profile=SimpleNamespace(pk=9))
     owner={'id':9,'name':'Synthetic learner','programme':'Example programme','programme_planned_hours':20,'aptem_id':7}
     modules={mid:{'id':mid,'title':title,'description':'','start_date':'2026-01-01','end_date':'2026-12-31','tutor_name':'Example tutor','coach_name':'','total_otjh':10,'educational_session_count':2}
         for mid,title in [('M1','Example module'),('M2','Another module')]}
+    if standalone:
+        modules['M1']['source_type'] = 'free_course'
     content=native([component('C1',component='Example reading',hasReadingContent=True),component('Q1',component='Final test',type='quiz',isQuiz=True,quizMeta={'quizId':1,'questions':1}),component('C2','M2',hasReadingContent=True)])
     content.update(id='7',programme='Example programme',cohort='',group='',week=[],modules=['Example module','Another module'])
     for item in content['components']:
@@ -611,6 +662,7 @@ def fixture_responses():
     meta['current_subjects']=[{'id':mid,'title':row['title']} for mid,row in modules.items()]
     meta['builder_subjects']={f'current:{mid}':{'id':mid,'title':row['title']} for mid,row in modules.items()}
     meta['modules']=modules
+    meta['free_course_module_ids'] = ['M1'] if standalone else []
     context=([{'moduleId':'M1'},{'moduleId':'M2'}],['M1','M2'],records,content,[course],definitions,
         {('50','material:1'),('50','quiz:3')},set(),{'50':2},meta,[])
     def query(sql,params):
@@ -634,15 +686,28 @@ def fixture_responses():
         stack.enter_context(patch.object(live_session_progress,'read_live_credits',return_value=[]))
         stack.enter_context(patch.object(builder_activity_dates,'read_builder_activity_dates',return_value={}))
         stack.enter_context(patch.object(weekly_learning,'build_learning_content_summary',side_effect=selected_content))
-        result={'catalogue':learning.read_catalogue(source,'commercial',owner),
-            'module':learning.read_module(source,'commercial',owner,'current:M1'),
-            'legacyModule':learning.read_module(source,'commercial',owner,'legacy:50')}
+        result={'catalogue':learning.read_catalogue(source,kind,owner),
+            'module':learning.read_module(source,kind,owner,'current:M1'),
+            'legacyModule':learning.read_module(source,kind,owner,'legacy:50')}
     for key in ('module','legacyModule'):
         result[key]['schedule']['generatedAt']='2026-10-18T00:00:00+00:00'
     return result
 
 
 class MyLearningSharedFixtureTests(SimpleTestCase):
+    def test_free_courses_leave_my_courses_but_keep_content_access_and_actual_hours(self):
+        for kind in ('commercial', 'apprenticeship'):
+            with self.subTest(kind=kind):
+                result = fixture_responses(standalone=True, kind=kind)
+                catalogue = result['catalogue']
+                self.assertEqual({card['id'] for card in catalogue['modules']}, {'current:M2', 'legacy:50'})
+                self.assertEqual(catalogue['summary']['current'], dict(subjects=1, total=1, completed=0, percent=0))
+                self.assertEqual(catalogue['summary']['subjectCount'], 2)
+                # Includes the accepted hour in standalone M1, plus two historic hours.
+                self.assertEqual(catalogue['otjh'], {'actual': 3, 'planned': 20})
+                self.assertEqual({c['moduleId'] for c in result['module']['detail']['components']}, {'M1'})
+                self.assertEqual(result['module']['detail']['componentProgress'][0]['componentId'], 'C1')
+
     def test_production_contract_matches_shared_frontend_fixture_without_full_initial_responses(self):
         from pathlib import Path
         fixture=Path(__file__).parents[2]/'frontend/src/test/myLearningFixtures.json'

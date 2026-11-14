@@ -159,6 +159,17 @@ class Command(BaseCommand):
             logging.getLogger(__name__).warning('Pending caption check is unavailable (%s); existing session jobs are unchanged.',
                                                 type(caption_failure).__name__)
         self.stdout.write(f'Processed {processed} session jobs; {failed} need retry.')
+        if options['scheduled']:
+            # Same serving/scheduler worker, same service as the manual button.
+            # Role failures have their own visible status and never requeue or
+            # mark an attendance/archive job failed.
+            try:
+                from curriculum_api.teams_people_refresh import sync_due_people
+                people = sync_due_people(limit=options['limit'], series_ids=requested_ids)
+                self.stdout.write(f"Checked {people['checked']} Teams people rosters; {people['failed']} need retry.")
+            except Exception as people_failure:
+                logging.getLogger(__name__).warning('Teams people phase is unavailable (%s); session job outcomes are unchanged.',
+                                                    type(people_failure).__name__)
         if failed:
             error = CommandError('Some session jobs need retry; saved results remain available.')
             error.session_jobs_need_retry = True

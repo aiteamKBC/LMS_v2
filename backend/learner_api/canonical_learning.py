@@ -12,6 +12,7 @@ from old_otjh import repository
 from old_otjh.repository import query
 from old_otjh.service import ServiceError
 from .ksb_exclusions import not_excluded_sql
+from .learner_coach_columns import owner_coach_sql
 from .monthly_log_sources import decoded, number, row
 from .current_learning import (
     current_records, current_records_bulk, is_unsynchronised_direct_save, source_payload_metadata,
@@ -23,6 +24,11 @@ UK = ZoneInfo('Europe/London')
 def _ksb_not_excluded(alias='k'):
     """Skip KSB rows the standards migration registered as not counting."""
     return not_excluded_sql(alias, repository._query_alias.get() or repository.DB)
+
+
+def _owner_coach_sql(alias='l'):
+    """The learner row's coach_name/coach_email on the database this query uses."""
+    return owner_coach_sql(alias, repository._query_alias.get() or repository.DB)
 
 
 def is_legacy_record(record):
@@ -86,15 +92,14 @@ def require_profile(learner_id):
 
 
 def profile(learner_id):
-    records = query('''SELECT l.id,l.enrolment_id,l.aptem_id,l.programme_id,l.full_name AS name,
-        p.name AS programme,c.name AS coach_name,c.email AS coach_email,l.email,l.start_date,l.end_date,l.learner_type,
+    records = query(f'''SELECT l.id,l.enrolment_id,l.aptem_id,l.programme_id,l.full_name AS name,
+        p.name AS programme,{_owner_coach_sql()},l.email,l.start_date,l.end_date,l.learner_type,
         u.id AS account_record_id,u."Email" AS account_email,u.aptem_id AS account_aptem_id,
         l.planned_hours AS programme_planned_hours,l.learner_start_date,l.learner_end_date,
         EXISTS(SELECT 1 FROM "Learner".progress_transfer_requests t WHERE t.enrolment_id=l.enrolment_id) AS progress_transfer_active
         FROM "Learner".learners l
         LEFT JOIN enrolment."Created_users" u ON u.id=l.enrolment_id
         LEFT JOIN curriculum.programmes p ON p.programme_id=l.programme_id
-        LEFT JOIN curriculum.coaches c ON c.id=l.coach_id
         WHERE l.enrolment_id=%s''', [learner_id])
     if not records:
         return None
@@ -128,11 +133,10 @@ def programme_planned_hours(learner_id, *, owner=None):
 
 def profile_by_aptem(aptem_id):
     """For already-authorized Audit callers; never use an Aptem ID as a PK."""
-    records = query('''SELECT l.id,l.enrolment_id,l.aptem_id,l.programme_id,l.full_name AS name,
-        p.name AS programme,c.name AS coach_name,c.email AS coach_email,l.email,l.start_date,l.end_date,l.learner_type
+    records = query(f'''SELECT l.id,l.enrolment_id,l.aptem_id,l.programme_id,l.full_name AS name,
+        p.name AS programme,{_owner_coach_sql()},l.email,l.start_date,l.end_date,l.learner_type
         FROM "Learner".learners l
         LEFT JOIN curriculum.programmes p ON p.programme_id=l.programme_id
-        LEFT JOIN curriculum.coaches c ON c.id=l.coach_id
         WHERE l.aptem_id=%s''', [aptem_id])
     if len(records) != 1:
         raise ServiceError('The consolidated learner identity needs review.', 'identity_review_required', 409)
@@ -557,6 +561,11 @@ def input_activity_date(entry):
 
 
 def rows_for(owner, records=None):
+    records = list(records if records is not None else entries_for(owner))
+    recovered_titles = {}
+    if any(record.get('component_type') == 'old_lms_recovered' for record in records):
+        from .recovered_activity_content import titles
+        recovered_titles = titles(owner, records)
     result = []
     record_set = list(records if records is not None else entries_for(owner))
     # Reconciled completion-only attempt rows have no progress document of
@@ -574,7 +583,7 @@ def rows_for(owner, records=None):
         ref = f"canonical:{entry['id']}"
         if entry.get('segment_id') is not None:
             ref += f":segment:{entry['segment_id']}"
-        item = row(ref, at, entry.get('component_title'),
+        item = row(ref, at, recovered_titles.get(str(entry['id'])) or entry.get('component_title'),
                    (entry.get('component_type') or entry.get('kind') or 'Learning').replace('_', ' ').title(),
                    hours=number(entry.get('actual_seconds')) / 3600,
                    planned=entry.get('expected_otjh') if entry.get('expected_otjh') is not None else source.get('planned_hours'),
@@ -727,6 +736,11 @@ def material_parts(item, owner, record=None):
                        if str(r['id']) == str(item.get('progress_id'))), None)
     if record is None:
         return []
+    if record.get('component_type') == 'old_lms_recovered':
+        from .recovered_activity_content import material_parts as recovered_parts
+        restored = recovered_parts(item, owner, record)
+        if restored:
+            return restored
     catalogue = query('''SELECT a.source_activity_id,a.source_activity_title,a.source_activity_type,
         a.source_section_title,a.source_position AS position,a.curriculum_component_ref,
         c.source_course_ref,c.source_course_title,c.curriculum_module_ref,
@@ -1535,15 +1549,14 @@ def metrics_bulk(learner_ids, *, learner_workspace=False, include_ksb_points=Fal
     if not enrolment_ids:
         return {}
 
-    owners = query('''SELECT l.id,l.enrolment_id,l.aptem_id,l.programme_id,l.full_name AS name,
-        p.name AS programme,c.name AS coach_name,c.email AS coach_email,l.email,l.start_date,l.end_date,l.learner_type,
+    owners = query(f'''SELECT l.id,l.enrolment_id,l.aptem_id,l.programme_id,l.full_name AS name,
+        p.name AS programme,{_owner_coach_sql()},l.email,l.start_date,l.end_date,l.learner_type,
         u.id AS account_record_id,u."Email" AS account_email,u.aptem_id AS account_aptem_id,
         l.planned_hours AS programme_planned_hours,l.learner_start_date,l.learner_end_date,
         EXISTS(SELECT 1 FROM "Learner".progress_transfer_requests t WHERE t.enrolment_id=l.enrolment_id) AS progress_transfer_active
         FROM "Learner".learners l
         LEFT JOIN enrolment."Created_users" u ON u.id=l.enrolment_id
         LEFT JOIN curriculum.programmes p ON p.programme_id=l.programme_id
-        LEFT JOIN curriculum.coaches c ON c.id=l.coach_id
         WHERE l.enrolment_id=ANY(%s)''', [enrolment_ids])
     owner_candidates = {}
     for owner in owners:

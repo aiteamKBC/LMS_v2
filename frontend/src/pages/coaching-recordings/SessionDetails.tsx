@@ -6,6 +6,7 @@ import SavedMeetingEvidence from './SavedMeetingEvidence';
 import { Download, Play, RefreshCw } from 'lucide-react';
 import type { EvidenceTab } from './location';
 import { prepareRecordingPlayback, type RecordingOccurrence } from './recordingPlayback';
+import detailsStyles from '@/components/feature/RecordingsDetails.module.css';
 
 function durationLabel(seconds: number) {
   const value = Math.max(0, Math.floor(seconds));
@@ -19,7 +20,7 @@ function recordedSeconds(files: CoachingSessionDetails['media']['recordings']) {
   return total / 1000;
 }
 
-export default function SessionDetails({ eventKey, analysisContext, analysisEventKey, reference, occurrence, category, timeZone = 'UTC', onPreviewChange, activeTab, onTabChange }: { eventKey: string; analysisContext?: string; analysisEventKey?: string; reference?: string; occurrence?: RecordingOccurrence; category?: CoachingMeeting['category']; timeZone?: string; onPreviewChange?: (open: boolean) => void; activeTab?: EvidenceTab; onTabChange?: (tab: EvidenceTab) => void }) {
+export default function SessionDetails({ eventKey, analysisContext, analysisEventKey, reference, occurrence, category, timeZone = 'UTC', onPreviewChange, activeTab, onTabChange, section }: { eventKey: string; analysisContext?: string; analysisEventKey?: string; reference?: string; occurrence?: RecordingOccurrence; category?: CoachingMeeting['category']; timeZone?: string; onPreviewChange?: (open: boolean) => void; activeTab?: EvidenceTab; onTabChange?: (tab: EvidenceTab) => void; section?: EvidenceTab }) {
   const [data, setData] = useState<CoachingSessionDetails | null>(null);
   const [error, setError] = useState('');
   const [revision, setRevision] = useState(0);
@@ -29,6 +30,10 @@ export default function SessionDetails({ eventKey, analysisContext, analysisEven
   const [playback, setPlayback] = useState<{ url: string; reference?: string; attempt: number } | null>(null);
   const playbackRequest = useRef<AbortController | null>(null);
   const playbackAttempt = useRef(0);
+  const video = useRef<HTMLVideoElement>(null);
+  useEffect(() => {
+    if (section && section !== 'recordings') video.current?.pause();
+  }, [section, playback]);
   const [showTypeReview, setShowTypeReview] = useState(false);
   const [captionError, setCaptionError] = useState(false);
   const [captionRetry, setCaptionRetry] = useState(0);
@@ -90,34 +95,35 @@ export default function SessionDetails({ eventKey, analysisContext, analysisEven
     return () => { controller.abort(); clearTimeout(timer); };
   }, [evidencePending, eventKey, reference, revision]);
 
-  return <section aria-label="Recordings and attendance" className="mt-4 border-t border-background-200 pt-4">
-    <div className="flex flex-wrap items-center justify-between gap-2"><h3 className="text-sm font-bold">Recordings</h3>
+  return <section aria-label="Recordings and attendance" className={section ? '' : 'mt-4 border-t border-background-200 pt-4'}>
+    <div className="flex flex-wrap items-center justify-between gap-2"><h3 className="text-sm font-bold">{section === 'attendance' ? 'Attendance' : section === 'transcript' || section === 'analysis' ? 'Transcript & AI analysis' : 'Recordings'}</h3>
       <button onClick={refresh} className="inline-flex items-center gap-1 text-xs font-semibold text-primary-700"><RefreshCw size={12} />Refresh details</button></div>
     {!data && !error && <p role="status" className="mt-3 text-sm">Loading saved recordings and attendance…</p>}
     {error && <p role="alert" className="mt-3 text-sm text-rose-800">{error} <button onClick={refresh} className="font-semibold underline">Retry details</button></p>}
     {data && <>
       {evidencePending && attendancePaused && <p className="mt-2 text-xs text-foreground-500">Automatic checks have stopped. Use Refresh details to check again.</p>}
       {data.partial && data.media.check?.state !== 'failed' && <p role="alert" className="mt-3 text-sm text-amber-900">Some saved evidence could not be checked. Refresh details to try again.</p>}
+      <div hidden={Boolean(section && section !== 'recordings')}>
       {data.media.check?.state === 'failed' && <p role="alert" className="mt-3 text-xs text-amber-900">The latest recording check failed. These are the last saved parts; additional parts could not be checked. Use Refresh calendars to request another check.</p>}
       {!data.media.recordings.length && <p className="mt-3 text-xs text-foreground-600">{recordingLabel(data.media)}{data.media.check?.state === 'complete' && data.media.check.reason === 'no-recordings-returned' ? '. This does not prove the meeting was not recorded. Use Refresh calendars to request another check.' : ''}</p>}
       {data.media.recordings.length > 0 && <p className="mt-3 text-xs text-foreground-600">{data.media.recordings.length} recording {data.media.recordings.length === 1 ? 'part' : 'parts'}{recordedSeconds(data.media.recordings) > 0 && ` · ${durationLabel(recordedSeconds(data.media.recordings))} recorded in total`}. All saved parts are listed below. Recording and attendance times are shown in {timeZone}.</p>}
       <ul className="mt-3 space-y-3">{data.media.recordings.map((file, index) => {
         const duration = file.startsAt && file.endsAt ? (Date.parse(file.endsAt) - Date.parse(file.startsAt)) / 1000 : null;
-        return <li key={file.id} className="rounded-xl border border-background-200 bg-white p-3 shadow-sm">
+        return <li key={file.id} className={`${detailsStyles.card} rounded-xl border border-background-200 bg-white p-3 shadow-sm`}>
           <div className="flex flex-wrap items-center justify-between gap-2"><span className="text-sm font-semibold">Recording {index + 1}</span>
-            <span className={`rounded-full px-2 py-1 text-[10px] font-semibold ${file.state === 'ready' ? 'bg-emerald-50 text-emerald-800' : 'bg-amber-50 text-amber-800'}`}>{file.state === 'ready' ? 'Ready' : recordingLabels[file.state]}</span></div>
+            <span className={`rounded-full px-2 py-1 text-[10px] font-semibold ${file.state === 'ready' ? `${detailsStyles.ready} bg-emerald-50 text-emerald-800` : 'bg-amber-50 text-amber-800'}`}>{file.state === 'ready' ? 'Ready' : recordingLabels[file.state]}</span></div>
           <div className="mt-2 flex flex-wrap items-center gap-2 text-[11px] text-foreground-500">{duration !== null && duration > 0 && <span>{durationLabel(duration)} recorded</span>}
             {file.source === 'microsoft' && <span>SharePoint recording</span>}</div>
           {file.startsAt && file.endsAt && duration !== null && duration > 0 && <p className="mt-2 break-words text-[11px] leading-5 text-foreground-600">Microsoft recording times: {stamp(file.startsAt)} – {stamp(file.endsAt)}</p>}
           {file.state === 'ready' && <div className="mt-3 flex flex-wrap gap-2">
-            <button aria-label={`Play recording ${index + 1}`} aria-pressed={playing === file.id} disabled={preparing && playing === file.id} className="inline-flex items-center gap-1.5 rounded-lg border border-primary-200 px-3 py-2 text-xs font-semibold text-primary-700 hover:bg-primary-50 disabled:opacity-50" onClick={() => void play(file.id)}><Play size={13} />Play</button>
-            <a aria-label={`Download recording ${index + 1}`} className="inline-flex items-center gap-1.5 rounded-lg bg-primary-600 px-3 py-2 text-xs font-semibold text-white hover:bg-primary-700" href={coachingRecordingUrl(data.eventKey, file.id, false, playback?.reference ?? reference)} target="_blank" rel="noopener noreferrer"><Download size={13} />Download</a>
+            <button aria-label={`Play recording ${index + 1}`} aria-pressed={playing === file.id} disabled={preparing && playing === file.id} className={`${detailsStyles.secondary} inline-flex items-center gap-1.5 rounded-lg border border-primary-200 px-3 py-2 text-xs font-semibold text-primary-700 hover:bg-primary-50 disabled:opacity-50`} onClick={() => void play(file.id)}><Play size={13} />Play</button>
+            <a aria-label={`Download recording ${index + 1}`} className={`${detailsStyles.primary} inline-flex items-center gap-1.5 rounded-lg bg-primary-600 px-3 py-2 text-xs font-semibold text-white hover:bg-primary-700`} href={coachingRecordingUrl(data.eventKey, file.id, false, playback?.reference ?? reference)} target="_blank" rel="noopener noreferrer"><Download size={13} />Download</a>
           </div>}
         </li>;
       })}</ul>
       {playing && data.media.recordings.some(file => file.id === playing && file.state === 'ready') && <div className="mt-4">
         {preparing && <p role="status" className="text-sm">Preparing recording…</p>}
-        {playback && <video key={playback.attempt} aria-label="Coaching recording player" className="aspect-video w-full rounded-lg bg-black" controls autoPlay preload="metadata"
+        {playback && <video ref={video} key={playback.attempt} aria-label="Coaching recording player" className="aspect-video w-full rounded-lg bg-black" controls autoPlay={!section || section === 'recordings'} preload="metadata"
           src={playback.url}
           onErrorCapture={event => { if ((event.target as HTMLElement).tagName === 'TRACK') setCaptionError(true); }}
           onError={event => { if (event.target === event.currentTarget) setPlayError('This recording could not be played. Retry playback to reload the video.'); }}>
@@ -132,7 +138,9 @@ export default function SessionDetails({ eventKey, analysisContext, analysisEven
         </p>}
         {playError && <p role="alert" className="mt-2 text-sm text-rose-800">{playError} <button className="font-semibold underline" onClick={() => void play(playing)}>Retry playback</button></p>}
       </div>}
-      <h3 className="mt-6 border-t border-background-200 pt-4 text-sm font-bold">Attendance</h3>
+      </div>
+      <div hidden={Boolean(section && section !== 'attendance')}>
+      {!section && <h3 className="mt-6 border-t border-background-200 pt-4 text-sm font-bold">Attendance</h3>}
       {data.attendance.source === 'coaching-session' && <p className="mt-1 text-xs text-foreground-500">From the saved Coaching Session attendance report.</p>}
       {data.attendance.state === 'available' && reference && <a className="mt-2 inline-flex items-center gap-1 text-xs font-semibold text-primary-700" href={coachingEvidenceUrl(data.eventKey, 'attendance', reference)}><Download size={12} />Download attendance</a>}
       {data.attendance.state === 'pending' && <p className="mt-2 text-sm text-foreground-600">The attendance report is not available yet. Attendance remains pending.</p>}
@@ -151,11 +159,14 @@ export default function SessionDetails({ eventKey, analysisContext, analysisEven
           </tr>)}</tbody></table>
         {!data.attendance.rows.length && <p className="mt-2 text-sm">No participant rows are available in the saved report.</p>}
       </div>}
+      </div>
+      <div hidden={Boolean(section && section !== 'transcript' && section !== 'analysis')}>
       <SavedMeetingEvidence key={`${data.eventKey}:${reference ?? ''}:${revision}`} evidence={data.evidence} eventKey={data.eventKey} reference={reference} category={category} onPreviewChange={onPreviewChange} activeTab={activeTab} onTabChange={onTabChange} />
       {analysisContext && <div className="mt-5 border-t border-background-200 pt-4">
         <button className="text-xs font-semibold text-primary-700 underline" aria-expanded={showTypeReview} onClick={() => setShowTypeReview(value => !value)}>{showTypeReview ? 'Close optional meeting type check' : 'Optional meeting type check'}</button>
         {showTypeReview && <QualitySuggestion key={`${eventKey}:${analysisContext}`} eventKey={analysisEventKey || eventKey} context={analysisContext} />}
       </div>}
+      </div>
     </>}
   </section>;
 }

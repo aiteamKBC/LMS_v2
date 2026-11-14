@@ -24,6 +24,16 @@ from . import tests_standalone_courses as standalone
 
 
 class FreeCourseStorageTests(CurriculumPersistenceHarness):
+    def setUp(self):
+        super().setUp()
+        # These tests exercise the historical 0080 bridge/import stage that
+        # precedes native cutover. The base harness only creates base tables.
+        from .free_course_storage_schema import provision
+        from .learning_storage import reset
+        reset()
+        provision(connection)
+        self.addCleanup(reset)
+
     def save(self):
         return v.save_module_authoring_structure('MOD-FREE', {
             **standalone.StandaloneCourseTests.payload(self), 'isForSale': True, 'price': '49.95',
@@ -194,11 +204,15 @@ class FreeCourseStorageTests(CurriculumPersistenceHarness):
         self.assertEqual(v.module_structure_source_rows(payload['catalogueId']), before)
 
     def test_migration_graph_has_one_leaf_without_renaming_applied_migrations(self):
-        modules = {key: value for key, value in settings.MIGRATION_MODULES.items() if key != 'curriculum_api'}
+        modules = {key: value for key, value in settings.MIGRATION_MODULES.items()
+                   if key not in {'curriculum_api', 'learner_api'}}
         with override_settings(MIGRATION_MODULES=modules):
             loader = MigrationLoader(None)
         self.assertEqual(loader.graph.leaf_nodes('curriculum_api'),
-                         [('curriculum_api', '0081_merge_free_courses_qr_attendance')])
+                         [('curriculum_api', '0082_independent_free_course_storage')])
+        plan = loader.graph.forwards_plan(('curriculum_api', '0082_independent_free_course_storage'))
+        self.assertLess(plan.index(('learner_api', '0026_free_course_relations')),
+                        plan.index(('curriculum_api', '0082_independent_free_course_storage')))
 
     def test_duplicating_imported_content_does_not_reuse_original_component_identity(self):
         import_content(self.export())

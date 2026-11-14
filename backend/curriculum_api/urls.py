@@ -9,6 +9,7 @@ from .archive_index import curriculum_archive_index
 from .programme_ksb_stats_batch import curriculum_programmes_ksb_stats
 from .record_snapshots import curriculum_record_snapshot
 from .free_course_conversion import convert_free_course
+from . import free_course_authoring
 from .module_live import curriculum_live, curriculum_module_changes
 from .module_collaboration import collaboration_configuration
 from .module_uploads import module_uploaded_files
@@ -28,6 +29,7 @@ from .teams_create_guard import teams_create_status, teams_meeting_collection
 from .teams_create_drafts import teams_create_draft
 from .teams_schedule_delivery import forward_schedule_email, schedule_email
 from .teams_calendar_state import sync_calendar_state
+from .teams_people_refresh import teams_people_refresh
 from .teams_directory import search_teams_directory
 from .bulk_attendance_learners import bulk_attendance_learners
 from .bulk_attendance_kbc_history import (
@@ -54,10 +56,12 @@ from .teaching_quality import teaching_review
 from .recordings_transcript_pdf import lecture_transcript
 from .module_hours import module_target
 from .catalogue_activity import catalogue_activity
-from . import free_course_authoring_views, free_course_quiz_views
+from . import delivery_dashboard, free_course_authoring_views, free_course_quiz_views
 
 
 urlpatterns = [
+    path('curriculum/delivery-dashboard/', delivery_dashboard.overview, name='curriculum-delivery-dashboard'),
+    path('curriculum/delivery-dashboard/sessions/', delivery_dashboard.sessions, name='curriculum-delivery-dashboard-sessions'),
     path(
         'curriculum/free-courses/authoring/',
         free_course_authoring_views.catalogue,
@@ -171,6 +175,13 @@ urlpatterns = [
     path('curriculum/programmes/reorder/', views.curriculum_programme_reorder, name='curriculum-programmes-reorder'),
     # Several cards' KSB numbers at once (?ids=a,b). Before <identifier> for the same reason.
     path('curriculum/programmes/ksb-stats/', curriculum_programmes_ksb_stats, name='curriculum-programmes-ksb-stats'),
+    path('curriculum/free-courses/', free_course_authoring.catalogue, name='free-course-catalogue'),
+    path('curriculum/free-courses/<str:course_id>/structure/', free_course_authoring.authoring, name='free-course-structure'),
+    path('curriculum/free-courses/<str:course_id>/collaboration/', free_course_authoring.authoring, {'kind': 'collaboration'}, name='free-course-collaboration'),
+    path('curriculum/free-courses/<str:course_id>/weeks/', free_course_authoring.authoring, {'kind': 'week'}, name='free-course-weeks'),
+    path('curriculum/free-courses/<str:course_id>/weeks/<str:item_id>/', free_course_authoring.authoring, {'kind': 'week'}, name='free-course-week'),
+    path('curriculum/free-courses/<str:course_id>/components/', free_course_authoring.authoring, {'kind': 'component'}, name='free-course-components'),
+    path('curriculum/free-courses/<str:course_id>/components/<str:item_id>/', free_course_authoring.authoring, {'kind': 'component'}, name='free-course-component'),
     path('curriculum/free-programmes/<str:programme_id>/modules/', views.curriculum_free_programme_modules, name='curriculum-free-programme-modules'),
     path('curriculum/free-programmes/<str:programme_id>/convert/', views.curriculum_free_programme_convert, name='curriculum-free-programme-convert'),
     path('curriculum/free-programmes/<str:programme_id>/import-module/', views.curriculum_free_programme_import_module, name='curriculum-free-programme-import-module'),
@@ -270,6 +281,7 @@ urlpatterns = [
     path('curriculum/teams-meetings/<str:live_session_id>/schedule-email/', schedule_email, name='curriculum-teams-schedule-email'),
     path('curriculum/teams-meetings/<str:live_session_id>/forward-email/', forward_schedule_email, name='curriculum-teams-forward-email'),
     path('curriculum/teams-meetings/<str:live_session_id>/calendar-state/', sync_calendar_state, name='curriculum-teams-calendar-state'),
+    path('curriculum/teams-meetings/<str:live_session_id>/refresh-people/', teams_people_refresh, name='curriculum-teams-people-refresh'),
     path('curriculum/teams-meetings/<str:live_session_id>/actions/', calendar_action, name='curriculum-teams-calendar-action'),
     path('curriculum/teams-meetings/<str:live_session_id>/compare-attendees/', teams_meeting_attendee_comparison, name='curriculum-teams-compare-attendees'),
     path('curriculum/teams-meetings/<str:live_session_id>/permission-check/', teams_meeting_permission_check, name='curriculum-teams-permission-check'),

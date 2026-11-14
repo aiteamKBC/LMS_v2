@@ -11,10 +11,12 @@ from unittest.mock import MagicMock, patch
 
 from django.core.exceptions import EmptyResultSet, FieldDoesNotExist
 from django.db.models import Q
+from django.db.models.functions import Lower, Trim
 from django.db.models.query import QuerySet
 from django.test import RequestFactory, SimpleTestCase
 
 from learner_api.models import EnrolmentUser, LearnerProfile
+from learner_api import learner_coach_columns
 from . import case_file, views
 from .caseload_placement import annotate_placement_labels, filter_options, placement_names
 
@@ -73,17 +75,27 @@ class CaseloadDashboardProjectionTests(SimpleTestCase):
              patch.object(views, 'learner_profile_ids_for_coach_email', return_value=[]):
             recorder, _ = run_recorded(lambda: views.fetch_caseload_dashboard_profiles('coach@example.test'))
         fields = [name for name in recorder.calls[0] if name != 'coach_rag']
-        sql = str(LearnerProfile.objects.filter(id__in=[101]).only(*fields).query)
-        for column in ('"programme_id"', '"cohort_id"', '"group_id"', '"coach_id"'):
+        with patch.object(learner_coach_columns, 'learner_coach_keyed', return_value=True):
+            sql = str(LearnerProfile.objects.annotate(coach_email_key=Lower(Trim('coach_email')))
+                      .filter(coach_email_key='coach@example.test').only(*fields).query)
+        for column in ('"programme_id"', '"cohort_id"', '"group_id"'):
             self.assertIn(column, sql)
+        self.assertIn('curriculum.coaches', sql)
+        self.assertNotIn('learners.coach_email', sql)
 
 
 class CaseFileShellProjectionTests(SimpleTestCase):
+    def setUp(self):
+        self.coach_schema = patch.object(learner_coach_columns, 'learner_coach_keyed', return_value=True)
+        self.coach_schema.start()
+        self.addCleanup(self.coach_schema.stop)
+
     def test_owner_scoped_shell_uses_ids_and_only_coach_rag_remains_blocked(self):
         with patch.object(views, 'learner_profile_ids_for_coach_email', return_value=[]):
             recorder, result = run_recorded(lambda: views.fetch_case_file_shell('coach@example.test', 101))
         fields = set(recorder.calls[0])
         self.assertTrue({'programme_id', 'cohort_id', 'group_id', 'coach_id'} <= fields)
+        self.assertNotIn('coach_email', fields)  # derived query alias, never a physical column
         self.assertTrue(PROPERTY_NAMES.isdisjoint(fields))
         self.assertEqual(fields - concrete(LearnerProfile), {'coach_rag'})
         self.assertEqual(recorder.errors, ["LearnerProfile has no field named 'coach_rag'"])
@@ -96,6 +108,11 @@ class CaseFileShellProjectionTests(SimpleTestCase):
 
 
 class CaseFileContextProjectionTests(SimpleTestCase):
+    def setUp(self):
+        self.coach_schema = patch.object(learner_coach_columns, 'learner_coach_keyed', return_value=True)
+        self.coach_schema.start()
+        self.addCleanup(self.coach_schema.stop)
+
     def context(self, path, profile_only, recorder_calls):
         request = RequestFactory().get(path)
         with patch.object(case_file, 'authenticated_coach_email', return_value='coach@example.test'), \
@@ -161,6 +178,11 @@ def caseload_queryset():
 
 class CaseloadFilterQueryTests(SimpleTestCase):
     """The view's search, cohort/group filters and sorts compile against the annotations."""
+
+    def setUp(self):
+        self.coach_schema = patch.object(learner_coach_columns, 'learner_coach_keyed', return_value=True)
+        self.coach_schema.start()
+        self.addCleanup(self.coach_schema.stop)
 
     def compiled(self, search='', cohort='', group='', sort='name'):
         queryset = annotate_placement_labels(caseload_queryset(), NAMES)

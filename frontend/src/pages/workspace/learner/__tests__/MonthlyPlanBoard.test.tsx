@@ -163,6 +163,14 @@ describe('compact Monthly board keeps existing presentation and actions', () => 
     expect(onMonthChange).toHaveBeenCalledWith('2026-11');
   });
 
+  it('links achieved hours to the selected learner monthly log', () => {
+    display(dashboardMonthlyFixture('2026-11'));
+
+    expect(screen.getByRole('link', { name: 'View monthly log' })).toHaveAttribute(
+      'href', '/learner/monthly-logs/commercial/265/2026-11',
+    );
+  });
+
   it('preserves form navigation, booking identity/learner and refresh after review booking', () => {
     const payload = dashboardMonthlyFixture(); payload.reviews = [review];
     const { onRefresh } = display(payload);

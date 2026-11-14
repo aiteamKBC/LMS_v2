@@ -12,8 +12,8 @@ from .models import LearnerProfile
 
 class LearnerDateSyncTests(SimpleTestCase):
     def test_exact_profile_columns(self):
-        self.assertEqual(LearnerProfile._meta.get_field('learner_start_date').column, 'Learner_Start_date')
-        self.assertEqual(LearnerProfile._meta.get_field('learner_end_date').column, 'Learner_end_date')
+        self.assertEqual(LearnerProfile._meta.get_field('learner_start_date').column, 'learner_start_date')
+        self.assertEqual(LearnerProfile._meta.get_field('learner_end_date').column, 'learner_end_date')
 
     def test_save_and_clear_copy_both_dates_to_linked_profile(self):
         for start, end in [('2028-01-01', '2028-12-31'), (None, None), ('2028-01-01', None)]:
@@ -56,12 +56,10 @@ class LearnerDateSyncTests(SimpleTestCase):
     def test_activation_copies_header_dates_into_new_profile(self):
         source = SimpleNamespace(id=132, programme_status='Active', learner_start_date='2028-01-01', learner_end_date='2028-12-31')
         with patch('learner_api.apprenticeship_agreement._group_dates', return_value=(None, None, None)), \
-                patch('learner_api.active_users.get_training_plan', return_value=[]), \
                 patch('learner_api.active_users.transaction.atomic'), \
-                patch('learner_api.active_users.learner_profile_for_source', return_value=None), \
+                patch('learner_api.placement_links.placement_profile', return_value=None), \
+                patch('learner_api.coach_assignment.source_coach_id', return_value=None), \
                 patch('learner_api.active_users.hydrate_source_training_plan', return_value=[]), \
-                patch('learner_api.active_users._resolve_linkable_programme_id', return_value=None), \
-                patch('learner_api.active_users._linkable_placement_ids', return_value=(None, None)), \
                 patch('learner_api.active_users.LearnerProfile.objects.create') as create, \
                 patch('learner_api.active_users.replace_training_plan'), \
                 patch('learner_api.active_users.refresh_learner_ksb_snapshot'):

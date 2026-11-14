@@ -57,7 +57,7 @@ class CohortArchiveDetachesModulesTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response['deleted'], True)
         self.assertIn(('update', 'modules', 'cohort_id = %s', ['COHORT-1'], {
-            'cohort_id': None, 'cohort_name': '', 'group_id': None, 'group_name': '',
+            'cohort_id': None, 'group_id': None,
         }), self.calls)
 
     def test_group_modules_are_still_detached_and_the_cohort_archived_last(self):

@@ -64,8 +64,10 @@ const library: RecordingsLibrary = {
 
 const renderPage = async (showAll = true) => {
   render(<MemoryRouter><CurriculumRecordingsPage /></MemoryRouter>);
+  fireEvent.click(await screen.findByRole('button', { name: 'More filters (0)' }));
   if (showAll) {
-    fireEvent.change(await screen.findByRole('combobox', { name: 'Filter by recording status' }), { target: { value: 'all' } });
+    fireEvent.click(await screen.findByRole('combobox', { name: 'Filter by recording status' }));
+    fireEvent.click(screen.getByRole('option', { name: 'All recordings' }));
     await screen.findByText(/Calendar events not matched to LMS/);
   }
 };
@@ -273,10 +275,27 @@ describe('Session recordings calendar', () => {
   it('shows a load error and retries the authenticated library request', async () => {
     const user = userEvent.setup();
     vi.mocked(loadRecordingsLibrary).mockRejectedValueOnce(new Error('Library unavailable'));
-    await renderPage(false);
+    render(<MemoryRouter><CurriculumRecordingsPage /></MemoryRouter>);
     expect(await screen.findByRole('alert')).toHaveTextContent('Library unavailable');
     await user.click(screen.getByRole('button', { name: 'Retry' }));
     await waitFor(() => expect(screen.getAllByRole('button', { name: /Introduction \(Live Teams Session\)/ }).length).toBeGreaterThan(0));
+  });
+
+  it('keeps advanced filters behind More filters and retains the selected programme when collapsed', async () => {
+    const user = userEvent.setup();
+    render(<MemoryRouter><CurriculumRecordingsPage /></MemoryRouter>);
+    const more = await screen.findByRole('button', { name: 'More filters (0)' });
+    expect(more).toHaveAttribute('aria-expanded', 'false');
+    expect(screen.queryByRole('combobox', { name: 'Search date scope' })).not.toBeInTheDocument();
+    await user.click(screen.getByRole('combobox', { name: 'Filter by programme' }));
+    await user.click(screen.getByRole('option', { name: 'Level 4' }));
+    await user.click(more);
+    expect(screen.getByRole('combobox', { name: 'Search date scope' })).toBeVisible();
+    await user.click(more);
+    expect(screen.queryByRole('combobox', { name: 'Search date scope' })).not.toBeInTheDocument();
+    expect(screen.getByRole('combobox', { name: 'Filter by programme' })).toHaveTextContent('Level 4');
+    await user.click(more);
+    expect(screen.getByRole('combobox', { name: 'Filter by programme' })).toHaveTextContent('Level 4');
   });
   it('keeps ended lectures inside the selected day or week, independent of saved recordings', async () => {
     const user = userEvent.setup();
@@ -291,7 +310,9 @@ describe('Session recordings calendar', () => {
       await user.click(await screen.findByRole('button', { name: 'Ended (1)' }));
       expect(screen.getByRole('button', { name: /Introduction \(Live Teams Session\)/ })).toBeInTheDocument();
       expect(screen.queryByRole('button', { name: /Cleaning \(Live Teams Session\)|Older lecture/ })).not.toBeInTheDocument();
+      await user.click(screen.getByRole('combobox', { name: 'Search date scope' }));
       expect(screen.getByRole('option', { name: 'All dates' })).toBeDisabled();
+      await user.keyboard('{Escape}');
       await user.selectOptions(screen.getByRole('combobox', { name: 'Calendar view' }), 'day');
       expect(screen.getByRole('button', { name: /Introduction \(Live Teams Session\)/ })).toBeInTheDocument();
       await user.click(screen.getByRole('button', { name: 'Next day' }));
@@ -309,7 +330,8 @@ describe('Session recordings calendar', () => {
     await screen.findByRole('button', { name: 'All lectures (0)' });
     await user.type(screen.getByRole('textbox', { name: 'Search lectures by title' }), 'remote');
     expect(screen.queryByRole('button', { name: /Remote seminar/ })).not.toBeInTheDocument();
-    await user.selectOptions(screen.getByRole('combobox', { name: 'Search date scope' }), 'all');
+    await user.click(screen.getByRole('combobox', { name: 'Search date scope' }));
+    await user.click(screen.getByRole('option', { name: 'All dates' }));
     expect(screen.getAllByRole('button', { name: /Remote seminar/ })).toHaveLength(10);
     expect(screen.getByText(/10 lectures across all dates/)).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: /Remote seminar 9/ }));
@@ -324,14 +346,18 @@ describe('Session recordings calendar', () => {
     }] });
     await renderPage();
     await screen.findAllByRole('button', { name: /Introduction \(Live Teams Session\)/ });
-    await user.click(screen.getByText('More filters (0)'));
-    await user.selectOptions(screen.getByRole('combobox', { name: 'Filter by programme' }), 'Level 4');
-    expect(screen.getByRole('combobox', { name: 'Filter by group' })).not.toHaveTextContent('Group B');
-    await user.selectOptions(screen.getByRole('combobox', { name: 'Filter by group' }), 'Group A');
-    await user.selectOptions(screen.getByRole('combobox', { name: 'Filter by module' }), 'M1');
-    await user.selectOptions(screen.getByRole('combobox', { name: 'Filter by programme' }), 'Level 5');
-    expect(screen.getByRole('combobox', { name: 'Filter by group' })).toHaveValue('all');
-    expect(screen.getByRole('combobox', { name: 'Filter by module' })).toHaveValue('all');
+    expect(screen.getByRole('button', { name: 'More filters (0)' })).toHaveAttribute('aria-expanded', 'true');
+    await user.click(screen.getByRole('combobox', { name: 'Filter by programme' }));
+    await user.click(screen.getByRole('option', { name: 'Level 4' }));
+    await user.click(screen.getByRole('combobox', { name: 'Filter by group' }));
+    expect(screen.queryByRole('option', { name: 'Group B' })).not.toBeInTheDocument();
+    await user.click(screen.getByRole('option', { name: 'Group A' }));
+    await user.click(screen.getByRole('combobox', { name: 'Filter by module' }));
+    await user.click(screen.getByRole('option', { name: 'Data Analysis' }));
+    await user.click(screen.getByRole('combobox', { name: 'Filter by programme' }));
+    await user.click(screen.getByRole('option', { name: 'Level 5' }));
+    expect(screen.getByRole('combobox', { name: 'Filter by group' })).toHaveTextContent('All groups');
+    expect(screen.getByRole('combobox', { name: 'Filter by module' })).toHaveTextContent('All modules');
     expect(screen.getByRole('button', { name: /Other programme lecture/ })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /Introduction \(Live Teams Session\)/ })).not.toBeInTheDocument();
   });
@@ -388,7 +414,7 @@ describe('Session recordings calendar', () => {
       expect(screen.queryByRole('button', { name: /Introduction \(Live Teams Session\)/ })).not.toBeInTheDocument();
       expect(screen.getByRole('button', { name: 'Ready to download (1)' })).toHaveAttribute('aria-pressed', 'false');
       await user.click(screen.getByRole('button', { name: 'Ended (1)' }));
-      expect(screen.getByRole('combobox', { name: 'Filter by recording status' })).toHaveValue('all');
+      expect(screen.getByRole('combobox', { name: 'Filter by recording status' })).toHaveTextContent('All recordings');
       expect(screen.getByRole('button', { name: /Introduction \(Live Teams Session\)/ })).toBeInTheDocument();
       expect(screen.getByText('1 lectures in selected day')).toBeInTheDocument();
       await user.click(screen.getByRole('button', { name: 'All lectures (2)' }));
@@ -424,7 +450,8 @@ describe('Session recordings calendar', () => {
       expect(screen.getByRole('button', { name: /Cleaning \(Live Teams Session\)/ })).toBeInTheDocument();
       expect(screen.getByText('2 lectures in selected day')).toBeInTheDocument();
       expect(screen.getByRole('button', { name: 'Ready to download (1)' })).toHaveAttribute('aria-pressed', 'false');
-      await user.selectOptions(screen.getByRole('combobox', { name: 'Filter by recording status' }), 'ready');
+      await user.click(screen.getByRole('combobox', { name: 'Filter by recording status' }));
+      await user.click(screen.getByRole('option', { name: 'Ready to download' }));
       expect(screen.getByRole('button', { name: 'Ended (2)' })).toHaveAttribute('aria-pressed', 'false');
       expect(screen.queryByRole('button', { name: /Cleaning \(Live Teams Session\)/ })).not.toBeInTheDocument();
     } finally { clock.mockRestore(); }
@@ -456,10 +483,11 @@ describe('Session recordings calendar', () => {
     ] });
     await renderPage();
     await user.type(screen.getByRole('textbox', { name: 'Search lectures by title' }), 'Intro');
-    await user.selectOptions(screen.getByRole('combobox', { name: 'Search date scope' }), 'all');
+    await user.click(screen.getByRole('combobox', { name: 'Search date scope' }));
+    await user.click(screen.getByRole('option', { name: 'All dates' }));
     expect(screen.getByRole('button', { name: /Intro on another day/ })).toBeInTheDocument();
     await user.click(within(screen.getByRole('complementary', { name: 'Choose lecture date' })).getByRole('button', { name: `Select ${date}` }));
-    expect(screen.getByRole('combobox', { name: 'Search date scope' })).toHaveValue('period');
+    expect(screen.getByRole('combobox', { name: 'Search date scope' })).toHaveTextContent('Selected day');
     expect(screen.getByRole('button', { name: 'All lectures (1)' })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /Intro on another day/ })).not.toBeInTheDocument();
   });

@@ -1,5 +1,6 @@
 """Run directly with Python. One module's sessions, read fresh; real builders, in-memory rows, no Django."""
 import ast
+import sys
 import unittest
 from datetime import date
 from pathlib import Path
@@ -35,7 +36,13 @@ class ModuleScopedSessionTests(unittest.TestCase):
             {'moduleCatalogueId': 'LEGACY-1', 'moduleId': 'LEGACY-1', 'title': 'legacy'},
             {'moduleCatalogueId': 'MOD-9', 'moduleId': 'MOD-9', 'title': 'other'},
         ])
+        self.calendar = Mock(return_value={'results': [{'id': 'calendar-session'}]})
+        calendar_module = SimpleNamespace(calendar_sessions=self.calendar)
+        module_patch = patch.dict(sys.modules, {'curriculum_api.delivery_dashboard': calendar_module})
+        module_patch.start()
+        self.addCleanup(module_patch.stop)
         self.n = dict(
+            __package__='curriculum_api', __name__='curriculum_api.views',
             date=date, SimpleNamespace=SimpleNamespace, require_GET=lambda view: view,
             AUTHORING_MODULES_TABLE='modules', COHORT_AUTHORING_DETAILS_TABLE='cohorts', GROUPS_TABLE='groups',
             authoring_fetch_all=self.fetch, get_holiday_rows_safe=lambda: self.holidays,
@@ -123,7 +130,13 @@ class ModuleScopedSessionTests(unittest.TestCase):
     def test_non_authoring_module_and_archive_view_are_answered_by_the_overview(self):
         self.assertEqual(self.get(module_catalogue_id='LEGACY-1')['results'], [self.overview.return_value[0]])
         self.assertEqual(self.get(module_catalogue_id='MOD-1', visibility='all')['results'], [])
-        self.assertEqual(self.get()['results'], self.overview.return_value)
+        self.assertEqual(self.get(visibility='all')['results'], self.overview.return_value)
+        self.calendar.assert_not_called()
+
+    def test_operational_calendar_uses_the_focused_read_instead_of_the_overview(self):
+        self.assertEqual(self.get(), {'results': [{'id': 'calendar-session'}]})
+        self.calendar.assert_called_once()
+        self.overview.assert_not_called()
 
 
 if __name__ == '__main__':

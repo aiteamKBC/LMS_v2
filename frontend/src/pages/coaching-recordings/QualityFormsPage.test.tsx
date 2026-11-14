@@ -20,10 +20,11 @@ describe('Curriculum quality form authoring', () => {
     open(); const question = await screen.findByRole('textbox', { name: 'Question text' });
     expect(question).toHaveValue('Original question');
     fireEvent.change(question, { target: { value: 'Edited question' } });
-    fireEvent.change(screen.getByRole('combobox', { name: 'Question type' }), { target: { value: 'checklist' } });
+    fireEvent.click(screen.getByRole('combobox', { name: 'Question type' }));
+    expect(screen.getByRole('option', { name: 'Upload image' })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('option', { name: 'Checklist' }));
     fireEvent.change(screen.getByRole('textbox', { name: /Options/ }), { target: { value: 'Observed\nNot observed' } });
     expect(saveQualityDefinition).not.toHaveBeenCalled();
-    expect(screen.getByRole('option', { name: 'Upload image' })).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Publish form' }));
     await screen.findByText(/Published · Form version 2/);
     expect(vi.mocked(saveQualityDefinition).mock.calls[0][0]).toMatchObject({ expectedRevision: 0, publish: true, definition: { sections: [{ criteria: [{ id: 'progress-1', text: 'Edited question', type: 'checklist', options: ['Observed', 'Not observed'] }] }] } });

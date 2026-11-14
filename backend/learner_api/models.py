@@ -26,6 +26,7 @@ from django.db.models.functions import Lower, Trim
 from system_audit.writes import AuditedQuerySet
 from config.cache_versions import VersionBumpQuerySetMixin
 from config.legacy_identity import legacy_field_alias
+from .learner_coach_columns import LearnerCoachEmailField, LearnerCoachTextField
 
 
 class SafeJSONField(models.JSONField):
@@ -51,23 +52,27 @@ LEARNER_KSBS_RELATION = '"Learner"."learner_ksbs"'
 
 
 def learner_profile_ids_for_coach_email(email, *, using=None):
-    """Resolve coach ownership through Learner.learners.coach_id."""
+    """Resolve coach ownership through the schema-aware coach alias."""
     value = str(email or '').strip().casefold()
-    if not value:
-        return []
-    using = using or router.db_for_read(LearnerProfile) or 'default'
-    with connections[using].cursor() as cursor:
-        cursor.execute(
-            '''select l.id
-                 from "Learner".learners l
-                 join curriculum.coaches c on c.id = l.coach_id
-                where lower(trim(c.email)) = %s''',
+    from old_otjh import repository
+    from .learner_coach_columns import learner_coach_sql
+
+    alias = using or repository._query_alias.get() or repository.DB
+    expression = learner_coach_sql('l', 'email', alias)
+    token = repository._query_alias.set(alias)
+    try:
+        rows = repository.query(
+            f'''SELECT l.id FROM "Learner".learners l
+                WHERE lower(trim({expression}))=%s''',
             [value],
         )
-        return [row[0] for row in cursor.fetchall()]
+    finally:
+        repository._query_alias.reset(token)
+    return [row['id'] for row in rows]
 
 
 def coach_id_for_email(email, *, using=None):
+    """Return one unambiguous Coach id without creating or guessing a row."""
     value = str(email or '').strip().casefold()
     if not value:
         return None
@@ -290,6 +295,17 @@ class PlacementGroup(models.Model):
         db_table = 'curriculum"."groups'
 
 
+class PlacementCoach(models.Model):
+    id = models.CharField(max_length=255, primary_key=True)
+    name = models.TextField()
+    email = models.EmailField(max_length=320)
+    status = models.CharField(max_length=32)
+
+    class Meta:
+        managed = False
+        db_table = 'curriculum"."coaches'
+
+
 def _learner_placement_names(record, *, by_enrolment):
     """Display labels from the canonical learner's FK relationships only."""
     from .placement_links import placement_profile
@@ -317,9 +333,8 @@ class EnrolmentUser(models.Model):
     # originally provisioned, while Last_audit stores the same value as bigint.
     aptem_id = models.TextField(db_column="aptem_id", null=True, blank=True)
 
-    # The coach assignment is kept on the enrolment source. The profile-side
-    # workspace resolves its canonical coach_id through curriculum.coaches, so
-    # the assignment survives a profile mirror rebuild.
+    # Enrolment-side contact snapshot. The coach workspace resolves the
+    # canonical Learner.learners.coach_id relationship instead.
     coach_name = models.TextField(db_column="Coach_name", null=True, blank=True)
     coach_email = models.TextField(db_column="Coach_email", null=True, blank=True)
 
@@ -482,6 +497,27 @@ class EnrolmentUser(models.Model):
         super().refresh_from_db(*args, **kwargs)
         self.__dict__.pop('_educational_placement', None)
         self.__dict__.pop('_placement_names', None)
+        self.__dict__.pop('_learner_coach_name', None)
+        self.__dict__.pop('_learner_coach_email', None)
+        self.__dict__.pop('_legacy_learning_plan', None)
+
+    @property
+    def learning_plan(self):
+        """Compatibility read from the enrolment source, never a profile column."""
+        if hasattr(self, '_legacy_learning_plan'):
+            return self._legacy_learning_plan
+        if not self.enrolment_id:
+            return None
+        try:
+            return EnrolmentUser.all_learners.filter(pk=self.enrolment_id).values_list(
+                'learning_plan', flat=True,
+            ).first()
+        except DatabaseError:
+            return None
+
+    @learning_plan.setter
+    def learning_plan(self, value):
+        self._legacy_learning_plan = value
 
     @cached_property
     def _placement_names(self):
@@ -646,9 +682,57 @@ class StaffUser(models.Model):
 class LearnerProfileQuerySet(VersionBumpQuerySetMixin, AuditedQuerySet):
     """Bulk writes retire the linked learners' cached subject rows."""
 
+    COACH_ALIASES = frozenset({"coach_name", "coach_email"})
+
+    def only(self, *fields):
+        # Query aliases are always selected by LearnerProfileManager below;
+        # remove them from Django's concrete-field mask.
+        concrete = tuple(field for field in fields if field not in self.COACH_ALIASES)
+        return super().only(*(concrete or ("coach_id",)))
+
+    def update(self, **kwargs):
+        unsupported = self.COACH_ALIASES.intersection(kwargs)
+        if unsupported:
+            names = ", ".join(sorted(unsupported))
+            raise ValueError(f"{names} are read-only; update coach_id instead.")
+        return super().update(**kwargs)
+
+    def bulk_update(self, objs, fields, batch_size=None):
+        unsupported = self.COACH_ALIASES.intersection(fields)
+        if unsupported:
+            names = ", ".join(sorted(unsupported))
+            raise ValueError(f"{names} are read-only; update coach_id instead.")
+        return super().bulk_update(objs, fields, batch_size=batch_size)
+
+
+class LearnerProfileManager(models.Manager.from_queryset(LearnerProfileQuerySet)):
+    def get_queryset(self):
+        # Preserve the historical object attributes with two fixed canonical
+        # expressions. This is the same bounded query shape as before, never a
+        # relation lookup per learner.
+        return super().get_queryset().annotate(
+            _learner_coach_name=models.F("coach_name"),
+            _learner_coach_email=models.F("coach_email"),
+        )
+
 
 class LearnerPlanModuleQuerySet(VersionBumpQuerySetMixin, AuditedQuerySet):
     """Bulk writes (the mirror rebuild) retire the learner's cached subject rows."""
+
+
+class LearnerPlanModuleManager(models.Manager.from_queryset(LearnerPlanModuleQuerySet)):
+    def get_queryset(self):
+        return super().get_queryset().select_related("curriculum_module")
+
+
+class LearnerPlanWeekManager(models.Manager):
+    def get_queryset(self):
+        return super().get_queryset().select_related("curriculum_week")
+
+
+class LearnerPlanComponentManager(models.Manager):
+    def get_queryset(self):
+        return super().get_queryset().select_related("curriculum_component")
 
 
 class LearnerProfile(models.Model):
@@ -697,10 +781,6 @@ class LearnerProfile(models.Model):
     # for profiles whose enrolment record has since been deleted.
     enrolment_id = models.BigIntegerField(null=True, blank=True, db_index=True)
 
-    # Canonical assignment to curriculum.coaches. Display details are
-    # resolved from that table rather than duplicated on Learner.learners.
-    coach_id = models.CharField(max_length=128, null=True, blank=True, db_index=True)
-
     # Legacy profile fallback for the external Aptem identity.  Newer records
     # carry the same value on enrolment."Created_users"; readers must prefer
     # that stable enrolment bridge and only use this column when the enrolment
@@ -733,6 +813,16 @@ class LearnerProfile(models.Model):
     progress_hours = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
     progress_variance = models.DecimalField(max_digits=10, decimal_places=4, null=True, blank=True)
     otjh_status = models.CharField(max_length=50, blank=True)
+    # Read through coach_id -> curriculum.coaches on the canonical schema (which
+    # has no copied coach columns), and as the copied columns on the legacy one.
+    # See learner_coach_columns; these display aliases are read-only.
+    coach_record = PlacementForeignKey(
+        PlacementCoach, db_column='coach_id', on_delete=models.PROTECT,
+        related_name='+', null=True, blank=True,
+    )
+    coach_name = LearnerCoachTextField(blank=True)
+    coach_email = LearnerCoachEmailField(max_length=320, blank=True)
+
     # What a coach has actually decided about this learner's work. Recomputed
     # from Learner.learning_reflection_submissions after every marking decision
     # (learner_api.marking_tally) rather than incremented, so a changed decision
@@ -742,6 +832,9 @@ class LearnerProfile(models.Model):
     accepted_reflections = models.IntegerField(default=0)
     rejected_reflections = models.IntegerField(default=0)
 
+    # The assigned plan is normalized below through plan_modules -> weeks ->
+    # components. Do not add a JSON field here: the physical learners table
+    # deliberately has no learning_plan column.
     # Programme and individual learner dates are distinct physical date columns.
     learner_start_date = models.DateField(null=True, blank=True)
     learner_end_date = models.DateField(null=True, blank=True)
@@ -757,21 +850,23 @@ class LearnerProfile(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
-    objects = models.Manager.from_queryset(LearnerProfileQuerySet)()
+    objects = LearnerProfileManager()
 
     def __init__(self, *args, **kwargs):
-        # Keep profile-shaped test doubles and legacy adapters readable without
-        # mapping columns that no longer exist in Learner.learners.
-        legacy = {
-            key: kwargs.pop(key, None)
-            for key in ('coach_name', 'coach_email', 'learning_plan')
-            if key in kwargs
-        }
+        # Keep the old source-shaped constructor usable for test doubles and
+        # adapters without mapping learning_plan onto the Learner table.
+        has_legacy_plan = 'learning_plan' in kwargs
+        legacy_plan = kwargs.pop('learning_plan', None) if has_legacy_plan else None
         super().__init__(*args, **kwargs)
-        for key, value in legacy.items():
-            setattr(self, f'_legacy_{key}', value)
+        if has_legacy_plan:
+            self._legacy_learning_plan = legacy_plan
 
     def save(self, *args, **kwargs):
+        update_fields = set(kwargs.get("update_fields") or ())
+        unsupported = LearnerProfileQuerySet.COACH_ALIASES.intersection(update_fields)
+        if unsupported:
+            names = ", ".join(sorted(unsupported))
+            raise ValueError(f"{names} are read-only; update coach_id instead.")
         self.__dict__.pop('_placement_names', None)
         return super().save(*args, **kwargs)
 
@@ -779,61 +874,6 @@ class LearnerProfile(models.Model):
         super().refresh_from_db(*args, **kwargs)
         self.__dict__.pop('_educational_placement', None)
         self.__dict__.pop('_placement_names', None)
-        for key in ('coach_name', 'coach_email', 'learning_plan'):
-            self.__dict__.pop(f'_legacy_{key}', None)
-
-    def _canonical_coach_contact(self):
-        if hasattr(self, '_legacy_coach_name') or hasattr(self, '_legacy_coach_email'):
-            return (
-                getattr(self, '_legacy_coach_name', '') or '',
-                getattr(self, '_legacy_coach_email', '') or '',
-            )
-        if not self.coach_id:
-            return '', ''
-        alias = self._state.db or 'default'
-        try:
-            with connections[alias].cursor() as cursor:
-                cursor.execute(
-                    'select name, email from curriculum.coaches where id = %s',
-                    [self.coach_id],
-                )
-                row = cursor.fetchone()
-        except DatabaseError:
-            return '', ''
-        return (row[0] or '', row[1] or '') if row else ('', '')
-
-    @property
-    def coach_name(self):
-        return self._canonical_coach_contact()[0]
-
-    @coach_name.setter
-    def coach_name(self, value):
-        self._legacy_coach_name = value or ''
-
-    @property
-    def coach_email(self):
-        return self._canonical_coach_contact()[1]
-
-    @coach_email.setter
-    def coach_email(self, value):
-        self._legacy_coach_email = value or ''
-
-    @property
-    def learning_plan(self):
-        if hasattr(self, '_legacy_learning_plan'):
-            return self._legacy_learning_plan
-        if not self.enrolment_id:
-            return None
-        try:
-            return EnrolmentUser.all_learners.filter(pk=self.enrolment_id).values_list(
-                'learning_plan', flat=True,
-            ).first()
-        except DatabaseError:
-            return None
-
-    @learning_plan.setter
-    def learning_plan(self, value):
-        self._legacy_learning_plan = value
 
     @cached_property
     def _placement_names(self):
@@ -898,19 +938,19 @@ class LearnerProfile(models.Model):
                 for item in assignment.profile_version.definitions.all()
             ]
 
-        # Compatibility fallback while existing environments are migrated.
-        try:
-            return [
-                {
-                    "code": item.code,
-                    "number": item.number,
-                    "type": item.ksb_type,
-                    "description": item.description,
-                }
-                for item in self.assigned_ksbs.all()
-            ]
-        except DatabaseError:
-            return []
+        # The retained Development snapshot has a different physical and
+        # semantic shape from the retired LearnerKsb ORM model.  Read it through
+        # the narrow adapter so missing rows remain [] while database failures
+        # stay visible to the endpoint instead of being disguised as no KSBs.
+        from .legacy_ksbs import read_legacy_learner_ksbs
+
+        cache_name = "_legacy_ksbs_cache"
+        if cache_name not in self.__dict__:
+            self.__dict__[cache_name] = read_legacy_learner_ksbs(
+                self.pk,
+                using=self._state.db or "enrolment",
+            )
+        return self.__dict__[cache_name]
 
     @property
     def training_plan(self):
@@ -1186,10 +1226,29 @@ class LearnerKsbAssignment(models.Model):
 class LearnerTrainingPlanModule(models.Model):
     learner = models.ForeignKey(LearnerProfile, on_delete=models.CASCADE, related_name="plan_modules")
     position = models.PositiveIntegerField()
-    module_ref = models.TextField(null=True, blank=True)
-    module_title = models.TextField(blank=True)
+    curriculum_module = models.ForeignKey(
+        "curriculum_api.ModuleAuthoringModule",
+        db_column="curriculum_module_id",
+        on_delete=models.PROTECT,
+        related_name="learner_plan_assignments",
+        null=True,
+        blank=True,
+    )
 
-    objects = models.Manager.from_queryset(LearnerPlanModuleQuerySet)()
+    objects = LearnerPlanModuleManager()
+
+    @property
+    def module_ref(self):
+        return self.curriculum_module_id
+
+    @module_ref.setter
+    def module_ref(self, value):
+        self.curriculum_module_id = value
+
+    @property
+    def module_title(self):
+        module = self.curriculum_module
+        return module.title if module is not None else ""
 
     @classmethod
     def cache_version_fields(cls):
@@ -1218,8 +1277,27 @@ class LearnerTrainingPlanWeek(models.Model):
         related_name="weeks",
     )
     position = models.PositiveIntegerField()
-    week_ref = models.TextField(null=True, blank=True)
-    week_title = models.TextField(blank=True)
+    curriculum_week = models.ForeignKey(
+        "curriculum_api.ModuleAuthoringWeek",
+        db_column="curriculum_week_id",
+        on_delete=models.PROTECT,
+        related_name="learner_plan_assignments",
+    )
+
+    objects = LearnerPlanWeekManager()
+
+    @property
+    def week_ref(self):
+        return self.curriculum_week_id
+
+    @week_ref.setter
+    def week_ref(self, value):
+        self.curriculum_week_id = value
+
+    @property
+    def week_title(self):
+        week = self.curriculum_week
+        return week.title if week is not None else ""
 
     class Meta:
         managed = False
@@ -1234,8 +1312,29 @@ class LearnerTrainingPlanComponent(models.Model):
         related_name="components",
     )
     position = models.PositiveIntegerField()
-    component_ref = models.TextField(null=True, blank=True)
-    component_title = models.TextField(blank=True)
+    curriculum_component = models.ForeignKey(
+        "curriculum_api.ModuleAuthoringComponent",
+        db_column="curriculum_component_id",
+        on_delete=models.PROTECT,
+        related_name="learner_plan_assignments",
+        null=True,
+        blank=True,
+    )
+
+    objects = LearnerPlanComponentManager()
+
+    @property
+    def component_ref(self):
+        return self.curriculum_component_id
+
+    @component_ref.setter
+    def component_ref(self, value):
+        self.curriculum_component_id = value
+
+    @property
+    def component_title(self):
+        component = self.curriculum_component
+        return component.title if component is not None else ""
 
     class Meta:
         managed = False
@@ -1247,15 +1346,15 @@ class LearnerFreeCourse(models.Model):
     """Canonical Free Course assignment owned by ``Learner.learners``.
 
     This table, not ``Created_users.Free_courses``, is the learner-facing
-    assignment source. It deliberately carries no hours, KSBs or component
-    tree. ``free_course_title`` is retained only because it exists in the
-    schema; readers resolve the official title from
-    ``curriculum.free_courses.course_name``.
+    assignment source. It deliberately carries no title snapshot, module
+    identity, hours, KSBs or component tree; readers resolve canonical content
+    from ``curriculum.free_courses``.
+    Database migration 0026 enforces the cross-schema course relationship.
+    Assignment records do not themselves award hours.
     """
     learner = models.ForeignKey(LearnerProfile, on_delete=models.CASCADE, related_name="free_courses")
     position = models.PositiveIntegerField()
     free_course_ref = models.TextField()
-    free_course_title = models.TextField(blank=True)
 
     class Meta:
         managed = False
@@ -1268,13 +1367,15 @@ FREE_PROGRESS_INACTIVE = "inactive"
 
 
 class LearnerFreeCourseProgress(models.Model):
-    """A learner's completion of a single free-course activity.
+    """Achieved native free-course components, keyed by LearnerProfile.id.
 
     Deliberately its OWN store, separate from Training_plan_progress and the KSB
     snapshot: free-course completion is shown on the free-courses page and must
     NEVER enter OTJH totals, the KSB snapshot or the programme's overall
     progress. Ownership is the canonical ``Learner.learners`` row; the URL's
     enrolment id must be resolved before this model is queried.
+    Migration 0026 translates legacy enrolment IDs. Attempts and actual hours
+    remain in learner_progress_entries; this index never awards hours independently.
     """
     learner = models.ForeignKey(
         LearnerProfile,

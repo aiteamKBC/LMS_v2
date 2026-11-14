@@ -62,86 +62,6 @@ class LifecycleShapeTests(SimpleTestCase):
         self.assertFalse(sc.status_is_inactive('active'))
 
 
-class TranslateWriteTests(SimpleTestCase):
-    def test_legacy_shape_payload_passes_through_unchanged(self):
-        payload = {'deleted_at': None, 'programme_name': 'X', 'status': 'archived'}
-        self.assertEqual(sc.translate_write('modules', payload, LEGACY_MODULES), (payload, set()))
-
-    def test_archived_status_becomes_inactive(self):
-        translated, _ = sc.translate_write('modules', {'status': 'archived'}, NORMALISED_MODULES)
-        self.assertEqual(translated['status'], 'inactive')
-
-    def test_soft_delete_stamps_become_status(self):
-        stamped, _ = sc.translate_write('modules', {'deleted_at': '2026-01-01', 'is_programme_deleted': True},
-                                        NORMALISED_MODULES)
-        self.assertEqual(stamped['status'], 'inactive')
-        restored, _ = sc.translate_write('modules', {'deleted_at': None, 'is_programme_deleted': False},
-                                         NORMALISED_MODULES)
-        self.assertEqual(restored['status'], 'active')
-
-    def test_an_ordinary_save_does_not_invent_a_status(self):
-        translated, _ = sc.translate_write('modules', {'title': 'Module A'}, NORMALISED_MODULES)
-        self.assertNotIn('status', translated)
-
-    def test_staff_names_are_left_for_curriculum_names(self):
-        # The chosen tutor/coach is written as its id by curriculum_names.store_staff
-        # (test_curriculum_names_no_db); the bridge no longer touches it.
-        translated, nullable = sc.translate_write('modules', {'tutor_name': 'Tutor'}, NORMALISED_MODULES)
-        self.assertNotIn('tutor_id', translated)
-        self.assertEqual(nullable, set())
-
-    def test_library_detach_is_refused_not_half_applied(self):
-        with self.assertRaises(sc.UnsupportedOnNormalisedSchema):
-            sc.translate_write('weeks', {'library_state': 'library', 'module_catalogue_id': ''}, NORMALISED['weeks'])
-
-    def test_ksb_mapping_resolves_standard_ksb_id(self):
-        with mock.patch.object(sc, 'standard_ksb_id_for', return_value=42) as resolve:
-            translated, _ = sc.translate_write('ksb_mappings', {'ksb_id': 'st0845-v1-1-181', 'ksb_code': 'K2',
-                                                                'module_catalogue_id': 'MOD-1'}, NORMALISED_KSB)
-        # The mapping's own source rides along: it picks the standard first.
-        resolve.assert_called_once_with('st0845-v1-1-181', 'K2', module_catalogue_id='MOD-1', source_type='', source_id='')
-        self.assertEqual(translated['standard_ksb_id'], 42)
-
-    def test_display_status_is_not_written_to_an_archive_flag_column(self):
-        # groups/modules CHECK status in ('active', 'inactive') on the new schema:
-        # a cohort-derived 'planned' or a builder 'draft' was refused (500).
-        for table, value in (('groups', 'planned'), ('modules', 'draft'), ('modules', 'published'), ('weeks', 'draft')):
-            translated, _ = sc.translate_write(table, {'status': value, 'title': 'T'}, NORMALISED[table])
-            self.assertNotIn('status', translated, (table, value))
-            self.assertEqual(translated['title'], 'T')
-        translated, _ = sc.translate_write('groups', {'status': 'Active'}, NORMALISED['groups'])
-        self.assertEqual(translated['status'], 'active')
-        translated, _ = sc.translate_write('groups', {'status': 'archived'}, NORMALISED['groups'])
-        self.assertEqual(translated['status'], 'inactive')
-
-    def test_cohorts_keep_their_own_status_values(self):
-        cohorts = {'cohort_id', 'cohort_name', 'programme_id', 'status', 'updated_at'}
-        translated, _ = sc.translate_write('cohorts', {'status': 'planned'}, cohorts)
-        self.assertEqual(translated['status'], 'planned')
-
-    def test_blank_foreign_keys_are_stored_as_null(self):
-        translated, nullable = sc.translate_write(
-            'modules', {'group_id': '', 'cohort_id': '  ', 'programme_id': 'PROG-1'}, NORMALISED_MODULES)
-        self.assertIsNone(translated['group_id'])
-        self.assertIsNone(translated['cohort_id'])
-        self.assertEqual(translated['programme_id'], 'PROG-1')
-        self.assertTrue({'group_id', 'cohort_id'} <= nullable)
-
-    def test_blank_required_foreign_key_leaves_the_stored_link_alone(self):
-        translated, nullable = sc.translate_write('components', {'week_id': '', 'title': 'T'}, NORMALISED['components'])
-        self.assertNotIn('week_id', translated)
-        self.assertNotIn('week_id', nullable)
-
-    def test_legacy_shape_keeps_blank_strings(self):
-        payload = {'group_id': '', 'status': 'draft'}
-        self.assertEqual(sc.translate_write('modules', payload, LEGACY_MODULES), (payload, set()))
-
-    def test_only_derived_copy_detects_name_refresh(self):
-        self.assertTrue(sc.only_derived_copy('modules', {'programme_name': 'New', 'updated_at': 'now'}, NORMALISED_MODULES))
-        self.assertFalse(sc.only_derived_copy('modules', {'programme_name': 'New', 'title': 'T'}, NORMALISED_MODULES))
-        self.assertFalse(sc.only_derived_copy('modules', {'programme_name': 'New'}, LEGACY_MODULES))
-
-
 class ReadRelationTests(SimpleTestCase):
     def test_normal_weeks_never_infer_free_course_ownership(self):
         with PostgresVendor():
@@ -267,13 +187,6 @@ class AdaptSqlTests(SimpleTestCase):
     def test_legacy_schema_and_other_vendors_pass_through(self):
         statement = 'select * from curriculum.modules m where m.deleted_at is null'
         self.assertEqual(sc.adapt_sql(statement), statement)  # SQLite test connection
-
-    def test_write_where_rekeys_a_legacy_condition(self):
-        with PostgresVendor():
-            where = sc.write_where('modules', 'programme_id = %s and deleted_at is null', NORMALISED_MODULES)
-        self.assertTrue(where.startswith('"module_catalogue_id" in (select "module_catalogue_id" from (select'))
-        with PostgresVendor():
-            self.assertEqual(sc.write_where('modules', 'programme_id = %s', NORMALISED_MODULES), 'programme_id = %s')
 
 
 class ProjectionTests(SimpleTestCase):

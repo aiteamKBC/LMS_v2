@@ -108,6 +108,7 @@ async function finish() {
 }
 
 beforeEach(() => {
+  clearAllCachedResources();
   vi.resetAllMocks();
   vi.mocked(readWebPointPlan).mockResolvedValue({ weeks: {} });
   programmeRead.loading = false;
@@ -128,7 +129,39 @@ beforeEach(() => {
   vi.mocked(fetchEvidence).mockResolvedValue([]);
   vi.mocked(loadLearningReflectionSubmission).mockResolvedValue(null);
 });
-afterEach(() => { cleanup(); vi.restoreAllMocks(); });
+afterEach(() => { cleanup(); clearAllCachedResources(); vi.restoreAllMocks(); });
+
+it.each(['commercial', 'apprenticeship'].flatMap(kind =>
+  ['reading', 'video', 'assignment', 'live_session'].map(type => ({ kind, type })),
+))('shows only the opened $type component mappings for a $kind learner', async ({ kind, type }) => {
+  const mapped = { ...first, type, contentHtml: '<p>Synthetic lesson</p>',
+    videoUrl: 'https://example.test/lesson.mp4', assignmentBrief: 'Synthetic assignment',
+    ksbMappings: [
+      { code: 'K1', description: 'Authored knowledge', classification: 'main', weight: 20 },
+      { code: 'S2', description: null, classification: 'main', weight: 30 },
+    ],
+  };
+  vi.mocked(fetchLearnerDetail).mockResolvedValue({ ...detail(), components: [mapped,
+    { ...second, ksbMappings: [{ code: 'K99', description: 'Other activity', weight: 10, classification: 'main' }] },
+  ], ksbs: [
+    { code: 'K1', description: 'Programme description', type: 'K', number: '1' },
+    { code: 'S2', description: 'Programme skill description', type: 'S', number: '2' },
+    { code: 'B99', description: 'Unmapped programme behaviour', type: 'B', number: '99' },
+  ] } as LearnerDetail);
+  mount('C1', kind);
+  const panel = await screen.findByRole('region', { name: 'Mapped KSBs' });
+  expect(within(panel).getAllByRole('listitem')).toHaveLength(2);
+  expect(panel).toHaveTextContent('K1Authored knowledge');
+  expect(panel).toHaveTextContent('S2Programme skill description');
+  expect(panel).not.toHaveTextContent(/K99|B99|Programme description/);
+  expect(submitComponentProgress).not.toHaveBeenCalled();
+});
+
+it('does not substitute programme KSBs when the activity has no mapping', async () => {
+  mount();
+  await screen.findByRole('heading', { name: 'Live Teams Session 1' });
+  expect(screen.queryByRole('region', { name: 'Mapped KSBs' })).not.toBeInTheDocument();
+});
 
 const lectureDraft = (kind = 'apprenticeship') => ({
   id: 'R-LECTURE', status: 'draft', activityId: 'C1', activityType: 'session', learnerKind: kind, learnerId: '1',
@@ -515,11 +548,12 @@ it('does not count a failed reading preview as reading time', async () => {
   vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible');
   let now = 0;
   vi.spyOn(performance, 'now').mockImplementation(() => now);
-  vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('', { status: 404 }));
+  const request = vi.spyOn(globalThis, 'fetch').mockImplementation(async () => new Response('', { status: 404 }));
   const reading = { ...first, type: 'reading', component: 'Reading', resourceUrl: '/curriculum_api/curriculum/uploads/sample.pdf' };
   vi.mocked(fetchLearnerDetail).mockResolvedValue({ ...detail(), components: [reading] } as unknown as LearnerDetail);
   const { unmount } = mount();
   await screen.findByText('This file could not be found on the server. Please let your coach or the curriculum team know.');
+  expect(request).toHaveBeenCalledWith(expect.stringContaining('sample.pdf'), expect.anything());
   now = 60000;
   unmount();
   const saved = JSON.parse(localStorage.getItem('learner_activity_timer:v1:apprenticeship:1:C1')!);
@@ -669,6 +703,95 @@ it.each(['commercial', 'apprenticeship'])('completes a live session with the exi
     timeTakenSeconds: 300,
     timeEntrySource: 'input',
   })));
+});
+
+it.each([
+  { kind: 'commercial', reflectionRequired: false },
+  { kind: 'commercial', reflectionRequired: true },
+  { kind: 'apprenticeship', reflectionRequired: false },
+  { kind: 'apprenticeship', reflectionRequired: true },
+])('keeps previous live-session time when cancelling a time decision for $kind (reflection: $reflectionRequired)', async ({ kind, reflectionRequired }) => {
+  vi.mocked(fetchLearnerDetail).mockResolvedValue({
+    ...detail(true), components: [{ ...first, reflectionRequired }],
+  } as unknown as LearnerDetail);
+  mount('C1', kind);
+  fireEvent.click(await screen.findByRole('button', { name: 'Record another attempt' }));
+  const dialog = await screen.findByRole('dialog');
+  expect(within(dialog).getByRole('button', { name: 'Continue' })).toBeDisabled();
+  expect(dialog).toHaveTextContent('00:00:20');
+  fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+  expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  expect(screen.getByRole('status')).toHaveTextContent('00:00:20');
+  expect(submitComponentProgress).not.toHaveBeenCalled();
+
+  fireEvent.click(screen.getByRole('button', { name: 'Record another attempt' }));
+  const nextAttempt = await screen.findByRole('dialog');
+  expect(within(nextAttempt).getAllByRole('radio').every(radio => !(radio as HTMLInputElement).checked)).toBe(true);
+  expect(within(nextAttempt).getByRole('button', { name: 'Continue' })).toBeDisabled();
+});
+
+it.each(['commercial', 'apprenticeship'])('hides retakes after verified Teams attendance for %s Live Teams sessions', async kind => {
+  const attended = { ...first, attendanceCompleted: true };
+  vi.mocked(fetchLearnerDetail).mockResolvedValue({
+    ...detail(true), components: [attended, empty, second],
+  } as unknown as LearnerDetail);
+  mount('C1', kind);
+  expect(await screen.findByText('Completed')).toBeVisible();
+  expect(screen.queryByRole('button', { name: 'Record another attempt' })).not.toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'Manage reflection time' })).toBeVisible();
+  expect(screen.getByRole('button', { name: 'Add lecture reflection' })).toBeVisible();
+});
+
+it.each(['commercial', 'apprenticeship'])('limits Live Session retakes using credited time for %s learners', async kind => {
+  const cases = [
+    { type: 'live_session', time: { timeTaken: '02:29:59' }, hidden: false },
+    { type: 'live_session', time: { timeTaken: null, reportedTime: '150 minutes', timeTrackingSource: 'verified_recording_watch' }, hidden: true },
+    { type: 'live_session', time: { timeTaken: '150:00' }, hidden: true },
+    { type: 'live_session', time: { claimedSeconds: 9000, timeTrackingSource: 'signed:input' }, hidden: true },
+    { type: 'live_session', time: { timeTaken: '03:00:00' }, hidden: true },
+    { type: 'reading', time: { timeTaken: '02:30:00' }, hidden: false },
+  ];
+  for (const { type, time, hidden } of cases) {
+    vi.mocked(fetchLearnerDetail).mockResolvedValue({
+      ...detail(true), components: [{ ...first, type, contentHtml: '<p>Synthetic learning material</p>' }],
+      componentProgress: [{ ...progress, ...time }],
+    } as unknown as LearnerDetail);
+    mount('C1', kind);
+    expect(await screen.findByText('Completed')).toBeVisible();
+    const retake = screen.queryByRole('button', { name: 'Record another attempt' });
+    if (hidden) expect(retake).not.toBeInTheDocument();
+    else expect(retake).toBeVisible();
+    if (type === 'live_session') {
+      expect(screen.getByRole('button', { name: 'Manage reflection time' })).toBeVisible();
+      expect(screen.getByRole('button', { name: 'Add lecture reflection' })).toBeVisible();
+    }
+    expect(submitComponentProgress).not.toHaveBeenCalled();
+    cleanup();
+  }
+});
+
+it.each(['commercial', 'apprenticeship'])('uses the fixed Live Session credit after manual completion and reopening for %s', async kind => {
+  vi.mocked(readLearnerAttendanceMode).mockResolvedValue('lazy');
+  const credited = { ...detail(true), componentProgress: [{ ...progress,
+    componentType: 'live_session', reportedTime: '150 minutes', timeTaken: null,
+    claimedSeconds: null, timeTrackingSource: 'completed_live_session', retakeTimeChoice: 'correct',
+  }] } as unknown as LearnerDetail;
+  vi.mocked(fetchLearnerDetail).mockResolvedValueOnce(detail()).mockResolvedValue(credited);
+  vi.mocked(submitComponentProgress).mockResolvedValue({ record: { ...progress,
+    timeTaken: '120:00', countedSeconds: 7200,
+  } } as unknown as ComponentProgressResponse);
+  const view = mount('C1', kind);
+  await finish();
+  await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('02:30:00'));
+  expect(screen.queryByRole('button', { name: 'Record another attempt' })).not.toBeInTheDocument();
+  expect(submitComponentProgress).toHaveBeenCalledTimes(1);
+  view.unmount();
+  mount('C1', kind);
+  expect(await screen.findByText('Completed')).toBeVisible();
+  expect(screen.getByRole('status')).toHaveTextContent('02:30:00');
+  expect(screen.queryByRole('button', { name: 'Record another attempt' })).not.toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'Manage reflection time' })).toBeVisible();
+  expect(screen.getByRole('button', { name: 'Add lecture reflection' })).toBeVisible();
 });
 
 it('keeps an inaccessible live session behind the existing access gate', async () => {

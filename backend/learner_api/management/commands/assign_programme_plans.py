@@ -9,8 +9,8 @@ own "My learning" page reads.
 
 The saved plan is hydrated first (``active_users.hydrate_training_plan``), so it
 carries the authored weeks and components rather than a bare module list, and
-then mirrored out by ``learning_plan.sync_learning_plan_mirror`` to the
-normalized learner plan rows and the legacy title columns.
+then projected by ``learning_plan.sync_learning_plan_mirror`` to the normalized
+learner training-plan relations.
 
 Only learners with **no** plan are touched. A learner whose plan somebody has
 already tailored is left exactly as it is: overwriting a deliberate selection

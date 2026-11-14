@@ -10,7 +10,7 @@ from django.db import connection
 from contextlib import ExitStack
 from hashlib import sha256
 
-from coach_api import views
+from coach_api import review_sources, views
 from coach_api.models import CoachCalendarEvent, ImportedReviewInstance, MigratedReviewDocument, MigratedReviewSignature
 from coach_api.review_sources import (
     ReviewIdentityConflict, apply_imported_state, imported_identity, linked_booking,
@@ -103,10 +103,19 @@ class ReviewSourceSeparationTests(SimpleTestCase):
     @patch("learner_api.models.LearnerProfile")
     def test_missing_enrolment_link_uses_unique_aptem_id_without_email_or_writes(self, model):
         person = profile(); person.enrolment_id = None
-        model.objects.filter.side_effect = [[], [person]]
+        profiles = model.objects.all.return_value
+        profiles.filter.side_effect = [[], [person]]
         self.assertIs(review_profile_for_source(source()), person)
-        self.assertEqual(model.objects.filter.call_args.kwargs, {"aptem_id": 6301})
+        model.objects.all.assert_called_once_with()
+        self.assertEqual(profiles.filter.call_args.kwargs, {"aptem_id": 6301})
         model.objects.update.assert_not_called()
+
+    def test_review_profile_query_does_not_select_removed_learning_plan_mirror(self):
+        with patch("learner_api.learner_coach_columns.learner_coach_keyed", return_value=True):
+            sql, _ = (review_sources._review_profile_queryset()
+                      .filter(enrolment_id=121)[:2].query.sql_with_params())
+        self.assertNotIn('"Learner"."learners"."learning_plan"', sql)
+        self.assertIn('"Learner"."learners"."enrolment_id"', sql)
 
     def test_same_email_does_not_override_true_aptem_conflict(self):
         person, enrolment = profile(6333), source(6301)

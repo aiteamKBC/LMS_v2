@@ -1,4 +1,5 @@
 """Learner-scoped view over the historical Last_audit activity mirror."""
+from curriculum_api.learning_storage import read_sql
 
 import json
 import re
@@ -47,7 +48,7 @@ ASSIGNED_SUBJECTS_SQL = '''
             CASE WHEN jsonb_typeof(plan)='array' THEN plan ELSE '[]'::jsonb END
         ) entry
         UNION
-        SELECT coalesce(m.curriculum_module_id,nullif(m.module_ref,'')) FROM source
+        SELECT m.curriculum_module_id FROM source
         JOIN "Learner".learners l ON l.enrolment_id=source.id
         JOIN "Learner".learner_training_plan_modules m ON m.learner_id=l.id
         WHERE jsonb_typeof(source.plan) IS DISTINCT FROM 'array'
@@ -786,11 +787,11 @@ def _effective_current_subjects(cursor, learner_id):
     module_ids = _effective_plan_ids(learner, {})
     if not module_ids:
         return []
-    cursor.execute('''
+    cursor.execute(read_sql('''
         SELECT module_catalogue_id,title
         FROM curriculum.modules
         WHERE module_catalogue_id=ANY(%s)
-    ''', [module_ids])
+    ''', cursor.db), [module_ids])
     titles = {module_id: title for module_id, title in cursor.fetchall()}
     return [
         {'id': module_id, 'title': titles[module_id]}

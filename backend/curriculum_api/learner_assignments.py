@@ -13,7 +13,7 @@ from learner_api import learning_plan as plans
 from learner_api.placement_links import with_placements, placement_ids, RELATIONS, CACHE
 from learner_api.active_users import hydrate_training_plan
 from learner_api.mappers import get_training_plan, stored_training_plan, training_plan_field
-from learner_api.models import EnrolmentUser, LearnerProfile, LearnerTrainingPlanModule
+from learner_api.models import EnrolmentUser, LearnerProfile
 
 logger = logging.getLogger(__name__)
 
@@ -266,25 +266,19 @@ def module_learner_assignments(request, identifier):
 def module_assignment_roster(module_id, placement_learners, lifecycle_status=''):
     """Include direct module membership without broadening programme/cohort rosters."""
     placed = {str(row['id']): row for row in placement_learners}
-    direct_ids = LearnerTrainingPlanModule.objects.filter(
-        module_ref=module_id,
-    ).values_list('learner_id', flat=True)
     profiles = LearnerProfile.objects.select_related(*RELATIONS).filter(
-        Q(pk__in=list(placed)) | Q(pk__in=direct_ids)
-    )
+        Q(pk__in=list(placed)) | Q(plan_modules__curriculum_module_id=module_id)
+    ).prefetch_related('plan_modules').distinct()
     if lifecycle_status:
         profiles = profiles.filter(lifecycle_status__iexact=lifecycle_status)
     result = dict(placed)
     for profile in profiles:
-        plan = profile.learning_plan
-        if isinstance(plan, str):
-            try:
-                plan = json.loads(plan)
-            except ValueError:
-                plan = None
-        entries = [entry for entry in plan if isinstance(entry, dict)] if isinstance(plan, list) else []
-        explicit = any(entry.get('assignmentMode') == 'explicit' for entry in entries)
-        assigned = any(str(entry.get('moduleId')) == module_id for entry in entries)
+        module_refs = {
+            str(module.module_ref) for module in profile.plan_modules.all()
+            if module.module_ref
+        }
+        explicit = bool(module_refs)
+        assigned = module_id in module_refs
         key = str(profile.pk)
         if explicit and not assigned:
             result.pop(key, None)
