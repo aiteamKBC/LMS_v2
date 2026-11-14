@@ -72,11 +72,10 @@ function calendarICSEvent(event: CalendarEvent): ICSEvent {
  * coach session (the primary action) moves in here so the toolbar stays a
  * single row instead of a stack of equally-loud buttons. */
 function CalendarMoreMenu({
-  connectedCount, notificationsEnabled, onCreateEvent, onConnectCalendar, onShare, onNotifications, onExportAll,
+  connectedCount, notificationsEnabled, onConnectCalendar, onShare, onNotifications, onExportAll,
 }: {
   connectedCount: number;
   notificationsEnabled: boolean;
-  onCreateEvent: () => void;
   onConnectCalendar: () => void;
   onShare: () => void;
   onNotifications: () => void;
@@ -94,7 +93,6 @@ function CalendarMoreMenu({
   }, []);
 
   const items: { label: string; icon: string; onClick: () => void }[] = [
-    { label: 'Create Event', icon: 'ri-add-line', onClick: onCreateEvent },
     { label: connectedCount > 0 ? `${connectedCount} calendar${connectedCount === 1 ? '' : 's'} connected` : 'Connect Personal Calendar', icon: connectedCount > 0 ? 'ri-calendar-check-line' : 'ri-calendar-2-line', onClick: onConnectCalendar },
     { label: 'Share Calendar', icon: 'ri-share-line', onClick: onShare },
     { label: notificationsEnabled ? 'Notifications enabled' : 'Set up Notifications', icon: 'ri-notification-3-line', onClick: onNotifications },
@@ -398,28 +396,6 @@ function getEventTimeRange(time: string): { start: number; end: number } {
   return { start: (startH || 0) * 60 + (startM || 0), end: (endH || 0) * 60 + (endM || 0) };
 }
 
-function hasConflict(events: CalendarEvent[], newEvent: CalendarEvent): CalendarEvent | null {
-  const newRange = getEventTimeRange(newEvent.time);
-  const newDate = parseEventDate(newEvent);
-  if (!newDate) return null;
-  for (const ev of events) {
-    if (ev.id === newEvent.id) continue;
-    const evDate = parseEventDate(ev);
-    if (!evDate || evDate.day !== newDate.day || evDate.month !== newDate.month) continue;
-    if (evDate.year !== null && newDate.year !== null && evDate.year !== newDate.year) continue;
-    const evRange = getEventTimeRange(ev.time);
-    if (newRange.start < evRange.end && newRange.end > evRange.start) return ev;
-  }
-  return null;
-}
-
-const RECURRENCE_OPTIONS = [
-  { value: 'none', label: 'No repeat' },
-  { value: 'weekly', label: 'Weekly' },
-  { value: 'biweekly', label: 'Bi-weekly' },
-  { value: 'monthly', label: 'Monthly' },
-];
-
 function requestNotificationPermission(): Promise<'default' | 'granted' | 'denied'> {
   if (!('Notification' in window)) return Promise.resolve('denied' as const);
   return Notification.requestPermission();
@@ -633,23 +609,12 @@ function LearnerCalendarBody() {
     !showEventDetails?.bookingOnly && showEventDetails?.reviewTemplateId && showEventDetails.source !== 'live-session'
       ? showEventDetails.eventKey || showEventDetails.id
       : '');
-  const [showCreateModal, setShowCreateModal] = useState(false);
   const [showDayDrawer, setShowDayDrawer] = useState(false);
-  const [customTitle, setCustomTitle] = useState('');
-  const [customDate, setCustomDate] = useState(() => todayISO());
-  const [customStartTime, setCustomStartTime] = useState('14:00');
-  const [customEndTime, setCustomEndTime] = useState('15:00');
-  const [customReminder, setCustomReminder] = useState('15');
-  const [customLocation, setCustomLocation] = useState('');
-  const [customDescription, setCustomDescription] = useState('');
-  const [customColor, setCustomColor] = useState('sky');
   const [notificationPermission, setNotificationPermission] = useState<'default' | 'granted' | 'denied'>('default');
   const [showNotificationSettings, setShowNotificationSettings] = useState(false);
   const [showShareCalendar, setShowShareCalendar] = useState(false);
   const [publicFeedUrl, setPublicFeedUrl] = useState<string | null>(null);
   const [feedCopied, setFeedCopied] = useState(false);
-  const [customRecurrence, setCustomRecurrence] = useState('none');
-  const [conflictEvent, setConflictEvent] = useState<CalendarEvent | null>(null);
   const [showBookModal, setShowBookModal] = useState(false);
   const [rescheduleEvent, setRescheduleEvent] = useState<CalendarEvent | null>(null);
   const [bookingSourceEvent, setBookingSourceEvent] = useState<CalendarEvent | null>(null);
@@ -682,7 +647,6 @@ function LearnerCalendarBody() {
   const aptemBooking = Boolean(rescheduleEvent?.bookingReviewId || rescheduleEvent?.importedReview
     || bookingSourceEvent?.bookingReviewId || bookingSourceEvent?.importedReview);
   const reviewSlotBooking = ['mcr', 'progress-review', 'review'].includes(bookType);
-  const timersRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
   const handledFocusEventRef = useRef<string | null>(null);
 
   const today = new Date();
@@ -1086,13 +1050,10 @@ function LearnerCalendarBody() {
     fetchLearnerCalendarEvents(myLearner.kind, myLearner.id, { revalidate: true })
       .then((res) => {
         if (cancelled || writeVersion !== calendarWriteVersionRef.current) return;
-        const mapEvents = (rows: LearnerCalendarEvent[]) => rows.map(mapCoachEvent).filter((event): event is CalendarEvent => event !== null);
-        setMyEvents(prev => [...mapEvents(res.events), ...prev.filter(event => event.id.startsWith('custom-'))]);
+        const events = res.events.map(mapCoachEvent).filter((event): event is CalendarEvent => event !== null);
+        setMyEvents(events);
         setCalendarLoading(false);
-        const events = mapEvents(res.events);
         setBookingCalendar(res.bookingCalendar || null);
-        // Keep locally-created personal events; replace the DB-backed ones.
-        setMyEvents((prev) => [...events, ...prev.filter((ev) => ev.id.startsWith('custom-'))]);
         setCalendarError(null);
       })
       .catch((err: Error) => {
@@ -1358,17 +1319,6 @@ function LearnerCalendarBody() {
   const handleNext = () => movePeriod(1);
   const handleToday = () => { setShowDayDrawer(false); setViewYear(today.getFullYear()); setViewMonth(today.getMonth()); setSelectedDay(today.getDate()); };
 
-  const handleRemoveFromCalendar = (eventId: string) => {
-    const ev = myEvents.find((e) => e.id === eventId);
-    setMyEvents((prev) => prev.filter((e) => e.id !== eventId));
-    if (timersRef.current[eventId]) { clearTimeout(timersRef.current[eventId]); delete timersRef.current[eventId]; }
-    const scheduled = JSON.parse(localStorage.getItem('calendarNotifications') || '[]');
-    localStorage.setItem('calendarNotifications', JSON.stringify(scheduled.filter((n: { id: string }) => n.id !== eventId)));
-    if (ev) setAddToCalendarToast(`"${ev.title}" removed from calendar`);
-    setShowEventDetails(null);
-    setTimeout(() => setAddToCalendarToast(null), 2500);
-  };
-
   // A learner cancels their own catch-up; Outlook emails the cancellation to them and their coach.
   const cancelCatchup = async (ev: CalendarEvent) => {
     if (cancelBusy || !window.confirm('Cancel this catch-up session? Your coach will be notified.')) return;
@@ -1409,45 +1359,6 @@ function LearnerCalendarBody() {
       setAddToCalendarToast(`Could not export calendar: ${error instanceof Error ? error.message : 'Please try again.'}`);
     }
     setTimeout(() => setAddToCalendarToast(null), 2500);
-  };
-
-  const handleCreateCustomEvent = () => {
-    if (!customTitle.trim()) return;
-    const dateObj = new Date(`${customDate}T12:00:00`);
-    const day = dateObj.getDate();
-    const monthName = MONTH_NAMES[dateObj.getMonth()].substring(0, 3);
-    const dayName = DAYS_OF_WEEK[dateObj.getDay() === 0 ? 6 : dateObj.getDay() - 1];
-    const reminderMinutes = parseInt(customReminder);
-    const newEvent: CalendarEvent = { id: `custom-${Date.now()}`, title: customTitle, date: `${day} ${monthName}`, dayName, time: `${customStartTime}\u2013${customEndTime}`, club: 'Personal', clubId: '', type: 'Personal', format: customLocation || 'Personal', location: customLocation || 'Personal Calendar', host: p.fullName, points: 0, status: 'confirmed', description: customDescription || `Reminder: ${customReminder} minutes before`, color: customColor, reminderMinutes, isoDate: customDate, timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone };
-    const conflict = hasConflict(myEvents, newEvent);
-    if (conflict) { setConflictEvent(conflict); return; }
-    setMyEvents((prev) => [newEvent, ...prev]);
-    if (notificationPermission === 'granted' && reminderMinutes > 0) { const timerId = scheduleEventNotification(newEvent.id, newEvent.title, newEvent.date, customStartTime, reminderMinutes); if (timerId) timersRef.current[newEvent.id] = timerId; }
-    if (customRecurrence !== 'none') {
-      const recurrenceCount = customRecurrence === 'monthly' ? 3 : 4;
-      const dayIncrement = customRecurrence === 'weekly' ? 7 : customRecurrence === 'biweekly' ? 14 : 0;
-      const monthIncrement = customRecurrence === 'monthly' ? 1 : 0;
-      for (let i = 1; i <= recurrenceCount; i++) {
-        const nextDate = new Date(dateObj);
-        if (dayIncrement > 0) nextDate.setDate(nextDate.getDate() + dayIncrement * i);
-        if (monthIncrement > 0) nextDate.setMonth(nextDate.getMonth() + monthIncrement * i);
-        const recDay = nextDate.getDate();
-        const recMonthName = MONTH_NAMES[nextDate.getMonth()].substring(0, 3);
-        const recDayName = DAYS_OF_WEEK[nextDate.getDay() === 0 ? 6 : nextDate.getDay() - 1];
-        const recEvent: CalendarEvent = { ...newEvent, id: `custom-${Date.now()}-${i}`, date: `${recDay} ${recMonthName}`, dayName: recDayName, isoDate: `${nextDate.getFullYear()}-${String(nextDate.getMonth() + 1).padStart(2, '0')}-${String(recDay).padStart(2, '0')}` };
-        const recConflict = hasConflict([newEvent, ...myEvents], recEvent);
-        if (recConflict) { setConflictEvent(recConflict); break; }
-        setMyEvents((prev) => [...prev, recEvent]);
-        if (notificationPermission === 'granted' && reminderMinutes > 0) { const recTimerId = scheduleEventNotification(recEvent.id, recEvent.title, recEvent.date, customStartTime, reminderMinutes); if (recTimerId) timersRef.current[recEvent.id] = recTimerId; }
-      }
-    }
-    setCustomTitle(''); setCustomDescription(''); setCustomLocation(''); setCustomDate(todayISO()); setCustomStartTime('14:00'); setCustomEndTime('15:00'); setCustomReminder('15'); setCustomColor('sky'); setCustomRecurrence('none'); setShowCreateModal(false);
-    setShowEventDetails(newEvent);
-    setViewYear(dateObj.getFullYear());
-    setViewMonth(dateObj.getMonth());
-    setSelectedDay(day);
-    setAddToCalendarToast(`"${newEvent.title}" created${customRecurrence !== 'none' ? ` and ${customRecurrence === 'monthly' ? '3 monthly' : '4 recurring'} instances added` : ''}!`);
-    setTimeout(() => setAddToCalendarToast(null), 3000);
   };
 
   const handleEnableNotifications = async () => { const result = await requestNotificationPermission(); setNotificationPermission(result); if (result === 'granted') { setAddToCalendarToast('Push notifications enabled!'); setTimeout(() => setAddToCalendarToast(null), 2500); } };
@@ -1688,35 +1599,8 @@ function LearnerCalendarBody() {
         </div>
       )}
 
-      {/* ═══════════ CREATE EVENT MODAL ═══════════ */}
-      {showCreateModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm" onClick={() => setShowCreateModal(false)}>
-          <div className="bg-background-50 rounded-2xl p-6 max-w-lg w-full mx-4 shadow-xl animate-in zoom-in-95 duration-200 max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
-            <div className="flex items-center justify-between mb-5"><h3 className="text-lg font-heading font-bold text-foreground-900 flex items-center gap-2"><AppIcon className="ri-add-circle-line text-primary-500"></AppIcon>Create New Event</h3><button onClick={() => setShowCreateModal(false)} className="w-8 h-8 rounded-lg flex items-center justify-center text-foreground-400 hover:bg-background-100 transition-smooth cursor-pointer"><AppIcon className="ri-close-line"></AppIcon></button></div>
-            <div className="space-y-4">
-              <div><label className="text-xs font-semibold text-foreground-500 mb-1.5 block">Event Title <span className="text-red-400">*</span></label><input type="text" value={customTitle} onChange={(e) => setCustomTitle(e.target.value)} placeholder="e.g. Study session, Team meeting..." className="w-full bg-background-100 border border-background-300 rounded-lg px-3 py-2 text-sm text-foreground-800 placeholder:text-foreground-400 focus:outline-none focus:ring-1 focus:ring-primary-400/40 focus:border-primary-300/50 transition-all" maxLength={100} /></div>
-              <div className="grid grid-cols-2 gap-3">
-                <div><label className="text-xs font-semibold text-foreground-500 mb-1.5 block">Date <span className="text-red-400">*</span></label><input type="date" value={customDate} onChange={(e) => setCustomDate(e.target.value)} className="w-full bg-background-100 border border-background-300 rounded-lg px-3 py-2 text-sm text-foreground-800 focus:outline-none focus:ring-1 focus:ring-primary-400/40 focus:border-primary-300/50 transition-all" /></div>
-                <div><label className="text-xs font-semibold text-foreground-500 mb-1.5 block">Reminder</label><select value={customReminder} onChange={(e) => setCustomReminder(e.target.value)} className="w-full bg-background-100 border border-background-300 rounded-lg px-3 py-2 text-sm text-foreground-800 focus:outline-none focus:ring-1 focus:ring-primary-400/40 focus:border-primary-300/50 transition-all cursor-pointer"><option value="5">5 minutes before</option><option value="15">15 minutes before</option><option value="30">30 minutes before</option><option value="60">1 hour before</option><option value="1440">1 day before</option></select></div>
-              </div>
-              <div className="grid grid-cols-2 gap-3">
-                <div><label className="text-xs font-semibold text-foreground-500 mb-1.5 block">Recurrence</label><select value={customRecurrence} onChange={(e) => setCustomRecurrence(e.target.value)} className="w-full bg-background-100 border border-background-300 rounded-lg px-3 py-2 text-sm text-foreground-800 focus:outline-none focus:ring-1 focus:ring-primary-400/40 focus:border-primary-300/50 transition-all cursor-pointer">{RECURRENCE_OPTIONS.map((opt) => (<option key={opt.value} value={opt.value}>{opt.label}</option>))}</select></div>
-                <div></div>
-              </div>
-              <div className="grid grid-cols-2 gap-3">
-                <div><label className="text-xs font-semibold text-foreground-500 mb-1.5 block">Start Time <span className="text-red-400">*</span></label><input type="time" value={customStartTime} onChange={(e) => setCustomStartTime(e.target.value)} className="w-full bg-background-100 border border-background-300 rounded-lg px-3 py-2 text-sm text-foreground-800 focus:outline-none focus:ring-1 focus:ring-primary-400/40 focus:border-primary-300/50 transition-all" /></div>
-                <div><label className="text-xs font-semibold text-foreground-500 mb-1.5 block">End Time <span className="text-red-400">*</span></label><input type="time" value={customEndTime} onChange={(e) => setCustomEndTime(e.target.value)} className="w-full bg-background-100 border border-background-300 rounded-lg px-3 py-2 text-sm text-foreground-800 focus:outline-none focus:ring-1 focus:ring-primary-400/40 focus:border-primary-300/50 transition-all" /></div>
-              </div>
-              <div><label className="text-xs font-semibold text-foreground-500 mb-1.5 block">Location (optional)</label><input type="text" value={customLocation} onChange={(e) => setCustomLocation(e.target.value)} placeholder="e.g. Microsoft Teams, Library..." className="w-full bg-background-100 border border-background-300 rounded-lg px-3 py-2 text-sm text-foreground-800 placeholder:text-foreground-400 focus:outline-none focus:ring-1 focus:ring-primary-400/40 focus:border-primary-300/50 transition-all" /></div>
-              <div><label className="text-xs font-semibold text-foreground-500 mb-1.5 block">Description (optional)</label><textarea value={customDescription} onChange={(e) => setCustomDescription(e.target.value)} placeholder="Add any notes, agenda..." maxLength={500} rows={3} className="w-full bg-background-100 border border-background-300 rounded-lg px-3 py-2 text-sm text-foreground-800 placeholder:text-foreground-400 focus:outline-none focus:ring-1 focus:ring-primary-400/40 focus:border-primary-300/50 transition-all resize-none" /><span className="text-[10px] text-foreground-400 mt-0.5 block">{customDescription.length}/500</span></div>
-            </div>
-            <div className="flex gap-2 mt-5"><button onClick={() => setShowCreateModal(false)} className="flex-1 px-4 py-2.5 rounded-xl border border-background-300 text-sm font-semibold text-foreground-600 hover:bg-background-100 transition-smooth cursor-pointer whitespace-nowrap">Cancel</button><button onClick={handleCreateCustomEvent} disabled={!customTitle.trim()} className="flex-1 px-4 py-2.5 rounded-xl bg-primary-500 text-white text-sm font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap disabled:opacity-50 disabled:cursor-not-allowed"><AppIcon className="ri-calendar-check-line mr-1"></AppIcon>Create Event</button></div>
-          </div>
-        </div>
-      )}
-
       {/* ═══════════ EVENT DETAILS MODAL ═══════════ */}
-      {showEventDetails && !conflictEvent && (
+      {showEventDetails && (
         <CalendarEventDialog
           title={showEventDetails.title}
           onClose={() => { setShowEventDetails(null); setCancelError(''); }}
@@ -1758,9 +1642,6 @@ function LearnerCalendarBody() {
                 <button type="button" disabled={showEventDetails.changeClosed || cancelBusy} title={showEventDetails.changeClosed ? 'Catch-ups can be cancelled up to 12 hours before they start.' : undefined} onClick={() => void cancelCatchup(showEventDetails)} className="inline-flex flex-1 items-center justify-center gap-2 rounded-xl border border-red-200 px-4 py-2.5 text-sm font-semibold text-red-600 transition-smooth hover:bg-red-50 cursor-pointer whitespace-nowrap disabled:cursor-not-allowed disabled:opacity-60"><AppIcon className="ri-calendar-close-line h-4 w-4 shrink-0" /><span>{cancelBusy ? 'Cancelling…' : 'Cancel catch-up'}</span></button>
               )}
               {hasCalendarExportTime(showEventDetails) && <button onClick={() => handleExportICS(showEventDetails)} className="inline-flex flex-1 items-center justify-center gap-2 px-4 py-2.5 rounded-xl border border-background-300 text-sm font-semibold text-foreground-600 hover:bg-background-100 transition-smooth cursor-pointer whitespace-nowrap"><AppIcon className="ri-download-line h-4 w-4 shrink-0"></AppIcon><span>Export .ics</span></button>}
-              {showEventDetails.id.startsWith('custom-') && (
-                <button onClick={() => handleRemoveFromCalendar(showEventDetails.id)} className="inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl border border-red-200 text-sm font-semibold text-red-600 hover:bg-red-50 transition-smooth cursor-pointer whitespace-nowrap"><AppIcon className="ri-calendar-close-line h-4 w-4 shrink-0"></AppIcon><span>Remove</span></button>
-              )}
 
           </>}
         >
@@ -1808,17 +1689,6 @@ function LearnerCalendarBody() {
             {!publicFeedUrl ? (<div className="text-center py-4"><button onClick={handleGeneratePublicFeed} className="px-5 py-2.5 bg-primary-500 text-white rounded-xl text-sm font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap"><AppIcon className="ri-link-m mr-1"></AppIcon>Generate Public Feed</button></div>) : (
               <div className="space-y-3"><div className="bg-background-100 rounded-xl p-3 break-all"><p className="text-xs text-foreground-400 mb-1">Public Feed URL</p><p className="text-xs font-mono text-foreground-600">{publicFeedUrl}</p></div><div className="flex gap-2"><button onClick={handleCopyFeedUrl} className="flex-1 px-4 py-2.5 rounded-xl bg-primary-500 text-white text-sm font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap"><AppIcon className={`${feedCopied ? 'ri-check-line' : 'ri-clipboard-line'} mr-1`}></AppIcon>{feedCopied ? 'Copied!' : 'Copy Link'}</button></div></div>
             )}
-          </div>
-        </div>
-      )}
-
-      {/* ═══════════ CONFLICT MODAL ═══════════ */}
-      {conflictEvent && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm" onClick={() => setConflictEvent(null)}>
-          <div className="bg-background-50 rounded-2xl p-6 max-w-md w-full mx-4 shadow-xl animate-in zoom-in-95 duration-200" onClick={(e) => e.stopPropagation()}>
-            <div className="flex items-center gap-3 mb-4"><span className="w-10 h-10 rounded-full bg-amber-100 text-amber-600 flex items-center justify-center"><AppIcon className="ri-alert-line text-lg"></AppIcon></span><h3 className="text-lg font-heading font-bold text-foreground-900">Event Conflict</h3></div>
-            <p className="text-sm text-foreground-500 mb-4"><strong className="text-foreground-700">{conflictEvent.title}</strong> already overlaps with this time slot.</p>
-            <div className="flex gap-2"><button onClick={() => setConflictEvent(null)} className="flex-1 px-4 py-2.5 rounded-xl bg-primary-500 text-white text-sm font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap">Got it</button></div>
           </div>
         </div>
       )}
@@ -1927,7 +1797,6 @@ function LearnerCalendarBody() {
               <CalendarMoreMenu
                 connectedCount={calendarConnections.length}
                 notificationsEnabled={notificationPermission === 'granted'}
-                onCreateEvent={() => setShowCreateModal(true)}
                 onConnectCalendar={() => { setConnectionError(null); setShowCalendarConnect(true); }}
                 onShare={() => setShowShareCalendar(true)}
                 onNotifications={() => setShowNotificationSettings(true)}

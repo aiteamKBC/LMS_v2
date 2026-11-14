@@ -10,8 +10,9 @@ import { fetchMeetingAttendance } from '@/api/meetingAttendance';
 import { fetchLearnerEventReviewInstance, fetchLearnerMeetingArtifacts } from '@/api/learnerCalendar';
 import { meetingCalendarHref } from '../reviews/meetingBooking';
 import * as ics from '@/utils/ics-generator';
+import { useLinkedLearner } from '@/hooks/useMyLearner';
 
-vi.mock('@/hooks/useMyLearner', () => ({ useLinkedLearner: () => ({ kind: 'commercial', id: '125' }) }));
+vi.mock('@/hooks/useMyLearner', () => ({ useLinkedLearner: vi.fn() }));
 vi.mock('@/pages/coach/shared/CoachMeetingArtifactsPanel', () => ({ CoachMeetingArtifactsPanel: () => <div>Meeting recordings</div> }));
 vi.mock('@/api/learnerCalendar', async importOriginal => ({
   ukOffsetForDate: (await importOriginal<typeof import('@/api/learnerCalendar')>()).ukOffsetForDate,
@@ -58,6 +59,7 @@ beforeEach(() => {
   vi.useFakeTimers({ shouldAdvanceTime: true });
   vi.setSystemTime(now);
   vi.clearAllMocks();
+  vi.mocked(useLinkedLearner).mockReturnValue({ kind: 'commercial', id: '125' });
   vi.mocked(fetchCalendarConnections).mockResolvedValue({ connections: [] });
   vi.mocked(fetchPersonalCalendarAvailability).mockResolvedValue({ busy: [], errors: [], connectedProviders: [] });
   vi.mocked(fetchReviewSlots).mockImplementation(async (_kind, _id, _date, duration) =>
@@ -111,23 +113,24 @@ describe('calendar exports', () => {
     expect(download).not.toHaveBeenCalled();
     expect(screen.getByText(/Could not export event: The event time zone is unavailable/)).toBeVisible();
   });
+});
 
-  it('records the device zone on a personal event rather than assuming UK time', async () => {
-    const download = vi.spyOn(ics, 'downloadICS').mockImplementation(() => {});
-    const NativeDateTimeFormat = Intl.DateTimeFormat;
-    vi.spyOn(Intl, 'DateTimeFormat').mockImplementation(function (locales, options) {
-      return new NativeDateTimeFormat(locales, { timeZone: 'Africa/Cairo', ...options });
-    });
-    setup([]);
-    await waitFor(() => expect(fetchLearnerCalendarEvents).toHaveBeenCalled());
+describe('learner calendar actions', () => {
+  it.each(['commercial', 'apprenticeship'] as const)('does not offer personal event creation for %s learners and preserves calendar actions', async kind => {
+    vi.mocked(useLinkedLearner).mockReturnValue({ kind, id: '125' });
+    setup();
+    await screen.findAllByRole('button', { name: /Catch-up with your coach/ });
     fireEvent.click(screen.getByRole('button', { name: 'More' }));
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Create Event' }));
-    fireEvent.change(screen.getByPlaceholderText('e.g. Study session, Team meeting...'), { target: { value: 'Personal study' } });
-    fireEvent.change(document.querySelector('input[type="date"]')!, { target: { value: '2027-01-04' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Create Event' }));
-    fireEvent.click(await screen.findByRole('button', { name: 'Export .ics' }));
-    expect(download).toHaveBeenCalledWith(expect.objectContaining({ isoDate: '2027-01-04', timeZone: 'Africa/Cairo' }));
-    expect(ics.generateICS(download.mock.calls[0][0])).toContain('DTSTART:20270104T120000Z');
+    const menu = screen.getByRole('menu', { name: 'Calendar actions' });
+    expect(within(menu).queryByRole('menuitem', { name: 'Create Event' })).not.toBeInTheDocument();
+    expect(within(menu).getAllByRole('menuitem').map(item => item.textContent)).toEqual([
+      'Connect Personal Calendar', 'Share Calendar', 'Set up Notifications', 'Export All Events',
+    ]);
+    expect(screen.queryByText('Create New Event')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'More' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Book Coach Session' }));
+    expect(await screen.findByRole('dialog', { name: 'Book a Coach Session' })).toBeVisible();
+    expect(bookLearnerCalendarSession).not.toHaveBeenCalled();
   });
 });
 
