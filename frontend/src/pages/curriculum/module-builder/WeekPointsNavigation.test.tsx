@@ -42,6 +42,74 @@ beforeEach(() => {
 });
 
 describe('Course structure Week Points navigation', () => {
+  it('keeps loaded activities selectable while Points are loading', () => {
+    vi.mocked(authoredWeekPoints).mockReturnValue(new Promise(() => {}));
+    render(<Workspace />);
+    expect(screen.getByRole('status')).toHaveTextContent('Loading Points');
+    expect(screen.getByRole('button', { name: /Updated reading title/ })).toBeVisible();
+    fireEvent.click(screen.getByRole('button', { name: /Check understanding/ }));
+    expect(onSelect).toHaveBeenCalledExactlyOnceWith('QUIZ');
+    expect(authoredWeekPoints).toHaveBeenCalledExactlyOnceWith('M1', 'W1');
+  });
+
+  it.each(['You do not have permission to perform this action.', 'Week Points are unavailable.'])(
+    'keeps activities visible after %s and restores saved grouping on retry', async message => {
+      vi.mocked(authoredWeekPoints).mockRejectedValueOnce(new Error(message));
+      render(<Workspace />);
+      expect(await screen.findByRole('alert')).toHaveTextContent(message);
+      for (const component of components) expect(screen.getByText(component.title)).toBeVisible();
+      fireEvent.click(screen.getByRole('button', { name: /Updated reading title/ }));
+      expect(onSelect).toHaveBeenCalledExactlyOnceWith('READ');
+      expect(sessionStorage.length).toBe(0);
+      expect(screen.queryByRole('button', { name: /Other components/ })).not.toBeInTheDocument();
+
+      fireEvent.click(screen.getByRole('button', { name: 'Retry loading Points' }));
+      fireEvent.click(await screen.findByRole('button', { name: 'Explore, 2 activities' }));
+      expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+      expect(screen.getAllByText('Updated reading title')).toHaveLength(1);
+      expect(screen.getByRole('button', { name: /Check understanding/ })).toBeVisible();
+      expect(screen.queryByRole('button', { name: /Ungrouped video/ })).not.toBeInTheDocument();
+      expect(authoredWeekPoints).toHaveBeenCalledTimes(2);
+      expect(vi.mocked(authoredWeekPoints).mock.calls.every(call => call.length === 2)).toBe(true);
+    });
+
+  it('retains editable cards, recording grouping and search when Points cannot load', async () => {
+    const live = { ...createEmptyComponent('W1', 'live-session', 1), id: 'LIVE', title: 'Live workshop' };
+    const recording = { ...createEmptyComponent('W1', 'recording-placeholder', 2), id: 'RECORDING', title: 'Workshop replay',
+      settings: { linkedLiveSessionComponentId: 'LIVE', linkedLiveSessionModuleId: '' } };
+    const video = { ...createEmptyComponent('W1', 'video', 3), id: 'VIDEO', title: 'Independent video' };
+    const all = [live, recording, video];
+    const change = vi.fn();
+    vi.mocked(authoredWeekPoints).mockRejectedValue(new Error('Points unavailable'));
+    function EditableWeek() {
+      const drafts = useWeekPointDrafts('M1', ['W1']);
+      return <>
+        <WeekComponentRail weekId="W1" components={all} selectedId={null} onSelectId={onSelect} onChange={change} pointsByType={{}} variant="nested"
+          renderComponentList={items => <WeekPointsNavigation moduleId="M1" weekId="W1" drafts={drafts}
+            components={items.flatMap(item => item.members)} selectedId={null} onSelect={onSelect}
+            renderActivity={id => items.find(item => item.component.id === id)?.node} />} />
+        <button onClick={() => { void drafts.save('M1', ['W1']); }}>Save Points</button>
+        <output aria-label="Points draft state">{drafts.get('M1', 'W1') ? 'Points loaded' : 'Points unavailable'}</output>
+      </>;
+    }
+    render(<EditableWeek />);
+    await screen.findByRole('alert');
+    expect(screen.getAllByTestId('grouped-session-recording')).toHaveLength(1);
+    expect(screen.getAllByRole('button', { name: 'Delete Workshop replay' })).toHaveLength(1);
+    fireEvent.click(screen.getByRole('button', { name: 'Duplicate Independent video' }));
+    expect(change.mock.calls[0][0].slice(0, 3)).toEqual(all);
+    expect(change.mock.calls[0][0]).toHaveLength(4);
+    fireEvent.click(screen.getByRole('button', { name: 'Delete Independent video' }));
+    expect(change).toHaveBeenLastCalledWith([live, recording]);
+    fireEvent.change(screen.getByRole('searchbox'), { target: { value: 'replay' } });
+    expect(screen.getByRole('button', { name: 'Delete Workshop replay' })).toBeVisible();
+    expect(screen.queryByText('Independent video')).not.toBeInTheDocument();
+    expect(screen.getByLabelText('Points draft state')).toHaveTextContent('Points unavailable');
+    fireEvent.click(screen.getByRole('button', { name: 'Save Points' }));
+    await waitFor(() => expect(authoredWeekPoints).toHaveBeenCalledExactlyOnceWith('M1', 'W1'));
+    expect(sessionStorage.length).toBe(0);
+  });
+
   it.each([
     { name: 'both activities in one Point', points: [{ id: 'P', title: 'Session', componentIds: ['LIVE', 'RECORDING'] }], grouped: true },
     { name: 'both activities in Other components', points: [], grouped: true },
