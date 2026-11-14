@@ -159,7 +159,7 @@ def prepare(connection):
     create_read_views(connection)
 
 
-def create_read_views(connection):
+def create_read_views(connection, *, tables=None):
     """Create native reads with no dependency on ordinary tables or row types.
 
     storage_version=2 is the cutover marker. Prepared rows are not exposed twice.
@@ -215,6 +215,8 @@ def create_read_views(connection):
     }
     with connection.cursor() as cursor:
         for table, (view, _) in TABLES.items():
+            if tables is not None and table not in tables:
+                continue
             definition = sql.SQL(', ').join(sql.SQL('{} {}').format(sql.Identifier(name), sql.SQL(kind))
                                             for name, kind in COLUMNS[table])
             before, after = projections[table].split(') row', 1)

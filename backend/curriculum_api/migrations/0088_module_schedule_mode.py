@@ -7,6 +7,12 @@ def add_schedule_mode(apps, schema_editor):
     with connection.cursor() as cursor:
         if connection.vendor == 'postgresql':
             cursor.execute("alter table curriculum.modules add column if not exists schedule_mode varchar(16) not null default 'group'")
+            cursor.execute("select to_regclass('curriculum.learning_courses')")
+            if cursor.fetchone()[0] is not None:
+                # Shared module readers use the mixed/native projections after
+                # free-course cutover; adding the physical column alone hides it.
+                from curriculum_api.free_course_native_schema import create_read_views
+                create_read_views(connection, tables={'modules'})
         else:
             cursor.execute('pragma table_info(modules)')
             columns = {row[1] for row in cursor.fetchall()}
