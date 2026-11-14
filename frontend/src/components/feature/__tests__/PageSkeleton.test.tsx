@@ -18,7 +18,7 @@
 import { beforeEach, describe, it, expect } from 'vitest';
 import { render } from '@testing-library/react';
 import { PageSkeleton } from '../Skeletons';
-import { SIDEBAR_RAIL_WIDTH, SIDEBAR_EXPANDED_WIDTH } from '../Sidebar';
+import { SIDEBAR_EXPANDED_WIDTH } from '../Sidebar';
 import { LEARNER_SIDEBAR_WIDTH } from '../learnerShellAssets';
 
 beforeEach(() => localStorage.clear());
@@ -37,9 +37,9 @@ describe('PageSkeleton', () => {
 
     // The rail comes from the same constant the real sidebar uses, so it cannot drift.
     const rail = container.querySelector<HTMLElement>(`[style*="width"]`);
-    expect(rail?.style.width).toBe(`${SIDEBAR_RAIL_WIDTH}px`);
+    expect(rail?.style.width).toBe(`${SIDEBAR_EXPANDED_WIDTH}px`);
     expect(rail).toHaveClass('hidden', 'lg:block');
-    expect(rail?.style.marginInline).toBe('12px');
+    expect(rail?.style.marginInline).toBe('8px');
 
     // Header.tsx is h-16 and the shell's breadcrumb strip is h-8. Both used to
     // be missing or wrong here, which shifted the page vertically on every
@@ -55,8 +55,8 @@ describe('PageSkeleton', () => {
     expect(root?.getAttribute('aria-label')).toBe('Loading page');
   });
 
-  it('keeps room for an open sidebar while the next page loads', () => {
-    localStorage.setItem('kbc_sidebar_pinned', 'true');
+  it.each(['true', 'false'])('keeps the shared width while loading with pinned preference %s', preference => {
+    localStorage.setItem('kbc_sidebar_pinned', preference);
     const { container } = render(<PageSkeleton />);
     expect(container.querySelector<HTMLElement>('[style*="width"]')?.style.width).toBe(`${SIDEBAR_EXPANDED_WIDTH}px`);
   });

@@ -19,8 +19,7 @@ function showAdminSidebar() {
   );
   const sidebar = screen.getByRole('complementary', { name: 'Super Admin sidebar' });
   const rail = within(within(sidebar).getByRole('navigation', { name: 'Super Admin primary navigation' }));
-  // Hovering the group opens its children, wherever the sidebar renders them.
-  fireEvent.mouseEnter(rail.getByRole('button', { name: 'External tools' }));
+  fireEvent.click(rail.getByRole('button', { name: 'External tools' }));
 }
 
 beforeEach(() => {

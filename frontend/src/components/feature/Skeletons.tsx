@@ -14,10 +14,8 @@
 // not action feedback. A button that has been clicked keeps its spinner, because
 // what the reader is waiting for there is an outcome, not a layout.
 // ============================================================================
-import { useState } from 'react';
 import './WorkspaceBreadcrumbs.css';
-import { SIDEBAR_RAIL_WIDTH, SIDEBAR_EXPANDED_WIDTH, SIDEBAR_CONTENT_GAP } from './Sidebar';
-import { LEARNER_SIDEBAR_WIDTH } from './learnerShellAssets';
+import { WORKSPACE_SIDEBAR_WIDTH } from './learnerShellAssets';
 
 interface SkeletonProps {
   className?: string;
@@ -287,13 +285,6 @@ export function HeroSkeleton() {
  */
 export function PageSkeleton({ workspaceRole, hideSidebar = false }: { workspaceRole?: string; hideSidebar?: boolean } = {}) {
   const learnerShell = workspaceRole === 'learner';
-  const [sidebarExpanded] = useState(() => {
-    try {
-      return localStorage.getItem('kbc_sidebar_pinned') === 'true';
-    } catch {
-      return false;
-    }
-  });
   return (
     <div
       className={`flex h-screen overflow-hidden bg-background-200 ${workspaceRole ? 'dashboard-theme' : ''} ${learnerShell ? 'kbc-learner-route-skeleton' : ''}`}
@@ -305,7 +296,7 @@ export function PageSkeleton({ workspaceRole, hideSidebar = false }: { workspace
       {!hideSidebar && (
         <div
           className={`hidden lg:block shrink-0 p-4 space-y-4 ${learnerShell ? 'kbc-learner-route-skeleton-sidebar' : 'my-3 ml-3 mr-3 rounded-[24px] bg-brand-deep'}`}
-          style={{ width: learnerShell ? LEARNER_SIDEBAR_WIDTH : sidebarExpanded ? SIDEBAR_EXPANDED_WIDTH : SIDEBAR_RAIL_WIDTH, marginInline: learnerShell ? 0 : SIDEBAR_CONTENT_GAP / 2 }}
+          style={{ width: WORKSPACE_SIDEBAR_WIDTH, marginInline: 8 }}
         >
           <SkeletonBlock className="h-9 w-9 rounded-xl mx-auto" />
           <div className="space-y-3 pt-2">

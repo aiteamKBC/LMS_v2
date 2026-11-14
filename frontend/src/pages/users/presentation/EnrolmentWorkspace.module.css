@@ -60,13 +60,10 @@
 .directoryShell :global(.kbc-enrolment-identity) { display: grid; gap: .125rem; text-align: left; }
 .directoryShell :global(.kbc-enrolment-identity small) { color: #8b8179; font-size: .625rem; font-weight: 400; }
 .directoryShell :global(.kbc-workspace-topbar button:focus-visible) { outline: 2px solid #5d2e88; outline-offset: 3px; }
-.sidebar { display: none; position: fixed; inset: .5rem auto .5rem .5rem; z-index: var(--enrolment-z-sidebar); width: 16.5rem; flex-direction: column; overflow: hidden; border-radius: 1rem; background: oklch(.33 .12 305 / .97); color: white; }
+.sidebar { display: none; position: fixed; inset: 0 auto 0 .5rem; height: 100dvh; z-index: var(--enrolment-z-sidebar); width: var(--enrolment-sidebar-width, 264px); flex-direction: column; overflow: hidden; border-radius: 1rem; background: oklch(.33 .12 305 / .97); color: white; }
 .shell .sidebar[data-mobile-open="true"] { background: oklch(.33 .12 305 / .97) !important; }
-.brand { display: flex; align-items: center; min-height: 3.5rem; gap: .75rem; padding: .625rem 1.25rem; border-bottom: 1px solid #ffffff20; }
-.brand img { flex-shrink: 0; object-fit: contain; }
-.brandText { display: grid; gap: .125rem; min-width: 0; }
-.brandText strong { color: white; font-size: .875rem; font-weight: 700; }
-.brandText span { color: #d6bfdc; font-size: .625rem; letter-spacing: .1em; text-transform: uppercase; }
+.brand { position: relative; display: flex; align-items: center; justify-content: center; min-height: 6rem; padding: 1.25rem 3rem; border-bottom: 1px solid #ffffff20; }
+.brand img { flex: 0 1 auto; width: 8rem; max-width: 100%; height: auto; object-fit: contain; }
 .workspaceLabel { display: flex; align-items: center; gap: .75rem; margin: .75rem .625rem .375rem; padding: .625rem .875rem; border: 1px solid #ffffff1a; border-radius: .75rem; background: #ffffff0e; }
 .workspaceLabel > svg { color: #ead06c; flex-shrink: 0; }
 .workspaceLabel > span { display: grid; gap: .125rem; }
@@ -90,7 +87,7 @@
 .signOut { display: flex; align-items: center; gap: .5rem; width: 100%; min-height: 3.5rem; padding: 1rem .875rem; border-radius: .5rem; color: #d8c4e4; font: 500 .75rem var(--font-body); text-align: left; cursor: pointer; }
 .signOut svg { flex-shrink: 0; }
 .signOut:hover { color: white; background: #ffffff12; }
-.mobileClose { display: none; margin-left: auto; min-width: 2.75rem; min-height: 2.75rem; align-items: center; justify-content: center; color: white; }
+.mobileClose { position: absolute; right: .75rem; top: 50%; transform: translateY(-50%); display: none; min-width: 2.75rem; min-height: 2.75rem; align-items: center; justify-content: center; color: white; }
 .sidebar :is(a,button):focus-visible { outline: 2px solid #f1d46c; outline-offset: -3px; }
 .breadcrumbs { display: flex; flex-wrap: wrap; align-items: center; gap: 1rem; margin: 0 .75rem; padding: .25rem .5rem .5rem; color: var(--enrolment-muted); font-size: .75rem; }
 .breadcrumbs > button, .breadcrumbs nav { display: flex; align-items: center; gap: .5rem; }
@@ -343,10 +340,8 @@
   .sessionTable td[data-label="Booked on"]::before { display: block; }
 }
 @media (max-width: 1023px) {
-  .sidebar[data-mobile-open="true"] { display: flex; width: min(16.5rem,calc(100vw - 2rem)); }
+  .sidebar[data-mobile-open="true"] { display: flex; width: min(var(--enrolment-sidebar-width, 264px),86vw); }
   .mobileClose { display: inline-flex; }
-  .brand { padding: .625rem .75rem; gap: .5rem; }
-  .brandText span { font-size: .5rem; }
   .directoryShell :global(.kbc-workspace-topbar[data-enrolment-header] > div:first-of-type) { display: flex; }
   .shell .content .main { padding: 1rem; }
   .hero { min-height: 16rem; padding: 1.5rem; }

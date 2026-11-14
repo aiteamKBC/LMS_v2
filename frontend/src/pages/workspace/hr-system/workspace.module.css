@@ -9,13 +9,8 @@
 .root :global(.kbc-learner-sidebar-panel) { background: linear-gradient(165deg, #321645, #231232) !important; }
 .root :global(.kbc-learner-sidebar-pattern) { display: none; }
 .root :global(.kbc-learner-sidebar-panel > div:nth-child(2)) { min-height: 96px; padding: 20px 16px; gap: 10px; }
-.root :global(.kbc-learner-sidebar-panel > div:nth-child(2))::before { content: ''; display: block; width: 43px; height: 43px; flex-shrink: 0; background: #fff url('/kbc-logo.png') -22px -16px / 132px 74px no-repeat; border-radius: 10px; }
-.root :global(.kbc-learner-sidebar-panel > div:nth-child(2))::after { content: 'HR System'; color: #f8f2fc; font-size: 14px; font-weight: 700; order: 1; flex: 1; }
 .root :global(.kbc-learner-sidebar-panel > div:nth-child(2) button) { order: 2; }
-.root :global(.kbc-learner-sidebar-panel > div:nth-child(2) img) { display: none; }
 .root :global(.kbc-learner-sidebar-panel[data-collapsed]) > div:nth-child(2) { padding: 15px 8px; }
-.root :global(.kbc-learner-sidebar-panel[data-collapsed]) > div:nth-child(2)::before,
-.root :global(.kbc-learner-sidebar-panel[data-collapsed]) > div:nth-child(2)::after { display: none; }
 .root :global(.kbc-learner-sidebar-panel nav a) { border-radius: 10px; font-size: 12px; }
 .root :global(.kbc-learner-sidebar-panel nav a[aria-current="page"]) { color: #2e1b39 !important; background: #d4b369 !important; }
 .root.root :global(.kbc-workspace-topbar.kbc-workspace-topbar) { background: #fff !important; border: 1px solid #ebe5ef !important; box-shadow: none !important; }

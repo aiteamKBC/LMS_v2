@@ -5,6 +5,8 @@ import './index.css'
 import './learner-theme.css'
 import App from './App.tsx'
 import './coach-theme.css'
+import './components/feature/WorkspaceSidebarTheme.css'
+import './components/feature/WorkspaceChromeTheme.css'
 import { installAuditRequestContext } from './lib/auditRequestContext'
 import { installPerformanceDiagnostics } from './lib/performanceDiagnostics'
 

@@ -145,7 +145,8 @@ it('still gives the full reviewing menu when the SAME admin opens a DIFFERENT le
   expect(sidebar().getByRole('link', { name: /^My Learning/ })).toBeVisible();
 });
 
-it('can collapse the learner sidebar and restore it from its top toggle', async () => {
+it('keeps learner navigation expanded despite a saved collapsed preference', async () => {
+  localStorage.setItem('kbc_learner_sidebar_collapsed', 'true');
   viewer.role = 'admin';
   rememberLearner('commercial', String(++learnerId));
   vi.mocked(fetchLearnerSummary).mockResolvedValue({
@@ -153,14 +154,8 @@ it('can collapse the learner sidebar and restore it from its top toggle', async 
   } as Awaited<ReturnType<typeof fetchLearnerSummary>>);
   render(<MemoryRouter initialEntries={['/workspace/learner/dashboard']}><LearnerPage /></MemoryRouter>);
 
-  await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Collapse learner navigation' })); });
-
   expect(sidebar().getByRole('link', { name: /^My Learning/ })).toBeVisible();
-  expect(screen.getByRole('button', { name: 'Expand learner navigation' })).toBeVisible();
-
-  await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Expand learner navigation' })); });
-
-  expect(sidebar().getByRole('link', { name: /^My Learning/ })).toBeVisible();
+  expect(screen.queryByRole('button', { name: /^(Collapse|Expand) learner navigation$/ })).toBeNull();
 });
 
 it.each([

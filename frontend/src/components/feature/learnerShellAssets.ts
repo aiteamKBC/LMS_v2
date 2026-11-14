@@ -1,4 +1,5 @@
-export const LEARNER_SIDEBAR_WIDTH = 240;
+export const WORKSPACE_SIDEBAR_WIDTH = 264;
+export const LEARNER_SIDEBAR_WIDTH = WORKSPACE_SIDEBAR_WIDTH;
 export const LEARNER_SIDEBAR_COLLAPSED_WIDTH = 64;
 
 export const LEARNER_SIDEBAR_PATTERN_URL =
@@ -8,4 +9,4 @@ export const LEARNER_HEADER_PATTERN_URL =
   'https://jokdxsdbxorzciulkdyl.supabase.co/storage/v1/object/public/images/4387c4c2e618436bba2fce05b1cf351e.png';
 
 export const LEARNER_LOGO_URL =
-  'https://jokdxsdbxorzciulkdyl.supabase.co/storage/v1/object/public/images/16480272afc94729b2911a62d1bbf85d.webp';
+  '/assets/kbc-sidebar-logo.svg';

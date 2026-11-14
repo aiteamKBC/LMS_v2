@@ -1,0 +1,167 @@
+/* Shared workspace spacing and the light Enrolment header treatment.
+   Keep the existing sidebar width variables and all navigation controls. */
+@layer workspace-chrome {
+  .workspace-shell > .workspace-content > .kbc-workspace-topbar {
+    position: relative !important;
+    inset: auto !important;
+    box-sizing: border-box;
+    height: 3.5rem !important;
+    min-height: 3.5rem !important;
+    flex-shrink: 0;
+    margin: .5rem .5rem .5rem .25rem !important;
+    padding: .375rem 1rem !important;
+    gap: .75rem !important;
+    border: 1px solid #e9e1ef !important;
+    border-radius: 1rem !important;
+    background: #fffc !important;
+    color: #302b28 !important;
+    box-shadow: none !important;
+    overflow: visible !important;
+  }
+
+  .workspace-shell .kbc-workspace-topbar .kbc-learner-header-pattern {
+    display: none !important;
+  }
+
+  .workspace-shell .kbc-workspace-topbar :is(.kbc-topbar-title, .kbc-topbar-user-name) {
+    color: #302b28 !important;
+  }
+
+  .workspace-shell .kbc-workspace-topbar :is(.kbc-topbar-subtitle, .kbc-enrolment-identity small) {
+    color: #8b8179 !important;
+  }
+
+  .workspace-shell .kbc-workspace-topbar > div:has(.kbc-topbar-title) {
+    overflow: hidden;
+  }
+
+  .workspace-shell .kbc-workspace-topbar > div:has(.kbc-topbar-title) > div > span[aria-hidden="true"] {
+    background: #f1e6ff !important;
+    color: #5d2e88 !important;
+    box-shadow: none !important;
+  }
+
+  .workspace-shell .kbc-workspace-topbar .kbc-navigation-menu {
+    min-height: 2.5rem;
+    border: 0 !important;
+    border-radius: .75rem !important;
+    background: transparent !important;
+    color: #5d2e88 !important;
+    box-shadow: none !important;
+  }
+
+  .workspace-shell .kbc-workspace-topbar .kbc-workspace-switcher-button {
+    height: 2.5rem !important;
+    padding: .25rem .75rem !important;
+    border: 1px solid #e6deee !important;
+    border-radius: .875rem !important;
+    background: #f7f4fb !important;
+    box-shadow: none !important;
+  }
+
+  .workspace-shell .kbc-workspace-topbar .kbc-workspace-switcher-button * {
+    color: #4e3b5c !important;
+  }
+
+  .workspace-shell .kbc-workspace-topbar .kbc-workspace-switcher > [role="menu"] {
+    width: min(18rem, calc(100vw - 6rem)) !important;
+    max-height: calc(100dvh - 6rem);
+    overflow-y: auto;
+  }
+
+  .workspace-shell .kbc-workspace-topbar > div:last-child {
+    border: 0 !important;
+    padding-left: 0 !important;
+  }
+
+  .workspace-shell .kbc-workspace-topbar .kbc-topbar-profile {
+    color: #4e3b5c !important;
+    box-shadow: none !important;
+  }
+
+  .workspace-shell .kbc-workspace-topbar .kbc-topbar-profile:is(:hover, [aria-expanded="true"]) {
+    background: #f0e7fa !important;
+  }
+
+  .workspace-shell .kbc-workspace-topbar .kbc-topbar-profile > span:first-child {
+    background: #f1e6ff !important;
+    color: #5d2e88 !important;
+    box-shadow: none !important;
+  }
+
+  .workspace-shell .kbc-workspace-topbar .kbc-topbar-profile > span:first-child *,
+  .workspace-shell .kbc-workspace-topbar .kbc-topbar-profile > svg {
+    color: #5d2e88 !important;
+  }
+
+  .workspace-shell .kbc-workspace-topbar .coach-header-search {
+    border-color: #e0d5ec !important;
+    border-radius: .875rem !important;
+    background: #f4f1f8 !important;
+    color: #8b8179 !important;
+  }
+
+  .workspace-shell .kbc-workspace-topbar .coach-header-search svg {
+    color: #9c89ae !important;
+  }
+
+  .workspace-shell .kbc-workspace-topbar :is(button, a):focus-visible {
+    outline: 2px solid #5d2e88 !important;
+    outline-offset: 3px !important;
+  }
+
+  /* Off-canvas positioning stays unchanged below the desktop breakpoint. */
+  @media (min-width: 1024px) {
+    .workspace-shell > aside.kbc-workspace-sidebar {
+      top: .5rem !important;
+      bottom: .5rem !important;
+      left: .5rem !important;
+      height: calc(100dvh - 1rem) !important;
+      max-height: calc(100dvh - 1rem) !important;
+      flex-direction: column;
+    }
+
+    .workspace-shell > aside.kbc-workspace-sidebar > .kbc-sidebar-surface {
+      height: 100% !important;
+      max-height: inherit;
+      min-height: 0;
+    }
+
+    .workspace-shell > aside.kbc-workspace-sidebar nav {
+      flex: 1 1 auto !important;
+      min-height: 0;
+    }
+
+    .workspace-shell > aside.kbc-workspace-sidebar > .kbc-sidebar-theme-brand {
+      flex-shrink: 0;
+    }
+
+    .workspace-shell {
+      --kbc-sidebar-offset: calc(var(--kbc-sidebar-width) + 1rem) !important;
+    }
+  }
+
+  @media (max-width: 639px) {
+    .workspace-shell > .workspace-content > .kbc-workspace-topbar {
+      margin-inline: .5rem !important;
+      padding-inline: .5rem !important;
+      gap: .375rem !important;
+    }
+
+    .workspace-shell .kbc-workspace-topbar .kbc-navigation-menu > span {
+      display: none;
+    }
+
+    .workspace-shell .kbc-workspace-topbar > .kbc-header-extras {
+      min-width: 0;
+      max-width: 30vw;
+      flex-shrink: 1;
+    }
+
+    .workspace-shell .kbc-workspace-topbar > .kbc-header-extras > * {
+      max-width: 100%;
+      white-space: normal;
+      overflow-wrap: anywhere;
+    }
+  }
+}

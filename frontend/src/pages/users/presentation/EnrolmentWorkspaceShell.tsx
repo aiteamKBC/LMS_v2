@@ -6,6 +6,7 @@ import type { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { Header, SignOutConfirmModal } from '@/components/feature/Header';
 import { GlobalSearch } from '@/components/feature/GlobalSearch';
 import { SidebarIcon, type SidebarNavItem } from '@/components/feature/Sidebar';
+import { LEARNER_LOGO_URL, WORKSPACE_SIDEBAR_WIDTH } from '@/components/feature/learnerShellAssets';
 import { useAuth } from '@/hooks/useAuth';
 import styles from './EnrolmentWorkspace.module.css';
 import '@/components/feature/WorkspaceBreadcrumbs.css';
@@ -16,7 +17,6 @@ import tutorialStyles from '../help/EnrolmentTutorial.module.css';
 
 type Props = ComponentProps<typeof WorkspaceShell> & { directoryLayout?: boolean };
 const navigationOrder = ['/users', '/users/first-sessions', '/users/coach-directory', '/users/progress-transfers'];
-const logoUrl = 'https://jokdxsdbxorzciulkdyl.supabase.co/storage/v1/object/public/images/16480272afc94729b2911a62d1bbf85d.webp';
 
 /** Enrollment-only frame. Shared headers, search, routes and permission checks are reused. */
 export function EnrolmentWorkspaceShell({ children, role, roleLabel, navItems, pageTitle, pageSubtitle,
@@ -106,13 +106,12 @@ export function EnrolmentWorkspaceShell({ children, role, roleLabel, navItems, p
   };
 
   return <div className={`dashboard-theme workspace-shell ${styles.shell} ${directoryLayout ? styles.directoryShell : ''}`} data-workspace-role={chromeRole}
-    data-collapsed="false" style={{ '--enrolment-sidebar-width': '16.5rem' } as CSSProperties}>
+    data-collapsed="false" style={{ '--enrolment-sidebar-width': `${WORKSPACE_SIDEBAR_WIDTH}px` } as CSSProperties}>
     {mobileOpen && <div className={styles.backdrop} aria-hidden="true" onClick={() => setMobileOpen(false)} />}
     <aside ref={navigationRef} id={`${chromeRole}-mobile-navigation`} className={styles.sidebar} data-mobile-open={mobileOpen}
       aria-label={`${workspaceLabel} navigation`} role={mobileOpen ? 'dialog' : undefined} aria-modal={mobileOpen || undefined}>
       <div className={styles.brand}>
-        <img src={logoUrl} alt="Kent Business College" width="36" height="40" />
-        <div className={styles.brandText}><strong>Enrolment</strong><span>Kent Business College</span></div>
+        <img src={LEARNER_LOGO_URL} alt="Kent Business College" width="104" height="42" />
         {mobileOpen && <button ref={closeRef} className={styles.mobileClose} type="button" aria-label="Close navigation" onClick={() => setMobileOpen(false)}><X size={19} /></button>}
       </div>
       <div className={styles.workspaceLabel}><UserRoundPlus size={19} aria-hidden="true" /><span><small>Workspace</small><strong>{workspaceLabel}</strong></span></div>

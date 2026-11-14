@@ -1,0 +1,204 @@
+/* Enrolment's navigation palette, shared by the workspace sidebars.
+   A named layer keeps these scoped rules above legacy theme !important
+   overrides. Routing, permissions and disclosure state stay in each sidebar. */
+@layer workspace-sidebar {
+  .kbc-workspace-sidebar {
+    --workspace-nav-background: oklch(.33 .12 305 / .97);
+    --workspace-nav-text: #dac9e5;
+    --workspace-nav-active: #ffffff23;
+    --workspace-nav-accent: #f1d46c;
+    --workspace-nav-border: #ffffff20;
+    border-radius: 1rem !important;
+    overflow: hidden !important;
+    background: var(--workspace-nav-background) !important;
+    color: white !important;
+    box-shadow: none !important;
+  }
+
+  .kbc-workspace-sidebar .kbc-sidebar-surface,
+  .kbc-workspace-sidebar.kbc-sidebar-surface {
+    background: var(--workspace-nav-background) !important;
+    color: white !important;
+    border-color: var(--workspace-nav-border) !important;
+    backdrop-filter: none !important;
+  }
+
+  .kbc-workspace-sidebar :is(.kbc-learner-sidebar-pattern, .kbc-sidebar-theme-pattern) {
+    opacity: 0 !important;
+  }
+
+  .kbc-workspace-sidebar :is(.kbc-sidebar-theme-brand, .kbc-sidebar-header) {
+    position: relative !important;
+    min-height: 6rem !important;
+    justify-content: center !important;
+    gap: 0 !important;
+    padding: 1.25rem 3rem !important;
+    border-color: var(--workspace-nav-border) !important;
+    background: transparent !important;
+    box-shadow: none !important;
+  }
+
+  .kbc-workspace-sidebar :is(.kbc-sidebar-theme-brand, .kbc-sidebar-header) > img {
+    flex: 0 1 auto !important;
+    width: 8rem !important;
+    max-width: 100% !important;
+    height: auto !important;
+    max-height: none !important;
+    object-fit: contain !important;
+    object-position: center !important;
+  }
+
+  .kbc-workspace-sidebar :is(.kbc-sidebar-theme-brand, .kbc-sidebar-header) > button {
+    position: absolute !important;
+    right: .75rem !important;
+    top: 50% !important;
+    transform: translateY(-50%) !important;
+  }
+
+  .kbc-workspace-sidebar[data-collapsed="true"] .kbc-sidebar-theme-brand,
+  .kbc-workspace-sidebar [data-collapsed="true"] > .kbc-sidebar-theme-brand {
+    min-height: 4rem !important;
+    padding: .625rem .5rem !important;
+  }
+
+  .kbc-workspace-sidebar[id$="-mobile-navigation"] > button[aria-label="Close navigation"] {
+    top: 3rem !important;
+    transform: translateY(-50%) !important;
+  }
+
+  .kbc-workspace-sidebar :is(.kbc-sidebar-role, .kbc-sidebar-header button) {
+    color: white !important;
+  }
+
+  .kbc-workspace-sidebar > button {
+    color: white !important;
+  }
+
+  .kbc-sidebar-coach:not([data-collapsed="true"]) .kbc-sidebar-theme-toggle {
+    top: 3rem !important;
+    transform: translateY(-50%) !important;
+  }
+
+  .kbc-workspace-sidebar nav {
+    background: transparent !important;
+    scrollbar-color: #ffffff59 transparent !important;
+    scrollbar-width: thin !important;
+  }
+
+  .kbc-workspace-sidebar :is(.kbc-sidebar-theme-nav, .kbc-sidebar-nav) {
+    padding: .75rem .625rem 1rem !important;
+  }
+
+  .kbc-workspace-sidebar .kbc-sidebar-theme-rail-nav {
+    padding-block: .75rem 1rem !important;
+  }
+
+  .kbc-workspace-sidebar :is(.kbc-sidebar-theme-nav, .kbc-sidebar-theme-rail-nav) > :not([hidden]) ~ :not([hidden]),
+  .kbc-workspace-sidebar .kbc-sidebar-nav > div > div + div {
+    margin-top: .375rem !important;
+    margin-bottom: 0 !important;
+  }
+
+  .kbc-workspace-sidebar nav :where(a, button, [role="link"][aria-disabled="true"]) {
+    position: relative;
+    min-height: 2.75rem !important;
+    border: 1px solid transparent !important;
+    border-radius: .625rem !important;
+    background: transparent !important;
+    color: var(--workspace-nav-text) !important;
+    font-size: .8125rem !important;
+    font-weight: 600 !important;
+    text-decoration: none !important;
+    box-shadow: none !important;
+    transition: background-color 150ms ease, color 150ms ease;
+  }
+
+  .kbc-workspace-sidebar .kbc-sidebar-theme-nav :is(a, button, [role="link"][aria-disabled="true"]),
+  .kbc-workspace-sidebar .kbc-sidebar-nav :is(a, button, [role="link"][aria-disabled="true"]) {
+    padding: .625rem .75rem !important;
+  }
+
+  .kbc-workspace-sidebar nav :is(a, button):not([aria-disabled="true"]):not(:disabled):is(:hover, :focus-visible),
+  .kbc-workspace-sidebar nav :is([aria-current="page"], [aria-current="true"], [data-active="true"], .bg-primary-50) {
+    background: var(--workspace-nav-active) !important;
+    color: white !important;
+    border-color: transparent !important;
+  }
+
+  .kbc-workspace-sidebar nav :is(a, button):not([aria-disabled="true"]):not(:disabled):is(:hover, :focus-visible)::before,
+  .kbc-workspace-sidebar nav :is([aria-current="page"], [aria-current="true"], [data-active="true"], .bg-primary-50)::before {
+    position: absolute;
+    inset: .65rem auto .65rem 0;
+    width: 3px;
+    border-radius: 1rem;
+    background: var(--workspace-nav-accent);
+    content: '';
+    pointer-events: none;
+  }
+
+  .kbc-workspace-sidebar :is(a, button):focus-visible {
+    outline: 2px solid var(--workspace-nav-accent) !important;
+    outline-offset: -3px !important;
+  }
+
+  .kbc-workspace-sidebar :is(.kbc-sidebar-icon-well, .kbc-sidebar-icon-well svg, nav > div > button > svg) {
+    background: transparent !important;
+    color: inherit !important;
+    box-shadow: none !important;
+  }
+
+  .kbc-workspace-sidebar .kbc-sidebar-active-marker {
+    display: none !important;
+  }
+
+  .kbc-workspace-sidebar .kbc-sidebar-number-badge {
+    background: #ffffff22 !important;
+    color: white !important;
+  }
+
+  /* Preserve the 36px rows used by the existing submenu progress track. */
+  .kbc-workspace-sidebar .kbc-learner-submenu-item > a {
+    min-height: 36px !important;
+    padding: 5px 8px !important;
+    font-size: .75rem !important;
+  }
+
+  .kbc-workspace-sidebar .kbc-learner-submenu-track-fill {
+    background: var(--workspace-nav-accent) !important;
+    box-shadow: none !important;
+  }
+
+  .kbc-workspace-sidebar .kbc-learner-submenu-item[data-active-path="true"]::before {
+    border-color: var(--workspace-nav-accent) !important;
+  }
+
+  .kbc-workspace-sidebar .kbc-learner-signout {
+    border-radius: .5rem !important;
+    color: #d8c4e4 !important;
+    font-size: .75rem !important;
+    min-height: 3.5rem !important;
+    padding: 1rem .875rem !important;
+  }
+
+  .kbc-workspace-sidebar .kbc-sidebar-theme-footer {
+    border-color: var(--workspace-nav-border) !important;
+  }
+
+  .kbc-workspace-sidebar .kbc-learner-signout:is(:hover, :focus-visible) {
+    background: #ffffff12 !important;
+    color: white !important;
+  }
+
+  .kbc-workspace-sidebar.kbc-sidebar-flyout :is(input, p, span) {
+    color: var(--workspace-nav-text) !important;
+  }
+
+  .kbc-workspace-sidebar.kbc-sidebar-flyout input {
+    border-color: var(--workspace-nav-border) !important;
+    background: #ffffff0e !important;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .kbc-workspace-sidebar nav :is(a, button) { transition: none !important; }
+  }
+}
