@@ -11,6 +11,7 @@ import type { ImportedReview } from '@/api/reviewHistory';
 import type { MeetingAttendance } from '@/api/meetingAttendance';
 import { AuthProvider } from '@/hooks/useAuth';
 import { ToastProvider } from '@/hooks/useToast';
+import { apiMe } from '@/api/auth';
 import ProgressReviewPage, { ProgressReviewsListPage } from '../progress-reviews/page';
 import MonthlyCoachingPage, { MonthlyCoachingListPage } from '../monthly-coaching/page';
 import { CurriculumReviewPage, CurriculumReviewsListPage } from './curriculumReviews';
@@ -57,6 +58,7 @@ function session(source: string, sequence = 1, status = 'not-scheduled'): Learne
 }
 
 beforeEach(() => {
+  vi.mocked(apiMe).mockResolvedValue({ id: 999, email: 'staff@example.test', displayName: 'Test staff', role: 'staff', subjectType: 'staff', subjectId: 999, permissions: [], hasPassword: true, lastLoginAt: null });
   // Booking dates in these fixtures are relative to this server-provided day.
   vi.useFakeTimers({ toFake: ['Date'] });
   vi.setSystemTime(new Date('2026-09-14T09:00:00Z'));
@@ -383,7 +385,7 @@ function SwitchLearner({ path }: { path: string }) {
 function mount(item: typeof cases[number] | typeof reviewsCase, suffix = '?kind=apprenticeship&learner=125', view: 'all' | 'current' = 'all') {
   const allView = view === 'all' && !suffix.startsWith('/');
   const target = `/learner/${item.path}${suffix}${allView ? `${suffix.includes('?') ? '&' : '?'}view=all` : ''}`;
-  const Auth = item.source === 'review' ? AuthProvider : React.Fragment;
+  const Auth = AuthProvider;
   return render(<React.StrictMode><ToastProvider><MemoryRouter initialEntries={[target]}><Auth>
     <SwitchLearner path={item.path} />
     <Routes>
@@ -701,6 +703,7 @@ describe.each(cases)('$path programme sessions', item => {
   });
 
   it('keeps a signed-in learner on their own assignments despite an old staff link', async () => {
+    vi.mocked(apiMe).mockResolvedValue({ id: 126, email: 'learner@example.test', displayName: 'Own learner', role: 'learner', subjectType: 'learner', subjectId: 126, learnerType: 'commercial', permissions: [], hasPassword: true, lastLoginAt: null });
     rememberSignedInLearner('learner', '126', 'commercial');
     events = [session(item.source)]; mount(item);
     await screen.findByRole('button', { name: bookingAction(item) });
@@ -767,6 +770,7 @@ it('opens monthly coaching on the current meeting and reveals grouped history on
 });
 
 it('preserves the signed-in learner when opening all monthly coaching meetings from an old staff link', async () => {
+  vi.mocked(apiMe).mockResolvedValue({ id: 126, email: 'learner@example.test', displayName: 'Own learner', role: 'learner', subjectType: 'learner', subjectId: 126, learnerType: 'commercial', permissions: [], hasPassword: true, lastLoginAt: null });
   rememberSignedInLearner('learner', '126', 'commercial');
   events = [session('mcr')];
   mount(cases[1], undefined, 'current');
@@ -781,6 +785,7 @@ it('preserves the signed-in learner when opening all monthly coaching meetings f
 });
 
 it('opens Reviews on the next booking, keeps an earlier signature visible, and browses every record without writes', async () => {
+  vi.mocked(apiMe).mockResolvedValue({ id: 126, email: 'learner@example.test', displayName: 'Own learner', role: 'learner', subjectType: 'learner', subjectId: 126, learnerType: 'commercial', permissions: [], hasPassword: true, lastLoginAt: null });
   rememberSignedInLearner('learner', '126', 'commercial');
   events = [
     { ...session('progress-review', 1), date: '2026-10-01', targetDate: '2026-10-01' },

@@ -19,7 +19,8 @@ class QuizPlacementTests(unittest.TestCase):
         connection.vendor = 'sqlite'
         self.cursor.db = connection
         connection.cursor.return_value.__enter__.return_value = self.cursor
-        self.scope = {'connections': {'enrolment': connection}, 'DatabaseError': RuntimeError, 'read_sql': read_sql,
+        self.scope = {'connections': {'enrolment': connection}, 'DatabaseError': RuntimeError,
+                      'read_sql': read_sql,
                       'logger': MagicMock(), '_s': lambda value: '' if value is None else str(value),
                       '_MODULE_ASSESSMENTS_WEEK_LABEL': 'Module assessments'}
         path = Path(__file__).with_name('learner_detail.py')
