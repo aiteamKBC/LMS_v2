@@ -8,7 +8,7 @@ are shown, and what is suggested) and the write (what is moved and archived).
 import json
 from datetime import datetime, timezone as tz
 from types import SimpleNamespace
-from unittest.mock import Mock, patch
+from unittest.mock import MagicMock, Mock, patch
 
 from django.test import RequestFactory, SimpleTestCase
 
@@ -302,7 +302,7 @@ class ShiftedPlanTests(SimpleTestCase):
         )
 
     def test_leaving_a_group_module_makes_the_shift_explicit(self):
-        with patch("learner_api.module_shift._group_module_ids", return_value=["MOD-A"]):
+        with patch("learner_api.module_shift.learner_group_module_ids", return_value=["MOD-A"]):
             shifted = module_shift._shifted_plan(
                 self.learner, [self.source], self.target, "MOD-A",
             )
@@ -313,7 +313,7 @@ class ShiftedPlanTests(SimpleTestCase):
         self.assertEqual(learning_plan._effective_plan_ids(self.learner, {}), ["MOD-B"])
 
     def test_a_non_group_module_does_not_freeze_the_rest_of_the_plan(self):
-        with patch("learner_api.module_shift._group_module_ids", return_value=["MOD-X"]):
+        with patch("learner_api.module_shift.learner_group_module_ids", return_value=["MOD-X"]):
             shifted = module_shift._shifted_plan(
                 self.learner, [self.source], self.target, "MOD-A",
             )
@@ -340,7 +340,9 @@ class ShiftedPlanTests(SimpleTestCase):
         self.assertTrue(mirrored)
         self.assertEqual(self.learner.learning_plan, [self.target])
         self.learner.save.assert_not_called()
-        self.assertEqual(json_replace.call_count, 2)
+        # The removed Learner.learners.learning_plan mirror is no longer a
+        # second JSON write; the enrolment plan is the single JSON source.
+        self.assertEqual(json_replace.call_count, 1)
         replace.assert_called_once_with(profile, "MOD-A", self.target)
         full_mirror.assert_not_called()
 
@@ -367,6 +369,105 @@ class ShiftedPlanTests(SimpleTestCase):
         self.assertEqual(self.learner.training_plan, [self.target])
         self.learner.save.assert_not_called()
         full_mirror.assert_not_called()
+
+
+class MirroredModuleReconciliationTests(SimpleTestCase):
+    @staticmethod
+    def _week(pk, position, curriculum_week_id, components=()):
+        return SimpleNamespace(
+            pk=pk,
+            position=position,
+            curriculum_week_id=curriculum_week_id,
+            _prefetched_objects_cache={'components': list(components)},
+        )
+
+    @staticmethod
+    def _component(pk, position, component_ref, component_title):
+        return SimpleNamespace(
+            pk=pk,
+            position=position,
+            curriculum_component_id=component_ref,
+            component_ref=component_ref,
+            component_title=component_title,
+        )
+
+    def test_reconciliation_preserves_matching_week_and_component_row_ids(self):
+        component = self._component(201, 1, 'C-A1', 'Old component')
+        weeks = [
+            self._week(101, 1, 'W-A1', [component]),
+            self._week(102, 2, 'W-A2'),
+            self._week(103, 3, 'W-A3'),
+        ]
+        related_weeks = MagicMock()
+        related_weeks.prefetch_related.return_value.order_by.return_value = weeks
+        module_row = SimpleNamespace(
+            pk=50,
+            curriculum_module_id='MOD-A',
+            weeks=related_weeks,
+            save=Mock(),
+        )
+        target = {
+            'moduleId': 'MOD-B',
+            'weeks': [
+                {'weekId': 'W-B1', 'components': [
+                    {'componentId': 'C-B1', 'componentTitle': 'New component'},
+                ]},
+                {'weekId': 'W-B2', 'components': []},
+            ],
+        }
+        validated = [{
+            'payload': target,
+            'module_id': 'MOD-B',
+            'weeks': [
+                {
+                    'payload': target['weeks'][0],
+                    'week_id': 'W-B1',
+                    'components': [{
+                        'payload': target['weeks'][0]['components'][0],
+                        'component_id': 'C-B1',
+                    }],
+                },
+                {'payload': target['weeks'][1], 'week_id': 'W-B2', 'components': []},
+            ],
+        }]
+
+        with patch.object(
+            module_shift, 'validate_training_plan_relationships', return_value=validated,
+        ), patch.object(module_shift, 'LearnerTrainingPlanModule') as modules, \
+                patch.object(module_shift, 'LearnerTrainingPlanWeek') as week_model, \
+                patch.object(module_shift, 'LearnerTrainingPlanComponent') as component_model:
+            modules.objects.filter.return_value.__getitem__.return_value = [module_row]
+            result = module_shift._replace_mirrored_module(object(), 'MOD-A', target)
+
+        self.assertTrue(result)
+        self.assertEqual(module_row.curriculum_module_id, 'MOD-B')
+        module_row.save.assert_called_once_with(update_fields=['curriculum_module'])
+        self.assertEqual([row.pk for row in week_model.objects.bulk_update.call_args.args[0]], [101, 102])
+        self.assertEqual([row.curriculum_week_id for row in weeks[:2]], ['W-B1', 'W-B2'])
+        week_model.objects.bulk_create.assert_not_called()
+        week_model.objects.filter.assert_called_once_with(pk__in=[103])
+        week_model.objects.filter.return_value.delete.assert_called_once_with()
+        self.assertEqual(
+            [row.pk for row in component_model.objects.bulk_update.call_args.args[0]],
+            [201],
+        )
+        self.assertEqual(component.curriculum_component_id, 'C-B1')
+        self.assertEqual(
+            component_model.objects.bulk_update.call_args.args[1],
+            ['curriculum_component'],
+        )
+        component_model.objects.bulk_create.assert_not_called()
+
+    def test_invalid_canonical_relationship_performs_no_mirror_write(self):
+        from .mappers import ValidationError
+
+        with patch.object(
+            module_shift, 'validate_training_plan_relationships',
+            side_effect=ValidationError('invalid module/week relationship'),
+        ), patch.object(module_shift, 'LearnerTrainingPlanModule') as modules:
+            with self.assertRaises(ValidationError):
+                module_shift._replace_mirrored_module(object(), 'MOD-A', {'moduleId': 'MOD-B'})
+            modules.objects.filter.assert_not_called()
 
 
 class MappingValidationTests(SimpleTestCase):

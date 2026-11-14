@@ -128,14 +128,14 @@ MODULES.update({
 
 def _fake_rows(sql, params):
     """Stand in for the queries module_shift makes, by shape of SQL."""
-    if "FROM curriculum.weeks" in sql:
+    if "FROM curriculum.weeks w" in sql:
         # These fixtures carry no weeks: nothing here maps progress.
         return []
     if "FROM curriculum.cohorts" in sql:
         return [dict(c) for c in COHORTS]
     if "FROM curriculum.groups" in sql:
         return [dict(g) for g in GROUPS]
-    if "WHERE module_catalogue_id = %s" in sql:
+    if "WHERE m.module_catalogue_id = %s" in sql:
         row = MODULES.get(params[0])
         return [dict(row)] if row else []
     # Match the candidate SQL; production code then verifies programme identity.
@@ -310,9 +310,9 @@ class ModuleShiftWriteTests(SimpleTestCase):
             patch("learner_api.module_shift.sync_active_user") as sync,
             patch("learner_api.module_shift.refresh_learner_ksb_snapshot"),
             patch("learner_api.module_shift.recompute_completed_hours") as recompute,
-            patch("learner_api.module_shift._programme_modules",
+            patch("learner_api.module_shift.learner_programme_modules",
                   return_value=[module_shift._module_payload(m) for m in MODULES.values()]),
-            patch("learner_api.module_shift._group_module_ids", return_value=list(preset)),
+            patch("learner_api.module_shift.learner_group_module_ids", return_value=list(preset)),
         ):
             model.all_learners.get.return_value = learner
             response = module_shift.module_shift(request, 62)

@@ -625,6 +625,16 @@ class LearnerPlanModuleManager(models.Manager.from_queryset(LearnerPlanModuleQue
         return super().get_queryset().select_related("curriculum_module")
 
 
+class LearnerPlanWeekManager(models.Manager):
+    def get_queryset(self):
+        return super().get_queryset().select_related("curriculum_week")
+
+
+class LearnerPlanComponentManager(models.Manager):
+    def get_queryset(self):
+        return super().get_queryset().select_related("curriculum_component")
+
+
 class LearnerProfile(models.Model):
     """Permanent learner identity shared by active and inactive workflows."""
 
@@ -1150,8 +1160,27 @@ class LearnerTrainingPlanWeek(models.Model):
         related_name="weeks",
     )
     position = models.PositiveIntegerField()
-    week_ref = models.TextField(null=True, blank=True)
-    week_title = models.TextField(blank=True)
+    curriculum_week = models.ForeignKey(
+        "curriculum_api.ModuleAuthoringWeek",
+        db_column="curriculum_week_id",
+        on_delete=models.PROTECT,
+        related_name="learner_plan_assignments",
+    )
+
+    objects = LearnerPlanWeekManager()
+
+    @property
+    def week_ref(self):
+        return self.curriculum_week_id
+
+    @week_ref.setter
+    def week_ref(self, value):
+        self.curriculum_week_id = value
+
+    @property
+    def week_title(self):
+        week = self.curriculum_week
+        return week.title if week is not None else ""
 
     class Meta:
         managed = False
@@ -1166,8 +1195,29 @@ class LearnerTrainingPlanComponent(models.Model):
         related_name="components",
     )
     position = models.PositiveIntegerField()
-    component_ref = models.TextField(null=True, blank=True)
-    component_title = models.TextField(blank=True)
+    curriculum_component = models.ForeignKey(
+        "curriculum_api.ModuleAuthoringComponent",
+        db_column="curriculum_component_id",
+        on_delete=models.PROTECT,
+        related_name="learner_plan_assignments",
+        null=True,
+        blank=True,
+    )
+
+    objects = LearnerPlanComponentManager()
+
+    @property
+    def component_ref(self):
+        return self.curriculum_component_id
+
+    @component_ref.setter
+    def component_ref(self, value):
+        self.curriculum_component_id = value
+
+    @property
+    def component_title(self):
+        component = self.curriculum_component
+        return component.title if component is not None else ""
 
     class Meta:
         managed = False

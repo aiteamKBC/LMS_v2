@@ -50,7 +50,7 @@ from login.permissions import learner_self_or_staff, staff_only
 from .constants import DELIVERY_PROGRAMME_STATUS
 from .free_course_selectors import assignment_version, assigned_course_ids, canonical_learner
 from .learner_progression import advance_learner
-from .mappers import _s, get_training_plan, stored_training_plan, training_plan_field
+from .mappers import ValidationError, _s, get_training_plan, stored_training_plan, training_plan_field
 from .models import EnrolmentUser, LearnerProfile
 from .placement_links import placement_ids, placement_payload
 from .projection_performance import projection_call, projection_operation
@@ -779,7 +779,7 @@ def sync_learning_plan_mirror(source, *, strict=False):
             weeks=weeks_csv,
             components=components_csv,
         )
-    except DatabaseError:
+    except (DatabaseError, ValidationError):
         if strict:
             raise
         logger.exception(
