@@ -1,0 +1,247 @@
+@import '../../styles/EnrolmentTypography.css';
+
+/* Presentation only. Keep page layouts, navigation, editors and data flows in
+   their owning components. Automatic audit retains its restored appearance.
+   The named layer overrides legacy unlayered !important colors without
+   competing with the existing sidebar and header layers. Print is unchanged. */
+@layer workspace-enrolment {
+  @media screen {
+    :root:has(.workspace-shell):not(:has([data-audit-home="/workspace/auditor-copy"])) {
+      --enrolment-ui-canvas: #f5f3f9;
+      --enrolment-ui-surface: #fcfbfd;
+      --enrolment-ui-field: #fff;
+      --enrolment-ui-soft: #f4f1f8;
+      --enrolment-ui-stripe: #fbf9fe;
+      --enrolment-ui-hover: #f2eafa;
+      --enrolment-ui-border: #ded4eb;
+      --enrolment-ui-divider: #e8dfef;
+      --enrolment-ui-heading: #4d365b;
+      --enrolment-ui-text: #51474b;
+      --enrolment-ui-muted: #75657d;
+      --enrolment-ui-link: #5d2e88;
+      --enrolment-ui-action: #5d2e88;
+      --enrolment-ui-action-hover: #492166;
+      --enrolment-ui-focus: #9c75bd;
+      --enrolment-ui-hero: radial-gradient(ellipse at 100% 0%, #78539780, transparent 65%), linear-gradient(110deg, #28103e, #381656 60%, #532970);
+      --enrolment-ui-popover-shadow: 0 10px 30px #2b153a24;
+    }
+
+    :root[data-theme="dark"]:has(.workspace-shell):not(:has([data-audit-home="/workspace/auditor-copy"])) {
+      --enrolment-ui-canvas: #18131f;
+      --enrolment-ui-surface: #241c2e;
+      --enrolment-ui-field: #2b2136;
+      --enrolment-ui-soft: #2c2237;
+      --enrolment-ui-stripe: #281f33;
+      --enrolment-ui-hover: #372943;
+      --enrolment-ui-border: #51405f;
+      --enrolment-ui-divider: #42324f;
+      --enrolment-ui-heading: #f0e4fa;
+      --enrolment-ui-text: #e1d5e9;
+      --enrolment-ui-muted: #c0adcc;
+      --enrolment-ui-link: #d6b5f0;
+      --enrolment-ui-action: #70409b;
+      --enrolment-ui-action-hover: #8150ad;
+      --enrolment-ui-focus: #c5a0e2;
+      --enrolment-ui-popover-shadow: 0 10px 30px #0006;
+    }
+
+    /* Root aliases also reach existing select menus and dialogs in body portals. */
+    :root:has(.workspace-shell):not(:has([data-audit-home="/workspace/auditor-copy"])),
+    .workspace-shell:not(:has([data-audit-home="/workspace/auditor-copy"])) {
+      --font-body: 'Enrolment Roboto', system-ui, sans-serif !important;
+      --font-heading: var(--font-body) !important;
+      --font-label: var(--font-body) !important;
+      --kbc-primary: var(--enrolment-ui-link) !important;
+      --kbc-primary-deep: var(--enrolment-ui-heading) !important;
+      --kbc-primary-secondary: var(--enrolment-ui-action-hover) !important;
+      --kbc-primary-accent: var(--enrolment-ui-focus) !important;
+      --kbc-surface: var(--enrolment-ui-surface) !important;
+      --kbc-border: var(--enrolment-ui-border) !important;
+      --kbc-text: var(--enrolment-ui-text) !important;
+      --kbc-muted: var(--enrolment-ui-muted) !important;
+      --kbc-app-bg: var(--enrolment-ui-canvas) !important;
+      --kbc-canvas: var(--enrolment-ui-canvas) !important;
+      --kbc-page-bg: var(--enrolment-ui-canvas) !important;
+      --kbc-purple-soft: var(--enrolment-ui-soft) !important;
+      --kbc-purple-wash: var(--enrolment-ui-stripe) !important;
+      --kbc-table-text: var(--enrolment-ui-text) !important;
+      --kbc-table-border: var(--enrolment-ui-divider) !important;
+      --kbc-table-header-text: var(--enrolment-ui-muted) !important;
+      --kbc-chrome-color: var(--enrolment-ui-soft) !important;
+      --kbc-hero-gradient: var(--enrolment-ui-hero) !important;
+      --kbc-radius-card: 1rem !important;
+      --kbc-radius-control: .875rem !important;
+      --kbc-shadow-card: none !important;
+      --kbc-shadow-popover: var(--enrolment-ui-popover-shadow) !important;
+      --action-primary: var(--enrolment-ui-action) !important;
+      --action-primary-hover: var(--enrolment-ui-action-hover) !important;
+      --action-primary-active: #432060 !important;
+      --action-primary-focus: var(--enrolment-ui-focus) !important;
+    }
+
+    .workspace-shell:not(:has([data-audit-home="/workspace/auditor-copy"])) {
+      background: radial-gradient(1120px 720px at 6% -12%, #e9def344, transparent 62%), radial-gradient(920px 640px at 97% 0%, #f2e5c533, transparent 58%), var(--enrolment-ui-canvas) !important;
+      color: var(--enrolment-ui-text);
+      font-family: var(--font-body) !important;
+    }
+
+    .workspace-shell:not(:has([data-audit-home="/workspace/auditor-copy"])) :is(.workspace-content, .workspace-main, .page-container) {
+      background-color: transparent !important;
+    }
+
+    .workspace-shell:not(:has([data-audit-home="/workspace/auditor-copy"])) :is(.workspace-breadcrumbs, .ui-filter-toolbar) {
+      border-color: var(--enrolment-ui-border) !important;
+      background: var(--enrolment-ui-soft) !important;
+      color: var(--enrolment-ui-muted) !important;
+      box-shadow: none !important;
+    }
+
+    .workspace-shell:not(:has([data-audit-home="/workspace/auditor-copy"])) .workspace-main :is(.ui-panel, .ui-metric-card, .ui-data-table, .ui-action-row, .card-premium, .coach-metric-card, .shadow-panel, .admin-cool-table) {
+      border-color: var(--enrolment-ui-border) !important;
+      border-radius: 1rem !important;
+      background: var(--enrolment-ui-surface) !important;
+      box-shadow: none !important;
+    }
+
+    .workspace-shell:not(:has([data-audit-home="/workspace/auditor-copy"])) .workspace-main :is(.ui-panel, .ui-metric-card, .card-premium):hover {
+      border-color: var(--enrolment-ui-border) !important;
+      box-shadow: none !important;
+    }
+
+    .workspace-shell:not(:has([data-audit-home="/workspace/auditor-copy"])) .workspace-main :is(.ui-hero-banner, .workspace-hero-banner, .workspace-page-hero, .page-header, .super-admin-hero, .learner-super-admin-hero, .curriculum-home-hero, .curriculum-department-hero) {
+      border: 1px solid #532970 !important;
+      border-radius: 1.5rem !important;
+      background: var(--enrolment-ui-hero) !important;
+      box-shadow: none !important;
+      color: #f5eafa !important;
+    }
+
+    .workspace-shell:not(:has([data-audit-home="/workspace/auditor-copy"])) .workspace-main :is(.ui-hero-banner, .workspace-page-hero, .super-admin-hero, .learner-super-admin-hero, .curriculum-home-hero, .curriculum-department-hero) :is(h1, h2, h3, .workspace-hero-title) {
+      color: white !important;
+      font-family: var(--font-heading) !important;
+    }
+
+    .workspace-shell:not(:has([data-audit-home="/workspace/auditor-copy"])) .workspace-main :is(.ui-hero-banner, .workspace-page-hero, .super-admin-hero, .learner-super-admin-hero, .curriculum-home-hero, .curriculum-department-hero) :is(.workspace-hero-description, p[class*="text-foreground-"]:not(.workspace-metric-value):not(.workspace-hero-metric p):not(.coach-metric-card p):not(.learner-hero-kpi p):not(.ui-panel p)) {
+      color: #e9dced !important;
+    }
+
+    .workspace-shell:not(:has([data-audit-home="/workspace/auditor-copy"])) .workspace-main :is(.workspace-hero-eyebrow, .workspace-hero-banner__icon) {
+      color: #ead68f !important;
+    }
+
+    .workspace-shell:not(:has([data-audit-home="/workspace/auditor-copy"])) .workspace-hero-banner__icon {
+      border: 1px solid #ffffff30 !important;
+      border-radius: .875rem !important;
+      background: #ffffff15 !important;
+      box-shadow: none !important;
+    }
+
+    .workspace-shell:not(:has([data-audit-home="/workspace/auditor-copy"])) .workspace-hero-metric {
+      border: 1px solid #ffffff55 !important;
+      background: var(--enrolment-ui-surface) !important;
+      color: var(--enrolment-ui-text) !important;
+    }
+
+    .workspace-shell:not(:has([data-audit-home="/workspace/auditor-copy"])) .workspace-main :where(input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="color"]):not([type="hidden"]):not([type="file"]), select, textarea, button[role="combobox"], button[aria-haspopup="listbox"]) {
+      border-color: var(--enrolment-ui-border) !important;
+      border-radius: .875rem !important;
+      background-color: var(--enrolment-ui-field) !important;
+      color: var(--enrolment-ui-text) !important;
+      font-family: var(--font-body) !important;
+      box-shadow: none !important;
+    }
+
+    .workspace-shell:not(:has([data-audit-home="/workspace/auditor-copy"])) .workspace-main :is(input, textarea)::placeholder {
+      color: var(--enrolment-ui-muted) !important;
+      opacity: .8;
+    }
+
+    .workspace-shell:not(:has([data-audit-home="/workspace/auditor-copy"])) .workspace-main :is(input, select, textarea):disabled {
+      background-color: var(--enrolment-ui-soft) !important;
+      color: var(--enrolment-ui-muted) !important;
+    }
+
+    .workspace-shell:not(:has([data-audit-home="/workspace/auditor-copy"])) .workspace-main :is(input, select, textarea):is([aria-invalid="true"], [class*="border-red-"], [class*="border-rose-"], [class*="border-destructive"]) {
+      border-color: var(--color-danger, #c53030) !important;
+    }
+
+    .workspace-shell:not(:has([data-audit-home="/workspace/auditor-copy"])) .workspace-main :is(button, a)[class*="rounded"]:not(.rounded-full) {
+      border-radius: .875rem !important;
+    }
+
+    .workspace-shell:not(:has([data-audit-home="/workspace/auditor-copy"])) .workspace-main :is(.primary-action, button.bg-primary-500, button.bg-primary-600, button.bg-primary-700, a.bg-primary-500, a.bg-primary-600, a.bg-primary-700) {
+      border-color: var(--enrolment-ui-action) !important;
+      background: var(--enrolment-ui-action) !important;
+      color: white !important;
+      box-shadow: none !important;
+    }
+
+    .workspace-shell:not(:has([data-audit-home="/workspace/auditor-copy"])) .workspace-main :is(.primary-action, button.bg-primary-500, button.bg-primary-600, button.bg-primary-700, a.bg-primary-500, a.bg-primary-600, a.bg-primary-700):hover:not(:disabled) {
+      background: var(--enrolment-ui-action-hover) !important;
+    }
+
+    .workspace-shell:not(:has([data-audit-home="/workspace/auditor-copy"])) .workspace-main :is(.ui-page-tabs button[aria-pressed="true"], [role="tab"][aria-selected="true"]) {
+      border-color: var(--enrolment-ui-action) !important;
+      background: var(--enrolment-ui-action) !important;
+      color: white !important;
+      box-shadow: none !important;
+    }
+
+    .workspace-shell:not(:has([data-audit-home="/workspace/auditor-copy"])) .workspace-main .ui-page-tabs button[aria-pressed="false"] {
+      border-color: var(--enrolment-ui-border) !important;
+      background: var(--enrolment-ui-field) !important;
+      color: var(--enrolment-ui-text) !important;
+      box-shadow: none !important;
+    }
+
+    .workspace-shell:not(:has([data-audit-home="/workspace/auditor-copy"])) .workspace-main .ui-metric-card[aria-pressed="true"] {
+      border-color: var(--enrolment-ui-action) !important;
+      box-shadow: inset 0 0 0 1px var(--enrolment-ui-action) !important;
+    }
+
+    .workspace-shell:not(:has([data-audit-home="/workspace/auditor-copy"])) .workspace-main table thead th {
+      border-color: var(--enrolment-ui-divider) !important;
+      background: var(--enrolment-ui-soft) !important;
+      color: var(--enrolment-ui-muted) !important;
+      font-family: var(--font-body) !important;
+      font-weight: 600;
+    }
+
+    .workspace-shell:not(:has([data-audit-home="/workspace/auditor-copy"])) .workspace-main table tbody tr:not([aria-selected="true"]):not([data-state="selected"]):not([class*="bg-warning"]):not([class*="bg-red-"]):not([class*="bg-amber-"]):not([class*="bg-destructive"]):nth-child(odd) { background: var(--enrolment-ui-field) !important; }
+    .workspace-shell:not(:has([data-audit-home="/workspace/auditor-copy"])) .workspace-main table tbody tr:not([aria-selected="true"]):not([data-state="selected"]):not([class*="bg-warning"]):not([class*="bg-red-"]):not([class*="bg-amber-"]):not([class*="bg-destructive"]):nth-child(even) { background: var(--enrolment-ui-stripe) !important; }
+    .workspace-shell:not(:has([data-audit-home="/workspace/auditor-copy"])) .workspace-main table tbody tr:not([aria-selected="true"]):not([data-state="selected"]):not([class*="bg-warning"]):not([class*="bg-red-"]):not([class*="bg-amber-"]):not([class*="bg-destructive"]):hover { background: var(--enrolment-ui-hover) !important; }
+    .workspace-shell:not(:has([data-audit-home="/workspace/auditor-copy"])) .workspace-main table tbody td { border-color: var(--enrolment-ui-divider) !important; }
+
+    .workspace-shell:not(:has([data-audit-home="/workspace/auditor-copy"])) .workspace-main :is(a, button, input, select, textarea):focus-visible {
+      outline: 3px solid var(--enrolment-ui-focus) !important;
+      outline-offset: 3px;
+    }
+
+    /* Only the embedded audit headings override the legacy serif face. Rich
+       evidence, signature fonts and monospace numeric columns keep their fonts. */
+    .workspace-shell:not(:has([data-audit-home="/workspace/auditor-copy"])) .learner-log-pro {
+      font-family: var(--font-body) !important;
+    }
+    .workspace-shell:not(:has([data-audit-home="/workspace/auditor-copy"])) .learner-log-pro :is(h1, h2, h3) { font-family: var(--font-heading) !important; }
+
+    /* Portal surfaces inherit these root tokens without moving their DOM,
+       changing their stacking order, or altering focus and dismiss handling. */
+    :root:has(.workspace-shell):not(:has([data-audit-home="/workspace/auditor-copy"])) :is(.workspace-main [role="listbox"], .learner-log-pro-select-content, .llp-hours-test-select-content, body > [role="group"][data-side]) {
+      border-color: var(--enrolment-ui-border) !important;
+      border-radius: .875rem !important;
+      background: var(--enrolment-ui-field) !important;
+      color: var(--enrolment-ui-text) !important;
+      font-family: var(--font-body) !important;
+      box-shadow: var(--enrolment-ui-popover-shadow) !important;
+    }
+
+    :root:has(.workspace-shell):not(:has([data-audit-home="/workspace/auditor-copy"])) :is(.learner-log-pro-select-content, .llp-hours-test-select-content) [role="option"] {
+      background: var(--enrolment-ui-field) !important;
+      color: var(--enrolment-ui-text) !important;
+    }
+    :root:has(.workspace-shell):not(:has([data-audit-home="/workspace/auditor-copy"])) :is(.learner-log-pro-select-content, .llp-hours-test-select-content) [role="option"][data-highlighted] {
+      background: var(--enrolment-ui-hover) !important;
+      color: var(--enrolment-ui-link) !important;
+    }
+  }
+}
