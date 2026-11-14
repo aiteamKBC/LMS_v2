@@ -21,6 +21,10 @@ export interface DeliveryWorkspaceProps {
   modulesLoading: boolean;
   modulesError: string | null;
   sessions: DeliveryLiveSession[];
+  /** Delivery chart only; the Session Calendar destination retains its full scope. */
+  chartSessions?: DeliveryLiveSession[];
+  chartLoading?: boolean;
+  chartError?: string | null;
   undatedSessionCount?: number;
   sessionsLoading: boolean;
   sessionsError: string | null;
@@ -45,6 +49,7 @@ export default function DeliveryWorkspace({
   description, cards, attentionItems, cohorts, activeCohortGroups, activeGroups, totalGroups,
   activeModules, totalModules, modulesLoading, modulesError, sessions, undatedSessionCount, sessionsLoading, sessionsError,
   loading, unavailable, error, onRetry, onRetrySessions, onRetryActivity, heroVariant = 'glass', staffing, now: previewNow,
+  chartSessions, chartLoading = sessionsLoading, chartError,
 }: DeliveryWorkspaceProps) {
   const [weekOffset, setWeekOffset] = useState(0);
   const [clock, setClock] = useState(() => new Date());
@@ -61,10 +66,12 @@ export default function DeliveryWorkspace({
     const timer = window.setInterval(() => setClock(new Date()), 60_000);
     return () => window.clearInterval(timer);
   }, [previewNow]);
-  const week = deliveryWeek(sessions, previewNow ?? clock, weekOffset);
-  const undated = undatedSessionCount ?? week.undated;
+  const week = deliveryWeek(chartSessions ?? sessions, previewNow ?? clock, weekOffset);
+  const calendarWeek = chartSessions ? deliveryWeek(sessions, previewNow ?? clock, weekOffset) : week;
+  const undated = undatedSessionCount ?? calendarWeek.undated;
   const activeCohorts = cohortSegments(cohorts)[0].value;
   const sessionsUnavailable = Boolean(sessionsError && !sessions.length);
+  const chartUnavailable = Boolean(chartError) || sessionsUnavailable;
   const nextLabel = week.next ? `${deliveryDateLabel(week.next.date, true)} · ${deliverySessionTime(week.next.startTime)} UK` : '';
   return <main className={styles.page}>
     <div className={styles.watermark} aria-hidden="true" />
@@ -121,21 +128,22 @@ export default function DeliveryWorkspace({
           <div className={styles.statFooter}><Link to="/curriculum/module-builder">Review modules <AppIcon className="ri-arrow-right-line" size={13} /></Link></div>
         </article>
 
-        <article className={styles.stat} aria-label="Scheduled live sessions" data-accent="gold" aria-busy={sessionsLoading}>
+        <article className={styles.stat} aria-label="Scheduled live sessions" data-accent="gold" aria-busy={chartLoading}>
           <div className={styles.statHeading}><div><h2>Scheduled live sessions</h2>
-            <p className={styles.value} aria-label="Scheduled live sessions count">{sessionsLoading ? <LoadingValue /> : sessionsUnavailable ? 'Unavailable' : number.format(week.count)}<span className={styles.valueHint}>{weekOffset ? 'next week' : 'this week'}</span></p>
+            <p className={styles.value} aria-label="Scheduled live sessions count">{chartLoading ? <LoadingValue /> : chartUnavailable ? 'Unavailable' : number.format(week.count)}<span className={styles.valueHint}>{weekOffset ? 'next week' : 'this week'}</span></p>
           </div><span className={styles.icon}><AppIcon className="ri-calendar-schedule-line" size={20} /></span></div>
           <div className={styles.weekControls}>
             <span>{deliveryDateLabel(week.days[0].date, true)} – {deliveryDateLabel(week.days[6].date, true)}</span>
             <select aria-label="Session week" value={weekOffset} onChange={event => setWeekOffset(Number(event.target.value))}><option value={0}>This week</option><option value={1}>Next week</option></select>
           </div>
-          {sessionsLoading ? <><span className={styles.srOnly} role="status">Loading live sessions.</span><ChartSkeleton /></> : sessionsUnavailable ? <p className={styles.statNote}>Session dates could not be loaded.</p> : <>
+          {chartSessions && <p className={styles.statNote}>Live sessions from active modules</p>}
+          {chartLoading ? <><span className={styles.srOnly} role="status">Loading live sessions.</span><ChartSkeleton /></> : chartUnavailable ? <p className={styles.statNote}>Session dates or active modules could not be verified.</p> : <>
             <WeeklySessionChart week={week} />
             <p className={styles.nextSession}>{week.next ? <><span>Next live</span> <strong title={week.next.title}>{nextLabel}</strong></> : 'No upcoming live sessions scheduled.'}</p>
             {!week.count && <span className={styles.srOnly}>No live sessions in the selected week.</span>}
           </>}
-          {!sessionsLoading && undated > 0 && <p className={styles.activityWarning}>{number.format(undated)} live sessions without a valid date</p>}
-          {!sessionsLoading && week.invalidTimes > 0 && <p className={styles.activityWarning}>{number.format(week.invalidTimes)} live sessions need their time or time zone checked</p>}
+          {!sessionsLoading && undated > 0 && <p className={styles.activityWarning}>{number.format(undated)} live sessions without a valid date (across the session calendar)</p>}
+          {!chartLoading && !chartUnavailable && week.invalidTimes > 0 && <p className={styles.activityWarning}>{number.format(week.invalidTimes)} live sessions need their time or time zone checked</p>}
           <div className={styles.statFooter}><Link to="/curriculum/session-calendar">View session calendar <AppIcon className="ri-arrow-right-line" size={13} /></Link><span>UK time</span></div>
         </article>
       </section>
@@ -149,7 +157,7 @@ export default function DeliveryWorkspace({
           return <Link to={card.href} key={card.href} className={styles.card} data-accent={accents[index]}>
             <div className={styles.cardTop}><span className={styles.icon}><AppIcon className={card.icon} size={23} /></span>{card.meta && (pending ? <LoadingValue /> : <span className={styles.badge}>{missing ? 'Unavailable' : card.meta}</span>)}</div>
             <h3>{card.title}</h3><p>{card.description}</p>
-            {calendar && week.next && !pending && !missing && <span className={styles.nextCardSession}>Next live · {nextLabel}</span>}
+            {calendar && calendarWeek.next && !pending && !missing && <span className={styles.nextCardSession}>Next live · {deliveryDateLabel(calendarWeek.next.date, true)} · {deliverySessionTime(calendarWeek.next.startTime)} UK</span>}
             <span className={styles.cardAction}>Open workspace <AppIcon className="ri-arrow-right-line" size={16} /></span>
           </Link>;
         })}</div>
