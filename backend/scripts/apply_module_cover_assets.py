@@ -91,19 +91,23 @@ def main(argv=None):
     plan_updates(covers, {}, args.asset_base_url, allow_missing=True)
     sys.path.insert(0, str(BACKEND_ROOT))
     os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'config.settings')
-    from django.db import connections, transaction
-    connection = connections[args.database]
-    if connection.vendor != 'postgresql' or str(connection.settings_dict['HOST']).rstrip('.').lower() != args.expected_host.rstrip('.').lower():
+    from django.db import connections
+    configured = connections[args.database]
+    if configured.vendor != 'postgresql' or str(configured.settings_dict['HOST']).rstrip('.').lower() != args.expected_host.rstrip('.').lower():
         raise ValueError('Configured database host/vendor does not match the identified target.')
     ids = [cover['moduleId'] for cover in covers]
     query = """select module_catalogue_id,cover_image_url,updated_at,
         md5((to_jsonb(m)-'cover_image_url'-'updated_at')::text)
         from curriculum.modules m where module_catalogue_id=any(%s)
         and deleted_at is null and is_programme_deleted is not true
-        and lower(coalesce(status,''))<>'archived'
+        and lower(coalesce(to_jsonb(m)->>'status',''))<>'archived'
         and lower(trim(coalesce(to_jsonb(m)->>'is_archived',''))) not in ('1','true','yes','y','on')"""
+    # Use Django's configured driver/parameters directly. A standalone data
+    # operation needs neither application setup nor a web-worker connection pool.
+    connection = configured.Database.connect(**configured.get_connection_params())
+    connection.autocommit = False
     try:
-        with transaction.atomic(using=args.database):
+        with connection:
             with connection.cursor() as cursor:
                 if not args.apply:
                     cursor.execute('set transaction read only')
