@@ -14,10 +14,10 @@ const ordinary = { moduleId: 'M1', moduleTitle: 'Programme module', hours: 10, g
 const standalone = { ...ordinary, moduleId: 'M2', moduleTitle: 'Standalone skills', hours: 6, groupName: '', programmeId: '', programmeName: '', isFreeCourse: true };
 function fixture(assigned = true, learnerType: 'commercial' | 'apprenticeship' = 'commercial'): LearningPlanResponse {
   return {
-    learner: { id: '7', name: 'Synthetic learner', learnerType, programme: 'Programme', programmeId: 'P1', cohort: 'Cohort', group: 'Group', programmeStatus: 'Delivery' },
+    learner: { id: '7', name: 'Synthetic learner', learnerType, programme: 'Programme', programmeId: 'P1', cohortId: 'Cohort', groupId: 'Group', cohort: 'Cohort', group: 'Group', programmeStatus: 'Delivery' },
     plan: assigned ? [ordinary, standalone] : [ordinary], preset: [ordinary], available: assigned ? [] : [standalone],
     standaloneCourses: [{ freeCourseId: 'FC-1', moduleId: 'M2', courseName: 'Standalone skills' }],
-    freeCourses: [], saved: true, programmes: [], totals: {
+    freeCourses: [], freeCourseAssignmentVersion: '', saved: true, programmes: [], totals: {
       moduleCount: 1, moduleHours: 10, freeCourseCount: assigned ? 1 : 0,
       freeCourseHours: assigned ? 6 : 0, plannedFreeCourseHours: assigned && learnerType === 'commercial' ? 6 : 0,
       meetingCount: 0, meetingHours: 0, totalHours: assigned && learnerType === 'commercial' ? 16 : 10,
@@ -50,7 +50,7 @@ describe('Learning plan free-course assignments', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Add free course' }));
     expect(screen.getByText((_content, element) => element?.tagName === 'SPAN' && element.textContent === '1 module · 1 free course · 16h total')).toBeVisible();
     fireEvent.click(screen.getByRole('button', { name: 'Save learning plan' }));
-    await waitFor(() => expect(saveLearningPlan).toHaveBeenCalledWith('7', ['M1', 'M2'], []));
+    await waitFor(() => expect(saveLearningPlan).toHaveBeenCalledWith('7', ['M1', 'M2']));
   });
 
   it('removes the same assignment from the plan and preserves unrelated modules', async () => {
@@ -59,7 +59,7 @@ describe('Learning plan free-course assignments', () => {
     fireEvent.click(section.getByRole('button', { name: 'Remove Standalone skills' }));
     expect(screen.queryByText('Standalone skills', { selector: 'td' })).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Save learning plan' }));
-    await waitFor(() => expect(saveLearningPlan).toHaveBeenCalledWith('7', ['M1'], []));
+    await waitFor(() => expect(saveLearningPlan).toHaveBeenCalledWith('7', ['M1']));
   });
 
   it('keeps an active learner removal confirmation for standalone courses', async () => {
@@ -111,7 +111,7 @@ describe('Learning plan free-course assignments', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Add free course' }));
     expect(screen.getByText((_content, element) => element?.tagName === 'SPAN' && element.textContent === '1 module · 1 free course · 10h total')).toBeVisible();
     fireEvent.click(screen.getByRole('button', { name: 'Save learning plan' }));
-    await waitFor(() => expect(saveLearningPlan).toHaveBeenCalledWith('7', ['M1', 'M2'], []));
+    await waitFor(() => expect(saveLearningPlan).toHaveBeenCalledWith('7', ['M1', 'M2']));
   });
 
   it('resetting group modules retains independently assigned courses', async () => {
@@ -122,7 +122,7 @@ describe('Learning plan free-course assignments', () => {
     fireEvent.click(await screen.findByRole('button', { name: 'Reset to group default' }));
     expect(within(screen.getByRole('region', { name: 'Assigned free courses' })).getByText('Standalone skills')).toBeVisible();
     fireEvent.click(screen.getByRole('button', { name: 'Save learning plan' }));
-    await waitFor(() => expect(saveLearningPlan).toHaveBeenCalledWith('7', ['M1', 'M2'], []));
+    await waitFor(() => expect(saveLearningPlan).toHaveBeenCalledWith('7', ['M1', 'M2']));
   });
 
   it('keeps standalone courses out of the core module picker', async () => {

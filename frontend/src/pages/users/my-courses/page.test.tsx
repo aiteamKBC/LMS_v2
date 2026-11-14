@@ -18,7 +18,7 @@ function show() { return render(<MemoryRouter initialEntries={['/users/my-course
 beforeEach(() => {
   vi.clearAllMocks(); sessionStorage.clear(); viewer.account = { id: 7, role: 'admin' };
   vi.mocked(personalLearningJson).mockReset().mockResolvedValue({ courses: [course] });
-  vi.mocked(useMyLearningModule).mockReturnValue({ data: null, error: '', loading: false, refresh: vi.fn() });
+  vi.mocked(useMyLearningModule).mockReturnValue({ data: null, error: '', loading: false, isFetching: false, refresh: vi.fn() });
 });
 afterEach(cleanup);
 

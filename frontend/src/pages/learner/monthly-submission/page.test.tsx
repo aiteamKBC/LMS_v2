@@ -9,11 +9,13 @@ import type { CoverMetadata } from '../my-learning/SubjectWorkspace';
 import { clearAllCachedResources } from '@/api/cachedRequest';
 import { useMonthlySubmission } from './useMonthlySubmission';
 import { useResolvedLearner } from '@/hooks/useMyLearner';
+import { useLearnerDetailParam } from '@/hooks/useLearnerDetailParam';
 import MonthlySubmissionPage from './page';
 import { assignmentToday, defaultAssignmentMonth, groupMonthlyAssignments, isOverdueAssignment, trainingPlanAssignments } from './model';
 
 vi.mock('@/components/feature/WorkspaceShell', () => ({ WorkspaceShell: ({ children }: { children: ReactNode }) => <>{children}</> }));
 vi.mock('@/hooks/useMyLearner', () => ({ useResolvedLearner: vi.fn() }));
+vi.mock('@/hooks/useLearnerDetailParam', () => ({ useLearnerDetailParam: vi.fn() }));
 // The list read is driven per test; the selected-assignment read runs for real against fetch.
 vi.mock('./useMonthlySubmission', async importOriginal => ({ ...await importOriginal<typeof import('./useMonthlySubmission')>(), useMonthlySubmission: vi.fn() }));
 vi.mock('../video-watch/page', () => ({ InlineAttachmentPreview: ({ url }: { url: string }) => <div data-testid="attachment-preview" data-url={url}>Document preview</div> }));
@@ -284,8 +286,8 @@ it.each(['commercial', 'apprenticeship'] as const)('orders assignment months acr
   vi.useFakeTimers({ toFake: ['Date'] });
   vi.setSystemTime(new Date('2026-11-12T12:00:00Z'));
   vi.mocked(useResolvedLearner).mockReturnValue({ kind, id: '125' });
-  vi.mocked(useLearnerDetailParam).mockReturnValue({ real: { ...real, components: [component('A1'), component('A2'), component('A3')] },
-    loading: false, loadError: null, isRealMode: true, refresh: vi.fn() });
+  vi.mocked(useMonthlySubmission).mockReturnValue({ real: { ...real, components: [component('A1'), component('A2'), component('A3')] },
+    loading: false, loadError: null, includesDetails: false, refresh: vi.fn() });
   sessionStorage.setItem(`monthly-assignment-selection:${kind}:125`, JSON.stringify({ month: '2026-11' }));
   mockRequests({ dates: { covers: {}, activity_dates: {
     A1: { date: '2027-09-01', month: '2027-09', date_source: 'builder_week' },
