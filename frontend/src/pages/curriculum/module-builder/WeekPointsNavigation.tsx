@@ -40,6 +40,22 @@ export function WeekPointsNavigation({ moduleId, weekId, drafts, components, sel
     return () => { active = false; };
   }, [moduleId, weekId, loaded, install, retry]);
 
+  const renderActivities = (activities: typeof components) => <ul className="space-y-1">
+    {activities.map(activity => {
+      const rendered = renderActivity?.(activity.id);
+      // A recording may already appear inside its live session's card.
+      if (renderActivity && rendered == null) return null;
+      return <li key={activity.id}>
+        {renderActivity ? rendered :
+          <button type="button" onClick={() => onSelect(activity.id)} aria-current={selectedId === activity.id ? 'true' : undefined}
+            className={`w-full rounded-md px-2 py-2 text-left focus-visible:outline-primary-500 ${selectedId === activity.id ? 'bg-primary-100 text-primary-900' : 'text-foreground-800 hover:bg-primary-50'}`}>
+            <span className="block break-words text-[11px] font-medium [overflow-wrap:anywhere]">{activity.title || 'Untitled activity'}</span>
+            <span className="mt-0.5 block text-[10px] text-primary-600">{componentAuthoringDefinitions.find(item => item.type === activity.type)?.label || activity.type}</span>
+          </button>}
+      </li>;
+    })}
+  </ul>;
+
   const pointsStatus = !draft ? <div className="mb-3 text-[11px] text-foreground-500">
     {error ? <>
       <p role="alert">{error}</p>
@@ -54,7 +70,12 @@ export function WeekPointsNavigation({ moduleId, weekId, drafts, components, sel
       renderActivity={renderActivity} onAddComponent={onAddComponent} expandAll={expandAll} revealComponentId={revealComponentId}
       readOnly={readOnly || !draft} onChange={next => { if (!readOnly) drafts.update(moduleId, weekId, () => next); }} />
   </>;
-  if (!draft) return pointsStatus;
+  // Points only group activities. Keep loaded activities available while their
+  // saved membership is unknown, without installing an empty draft.
+  if (!draft) return <div className="mb-3 space-y-2">
+    {pointsStatus}
+    {components.length > 0 && renderActivities(components)}
+  </div>;
   if (!draft.points.length && !components.length) return null;
 
   const byId = new Map(components.map(component => [component.id, component]));
@@ -85,15 +106,7 @@ export function WeekPointsNavigation({ moduleId, weekId, drafts, components, sel
           <span className="shrink-0 text-[10px] font-normal text-foreground-500">{activities.length}</span>
         </button>
         <div id={panelId} hidden={!open} className="border-t border-primary-100 px-2 py-1">
-          {activities.length ? <ul className="space-y-1">
-            {activities.map(activity => <li key={activity.id}>
-              <button type="button" onClick={() => onSelect(activity.id)} aria-current={selectedId === activity.id ? 'true' : undefined}
-                className={`w-full rounded-md px-2 py-2 text-left focus-visible:outline-primary-500 ${selectedId === activity.id ? 'bg-primary-100 text-primary-900' : 'text-foreground-800 hover:bg-primary-50'}`}>
-                <span className="block break-words text-[11px] font-medium [overflow-wrap:anywhere]">{activity.title || 'Untitled activity'}</span>
-                <span className="mt-0.5 block text-[10px] text-primary-600">{componentAuthoringDefinitions.find(item => item.type === activity.type)?.label || activity.type}</span>
-              </button>
-            </li>)}
-          </ul> : <p className="px-2 py-2 text-[11px] text-foreground-500">No activities to show.</p>}
+          {activities.length ? renderActivities(activities) : <p className="px-2 py-2 text-[11px] text-foreground-500">No activities to show.</p>}
         </div>
       </div>;
     })}
