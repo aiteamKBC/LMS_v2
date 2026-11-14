@@ -70,7 +70,9 @@ class ModuleOverviewReadTests(SimpleTestCase):
         result, _ = self.read('current:M1', stored=None, tutor='Someone New')
         self.assertEqual(result['overview'], {'summary': '', 'description': '', 'targetAudience': [], 'prerequisites': [],
                                               'requirements': [], 'highlights': [], 'descriptionSections': [], 'sidebarSections': [],
-                                              'instructor': {'name': 'Someone New', 'bio': '', 'photoUrl': ''}})
+                                              'instructor': {'name': 'Someone New', 'bio': '', 'photoUrl': ''},
+                                              # Optional Hero background: empty when none is authored.
+                                              'heroBackgroundUrl': ''})
 
     def test_previous_tutors_details_are_not_shown(self):
         stored = {'summary': 'S', 'instructor': {'tutorName': 'Andrew Millington', 'bio': 'Andrew bio',

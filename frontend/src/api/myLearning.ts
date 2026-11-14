@@ -34,6 +34,8 @@ export type ModuleOverviewContent = {
   sidebarSections?: { id: string; heading: string; body: string; bullets: string[] }[];
   /** Always the module's own tutor; null when no tutor is assigned. */
   instructor: { name: string; bio: string; photoUrl: string } | null;
+  /** Optional image behind the Hero; '' (or absent from older servers) for the standard background. */
+  heroBackgroundUrl?: string;
 };
 export type MyLearningModule = {
   subjectId: string; detail: LearnerDetail; activity: StudentActivityResponse | null;

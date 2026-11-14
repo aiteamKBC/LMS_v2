@@ -83,10 +83,13 @@ export function ModuleOverviewView({
     </nav>}
 
     <div className={styles.layout}>
-      <div className={styles.band} aria-hidden="true" />
+      <HeroBand key={model.heroBackgroundUrl} url={model.heroBackgroundUrl} />
       <header className={styles.hero}>
-        {model.programme && <p className={styles.eyebrow}>Programme: {model.programme}</p>}
-        <h2 id={titleId} ref={headingRef} tabIndex={headingRef ? -1 : undefined} className={styles.title}>{model.title}</h2>
+        {/* Title first and largest; the programme sits directly beneath it. */}
+        <div className={styles.heroHeading}>
+          <h2 id={titleId} ref={headingRef} tabIndex={headingRef ? -1 : undefined} className={styles.title}>{model.title}</h2>
+          {model.programme && <p className={styles.eyebrow}>Programme: {model.programme}</p>}
+        </div>
         {loading
           ? <div className={styles.skeletonGroup} aria-hidden="true"><span className={styles.skeleton} style={{ width: '92%' }} /><span className={styles.skeleton} style={{ width: '70%' }} /></div>
           : model.summary && <p className={styles.summary}>{model.summary}</p>}
@@ -372,6 +375,25 @@ function SideCardSkeleton({ rows }: { rows: number }) {
 
 function SidebarSkeleton() {
   return <div className={styles.sideCards}><SideCardSkeleton rows={4} /><SideCardSkeleton rows={3} /></div>;
+}
+
+/**
+ * The lilac band behind the Hero. An authored background image sits under a
+ * lilac wash that is strongest behind the text, so the title, summary and
+ * instructor stay readable and the band still reads as KBC. Decorative only
+ * (aria-hidden, empty alt). A missing or broken image leaves the plain band.
+ * Keyed by URL by the caller, so a new image gets a fresh load attempt.
+ */
+function HeroBand({ url }: { url: string }) {
+  const [failed, setFailed] = useState(false);
+  const showImage = Boolean(url) && !failed;
+  return <div className={styles.band} data-image={showImage || undefined} aria-hidden="true">
+    {showImage && <>
+      <img className={styles.bandImage} src={url} alt="" decoding="async" referrerPolicy="no-referrer"
+        data-testid="hero-background" onError={() => setFailed(true)} />
+      <span className={styles.bandOverlay} />
+    </>}
+  </div>;
 }
 
 function HeroInstructor({ instructor }: { instructor: OverviewInstructor }) {

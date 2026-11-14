@@ -39,6 +39,8 @@ export type ModuleOverviewFields = {
   requirements: string[];
   instructorBio: string;
   instructorPhotoUrl: string;
+  /** Optional Hero background: a public https:// image or an uploaded Hero background. */
+  heroBackgroundUrl: string;
 };
 
 /** Both reorderable section lists share one item shape and rule set. */
@@ -83,7 +85,7 @@ export class ModuleOverviewError extends Error {
 
 export const EMPTY_OVERVIEW: ModuleOverviewFields = {
   summary: '', description: '', descriptionSections: [], sidebarSections: [], highlights: [],
-  targetAudience: [], prerequisites: [], requirements: [], instructorBio: '', instructorPhotoUrl: '',
+  targetAudience: [], prerequisites: [], requirements: [], instructorBio: '', instructorPhotoUrl: '', heroBackgroundUrl: '',
 };
 
 const SECTION_ID = /^[A-Za-z0-9_-]{1,40}$/;
@@ -126,6 +128,7 @@ export function withOverviewDefaults(value: Partial<ModuleOverviewFields> | null
     requirements: strings(source.requirements),
     instructorBio: text(source.instructorBio),
     instructorPhotoUrl: text(source.instructorPhotoUrl),
+    heroBackgroundUrl: text(source.heroBackgroundUrl),
   };
 }
 
@@ -172,6 +175,47 @@ async function send<T>(url: string, method: 'PUT' | 'POST', body: unknown, fallb
   if (response.status === 403) csrfPromise = null;
   return readJson<T>(response, fallback);
 }
+
+/** The overview's uploadable images; each has its own upload endpoint (and slot under the module). */
+export type OverviewImageKind = 'instructor-photo' | 'hero-background';
+const IMAGE_NOUN: Record<OverviewImageKind, string> = { 'instructor-photo': 'photo', 'hero-background': 'background image' };
+const imageUploadUrl = (moduleCatalogueId: string, kind: OverviewImageKind) => `${overviewUrl(moduleCatalogueId)}${kind}/`;
+
+/**
+ * Store an overview image and return its URL. Writes no overview: the editor
+ * calls this from Save overview and then saves the URL with the overview.
+ */
+export async function uploadOverviewImage(moduleCatalogueId: string, kind: OverviewImageKind, file: File) {
+  const token = await csrfToken();
+  const body = new FormData();
+  body.append('file', file);
+  // No Content-Type header: the browser sets the multipart boundary.
+  const response = await fetch(imageUploadUrl(moduleCatalogueId, kind), {
+    method: 'POST', credentials: 'same-origin', body,
+    headers: { 'X-CSRFToken': token, 'X-Requested-With': 'XMLHttpRequest' },
+  });
+  if (response.status === 403) csrfPromise = null;
+  return readJson<{ uploaded: boolean; url: string }>(response, `The ${IMAGE_NOUN[kind]} could not be uploaded`);
+}
+
+/**
+ * Remove an image uploaded by this Save whose overview save then failed. The
+ * server refuses (and keeps the file) once any overview references it.
+ */
+export async function discardOverviewImage(moduleCatalogueId: string, kind: OverviewImageKind, url: string) {
+  const token = await csrfToken();
+  const response = await fetch(imageUploadUrl(moduleCatalogueId, kind), {
+    method: 'DELETE', credentials: 'same-origin', body: JSON.stringify({ url }),
+    headers: { 'Content-Type': 'application/json', 'X-CSRFToken': token, 'X-Requested-With': 'XMLHttpRequest' },
+  });
+  if (response.status === 403) csrfPromise = null;
+  return readJson<{ deleted: boolean }>(response, `The unsaved ${IMAGE_NOUN[kind]} could not be removed`);
+}
+
+export const uploadInstructorPhoto = (moduleCatalogueId: string, file: File) =>
+  uploadOverviewImage(moduleCatalogueId, 'instructor-photo', file);
+export const discardInstructorPhoto = (moduleCatalogueId: string, url: string) =>
+  discardOverviewImage(moduleCatalogueId, 'instructor-photo', url);
 
 /** Ids of modules that already have an overview. `available: false` before the migration runs. */
 export async function fetchModuleOverviewStatus(signal?: AbortSignal) {
@@ -222,12 +266,30 @@ export async function copyOverviewAfterDuplicate({ sourceId, duplicateId, source
 
 const HTML_TAG =/<\s*\/?\s*[a-zA-Z!?]/;
 const IMAGE_PATH = /\.(jpe?g|png|webp|gif|avif)$/i;
+/** Mirror the server's ``_uploaded_url_pattern(slot)``: a file in a module's upload slot for one image kind. */
+const UPLOADED_PHOTO_URL = /^\/curriculum_api\/curriculum\/uploads\/[A-Za-z0-9_-]{1,96}\/instructor-photo\/[A-Za-z0-9_-]{1,120}\.(jpg|jpeg|png|webp)$/;
+const UPLOADED_HERO_URL = /^\/curriculum_api\/curriculum\/uploads\/[A-Za-z0-9_-]{1,96}\/hero-background\/[A-Za-z0-9_-]{1,120}\.(jpg|jpeg|png|webp)$/;
+
+/** Whether a photo URL is an uploaded instructor photo (as opposed to a pasted https:// URL). */
+export const isUploadedPhotoUrl = (value: string) => UPLOADED_PHOTO_URL.test(value.trim());
+/** Whether a Hero background URL is an uploaded Hero background (as opposed to a pasted https:// URL). */
+export const isUploadedHeroUrl = (value: string) => UPLOADED_HERO_URL.test(value.trim());
 
 /** Mirrors the server's photo URL rule so the form can explain a problem before saving. */
 export function photoUrlProblem(value: string): string {
+  return imageUrlProblem(value, isUploadedPhotoUrl);
+}
+
+/** Mirrors the server's Hero background URL rule: public https://, or an uploaded Hero background only. */
+export function heroBackgroundUrlProblem(value: string): string {
+  return imageUrlProblem(value, isUploadedHeroUrl);
+}
+
+function imageUrlProblem(value: string, isUploaded: (value: string) => boolean): string {
   const url = value.trim();
   if (!url) return '';
   if (url.length > OVERVIEW_LIMITS.url) return `Must be ${OVERVIEW_LIMITS.url} characters or fewer.`;
+  if (isUploaded(url)) return '';
   if (/[\s"'<>\\`]/.test(url)) return 'The URL contains characters that are not allowed.';
   let parsed: URL;
   try {
@@ -284,6 +346,8 @@ export function validateOverview(fields: ModuleOverviewFields, tutorName: string
   });
   const photo = photoUrlProblem(fields.instructorPhotoUrl);
   if (photo) errors.push({ field: 'instructorPhotoUrl', message: photo });
+  const hero = heroBackgroundUrlProblem(fields.heroBackgroundUrl);
+  if (hero) errors.push({ field: 'heroBackgroundUrl', message: hero });
   if (!tutorName.trim() && (fields.instructorBio.trim() || fields.instructorPhotoUrl.trim())) {
     errors.push({ field: 'instructorBio', message: 'Assign a tutor to this module before adding instructor details.' });
   }
@@ -311,5 +375,6 @@ export function normaliseOverview(fields: ModuleOverviewFields): ModuleOverviewF
     requirements: list(fields.requirements),
     instructorBio: fields.instructorBio.trim(),
     instructorPhotoUrl: fields.instructorPhotoUrl.trim(),
+    heroBackgroundUrl: fields.heroBackgroundUrl.trim(),
   };
 }

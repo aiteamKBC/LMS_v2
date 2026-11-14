@@ -2,7 +2,7 @@ import {
   componentType, composeOverviewModel, type ModuleOverviewModel, type OverviewWeek,
 } from '@/pages/learner/my-learning/moduleOverviewModel';
 import type { ModuleCatalogueItem } from './moduleAuthoringData';
-import { photoUrlProblem, type ModuleOverviewFields, type ModuleOverviewRecord } from './moduleOverviewApi';
+import { heroBackgroundUrlProblem, photoUrlProblem, type ModuleOverviewFields, type ModuleOverviewRecord } from './moduleOverviewApi';
 
 /**
  * The module's existing (not authored) values the preview shows: title,
@@ -44,15 +44,33 @@ export function previewSourceFromStructure(structure: Pick<ModuleCatalogueItem, 
   };
 }
 
-/** The photo learners would see for the draft: a valid override, else the tutor's standard photo. */
-export function previewPhotoUrl(fields: Pick<ModuleOverviewFields, 'instructorPhotoUrl'>, record: Pick<ModuleOverviewRecord, 'defaultPhotoUrl'> | null) {
+/**
+ * The photo learners would see for the draft: a selected-but-not-yet-uploaded
+ * file (its browser preview URL), else a valid override, else the tutor's
+ * standard photo.
+ */
+export function previewPhotoUrl(fields: Pick<ModuleOverviewFields, 'instructorPhotoUrl'>, record: Pick<ModuleOverviewRecord, 'defaultPhotoUrl'> | null,
+  pendingPhotoUrl = '') {
+  if (pendingPhotoUrl) return pendingPhotoUrl;
   const url = fields.instructorPhotoUrl.trim();
   if (url) return photoUrlProblem(url) ? '' : url;
   return record?.defaultPhotoUrl || '';
 }
 
+/**
+ * The Hero background learners would see for the draft: a selected-but-not-yet-
+ * uploaded file (its browser preview URL), else a valid URL, else none (the
+ * standard lilac band).
+ */
+export function previewHeroBackgroundUrl(fields: Pick<ModuleOverviewFields, 'heroBackgroundUrl'>, pendingHeroUrl = '') {
+  if (pendingHeroUrl) return pendingHeroUrl;
+  const url = fields.heroBackgroundUrl.trim();
+  return url && !heroBackgroundUrlProblem(url) ? url : '';
+}
+
 /** The learner page model for the unsaved draft. Nothing here is persisted. */
-export function buildPreviewModel(source: OverviewPreviewSource, record: ModuleOverviewRecord | null, fields: ModuleOverviewFields): ModuleOverviewModel {
+export function buildPreviewModel(source: OverviewPreviewSource, record: ModuleOverviewRecord | null, fields: ModuleOverviewFields,
+  pendingPhotoUrl = '', pendingHeroUrl = ''): ModuleOverviewModel {
   const tutor = text(record?.tutorName);
   return composeOverviewModel({
     title: source.title,
@@ -62,7 +80,8 @@ export function buildPreviewModel(source: OverviewPreviewSource, record: ModuleO
     weeks: source.weeks,
     overview: {
       ...fields,
-      instructor: tutor ? { name: tutor, bio: fields.instructorBio, photoUrl: previewPhotoUrl(fields, record) } : null,
+      instructor: tutor ? { name: tutor, bio: fields.instructorBio, photoUrl: previewPhotoUrl(fields, record, pendingPhotoUrl) } : null,
+      heroBackgroundUrl: previewHeroBackgroundUrl(fields, pendingHeroUrl),
     },
     // The learner's own results are not available in the Module Builder.
     grades: null,

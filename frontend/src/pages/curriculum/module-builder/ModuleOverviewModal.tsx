@@ -6,12 +6,18 @@ import {
   EMPTY_OVERVIEW,
   ModuleOverviewError,
   OVERVIEW_LIMITS,
+  discardOverviewImage,
+  heroBackgroundUrlProblem,
+  isUploadedHeroUrl,
+  isUploadedPhotoUrl,
   loadModuleOverview,
   newSectionId,
   normaliseOverview,
   photoUrlProblem,
   saveModuleOverview,
+  uploadOverviewImage,
   validateOverview,
+  type OverviewImageKind,
   type ModuleOverviewFields,
   type ModuleOverviewRecord,
   type OverviewFieldError,
@@ -20,6 +26,9 @@ import {
   type OverviewSectionList,
 } from './moduleOverviewApi';
 import { buildPreviewModel, previewSourceFromStructure, type OverviewPreviewSource } from './moduleOverviewPreview';
+import {
+  HERO_LIMITS, PHOTO_ACCEPT, PHOTO_LIMITS, formatBytes, inspectPhotoFile, photoFileProblem, type ImageLimits, type PhotoInspector,
+} from './instructorPhoto';
 
 const LIST_FIELDS: Record<Exclude<OverviewListField, 'highlights'>, { label: string; hint: string; placeholder: string }> = {
   prerequisites: { label: 'Prerequisites', hint: 'Shown in the sidebar as “Before you start”.', placeholder: 'e.g. Completion of Module 1' },
@@ -37,6 +46,14 @@ const NO_SECTION_ERRORS: Record<OverviewSectionList, string[]> = { descriptionSe
 
 type PreviewState = { status: 'loading' | 'ready' | 'failed'; source: OverviewPreviewSource };
 type PreviewModule = { title: string; programmeName?: string; coverImage?: string };
+/** A photo chosen from the computer: kept in the browser until Save overview uploads it. */
+type PendingPhoto = { file: File; previewUrl: string };
+type PhotoMode = 'upload' | 'url';
+/** The inactive photo method's draft, restored when staff switch back. Never sent. */
+type PhotoStash = { upload: { url: string; pending: PendingPhoto | null }; url: string };
+const EMPTY_STASH: PhotoStash = { upload: { url: '', pending: null }, url: '' };
+const photoModeFor = (url: string): PhotoMode => (isUploadedPhotoUrl(url) ? 'upload' : 'url');
+const heroModeFor = (url: string): PhotoMode => (isUploadedHeroUrl(url) ? 'upload' : 'url');
 
 /**
  * Manage Module Overview: an editor with a live learner preview.
@@ -46,7 +63,7 @@ type PreviewModule = { title: string; programmeName?: string; coverImage?: strin
  * component from the unsaved draft plus the module's existing records (title,
  * programme, cover, curriculum, tutor), which are read-only here.
  */
-export function ModuleOverviewModal({ moduleCatalogueId, moduleTitle, module, onClose, onSaved, loadPreviewSource }: {
+export function ModuleOverviewModal({ moduleCatalogueId, moduleTitle, module, onClose, onSaved, loadPreviewSource, inspectPhoto = inspectPhotoFile }: {
   moduleCatalogueId: string;
   moduleTitle: string;
   /** The Module Builder card's own values, used until (or if) the stored structure cannot be read. */
@@ -55,6 +72,8 @@ export function ModuleOverviewModal({ moduleCatalogueId, moduleTitle, module, on
   onSaved?: (hasOverview: boolean) => void;
   /** Injectable for tests; defaults to the module's stored structure (a read-only GET). */
   loadPreviewSource?: (moduleCatalogueId: string) => Promise<OverviewPreviewSource | null>;
+  /** Injectable for tests; reads a chosen photo's signature and dimensions in the browser. */
+  inspectPhoto?: PhotoInspector;
 }) {
   const dialog = useRef<HTMLDivElement>(null);
   const titleId = useId();
@@ -75,6 +94,37 @@ export function ModuleOverviewModal({ moduleCatalogueId, moduleTitle, module, on
     title: module?.title || moduleTitle, programme: module?.programmeName, coverUrl: module?.coverImage,
   }), [module?.title, module?.programmeName, module?.coverImage, moduleTitle]);
   const [preview, setPreview] = useState<PreviewState>({ status: 'loading', source: fallbackSource });
+  const [photoMode, setPhotoMode] = useState<PhotoMode>('url');
+  const [pendingPhoto, setPendingPhoto] = useState<PendingPhoto | null>(null);
+  const [photoStash, setPhotoStash] = useState<PhotoStash>(EMPTY_STASH);
+  const [photoFileError, setPhotoFileError] = useState('');
+  const [checkingPhoto, setCheckingPhoto] = useState(false);
+  // The Hero background: the same one-active-method draft as the photo, kept separately.
+  const [heroMode, setHeroMode] = useState<PhotoMode>('url');
+  const [pendingHero, setPendingHero] = useState<PendingPhoto | null>(null);
+  const [heroStash, setHeroStash] = useState<PhotoStash>(EMPTY_STASH);
+  const [heroFileError, setHeroFileError] = useState('');
+  const [checkingHero, setCheckingHero] = useState(false);
+  const [heroThumbFailed, setHeroThumbFailed] = useState(false);
+  // Every browser preview URL created here, released when the editor closes.
+  const objectUrls = useRef(new Set<string>());
+
+  const release = (photo: PendingPhoto | null | undefined) => {
+    if (!photo) return;
+    URL.revokeObjectURL(photo.previewUrl);
+    objectUrls.current.delete(photo.previewUrl);
+  };
+
+  /** Back to the saved photo: drops every selected file (never uploaded) and the other method's draft. */
+  const resetPhoto = (savedUrl: string) => {
+    // Every live preview URL belongs to a selection being dropped here.
+    objectUrls.current.forEach(url => URL.revokeObjectURL(url));
+    objectUrls.current.clear();
+    setPendingPhoto(null);
+    setPhotoStash(EMPTY_STASH);
+    setPhotoMode(photoModeFor(savedUrl));
+    setPhotoFileError('');
+  };
 
   const apply = (next: ModuleOverviewRecord) => {
     setRecord(next);
@@ -83,12 +133,29 @@ export function ModuleOverviewModal({ moduleCatalogueId, moduleTitle, module, on
     setFieldErrors([]);
     setErrorSectionIds(NO_SECTION_ERRORS);
     setConflict(null);
+    // Same as resetPhoto, inlined so apply stays free of component functions
+    // (it runs from the load effect).
+    objectUrls.current.forEach(url => URL.revokeObjectURL(url));
+    objectUrls.current.clear();
+    setPendingPhoto(null);
+    setPhotoStash(EMPTY_STASH);
+    setPhotoMode(photoModeFor(next.overview.instructorPhotoUrl));
+    setPhotoFileError('');
+    setPendingHero(null);
+    setHeroStash(EMPTY_STASH);
+    setHeroMode(heroModeFor(next.overview.heroBackgroundUrl));
+    setHeroFileError('');
   };
 
   useEffect(() => {
     const previous = document.activeElement as HTMLElement | null;
     dialog.current?.focus();
-    return () => previous?.focus();
+    const urls = objectUrls.current;
+    return () => {
+      previous?.focus();
+      urls.forEach(url => URL.revokeObjectURL(url));
+      urls.clear();
+    };
   }, []);
 
   useEffect(() => {
@@ -118,12 +185,22 @@ export function ModuleOverviewModal({ moduleCatalogueId, moduleTitle, module, on
     return () => { active = false; };
   }, [moduleCatalogueId, loadPreviewSource, fallbackSource]);
 
-  const dirty = useMemo(() => JSON.stringify(normaliseOverview(fields)) !== JSON.stringify(normaliseOverview(loaded)), [fields, loaded]);
+  const fieldsDirty = useMemo(() => JSON.stringify(normaliseOverview(fields)) !== JSON.stringify(normaliseOverview(loaded)), [fields, loaded]);
+  // A selected file is an unsaved change even before anything is uploaded.
+  const dirty = fieldsDirty || Boolean(pendingPhoto) || Boolean(pendingHero);
   const tutorName = record?.tutorName || '';
   const photoUrl = fields.instructorPhotoUrl.trim();
-  const avatarUrl = photoUrl && !photoUrlProblem(photoUrl) ? photoUrl : (!photoUrl ? record?.defaultPhotoUrl || '' : '');
+  const pendingPreviewUrl = pendingPhoto?.previewUrl || '';
+  const avatarUrl = pendingPreviewUrl
+    || (photoUrl && !photoUrlProblem(photoUrl) ? photoUrl : (!photoUrl ? record?.defaultPhotoUrl || '' : ''));
   useEffect(() => setAvatarFailed(false), [avatarUrl]);
-  const previewModel = useMemo(() => buildPreviewModel(preview.source, record, fields), [preview.source, record, fields]);
+  const pendingHeroUrl = pendingHero?.previewUrl || '';
+  const heroUrl = fields.heroBackgroundUrl.trim();
+  // The editor's own thumbnail: exactly what the Live Preview's band shows.
+  const heroThumbUrl = pendingHeroUrl || (heroUrl && !heroBackgroundUrlProblem(heroUrl) ? heroUrl : '');
+  useEffect(() => setHeroThumbFailed(false), [heroThumbUrl]);
+  const previewModel = useMemo(() => buildPreviewModel(preview.source, record, fields, pendingPreviewUrl, pendingHeroUrl),
+    [preview.source, record, fields, pendingPreviewUrl, pendingHeroUrl]);
 
   const errorFor = (field: string) => fieldErrors.filter(item => item.field === field || item.field.startsWith(`${field}[`) || item.field.startsWith(`${field}.`)).map(item => item.message);
   const sectionErrors = (list: OverviewSectionList, id: string, part?: string) => {
@@ -148,15 +225,114 @@ export function ModuleOverviewModal({ moduleCatalogueId, moduleTitle, module, on
   const discard = () => {
     if (!dirty || !window.confirm('Discard all unsaved changes and go back to the saved overview?')) return;
     setFields(loaded);
+    resetPhoto(loaded.instructorPhotoUrl); // releases every preview URL, the Hero's too
+    setPendingHero(null);
+    setHeroStash(EMPTY_STASH);
+    setHeroMode(heroModeFor(loaded.heroBackgroundUrl));
+    setHeroFileError('');
     setFieldErrors([]);
     setErrorSectionIds(NO_SECTION_ERRORS);
     setError('');
     setNotice('Changes discarded.');
   };
 
+  const clearPhotoErrors = () => {
+    setPhotoFileError('');
+    setFieldErrors(current => current.filter(item => item.field !== 'instructorPhoto' && item.field !== 'instructorPhotoUrl'));
+  };
+
+  /** One active photo method at a time; the other method's draft is set aside, not sent. */
+  const switchPhotoMode = (next: PhotoMode) => {
+    if (next === photoMode) return;
+    const current = fields.instructorPhotoUrl;
+    if (next === 'url') {
+      setPhotoStash(stash => ({ ...stash, upload: { url: isUploadedPhotoUrl(current) ? current : '', pending: pendingPhoto } }));
+      setPendingPhoto(null);
+      set('instructorPhotoUrl', photoStash.url);
+    } else {
+      setPhotoStash(stash => ({ ...stash, url: isUploadedPhotoUrl(current) ? '' : current }));
+      setPendingPhoto(photoStash.upload.pending);
+      set('instructorPhotoUrl', photoStash.upload.url);
+    }
+    clearPhotoErrors();
+    setPhotoMode(next);
+  };
+
+  /** Checks and previews a file in the browser. Nothing is uploaded until Save overview. */
+  const choosePhoto = async (file: File | undefined) => {
+    if (!file) return;
+    setCheckingPhoto(true);
+    clearPhotoErrors();
+    const problem = await photoFileProblem(file, inspectPhoto);
+    setCheckingPhoto(false);
+    if (problem) {
+      setPhotoFileError(problem);
+      return;
+    }
+    release(pendingPhoto);
+    const previewUrl = URL.createObjectURL(file);
+    objectUrls.current.add(previewUrl);
+    setPendingPhoto({ file, previewUrl });
+    setNotice('');
+  };
+
+  const clearHeroErrors = () => {
+    setHeroFileError('');
+    setFieldErrors(current => current.filter(item => item.field !== 'heroBackground' && item.field !== 'heroBackgroundUrl'));
+  };
+
+  /** One active Hero background method at a time, exactly like the photo. */
+  const switchHeroMode = (next: PhotoMode) => {
+    if (next === heroMode) return;
+    const current = fields.heroBackgroundUrl;
+    if (next === 'url') {
+      setHeroStash(stash => ({ ...stash, upload: { url: isUploadedHeroUrl(current) ? current : '', pending: pendingHero } }));
+      setPendingHero(null);
+      set('heroBackgroundUrl', heroStash.url);
+    } else {
+      setHeroStash(stash => ({ ...stash, url: isUploadedHeroUrl(current) ? '' : current }));
+      setPendingHero(heroStash.upload.pending);
+      set('heroBackgroundUrl', heroStash.upload.url);
+    }
+    clearHeroErrors();
+    setHeroMode(next);
+  };
+
+  /** Checks and previews a Hero background in the browser. Nothing is uploaded until Save overview. */
+  const chooseHero = async (file: File | undefined) => {
+    if (!file) return;
+    setCheckingHero(true);
+    clearHeroErrors();
+    const problem = await photoFileProblem(file, inspectPhoto, HERO_LIMITS);
+    setCheckingHero(false);
+    if (problem) {
+      setHeroFileError(problem);
+      return;
+    }
+    release(pendingHero);
+    const previewUrl = URL.createObjectURL(file);
+    objectUrls.current.add(previewUrl);
+    setPendingHero({ file, previewUrl });
+    setNotice('');
+  };
+
+  const removeHero = () => {
+    release(pendingHero);
+    setPendingHero(null);
+    set('heroBackgroundUrl', '');
+    clearHeroErrors();
+  };
+
+  const removePhoto = () => {
+    release(pendingPhoto);
+    setPendingPhoto(null);
+    set('instructorPhotoUrl', '');
+    clearPhotoErrors();
+  };
+
   const save = async () => {
     if (!record) return;
-    const clean = normaliseOverview(fields);
+    let clean = normaliseOverview(fields);
     const problems = validateOverview(clean, tutorName);
     setFieldErrors(problems);
     setErrorSectionIds({ descriptionSections: clean.descriptionSections.map(section => section.id),
@@ -169,12 +345,37 @@ export function ModuleOverviewModal({ moduleCatalogueId, moduleTitle, module, on
       return;
     }
     setSaving(true);
+    // Upload first, then save the returned URLs with the overview. A failed
+    // upload stops here: no overview is saved and no reference to it exists.
+    const pendingUploads: { kind: OverviewImageKind; file: File; field: 'instructorPhotoUrl' | 'heroBackgroundUrl'; noun: string }[] = [];
+    if (pendingPhoto) pendingUploads.push({ kind: 'instructor-photo', file: pendingPhoto.file, field: 'instructorPhotoUrl', noun: 'photo' });
+    if (pendingHero) pendingUploads.push({ kind: 'hero-background', file: pendingHero.file, field: 'heroBackgroundUrl', noun: 'background image' });
+    const uploaded: { kind: OverviewImageKind; url: string }[] = [];
+    // The overview was not saved, so anything just uploaded is unreferenced:
+    // ask the server to remove it (it refuses if anything references it). The
+    // selected files stay in the editor, so Save can simply be retried.
+    const discardUploaded = () => uploaded.forEach(item =>
+      void discardOverviewImage(moduleCatalogueId, item.kind, item.url).catch(() => undefined));
     try {
+      for (const item of pendingUploads) {
+        try {
+          const url = (await uploadOverviewImage(moduleCatalogueId, item.kind, item.file)).url;
+          uploaded.push({ kind: item.kind, url });
+          clean = { ...clean, [item.field]: url };
+        } catch (reason) {
+          discardUploaded();
+          if (reason instanceof ModuleOverviewError && reason.fields.length) setFieldErrors(reason.fields);
+          setError(`The ${item.noun} could not be uploaded, so nothing was saved. ${reason instanceof Error ? reason.message : ''}`.trim());
+          setPane('edit');
+          return;
+        }
+      }
       const saved = await saveModuleOverview(moduleCatalogueId, clean, record.updatedAt);
       apply(saved);
       setNotice(saved.hasOverview ? 'Module overview saved.' : 'Module overview cleared. Learners will see the module’s own details only.');
       onSaved?.(saved.hasOverview);
     } catch (reason) {
+      discardUploaded();
       if (reason instanceof ModuleOverviewError && reason.conflict) {
         setConflict(reason.current);
         setError(reason.message);
@@ -280,6 +481,54 @@ export function ModuleOverviewModal({ moduleCatalogueId, moduleTitle, module, on
                   <Group title="Hero" hint="Shown under the module title, beside the cover and progress card.">
                     <TextField label="Short summary" hint="One or two sentences." value={fields.summary}
                       limit={OVERVIEW_LIMITS.summary} errors={errorFor('summary')} onChange={value => set('summary', value)} />
+
+                    <fieldset className="grid gap-3">
+                      <legend className="mb-1 text-sm font-semibold text-foreground-900">Hero background image (optional)</legend>
+                      <p className="text-xs text-foreground-500">
+                        Shown behind the module title under a soft lilac wash, so the text stays readable. Separate from the module cover.
+                      </p>
+                      <div className="flex h-[72px] w-full items-center justify-center overflow-hidden rounded-lg bg-primary-50 ring-1 ring-background-200">
+                        {heroThumbUrl && !heroThumbFailed
+                          ? <img src={heroThumbUrl} alt="Hero background preview" className="h-full w-full object-cover" referrerPolicy="no-referrer"
+                            onError={() => setHeroThumbFailed(true)} />
+                          : <span className="text-xs text-foreground-500">Standard lilac background</span>}
+                      </div>
+                      {heroThumbFailed && heroThumbUrl && <p role="status" className="text-xs text-danger-700">
+                        This image could not be loaded. Learners will not see a broken image; the standard background is shown instead.
+                      </p>}
+                      <div role="radiogroup" aria-label="Hero background source" className="inline-flex w-fit gap-1 rounded-lg border border-background-200 bg-background-50 p-1">
+                        {(['upload', 'url'] as const).map(mode => <label key={mode}
+                          className={`inline-flex cursor-pointer items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-semibold focus-within:ring-2 focus-within:ring-primary-200 ${heroMode === mode ? 'bg-white text-primary-700 shadow-sm ring-1 ring-primary-200' : 'text-foreground-600 hover:text-foreground-900'}`}>
+                          <input type="radio" name={`${titleId}-hero-source`} value={mode} checked={heroMode === mode}
+                            aria-label={mode === 'upload' ? 'Upload Hero background image' : 'Use Hero background image URL'}
+                            onChange={() => switchHeroMode(mode)} disabled={saving} className="sr-only" />
+                          <AppIcon name={mode === 'upload' ? 'ri-upload-2-line' : 'ri-link'} size={14} />
+                          {mode === 'upload' ? 'Upload image' : 'Use image URL'}
+                        </label>)}
+                      </div>
+                      {heroMode === 'url' ? (
+                        <TextField label="Hero background image URL (optional)"
+                          hint="A public https:// image (.jpg, .png, .webp, .gif or .avif). Leave blank for the standard background."
+                          value={fields.heroBackgroundUrl} limit={OVERVIEW_LIMITS.url} errors={errorFor('heroBackgroundUrl')} type="url"
+                          onChange={value => set('heroBackgroundUrl', value)}
+                          action={fields.heroBackgroundUrl ? { label: 'Remove background URL', onClick: () => set('heroBackgroundUrl', '') } : undefined} />
+                      ) : (
+                        <PhotoUploadField
+                          pending={pendingHero}
+                          hasSavedUpload={!pendingHero && isUploadedHeroUrl(fields.heroBackgroundUrl)}
+                          hasDefault={false}
+                          checking={checkingHero}
+                          disabled={saving}
+                          errors={[heroFileError, ...errorFor('heroBackground'), ...errorFor('heroBackgroundUrl')].filter(Boolean)}
+                          onChoose={file => void chooseHero(file)}
+                          onRemove={removeHero}
+                          limits={HERO_LIMITS}
+                          imageNoun="background image"
+                          removeLabel="Remove background image"
+                          savedText="Using the uploaded background image."
+                          emptyText="No image selected. Learners see the standard lilac background." />
+                      )}
+                    </fieldset>
                   </Group>
 
                   <Group title="Description tab" hint="Headings, paragraphs and lists in the order shown here. Leave a blank line between paragraphs.">
@@ -358,11 +607,35 @@ export function ModuleOverviewModal({ moduleCatalogueId, moduleTitle, module, on
                           : <AppIcon name="ri-user-3-line" size={30} className="text-foreground-400" />}
                       </div>
                       <div className="grid gap-4">
-                        <TextField label="Instructor photo URL (optional)"
-                          hint={record.defaultPhotoUrl ? 'Leave blank to use the standard Kent Business College photo for this tutor.' : 'A public https:// image (.jpg, .png, .webp, .gif or .avif). Leave blank for no photo.'}
-                          value={fields.instructorPhotoUrl} limit={OVERVIEW_LIMITS.url} errors={errorFor('instructorPhotoUrl')} type="url"
-                          onChange={value => set('instructorPhotoUrl', value)}
-                          action={fields.instructorPhotoUrl ? { label: 'Remove photo URL', onClick: () => set('instructorPhotoUrl', '') } : undefined} />
+                        <fieldset className="grid gap-3">
+                          <legend className="mb-2 text-sm font-semibold text-foreground-900">Instructor photo (optional)</legend>
+                          <div role="radiogroup" aria-label="Photo source" className="inline-flex w-fit gap-1 rounded-lg border border-background-200 bg-background-50 p-1">
+                            {(['upload', 'url'] as const).map(mode => <label key={mode}
+                              className={`inline-flex cursor-pointer items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-semibold focus-within:ring-2 focus-within:ring-primary-200 ${photoMode === mode ? 'bg-white text-primary-700 shadow-sm ring-1 ring-primary-200' : 'text-foreground-600 hover:text-foreground-900'}`}>
+                              <input type="radio" name={`${titleId}-photo-source`} value={mode} checked={photoMode === mode}
+                                onChange={() => switchPhotoMode(mode)} disabled={saving} className="sr-only" />
+                              <AppIcon name={mode === 'upload' ? 'ri-upload-2-line' : 'ri-link'} size={14} />
+                              {mode === 'upload' ? 'Upload image' : 'Use image URL'}
+                            </label>)}
+                          </div>
+                          {photoMode === 'url' ? (
+                            <TextField label="Instructor photo URL (optional)"
+                              hint={record.defaultPhotoUrl ? 'Leave blank to use the standard Kent Business College photo for this tutor.' : 'A public https:// image (.jpg, .png, .webp, .gif or .avif). Leave blank for no photo.'}
+                              value={fields.instructorPhotoUrl} limit={OVERVIEW_LIMITS.url} errors={errorFor('instructorPhotoUrl')} type="url"
+                              onChange={value => set('instructorPhotoUrl', value)}
+                              action={fields.instructorPhotoUrl ? { label: 'Remove photo URL', onClick: () => set('instructorPhotoUrl', '') } : undefined} />
+                          ) : (
+                            <PhotoUploadField
+                              pending={pendingPhoto}
+                              hasSavedUpload={!pendingPhoto && isUploadedPhotoUrl(fields.instructorPhotoUrl)}
+                              hasDefault={Boolean(record.defaultPhotoUrl)}
+                              checking={checkingPhoto}
+                              disabled={saving}
+                              errors={[photoFileError, ...errorFor('instructorPhoto'), ...errorFor('instructorPhotoUrl')].filter(Boolean)}
+                              onChoose={file => void choosePhoto(file)}
+                              onRemove={removePhoto} />
+                          )}
+                        </fieldset>
                         {avatarFailed && avatarUrl && <p role="status" className="text-xs text-danger-700">This image could not be loaded. Learners will not see a broken image; the photo will simply be hidden.</p>}
                         <TextField label="Instructor biography (optional)" value={fields.instructorBio} limit={OVERVIEW_LIMITS.instructorBio}
                           errors={errorFor('instructorBio')} multiline rows={4} onChange={value => set('instructorBio', value)}
@@ -395,6 +668,42 @@ export function ModuleOverviewModal({ moduleCatalogueId, moduleTitle, module, on
       </div>
     </div>
   );
+}
+
+function PhotoUploadField({ pending, hasSavedUpload, hasDefault, checking, disabled, errors, onChoose, onRemove,
+  limits = PHOTO_LIMITS, imageNoun = 'image', removeLabel = 'Remove photo', savedText = 'Using the uploaded photo.',
+  defaultText = 'No image selected. Learners see the standard Kent Business College photo for this tutor.',
+  emptyText = 'No image selected. No photo is shown.' }: {
+  pending: PendingPhoto | null; hasSavedUpload: boolean; hasDefault: boolean; checking: boolean; disabled: boolean;
+  errors: string[]; onChoose: (file: File | undefined) => void; onRemove: () => void;
+  /** Defaults are the instructor photo's; the Hero background passes its own. */
+  limits?: ImageLimits; imageNoun?: string; removeLabel?: string; savedText?: string; defaultText?: string; emptyText?: string;
+}) {
+  const id = useId();
+  const hasPhoto = Boolean(pending) || hasSavedUpload;
+  const status = checking ? 'Checking the image…'
+    : pending ? `Selected: ${pending.file.name} (${formatBytes(pending.file.size)}). It is uploaded when you click Save overview.`
+      : hasSavedUpload ? savedText
+        : hasDefault ? defaultText
+          : emptyText;
+  return <div className="grid gap-2">
+    <p id={`${id}-hint`} className="text-xs text-foreground-500">
+      JPG, PNG or WebP, up to {limits.maxBytes / (1024 * 1024)} MB, at least {limits.minWidth} × {limits.minHeight} pixels.
+      Nothing is uploaded until you save.
+    </p>
+    <div className="flex flex-wrap items-center gap-2">
+      <label className={`inline-flex cursor-pointer items-center gap-1.5 rounded-lg border border-primary-200 bg-primary-50 px-3 py-1.5 text-xs font-bold text-primary-700 focus-within:ring-2 focus-within:ring-primary-200 ${disabled ? 'pointer-events-none opacity-50' : ''}`}>
+        <input type="file" accept={PHOTO_ACCEPT} className="sr-only" disabled={disabled}
+          aria-describedby={`${id}-hint ${id}-status${errors.length ? ` ${id}-error` : ''}`}
+          onChange={event => { const file = event.target.files?.[0]; event.target.value = ''; onChoose(file); }} />
+        <AppIcon name="ri-image-add-line" size={14} />{hasPhoto ? `Replace ${imageNoun}` : `Choose ${imageNoun}`}
+      </label>
+      {hasPhoto && <button type="button" onClick={onRemove} disabled={disabled}
+        className="text-xs font-semibold text-danger-700 hover:underline disabled:opacity-50">{removeLabel}</button>}
+    </div>
+    <p id={`${id}-status`} role="status" className="text-xs text-foreground-600">{status}</p>
+    {errors.length > 0 && <p id={`${id}-error`} role="alert" className="text-xs text-danger-700">{errors.join(' ')}</p>}
+  </div>;
 }
 
 function Group({ title, hint, children }: { title: string; hint?: string; children: ReactNode }) {

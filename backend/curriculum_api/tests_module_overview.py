@@ -174,7 +174,7 @@ class StoredShapeTests(SimpleTestCase):
         self.assertEqual(mo.learner_view('{"summary": "Hi", "targetAudience": ["A", 3, ""]}', None),
                          {'summary': 'Hi', 'description': '', 'targetAudience': ['A'], 'prerequisites': [],
                           'requirements': [], 'highlights': [], 'descriptionSections': [], 'sidebarSections': [],
-                          'instructor': None})
+                          'instructor': None, 'heroBackgroundUrl': ''})
         for raw in (None, '', 'not json', '[1, 2]', 42):
             with self.subTest(raw=raw):
                 self.assertEqual(mo.learner_view(raw, None)['summary'], '')

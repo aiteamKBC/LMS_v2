@@ -39,10 +39,30 @@
   min-width: 0;
 }
 .band {
+  position: relative;
+  overflow: hidden;
   grid-column: 1 / -1;
   grid-row: 1;
   border-radius: 20px;
   background: var(--overview-band);
+}
+/* Optional authored background: cropped to fill (never stretched), centred,
+   under a lilac wash that is strongest behind the Hero text on the left. */
+.bandImage {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: center;
+}
+.bandOverlay {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg,
+    color-mix(in srgb, var(--overview-band) 94%, transparent) 0%,
+    color-mix(in srgb, var(--overview-band) 86%, transparent) 45%,
+    color-mix(in srgb, var(--overview-band) 55%, transparent) 100%);
 }
 .hero {
   grid-column: 1;
@@ -70,13 +90,25 @@
 .sideCards { display: grid; gap: 20px; min-width: 0; }
 
 /* Hero ------------------------------------------------------------------------ */
-.eyebrow { color: var(--overview-accent); font-size: 13px; font-weight: 700; letter-spacing: .02em; text-transform: uppercase; overflow-wrap: anywhere; }
-.title {
+/* Title, then the programme directly beneath it (tighter than the Hero gap). */
+.heroHeading { display: grid; gap: 10px; min-width: 0; }
+.eyebrow { margin: 0; color: var(--overview-accent); font-size: 14px; font-weight: 700; line-height: 1.35; letter-spacing: .02em; text-transform: uppercase; overflow-wrap: anywhere; }
+/* Sized from the overview container (not the viewport), so the editor's Live
+   Preview gets the same size as a learner screen of that width:
+   desktop 34-36px, tablet 28-30px (<=900px), mobile 24-26px (<=560px).
+   Selector specificity (0,5,0) is deliberate. Two workspace-wide h2 rules
+   otherwise win over a plain class here:
+     - index.css `.dashboard-theme .workspace-main h2` (0,2,1): ~21.6px
+     - WorkspaceDesign.module.css `.dashboard-theme[data-workspace-role].shell
+       .workspace-main h2` (0,4,1): 1rem, the size actually seen in the app.
+   Both wrap the learner page and the Live Preview. Kept scoped to this module
+   rather than editing those shared rules. */
+.page .layout .hero .heroHeading .title {
   margin: 0;
   font-family: var(--overview-serif);
-  font-size: clamp(30px, 3.5vw, 46px);
+  font-size: clamp(34px, 3cqi, 36px);
   font-weight: 700;
-  line-height: 1.1;
+  line-height: 1.18;
   letter-spacing: -.012em;
   color: var(--overview-text);
   overflow-wrap: anywhere;
@@ -305,9 +337,12 @@
 
 /* Narrow: one column. Hero, then the start card, tabs, then the sidebar. ---- */
 @container overview (max-width: 900px) {
+  .page .layout .hero .heroHeading .title { font-size: clamp(28px, 3.5cqi, 30px); }
   .layout { grid-template-columns: minmax(0, 1fr); }
   .side { display: contents; }
   .band { grid-column: 1; grid-row: 1; }
+  /* One column: the text spans the whole band, so the wash is even. */
+  .bandOverlay { background: color-mix(in srgb, var(--overview-band) 88%, transparent); }
   .hero { grid-column: 1; grid-row: 1; padding: 24px clamp(18px, 4cqi, 32px); }
   .heroCard { grid-column: 1; grid-row: 2; }
   .content { grid-column: 1; grid-row: 3; }
@@ -317,6 +352,8 @@
 }
 
 @container overview (max-width: 560px) {
+  .page .layout .hero .heroHeading .title { font-size: clamp(24px, 5cqi, 26px); }
+  .eyebrow { font-size: 12.5px; }
   .heroCard { grid-template-columns: minmax(0, 1fr); }
   .heroCard .coverFrame { grid-row: auto; }
   .instructor { gap: 18px; }

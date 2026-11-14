@@ -130,6 +130,8 @@ export type ModuleOverviewModel = {
   sidebarSections: OverviewSectionView[];
   outcomes: string[]; targetAudience: string[]; prerequisites: string[]; requirements: string[];
   instructor: OverviewInstructor | null; tutorName: string;
+  /** Optional image behind the Hero; '' keeps the standard lilac background. */
+  heroBackgroundUrl: string;
   weeks: OverviewWeek[]; counts: ReturnType<typeof typeCounts>; activityTotal: number;
   /** null: grades are not shown (no module read, e.g. the editor preview). */
   grades: OverviewGrade[] | null;
@@ -165,6 +167,7 @@ export function composeOverviewModel(input: {
     requirements: list(overview?.requirements),
     instructor,
     tutorName: instructor?.name || (UNASSIGNED.test(tutor) ? '' : tutor),
+    heroBackgroundUrl: text(overview?.heroBackgroundUrl),
     weeks: input.weeks,
     counts: typeCounts(input.weeks),
     activityTotal: input.weeks.reduce((sum, week) => sum + week.items.length, 0),

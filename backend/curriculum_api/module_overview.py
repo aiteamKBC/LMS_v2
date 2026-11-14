@@ -25,6 +25,11 @@ Stored shape (schemaVersion 2)::
 ``sidebarSections`` is optional and additive within version 2: records saved
 before it existed simply have no custom sidebar sections.
 
+``heroBackgroundUrl`` is likewise optional and additive: an image shown behind
+the learner Hero (a public https:// image, or an uploaded Hero background --
+see "Uploaded instructor photos" below, which applies to it too). It is stored
+only when set and belongs to the module, not to a tutor.
+
 Version 1 records (no ``descriptionSections`` / ``highlights``) are read as
 they are -- the missing keys are simply empty -- and are never rewritten in
 place. A record becomes version 2 only when staff explicitly save it again.
@@ -41,13 +46,30 @@ Instructor overrides belong to one tutor
 Text is plain text. HTML is refused on save and the frontend renders text
 nodes only, so nothing authored here can execute in a learner's browser. The
 backend never fetches the photo URL.
+
+Uploaded instructor photos
+    Staff may upload a photo instead of pasting a URL. The bytes go through
+    ``upload_storage`` -- the same container, path shape and serving route as
+    every other curriculum authoring upload (Azure/S3 when configured, local
+    disk otherwise) -- into a per-module ``instructor-photo`` slot. The upload
+    endpoint writes no database row: the editor uploads on Save overview and
+    then stores the returned ``/curriculum_api/curriculum/uploads/...`` URL in
+    ``instructor.photoUrl`` through the normal overview save, so the overview
+    still changes only on Save. Only that exact upload-path shape is accepted
+    as a relative photo URL; any other photo must be a public https:// image.
+    Replacing or removing a photo never deletes the file (another overview may
+    reference it); the only delete is the editor's cleanup of a file it just
+    uploaded whose overview save then failed, and only while no overview
+    references it.
 """
 from __future__ import annotations
 
 import ipaddress
 import json
+import logging
 import re
 import unicodedata
+from dataclasses import dataclass, field as dataclass_field
 from datetime import datetime, timezone
 from urllib.parse import urlsplit
 
@@ -56,7 +78,10 @@ from django.http import JsonResponse
 from django.middleware.csrf import get_token
 from django.views.decorators.http import require_GET
 
+from . import upload_storage
 from .module_overview_schema import COLUMN
+
+logger = logging.getLogger(__name__)
 
 SCHEMA_VERSION = 2
 #: Versions the editor may send and the readers understand.
@@ -80,8 +105,73 @@ SIDEBAR_KEY = 'sidebarSections'
 MAX_SIDEBAR_SECTIONS = 6
 #: Every section list: key -> maximum number of sections. Same item rules for each.
 SECTION_LISTS = {SECTIONS_KEY: MAX_SECTIONS, SIDEBAR_KEY: MAX_SIDEBAR_SECTIONS}
-INPUT_KEYS = frozenset({*TEXT_KEYS, *LIST_KEYS, *SECTION_LISTS, 'instructorBio', 'instructorPhotoUrl', 'schemaVersion'})
+INPUT_KEYS = frozenset({*TEXT_KEYS, *LIST_KEYS, *SECTION_LISTS, 'instructorBio', 'instructorPhotoUrl',
+                        'heroBackgroundUrl', 'schemaVersion'})
 IMAGE_EXTENSIONS = ('.jpg', '.jpeg', '.png', '.webp', '.gif', '.avif')
+
+#: Uploaded instructor photos (see module docstring).
+PHOTO_UPLOAD_SLOT = 'instructor-photo'
+PHOTO_URL_PREFIX = upload_storage.UPLOAD_URL_PREFIX
+MAX_PHOTO_BYTES = 5 * 1024 * 1024
+MIN_PHOTO_SIDE = 64
+MAX_PHOTO_SIDE = 6000
+MAX_PHOTO_PIXELS = 36_000_000
+#: Decoded image format -> (accepted file extensions, stored extension, content type).
+PHOTO_FORMATS = {
+    'JPEG': (('.jpg', '.jpeg'), '.jpg', 'image/jpeg'),
+    'PNG': (('.png',), '.png', 'image/png'),
+    'WEBP': (('.webp',), '.webp', 'image/webp'),
+}
+#: Optional Hero background image: a top-level key, not bound to a tutor.
+HERO_KEY = 'heroBackgroundUrl'
+HERO_UPLOAD_SLOT = 'hero-background'
+MAX_HERO_BYTES = 8 * 1024 * 1024
+MIN_HERO_WIDTH = 640
+MIN_HERO_HEIGHT = 200
+MAX_HERO_SIDE = 8000
+MAX_HERO_PIXELS = 40_000_000
+
+
+def _uploaded_url_pattern(slot):
+    """The only relative URL accepted for an image: a file in some module's ``slot``."""
+    return re.compile(
+        r'^' + re.escape(PHOTO_URL_PREFIX)
+        + r'(?P<module>[A-Za-z0-9_-]{1,96})/' + re.escape(slot)
+        + r'/(?P<name>[A-Za-z0-9_-]{1,120})\.(?:jpg|jpeg|png|webp)$'
+    )
+
+
+@dataclass(frozen=True)
+class ImageKind:
+    """One kind of uploadable overview image: where it is stored and its limits."""
+    slot: str             # folder under the module in the upload container
+    file_prefix: str      # stored file name: <prefix>-<timestamp>.<ext>
+    field: str            # field name in upload error responses
+    noun: str             # user-facing ("photo", "background image")
+    log_noun: str         # log messages
+    max_bytes: int
+    min_width: int
+    min_height: int
+    max_side: int
+    max_pixels: int
+    pattern: re.Pattern = dataclass_field(repr=False)
+
+    def match(self, url):
+        return self.pattern.match(url) if isinstance(url, str) else None
+
+
+INSTRUCTOR_PHOTO = ImageKind(
+    slot=PHOTO_UPLOAD_SLOT, file_prefix='instructor', field='instructorPhoto', noun='photo',
+    log_noun='an instructor photo', max_bytes=MAX_PHOTO_BYTES, min_width=MIN_PHOTO_SIDE,
+    min_height=MIN_PHOTO_SIDE, max_side=MAX_PHOTO_SIDE, max_pixels=MAX_PHOTO_PIXELS,
+    pattern=_uploaded_url_pattern(PHOTO_UPLOAD_SLOT),
+)
+HERO_BACKGROUND = ImageKind(
+    slot=HERO_UPLOAD_SLOT, file_prefix='hero', field='heroBackground', noun='background image',
+    log_noun='a Hero background image', max_bytes=MAX_HERO_BYTES, min_width=MIN_HERO_WIDTH,
+    min_height=MIN_HERO_HEIGHT, max_side=MAX_HERO_SIDE, max_pixels=MAX_HERO_PIXELS,
+    pattern=_uploaded_url_pattern(HERO_UPLOAD_SLOT),
+)
 
 #: Photos supplied by Kent Business College for its instructors, keyed by the
 #: exact normalised tutor name (see :func:`person_key`). The single place this
@@ -240,12 +330,46 @@ def _clean_sections(value, errors, key=SECTIONS_KEY, limit=MAX_SECTIONS):
     return sections
 
 
+def photo_upload_segment(module_id) -> str:
+    """The module's folder name in uploaded photo paths: ASCII-safe and bounded."""
+    return re.sub(r'[^A-Za-z0-9_-]+', '-', str(module_id or '')).strip('-')[:96] or 'module'
+
+
+def uploaded_photo_match(url):
+    """The match for an instructor-photo upload URL, or None."""
+    return INSTRUCTOR_PHOTO.match(url)
+
+
+def uploaded_hero_match(url):
+    """The match for a Hero background upload URL, or None."""
+    return HERO_BACKGROUND.match(url)
+
+
 def photo_url_error(url) -> str:
-    """Why ``url`` is not an acceptable public HTTPS image URL, or ''."""
+    """Why ``url`` is not an acceptable instructor photo URL, or ''.
+
+    Accepted: a public HTTPS image URL, or the URL of an uploaded instructor
+    photo (see :func:`uploaded_photo_match`).
+    """
+    return _image_url_error(url, INSTRUCTOR_PHOTO)
+
+
+def hero_url_error(url) -> str:
+    """Why ``url`` is not an acceptable Hero background URL, or ''.
+
+    The same public HTTPS rule as photos; the only relative URL accepted is an
+    uploaded Hero background (never an instructor photo or another upload).
+    """
+    return _image_url_error(url, HERO_BACKGROUND)
+
+
+def _image_url_error(url, kind) -> str:
     if not isinstance(url, str) or not url:
         return 'Enter an image URL.'
     if len(url) > MAX_URL:
         return f'Must be {MAX_URL} characters or fewer.'
+    if kind.match(url):
+        return ''
     if any(character.isspace() for character in url) or any(character in url for character in '"\'<>\\`'):
         return 'The URL contains characters that are not allowed.'
     try:
@@ -274,6 +398,25 @@ def photo_url_error(url) -> str:
 
 def safe_photo_url(url) -> str:
     return url if isinstance(url, str) and not photo_url_error(url) else ''
+
+
+def safe_hero_url(url) -> str:
+    return url if isinstance(url, str) and not hero_url_error(url) else ''
+
+
+def _clean_image_url(payload, key, check, errors) -> str:
+    value = payload.get(key)
+    if value in (None, ''):
+        return ''
+    if not isinstance(value, str):
+        errors.append({'field': key, 'message': 'Must be text.'})
+        return ''
+    value = value.strip()
+    problem = check(value) if value else ''
+    if problem:
+        errors.append({'field': key, 'message': problem})
+        return ''
+    return value
 
 
 def validate_input(payload) -> dict:
@@ -306,6 +449,7 @@ def validate_input(payload) -> dict:
                 errors.append({'field': 'instructorPhotoUrl', 'message': problem})
             else:
                 cleaned['instructorPhotoUrl'] = photo
+    cleaned[HERO_KEY] = _clean_image_url(payload, HERO_KEY, hero_url_error, errors)
     if errors:
         raise OverviewValidationError(errors)
     return cleaned
@@ -374,7 +518,8 @@ def has_authored_content(stored) -> bool:
     return bool(any(_stored_text(stored, key, MAX_DESCRIPTION) for key in TEXT_KEYS)
                 or any(_stored_list(stored, key) for key in LIST_KEYS)
                 or any(_stored_sections(stored, key) for key in SECTION_LISTS)
-                or stored_instructor(stored))
+                or stored_instructor(stored)
+                or safe_hero_url(stored.get(HERO_KEY)))
 
 
 def build_stored(cleaned, *, current_tutor, previous=None, now=None):
@@ -402,6 +547,11 @@ def build_stored(cleaned, *, current_tutor, previous=None, now=None):
         stored['instructor'] = {'tutorName': tutor, 'bio': bio, 'photoUrl': photo}
     elif previous_instructor and person_key(previous_instructor['tutorName']) != person_key(tutor):
         stored['instructor'] = previous_instructor
+    # Optional and module-level; written only when set, so records without one
+    # keep exactly their previous shape.
+    hero = cleaned.get(HERO_KEY) or ''
+    if hero:
+        stored[HERO_KEY] = hero
     if not has_authored_content(stored):
         return None
     stored['updatedAt'] = (now or datetime.now(timezone.utc)).strftime('%Y-%m-%dT%H:%M:%S.%fZ')
@@ -423,6 +573,9 @@ def copy_for_duplicate(source, *, target_tutor, now=None):
         **{key: _stored_list(source, key) for key in LIST_KEYS},
         **{key: _stored_sections(source, key) for key in SECTION_LISTS},
         'instructorBio': '', 'instructorPhotoUrl': '',
+        # The Hero background belongs to the module's presentation, not a tutor:
+        # the duplicate references the same image (never deleted automatically).
+        HERO_KEY: safe_hero_url(source.get(HERO_KEY)),
     }
     instructor = stored_instructor(source)
     tutor = tutor_display_name(target_tutor)
@@ -455,6 +608,7 @@ def learner_view(stored, tutor_name):
         **{key: _stored_list(stored, key) for key in LIST_KEYS},
         **{key: _stored_sections(stored, key) for key in SECTION_LISTS},
         'instructor': resolve_instructor(tutor_name, stored),
+        HERO_KEY: safe_hero_url(stored.get(HERO_KEY)),
     }
 
 
@@ -478,6 +632,7 @@ def editor_view(module_id, stored, tutor_name, *, available=True):
             **{key: _stored_sections(stored, key) for key in SECTION_LISTS},
             'instructorBio': instructor['bio'] if matches else '',
             'instructorPhotoUrl': instructor['photoUrl'] if matches else '',
+            HERO_KEY: safe_hero_url((stored or {}).get(HERO_KEY)),
         },
         # An override written for a previous tutor: kept, never shown to learners.
         'previousTutorDetails': instructor['tutorName'] if instructor and not matches else None,
@@ -680,3 +835,163 @@ def module_overview_copy(request, module_catalogue_id):
                              **editor_view(target_id, stored, target.get('tutor_name'))})
     except DatabaseError:
         return _error('The module overview could not be copied. Please try again.', 503)
+
+
+# ---------------------------------------------------------------------------
+# Overview image uploads: the instructor photo and the Hero background.
+# Staff-only like every /curriculum_api/ route; CSRF is enforced by the
+# middleware (the views are not exempt). They store bytes only: the overview
+# row changes solely through module_overview_detail's PUT.
+# ---------------------------------------------------------------------------
+
+def inspect_image(uploaded_file, kind):
+    """``(format_info, '')`` for an acceptable image of ``kind``, else ``(None, problem)``.
+
+    The decoded content decides the type: the file name must agree with it, and
+    the client's declared content type is never trusted.
+    """
+    name = str(getattr(uploaded_file, 'name', '') or '')
+    suffix = ('.' + name.rsplit('.', 1)[-1].lower()) if '.' in name else ''
+    if suffix not in {ext for exts, _stored, _type in PHOTO_FORMATS.values() for ext in exts}:
+        return None, 'Choose a JPG, PNG or WebP image.'
+    size = getattr(uploaded_file, 'size', 0) or 0
+    if size <= 0:
+        return None, 'The selected file is empty.'
+    if size > kind.max_bytes:
+        return None, f'The image is too large. The maximum size is {kind.max_bytes // (1024 * 1024)} MB.'
+    from PIL import Image
+    try:
+        uploaded_file.seek(0)
+        with Image.open(uploaded_file) as image:
+            image_format = image.format
+            width, height = image.size
+            if width * height > kind.max_pixels:
+                return None, f'The image is too large. Use at most {kind.max_side} pixels on each side.'
+            image.verify()
+    except Exception:  # noqa: BLE001 - any decoder failure means "not a usable image"
+        return None, 'The file is not a valid JPG, PNG or WebP image.'
+    finally:
+        try:
+            uploaded_file.seek(0)
+        except Exception:  # noqa: BLE001
+            pass
+    info = PHOTO_FORMATS.get(image_format)
+    if not info:
+        return None, 'The file is not a valid JPG, PNG or WebP image.'
+    if suffix not in info[0]:
+        return None, 'The file name does not match its image type. Choose a JPG, PNG or WebP image.'
+    if width < kind.min_width or height < kind.min_height:
+        return None, f'The image is too small. Use at least {kind.min_width} × {kind.min_height} pixels.'
+    if width > kind.max_side or height > kind.max_side:
+        return None, f'The image is too large. Use at most {kind.max_side} pixels on each side.'
+    return {'format': image_format, 'extension': info[1], 'contentType': info[2],
+            'width': width, 'height': height}, ''
+
+
+def inspect_photo(uploaded_file):
+    """:func:`inspect_image` with the instructor photo limits."""
+    return inspect_image(uploaded_file, INSTRUCTOR_PHOTO)
+
+
+def inspect_hero(uploaded_file):
+    """:func:`inspect_image` with the Hero background limits."""
+    return inspect_image(uploaded_file, HERO_BACKGROUND)
+
+
+def photo_in_use(url) -> bool:
+    """Whether any module's stored overview mentions ``url``.
+
+    A LIKE scan of the JSON text: over-matching only ever reports "in use",
+    which keeps the file -- the safe direction for a delete guard.
+    """
+    v = _views()
+    table = v.authoring_table_name(v.AUTHORING_MODULES_TABLE)
+    rows = v.fetch_all(
+        f'select module_catalogue_id from {table} '
+        f'where cast({v.quote_ident(COLUMN)} as text) like %s limit 1',
+        [f'%{url}%'],
+    )
+    return bool(rows)
+
+
+def _image_field_error(kind, message, status=400):
+    return _error(message, status, fields=[{'field': kind.field, 'message': message}])
+
+
+def _store_image(module_id, uploaded_file, kind):
+    info, problem = inspect_image(uploaded_file, kind)
+    if problem:
+        return _image_field_error(kind, problem)
+    root = _views().COMPONENT_UPLOAD_ROOT
+    timestamp = datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S%f')
+    relative = f'{root}/{photo_upload_segment(module_id)}/{kind.slot}/{kind.file_prefix}-{timestamp}{info["extension"]}'
+    failed = f'The {kind.noun} could not be uploaded. Nothing was saved; please try again.'
+    try:
+        saved = upload_storage.store(uploaded_file, relative, info['contentType'])
+    except Exception:  # noqa: BLE001 - storage outage; reported, nothing recorded
+        logger.exception('Unable to store %s for module %s.', kind.log_noun, module_id)
+        return _error(failed, 503)
+    url = PHOTO_URL_PREFIX + saved.removeprefix(f'{root}/')
+    if not kind.match(url):
+        # Storage renamed it into a shape the overview would refuse: drop it.
+        upload_storage.delete(saved)
+        logger.error('%s for module %s was stored under an unexpected name.', kind.log_noun.capitalize(), module_id)
+        return _error(failed, 503)
+    logger.info('Stored %s for module %s (%s bytes, %sx%s).',
+                kind.log_noun, module_id, uploaded_file.size, info['width'], info['height'])
+    return JsonResponse({'uploaded': True, 'url': url, 'width': info['width'], 'height': info['height']}, status=201)
+
+
+def _discard_image(request, module_id, row, kind):
+    """Remove an image this module's editor uploaded but never saved."""
+    payload = _views().json_body(request)
+    url = payload.get('url') if isinstance(payload, dict) else None
+    match = kind.match(url)
+    if not match or match.group('module') != photo_upload_segment(module_id):
+        return _error(f'Only an unsaved {kind.noun} uploaded for this module can be discarded.', 400)
+    # Checked against this row as read and against every module's overview,
+    # so a saved or copied reference always keeps the file.
+    if url in str(row.get('module_overview') or '') or photo_in_use(url):
+        return JsonResponse({'deleted': False, 'reason': 'in_use'}, status=409)
+    root = _views().COMPONENT_UPLOAD_ROOT
+    upload_storage.delete(f'{root}/{url.removeprefix(PHOTO_URL_PREFIX)}')
+    return JsonResponse({'deleted': True})
+
+
+def _image_endpoint(request, module_catalogue_id, kind, *, needs_tutor):
+    """POST: store an image of ``kind``, return its URL. DELETE: discard an unsaved one."""
+    if request.method not in ('POST', 'DELETE'):
+        return _error('Method not allowed.', 405)
+    try:
+        module_id = _resolve_module_id(module_catalogue_id)
+        if not module_id:
+            return _error('A module is required.', 400)
+        if not column_available():
+            return _unavailable()
+        row = read_module_row(module_id)
+        if not row:
+            return _error('Module not found.', 404)
+        if request.method == 'DELETE':
+            return _discard_image(request, module_id, row, kind)
+        if needs_tutor and not tutor_display_name(row.get('tutor_name')):
+            return _image_field_error(kind, 'Assign a tutor to this module before adding instructor details.')
+        uploaded_file = request.FILES.get('file')
+        if not uploaded_file:
+            return _image_field_error(kind, 'Choose an image to upload.')
+        return _store_image(module_id, uploaded_file, kind)
+    except DatabaseError:
+        return _error(f'The {kind.noun} could not be processed. Please try again.', 503)
+
+
+def instructor_photo(request, module_catalogue_id):
+    """POST: store an instructor photo, return its URL. DELETE: discard an unsaved one."""
+    return _image_endpoint(request, module_catalogue_id, INSTRUCTOR_PHOTO, needs_tutor=True)
+
+
+def hero_background(request, module_catalogue_id):
+    """POST: store a Hero background image, return its URL. DELETE: discard an unsaved one.
+
+    Unlike the instructor photo it needs no tutor: the background belongs to
+    the module's page, not to a person.
+    """
+    return _image_endpoint(request, module_catalogue_id, HERO_BACKGROUND, needs_tutor=False)
