@@ -56,6 +56,12 @@ const QUALITY_SIDEBAR_NAV = [
     icon: "ri-checkbox-circle-line",
     href: "/curriculum/quality-demo?view=checks",
   },
+  {
+    id: "quality-demo-calendar",
+    label: "Weekly Calendar",
+    icon: "ri-calendar-schedule-line",
+    href: "/curriculum/coaching-recordings?view=week",
+  },
 ];
 
 export default function QualityAssurancePage() {

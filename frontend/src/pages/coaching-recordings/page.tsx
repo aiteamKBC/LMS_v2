@@ -12,6 +12,7 @@ import CoachMiniCalendar from './CoachMiniCalendar';
 import MeetingCalendar from './MeetingCalendar';
 import CoachLearnersDialog from './CoachLearnersDialog';
 import SyncReviewDrawer from './SyncReviewDrawer';
+import QAWorkCalendar from './QAWorkCalendar';
 import { readLocation, writeLocation, type CoachingLocation } from './location';
 
 const control = 'max-w-full min-w-0 rounded-lg border border-background-200 bg-white px-3 py-2 text-sm text-foreground-800 focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary-500';
@@ -372,6 +373,7 @@ export default function CoachingRecordingsPage({ workspace = 'curriculum' }: { w
             {!loading && !preparing && !visible.length && !cancellations.length && <p className="rounded-xl border border-background-200 bg-white p-6 text-sm text-foreground-600">{data.partial ? 'No meetings loaded for these filters. Some calendars or recordings could not be checked.' : phase === 'ready' ? 'No meetings ready to review match these filters in the selected period.' : 'No meetings match these filters in the selected period.'}</p>}
             <MeetingCalendar date={date} period={period} timeZone={zone} meetings={period === 'day' ? visible : visible.slice(0, agendaLimit)} totalMeetings={visible.length} now={now}
               selected={activeKey} coachName={coachName} learnerName={learnerName} onSelectDay={selectDay} onSelectMeeting={selectMeeting} />
+            <QAWorkCalendar date={date} period={period} />
             {period !== 'day' && visible.length > agendaLimit && <button className={control} onClick={() => setAgendaLimit(value => value + 30)}>Show more meetings ({visible.length - agendaLimit} remaining)</button>}
             {cancellations.length > 0 && <section aria-label="Saved LMS cancellations" className="rounded-xl border border-rose-200 bg-rose-50 p-4">
               <h2 className="text-sm font-bold text-rose-950">Saved LMS cancellations</h2>

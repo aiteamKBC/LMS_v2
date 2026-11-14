@@ -2,34 +2,9 @@ import { useState } from 'react';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { WorkspaceHeroBanner } from '@/components/feature/WorkspaceHeroBanner';
 import { roleNavMap } from '@/mocks/navigation';
+import { FINDINGS_DATA, type QAFinding } from '@/pages/qa/qaCalendarSources';
 
 const qaNav = roleNavMap.qa;
-
-interface QAFinding {
-  id: string;
-  title: string;
-  category: string;
-  severity: 'Critical' | 'Major' | 'Minor' | 'Observation';
-  status: 'Open' | 'In Progress' | 'Resolved' | 'Closed';
-  raisedBy: string;
-  date: string;
-  description: string;
-  actionPlan: string;
-  owner: string;
-  dueDate: string;
-  daysRemaining: number;
-}
-
-const FINDINGS_DATA: QAFinding[] = [
-  { id: 'qf-01', title: 'Inconsistent KSB Assessment Criteria', category: 'KSB', severity: 'Major', status: 'In Progress', raisedBy: 'QA Lead', date: '5 Jun', description: 'Three assessors applied different minimum evidence thresholds for KSB validation. No standardised guidance exists.', actionPlan: 'Develop and publish standardised KSB assessment criteria. Train all assessors. Review all affected validations.', owner: 'Emma Clarke', dueDate: '20 Jun', daysRemaining: 14 },
-  { id: 'qf-02', title: 'OTJH Verification Gaps', category: 'OTJH', severity: 'Critical', status: 'Open', raisedBy: 'QA Officer', date: '4 Jun', description: '25% of OTJH entries lack proper verification (attendance record or employer sign-off). Funding compliance risk.', actionPlan: 'Implement mandatory dual verification. Audit all Q2 OTJH entries. Update system validation rules.', owner: 'James Whitfield', dueDate: '18 Jun', daysRemaining: 12 },
-  { id: 'qf-03', title: 'Module Version Control Missing', category: 'Module', severity: 'Minor', status: 'Resolved', raisedBy: 'QA Officer', date: '3 Jun', description: 'Two curriculum modules were updated without version control. Historical versions not recoverable.', actionPlan: 'Implement version control system. Train curriculum team. Review all module changes.', owner: 'Sarah Chen', dueDate: '10 Jun', daysRemaining: 0 },
-  { id: 'qf-04', title: 'Progress Review Quality Variance', category: 'Progress', severity: 'Major', status: 'In Progress', raisedBy: 'QA Lead', date: '2 Jun', description: 'Progress review quality varies significantly between coaches. Some reviews lack actionable next steps.', actionPlan: 'Create review template with mandatory sections. QA all reviews for 2 months. Coach training on quality standards.', owner: 'Emma Clarke', dueDate: '30 Jun', daysRemaining: 24 },
-  { id: 'qf-05', title: 'Evidence Pack Completeness', category: 'Evidence', severity: 'Minor', status: 'Open', raisedBy: 'QA Officer', date: '1 Jun', description: '12% of evidence submissions lack clear KSB linkage. Learners not consistently mapping evidence to standards.', actionPlan: 'Update submission guidance. Add KSB selector to upload flow. Review and retrain affected learners.', owner: 'David Thompson', dueDate: '15 Jun', daysRemaining: 9 },
-  { id: 'qf-06', title: 'Employer Sign-off Delays', category: 'Compliance', severity: 'Observation', status: 'Closed', raisedBy: 'QA Officer', date: '31 May', description: 'Average employer sign-off time increased from 3 days to 8 days. No process change identified.', actionPlan: 'Monitor trend for another month. Review employer communication. Consider automated reminders.', owner: 'Priya Patel', dueDate: '30 Jun', daysRemaining: 24 },
-  { id: 'qf-07', title: 'Sampling Coverage Below Target', category: 'Sampling', severity: 'Major', status: 'In Progress', raisedBy: 'QA Lead', date: '30 May', description: 'Q2 sampling achieved 8% coverage vs 15% target. High-risk learners underrepresented.', actionPlan: 'Increase Q3 sampling to 20%. Prioritise high-risk learners. Report to leadership.', owner: 'QA Lead', dueDate: '15 Jun', daysRemaining: 9 },
-  { id: 'qf-08', title: 'Report Formatting Inconsistency', category: 'Report', severity: 'Observation', status: 'Resolved', raisedBy: 'QA Officer', date: '29 May', description: 'Internal reports use different formatting and branding standards. No template enforced.', actionPlan: 'Create standard report template. Update all authors. Review existing reports.', owner: 'James Whitfield', dueDate: '12 Jun', daysRemaining: 0 },
-];
 
 const severityConfig: Record<string, { bg: string; text: string; border: string }> = {
   Critical: { bg: 'bg-red-100', text: 'text-red-700', border: 'border-red-300' },
