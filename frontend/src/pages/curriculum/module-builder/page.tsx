@@ -17,6 +17,7 @@ import { ModuleEditReservedError } from './moduleAuthoringData';
 import { confirmModuleSave, sameAuthoredModule } from './confirmModuleSave';
 import { AssignmentTopicsEditor } from '../shared/AssignmentTopicsEditor';
 import { Fragment, useCallback, useContext, useEffect, useId, useMemo, useRef, useState, type DragEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
+import { createPortal } from 'react-dom';
 import catalogueStyles from './ModuleCatalogue.module.css';
 import { Link, useSearchParams } from 'react-router-dom';
 import Swal from 'sweetalert2';
@@ -5726,7 +5727,8 @@ function ComponentTypeModal({ onClose, onAdd, title = 'What do you want to add?'
 
 function OpeningModuleAlert({ title, mode, complete }: { title: string; mode: 'builder' | 'settings'; complete: boolean }) {
   const isSettings = mode === 'settings';
-  return (
+  // Escape the catalogue's direct-child positioning rule and stacking context.
+  return createPortal(
     <div className="fixed inset-0 z-[90] flex items-center justify-center bg-black/40 p-4 backdrop-blur-sm" aria-live="polite" aria-busy="true">
       <div className="w-full max-w-md overflow-hidden rounded-2xl border border-white/10 bg-background-50 text-center shadow-2xl">
         <div className="p-6">
@@ -5748,7 +5750,8 @@ function OpeningModuleAlert({ title, mode, complete }: { title: string; mode: 'b
           </div>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
 
