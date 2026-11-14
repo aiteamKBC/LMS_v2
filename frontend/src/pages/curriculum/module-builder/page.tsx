@@ -17,6 +17,7 @@ import { ModuleEditReservedError } from './moduleAuthoringData';
 import { confirmModuleSave, sameAuthoredModule } from './confirmModuleSave';
 import { AssignmentTopicsEditor } from '../shared/AssignmentTopicsEditor';
 import { Fragment, useCallback, useContext, useEffect, useId, useMemo, useRef, useState, type DragEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
+import { createPortal } from 'react-dom';
 import catalogueStyles from './ModuleCatalogue.module.css';
 import { Link, useSearchParams } from 'react-router-dom';
 import Swal from 'sweetalert2';
@@ -1624,7 +1625,7 @@ function ModuleBuilderContent() {
   // the "is this still what we sent" comparison, so it is done once per render
   // rather than three times.
   const pointDrafts = useWeekPointDrafts(workingModule?.catalogueId || workingModule?.id || '', workingModule?.weekStructure.map(week => week.id) || []);
-  const { save: savePointDrafts, discard: discardPointDrafts, signature: pointDraftSignature } = pointDrafts;
+  const { save: savePointDrafts, discard: discardPointDrafts, update: updatePointDrafts, signature: pointDraftSignature } = pointDrafts;
   const workingModuleSnapshot = useMemo(() => moduleSnapshot(workingModule), [workingModule]);
   const hasUnsavedWorkingModuleChanges = Boolean(
     workingModule && savedModuleSnapshotRef.current && workingModuleSnapshot !== savedModuleSnapshotRef.current,
@@ -2307,13 +2308,26 @@ function ModuleBuilderContent() {
   // one keeps its Teams date with the rail's date notice saying it no longer
   // matches. Client state only, saved with the module like the copy above.
   const moveComponentToAnotherWeek = useCallback((component: ModuleComponent, targetWeekId: string) => {
+    const current = workingModuleRef.current;
+    if (!current || workingModuleProgrammeArchived || !current.weekStructure.some(week => week.id === targetWeekId)) return;
+    const movedWeeks = moveComponentToWeek(current.weekStructure, component.id, targetWeekId, current.catalogueId || current.id);
+    // Points belong to a week. A component moved through Move leaves its old
+    // Point and arrives outside Points in the destination week.
+    for (const week of current.weekStructure) {
+      const retained = new Set(movedWeeks.find(next => next.id === week.id)?.components.map(item => item.id) || []);
+      const removed = new Set(week.components.filter(item => !retained.has(item.id)).map(item => item.id));
+      if (!removed.size) continue;
+      updatePointDrafts(current.catalogueId || current.id, week.id, points => points.map(point => ({
+        ...point, componentIds: point.componentIds.filter(id => !removed.has(id)),
+      })));
+    }
     updateWorkingModule(module => ({
       ...module,
       weekStructure: moveComponentToWeek(module.weekStructure, component.id, targetWeekId, module.catalogueId || module.id),
     }));
     setExpandedWeekIds(prev => new Set(prev).add(targetWeekId));
     setSelection({ kind: 'component', weekId: targetWeekId, componentId: component.id });
-  }, [updateWorkingModule]);
+  }, [updateWorkingModule, updatePointDrafts, workingModuleProgrammeArchived]);
 
   const confirmDeleteWeek = async (weekId: string) => {
     if (!workingModule) return;
@@ -3749,6 +3763,7 @@ function ModuleBuilderContent() {
           <div className="grid grid-cols-1 items-start gap-4 xl:grid-cols-[380px_minmax(0,1fr)_290px] 2xl:grid-cols-[420px_minmax(560px,1fr)_310px]">
             <CourseStructure
               pointDrafts={pointDrafts}
+              readOnly={workingModuleProgrammeArchived}
               module={workingModule}
               selection={selection}
               dragState={dragState}
@@ -4798,8 +4813,9 @@ function WorkspaceActionFooter({ saving, saved, status, autoSave, onToggleAutoSa
 // expanding a week renders its parts timeline (the shared WeekComponentRail,
 // nested variant) indented underneath, so the week list and "the week, in
 // order" view are one nested panel instead of two side-by-side ones.
-function CourseStructure({ pointDrafts, module, selection, dragState, onDragState, onSelectWeek, onSelectComponent, onAddWeek, onAddWeekFromTemplate, onDeleteWeek, onDuplicateWeek, onDropReorder, onComponentsChange, onCopyComponentToWeek, onMoveComponentToWeek, recordingLinks, onWeekHolidayNoteChange, onReuseComponents, onCreateTeamsMeeting, onReplaceTeamsLinks, onRestoreTeamsData, focusedComponentId = '', pointsByType, plannedSessions, plannedSlots, expandedWeekIds, onExpandedWeekIdsChange, allowMultipleExpanded = false }: {
+function CourseStructure({ pointDrafts, readOnly = false, module, selection, dragState, onDragState, onSelectWeek, onSelectComponent, onAddWeek, onAddWeekFromTemplate, onDeleteWeek, onDuplicateWeek, onDropReorder, onComponentsChange, onCopyComponentToWeek, onMoveComponentToWeek, recordingLinks, onWeekHolidayNoteChange, onReuseComponents, onCreateTeamsMeeting, onReplaceTeamsLinks, onRestoreTeamsData, focusedComponentId = '', pointsByType, plannedSessions, plannedSlots, expandedWeekIds, onExpandedWeekIdsChange, allowMultipleExpanded = false }: {
   pointDrafts: WeekPointDrafts;
+  readOnly?: boolean;
   module: ModuleCatalogueItem;
   selection: Selection | null;
   dragState: DragState;
@@ -5378,9 +5394,11 @@ function CourseStructure({ pointDrafts, module, selection, dragState, onDragStat
                       warns and stops there -- the session keeps its date, its
                       week and its Teams meeting. */}
                   <WeekComponentRail
+                    pointStructure={{ points: pointDrafts.get(module.catalogueId || module.id, week.id)?.points || [],
+                      onChange: points => { if (!readOnly) pointDrafts.update(module.catalogueId || module.id, week.id, () => points); } }}
                     componentSectionKey={componentId => pointDrafts.get(module.catalogueId || module.id, week.id)?.points
                       .find(point => point.componentIds.includes(componentId))?.id || null}
-                    renderComponentList={(items, searchTerm) => <WeekPointsNavigation
+                    renderComponentList={(items, searchTerm, actions) => <WeekPointsNavigation
                       key={`${module.catalogueId || module.id}:${week.id}`}
                       moduleId={module.catalogueId || module.id}
                       weekId={week.id}
@@ -5389,6 +5407,8 @@ function CourseStructure({ pointDrafts, module, selection, dragState, onDragStat
                       selectedId={selection?.kind === 'component' && selection.weekId === week.id ? selection.componentId : null}
                       onSelect={componentId => onSelectComponent(week.id, componentId)}
                       renderActivity={componentId => items.find(item => item.component.id === componentId)?.node}
+                      onAddComponent={actions?.addComponent}
+                      readOnly={readOnly}
                       expandAll={Boolean(searchTerm)}
                       revealComponentId={focusedComponentId}
                     />}
@@ -5707,7 +5727,8 @@ function ComponentTypeModal({ onClose, onAdd, title = 'What do you want to add?'
 
 function OpeningModuleAlert({ title, mode, complete }: { title: string; mode: 'builder' | 'settings'; complete: boolean }) {
   const isSettings = mode === 'settings';
-  return (
+  // Escape the catalogue's direct-child positioning rule and stacking context.
+  return createPortal(
     <div className="fixed inset-0 z-[90] flex items-center justify-center bg-black/40 p-4 backdrop-blur-sm" aria-live="polite" aria-busy="true">
       <div className="w-full max-w-md overflow-hidden rounded-2xl border border-white/10 bg-background-50 text-center shadow-2xl">
         <div className="p-6">
@@ -5729,7 +5750,8 @@ function OpeningModuleAlert({ title, mode, complete }: { title: string; mode: 'b
           </div>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
 
@@ -5853,7 +5875,8 @@ function ModuleWeekPanel({ pointDrafts, saving, week, module, groupOptions, onCh
         </div>
       </div>
 
-      <WebWeekPointsEditor key={`${module.catalogueId || module.id}:${week.id}`} moduleId={module.catalogueId || module.id} weekId={week.id} drafts={pointDrafts} busy={saving} />
+      <WebWeekPointsEditor key={`${module.catalogueId || module.id}:${week.id}`} moduleId={module.catalogueId || module.id} weekId={week.id} drafts={pointDrafts} busy={saving}
+        activities={week.components.map(component => ({ id: component.id, title: component.title, type: component.type }))} />
 
       <WeekOverviewPanel
         components={week.components}

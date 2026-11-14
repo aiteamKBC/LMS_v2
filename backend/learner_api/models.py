@@ -1253,7 +1253,7 @@ FREE_PROGRESS_INACTIVE = "inactive"
 
 
 class LearnerFreeCourseProgress(models.Model):
-    """Achieved native free-course components, keyed by LearnerProfile.id.
+    """Native free-course progress, keyed by LearnerProfile.id.
 
     Deliberately its OWN store, separate from Training_plan_progress and the KSB
     snapshot: free-course completion is shown on the free-courses page and must

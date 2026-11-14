@@ -1,15 +1,16 @@
 import { useEffect, useState } from 'react';
-import { authoredWeekPoints, type WebPoint } from '@/api/webWeekPoints';
+import { authoredWeekPoints, type AuthoredWeekPoints, type WebPoint } from '@/api/webWeekPoints';
 
 import type { WeekPointDrafts } from './useWeekPointDrafts';
 import { componentAuthoringDefinitions } from './componentAuthoringModel';
 
-export function WebWeekPointsEditor({ moduleId, weekId, drafts, busy = false }: {
-  moduleId: string; weekId: string; drafts: WeekPointDrafts; busy?: boolean;
+export function WebWeekPointsEditor({ moduleId, weekId, drafts, busy = false, activities }: {
+  moduleId: string; weekId: string; drafts: WeekPointDrafts; busy?: boolean; activities?: AuthoredWeekPoints['activities'];
 }) {
   const draft = drafts.get(moduleId, weekId);
   const data = draft?.data;
   const points = draft?.points || [];
+  const availableActivities = activities || data?.activities || [];
   const [error, setError] = useState('');
   const [reload, setReload] = useState(0);
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
@@ -66,7 +67,7 @@ export function WebWeekPointsEditor({ moduleId, weekId, drafts, busy = false }: 
         </div>
         <p className="mb-2 text-xs text-foreground-500">{point.componentIds.length} activities selected</p>
         <div className="max-h-64 space-y-2 overflow-y-auto">
-          {data.activities.map(activity => {
+          {availableActivities.map(activity => {
             const elsewhere = points.some(other => other.id !== point.id && other.componentIds.includes(activity.id));
             const typeLabel = componentAuthoringDefinitions.find(item => item.type === activity.type)?.label || activity.type || 'Activity';
             const typeId = `point-${point.id}-activity-${activity.id}-type`;
@@ -81,9 +82,9 @@ export function WebWeekPointsEditor({ moduleId, weekId, drafts, busy = false }: 
               </span>
             </label>;
           })}
-          {point.componentIds.filter(id => !data.activities.some(activity => activity.id === id)).map(id =>
+          {point.componentIds.filter(id => !availableActivities.some(activity => activity.id === id)).map(id =>
             <label key={id} className="flex cursor-pointer items-start gap-2 py-1 text-sm text-amber-700"><input type="checkbox" className="mt-0.5 !h-4 !min-h-0 !w-4 shrink-0 !rounded !p-0 accent-primary-600" checked onChange={() => change(index, { componentIds: point.componentIds.filter(value => value !== id) })} />Activity removed from this week — uncheck to remove it from this Point.</label>)}
-          {!data.activities.length && <p className="text-sm text-foreground-500">Save activities in this week to select them here.</p>}
+          {!availableActivities.length && <p className="text-sm text-foreground-500">Add components to this week to select them here.</p>}
         </div>
         </div>
       </fieldset>)}

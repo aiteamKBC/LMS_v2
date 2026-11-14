@@ -1,6 +1,6 @@
 """Native free-course assignment and completion records.
 
-The completion table is an index of achieved activities. The existing progress
+The completion table retains activity state and completion dates. The progress
 ledger remains the authority for attempts, evidence and actual hours; writing
 this index never awards hours a second time.
 """
@@ -8,6 +8,7 @@ from django.db import connections, transaction
 
 from curriculum_api.learning_storage import enabled
 from .models import LearnerFreeCourse, LearnerFreeCourseProgress
+from .free_course_progress import save_completion
 from .progress_rules import progress_counts_as_achieved
 
 
@@ -70,6 +71,4 @@ def record_completion(learner, progress):
     completed_at = progress.submitted_at or progress.declared_completed_at
     if completed_at is None:
         raise ValueError('A free-course completion must have a recorded completion time.')
-    LearnerFreeCourseProgress.objects.get_or_create(
-        learner_id=learner.pk, component_ref=owner[0],
-        defaults={'free_course_ref': owner[1], 'completed_at': completed_at})
+    return save_completion(learner.pk, owner[0], owner[1], completed_at)

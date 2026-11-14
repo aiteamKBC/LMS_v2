@@ -10,8 +10,8 @@ from unittest import mock
 
 from django.test import SimpleTestCase
 
+from curriculum_api import learning_storage, video_imports
 from curriculum_api import views as curriculum
-from curriculum_api import video_imports
 from mcp_api import changes, dispatch
 from mcp_api.tests.test_changes import PendingManager
 from mcp_api.tests.test_transport import TransportTestCase, rpc
@@ -374,6 +374,27 @@ class ComponentContractTests(SimpleTestCase):
             with self.assertRaisesRegex(components.ToolError, "no longer exists"):
                 with components._locked_parents(target):
                     self.fail("must not reach creation when a parent disappeared")
+
+    def test_free_course_parent_locks_use_native_course_storage(self):
+        connection = mock.MagicMock()
+        connection.features.has_select_for_update = True
+        cursor = connection.cursor.return_value.__enter__.return_value
+        cursor.fetchone.return_value = (1,)
+        target = {"module_id": "FC1", "week_id": "W1", "week_number": 3}
+        with mock.patch.object(components, "connection", connection), \
+                mock.patch.object(components.transaction, "atomic", mock.MagicMock()), \
+                mock.patch.object(learning_storage, "course", return_value={"id": "FC-ROW"}) as course:
+            with components._locked_parents(target):
+                pass
+            course.assert_called_once_with("FC1", lock=True)
+            (call,) = cursor.execute.call_args_list
+            self.assertIn("curriculum.free_course_weeks", call.args[0])
+            self.assertIn("FOR UPDATE", call.args[0])
+            self.assertEqual(call.args[1], ["W1", "FC-ROW", 3])
+            cursor.fetchone.return_value = None
+            with self.assertRaisesRegex(components.ToolError, "no longer exists"):
+                with components._locked_parents(target):
+                    self.fail("must not reach creation when the free-course week disappeared")
 
     def test_dispatcher_allows_single_component_writes_but_no_module_save_or_delete(self):
         self.assertTrue(dispatch.is_allowed("POST", dispatch.COMPONENT_CREATE_PATH))

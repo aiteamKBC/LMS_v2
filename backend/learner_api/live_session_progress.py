@@ -13,7 +13,8 @@ from .attendance_rules import attendance_outcome
 from .projection_performance import projection_call
 
 
-# Attendance and saved Live Teams completions earn the full activity credit.
+# Attendance and legacy Live Teams completions earn the full activity credit.
+# Learner-entered completion time is counted by the normal progress calculation.
 # This is intentionally separate from the scheduled/session display duration
 # used by the attendance register.
 LIVE_SESSION_CREDIT_MINUTES = 150
@@ -132,11 +133,12 @@ def _with_completed_live_credits(source, components, credits):
 
 
 def project_completed_live_credits(components, progress):
-    """A saved successful completion earns 150 minutes, including manual entry."""
+    """Keep legacy completion credit without overriding learner-entered time."""
     from .progress_rules import progress_record_counts_as_achieved
     by_id = {str(c['componentId']): c for c in components
              if _live(c) and c.get('componentId') and c.get('moduleId')}
     result = {}
+    input_components = set()
     for row in progress:
         cid = str(row.get('componentId') or '')
         component = by_id.get(cid)
@@ -145,11 +147,16 @@ def project_completed_live_credits(components, progress):
                 or not row.get('submittedAt')
                 or (row.get('moduleId') and str(row['moduleId']) != str(component['moduleId']))):
             continue
+        if str(row.get('timeTrackingSource') or '').endswith(':input'):
+            # The saved input and any retake decisions already own actual hours.
+            # An older completion must not top that same activity up to 150m.
+            input_components.add(cid)
+            continue
         result.setdefault(cid, {'componentId': cid, 'moduleId': component['moduleId'],
             'componentType': 'live_session', 'title': component.get('title') or 'Live session',
             'hours': LIVE_SESSION_CREDIT_MINUTES / 60, 'submittedAt': row['submittedAt'],
             'timeTrackingSource': 'completed_live_session'})
-    return list(result.values())
+    return [credit for cid, credit in result.items() if cid not in input_components]
 
 
 def read_completed_live_credits(source, components):
@@ -161,10 +168,11 @@ def read_completed_live_credits(source, components):
         learner_id=profile.pk, component_ref__in=[str(c['componentId']) for c in components],
         kind='component', deleted_at__isnull=True,
     ).order_by('submitted_at', 'id').values(
-        'component_ref', 'module_ref', 'kind', 'passed', 'submitted_at')
+        'component_ref', 'module_ref', 'kind', 'passed', 'submitted_at', 'time_tracking_source')
     return project_completed_live_credits(components, [
         {'componentId': row['component_ref'], 'moduleId': row['module_ref'],
          'kind': row['kind'], 'passed': row['passed'],
+         'timeTrackingSource': row['time_tracking_source'],
          'submittedAt': row['submitted_at'].isoformat() if row['submitted_at'] else None}
         for row in rows])
 

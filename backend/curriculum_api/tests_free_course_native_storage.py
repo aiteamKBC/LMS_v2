@@ -217,6 +217,106 @@ class IndependentFreeCourseStorageTests(CurriculumPersistenceHarness):
         self.assertEqual(v.authoring_fetch_all('modules', 'module_catalogue_id=%s', [self.reference]),
                          self.before['modules'])
 
+    def test_imported_progress_placeholder_completes_once_without_rewriting_its_id(self):
+        from datetime import timedelta
+        from importlib import import_module
+        from learner_api.free_course_progress import completed_component_refs, save_completion
+        models, source, profile, course_id, component_id = self.learner_fixture()
+        self.install_relations()
+        with connection.schema_editor() as editor:
+            import_module('learner_api.migrations.0027_free_course_progress_state').install(None, editor)
+        progress = models.LearnerFreeCourseProgress.objects.using('default')
+        placeholder = progress.create(learner_id=profile.pk, free_course_ref=course_id,
+                                      component_ref=component_id, completed_at=None)
+        at = timezone.now()
+        with patch.object(models.LearnerFreeCourseProgress, 'objects', progress):
+            self.assertEqual(completed_component_refs(profile.pk), set())
+            self.assertTrue(save_completion(profile.pk, component_id, course_id, at))
+            self.assertTrue(save_completion(profile.pk, component_id, course_id, at + timedelta(days=1)))
+            self.assertEqual(completed_component_refs(profile.pk), {component_id})
+            self.assertEqual(completed_component_refs(profile.pk + 1), set())
+        placeholder.refresh_from_db(using='default')
+        self.assertEqual(placeholder.completed_at, at)
+        self.assertEqual(progress.filter(learner_id=profile.pk, component_ref=component_id).count(), 1)
+
+    def test_compatible_week_fields_follow_edits_and_keep_archived_positions(self):
+        from importlib import import_module
+        schema.detach(connection)
+        with connection.schema_editor() as editor:
+            import_module('curriculum_api.migrations.0087_free_course_compatible_fields').install(None, editor)
+        store.upsert('weeks', {'id': 'WEEK-INDEPENDENT', 'module_catalogue_id': self.reference,
+            'title': 'Edited title', 'summary': 'Retained summary', 'display_order': 1,
+            'holiday_note_enabled': True, 'holiday_note': 'Break', 'learning_outcomes': ['Outcome']})
+        with connection.cursor() as cursor:
+            cursor.execute('''SELECT title,summary,learning_outcomes,holiday_note_enabled,holiday_note
+                FROM curriculum.free_course_weeks WHERE content_ref=%s''', ['WEEK-INDEPENDENT'])
+            title, summary, outcomes, enabled, note = cursor.fetchone()
+            if isinstance(outcomes, str):
+                outcomes = json.loads(outcomes)
+            self.assertEqual((title,summary,outcomes,enabled,note),
+                             ('Edited title','Retained summary',['Outcome'],True,'Break'))
+        store.upsert('weeks', {'id': 'WEEK-INDEPENDENT', 'module_catalogue_id': self.reference,
+                              'deleted_at': timezone.now()})
+        store.upsert('weeks', {'id': 'WEEK-REPLACEMENT', 'module_catalogue_id': self.reference,
+                              'title': 'Replacement', 'week_number': 1, 'display_order': 1})
+        with connection.cursor() as cursor:
+            cursor.execute('SELECT status,count(*) FROM curriculum.free_course_weeks GROUP BY status')
+            self.assertEqual(dict(cursor.fetchall()), {'active': 1, 'inactive': 1})
+
+    def test_archived_progress_remains_archived_and_is_not_reported_as_completed(self):
+        from importlib import import_module
+        from learner_api.free_course_progress import completed_component_refs, save_completion
+        models, source, profile, course_id, component_id = self.learner_fixture()
+        self.install_relations()
+        with connection.schema_editor() as editor:
+            import_module('learner_api.migrations.0027_free_course_progress_state').install(None, editor)
+        progress = models.LearnerFreeCourseProgress.objects.using('default')
+        at = timezone.now()
+        row = progress.create(learner_id=profile.pk, free_course_ref=course_id,
+                              component_ref=component_id, completed_at=at)
+        with connection.cursor() as cursor:
+            cursor.execute('UPDATE "Learner".learner_free_course_progress '
+                           "SET status='inactive', deleted_at=%s WHERE id=%s", [at, row.pk])
+            cursor.execute('SELECT to_jsonb(p) FROM "Learner".learner_free_course_progress p WHERE id=%s', [row.pk])
+            before = cursor.fetchone()[0]
+        with patch.object(models.LearnerFreeCourseProgress, 'objects', progress):
+            self.assertEqual(completed_component_refs(profile.pk), set())
+            self.assertFalse(save_completion(profile.pk, component_id, course_id, timezone.now()))
+        with connection.cursor() as cursor:
+            cursor.execute('SELECT to_jsonb(p) FROM "Learner".learner_free_course_progress p WHERE id=%s', [row.pk])
+            self.assertEqual(cursor.fetchone()[0], before)
+
+    def test_alignment_batch_preserves_existing_rows_and_only_appends_assignments(self):
+        from importlib import import_module
+        from .free_course_alignment import TABLES, Plan, apply_plan, rows
+        models, source, profile, course_id, component_id = self.learner_fixture()
+        self.install_relations()
+        schema.detach(connection)
+        with connection.schema_editor() as editor:
+            import_module('learner_api.migrations.0027_free_course_progress_state').install(None, editor)
+        before = {table: rows(connection, sql.SQL('SELECT * FROM {} ORDER BY id').format(
+            sql.Identifier(namespace,table))) for table,namespace in TABLES.items()}
+        inserts = {table: [] for table in TABLES}
+        inserts['free_courses'] = [dict(id='FC-ALIGN',course_name='Imported synthetic course',
+            storage_version=2,content_ref='MOD-ALIGN',managed_by_builder=True)]
+        inserts['free_course_weeks'] = [dict(id='FW-ALIGN',course_id='FC-ALIGN',week_number=1,
+            week_title='Imported week',content_ref='WEEK-ALIGN',week_id='WEEK-ALIGN')]
+        inserts['free_programme_components'] = [dict(id='CP-ALIGN',free_module_id='FW-ALIGN',
+            content_ref='COMP-ALIGN',week_id='WEEK-ALIGN',programme_id='FREE-COURSES',type='reading',title='Imported reading')]
+        inserts['learner_free_courses'] = [dict(learner_id=profile.pk,free_course_ref='FC-ALIGN',
+            free_course_title='Imported synthetic course',position=1)]
+        inserts['learner_free_course_progress'] = [dict(learner_id=profile.pk,free_course_ref='FC-ALIGN',
+            component_ref='CP-ALIGN',completed_at=None,status='active',deleted_at=None)]
+        addition = dict(freeCourseId='FC-ALIGN',courseName='Imported synthetic course',addedAt='')
+        apply_plan(connection,Plan(inserts,{source.pk:[addition]},'synthetic',0),before)
+        source.refresh_from_db(using='default')
+        self.assertEqual(source.free_courses,[addition])
+        self.assertIsNone(models.LearnerFreeCourseProgress.objects.using('default').get(component_ref='CP-ALIGN').completed_at)
+        self.assertEqual(models.LearnerProgressEntry.objects.using('default').filter(learner=profile).count(),0)
+        for table in TABLES:
+            self.assertEqual(len(rows(connection,sql.SQL('SELECT id FROM {}').format(sql.Identifier(TABLES[table],table)))),
+                             len(before[table])+1)
+
     def test_unknown_cascade_relationship_aborts_cutover_and_preserves_content(self):
         with connection.cursor() as cursor:
             cursor.execute('''CREATE TABLE curriculum.synthetic_course_history
