@@ -1125,7 +1125,7 @@
 .learningPage :is(.list, .grid) .moduleCard[data-source='legacy'] { background: linear-gradient(105deg, #fffaf3, #fffdf9); }
 .learningPage :is(.list, .grid) .moduleCard .moduleCover { position: relative; overflow: hidden; background: var(--learner-soft, #f8f5fc); }
 .learningPage :is(.list, .grid) .moduleCard .moduleCover .cover { width: 100%; height: 100%; }
-.learningPage :is(.list, .grid) .moduleCard .courseCoverImage { display: block; width: 100%; height: 100%; object-fit: cover; object-position: 50% 35%; }
+.learningPage :is(.list, .grid) .moduleCard .moduleCover img { display: block; width: 100%; height: 100%; object-fit: cover; object-position: 50% 35%; }
 .learningPage :is(.list, .grid) .moduleCard .defaultCoverImage { object-fit: contain; }
 .learningPage :is(.list, .grid) .moduleCard .cardMetaRow { justify-content: flex-start; gap: 6px 8px; }
 .learningPage :is(.list, .grid) .moduleCard .sourceBadge { flex-shrink: 1; white-space: normal; text-align: left; }
