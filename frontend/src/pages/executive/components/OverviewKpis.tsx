@@ -12,10 +12,11 @@ interface OverviewKpisProps {
   records: QualityRecord[];
   actions: QualityAction[];
   forms: FormDefinition[];
+  availability: { actions: boolean; criticalIssues: boolean; feedback: boolean };
   onOpenAuditTypes?: () => void;
 }
 
-export default function OverviewKpis({ records, actions, forms, onOpenAuditTypes }: OverviewKpisProps) {
+export default function OverviewKpis({ records, actions, forms, availability, onOpenAuditTypes }: OverviewKpisProps) {
   const today = todayIso(TIME_ZONE_LABEL);
   const audits = records.filter(
     (record) => record.category === "Quality Audit" && record.reviewStatus === "completed",
@@ -59,9 +60,9 @@ export default function OverviewKpis({ records, actions, forms, onOpenAuditTypes
 
         <KpiCard
           label="Feedback responses"
-          value={formatNumber(feedback.length)}
+          value={availability.feedback ? formatNumber(feedback.length) : '—'}
           definition="Learner and employer form submissions received in the period."
-          hint="Free-text comments never change a RAG status"
+          hint={availability.feedback ? 'Free-text comments never change a RAG status' : 'Feedback response data is unavailable'}
           icon="ri-chat-3-line"
           accent="secondary"
           to="/curriculum/quality-demo?view=feedbacks"
@@ -70,20 +71,20 @@ export default function OverviewKpis({ records, actions, forms, onOpenAuditTypes
 
         <KpiCard
           label="Critical issues"
-          value={formatNumber(critical.length)}
+          value={availability.criticalIssues ? formatNumber(critical.length) : '—'}
           definition="Red outcomes with a critical compliance concern flagged."
-          hint={critical.length ? "Immediate review or escalation required" : "No critical concerns in scope"}
+          hint={!availability.criticalIssues ? 'Critical issue data is unavailable' : critical.length ? "Immediate review or escalation required" : "No critical concerns in scope"}
           icon="ri-alert-line"
-          accent="critical"
+          accent={availability.criticalIssues ? 'critical' : 'secondary'}
           to="/qa/escalations"
           linkLabel="Review critical actions"
         />
 
         <KpiCard
           label="Open actions"
-          value={formatNumber(openActions.length)}
+          value={availability.actions ? formatNumber(openActions.length) : '—'}
           definition="Improvement actions not yet resolved or closed."
-          hint={`${overdueActions.length} past target date`}
+          hint={availability.actions ? `${overdueActions.length} past target date` : 'Action status data is unavailable'}
           icon="ri-task-line"
           accent={overdueActions.length ? "accent" : "secondary"}
           to="/qa/findings"

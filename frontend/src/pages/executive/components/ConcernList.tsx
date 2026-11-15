@@ -7,7 +7,7 @@ const TREND_META = {
   flat: { icon: "ri-arrow-right-line", label: "Stable", cls: "text-foreground-500" },
 };
 
-export default function ConcernList({ themes }: { themes: ConcernTheme[] }) {
+export default function ConcernList({ themes, available }: { themes: ConcernTheme[]; available: boolean }) {
   return (
     <Panel
       title="Recurring concerns"
@@ -15,6 +15,7 @@ export default function ConcernList({ themes }: { themes: ConcernTheme[] }) {
       className="h-full"
       headingId="concerns-heading"
     >
+      {!available ? <p className="py-6 text-[12px] text-foreground-600">Recurring concern data is unavailable. No trend is inferred.</p> : <>
       <ul className="space-y-3">
         {themes.map((theme) => {
           const trend = TREND_META[theme.trend];
@@ -44,6 +45,7 @@ export default function ConcernList({ themes }: { themes: ConcernTheme[] }) {
         Themes are extracted from linked records only. Free-text comments are cited as evidence and never
         converted into an official status.
       </p>
+      </>}
     </Panel>
   );
 }

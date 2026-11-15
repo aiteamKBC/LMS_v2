@@ -14,6 +14,7 @@ export interface LiveQmsData {
   periodLabel: string;
   lastRefresh: string;
   notice: string;
+  availability: { actions: boolean; criticalIssues: boolean; concerns: boolean; feedback: boolean; feedbackScores: boolean };
 }
 
 function emptyRag(): RagCounts {
@@ -166,6 +167,7 @@ async function loadFeedbackData(start: string, end: string) {
         [...forms.map(form => form.formType), ...inPeriod.map(row => row.formType)]
           .map(type => [type, feedbackTypeLabel(type)] as const),
       )].map(([id, name]) => ({ id, name })),
+      scoresAvailable: insights !== null,
     };
   } catch {
     return null;
@@ -299,6 +301,7 @@ export async function loadLiveQmsData(signal: AbortSignal): Promise<LiveQmsData>
     actions: [],
     concerns: [],
     feedbackTypes: feedback?.feedbackTypes ?? [],
+    availability: { actions: false, criticalIssues: false, concerns: false, feedback: feedback !== null, feedbackScores: feedback?.scoresAvailable ?? false },
     periodLabel: `${start} – ${end}`,
     lastRefresh: new Intl.DateTimeFormat('en-GB', { dateStyle: 'medium', timeStyle: 'short', timeZone: TIME_ZONE_LABEL }).format(new Date()),
     notice: `Live source: ${sourceLabel}. The RAG chart uses stored criterion ratings. No blended review-level RAG is inferred because the current APIs do not expose an approved aggregation policy.`,

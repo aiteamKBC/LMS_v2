@@ -116,7 +116,7 @@ export default function RegistryTable({ forms }: RegistryTableProps) {
                       </p>
                       {form.completionRate !== null ? (
                         <p className="text-[11px] text-foreground-500">
-                          {formatPct(form.completionRate * 100)} of {formatNumber(form.scheduled)}
+                          {formatPct(form.completionRate * 100)}{form.scheduled > 0 ? ` of ${formatNumber(form.scheduled)}` : ' of saved records completed'}
                         </p>
                       ) : null}
                     </td>

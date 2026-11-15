@@ -250,18 +250,18 @@ export default function ExecutiveOverview() {
         coaches={coaches}
         tutors={tutors}
         fields={["period", "category", "formType", "feedbackType", "respondentType", "coach", "tutor", "rag", "query"]}
-        resultLabel={`records · ${formatNumber(assessedInScope)} assessed · ${formatNumber(openInScope)} open actions in scope`}
+        resultLabel={`records · ${formatNumber(assessedInScope)} assessed · ${live.availability.actions ? `${formatNumber(openInScope)} open actions in scope` : 'action status unavailable'}`}
       />
 
-      <OverviewKpis records={records} actions={actions} forms={forms} onOpenAuditTypes={() => setAuditTypesOpen(true)} />
+      <OverviewKpis records={records} actions={actions} forms={forms} availability={live.availability} onOpenAuditTypes={() => setAuditTypesOpen(true)} />
 
       {auditTypesOpen ? <MeetingTypesModal records={records} onClose={() => setAuditTypesOpen(false)} onOpenType={openAuditType} /> : null}
 
-      <QualityDonuts records={records} selectedCoach={filters.coach} selectedTutor={filters.tutor} />
+      <QualityDonuts records={records} selectedCoach={filters.coach} selectedTutor={filters.tutor} feedbackAvailable={live.availability.feedbackScores} />
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
         <div className="lg:col-span-2">
-          <HealthOverview records={records} actions={actions} />
+          <HealthOverview records={records} actions={actions} availability={live.availability} />
         </div>
         <CategoryRag records={records} />
       </div>
@@ -292,9 +292,9 @@ export default function ExecutiveOverview() {
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
         <div className="lg:col-span-2">
-          <ActionsList actions={actions} />
+          <ActionsList actions={actions} available={live.availability.actions} />
         </div>
-      <ConcernList themes={live.concerns} />
+      <ConcernList themes={live.concerns} available={live.availability.concerns} />
       </div>
 
       <footer className="rounded-xl border border-background-300/70 bg-background-200/40 px-4 py-3.5">
