@@ -11379,7 +11379,7 @@ def build_sessions_basic(training_rows, module_rows, program_configs=None, holid
 
 
 def module_delivery_row(module_row, group_row=None):
-    """A module row that answers with its group's delivery pattern first.
+    """Use the Group pattern unless this delivery explicitly chose Custom.
 
     The group states when its learners meet, so its delivery days and clock
     govern every module delivered to it -- changing the group moves its modules
@@ -11404,6 +11404,8 @@ def module_delivery_row(module_row, group_row=None):
     a decision about that date, not a pattern the group can take back.
     """
     module_row = dict(module_row or {})
+    if clean_str(module_row.get('schedule_mode') or module_row.get('scheduleMode')) == 'custom':
+        return module_row
     group_row = group_row or {}
     day = clean_str(group_row.get('session_week_day')) or schedule_day_part(group_row.get('schedule'))
     start = clean_str(group_row.get('session_start_time')) or schedule_time_parts(group_row.get('schedule'))[0]
@@ -11441,6 +11443,8 @@ def module_delivery_session_plan(module, session_count, start, holidays=None, we
     day at all. There is no weekday to skip onto in that case, so it stays a
     plain count of weeks and reports no shifts.
     """
+    if not week_count and clean_str(module.get('schedule_mode') or module.get('scheduleMode')) == 'custom':
+        week_count = parse_int(module.get('weeks_number') or module.get('weeksNumber'), 0)
     weekly = module_weekly_schedule(module)
     delivery_days = ', '.join(slot['day'] for slot in weekly) or module.get('session_week_day') or module.get('week_days') or module.get('delivery_days') or ''
     # A module-specific closure must not change other modules in its cohort.
@@ -11449,6 +11453,13 @@ def module_delivery_session_plan(module, session_count, start, holidays=None, we
     plan = build_module_session_plan(
         start, session_count, delivery_days, applied_holidays, week_count=week_count,
     ) if delivery_days else {}
+    custom_end = parse_date(module.get('end_date') or module.get('endDate')) if clean_str(module.get('schedule_mode') or module.get('scheduleMode')) == 'custom' else None
+    if custom_end and plan.get('sessions'):
+        plan['sessions'] = [session for session in plan['sessions'] if parse_date(session['date']) <= custom_end]
+        plan['slots'] = [slot for slot in plan.get('slots') or [] if parse_date(slot['date']) <= custom_end]
+        plan['finalEndDate'] = max((session['date'] for session in plan['sessions']), default='')
+        if not plan['sessions']:
+            return plan
     if plan.get('sessions'):
         for session in plan['sessions']:
             clock, end, duration = module_session_clock({**module, 'session_overrides': {}}, session_date=session.get('date'))
@@ -11790,6 +11801,9 @@ def module_session_dates(module, holiday_cache=None):
     signature = (
         session_count,
         start,
+        clean_str(module.get('schedule_mode')),
+        parse_int(module.get('weeks_number'), 0),
+        clean_str(module.get('end_date')),
         clean_str(module.get('session_week_day')),
         clean_str(module.get('cohort_id')),
         len(module.get('holidays') or ()),
@@ -12058,14 +12072,16 @@ def module_session_clock(module_row, group_row=None, session_date=None):
     exception = override_clock(module_row, session_date)
     if exception:
         return exception
-    # The group is where its learners are told when they meet, so the clock it
+    # Explicit Custom deliveries keep their per-day clocks. Otherwise the
+    # group is where its learners are told when they meet, so the clock it
     # states governs every module delivered to it: move the group and its
     # modules move with it, rather than each one running to a copy of the clock
     # taken when it was authored. A module's own clock -- and its per-weekday
     # table, which is a refinement of that clock -- answers where its group
     # states none: an ungrouped module, or a group never given a slot.
-    group_start = clean_str((group_row or {}).get('session_start_time'))
-    group_end = clean_str((group_row or {}).get('session_end_time'))
+    custom = clean_str((module_row or {}).get('schedule_mode') or (module_row or {}).get('scheduleMode')) == 'custom'
+    group_start = '' if custom else clean_str((group_row or {}).get('session_start_time'))
+    group_end = '' if custom else clean_str((group_row or {}).get('session_end_time'))
     start_time = group_start or clean_str((module_row or {}).get('session_start_time')) or DEFAULT_SESSION_START_TIME
     end_time = group_end or clean_str((module_row or {}).get('session_end_time')) or DEFAULT_SESSION_END_TIME
     day = parse_date(session_date)
@@ -12170,9 +12186,12 @@ def module_schedule_view(module, tutor_name=None):
         # here is what makes an unassigned module skip the check entirely.
         'tutor_name': tutor if staff_assignment_key(tutor) else '',
         'sessions_number': parse_int(sessions_number, 0),
+        'weeks_number': parse_int(first('weeks_number', 'weeksNumber'), 0),
         'start_date': first('start_date', 'startDate'),
+        'end_date': first('end_date', 'endDate'),
         'session_week_day': ', '.join(slot['day'] for slot in weekly) or first('session_week_day', 'weekDays', 'week_days', 'delivery_days', 'deliveryDays'),
         'weekly_schedule': weekly,
+        'schedule_mode': first('schedule_mode', 'scheduleMode') or 'group',
         'session_holidays': parse_json_value(module.get('session_holidays') or module.get('sessionHolidays'), []),
         'session_overrides': session_overrides(module),
         'session_start_time': first('session_start_time', 'startTime', 'start_time'),
@@ -12199,7 +12218,10 @@ def module_schedule_assignment_changed(before, after):
         'session_start_time',
         'session_end_time',
         'weekly_schedule',
+        'schedule_mode',
     )
+    if before.get('schedule_mode') == 'custom' or after.get('schedule_mode') == 'custom':
+        keys += ('weeks_number', 'end_date')
     return any(clean_str(before.get(key)) != clean_str(after.get(key)) for key in keys)
 
 
@@ -12257,6 +12279,8 @@ def tutor_delivery_schedule(schedule, groups):
     -- so assigning that tutor elsewhere was refused over sessions the group's
     own timetable does not contain.
     """
+    if clean_str((schedule or {}).get('schedule_mode') or (schedule or {}).get('scheduleMode')) == 'custom':
+        return schedule
     group = (groups or {}).get(clean_str((schedule or {}).get('group_id')))
     if not group:
         return schedule
@@ -12385,6 +12409,8 @@ def module_delivery_day_gap(schedule, groups=None):
 
     Returns the group row, so a caller can name it.
     """
+    if clean_str((schedule or {}).get('schedule_mode') or (schedule or {}).get('scheduleMode')) == 'custom' and clean_str((schedule or {}).get('session_week_day')):
+        return None
     group = (groups if groups is not None else safe_group_delivery_rows()).get(
         clean_str((schedule or {}).get('group_id'))
     )
@@ -14335,7 +14361,7 @@ COMPACT_MODULE_LIST_FIELDS = frozenset({
     # Status badges and the delivery label.
     'status', 'authoringStatus', 'deliveryStatus',
     # Read into the module edit form and saved back out of it. Not display-only.
-    'startDate', 'endDate', 'weeklySchedule', 'sessionHolidays', 'deliveryWeeks',
+    'startDate', 'endDate', 'weeklySchedule', 'scheduleMode', 'sessionHolidays', 'deliveryWeeks',
     'weekDays', 'startTime', 'endTime', 'notes', 'color', 'coverImage',
     # Staffing shown on the row.
     'tutor', 'coach',
@@ -14941,6 +14967,7 @@ def provision_module_authoring_tables():
                 session_start_time varchar(32),
                 session_end_time varchar(32),
                 ksb_profile_source_id varchar(128),
+                schedule_mode varchar(16) not null default 'group',
                 source_type varchar(64),
                 source_id varchar(255),
                 cover_image_url text,
@@ -14954,6 +14981,66 @@ def provision_module_authoring_tables():
                 tutor_id varchar(128)
             )
         ''')
+        # Local/test bootstrap upgrade for existing tables; never restore legacy name/flag columns.
+        if postgres:
+            for column, definition in (
+                ('sessions_number', f"integer not null default 0"),
+                ('start_date', f"date"),
+                ('end_date', f"date"),
+                ('cohort_id', f"varchar(255)"),
+                ('group_id', f"varchar(255)"),
+                ('learner_roster_mode', f"varchar(32) not null default 'inherited'"),
+                ('teams_shared_source_module_id', f"varchar(128)"),
+                ('ksb_remap_report', f"text"),
+                ('ksb_profile_source_id', f"varchar(128)"),
+                ('session_week_day', f"varchar(255)"),
+                ('session_start_time', f"varchar(32)"),
+                ('session_end_time', f"varchar(32)"),
+                ('weekly_schedule', f"{json_type}"),
+                ('schedule_mode', f"varchar(16) not null default 'group'"),
+                ('source_type', f"varchar(64)"),
+                ('source_id', f"varchar(255)"),
+                ('cover_image_url', f"text"),
+                ('session_holidays', f"{json_type}"),
+                ('session_overrides', f"{json_type} not null default '{{}}'"),
+                ('status', f"varchar(32) not null default 'active'"),
+                ('tutor_id', f"varchar(128)"),
+            ):
+                cursor.execute(
+                    f'alter table {authoring_table_name(AUTHORING_MODULES_TABLE)} '
+                    f'add column if not exists {quote_ident(column)} {definition}'
+                )
+        else:
+            cursor.execute(f'pragma table_info({quote_ident(AUTHORING_MODULES_TABLE)})')
+            existing_columns = {row[1] for row in cursor.fetchall()}
+            for column, definition in (
+                ('sessions_number', f"integer not null default 0"),
+                ('start_date', f"date"),
+                ('end_date', f"date"),
+                ('cohort_id', f"varchar(255)"),
+                ('group_id', f"varchar(255)"),
+                ('learner_roster_mode', f"varchar(32) not null default 'inherited'"),
+                ('teams_shared_source_module_id', f"varchar(128)"),
+                ('ksb_remap_report', f"text"),
+                ('ksb_profile_source_id', f"varchar(128)"),
+                ('session_week_day', f"varchar(255)"),
+                ('session_start_time', f"varchar(32)"),
+                ('session_end_time', f"varchar(32)"),
+                ('weekly_schedule', f"{json_type}"),
+                ('schedule_mode', f"varchar(16) not null default 'group'"),
+                ('source_type', f"varchar(64)"),
+                ('source_id', f"varchar(255)"),
+                ('cover_image_url', f"text"),
+                ('session_holidays', f"{json_type}"),
+                ('session_overrides', f"{json_type} not null default '{{}}'"),
+                ('status', f"varchar(32) not null default 'active'"),
+                ('tutor_id', f"varchar(128)"),
+            ):
+                if column not in existing_columns:
+                    cursor.execute(
+                        f'alter table {authoring_table_name(AUTHORING_MODULES_TABLE)} '
+                        f'add column {quote_ident(column)} {definition}'
+                    )
         cursor.execute(f'''
             create table if not exists {authoring_table_name(MODULE_TEAMS_SHARES_TABLE)} (
                 module_catalogue_id varchar(128) primary key,
@@ -17028,8 +17115,12 @@ def validate_component_authoring_payload(component, path):
 
 def validate_module_authoring_payload(payload):
     errors = []
+    if 'scheduleMode' in payload and payload['scheduleMode'] not in ('group', 'custom'):
+        errors.append({'path': 'scheduleMode', 'message': 'Choose Group or Custom scheduling.'})
     try:
-        module_weekly_schedule(payload)
+        weekly = module_weekly_schedule(payload)
+        if payload.get('scheduleMode') == 'custom' and not weekly:
+            errors.append({'path': 'weeklySchedule', 'message': 'Choose the weekdays and times for the custom schedule.'})
     except ValueError as exc:
         errors.append({'path': 'weeklySchedule', 'message': str(exc)})
     source_cache = {}
@@ -20328,7 +20419,7 @@ def apply_module_session_plan_to_weeks(module, group_row, weeks, *, holidays=Non
                 if planned_instant:
                     planned_settings['sessionDateTimeUtc'] = planned_instant
                     planned_settings['teamsStartDateTimeUtc'] = planned_instant
-                if settings.get('teamsCalendarBinding') in {'missing', 'ambiguous'}:
+                if settings.get('teamsCalendarBinding') in {'missing', 'ambiguous', 'unverified'}:
                     # A planned delivery time does not confirm a Microsoft
                     # occurrence. Also clear a stamp left by an older planner.
                     planned_settings['teamsStartDateTimeUtc'] = ''
@@ -21308,6 +21399,7 @@ def get_authoring_structure_payload(module_catalogue_id, include_archived=False,
         'startDate': format_date(module.get('start_date')),
         'endDate': format_date(module.get('end_date')),
         'weeklySchedule': module_weekly_schedule(delivery_module),
+        'scheduleMode': module.get('schedule_mode') or 'group',
         'sessionHolidays': parse_json_value(module.get('session_holidays'), []),
         'deliveryWeeks': module_delivery_week_count(module, weeks),
         # The pattern this module actually runs to: its group's, and its own
@@ -21813,6 +21905,7 @@ def get_authoring_structure_payloads(
             'startDate': format_date(module.get('start_date')),
             'endDate': format_date(module.get('end_date')),
             'weeklySchedule': module_weekly_schedule(delivery_module),
+            'scheduleMode': module.get('schedule_mode') or 'group',
             'sessionHolidays': parse_json_value(module.get('session_holidays'), []),
             'deliveryWeeks': module_delivery_week_count(module, weeks),
             # The group's pattern first; the module's own only where it states none.
@@ -22045,6 +22138,7 @@ def authoring_catalogue_summaries(include_programme_deleted=False, include_conte
             'coach': group_coach_name,
             'sessionsNumber': parse_int(row.get('sessions_number'), 0),
             'weeklySchedule': module_weekly_schedule(row),
+            'scheduleMode': row.get('schedule_mode') or 'group',
             'sessionHolidays': parse_json_value(row.get('session_holidays'), []),
             'weekDays': row.get('session_week_day') or '',
             'startTime': row.get('session_start_time') or '',
@@ -22225,6 +22319,7 @@ def authoring_summary_catalogue_item(summary):
         'endDate': summary['endDate'],
         'sessionsNumber': summary['sessionsNumber'],
         'weeklySchedule': summary.get('weeklySchedule') or [],
+        'scheduleMode': summary.get('scheduleMode') or 'group',
         'sessionHolidays': summary.get('sessionHolidays') or [],
         'deliveryWeeks': summary.get('deliveryWeeks'),
         'weekDays': summary.get('weekDays') or '',
@@ -22288,6 +22383,7 @@ def enrich_curriculum_modules_with_authoring_details(modules, *, child_rows=None
             'endDate': authoring.get('endDate') or module.get('endDate'),
             'sessionsNumber': authoring.get('sessionsNumber') or module.get('sessionsNumber'),
             'weeklySchedule': authoring.get('weeklySchedule') or [],
+            'scheduleMode': authoring.get('scheduleMode') or 'group',
             'sessionHolidays': authoring.get('sessionHolidays') or [],
             'deliveryWeeks': authoring.get('deliveryWeeks'),
             'weekDays': authoring.get('weekDays') or module.get('weekDays') or '',
@@ -23472,6 +23568,7 @@ def save_module_authoring_structure(
     if authored_week_count <= 0:
         authored_week_count = len(weeks) or module_stored_week_count(existing_module_row)
     weekly_schedule = merged_weekly_schedule(payload, existing_module_row)
+    schedule_mode = payload.get('scheduleMode', existing_module_row.get('schedule_mode') or 'group')
     if weekly_schedule:
         if not has_column(AUTHORING_MODULES_TABLE, 'weekly_schedule'):
             raise ModuleAuthoringValidationError([{'path': 'weeklySchedule', 'message': 'Apply curriculum migration 0063 before saving per-day times.'}])
@@ -23535,6 +23632,7 @@ def save_module_authoring_structure(
             'session_start_time': session_start_time or None,
             'session_end_time': session_end_time or None,
             'weekly_schedule': json_db_value(weekly_schedule),
+            'schedule_mode': schedule_mode,
             'tutor_name': tutor_name or None,
             'tutor_email': tutor_email or None,
         })
@@ -23798,7 +23896,7 @@ def save_module_authoring_structure(
 
 # Module fields the Teams attachment pass reads to date and pair sessions.
 LIVE_SESSION_SCHEDULE_FIELDS = (
-    'startDate', 'endDate', 'weeklySchedule', 'weekDays', 'startTime', 'endTime',
+    'startDate', 'endDate', 'weeklySchedule', 'scheduleMode', 'weekDays', 'startTime', 'endTime',
     'sessionsNumber', 'sessionHolidays', 'groupId', 'cohortId', 'teamsSharedSourceModuleId',
 )
 
@@ -24780,11 +24878,15 @@ def curriculum_preview_module_session_plan(request):
         weekly = module_weekly_schedule(payload)
     except ValueError as exc:
         return json_error(str(exc), fields=['weeklySchedule'])
+    if payload.get('endDate') and payload.get('weeksNumber'):
+        slot = {**module_schedule_view(payload), 'schedule_mode': 'custom'}
+        return JsonResponse(module_delivery_session_plan(slot, 0, parse_date(payload.get('startDate')), payload.get('holidays') or [], week_count=parse_int(payload.get('weeksNumber'), 0)))
     plan = build_module_session_plan(
         payload.get('startDate') or payload.get('start_date'),
         payload.get('numberOfSessions') or payload.get('sessionsNumber') or payload.get('weeks'),
         ', '.join(slot['day'] for slot in weekly) or payload.get('deliveryDays') or payload.get('weekDays') or payload.get('delivery_day'),
         payload.get('holidays') or payload.get('linkedHolidays') or [],
+        week_count=parse_int(payload.get('weeksNumber'), 0),
     )
     slot = module_schedule_view(payload)
     for session in plan.get('sessions') or []:
@@ -25294,7 +25396,7 @@ PROGRAMME_WORKSPACE_MODULE_FIELDS = frozenset({
     'programmeId', 'programme', 'cohortId', 'cohort', 'groupId', 'group',
     'weeks', 'sessionsNumber', 'ksbCount', 'lessons', 'quizzes', 'assignments',
     'status', 'authoringStatus', 'deliveryStatus', 'isProgrammeDeleted',
-    'startDate', 'endDate', 'weeklySchedule', 'sessionHolidays', 'deliveryWeeks',
+    'startDate', 'endDate', 'weeklySchedule', 'scheduleMode', 'sessionHolidays', 'deliveryWeeks',
     'weekDays', 'startTime', 'endTime', 'notes', 'color', 'coverImage',
     'tutor', 'coach', 'ksbCodes', 'lastUpdated', 'weekStructureOutline',
 })
@@ -26591,6 +26693,7 @@ def curriculum_module_collection(request):
             'sessionsNumber': payload.get('sessionsNumber') or payload.get('sessions_number') or 0,
             'weeksNumber': payload.get('weeks') or payload.get('weeksNumber') or 0,
             'weeklySchedule': payload.get('weeklySchedule'),
+            'scheduleMode': payload.get('scheduleMode') or 'group',
             'weekDays': payload.get('weekDays'),
             'startTime': payload.get('startTime'),
             'endTime': payload.get('endTime'),
@@ -26684,6 +26787,7 @@ def curriculum_module_collection(request):
         'sessionsNumber': payload.get('sessionsNumber') or payload.get('weeks') or 1,
         'weeksNumber': payload.get('weeks') or payload.get('weeksNumber') or 0,
         'weeklySchedule': payload.get('weeklySchedule'),
+        'scheduleMode': payload.get('scheduleMode') or 'group',
         'weekDays': payload.get('weekDays'),
         'startTime': payload.get('startTime'),
         'endTime': payload.get('endTime'),
@@ -32948,6 +33052,7 @@ def curriculum_module_detail(request, identifier):
             'groupId': payload.get('groupId') or current.get('groupId') or '',
             'groupName': payload.get('groupName') or payload.get('group') or current.get('groupName') or current.get('group') or '',
             'weeklySchedule': merged_weekly_schedule(payload, current),
+            'scheduleMode': payload.get('scheduleMode', current.get('scheduleMode') or 'group'),
             'weekDays': payload.get('weekDays') or current.get('weekDays') or current_delivery_metadata.get('weekDays') or '',
             'startTime': payload.get('startTime') or current.get('startTime') or current_delivery_metadata.get('startTime') or '',
             'endTime': payload.get('endTime') or current.get('endTime') or current_delivery_metadata.get('endTime') or '',
@@ -34044,7 +34149,7 @@ def curriculum_group_detail(request, identifier):
         # Read before the write: the session count is re-derived from the week
         # count these rows carried under the *old* delivery pattern.
         previous_module_rows = (
-            authoring_fetch_all(AUTHORING_MODULES_TABLE, 'group_id = %s', [group_id])
+            authoring_fetch_all(AUTHORING_MODULES_TABLE, "group_id = %s and coalesce(schedule_mode, 'group') <> 'custom'", [group_id])
             if module_delivery_updates else []
         )
         if module_delivery_updates:
@@ -34056,7 +34161,7 @@ def curriculum_group_detail(request, identifier):
             # day/time chosen when the group was first created.
             update_authoring_rows(
                 AUTHORING_MODULES_TABLE,
-                'group_id = %s',
+                "group_id = %s and coalesce(schedule_mode, 'group') <> 'custom'",
                 [group_id],
                 module_delivery_updates,
             )
@@ -34073,7 +34178,7 @@ def curriculum_group_detail(request, identifier):
             # unbooked sessions now; confirmed Teams occurrences are left for
             # the explicit calendar-update flow advertised in this response.
             persist_group_module_session_dates(
-                authoring_fetch_all(AUTHORING_MODULES_TABLE, 'group_id = %s', [group_id]),
+                authoring_fetch_all(AUTHORING_MODULES_TABLE, "group_id = %s and coalesce(schedule_mode, 'group') <> 'custom'", [group_id]),
                 updated_group,
             )
         next_cohort_id = clean_str(updated_group.get('cohort_id'))
@@ -35032,6 +35137,7 @@ def module_attachment_authoring_payload(item, group, cohort, catalogue_id, modul
         'startDate': start_date,
         'endDate': end_date,
         'weeklySchedule': merged_weekly_schedule(item, current_structure),
+        'scheduleMode': item.get('scheduleMode', current_structure.get('scheduleMode') or 'group'),
         'weekDays': schedule,
         'startTime': item.get('startTime') or group.get('startTime') or '',
         'endTime': item.get('endTime') or group.get('endTime') or '',
@@ -35161,7 +35267,7 @@ def attachment_week_structure(item, current_structure=None, week_count=None, ses
 
     Prefers an explicitly supplied structure, then the legacy `weeks` list form,
     then whatever is already stored. Only once none of those exist does it
-    pre-create empty weeks, to the resolved week count: a module attached with
+    pre-create weeks (with dated live slots for Custom), to the resolved count: a module attached with
     "10 weeks" has to actually hold 10 week rows, or a page that reads the
     structure straight from storage (rather than going through a client-side
     "fill in a default structure" fallback) sees none of them.
@@ -35175,7 +35281,36 @@ def attachment_week_structure(item, current_structure=None, week_count=None, ses
         if weeks:
             return weeks
     target = week_count if week_count is not None else attachment_week_count(item, session_count, schedule)
-    return [empty_authoring_week(index + 1) for index in range(max(0, target))]
+    weeks = [empty_authoring_week(index + 1) for index in range(max(0, target))]
+    weekly = module_weekly_schedule(item)
+    # A fresh custom delivery authors actual sessions inside each calendar week.
+    # Existing structures above, including reading weeks and bookings, stay intact.
+    if item.get('scheduleMode') == 'custom' and len(weekly) > 1:
+        row = {
+            'schedule_mode': 'custom',
+            'end_date': item.get('endDate'),
+            'weekly_schedule': weekly,
+            'session_week_day': ', '.join(slot['day'] for slot in weekly),
+            'session_start_time': weekly[0]['startTime'],
+            'session_end_time': weekly[0]['endTime'],
+        }
+        plan = module_delivery_session_plan(row, 0, parse_date(item.get('startDate')), week_count=target)
+        for session in plan.get('sessions') or []:
+            week_index = parse_int(session.get('weekNumber'), 1) - 1
+            if not 0 <= week_index < len(weeks):
+                continue
+            weeks[week_index]['components'].append({
+                'type': 'live-session',
+                'title': f"Live session {len(weeks[week_index]['components']) + 1}",
+                'expectedOtjh': (session.get('durationMinutes') or 60) / 60,
+                'settings': {
+                    'sessionDate': session['date'],
+                    'sessionTime': session.get('startTime') or '',
+                    'durationMinutes': session.get('durationMinutes') or 60,
+                    'completionRule': 'Attend or watch recording',
+                },
+            })
+    return weeks
 
 
 def attachment_session_count(item, weeks=None):
@@ -35378,7 +35513,7 @@ def curriculum_group_modules(request, identifier):
                 # now; module_attachment_authoring_payload otherwise falls back to the
                 # stored structure and the new content would need a manual Save.
                 structure_payload = module_attachment_authoring_payload(
-                    {**item, 'weekStructure': attachment_week_structure(item, current_structure, session_count=session_count, schedule=delivery_days)},
+                    {**item, 'weekStructure': attachment_week_structure({**item, 'startDate': start_date, 'endDate': end_date}, current_structure, session_count=session_count, schedule=delivery_days)},
                     group,
                     cohort,
                     catalogue_id,

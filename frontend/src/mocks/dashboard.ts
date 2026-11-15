@@ -1,0 +1,61 @@
+export const RAG_PERIODS = [
+  {
+    key: "7",
+    label: "Last 7 days",
+    totalChecks: 42,
+    overall: { red: 3, amber: 7, green: 32 },
+    forms: { red: 2, amber: 4, green: 18 },
+    feedback: { red: 1, amber: 2, green: 10 },
+    timeliness: { red: 0, amber: 1, green: 4 },
+    byProgramme: [
+      { programme: "Digital Marketing L3", cohort: "DM-2409", red: 1, amber: 2, green: 8 },
+      { programme: "Business Administration L3", cohort: "BA-2405", red: 1, amber: 2, green: 9 },
+      { programme: "Health & Social Care L2", cohort: "HSC-2501", red: 0, amber: 1, green: 7 },
+      { programme: "Engineering Technician L4", cohort: "ENG-2403", red: 1, amber: 1, green: 4 },
+      { programme: "Customer Service L2", cohort: "CS-2506", red: 0, amber: 1, green: 4 },
+    ],
+  },
+  {
+    key: "30",
+    label: "Last 30 days",
+    totalChecks: 174,
+    overall: { red: 9, amber: 27, green: 138 },
+    forms: { red: 5, amber: 14, green: 71 },
+    feedback: { red: 3, amber: 9, green: 52 },
+    timeliness: { red: 1, amber: 4, green: 15 },
+    byProgramme: [
+      { programme: "Digital Marketing L3", cohort: "DM-2409", red: 2, amber: 5, green: 23 },
+      { programme: "Business Administration L3", cohort: "BA-2405", red: 3, amber: 8, green: 31 },
+      { programme: "Health & Social Care L2", cohort: "HSC-2501", red: 1, amber: 6, green: 29 },
+      { programme: "Engineering Technician L4", cohort: "ENG-2403", red: 2, amber: 5, green: 21 },
+      { programme: "Customer Service L2", cohort: "CS-2506", red: 1, amber: 3, green: 34 },
+    ],
+  },
+  {
+    key: "90",
+    label: "Last 90 days",
+    totalChecks: 512,
+    overall: { red: 31, amber: 96, green: 385 },
+    forms: { red: 16, amber: 48, green: 198 },
+    feedback: { red: 11, amber: 34, green: 133 },
+    timeliness: { red: 4, amber: 14, green: 54 },
+    byProgramme: [
+      { programme: "Digital Marketing L3", cohort: "DM-2409", red: 8, amber: 21, green: 74 },
+      { programme: "Business Administration L3", cohort: "BA-2405", red: 9, amber: 27, green: 96 },
+      { programme: "Health & Social Care L2", cohort: "HSC-2501", red: 5, amber: 18, green: 84 },
+      { programme: "Engineering Technician L4", cohort: "ENG-2403", red: 6, amber: 17, green: 63 },
+      { programme: "Customer Service L2", cohort: "CS-2506", red: 3, amber: 13, green: 68 },
+    ],
+  },
+];
+
+export const RAG_TREND = [
+  { week: "Wk 36", green: 38, amber: 11, red: 4 },
+  { week: "Wk 37", green: 41, amber: 9, red: 3 },
+  { week: "Wk 38", green: 36, amber: 13, red: 5 },
+  { week: "Wk 39", green: 45, amber: 8, red: 2 },
+  { week: "Wk 40", green: 47, amber: 7, red: 3 },
+  { week: "Wk 41", green: 43, amber: 10, red: 4 },
+  { week: "Wk 42", green: 49, amber: 6, red: 2 },
+  { week: "Wk 43", green: 52, amber: 5, red: 1 },
+];
