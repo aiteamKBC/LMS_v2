@@ -135,6 +135,8 @@ def read_tab(source, kind, tab, request, *, canonical_contract=False):
     if profile is None or profile.pk != owner['id'] or profile.enrolment_id != source.pk:
         raise ServiceError('The consolidated learner identity needs review.', 'identity_review_required', 409)
     source._case_file_profile = profile
+    from .learning_plan import install_canonical_training_plan
+    install_canonical_training_plan(source, profile)
     install_request_caches(source)
     if tab == 'training':
         from .dashboard_training import read_training
@@ -165,7 +167,7 @@ def dashboard_tab(request, kind, pk, tab, canonical_contract=False):
             if source is None:
                 from .training_plan_dashboard import TRAINING_PLAN_SOURCE_FIELDS
                 source = model.all_learners.only(*dict.fromkeys([
-                    *TRAINING_PLAN_SOURCE_FIELDS, 'username', 'employer_id', 'learning_plan', 'training_plan',
+                    *TRAINING_PLAN_SOURCE_FIELDS, 'username', 'employer_id',
                 ])).get(pk=pk)
             with measurement.stage(tab):
                 payload = read_tab(source, kind, tab, request,

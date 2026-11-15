@@ -133,7 +133,7 @@ class DashboardWeeklyTests(SimpleTestCase):
         self.assertTrue(cursor.execute.call_args_list[1].args[0].startswith('SELECT link.component_id,'))
 
     def test_student_delegates_to_canonical_reader_and_sends_only_required_contract(self):
-        source = SimpleNamespace(pk=265)
+        source = SimpleNamespace(pk=265, _canonical_training_plan=[{'moduleId': 'M1'}])
         profile = SimpleNamespace(pk=17, enrolment_id=265)
         payload = {'weeks': [], 'selectedWeek': None}
         with patch.object(weekly.canonical_learning, 'require_profile', return_value={'id': 17}), \
@@ -144,12 +144,13 @@ class DashboardWeeklyTests(SimpleTestCase):
         self.assertEqual(set(result), {'weeks', 'selectedWeek'})
         self.assertEqual(read.call_args.kwargs, {'module_id': 'M1', 'include_weeks': True, 'include_actions': True})
         self.assertIs(read.call_args.args[0].profile, profile)
+        self.assertTrue(source._canonical_profile['_canonical_plan_only'])
         identity.assert_called_once_with(source, 265, heal=False, fields=('id', 'enrolment_id'))
 
     def test_week_detail_omits_rail_and_preserves_delivery_slot_identity(self):
         navigation = {'id': 'M1:2', 'moduleId': 'M1', 'kind': 'live-session', 'slotNumber': 2}
         selected = {'weekId': 'M1:2', 'activities': [], 'summary': {}, 'liveSession': None}
-        source = SimpleNamespace(pk=265)
+        source = SimpleNamespace(pk=265, _canonical_training_plan=[{'moduleId': 'M1'}])
         with patch.object(weekly.canonical_learning, 'require_profile', return_value={'id': 17}), \
              patch.object(weekly, 'learner_profile_for_source', return_value=SimpleNamespace(pk=17, enrolment_id=265)), \
              patch.object(weekly, 'read_weekly_learning', return_value={'modules': [], 'weeks': [navigation], 'selectedWeek': selected}) as read:
@@ -161,7 +162,7 @@ class DashboardWeeklyTests(SimpleTestCase):
     def test_routing_loads_only_selected_week_without_attempt_bodies_or_unrelated_quizzes(self):
         navigation = {'id': 'M1:1', 'moduleId': 'M1', 'weekId': 'W1', 'kind': 'live-session', 'slotNumber': 1}
         selected = {'weekId': 'M1:1', 'activities': [{'id': 'C1', 'status': 'not-started', 'expectedHours': 2}], 'summary': {}, 'liveSession': None}
-        source = SimpleNamespace(pk=265, programme='P')
+        source = SimpleNamespace(pk=265, programme='P', _canonical_training_plan=[{'moduleId': 'M1'}])
         with patch.object(weekly.canonical_learning, 'require_profile', return_value={'id': 17}), \
              patch.object(weekly, 'learner_profile_for_source', return_value=SimpleNamespace(pk=17, enrolment_id=265)), \
              patch.object(weekly, 'read_weekly_learning', return_value={'modules': [], 'weeks': [navigation], 'selectedWeek': selected}), \
@@ -190,7 +191,10 @@ class DashboardWeeklyTests(SimpleTestCase):
              patch.object(weekly, 'read_weekly_learning', side_effect=LookupError('missing')) as read:
             for wid, mid in [('slot:M1:1', 'M2'), ('invalid', 'M1'), ('slot:M1:1', 'M1')]:
                 with self.assertRaises(weekly.ServiceError) as error:
-                    weekly.read_dashboard_weekly(SimpleNamespace(pk=265), 265, module_id=mid, week_id=wid)
+                    weekly.read_dashboard_weekly(
+                        SimpleNamespace(pk=265, _canonical_training_plan=[{'moduleId': 'M1'}]),
+                        265, module_id=mid, week_id=wid,
+                    )
                 self.assertEqual(error.exception.status, 404)
         self.assertEqual(read.call_count, 1)
 
@@ -281,8 +285,7 @@ class DashboardWeeklyTests(SimpleTestCase):
                 with self.subTest(kind=kind, status=expected), \
                      patch('login.permissions.authenticate_request', return_value=account), \
                      patch.dict(weekly.SOURCE_MODELS, {kind: model}), \
-                     patch.object(weekly, 'read_dashboard_weekly', side_effect=DatabaseError('offline')) as read, \
-                     patch.object(weekly, 'assignment_projection', side_effect=lambda query: query):
+                     patch.object(weekly, 'read_dashboard_weekly', side_effect=DatabaseError('offline')) as read:
                     request = RequestFactory().get(f'/learner_api/dashboard/{kind}/265/weekly/')
                     request.login_account = account
                     response = weekly.dashboard_weekly(request, kind=kind, pk=265)

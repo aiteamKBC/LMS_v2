@@ -438,7 +438,8 @@ class MyLearningIdentityProjectionTests(SimpleTestCase):
     def test_request_context_reuses_metadata_and_never_reads_unrelated_course_rows_for_detail(self):
         from . import models, weekly_learning, dashboard_training, teams_attendance, live_session_progress, subject_origins, previous_learning_groups, builder_activity_dates, student_activity
         for selected, personal in ((None, False), ('current:M1', False), (None, True)):
-            source=SimpleNamespace(pk=7,id=7,aptem_id=7,programme='Programme',cohort='',group='')
+            source=SimpleNamespace(pk=7,id=7,aptem_id=7,programme='Programme',cohort='',group='',
+                _canonical_training_plan=[{'moduleId':'M1'}])
             profile=SimpleNamespace(pk=9,enrolment_id=7)
             manager=MagicMock();manager.only.return_value.filter.return_value.first.return_value=profile
             content=native([component()])
@@ -731,7 +732,8 @@ class MyLearningSharedFixtureTests(SimpleTestCase):
 class MyLearningSearchTests(SimpleTestCase):
     def test_search_context_avoids_ledger_hours_covers_dates_and_attendance_reads(self):
         from . import models,weekly_learning,dashboard_training,teams_attendance,live_session_progress,subject_origins,previous_learning_groups,builder_activity_dates,student_activity
-        source=SimpleNamespace(pk=7,id=7,aptem_id=7,programme='Programme',cohort='',group='')
+        source=SimpleNamespace(pk=7,id=7,aptem_id=7,programme='Programme',cohort='',group='',
+            _canonical_training_plan=[{'moduleId':'M1'}])
         manager=MagicMock();manager.only.return_value.filter.return_value.first.return_value=SimpleNamespace(pk=9,enrolment_id=7)
         connection=fake_connections()
         cursor = connection['enrolment'].cursor.return_value.__enter__.return_value

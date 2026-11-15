@@ -35,7 +35,15 @@ class LectureReflectionTimeTests(SimpleTestCase):
             stack.enter_context(patch('learner_api.lecture_reflection_time.connections'))['enrolment'].cursor.return_value.__enter__.return_value = cursor
             models = stack.enter_context(patch('learner_api.components.SOURCE_MODELS'))
             models.__getitem__.return_value.objects.get.return_value = source
-            stack.enter_context(patch('learner_api.active_users.learner_profile_for_source', return_value=learner))
+            stack.enter_context(patch('learner_api.identity.learner_profile_for_source', return_value=learner))
+            stack.enter_context(patch(
+                'learner_api.learning_plan.install_canonical_training_plan',
+                side_effect=lambda selected_source, _profile: (
+                    setattr(selected_source, '_canonical_training_plan',
+                            [{'moduleId': 'MODULE' if assigned else 'OTHER'}])
+                    or selected_source._canonical_training_plan
+                ),
+            ))
             stack.enter_context(patch('learner_api.learning_plan.effective_training_plan', return_value=[{'moduleId': 'MODULE' if assigned else 'OTHER'}]))
             stack.enter_context(patch('learner_api.live_session_progress.read_live_credits', return_value=credits or []))
             known = (stored or {}).get('lectureReflectionTime', {})

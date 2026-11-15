@@ -461,28 +461,23 @@ class SubjectBuilderCoverTests(SimpleTestCase):
         self.assertEqual(cursor.execute.call_args.args[1], [['MOD-1']])
         self.assertNotIn('legacy:99', links)
 
-    @patch('learner_api.student_activity._effective_plan_ids')
-    @patch('learner_api.student_activity.EnrolmentUser')
-    def test_current_subjects_include_modules_inherited_by_the_effective_plan(self, users, effective_plan_ids):
-        learner = SimpleNamespace()
-        users.all_learners.only.return_value.get.return_value = learner
-        effective_plan_ids.return_value = ['SAVED-1', 'GROUP-NEW', 'SAVED-2']
+    def test_current_subjects_read_only_saved_canonical_assignments(self):
         cursor = MagicMock()
         cursor.fetchall.return_value = [
-            ('GROUP-NEW', 'New from group'),
-            ('SAVED-2', 'Second saved module'),
             ('SAVED-1', 'First saved module'),
+            ('SAVED-2', 'Second saved module'),
         ]
 
         subjects = _effective_current_subjects(cursor, 132)
 
         self.assertEqual(subjects, [
             {'id': 'SAVED-1', 'title': 'First saved module'},
-            {'id': 'GROUP-NEW', 'title': 'New from group'},
             {'id': 'SAVED-2', 'title': 'Second saved module'},
         ])
-        effective_plan_ids.assert_called_once_with(learner, {})
-        self.assertEqual(cursor.execute.call_args.args[1], [['SAVED-1', 'GROUP-NEW', 'SAVED-2']])
+        sql, params = cursor.execute.call_args.args
+        self.assertIn('learner_training_plan_modules', sql)
+        self.assertIn('ORDER BY plan.position,plan.id', sql)
+        self.assertEqual(params, [132])
 
     @patch('login.permissions._auth_gate_enabled', return_value=True)
     @patch('login.permissions.authenticate_request')

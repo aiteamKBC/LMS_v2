@@ -36,33 +36,61 @@ class ActivityViewerProjectionTests(SimpleTestCase):
         native = {'componentId': 'NEW', 'module': 'Same title', 'moduleId': 'M1'}
         self.assertEqual(reader._activity_module_components([legacy, native], 'OLD'), [legacy])
 
-    def project(self, selected='LIVE', fail_content=False):
+    def project(self, selected='LIVE', fail_content=False, plan=None):
         components = [
-            {'componentId': 'LIVE', 'moduleId': 'M1', 'module': 'Module', 'type': 'live_session'},
-            {'componentId': 'READ', 'moduleId': 'M1', 'module': 'Module', 'type': 'reading'},
-            {'componentId': 'OTHER', 'moduleId': 'M2', 'module': 'Module', 'type': 'live_session'},
+            {'componentId': 'LIVE', 'moduleId': 'M1', 'module': 'First', 'weekId': 'W1', 'week': 'Week 1', 'type': 'live_session'},
+            {'componentId': 'READ', 'moduleId': 'M1', 'module': 'First', 'weekId': 'W2', 'week': 'Week 2', 'type': 'reading'},
+            {'componentId': 'OTHER', 'moduleId': 'M2', 'module': 'Second', 'weekId': 'W3', 'week': 'Week 1', 'type': 'live_session'},
         ]
-        detail = {'id': '7', 'modules': ['Module'], 'week': [], 'components': components, 'componentProgress': []}
-        source = SimpleNamespace(programme='Programme')
+        plan = plan if plan is not None else [
+            {'moduleId': 'M1', 'moduleTitle': 'First', 'weeks': [
+                {'weekId': 'W1', 'components': [{'componentId': 'LIVE'}]},
+                {'weekId': 'W2', 'components': [{'componentId': 'READ'}]},
+            ]},
+            {'moduleId': 'M2', 'moduleTitle': 'Second', 'weeks': [
+                {'weekId': 'W3', 'components': [{'componentId': 'OTHER'}]},
+            ]},
+        ]
+        detail = {'id': '7', 'modules': ['First', 'Second'], 'week': [], 'components': components,
+                  'componentProgress': [{'componentId': 'READ', 'kind': 'component'}]}
+        source = SimpleNamespace(pk=7, id=7, programme='Programme')
         with ExitStack() as stack:
             def mock(name, **kwargs):
                 return stack.enter_context(patch(name, **kwargs))
             prefix = 'learner_api.learner_detail.'
             writes = [mock(prefix + name) for name in ('advance_learner', 'hydrate_source_training_plan', 'persist_live_otjh_snapshot')]
             snapshot = mock(prefix + '_live_otjh_snapshot')
-            mock(prefix + 'effective_training_plan', return_value=[{'moduleId': 'M1'}])
-            profile_read = mock(prefix + '_active_profile_for_source', return_value=SimpleNamespace(ksbs=['K1']))
+            mock(prefix + 'effective_training_plan', return_value=plan)
+            profile_read = mock(prefix + '_active_profile_for_source', return_value=SimpleNamespace(
+                pk=9, enrolment_id=7, ksbs=['K1']))
+            mock(prefix + 'install_canonical_training_plan', side_effect=lambda selected_source, _profile: (
+                setattr(selected_source, '_canonical_training_plan', plan) or plan
+            ))
+            mock(prefix + '_activity_plan_assignments', side_effect=lambda _source, _profile, identity: (
+                plan, reader._activity_plan_module(plan, identity)
+            ))
             mock(prefix + '_linked_profile_ids', return_value=())
             mock(prefix + 'to_learner_detail', return_value=detail)
             mock(prefix + 'access_gate', return_value={})
             mock(prefix + 'learning_access', return_value={})
             mock(prefix + '_apply_cohort_schedule')
+            mock(prefix + 'read_sql', side_effect=lambda sql, *_args: sql)
             if fail_content:
                 connection = MagicMock()
                 connection.cursor.return_value.__enter__.return_value.execute.side_effect = DatabaseError('Content read timed out')
                 mock(prefix + 'connections', new={'enrolment': connection})
             else:
-                mock(prefix + '_resolve_from_master', return_value=(detail['modules'], [], components))
+                def resolve(_modules, _weeks, _components, *, assigned_modules, **_kwargs):
+                    module_ids = {row['moduleId'] for row in assigned_modules}
+                    selected_components = [row for row in components if row['moduleId'] in module_ids]
+                    selected_weeks = [
+                        {'moduleId': row['moduleId'], 'module': row['module'],
+                         'weekId': row['weekId'], 'week': row['week']}
+                        for row in selected_components
+                    ]
+                    selected_modules = list(dict.fromkeys(row['module'] for row in selected_components))
+                    return selected_modules, selected_weeks, selected_components
+                mock(prefix + '_resolve_from_master', side_effect=resolve)
             mock(prefix + '_apply_programme_assignment_template', side_effect=lambda rows, programme: rows)
             mock(prefix + '_annotate_otjh', side_effect=lambda rows: (rows, 0))
             mock(prefix + '_append_week_quizzes', side_effect=lambda weeks, rows, **kwargs: (weeks, rows))
@@ -78,15 +106,77 @@ class ActivityViewerProjectionTests(SimpleTestCase):
             for operation in [*writes, snapshot]:
                 operation.assert_not_called()
             profile_read.assert_called_once_with(source, 7, heal=False)
-            self.assertEqual([row['componentId'] for row in attendance.call_args.args[0]], ['LIVE', 'READ'])
-            self.assertEqual([row['componentId'] for row in credits.call_args.kwargs['components']], ['LIVE', 'READ'])
-            self.assertEqual([row['componentId'] for row in result['components']], ['LIVE', 'READ', 'OTHER'])
+            expected = ['OTHER'] if selected == 'OTHER' else ['LIVE', 'READ']
+            self.assertEqual([row['componentId'] for row in attendance.call_args.args[0]], expected)
+            self.assertEqual([row['componentId'] for row in credits.call_args.kwargs['components']], expected)
+            self.assertEqual([row['componentId'] for row in result['components']], expected)
             self.assertTrue(result['components'][0]['attendanceCompleted'])
-            self.assertNotIn('attendanceCompleted', result['components'][2])
             return result
 
     def test_only_selected_module_attendance_and_no_programme_totals_or_writes(self):
-        self.project()
+        result = self.project()
+        self.assertEqual(result['modules'], ['First'])
+        self.assertEqual([row['weekId'] for row in result['week']], ['W1', 'W2'])
+        self.assertEqual(result['componentProgress'], [{'componentId': 'READ', 'kind': 'component'}])
+
+    def test_component_in_later_cross_programme_assignment_selects_its_actual_module(self):
+        result = self.project('OTHER')
+        self.assertEqual(result['modules'], ['Second'])
+        self.assertEqual([row['weekId'] for row in result['week']], ['W3'])
+
+    def test_historical_plan_placement_wins_over_current_programme_parentage(self):
+        historical = {'moduleId': 'CROSS-PROGRAMME', 'moduleTitle': 'Historical placement', 'weeks': [
+            {'weekId': 'OLD-WEEK', 'components': [{'componentId': 'MOVED-COMPONENT'}]},
+        ]}
+        current = {'moduleId': 'CURRENT-PROGRAMME', 'moduleTitle': 'Current placement', 'weeks': []}
+        self.assertIs(reader._activity_plan_module([current, historical], 'MOVED-COMPONENT'), historical)
+
+    def test_normalized_owner_query_keeps_all_module_identities_but_only_owner_children(self):
+        connection = MagicMock()
+        cursor = connection.cursor.return_value.__enter__.return_value
+        cursor.fetchall.return_value = [
+            (11, 'M1', False, None, None, None, None),
+            (22, 'CROSS-PROGRAMME', True, 220, 'OLD-WEEK', 2200, 'MOVED-COMPONENT'),
+            (22, 'CROSS-PROGRAMME', True, 221, 'NEXT-WEEK', 2201, 'NEXT-COMPONENT'),
+        ]
+        source = SimpleNamespace(pk=7)
+        profile = SimpleNamespace(pk=9, enrolment_id=7)
+        with patch.object(reader, 'connections', {'enrolment': connection}):
+            assignments, owner = reader._activity_plan_assignments(source, profile, 'MOVED-COMPONENT')
+        self.assertEqual(assignments, [
+            {'moduleId': 'M1', 'weeks': []},
+            {'moduleId': 'CROSS-PROGRAMME', 'weeks': [
+                {'weekId': 'OLD-WEEK', 'components': [{'componentId': 'MOVED-COMPONENT'}]},
+                {'weekId': 'NEXT-WEEK', 'components': [{'componentId': 'NEXT-COMPONENT'}]},
+            ]},
+        ])
+        self.assertIs(owner, assignments[1])
+        _sql, params = cursor.execute.call_args.args
+        self.assertEqual(params, [9, 'MOVED-COMPONENT', 9])
+
+    def test_owner_query_rejects_a_profile_not_owned_by_the_requested_learner(self):
+        connection = MagicMock()
+        source = SimpleNamespace(pk=7)
+        other_learner_profile = SimpleNamespace(pk=9, enrolment_id=8)
+        with patch.object(reader, 'connections', {'enrolment': connection}), \
+             self.assertRaises(ServiceError) as caught:
+            reader._activity_plan_assignments(source, other_learner_profile, 'LIVE')
+        self.assertEqual(caught.exception.status, 404)
+        connection.cursor.assert_not_called()
+
+    def test_empty_plan_does_not_fall_back_to_unassigned_curriculum_content(self):
+        with self.assertRaises(ServiceError) as caught:
+            self.project('LIVE', plan=[])
+        self.assertEqual(caught.exception.status, 404)
+
+    def test_ambiguous_duplicate_component_assignment_is_not_authorized(self):
+        duplicate = [
+            {'moduleId': 'M1', 'weeks': [{'components': [{'componentId': 'LIVE'}]}]},
+            {'moduleId': 'M2', 'weeks': [{'components': [{'componentId': 'LIVE'}]}]},
+        ]
+        with self.assertRaises(ServiceError) as caught:
+            self.project('LIVE', plan=duplicate)
+        self.assertEqual(caught.exception.status, 404)
 
     def test_activity_content_failure_is_not_replaced_by_the_saved_outline(self):
         with self.assertRaisesMessage(DatabaseError, 'Content read timed out'):
@@ -113,7 +203,8 @@ class ActivityViewerProjectionTests(SimpleTestCase):
             return []
 
         cursor.fetchall.side_effect = fetch_rows
-        with patch.object(reader, 'connections', {'enrolment': connection}):
+        with patch.object(reader, 'connections', {'enrolment': connection}), \
+             patch.object(reader, 'read_sql', side_effect=lambda sql, *_args: sql):
             modules, weeks, components = reader._resolve_from_master([], [], [],
                 assigned_modules=[{'moduleId': 'M2'}, {'moduleId': 'M1'}], compact=True, strict=True)
         self.assertEqual(modules, ['Second module', 'First module'])
@@ -153,4 +244,5 @@ class ActivityViewerProjectionTests(SimpleTestCase):
                      patch.object(reader, 'build_learner_detail', side_effect=DatabaseError('Content read timed out')):
                     response = reader.learner_detail.__wrapped__(request, kind, 7)
                 self.assertEqual(response.status_code, 502)
-                self.assertContains(response, 'Content read timed out', status_code=502)
+                self.assertContains(response, 'Could not load learner details', status_code=502)
+                self.assertNotContains(response, 'Content read timed out', status_code=502)

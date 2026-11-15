@@ -35,7 +35,7 @@ class HistoricalEvidenceTests(SimpleTestCase):
                 self.assertEqual(self.call(view, pk=8, **kwargs).status_code, 404)
             resolve.assert_not_called()
 
-    def test_identity_requires_matching_kind_email_link_and_unique_owner(self):
+    def test_identity_requires_matching_kind_canonical_link_and_unique_owner(self):
         cursor = MagicMock()
         with patch.object(history, 'dict_rows', return_value=[{'kind': 'apprenticeship', 'aptem_id': '42', 'verified_id': 42, 'links': 1}]):
             self.assertEqual(history.resolve_aptem(cursor, 'apprenticeship', 7), 42)
@@ -46,7 +46,10 @@ class HistoricalEvidenceTests(SimpleTestCase):
                 with self.assertRaises(history.EvidenceError) as error:
                     history.resolve_aptem(cursor, 'apprenticeship', 7)
                 self.assertEqual(error.exception.status, 409)
-        self.assertIn('u."Email"', cursor.execute.call_args.args[0])
+        sql = cursor.execute.call_args.args[0]
+        self.assertIn('learner.enrolment_id=u.id', sql)
+        self.assertIn('learner.aptem_id::text', sql)
+        self.assertNotIn('u."Email"', sql)
 
     def test_no_previous_link_is_an_empty_library(self):
         with patch.object(history, 'connections'), patch.object(history, 'resolve_aptem', return_value=None), patch.object(history, 'source_rows') as rows:

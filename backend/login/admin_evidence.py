@@ -27,6 +27,10 @@ from django.views.decorators.http import require_GET, require_POST
 from django.views.decorators.csrf import csrf_exempt
 
 from learner_api import evidence_storage
+from learner_api.aptem_identity import (
+    ADMIN_EVIDENCE_IDENTITY_CTES,
+    CURRENT_APTEM_IDENTITY_CTE,
+)
 
 from .models import ROLE_ADMIN
 from .permissions import require_role
@@ -144,7 +148,7 @@ def _rows(sql, params=None):
 LATEST_COMPLETED_RUN = """
     SELECT r.*
     FROM fetching_evidence.assignment_classification_runs r
-    WHERE r.learner_id = a."ID" AND r.status = 'completed'
+    WHERE r.learner_id = a.aptem_id AND r.status = 'completed'
     ORDER BY (r.source_fingerprint IS NOT NULL) DESC,
              r.completed_at DESC NULLS LAST,
              r.id DESC
@@ -155,7 +159,7 @@ LATEST_COMPLETED_RUN = """
 @require_GET
 @require_role(ROLE_ADMIN)
 def classified_learners(request):
-    """All current Aptem-active learners with their latest completed run."""
+    """Eligible current and proven completed historical learners."""
     page, page_size = _paging(request)
     search = str(request.GET.get("q") or "").strip()
     readiness = str(request.GET.get("portfolioReadiness") or "").strip().lower()
@@ -163,18 +167,17 @@ def classified_learners(request):
     human_verification = str(request.GET.get("humanVerification") or "").strip().lower()
 
     where = [
-        "lower(btrim(coalesce(a.\"Program-Status\", ''))) = 'active'",
-        "a.\"ID\" <> %s",
+        "a.aptem_id <> %s",
     ]
     params = [TEST_LEARNER_ID]
     if search:
-        where.append("(a.\"FullName\" ILIKE %s OR a.\"ID\"::text ILIKE %s)")
+        where.append("(a.full_name ILIKE %s OR a.aptem_id::text ILIKE %s)")
         term = f"%{search}%"
         params.extend([term, term])
     programme = str(request.GET.get('programme') or '').strip()
     if programme:
-        where.append('''coalesce(nullif(btrim(a."Program Name"), ''),
-            nullif(btrim(a."Group"), ''), 'Unknown programme') = %s''')
+        where.append('''coalesce(nullif(btrim(a.programme_name), ''),
+            nullif(btrim(a.group_name), ''), 'Unknown programme') = %s''')
         params.append(programme)
     for key, expression in {
         'found': 'coalesce(run.assignments_found, 0)',
@@ -215,11 +218,12 @@ def classified_learners(request):
     except DatabaseError:
         return _error("Could not load assignment classifications.", 503)
     sql = f"""
-        WITH manual AS ({manual_source}), excluded AS ({exclusion_source})
-        SELECT a."ID" AS learner_id,
-               coalesce(nullif(btrim(a."FullName"), ''), 'Learner ' || a."ID"::text) AS full_name,
-               coalesce(nullif(btrim(a."Program Name"), ''),
-                        nullif(btrim(a."Group"), ''), 'Unknown programme') AS programme,
+        WITH {ADMIN_EVIDENCE_IDENTITY_CTES},
+        manual AS ({manual_source}), excluded AS ({exclusion_source})
+        SELECT a.aptem_id AS learner_id,
+               coalesce(nullif(btrim(a.full_name), ''), 'Learner ' || a.aptem_id::text) AS full_name,
+               coalesce(nullif(btrim(a.programme_name), ''),
+                        nullif(btrim(a.group_name), ''), 'Unknown programme') AS programme,
                run.id AS run_id, run.assignments_found,
                run.unique_assignments_evaluated,
                coalesce(run.assignments_selected, 0) + coalesce(manual_count.total, 0) - coalesce(excluded_count.total, 0) AS assignments_selected,
@@ -229,15 +233,15 @@ def classified_learners(request):
                source.assignment_slots, source.assignment_files,
                source.accepted_assignment_files, source.referred_assignment_files,
                count(*) OVER () AS total_count
-        FROM "LMS"."Aptem_users" a
+        FROM admin_evidence_identity a
         LEFT JOIN LATERAL ({LATEST_COMPLETED_RUN}) run ON true
         LEFT JOIN (SELECT run_id, learner_id, count(*) AS total FROM manual GROUP BY run_id, learner_id)
-          manual_count ON manual_count.run_id = run.id AND manual_count.learner_id = a."ID"
+          manual_count ON manual_count.run_id = run.id AND manual_count.learner_id = a.aptem_id
         LEFT JOIN (SELECT x.run_id, x.learner_id, count(*) AS total FROM excluded x
             JOIN fetching_evidence.assignment_classification_results r ON r.run_id = x.run_id
               AND r.learner_id = x.learner_id AND r.evidence_id = x.evidence_id
             GROUP BY x.run_id, x.learner_id) excluded_count
-          ON excluded_count.run_id = run.id AND excluded_count.learner_id = a."ID"
+          ON excluded_count.run_id = run.id AND excluded_count.learner_id = a.aptem_id
         LEFT JOIN LATERAL (
             SELECT count(DISTINCT e.component_id) FILTER (
                        WHERE lower(coalesce(e.component_name, '')) LIKE '%%assignment%%'
@@ -257,10 +261,10 @@ def classified_learners(request):
                          AND lower(coalesce(e.evidence_status, '')) = 'referred'
                    ) AS referred_assignment_files
             FROM fetching_evidence.evidence_items e
-            WHERE e.learner_id = a."ID"
+            WHERE e.learner_id = a.aptem_id
         ) source ON run.id IS NULL
         WHERE {' AND '.join(where)}
-        ORDER BY lower(coalesce(a."FullName", '')), a."ID"
+        ORDER BY lower(coalesce(a.full_name, '')), a.aptem_id
         LIMIT %s OFFSET %s
     """
     params.extend([page_size, (page - 1) * page_size])
@@ -299,11 +303,12 @@ def classified_learners(request):
 
 
 def _programme_options():
-    rows = _rows('''SELECT DISTINCT coalesce(nullif(btrim(a."Program Name"), ''),
-        nullif(btrim(a."Group"), ''), 'Unknown programme') AS programme
-        FROM "LMS"."Aptem_users" a
-        WHERE lower(btrim(coalesce(a."Program-Status", ''))) = 'active'
-          AND a."ID" <> %s
+    rows = _rows(f'''WITH {CURRENT_APTEM_IDENTITY_CTE}
+        SELECT DISTINCT coalesce(nullif(btrim(a.programme_name), ''),
+        nullif(btrim(a.group_name), ''), 'Unknown programme') AS programme
+        FROM current_aptem_identity a
+        WHERE lower(btrim(coalesce(a.programme_status, ''))) IN ('active', 'delivery')
+          AND a.aptem_id <> %s
         ORDER BY programme''', [TEST_LEARNER_ID])
     return [row['programme'] for row in rows]
 
@@ -311,16 +316,17 @@ def _programme_options():
 def _learner_and_run(learner_id):
     rows = _rows(
         f"""
-        SELECT a."ID" AS learner_id,
-               coalesce(nullif(btrim(a."FullName"), ''), 'Learner ' || a."ID"::text) AS full_name,
-               coalesce(nullif(btrim(a."Program Name"), ''),
-                        nullif(btrim(a."Group"), ''), 'Unknown programme') AS programme,
+        WITH {ADMIN_EVIDENCE_IDENTITY_CTES}
+        SELECT a.aptem_id AS learner_id,
+               coalesce(nullif(btrim(a.full_name), ''), 'Learner ' || a.aptem_id::text) AS full_name,
+               coalesce(nullif(btrim(a.programme_name), ''),
+                        nullif(btrim(a.group_name), ''), 'Unknown programme') AS programme,
                run.id AS run_id, run.assignments_selected,
                run.portfolio_readiness, run.selection_status,
                run.portfolio_summary, run.completed_at
                , source.assignment_slots, source.assignment_files,
                source.accepted_assignment_files, source.referred_assignment_files
-        FROM "LMS"."Aptem_users" a
+        FROM admin_evidence_identity a
         LEFT JOIN LATERAL ({LATEST_COMPLETED_RUN}) run ON true
         LEFT JOIN LATERAL (
             SELECT count(DISTINCT e.component_id) FILTER (
@@ -341,11 +347,10 @@ def _learner_and_run(learner_id):
                          AND lower(coalesce(e.evidence_status, '')) = 'referred'
                    ) AS referred_assignment_files
             FROM fetching_evidence.evidence_items e
-            WHERE e.learner_id = a."ID"
+            WHERE e.learner_id = a.aptem_id
         ) source ON run.id IS NULL
-        WHERE a."ID" = %s
-          AND a."ID" <> %s
-          AND lower(btrim(coalesce(a."Program-Status", ''))) = 'active'
+        WHERE a.aptem_id = %s
+          AND a.aptem_id <> %s
         LIMIT 1
         """,
         [learner_id, TEST_LEARNER_ID],
@@ -631,18 +636,18 @@ def update_ksb_codes(request, learner_id, evidence_id):
 def _report_form_row(learner_id, evidence_id):
     rows = _rows(
         f"""
+        WITH {ADMIN_EVIDENCE_IDENTITY_CTES}
         SELECT run.id AS run_id, e.evidence_id, e.learner_id, e.full_name,
                e.program_name, e.evidence_name, e.evidence_status, e.spent_time,
                e.completed_date, e.report_blob,
                coalesce(nullif(e.component_name, ''), nullif(v.component_name, '')) AS activity_name
-        FROM "LMS"."Aptem_users" a
+        FROM admin_evidence_identity a
         JOIN LATERAL ({LATEST_COMPLETED_RUN}) run ON true
         JOIN {EVALUATIONS} v
           ON v.run_id = run.id AND v.learner_id = run.learner_id
         JOIN {EVIDENCE_ITEMS} e
           ON e.evidence_id = v.evidence_id AND e.learner_id = v.learner_id
-        WHERE a."ID" = %s AND a."ID" <> %s
-          AND lower(btrim(coalesce(a."Program-Status", ''))) = 'active'
+        WHERE a.aptem_id = %s AND a.aptem_id <> %s
           AND e.evidence_id = %s
         LIMIT 1
         """,
@@ -882,15 +887,15 @@ def _authorised_document(learner_id, evidence_id):
     """Authoritative blob row, reachable only through the latest valid run."""
     rows = _rows(
         f"""
+        WITH {ADMIN_EVIDENCE_IDENTITY_CTES}
         SELECT e.evidence_id, e.evidence_name, e.file_blob, e.report_blob
-        FROM "LMS"."Aptem_users" a
+        FROM admin_evidence_identity a
         JOIN LATERAL ({LATEST_COMPLETED_RUN}) run ON true
         JOIN fetching_evidence.assignment_classification_evaluations v
           ON v.run_id = run.id AND v.learner_id = run.learner_id
         JOIN fetching_evidence.evidence_items e
           ON e.evidence_id = v.evidence_id AND e.learner_id = v.learner_id
-        WHERE a."ID" = %s AND a."ID" <> %s
-          AND lower(btrim(coalesce(a."Program-Status", ''))) = 'active'
+        WHERE a.aptem_id = %s AND a.aptem_id <> %s
           AND e.evidence_id = %s
         LIMIT 1
         """,

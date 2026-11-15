@@ -10,7 +10,7 @@ from django.views.decorators.http import require_GET
 from login.permissions import learner_self_or_staff
 from old_otjh.service import ServiceError
 
-from coach_api.weekly_learning import assignment_projection, read_weekly_learning
+from coach_api.weekly_learning import read_weekly_learning
 from .response_cache import cached_learner_read
 from . import canonical_learning, journal_sources
 from .identity import learner_profile_for_source
@@ -18,6 +18,7 @@ from .learner_detail import SOURCE_MODELS
 from .projection_performance import measure_projection
 from .weekly_learning import _weekly_component
 from .learner_detail import _resolve_from_master, _apply_programme_assignment_template
+from .learning_plan import install_canonical_training_plan
 from .submission_visibility import VISIBLE_SUBMISSION_SQL
 
 # programme/cohort/group are placement properties (not columns); load their id
@@ -95,8 +96,9 @@ def read_dashboard_weekly(source, pk, *, week_id=None, module_id=None):
     profile = learner_profile_for_source(source, pk, heal=False, fields=('id', 'enrolment_id'))
     if profile is None or profile.pk != owner['id'] or profile.enrolment_id != pk:
         raise ServiceError('The consolidated learner identity needs review.', 'identity_review_required', 409)
-    source._canonical_profile = owner
+    source._canonical_profile = {**owner, '_canonical_plan_only': True}
     source._case_file_profile = profile
+    install_canonical_training_plan(source, profile)
     selection = _selection(week_id, module_id)
     try:
         payload = read_weekly_learning(SimpleNamespace(source=source, profile=profile), selection,
@@ -143,9 +145,7 @@ def dashboard_weekly(request, kind, pk, week_id=None):
         return JsonResponse({'error': 'Unknown learner kind.'}, status=404)
     try:
         with measure_projection('dashboard-week-detail' if week_id else 'dashboard-weekly', kind=kind, learner_id=pk):
-            source = assignment_projection(model.all_learners.only(*WEEKLY_SOURCE_FIELDS)).get(pk=pk)
-            source.training_plan = source._weekly_training_plan
-            source.learning_plan = source._weekly_learning_plan
+            source = model.all_learners.only(*WEEKLY_SOURCE_FIELDS).get(pk=pk)
             payload = read_dashboard_weekly(source, pk, week_id=week_id, module_id=request.GET.get('moduleId'))
             response = JsonResponse(payload)
     except model.DoesNotExist:

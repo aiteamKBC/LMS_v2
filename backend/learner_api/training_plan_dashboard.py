@@ -17,7 +17,8 @@ from old_otjh.service import ServiceError
 from .learner_detail import SOURCE_MODELS
 from .module_placement_sql import group_coach_name_sql, module_placement_names_sql, module_tutor_name_sql
 from .models import LearnerProfile, StaffUser
-from .learning_plan import _aptem_subject_modules, _effective_plan_ids, request_preset_cache
+from .learning_plan import (_aptem_subject_modules, _effective_plan_ids,
+                            install_canonical_training_plan, request_preset_cache)
 from .coach_assignment import learner_profile_coach as current_coach
 from .student_activity import _builder_subject_metadata, builder_subject_links
 from .subject_content import as_list, clean_text, safe_url
@@ -49,7 +50,6 @@ def is_educational_live_session_week(title):
 # them before issuing its real projection queries.
 TRAINING_PLAN_SOURCE_FIELDS = (
     'id', 'aptem_id', 'email', 'status', 'programme_status',
-    'learning_plan', 'training_plan', 'modules', 'weeks', 'components',
     'case_owner', 'coach_name', 'coach_email',
     'start_date', 'end_date', 'learner_start_date',
     'practical_period_end_date', 'apprenticeship_end_date',
@@ -369,19 +369,13 @@ def plan_module_ids(cur, source, owner):
     # Builder metadata enriches those assignments (and supplies legacy
     # links), but a missing builder row must not hide an assigned module.
     current_module_ids = list(dict.fromkeys(_effective_plan_ids(source, request_preset_cache(source))))
-    # Imported learners can have real assigned subjects in the Aptem
-    # mirror without those ids ever being written to the native learning
-    # plan. Include those subjects in the same dashboard projection unless
-    # staff explicitly limited the learner to a native assignment set.
-    if owner is not None:
-        current_module_ids.extend(canonical_learning.curriculum_module_ids_for(owner))
+    # Imported/source-course memberships remain visible in My Courses, but are
+    # not saved Training Plan assignments and must not extend this schedule.
     current_module_ids = list(dict.fromkeys(current_module_ids))
     refs = [f'current:{module_id}' for module_id in current_module_ids]
     links = builder_subject_links(cur, source, refs, read=_builder_subject_metadata)
-    builder_ids = {
-        item['id'] for item in links.values() if item.get('id')
-    }
-    return sorted(builder_ids | set(current_module_ids)), links
+    builder_ids = [item['id'] for item in links.values() if item.get('id')]
+    return list(dict.fromkeys([*current_module_ids, *builder_ids])), links
 
 
 def plan_planned_hours(source, owner, *, ids=None):
@@ -663,6 +657,8 @@ def read_dashboard(source, section=None, *, records=None, targets=None, dashboar
                 FROM curriculum.modules m LEFT JOIN curriculum.groups g ON g.group_id=m.group_id
                 WHERE m.module_catalogue_id=ANY(%s) ORDER BY m.title''', connections['enrolment']), [ids])
             module_rows = rows(cur)
+            plan_position = {str(module_id): position for position, module_id in enumerate(ids)}
+            module_rows.sort(key=lambda row: plan_position.get(str(row['id']), len(plan_position)))
             modules = [plan_module(row) for row in module_rows]
             by_id = {module['id']: module for module in modules}
             week_counts = defaultdict(int)
@@ -790,6 +786,9 @@ def training_plan_dashboard(request, kind, pk):
             if source is None:
                 source = model.all_learners.only(*TRAINING_PLAN_SOURCE_FIELDS).get(pk=pk)
             source._canonical_profile = canonical_learning.require_profile(pk)
+            install_canonical_training_plan(
+                source, profile_id=source._canonical_profile['id'],
+            )
         # ``learning`` is the detailed weekly dashboard projection.  Keep it
         # on the same read path as overview so clients can request the weekly
         # modules/sessions without being rejected by the section guard.

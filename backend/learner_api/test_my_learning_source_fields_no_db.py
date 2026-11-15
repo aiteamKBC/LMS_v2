@@ -44,15 +44,21 @@ class SourceFieldTests(SimpleTestCase):
         self.assertTrue({'programme_id', 'cohort_id', 'group_id'} <= set(learning.SOURCE_FIELDS))
         self.assertTrue({'programme', 'cohort', 'group'}.isdisjoint(learning.SOURCE_FIELDS))
 
-    def test_structured_projection_does_not_load_wide_csv_plan_snapshots(self):
-        kept = set(OLD_FIELDS) - {'programme', 'cohort', 'group', 'modules', 'weeks', 'components'}
+    def test_source_projection_does_not_load_any_legacy_plan_storage(self):
+        kept = set(OLD_FIELDS) - {
+            'programme', 'cohort', 'group', 'learning_plan', 'training_plan',
+            'modules', 'weeks', 'components',
+        }
         self.assertEqual(set(learning.SOURCE_FIELDS), kept | {'programme_id', 'cohort_id', 'group_id'})
-        self.assertTrue({'modules', 'weeks', 'components'}.isdisjoint(learning.SOURCE_FIELDS))
+        self.assertTrue({'learning_plan', 'training_plan', 'modules', 'weeks', 'components'}
+                        .isdisjoint(learning.SOURCE_FIELDS))
 
     def test_the_real_queryset_compiles(self):
         sql = str(EnrolmentUser.all_learners.only(*learning.SOURCE_FIELDS).filter(pk=PK).query)
-        for column in ('"programme_id"', '"cohort_id"', '"group_id"', '"Training_plan"', '"Learner_type"'):
+        for column in ('"programme_id"', '"cohort_id"', '"group_id"', '"Learner_type"'):
             self.assertIn(column, sql)
+        self.assertNotIn('"Training_plan"', sql)
+        self.assertNotIn('"Learning_plan"', sql)
 
     def test_the_previous_tuple_reproduces_the_reported_error(self):
         with self.assertRaises(FieldDoesNotExist):
@@ -68,19 +74,10 @@ class SourceFieldTests(SimpleTestCase):
         str(EnrolmentUser.all_learners.only(*learning.SOURCE_FIELDS).filter(pk=PK).query)
         str(EnrolmentUser.all_learners.only(*learning.SOURCE_FIELDS).filter(pk__in=[PK, PK + 1]).query)
 
-    def test_legacy_plan_columns_are_hydrated_in_one_fallback_query(self):
+    def test_legacy_plan_columns_remain_deferred(self):
         source = loaded_row()
-        source.training_plan = None
-        source.learning_plan = None
-        queryset = EnrolmentUser.all_learners
-        with patch.object(queryset, 'filter') as filtered:
-            filtered.return_value.values.return_value.get.return_value = {
-                'modules':'M1', 'weeks':'Week 1', 'components':'Lesson 1',
-            }
-            learning.hydrate_legacy_plan_fields(source, SimpleNamespace(all_learners=queryset))
-        filtered.return_value.values.assert_called_once_with('modules', 'weeks', 'components')
-        self.assertEqual((source.modules, source.weeks, source.components),
-                         ('M1', 'Week 1', 'Lesson 1'))
+        self.assertTrue({'learning_plan', 'training_plan', 'modules', 'weeks', 'components'}
+                        <= source.get_deferred_fields())
 
 
 class MyLearningViewTests(SimpleTestCase):
