@@ -128,8 +128,19 @@ def list_reviews(start,end,coach='',status='',offset=0,search='',review_type='',
           payload->'meeting'->>'title' AS title,payload->'coach'->>'name' AS coach_name,payload->'definition'->>'title' AS form_title,
           payload->'reviewer'->>'name' AS reviewer_name,
           jsonb_array_length(payload->'form'->'actions') AS action_count,'''+type_sql()+''' AS review_type,
+          jsonb_build_object(
+            'gold', count(*) FILTER (WHERE criterion.value->>'rating'='gold'),
+            'green', count(*) FILTER (WHERE criterion.value->>'rating'='green'),
+            'amber', count(*) FILTER (WHERE criterion.value->>'rating'='amber'),
+            'red', count(*) FILTER (WHERE criterion.value->>'rating'='red'),
+            'na', count(*) FILTER (WHERE criterion.value->>'rating'='na')
+          ) AS rating_counts,
           (SELECT max(d.version) FROM lms_quality.document d WHERE d.review_id=lms_quality.review.id) AS pdf_version
-          FROM lms_quality.review WHERE ''' + where + ' ORDER BY starts_at DESC,id LIMIT 31 OFFSET %s', [*params,offset]).fetchall()
+          FROM lms_quality.review
+          LEFT JOIN LATERAL jsonb_each(COALESCE(payload->'form'->'criteria','{}'::jsonb)) AS criterion(key,value) ON TRUE
+          WHERE ''' + where + '''
+          GROUP BY id,coach_email,learner_id,learner_name,starts_at,status,version,updated_at,payload
+          ORDER BY starts_at DESC,id LIMIT 31 OFFSET %s''', [*params,offset]).fetchall()
     return rows[:30], offset+30 if len(rows)>30 else None
 
 
