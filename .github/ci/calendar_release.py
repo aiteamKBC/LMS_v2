@@ -33,7 +33,7 @@ def aws(*args):
         raise ReleaseError('AWS command unavailable: ' + ' '.join(args[:2])) from None
     if result.returncode:
         # Print only the AWS error class, never task definitions/secret values.
-        match = re.search(r'\(([A-Za-z0-9_.]+)\)', result.stderr)
+        match = re.search(r'An error occurred \(([A-Za-z0-9_.]+)\)', result.stderr)
         code = match.group(1) if match else 'command_failed'
         raise ReleaseError('AWS ' + ' '.join(args[:2]) + ': ' + code)
     try:

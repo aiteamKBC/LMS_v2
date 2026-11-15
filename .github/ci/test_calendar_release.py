@@ -208,6 +208,13 @@ class ReleaseTests(unittest.TestCase):
         self.assertNotIn('private-url', str(caught.exception))
         self.assertNotIn('SECRET-VALUE', str(caught.exception))
 
+    def test_non_aws_error_parentheses_are_not_mistaken_for_an_error_code(self):
+        failure = SimpleResult(returncode=1, stdout='', stderr='Invalid JSON: private setting (SECRET_VALUE)')
+        with patch.object(subprocess, 'run', return_value=failure), self.assertRaises(release.ReleaseError) as caught:
+            release.aws('ecs', 'register-task-definition')
+        self.assertIn('command_failed', str(caught.exception))
+        self.assertNotIn('SECRET_VALUE', str(caught.exception))
+
 
 class SimpleResult:
     def __init__(self, **kwargs):
