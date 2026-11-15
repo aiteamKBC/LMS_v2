@@ -5537,7 +5537,8 @@ def curriculum_teams_meeting_artifact_content(request, live_session_id, artifact
         request_headers['Range'] = range_header
     graph_request = urllib_request.Request(url, headers=request_headers, method='GET')
     try:
-        graph_response = urllib_request.urlopen(graph_request, timeout=45)
+        from .transcript_transport import open_transcript
+        graph_response = open_transcript(urllib_request.urlopen, graph_request, timeout=45)
     except urllib_error.HTTPError as exc:
         if exc.code == 416 and artifact_type == 'recording':
             response = HttpResponse(status=416)
