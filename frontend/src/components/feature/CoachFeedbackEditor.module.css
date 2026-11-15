@@ -1,10 +1,20 @@
-.editorShell { overflow: hidden; border: 1px solid #d5dfeb; border-radius: 9px; background: #fff; }
-.toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; padding: 7px 9px; border-bottom: 1px solid #e3e9f0; background: #f5f8fb; }
-.toolbar button { min-width: 30px; min-height: 28px; padding: 4px 7px; border: 1px solid transparent; border-radius: 5px; color: #304764; font-size: 11px; font-weight: 700; }
-.toolbar button:hover:not(:disabled), .toolbar button:focus-visible { border-color: #a8bfd5; background: #eaf3fb; outline: none; }
+.editorShell { position: relative; overflow: hidden; border: 1px solid #c8d5e3; border-radius: 10px; background: #fff; box-shadow: 0 1px 2px rgb(16 39 69 / 4%); }
+.backdrop { position: fixed; z-index: 1000; inset: 0; width: 100%; height: 100%; border: 0; background: rgb(7 27 59 / 46%); cursor: default; }
+.editorShellExpanded { position: fixed; z-index: 1001; inset: 20px; display: flex; flex-direction: column; max-height: calc(100vh - 40px); border-color: #9fb9d0; border-radius: 12px; box-shadow: 0 22px 70px rgb(7 27 59 / 28%); }
+.toolbar { position: sticky; top: 0; z-index: 1; display: flex; flex-wrap: wrap; align-items: center; gap: 5px; padding: 8px 10px; border-bottom: 1px solid #dce5ee; background: #f8fafc; }
+.toolbarGroup { display: inline-flex; align-items: center; gap: 2px; }
+.toolbar button { display: inline-flex; min-width: 30px; min-height: 30px; align-items: center; justify-content: center; padding: 5px 7px; border: 1px solid transparent; border-radius: 6px; color: #304764; }
+.toolbar button:hover:not(:disabled), .toolbar button:focus-visible { border-color: #9fb9d0; background: #eaf3fb; outline: none; }
+.toolbar button[aria-pressed="true"] { border-color: #76a5c7; background: #dceefb; color: #125f93; }
 .toolbar button:disabled { cursor: not-allowed; opacity: .45; }
+.expandButton { gap: 5px; padding-inline: 9px !important; font-size: 11px; font-weight: 700; }
+.toolbarSpacer { flex: 1 1 auto; min-width: 8px; }
 .divider { width: 1px; height: 20px; margin: 0 3px; background: #d5dfeb; }
-.editor { min-height: 176px; padding: 13px; color: #263a57; font-size: 12px; line-height: 1.65; outline: none; }
+.selectControl { position: relative; display: inline-flex; align-items: center; }
+.selectControl select { min-height: 30px; padding: 0 24px 0 8px; border: 1px solid #d2deea; border-radius: 6px; background: #fff; color: #304764; font-size: 11px; font-weight: 650; outline: none; }
+.selectControl select:focus { border-color: #76a5c7; box-shadow: 0 0 0 2px rgb(49 134 198 / 12%); }
+.editor { min-height: 230px; max-height: 520px; overflow-y: auto; padding: 18px 18px 14px; color: #263a57; font-size: 14px; line-height: 1.7; outline: none; }
+.editorShellExpanded .editor { flex: 1 1 auto; min-height: 0; max-height: none; }
 .editor:empty::before { color: #9aa8ba; content: attr(data-placeholder); pointer-events: none; }
 .editor p { margin: 0 0 .65em; }
 .editor p:last-child { margin-bottom: 0; }
@@ -13,4 +23,14 @@
 .editor h3 { font-size: 1.2em; }
 .editor h4 { font-size: 1.05em; }
 .editor ul, .editor ol { margin: .35em 0 .65em 1.4em; padding: 0; }
+.editorFooter { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 7px 12px; border-top: 1px solid #e6edf3; color: #8090a2; font-size: 10px; }
 .compatibilityValue { position: absolute; width: 1px; height: 1px; overflow: hidden; opacity: 0; pointer-events: none; }
+
+@media (max-width: 620px) {
+  .editorShellExpanded { inset: 8px; max-height: calc(100vh - 16px); }
+  .toolbar { gap: 3px; padding: 7px; }
+  .toolbarGroup { gap: 0; }
+  .selectControl select { max-width: 104px; }
+  .editor { min-height: 190px; padding: 14px; }
+  .editorFooter { align-items: flex-start; flex-direction: column; gap: 2px; }
+}

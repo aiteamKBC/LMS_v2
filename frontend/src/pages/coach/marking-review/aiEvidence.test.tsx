@@ -73,3 +73,34 @@ it('sends an uploaded marking guide with the next draft request', async () => {
   expect(request).toBeTruthy();
   expect((request?.[1]?.body as FormData).get('promptFile')).toBeTruthy();
 });
+
+it('preserves edited instructions and the attached guide across expansion and draft generation', async () => {
+  review('assignment');
+  fireEvent.click(await screen.findByRole('button', { name: 'AI marking instructions' }));
+  const instructions = await screen.findByDisplayValue('Original criteria');
+  fireEvent.change(instructions, { target: { value: 'Use these synthetic criteria.' } });
+  const guide = new File(['Synthetic guidance'], 'criteria.txt', { type: 'text/plain' });
+  fireEvent.change(screen.getByLabelText('Upload marking guidance'), { target: { files: [guide] } });
+  fireEvent.click(await screen.findByRole('button', { name: 'Expand AI marking instructions' }));
+
+  expect(screen.getByRole('dialog', { name: /AI marking instructions/ })).toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'Collapse AI marking instructions' })).toHaveFocus();
+  expect(screen.getByRole('textbox', { name: 'AI marking instructions' })).toHaveValue('Use these synthetic criteria.');
+  expect(screen.getByText(/criteria.txt/)).toBeInTheDocument();
+  fireEvent.change(screen.getByRole('textbox', { name: 'AI marking instructions' }), { target: { value: 'Updated expanded criteria.' } });
+  expect(document.body.style.overflow).toBe('hidden');
+
+  fireEvent.keyDown(document, { key: 'Escape' });
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Expand AI marking instructions' })).toBeInTheDocument());
+  expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  expect(screen.getByRole('textbox', { name: 'AI marking instructions' })).toHaveValue('Updated expanded criteria.');
+  expect(screen.getByRole('button', { name: 'Expand AI marking instructions' })).toHaveFocus();
+  expect(document.body.style.overflow).toBe('');
+  fireEvent.click(screen.getByRole('button', { name: 'Generate AI draft' }));
+  await screen.findByText(/AI-assisted draft generated/);
+  const request = vi.mocked(coachFetch).mock.calls.find(([, init]) => init?.method === 'POST');
+  const body = request?.[1]?.body as FormData;
+  expect(body.get('prompt')).toBe('Updated expanded criteria.');
+  expect((body.get('promptFile') as File).name).toBe('criteria.txt');
+  expect(vi.mocked(coachFetch).mock.calls.some(([, init]) => init?.method === 'PATCH')).toBe(false);
+});

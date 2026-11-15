@@ -19,6 +19,7 @@ import { SavedReflection } from '@/components/feature/SavedReflection';
 import { CoachFeedbackEditor } from '@/components/feature/CoachFeedbackEditor';
 import { FormattedFeedback } from '@/components/feature/FormattedFeedback';
 import { feedbackHtmlToPlainText } from '@/lib/feedbackHtml';
+import { MarkingInstructionsPanel } from './MarkingInstructionsPanel';
 
 const coachNav = roleNavMap.coach;
 async function personalEvidence(submissionId: string, fileId?: string) {
@@ -520,36 +521,37 @@ export default function CoachMarkingReviewPage() {
               {selected.ksbReview?.status !== 'pending' && <section className={styles.feedbackPanel}>
                 <div className={styles.feedbackHeading}>
                   <div><p>Coach feedback</p><h4>Review the AI draft and make the final decision</h4></div>
-                  {!personal && <button type="button" disabled={generating || saving} onClick={() => void generateAiFeedback()}>
-                    <i className={generating ? 'ri-loader-4-line' : 'ri-sparkling-line'} aria-hidden="true" />
-                    {generating ? 'Generating…' : 'Generate AI draft'}
-                  </button>}
+                  {!personal && <div className={styles.feedbackActions}>
+                    <button type="button" disabled={generating || saving} onClick={() => void generateAiFeedback()}>
+                      <i className={generating ? 'ri-loader-4-line' : 'ri-sparkling-line'} aria-hidden="true" />
+                      {generating ? 'Generating…' : 'Generate AI draft'}
+                    </button>
+                  </div>}
                 </div>
                 <CoachFeedbackEditor value={feedback} onChange={setFeedback} disabled={saving} />
                 {aiNotice && <p className={styles.aiNotice}><i className="ri-sparkling-line" aria-hidden="true" /> {aiNotice}</p>}
                 {error && <p className={styles.inlineError}>{error}</p>}
 
-                {!personal && <details className={styles.promptEditor}>
-                  <summary>AI marking instructions {promptEdited ? <span>Edited</span> : null}</summary>
+                {!personal && <MarkingInstructionsPanel key={selected.id} edited={promptEdited} guidanceAttached={Boolean(promptUpload)}>
                   <p>{promptAvailable ? `These ${promptKind === 'assignment' ? 'assignment marking' : 'reflection validation'} instructions apply to the next draft only.` : 'No saved prompt is available. You can supply instructions for this draft.'}</p>
-                  <textarea value={prompt} onChange={event => setPrompt(event.target.value)} rows={8} spellCheck={false} placeholder="Write the instructions the AI should mark against…" />
+                  <textarea aria-label="AI marking instructions" value={prompt} onChange={event => setPrompt(event.target.value)} rows={8} spellCheck={false} placeholder="Write the instructions the AI should mark against…" />
                   <label className={styles.promptUpload}>
-                    <span><i className="ri-upload-2-line" aria-hidden="true" /> Upload marking guidance</span>
-                    <input type="file" accept=".pdf,.docx,.txt,.md,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain,text/markdown" onChange={event => {
-                      const file = event.target.files?.[0] || null;
-                      setPromptUpload(file);
+                    <span><i className="ri-attachment-2" aria-hidden="true" /> Upload marking guidance</span>
+                    <input aria-label="Upload marking guidance" type="file" accept=".pdf,.docx,.txt,.md,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain,text/markdown" onChange={event => {
+                      setPromptUpload(event.target.files?.[0] || null);
                       setPromptError('');
+                      event.currentTarget.value = '';
                     }} />
                     <small>PDF or Word (.docx), up to 5 MB. Used for this draft only.</small>
                   </label>
-                  {promptUpload && <div className={styles.promptFile}><i className="ri-file-text-line" aria-hidden="true" /><span>{promptUpload.name}</span><button type="button" onClick={() => setPromptUpload(null)}>Remove</button></div>}
+                  {promptUpload && <div className={styles.promptFile}><i className="ri-file-text-line" aria-hidden="true" /><span>{promptUpload.name} · used for this draft</span><button type="button" onClick={() => setPromptUpload(null)}>Remove</button></div>}
                   <div className={styles.promptMeta}>
                     <span>{promptFile || 'No prompt file'} · {prompt.length.toLocaleString()} characters</span>
                     <button type="button" disabled={!defaultPrompt || prompt === defaultPrompt} onClick={() => setPrompt(defaultPrompt)}>Reset to default</button>
                   </div>
                   {promptCleared && <p>The saved prompt will be used because this field is empty.</p>}
                   {promptError && <p className={styles.inlineError}>{promptError}</p>}
-                </details>}
+                </MarkingInstructionsPanel>}
 
                 <div className={styles.decisionRow}>
                   <button type="button" className={styles.reject} disabled={saving || (selected.activityType === 'extra_activity' && !extraDocument)} onClick={() => void saveDecision(personal ? 'referred' : 'rejected')}><i className="ri-arrow-go-back-line" aria-hidden="true" /> {personal ? 'Return for improvement' : 'Refer back with feedback'}</button>
