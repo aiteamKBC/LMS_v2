@@ -42,6 +42,20 @@ describe('tutor availability belongs to the current destination', () => {
     expect(result.current.verdictFor('Tutor One')).toBeNull();
   });
 
+  it('discards the previous availability verdict when the week boundary changes', async () => {
+    vi.mocked(previewTutorAvailabilityRoster).mockResolvedValueOnce(busy).mockImplementationOnce(() => new Promise(() => {}));
+    const { result, rerender } = renderHook(({ weekStartsOn }) => useTutorAvailability({
+      moduleCatalogueId: 'MOD-CUSTOM', scheduleMode: 'custom', weeksNumber: 4, weekStartsOn,
+    }), { initialProps: { weekStartsOn: 'Monday' } });
+    await act(async () => { await vi.advanceTimersByTimeAsync(300); });
+    expect(result.current.verdictFor('Tutor One')?.available).toBe(false);
+    rerender({ weekStartsOn: 'Sunday' });
+    expect(result.current.verdictFor('Tutor One')).toBeNull();
+    expect(result.current.loading).toBe(true);
+    await act(async () => { await vi.advanceTimersByTimeAsync(300); });
+    expect(previewTutorAvailabilityRoster).toHaveBeenLastCalledWith(expect.objectContaining({ weekStartsOn: 'Sunday' }));
+  });
+
   it('ignores a late answer from the previous destination and reports failed checks', async () => {
     let resolveOld!: (value: CurriculumTutorAvailabilityRoster) => void;
     vi.mocked(previewTutorAvailabilityRoster).mockImplementationOnce(() => new Promise(resolve => { resolveOld = resolve; }))

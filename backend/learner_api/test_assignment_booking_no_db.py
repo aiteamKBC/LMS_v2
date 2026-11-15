@@ -169,7 +169,7 @@ class AssignmentBookingTests(unittest.TestCase):
                 for target in node.targets:
                     if isinstance(target, ast.Name) and target.id in {'BOOKABLE_TYPES', 'ONBOARDING_REVIEW_TYPES'}:
                         self.ns[target.id] = ast.literal_eval(node.value)
-                    elif isinstance(target, ast.Name) and target.id == 'COACH_APPROVAL_TYPES':
+                    elif isinstance(target, ast.Name) and target.id == 'DIRECT_COACH_BOOKING_TYPES':
                         # frozenset((...)): read the literal inside the call.
                         self.ns[target.id] = frozenset(ast.literal_eval(node.value.args[0]))
         load_functions(ROOT / 'calendar.py', {'_error', 'learner_calendar_book'}, self.ns)

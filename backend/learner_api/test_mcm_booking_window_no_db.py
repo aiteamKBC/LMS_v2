@@ -154,7 +154,7 @@ class McmBookingWindowTests(unittest.TestCase):
                            side_effect=lambda **_fields: self.record,
                            objects=self.manager, STATUS_AWAITING_SIGNATURE='awaiting-signature',
                            STATUS_COMPLETED='completed', STATUS_SCHEDULED='scheduled', SYNC_SYNCED='synced'))
-        load(ROOT / 'calendar.py', {'BOOKABLE_TYPES', 'ONBOARDING_REVIEW_TYPES', 'REVIEW_BOOKING_TYPES', 'COACH_APPROVAL_TYPES',
+        load(ROOT / 'calendar.py', {'BOOKABLE_TYPES', 'ONBOARDING_REVIEW_TYPES', 'REVIEW_BOOKING_TYPES', 'DIRECT_COACH_BOOKING_TYPES',
                                     '_error', 'learner_calendar_book', 'learner_calendar_reschedule'}, self.ns)
 
     def request(self, day, *, kind='commercial', path='assignment', session_type='mcr', duration=60):

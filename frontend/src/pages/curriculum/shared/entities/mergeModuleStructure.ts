@@ -160,6 +160,7 @@ const FIELD_LABELS: Record<string, string> = {
   sessionsNumber: 'number of sessions',
   weeklySchedule: 'weekly schedule',
   scheduleMode: 'schedule source',
+  weekStartsOn: 'start of the week',
   sessionHolidays: 'holiday selection',
   tutor: 'tutor',
   coach: 'coach',
