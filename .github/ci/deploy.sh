@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Deploy steps for .github/workflows/deploy-aws.yml (one sub-command per step).
 # Env from the workflow: AWS_REGION ECR_REPOSITORY ECS_CLUSTER IMAGE_TAG BUCKET
-# DISTRIBUTION SITE_URL ALB_METRIC_ID COMMIT, and REGISTRY for "push".
+# DISTRIBUTION SITE_URL ALB_METRIC_ID COMMIT, and REGISTRY for "push-candidate".
 #
 # Exact rollback: the image that last passed a full deploy (health, smoke test
 # and the post-deploy watch) carries the ECR tag "last-good". A failed deploy
@@ -12,6 +12,7 @@ set -euo pipefail
 
 STATE=.deploy-state
 mkdir -p "$STATE"
+PYTHON="${PYTHON:-python3}"
 
 manifest_of() { # tag -> manifest JSON (empty if the tag doesn't exist)
   aws ecr batch-get-image --repository-name "$ECR_REPOSITORY" --image-ids imageTag="$1" \
@@ -67,22 +68,38 @@ metric() { # name stat -> one value for the window
 }
 
 case "${1:?sub-command}" in
-  push)
+  push-candidate)
+    [[ "$COMMIT" =~ ^[a-f0-9]{40}$ ]] || { echo 'Invalid release commit' >&2; exit 1; }
     REPO="$REGISTRY/$ECR_REPOSITORY"
+    candidate="candidate-$COMMIT-${GITHUB_RUN_ID:?}-${GITHUB_RUN_ATTEMPT:?}"
     gunzip -c image.tar.gz | docker load
-    # First run: whatever runs now becomes last-good
+    # Only a unique candidate tag is pushed. Scheduled/replacement service tasks
+    # keep pulling the live tag until the schema gate has succeeded.
+    docker tag lms-backend:ci "$REPO:$candidate"
+    docker push -q "$REPO:$candidate"
+    "$PYTHON" .github/ci/calendar_release.py record --repository-uri "$REPO" --tag "$candidate"
+    ;;
+
+  promote)
+    digest=$("$PYTHON" .github/ci/calendar_release.py verified-digest)
+    manifest=$(aws ecr batch-get-image --repository-name "$ECR_REPOSITORY" \
+      --image-ids imageDigest="$digest" --query 'images[0].imageManifest' --output text)
+    [ -n "$manifest" ] && [ "$manifest" != None ] || { echo 'Candidate manifest missing' >&2; exit 1; }
+    # Capture the previous live image before any live-tag mutation.
     if [ -z "$(manifest_of last-good)" ]; then
       current=$(manifest_of "$IMAGE_TAG")
-      [ -z "$current" ] || tag_manifest last-good "$current"
+      [ -n "$current" ] || { echo 'No previous image available for rollback' >&2; exit 1; }
+      tag_manifest last-good "$current"
     fi
-    docker tag lms-backend:ci "$REPO:$COMMIT"
-    docker tag lms-backend:ci "$REPO:$IMAGE_TAG"
-    docker push -q "$REPO:$COMMIT"
-    docker push -q "$REPO:$IMAGE_TAG"
+    tag_manifest "$COMMIT" "$manifest"
+    # Record intent before the network write: an ambiguous put-image failure
+    # must still trigger rollback. Additive database fields are retained.
     echo "pushed" > "$STATE/pushed"
+    tag_manifest "$IMAGE_TAG" "$manifest"
     ;;
 
   roll)
+    [ -f "$STATE/pushed" ] || { echo 'Image has not passed promotion' >&2; exit 1; }
     restart_all
     ;;
 
