@@ -32,7 +32,7 @@ describe('home progress transport', () => {
 });
 
 describe('home upcoming transport', () => {
-  const upcoming = { events: [{ id: 's1', type: 'session', title: 'Lecture', date: '2026-10-15T09:00:00+00:00' }] };
+  const upcoming = { events: [{ id: 's1', type: 'session', title: 'Lecture', date: '2026-10-15T09:00:00+00:00', componentId: 'LIVE-1' }] };
   it('requests only the upcoming section for this learner', async () => {
     vi.mocked(fetch).mockResolvedValueOnce(new Response(JSON.stringify(upcoming)));
     await expect(upcomingSchedule.read('commercial', '265')).resolves.toEqual(upcoming);

@@ -6,6 +6,7 @@ from django.db import connections
 from django.utils import timezone
 
 from . import personal_learning_store as store
+from coach_api.feedback_format import feedback_plain_text, sanitize_feedback
 
 
 def normal(value):
@@ -110,10 +111,10 @@ def decide(state, submission_id, payload, actor, coach):
     if payload.get('version') != submission.get('version', 1):
         raise ValueError('This submission changed. Reload it before saving your review.')
     decision = payload.get('decision')
-    feedback = str(payload.get('feedback') or '').strip()
+    feedback = sanitize_feedback(str(payload.get('feedback') or '').strip())
     if decision not in {'accepted', 'referred', 'rejected'}:
         raise ValueError('Choose accept or return the work for improvement.')
-    if len(feedback) > 20000 or (decision != 'accepted' and not feedback):
+    if len(feedback) > 20000 or (decision != 'accepted' and not feedback_plain_text(feedback)):
         raise ValueError('Provide feedback of up to 20,000 characters for this decision.')
     records = [row for row in state['progress'] if row.get('submissionId') == str(submission_id)]
     if not records:

@@ -1088,15 +1088,17 @@ class LearnerFreeCourse(models.Model):
 
 
 class LearnerFreeCourseProgress(models.Model):
-    """Achieved native free-course components, keyed by LearnerProfile.id.
+    """Native free-course progress, keyed by LearnerProfile.id.
 
     Migration 0026 translates legacy enrolment IDs before adding the learner,
     course and component relationships. Attempts and actual hours remain in
-    learner_progress_entries; this index never awards hours independently."""
+    learner_progress_entries; this index never awards hours independently.
+    Migration 0027 also retains incomplete and archived imported rows; use
+    free_course_progress helpers to read completions and preserve their state."""
     learner_id = models.BigIntegerField()
     component_ref = models.TextField()
     free_course_ref = models.TextField(null=True, blank=True)
-    completed_at = models.DateTimeField()
+    completed_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         managed = False

@@ -290,7 +290,7 @@ it('waits for an in-flight autosave before final submission and never sends a dr
   await tick();
   changeAnswer('Updated learning '.repeat(100));
   fireEvent.click(screen.getByRole('button', { name: 'Review' }));
-  fireEvent.click(screen.getByRole('button', { name: 'Submit for tutor review' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Submit' }));
   expect(mocks.save).toHaveBeenCalledTimes(1);
   mocks.save.mockResolvedValue({ status: 'submitted_for_tutor_review' });
   await act(async () => resolve({ status: 'draft' }));
@@ -316,7 +316,7 @@ it('orders a reopened reflection submission after the previous window has finish
   await settle();
   changeAnswer('Latest reflection '.repeat(100));
   fireEvent.click(screen.getByRole('button', { name: 'Review' }));
-  fireEvent.click(screen.getByRole('button', { name: 'Submit for tutor review' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Submit' }));
   await settle();
   expect(mocks.save).toHaveBeenCalledTimes(1);
   mocks.save.mockResolvedValue({ status: 'submitted_for_tutor_review' });

@@ -1,6 +1,7 @@
 import { useEffect, useId, useRef, useState } from 'react';
 import { CheckCircle2, ChevronDown, ChevronUp, ClipboardCheck } from 'lucide-react';
 import type { ComponentMarking } from '@/api/learnerDetail';
+import { FormattedFeedback } from '@/components/feature/FormattedFeedback';
 import { statusLabels } from './model';
 import styles from './monthlySubmission.module.css';
 
@@ -14,7 +15,7 @@ export function AssignmentFeedback({ marking, status }: { marking?: ComponentMar
     ? reviewedDate.toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' }) : '';
   const [expanded, setExpanded] = useState(false);
   const [overflows, setOverflows] = useState(false);
-  const contentRef = useRef<HTMLParagraphElement>(null);
+  const contentRef = useRef<HTMLDivElement>(null);
   const contentId = useId();
 
   useEffect(() => { setExpanded(false); }, [feedback, result]);
@@ -51,7 +52,7 @@ export function AssignmentFeedback({ marking, status }: { marking?: ComponentMar
     </p>}
     {feedback ? <>
       <p className={styles.feedbackLabel}>{pending || result === 'draft' ? 'Previous coach feedback' : 'Coach feedback'}</p>
-      <p ref={contentRef} id={contentId} className={`${styles.feedbackText} ${expanded ? '' : styles.feedbackPreview}`}>{feedback}</p>
+      <FormattedFeedback value={feedback} ref={contentRef} id={contentId} className={`${styles.feedbackText} ${expanded ? '' : styles.feedbackPreview}`} />
       {overflows && <button type="button" className={styles.feedbackToggle} aria-expanded={expanded} aria-controls={contentId}
         onClick={() => setExpanded(value => !value)}>
         {expanded ? <ChevronUp size={16} aria-hidden="true" /> : <ChevronDown size={16} aria-hidden="true" />}

@@ -47,6 +47,7 @@ def save_mp4(kind, target_id, component, scope, uploaded, *, title=''):
     Source persistence and queue creation commit together. Bunny IO happens later.
     """
     from . import video_imports as imports
+    from .learning_storage import course
 
     if kind not in ('module', 'template') or not all(
         re.fullmatch(r'[\w-]+', value, re.ASCII) for value in (target_id, component['id'])
@@ -72,14 +73,24 @@ def save_mp4(kind, target_id, component, scope, uploaded, *, title=''):
         'uploadSource': 'Device upload',
     }
     views = imports._views()
-    table = views.AUTHORING_COMPONENTS_TABLE if kind == 'module' else views.WEEK_TEMPLATE_COMPONENTS_TABLE
-    parent = 'module_catalogue_id' if kind == 'module' else 'week_template_id'
-    table_sql = views.authoring_table_name(table)
     with transaction.atomic():
+        # Lock the physical owner before resolving the component. This also
+        # serializes a native course conversion against attaching the file.
+        owner = course(target_id, lock=True) if kind == 'module' else None
+        if owner is not None:
+            table_sql = views.authoring_table_name('free_programme_components')
+            weeks_sql = views.authoring_table_name('free_course_weeks')
+            where = f'content_ref = %s AND free_module_id IN (SELECT id FROM {weeks_sql} WHERE course_id = %s)'
+            identity = [component['id'], owner['id']]
+        else:
+            table = views.AUTHORING_COMPONENTS_TABLE if kind == 'module' else views.WEEK_TEMPLATE_COMPONENTS_TABLE
+            table_sql = views.authoring_table_name(table)
+            parent = 'module_catalogue_id' if kind == 'module' else 'week_template_id'
+            where = f'id = %s AND {parent} = %s'
+            identity = [component['id'], target_id]
         with connection.cursor() as cursor:
             lock = ' FOR UPDATE' if connection.vendor == 'postgresql' else ''
-            cursor.execute(f'SELECT settings_json FROM {table_sql} WHERE id = %s AND {parent} = %s{lock}',
-                           [component['id'], target_id])
+            cursor.execute(f'SELECT settings_json FROM {table_sql} WHERE {where}{lock}', identity)
             row = cursor.fetchone()
             _, rows, current_scope = imports.target(kind, target_id)
             current = next((r for r in rows if r['id'] == component['id']), None)
@@ -91,8 +102,7 @@ def save_mp4(kind, target_id, component, scope, uploaded, *, title=''):
             if source_url(settings) not in (source_url(imports._settings(component)), url):
                 raise VideoImportError('The video source changed during upload. Refresh before retrying.')
             saved = {**settings, **updates}
-            cursor.execute(f'UPDATE {table_sql} SET settings_json = %s WHERE id = %s AND {parent} = %s',
-                           [json.dumps(saved), component['id'], target_id])
+            cursor.execute(f'UPDATE {table_sql} SET settings_json = %s WHERE {where}', [json.dumps(saved), *identity])
             asset = imports.enqueue(kind, target_id, {**current, 'settings_json': saved}, current_scope, title=title)
             if asset.status == 'failed':
                 asset.status, asset.error = 'queued', ''
