@@ -22,11 +22,12 @@ def _live(alias):
 
 def students(email):
     # The enrolment row keeps placement ids; names come from the curriculum.
-    # They are only context()'s fallback for a profile without ids.
+    # They are only context()'s fallback for a profile without ids. Module
+    # membership is not read here: it comes from the normalized plan records
+    # (attendance_membership), never the legacy Learning_plan/Training_plan.
     return [SimpleNamespace(**row) for row in rows('''
         SELECT u.id, u.id AS pk, coalesce(p.name, '') AS programme,
-               coalesce(g.group_name, '') AS "group", coalesce(c.cohort_name, '') AS cohort,
-               u."Learning_plan" AS learning_plan, u."Training_plan" AS training_plan
+               coalesce(g.group_name, '') AS "group", coalesce(c.cohort_name, '') AS cohort
         FROM enrolment."Created_users" u
         LEFT JOIN curriculum.programmes p ON p.programme_id = u.programme_id
         LEFT JOIN curriculum.groups g ON g.group_id = u.group_id
@@ -36,7 +37,7 @@ def students(email):
 
 
 def placements(enrolment_id):
-    return rows('''SELECT programme_id, group_id, cohort_id
+    return rows('''SELECT id, programme_id, group_id, cohort_id
                   FROM "Learner".learners WHERE enrolment_id = %s''', [enrolment_id])
 
 

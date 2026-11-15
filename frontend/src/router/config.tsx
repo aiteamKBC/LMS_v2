@@ -98,7 +98,6 @@ const CurriculumQualityHub = lazyRoute(() => import("../pages/curriculum/hubs/pa
 const CurriculumQualityDemo = lazyRoute(() => import("../pages/dashboard/page"));
 const CoachingQualityReviewsPage = lazyRoute(() => import("../pages/coaching-recordings/QualityReviewsPage"));
 const CoachingQualityFormsPage = lazyRoute(() => import("../pages/coaching-recordings/QualityFormsPage"));
-const CurriculumFreeCourses = lazyRoute(() => import("../pages/curriculum/free-courses/page"));
 const CoachAuditTrailPage = lazyRoute(() => import("../pages/coach/audit-trail/page"));
 const CoachAuditTrailPersonPage = lazyRoute(() => import("../pages/coach/audit-trail/person/page"));
 const CurriculumAuditTrailPage = lazyRoute(() => import("../pages/curriculum/audit-trail/page"));
@@ -662,10 +661,6 @@ const routes: RouteObject[] = [
     path: "/learner/component/:kind/:id/:componentId",
     element: <VideoWatchPage />,
   },
-  {
-    path: "/learner/component/:kind/:id/:componentId",
-    element: <VideoWatchPage />,
-  },
 
   {
     path: "/learner/modules",
@@ -1200,10 +1195,6 @@ const routes: RouteObject[] = [
   {
     path: "/curriculum/quality-demo",
     element: <CurriculumQualityDemo />,
-  },
-  {
-    path: "/curriculum/free-courses",
-    element: <CurriculumFreeCourses />,
   },
   {
     path: "/curriculum/module-builder",

@@ -57,7 +57,6 @@ class ParallelAttendanceRegisterTests(SimpleTestCase):
 
     def test_saved_qr_creates_original_with_guest_source_even_if_original_is_future(self):
         profile = SimpleNamespace(id=10, enrolment_id=100, email='learner@example.invalid', full_name='Learner')
-        source = SimpleNamespace(pk=100)
         occurrences = MagicMock()
         occurrence_manager = occurrences.objects.using.return_value
         guest_query, original_query = MagicMock(), MagicMock()
@@ -82,8 +81,6 @@ class ParallelAttendanceRegisterTests(SimpleTestCase):
         raw.objects.using.return_value.filter.return_value.values.return_value = []
         profiles = MagicMock()
         profiles.objects.using.return_value.filter.return_value.only.return_value = [profile]
-        enrolments = MagicMock()
-        enrolments.all_learners.filter.return_value.only.return_value = [source]
         decisions = MagicMock()
         decisions.objects.using.return_value.filter.return_value.values.return_value = []
         with patch('curriculum_api.parallel_attendance_register.LiveSessionOccurrence', occurrences), \
@@ -91,14 +88,17 @@ class ParallelAttendanceRegisterTests(SimpleTestCase):
              patch('curriculum_api.parallel_attendance_register.LiveSessionLearnerAttendance', register), \
              patch('curriculum_api.parallel_attendance_register.LiveSessionAttendance', raw), \
              patch('curriculum_api.parallel_attendance_register.LearnerProfile', profiles), \
-             patch('curriculum_api.parallel_attendance_register.EnrolmentUser', enrolments), \
              patch('coach_api.models.CoachAttendanceSourceAdjustment', decisions), \
              patch('curriculum_api.parallel_attendance_register.transaction.atomic', return_value=nullcontext()), \
-             patch('curriculum_api.parallel_attendance_register.assigned_module_ids', return_value=['MA']), \
+             patch('curriculum_api.parallel_attendance_register.assigned_module_ids_by_profile',
+                   return_value={10: {'MA'}}) as membership, \
              patch('curriculum_api.parallel_attendance_register.equivalent_alternatives_by_occurrence',
                    return_value={'B': [{'id': 'A', 'moduleCatalogueId': 'MA'}]}):
             count = reconcile_parallel_attendance(['B'], database='default')
         self.assertEqual(count, 1)
+        # Membership comes from the normalized plan records, asked only about the
+        # modules the choice compares: the attended guest module and its originals.
+        membership.assert_called_once_with({10}, {'MB', 'MA'})
         saved = manager.create.call_args.kwargs
         self.assertEqual((saved['occurrence_id'], saved['attendance_status'], saved['attendance_basis']),
                          ('A', 'present', 'parallel'))
