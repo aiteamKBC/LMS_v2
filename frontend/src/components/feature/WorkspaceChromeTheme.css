@@ -64,9 +64,9 @@
   }
 
   .workspace-shell .kbc-workspace-topbar .kbc-workspace-switcher > [role="menu"] {
-    width: min(18rem, calc(100vw - 6rem)) !important;
-    max-height: calc(100dvh - 6rem);
-    overflow-y: auto;
+    width: min(21rem, calc(100vw - 6rem)) !important;
+    max-height: min(42rem, calc(100dvh - 6rem));
+    overflow: hidden;
   }
 
   .workspace-shell .kbc-workspace-topbar > div:last-child {

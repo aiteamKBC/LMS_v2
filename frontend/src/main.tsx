@@ -8,6 +8,7 @@ import './coach-theme.css'
 import './components/feature/WorkspaceSidebarTheme.css'
 import './components/feature/WorkspaceChromeTheme.css'
 import './components/feature/WorkspaceEnrolmentTheme.css'
+import './styles/dropdowns.css'
 import { installAuditRequestContext } from './lib/auditRequestContext'
 import { installPerformanceDiagnostics } from './lib/performanceDiagnostics'
 

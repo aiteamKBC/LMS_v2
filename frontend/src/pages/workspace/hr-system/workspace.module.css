@@ -46,8 +46,8 @@
 .metric { padding: 21px; border: 1px solid #e8e3ed; border-radius: var(--lms-radius, 16px); min-width: 0; }
 .metricTop { display: flex; justify-content: space-between; gap: 10px; color: #675872; font-size: 11px; font-weight: 650; }
 .metricTop svg { font-size: 17px; }
-.metric > strong { display: block; font-size: clamp(26px, 2.6vw, 38px); font-weight: 750; line-height: 1.3; letter-spacing: -1.4px; margin-top: 17px; }
-.metric em { font-style: normal; font-size: 17px; font-weight: 500; letter-spacing: -.5px; }
+.metric > strong { display: flex; align-items: baseline; gap: 6px; font-size: clamp(26px, 2.6vw, 38px); font-weight: 750; line-height: 1.3; letter-spacing: -1.4px; margin-top: 17px; }
+.metric em { font-style: normal; font-size: 17px; font-weight: 500; letter-spacing: normal; }
 .metric p { font-size: 10px; margin-top: 10px; color: #766b7e; }
 .metric p > span { display: block; margin-top: 4px; opacity: .8; }
 .metric p > button { display: flex; align-items: center; gap: 5px; margin-top: 4px; color: #653c88; text-decoration: underline; }
@@ -69,10 +69,26 @@
 .programmeBanner p:last-child { color: #8a7c96; font-size: 11px; }
 .programmeIcon { display: grid; place-items: center; width: 48px; height: 48px; border-radius: var(--lms-radius, 16px); color: #6c4686; background: #ece3f4; flex-shrink: 0; }
 .toolbar { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 16px; flex-wrap: wrap; }
-.toolbar > nav { min-width: 0; max-width: 100%; }
-.search { display: flex; align-items: center; gap: 7px; color: #948b9c; border: 1px solid #e9e3ee; border-radius: var(--lms-radius, 16px); padding: 8px 10px; }
-.root.root .search input { font-size: 13px; width: 170px; min-width: 0; border: 0; border-radius: 0; padding: 0; background: transparent; color: #332a3c; outline: none; box-shadow: none; }
+/* Keep the keyboard focus outline inside the horizontally scrolling strip. */
+.toolbar > nav { min-width: 0; max-width: calc(100% + 16px); margin: -8px; padding: 8px; scroll-padding: 8px; }
+.search { display: flex; align-items: center; gap: 10px; min-width: 0; max-width: 100%; min-height: 44px; color: var(--enrolment-ui-muted, #948b9c); border: 1px solid var(--enrolment-ui-border, #e9e3ee); border-radius: var(--lms-radius, 16px); padding: 8px 12px; background: var(--enrolment-ui-field, #fff); }
+.search > svg { width: 16px; height: 16px; flex-shrink: 0; }
+.root.root .search input { font-size: 13px; width: 170px; min-width: 0; min-height: 0; height: 24px; flex: 1; border: 0; border-radius: 0; padding: 0; background: transparent; color: var(--enrolment-ui-text, #332a3c); outline: none; box-shadow: none; }
 .search:focus-within { outline: 3px solid #b88bda; outline-offset: 3px; }
+/* The enclosing search field owns focus. Match the theme's important layer so
+   its standalone-input styling cannot draw a second field inside this one. */
+@layer workspace-enrolment {
+  .root.root :global(.workspace-shell) :global(.workspace-main) .search input,
+  .root.root :global(.workspace-shell) :global(.workspace-main) .search input:focus-visible {
+    min-height: 0 !important;
+    border: 0 !important;
+    border-radius: 0 !important;
+    padding: 0 !important;
+    background: transparent !important;
+    outline: none !important;
+    box-shadow: none !important;
+  }
+}
 .tableScroll { position: relative; min-width: 0; max-width: 100%; overflow-x: auto; }
 .table { width: 100%; border-collapse: collapse; text-align: left; font-size: 12px; }
 .table th { color: #897e93; font-weight: 550; font-size: 10px; background: #f9f7fb; border-block: 1px solid #f1edf5; padding: 12px 10px; white-space: nowrap; }
