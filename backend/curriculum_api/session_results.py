@@ -30,8 +30,7 @@ def effective_module_register_rows(module_catalogue_id, occurrences):
     """Project current plan membership; saved evidence is merged separately."""
     if not module_catalogue_id or not occurrences:
         return []
-    # Membership from the normalized plan records (the roster's rule), never the
-    # legacy Created_users Learning_plan/Training_plan.
+    # Membership comes from the normalized plan records (the roster's rule).
     from .attendance_membership import module_roster
     members = module_roster(module_catalogue_id)
     return [{
@@ -52,15 +51,12 @@ def read(sql, params=()):
 
 
 def known_learner_emails(emails):
-    """Identify reported learner addresses without guessing from display names."""
+    """Identify reported learner addresses from the canonical learner directory."""
     wanted = sorted({str(value or '').strip().casefold() for value in emails} - {''})
     if not wanted:
         return set()
-    rows = read('''SELECT lower(btrim("Email")) AS email
-        FROM enrolment."Created_users" WHERE lower(btrim("Email"))=ANY(%s)
-        UNION
-        SELECT lower(btrim(email)) AS email
-        FROM "Learner".learners WHERE lower(btrim(email))=ANY(%s)''', [wanted, wanted])
+    rows = read('''SELECT lower(btrim(email)) AS email
+        FROM "Learner".learners WHERE lower(btrim(email))=ANY(%s)''', [wanted])
     return {row['email'] for row in rows}
 
 
@@ -641,10 +637,10 @@ def link_attendance_alias(request, series_id, session_number):
                     return JsonResponse({'error': 'Module not found.'}, status=404)
                 rules = identity_rules([module_id])
                 aliases = attendance_alias_rows(module_id)
-                legacy = attendance_identity_link_rows([occurrence['id']])
+                reviewed_links = attendance_identity_link_rows([occurrence['id']])
                 selected_ids = {str(row['id']) for row in selected}
                 effective = [row for row in apply_reviewed_identities(
-                    records, aliases, legacy, rules,
+                    records, aliases, reviewed_links, rules,
                     learners={str(row.get('learner_email') or '').strip().casefold(): {
                         'name': row.get('learner_name'), 'learnerProfileId': row.get('learner_profile_id')}
                         for row in roster if row.get('learner_email')},

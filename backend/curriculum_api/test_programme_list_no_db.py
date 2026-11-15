@@ -155,7 +155,7 @@ class ProgrammeListTests(SimpleTestCase):
 
     def test_postgres_batches_narrow_relationships_and_decodes_raw_json(self):
         source = {'modules': self.modules, 'groups': self.groups, 'cohorts': self.cohorts,
-                  'weeks': self.weeks, 'program_configs': self.configs, 'ksb_profiles': self.profiles}
+                  'weeks': self.weeks, 'program_configs': self.configs}
         with patch.object(views, 'connection', vendor='postgresql'), \
              patch.object(views, 'ensure_module_authoring_tables'), \
              patch.object(views, 'fetch_all', return_value=[{key: json.dumps(value) for key, value in source.items()}]) as fetch:

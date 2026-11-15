@@ -882,6 +882,9 @@ function CurriculumProgrammesContent() {
                   Build programme structures, manage cohorts and groups, and keep module delivery plans connected to live LMS records.
                 </p>
                 <p className="mt-2 text-[12px] font-semibold text-white/70">{loading ? 'Loading live LMS programmes...' : heroSummary}</p>
+                <p className="mt-1 max-w-2xl text-[11px] leading-5 text-white/60">
+                  The module count includes only modules linked to a programme. Unassigned catalogue modules are managed in Module Builder.
+                </p>
               </div>
               <div className="curriculum-programme-hero-actions flex flex-col gap-2 sm:flex-row sm:items-center">
                 {/* A programme is independently saveable: this creates one from
@@ -921,7 +924,7 @@ function CurriculumProgrammesContent() {
             <div className="curriculum-programme-hero-stats relative mt-6 grid grid-cols-2 gap-3 lg:grid-cols-4">
               <DashboardStat icon="ri-layout-masonry-line" label="Actual programmes" value={String(totalProgrammes)} detail={`${totalModules} modules connected`} />
               <DashboardStat icon="ri-calendar-event-line" label="Cohorts" value={String(totalCohorts)} detail={`${totalLearners} learners allocated`} />
-              <DashboardStat icon="ri-stack-line" label="Modules" value={String(totalModules)} detail={`${totalWeeks} planned weeks`} />
+              <DashboardStat icon="ri-stack-line" label="Programme modules" value={String(totalModules)} detail="Modules linked to a programme" />
               <DashboardStat
                 icon="ri-node-tree"
                 label="KSB progress"
@@ -1717,10 +1720,10 @@ function learnerAchievementMap(data: CurriculumProgrammeLearnerKsbSummaryRespons
 
 function ImpactStat({ icon, label, value, detail }: { icon: string; label: string; value: string; detail: string }) {
   return (
-    <div className="coach-metric-card">
+    <div className="coach-metric-card" title={`${label}: ${detail}`}>
       <div className="flex items-center gap-2 text-foreground-500">
         <AppIcon className={`${icon} text-sm`}></AppIcon>
-        <span className="truncate text-[10px] font-bold uppercase tracking-wide">{label}</span>
+        <span className="truncate text-[10px] font-bold uppercase tracking-wide" title={label} aria-label={label}>{label}</span>
       </div>
       <p className="mt-2 text-2xl font-heading font-bold text-foreground-950">{value}</p>
       <p className="mt-0.5 truncate text-[11px] font-semibold text-foreground-500">{detail}</p>
@@ -2201,7 +2204,7 @@ function DashboardStat({ icon, label, value, detail }: { icon: string; label: st
         <span className="truncate text-[10px] font-bold uppercase tracking-wide">{label}</span>
       </div>
       <p className="mt-2 text-2xl font-heading font-bold text-foreground-950">{value}</p>
-      <p className="mt-0.5 truncate text-[11px] font-semibold text-foreground-600">{detail}</p>
+      <p className="mt-0.5 truncate text-[11px] font-semibold text-foreground-600" title={detail}>{detail}</p>
     </div>
   );
 }

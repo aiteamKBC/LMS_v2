@@ -9385,6 +9385,54 @@ def build_staff_user_profile_collection(role, visibility='operational'):
     return build_staff_profiles(profile_rows, role, modules, [])
 
 
+def build_curriculum_tutor_profile_collection(visibility='operational'):
+    """Read the tutor picker from the curriculum tutor catalogue.
+
+    The Module Builder's tutor filter is intentionally scoped to the rows in
+    ``curriculum.tutors``. Assignments are still enriched from the canonical
+    curriculum module rows so the picker only changes the identity source.
+    """
+    if connection.vendor != 'postgresql' or not table_exists('tutors'):
+        return []
+    rows = fetch_all(
+        f'''select id, name, email, phone, status
+            from {table_name('tutors')}
+            order by lower(trim(coalesce(name, ''))), id'''
+    )
+    profiles = []
+    for row in rows:
+        status = clean_str(row.get('status')).lower() or 'active'
+        archived = status in {'archived', 'inactive', 'disabled'}
+        if archived and visibility != 'all':
+            continue
+        profiles.append({
+            'id': clean_str(row.get('id')),
+            'staffUserId': '',
+            'uuid': '',
+            'role': 'tutor',
+            'name': clean_str(row.get('name')),
+            'email': clean_str(row.get('email')),
+            'phone': clean_str(row.get('phone')),
+            'job_title': 'Tutor',
+            'status': 'archived' if archived else 'active',
+            'access': 'tutor',
+            'is_archived': archived,
+        })
+    if not profiles:
+        return []
+    training_rows = get_training_rows()
+    if visibility != 'all':
+        training_rows = [row for row in training_rows if is_operational_training_row(row)]
+    catalogue = authoring_modules_as_catalogue_rows(week_rows=[])
+    modules = build_modules(
+        catalogue,
+        training_rows,
+        get_program_config_rows(),
+        include_unused=visibility == 'all',
+    )
+    return build_staff_profiles(profiles, 'tutor', modules, [])
+
+
 def get_tutor_module_rows():
     if not table_exists('Tutors_Modules'):
         return []
@@ -36070,7 +36118,12 @@ def curriculum_england_holidays_refresh(request):
 
 @csrf_exempt
 def curriculum_tutors(request):
-    return curriculum_staff_profile_collection(request, 'tutor')
+    if request.method != 'GET':
+        return json_error(STAFF_PROFILE_READ_ONLY_MESSAGE, status=405)
+    visibility = curriculum_visibility(request)
+    with curriculum_read_scope():
+        profiles = build_curriculum_tutor_profile_collection(visibility)
+    return curriculum_results_response(profiles)
 
 
 @csrf_exempt
