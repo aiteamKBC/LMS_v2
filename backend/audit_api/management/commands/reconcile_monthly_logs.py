@@ -20,6 +20,7 @@ from decimal import Decimal, ROUND_HALF_UP
 
 from django.core.management.base import BaseCommand, CommandError
 from django.db import connections, transaction
+from learner_api.aptem_identity import APTEM_IDENTITY_CTES
 
 
 END_MONTH = "2026-08"
@@ -235,12 +236,13 @@ class Command(BaseCommand):
         return plan
 
     def _load(self, cursor, aptem_ids):
-        cursor.execute(f'''SELECT m.*, l.learner_name, l.learner_id AS canonical_learner_id,
+        cursor.execute(f'''WITH {APTEM_IDENTITY_CTES}
+                           SELECT m.*, l.learner_name, l.learner_id AS canonical_learner_id,
                                   l.planned_hours_total AS programme_hours_total,
-                                  au."Start-Date" AS start_date
+                                  identity.start_date AS start_date
                            FROM {MANUAL} m
                            LEFT JOIN "Last_audit".learners l ON l.aptem_id=m.aptem_id
-                           LEFT JOIN "LMS"."Aptem_users" au ON au."ID"=m.aptem_id
+                           LEFT JOIN aptem_identity identity ON identity.aptem_id=m.aptem_id
                            WHERE m.aptem_id=ANY(%s) AND m.deleted_at IS NULL
                              AND m.month <= %s
                            ORDER BY m.aptem_id,m.month,m.id''', [aptem_ids, END_MONTH])
@@ -499,11 +501,12 @@ class Command(BaseCommand):
             cursor.execute(f"INSERT INTO {AUDIT_TABLE}(run_id,row_id,aptem_id,month,field,source,status,reason,created_by) VALUES(%s,%s,%s,%s,%s,%s,'pending_review',%s,%s)", [run_id, item["row_id"], item["aptem_id"], item["month"], item["field"], item.get("source"), item["reason"], ACTOR])
 
     def _verify(self, cursor, aptem_ids):
-        cursor.execute(f'''SELECT m.aptem_id,l.learner_name,m.month,m.actual_hours,m.planned_hours,m.activity_date,
-                                  k.ksbs,au."Start-Date" AS start_date
+        cursor.execute(f'''WITH {APTEM_IDENTITY_CTES}
+                           SELECT m.aptem_id,l.learner_name,m.month,m.actual_hours,m.planned_hours,m.activity_date,
+                                  k.ksbs,identity.start_date AS start_date
                            FROM {MANUAL} m LEFT JOIN "Last_audit".learners l ON l.aptem_id=m.aptem_id
                            LEFT JOIN {ROW_KSB} k ON k.row_id=m.id
-                           LEFT JOIN "LMS"."Aptem_users" au ON au."ID"=m.aptem_id
+                           LEFT JOIN aptem_identity identity ON identity.aptem_id=m.aptem_id
                            WHERE m.aptem_id=ANY(%s) AND m.deleted_at IS NULL AND m.month <= %s''',[aptem_ids,END_MONTH])
         rows=self._dicts(cursor); out={}
         for row in rows:

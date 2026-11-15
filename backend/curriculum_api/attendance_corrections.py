@@ -14,10 +14,9 @@ from django.views.decorators.http import require_http_methods
 from login.permissions import require_role
 from coach_api.models import CoachAttendanceSourceAdjustment
 from learner_api.models import LearnerProfile
-from learner_api.attendance_assignments import assigned_module_ids
-from .learner_compat import module_roster  # learner_api roster, or its by-id read on the normalised schema
 from learner_api.attendance_lectures import read_native_occurrences, _aware
 from learner_api.learner_detail import SOURCE_MODELS
+from .attendance_membership import assigned_module_ids_by_profile, module_roster
 from .models import INACTIVE_STATUSES, LiveSession, LiveSessionOccurrence, ModuleAuthoringModule
 
 
@@ -85,8 +84,12 @@ def save_correction(module_id, occurrence, source_id, roster, payload, actor):
     # Lock the learner too: first-time corrections have no ledger row to lock.
     profile = LearnerProfile.objects.select_for_update().get(pk=profile_id)
     source = SOURCE_MODELS['commercial'].all_learners.filter(pk=profile.enrolment_id).first()
-    if source is None or module_id not in assigned_module_ids(source):
+    if source is None:
         raise CorrectionError('Learner source is unavailable.', 409)
+    # Re-check membership inside the lock from the normalized plan records (the
+    # roster's rule); the legacy Created_users plan is never consulted.
+    if module_id not in assigned_module_ids_by_profile([profile_id], [module_id]).get(profile_id, set()):
+        raise CorrectionError('Learner is no longer assigned to this module. Refresh saved results.', 409)
     native = read_native_occurrences(source, module_ids=[module_id])
     if not any(str(row['session_id']) == source_id for row in native):
         raise CorrectionError('Session assignment changed. Refresh saved results.', 409)

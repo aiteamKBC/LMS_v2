@@ -1,9 +1,10 @@
 """The learner's learning plan — the modules they will actually be taught.
 
-A learner's group already carries a module set (curriculum.groups.module_ids),
-so the plan starts as that preset rather than blank. Staff then tune it: drop a
-module the learner doesn't need, or add any module in the catalogue — including
-one belonging to another programme, chosen from the programme picker.
+The currently wired ``learning_plan`` view retains the legacy workflow while
+the rollout gate is closed. ``canonical_learning_plan`` is the locally tested
+candidate: its displayed/saved plan comes only from the normalized learner-plan
+tables. A group module set is an editor suggestion, never an implicit canonical
+assignment.
 
 Cross-programme modules used to be refused here, because a module from another
 programme maps to different KSBs and sits under different funding. That is still
@@ -19,8 +20,11 @@ start_date/end_date), set where the module is scheduled in the curriculum tree.
 Read-only here, and re-derived on every read like the hours — the plan decides
 which modules are taught, not when. Empty for a module with no window yet.
 
-The saved plan lives on enrolment."Created_users"."Learning_plan" (jsonb), which
-also feeds the delivery-side training plan.
+Once the canonical candidate is wired, the normalized
+``Learner.learner_training_plan_*`` hierarchy is the sole editor authority and
+the enrolment-side JSON is only a derived compatibility projection. The URL is
+deliberately not switched in this file; activation remains subject to the
+isolated PostgreSQL, frontend and compatibility-consumer gate.
 
     GET   /learner_api/learning-plan/<pk>/            -> {plan, preset, available, programmes, totals}
     PATCH /learner_api/learning-plan/<pk>/            -> save {modules:[...]}
@@ -35,12 +39,17 @@ import json
 import logging
 from datetime import date, datetime
 
-from django.db import DatabaseError, connection
+from django.db import DatabaseError, connection, connections, transaction
 from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt, ensure_csrf_cookie
 
 from curriculum_api.programme_name_sql import programme_name_sql
 from curriculum_api.canonical_read_sql import module_expected_otjh_sql
+from curriculum_api.models import (
+    ModuleAuthoringComponent,
+    ModuleAuthoringModule,
+    ModuleAuthoringWeek,
+)
 
 from .module_placement_sql import module_placement_names_sql
 
@@ -56,8 +65,56 @@ from .models import EnrolmentUser, LearnerProfile
 from .placement_links import placement_ids, placement_payload
 from .planned_learning import learner_type, planned_modules
 from .projection_performance import projection_call, projection_operation
+from .training_plan_editor_contract import (
+    parse_training_plan_editor_request,
+    training_plan_editor_error_status,
+)
+from .training_plan_writes import (
+    TrainingPlanAuthorization,
+    TrainingPlanAuthorizationError,
+    TrainingPlanConflict,
+    TrainingPlanValidationError,
+    TrainingPlanWriteError,
+    empty_training_plan_version,
+    reconcile_training_plan,
+    training_plan_snapshot,
+)
 
 logger = logging.getLogger(__name__)
+
+CANONICAL_TRAINING_PLAN_PREFETCH = "plan_modules__weeks__components"
+TRAINING_PLAN_DATABASE = "enrolment"
+
+
+def install_canonical_training_plan(source, profile=None, *, profile_id=None):
+    """Attach the normalized learner-owned plan to an enrolment source.
+
+    The exact ``enrolment_id`` bridge enforces ownership.  Four bounded ORM
+    queries load the profile, modules, weeks and components; related Curriculum
+    titles are joined by the child managers.  Missing assignments are a real
+    empty plan and never fall through to Created_users JSON or group presets.
+    """
+    if hasattr(source, "_canonical_training_plan"):
+        return source._canonical_training_plan
+
+    source_id = getattr(source, "pk", None) or getattr(source, "id", None)
+    if profile is None:
+        query = LearnerProfile.objects.only("id", "enrolment_id").filter(
+            enrolment_id=source_id,
+        )
+        if profile_id is not None:
+            query = query.filter(pk=profile_id)
+        profile = query.prefetch_related(CANONICAL_TRAINING_PLAN_PREFETCH).first()
+    else:
+        if source_id is None or profile.enrolment_id != source_id:
+            raise ValueError("The learner profile does not own this enrolment source.")
+        from django.db.models import prefetch_related_objects
+
+        prefetch_related_objects([profile], CANONICAL_TRAINING_PLAN_PREFETCH)
+
+    plan = profile.training_plan if profile is not None else []
+    source._canonical_training_plan = plan
+    return plan
 
 
 def _error(message, status):
@@ -154,12 +211,12 @@ def _validate_free_course_assignment_snapshot(learner, value):
     return None
 
 
-def _rows(sql, params):
+def _rows(sql, params, *, using="default"):
     # Deliberately the `default` alias: every caller reads curriculum.*, which is
     # owned by curriculum_api and migrated on `default`. Not an oversight — see
     # the note in apprenticeship_agreement._group_dates.
-    with projection_operation('assignment_query'), connection.cursor() as cursor:
-        cursor.execute(read_sql(sql), params)
+    with projection_operation('assignment_query'), connections[using].cursor() as cursor:
+        cursor.execute(read_sql(sql, cursor.db), params)
         columns = [c[0] for c in cursor.description]
         return [dict(zip(columns, row)) for row in cursor.fetchall()]
 
@@ -273,7 +330,7 @@ def _all_modules():
     ]
 
 
-def _modules_by_id(module_ids):
+def _modules_by_id(module_ids, *, using="default"):
     """Live catalogue rows for specific module ids, whatever programme they sit on.
 
     ``_programme_modules`` is scoped to the learner's own programme, so a module
@@ -286,7 +343,11 @@ def _modules_by_id(module_ids):
     ids = [i for i in dict.fromkeys(_s(i) for i in module_ids) if i]
     if not ids:
         return {}
-    rows = _rows(_LIVE_MODULE_SQL + " AND module_catalogue_id = ANY(%s)", [ids])
+    rows = _rows(
+        _LIVE_MODULE_SQL + " AND module_catalogue_id = ANY(%s)",
+        [ids],
+        using=using,
+    )
     return {m["moduleId"]: m for m in (_module_payload(r) for r in rows) if m["moduleId"]}
 
 
@@ -741,18 +802,17 @@ def _plan_titles(plan):
 def sync_learning_plan_mirror(source, *, strict=False):
     """Write the learner's assigned plan to normalized learner relations.
 
-    The plan staff edit lives on ``enrolment."Created_users"."Learning_plan"``.
-    That is still the record of truth; this copies it outwards so the surfaces
-    that already read those tables can see what a learner is assigned:
+    The existing staff editor still posts through the enrolment-side JSON
+    compatibility field. This copies the accepted selection into the canonical
+    learner assignment relations used by delivery readers:
 
     * ``Learner.learner_training_plan_*`` -- the normalized learner-facing
       assignment used by coach, marking and reporting surfaces.
     * ``Created_users`` Modules/Weeks/Components -- the legacy title columns,
       kept in step so they cannot describe a plan the learner no longer has.
 
-    Resolved through ``get_training_plan``, which is the same resolver the
-    learner's own "My learning" page uses, so the mirror shows what the learner
-    sees rather than a second opinion assembled here.
+    The learner's own My Learning page reads the normalized result directly;
+    it does not re-read this compatibility payload.
 
     An unassigned plan writes an empty mirror rather than being skipped: a
     learner whose plan was cleared must not keep a stale copy of it.
@@ -801,7 +861,197 @@ def sync_learning_plan_mirror(source, *, strict=False):
     return len(plan)
 
 
-def _serialize(learner):
+def _canonical_profile_for(learner):
+    """Resolve the canonical learner owner through the exact enrolment link."""
+    return (
+        LearnerProfile._base_manager.using(TRAINING_PLAN_DATABASE)
+        .only("id", "enrolment_id")
+        .filter(enrolment_id=learner.pk)
+        .first()
+    )
+
+
+def _is_current_curriculum_row(row):
+    return _s(getattr(row, "status", "")).casefold() != "inactive"
+
+
+def _canonical_tree_for_modules(module_ids):
+    """Expand an ordered module selection into the current Curriculum tree.
+
+    The reconciliation service independently validates every relationship
+    again after it acquires the learner lock.
+    """
+    module_ids = tuple(module_ids)
+    modules = ModuleAuthoringModule._base_manager.using(
+        TRAINING_PLAN_DATABASE
+    ).in_bulk(module_ids)
+    missing = [module_id for module_id in module_ids if module_id not in modules]
+    if missing:
+        raise TrainingPlanValidationError(
+            "unknown_curriculum_assignment",
+            "One or more requested Curriculum modules do not exist.",
+            details={"moduleIds": missing, "weekIds": [], "componentIds": []},
+        )
+
+    weeks = list(
+        ModuleAuthoringWeek._base_manager.using(TRAINING_PLAN_DATABASE)
+        .filter(module_catalogue_id__in=module_ids)
+        .only("id", "module_catalogue_id", "display_order", "week_number", "status")
+        .order_by("module_catalogue_id", "display_order", "week_number", "id")
+    )
+    weeks = [row for row in weeks if _is_current_curriculum_row(row)]
+    week_ids = [row.id for row in weeks]
+    components = list(
+        ModuleAuthoringComponent._base_manager.using(TRAINING_PLAN_DATABASE)
+        .filter(week_id__in=week_ids, module_catalogue_id__in=module_ids)
+        .only("id", "week_id", "module_catalogue_id", "display_order", "status")
+        .order_by("module_catalogue_id", "week_id", "display_order", "id")
+    ) if week_ids else []
+    components = [row for row in components if _is_current_curriculum_row(row)]
+
+    weeks_by_module = {}
+    for week in weeks:
+        weeks_by_module.setdefault(week.module_catalogue_id, []).append(week)
+    components_by_week = {}
+    for component in components:
+        components_by_week.setdefault(component.week_id, []).append(component)
+
+    return [
+        {
+            "moduleId": module_id,
+            "weeks": [
+                {
+                    "weekId": week.id,
+                    "components": [
+                        {"componentId": component.id}
+                        for component in components_by_week.get(week.id, [])
+                    ],
+                }
+                for week in weeks_by_module.get(module_id, [])
+            ],
+        }
+        for module_id in module_ids
+    ]
+
+
+def _compatibility_projection(canonical_plan):
+    """Derive legacy JSON and title summaries from canonical assignments only."""
+    module_ids = [row["moduleId"] for row in canonical_plan]
+    week_ids = [
+        week["weekId"] for module in canonical_plan for week in module.get("weeks", [])
+    ]
+    component_ids = [
+        component["componentId"]
+        for module in canonical_plan
+        for week in module.get("weeks", [])
+        for component in week.get("components", [])
+    ]
+    module_payloads = _modules_by_id(module_ids, using=TRAINING_PLAN_DATABASE)
+    weeks = ModuleAuthoringWeek._base_manager.using(
+        TRAINING_PLAN_DATABASE
+    ).in_bulk(week_ids)
+    components = ModuleAuthoringComponent._base_manager.using(
+        TRAINING_PLAN_DATABASE
+    ).in_bulk(component_ids)
+    missing = {
+        "moduleIds": [value for value in module_ids if value not in module_payloads],
+        "weekIds": [value for value in week_ids if value not in weeks],
+        "componentIds": [value for value in component_ids if value not in components],
+    }
+    if any(missing.values()):
+        raise TrainingPlanConflict(
+            "canonical_projection_unavailable",
+            "The canonical Training Plan could not be projected safely.",
+            details=missing,
+        )
+
+    projection = []
+    for module in canonical_plan:
+        projected_weeks = []
+        for week in module.get("weeks", []):
+            week_row = weeks[week["weekId"]]
+            projected_components = []
+            for component in week.get("components", []):
+                component_row = components[component["componentId"]]
+                projected_components.append({
+                    "componentId": component_row.id,
+                    "componentTitle": _s(component_row.title) or _s(component_row.type) or "Activity",
+                    "type": _s(component_row.type),
+                    "expectedOtjh": float(component_row.expected_otjh or 0),
+                })
+            projected_weeks.append({
+                "weekId": week_row.id,
+                "weekTitle": _s(week_row.title) or f"Week {week_row.week_number}",
+                "components": projected_components,
+            })
+        projection.append({
+            **module_payloads[module["moduleId"]],
+            "weeks": projected_weeks,
+        })
+    return projection
+
+
+def _editor_authorization(request, profile, enrolment_id):
+    account = getattr(request, "login_account", None)
+    role = _s(getattr(account, "role", "")).casefold()
+    if role == "learner":
+        try:
+            owns_source = int(getattr(account, "subject_id", 0)) == int(enrolment_id)
+        except (TypeError, ValueError):
+            owns_source = False
+        if not owns_source:
+            raise TrainingPlanAuthorizationError(
+                "learner_access_denied",
+                "The caller is not authorized to modify this learner's Training Plan.",
+            )
+        return TrainingPlanAuthorization.for_learner(profile.id)
+    if role in {"staff", "admin"}:
+        return TrainingPlanAuthorization.for_staff()
+    raise TrainingPlanAuthorizationError(
+        "authorization_required",
+        "An authenticated learner owner or staff member is required.",
+    )
+
+
+def _write_compatibility_projection(learner, projection):
+    """Update only derived compatibility fields on the editor connection."""
+    modules_csv, weeks_csv, components_csv = _plan_titles(projection)
+    plan_field = "training_plan" if learner_type(learner) == "commercial" else "learning_plan"
+    updated = (
+        EnrolmentUser.all_learners.using(TRAINING_PLAN_DATABASE)
+        .filter(pk=learner.pk)
+        .update(**{
+            plan_field: projection,
+            "modules": modules_csv,
+            "weeks": weeks_csv,
+            "components": components_csv,
+        })
+    )
+    if updated != 1:
+        raise TrainingPlanConflict(
+            "compatibility_projection_not_saved",
+            "The compatibility Training Plan projection could not be saved.",
+        )
+
+
+def _invalidate_training_plan_caches(learner):
+    """Invalidate plan-dependent caches only after the transaction commits."""
+    try:
+        from .subject_cache import bump_learners
+        from .read_model import enqueue_learner_home_refresh
+
+        bump_learners([learner.pk], using=TRAINING_PLAN_DATABASE)
+        enqueue_learner_home_refresh(
+            learner_type(learner), learner.pk,
+            reason="training-plan-editor", using=TRAINING_PLAN_DATABASE,
+        )
+    except Exception:
+        logger.exception(
+            "learning_plan: cache invalidation failed for learner %s", learner.pk
+        )
+
+
+def _legacy_serialize(learner):
     from .free_course_catalogue import builder_free_courses
     programme = _s(learner.programme)
     group = _s(learner.group)
@@ -927,6 +1177,59 @@ def _serialize(learner):
     }
 
 
+def _serialize(learner, *, canonical_plan, plan_version):
+    """Return the existing editor shape from canonical assignments only."""
+    from .free_course_catalogue import builder_free_courses
+
+    catalogue = learner_programme_modules(learner)
+    by_id = {module["moduleId"]: module for module in catalogue}
+    preset_ids = learner_group_module_ids(learner)
+    preset = [by_id[module_id] for module_id in preset_ids if module_id in by_id]
+
+    canonical_ids = [_s(module.get("moduleId")) for module in canonical_plan]
+    off_programme = _modules_by_id(
+        module_id for module_id in canonical_ids if module_id not in by_id
+    )
+    plan = [
+        by_id.get(module_id) or off_programme[module_id]
+        for module_id in canonical_ids
+    ]
+
+    chosen = {module["moduleId"] for module in plan}
+    everything = _all_modules()
+    meetings, meetings_reason = _meetings(learner)
+    free_course_ids = _canonical_free_course_assignment_ids(learner)
+    return {
+        "learner": {
+            "id": str(learner.id),
+            "name": _s(learner.username),
+            "programme": _s(learner.programme),
+            **placement_payload(learner),
+            "cohort": _s(learner.cohort),
+            "group": _s(learner.group),
+            "programmeStatus": _s(learner.programme_status),
+            "learnerType": learner_type(learner),
+        },
+        "plan": plan,
+        "planVersion": plan_version,
+        "freeCourses": _canonical_free_course_assignments(learner, free_course_ids),
+        "freeCourseAssignmentVersion": _canonical_free_course_assignment_version(
+            learner, free_course_ids,
+        ),
+        "standaloneCourses": builder_free_courses(include_content=False),
+        # The preset remains an explicit editor convenience only. It is never
+        # merged into the displayed or saved canonical plan automatically.
+        "preset": preset,
+        "available": [module for module in everything if module["moduleId"] not in chosen],
+        "programmes": _programmes(everything),
+        "saved": bool(plan),
+        "inheritedCount": 0,
+        "meetings": meetings,
+        "meetingsReason": meetings_reason,
+        "totals": _totals(plan, meetings, kind=learner_type(learner)),
+    }
+
+
 @ensure_csrf_cookie
 @csrf_exempt
 # Saving the plan rewrites the learner's modules and can advance their
@@ -944,7 +1247,7 @@ def learning_plan(request, pk):
 
     if request.method == "GET":
         try:
-            return JsonResponse(_serialize(learner))
+            return JsonResponse(_legacy_serialize(learner))
         except DatabaseError:
             logger.exception("learning_plan: read failed")
             return _error("Could not read the learning plan.", 503)
@@ -1065,7 +1368,99 @@ def learning_plan(request, pk):
     # happened to run the check. Never raises — see advance_learner.
     advance_learner(learner)
 
-    return JsonResponse(_serialize(learner))
+    return JsonResponse(_legacy_serialize(learner))
+
+
+@ensure_csrf_cookie
+@csrf_exempt
+@learner_self_or_staff(kwarg="pk")
+def canonical_learning_plan(request, pk):
+    """Read or reconcile the canonical learner Training Plan."""
+    try:
+        learner = EnrolmentUser.all_learners.using(
+            TRAINING_PLAN_DATABASE
+        ).get(pk=pk)
+    except EnrolmentUser.DoesNotExist:
+        return _error("Learner not found.", 404)
+    except DatabaseError:
+        logger.exception("learning_plan: lookup failed")
+        return _error("Could not read the learner.", 503)
+
+    try:
+        profile = _canonical_profile_for(learner)
+        if request.method == "GET":
+            if profile is None:
+                canonical_plan = ()
+                plan_version = empty_training_plan_version()
+            else:
+                snapshot = training_plan_snapshot(
+                    profile.id, using=TRAINING_PLAN_DATABASE
+                )
+                canonical_plan = snapshot.plan
+                plan_version = snapshot.plan_version
+            return JsonResponse(_serialize(
+                learner,
+                canonical_plan=canonical_plan,
+                plan_version=plan_version,
+            ))
+
+        if request.method not in ("PATCH", "PUT"):
+            return _error("Method not allowed.", 405)
+
+        try:
+            payload = json.loads(request.body or b"{}")
+        except ValueError as exc:
+            raise TrainingPlanValidationError(
+                "invalid_json", "Request body must be valid JSON."
+            ) from exc
+        editor_request = parse_training_plan_editor_request(payload)
+
+        # Older clients may still send this read snapshot. It remains a strict
+        # canonical no-op and never becomes an assignment source here.
+        if "freeCourses" in payload:
+            assignment_error = _validate_free_course_assignment_snapshot(
+                learner, payload.get("freeCourses")
+            )
+            if assignment_error is not None:
+                return assignment_error
+
+        if profile is None:
+            raise TrainingPlanConflict(
+                "canonical_learner_profile_required",
+                "The learner does not yet have a canonical profile to own the Training Plan.",
+                details={"enrolmentId": learner.pk},
+            )
+        authorization = _editor_authorization(request, profile, learner.pk)
+
+        with transaction.atomic(using=TRAINING_PLAN_DATABASE):
+            requested_plan = _canonical_tree_for_modules(editor_request.module_ids)
+            result = reconcile_training_plan(
+                profile.id,
+                requested_plan,
+                authorization=authorization,
+                expected_version=editor_request.expected_plan_version,
+                reorder=True,
+                using=TRAINING_PLAN_DATABASE,
+            )
+            projection = _compatibility_projection(result.plan)
+            _write_compatibility_projection(learner, projection)
+            response_payload = _serialize(
+                learner,
+                canonical_plan=result.plan,
+                plan_version=result.plan_version,
+            )
+            transaction.on_commit(
+                lambda: _invalidate_training_plan_caches(learner),
+                using=TRAINING_PLAN_DATABASE,
+            )
+        return JsonResponse(response_payload)
+    except TrainingPlanWriteError as exc:
+        return JsonResponse(
+            exc.as_dict(), status=training_plan_editor_error_status(exc)
+        )
+    except DatabaseError:
+        logger.exception("learning_plan: canonical editor failed")
+        return _error("Could not save the learning plan.", 503)
 
 
 # ---------------------------------------------------------------------------
@@ -1143,7 +1538,10 @@ def _effective_plan_ids(learner, preset_cache, *, saved_plan=...):
     same way, so a module inherited from the group reads as assigned here too
     and the picker cannot contradict the modal.
     """
-    saved = stored_training_plan(learner) if saved_plan is ... else saved_plan
+    if saved_plan is ... and hasattr(learner, "_canonical_training_plan"):
+        saved = list(learner._canonical_training_plan or [])
+    else:
+        saved = stored_training_plan(learner) if saved_plan is ... else saved_plan
     if saved is None:
         return list(_preset_ids_for(learner, preset_cache))
     ids = [_s(entry.get("moduleId")) for entry in saved if _s(entry.get("moduleId"))]
@@ -1164,6 +1562,9 @@ def effective_training_plan(learner, preset_cache=None):
     modules. Module Builder remains authoritative for their live titles, weeks
     and components.
     """
+    if hasattr(learner, "_canonical_training_plan"):
+        return list(learner._canonical_training_plan or [])
+
     saved = stored_training_plan(learner)
     plan = list(saved if saved is not None else (get_training_plan(learner) or []))
     effective_ids = _effective_plan_ids(

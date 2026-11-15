@@ -5,8 +5,9 @@ import { ActivityChart, CohortChart, WeeklySessionChart } from './DeliveryCharts
 import { cohortSegments, deliveryDateLabel, deliverySessionTime, deliveryWeek, type DeliveryLiveSession } from './deliveryDashboard';
 import styles from './DeliveryWorkspace.module.css';
 
-type Destination = { title: string; description: string; href: string; icon: string; meta?: string };
-type AttentionItem = { label: string; value: number; href: string; icon: string };
+type Destination = { title: string; description: string; href: string; icon: string; meta?: string; note?: string };
+/** `staffing` ties a readiness row to the active-only count in Delivery activity. */
+type AttentionItem = { label: string; value: number; href: string; icon: string; staffing?: 'coach' | 'tutor' };
 
 export interface DeliveryWorkspaceProps {
   description: string;
@@ -42,6 +43,15 @@ export interface DeliveryWorkspaceProps {
 
 const number = new Intl.NumberFormat('en-GB');
 const accents = ['violet', 'sky', 'gold', 'violet', 'gold', 'green'] as const;
+/** Says the row's unit (every record) beside the active-only Staffing count. */
+function attentionScope(item: AttentionItem, staffing: DeliveryWorkspaceProps['staffing'], hidden: boolean) {
+  if (!item.staffing || hidden) return '';
+  const all = item.staffing === 'coach' ? 'All groups, active or not' : 'All modules, active or not';
+  const pending = item.staffing === 'coach' ? staffing?.coachLoading ?? staffing?.loading : staffing?.tutorLoading ?? staffing?.loading;
+  const active = item.staffing === 'coach' ? staffing?.needsCoach : staffing?.needsTutor;
+  if (!staffing || pending || active === null || active === undefined) return all;
+  return `${all} · ${number.format(active)} of them ${item.staffing === 'coach' ? 'in active groups' : 'active or running in the next 14 days'}`;
+}
 function LoadingValue() { return <span className={styles.skeleton} aria-hidden="true" />; }
 function ChartSkeleton() { return <div className={styles.chartSkeleton} aria-hidden="true" />; }
 
@@ -72,7 +82,10 @@ export default function DeliveryWorkspace({
   const activeCohorts = cohortSegments(cohorts)[0].value;
   const sessionsUnavailable = Boolean(sessionsError && !sessions.length);
   const chartUnavailable = Boolean(chartError) || sessionsUnavailable;
-  const nextLabel = week.next ? `${deliveryDateLabel(week.next.date, true)} · ${deliverySessionTime(week.next.startTime)} UK` : '';
+  // "Next live" is the next session anywhere, like the Session Calendar card. The
+  // chart stays active-modules only, so a module starting tomorrow is not skipped.
+  const next = calendarWeek.next;
+  const nextLabel = next ? `${deliveryDateLabel(next.date, true)} · ${deliverySessionTime(next.startTime)} UK` : '';
   return <main className={styles.page}>
     <div className={styles.watermark} aria-hidden="true" />
     <div className={styles.content}>
@@ -124,6 +137,7 @@ export default function DeliveryWorkspace({
               data-clear={item.count === 0 && !item.loading || undefined}>
               <span>{item.label}</span><strong aria-label={`${item.label} count`}>{item.loading ? '…' : item.count === null ? 'Unavailable' : number.format(item.count)}</strong>
             </Link>)}</div>
+            <small className={styles.staffingScope}>Active work only. Delivery setup below counts every group and module.</small>
           </div>}
           <div className={styles.statFooter}><Link to="/curriculum/module-builder">Review modules <AppIcon className="ri-arrow-right-line" size={13} /></Link></div>
         </article>
@@ -139,7 +153,7 @@ export default function DeliveryWorkspace({
           {chartSessions && <p className={styles.statNote}>Live sessions from active modules</p>}
           {chartLoading ? <><span className={styles.srOnly} role="status">Loading live sessions.</span><ChartSkeleton /></> : chartUnavailable ? <p className={styles.statNote}>Session dates or active modules could not be verified.</p> : <>
             <WeeklySessionChart week={week} />
-            <p className={styles.nextSession}>{week.next ? <><span>Next live</span> <strong title={week.next.title}>{nextLabel}</strong></> : 'No upcoming live sessions scheduled.'}</p>
+            <p className={styles.nextSession}>{next ? <><span>Next live</span> <strong title={next.title}>{nextLabel}</strong></> : 'No upcoming live sessions scheduled.'}</p>
             {!week.count && <span className={styles.srOnly}>No live sessions in the selected week.</span>}
           </>}
           {!sessionsLoading && undated > 0 && <p className={styles.activityWarning}>{number.format(undated)} live sessions without a valid date (across the session calendar)</p>}
@@ -149,7 +163,7 @@ export default function DeliveryWorkspace({
       </section>
 
       <section className={styles.workspaces} aria-labelledby="delivery-workspaces-title">
-        <div className={styles.sectionHeading}><div><p className={styles.eyebrow}>Workspaces</p><h2 id="delivery-workspaces-title">Choose what you want to do</h2><p>Each destination owns one job, so you always know where a change will be saved.</p></div><span className={styles.workspaceCount}><span aria-hidden="true" />6 workspaces</span></div>
+        <div className={styles.sectionHeading}><div><p className={styles.eyebrow}>Workspaces</p><h2 id="delivery-workspaces-title">Choose what you want to do</h2><p>Each destination owns one job, so you always know where a change will be saved.</p></div><span className={styles.workspaceCount}><span aria-hidden="true" />{cards.length} workspaces</span></div>
         <div className={styles.grid}>{cards.map((card, index) => {
           const calendar = card.href === '/curriculum/session-calendar';
           const pending = calendar ? sessionsLoading : loading;
@@ -157,6 +171,7 @@ export default function DeliveryWorkspace({
           return <Link to={card.href} key={card.href} className={styles.card} data-accent={accents[index]}>
             <div className={styles.cardTop}><span className={styles.icon}><AppIcon className={card.icon} size={23} /></span>{card.meta && (pending ? <LoadingValue /> : <span className={styles.badge}>{missing ? 'Unavailable' : card.meta}</span>)}</div>
             <h3>{card.title}</h3><p>{card.description}</p>
+            {card.note && !pending && !missing && <span className={styles.nextCardSession}>{card.note}</span>}
             {calendar && calendarWeek.next && !pending && !missing && <span className={styles.nextCardSession}>Next live · {deliveryDateLabel(calendarWeek.next.date, true)} · {deliverySessionTime(calendarWeek.next.startTime)} UK</span>}
             <span className={styles.cardAction}>Open workspace <AppIcon className="ri-arrow-right-line" size={16} /></span>
           </Link>;
@@ -164,13 +179,16 @@ export default function DeliveryWorkspace({
       </section>
 
       <section className={styles.readiness} aria-labelledby="delivery-setup-title">
-        <div className={styles.readinessHeading}><div><p className={styles.eyebrow}>Delivery readiness</p><h2 id="delivery-setup-title">Delivery setup to finish</h2><p>Assignments that can block a clean launch.</p></div><span className={styles.checks}><AppIcon className="ri-checkbox-multiple-line" size={15} />3 checks</span></div>
-        <ul>{attentionItems.map(item => <li key={item.label}>
-          <Link to={item.href} className={styles.attention} aria-label={`${item.label}: ${loading ? 'Loading' : unavailable ? 'Unavailable' : item.value === 0 ? 'Clear' : number.format(item.value)}`} data-clear={!loading && !unavailable && item.value === 0 || undefined}>
-            <span className={styles.attentionIcon}><AppIcon className={!loading && !unavailable && item.value === 0 ? 'ri-checkbox-circle-line' : item.icon} size={20} /></span><span className={styles.attentionLabel}>{item.label}</span>
+        <div className={styles.readinessHeading}><div><p className={styles.eyebrow}>Delivery readiness</p><h2 id="delivery-setup-title">Delivery setup to finish</h2><p>Assignments that can block a clean launch.</p></div><span className={styles.checks}><AppIcon className="ri-checkbox-multiple-line" size={15} />{attentionItems.length} checks</span></div>
+        <ul>{attentionItems.map(item => {
+          const note = attentionScope(item, staffing, loading || unavailable);
+          return <li key={item.label}>
+          <Link to={item.href} className={styles.attention} aria-label={`${item.label}: ${loading ? 'Loading' : unavailable ? 'Unavailable' : item.value === 0 ? 'Clear' : number.format(item.value)}${note ? `. ${note}` : ''}`} data-clear={!loading && !unavailable && item.value === 0 || undefined}>
+            <span className={styles.attentionIcon}><AppIcon className={!loading && !unavailable && item.value === 0 ? 'ri-checkbox-circle-line' : item.icon} size={20} /></span><span className={styles.attentionLabel}>{item.label}{note && <small className={styles.attentionScope}>{note}</small>}</span>
             {loading ? <LoadingValue /> : <span className={styles.attentionValue}>{unavailable ? 'Unavailable' : item.value === 0 ? 'Clear' : number.format(item.value)}</span>}<AppIcon className={`ri-arrow-right-s-line ${styles.chevron}`} size={18} />
           </Link>
-        </li>)}</ul>
+        </li>;
+        })}</ul>
       </section>
     </div>
   </main>;

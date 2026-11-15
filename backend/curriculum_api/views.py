@@ -1308,21 +1308,8 @@ def training_row_column_module_catalogue_id(row):
     return clean_str((row or {}).get(TRAINING_MODULE_CATALOGUE_COLUMN))
 
 
-def training_row_legacy_module_catalogue_id(row):
-    meta = (row or {}).get('_meta') or extract_notes_meta((row or {}).get('notes'))
-    return clean_str(meta.get(TRAINING_MODULE_CATALOGUE_COLUMN))
-
-
 def training_row_invalid_explicit_module_catalogue_id(row):
     value = training_row_column_module_catalogue_id(row)
-    return value if value and not is_canonical_module_catalogue_id(value) else ''
-
-
-def training_row_stale_legacy_module_catalogue_id(row):
-    column_value = training_row_column_module_catalogue_id(row)
-    if column_value:
-        return ''
-    value = training_row_legacy_module_catalogue_id(row)
     return value if value and not is_canonical_module_catalogue_id(value) else ''
 
 
@@ -1330,8 +1317,7 @@ def training_row_module_catalogue_id(row):
     column_value = training_row_column_module_catalogue_id(row)
     if column_value:
         return column_value if is_canonical_module_catalogue_id(column_value) else ''
-    legacy_value = training_row_legacy_module_catalogue_id(row)
-    return legacy_value if is_canonical_module_catalogue_id(legacy_value) else ''
+    return ''
 
 
 def link_training_row_to_catalogue(training_id, module_catalogue_id):
@@ -1456,25 +1442,29 @@ def stored_module_cover_image(module_catalogue_id, value):
     stores. One cover per module, so the path has a fixed slot and a new upload
     simply replaces the old one.
 
-    Anything that is not an inline image is returned untouched: an https:// URL
+    Anything that is not an inline value is returned untouched: an https:// URL
     a curator pasted is already a URL, and '' still means "remove the cover".
-    Storage failing returns the value unchanged rather than raising -- a saved
-    module with an oversized cover is better than a module that would not save.
+
+    A ``data:`` value is never handed back for a column. One that is not a
+    base64 image of a known type, does not decode, or cannot be stored raises
+    ``CoverImageError`` and the save is refused: no image is kept as base64.
     """
     value = clean_str(value)
-    match = MODULE_COVER_DATA_URI.match(value)
-    if not match:
+    if not value.lower().startswith('data:'):
         return value
-    content_type = match.group(1).lower()
+    match = MODULE_COVER_DATA_URI.match(value)
+    content_type = match.group(1).lower() if match else ''
+    if content_type not in MODULE_COVER_EXTENSIONS:
+        raise CoverImageError('Choose a JPG, PNG, GIF, WebP, AVIF, SVG or BMP image.')
     try:
         raw = base64.b64decode(re.sub(r'\s+', '', match.group(2)), validate=True)
     except Exception:
         logger.warning('Module %s sent a cover image that is not valid base64.', module_catalogue_id)
-        return value
+        raise CoverImageError('The image could not be read. Choose it again.')
     if not raw:
         return ''
     module_segment = safe_upload_segment(module_catalogue_id, 'module')
-    extension = MODULE_COVER_EXTENSIONS.get(content_type, '.img')
+    extension = MODULE_COVER_EXTENSIONS[content_type]
     timestamp = datetime.utcnow().strftime('%Y%m%d%H%M%S%f')
     relative_path = (
         f'{COMPONENT_UPLOAD_ROOT}/{module_segment}/{MODULE_COVER_UPLOAD_SLOT}/cover-{timestamp}{extension}'
@@ -1483,7 +1473,7 @@ def stored_module_cover_image(module_catalogue_id, value):
         saved_path = upload_storage.store(ContentFile(raw), relative_path, content_type)
     except Exception:
         logger.exception('Unable to store the cover image for module %s.', module_catalogue_id)
-        return value
+        raise CoverImageError('The image could not be uploaded right now. Try again.')
     public_path = saved_path.removeprefix(f'{COMPONENT_UPLOAD_ROOT}/')
     return f'/curriculum_api/curriculum/uploads/{public_path}'
 
@@ -5581,7 +5571,8 @@ def curriculum_teams_meeting_artifact_content(request, live_session_id, artifact
         request_headers['Range'] = range_header
     graph_request = urllib_request.Request(url, headers=request_headers, method='GET')
     try:
-        graph_response = urllib_request.urlopen(graph_request, timeout=45)
+        from .transcript_transport import open_transcript
+        graph_response = open_transcript(urllib_request.urlopen, graph_request, timeout=45)
     except urllib_error.HTTPError as exc:
         if exc.code == 416 and artifact_type == 'recording':
             response = HttpResponse(status=416)
@@ -7612,7 +7603,7 @@ def unhook_programme_reusables(plan, removed):
             count(WEEK_TEMPLATES_TABLE, update_rows(WEEK_TEMPLATES_TABLE, where_sql, params, updates))
 
 
-def permanently_delete_programme_structure(plan):
+def permanently_delete_programme_structure(plan, force_content=False):
     """Delete an archived programme that no longer owns authored content.
 
     The order is dictated by the foreign keys migration 0038 added (children
@@ -7620,8 +7611,11 @@ def permanently_delete_programme_structure(plan):
     ``delete from curriculum.programmes`` cannot supply, which is why Postgres
     answers it with ``cohorts_programme_id_fkey``.
 
-    Authored content is *not* deleted: a programme that still owns weeks or
-    components is refused whole (``refuse_if_programme_owns_content``). Quizzes
+    Authored content is *not* deleted by the normal path: a programme that still
+    owns weeks or components is refused whole (``refuse_if_programme_owns_content``).
+    ``force_content=True`` is an explicit destructive override used only by the
+    forced-delete flow; it removes components and weeks before their modules.
+    Quizzes
     and week templates are kept, unhooked from it (``unhook_programme_reusables``);
     the delivery scaffolding - the programme, cohorts, groups, modules, live
     sessions and link rows - is what actually goes. Deleting a live session
@@ -7667,7 +7661,8 @@ def permanently_delete_programme_structure(plan):
     component_clause = curriculum_in_clause('component_id', child.get('componentIds'))
 
     # Refuse before anything is written, then unhook what is kept.
-    refuse_if_programme_owns_content(plan)
+    if not force_content:
+        refuse_if_programme_owns_content(plan)
     unhook_programme_reusables(plan, removed)
 
     # Mappings are placed by component; the plan's componentIds already hold
@@ -7675,6 +7670,15 @@ def permanently_delete_programme_structure(plan):
     wipe(AUTHORING_KSB_MAPPINGS_TABLE, [component_clause])
     wipe('quiz_component_links', [component_clause])
     wipe('quiz_course_links', [module_clause, week_clause])
+    if force_content:
+        # Authored content is explicitly opted into deletion here. Components
+        # must go before weeks, and both must go before their parent modules.
+        wipe(AUTHORING_COMPONENTS_TABLE, [
+            curriculum_in_clause('id', child.get('componentIds')),
+        ])
+        wipe(AUTHORING_WEEKS_TABLE, [
+            curriculum_in_clause('id', child.get('weekIds')),
+        ])
     wipe('tutor_module_notifications', [module_clause])
     wipe('module_completion_criteria', [module_clause])
     wipe('module_details', [module_clause])
@@ -7717,7 +7721,14 @@ def request_wants_permanent_programme_delete(request):
     return request_wants_permanent_delete(request)
 
 
-def permanent_programme_delete_response(identifier, programme=None, config=None):
+def request_wants_forced_programme_delete(request):
+    """Opt into deleting authored weeks/components as well as delivery rows."""
+    return request_wants_permanent_programme_delete(request) and truthy(
+        request.GET.get('force') or request.GET.get('cascade')
+    )
+
+
+def permanent_programme_delete_response(identifier, programme=None, config=None, force_content=False):
     """HTTP outcome of a permanent programme delete.
 
     Archived-only by design: ``is_archived`` is the switch that turns an
@@ -7756,7 +7767,7 @@ def permanent_programme_delete_response(identifier, programme=None, config=None)
 
     try:
         with transaction.atomic():
-            removed = permanently_delete_programme_structure(plan)
+            removed = permanently_delete_programme_structure(plan, force_content=force_content)
         # Again, now the delete is committed. The invalidation inside the
         # transaction cannot be the last word: a read arriving before the commit
         # refills every cache from rows that are on their way out, and the
@@ -7809,6 +7820,7 @@ def permanent_programme_delete_response(identifier, programme=None, config=None)
     return JsonResponse({
         'deleted': True,
         'permanent': True,
+        'forced': bool(force_content),
         'archived': False,
         'id': clean_str(identifier),
         'removed': removed,
@@ -8813,45 +8825,17 @@ def get_training_rows():
 
 
 def get_module_rows():
-    if not table_exists('Modules'):
-        return authoring_modules_as_catalogue_rows()
-    if not table_exists('Modules') and table_exists(AUTHORING_MODULES_TABLE):
-        rows = fetch_all(f'''
-            select *
-            from {table_name(AUTHORING_MODULES_TABLE)}
-            order by title, module_catalogue_id
-        ''')
-        return [
-            {
-                **row,
-                'Module ID': row.get('module_catalogue_id'),
-                'Module_name': row.get('title') or row.get('module_catalogue_id') or 'Module',
-                'Number of sessions': row.get('sessions_number') or 0,
-                'start_date': row.get('start_date'),
-                'end_date': row.get('end_date'),
-                'Module_colour': row.get('color') or '#6941c6',
-                'Notes': row.get('description') or '',
-                'session_ksb_json': '',
-            }
-            for row in rows
-        ]
-
-    return fetch_all(f'''
-        select *
-        from "{CURRICULUM_SCHEMA}"."Modules"
-        order by "Module_name", "Module ID"
-    ''')
+    # The authoring tables are the catalogue: the legacy curriculum."Modules"
+    # table no longer exists in the curriculum database.
+    return authoring_modules_as_catalogue_rows()
 
 
 @scoped_curriculum_read
 def get_ksb_profile_rows():
-    if not table_exists('ksb_profiles'):
-        return []
-    return fetch_all(f'''
-        select *
-        from {table_name("ksb_profiles")}
-        order by is_active desc, name
-    ''')
+    # curriculum.ksb_profiles was removed: a programme takes its KSBs from its
+    # apprenticeship standard (standard_ksbs). Kept as an empty source so the
+    # callers that still pass profiles through need no change.
+    return []
 
 
 # The standard KSB rows as last read, with the digest they were read under
@@ -9390,12 +9374,8 @@ def build_staff_user_profile_collection(role, visibility='operational'):
         )
         return build_staff_profiles(profile_rows, role, [], groups)
     # Tutor profiles only expose module identities/dates/status. Week titles
-    # and group statistics cannot affect those fields. Legacy catalogues keep
-    # their existing resolver, including non-authoring identifiers.
-    catalogue = (
-        authoring_modules_as_catalogue_rows(week_rows=[])
-        if not table_exists('Modules') else get_module_rows()
-    )
+    # and group statistics cannot affect those fields.
+    catalogue = authoring_modules_as_catalogue_rows(week_rows=[])
     modules = build_modules(
         catalogue,
         training_rows,
@@ -9713,7 +9693,7 @@ def get_curriculum_rows(compact=False):
     # five; each reader still makes its own call and finds its rows memoised.
     prefetch_authoring_reads([
         *training_index_reads(),
-        *([] if table_exists('Modules') else [((AUTHORING_WEEKS_TABLE,), {'columns': WEEK_INDEX_COLUMNS})]),
+        ((AUTHORING_WEEKS_TABLE,), {'columns': WEEK_INDEX_COLUMNS}),
     ])
     rows = {
         'training': get_training_rows(),
@@ -9770,7 +9750,6 @@ def build_modules(module_rows, training_rows, program_configs=None, include_unus
         group_id = group['id']
         catalogue_id = training_row_module_catalogue_id(row)
         invalid_explicit_id = training_row_invalid_explicit_module_catalogue_id(row)
-        stale_legacy_id = training_row_stale_legacy_module_catalogue_id(row)
         catalogue = module_catalog.get(str(catalogue_id)) or module_catalog.get(normalise(row.get('module_name')))
         name = row.get('module_name') or (catalogue.get('Module_name') if catalogue else f'Module {row.get("id")}')
         delivery_module_id = clean_str(row.get('id')) or catalogue_id
@@ -9799,7 +9778,6 @@ def build_modules(module_rows, training_rows, program_configs=None, include_unus
             'moduleCatalogueId': catalogue_id,
             'deliveryRowId': row.get('id'),
             'deliveryModuleId': delivery_module_id,
-            'legacyModuleId': stale_legacy_id,
             'invalidModuleCatalogueId': invalid_explicit_id,
             'structureId': canonical_module_id,
             'sourceId': catalogue_id,
@@ -11185,7 +11163,6 @@ def build_sessions(training_rows, module_rows, program_configs=None, authoring_m
         delivery_module_id = clean_str(row.get('id'))
         explicit_catalogue_id = training_row_module_catalogue_id(row)
         invalid_explicit_id = training_row_invalid_explicit_module_catalogue_id(row)
-        stale_legacy_id = training_row_stale_legacy_module_catalogue_id(row)
         module_id = explicit_catalogue_id or delivery_module_id
         cohort = actual_cohort_identity(row, program)
         if not cohort:
@@ -11257,7 +11234,6 @@ def build_sessions(training_rows, module_rows, program_configs=None, authoring_m
                 'moduleId': module_id,
                 'deliveryModuleId': delivery_module_id,
                 'moduleCatalogueId': (authoring_module or {}).get('module_catalogue_id') or explicit_catalogue_id or meta.get('module_catalogue_id') or '',
-                'legacyModuleId': stale_legacy_id,
                 'invalidModuleCatalogueId': invalid_explicit_id,
                 'weekId': (session_links[index].get('weekId') if index < len(session_links) else '') or f'{module_id}-week-{index + 1}',
                 'componentId': (session_links[index].get('componentId') if index < len(session_links) else '') or '',
@@ -11379,7 +11355,7 @@ def build_sessions_basic(training_rows, module_rows, program_configs=None, holid
 
 
 def module_delivery_row(module_row, group_row=None):
-    """A module row that answers with its group's delivery pattern first.
+    """Use the Group pattern unless this delivery explicitly chose Custom.
 
     The group states when its learners meet, so its delivery days and clock
     govern every module delivered to it -- changing the group moves its modules
@@ -11404,6 +11380,8 @@ def module_delivery_row(module_row, group_row=None):
     a decision about that date, not a pattern the group can take back.
     """
     module_row = dict(module_row or {})
+    if clean_str(module_row.get('schedule_mode') or module_row.get('scheduleMode')) == 'custom':
+        return module_row
     group_row = group_row or {}
     day = clean_str(group_row.get('session_week_day')) or schedule_day_part(group_row.get('schedule'))
     start = clean_str(group_row.get('session_start_time')) or schedule_time_parts(group_row.get('schedule'))[0]
@@ -11441,6 +11419,8 @@ def module_delivery_session_plan(module, session_count, start, holidays=None, we
     day at all. There is no weekday to skip onto in that case, so it stays a
     plain count of weeks and reports no shifts.
     """
+    if not week_count and clean_str(module.get('schedule_mode') or module.get('scheduleMode')) == 'custom':
+        week_count = parse_int(module.get('weeks_number') or module.get('weeksNumber'), 0)
     weekly = module_weekly_schedule(module)
     delivery_days = ', '.join(slot['day'] for slot in weekly) or module.get('session_week_day') or module.get('week_days') or module.get('delivery_days') or ''
     # A module-specific closure must not change other modules in its cohort.
@@ -11449,6 +11429,13 @@ def module_delivery_session_plan(module, session_count, start, holidays=None, we
     plan = build_module_session_plan(
         start, session_count, delivery_days, applied_holidays, week_count=week_count,
     ) if delivery_days else {}
+    custom_end = parse_date(module.get('end_date') or module.get('endDate')) if clean_str(module.get('schedule_mode') or module.get('scheduleMode')) == 'custom' else None
+    if custom_end and plan.get('sessions'):
+        plan['sessions'] = [session for session in plan['sessions'] if parse_date(session['date']) <= custom_end]
+        plan['slots'] = [slot for slot in plan.get('slots') or [] if parse_date(slot['date']) <= custom_end]
+        plan['finalEndDate'] = max((session['date'] for session in plan['sessions']), default='')
+        if not plan['sessions']:
+            return plan
     if plan.get('sessions'):
         for session in plan['sessions']:
             clock, end, duration = module_session_clock({**module, 'session_overrides': {}}, session_date=session.get('date'))
@@ -11790,6 +11777,9 @@ def module_session_dates(module, holiday_cache=None):
     signature = (
         session_count,
         start,
+        clean_str(module.get('schedule_mode')),
+        parse_int(module.get('weeks_number'), 0),
+        clean_str(module.get('end_date')),
         clean_str(module.get('session_week_day')),
         clean_str(module.get('cohort_id')),
         len(module.get('holidays') or ()),
@@ -12058,14 +12048,16 @@ def module_session_clock(module_row, group_row=None, session_date=None):
     exception = override_clock(module_row, session_date)
     if exception:
         return exception
-    # The group is where its learners are told when they meet, so the clock it
+    # Explicit Custom deliveries keep their per-day clocks. Otherwise the
+    # group is where its learners are told when they meet, so the clock it
     # states governs every module delivered to it: move the group and its
     # modules move with it, rather than each one running to a copy of the clock
     # taken when it was authored. A module's own clock -- and its per-weekday
     # table, which is a refinement of that clock -- answers where its group
     # states none: an ungrouped module, or a group never given a slot.
-    group_start = clean_str((group_row or {}).get('session_start_time'))
-    group_end = clean_str((group_row or {}).get('session_end_time'))
+    custom = clean_str((module_row or {}).get('schedule_mode') or (module_row or {}).get('scheduleMode')) == 'custom'
+    group_start = '' if custom else clean_str((group_row or {}).get('session_start_time'))
+    group_end = '' if custom else clean_str((group_row or {}).get('session_end_time'))
     start_time = group_start or clean_str((module_row or {}).get('session_start_time')) or DEFAULT_SESSION_START_TIME
     end_time = group_end or clean_str((module_row or {}).get('session_end_time')) or DEFAULT_SESSION_END_TIME
     day = parse_date(session_date)
@@ -12170,9 +12162,12 @@ def module_schedule_view(module, tutor_name=None):
         # here is what makes an unassigned module skip the check entirely.
         'tutor_name': tutor if staff_assignment_key(tutor) else '',
         'sessions_number': parse_int(sessions_number, 0),
+        'weeks_number': parse_int(first('weeks_number', 'weeksNumber'), 0),
         'start_date': first('start_date', 'startDate'),
+        'end_date': first('end_date', 'endDate'),
         'session_week_day': ', '.join(slot['day'] for slot in weekly) or first('session_week_day', 'weekDays', 'week_days', 'delivery_days', 'deliveryDays'),
         'weekly_schedule': weekly,
+        'schedule_mode': first('schedule_mode', 'scheduleMode') or 'group',
         'session_holidays': parse_json_value(module.get('session_holidays') or module.get('sessionHolidays'), []),
         'session_overrides': session_overrides(module),
         'session_start_time': first('session_start_time', 'startTime', 'start_time'),
@@ -12199,7 +12194,10 @@ def module_schedule_assignment_changed(before, after):
         'session_start_time',
         'session_end_time',
         'weekly_schedule',
+        'schedule_mode',
     )
+    if before.get('schedule_mode') == 'custom' or after.get('schedule_mode') == 'custom':
+        keys += ('weeks_number', 'end_date')
     return any(clean_str(before.get(key)) != clean_str(after.get(key)) for key in keys)
 
 
@@ -12257,6 +12255,8 @@ def tutor_delivery_schedule(schedule, groups):
     -- so assigning that tutor elsewhere was refused over sessions the group's
     own timetable does not contain.
     """
+    if clean_str((schedule or {}).get('schedule_mode') or (schedule or {}).get('scheduleMode')) == 'custom':
+        return schedule
     group = (groups or {}).get(clean_str((schedule or {}).get('group_id')))
     if not group:
         return schedule
@@ -12385,6 +12385,8 @@ def module_delivery_day_gap(schedule, groups=None):
 
     Returns the group row, so a caller can name it.
     """
+    if clean_str((schedule or {}).get('schedule_mode') or (schedule or {}).get('scheduleMode')) == 'custom' and clean_str((schedule or {}).get('session_week_day')):
+        return None
     group = (groups if groups is not None else safe_group_delivery_rows()).get(
         clean_str((schedule or {}).get('group_id'))
     )
@@ -13351,72 +13353,13 @@ def all_standard_required_ksbs():
     return definitions
 
 
-def profile_required_ksbs(identifier):
-    ident = clean_str(identifier).replace('ksb-', '', 1)
-    rows = get_ksb_profile_rows()
-    matched = None
-    for row in rows:
-        row_ids = {
-            clean_str(row.get('id')),
-            f'ksb-{clean_str(row.get("id"))}',
-            clean_str(row.get('ksb_profile_id')),
-            slugify(row.get('name') or ''),
-            *ksb_profile_context_ids(row, 'programme_ids'),
-        }
-        if clean_str(identifier) in row_ids or ident in row_ids:
-            matched = row
-            break
-    if not matched:
-        return []
-    source_id = ksb_profile_source_id(matched)
-    items = parse_json_value(matched.get('ksb_items'), [])
-    definitions = []
-    for item in items if isinstance(items, list) else []:
-        type_code = normalise_ksb_type(item.get('type'))
-        code = full_ksb_code(item)
-        if not code:
-            continue
-        definitions.append({
-            'ksb_id': clean_str(item.get('id')) or f'{source_id}:{code}',
-            'code': code,
-            'title': item.get('title') or code,
-            'description': item.get('description') or item.get('title') or '',
-            'ksb_type': ksb_type_from_value(type_code, code),
-            'source_type': 'framework',
-            'source_id': source_id,
-        })
-    return definitions
-
-
-def all_profile_required_ksbs(active_only=True):
-    definitions = []
-    seen = set()
-    for row in get_ksb_profile_rows():
-        if active_only and not truthy(row.get('is_active')):
-            continue
-        for definition in profile_required_ksbs(ksb_profile_source_id(row)):
-            identity = (
-                clean_str(definition.get('source_type')).lower(),
-                clean_str(definition.get('source_id')).lower(),
-                coverage_normalise_code(definition.get('code')),
-            )
-            if identity in seen:
-                continue
-            seen.add(identity)
-            definitions.append(definition)
-    return definitions
-
-
 def required_ksbs_for_source(source_type='', source_id=''):
     source_type, source_id = split_ksb_source(source_type, source_id)
     if source_type == 'standard' and not source_id:
         return all_standard_required_ksbs()
-    if source_type in {'framework', 'profile'} and not source_id:
-        return all_profile_required_ksbs()
     if source_type == 'standard' and source_id:
         return standard_required_ksbs(source_id)
-    if source_type in {'framework', 'profile'} and source_id:
-        return profile_required_ksbs(source_id)
+    # 'framework'/'profile' sources were KSB profiles, which no longer exist.
     return []
 
 
@@ -14335,7 +14278,7 @@ COMPACT_MODULE_LIST_FIELDS = frozenset({
     # Status badges and the delivery label.
     'status', 'authoringStatus', 'deliveryStatus',
     # Read into the module edit form and saved back out of it. Not display-only.
-    'startDate', 'endDate', 'weeklySchedule', 'sessionHolidays', 'deliveryWeeks',
+    'startDate', 'endDate', 'weeklySchedule', 'scheduleMode', 'sessionHolidays', 'deliveryWeeks',
     'weekDays', 'startTime', 'endTime', 'notes', 'color', 'coverImage',
     # Staffing shown on the row.
     'tutor', 'coach',
@@ -14356,7 +14299,6 @@ COMPACT_MODULE_LIST_DROPPED = {
     'deliveryMetadata': 'Not on the CurriculumModule TypeScript type at all, so nothing can read it off a response row. Every `deliveryMetadata` read in the frontend is of the object curriculumModuleToCatalogue() builds locally. Carries the Teams join URL, organiser and the attendee/presenter/co-organiser lists, so dropping it takes real attendee addresses out of a list response as well.',
     'qualityScore': 'Not on the CurriculumModule type; the catalogue item hardcodes 0.',
     'author': "Always '' out of build_modules() and authoring_summary_catalogue_item(). No reader.",
-    'legacyModuleId': 'No reference anywhere in the frontend.',
     'invalidModuleCatalogueId': 'No reference anywhere in the frontend. Read server-side by enrich_modules_with_authoring(), which runs before this projection.',
     'deliveryRowId': 'No reference on a module row (the one `deliveryRowId` read in the frontend is on a session).',
     'sourceType': 'No reader on a module row; curriculumModuleToCatalogue() explicitly sets its own to undefined. Read server-side before this projection.',
@@ -14672,6 +14614,10 @@ GROUPS_TABLE = 'groups'
 FREE_COURSES_TABLE = 'free_courses'
 FREE_PROGRAMME_MODULES_TABLE = 'free_course_weeks'
 FREE_PROGRAMME_COMPONENTS_TABLE = 'free_programme_components'
+# Canonical authoring tables.  These names are shared by the Home, Programme,
+# Delivery and module-authoring read/write helpers; removing the constants
+# leaves those paths with a runtime AttributeError even though the tables
+# themselves are the current normalized schema (not the retired catalogue).
 AUTHORING_MODULES_TABLE = 'modules'
 AUTHORING_WEEKS_TABLE = 'weeks'
 AUTHORING_COMPONENTS_TABLE = 'components'
@@ -14941,6 +14887,7 @@ def provision_module_authoring_tables():
                 session_start_time varchar(32),
                 session_end_time varchar(32),
                 ksb_profile_source_id varchar(128),
+                schedule_mode varchar(16) not null default 'group',
                 source_type varchar(64),
                 source_id varchar(255),
                 cover_image_url text,
@@ -14954,6 +14901,66 @@ def provision_module_authoring_tables():
                 tutor_id varchar(128)
             )
         ''')
+        # Local/test bootstrap upgrade for existing tables; never restore legacy name/flag columns.
+        if postgres:
+            for column, definition in (
+                ('sessions_number', f"integer not null default 0"),
+                ('start_date', f"date"),
+                ('end_date', f"date"),
+                ('cohort_id', f"varchar(255)"),
+                ('group_id', f"varchar(255)"),
+                ('learner_roster_mode', f"varchar(32) not null default 'inherited'"),
+                ('teams_shared_source_module_id', f"varchar(128)"),
+                ('ksb_remap_report', f"text"),
+                ('ksb_profile_source_id', f"varchar(128)"),
+                ('session_week_day', f"varchar(255)"),
+                ('session_start_time', f"varchar(32)"),
+                ('session_end_time', f"varchar(32)"),
+                ('weekly_schedule', f"{json_type}"),
+                ('schedule_mode', f"varchar(16) not null default 'group'"),
+                ('source_type', f"varchar(64)"),
+                ('source_id', f"varchar(255)"),
+                ('cover_image_url', f"text"),
+                ('session_holidays', f"{json_type}"),
+                ('session_overrides', f"{json_type} not null default '{{}}'"),
+                ('status', f"varchar(32) not null default 'active'"),
+                ('tutor_id', f"varchar(128)"),
+            ):
+                cursor.execute(
+                    f'alter table {authoring_table_name(AUTHORING_MODULES_TABLE)} '
+                    f'add column if not exists {quote_ident(column)} {definition}'
+                )
+        else:
+            cursor.execute(f'pragma table_info({quote_ident(AUTHORING_MODULES_TABLE)})')
+            existing_columns = {row[1] for row in cursor.fetchall()}
+            for column, definition in (
+                ('sessions_number', f"integer not null default 0"),
+                ('start_date', f"date"),
+                ('end_date', f"date"),
+                ('cohort_id', f"varchar(255)"),
+                ('group_id', f"varchar(255)"),
+                ('learner_roster_mode', f"varchar(32) not null default 'inherited'"),
+                ('teams_shared_source_module_id', f"varchar(128)"),
+                ('ksb_remap_report', f"text"),
+                ('ksb_profile_source_id', f"varchar(128)"),
+                ('session_week_day', f"varchar(255)"),
+                ('session_start_time', f"varchar(32)"),
+                ('session_end_time', f"varchar(32)"),
+                ('weekly_schedule', f"{json_type}"),
+                ('schedule_mode', f"varchar(16) not null default 'group'"),
+                ('source_type', f"varchar(64)"),
+                ('source_id', f"varchar(255)"),
+                ('cover_image_url', f"text"),
+                ('session_holidays', f"{json_type}"),
+                ('session_overrides', f"{json_type} not null default '{{}}'"),
+                ('status', f"varchar(32) not null default 'active'"),
+                ('tutor_id', f"varchar(128)"),
+            ):
+                if column not in existing_columns:
+                    cursor.execute(
+                        f'alter table {authoring_table_name(AUTHORING_MODULES_TABLE)} '
+                        f'add column {quote_ident(column)} {definition}'
+                    )
         cursor.execute(f'''
             create table if not exists {authoring_table_name(MODULE_TEAMS_SHARES_TABLE)} (
                 module_catalogue_id varchar(128) primary key,
@@ -16842,6 +16849,18 @@ class ModuleAuthoringValidationError(ValueError):
         self.errors = errors
 
 
+class CoverImageError(ModuleAuthoringValidationError):
+    """A cover sent inline that cannot become a stored file (see stored_module_cover_image).
+
+    A ModuleAuthoringValidationError so the module save answers 400 with the
+    reason, and so a ValueError so the free-course saves do the same.
+    """
+
+    def __init__(self, message):
+        ValueError.__init__(self, message)
+        self.errors = [{'path': 'coverImage', 'message': message}]
+
+
 def http_url(value):
     text = clean_str(value)
     if not text:
@@ -17028,8 +17047,12 @@ def validate_component_authoring_payload(component, path):
 
 def validate_module_authoring_payload(payload):
     errors = []
+    if 'scheduleMode' in payload and payload['scheduleMode'] not in ('group', 'custom'):
+        errors.append({'path': 'scheduleMode', 'message': 'Choose Group or Custom scheduling.'})
     try:
-        module_weekly_schedule(payload)
+        weekly = module_weekly_schedule(payload)
+        if payload.get('scheduleMode') == 'custom' and not weekly:
+            errors.append({'path': 'weeklySchedule', 'message': 'Choose the weekdays and times for the custom schedule.'})
     except ValueError as exc:
         errors.append({'path': 'weeklySchedule', 'message': str(exc)})
     source_cache = {}
@@ -20328,7 +20351,7 @@ def apply_module_session_plan_to_weeks(module, group_row, weeks, *, holidays=Non
                 if planned_instant:
                     planned_settings['sessionDateTimeUtc'] = planned_instant
                     planned_settings['teamsStartDateTimeUtc'] = planned_instant
-                if settings.get('teamsCalendarBinding') in {'missing', 'ambiguous'}:
+                if settings.get('teamsCalendarBinding') in {'missing', 'ambiguous', 'unverified'}:
                     # A planned delivery time does not confirm a Microsoft
                     # occurrence. Also clear a stamp left by an older planner.
                     planned_settings['teamsStartDateTimeUtc'] = ''
@@ -21308,6 +21331,7 @@ def get_authoring_structure_payload(module_catalogue_id, include_archived=False,
         'startDate': format_date(module.get('start_date')),
         'endDate': format_date(module.get('end_date')),
         'weeklySchedule': module_weekly_schedule(delivery_module),
+        'scheduleMode': module.get('schedule_mode') or 'group',
         'sessionHolidays': parse_json_value(module.get('session_holidays'), []),
         'deliveryWeeks': module_delivery_week_count(module, weeks),
         # The pattern this module actually runs to: its group's, and its own
@@ -21813,6 +21837,7 @@ def get_authoring_structure_payloads(
             'startDate': format_date(module.get('start_date')),
             'endDate': format_date(module.get('end_date')),
             'weeklySchedule': module_weekly_schedule(delivery_module),
+            'scheduleMode': module.get('schedule_mode') or 'group',
             'sessionHolidays': parse_json_value(module.get('session_holidays'), []),
             'deliveryWeeks': module_delivery_week_count(module, weeks),
             # The group's pattern first; the module's own only where it states none.
@@ -22045,6 +22070,7 @@ def authoring_catalogue_summaries(include_programme_deleted=False, include_conte
             'coach': group_coach_name,
             'sessionsNumber': parse_int(row.get('sessions_number'), 0),
             'weeklySchedule': module_weekly_schedule(row),
+            'scheduleMode': row.get('schedule_mode') or 'group',
             'sessionHolidays': parse_json_value(row.get('session_holidays'), []),
             'weekDays': row.get('session_week_day') or '',
             'startTime': row.get('session_start_time') or '',
@@ -22225,6 +22251,7 @@ def authoring_summary_catalogue_item(summary):
         'endDate': summary['endDate'],
         'sessionsNumber': summary['sessionsNumber'],
         'weeklySchedule': summary.get('weeklySchedule') or [],
+        'scheduleMode': summary.get('scheduleMode') or 'group',
         'sessionHolidays': summary.get('sessionHolidays') or [],
         'deliveryWeeks': summary.get('deliveryWeeks'),
         'weekDays': summary.get('weekDays') or '',
@@ -22288,6 +22315,7 @@ def enrich_curriculum_modules_with_authoring_details(modules, *, child_rows=None
             'endDate': authoring.get('endDate') or module.get('endDate'),
             'sessionsNumber': authoring.get('sessionsNumber') or module.get('sessionsNumber'),
             'weeklySchedule': authoring.get('weeklySchedule') or [],
+            'scheduleMode': authoring.get('scheduleMode') or 'group',
             'sessionHolidays': authoring.get('sessionHolidays') or [],
             'deliveryWeeks': authoring.get('deliveryWeeks'),
             'weekDays': authoring.get('weekDays') or module.get('weekDays') or '',
@@ -23472,6 +23500,7 @@ def save_module_authoring_structure(
     if authored_week_count <= 0:
         authored_week_count = len(weeks) or module_stored_week_count(existing_module_row)
     weekly_schedule = merged_weekly_schedule(payload, existing_module_row)
+    schedule_mode = payload.get('scheduleMode', existing_module_row.get('schedule_mode') or 'group')
     if weekly_schedule:
         if not has_column(AUTHORING_MODULES_TABLE, 'weekly_schedule'):
             raise ModuleAuthoringValidationError([{'path': 'weeklySchedule', 'message': 'Apply curriculum migration 0063 before saving per-day times.'}])
@@ -23535,6 +23564,7 @@ def save_module_authoring_structure(
             'session_start_time': session_start_time or None,
             'session_end_time': session_end_time or None,
             'weekly_schedule': json_db_value(weekly_schedule),
+            'schedule_mode': schedule_mode,
             'tutor_name': tutor_name or None,
             'tutor_email': tutor_email or None,
         })
@@ -23798,7 +23828,7 @@ def save_module_authoring_structure(
 
 # Module fields the Teams attachment pass reads to date and pair sessions.
 LIVE_SESSION_SCHEDULE_FIELDS = (
-    'startDate', 'endDate', 'weeklySchedule', 'weekDays', 'startTime', 'endTime',
+    'startDate', 'endDate', 'weeklySchedule', 'scheduleMode', 'weekDays', 'startTime', 'endTime',
     'sessionsNumber', 'sessionHolidays', 'groupId', 'cohortId', 'teamsSharedSourceModuleId',
 )
 
@@ -24780,11 +24810,15 @@ def curriculum_preview_module_session_plan(request):
         weekly = module_weekly_schedule(payload)
     except ValueError as exc:
         return json_error(str(exc), fields=['weeklySchedule'])
+    if payload.get('endDate') and payload.get('weeksNumber'):
+        slot = {**module_schedule_view(payload), 'schedule_mode': 'custom'}
+        return JsonResponse(module_delivery_session_plan(slot, 0, parse_date(payload.get('startDate')), payload.get('holidays') or [], week_count=parse_int(payload.get('weeksNumber'), 0)))
     plan = build_module_session_plan(
         payload.get('startDate') or payload.get('start_date'),
         payload.get('numberOfSessions') or payload.get('sessionsNumber') or payload.get('weeks'),
         ', '.join(slot['day'] for slot in weekly) or payload.get('deliveryDays') or payload.get('weekDays') or payload.get('delivery_day'),
         payload.get('holidays') or payload.get('linkedHolidays') or [],
+        week_count=parse_int(payload.get('weeksNumber'), 0),
     )
     slot = module_schedule_view(payload)
     for session in plan.get('sessions') or []:
@@ -25294,7 +25328,7 @@ PROGRAMME_WORKSPACE_MODULE_FIELDS = frozenset({
     'programmeId', 'programme', 'cohortId', 'cohort', 'groupId', 'group',
     'weeks', 'sessionsNumber', 'ksbCount', 'lessons', 'quizzes', 'assignments',
     'status', 'authoringStatus', 'deliveryStatus', 'isProgrammeDeleted',
-    'startDate', 'endDate', 'weeklySchedule', 'sessionHolidays', 'deliveryWeeks',
+    'startDate', 'endDate', 'weeklySchedule', 'scheduleMode', 'sessionHolidays', 'deliveryWeeks',
     'weekDays', 'startTime', 'endTime', 'notes', 'color', 'coverImage',
     'tutor', 'coach', 'ksbCodes', 'lastUpdated', 'weekStructureOutline',
 })
@@ -25737,7 +25771,12 @@ def curriculum_programme_detail(request, identifier):
             log_curriculum_decision(
                 'programme.delete', outcome='permanent_requested', entity_id=identifier,
             )
-            return permanent_programme_delete_response(identifier, programme, config)
+            return permanent_programme_delete_response(
+                identifier,
+                programme,
+                config,
+                force_content=request_wants_forced_programme_delete(request),
+            )
 
         with transaction.atomic():
             soft_deleted = soft_delete_programme_authoring_structure(identifier, programme, config)
@@ -26591,6 +26630,7 @@ def curriculum_module_collection(request):
             'sessionsNumber': payload.get('sessionsNumber') or payload.get('sessions_number') or 0,
             'weeksNumber': payload.get('weeks') or payload.get('weeksNumber') or 0,
             'weeklySchedule': payload.get('weeklySchedule'),
+            'scheduleMode': payload.get('scheduleMode') or 'group',
             'weekDays': payload.get('weekDays'),
             'startTime': payload.get('startTime'),
             'endTime': payload.get('endTime'),
@@ -26684,6 +26724,7 @@ def curriculum_module_collection(request):
         'sessionsNumber': payload.get('sessionsNumber') or payload.get('weeks') or 1,
         'weeksNumber': payload.get('weeks') or payload.get('weeksNumber') or 0,
         'weeklySchedule': payload.get('weeklySchedule'),
+        'scheduleMode': payload.get('scheduleMode') or 'group',
         'weekDays': payload.get('weekDays'),
         'startTime': payload.get('startTime'),
         'endTime': payload.get('endTime'),
@@ -27780,6 +27821,8 @@ def curriculum_module_settings(request, module_catalogue_id):
                 'declaredTotalOtjh': payload.get('totalOtjh') if 'totalOtjh' in payload else existing.get('declaredTotalOtjh'),
             }
             result = save_module_authoring_structure(module_catalogue_id, updates)
+    except CoverImageError as exc:
+        return json_error(str(exc), status=400)
     except Exception as exc:
         logger.exception('Unable to update module authoring settings for %s.', module_catalogue_id)
         return json_error('Unable to update module settings.', status=500, detail=str(exc))
@@ -27951,14 +27994,14 @@ def component_source_inputs_fingerprint():
     """What a mapping's inferred KSB source depends on beyond the curriculum epoch.
 
     The component reads infer a mapping's source from the Skills England KSBs
-    (``standard_ksbs``) and, where it still exists, ``ksb_profiles``. Neither is
-    written through a curriculum handler, so no epoch bump retires a cached read
-    when they change. This is their row count and newest stamp: one round trip,
-    taken when a cached entry passes its ttl, so the entry is rebuilt only when
-    they have moved (see cached_curriculum_value's ``fingerprint``).
+    (``standard_ksbs``). It is not written through a curriculum handler, so no
+    epoch bump retires a cached read when it changes. This is its row count and
+    newest stamp: one round trip, taken when a cached entry passes its ttl, so
+    the entry is rebuilt only when it has moved (see cached_curriculum_value's
+    ``fingerprint``).
     """
     parts = []
-    for table in ('standard_ksbs', 'ksb_profiles'):
+    for table in ('standard_ksbs',):
         if not table_exists(table):
             parts.append((table, None))
             continue
@@ -28683,7 +28726,22 @@ def curriculum_uploaded_file(request, path):
         response.streaming_content = video_chunks(request, stream)
     if requested:
         response['Content-Range'] = f'bytes {offset}-{offset + length - 1}/{total_size}'
+    if MODULE_COVER_FILE_PATH.search(path):
+        # A cover's file name carries the moment it was uploaded and a new
+        # upload gets a new name (stored_module_cover_image), so these bytes
+        # never change. Without this every catalogue visit fetched every cover
+        # again through Django and Azure, and the cards sat empty meanwhile.
+        response['Cache-Control'] = 'private, max-age=31536000, immutable'
     return response
+
+
+#: Cover files whose name changes whenever the picture does:
+#: ``<module>/cover/cover-<20-digit UTC timestamp>.<ext>`` from a save, and
+#: ``free_course_covers/<sha256 prefix>.<ext>`` from the free-course backfills,
+#: and ``quiz_images/<sha256 prefix>.<ext>`` (quiz_api.question_images).
+MODULE_COVER_FILE_PATH = re.compile(
+    rf'(?:^|/)(?:{MODULE_COVER_UPLOAD_SLOT}/cover-\d{{20}}|(?:free_course_covers|quiz_images)/[0-9a-f]{{32}})\.[a-z]+$'
+)
 
 
 # The component column that makes this table expensive: inlined authoring
@@ -29097,7 +29155,9 @@ def resolve_coverage_source(request, module_rows, scope='', identifier=''):
 
 def required_ksbs_for_resolved_source(source_type, source_id, origin):
     if origin == 'all-profiles':
-        return all_profile_required_ksbs()
+        # No source on the scope: there are no KSB profiles to fall back on, so
+        # coverage is mapping-only.
+        return []
     return required_ksbs_for_source(source_type, source_id)
 
 
@@ -29751,124 +29811,6 @@ PROGRESS_LINEAGE_COLUMN_BY_SCOPE = {
     'week': 'week_ref',
     'component': 'component_ref',
 }
-
-
-def learner_progress_ksb_totals(learner_ids, programme_ksb_codes):
-    """Per-learner achieved KSB weight only, without the rows that produced it.
-
-    Same question as ``learner_progress_ksb_consumption`` asked at programme
-    scope, answered by the same rule -- ``progress_counts_as_achieved`` decides
-    what counts, one completion per (learner, component, code) counts once, and a
-    code outside ``programme_ksb_codes`` contributes nothing -- but it reads only
-    the six columns those three checks need.
-
-    It exists because the caller that only wants a percentage was paying for a
-    whole drill-down. The full read selects eighteen columns of
-    ``learner_progress_entries`` (445 MB for 220k rows: ``feedback``,
-    ``component_title``, ``module_title`` and the rest are wide text), groups by
-    every one of them, and joins out to ``curriculum.components``,
-    ``curriculum.weeks`` and ``curriculum.modules`` to resolve titles nobody
-    reads. Measured from outside the database's region that ran past the 15s
-    statement timeout on every programme, so the programme card's KSB bar was not
-    slow -- it was failing, and rendering 0. Narrowed to the columns the rule
-    needs, with no joins, it completes.
-
-    Deliberately programme-scope only. Everything the scope filter does -- the
-    component list, the lineage fallback, ``in_scope``/``out_of_scope`` -- needs
-    the rows, so a narrower scope still goes through the full read. There is no
-    ``totals_only`` flag on that function for the same reason: a scope-aware
-    caller must not be able to ask for totals that skipped the scope check.
-
-    The summing happens in SQL, and it has to. Narrowing the columns alone left
-    ~177k rows on the wire for a 150-learner programme -- 0.6s of database time
-    against 42s of transfer and dict building, measured from outside the region.
-    What comes back now is one row per (learner, KSB code).
-
-    The completion rule is still applied in Python, because
-    ``learner_api.progress_rules`` says it lives in exactly one place and a SQL
-    copy would drift from it. It is not reimplemented here: the distinct
-    ``(kind, passed)`` pairs are read first -- there are a handful -- the rule
-    decides which of them count, and the pairs it accepts go back into the
-    aggregate as parameters. The rule answers; SQL only carries the answer.
-    """
-    if not learner_ids or connection.vendor != 'postgresql':
-        return {}
-    if not learner_schema_table_exists('learner_progress_entries') or not learner_schema_table_exists('learner_progress_ksbs'):
-        return {}
-    code_filter = sorted({coverage_normalise_code(code) for code in programme_ksb_codes if coverage_normalise_code(code)})
-    if not code_filter:
-        # No mapped codes means no denominator, so there is nothing to total.
-        # Also keeps the aggregate below from reading the whole KSB table for a
-        # filter that would discard every row anyway.
-        return {}
-    totals = defaultdict(dict)
-    try:
-        with connection.cursor() as cursor:
-            cursor.execute(
-                '''
-                select distinct p.kind, p.passed
-                from "Learner"."learner_progress_entries" p
-                where p.learner_id = any(%s)
-                ''',
-                [learner_ids],
-            )
-            outcome_pairs = [
-                (kind, passed) for kind, passed in cursor.fetchall()
-                if progress_counts_as_achieved(kind=kind, passed=passed)
-            ]
-            if not outcome_pairs:
-                return {}
-            # `is not distinct from` rather than `=`: an ungraded completion
-            # leaves `passed` NULL, and NULL = NULL is NULL, which would drop
-            # every row the rule just accepted.
-            outcome_sql = ' or '.join(
-                ['(p.kind is not distinct from %s and p.passed is not distinct from %s)'] * len(outcome_pairs)
-            )
-            outcome_params = [value for pair in outcome_pairs for value in pair]
-            cursor.execute(
-                f'''
-                select learner_id, code, sum(weight) as weight
-                from (
-                    -- One row per (learner, component, code): a component
-                    -- completed twice was earned once. The ordering picks the
-                    -- same winner the row-level read picks -- newest submission
-                    -- first, and the heaviest snapshot within it, which is the
-                    -- `max(weight)` the row-level read takes per progress row.
-                    select distinct on (
-                            p.learner_id,
-                            coalesce(nullif(btrim(p.component_ref), ''), 'progress:' || p.id),
-                            upper(btrim(k.ksb_code))
-                        )
-                        p.learner_id,
-                        upper(btrim(k.ksb_code)) as code,
-                        coalesce(k.weight, 0) as weight
-                    from "Learner"."learner_progress_entries" p
-                    join "Learner"."learner_progress_ksbs" k on k.progress_id = p.id{and_not_excluded('k', connection)}
-                    where p.learner_id = any(%s)
-                      -- upper(btrim(...)) is ksb_coverage.normalise_code() in
-                      -- SQL, so a stored code that differs only in case or
-                      -- padding still matches the mapped codes it is filtered
-                      -- against. Comparing the raw column would silently drop it.
-                      and upper(btrim(k.ksb_code)) = any(%s)
-                      and ({outcome_sql})
-                    order by p.learner_id,
-                             coalesce(nullif(btrim(p.component_ref), ''), 'progress:' || p.id),
-                             upper(btrim(k.ksb_code)),
-                             p.submitted_at desc nulls last, p.id desc,
-                             k.weight desc nulls last
-                ) achieved
-                group by learner_id, code
-                ''',
-                [learner_ids, code_filter, *outcome_params],
-            )
-            for learner_id, ksb_code, weight in cursor.fetchall():
-                code = coverage_normalise_code(ksb_code)
-                if code:
-                    totals[learner_id][code] = float(float_weight(weight or 0) or 0)
-    except Exception as exc:
-        logger.warning('Could not load learner progress KSB totals: %s', exc)
-        return {}
-    return dict(totals)
 
 
 def progress_scope_predicate(component_ids, lineage_column='', scope_ref=''):
@@ -32801,7 +32743,10 @@ def _update_module_cover(request, identifier, payload):
         return json_error('Choose a valid module image.', status=400)
     # Validated as an image first, then stored: the column keeps a URL, never
     # the picture. See stored_module_cover_image().
-    image = stored_module_cover_image(identifier, image)
+    try:
+        image = stored_module_cover_image(identifier, image)
+    except CoverImageError as error:
+        return json_error(str(error), status=400)
     try:
         with connection.cursor() as cursor:
             # Only a live (not archived) module takes a cover.
@@ -32948,6 +32893,7 @@ def curriculum_module_detail(request, identifier):
             'groupId': payload.get('groupId') or current.get('groupId') or '',
             'groupName': payload.get('groupName') or payload.get('group') or current.get('groupName') or current.get('group') or '',
             'weeklySchedule': merged_weekly_schedule(payload, current),
+            'scheduleMode': payload.get('scheduleMode', current.get('scheduleMode') or 'group'),
             'weekDays': payload.get('weekDays') or current.get('weekDays') or current_delivery_metadata.get('weekDays') or '',
             'startTime': payload.get('startTime') or current.get('startTime') or current_delivery_metadata.get('startTime') or '',
             'endTime': payload.get('endTime') or current.get('endTime') or current_delivery_metadata.get('endTime') or '',
@@ -33115,33 +33061,9 @@ def curriculum_ksb_set_definitions(request, identifier):
 @gzip_page
 @require_GET
 def curriculum_ksb_sets(request):
-    if request.GET.get('view') == 'summary':
-        visibility = curriculum_visibility(request)
-
-        def build():
-            profiles = get_ksb_profile_rows()
-            if visibility != 'all':
-                profiles = [row for row in profiles if row.get('is_active')]
-            # This list needs identities, programme links and definition counts,
-            # not the curriculum tree or per-definition coverage/activity data.
-            return build_ksb_data(profiles, [], [], summary_only=True)[1]
-
-        results = cached_curriculum_value(
-            f'ksb-source-summaries:{visibility}', build,
-            force=request_bypasses_curriculum_cache(request),
-        )
-        return curriculum_collection_response({'schema': CURRICULUM_SCHEMA}, 'ksbSets', results)
-    # Every set is one KSB profile in this visibility (see build_ksb_data), so
-    # with none there is nothing to build: answer from the profiles table
-    # instead of rebuilding the whole compact overview -- ~10 s on a cache miss
-    # -- to return an empty list. That is the usual case since programmes take
-    # their KSBs from standards.
-    profiles = get_ksb_profile_rows()
-    if curriculum_visibility(request) != 'all':
-        profiles = [profile for profile in profiles if profile.get('is_active')]
-    if not profiles:
-        return curriculum_collection_response({'schema': CURRICULUM_SCHEMA}, 'ksbSets', [])
-    return curriculum_collection_response(get_cached_payload(request, compact=True), 'ksbSets')
+    # Every KSB set was one stored KSB profile, and curriculum keeps none any more
+    # (curriculum.ksb_profiles was removed). Kept so older screens get an empty list.
+    return curriculum_collection_response({'schema': CURRICULUM_SCHEMA}, 'ksbSets', [])
 
 
 def curriculum_cohort_from_authoring_detail(detail):
@@ -34044,7 +33966,7 @@ def curriculum_group_detail(request, identifier):
         # Read before the write: the session count is re-derived from the week
         # count these rows carried under the *old* delivery pattern.
         previous_module_rows = (
-            authoring_fetch_all(AUTHORING_MODULES_TABLE, 'group_id = %s', [group_id])
+            authoring_fetch_all(AUTHORING_MODULES_TABLE, "group_id = %s and coalesce(schedule_mode, 'group') <> 'custom'", [group_id])
             if module_delivery_updates else []
         )
         if module_delivery_updates:
@@ -34056,7 +33978,7 @@ def curriculum_group_detail(request, identifier):
             # day/time chosen when the group was first created.
             update_authoring_rows(
                 AUTHORING_MODULES_TABLE,
-                'group_id = %s',
+                "group_id = %s and coalesce(schedule_mode, 'group') <> 'custom'",
                 [group_id],
                 module_delivery_updates,
             )
@@ -34073,7 +33995,7 @@ def curriculum_group_detail(request, identifier):
             # unbooked sessions now; confirmed Teams occurrences are left for
             # the explicit calendar-update flow advertised in this response.
             persist_group_module_session_dates(
-                authoring_fetch_all(AUTHORING_MODULES_TABLE, 'group_id = %s', [group_id]),
+                authoring_fetch_all(AUTHORING_MODULES_TABLE, "group_id = %s and coalesce(schedule_mode, 'group') <> 'custom'", [group_id]),
                 updated_group,
             )
         next_cohort_id = clean_str(updated_group.get('cohort_id'))
@@ -35032,6 +34954,7 @@ def module_attachment_authoring_payload(item, group, cohort, catalogue_id, modul
         'startDate': start_date,
         'endDate': end_date,
         'weeklySchedule': merged_weekly_schedule(item, current_structure),
+        'scheduleMode': item.get('scheduleMode', current_structure.get('scheduleMode') or 'group'),
         'weekDays': schedule,
         'startTime': item.get('startTime') or group.get('startTime') or '',
         'endTime': item.get('endTime') or group.get('endTime') or '',
@@ -35161,7 +35084,7 @@ def attachment_week_structure(item, current_structure=None, week_count=None, ses
 
     Prefers an explicitly supplied structure, then the legacy `weeks` list form,
     then whatever is already stored. Only once none of those exist does it
-    pre-create empty weeks, to the resolved week count: a module attached with
+    pre-create weeks (with dated live slots for Custom), to the resolved count: a module attached with
     "10 weeks" has to actually hold 10 week rows, or a page that reads the
     structure straight from storage (rather than going through a client-side
     "fill in a default structure" fallback) sees none of them.
@@ -35175,7 +35098,36 @@ def attachment_week_structure(item, current_structure=None, week_count=None, ses
         if weeks:
             return weeks
     target = week_count if week_count is not None else attachment_week_count(item, session_count, schedule)
-    return [empty_authoring_week(index + 1) for index in range(max(0, target))]
+    weeks = [empty_authoring_week(index + 1) for index in range(max(0, target))]
+    weekly = module_weekly_schedule(item)
+    # A fresh custom delivery authors actual sessions inside each calendar week.
+    # Existing structures above, including reading weeks and bookings, stay intact.
+    if item.get('scheduleMode') == 'custom' and len(weekly) > 1:
+        row = {
+            'schedule_mode': 'custom',
+            'end_date': item.get('endDate'),
+            'weekly_schedule': weekly,
+            'session_week_day': ', '.join(slot['day'] for slot in weekly),
+            'session_start_time': weekly[0]['startTime'],
+            'session_end_time': weekly[0]['endTime'],
+        }
+        plan = module_delivery_session_plan(row, 0, parse_date(item.get('startDate')), week_count=target)
+        for session in plan.get('sessions') or []:
+            week_index = parse_int(session.get('weekNumber'), 1) - 1
+            if not 0 <= week_index < len(weeks):
+                continue
+            weeks[week_index]['components'].append({
+                'type': 'live-session',
+                'title': f"Live session {len(weeks[week_index]['components']) + 1}",
+                'expectedOtjh': (session.get('durationMinutes') or 60) / 60,
+                'settings': {
+                    'sessionDate': session['date'],
+                    'sessionTime': session.get('startTime') or '',
+                    'durationMinutes': session.get('durationMinutes') or 60,
+                    'completionRule': 'Attend or watch recording',
+                },
+            })
+    return weeks
 
 
 def attachment_session_count(item, weeks=None):
@@ -35378,7 +35330,7 @@ def curriculum_group_modules(request, identifier):
                 # now; module_attachment_authoring_payload otherwise falls back to the
                 # stored structure and the new content would need a manual Save.
                 structure_payload = module_attachment_authoring_payload(
-                    {**item, 'weekStructure': attachment_week_structure(item, current_structure, session_count=session_count, schedule=delivery_days)},
+                    {**item, 'weekStructure': attachment_week_structure({**item, 'startDate': start_date, 'endDate': end_date}, current_structure, session_count=session_count, schedule=delivery_days)},
                     group,
                     cohort,
                     catalogue_id,

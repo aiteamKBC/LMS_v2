@@ -25,7 +25,14 @@ class Command(BaseCommand):
     help = __doc__
 
     def add_arguments(self, parser):
-        parser.add_argument('--apply', action='store_true')
+        mode = parser.add_mutually_exclusive_group()
+        mode.add_argument('--apply', action='store_true', help='Write the adoption. Without it nothing is written.')
+        mode.add_argument('--dry-run', action='store_true',
+                          help='Preview only (the default): read-only counts for the selected courses.')
+        parser.add_argument('--include', action='append', default=[], metavar='FREE_COURSE_ID',
+                            help='Adopt only these curriculum.free_courses ids (repeatable or comma-separated).')
+        parser.add_argument('--exclude', action='append', default=[], metavar='FREE_COURSE_ID',
+                            help='Leave these curriculum.free_courses ids untouched (repeatable or comma-separated).')
         parser.add_argument('--expected-database', required=True)
         parser.add_argument('--expected-host', required=True)
         parser.add_argument('--backup', help='New private JSON restore-point path; required with --apply.')
@@ -45,12 +52,15 @@ class Command(BaseCommand):
                 cursor.execute('SELECT current_database()')
                 if cursor.fetchone()[0] != options['expected_database']:
                     raise CommandError('Connected database does not match the intended target.')
+        def ids(values):
+            return [part.strip() for value in values for part in str(value).split(',') if part.strip()]
+        selection = {'include': ids(options['include']), 'exclude': ids(options['exclude'])}
         try:
             with read_only_databases():
-                snapshot = adoption_snapshot()
+                snapshot = adoption_snapshot(**selection)
         except ValueError as exc:
             raise CommandError(str(exc)) from exc
-        self.stdout.write(json.dumps({'preview': snapshot_counts(snapshot)}))
+        self.stdout.write(json.dumps({'preview': snapshot_counts(snapshot), 'selection': selection}))
         if not options['apply']:
             return
         if not options['backup']:
@@ -61,7 +71,8 @@ class Command(BaseCommand):
         self.stdout.write(json.dumps({'coursesCreated': created, **result}))
         # Re-read the normal catalogue and the remaining old assignments.
         with read_only_databases():
-            verified = adoption_snapshot()
-        if snapshot_counts(verified)['assignedLearners']:
+            verified = adoption_snapshot(**selection)
+        remaining = snapshot_counts(verified)
+        if remaining['assignedLearners'] or remaining['assignments']:
             raise CommandError('Legacy assignments remain; rerun after resolving the reported failure.')
         self.stdout.write('Verified: legacy assignments moved; source content and completion history retained.')

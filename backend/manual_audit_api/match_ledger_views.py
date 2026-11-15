@@ -34,6 +34,8 @@ from django.conf import settings
 from django.db import DatabaseError, connections, transaction
 from django.http import HttpRequest, JsonResponse
 
+from learner_api.aptem_identity import APTEM_IDENTITY_CTES
+
 from audit_api.learner_exclusions import is_excluded_learner
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET
@@ -804,10 +806,10 @@ def _load_profile_sources(aptem_id, learner_email, learner_name=None):
                 employment = _first_employment_details(employment_value)
 
         cursor.execute(
-            '''
-            select "Levy or Not"
-            from "LMS"."Aptem_users"
-            where "ID" = %s
+            f'''with {APTEM_IDENTITY_CTES}
+            select levy_status
+            from aptem_identity
+            where aptem_id = %s
             limit 1
             ''',
             [aptem_id],

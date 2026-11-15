@@ -51,6 +51,7 @@ from django.db import DatabaseError, connections
 from django.http import HttpRequest, JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET
+from learner_api.aptem_identity import APTEM_IDENTITY_CTES
 
 from .audit_trail import (
     ACTIVITY_OVERRIDE_RETURNING,
@@ -715,7 +716,7 @@ def _fetch_rows():
         # cast) avoids converting every row's multi-MB blob to jsonb just to
         # read the programme name — roughly halves the query time.
         cur.execute(
-            '''
+            f'''with {APTEM_IDENTITY_CTES}
             select lm.aptem_id, lm.learner_name, lm.learner_email,
                    lm.programme_structure, lm.aptem_training_plan,
                    lm.programme_name, profile.program_status,
@@ -730,9 +731,9 @@ def _fetch_rows():
                 limit 1
             ) profile on true
             left join lateral (
-                select "OwnerName" as coach_name, "OwnerEmail" as coach_email
-                from "LMS"."Aptem_users"
-                where "ID" = lm.aptem_id
+                select coach_name, coach_email
+                from aptem_identity
+                where aptem_id = lm.aptem_id
                 limit 1
             ) owner on true
             where lm.programme_structure ->> 'programme' = %s
@@ -802,7 +803,7 @@ def _fetch_profile_row(learner_key):
     """
     with connections[resolve(CONN)].cursor() as cur:
         cur.execute(
-            '''
+            f'''with {APTEM_IDENTITY_CTES}
             select lm.aptem_id, lm.learner_name, lm.learner_email,
                    lm.programme_structure, lm.aptem_training_plan,
                    lm.programme_name, profile.program_status,
@@ -817,9 +818,9 @@ def _fetch_profile_row(learner_key):
                 limit 1
             ) profile on true
             left join lateral (
-                select "OwnerName" as coach_name, "OwnerEmail" as coach_email
-                from "LMS"."Aptem_users"
-                where "ID" = lm.aptem_id
+                select coach_name, coach_email
+                from aptem_identity
+                where aptem_id = lm.aptem_id
                 limit 1
             ) owner on true
             where lm.aptem_id::text = %s
@@ -891,16 +892,16 @@ def _fetch_profile_source_row(learner_key):
     """
     with connections[resolve(CONN)].cursor() as cur:
         cur.execute(
-            '''
+            f'''with {APTEM_IDENTITY_CTES}
             select contracts.learner_id, contracts.full_name, contracts.email,
                    contracts.program_name, contracts.program_status,
                    contracts."Break in learning", owner.coach_name,
                    owner.coach_email
             from fetching_evidence.aptem_cv_contracts_probe contracts
             left join lateral (
-                select "OwnerName" as coach_name, "OwnerEmail" as coach_email
-                from "LMS"."Aptem_users"
-                where "ID" = contracts.learner_id
+                select coach_name, coach_email
+                from aptem_identity
+                where aptem_id = contracts.learner_id
                 limit 1
             ) owner on true
             where contracts.learner_id::text = %s
@@ -1359,24 +1360,19 @@ def _load_profile_learner(learner_key):
     """
     with connections[resolve(CONN)].cursor() as cursor:
         cursor.execute(
-            '''
-            select l.aptem_id, l.learner_name, l.learner_email,
-                   l.programme_name,
-                   coalesce(
-                       case
-                           when lower(btrim(coalesce(l.programme_status, ''))) in ('', 'unknown') then null
-                           else btrim(l.programme_status)
-                       end,
-                       nullif(btrim(aptem."Program-Status"), '')
-                   ) as programme_status,
-                   coalesce(nullif(btrim(l.coach_name), ''), nullif(btrim(aptem."OwnerName"), '')) as coach_name,
-                   coalesce(nullif(btrim(l.coach_email), ''), nullif(btrim(aptem."OwnerEmail"), '')) as coach_email,
+            f'''with {APTEM_IDENTITY_CTES}
+            select l.aptem_id,
+                   coalesce(nullif(identity.full_name, ''), l.learner_name),
+                   coalesce(nullif(identity.email, ''), l.learner_email),
+                   coalesce(nullif(identity.programme_name, ''), l.programme_name),
+                   coalesce(nullif(identity.programme_status, ''), l.programme_status) as programme_status,
+                   coalesce(nullif(identity.coach_name, ''), l.coach_name) as coach_name,
+                   coalesce(nullif(identity.coach_email, ''), l.coach_email) as coach_email,
                    lm.aptem_training_plan
             from "Last_audit".learners l
             left join "Audit".learner_match lm
               on lm.aptem_id = l.aptem_id
-            left join "LMS"."Aptem_users" aptem
-              on aptem."ID" = l.aptem_id
+            left join aptem_identity identity on identity.aptem_id = l.aptem_id
             where l.aptem_id::text = %s
                or lower(l.learner_name) = %s
             order by case when l.aptem_id::text = %s then 0 else 1 end
@@ -1394,40 +1390,28 @@ def _load_profile_learner(learner_key):
         # record belongs to the audit cohort.
         with connections[CONN].cursor() as cursor:
             cursor.execute(
-                '''
-                select aptem."ID", aptem."FullName", aptem."Email",
-                       coalesce(
-                           nullif(btrim(aptem."Program Name"), ''),
-                           nullif(btrim(aptem."Group"), '')
-                       ) as programme_name,
-                       nullif(btrim(aptem."Program-Status"), '') as programme_status,
-                       nullif(btrim(aptem."OwnerName"), '') as coach_name,
-                       nullif(btrim(aptem."OwnerEmail"), '') as coach_email,
+                f'''with {APTEM_IDENTITY_CTES}
+                select identity.aptem_id, identity.full_name, identity.email,
+                       identity.programme_name, identity.programme_status,
+                       identity.coach_name, identity.coach_email,
                        lm.aptem_training_plan
-                from "LMS"."Aptem_users" aptem
+                from aptem_identity identity
                 left join "Audit".learner_match lm
-                  on lm.aptem_id = aptem."ID"
+                  on lm.aptem_id = identity.aptem_id
                 where (
-                        aptem."ID"::text = %s
-                        or lower(btrim(aptem."FullName")) = %s
-                        or lower(btrim(aptem."Email")) = %s
-                      )
-                  and exists (
-                        select 1
-                        from "Audit".ilr_learning_deliveries ilr
-                        where (
-                            nullif(btrim(aptem."Email"), '') is not null
-                            and lower(btrim(ilr.email)) = lower(btrim(aptem."Email"))
-                        ) or (
-                            nullif(btrim(aptem."FullName"), '') is not null
-                            and lower(btrim(concat_ws(' ', ilr.given_names, ilr.family_name))) =
-                                lower(btrim(aptem."FullName"))
+                        identity.aptem_id::text = %s
+                        or lower(btrim(identity.full_name)) = %s
+                        or lower(btrim(identity.email)) = %s
+                        or exists (
+                            select 1 from "Learner".aptem_historical_emails historical_email
+                            where historical_email.aptem_id=identity.aptem_id
+                              and lower(btrim(historical_email.email))=%s
                         )
-                  )
-                order by case when aptem."ID"::text = %s then 0 else 1 end
+                      )
+                order by case when identity.aptem_id::text = %s then 0 else 1 end
                 limit 1
                 ''',
-                [learner_key, learner_key, learner_key, learner_key],
+                [learner_key, learner_key, learner_key, learner_key, learner_key],
             )
             row = cursor.fetchone()
 
@@ -1685,10 +1669,10 @@ def _load_profile_sources(aptem_id, learner_email, learner_name=None):
         employment = _merge_matching_cv_employment_terms(employment, cv_employment_candidates)
 
         cursor.execute(
-            '''
-            select "Levy or Not"
-            from "LMS"."Aptem_users"
-            where "ID" = %s
+            f'''with {APTEM_IDENTITY_CTES}
+            select levy_status
+            from aptem_identity
+            where aptem_id = %s
             limit 1
             ''',
             [aptem_id],

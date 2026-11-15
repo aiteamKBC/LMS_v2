@@ -369,7 +369,6 @@ export interface CurriculumModule extends CoursePricing {
   moduleCatalogueId?: string;
   deliveryRowId?: number | string;
   deliveryModuleId?: string;
-  legacyModuleId?: string;
   invalidModuleCatalogueId?: string;
   structureId?: string;
   sourceId: number | string;
@@ -423,6 +422,7 @@ export interface CurriculumModule extends CoursePricing {
    */
   sessionsNumber?: number;
   weeklySchedule?: CurriculumWeeklySession[];
+  scheduleMode?: 'group' | 'custom';
   sessionHolidays?: CurriculumHoliday[];
   /** Teaching weeks, separate from imported content rows. */
   deliveryWeeks?: number;
@@ -1567,7 +1567,6 @@ export interface CurriculumSession {
   deliveryRowId?: number | string;
   // Temporary compatibility: prefer moduleCatalogueId when present.
   deliveryModuleId?: string;
-  legacyModuleId?: string;
   invalidModuleCatalogueId?: string;
   componentId?: string;
   /** The live-session component's own title, when the caller matched one. Display only. */
@@ -3242,7 +3241,7 @@ async function fetchCollection<T>(path: string, init?: CurriculumRequestInit): P
 // caller that reads a field outside it means widening the set server-side --
 // the field will not simply appear. Dropped today: weekStructure and its nested
 // components, sessionNames (use `sessionNamesCount`), deliveryMetadata,
-// qualityScore, author, assignments, sourceType, deliveryRowId, legacyModuleId
+// qualityScore, author, assignments, sourceType, deliveryRowId
 // and invalidModuleCatalogueId. Anything that reads one of those must take the
 // full response.
 export function fetchCurriculumModules(signal?: AbortSignal, options: {
@@ -4287,6 +4286,7 @@ export type CurriculumModuleInput = Partial<Pick<CurriculumModule, 'name' | 'wee
   tutor?: string;
   coach?: string;
   weeklySchedule?: CurriculumWeeklySession[];
+  scheduleMode?: 'group' | 'custom';
   weekDays?: string;
   startTime?: string;
   endTime?: string;
@@ -4322,6 +4322,7 @@ export type CurriculumModuleAttachmentInput = {
   coach?: string;
   tutor?: string;
   weeklySchedule?: CurriculumWeeklySession[];
+  scheduleMode?: 'group' | 'custom';
   weekDays?: string;
   startTime?: string;
   endTime?: string;
@@ -4382,6 +4383,7 @@ export type CurriculumProgrammeDeleteResult = {
   deleted: boolean;
   permanent: boolean;
   archived?: boolean;
+  forced?: boolean;
   reason?: string;
   message?: string;
   id: string;
@@ -4419,8 +4421,10 @@ export type CurriculumProgrammeDependencyError = {
   message?: string;
 };
 
-export function deleteCurriculumProgramme(id: string, options: { permanent?: boolean } = {}) {
-  const suffix = options.permanent ? '?permanent=true' : '';
+export function deleteCurriculumProgramme(id: string, options: { permanent?: boolean; force?: boolean } = {}) {
+  const suffix = options.permanent
+    ? `?permanent=true${options.force ? '&force=true' : ''}`
+    : '';
   return fetchJson<CurriculumProgrammeDeleteResult>(
     `/curriculum/programmes/${encodeURIComponent(id)}/${suffix}`,
     { method: 'DELETE', timeoutMs: 60000 },
@@ -4429,6 +4433,7 @@ export function deleteCurriculumProgramme(id: string, options: { permanent?: boo
 
 export const archiveCurriculumProgramme = (id: string) => deleteCurriculumProgramme(id);
 export const permanentlyDeleteCurriculumProgramme = (id: string) => deleteCurriculumProgramme(id, { permanent: true });
+export const forciblyDeleteCurriculumProgramme = (id: string) => deleteCurriculumProgramme(id, { permanent: true, force: true });
 
 export type CurriculumProgrammeRestoreResult = {
   restored: boolean;
@@ -5026,12 +5031,15 @@ export function previewCohortEndDate(input: {
   return postJson<CurriculumCohortEndDatePreview>('/curriculum/preview/cohort-end-date/', input);
 }
 
-export function previewModuleSessionPlan(input: { startDate?: string; numberOfSessions?: number; sessionsNumber?: number; weeklySchedule?: CurriculumWeeklySession[]; weekDays?: string | string[]; deliveryDays?: string | string[]; holidays?: unknown[] }) {
+export function previewModuleSessionPlan(input: { startDate?: string; endDate?: string; numberOfSessions?: number; sessionsNumber?: number; weeksNumber?: number; weeklySchedule?: CurriculumWeeklySession[]; weekDays?: string | string[]; deliveryDays?: string | string[]; holidays?: unknown[] }) {
   return postJson<CurriculumSessionPlanPreview>('/curriculum/preview/module-session-plan/', input);
 }
 
 /** The slot a tutor is being asked about. Matches the module's own schedule fields. */
 export interface CurriculumTutorAvailabilityInput {
+  endDate?: string;
+  scheduleMode?: 'group' | 'custom';
+  weeksNumber?: number;
   /** The destination group supplies delivery days and times when moving a course. */
   groupId?: string;
   startDate?: string;

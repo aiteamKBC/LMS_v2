@@ -33,11 +33,10 @@ class AptemDatesPostgresTests(CoachTransactionTestCase):
                     or Path(directory).resolve() != Path(expected_directory).resolve()):
                 raise RuntimeError("The actual database does not match the verified disposable cluster.")
             cursor.execute('CREATE SCHEMA IF NOT EXISTS "LMS"')
-            for table in ('"LMS"."Aptem_users"', '"LMS"."non_active_users"'):
-                cursor.execute(f'''CREATE TABLE IF NOT EXISTS {table} (
-                    "ID" bigint PRIMARY KEY, "FullName" text, "Program-Status" text,
-                    "Start-Date" date, "End-Date" date
-                )''')
+            cursor.execute('''CREATE TABLE IF NOT EXISTS "LMS".non_active_users (
+                "ID" bigint PRIMARY KEY, "FullName" text, "Program-Status" text,
+                "Start-Date" date, "End-Date" date
+            )''')
         self.enrolments = []
         self.profiles = []
         self.addCleanup(self.clean_owned_rows)
@@ -53,34 +52,31 @@ class AptemDatesPostgresTests(CoachTransactionTestCase):
                 learning_plan={"preserve": True},
             )
             self.enrolments.append(learner)
+            source_start, source_end = ((date(2024, 3, 4), date(2028, 5, 6)) if index == 2
+                                        else (date(2025, 1, 2), date(2027, 8, 30)))
             self.profiles.append(LearnerProfile.objects.using("enrolment").create(
                 full_name=learner.username, email=learner.email, enrolment_id=learner.pk,
                 aptem_id=901000 + index, learner_type=kind, programme_status=local_status,
                 lifecycle_status=local_status.casefold(), completed_hours="12", planned_hours="600",
-                start_date=date(2023, 1, 1), end_date=date(2029, 12, 31),
+                start_date=source_start, end_date=source_end,
                 learner_start_date="2022-02-03", learner_end_date="2029-11-12",
             ))
-            table = '"LMS"."non_active_users"' if index == 2 else '"LMS"."Aptem_users"'
-            status = "Withdrawn" if index == 2 else "Active"
-            start, end = ((date(2024, 3, 4), date(2028, 5, 6)) if index == 2
-                          else (date(2025, 1, 2), date(2027, 8, 30)))
-            with connection.cursor() as cursor:
-                cursor.execute(f'INSERT INTO {table} ("ID","FullName","Program-Status","Start-Date","End-Date") VALUES (%s,%s,%s,%s,%s)',
-                               [901000 + index, learner.username, status, start, end])
+            if index == 2:
+                with connection.cursor() as cursor:
+                    cursor.execute('''INSERT INTO "LMS".non_active_users
+                        ("ID","FullName","Program-Status","Start-Date","End-Date")
+                        VALUES (%s,%s,%s,%s,%s)''',
+                        [901000 + index, learner.username, "Withdrawn", source_start, source_end])
         self.native = EnrolmentUser.all_learners.using("enrolment").create(
             username="Native Example", email="native-dates@example.invalid", aptem_id=None,
             start_date="2022-01-01", end_date="2026-12-31", programme_status="Delivery",
         )
         self.enrolments.append(self.native)
-        # An external learner without any local account must never be imported.
-        with connection.cursor() as cursor:
-            cursor.execute('INSERT INTO "LMS"."Aptem_users" ("ID","FullName","Program-Status","Start-Date","End-Date") VALUES (%s,%s,%s,%s,%s)',
-                           [901004, "External Only Example", "Active", date(2025, 1, 2), date(2027, 8, 30)])
 
     def clean_owned_rows(self):
         with connections["enrolment"].cursor() as cursor:
-            for table in ('"LMS"."Aptem_users"', '"LMS"."non_active_users"'):
-                cursor.execute(f'DELETE FROM {table} WHERE "ID"=ANY(%s)', [[901001, 901002, 901003, 901004]])
+            cursor.execute('DELETE FROM "LMS".non_active_users WHERE "ID"=ANY(%s)',
+                           [[901001, 901002, 901003, 901004]])
             cursor.execute('DELETE FROM "Learner".learners WHERE id=ANY(%s)',
                            [[row.pk for row in self.profiles]])
             cursor.execute('DELETE FROM enrolment."Created_users" WHERE id=ANY(%s)',
@@ -118,7 +114,7 @@ class AptemDatesPostgresTests(CoachTransactionTestCase):
         self.assertEqual(LoginAccount.objects.using("enrolment").count(), account_count)
         self.assertEqual(self.apply()["counts"].get("changed", 0), 0)
 
-    def test_blank_imported_end_preserves_the_existing_end_on_both_records(self):
+    def test_preserved_nonactive_row_cannot_override_current_learner(self):
         with connections["enrolment"].cursor() as cursor:
             cursor.execute('UPDATE "LMS"."non_active_users" SET "End-Date"=NULL WHERE "ID"=901002')
         report = self.apply()
@@ -127,9 +123,9 @@ class AptemDatesPostgresTests(CoachTransactionTestCase):
         profile.refresh_from_db(using="enrolment")
         self.assertEqual(learner.start_date, "2024-03-04")
         self.assertEqual(profile.start_date, date(2024, 3, 4))
-        self.assertEqual(learner.end_date, "2029-12-31")
-        self.assertEqual(profile.end_date, date(2029, 12, 31))
-        self.assertEqual(report["counts"]["preserved.missing_end_date"], 1)
+        self.assertEqual(learner.end_date, "2028-05-06")
+        self.assertEqual(profile.end_date, date(2028, 5, 6))
+        self.assertEqual(report["counts"].get("preserved.missing_end_date", 0), 0)
 
     def test_explicit_existing_profile_link_supports_a_missing_enrolment_aptem_id(self):
         learner = self.enrolments[0]
@@ -155,8 +151,9 @@ class AptemDatesPostgresTests(CoachTransactionTestCase):
             with self.assertRaisesMessage(CommandError, "changes rolled back"):
                 call_command("sync_aptem_learner_details", apply=True, all_rows=True, stdout=output)
         self.assertEqual(output.getvalue(), "")
-        for learner, profile in zip(self.enrolments, self.profiles):
+        for index, (learner, profile) in enumerate(zip(self.enrolments, self.profiles), start=1):
             learner.refresh_from_db(using="enrolment")
             profile.refresh_from_db(using="enrolment")
             self.assertEqual(learner.start_date, "2023-01-01")
-            self.assertEqual(profile.start_date, date(2023, 1, 1))
+            expected_start = date(2024, 3, 4) if index == 2 else date(2025, 1, 2)
+            self.assertEqual(profile.start_date, expected_start)

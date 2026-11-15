@@ -59,12 +59,12 @@ def resolve_aptem(cursor, kind, pk):
     if kind not in {'commercial', 'apprenticeship'}:
         raise EvidenceError('Unknown learner kind.', 400)
     cursor.execute('''SELECT u.aptem_id, lower(btrim(u."Learner_type")) AS kind,
-        a."ID" AS verified_id,
+        learner.aptem_id AS verified_id,
         (SELECT count(*) FROM enrolment."Created_users" other
          WHERE ltrim(btrim(other.aptem_id), '0')=ltrim(btrim(u.aptem_id), '0')) AS links
         FROM enrolment."Created_users" u
-        LEFT JOIN "LMS"."Aptem_users" a ON a."ID"::text=ltrim(btrim(u.aptem_id), '0')
-          AND nullif(lower(btrim(u."Email")), '')=lower(btrim(a."Email"))
+        LEFT JOIN "Learner".learners learner ON learner.enrolment_id=u.id
+          AND learner.aptem_id::text=ltrim(btrim(u.aptem_id), '0')
         WHERE u.id=%s''', [pk])
     rows = dict_rows(cursor)
     if not rows or rows[0]['kind'] != kind:

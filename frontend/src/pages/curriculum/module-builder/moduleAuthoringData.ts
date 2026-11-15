@@ -1128,7 +1128,7 @@ export function applyModuleWeekSessionPlan(
         // An additional meeting owns its confirmed schedule independently of
         // this week's main delivery slot, including after a week is inserted.
         if (trimmed(settings.extraTeamsMeetingUrl)) return component;
-        const calendarConfirmationPending = ['missing', 'ambiguous'].includes(trimmed(settings.teamsCalendarBinding));
+        const calendarConfirmationPending = ['missing', 'ambiguous', 'unverified'].includes(trimmed(settings.teamsCalendarBinding));
         // A live session runs on the day its week runs on. The date stored on
         // the component is a copy of the plan's, not a second opinion, so it
         // follows the plan whenever the plan moves -- which is what a changed
@@ -1294,6 +1294,7 @@ export interface ModuleCatalogueItem extends CoursePricing {
   startTime?: string;
   endTime?: string;
   weeklySchedule?: CurriculumModule['weeklySchedule'];
+  scheduleMode?: CurriculumModule['scheduleMode'];
   sessionHolidays?: CurriculumModule['sessionHolidays'];
   deliveryWeeks?: number;
   id: string;
@@ -2410,61 +2411,6 @@ export interface ModuleStructureResolveResult {
   module?: ModuleCatalogueItem;
 }
 
-export async function loadModuleStructuresBatch(modules: ModuleStructureResolveRequest[]): Promise<ModuleStructureResolveResult[]> {
-  const response = await apiJson<{ results: ModuleStructureResolveResult[] }>('/curriculum/modules/resolve-structures/', {
-    method: 'POST',
-    body: JSON.stringify({ modules }),
-    timeoutMs: 8000,
-  });
-  return response.results.map(result => ({
-    ...result,
-    module: result.module ? recalculateModule(result.module) : undefined,
-  }));
-}
-
-export async function updateModuleSettings(moduleCatalogueId: string, payload: Partial<ModuleCatalogueItem>) {
-  const response = await apiJson<{ updated: boolean; module: ModuleCatalogueItem }>(`/curriculum/modules/${encodeURIComponent(moduleCatalogueId)}/settings/`, {
-    method: 'PATCH',
-    body: JSON.stringify(payload),
-  });
-  // Same reason as `saveModuleStructure`: an `apiJson` write invalidates nothing.
-  invalidateCurriculumCacheByEntity('module');
-  return recalculateModule(response.module);
-}
-
-export function createLegacyLocalModule(input: { programme: string; title: string; description: string; weeks: number; status: ModuleStatus }): ModuleCatalogueItem {
-  const catalogueId = makeAuthoringId('MOD');
-  const id = `local-${catalogueId}`;
-  const weekStructure = Array.from({ length: Math.max(1, input.weeks || 1) }, (_, index) => createEmptyWeek(id, index + 1));
-  return recalculateModule({
-    id,
-    catalogueId,
-    // Never derive an id from the programme NAME, and never persist a
-    // placeholder. An unassigned legacy draft has no programme id.
-    programmeId: '',
-    programmeName: input.programme || 'Unassigned programme',
-    title: input.title,
-    description: input.description,
-    status: input.status || 'draft',
-    sessionsNumber: weekStructure.length,
-    startDate: '',
-    endDate: '',
-    weeks: weekStructure.length,
-    totalOtjh: 0,
-    ksbCount: 0,
-    lessonCount: 0,
-    quizCount: 0,
-    qualityScore: 0,
-    moduleKsbMappings: [],
-    completionCriteria: emptyCompletionCriteria(),
-    advancedDetails: emptyAdvancedDetails(),
-    background: '',
-    epaRequirements: [],
-    qualificationOutcomes: [],
-    weekStructure,
-  });
-}
-
 /**
  * How many authored week/live-session titles the module has.
  *
@@ -2548,6 +2494,7 @@ export function curriculumModuleToCatalogue(module: CurriculumModule): ModuleCat
     tutor,
     coach,
     weeklySchedule: module.weeklySchedule || [],
+    scheduleMode: module.scheduleMode,
     sessionHolidays: module.sessionHolidays || [],
     deliveryWeeks: module.deliveryWeeks,
     deliveryMetadata: {
@@ -3513,12 +3460,6 @@ export function utcIsoToCalendarParts(value: unknown, timeZone = calendarTimeZon
   return { date: `${parts.year}-${parts.month}-${parts.day}`, time: `${parts.hour === '24' ? '00' : parts.hour}:${parts.minute}` };
 }
 
-function clockIn(instant: Date, timeZone: string) {
-  return new Intl.DateTimeFormat('en-GB', {
-    timeZone, hour: '2-digit', minute: '2-digit', hour12: false,
-  }).format(instant);
-}
-
 function shortZoneName(timeZone: string) {
   return timeZone.split('/').pop()?.replace(/_/g, ' ') || timeZone;
 }
@@ -3547,22 +3488,6 @@ export function viewerZoneOffset(instant: Date | null = null) {
     calendarZoneLabel: shortZoneName(calendarTimeZone),
     /** Zero when both zones show the same clock, so callers can stay quiet. */
     differenceMinutes,
-  };
-}
-
-export function describeSessionTime(naiveLocal: string) {
-  const iso = zonedNaiveToUtcIso(naiveLocal);
-  const instant = new Date(iso);
-  if (Number.isNaN(instant.getTime())) return null;
-  const viewerZone = Intl.DateTimeFormat().resolvedOptions().timeZone || calendarTimeZone;
-  const calendarClock = clockIn(instant, calendarTimeZone);
-  const viewerClock = clockIn(instant, viewerZone);
-  return {
-    iso,
-    calendarClock,
-    calendarZone: shortZoneName(calendarTimeZone),
-    viewerClock: viewerClock === calendarClock ? '' : viewerClock,
-    viewerZone: shortZoneName(viewerZone),
   };
 }
 
@@ -4147,10 +4072,6 @@ export function teamsMeetingArtifactPreviewUrl(liveSessionId: string, artifactId
   return `${teamsMeetingArtifactContentUrl(liveSessionId, artifactId)}?preview=1`;
 }
 
-export function teamsMeetingRecordingEventsUrl(liveSessionId: string, artifactId: string) {
-  return `${API_BASE_URL}/curriculum/teams-meetings/${encodeURIComponent(liveSessionId)}/artifacts/${encodeURIComponent(artifactId)}/recording-events/`;
-}
-
 /** One thing a viewer did to a recording: started it, paused, skipped, finished. */
 export interface TeamsRecordingEventInput {
   type: 'play' | 'pause' | 'seeked' | 'ended' | 'heartbeat' | 'open' | 'close';
@@ -4251,115 +4172,6 @@ async function apiJson<T>(path: string, init?: { method?: string; body?: string;
 export class CurriculumRequestTimeout extends Error {
   constructor() {
     super('The response timed out. The server may still be processing this request. Check its saved status before retrying.');
-  }
-}
-
-function componentAdvancedDefaults(type: ModuleComponentType): Record<string, string | number | boolean | string[]> {
-  const completionRules: Partial<Record<ModuleComponentType, string>> = {
-    'live-session': 'Attend or watch recording',
-    'recording-placeholder': 'Mark complete after watching',
-    video: 'Watch video and mark complete',
-    podcast: 'Listen and mark complete',
-    reading: 'Read the material and confirm completion',
-    powerpoint: 'Review slide deck',
-    quiz: 'Submit',
-    'monthly-ksb-quiz': 'Submit monthly KSB quiz',
-    reflection: 'Submit reflection',
-    'workplace-evidence': 'Upload + describe',
-    assignment: 'Submit assignment',
-    checkpoint: 'Complete checkpoint',
-    'coaching-preparation': 'Complete coaching preparation',
-  };
-  const evidenceRequired: Partial<Record<ModuleComponentType, string>> = {
-    'live-session': 'Attendance or recording completion',
-    quiz: 'Quiz result',
-    'monthly-ksb-quiz': 'Quiz result',
-    checkpoint: 'Quiz result',
-    reflection: 'Reflection + signature',
-    'workplace-evidence': 'File + 100-word description',
-    assignment: 'Submission file',
-    'coaching-preparation': 'Preparation notes',
-  };
-  const reflectionPrompt =
-    type === 'workplace-evidence'
-      ? 'What workplace evidence have you uploaded, and which KSBs does it demonstrate?'
-      : ['quiz', 'monthly-ksb-quiz', 'checkpoint'].includes(type)
-        ? 'Which questions or topics do you need to revisit after this activity?'
-        : 'What did you learn? How will you apply this at work? Which KSBs did this develop?';
-
-  return {
-    completionRule: completionRules[type] || 'Mark complete',
-    evidenceRequired: evidenceRequired[type] || '-',
-    reflectionPrompt,
-    contentStatus: 'Draft',
-    version: '0.1',
-  };
-}
-
-// Retained from the pre-registry authoring implementation for reference and
-// backwards-compatible migration work. Runtime defaults come from
-// componentAuthoringModel.getDefaultComponentSettings above.
-export function getLegacyDefaultComponentSettings(type: ModuleComponentType): Record<string, string | number | boolean | string[]> {
-  switch (type) {
-    case 'live-session':
-      return { ...componentAdvancedDefaults(type), sessionPurpose: '', preparationInstructions: '', reflectionQuestions: '', attendanceRequired: true, recordingExpected: true };
-    case 'recording-placeholder':
-      return { ...componentAdvancedDefaults(type), recordingPurpose: '', source: 'MIS allocation', expectedAvailability: 'After live session' };
-    case 'video':
-      return { ...componentAdvancedDefaults(type), provider: 'YouTube', videoUrl: '', durationMinutes: 10, learningBrief: '', postWatchTask: '' };
-    case 'podcast':
-      return { ...componentAdvancedDefaults(type), podcastSource: 'External URL', podcastUrl: '', durationMinutes: 20, listeningFocus: '', podcastReflectionQuestion: '' };
-    case 'reading':
-      return {
-        ...componentAdvancedDefaults(type),
-        difficulty: 'Standard',
-        requirement: 'Required',
-        readingSource: 'Written in LMS',
-        resourceUrl: '',
-        uploadedFileName: '',
-        uploadedFileUrl: '',
-        uploadedFileSize: 0,
-        uploadedFileContentType: '',
-        uploadSource: '',
-        readingContent: '',
-        mainLearningOutcomes: '',
-        ksbEvidenceNotes: '',
-        focusSections: '',
-        learnerInstruction: '',
-        keyPointCount: '0',
-        keyPoints: '',
-        glossaryTerms: '',
-        estimatedReadingTime: 20,
-        otjhRationale: '',
-        audioEnabled: false,
-        audioUrl: '',
-        reflectionQuestionCount: '0 qs',
-        readingReflectionPrompts: '',
-        readingEvidenceRequired: '',
-        completionRuleCount: '3 rules',
-        completionConfirmationRequired: true,
-        linkedActivity: '',
-        coachingPrompt: '',
-        requiredReading: true,
-      };
-    case 'powerpoint':
-      return { ...componentAdvancedDefaults(type), fileName: '', slideRange: '', speakerNotes: '', downloadAllowed: true };
-    case 'quiz':
-      return { ...componentAdvancedDefaults(type), buildMode: 'manual', numberOfQuestions: 10, passMarkPercentage: 70, attemptsAllowed: 2, affectsKsbProgression: true, questionsPlaceholder: '', completionFeedback: '' };
-    case 'monthly-ksb-quiz':
-      return { ...componentAdvancedDefaults(type), buildMode: 'manual', numberOfQuestions: 12, passMarkPercentage: 70, attemptsAllowed: 2, affectsKsbProgression: true, monthFocus: '' };
-    case 'reflection':
-      return { ...componentAdvancedDefaults(type), minimumWordCount: 250, learnerGuidance: '', tutorReviewGuidance: '' };
-    case 'workplace-evidence':
-      return { ...componentAdvancedDefaults(type), evidenceInstructions: '', acceptedEvidenceTypes: 'Document, image, video, witness statement', assessmentChecklist: '', minimumDescriptionWords: 100 };
-    case 'assignment':
-      return { ...componentAdvancedDefaults(type), assignmentBrief: '', submissionInstructions: '', dueTiming: 'End of week', markingRubric: '' };
-    case 'checkpoint':
-      return { ...componentAdvancedDefaults(type), checkpointTitle: '', checkpointQuestions: '', progressReviewLinked: true, monthlyCoachingReviewLinked: true };
-    case 'coaching-preparation':
-      return { ...componentAdvancedDefaults(type), preparationPrompt: '', evidenceToBring: '', coachDiscussionPoints: '', coachingReviewLinked: true };
-    default:
-      return componentAdvancedDefaults(type);
   }
 }
 

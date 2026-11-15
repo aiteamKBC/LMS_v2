@@ -64,7 +64,7 @@ export function ActivityChart({ activeGroups, totalGroups, activeModules, totalM
             <rect x="0" y="4" width="300" height="8" rx="4" fill={`${metric.color}14`} />
             {proportion > 0 && <rect x="0" y="4" width={300 * proportion} height="8" rx="4" fill={`url(#activity-${id}-${index})`} />}
           </svg>
-          <div className={styles.activityMetricFoot}><span>of {number.format(metric.total)} {index === 0 ? 'groups' : 'modules'}</span><span>{Math.round(proportion * 100)}% active</span></div>
+          <div className={styles.activityMetricFoot}><span>of {number.format(metric.total)} {index === 0 ? 'groups' : 'modules in groups'}</span><span>{Math.round(proportion * 100)}% active</span></div>
         </>}
       </div>;
     })}

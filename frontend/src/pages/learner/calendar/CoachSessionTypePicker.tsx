@@ -4,8 +4,8 @@ import type { BookableSessionType } from '@/api/learnerCalendar';
 export const COACH_SESSION_TYPES = [
   { value: 'catch-up', label: 'Catch-up', icon: 'ri-chat-3-line', desc: 'Quick check-in on your progress' },
   { value: 'student-support', label: 'Student Support', icon: 'ri-heart-2-line', desc: 'Help with challenges or wellbeing' },
-  { value: 'progress-review', label: 'PR', icon: 'ri-line-chart-line', desc: 'Progress Review' },
-  { value: 'mcr', label: 'MCM', icon: 'ri-calendar-check-line', desc: 'Monthly Coaching Meeting' },
+  { value: 'progress-review', label: 'PR', icon: 'ri-line-chart-line', desc: 'Progress Review · Manage existing sessions' },
+  { value: 'mcr', label: 'MCM', icon: 'ri-calendar-check-line', desc: 'Monthly Coaching Meeting · Manage existing sessions' },
   { value: 'gateway', label: 'Gateway', icon: 'ri-flag-line', desc: 'Gateway review or assessment' },
   { value: 'other', label: 'Other', icon: 'ri-more-line', desc: 'Request another session type' },
 ] as const;
@@ -16,9 +16,10 @@ export const COACH_APPROVAL_SESSION_TYPES: ReadonlySet<BookableSessionType> = ne
   'student-support', 'gateway', 'other',
 ]);
 
-export default function CoachSessionTypePicker({ value, onChange }: {
+export default function CoachSessionTypePicker({ value, onChange, compact = false }: {
   value: BookableSessionType;
   onChange: (value: CoachSessionRequestType) => void;
+  compact?: boolean;
 }) {
   return <div role="group" aria-label="Session Type" className="grid grid-cols-2 gap-3">
     {COACH_SESSION_TYPES.map((type, index, list) => <button
@@ -27,11 +28,11 @@ export default function CoachSessionTypePicker({ value, onChange }: {
       aria-pressed={value === type.value}
       onClick={() => onChange(type.value)}
       /* A lone trailing tile leaves a visible gap, so let it span the row. */
-      className={`p-3 rounded-xl border-2 text-left transition-all cursor-pointer ${index === list.length - 1 && list.length % 2 === 1 ? 'col-span-2' : ''} ${value === type.value ? 'border-primary-400 bg-primary-50/40' : 'border-background-300 hover:border-background-400'}`}
+      className={`p-3 rounded-xl border-2 text-left transition-all cursor-pointer ${compact ? 'flex items-center gap-2' : ''} ${index === list.length - 1 && list.length % 2 === 1 ? 'col-span-2' : ''} ${value === type.value ? 'border-primary-400 bg-primary-50/40' : 'border-background-300 hover:border-background-400'}`}
     >
-      <span className={`w-8 h-8 rounded-lg flex items-center justify-center mb-2 ${value === type.value ? 'bg-primary-100 text-primary-600' : 'bg-background-100 text-foreground-500'}`}><AppIcon className={type.icon} /></span>
+      <span className={`w-8 h-8 rounded-lg flex items-center justify-center ${compact ? 'shrink-0' : 'mb-2'} ${value === type.value ? 'bg-primary-100 text-primary-600' : 'bg-background-100 text-foreground-500'}`}><AppIcon className={type.icon} /></span>
       <p className="text-sm font-semibold text-foreground-900">{type.label}</p>
-      <p className="text-xs text-foreground-400 mt-0.5">{type.desc}</p>
+      <p className={compact ? 'sr-only' : 'text-xs text-foreground-400 mt-0.5'}>{type.desc}</p>
     </button>)}
   </div>;
 }

@@ -5,7 +5,7 @@ import { MemoryRouter, useLocation } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ReactNode } from 'react';
 import type { CurriculumProgramme } from '@/lib/curriculumApi';
-import { fetchCurriculumKsbSets, fetchCurriculumKsbSetSummaries } from '@/lib/curriculumApi';
+import { fetchCurriculumKsbSets, fetchCurriculumKsbSetSummaries, fetchCurriculumStandards } from '@/lib/curriculumApi';
 
 /**
  * A programme with no usable KSB source is unfinished work, not a programme with
@@ -15,9 +15,8 @@ import { fetchCurriculumKsbSets, fetchCurriculumKsbSetSummaries } from '@/lib/cu
  * badge on the card, the panel saying what it costs — rather than discovered
  * later on an empty screen.
  *
- * There is exactly one empty KSB profile, shared. A programme with no real
- * standard yet can be parked on it; it is created the first time it is asked for
- * and reused after that — never one empty profile per programme.
+ * KSBs come from the apprenticeship standards only: curriculum keeps no KSB
+ * profiles any more, so the page never asks for them.
  */
 
 vi.mock('@/api/assignedLearners', () => ({ fetchLearnerStatusCounts: vi.fn(async (_scope: string, ids: string[]) => Object.fromEntries(ids.map(id => [id, { total: 3, statuses: { active: 2, withdrawn: 1 } }]))), fetchAssignedLearners: vi.fn(async () => ({ scope: 'programme', id: 'PROG-MAPPED', status: 'active', total: 2, filteredTotal: 2, page: 1, pageSize: 25, learners: [
@@ -38,7 +37,7 @@ vi.mock('@/components/feature/CurriculumSweetAlert', () => ({
 
 const withSource = {
   id: 'PROG-MAPPED', sourceId: 'PROG-MAPPED', name: 'Data Analyst', level: 'LVL-4',
-  ksbProfileSourceId: 'profile:KSB-1', ksbTotal: 10, ksbMapped: 3,
+  ksbProfileSourceId: 'standard:st0845-v1-1', ksbTotal: 10, ksbMapped: 3,
   cohorts: 1, groups: 1, modules: 1, weeks: 10, learners: 0,
 } as unknown as CurriculumProgramme;
 
@@ -63,21 +62,6 @@ vi.mock('@/hooks/useCurriculumProgrammes', () => ({
   }),
 }));
 
-vi.mock('@/hooks/useCurriculumData', () => ({
-  useCurriculumData: () => ({ data: null, loading: false, error: null, reload: vi.fn(async () => null) }),
-}));
-
-vi.mock('@/hooks/useCurriculumStaffProfiles', () => ({
-  useCurriculumStaffProfiles: () => ({ tutors: [], coaches: [], loading: false, error: null, reload: vi.fn() }),
-}));
-
-const realProfile = {
-  id: 'KSB-1', frameworkId: 'KSB-1', standard: 'Project Control Professional',
-  standardSourceId: 'st0845-v1-1',
-  programmeName: 'Project Control', knowledge: 31, skills: 29, behaviours: 11,
-  ksbs: new Array(71).fill({ code: 'K1' }),
-};
-
 const linkedStandard = {
   id: 'st0845-v1-1', code: 'ST0845', standardRef: 'ST0845', version: '1.1',
   name: 'Project controls professional', level: 'Level 6', levelValue: '6',
@@ -85,15 +69,13 @@ const linkedStandard = {
   knowledge: 31, skills: 29, behaviours: 11, total: 71, ksbs: [],
 };
 
-// The one shared placeholder. Not owned by a programme: several can be parked on
-// it, and it is the same row in the KSB Frameworks list every time.
-const sharedEmptyProfile = {
-  id: 'KSBP-EMPTY', frameworkId: 'KSBP-EMPTY', standard: 'Empty KSB profile',
-  programmeName: 'Empty KSB profile', knowledge: 0, skills: 0, behaviours: 0,
-  ksbs: [] as unknown[],
+// A standard row that holds no KSB codes: applied, but nothing to map against.
+const emptyStandard = {
+  ...linkedStandard, id: 'st-empty', code: 'ST0000', standardRef: 'ST0000',
+  name: 'Empty standard', knowledge: 0, skills: 0, behaviours: 0, total: 0,
 };
 
-let ksbSets: unknown[] = [realProfile];
+let standards: unknown[] = [linkedStandard];
 
 const createCurriculumProgramme = vi.fn(async () => ({
   created: true,
@@ -105,13 +87,10 @@ vi.mock('@/lib/curriculumApi', async importOriginal => ({
   ...(await importOriginal<typeof import('@/lib/curriculumApi')>()),
   createCurriculumProgramme: (...args: unknown[]) => createCurriculumProgramme(...(args as [])),
   updateCurriculumProgramme: (...args: unknown[]) => updateCurriculumProgramme(...(args as [])),
-  fetchCurriculumKsbSets: vi.fn(async () => ksbSets),
-  fetchCurriculumKsbSetSummaries: vi.fn(async () => ksbSets.map(value => {
-    const { ksbs, ...metadata } = value as typeof realProfile;
-    return { ...metadata, ksbCount: ksbs.length, knowledgeCount: ksbs.length, skillCount: 0, behaviourCount: 0 };
-  })),
+  fetchCurriculumKsbSets: vi.fn(async () => []),
+  fetchCurriculumKsbSetSummaries: vi.fn(async () => []),
   fetchCurriculumProgrammeKsbStats: vi.fn(async () => ({})),
-  fetchCurriculumStandards: vi.fn(async () => [linkedStandard]),
+  fetchCurriculumStandards: vi.fn(async () => standards),
   fetchCurriculumModules: vi.fn(async () => []),
   fetchCurriculumProgrammeKsbCoverage: vi.fn(async () => null),
   fetchCurriculumProgrammeLearnerKsbImpact: vi.fn(async () => null),
@@ -137,11 +116,12 @@ describe('Programmes page — a programme with no usable KSB source', { timeout:
     vi.mocked(fetchAssignedLearners).mockClear();
     vi.mocked(fetchLearnerStatusCounts).mockClear();
     listedProgrammes = [withSource, withoutSource];
-    ksbSets = [realProfile];
+    standards = [linkedStandard];
     createCurriculumProgramme.mockClear();
     updateCurriculumProgramme.mockClear();
     vi.mocked(fetchCurriculumKsbSets).mockClear();
     vi.mocked(fetchCurriculumKsbSetSummaries).mockClear();
+    vi.mocked(fetchCurriculumStandards).mockClear();
   });
 
   it('shows automatically loaded programme status counts while names wait for an explicit open', async () => {
@@ -159,10 +139,11 @@ describe('Programmes page — a programme with no usable KSB source', { timeout:
     expect(fetchAssignedLearners).toHaveBeenCalledWith(expect.objectContaining({ scope: 'programme', id: 'PROG-MAPPED' }), 'active', '', 1, expect.any(AbortSignal));
   });
 
-  it('loads source summaries on mount, never the full KSB library', async () => {
+  it('loads the standards on mount, never the removed KSB profiles', async () => {
     await renderProgrammes();
-    await screen.findByRole('button', { name: 'View KSBs for Project Control Professional' });
-    expect(fetchCurriculumKsbSetSummaries).toHaveBeenCalledTimes(1);
+    await screen.findByRole('button', { name: 'View KSBs for Project controls professional' });
+    expect(fetchCurriculumStandards).toHaveBeenCalledTimes(1);
+    expect(fetchCurriculumKsbSetSummaries).not.toHaveBeenCalled();
     expect(fetchCurriculumKsbSets).not.toHaveBeenCalled();
   });
 
@@ -206,14 +187,14 @@ describe('Programmes page — a programme with no usable KSB source', { timeout:
     const mapped = within(cardFor('Data Analyst'));
     expect(mapped.queryByText('Needs KSB source')).not.toBeInTheDocument();
     expect(mapped.getByText('Applied KSB Source')).toBeInTheDocument();
-    expect(mapped.getByText('Project Control Professional')).toBeInTheDocument();
+    expect(mapped.getByText('Project controls professional')).toBeInTheDocument();
     expect(mapped.getByText('348 hrs min')).toBeInTheDocument();
     expect(mapped.getByText('£27,000 max funding')).toBeInTheDocument();
   });
 
-  it('marks a programme parked on the empty profile', async () => {
-    ksbSets = [realProfile, sharedEmptyProfile];
-    listedProgrammes = [{ ...withSource, name: 'Parked Programme', ksbProfileSourceId: 'profile:KSBP-EMPTY' } as CurriculumProgramme];
+  it('marks a programme whose applied standard holds no KSB codes', async () => {
+    standards = [linkedStandard, emptyStandard];
+    listedProgrammes = [{ ...withSource, name: 'Parked Programme', ksbProfileSourceId: 'standard:st-empty' } as CurriculumProgramme];
     await renderProgrammes();
     expect(await screen.findByText('Parked Programme')).toBeInTheDocument();
 
@@ -227,8 +208,8 @@ describe('Programmes page — a programme with no usable KSB source', { timeout:
     expect(screen.queryByRole('button', { name: 'Author a KSB profile' })).not.toBeInTheDocument();
   });
 
-  // Creating a programme writes no profile of its own — there is one, shared —
-  // so the create leads to the picker, where that profile is one of the options.
+  // Creating a programme writes no KSB source of its own, so the create leads
+  // straight to the standards picker.
   it('asks a newly created programme for its source without writing a profile', async () => {
     await renderProgrammes();
     expect(await screen.findByText('Test-Zyad')).toBeInTheDocument();
@@ -253,7 +234,6 @@ describe('Programmes page — a programme with no usable KSB source', { timeout:
     const sourceModal = within(sourceHeading.closest('.fixed') as HTMLElement);
     // Only the GOV.UK standards are offered; the manual profile is not.
     expect(sourceModal.queryByRole('button', { name: 'KSB profile' })).not.toBeInTheDocument();
-    expect(sourceModal.queryByRole('button', { name: /Project Control Professional/ })).not.toBeInTheDocument();
     await userEvent.click(sourceModal.getByRole('button', { name: /Project controls professional/ }));
     await userEvent.click(sourceModal.getByRole('button', { name: 'Apply source' }));
 

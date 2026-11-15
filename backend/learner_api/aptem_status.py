@@ -12,11 +12,23 @@ def with_aptem_status(queryset):
     # This projection keeps the directory to one query, without loading plans
     # or fetching an external status separately for each learner.
     return queryset.annotate(_aptem_programme_status=RawSQL('''(
-        SELECT a."Program-Status" FROM "LMS"."Aptem_users" a
-        WHERE a."ID"::numeric = CASE
-            WHEN btrim("enrolment"."Created_users".aptem_id::text) ~ '^[0-9]{1,19}$'
-            THEN btrim("enrolment"."Created_users".aptem_id::text)::numeric
-            ELSE NULL END
+        SELECT source.programme_status
+        FROM (
+            SELECT learner.programme_status, 0 AS priority
+            FROM "Learner".learners learner
+            WHERE learner.enrolment_id = "enrolment"."Created_users".id
+              AND learner.aptem_id::text = ltrim(btrim("enrolment"."Created_users".aptem_id::text), '0')
+            UNION ALL
+            SELECT inactive."Program-Status", 1
+            FROM "LMS".non_active_users inactive
+            WHERE inactive."ID"::text = ltrim(btrim("enrolment"."Created_users".aptem_id::text), '0')
+              AND NOT EXISTS (
+                  SELECT 1 FROM "Learner".learners learner
+                  WHERE learner.enrolment_id = "enrolment"."Created_users".id
+                    AND learner.aptem_id = inactive."ID"
+              )
+        ) source
+        ORDER BY source.priority
         LIMIT 1
     )''', [], output_field=TextField()))
 
@@ -32,7 +44,24 @@ def programme_status(source):
         status = None
         if ident.isascii() and ident.isdecimal() and 0 < int(ident) <= 9223372036854775807:
             with connections['enrolment'].cursor() as cursor:
-                cursor.execute('SELECT "Program-Status" FROM "LMS"."Aptem_users" WHERE "ID"=%s', [int(ident)])
+                cursor.execute('''
+                    SELECT source.programme_status
+                    FROM (
+                        SELECT learner.programme_status, 0 AS priority
+                        FROM "Learner".learners learner
+                        WHERE learner.aptem_id=%s
+                        UNION ALL
+                        SELECT inactive."Program-Status", 1
+                        FROM "LMS".non_active_users inactive
+                        WHERE inactive."ID"=%s
+                          AND NOT EXISTS (
+                              SELECT 1 FROM "Learner".learners learner
+                              WHERE learner.aptem_id=inactive."ID"
+                          )
+                    ) source
+                    ORDER BY source.priority
+                    LIMIT 1
+                ''', [int(ident), int(ident)])
                 row = cursor.fetchone()
             status = row[0] if row else None
         source._aptem_programme_status = status

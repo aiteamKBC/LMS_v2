@@ -15,7 +15,7 @@ from zoneinfo import ZoneInfo
 
 from django.db import connections, transaction
 
-from .bunny_stream import BunnyStream, VideoImportError, playback_url, video_title
+from .bunny_stream import BunnyStream, VideoImportError, VideoUploadConflict, playback_url, video_title
 from .models import CurriculumVideoImport
 from .session_bunny_policy import BUNNY_CONTAINER, bunny_recording, signed_embed
 from .session_recording_source import download_recording, resolve_recording_download
@@ -36,13 +36,37 @@ def _transient_bunny_error(failure):
             or any(f'HTTP {status}.' in str(failure) for status in (408, 429, 500, 502, 503, 504)))
 
 
+def _retire_empty_failed_upload(asset, video):
+    """Retain a confirmed empty failed GUID and replace only its upload identity.
+
+    Bunny refuses another PUT to an identity that has already received an
+    interrupted upload. Never replace processing, playable or nonempty media.
+    Save the old GUID before another create so a lost response remains recoverable.
+    """
+    if (not asset.video_id or video.get('guid') != asset.video_id or video.get('status') != 6
+            or video.get('storageSize') != 0 or video.get('length') != 0):
+        return False
+    retired = list(asset.scope.get('interrupted_upload_ids') or [])
+    if len(retired) >= 3:
+        raise VideoImportError('Repeated Bunny uploads failed. Review the saved import before retrying.')
+    if asset.video_id not in retired:
+        retired.append(asset.video_id)
+    asset.scope = {**asset.scope, 'interrupted_upload_ids': retired}
+    asset.scope.pop('bunny_fetch_requested_at', None)
+    asset.video_id = ''
+    asset.save(update_fields=['scope', 'video_id', 'updated_at'])
+    return True
+
+
 def _prepare_and_upload(asset, client, stream):
     """Keep downloaded bytes during transient Bunny failures; reuse the GUID."""
     for attempt in range(3):
         try:
             if not asset.video_id:
-                recovered = _find_import(asset, client) if attempt else None
+                recovered = _find_import(asset, client) if attempt or asset.scope.get('interrupted_upload_ids') else None
                 created = recovered or client.create(asset.id, asset.title, asset.collection_id, scope=asset.scope)
+                if created['guid'] in asset.scope.get('interrupted_upload_ids', []):
+                    raise VideoImportError('Bunny returned a previously failed upload. Review the saved import.')
                 asset.video_id = created['guid']
                 playback_url(asset.library_id, asset.video_id)
                 asset.save(update_fields=['video_id', 'updated_at'])
@@ -56,6 +80,12 @@ def _prepare_and_upload(asset, client, stream):
             stream.seek(0)
             client.upload(asset.video_id, stream)
             return
+        except VideoUploadConflict:
+            remote = client.video(asset.video_id)
+            if remote.get('status') in (1, 2, 3, 4):
+                return  # the accepted upload outlived its response
+            if attempt == 2 or not _retire_empty_failed_upload(asset, remote):
+                raise
         except VideoImportError as failure:
             if not _transient_bunny_error(failure) or attempt == 2:
                 raise
@@ -202,6 +232,8 @@ def transfer_recording(asset, *, lease_id=None):
             asset.save(update_fields=['video_id', 'updated_at'])
             client.metadata(asset.video_id, asset.scope, asset.title)
     video = client.video(asset.video_id) if asset.video_id else None
+    if video is not None and _retire_empty_failed_upload(asset, video):
+        video = None
     if video is None:
         if _queue_remote_fetch(asset, client, source, microsoft_graph_token(), row):
             video = client.video(asset.video_id) if asset.video_id else None
@@ -284,9 +316,14 @@ def recording_player(row, *, download=False, referrer=''):
         return url
     query = parse_qs(urlsplit(url).query)
     data = BunnyStream(saved['libraryId']).request('GET', f"/videos/{saved['videoId']}/play",
-        headers={'Referer': referrer} if referrer else {},
+        # The protected play-data endpoint validates the signed embed as its
+        # player referrer, just as a real Bunny iframe does. LMS authorization
+        # has already occurred before this server-only request.
+        headers={'Referer': url},
         params={'token': query['token'][0], 'expires': query['expires'][0]})
     source = data.get('originalUrl') or data.get('fallbackUrl') or ''
+    if not data.get('originalUrl') and data.get('enableMP4Fallback') is False:
+        raise VideoImportError('Bunny provides protected playback for this recording. Use the staff original-file download.')
     parsed = urlsplit(source)
     if not data.get('originalUrl') and parsed.path.endswith('/play_'):
         # Play-data returns an MP4 prefix, not a complete downloadable URL.

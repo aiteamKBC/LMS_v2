@@ -15,6 +15,8 @@ from learner_api.active_users import hydrate_training_plan
 from learner_api.mappers import get_training_plan, stored_training_plan, training_plan_field
 from learner_api.models import EnrolmentUser, LearnerProfile
 
+from . import module_plan_rows
+
 logger = logging.getLogger(__name__)
 
 
@@ -62,47 +64,52 @@ def _same_cohort(learner, target):
     return ids['cohort_id'] == target['id'] and ids['programme_id'] == target['programmeId']
 
 
+def _cohort_members(target, cache):
+    """{module id: member enrolment ids} for the cohort's modules, read once per request.
+
+    Membership by the card's rule over `"Learner".learners` and
+    `learner_training_plan_modules`, never the legacy JSON plan.
+    """
+    if '_cohortMembers' not in cache:
+        from .learner_status_counts import module_member_enrolment_ids_by_module
+        cache['_cohortMembers'] = module_member_enrolment_ids_by_module(target['moduleIds'])
+    return cache['_cohortMembers']
+
+
 def _assigned(learner, target, cache):
-    ids = set(plans._effective_plan_ids(learner, cache))
-    return set(target['moduleIds']).issubset(ids) and (target['scope'] == 'module' or _same_cohort(learner, target))
+    """Cohort assignment: placed in the cohort and a member of every one of its modules."""
+    members = _cohort_members(target, cache)
+    learner_id = str(learner.pk)
+    return (all(learner_id in members.get(module_id, ()) for module_id in target['moduleIds'])
+            and _same_cohort(learner, target))
+
+
+def _plan_row_counts():
+    """Saved plan rows per enrolment id: the drawers' "N modules" figure."""
+    from . import views
+    with views.connection.cursor() as cursor:
+        cursor.execute("""
+            SELECT l.enrolment_id, count(t.id)
+            FROM "Learner".learners l
+            JOIN "Learner".learner_training_plan_modules t ON t.learner_id = l.id
+            WHERE l.enrolment_id IS NOT NULL
+            GROUP BY l.enrolment_id
+        """)
+        return {str(enrolment_id): count for enrolment_id, count in cursor.fetchall()}
 
 
 def _payload(target, learners):
-    # `learners` deliberately does not select learning_plan/training_plan --
-    # shipping those for every learner (~11 MB across ~460 rows) is what made
-    # this directory time out over a slow link. assignment_directory_facts
-    # gets the same assigned/moduleCount answer from Postgres directly, and
-    # only the rare ambiguous case (a plan stored as a JSON string) needs the
-    # plan columns read back in Python, for just those learners.
-    from .learner_assignment_counts_sql import assignment_directory_facts
+    """The "Assign learners" directory, with membership from the normalized records.
 
-    target_ids = set(target['moduleIds'])
-    facts, ambiguous_ids = assignment_directory_facts(target['moduleIds'])
-    plan_backfill = {}
-    if ambiguous_ids:
-        plan_backfill = dict(EnrolmentUser.all_learners.filter(pk__in=ambiguous_ids)
-                              .values_list('pk', 'learning_plan', 'training_plan'))
+    `assigned` and `moduleCount` use the same source as the module card and the
+    module drawer, so a learner assigned in Module Builder shows as assigned here.
+    """
+    if target['scope'] == 'module':
+        return _module_payload(target, learners)
     cache = {}
-    rows = []
-    for learner in learners:
-        if learner.pk in plan_backfill:
-            learner.learning_plan, learner.training_plan = plan_backfill[learner.pk]
-            assigned = _assigned(learner, target, cache)
-            module_count = len(plans._effective_plan_ids(learner, cache))
-        else:
-            fact = facts.get(learner.pk)
-            assigned = bool(fact) and target_ids.issubset(fact['effective']) and (
-                target['scope'] == 'module' or _same_cohort(learner, target))
-            module_count = fact['moduleCount'] if fact else 0
-        rows.append({
-            'id': str(learner.pk), 'name': plans._s(learner.username) or plans._s(learner.email),
-            'email': plans._s(learner.email), 'programme': plans._s(learner.programme),
-            'company': plans._s(learner.employer) or plans._s(learner.organization),
-            'cohort': plans._s(learner.cohort), 'group': plans._s(learner.group),
-            'programmeStatus': plans._s(learner.programme_status),
-            'learnerType': plans._s(learner.learner_type) or 'apprenticeship',
-            'assigned': assigned, 'moduleCount': module_count,
-        })
+    module_counts = _plan_row_counts()
+    rows = [_row(learner, _assigned(learner, target, cache), module_counts.get(str(learner.pk), 0))
+            for learner in learners]
     return {
         'target': {**{key: target[key] for key in ('id', 'name', 'scope', 'programmeName')},
                    'moduleCount': len(target['moduleIds'])},
@@ -111,7 +118,128 @@ def _payload(target, learners):
     }
 
 
+def _row(learner, assigned, module_count):
+    return {
+        'id': str(learner.pk), 'name': plans._s(learner.username) or plans._s(learner.email),
+        'email': plans._s(learner.email), 'programme': plans._s(learner.programme),
+        'company': plans._s(learner.employer) or plans._s(learner.organization),
+        'cohort': plans._s(learner.cohort), 'group': plans._s(learner.group),
+        'programmeStatus': plans._s(learner.programme_status),
+        'learnerType': plans._s(learner.learner_type) or 'apprenticeship',
+        'assigned': assigned, 'moduleCount': module_count,
+    }
+
+
+def _module_payload(target, learners):
+    """Module drawer: assigned learners are exactly the ones the card counts.
+
+    Membership comes from `"Learner".learners` and
+    `learner_training_plan_modules` through the card's own rule
+    (`learner_status_counts.module_member_enrolment_ids`), not from the legacy
+    JSON plan, so the drawer and the "N learners" figure share one source.
+    """
+    from . import views
+    from .learner_status_counts import module_member_enrolment_ids
+
+    members = module_member_enrolment_ids(target['id']) or set()
+    module_counts = _plan_row_counts()
+    rows = [_row(learner, str(learner.pk) in members, module_counts.get(str(learner.pk), 0))
+            for learner in learners]
+    return {
+        'target': {**{key: target[key] for key in ('id', 'name', 'scope', 'programmeName')},
+                   'moduleCount': len(target['moduleIds'])},
+        'learners': rows,
+        'totals': {'learnerCount': len(rows), 'assignedCount': sum(row['assigned'] for row in rows)},
+    }
+
+
+def _save_legacy_plan(learner, plan):
+    field = training_plan_field(learner)
+    setattr(learner, field, plan)
+    learner.save(update_fields=[field])
+
+
+def _module_members(target, cache):
+    """The drawer's assigned set, read once per save and shared by every learner in it."""
+    if '_moduleMembers' not in cache:
+        from .learner_status_counts import module_member_enrolment_ids
+        cache['_moduleMembers'] = module_member_enrolment_ids(target['id']) or set()
+    return cache['_moduleMembers']
+
+
+def _assign_module(learner, target, catalogue, cache):
+    """Add one module to both plan stores without wiping rows the JSON lacks.
+
+    "Already assigned" means what the drawer shows: membership by the card's
+    rule. The JSON plan gets the module if it lacks it. A learner with plan rows
+    gets just this module's rows; one with none is written out in full from the
+    JSON, which loses nothing.
+    """
+    module_id = target['moduleIds'][0]
+    if str(learner.pk) in _module_members(target, cache):
+        return False
+    profile = module_plan_rows.profile_for(learner)
+    targeted = module_plan_rows.has_plan_rows(profile)
+    legacy_has = module_id in set(plans._effective_plan_ids(learner, cache))
+    if '_assignmentModules' not in cache:
+        additions = hydrate_training_plan([catalogue[mid] for mid in target['moduleIds']], strict=True)
+        cache['_assignmentModules'] = {entry['moduleId']: entry for entry in additions}
+    hydrated = cache['_assignmentModules']
+    # An unsaved plan that holds the module only through the group preset is
+    # written out too, or the rows built from it below would not carry the module.
+    write_legacy = not legacy_has or stored_training_plan(learner) is None
+    if write_legacy:
+        saved = stored_training_plan(learner)
+        existing = list(saved if saved is not None else get_training_plan(learner) or [])
+        existing_ids = {plans._s(entry.get('moduleId')) for entry in existing}
+        for mid in [*plans._effective_plan_ids(learner, cache), module_id]:
+            if mid and mid not in existing_ids:
+                existing.append(dict(catalogue.get(mid) or {'moduleId': mid}))
+                existing_ids.add(mid)
+        existing = [dict(entry, assignmentMode='explicit') for entry in existing]
+        _save_legacy_plan(learner, [{**entry, **hydrated.get(entry.get('moduleId'), {})} for entry in existing])
+    if targeted:
+        if write_legacy:
+            module_plan_rows.refresh_title_columns(learner)
+        module_plan_rows.add_module_row(profile, hydrated.get(module_id) or catalogue[module_id])
+    else:
+        # No plan rows yet, so a full rebuild from the JSON loses nothing.
+        plans.sync_learning_plan_mirror(learner, strict=True)
+    return True
+
+
+def _unassign_module(learner, target, cache):
+    """Remove one module from both plan stores without wiping rows the JSON lacks."""
+    module_id = target['moduleIds'][0]
+    if str(learner.pk) not in _module_members(target, cache):
+        return False
+    profile = module_plan_rows.profile_for(learner)
+    targeted = module_plan_rows.has_plan_rows(profile)
+    legacy_has = module_id in set(plans._effective_plan_ids(learner, cache))
+    if legacy_has:
+        saved = stored_training_plan(learner)
+        existing = list(saved if saved is not None else get_training_plan(learner) or [])
+        # Frozen as explicit, so a group preset does not put the module straight back.
+        _save_legacy_plan(learner, [dict(entry, assignmentMode='explicit') for entry in existing
+                                    if plans._s(entry.get('moduleId')) != module_id])
+    if targeted:
+        if legacy_has:
+            module_plan_rows.refresh_title_columns(learner)
+        module_plan_rows.remove_module_rows(profile, module_id)
+    else:
+        # No plan rows: the learner held the module through placement. Writing the
+        # remaining JSON plan out as rows makes their selection explicit, without
+        # the module. A learner whose plan would be empty has no row to carry
+        # that, so the removal is reported as failed rather than claimed.
+        plans.sync_learning_plan_mirror(learner, strict=True)
+        if not module_plan_rows.has_plan_rows(module_plan_rows.profile_for(learner)):
+            raise ValueError('This learner has no other modules, so the removal cannot be recorded.')
+    return True
+
+
 def _assign(learner, target, catalogue, cache):
+    if target['scope'] == 'module':
+        return _assign_module(learner, target, catalogue, cache)
     if _assigned(learner, target, cache):
         return False
     # Preserve detailed and retired entries, as well as the modules this learner
@@ -148,14 +276,24 @@ def _assign(learner, target, catalogue, cache):
         learner.__dict__.pop(CACHE, None)
         learner.__dict__.pop('_placement_names', None)
     learner.save(update_fields=fields)
-    # Strict here: all selected learners and their delivery plans commit together.
-    plans.sync_learning_plan_mirror(learner, strict=True)
+    profile = module_plan_rows.profile_for(learner)
+    if module_plan_rows.has_plan_rows(profile):
+        # Add only the cohort's modules. A full rebuild from the JSON would
+        # delete the rows the JSON lacks (modules assigned in Module Builder).
+        module_plan_rows.refresh_title_columns(learner)
+        for module_id in target['moduleIds']:
+            module_plan_rows.add_module_row(profile, hydrated.get(module_id) or catalogue[module_id])
+    else:
+        # No plan rows yet, so a full rebuild from the JSON loses nothing.
+        plans.sync_learning_plan_mirror(learner, strict=True)
     return True
 
 
 def _unassign(learner, target, catalogue, cache):
     # `catalogue` is unused here, but _handle dispatches to this and _assign
     # through the same call, so the two signatures have to match.
+    if target['scope'] == 'module':
+        return _unassign_module(learner, target, cache)
     if not _assigned(learner, target, cache):
         return False
     saved = stored_training_plan(learner)
@@ -169,7 +307,19 @@ def _unassign(learner, target, catalogue, cache):
     field = training_plan_field(learner)
     setattr(learner, field, remaining)
     learner.save(update_fields=[field])
-    plans.sync_learning_plan_mirror(learner, strict=True)
+    profile = module_plan_rows.profile_for(learner)
+    if module_plan_rows.has_plan_rows(profile):
+        # Remove only the cohort's modules; other saved rows stay.
+        module_plan_rows.refresh_title_columns(learner)
+        for module_id in remove_ids:
+            module_plan_rows.remove_module_rows(profile, module_id)
+    else:
+        # No plan rows: the modules were held through placement. Writing the
+        # remaining JSON plan out as rows makes the selection explicit without
+        # them; with nothing left there is no row to record it, so say so.
+        plans.sync_learning_plan_mirror(learner, strict=True)
+        if not module_plan_rows.has_plan_rows(module_plan_rows.profile_for(learner)):
+            raise ValueError('This learner has no other modules, so the removal cannot be recorded.')
     return True
 
 

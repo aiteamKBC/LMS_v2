@@ -740,68 +740,33 @@ def validate_training_plan_relationships(plan):
 
 
 def replace_training_plan(learner, plan):
-    """Rebuild the learner's plan_modules/weeks/components mirror.
+    """Safely reconcile normalized plan rows without a delete/rebuild.
 
-    One insert per level, not one per row. Written row by row this cost a
-    separate round trip for every module and every week -- a learner on five
-    thirteen-week modules paid about 140 of them, which is why assigning a
-    single learner to a module sat there for several seconds against a remote
-    database. The rows written are identical; only the number of trips changed.
+    This compatibility entry point remains for existing callers while they are
+    migrated away from legacy JSON.  The mutation itself is canonical: stable
+    IDs, historical progress protection, stale-write detection and historical
+    Curriculum re-parenting guards all come from the shared writer service.
     """
-    # Validate the complete replacement before the established delete/rebuild.
-    # A stale week id must not clear a valid mirror and fail on the insert.
-    modules = validate_training_plan_relationships(plan)
-    LearnerTrainingPlanModule.objects.filter(learner=learner).delete()
-    if not modules:
-        return
+    from .training_plan_writes import (
+        TrainingPlanAuthorization,
+        TrainingPlanWriteError,
+        reconcile_training_plan,
+        training_plan_snapshot,
+    )
 
-    module_rows = LearnerTrainingPlanModule.objects.bulk_create([
-        LearnerTrainingPlanModule(
-            learner=learner,
-            position=module_position,
-            curriculum_module_id=module["module_id"],
+    using = learner._state.db or "enrolment"
+    try:
+        snapshot = training_plan_snapshot(learner.pk, using=using)
+        return reconcile_training_plan(
+            learner.pk,
+            plan,
+            authorization=TrainingPlanAuthorization.for_staff(),
+            expected_version=snapshot.plan_version,
+            reorder=True,
+            using=using,
         )
-        for module_position, module in enumerate(modules, 1)
-    ])
-    # Postgres hands the ids back from a bulk insert; a backend that cannot has
-    # to be asked for them, or the children below have no parent to point at.
-    if any(row.pk is None for row in module_rows):
-        module_rows = list(LearnerTrainingPlanModule.objects
-                           .filter(learner=learner).order_by("position", "id"))
-
-    week_plan = [
-        (module_row, week_position, week)
-        for module_row, module in zip(module_rows, modules)
-        for week_position, week in enumerate(module["weeks"], 1)
-    ]
-    if not week_plan:
-        return
-
-    week_rows = LearnerTrainingPlanWeek.objects.bulk_create([
-        LearnerTrainingPlanWeek(
-            plan_module=module_row,
-            position=week_position,
-            curriculum_week_id=week["week_id"],
-        )
-        for module_row, week_position, week in week_plan
-    ])
-    if any(row.pk is None for row in week_rows):
-        saved = {
-            (row.plan_module_id, row.position): row
-            for row in LearnerTrainingPlanWeek.objects
-            .filter(plan_module__in=module_rows).order_by("plan_module_id", "position", "id")
-        }
-        week_rows = [saved[(module_row.pk, week_position)] for module_row, week_position, _ in week_plan]
-
-    LearnerTrainingPlanComponent.objects.bulk_create([
-        LearnerTrainingPlanComponent(
-            plan_week=week_row,
-            position=position,
-            curriculum_component_id=component["component_id"],
-        )
-        for week_row, (_, _, week) in zip(week_rows, week_plan)
-        for position, component in enumerate(week["components"], 1)
-    ], batch_size=1000)
+    except TrainingPlanWriteError as exc:
+        raise ValidationError(exc.message) from exc
 
 
 def hydrate_training_plan(plan, *, strict=False):

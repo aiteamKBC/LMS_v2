@@ -39,4 +39,4 @@ def signed_embed(library_id, video_id, *, now=None):
     expires = int(time.time() if now is None else now) + 4 * 60 * 60
     token = hashlib.sha256(f'{key}{video_id}{expires}'.encode()).hexdigest()
     query = urlencode({'token': token, 'expires': expires, 'autoplay': 'false', 'preload': 'false', 'captions': 'en'})
-    return f'https://player.mediadelivery.net/embed/{library_id}/{video_id}?{query}'
+    return f'https://iframe.mediadelivery.net/embed/{library_id}/{video_id}?{query}'

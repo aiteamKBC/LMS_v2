@@ -24,6 +24,7 @@ from django.http import HttpRequest, JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET
 
+from learner_api.aptem_identity import CURRENT_APTEM_IDENTITY_CTE
 from .common import CONN, normalize_lms_category
 from .plan_projection import _ksbs_dict
 from .plan_tables import (
@@ -386,14 +387,13 @@ def _sync_member_months(cur, group_id, aptem_ids):
 
 
 def _aptem_group_learners(cur, programme_name, aptem_group):
-    """Cohort learners of one Aptem (programme, group) pair — the exact
-    row-by-row linkage as it appears in Aptem."""
+    """Current cohort learners for one normalized programme/group pair."""
     cur.execute(
-        '''
+        f'''with {CURRENT_APTEM_IDENTITY_CTE}
         select l.aptem_id, l.learner_name, l.learner_email
-        from "LMS"."Aptem_users" au
-        join "Manual_audit".learners l on l.aptem_id = au."ID"
-        where btrim(au."Program Name") = %s and btrim(au."Group") = %s
+        from current_aptem_identity identity
+        join "Manual_audit".learners l on l.aptem_id = identity.aptem_id
+        where btrim(identity.programme_name) = %s and btrim(identity.group_name) = %s
         order by l.learner_name
         ''',
         [programme_name, aptem_group],
@@ -725,9 +725,9 @@ def plan_learners(request: HttpRequest) -> JsonResponse:
                 # The learner's own Aptem linkage (programme + group), kept for
                 # the shared cohort filtering that comes later.
                 cur.execute(
-                    '''
-                    select btrim(au."Program Name"), btrim(au."Group")
-                    from "LMS"."Aptem_users" au where au."ID" = %s
+                    f'''with {CURRENT_APTEM_IDENTITY_CTE}
+                    select btrim(identity.programme_name), btrim(identity.group_name)
+                    from current_aptem_identity identity where identity.aptem_id = %s
                     ''',
                     [aptem_id],
                 )

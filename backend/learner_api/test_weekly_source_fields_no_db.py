@@ -13,7 +13,6 @@ from django.core.exceptions import FieldDoesNotExist
 from django.db.models.query import QuerySet
 from django.test import RequestFactory, SimpleTestCase
 
-from coach_api.weekly_learning import assignment_projection
 from . import dashboard_weekly as weekly
 from .models import EnrolmentUser
 from .placement_links import placement_ids
@@ -28,8 +27,6 @@ def source_row(kind, **ids):
     row = EnrolmentUser(pk=PK, learner_type=kind, aptem_id=None, username='Synthetic', email='l@example.test',
                         programme_id=ids.get('programme_id', 'PROG-1'), cohort_id=ids.get('cohort_id', 'COH-1'),
                         group_id=ids.get('group_id', 'GRP-1'))
-    row._weekly_training_plan = [{'moduleId': 'M1', 'assignmentMode': None}]
-    row._weekly_learning_plan = None
     return row
 
 
@@ -39,16 +36,18 @@ class SourceFieldTests(SimpleTestCase):
         self.assertTrue({'programme_id', 'cohort_id', 'group_id'} <= set(weekly.WEEKLY_SOURCE_FIELDS))
         self.assertTrue({'programme', 'cohort', 'group'}.isdisjoint(weekly.WEEKLY_SOURCE_FIELDS))
 
-    def test_the_real_projected_queryset_compiles(self):
-        sql = str(assignment_projection(EnrolmentUser.all_learners.only(*weekly.WEEKLY_SOURCE_FIELDS))
+    def test_the_real_canonical_source_queryset_compiles_without_plan_json(self):
+        sql = str(EnrolmentUser.all_learners.only(*weekly.WEEKLY_SOURCE_FIELDS)
                   .filter(pk=PK).query)
-        for column in ('"programme_id"', '"cohort_id"', '"group_id"', '_weekly_training_plan'):
+        for column in ('"programme_id"', '"cohort_id"', '"group_id"'):
             self.assertIn(column, sql)
+        self.assertNotIn('Learning_plan', sql)
+        self.assertNotIn('Training_plan', sql)
 
     def test_the_previous_tuple_reproduces_the_reported_error(self):
         old = ('id', 'aptem_id', 'learner_type', 'username', 'email', 'programme', 'cohort', 'group')
         with self.assertRaises(FieldDoesNotExist):
-            str(assignment_projection(EnrolmentUser.all_learners.only(*old)).filter(pk=PK).query)
+            str(EnrolmentUser.all_learners.only(*old).filter(pk=PK).query)
 
 
 class WeeklyViewTests(SimpleTestCase):
@@ -77,9 +76,8 @@ class WeeklyViewTests(SimpleTestCase):
                     self.assertEqual(json.loads(response.content), self.payload)
                     self.assertEqual(get.loaded_fields(), set(weekly.WEEKLY_SOURCE_FIELDS))
                     source = read.call_args.args[0]
-                    # The view still exposes the projected plans under their usual names.
-                    self.assertEqual(source.training_plan, [{'moduleId': 'M1', 'assignmentMode': None}])
-                    self.assertIsNone(source.learning_plan)
+                    self.assertNotIn('training_plan', get.loaded_fields())
+                    self.assertNotIn('learning_plan', get.loaded_fields())
                     self.assertEqual(read.call_args.args[1], PK)
 
     def test_other_learners_are_still_refused_before_the_read(self):

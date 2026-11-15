@@ -6,8 +6,8 @@ Free Course ownership exists only in these relations::
 
 The optional ``legacy_copied_from_week_id`` is provenance.  It is never used
 to join to, or infer ownership from, the normal ``curriculum.weeks`` table.
-This module is deliberately read-only; Phase A must not alter authoring or
-quiz-link writers.
+Archived weeks/components remain stored for history but are excluded from all
+current catalogue reads, including the learner's batched projection.
 """
 from __future__ import annotations
 
@@ -83,6 +83,8 @@ def _select(table, *, columns=None, clauses=(), params=(), order_by=()):
         f"select {', '.join(_quote_ident(column) for column in selected)} "
         f"from {_table_name(table)}"
     )
+    if table in (FREE_COURSE_WEEKS_TABLE, FREE_COMPONENTS_TABLE):
+        clauses = [*clauses, '"deleted_at" is null']
     if clauses:
         sql += " where " + " and ".join(clauses)
     if order_by:
@@ -175,8 +177,11 @@ def fetch_many(reads):
         if unknown:
             raise ValueError(f"Unsupported columns for {table}: {', '.join(sorted(unknown))}")
         query = f"select {', '.join(_quote_ident(column) for column in selected)} from {_table_name(table)}"
-        if where_sql:
-            query += f" where {where_sql}"
+        clauses = [f"({where_sql})"] if where_sql else []
+        if table in (FREE_COURSE_WEEKS_TABLE, FREE_COMPONENTS_TABLE):
+            clauses.append('"deleted_at" is null')
+        if clauses:
+            query += " where " + " and ".join(clauses)
         if ordering:
             query += " order by " + ", ".join(_quote_ident(column) for column in ordering)
         queries.append((query, list(params or [])))

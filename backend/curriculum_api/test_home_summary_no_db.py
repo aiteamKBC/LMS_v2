@@ -8,7 +8,7 @@ from django.core.cache import cache
 from django.test import RequestFactory, SimpleTestCase, override_settings
 
 from login.api_gate import ApiSessionGateMiddleware
-from . import home_summary, views
+from . import home_summary, module_authoring_facts, views
 
 
 def source_data():
@@ -41,12 +41,12 @@ class HomeProjectionTests(SimpleTestCase):
         source = source_data()
         before = copy.deepcopy(source)
         result = home_summary.project_home_summary(source, source['programmes'])
-        self.assertEqual(result['stats'], {'programmes': 3, 'activeCohorts': 1, 'groups': 3, 'openIssues': 9})
+        self.assertEqual(result['stats'], {'programmes': 3, 'activeCohorts': 1, 'groups': 3, 'openIssues': 7})
         self.assertEqual(result['attentionCounts'], {
-            'programme-ksb-source': 1, 'module-mapping': 2, 'draft-content': 2,
+            'programme-ksb-source': 1, 'module-mapping': 2,
             'group-coach': 2, 'module-tutor': 2,
         })
-        self.assertEqual([item['id'] for item in result['continueModules']], ['M3', 'M/1'])
+        self.assertEqual([item['id'] for item in result['continueModules']], ['M2', 'M3', 'M/1'])
         self.assertEqual(result['programmeFocus'], [
             {'programme': {'id': 'canonical-P1', 'name': 'Alpha'}, 'issues': ['1 mapping gap', '1 without tutor', '2 without coach'], 'issueCount': 3},
             {'programme': {'id': 'P3', 'name': 'Empty'}, 'issues': ['No KSB source', 'No modules', 'No delivery setup'], 'issueCount': 3},
@@ -85,14 +85,27 @@ class HomeProjectionTests(SimpleTestCase):
         self.assertEqual(result['continueModules'], [])
         self.assertEqual(result['programmeFocus'], [])
 
-    def test_live_modules_of_the_current_schema_are_not_drafts(self):
-        # The current curriculum database stores 'active' / 'inactive' only:
-        # no module there is unfinished authoring.
+    def test_continue_working_is_the_most_recently_edited_modules(self):
+        # The current curriculum database stores 'active' / 'inactive' only, so
+        # there is no draft issue and no status on the cards.
         modules = [{'id': 'M1', 'status': 'active', 'lastUpdated': '2026-10-01'},
                    {'id': 'M2', 'status': 'active', 'lastUpdated': '2026-10-03'}]
         result = home_summary.project_home_summary({'modules': modules}, [])
-        self.assertEqual(result['attentionCounts']['draft-content'], 0)
+        self.assertNotIn('draft-content', result['attentionCounts'])
         self.assertEqual([item['id'] for item in result['continueModules']], ['M2', 'M1'])
+        self.assertEqual(result['continueModules'][0]['lastUpdated'], '2026-10-03')
+        self.assertNotIn('status', result['continueModules'][0])
+
+    def test_authoring_facts_replace_the_legacy_placeholders(self):
+        # build_modules() leaves ksbCount 0 and lastUpdated blank for every row.
+        modules = [{'moduleCatalogueId': 'M1', 'ksbCount': 0, 'lastUpdated': ''},
+                   {'moduleCatalogueId': 'M2', 'ksbCount': 0, 'lastUpdated': ''}]
+        authoring = [{'module_catalogue_id': 'M1', 'updated_at': '2026-11-12T09:30:00+00:00'}]
+        module_authoring_facts.apply_authoring_facts(modules, authoring, {'M1': 14})
+        self.assertEqual(modules[0]['ksbCount'], 14)
+        self.assertTrue(modules[0]['lastUpdated'].startswith('2026-11-12'))
+        self.assertEqual(modules[1]['ksbCount'], 0)
+        self.assertEqual(modules[1]['lastUpdated'], '')
 
 
 class HomeBuilderTests(SimpleTestCase):
@@ -248,7 +261,7 @@ class HomeEndpointTests(SimpleTestCase):
              patch.object(home_summary, 'build_home_summary', return_value={'stats': {}}) as build:
             response = home_summary.curriculum_home_summary(request)
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(cache.call_args.args[0], 'home-summary:v2:all')
+        self.assertEqual(cache.call_args.args[0], 'home-summary:v3:all')
         self.assertTrue(cache.call_args.kwargs['force'])
         build.assert_called_once_with('all', force=True)
 
@@ -285,7 +298,7 @@ class HomeAttentionDetailTests(SimpleTestCase):
         self.assertNotIn('attentionRecords', summary)
         self.assertNotIn('programmeDetails', summary)
         response, cached = self._get('issue=group-coach')
-        self.assertEqual(cached.call_args.args[0], 'home-summary:v2:operational')
+        self.assertEqual(cached.call_args.args[0], 'home-summary:v3:operational')
         body = json.loads(response.content)
         self.assertEqual(body['count'], summary['attentionCounts']['group-coach'])
         self.assertEqual([record['id'] for record in body['records']], ['G1', 'G2'])

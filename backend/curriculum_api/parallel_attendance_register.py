@@ -6,8 +6,8 @@ from django.db.models.functions import Lower, Trim
 from django.utils import timezone
 
 from learner_api.alternative_recovery import equivalent_alternatives_by_occurrence
-from learner_api.attendance_assignments import assigned_module_ids
-from learner_api.models import EnrolmentUser, LearnerProfile
+from learner_api.models import LearnerProfile
+from .attendance_membership import assigned_module_ids_by_profile
 from .models import LiveSession, LiveSessionAttendance, LiveSessionLearnerAttendance, LiveSessionOccurrence, ModuleAuthoringModule
 from .session_results_policy import instant
 
@@ -165,9 +165,15 @@ def reconcile_parallel_attendance(occurrence_ids, *, database=None):
         return 0
     profiles = {p.id: p for p in LearnerProfile.objects.using(database)
                 .filter(id__in={key[0] for key in evidence}).only('id', 'enrolment_id', 'email', 'full_name')}
-    enrolments = {source.pk: source for source in EnrolmentUser.all_learners.filter(
-        pk__in={p.enrolment_id for p in profiles.values() if p.enrolment_id is not None})
-        .only('id', 'programme', 'group', 'training_plan', 'learning_plan')}
+    # Module membership from the normalized plan records (the roster's rule),
+    # never the legacy Created_users Learning_plan/Training_plan. Only the
+    # modules choose_originals compares: each attended guest module and the
+    # modules of its equivalent originals.
+    compared_modules = {str(guest_module) for _, _, guest_module in evidence}
+    compared_modules.update(str(item.get('moduleCatalogueId') or '')
+                            for _, guest_id, _ in evidence for item in alternatives.get(guest_id, []))
+    compared_modules.discard('')
+    assignments = assigned_module_ids_by_profile(set(profiles), compared_modules)
     original_ids = {str(item['id']) for values in alternatives.values() for item in values}
     originals = {str(row['id']): row for row in LiveSessionOccurrence.objects.using(database)
                  .filter(id__in=original_ids).values('id', 'live_session_id')}
@@ -175,10 +181,9 @@ def reconcile_parallel_attendance(occurrence_ids, *, database=None):
     with transaction.atomic(using=database):
         for profile_id, guest_id, guest_module in sorted(evidence):
             profile = profiles.get(profile_id)
-            source = enrolments.get(profile.enrolment_id) if profile else None
-            if not source:
+            if profile is None:
                 continue
-            choices = choose_originals(alternatives.get(guest_id, []), assigned_module_ids(source), guest_module)
+            choices = choose_originals(alternatives.get(guest_id, []), assignments.get(profile_id, set()), guest_module)
             if not choices:
                 continue
             original_id, original_module = choices[0]

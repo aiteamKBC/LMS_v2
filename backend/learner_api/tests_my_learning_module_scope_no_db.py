@@ -28,7 +28,9 @@ class ModuleContextScopeTests(SimpleTestCase):
             learning_plan=deepcopy(plan) if kind == 'apprenticeship' else None)
         original = deepcopy((source.training_plan, source.learning_plan))
         manager = MagicMock()
-        manager.only.return_value.filter.return_value.first.return_value = SimpleNamespace(pk=9, enrolment_id=7)
+        manager.only.return_value.filter.return_value.prefetch_related.return_value.first.return_value = SimpleNamespace(
+            pk=9, enrolment_id=7, training_plan=deepcopy(plan),
+        )
         builders = {f'current:M{i}': {'id': f'M{i}', 'title': f'Module {i}'} for i in range(100)}
         links = {'current:M1': 'legacy:50', 'current:M2': 'legacy:50'} if imported_links is None else imported_links
         connections = fake_connections()
@@ -47,6 +49,12 @@ class ModuleContextScopeTests(SimpleTestCase):
 
         with ExitStack() as stack:
             stack.enter_context(patch.object(models.LearnerProfile, 'objects', manager))
+            stack.enter_context(patch.object(
+                learning, 'install_canonical_training_plan',
+                side_effect=lambda selected_source, profile: (
+                    setattr(selected_source, '_canonical_training_plan', deepcopy(plan)) or plan
+                ),
+            ))
             stack.enter_context(patch.object(learning, 'connections', connections))
             stack.enter_context(patch.object(learning, 'effective_training_plan', return_value=plan))
             reader = stack.enter_context(patch.object(weekly_learning, 'build_learning_content_summary', side_effect=content))

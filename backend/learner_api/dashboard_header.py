@@ -20,7 +20,8 @@ from .learner_detail import (SOURCE_MODELS, _first_session_unlocked, _iso_date,
                              learning_access, student_activity_available, _s)
 from .models import LearnerProfile
 from .module_placement_sql import group_coach_name_sql, module_placement_names_sql
-from .learning_plan import _effective_plan_ids
+from .learning_plan import (CANONICAL_TRAINING_PLAN_PREFETCH, _effective_plan_ids,
+                            install_canonical_training_plan)
 from .overview_week import upcoming_assignment_deadlines
 from .projection_performance import measure_projection
 from .subject_content import clean_text
@@ -34,24 +35,10 @@ HEADER_SOURCE_FIELDS = tuple(field for field in TRAINING_PLAN_SOURCE_FIELDS
 
 
 def read_header_source(model, pk, *, minimal=False):
-    """Keep assignment semantics without transferring stored curriculum snapshots."""
-    from django.db.models.expressions import RawSQL
-    from .models import SafeJSONField
-    query = model.all_learners.only(*dict.fromkeys(
-        field for field in HEADER_SOURCE_FIELDS if field not in ('training_plan', 'learning_plan')))
-    for field, column in (('training_plan', 'Training_plan'), ('learning_plan', 'Learning_plan')):
-        query = query.annotate(**{f'_header_{field}': RawSQL(
-            f'''CASE WHEN jsonb_typeof("{column}"::jsonb)='array' THEN
-              (SELECT coalesce(jsonb_agg(CASE WHEN jsonb_typeof(item)='object'
-                THEN jsonb_build_object('moduleId',item->'moduleId',
-                  'assignmentMode',item->'assignmentMode') ELSE 'null'::jsonb END
-                ORDER BY position), '[]'::jsonb)
-               FROM jsonb_array_elements("{column}"::jsonb) WITH ORDINALITY AS entries(item,position))
-              ELSE "{column}"::jsonb END''', [], output_field=SafeJSONField())})
-    source = query.get(pk=pk)
-    source.training_plan = source._header_training_plan
-    source.learning_plan = source._header_learning_plan
-    return source
+    """Load only account/placement fields; assignments come from Learner.*."""
+    return model.all_learners.only(*dict.fromkeys(
+        field for field in HEADER_SOURCE_FIELDS
+        if field not in ('training_plan', 'learning_plan'))).get(pk=pk)
 
 
 def header_sessions(cur, ids, now):
@@ -210,8 +197,9 @@ def header_profile(source, pk, *, identity_only=False):
     this request. Read two profiles to preserve the duplicate-bridge rejection;
     never use a same-number profile or an email fallback.
     """
-    fields = ('id', 'email', 'aptem_id') if identity_only else TRAINING_PLAN_PROFILE_FIELDS
-    profiles = list(LearnerProfile.objects.filter(enrolment_id=pk).only(*fields)[:2])
+    fields = ('id', 'email', 'aptem_id', 'enrolment_id') if identity_only else TRAINING_PLAN_PROFILE_FIELDS
+    profiles = list(LearnerProfile.objects.filter(enrolment_id=pk).only(*fields)
+                    .prefetch_related(CANONICAL_TRAINING_PLAN_PREFETCH)[:2])
     if not profiles:
         raise ServiceError('The learner is not linked to the consolidated learning record.',
                            'ssot_identity_required', 409)
@@ -223,14 +211,14 @@ def header_profile(source, pk, *, identity_only=False):
         'account_record_id': source.pk, 'account_email': source.email,
         'account_aptem_id': source.aptem_id,
     })
+    install_canonical_training_plan(source, profile)
     return profile, owner
 
 
 def dashboard_modules(source, owner, *, include_coach=True, include_week_counts=True):
     """Shared compact assignment/navigation read; no presentation histories."""
     source._dashboard_assigned_ids = {str(mid) for mid in _effective_plan_ids(source, {})}
-    ids = sorted(source._dashboard_assigned_ids |
-                 set(canonical_learning.curriculum_module_ids_for(owner)))
+    ids = sorted(source._dashboard_assigned_ids)
     if not ids:
         return ids, []
     # The coach names are read through curriculum.group_coaches (curriculum.groups no longer
@@ -245,7 +233,10 @@ def dashboard_modules(source, owner, *, include_coach=True, include_week_counts=
             {week_count} AS week_count{coach_column}
             FROM curriculum.modules m{coach_join}
             WHERE m.module_catalogue_id=ANY(%s) ORDER BY m.title''', [ids])
-        return ids, rows(cur)
+        modules = rows(cur)
+        plan_position = {str(module_id): position for position, module_id in enumerate(ids)}
+        modules.sort(key=lambda row: plan_position.get(str(row['id']), len(plan_position)))
+        return ids, modules
 
 
 def build_dashboard_bootstrap(source, pk, *, include_pending_delivery=False):

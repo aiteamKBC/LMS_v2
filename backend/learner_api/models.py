@@ -1367,7 +1367,7 @@ FREE_PROGRESS_INACTIVE = "inactive"
 
 
 class LearnerFreeCourseProgress(models.Model):
-    """Achieved native free-course components, keyed by LearnerProfile.id.
+    """Native free-course progress, keyed by LearnerProfile.id.
 
     Deliberately its OWN store, separate from Training_plan_progress and the KSB
     snapshot: free-course completion is shown on the free-courses page and must
@@ -1407,6 +1407,18 @@ class LearnerProgressQuerySet(VersionBumpQuerySetMixin, AuditedQuerySet):
 
 class LearnerProgressEntry(models.Model):
     learner = models.ForeignKey(LearnerProfile, on_delete=models.CASCADE, related_name="progress_entries")
+    # Physical FK retained by the canonical schema for stable training-plan
+    # lineage.  It was added outside Django and uses ON DELETE SET NULL in
+    # PostgreSQL.  Phase-1 plan writes only read this relation to block removal
+    # of referenced plan rows; they never clear or rewrite it.
+    plan_component = models.ForeignKey(
+        LearnerTrainingPlanComponent,
+        db_column="plan_component_id",
+        on_delete=models.SET_NULL,
+        related_name="progress_entries",
+        null=True,
+        blank=True,
+    )
     entry_order = models.PositiveIntegerField()
     kind = models.CharField(max_length=30)
     programme_ref = models.TextField(null=True, blank=True)

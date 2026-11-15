@@ -62,18 +62,20 @@ def add_reflection_time(payload, stored, *, submission_mode):
     if payload.get('activityType') != noun:
         raise ValueError('The reflection does not match this lecture activity. Reload it before adding time.')
     from .components import SOURCE_MODELS
-    from .active_users import learner_profile_for_source, save_progress_record, _progress_record_minutes
+    from .identity import learner_profile_for_source
+    from .active_users import save_progress_record, _progress_record_minutes
     model = SOURCE_MODELS[payload['learnerKind']]
     try:
         source = model.objects.get(pk=payload['learnerId'])
     except model.DoesNotExist as exc:
         raise ValueError('Learner not found. No time was added.') from exc
-    from .learning_plan import effective_training_plan
-    if module_id not in {str(row.get('moduleId') or '') for row in effective_training_plan(source)}:
-        raise ValueError('This lecture is not in your learning plan. No time was added.')
     learner = learner_profile_for_source(source, payload['learnerId'], active_only=True)
     if learner is None:
         raise ValueError('An active learner profile is required to add reflection time.')
+    from .learning_plan import effective_training_plan, install_canonical_training_plan
+    install_canonical_training_plan(source, learner)
+    if module_id not in {str(row.get('moduleId') or '') for row in effective_training_plan(source)}:
+        raise ValueError('This lecture is not in your learning plan. No time was added.')
     history = learner.training_plan_progress
     completed = any(row.get('componentId') == component_id and row.get('kind') in ('component', 'video')
                     and row.get('passed') is not False for row in history)

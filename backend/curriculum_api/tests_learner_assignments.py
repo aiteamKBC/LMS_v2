@@ -31,6 +31,16 @@ class AssignmentTests(SimpleTestCase):
         self.enterContext(patch.object(assignments.plans, '_group_module_ids', return_value=[]))
         self.enterContext(patch.object(assignments, 'hydrate_training_plan', side_effect=lambda plan, **kw: [dict(m, weeks=[]) for m in plan]))
         self.profiles = self.enterContext(patch.object(assignments, 'LearnerProfile'))
+        # Membership and plan rows come from the normalized records; no database here.
+        self.members = set()
+        self.cohort_members = {}
+        self.enterContext(patch.object(assignments, '_module_members', side_effect=lambda target, cache: self.members))
+        self.enterContext(patch.object(assignments, '_cohort_members', side_effect=lambda target, cache: self.cohort_members))
+        self.enterContext(patch.object(assignments, '_plan_row_counts', return_value={}))
+        self.rows = self.enterContext(patch.object(assignments, 'module_plan_rows'))
+        self.rows.has_plan_rows.return_value = False
+        self.placement = {'programme_id': 'PROG-1', 'cohort_id': 'OTHER', 'group_id': None}
+        self.enterContext(patch.object(assignments, 'placement_ids', side_effect=lambda row: self.placement))
 
     def test_module_assignment_preserves_placement_and_detailed_existing_plan(self):
         old = {'moduleId': 'OLD', 'weeks': [{'weekId': 'W1', 'components': [{'componentId': 'C1'}]}]}
@@ -78,23 +88,50 @@ class AssignmentTests(SimpleTestCase):
 
     def test_repeat_assignment_does_not_write_or_duplicate_modules(self):
         row = learner([{'moduleId': 'MOD-1', 'assignmentMode': 'explicit'}])
+        self.members = {'1'}
         self.assertFalse(assignments._assign(row, MODULE, CATALOGUE, {}))
         row.save.assert_not_called()
 
     def test_existing_cohort_member_missing_modules_can_be_assigned(self):
-        row = learner([{'moduleId': 'MOD-1'}], programme='Business', cohort='September', group='Group A')
-        def facts(_ids):
-            ids = set(_effective_plan_ids(row, {}))
-            return {row.pk: {'effective': ids, 'moduleCount': len(ids)}}, []
-        with patch('curriculum_api.learner_assignment_counts_sql.assignment_directory_facts', side_effect=facts):
-            self.assertFalse(assignments._payload(COHORT, [row])['learners'][0]['assigned'])
-            assignments._assign(row, COHORT, CATALOGUE, {})
-            self.assertEqual(row.group, 'Group A')
-            self.assertTrue(assignments._payload(COHORT, [row])['learners'][0]['assigned'])
+        row = learner([{'moduleId': 'MOD-1'}])
+        self.placement = {'programme_id': 'PROG-1', 'cohort_id': 'COHORT-1', 'group_id': 'G1'}
+        self.cohort_members = {'MOD-1': {'1'}, 'MOD-2': set()}
+        self.assertFalse(assignments._payload(COHORT, [row])['learners'][0]['assigned'])
+        self.cohort_members = {'MOD-1': {'1'}, 'MOD-2': {'1'}}
+        self.assertTrue(assignments._payload(COHORT, [row])['learners'][0]['assigned'])
+
+    def test_cohort_directory_reads_the_normalized_records_not_the_json_plan(self):
+        self.placement = {'programme_id': 'PROG-1', 'cohort_id': 'COHORT-1', 'group_id': None}
+        # 1: JSON plan lists both modules, the normalized records do not -> not assigned.
+        # 2: empty JSON plan, Module Builder rows for both -> assigned.
+        self.cohort_members = {'MOD-1': {'2'}, 'MOD-2': {'2'}}
+        with patch.object(assignments, '_plan_row_counts', return_value={'2': 5}):
+            data = assignments._payload(COHORT, [
+                learner([{'moduleId': 'MOD-1'}, {'moduleId': 'MOD-2'}]), learner([], id=2, pk=2)])
+        self.assertEqual([(row['assigned'], row['moduleCount']) for row in data['learners']], [(False, 0), (True, 5)])
+        self.assertEqual(data['totals'], {'learnerCount': 2, 'assignedCount': 1})
+
+    def test_cohort_assignment_adds_only_its_rows_for_a_learner_with_plan_rows(self):
+        row = learner([{'moduleId': 'OLD'}], _state=SimpleNamespace(db='default'))
+        self.profiles.objects.using.return_value.filter.return_value.update.return_value = 1
+        self.rows.has_plan_rows.return_value = True
+        self.assertTrue(assignments._assign(row, COHORT, CATALOGUE, {}))
+        self.assertEqual([call.args[1]['moduleId'] for call in self.rows.add_module_row.call_args_list], ['MOD-1', 'MOD-2'])
+        self.rows.remove_module_rows.assert_not_called()
+        self.mirror.assert_not_called()
+
+    def test_cohort_removal_deletes_only_its_rows_for_a_learner_with_plan_rows(self):
+        row = learner([{'moduleId': 'OLD'}, {'moduleId': 'MOD-1'}, {'moduleId': 'MOD-2'}])
+        self.placement = {'programme_id': 'PROG-1', 'cohort_id': 'COHORT-1', 'group_id': None}
+        self.cohort_members = {'MOD-1': {'1'}, 'MOD-2': {'1'}}
+        self.rows.has_plan_rows.return_value = True
+        self.assertTrue(assignments._unassign(row, COHORT, CATALOGUE, {}))
+        self.assertEqual({call.args[1] for call in self.rows.remove_module_rows.call_args_list}, {'MOD-1', 'MOD-2'})
+        self.assertEqual([entry['moduleId'] for entry in row.learning_plan], ['OLD'])
+        self.mirror.assert_not_called()
 
     def test_directory_includes_company_and_accurate_assignment_state(self):
-        facts = {1: {'effective': set(), 'moduleCount': 0}, 2: {'effective': {'MOD-1'}, 'moduleCount': 1}}
-        with patch('curriculum_api.learner_assignment_counts_sql.assignment_directory_facts', return_value=(facts, [])):
+        with patch('curriculum_api.learner_status_counts.module_member_enrolment_ids', return_value={'2'}):
             data = assignments._payload(MODULE, [learner([]), learner([{'moduleId': 'MOD-1'}], pk=2)])
         self.assertEqual(data['totals'], {'learnerCount': 2, 'assignedCount': 1})
         self.assertEqual(data['learners'][0]['company'], 'Al Fanar')

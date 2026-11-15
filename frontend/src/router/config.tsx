@@ -95,9 +95,9 @@ const MigratedReviewTemplates = lazyRoute(() => import("../pages/curriculum/revi
 const CurriculumDeliveryHub = lazyRoute(() => import("../pages/curriculum/hubs/page").then(module => ({ default: module.CurriculumDeliveryHub })));
 const CurriculumBulkAttendance = lazyRoute(() => import("../pages/curriculum/bulk-attendance/page"));
 const CurriculumQualityHub = lazyRoute(() => import("../pages/curriculum/hubs/page").then(module => ({ default: module.CurriculumQualityHub })));
+const CurriculumQualityDemo = lazyRoute(() => import("../pages/dashboard/page"));
 const CoachingQualityReviewsPage = lazyRoute(() => import("../pages/coaching-recordings/QualityReviewsPage"));
 const CoachingQualityFormsPage = lazyRoute(() => import("../pages/coaching-recordings/QualityFormsPage"));
-const CurriculumFreeCourses = lazyRoute(() => import("../pages/curriculum/free-courses/page"));
 const CoachAuditTrailPage = lazyRoute(() => import("../pages/coach/audit-trail/page"));
 const CoachAuditTrailPersonPage = lazyRoute(() => import("../pages/coach/audit-trail/person/page"));
 const CurriculumAuditTrailPage = lazyRoute(() => import("../pages/curriculum/audit-trail/page"));
@@ -661,10 +661,6 @@ const routes: RouteObject[] = [
     path: "/learner/component/:kind/:id/:componentId",
     element: <VideoWatchPage />,
   },
-  {
-    path: "/learner/component/:kind/:id/:componentId",
-    element: <VideoWatchPage />,
-  },
 
   {
     path: "/learner/modules",
@@ -1197,8 +1193,8 @@ const routes: RouteObject[] = [
     element: <CurriculumQualityHub />,
   },
   {
-    path: "/curriculum/free-courses",
-    element: <CurriculumFreeCourses />,
+    path: "/curriculum/quality-demo",
+    element: <CurriculumQualityDemo />,
   },
   {
     path: "/curriculum/module-builder",

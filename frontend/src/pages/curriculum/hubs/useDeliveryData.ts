@@ -4,7 +4,9 @@ import { useLiveRefresh } from '@/hooks/useRefreshOnReturn';
 import { fetchCurriculumJson } from '@/lib/curriculumApi';
 
 export interface DeliveryOverview {
-  modules: Array<{ id: string; moduleCatalogueId: string; groupId: string; cohortId: string; tutor: string; status: string; isFreeCourse: boolean }>;
+  /** Every live module (Module Builder's count), and where the ones outside groups sit. */
+  moduleTotals?: { all: number; cohortOnly: number; unplaced: number };
+  modules: Array<{ id: string; moduleCatalogueId: string; groupId: string; tutor: string; isFreeCourse: boolean }>;
   cohorts: Array<{ id: string; status: string }>;
   groups: Array<{ id: string; cohortId: string; coach: string; moduleIds: string[] }>;
 }

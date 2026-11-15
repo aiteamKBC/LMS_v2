@@ -1116,6 +1116,78 @@ table tbody td:last-child {
   }
 }
 
+/* Keep the integrated Quality Assurance demo on the LMS theme. The shared
+   root tokens above provide the brand palette and typography. */
+.quality-demo {
+  font-family: var(--font-body);
+  color: oklch(var(--foreground-950));
+}
+
+.quality-demo .scroll-slim {
+  scrollbar-width: thin;
+  scrollbar-color: oklch(var(--background-300)) transparent;
+}
+
+.quality-demo .scroll-slim::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+.quality-demo .scroll-slim::-webkit-scrollbar-thumb {
+  background-color: oklch(var(--background-300));
+  border-radius: 999px;
+}
+
+@keyframes quality-demo-drawer-in {
+  from { transform: translateX(28px); opacity: 0; }
+  to { transform: translateX(0); opacity: 1; }
+}
+
+@keyframes quality-demo-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes quality-demo-rise {
+  from { transform: translateY(8px); opacity: 0; }
+  to { transform: translateY(0); opacity: 1; }
+}
+
+.quality-demo .qa-drawer { animation: quality-demo-drawer-in 0.28s cubic-bezier(0.22, 1, 0.36, 1) both; }
+.quality-demo .qa-fade { animation: quality-demo-fade-in 0.22s ease-out both; }
+.quality-demo .qa-rise { animation: quality-demo-rise 0.28s ease-out both; }
+
+/* The demo uses amber/orange utility classes for its improvement states. Map
+   those states to the LMS heritage-gold scale so every Quality surface keeps
+   the same brand language while green/red remain meaningful status colours. */
+.quality-demo :is(.bg-amber-50, .bg-orange-50) { background-color: oklch(var(--accent-50)); }
+.quality-demo :is(.bg-amber-100, .bg-orange-100) { background-color: oklch(var(--accent-100)); }
+.quality-demo :is(.bg-amber-200, .bg-orange-200) { background-color: oklch(var(--accent-200)); }
+.quality-demo :is(.bg-amber-400, .bg-orange-400) { background-color: oklch(var(--accent-400)); }
+.quality-demo :is(.bg-amber-500, .bg-orange-500) { background-color: oklch(var(--accent-500)); }
+.quality-demo :is(.bg-amber-600, .bg-orange-600) { background-color: oklch(var(--accent-600)); }
+.quality-demo :is(.bg-amber-700, .bg-orange-700) { background-color: oklch(var(--accent-700)); }
+.quality-demo :is(.bg-amber-800, .bg-orange-800) { background-color: oklch(var(--accent-800)); }
+.quality-demo :is(.bg-amber-900, .bg-orange-900) { background-color: oklch(var(--accent-900)); }
+.quality-demo :is(.text-amber-500, .text-orange-500) { color: oklch(var(--accent-500)); }
+.quality-demo :is(.text-amber-600, .text-orange-600) { color: oklch(var(--accent-600)); }
+.quality-demo :is(.text-amber-700, .text-orange-700) { color: oklch(var(--accent-700)); }
+.quality-demo :is(.text-amber-800, .text-orange-800) { color: oklch(var(--accent-800)); }
+.quality-demo :is(.text-amber-900, .text-orange-900) { color: oklch(var(--accent-900)); }
+.quality-demo :is(.border-amber-200, .border-orange-200) { border-color: oklch(var(--accent-200)); }
+.quality-demo :is(.border-amber-300, .border-orange-300) { border-color: oklch(var(--accent-300)); }
+.quality-demo :is(.ring-amber-200, .ring-orange-200) { --tw-ring-color: oklch(var(--accent-200)); }
+.quality-demo :is(.hover\:bg-amber-100:hover, .hover\:bg-orange-100:hover) { background-color: oklch(var(--accent-100)); }
+.quality-demo :is(.hover\:bg-amber-700:hover, .hover\:bg-orange-700:hover) { background-color: oklch(var(--accent-700)); }
+
+@media (prefers-reduced-motion: reduce) {
+  .quality-demo .qa-drawer,
+  .quality-demo .qa-fade,
+  .quality-demo .qa-rise {
+    animation: none;
+  }
+}
+
 @keyframes slide-enter-from-left {
   from {
     opacity: 0;

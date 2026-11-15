@@ -2077,6 +2077,18 @@ class ArchiveWorkerTests(unittest.TestCase):
         self.assertEqual(self.ns['save_archive'].call_args.kwargs['text'], 'Speaker: Hello')
         blob.upload_blob.assert_called_once_with(b'Speaker: Hello', overwrite=True)
 
+    def test_rejected_microsoft_transcript_stays_retryable_and_a_later_download_restores_text(self):
+        errors, _ = self.archive(exists=False, kind='transcript', http_status=400)
+        self.assertEqual(len(errors), 1)
+        self.assertIn('HTTP 400', errors[0])
+        self.assertEqual(self.ns['save_archive'].call_args.kwargs['state'], 'failed')
+        self.storage.upload_blob.assert_not_called()
+        self.assertNotIn('synthetic private response', errors[0])
+        errors, _ = self.archive(state='failed', exists=False, kind='transcript')
+        self.assertEqual(errors, [])
+        self.assertEqual(self.ns['save_archive'].call_args.kwargs['text'], 'Speaker: Hello')
+        self.assertNotIn('state', self.ns['save_archive'].call_args.kwargs)
+
     def worker(self, *, queued=True, partial=False):
         cursor = Mock(); cursor.__enter__ = Mock(return_value=cursor); cursor.__exit__ = Mock(return_value=False)
         cursor.fetchone.side_effect = [('S', True), None] if queued else [None]
@@ -2160,7 +2172,7 @@ class ArchiveWorkerTests(unittest.TestCase):
         self.assertIn("OR (session_result_jobs.attempts>=8", requeue)
         self.assertIn("session_result_jobs.finished_at < now()-interval '6 hours'", requeue)
         self.assertIn("session_result_jobs.finished_at < now()-interval '1 hour'", requeue)
-        self.assertIn("pending_artifact.artifact_type='recording'", requeue)
+        self.assertIn("pending_artifact.artifact_type IN ('recording','transcript')", requeue)
         self.assertIn("coalesce(pending_archive.status,'')<>'ready'", requeue)
         self.assertIn('later.live_session_id=session_result_jobs.live_session_id', requeue)
         self.assertIn("later.status NOT IN ('cancelled','deleted','superseded')", requeue)

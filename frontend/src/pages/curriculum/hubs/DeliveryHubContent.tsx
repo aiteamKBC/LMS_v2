@@ -53,6 +53,6 @@ export default function DeliveryHubContent({ overview, ...props }: Props) {
     chartError={props.unavailable ? props.error || 'Module overview unavailable.' : modules.length && !activity.data ? activity.error || null : null}
     undatedSessionCount={sessions.undatedSessionCount}
     cards={props.cards.map(card => card.href === '/curriculum/session-calendar'
-      ? { ...card, meta: sessions.loading ? 'Loading' : sessions.error && !live.length ? 'Unavailable' : `${live.length} sessions` } : card)}
+      ? { ...card, meta: sessions.loading ? 'Loading' : sessions.error && !live.length ? 'Unavailable' : `${live.length} live sessions` } : card)}
   />;
 }

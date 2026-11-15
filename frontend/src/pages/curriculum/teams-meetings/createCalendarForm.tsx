@@ -249,11 +249,15 @@ export function ModuleSessionSchedulePreview({
           </span>
         </div>
       </div>
-      <GroupPatternNote
+      {row.scheduleMode === 'custom' && <p className="border-b border-primary-200 bg-primary-50 px-3 py-2.5 text-[12px] font-semibold text-primary-800">
+        Custom · {row.weeklySchedule?.length || 1} session{row.weeklySchedule?.length === 1 ? '' : 's'} per week
+        {row.weeklySchedule?.length ? ` · ${row.weeklySchedule.map(slot => `${slot.day} ${clockLabel(slot.startTime)} - ${clockLabel(slot.endTime)}`).join(' · ')}` : ''}
+      </p>}
+      {row.scheduleMode !== 'custom' && <GroupPatternNote
         pattern={row.groupPattern}
         lengths={occurrences.map(item => item.durationMinutes)}
         overrideDuration={overrideDuration}
-      />
+      />}
       <HolidayWarningNote plan={plan} />
       {occurrences.length ? (
         <>
