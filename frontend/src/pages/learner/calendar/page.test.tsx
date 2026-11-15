@@ -302,28 +302,16 @@ describe('programme sessions from the booking picker', () => {
     expect(await within(chooser).findByRole('button', { name: /Recovered review/ })).toBeVisible();
   });
 
-<<<<<<< HEAD
   it.each(['catch-up', 'student-support', 'gateway', 'other'] as const)('preserves new %s bookings after leaving the programme session picker', async source => {
-=======
-  it.each(['catch-up', 'student-support', 'gateway', 'other'] as const)('preserves the existing %s booking policy after leaving the programme session picker', async source => {
->>>>>>> origin/main
     setup([]);
     vi.mocked(bookLearnerCalendarSession).mockResolvedValue({ event: event({ source }) });
     const chooser = await openProgrammeSessions(/MCM Monthly Coaching Meeting/);
     const tile = { 'catch-up': /Catch-up Quick check-in/, 'student-support': /Student Support Help with/,
-<<<<<<< HEAD
       gateway: /Gateway Gateway review/, other: /Other Book another/ }[source];
     fireEvent.click(within(chooser).getByRole('button', { name: tile }));
     if (source === 'other') fireEvent.change(within(chooser).getByRole('textbox', { name: /^Other/ }), { target: { value: 'Study advice' } });
     await selectAvailableTime(chooser, '11:00');
     fireEvent.click(within(chooser).getByRole('button', { name: 'Book Session' }));
-=======
-      gateway: /Gateway Gateway review/, other: /Other Request another/ }[source];
-    fireEvent.click(within(chooser).getByRole('button', { name: tile }));
-    if (source === 'other') fireEvent.change(within(chooser).getByRole('textbox', { name: /^Other/ }), { target: { value: 'Study advice' } });
-    fireEvent.change(within(chooser).getByLabelText('Time'), { target: { value: '11:00' } });
-    fireEvent.click(within(chooser).getByRole('button', { name: source === 'catch-up' ? 'Book Session' : 'Send Request' }));
->>>>>>> origin/main
     await waitFor(() => expect(bookLearnerCalendarSession).toHaveBeenCalledExactlyOnceWith('commercial', '125', expect.objectContaining({ sessionType: source })));
     expect(rescheduleLearnerCalendarSession).not.toHaveBeenCalled();
   });
@@ -666,14 +654,8 @@ describe('calendar event previews', () => {
     await screen.findAllByRole('button', { name: /Pending PR/ });
     fireEvent.click(screen.getByRole('button', { name: 'Book Coach Session' }));
     const dialog = await screen.findByRole('dialog', { name: 'Book a Coach Session' });
-<<<<<<< HEAD
     await selectAvailableTime(dialog, '09:00');
     expect(within(dialog).queryByRole('option', { name: '10:00' })).not.toBeInTheDocument();
-=======
-    fireEvent.change(within(dialog).getByLabelText('Time'), { target: { value: '10:00' } });
-    expect(within(dialog).getByText(/overlaps another calendar event/)).toBeVisible();
-    expect(within(dialog).getByRole('button', { name: 'Book Session' })).toBeDisabled();
->>>>>>> origin/main
     expect(bookLearnerCalendarSession).not.toHaveBeenCalled();
   });
 

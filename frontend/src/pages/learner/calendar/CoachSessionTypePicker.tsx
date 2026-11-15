@@ -12,13 +12,6 @@ export const COACH_SESSION_TYPES = [
 
 export type CoachSessionRequestType = typeof COACH_SESSION_TYPES[number]['value'];
 
-<<<<<<< HEAD
-=======
-export const COACH_APPROVAL_SESSION_TYPES: ReadonlySet<BookableSessionType> = new Set([
-  'student-support', 'gateway', 'other',
-]);
-
->>>>>>> origin/main
 export default function CoachSessionTypePicker({ value, onChange, compact = false }: {
   value: BookableSessionType;
   onChange: (value: CoachSessionRequestType) => void;
