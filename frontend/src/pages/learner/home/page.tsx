@@ -126,7 +126,7 @@ function LearnerHome({ kind, id, preview = false }: { kind?: LearnerKind; id?: s
   if (beforeActive) return <Navigate to={beforeActive} replace />;
   const name = profile.real.name?.trim() || (!preview && account.displayName?.trim()) || 'Learner';
   const firstName = name.split(/\s+/)[0];
-  const events = homeUpcomingEvents(schedule.error ? null : schedule.data, now)
+  const events = homeUpcomingEvents(schedule.error ? null : schedule.data, now, kind, id)
     .map(event => ({ ...event, href: link(event.href) }));
   return <div className={styles.home}>
     <a href="#student-main" className={styles.skip}>Skip to main content</a>

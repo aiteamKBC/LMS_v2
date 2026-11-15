@@ -43,7 +43,7 @@ it('identifies an unchanged submitted lecture and enables resubmission only afte
   fireEvent.click(screen.getByRole('button', { name: 'Learning' }));
   fireEvent.change(screen.getByPlaceholderText('Type or use the microphone...'), { target: { value: 'Updated reflection '.repeat(100) } });
   fireEvent.click(screen.getByRole('button', { name: 'Review' }));
-  expect(screen.getByRole('button', { name: 'Submit for tutor review' })).toBeEnabled();
+  expect(screen.getByRole('button', { name: 'Submit' })).toBeEnabled();
   expect(mocks.save).not.toHaveBeenCalled();
 });
 
@@ -81,7 +81,7 @@ it.each([['correct', 1200, 8400], ['add', 3000, 10200], ['retry', 1800, 9000]] a
     expect(minutes).not.toHaveAttribute('readonly');
     fireEvent.change(minutes, { target: { value: '20' } });
     fireEvent.click(screen.getByRole('button', { name: 'Review' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Submit for tutor review' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Submit' }));
     fireEvent.click(await screen.findByRole('button', { name: 'Confirm time' }));
     await waitFor(() => expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({ reflectionTimeChoice: choice, additionalReflectionSeconds: 1200 })));
     expect(mocks.save).toHaveBeenLastCalledWith(expect.objectContaining({ reflectionTimeOperation: expect.objectContaining({
@@ -136,7 +136,7 @@ it('adds only explicitly entered reflection minutes and confirms them without ed
   fireEvent.click(screen.getByRole('checkbox', { name: 'Add more learning time for this reflection' }));
   fireEvent.change(screen.getByLabelText('Additional reflection time (minutes)'), { target: { value: '30' } });
   fireEvent.click(screen.getByRole('button', { name: 'Review' }));
-  fireEvent.click(screen.getByRole('button', { name: 'Submit for tutor review' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Submit' }));
   expect(await screen.findByRole('alertdialog')).toHaveTextContent('0 hours and 30 minutes');
   expect(onSubmit).not.toHaveBeenCalled();
   fireEvent.click(screen.getByRole('button', { name: 'Confirm time' }));
@@ -177,7 +177,7 @@ it('keeps an unavailable lecture duration distinct from zero and blocks invalid 
   fireEvent.click(screen.getByRole('checkbox', { name: 'Add more learning time for this reflection' }));
   fireEvent.change(screen.getByLabelText('Additional reflection time (minutes)'), { target: { value: '481' } });
   fireEvent.click(screen.getByRole('button', { name: 'Review' }));
-  expect(screen.getByRole('button', { name: 'Submit for tutor review' })).toBeDisabled();
+  expect(screen.getByRole('button', { name: 'Submit' })).toBeDisabled();
   expect(screen.getByRole('alert')).toHaveTextContent('480 minutes');
 });
 
@@ -194,7 +194,7 @@ it('keeps the reflection and added minutes when the server requests the existing
   fireEvent.click(screen.getByRole('checkbox', { name: 'Add more learning time for this reflection' }));
   fireEvent.change(screen.getByLabelText('Additional reflection time (minutes)'), { target: { value: '30' } });
   fireEvent.click(screen.getByRole('button', { name: 'Review' }));
-  fireEvent.click(screen.getByRole('button', { name: 'Submit for tutor review' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Submit' }));
   fireEvent.click(await screen.findByRole('button', { name: 'Confirm time' }));
   expect(await screen.findByRole('dialog')).toBeVisible();
   expect(onSubmit).not.toHaveBeenCalled();
@@ -212,14 +212,14 @@ it.each(['commercial', 'apprenticeship'] as const)('lets a %s learner review 49 
   openOtjh();
   await waitFor(() => expect(screen.getByLabelText('Actual time spent (hours)')).toHaveValue(49));
   fireEvent.click(screen.getByRole('button', { name: 'Review' }));
-  fireEvent.click(screen.getByRole('button', { name: 'Submit for tutor review' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Submit' }));
   expect(await screen.findByRole('alertdialog')).toHaveTextContent('49 hours and 0 minutes');
   expect(mocks.save.mock.calls.some(([payload]) => payload.submissionMode === 'submit')).toBe(false);
   fireEvent.click(screen.getByRole('button', { name: 'Edit time' }));
   await waitFor(() => expect(screen.getByLabelText('Actual time spent (hours)')).toHaveValue(49));
   fireEvent.change(screen.getByLabelText('Actual time spent (hours)'), { target: { value: '4.9' } });
   fireEvent.click(screen.getByRole('button', { name: 'Review' }));
-  fireEvent.click(screen.getByRole('button', { name: 'Submit for tutor review' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Submit' }));
   expect(await screen.findByRole('alertdialog')).toHaveTextContent('4 hours and 54 minutes');
   expect(onSubmit).not.toHaveBeenCalled();
   fireEvent.click(screen.getByRole('button', { name: 'Confirm time' }));
@@ -276,7 +276,7 @@ it.each([
   expect(screen.getByLabelText('Selected activity time')).not.toHaveAttribute('readonly');
   expect(screen.queryByLabelText('Actual time spent (hours)')).not.toBeInTheDocument();
   fireEvent.click(screen.getByRole('button', { name: 'Review' }));
-  const submit = screen.getByRole('button', { name: 'Submit for tutor review' });
+  const submit = screen.getByRole('button', { name: 'Submit' });
   await waitFor(() => expect(submit).toBeEnabled());
   fireEvent.click(submit);
   await waitFor(() => expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({
@@ -303,7 +303,7 @@ it.each([['00:05:00', 300], ['02:30:00', 9000]])('saves corrected time %s from t
   expect(screen.getByLabelText('Selected activity time')).toHaveValue('00:10:00');
   fireEvent.change(screen.getByLabelText('Selected activity time'), { target: { value: clock } });
   fireEvent.click(screen.getByRole('button', { name: 'Review' }));
-  fireEvent.click(screen.getByRole('button', { name: 'Submit for tutor review' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Submit' }));
   expect(onSubmit).not.toHaveBeenCalled();
   fireEvent.click(await screen.findByRole('button', { name: 'Confirm time' }));
   await waitFor(() => expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({
@@ -325,7 +325,7 @@ it.each(['00:90:00', '-1:00:00', '', 'not a time'])('does not allow submission w
   fireEvent.change(screen.getByLabelText('Selected activity time'), { target: { value } });
   expect(screen.getByLabelText('Selected activity time')).toHaveAttribute('aria-invalid', 'true');
   fireEvent.click(screen.getByRole('button', { name: 'Review' }));
-  expect(screen.getByRole('button', { name: 'Submit for tutor review' })).toBeDisabled();
+  expect(screen.getByRole('button', { name: 'Submit' })).toBeDisabled();
 });
 
 
@@ -346,7 +346,7 @@ it('keeps a separate lecture reflection time read-only and preserves its saved d
   fireEvent.change(time, { target: { value: '03:00:00' } });
   expect(time).toHaveValue('02:00:00');
   fireEvent.click(screen.getByRole('button', { name: 'Review' }));
-  fireEvent.click(screen.getByRole('button', { name: 'Submit for tutor review' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Submit' }));
   await waitFor(() => expect(onSubmit).toHaveBeenCalledOnce());
   expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument();
   expect(mocks.save).toHaveBeenLastCalledWith(expect.objectContaining({

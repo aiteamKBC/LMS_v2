@@ -568,6 +568,7 @@ def read_upcoming(source, now=None):
     by its UK moment, with only the fields the card reads.
     """
     from .overview_week import upcoming_assignment_deadlines
+    from .home_session_components import upcoming_session_components
 
     monday, friday, start, end = next_week_window(now or datetime.now(timezone.utc))
     owner = getattr(source, '_canonical_profile', None)
@@ -580,11 +581,16 @@ def read_upcoming(source, now=None):
     events = []
     with connections['enrolment'].cursor() as cur:
         ids, _ = plan_module_ids(cur, source, owner)
-        found = _plan_session_list(_plan_session_rows(cur, email, ids, since=start, until=end)) if ids else []
+        session_rows = _plan_session_rows(cur, email, ids, since=start, until=end) if ids else []
+        found = _plan_session_list(session_rows)
+        components = upcoming_session_components(cur, session_rows)
     for session in found:
         if _active(session['status']):
-            events.append((datetime.fromisoformat(session['start']), {
-                'id': str(session['id']), 'type': 'session', 'title': session['title'], 'date': session['start']}))
+            event = {'id': str(session['id']), 'type': 'session', 'title': session['title'], 'date': session['start']}
+            component_id = components.get((str(session['moduleId']), str(session['id'])))
+            if component_id:
+                event['componentId'] = component_id
+            events.append((datetime.fromisoformat(session['start']), event))
     for deadline in upcoming_assignment_deadlines(source, profile, monday, friday):
         events.append((_end_of_uk_day(date.fromisoformat(deadline['date'])), {
             'id': deadline['id'], 'type': 'assignment', 'title': deadline['title'], 'date': deadline['date']}))
