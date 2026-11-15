@@ -1,6 +1,6 @@
 """Synthetic custom schedules through real planners; no database or Graph calls."""
 from copy import deepcopy
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 
 from django.test import SimpleTestCase
 
@@ -39,13 +39,55 @@ class CustomWeeklyScheduleTests(SimpleTestCase):
     def test_mid_week_start_does_not_invent_sessions_before_the_start(self):
         payload = {**self.payload(7), 'startDate': '2026-09-09'}
         weeks = views.attachment_week_structure(payload, week_count=4)
-        self.assertEqual([len(week['components']) for week in weeks], [5, 7, 7, 7])
+        # New Custom weeks start on the first live session (Wednesday), so
+        # Monday/Tuesday fall later in that same seven-day window.
+        self.assertEqual([len(week['components']) for week in weeks], [7, 7, 7, 7])
         self.assertEqual(weeks[0]['components'][0]['settings']['sessionDate'], '2026-09-09')
+
+    def test_custom_week_begins_with_its_first_live_session_across_sunday(self):
+        payload = {**self.payload(2), 'startDate': '2026-09-10', 'endDate': '2026-10-07',
+                   'weekStartsOn': 'Thursday', 'weeklySchedule': [
+                       {'day': day, 'startTime': '09:00', 'endTime': '11:00'} for day in ('Tuesday', 'Thursday')
+                   ]}
+        weeks = views.attachment_week_structure(payload, week_count=4)
+        self.assertEqual([[component['settings']['sessionDate'] for component in week['components']] for week in weeks], [
+            ['2026-09-10', '2026-09-15'], ['2026-09-17', '2026-09-22'],
+            ['2026-09-24', '2026-09-29'], ['2026-10-01', '2026-10-06'],
+        ])
+        row = views.module_schedule_view({**payload, 'weeksNumber': 4})
+        plan = views.module_session_plan_for_weeks(row, 4, holidays=[])
+        self.assertEqual([item['weekNumber'] for item in plan['sessions']], [1, 1, 2, 2, 3, 3, 4, 4])
+        self.assertEqual(sorted(views.module_session_dates(row)), [
+            date.fromisoformat(component['settings']['sessionDate']) for week in weeks for component in week['components']
+        ])
+
+    def test_two_three_and_seven_sessions_keep_whole_weeks_from_every_possible_start_day(self):
+        for count in (2, 3, 7):
+            for offset in range(7):
+                with self.subTest(count=count, offset=offset):
+                    start = date(2026, 9, 7) + timedelta(days=offset)
+                    payload = {**self.payload(count), 'startDate': start.isoformat(), 'weekStartsOn': 'Monday'}
+                    first = next(start + timedelta(days=step) for step in range(7)
+                                 if (start + timedelta(days=step)).weekday() < count)
+                    payload['endDate'] = (first + timedelta(days=27)).isoformat()
+                    weeks = views.attachment_week_structure(payload, week_count=4)
+                    self.assertEqual([len(week['components']) for week in weeks], [count] * 4)
+                    all_dates = []
+                    for index, week in enumerate(weeks):
+                        dates = [date.fromisoformat(component['settings']['sessionDate']) for component in week['components']]
+                        self.assertEqual(dates[0], first + timedelta(days=7 * index))
+                        self.assertTrue(all(0 <= (day - dates[0]).days < 7 for day in dates))
+                        all_dates.extend(dates)
+                    self.assertEqual(len(set(all_dates)), 4 * count)
 
     def test_the_default_once_weekly_structure_is_unchanged(self):
         payload = {**self.payload(1), 'scheduleMode': 'group'}
         weeks = views.attachment_week_structure(payload, week_count=4)
         self.assertEqual(weeks, [views.empty_authoring_week(index + 1) for index in range(4)])
+        marked = {**payload, 'weekStartsOn': 'Thursday', 'startDate': '2026-09-09', 'weeksNumber': 4}
+        unmarked = {key: value for key, value in marked.items() if key != 'weekStartsOn'}
+        self.assertEqual(views.module_session_plan_for_weeks(views.module_schedule_view(marked), 4, holidays=[]),
+                         views.module_session_plan_for_weeks(views.module_schedule_view(unmarked), 4, holidays=[]))
 
     def test_custom_components_stop_at_the_explicit_end_date(self):
         payload = {**self.payload(7), 'endDate': '2026-10-02'}
@@ -97,8 +139,15 @@ class CustomWeeklyScheduleTests(SimpleTestCase):
         self.assertEqual(recurrence['range']['numberOfOccurrences'], 28)
 
     def test_custom_tutor_dates_stay_within_the_authored_weeks(self):
-        payload = {**self.payload(7), 'weeksNumber': 4, 'startDate': '2026-09-09'}
+        payload = {**self.payload(7), 'weeksNumber': 4, 'startDate': '2026-09-09', 'weekStartsOn': 'Wednesday'}
         row = views.module_schedule_view(payload)
+        dates = views.module_session_dates(row)
+        self.assertEqual(len(dates), 28)
+        self.assertEqual(min(dates), date(2026, 9, 9))
+        self.assertEqual(max(dates), date(2026, 10, 6))
+
+    def test_existing_custom_modules_without_the_new_marker_keep_their_calendar_weeks(self):
+        row = views.module_schedule_view({**self.payload(7), 'weeksNumber': 4, 'startDate': '2026-09-09'})
         dates = views.module_session_dates(row)
         self.assertEqual(len(dates), 26)
         self.assertEqual(min(dates), date(2026, 9, 9))
