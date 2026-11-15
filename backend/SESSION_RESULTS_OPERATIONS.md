@@ -301,3 +301,41 @@ references were compared with their pre-change backup and preserved. The four
 empty failed placeholders created during this task were removed; original
 Microsoft/Azure files were not deleted. This data verification does not mean
 the new application player has been deployed or browser-accepted.
+
+### Recovering rejected transcript downloads
+
+Graph can list a transcript using a MessagePack-CSharp Lz4BlockArray resource
+ID which its content endpoint rejects with HTTP 400. The shared transcript
+transport makes one bounded, lossless retry using the same serialized identity
+without the compression envelope. Meeting/owner paths, query, credentials and
+stored IDs remain unchanged. Other failures still propagate. This applies to
+lecture archives, coaching reads, legacy downloads and coaching archives.
+
+Metadata-only coaching refreshes and failed content reads preserve previously
+saved transcript text; the latest failure remains visible. A successful content
+retry replaces that part and clears its saved fetch error.
+
+The explicit repair command processes transcript files only, without meeting,
+attendance or recording synchronization. Run it in the deployed worker image
+with its existing private-storage role. Local credentials are not required or
+exported. Inspect first; repeat `--artifact-id` or `--live-session-id` for an
+explicit scope, or use the bounded default selection of missing active archives.
+
+```sh
+python manage.py repair_session_transcripts --limit 100
+python manage.py repair_session_transcripts --limit 100 --apply --expected-database <database-name> --expected-endpoint <neon-endpoint-id>
+```
+
+The endpoint ID is the host's first label, without `-pooler`. Apply refuses a
+different target. It skips series owned by a running worker and locks only the
+selected series job while archiving; retry a reported busy series later.
+`verifiedReady` requires both saved text and a nonempty private storage object.
+Partial or unverifiable repairs return a failing command status.
+
+Bunny interrupted-upload recovery replaces only a confirmed empty failed upload
+identity, retaining the previous GUID in the import journal. It preserves
+encoding, playable and nonempty media. Signed lecture playback uses the iframe
+host. Protected play-data requests use the signed iframe as their referrer;
+disabled MP4 fallback is reported explicitly, while staff original-file downloads
+continue through the authenticated Microsoft transport. Library DRM and domain
+restrictions are retained.

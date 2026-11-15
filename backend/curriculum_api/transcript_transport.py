@@ -92,9 +92,14 @@ def uncompressed_resource_id(value):
 
 
 def normalized_transcript_url(url):
-    parsed = urlsplit(url)
-    if (parsed.scheme != 'https' or parsed.hostname != 'graph.microsoft.com'
-            or parsed.username or parsed.password or parsed.fragment):
+    try:
+        parsed = urlsplit(url)
+        allowed = (parsed.scheme == 'https' and parsed.hostname == 'graph.microsoft.com'
+                   and parsed.port in (None, 443) and not parsed.username
+                   and not parsed.password and not parsed.fragment)
+    except (TypeError, ValueError):
+        return None
+    if not allowed:
         return None
     match = re.fullmatch(r'(.*/transcripts/)([^/]+)(/content)', parsed.path)
     if not match:

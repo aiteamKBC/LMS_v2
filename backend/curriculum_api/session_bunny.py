@@ -315,9 +315,14 @@ def recording_player(row, *, download=False, referrer=''):
         return url
     query = parse_qs(urlsplit(url).query)
     data = BunnyStream(saved['libraryId']).request('GET', f"/videos/{saved['videoId']}/play",
-        headers={'Referer': referrer} if referrer else {},
+        # The protected play-data endpoint validates the signed embed as its
+        # player referrer, just as a real Bunny iframe does. LMS authorization
+        # has already occurred before this server-only request.
+        headers={'Referer': url},
         params={'token': query['token'][0], 'expires': query['expires'][0]})
     source = data.get('originalUrl') or data.get('fallbackUrl') or ''
+    if not data.get('originalUrl') and data.get('enableMP4Fallback') is False:
+        raise VideoImportError('Bunny provides protected playback for this recording. Use the staff original-file download.')
     parsed = urlsplit(source)
     if not data.get('originalUrl') and parsed.path.endswith('/play_'):
         # Play-data returns an MP4 prefix, not a complete downloadable URL.
