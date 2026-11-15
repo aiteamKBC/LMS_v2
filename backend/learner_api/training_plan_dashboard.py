@@ -651,6 +651,12 @@ def read_dashboard(source, section=None, *, records=None, targets=None, dashboar
                 {group_coach_name_sql('g')} AS coach_name,
                 {module_placement_names_sql('m')},{module_expected_otjh_sql('m')} AS total_otjh,(SELECT COUNT(*) FROM curriculum.weeks w WHERE w.module_catalogue_id=m.module_catalogue_id AND {visible_week_sql('w')}) AS weeks_number,m.sessions_number,
                 m.cohort_id,
+                to_jsonb(m)->>'schedule_mode' AS schedule_mode,
+                to_jsonb(m)->>'week_starts_on' AS week_starts_on,
+                to_jsonb(m)->'weekly_schedule' AS weekly_schedule,
+                to_jsonb(m)->'session_holidays' AS session_holidays,
+                to_jsonb(m)->'session_overrides' AS session_overrides,
+                to_jsonb(m)->'calendar_policy' AS calendar_policy,
                 coalesce(nullif(m.session_week_day,''),g.session_week_day) AS session_week_day,
                 coalesce(nullif(m.session_start_time,''),g.session_start_time) AS session_start_time,
                 coalesce(nullif(m.session_end_time,''),g.session_end_time) AS session_end_time

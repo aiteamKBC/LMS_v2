@@ -8,6 +8,7 @@ from zoneinfo import ZoneInfo
 from curriculum_api import views
 from curriculum_api.tests import CurriculumPersistenceTransactionHarness
 from curriculum_api.teams_weekly_calendar import calendar_groups, graph_event_utc
+from coach_api.tests_support.persisted_fixtures import curriculum_session
 
 
 SLOTS = [
@@ -76,6 +77,10 @@ class GraphCalendar:
 
 
 class ModuleWeeklyScheduleTests(CurriculumPersistenceTransactionHarness):
+    def setUp(self):
+        super().setUp()
+        curriculum_session(self, self.client)
+
     def test_custom_delivery_creates_dated_components_and_survives_a_group_schedule_change(self):
         tree = self.tree_payload()
         tree['cohorts'][0]['groups'][0]['modules'] = []
@@ -84,11 +89,13 @@ class ModuleWeeklyScheduleTests(CurriculumPersistenceTransactionHarness):
             'moduleName': 'Custom weekly delivery', 'startDate': '2026-09-07',
             'weeks': 4, 'sessionsNumber': 8, 'weeklySchedule': SLOTS,
             'scheduleMode': 'custom', 'tutor': 'Tutor One',
+            'weekStartsOn': 'Monday',
         })
         self.assertEqual(response.status_code, 200, response.content)
         module_id = response.json()['created'][0]['catalogueId']
         structure = views.get_authoring_structure_payload(module_id)
         self.assertEqual(structure['scheduleMode'], 'custom')
+        self.assertEqual(structure['weekStartsOn'], 'Monday')
         self.assertEqual(structure['weeksNumber'], 4)
         self.assertEqual(structure['sessionsNumber'], 8)
         self.assertEqual([len(week['components']) for week in structure['weekStructure']], [2] * 4)
@@ -101,9 +108,14 @@ class ModuleWeeklyScheduleTests(CurriculumPersistenceTransactionHarness):
         self.assertEqual(response.status_code, 200, response.content)
         after = views.get_authoring_structure_payload(module_id)
         self.assertEqual(after['weeklySchedule'], SLOTS)
+        self.assertEqual(after['weekStartsOn'], 'Monday')
         self.assertEqual(after['weekStructure'], before)
         catalogue = views.authoring_summary_catalogue_item(views.authoring_catalogue_summaries()[module_id])
         self.assertEqual(catalogue['scheduleMode'], 'custom')
+        self.assertEqual(catalogue['weekStartsOn'], 'Monday')
+        response = self.patch_json(f'/curriculum_api/curriculum/modules/{module_id}/', {'name': 'Renamed custom module'})
+        self.assertEqual(response.status_code, 200, response.content)
+        self.assertEqual(views.get_authoring_structure_payload(module_id)['weekStartsOn'], 'Monday')
 
     def create_module(self):
         response = self.post_json('/curriculum_api/curriculum/modules/', {
@@ -113,6 +125,36 @@ class ModuleWeeklyScheduleTests(CurriculumPersistenceTransactionHarness):
         })
         self.assertEqual(response.status_code, 201, response.content)
         return response.json()['moduleCatalogueId']
+
+    def test_new_custom_delivery_anchors_to_first_session_without_a_client_weekday(self):
+        tree = self.tree_payload()
+        tree['cohorts'][0]['groups'][0]['modules'] = []
+        self.assertEqual(self.post_json('/curriculum_api/curriculum/programmes/tree/', tree).status_code, 200)
+        response = self.post_json('/curriculum_api/curriculum/groups/GROUP-DATA-1/modules/', {
+            'moduleName': 'Thursday then Tuesday', 'startDate': '2026-09-10', 'endDate': '2026-10-07',
+            'scheduleMode': 'custom', 'weeks': 4, 'tutor': 'Tutor One',
+            'weeklySchedule': [{'day': day, 'startTime': '09:00', 'endTime': '11:00'} for day in ('Tuesday', 'Thursday')],
+        })
+        self.assertEqual(response.status_code, 200, response.content)
+        module_id = response.json()['created'][0]['catalogueId']
+        structure = views.get_authoring_structure_payload(module_id)
+        self.assertEqual(structure['weekStartsOn'], 'Thursday')
+        self.assertEqual([len(week['components']) for week in structure['weekStructure']], [2] * 4)
+        self.assertEqual([[component['settings']['sessionDate'] for component in week['components']]
+                          for week in structure['weekStructure']], [
+            ['2026-09-10', '2026-09-15'], ['2026-09-17', '2026-09-22'],
+            ['2026-09-24', '2026-09-29'], ['2026-10-01', '2026-10-06'],
+        ])
+        self.assertEqual(structure['startDate'], '2026-09-10')
+        self.assertEqual(structure['endDate'], '2026-10-07')
+
+    def test_invalid_week_boundary_is_rejected_without_saving(self):
+        response = self.post_json('/curriculum_api/curriculum/modules/', {
+            'moduleType': 'authoring', 'title': 'Invalid boundary', 'weekStartsOn': 'Funday',
+        })
+        self.assertEqual(response.status_code, 400, response.content)
+        self.assertEqual(response.json()['fields'], ['weekStartsOn'])
+        self.assertEqual(views.authoring_fetch_all(views.AUTHORING_MODULES_TABLE), [])
 
     def test_per_day_times_round_trip_and_reach_every_planned_session(self):
         module_id = self.create_module()
@@ -215,6 +257,7 @@ class TeamsWeekdaySeriesTests(CurriculumPersistenceTransactionHarness):
 
     def setUp(self):
         super().setUp()
+        curriculum_session(self, self.client)
         views.ensure_live_session_tracking_tables()
         self.graph = GraphCalendar()
         for target, kwargs in (

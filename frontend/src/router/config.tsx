@@ -1319,6 +1319,12 @@ const routes: RouteObject[] = [
     element: <CurriculumEnglandHolidays />,
   },
   {
+    // The bank holiday calendar: GOV.UK holidays stay synced here, and extra
+    // manual holidays are added here without touching the GOV.UK mirror.
+    path: "/curriculum/holiday-calendars",
+    element: <CurriculumEnglandHolidays />,
+  },
+  {
     path: "/curriculum/session-calendar",
     element: <SessionCalendarPage />,
   },

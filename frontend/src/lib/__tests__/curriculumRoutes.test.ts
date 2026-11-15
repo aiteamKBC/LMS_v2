@@ -13,6 +13,7 @@ const CURRICULUM_ROUTE_IMPORTS: Record<string, () => Promise<unknown>> = {
   '/curriculum/groups/:id': () => import('@/pages/curriculum/group-workspace/page'),
   '/curriculum/modules/:id': () => import('@/pages/curriculum/module-workspace/page'),
   '/curriculum/england-holidays': () => import('@/pages/curriculum/england-holidays/page'),
+  '/curriculum/holiday-calendars': () => import('@/pages/curriculum/england-holidays/page'),
   '/curriculum/module-builder': () => import('@/pages/curriculum/module-builder/page'),
   '/curriculum/week-builder': () => import('@/pages/curriculum/week-builder/page'),
   '/curriculum/ksb-mapping': () => import('@/pages/curriculum/ksb-mapping/page'),

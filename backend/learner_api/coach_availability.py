@@ -60,6 +60,14 @@ def catchup_slot_is_free(owner_email, day, start, duration, *, exclude_event_key
     return start.strftime('%H:%M') in free
 
 
+def coach_session_slot_is_free(owner_email, day, start, duration, *, record=None):
+    """Use the coach's Outlook working hours, in the booking's London clock."""
+    free = free_slots(owner_email, day, uk_offset_minutes(day), duration=duration,
+                      exclude_event_key=getattr(record, 'event_key', '') or '',
+                      exclude_record_id=getattr(record, 'pk', None), review_self_record=record)
+    return start.strftime('%H:%M') in free and start.second == 0 and start.microsecond == 0
+
+
 def free_slots(owner_email, day, offset, *, exclude_event_key='', exclude_record_id=None,
                duration=60, uk_working_hours=False, review_hours=False,
                review_self_record=None):
@@ -163,7 +171,7 @@ def free_slots(owner_email, day, offset, *, exclude_event_key='', exclude_record
             # be reconsidered. Unknown provider availability remains blocked.
             own_start = (datetime.combine(review_self_record.scheduled_date,
                 review_self_record.scheduled_time, ZoneInfo('Europe/London')).astimezone(timezone.utc)
-                if review_hours and review_self_record and review_self_record.scheduled_date
+                if review_self_record and review_self_record.scheduled_date
                 and review_self_record.scheduled_time and getattr(review_self_record, 'graph_event_id', '') else None)
             own_end = own_start + timedelta(minutes=review_self_record.duration_minutes or 60) if own_start else None
             if (not own_start or not (at < own_end and until > own_start)
@@ -175,7 +183,8 @@ def free_slots(owner_email, day, offset, *, exclude_event_key='', exclude_record
                     # One identity-aware read per day, not a Graph call for
                     # every proposed start. Other meetings stay in this list.
                     outlook_busy = coach_outlook_busy_intervals(
-                        owner_email, day, REVIEW_DAY_START, 480, record=review_self_record)
+                        owner_email, day, REVIEW_DAY_START if review_hours else time.min,
+                        480 if review_hours else 1440, record=review_self_record)
             except CoachAvailabilityUnavailable as exc:
                 raise AvailabilityUnavailable(str(exc)) from exc
             if any(at < b and until > a for a, b in outlook_busy):
@@ -218,9 +227,9 @@ def coach_available_slots(request, kind, pk):
             )
     else:
         profile = learner_profile_for_source(learner, pk, active_only=True, heal=False)
-        if not profile or not profile.coach_email:
+        owner_email = (getattr(learner, 'coach_email', getattr(profile, 'coach_email', '')) or '').strip()
+        if not profile or not owner_email:
             return JsonResponse({'error': 'No coach has been assigned to you yet.'}, status=400)
-        owner_email = profile.coach_email.strip()
     try:
         day = date.fromisoformat(request.GET.get('date', ''))
         offset = int(request.GET.get('timezoneOffsetMinutes', '0'))
@@ -229,6 +238,9 @@ def coach_available_slots(request, kind, pk):
         purpose = request.GET.get('purpose', '')
         catchup = purpose == 'catch-up'
         review = purpose == 'review'
+        coach_session = purpose == 'coach-session'
+        if coach_session:
+            offset = uk_offset_minutes(day)
         if review and college_day:
             raise ValueError()
         # Review durations can include a stored/configured value such as 75
@@ -237,12 +249,27 @@ def coach_available_slots(request, kind, pk):
         if review:
             from coach_api.booking_hours import validate_review_duration
             duration = validate_review_duration(duration_value)
+        elif coach_session:
+            from coach_api.views import normalize_duration_minutes
+            duration = normalize_duration_minutes(duration_value)
         else:
             duration = int(duration_value)
             if duration not in (15, 30, 45, 60, 90, 120):
                 raise ValueError()
         exclude_event_key = ''
         review_self_record = None
+        if (coach_session or catchup) and request.GET.get('excludeEventKey'):
+            from .calendar import _learner_booking_record, DIRECT_COACH_BOOKING_TYPES
+            exclude_event_key = request.GET['excludeEventKey'].strip()
+            if len(exclude_event_key) > 255:
+                raise ValueError()
+            existing = _learner_booking_record(kind, pk, exclude_event_key)
+            allowed_types = {'catch-up'} if catchup else DIRECT_COACH_BOOKING_TYPES
+            if (existing is None or existing.event_type not in allowed_types
+                    or existing.status not in {'scheduled', 'not-scheduled'}):
+                return JsonResponse({'error': 'The current booking could not be verified. Refresh and retry.'}, status=409)
+            owner_email = existing.owner_email
+            review_self_record = existing
         if review and request.GET.get('excludeEventKey'):
             exclude_event_key = request.GET.get('excludeEventKey', '').strip()
             if len(exclude_event_key) > 255:
