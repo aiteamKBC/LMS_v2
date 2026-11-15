@@ -1386,7 +1386,9 @@ it('offers recovery inside the reflection popup and preserves the entered durati
   const dialog = await screen.findByRole('dialog', { name: 'Do you want to complete a reflection?' });
   fireEvent.click(within(dialog).getByRole('button', { name: 'No, finish without reflection' }));
   fireEvent.click(await screen.findByRole('button', { name: 'Confirm time' }));
-  fireEvent.click(await within(dialog).findByRole('button', { name: 'Restore saved time' }));
+  const restore = await within(dialog).findByRole('button', { name: 'Restore saved time' });
+  await waitFor(() => expect(restore).toBeEnabled());
+  fireEvent.click(restore);
   await screen.findByText(/Your time has been restored/);
   fireEvent.click(within(dialog).getByRole('button', { name: 'No, finish without reflection' }));
   await waitFor(() => expect(submitComponentProgress).toHaveBeenCalledWith('C1', 'apprenticeship', '1', expect.objectContaining({
