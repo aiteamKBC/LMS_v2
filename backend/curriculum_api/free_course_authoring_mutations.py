@@ -245,9 +245,12 @@ def _stored_cover(course_id, value):
     browser. Same helper, path shape and failure behaviour as module covers:
     URLs and '' pass through untouched.
     """
-    from .views import stored_module_cover_image  # lazy: views is heavy, keep this module light to import
+    from .views import CoverImageError, stored_module_cover_image  # lazy: views is heavy, keep this module light to import
 
-    return stored_module_cover_image(course_id, value)
+    try:
+        return stored_module_cover_image(course_id, value)
+    except CoverImageError as error:
+        raise MutationError("invalid_cover", str(error)) from error
 
 
 def _validate_shape(weeks):

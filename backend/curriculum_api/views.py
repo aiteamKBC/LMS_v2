@@ -1456,25 +1456,29 @@ def stored_module_cover_image(module_catalogue_id, value):
     stores. One cover per module, so the path has a fixed slot and a new upload
     simply replaces the old one.
 
-    Anything that is not an inline image is returned untouched: an https:// URL
+    Anything that is not an inline value is returned untouched: an https:// URL
     a curator pasted is already a URL, and '' still means "remove the cover".
-    Storage failing returns the value unchanged rather than raising -- a saved
-    module with an oversized cover is better than a module that would not save.
+
+    A ``data:`` value is never handed back for a column. One that is not a
+    base64 image of a known type, does not decode, or cannot be stored raises
+    ``CoverImageError`` and the save is refused: no image is kept as base64.
     """
     value = clean_str(value)
-    match = MODULE_COVER_DATA_URI.match(value)
-    if not match:
+    if not value.lower().startswith('data:'):
         return value
-    content_type = match.group(1).lower()
+    match = MODULE_COVER_DATA_URI.match(value)
+    content_type = match.group(1).lower() if match else ''
+    if content_type not in MODULE_COVER_EXTENSIONS:
+        raise CoverImageError('Choose a JPG, PNG, GIF, WebP, AVIF, SVG or BMP image.')
     try:
         raw = base64.b64decode(re.sub(r'\s+', '', match.group(2)), validate=True)
     except Exception:
         logger.warning('Module %s sent a cover image that is not valid base64.', module_catalogue_id)
-        return value
+        raise CoverImageError('The image could not be read. Choose it again.')
     if not raw:
         return ''
     module_segment = safe_upload_segment(module_catalogue_id, 'module')
-    extension = MODULE_COVER_EXTENSIONS.get(content_type, '.img')
+    extension = MODULE_COVER_EXTENSIONS[content_type]
     timestamp = datetime.utcnow().strftime('%Y%m%d%H%M%S%f')
     relative_path = (
         f'{COMPONENT_UPLOAD_ROOT}/{module_segment}/{MODULE_COVER_UPLOAD_SLOT}/cover-{timestamp}{extension}'
@@ -1483,7 +1487,7 @@ def stored_module_cover_image(module_catalogue_id, value):
         saved_path = upload_storage.store(ContentFile(raw), relative_path, content_type)
     except Exception:
         logger.exception('Unable to store the cover image for module %s.', module_catalogue_id)
-        return value
+        raise CoverImageError('The image could not be uploaded right now. Try again.')
     public_path = saved_path.removeprefix(f'{COMPONENT_UPLOAD_ROOT}/')
     return f'/curriculum_api/curriculum/uploads/{public_path}'
 
@@ -16842,6 +16846,18 @@ class ModuleAuthoringValidationError(ValueError):
         self.errors = errors
 
 
+class CoverImageError(ModuleAuthoringValidationError):
+    """A cover sent inline that cannot become a stored file (see stored_module_cover_image).
+
+    A ModuleAuthoringValidationError so the module save answers 400 with the
+    reason, and so a ValueError so the free-course saves do the same.
+    """
+
+    def __init__(self, message):
+        ValueError.__init__(self, message)
+        self.errors = [{'path': 'coverImage', 'message': message}]
+
+
 def http_url(value):
     text = clean_str(value)
     if not text:
@@ -27780,6 +27796,8 @@ def curriculum_module_settings(request, module_catalogue_id):
                 'declaredTotalOtjh': payload.get('totalOtjh') if 'totalOtjh' in payload else existing.get('declaredTotalOtjh'),
             }
             result = save_module_authoring_structure(module_catalogue_id, updates)
+    except CoverImageError as exc:
+        return json_error(str(exc), status=400)
     except Exception as exc:
         logger.exception('Unable to update module authoring settings for %s.', module_catalogue_id)
         return json_error('Unable to update module settings.', status=500, detail=str(exc))
@@ -28683,7 +28701,22 @@ def curriculum_uploaded_file(request, path):
         response.streaming_content = video_chunks(request, stream)
     if requested:
         response['Content-Range'] = f'bytes {offset}-{offset + length - 1}/{total_size}'
+    if MODULE_COVER_FILE_PATH.search(path):
+        # A cover's file name carries the moment it was uploaded and a new
+        # upload gets a new name (stored_module_cover_image), so these bytes
+        # never change. Without this every catalogue visit fetched every cover
+        # again through Django and Azure, and the cards sat empty meanwhile.
+        response['Cache-Control'] = 'private, max-age=31536000, immutable'
     return response
+
+
+#: Cover files whose name changes whenever the picture does:
+#: ``<module>/cover/cover-<20-digit UTC timestamp>.<ext>`` from a save, and
+#: ``free_course_covers/<sha256 prefix>.<ext>`` from the free-course backfills,
+#: and ``quiz_images/<sha256 prefix>.<ext>`` (quiz_api.question_images).
+MODULE_COVER_FILE_PATH = re.compile(
+    rf'(?:^|/)(?:{MODULE_COVER_UPLOAD_SLOT}/cover-\d{{20}}|(?:free_course_covers|quiz_images)/[0-9a-f]{{32}})\.[a-z]+$'
+)
 
 
 # The component column that makes this table expensive: inlined authoring
@@ -32801,7 +32834,10 @@ def _update_module_cover(request, identifier, payload):
         return json_error('Choose a valid module image.', status=400)
     # Validated as an image first, then stored: the column keeps a URL, never
     # the picture. See stored_module_cover_image().
-    image = stored_module_cover_image(identifier, image)
+    try:
+        image = stored_module_cover_image(identifier, image)
+    except CoverImageError as error:
+        return json_error(str(error), status=400)
     try:
         with connection.cursor() as cursor:
             # Only a live (not archived) module takes a cover.

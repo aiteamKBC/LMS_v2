@@ -1,4 +1,5 @@
 import base64
+import hashlib
 import io
 import json
 from contextlib import nullcontext
@@ -10,7 +11,8 @@ from django.test import RequestFactory, SimpleTestCase
 
 from . import views
 from .models import QuizPackage, QuizQuestion
-from .question_images import MAX_IMAGE_BYTES, validate_question_image
+from . import question_images
+from .question_images import EXTENSIONS, MAX_IMAGE_BYTES, SERVED_PREFIX, store_question_image, stored_answer_text, validate_question_image
 from learner_api import quizzes
 from learner_api.models import LearnerProfile, LearnerProgressEntry, LearnerQuizAnswer
 
@@ -21,7 +23,62 @@ def image_data(colour="blue", format="PNG", mime="image/png"):
     return f"data:{mime};base64," + base64.b64encode(output.getvalue()).decode()
 
 
+def stored_url(value):
+    """The URL the fake storage below hands back for an inline image."""
+    header, _sep, encoded = value.partition(",")
+    mime = header.removeprefix("data:").removesuffix(";base64")
+    return SERVED_PREFIX + hashlib.sha256(base64.b64decode(encoded)).hexdigest()[:32] + EXTENSIONS[mime]
+
+
+def fake_store(content, mime):
+    return SERVED_PREFIX + hashlib.sha256(content).hexdigest()[:32] + EXTENSIONS[mime]
+
+
 class QuestionImageTests(SimpleTestCase):
+    def setUp(self):
+        storage = patch.object(question_images, "store_image_bytes", side_effect=fake_store)
+        self.store_bytes = storage.start()
+        self.addCleanup(storage.stop)
+
+    def test_an_inline_question_image_is_stored_and_replaced_by_its_url(self):
+        image = image_data()
+        url = store_question_image(image)
+        self.assertEqual(url, stored_url(image))
+        self.assertFalse(url.startswith("data:"))
+        # Same picture, same file: a stored URL passes through untouched.
+        self.assertEqual(store_question_image(url), url)
+        self.assertEqual(store_question_image(""), "")
+        self.assertEqual(store_question_image(None), "")
+
+    def test_storage_failing_refuses_the_image_instead_of_keeping_base64(self):
+        self.store_bytes.side_effect = ValueError("The image could not be uploaded right now. Try again.")
+        with self.assertRaises(ValueError):
+            store_question_image(image_data())
+
+    def test_a_url_that_is_not_one_of_ours_is_still_refused(self):
+        for value in ("https://example.com/image.png", SERVED_PREFIX + "../x.png", "/curriculum_api/curriculum/uploads/MOD/cover/a.png"):
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                store_question_image(value)
+
+    def test_an_image_matching_answer_stores_its_picture_and_keeps_its_fields(self):
+        image = image_data("green")
+        text = json.dumps({"kind": "image_matching_pair", "imageUrl": image, "label": "Image A", "match": "Circle"})
+        stored = json.loads(stored_answer_text(text))
+        self.assertEqual(stored, {"kind": "image_matching_pair", "imageUrl": stored_url(image), "label": "Image A", "match": "Circle"})
+        svg = "data:image/svg+xml;base64," + base64.b64encode(b"<svg xmlns='http://www.w3.org/2000/svg'/>").decode()
+        self.assertTrue(json.loads(stored_answer_text(json.dumps({"kind": "image_matching_pair", "imageUrl": svg, "match": "x"})))["imageUrl"].endswith(".svg"))
+
+    def test_answers_without_an_inline_picture_are_returned_exactly(self):
+        for text in ("Yes", "Circle -> round", '{"kind":"image_matching_pair","imageUrl":"https://example.invalid/a.png","match":"x"}', "{not json data:"):
+            with self.subTest(text=text):
+                self.assertEqual(stored_answer_text(text), text)
+        self.store_bytes.assert_not_called()
+
+    def test_an_answer_picture_that_is_not_an_image_is_refused(self):
+        for image in ("data:image/png;base64,aGVsbG8=", "data:text/plain;base64,aGk=", "data:image/png;base64,!!"):
+            with self.subTest(image=image), self.assertRaises(ValueError):
+                stored_answer_text(json.dumps({"kind": "image_matching_pair", "imageUrl": image, "match": "x"}))
+
     def test_validates_supported_images_and_explicit_removal(self):
         for format, mime in (("PNG", "image/png"), ("JPEG", "image/jpeg"), ("GIF", "image/gif"), ("WEBP", "image/webp")):
             with self.subTest(format=format):
@@ -67,13 +124,13 @@ class QuestionImageTests(SimpleTestCase):
                 image = image_data()
                 response, manager = self.save_questions([{"text": "Read the diagram", "questionType": question_type, "imageUrl": image, "answers": []}])
                 self.assertEqual(response.status_code, 200)
-                self.assertEqual(manager.create.call_args.kwargs["image_url"], image)
+                self.assertEqual(manager.create.call_args.kwargs["image_url"], stored_url(image))
                 self.assertEqual(manager.create.call_args.kwargs["question_type"], question_type)
 
     def test_omitted_image_is_preserved_and_explicit_image_can_replace_or_remove_it(self):
         original = image_data()
         replacement = image_data("red")
-        for patch_value, expected in (({}, original), ({"imageUrl": replacement}, replacement), ({"imageUrl": ""}, ""), ({"imageUrl": None}, "")):
+        for patch_value, expected in (({}, original), ({"imageUrl": replacement}, stored_url(replacement)), ({"imageUrl": ""}, ""), ({"imageUrl": None}, "")):
             with self.subTest(present="imageUrl" in patch_value):
                 question = MagicMock(id=21, image_url=original)
                 response, manager = self.save_questions([{"id": 21, "text": "Unchanged", "questionType": "true_false", "answers": [], **patch_value}], question)
