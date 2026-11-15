@@ -74,6 +74,7 @@ from coach_api.validation import (
     validate_month,
     validation_error_response,
 )
+from coach_api.feedback_format import feedback_plain_text, sanitize_feedback
 from config.observability import metric_event
 from login.permissions import require_access
 from learner_api.evidence_storage import (
@@ -14876,6 +14877,7 @@ def coach_marking_queue(request, submission_id=None):
             # text; this ceiling only exists to stop something absurd being
             # posted, so it is raised to clear a full draft with room to edit.
             feedback = validator.text("feedback", max_length=MARKING_FEEDBACK_MAX_LENGTH)
+            feedback = sanitize_feedback(feedback)
             reviewed_by = validator.text("reviewedBy", max_length=255, default="Progress Coach") or "Progress Coach"
             # A super-admin marking from inside a coach's workspace is recorded
             # as themselves, not as the coach: "Demo Admin (for Test Coach)".
@@ -14889,7 +14891,7 @@ def coach_marking_queue(request, submission_id=None):
                     getattr(admin, "username", "") or getattr(admin, "email", "")
                 ) or "Administrator"
                 reviewed_by = f"{admin_name} (for {reviewed_by})"[:255]
-            if decision and decision != "accepted" and not feedback:
+            if decision and decision != "accepted" and not feedback_plain_text(feedback):
                 validator.error("feedback", "Feedback is required for this decision.")
             validator.check()
         except ValidationError as exc:

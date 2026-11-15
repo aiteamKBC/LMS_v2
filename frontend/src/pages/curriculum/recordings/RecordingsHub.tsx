@@ -40,11 +40,21 @@ export default function RecordingsHub() {
               ],
               meta: 'Coach selected first, then the meeting calendar is shown', action: 'Open coaching recordings',
             },
+            {
+              title: 'Quality Assurance', heading: 'Quality assurance', href: '/curriculum/quality-demo',
+              eyebrow: 'Quality management', image: '',
+              description: 'Review quality checks, manage forms and monitor curriculum issues in one workspace.',
+              features: [
+                { icon: ShieldCheck, label: 'Quality checks and reviews' },
+                { icon: CalendarDays, label: 'Sampling and findings calendar' },
+              ],
+              meta: 'Quality checks, forms and QA calendar', action: 'Open quality assurance',
+            },
           ].map(card => <Link key={card.href} to={card.href} aria-label={card.title} className={styles.card}>
             <span className={styles.hoverFill} aria-hidden="true" />
-            <span className={styles.illustration} aria-hidden="true">
+            {card.image && <span className={styles.illustration} aria-hidden="true">
               <img src={`${import.meta.env.BASE_URL}recordings-hub/${card.image}.jpg`} alt="" width={480} height={480} />
-            </span>
+            </span>}
             <div className={styles.content}>
               <p className={styles.eyebrow}>{card.eyebrow}</p>
               <h2 className={styles.title}>{card.heading}</h2>

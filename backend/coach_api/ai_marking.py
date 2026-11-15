@@ -101,6 +101,11 @@ MAX_OUTPUT_TOKENS = 4_000
 #: cannot turn one click into an enormous request.
 MAX_PROMPT_CHARS = 30_000
 
+# A marking guide is sent only for the current draft; it is not retained as a
+# learner evidence file.  Keep the upload bounded before parsing it so a coach
+# cannot accidentally turn one click into an unbounded memory/model request.
+MAX_PROMPT_FILE_BYTES = 5 * 1024 * 1024
+
 #: Extensions we can read as text. Images are listed for the model as context
 #: ("a screenshot was provided") but their content is not read.
 TEXT_EXTRACTORS = {".pdf", ".docx", ".pptx", ".txt", ".md"}
@@ -947,6 +952,33 @@ def _prompt_for(submission):
     )
 
 
+def extract_prompt_file(upload):
+    """Read a coach-supplied PDF/DOCX/text marking guide.
+
+    The file is transient: its extracted text is folded into this generation's
+    policy and never written to learner evidence or the submission row.
+    Returns ``(filename, text)`` and raises ``ValueError`` for a user-facing
+    validation problem.
+    """
+    filename = _s(getattr(upload, "name", "")) or "marking-guidance"
+    if getattr(upload, "size", 0) > MAX_PROMPT_FILE_BYTES:
+        raise ValueError(
+            f"The marking guidance file is too large. The limit is {MAX_PROMPT_FILE_BYTES // (1024 * 1024)} MB."
+        )
+    suffix = _evidence_file_format(getattr(upload, "content_type", ""), filename)
+    if suffix not in {".pdf", ".docx", ".txt", ".md"}:
+        raise ValueError("Upload a PDF, Word document (.docx), or text/Markdown file.")
+    data = upload.read(MAX_PROMPT_FILE_BYTES + 1)
+    if len(data) > MAX_PROMPT_FILE_BYTES:
+        raise ValueError(
+            f"The marking guidance file is too large. The limit is {MAX_PROMPT_FILE_BYTES // (1024 * 1024)} MB."
+        )
+    text = extract_file_text(getattr(upload, "content_type", ""), filename, data).strip()
+    if not text:
+        raise ValueError("The marking guidance file could not be read. Check that it contains selectable text.")
+    return filename, text[:MAX_PROMPT_CHARS]
+
+
 @coach_access_required
 @read_only_view
 def coach_marking_ai_prompt(request, submission_id):
@@ -1024,14 +1056,25 @@ def coach_marking_ai_feedback(request, submission_id):
     # The body is optional: the button posts nothing at all when the coach has
     # not edited the prompt, so a missing or blank body means "use the authored
     # file" rather than a malformed request.
-    body = (request.body or b"").strip()
-    if body:
-        try:
-            payload = json.loads(body)
-        except (TypeError, ValueError, UnicodeDecodeError):
-            return _error("The request body was not valid JSON.", 400, "invalid_json")
+    uploaded_prompt_name = ""
+    uploaded_prompt = ""
+    if request.content_type and request.content_type.startswith("multipart/form-data"):
+        payload = {"prompt": request.POST.get("prompt", "")}
+        prompt_file = request.FILES.get("promptFile")
+        if prompt_file is not None:
+            try:
+                uploaded_prompt_name, uploaded_prompt = extract_prompt_file(prompt_file)
+            except ValueError as exc:
+                return _error(str(exc), 400, "invalid_prompt_file")
     else:
-        payload = {}
+        body = (request.body or b"").strip()
+        if body:
+            try:
+                payload = json.loads(body)
+            except (TypeError, ValueError, UnicodeDecodeError):
+                return _error("The request body was not valid JSON.", 400, "invalid_json")
+        else:
+            payload = {}
     prompt = _s(payload.get("prompt")) if isinstance(payload, dict) else ""
     if len(prompt) > MAX_PROMPT_CHARS:
         return _error(
@@ -1041,7 +1084,22 @@ def coach_marking_ai_feedback(request, submission_id):
             "prompt_too_long",
         )
     # Empty means "use the authored file", so a cleared box cannot accidentally
-    # send an empty policy to the model.
+    # send an empty policy to the model. A file is additive: the authored policy
+    # (or the coach's edited policy) remains the base, while the uploaded guide
+    # supplies the assessment-specific criteria for this draft.
+    if uploaded_prompt:
+        base_prompt = prompt or load_prompt_document()
+        prompt = (
+            f"{base_prompt}\n\n"
+            f"Additional marking guidance supplied by the coach ({uploaded_prompt_name}):\n"
+            f"{uploaded_prompt}"
+        )
+        if len(prompt) > MAX_PROMPT_CHARS:
+            return _error(
+                f"The combined marking guidance is too long. The limit is {MAX_PROMPT_CHARS:,} characters.",
+                400,
+                "prompt_too_long",
+            )
     prompt = prompt or None
 
     # Which policy applies depends on what is being marked -- resolved by
@@ -1057,4 +1115,7 @@ def coach_marking_ai_feedback(request, submission_id):
     except RuntimeError as exc:
         return _error(str(exc), 502, "ai_generation_failed")
 
+    if uploaded_prompt_name:
+        meta["promptFile"] = uploaded_prompt_name
+        meta["promptSource"] = "custom-file"
     return JsonResponse({"feedback": text, "meta": meta})
