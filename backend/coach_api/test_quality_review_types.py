@@ -122,6 +122,32 @@ class QualityTypeStorageTests(SimpleTestCase):
         self.assertNotIn('form',rows[0]);self.assertNotIn('content',rows[0])
 
 
+    def test_rating_counts_remain_scoped_to_each_review_and_keep_empty_ratings(self):
+        ratings=[('gold','green','amber','red','na'),('red','red','green'),()]
+        saved=[]
+        for index,values in enumerate(ratings,1):
+            value=snapshot();value['identity']=str(index)*64
+            value['learner']['id']=str(index)
+            value['reviewer']={'id':'staff:1','name':'Synthetic Reviewer'}
+            value['form']['criteria']={f'criterion-{i}':{'rating':rating,'evidence':'Synthetic observation'} for i,rating in enumerate(values)}
+            if index==3:value['coach']['email']='other-coach@example.invalid'
+            saved.append(store.save_review(value,expected=0,request_id=str(uuid4()),actor='staff:1'))
+        rows,following=store.list_reviews('2026-10-01','2026-11-01')
+        self.assertIsNone(following)
+        self.assertEqual(len(rows),3)
+        by_id={str(row['id']):row for row in rows}
+        self.assertEqual(set(by_id),{row['id'] for row in saved})
+        expected=[{'gold':1,'green':1,'amber':1,'red':1,'na':1},
+                  {'gold':0,'green':1,'amber':0,'red':2,'na':0},
+                  {'gold':0,'green':0,'amber':0,'red':0,'na':0}]
+        for saved_row,counts in zip(saved,expected):
+            row=by_id[saved_row['id']]
+            self.assertEqual(json.loads(row['rating_counts']),counts)
+            self.assertEqual(row['reviewer_name'],'Synthetic Reviewer')
+        scoped,_=store.list_reviews('2026-10-01','2026-11-01',coach='coach@example.invalid')
+        self.assertEqual({str(row['id']) for row in scoped},{row['id'] for row in saved[:2]})
+
+
 class QualityTypeApiTests(SimpleTestCase):
     def setUp(self):
         ReviewApiTests.setUp(self)
