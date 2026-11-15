@@ -7,9 +7,9 @@ type ImportState = { id: string; status: string; error: string; bunnyUrl?: strin
 type VideoSettingsPatch = Record<string, string | number | boolean>;
 type ResponseData = { enabled?: boolean; saved?: boolean; import?: ImportState | null; error?: string; scope?: Record<string, string>; savedSettings?: VideoSettingsPatch };
 
-export function CurriculumVideoUpload({ targetKind = 'module', targetId, componentId, title, source, onUploaded }: {
-  targetKind?: 'module' | 'template'; targetId?: string; componentId: string;
-  title: string; source: string; onUploaded?: (settings: VideoSettingsPatch) => void;
+export function CurriculumVideoUpload({ targetKind = 'module', targetId, componentId, title, source, onUploaded, deferUpload = false }: {
+  targetKind?: 'module' | 'template' | 'free_course'; targetId?: string; componentId: string;
+  title: string; source: string; onUploaded?: (settings: VideoSettingsPatch) => void; deferUpload?: boolean;
 }) {
   const [state, setState] = useState<ImportState | null>(null);
   const [error, setError] = useState('');
@@ -87,14 +87,14 @@ export function CurriculumVideoUpload({ targetKind = 'module', targetId, compone
       assertComponentUploadAllowed(file);
       if (!file.name.toLowerCase().endsWith('.mp4')) throw new Error('Choose an MP4 video file.');
       setError('');
-      if ((!saved || pending) && pendingFiles) pendingFiles.select(componentId, file, source);
+      if ((deferUpload || !saved || pending) && pendingFiles) pendingFiles.select(componentId, file, source);
       else void upload(file);
     } catch (cause) { setError(cause instanceof Error ? cause.message : 'Choose an MP4 video file.'); }
   };
   return <div className="mt-4 space-y-2 rounded-lg border border-background-200 p-3">
     <p className="text-sm font-semibold">Bunny video storage</p>
     <p className="text-xs text-foreground-500">Save starts copying this video to Bunny automatically; the LMS keeps the original link. MP4 uploads are saved for LMS playback and copied to Bunny.</p>
-    {!saved && <p className="text-xs text-foreground-500">Choose an MP4, then Save to upload it to the LMS and Bunny.</p>}
+    {(!saved || deferUpload) && <p className="text-xs text-foreground-500">Choose an MP4, then Save to upload it to the LMS and Bunny.</p>}
     <label className="block text-sm">Upload MP4 (up to 300 MB)
       <input aria-label="Upload MP4 to LMS and Bunny" type="file" accept=".mp4,video/mp4" disabled={busy || pending?.uploading || !available || (!pendingFiles && (!url || !saved))} className="mt-1 block w-full text-xs" onChange={event => { const file = event.target.files?.[0]; event.target.value = ''; if (file) chooseFile(file); }} />
     </label>

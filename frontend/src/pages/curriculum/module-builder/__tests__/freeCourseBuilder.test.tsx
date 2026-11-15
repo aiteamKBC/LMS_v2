@@ -5,11 +5,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ReactNode } from 'react';
 import * as api from '@/lib/curriculumApi';
 import { showCurriculumConfirm } from '@/components/feature/CurriculumSweetAlert';
+import { coachFetch } from '@/lib/coachFetch';
 import FreeCourseBuilder from '../FreeCourseBuilder';
 import { freeCourseReturnTo, freeCourseSaveInput, newFreeCourseWeek } from '../freeCourseBuilderData';
 
 vi.mock('@/components/feature/WorkspaceShell', () => ({ WorkspaceShell: ({ children }: { children: ReactNode }) => <div>{children}</div> }));
 vi.mock('@/components/feature/CurriculumSweetAlert', () => ({ showCurriculumConfirm: vi.fn(), showCurriculumAlert: vi.fn() }));
+vi.mock('@/lib/coachFetch', () => ({ coachFetch: vi.fn() }));
 vi.mock('../RichTextEditor', () => ({ RichTextDraft: ({ label, value, onChange }: { label: string; value: string; onChange: (value: string) => void }) => <label>{label}<textarea value={value} onChange={event => onChange(event.target.value)} /></label> }));
 vi.mock('@/lib/curriculumApi', async original => ({
   ...(await original<typeof import('@/lib/curriculumApi')>()),
@@ -35,6 +37,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   vi.mocked(api.fetchFreeCourseAuthoringCourse).mockResolvedValue(course());
   vi.mocked(api.updateFreeCourseAuthoring).mockResolvedValue(course());
+  vi.mocked(coachFetch).mockImplementation(async () => new Response(JSON.stringify({ enabled: true, saved: false, import: null })));
   // Every authoring call in these tests must use a mock; never contact an LMS.
   vi.stubGlobal('fetch', vi.fn(() => { throw new Error('Unexpected network request'); }));
 });
@@ -127,6 +130,63 @@ describe('Free Course in Module Builder', () => {
     expect(await screen.findByLabelText('Course name')).toHaveValue('Independent course');
     expect(api.updateFreeCourseAuthoring).not.toHaveBeenCalled();
     expect(globalThis.fetch).not.toHaveBeenCalled();
+  });
+
+  it('uploads a pending MP4 after saving its canonical ID and uses the returned revision on the next save', async () => {
+    let saved = course();
+    vi.mocked(api.updateFreeCourseAuthoring).mockImplementation(async (_id, input) => {
+      const patch = input as ReturnType<typeof freeCourseSaveInput>;
+      const video = patch.weeks[0].components[1];
+      saved = structuredClone(course());
+      saved.revision = 'fcv1:structure';
+      saved.weeks[0].components.push({ ...video, id: 'C-VIDEO' });
+      saved.clientIdMap = { components: { [video.clientId || 'C-VIDEO']: 'C-VIDEO' } };
+      return saved;
+    });
+    vi.mocked(coachFetch).mockImplementation(async (url, options) => {
+      if (options?.method !== 'POST') return new Response(JSON.stringify({ enabled: true, saved: false }));
+      expect(String(url)).toContain('/videos/free_course/FREE-1/C-VIDEO/');
+      expect((options.body as FormData).get('expectedRevision')).toBe('fcv1:structure');
+      const uploaded = structuredClone(saved);
+      uploaded.revision = 'fcv1:file';
+      uploaded.weeks[0].components[1].settings = { videoUrl: '/curriculum_api/curriculum/uploads/videos/free_course/FREE-1/C-VIDEO/file.mp4', sourceType: 'HTML (MP4)' };
+      return new Response(JSON.stringify({ savedSettings: uploaded.weeks[0].components[1].settings, course: uploaded, import: { status: 'queued' } }), { status: 202 });
+    });
+    open();
+    await screen.findByLabelText('Course name');
+    await userEvent.click(screen.getByRole('button', { name: 'Add component' }));
+    await userEvent.click(screen.getByRole('button', { name: /^Video/i }));
+    const picker = await screen.findByLabelText('Upload MP4 to LMS and Bunny');
+    fireEvent.change(picker, { target: { files: [new File(['video'], 'lesson.mp4', { type: 'video/mp4' })] } });
+    expect(screen.getByText(/lesson.mp4.*Selected/)).toBeInTheDocument();
+    expect(vi.mocked(coachFetch).mock.calls.some(([, options]) => options?.method === 'POST')).toBe(false);
+    await userEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+    expect(await screen.findByText('Free course saved')).toBeInTheDocument();
+    expect(screen.queryByText(/lesson.mp4.*Selected/)).not.toBeInTheDocument();
+    expect(screen.getByLabelText('MP4 file URL')).toHaveValue('/curriculum_api/curriculum/uploads/videos/free_course/FREE-1/C-VIDEO/file.mp4');
+    await userEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+    await waitFor(() => expect(api.updateFreeCourseAuthoring).toHaveBeenLastCalledWith('FREE-1', expect.objectContaining({ expectedRevision: 'fcv1:file', importVideoComponentIds: ['C-VIDEO'] })));
+  });
+
+  it('retains a failed MP4 for retry without claiming that the file was saved', async () => {
+    const original = course();
+    original.weeks[0].components[0] = { ...original.weeks[0].components[0], type: 'video', title: 'Existing video', settings: { videoUrl: 'https://example.test/original.mp4' } };
+    vi.mocked(api.fetchFreeCourseAuthoringCourse).mockResolvedValue(original);
+    vi.mocked(api.updateFreeCourseAuthoring).mockResolvedValue({ ...original, revision: 'fcv1:structure' });
+    vi.mocked(coachFetch).mockImplementation(async (_url, options) => new Response(JSON.stringify(options?.method === 'POST'
+      ? { error: 'Storage unavailable' } : { enabled: true, saved: true }), { status: options?.method === 'POST' ? 503 : 200 }));
+    open();
+    await userEvent.click(await screen.findByText('Existing video'));
+    fireEvent.change(await screen.findByLabelText('Upload MP4 to LMS and Bunny'), { target: { files: [new File(['video'], 'retry.mp4')] } });
+    const unload = new Event('beforeunload', { cancelable: true }); window.dispatchEvent(unload);
+    expect(unload.defaultPrevented).toBe(true);
+    await userEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+    await waitFor(() => expect(screen.getAllByRole('alert').some(item => item.textContent?.includes('MP4 upload did not finish'))).toBe(true));
+    expect(screen.getByText(/retry.mp4.*Selected/)).toBeInTheDocument();
+    expect(screen.queryByText('Free course saved')).not.toBeInTheDocument();
+    expect(screen.getByLabelText('Video URL')).toHaveValue('https://example.test/original.mp4');
+    await userEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+    await waitFor(() => expect(api.updateFreeCourseAuthoring).toHaveBeenLastCalledWith('FREE-1', expect.objectContaining({ expectedRevision: 'fcv1:structure' })));
   });
 
   it('adds self-study activities through the shared rail and saves new identities as client IDs', async () => {

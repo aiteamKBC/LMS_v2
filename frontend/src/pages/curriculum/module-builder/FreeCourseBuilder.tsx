@@ -13,6 +13,7 @@ import { fetchComponentPointsDefaults, uploadWeekComponentResource } from '../we
 import type { ModuleComponent } from './moduleAuthoringData';
 import { freeCourseComponentChange, freeCourseEditorComponent, freeCourseReturnTo, freeCourseSaveInput, newFreeCourseWeek } from './freeCourseBuilderData';
 import { WeekTemplateImportModal } from './WeekTemplateImportModal';
+import { FreeCourseVideoScopeContext, PendingVideoFilesContext, usePendingVideoFiles } from '../shared/pendingVideoFiles';
 
 const QuizEditor = lazy(() => import('../quiz-xml/edit/QuizEditorPanel').then(module => ({ default: module.QuizEditorPanel })));
 const inputClass = 'w-full rounded-lg border border-background-200 bg-white px-3 py-2 text-sm outline-none focus:border-primary-400';
@@ -36,7 +37,8 @@ export default function FreeCourseBuilder({ courseId }: { courseId: string }) {
   const [quiz, setQuiz] = useState<{ id: number; componentId: string; revision: string } | null>(null);
   const [importOpen, setImportOpen] = useState(false);
   const [points, setPoints] = useState<Partial<Record<ModuleComponent['type'], number>>>({});
-  const dirty = Boolean(draft && stored && JSON.stringify(draft) !== JSON.stringify(stored));
+  const videoFiles = usePendingVideoFiles(courseId);
+  const dirty = videoFiles.hasPending || Boolean(draft && stored && JSON.stringify(draft) !== JSON.stringify(stored));
   const week = draft?.weeks.find(item => item.freeCourseWeekId === weekId);
   const component = week?.components.find(item => item.id === componentId);
 
@@ -98,13 +100,28 @@ export default function FreeCourseBuilder({ courseId }: { courseId: string }) {
     setSaving(true);
     setError('');
     try {
-      const saved = await updateFreeCourseAuthoring(courseId, freeCourseSaveInput(stored, draft));
+      let saved = await updateFreeCourseAuthoring(courseId, {
+        ...freeCourseSaveInput(stored, draft),
+        importVideoComponentIds: component?.type === 'video' && !videoFiles.files[component.id] ? [component.id] : [],
+      });
       const weekIndex = draft.weeks.findIndex(item => item.freeCourseWeekId === weekId);
       const componentIndex = week?.components.findIndex(item => item.id === componentId) ?? -1;
       setStored(saved);
       setDraft(saved);
       setWeekId(saved.weeks[weekIndex]?.freeCourseWeekId || saved.weeks[0]?.freeCourseWeekId || '');
       setComponentId(saved.weeks[weekIndex]?.components[componentIndex]?.id || '');
+      const mapping = saved.clientIdMap?.components;
+      videoFiles.remapIds(mapping && typeof mapping === 'object'
+        ? Object.fromEntries(Object.entries(mapping).filter((entry): entry is [string, string] => typeof entry[1] === 'string')) : {});
+      await videoFiles.uploadSaved('free_course', courseId, saved.weeks.flatMap(item => item.components), () => {}, {
+        fields: () => ({ expectedRevision: saved.revision }),
+        onResponse: data => {
+          const document = data.course as FreeCourseAuthoringDocument | undefined;
+          if (!document?.revision || document.course.courseId !== courseId) throw new Error('The MP4 response could not confirm the saved course. Reopen the course before retrying.');
+          saved = document;
+          setStored(document); setDraft(document);
+        },
+      });
       setSavedNotice('Free course saved');
     } catch (reason) {
       const code = reason instanceof CurriculumApiError && reason.data && typeof reason.data === 'object' && 'code' in reason.data ? reason.data.code : undefined;
@@ -115,6 +132,7 @@ export default function FreeCourseBuilder({ courseId }: { courseId: string }) {
   };
   const changeComponents = (next: ModuleComponent[]) => {
     if (!week) return;
+    for (const item of week.components) if (!next.some(part => part.id === item.id)) videoFiles.remove(item.id);
     changeWeek(week.freeCourseWeekId, { components: next.map((item, index) => {
       const existing = week.components.find(part => part.id === item.id);
       if (existing) return { ...freeCourseComponentChange(existing, item), displayOrder: index };
@@ -179,7 +197,7 @@ export default function FreeCourseBuilder({ courseId }: { courseId: string }) {
     } catch (reason) { setError(reason instanceof Error ? reason.message : 'Could not read the image.'); }
   };
 
-  return <WorkspaceShell role="curriculum" roleLabel="Curriculum Designer" navItems={curriculumNavItems} workspaceLabel="Curriculum Studio"
+  return <PendingVideoFilesContext.Provider value={videoFiles}><FreeCourseVideoScopeContext.Provider value={courseId}><WorkspaceShell role="curriculum" roleLabel="Curriculum Designer" navItems={curriculumNavItems} workspaceLabel="Curriculum Studio"
     pageTitle="Module Builder" pageSubtitle="Free course authoring workspace" userName="Rachel Myers" userRole="Curriculum Designer">
     <div className="min-h-[calc(100vh-96px)] bg-background-100 px-3 py-4 sm:px-5 lg:px-6">
       <div className="mx-auto flex max-w-[1840px] flex-col gap-4">
@@ -228,6 +246,7 @@ export default function FreeCourseBuilder({ courseId }: { courseId: string }) {
                     {([-1, 1] as const).map(direction => <button type="button" key={direction} disabled={draft.weeks.indexOf(week) + direction < 0 || draft.weeks.indexOf(week) + direction >= draft.weeks.length}
                       className="text-sm text-primary-700 underline disabled:opacity-30" onClick={() => { const next = [...draft.weeks]; const index = next.indexOf(week); [next[index], next[index + direction]] = [next[index + direction], next[index]]; setDraft({ ...draft, weeks: next }); }}>Move week {direction === -1 ? 'up' : 'down'}</button>)}
                     <button type="button" className="text-sm text-red-700 underline" onClick={() => { void showCurriculumConfirm({ title: 'Remove week?', text: `Remove "${week.title}" and its components from this free course?`, confirmButtonText: 'Remove week', cancelButtonText: 'Keep week', onConfirm: async () => {
+                      for (const item of week.components) videoFiles.remove(item.id);
                       const weeks = draft.weeks.filter(item => item.freeCourseWeekId !== weekId); setDraft({ ...draft, weeks }); setWeekId(weeks[0]?.freeCourseWeekId || ''); setComponentId('');
                     } }); }}>Remove week</button>
                   </div>
@@ -265,5 +284,5 @@ export default function FreeCourseBuilder({ courseId }: { courseId: string }) {
         </div>}
       </div>
     </div>
-  </WorkspaceShell>;
+  </WorkspaceShell></FreeCourseVideoScopeContext.Provider></PendingVideoFilesContext.Provider>;
 }

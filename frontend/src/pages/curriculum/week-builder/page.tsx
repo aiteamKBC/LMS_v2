@@ -97,7 +97,7 @@ import {
 import { showFullTextWhenTruncated } from '@/pages/curriculum/shared/entities/truncationTitle';
 import { COMPONENT_UPLOAD_MAX_LABEL } from '@/pages/curriculum/shared/componentUploadPolicy';
 import { CurriculumVideoUpload } from '@/pages/curriculum/shared/CurriculumVideoUpload';
-import { PendingVideoFilesContext, usePendingVideoFiles, withUploadedVideo } from '@/pages/curriculum/shared/pendingVideoFiles';
+import { FreeCourseVideoScopeContext, PendingVideoFilesContext, usePendingVideoFiles, withUploadedVideo } from '@/pages/curriculum/shared/pendingVideoFiles';
 // Both panels are heavy and only mount when their modal opens — GuidedQuizUpload
 // alone pulls in xlsx (~420 kB). Splitting them keeps that weight off the initial
 // load of this page and of module-builder, which imports from this module.
@@ -2614,6 +2614,7 @@ function LiveSessionBody({ component, onChange, setSetting, rulePoints, weekSess
 // required progress, component content).
 function VideoBody({ component, onChange, setSetting, rulePoints, moduleId, videoTemplateId }: ComponentBodyProps) {
   const canonicalFreeCourse = useContext(CanonicalFreeCourseContext);
+  const freeCourseId = useContext(FreeCourseVideoScopeContext);
   const s = (key: string) => String(component.settings[key] ?? '');
   const sourceType = normaliseVideoSourceType(s('sourceType') || s('provider'));
   const updateSourceType = (value: string) => onChange({
@@ -2623,7 +2624,7 @@ function VideoBody({ component, onChange, setSetting, rulePoints, moduleId, vide
   return (
     <>
       <Section title="Video details">
-        {!canonicalFreeCourse && <CurriculumVideoUpload key={`${moduleId || videoTemplateId}:${component.id}`} targetKind={moduleId ? 'module' : 'template'} targetId={moduleId || videoTemplateId} componentId={component.id} title={component.title}
+        {(!canonicalFreeCourse || freeCourseId) && <CurriculumVideoUpload key={`${freeCourseId || moduleId || videoTemplateId}:${component.id}`} targetKind={canonicalFreeCourse ? 'free_course' : moduleId ? 'module' : 'template'} targetId={canonicalFreeCourse ? freeCourseId : moduleId || videoTemplateId} componentId={component.id} title={component.title} deferUpload={canonicalFreeCourse}
           source={s('videoUrl') || s('embedCode')}
           onUploaded={settings => onChange({ settings: { ...component.settings, ...settings } })} />}
         <Field editField="title" label="Title"><input value={component.title} onChange={e => onChange({ title: e.target.value })} className={inputClass} /></Field>
