@@ -16,8 +16,8 @@ import CurriculumStudio from './page';
 
 const summary: CurriculumHomeSummary = {
   stats: { programmes: 7, activeCohorts: 11, groups: 113, openIssues: 174 },
-  attentionCounts: { 'programme-ksb-source': 0, 'module-mapping': 94, 'draft-content': 0, 'group-coach': 79, 'module-tutor': 1 },
-  continueModules: [{ id: 'M/1', name: 'Synthetic module', programme: 'Synthetic programme', weeks: 16, status: 'published' }],
+  attentionCounts: { 'programme-ksb-source': 0, 'module-mapping': 94, 'group-coach': 79, 'module-tutor': 1 },
+  continueModules: [{ id: 'M/1', name: 'Synthetic module', programme: 'Synthetic programme', weeks: 16, lastUpdated: '2026-11-12T09:30:00+00:00' }],
   programmeFocus: [{ programme: { id: 'P/1', name: 'Synthetic programme' }, issues: ['26 mapping gaps', '29 without coach'], issueCount: 2 }],
 };
 
@@ -72,7 +72,7 @@ describe('Curriculum Home summary', () => {
     expect(screen.queryByText('No modules yet')).not.toBeInTheDocument();
     await act(async () => resolve({
       stats: { programmes: 0, activeCohorts: 0, groups: 0, openIssues: 0 },
-      attentionCounts: { 'programme-ksb-source': 0, 'module-mapping': 0, 'draft-content': 0, 'group-coach': 0, 'module-tutor': 0 },
+      attentionCounts: { 'programme-ksb-source': 0, 'module-mapping': 0, 'group-coach': 0, 'module-tutor': 0 },
       continueModules: [], programmeFocus: [],
     }));
     expect(screen.getByText('Everything looks clear')).toBeInTheDocument();
@@ -197,7 +197,7 @@ describe('Curriculum Home details', () => {
     await user.click(await screen.findByRole('button', { name: /Synthetic module/ }));
     const dialog = await screen.findByRole('dialog', { name: 'Synthetic module' });
     expect(within(dialog).getByText('16 weeks')).toBeInTheDocument();
-    expect(within(dialog).getByText('Published')).toBeInTheDocument();
+    expect(within(dialog).getByText('12 Nov 2026')).toBeInTheDocument();
     expect(within(dialog).getByRole('link', { name: /Open in Module Builder/ })).toHaveAttribute('href', '/curriculum/module-builder?module=M%2F1');
     expect(mocks.fetch).toHaveBeenCalledTimes(1);
   });

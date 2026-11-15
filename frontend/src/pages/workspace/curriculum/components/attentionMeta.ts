@@ -34,12 +34,6 @@ export const ATTENTION_META: Record<AttentionKey, AttentionMeta> = {
     href: '/curriculum/ksb-mapping', action: 'Open coverage', icon: 'ri-link-unlink',
     edit: { label: 'Map KSBs', href: moduleBuilder },
   },
-  'draft-content': {
-    title: 'Modules are still in draft', detail: 'Continue authoring the content that is not yet published.',
-    requirement: 'Still in draft', noun: 'module',
-    href: '/curriculum/module-builder', action: 'Continue authoring', icon: 'ri-draft-line',
-    edit: { label: 'Continue authoring', href: moduleBuilder },
-  },
   'group-coach': {
     title: 'Groups have no coach', detail: 'Assign a coach before the delivery setup is complete.',
     requirement: 'No coach assigned', noun: 'group',
@@ -67,7 +61,7 @@ export function programmeSectionMeta(key: ProgrammeSectionKey, programmeId: stri
   if (key === 'programme-ksb-source') {
     return { title: 'No KSB source', summary: meta.detail, icon: meta.icon, href: programmeHref, action: 'Choose source' };
   }
-  const titles: Partial<Record<AttentionKey, string>> = { 'module-mapping': 'Modules without KSB mappings', 'module-tutor': 'Modules without a tutor', 'group-coach': 'Groups without a coach', 'draft-content': 'Draft modules' };
+  const titles: Partial<Record<AttentionKey, string>> = { 'module-mapping': 'Modules without KSB mappings', 'module-tutor': 'Modules without a tutor', 'group-coach': 'Groups without a coach' };
   return { title: titles[key] ?? meta.title, summary: meta.detail, icon: meta.icon, href: meta.href, action: meta.action };
 }
 

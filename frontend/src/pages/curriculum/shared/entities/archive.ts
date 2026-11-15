@@ -23,6 +23,7 @@ import {
   permanentlyDeleteCurriculumGroup,
   permanentlyDeleteCurriculumModule,
   permanentlyDeleteCurriculumProgramme,
+  forciblyDeleteCurriculumProgramme,
   restoreCurriculumCohort,
   restoreCurriculumGroup,
   restoreCurriculumModule,
@@ -379,5 +380,30 @@ export async function permanentlyDeleteProgrammeWithConfirm(
       await onDeleted();
     },
     successTitle: 'Programme deleted permanently',
+  });
+}
+
+/**
+ * Explicit destructive override: removes the programme and authored weeks and
+ * components as well as its delivery structure. This is intentionally a
+ * separate action from the normal permanent delete.
+ */
+export async function forciblyDeleteProgrammeWithConfirm(
+  programme: { id: string; name: string },
+  onDeleted: () => void | Promise<void>,
+): Promise<boolean> {
+  return showCurriculumConfirm({
+    title: 'Force-delete all programme content?',
+    text: `This permanently deletes ${programme.name}, its cohorts, groups, modules, weeks and components from the database. It cannot be undone. Learner accounts and progress are not deleted, but the curriculum content they reference may prevent this operation from completing. Use this only if you are certain this programme and its authored content must be destroyed.`,
+    icon: 'warning',
+    confirmButtonText: 'Yes, force-delete everything',
+    onConfirm: async () => {
+      await withArchiveError(
+        'Unable to force-delete this programme.',
+        () => forciblyDeleteCurriculumProgramme(programme.id),
+      );
+      await onDeleted();
+    },
+    successTitle: 'Programme and authored content deleted',
   });
 }

@@ -196,6 +196,9 @@ vi.mock('@/lib/curriculumApi', async importOriginal => ({
   fetchCurriculumOverview: vi.fn(async () => ({ programmes, cohorts, groups, modules })),
   fetchCurriculumDeliveryScope: vi.fn(async () => ({ cohorts, groups })),
   fetchCurriculumHolidays: vi.fn(async () => []),
+  // The tab badge reads the free-course count on mount (page.tsx); unmocked it
+  // hits the network and the undefined catalogue crashes the whole page.
+  fetchFreeCourseAuthoringCatalogue: vi.fn(async () => ({ revision: 'test', courses: [] })),
   fetchCurriculumScopeLearnerKsbImpact: (...args: unknown[]) => fetchCurriculumScopeLearnerKsbImpact(...args),
 }));
 

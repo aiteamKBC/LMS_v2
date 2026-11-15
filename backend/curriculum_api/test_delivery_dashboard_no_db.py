@@ -161,7 +161,7 @@ class DashboardReadTests(unittest.TestCase):
         self.views.cached_curriculum_value = Mock(side_effect=lambda key, factory, **kwargs: factory())
         self.request(); self.request('sessions')
         calls = self.views.cached_curriculum_value.call_args_list
-        self.assertEqual([call.args[0] for call in calls], ['delivery-dashboard:v1:overview', 'delivery-calendar:v3'])
+        self.assertEqual([call.args[0] for call in calls], ['delivery-dashboard:v3:overview', 'delivery-calendar:v3'])
         self.assertTrue(all(call.kwargs == {'force': False, 'ttl': 30} for call in calls))
 
     def test_chart_and_calendar_share_one_build_and_keep_the_existing_collection_contract(self):

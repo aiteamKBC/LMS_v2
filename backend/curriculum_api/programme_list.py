@@ -33,14 +33,11 @@ def programme_list_sources():
     if views.connection.vendor != 'postgresql':
         return {
             **{name: views.authoring_fetch_all(table, columns=fields) for name, table, fields, _ in sources},
-            'program_configs': views.get_program_config_rows(), 'ksb_profiles': views.get_ksb_profile_rows(),
+            'program_configs': views.get_program_config_rows(), 'ksb_profiles': [],
         }
     views.ensure_module_authoring_tables()
     sources.append(('program_configs', 'programmes', None,
                     "coalesce((to_jsonb(source_row)->>'display_order')::numeric, 0), name"))
-    has_profiles = views.table_exists('ksb_profiles')
-    if has_profiles:
-        sources.append(('ksb_profiles', 'ksb_profiles', None, 'is_active desc, name'))
     selections, params = [], []
     for name, table, fields, ordering in sources:
         expression = 'to_jsonb(source_row)'
@@ -57,8 +54,9 @@ def programme_list_sources():
     # are parameters. JSON key selection tolerates optional legacy columns.
     row = views.fetch_all('select ' + ', '.join(selections), params)[0]
     result = {name: json.loads(value) if isinstance(value, str) else value for name, value in row.items()}
-    if not has_profiles:
-        result['ksb_profiles'] = []
+    # Curriculum keeps no KSB profiles (curriculum.ksb_profiles was removed); a
+    # programme takes its KSBs from its standard. Kept as a key for build_programmes.
+    result['ksb_profiles'] = []
     return result
 
 
@@ -67,44 +65,27 @@ def programme_list_learner_counts(source):
         return views.active_learner_programme_counts()
     if not source['has_learner_table']:
         return {}, {}
-    # Match active_learner_programme_counts exactly: named learners, by explicit
-    # id when present, otherwise normalized name. That existing rule does not
-    # filter lifecycle_status. Group in SQL instead of transferring every row;
-    # JSON key lookup supports installations without the optional programme_id.
-    # The normalised Learner.learners has no programme name, only programme_id:
-    # there a learner counts by id (the old rule, named learners only, still
-    # applies wherever the name column exists).
-    # Plain column reads chosen from the table's columns: to_jsonb(learner)
-    # serialised every row and took seconds on a slow link.
-    from . import schema_compat
-    columns = schema_compat.columns_of('Learner', 'learners')
-    # Unknown shape (not PostgreSQL): the legacy columns.
-    has_name, has_id = ('programme' in columns, 'programme_id' in columns) if columns else (True, True)
-    name_sql = "coalesce(programme::text, '')" if has_name else "''::text"
-    id_sql = "coalesce(programme_id::text, '')" if has_id else "''::text"
-    present = name_sql if has_name or not has_id else id_sql
-    rows = views.fetch_all(f'''
-        select {name_sql} as programme, {id_sql} as programme_id, count(*) as learner_count
+    # By programme_id only: the normalised Learner.learners has no programme name
+    # column, so there is no by-name bucket to fill. Like the rule it replaced,
+    # this does not filter lifecycle_status. Grouped in SQL so no rows travel.
+    rows = views.fetch_all('''
+        select coalesce(programme_id::text, '') as programme_id, count(*) as learner_count
         from "Learner"."learners" learner
-        where btrim({present}) <> ''
-        group by 1, 2
+        where btrim(coalesce(programme_id::text, '')) <> ''
+        group by 1
     ''')
-    by_id, by_name = Counter(), Counter()
+    by_id = Counter()
     for row in rows:
         programme_id = views.clean_str(row['programme_id'])
-        name = views.normalise(row['programme'])
         if programme_id:
             by_id[programme_id] += row['learner_count']
-        elif name:
-            by_name[name] += row['learner_count']
-    return dict(by_id), dict(by_name)
+    return dict(by_id), {}
 
 
 def programme_list_needs_module_enrichment(programmes, source, counts, *, include_archived):
-    # Legacy catalogue rows and programmes represented only by unattached
-    # modules retain the existing ranking, deduplication and reconstruction.
-    if views.table_exists('Modules'):
-        return True
+    # Programmes represented only by unattached modules retain the existing
+    # ranking, deduplication and reconstruction. (The legacy curriculum."Modules"
+    # catalogue no longer exists, so it is not a reason to take this path.)
     known = {
         views.normalise(programme.get(key)) for programme in programmes
         for key in ('id', 'sourceId', 'name', 'standard')

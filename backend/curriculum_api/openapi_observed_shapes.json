@@ -4071,9 +4071,6 @@
         "deliveryModuleId": {
          "type": "string"
         },
-        "legacyModuleId": {
-         "type": "string"
-        },
         "invalidModuleCatalogueId": {
          "type": "string"
         },
@@ -4984,9 +4981,6 @@
         "deliveryModuleId": {
          "type": "string"
         },
-        "legacyModuleId": {
-         "type": "string"
-        },
         "invalidModuleCatalogueId": {
          "type": "string"
         },
@@ -5145,9 +5139,6 @@
          "type": "string"
         },
         "deliveryModuleId": {
-         "type": "string"
-        },
-        "legacyModuleId": {
          "type": "string"
         },
         "invalidModuleCatalogueId": {
@@ -7585,9 +7576,6 @@
         "deliveryModuleId": {
          "type": "string"
         },
-        "legacyModuleId": {
-         "type": "string"
-        },
         "invalidModuleCatalogueId": {
          "type": "string"
         },
@@ -8806,7 +8794,6 @@
           "moduleCatalogueId": {},
           "deliveryRowId": {},
           "deliveryModuleId": {},
-          "legacyModuleId": {},
           "invalidModuleCatalogueId": {},
           "structureId": {},
           "sourceId": {},

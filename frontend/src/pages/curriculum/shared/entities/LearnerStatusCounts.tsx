@@ -11,6 +11,9 @@ function statusMeta(status: string) {
   if (key === 'withdrawn') return { icon: 'ri-user-unfollow-line', tone: 'border-red-200 bg-red-50 text-red-700' };
   if (['onbreak', 'onabreak', 'break', 'paused', 'onhold'].includes(key)) return { icon: 'ri-pause-circle-line', tone: 'border-amber-200 bg-amber-50 text-amber-800' };
   if (key === 'completed') return { icon: 'ri-graduation-cap-line', tone: 'border-sky-200 bg-sky-50 text-sky-700' };
+  if (key === 'delivery') return { icon: 'ri-book-open-line', tone: 'border-primary-200 bg-primary-50 text-primary-700' };
+  if (key === 'onboarding') return { icon: 'ri-user-add-line', tone: 'border-sky-200 bg-sky-50 text-sky-700' };
+  if (key === 'readytoenrol') return { icon: 'ri-user-follow-line', tone: 'border-sky-200 bg-sky-50 text-sky-700' };
   if (['enteredepa', 'epa'].includes(key)) return { icon: 'ri-medal-line', tone: 'border-violet-200 bg-violet-50 text-violet-700' };
   return { icon: status === 'all' ? 'ri-group-line' : 'ri-information-line', tone: 'border-foreground-200 bg-background-100 text-foreground-600' };
 }
@@ -28,7 +31,7 @@ export function LearnerStatusCounts({ target, onManage, refreshKey }: { target: 
   }, [context?.statusStore, scope, id, name, refreshKey]);
   if (!state.value) return <span className="inline-flex items-center gap-1 text-[11px] text-foreground-500" aria-label={`${name}: learner counts`}>
     {state.loading ? <span role="status" className="inline-flex gap-1"><span className="sr-only">Loading learner counts…</span>
-      {['all', 'active', 'withdrawn', 'on break'].map(status => {
+      {['all', 'active'].map(status => {
         const meta = statusMeta(status);
         return <span key={status} aria-hidden="true" className={`inline-flex min-h-7 items-center gap-1 rounded-lg border px-1.5 py-1 font-bold ${meta.tone}`}>
           <AppIcon className={meta.icon} /><span>…</span>
@@ -37,7 +40,9 @@ export function LearnerStatusCounts({ target, onManage, refreshKey }: { target: 
     </span> : <button type="button" onClick={event => { event.stopPropagation(); context?.statusStore.refresh(target); }}
       title={state.error} className="font-semibold text-red-700 underline">Retry learner counts</button>}
   </span>;
-  const keys = ['all', 'active', 'withdrawn', ...Object.keys(state.value.statuses).filter(key => !['active', 'withdrawn'].includes(key))];
+  // All and Active always show; any other status only when someone holds it, so
+  // a status the data never uses (withdrawn, today) is not a permanent zero.
+  const keys = ['all', 'active', ...Object.keys(state.value.statuses).filter(key => key !== 'active' && (state.value!.statuses[key] || 0) > 0)];
   return <span className="inline-flex flex-wrap items-center justify-center gap-1" role="group" aria-label={`${name}: learner counts`} aria-busy={state.loading}>
     {keys.map(status => {
       const count = status === 'all' ? state.value!.total : state.value!.statuses[status] || 0;

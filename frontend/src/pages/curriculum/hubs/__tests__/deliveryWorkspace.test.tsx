@@ -54,7 +54,7 @@ beforeEach(() => {
 afterEach(() => { cleanup(); vi.useRealTimers(); });
 
 describe('Delivery dashboard using existing curriculum reads', () => {
-  it('limits both weeks, daily bars and next live to active modules while keeping the full calendar destination', () => {
+  it('limits both weeks and daily bars to active modules, while next live matches the full calendar', () => {
     sessionRead.sessions.push(
       { id: 'future', moduleCatalogueId: 'm2', type: 'Live Session', date: '2026-11-13', startTime: '10:30' },
       { id: 'ended', moduleCatalogueId: 'm3', type: 'Live Session', date: '2026-11-13', startTime: '10:40' },
@@ -67,8 +67,10 @@ describe('Delivery dashboard using existing curriculum reads', () => {
     const chart = screen.getByRole('article', { name: 'Scheduled live sessions' });
     expect(within(chart).getByLabelText('Scheduled live sessions count')).toHaveTextContent(/^5this week$/);
     expect(within(chart).getByRole('img', { name: /13 Nov 2026: 2;/ })).toBeVisible();
-    expect(within(chart).getByText(/13 Nov \u00b7 11:00 UK/)).toBeVisible();
-    expect(screen.getByText('11 sessions')).toBeVisible();
+    // Next live is the next session anywhere, the same one the Session Calendar card names.
+    const calendarNext = screen.getByText(/^Next live \u00b7 /).textContent!.replace(/^Next live \u00b7 /, '');
+    expect(within(chart).getByText(calendarNext)).toBeVisible();
+    expect(screen.getByText('11 live sessions')).toBeVisible();
     fireEvent.change(screen.getByLabelText('Session week'), { target: { value: '1' } });
     expect(within(chart).getByLabelText('Scheduled live sessions count')).toHaveTextContent(/^1next week$/);
     (moduleRead.data!.m1 as { lastLiveDate: string }).lastLiveDate = '2026-11-12';
@@ -86,7 +88,7 @@ describe('Delivery dashboard using existing curriculum reads', () => {
     moduleRead.loading = false; moduleRead.error = 'Activity unavailable';
     view.rerender(<MemoryRouter><CurriculumDeliveryHub /></MemoryRouter>);
     expect(within(chart).getByLabelText('Scheduled live sessions count')).toHaveTextContent('Unavailable');
-    expect(screen.getByText('5 sessions')).toBeVisible();
+    expect(screen.getByText('5 live sessions')).toBeVisible();
   });
 
   it('refreshes staffing when a session starts without requesting a data reload', () => {
@@ -183,12 +185,12 @@ describe('Delivery dashboard using existing curriculum reads', () => {
       '/curriculum/cohorts', '/curriculum/groups', '/curriculum/module-builder', '/curriculum/teams-meetings', '/curriculum/england-holidays', '/curriculum/session-calendar',
     ]);
     expect(within(destinations).getByText('2 cohorts')).toBeVisible();
-    expect(within(destinations).getByText('4 modules')).toBeVisible();
-    expect(within(destinations).getByText('5 sessions')).toBeVisible();
+    expect(within(destinations).getByText('4 in groups')).toBeVisible();
+    expect(within(destinations).getByText('5 live sessions')).toBeVisible();
     expect(within(destinations).getByText(/One non-delivery calendar: GOV.UK bank holidays/)).toBeVisible();
     expect(screen.getByRole('link', { name: 'Open Cohorts' })).toHaveAttribute('href', '/curriculum/cohorts');
-    expect(screen.getByRole('link', { name: 'Groups without a coach: 2' })).toHaveAttribute('href', '/curriculum/groups');
-    expect(screen.getByRole('link', { name: 'Modules without a tutor: 1' })).toHaveAttribute('href', '/curriculum/module-builder');
+    expect(screen.getByRole('link', { name: /^Groups without a coach: 2\. All groups, active or not/ })).toHaveAttribute('href', '/curriculum/groups');
+    expect(screen.getByRole('link', { name: /^Modules without a tutor: 1\. All modules, active or not/ })).toHaveAttribute('href', '/curriculum/module-builder');
   });
 
   it('separates active delivery metrics from urgent staffing needs inside the upper activity card', () => {
@@ -213,7 +215,7 @@ describe('Delivery dashboard using existing curriculum reads', () => {
     fireEvent.change(screen.getByLabelText('Session week'), { target: { value: '1' } });
     expect(screen.getByLabelText('Scheduled live sessions count')).toHaveTextContent(/^1next week$/);
     expect(screen.getByRole('img', { name: /^Live sessions by day: 16 Nov 2026: 1; 17 Nov 2026: 0;/ })).toBeVisible();
-    expect(screen.getByText('6 sessions')).toBeVisible();
+    expect(screen.getByText('6 live sessions')).toBeVisible();
   });
 
   it('excludes cancelled sessions and other content, deduplicating only repeated session identities', () => {
@@ -224,7 +226,7 @@ describe('Delivery dashboard using existing curriculum reads', () => {
     );
     renderDelivery();
     expect(screen.getByLabelText('Scheduled live sessions count')).toHaveTextContent('5');
-    expect(screen.getByText('5 sessions')).toBeVisible();
+    expect(screen.getByText('5 live sessions')).toBeVisible();
     expect(screen.getByRole('img', { name: /13 Nov 2026: 2;/ })).toBeVisible();
   });
 
@@ -233,7 +235,7 @@ describe('Delivery dashboard using existing curriculum reads', () => {
     renderDelivery();
     expect(screen.getByText('2 live sessions without a valid date (across the session calendar)')).toBeVisible();
     expect(screen.getByLabelText('Scheduled live sessions count')).toHaveTextContent('5');
-    expect(screen.getByText('5 sessions')).toBeVisible();
+    expect(screen.getByText('5 live sessions')).toBeVisible();
     expect(screen.getByRole('img', { name: /13 Nov 2026: 2;/ })).toBeVisible();
     fireEvent.change(screen.getByLabelText('Session week'), { target: { value: '1' } });
     expect(screen.getByLabelText('Scheduled live sessions count')).toHaveTextContent(/^0next week$/);
@@ -255,7 +257,7 @@ describe('Delivery dashboard using existing curriculum reads', () => {
     renderDelivery();
     expect(screen.getByText('2 live sessions without a valid date (across the session calendar)')).toBeVisible();
     expect(screen.getByLabelText('Scheduled live sessions count')).toHaveTextContent(/^0this week$/);
-    expect(screen.getByText('0 sessions')).toBeVisible();
+    expect(screen.getByText('0 live sessions')).toBeVisible();
     expect(screen.getByRole('img', { name: /^Live sessions by day: 9 Nov 2026: 0;/ })).toBeVisible();
   });
 
@@ -277,7 +279,7 @@ describe('Delivery dashboard using existing curriculum reads', () => {
     expect(screen.getByLabelText('Scheduled live sessions count')).toHaveTextContent('Unavailable');
     expect(screen.getByLabelText('Active cohorts count')).toHaveTextContent(/^1$/);
     expect(screen.getByLabelText('Active modules count')).toHaveTextContent(/^1$/);
-    expect(screen.queryByText('0 sessions')).not.toBeInTheDocument();
+    expect(screen.queryByText('0 live sessions')).not.toBeInTheDocument();
   });
 
   it('preserves cached live dates alongside a refresh failure', () => {

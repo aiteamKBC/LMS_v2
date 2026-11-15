@@ -2,14 +2,15 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { fetchCurriculumJson } from '@/lib/curriculumApi';
 import { useLiveRefresh } from '@/hooks/useRefreshOnReturn';
 
-export type AttentionKey = 'programme-ksb-source' | 'module-mapping' | 'draft-content' | 'group-coach' | 'module-tutor';
+export type AttentionKey = 'programme-ksb-source' | 'module-mapping' | 'group-coach' | 'module-tutor';
 
 export interface HomeModule {
   id: string;
   name: string;
   programme: string;
   weeks: number;
-  status: string;
+  /** ISO timestamp of the module's last edit; blank when the database has none. */
+  lastUpdated: string;
 }
 
 export interface ProgrammeFocus {
