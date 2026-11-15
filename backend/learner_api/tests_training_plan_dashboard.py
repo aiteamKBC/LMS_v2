@@ -305,11 +305,10 @@ class TrainingPlanDashboardTests(SimpleTestCase):
         self.effective_plan.return_value = []
         with patch('learner_api.training_plan_dashboard.connections', {'enrolment': connection}), \
              patch('learner_api.training_plan_dashboard.LearnerProfile') as profiles, \
-             patch('learner_api.training_plan_dashboard.stored_training_plan', return_value=[]), \
              patch('learner_api.training_plan_dashboard._builder_subject_metadata', return_value=({}, {})), \
              patch('learner_api.calendar.coaching_events_for_learner', return_value=events), \
              patch('learner_api.training_plan_dashboard.coach_phone', return_value=''):
-            profiles.objects.filter.return_value.first.return_value = None
+            profiles.objects.filter.return_value.only.return_value.first.return_value = None
             reviews = read_dashboard(source, section='overview')['reviews']
 
         self.assertEqual([(row['eventKey'], row['reviewTemplateId'], row['reviewInstanceId']) for row in reviews], [
@@ -320,19 +319,28 @@ class TrainingPlanDashboardTests(SimpleTestCase):
 
     def test_overview_reads_current_calendar_targets_and_stored_booking_changes(self):
         from coach_api.models import CoachCalendarEvent
+        from curriculum_api.review_instances import review_calendar_event_key
 
         source = SimpleNamespace(pk=125, aptem_id=None, email='learner@example.com',
-                                 start_date='2024-11-04', end_date='2026-11-03')
+                                 start_date='2024-11-04', learner_start_date='2024-11-04', end_date='2026-11-03')
         profile = SimpleNamespace(id=272, lifecycle_status='active', email=source.email,
-                                  start_date=None, end_date=None, coach_name='Assigned Coach', coach_email='coach@example.com')
+                                  start_date=None, end_date=None, coach_name='Assigned Coach', coach_email='coach@example.com',
+                                  programme_id='PROG-TEST', programme='Synthetic curriculum')
         connection = MagicMock()
         connection.cursor.return_value.__enter__.return_value.fetchall.return_value = []
         records = []
-        event_key = 'mcr:272:23:2026-09-25'
+        event_key = review_calendar_event_key(272, 'REV-MCM', 23)
         with patch('learner_api.training_plan_dashboard.connections', {'enrolment': connection}), \
              patch('learner_api.training_plan_dashboard.LearnerProfile') as profiles, \
              patch('learner_api.training_plan_dashboard._builder_subject_metadata', return_value=({}, {})), \
              patch('learner_api.training_plan_dashboard.coach_phone', return_value=''), \
+             patch('coach_api.views.resolve_curriculum_programme_id', return_value='PROG-TEST'), \
+             patch('coach_api.views.resolve_curriculum_review_occurrences', side_effect=lambda **kwargs: [{
+                 'reviewTemplateId': 'REV-MCM', 'reviewName': 'Monthly Coaching Meeting',
+                 'reviewTypeCode': 'mcm', 'reviewTypeId': 'REVT-MCM', 'reviewTypeName': 'Monthly Coaching Meeting',
+                 'reviewTypeIsSystem': True, 'occurrenceNumber': 23,
+                 'targetDate': date(2026, 9, 25) + (kwargs['learner_start_date'] - date(2024, 11, 4)),
+             }]), \
              patch('learner_api.calendar.CoachCalendarEvent.objects.filter') as stored:
             profiles.objects.filter.return_value.only.return_value.first.return_value = profile
             stored.return_value.order_by.return_value = records
@@ -353,7 +361,7 @@ class TrainingPlanDashboardTests(SimpleTestCase):
             booking = CoachCalendarEvent(event_key=event_key, event_type='mcr', learner_id=272,
                                          learner_email=source.email, sequence=23, target_date=date(2026, 9, 25),
                                          scheduled_date=date(2026, 9, 28), scheduled_time=time(14),
-                                         status='scheduled', owner_name='Assigned Coach')
+                                         status='scheduled', owner_name='Assigned Coach', review_template_id='REV-MCM')
             records.append(booking)
             booked = current()
             self.assertEqual(len(booked), 1)
@@ -385,6 +393,7 @@ class TrainingPlanDashboardTests(SimpleTestCase):
             # Unbooked targets also track changes to the source programme window.
             records.clear()
             source.start_date = '2024-11-05'
+            source.learner_start_date = '2024-11-05'
             source.end_date = '2026-09-30'
             profile.coach_name = 'Replacement Coach'
             reviews = read_dashboard(source, section='overview')['reviews']
@@ -392,7 +401,8 @@ class TrainingPlanDashboardTests(SimpleTestCase):
             self.assertEqual(monthly[-1]['sequence'], 23)
             self.assertEqual(monthly[-1]['targetDate'], '2026-09-26')
             self.assertEqual(monthly[-1]['coachName'], 'Replacement Coach')
-            self.assertNotIn(event_key, [event['eventKey'] for event in reviews])
+            # Native occurrence identity is stable when the configured target date changes.
+            self.assertIn(event_key, [event['eventKey'] for event in reviews])
 
     def test_overview_does_not_download_or_parse_contract(self):
         source = SimpleNamespace(pk=125, aptem_id='92', email='learner@example.com')
