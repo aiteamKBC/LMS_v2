@@ -11,6 +11,7 @@ import { assignmentToday, defaultAssignmentMonth, groupMonthlyAssignments, isOve
 import { useMonthlyAssignmentPlan } from './useMonthlyAssignmentPlan';
 import styles from './monthlySubmission.module.css';
 import { ExtraActivityInfo } from '@/components/feature/ExtraActivityInfo';
+import { FormattedFeedback } from '@/components/feature/FormattedFeedback';
 
 const extraStatusLabels = { ...statusLabels, rejected: 'Rejected', escalated: 'Escalated' };
 
@@ -141,7 +142,7 @@ export default function MonthlySubmissionPage() {
                     <summary>View submitted activity</summary><div className={styles.extraProse}>{selectedExtra.answer}</div>
                   </details>
                   {selectedExtra.coachFeedback && <section className={styles.extraFeedback} aria-label="Coach feedback">
-                    <h3><CheckCircle2 size={19} aria-hidden="true" />Coach feedback</h3><p className={styles.extraProse}>{selectedExtra.coachFeedback}</p>
+                    <h3><CheckCircle2 size={19} aria-hidden="true" />Coach feedback</h3><FormattedFeedback value={selectedExtra.coachFeedback} className={styles.extraProse} />
                   </section>}
                 </div>
                 <aside className={styles.extraMetadata} aria-label="Extra activity information">
