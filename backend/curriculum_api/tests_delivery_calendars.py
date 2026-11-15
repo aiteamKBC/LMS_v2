@@ -162,3 +162,17 @@ class DeliveryCalendarPersistenceTests(CurriculumPersistenceTransactionHarness):
         with patch.object(views, 'authoring_module_exists', return_value=module):
             with self.assertRaises(country_calendars.CalendarUnavailable):
                 views.teams_non_delivery_reason(target, holiday_rows=[], module_catalogue_id='SA')
+
+    def test_invalid_sync_payload_cannot_trigger_provider_writes(self):
+        with patch('curriculum_api.england_holidays.run_sync', return_value={'status': 'ok'}) as england, \
+                patch.object(country_calendars, 'sync_saved', return_value=[]) as countries:
+            for payload in (None, [], ['SA'], 'SA'):
+                with self.subTest(payload=payload):
+                    response = self.post_json('/curriculum_api/curriculum/country-calendars/sync/', payload)
+                    self.assertEqual(response.status_code, 400, response.content)
+            england.assert_not_called()
+            countries.assert_not_called()
+            response = self.post_json('/curriculum_api/curriculum/country-calendars/sync/', {})
+            self.assertEqual(response.status_code, 200, response.content)
+            england.assert_called_once()
+            countries.assert_called_once()

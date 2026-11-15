@@ -41,7 +41,9 @@ def country_calendars(request):
 def sync_country_calendars(request):
     from . import england_holidays
     from . import views as v
-    payload = v.json_body(request) or {}
+    payload = v.json_body(request)
+    if not isinstance(payload, dict):
+        return v.json_error('Invalid JSON body.')
     country = str(payload.get('country', '')).upper()
     if country and country != 'GB':
         saved = None
