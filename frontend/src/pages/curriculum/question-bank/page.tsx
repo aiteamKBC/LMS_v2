@@ -289,7 +289,7 @@ export default function QuestionBankPage() {
             { label: 'KSB Tagged', value: `${ksbTaggedPercent}%`, icon: 'ri-price-tag-3-line' },
           ]}
           actions={(
-            <button type="button" className="inline-flex h-[4.5rem] min-w-[7.5rem] items-center justify-center whitespace-nowrap rounded-[0.75rem] bg-[#b27715] px-3 text-xs font-semibold text-white transition-smooth hover:bg-[#986511]">
+            <button type="button" className="inline-flex h-[4.5rem] min-w-[7.5rem] items-center justify-center whitespace-nowrap rounded-2xl bg-[#b27715] px-3 text-xs font-semibold text-white transition-smooth hover:bg-[#986511]">
               <AppIcon className="mr-1" name="ri-add-line" size={13} /> Create Bank
             </button>
           )}

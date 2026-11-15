@@ -114,7 +114,7 @@
     overflow: hidden !important;
     padding: 0 !important;
     border: 1px solid oklch(var(--hub-line)) !important;
-    border-radius: 16px !important;
+    border-radius: var(--lms-radius, 16px) !important;
     background: oklch(var(--hub-surface) / .62) !important;
     color: oklch(.15 .015 52) !important;
     box-shadow: inset 0 1px 0 oklch(1 0 0 / .72), inset 0 0 0 1px oklch(1 0 0 / .26) !important;
@@ -196,7 +196,7 @@
     margin: 0 !important;
     padding: 10px 14px !important;
     border: 1px solid oklch(var(--hub-line)) !important;
-    border-radius: 12px !important;
+    border-radius: var(--lms-radius, 16px) !important;
     background: oklch(var(--hub-surface) / .62) !important;
     color: oklch(.27 .017 56) !important;
     box-shadow: inset 0 1px 0 oklch(1 0 0 / .72) !important;
@@ -236,7 +236,7 @@
     gap: 8px !important;
     padding: 0 16px !important;
     border: 0 !important;
-    border-radius: 12px !important;
+    border-radius: var(--lms-radius, 16px) !important;
     background: oklch(var(--hub-tone)) !important;
     color: oklch(var(--hub-background)) !important;
     font-size: 13px !important;

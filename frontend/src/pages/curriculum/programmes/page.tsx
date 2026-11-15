@@ -2625,7 +2625,7 @@ function ChoiceSelect({
         aria-expanded={open}
       >
         <span className="flex h-full items-center gap-2.5">
-          {selectedOption?.color ? <span className="h-3.5 w-3.5 shrink-0 rounded-[4px] ring-1 ring-black/10" style={{ backgroundColor: selectedOption.color }} /> : null}
+          {selectedOption?.color ? <span className="h-3.5 w-3.5 shrink-0 rounded-2xl ring-1 ring-black/10" style={{ backgroundColor: selectedOption.color }} /> : null}
           <span className="min-w-0 flex-1">
             <span className={`block truncate text-[13px] font-semibold ${selectedOption ? 'text-foreground-900' : 'text-foreground-400'}`} title={selectedOption?.label || placeholder}>
               {selectedOption?.label || placeholder}
@@ -2680,7 +2680,7 @@ function ChoiceSelect({
                   aria-selected={selected}
                 >
                   <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-background-100 text-foreground-500">
-                    {option.color ? <span className="h-4 w-4 rounded-[5px] ring-1 ring-black/10" style={{ backgroundColor: option.color }} /> : <AppIcon className="ri-arrow-right-up-line text-sm"></AppIcon>}
+                    {option.color ? <span className="h-4 w-4 rounded-2xl ring-1 ring-black/10" style={{ backgroundColor: option.color }} /> : <AppIcon className="ri-arrow-right-up-line text-sm"></AppIcon>}
                   </span>
                   <span className="min-w-0 flex-1">
                     <span className="block truncate text-[13px] font-bold" title={option.label}>{option.label}</span>

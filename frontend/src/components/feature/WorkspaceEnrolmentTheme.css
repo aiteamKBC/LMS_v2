@@ -69,8 +69,8 @@
       --kbc-table-header-text: var(--enrolment-ui-muted) !important;
       --kbc-chrome-color: var(--enrolment-ui-soft) !important;
       --kbc-hero-gradient: var(--enrolment-ui-hero) !important;
-      --kbc-radius-card: 1rem !important;
-      --kbc-radius-control: .875rem !important;
+      --kbc-radius-card: var(--lms-radius, 16px) !important;
+      --kbc-radius-control: var(--lms-radius, 16px) !important;
       --kbc-shadow-card: none !important;
       --kbc-shadow-popover: var(--enrolment-ui-popover-shadow) !important;
       --action-primary: var(--enrolment-ui-action) !important;
@@ -98,7 +98,7 @@
 
     .workspace-shell:not([data-workspace-role="curriculum"]):not(:has([data-audit-home="/workspace/auditor-copy"])) .workspace-main :is(.ui-panel, .ui-metric-card, .ui-data-table, .ui-action-row, .card-premium, .coach-metric-card, .shadow-panel, .admin-cool-table) {
       border-color: var(--enrolment-ui-border) !important;
-      border-radius: 1rem !important;
+      border-radius: var(--lms-radius, 16px) !important;
       background: var(--enrolment-ui-surface) !important;
       box-shadow: none !important;
     }
@@ -110,7 +110,7 @@
 
     .workspace-shell:not([data-workspace-role="curriculum"]):not(:has([data-audit-home="/workspace/auditor-copy"])) .workspace-main :is(.ui-hero-banner, .workspace-hero-banner, .workspace-page-hero, .page-header, .super-admin-hero, .learner-super-admin-hero, .curriculum-home-hero, .curriculum-department-hero) {
       border: 1px solid #532970 !important;
-      border-radius: 1.5rem !important;
+      border-radius: var(--lms-radius, 16px) !important;
       background: var(--enrolment-ui-hero) !important;
       box-shadow: none !important;
       color: #f5eafa !important;
@@ -131,7 +131,7 @@
 
     .workspace-shell:not([data-workspace-role="curriculum"]):not(:has([data-audit-home="/workspace/auditor-copy"])) .workspace-hero-banner__icon {
       border: 1px solid #ffffff30 !important;
-      border-radius: .875rem !important;
+      border-radius: var(--lms-radius, 16px) !important;
       background: #ffffff15 !important;
       box-shadow: none !important;
     }
@@ -144,7 +144,7 @@
 
     .workspace-shell:not([data-workspace-role="curriculum"]):not(:has([data-audit-home="/workspace/auditor-copy"])) .workspace-main :where(input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="color"]):not([type="hidden"]):not([type="file"]), select, textarea, button[role="combobox"], button[aria-haspopup="listbox"]) {
       border-color: var(--enrolment-ui-border) !important;
-      border-radius: .875rem !important;
+      border-radius: var(--lms-radius, 16px) !important;
       background-color: var(--enrolment-ui-field) !important;
       color: var(--enrolment-ui-text) !important;
       font-family: var(--font-body) !important;
@@ -166,7 +166,7 @@
     }
 
     .workspace-shell:not([data-workspace-role="curriculum"]):not(:has([data-audit-home="/workspace/auditor-copy"])) .workspace-main :is(button, a)[class*="rounded"]:not(.rounded-full) {
-      border-radius: .875rem !important;
+      border-radius: var(--lms-radius, 16px) !important;
     }
 
     .workspace-shell:not([data-workspace-role="curriculum"]):not(:has([data-audit-home="/workspace/auditor-copy"])) .workspace-main :is(.primary-action, button.bg-primary-500, button.bg-primary-600, button.bg-primary-700, a.bg-primary-500, a.bg-primary-600, a.bg-primary-700) {
@@ -228,7 +228,7 @@
        changing their stacking order, or altering focus and dismiss handling. */
     :root:has(.workspace-shell):not(:has(.workspace-shell[data-workspace-role="curriculum"])):not(:has([data-audit-home="/workspace/auditor-copy"])) :is(.workspace-main [role="listbox"], .learner-log-pro-select-content, .llp-hours-test-select-content, body > [role="group"][data-side]) {
       border-color: var(--enrolment-ui-border) !important;
-      border-radius: .875rem !important;
+      border-radius: var(--lms-radius, 16px) !important;
       background: var(--enrolment-ui-field) !important;
       color: var(--enrolment-ui-text) !important;
       font-family: var(--font-body) !important;

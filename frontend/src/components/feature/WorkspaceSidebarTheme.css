@@ -8,7 +8,7 @@
     --workspace-nav-active: #ffffff23;
     --workspace-nav-accent: #f1d46c;
     --workspace-nav-border: #ffffff20;
-    border-radius: 1rem !important;
+    border-radius: var(--lms-radius, 16px) !important;
     overflow: hidden !important;
     background: var(--workspace-nav-background) !important;
     color: white !important;
@@ -103,7 +103,7 @@
     position: relative;
     min-height: 2.75rem !important;
     border: 1px solid transparent !important;
-    border-radius: .625rem !important;
+    border-radius: var(--lms-radius, 16px) !important;
     background: transparent !important;
     color: var(--workspace-nav-text) !important;
     font-size: .8125rem !important;
@@ -130,7 +130,7 @@
     position: absolute;
     inset: .65rem auto .65rem 0;
     width: 3px;
-    border-radius: 1rem;
+    border-radius: var(--lms-radius, 16px);
     background: var(--workspace-nav-accent);
     content: '';
     pointer-events: none;
@@ -173,7 +173,7 @@
   }
 
   .kbc-workspace-sidebar .kbc-learner-signout {
-    border-radius: .5rem !important;
+    border-radius: var(--lms-radius, 16px) !important;
     color: #d8c4e4 !important;
     font-size: .75rem !important;
     min-height: 3.5rem !important;

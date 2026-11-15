@@ -151,7 +151,7 @@ export default function InclusionDashboard({ learnerId, learner }: { learnerId: 
   const selectedCaseReport = selectedCase?.reportId && data.reports.find(report => report.id === selectedCase.reportId);
 
   return <div className="space-y-5" aria-label="Inclusion dashboard for selected learner">
-    <header className="flex flex-wrap items-center gap-4 rounded-[24px] border border-primary-100 bg-white p-5 shadow-sm">
+    <header className="flex flex-wrap items-center gap-4 rounded-2xl border border-primary-100 bg-white p-5 shadow-sm">
       <div className="mr-2">
         <h2 className="text-lg font-bold text-primary-950">Student Support</h2>
         <p className="mt-1 text-sm text-primary-600">Review this learner's support and inclusion needs.</p>
@@ -160,7 +160,7 @@ export default function InclusionDashboard({ learnerId, learner }: { learnerId: 
       <Link to="/workspace/advanced-admin" className="inline-flex items-center gap-2 rounded-xl bg-primary-950 px-4 py-2 text-sm font-semibold text-white hover:bg-primary-800"><ArrowLeft size={16} />Back to Cards</Link>
     </header>
 
-    <section className="space-y-5 rounded-[24px] border border-primary-100 bg-white p-5 shadow-sm">
+    <section className="space-y-5 rounded-2xl border border-primary-100 bg-white p-5 shadow-sm">
       <div><h2 className="text-lg font-bold text-primary-950">Inclusion Dashboard</h2><p className="mt-1 text-sm text-primary-600">Saved screening reports and support tickets for {learner.name}.</p></div>
       {error && <p role="alert" className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-800">{error}</p>}
       {loading && <p role="status" className="rounded-xl bg-primary-50 p-4 text-sm text-primary-800">Loading Inclusion records…</p>}

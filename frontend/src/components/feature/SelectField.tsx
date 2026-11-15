@@ -320,7 +320,7 @@ export function SelectMenu({
         aria-controls={open ? listboxId : undefined}
         aria-label={ariaLabel}
         aria-labelledby={ariaLabelledBy}
-        className={`flex w-full items-center !gap-3 rounded-[10px] border px-3.5 text-left outline-none transition-smooth focus-visible:ring-2 focus-visible:ring-primary-200 ${TRIGGER_HEIGHT[size]} ${triggerTone} ${triggerClassName}`}
+        className={`flex w-full items-center !gap-3 rounded-2xl border px-3.5 text-left outline-none transition-smooth focus-visible:ring-2 focus-visible:ring-primary-200 ${TRIGGER_HEIGHT[size]} ${triggerTone} ${triggerClassName}`}
       >
         {selected?.icon && <AppIcon className={`${selected.icon} shrink-0 text-foreground-400`}></AppIcon>}
         <span className={`min-w-0 flex-1 truncate text-[14px] ${selected ? 'font-semibold text-foreground-900' : 'font-medium text-foreground-400'}`}>
@@ -338,7 +338,7 @@ export function SelectMenu({
           tabIndex={-1}
           onKeyDown={handleMenuKeyDown}
           style={panelStyle}
-          className={`fixed z-[10050] flex flex-col overflow-hidden rounded-[10px] border border-background-200 bg-background-50 shadow-[0_8px_24px_-6px_rgb(35_20_55_/_0.16)] outline-none focus-visible:!outline-none select-menu-pop ${above ? 'is-above' : ''} ${menuClassName}`}
+          className={`fixed z-[10050] flex flex-col overflow-hidden rounded-2xl border border-background-200 bg-background-50 shadow-[0_8px_24px_-6px_rgb(35_20_55_/_0.16)] outline-none focus-visible:!outline-none select-menu-pop ${above ? 'is-above' : ''} ${menuClassName}`}
         >
           {showSearch && (
             <div className="flex items-center gap-3 border-b border-background-200 px-3.5 py-2.5">

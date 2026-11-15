@@ -499,7 +499,7 @@ export function Sidebar({
       ) : (
       <aside
           aria-label={`${roleLabel} sidebar`}
-          className="kbc-workspace-sidebar fixed bottom-3 left-3 top-3 z-40 hidden overflow-hidden rounded-[24px] shadow-sm transition-[width] duration-300 ease-in-out motion-reduce:transition-none lg:flex"
+          className="kbc-workspace-sidebar fixed bottom-3 left-3 top-3 z-40 hidden overflow-hidden rounded-2xl shadow-sm transition-[width] duration-300 ease-in-out motion-reduce:transition-none lg:flex"
           data-workspace-role={look}
           style={{ width: SIDEBAR_EXPANDED_WIDTH }}
         >

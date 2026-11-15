@@ -539,7 +539,7 @@ body .dashboard-theme[data-workspace-role="advanced-admin"] .kbc-learner-sidebar
 }
 
 body .dashboard-theme[data-workspace-role="advanced-admin"] .kbc-learner-sidebar-panel nav[aria-label="Advanced Admin primary navigation"] :is(a, button) {
-  border-radius: 8px;
+  border-radius: var(--lms-radius, 16px);
   color: #fff;
 }
 
@@ -709,7 +709,7 @@ body .dashboard-theme[data-workspace-role="curriculum"] .kbc-learner-signout:foc
   height: 12px;
   border-bottom: 2px solid rgb(255 255 255 / 0.25);
   border-left: 2px solid rgb(255 255 255 / 0.25);
-  border-bottom-left-radius: 10px;
+  border-bottom-left-radius: var(--lms-radius, 16px);
   content: '';
   transform: translateY(-50%);
   transition: border-color 300ms ease, width 300ms ease;
@@ -723,7 +723,7 @@ body .dashboard-theme[data-workspace-role="curriculum"] .kbc-learner-signout:foc
   min-height: 36px;
   padding: 5px 8px !important;
   gap: 8px !important;
-  border-radius: 8px;
+  border-radius: var(--lms-radius, 16px);
   font-size: 12px !important;
   background: transparent !important;
   color: rgb(255 255 255 / 0.72) !important;
@@ -761,7 +761,7 @@ body .dashboard-theme[data-workspace-role="curriculum"] .kbc-learner-sidebar-pan
   min-height: 44px;
   padding-inline: 10px;
   gap: 10px;
-  border-radius: 12px;
+  border-radius: var(--lms-radius, 16px);
   background: transparent !important;
   color: rgb(255 255 255 / 0.72) !important;
   box-shadow: none;
@@ -794,7 +794,7 @@ body .dashboard-theme[data-workspace-role="curriculum"] .kbc-learner-sidebar-pan
   padding-inline: 6px !important;
   gap: 6px !important;
   border: 1px solid transparent;
-  border-radius: 6px;
+  border-radius: var(--lms-radius, 16px);
   font-weight: 600;
   line-height: 18px;
 }

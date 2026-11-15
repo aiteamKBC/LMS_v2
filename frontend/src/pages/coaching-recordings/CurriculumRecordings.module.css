@@ -12,7 +12,7 @@
 /* These hooks also follow the shared controls into their body portals. */
 .periodDate { width: 174px; max-width: 100%; }
 .periodDate > span { display: none; }
-.periodDate > div { height: 40px; margin-top: 0; border-radius: 10px; }
+.periodDate > div { height: 40px; margin-top: 0; border-radius: var(--lms-radius, 16px); }
 .periodDate input { font-size: 13px; font-weight: 500; }
 .period .periodDate input[role='combobox'],
 .period .periodDate input[role='combobox']:focus {
@@ -66,7 +66,7 @@
   padding: 20px 24px !important;
   overflow: hidden !important;
   border: 1px solid oklch(0.235 0.089 305) !important;
-  border-radius: 26px !important;
+  border-radius: var(--lms-radius, 16px) !important;
   background:
     radial-gradient(circle at 95% 5%, oklch(0.968 0.005 305 / 0.1) 0 140px, transparent 143px),
     radial-gradient(circle at 65% 110%, oklch(0.795 0.145 85 / 0.1) 0 130px, transparent 134px),
@@ -82,7 +82,7 @@
   min-height: 36px !important;
   padding: 8px 12px !important;
   border-color: oklch(0.968 0.005 305 / 0.3) !important;
-  border-radius: 16px !important;
+  border-radius: var(--lms-radius, 16px) !important;
   background: oklch(0.968 0.005 305 / 0.1) !important;
   color: oklch(0.968 0.005 305) !important;
   font-size: 13px !important;
@@ -92,13 +92,13 @@
 .page:where(:not(:global([data-theme='dark']) *)) .hero a[href='/curriculum/coaching-recordings/reviews']:hover,
 .page:where(:not(:global([data-theme='dark']) *)) .hero button:hover { background: oklch(0.968 0.005 305 / 0.2) !important; }
 .page:where(:not(:global([data-theme='dark']) *)) [aria-label='Recording libraries'] { flex-wrap: wrap !important; }
-.page:where(:not(:global([data-theme='dark']) *)) [aria-label='Recording libraries'] > * { border-radius: 12px !important; font-size: 13px !important; }
+.page:where(:not(:global([data-theme='dark']) *)) [aria-label='Recording libraries'] > * { border-radius: var(--lms-radius, 16px) !important; font-size: 13px !important; }
 .page:where(:not(:global([data-theme='dark']) *)) [aria-label='Recording libraries'] > [aria-current='page'] { background: var(--coaching-purple) !important; }
 
 .page:where(:not(:global([data-theme='dark']) *)) [aria-label='Calendar filters'] {
   gap: 12px !important;
   border-color: var(--coaching-line) !important;
-  border-radius: 16px !important;
+  border-radius: var(--lms-radius, 16px) !important;
   background: var(--coaching-surface) !important;
 }
 
@@ -108,7 +108,7 @@
 .page:where(:not(:global([data-theme='dark']) *)) .period > :is(input, select, button) {
   min-height: 40px !important;
   border-color: var(--coaching-control-line) !important;
-  border-radius: 16px !important;
+  border-radius: var(--lms-radius, 16px) !important;
   background-color: var(--coaching-surface) !important;
   color: oklch(0.15 0.015 52) !important;
   font-size: 13px !important;
@@ -119,7 +119,7 @@
   padding: 16px !important;
   gap: 10px !important;
   border: 1px solid var(--coaching-line) !important;
-  border-radius: 16px !important;
+  border-radius: var(--lms-radius, 16px) !important;
   background: var(--coaching-surface) !important;
 }
 
@@ -127,7 +127,7 @@
   gap: 12px 20px !important;
   padding: 10px 14px !important;
   border: 1px solid var(--coaching-line) !important;
-  border-radius: 16px !important;
+  border-radius: var(--lms-radius, 16px) !important;
   background: oklch(0.94 0.014 305 / 0.6) !important;
 }
 
@@ -135,12 +135,12 @@
 .page:where(:not(:global([data-theme='dark']) *)) [aria-label='Meeting summary'] svg { color: var(--coaching-purple) !important; }
 
 
-.page:where(:not(:global([data-theme='dark']) *)) [aria-label='Coach meeting calendar'] { padding: 12px !important; border-color: var(--coaching-line) !important; border-radius: 16px !important; background: var(--coaching-surface) !important; }
+.page:where(:not(:global([data-theme='dark']) *)) [aria-label='Coach meeting calendar'] { padding: 12px !important; border-color: var(--coaching-line) !important; border-radius: var(--lms-radius, 16px) !important; background: var(--coaching-surface) !important; }
 .page:where(:not(:global([data-theme='dark']) *)) [aria-label='Coach meeting calendar'] > div:first-child h2 { font-size: 12.5px !important; font-weight: 600 !important; }
 .page:where(:not(:global([data-theme='dark']) *)) [aria-label='Coach meeting calendar'] > p { font-size: 10px !important; }
-.page:where(:not(:global([data-theme='dark']) *)) [aria-label='Hourly coach meeting calendar'] { border-color: var(--coaching-line) !important; border-radius: 12px !important; }
-.page:where(:not(:global([data-theme='dark']) *)) [aria-label='Hourly coach meeting calendar'] article > button { border-radius: 8px !important; box-shadow: none !important; }
-.page:where(:not(:global([data-theme='dark']) *)) [aria-label='Ready to action summary'] { padding: 12px !important; border-color: var(--coaching-line) !important; border-radius: 16px !important; background: var(--coaching-surface) !important; }
+.page:where(:not(:global([data-theme='dark']) *)) [aria-label='Hourly coach meeting calendar'] { border-color: var(--coaching-line) !important; border-radius: var(--lms-radius, 16px) !important; }
+.page:where(:not(:global([data-theme='dark']) *)) [aria-label='Hourly coach meeting calendar'] article > button { border-radius: var(--lms-radius, 16px) !important; box-shadow: none !important; }
+.page:where(:not(:global([data-theme='dark']) *)) [aria-label='Ready to action summary'] { padding: 12px !important; border-color: var(--coaching-line) !important; border-radius: var(--lms-radius, 16px) !important; background: var(--coaching-surface) !important; }
 
 @media (min-width: 768px) {
   .page:where(:not(:global([data-theme='dark']) *)) [aria-label='Calendar filters'] > label { flex: 1 1 25% !important; }
@@ -175,11 +175,11 @@
   .page:where(:not(:global([data-theme='dark']) *)) .hero h1 { margin: 0 !important; }
   .page:where(:not(:global([data-theme='dark']) *)) .heroHeading p { margin: 8px 0 0 !important; color: oklch(.968 .005 305 / .8) !important; font-size: 13.5px !important; line-height: 1.65 !important; }
   .page:where(:not(:global([data-theme='dark']) *)) .heroActions { display: flex !important; flex-wrap: wrap !important; flex-shrink: 0 !important; gap: 8px !important; padding-top: 4px !important; }
-  .page:where(:not(:global([data-theme='dark']) *)) .heroActions :is(a,button) { display: inline-flex !important; align-items: center !important; justify-content: center !important; gap: 6px !important; min-height: 36px !important; padding: 6px 12px !important; border: 1px solid oklch(.968 .005 305 / .3) !important; border-radius: 16px !important; color: oklch(.968 .005 305) !important; background: oklch(.968 .005 305 / .1) !important; font-size: 13px !important; font-weight: 500 !important; box-shadow: none !important; text-decoration: none !important; }
+  .page:where(:not(:global([data-theme='dark']) *)) .heroActions :is(a,button) { display: inline-flex !important; align-items: center !important; justify-content: center !important; gap: 6px !important; min-height: 36px !important; padding: 6px 12px !important; border: 1px solid oklch(.968 .005 305 / .3) !important; border-radius: var(--lms-radius, 16px) !important; color: oklch(.968 .005 305) !important; background: oklch(.968 .005 305 / .1) !important; font-size: 13px !important; font-weight: 500 !important; box-shadow: none !important; text-decoration: none !important; }
   .page:where(:not(:global([data-theme='dark']) *)) .heroBadges { display: flex !important; flex-wrap: wrap !important; gap: 8px !important; margin-top: 12px !important; }
   .page:where(:not(:global([data-theme='dark']) *)) .heroBadges span { display: inline-flex !important; align-items: center !important; gap: 6px !important; padding: 5px 10px !important; border: 1px solid oklch(.968 .005 305 / .2) !important; border-radius: 999px !important; background: oklch(.968 .005 305 / .08) !important; color: oklch(.968 .005 305 / .85) !important; font-size: 11.5px !important; line-height: 1.4 !important; }
   .page:where(:not(:global([data-theme='dark']) *)) .heroStats { display: grid !important; grid-template-columns: repeat(3,minmax(0,1fr)) !important; gap: 10px !important; margin-top: 16px !important; }
-  .page:where(:not(:global([data-theme='dark']) *)) .heroStats > div { display: flex !important; align-items: center !important; gap: 12px !important; padding: 12px 16px !important; border: 1px solid oklch(.968 .005 305 / .15) !important; border-radius: 20px !important; background: oklch(.968 .005 305 / .09) !important; }
+  .page:where(:not(:global([data-theme='dark']) *)) .heroStats > div { display: flex !important; align-items: center !important; gap: 12px !important; padding: 12px 16px !important; border: 1px solid oklch(.968 .005 305 / .15) !important; border-radius: var(--lms-radius, 16px) !important; background: oklch(.968 .005 305 / .09) !important; }
   .page:where(:not(:global([data-theme='dark']) *)) .heroStats i { display: flex !important; align-items: center !important; justify-content: center !important; width: 36px !important; height: 36px !important; flex-shrink: 0 !important; border-radius: 50% !important; background: oklch(.968 .005 305 / .15) !important; color: oklch(.968 .005 305) !important; }
   .page:where(:not(:global([data-theme='dark']) *)) .heroStats strong { display: block !important; color: oklch(.968 .005 305) !important; font-size: 21px !important; line-height: 1.2 !important; font-weight: 600 !important; }
   .page:where(:not(:global([data-theme='dark']) *)) .heroStats span { display: block !important; color: oklch(.968 .005 305 / .7) !important; font-size: 11.5px !important; line-height: 1.4 !important; }
@@ -189,13 +189,13 @@
   .page:where(:not(:global([data-theme='dark']) *)) .calendarFilters { margin-top: 0 !important; gap: 12px !important; box-shadow: inset 0 1px 0 oklch(1 0 0 / .26) !important; }
   .page:where(:not(:global([data-theme='dark']) *)) .calendarFilters :is(select,input) { box-shadow: none !important; font-size: 14px !important; }
   .page:where(:not(:global([data-theme='dark']) *)) .calendarFilters > label { color: oklch(.3 .015 52) !important; }
-  .page:where(:not(:global([data-theme='dark']) *)) .extraControl { min-height: 26px !important; padding: 4px 8px !important; border: 0 !important; border-radius: 8px !important; background: transparent !important; box-shadow: none !important; color: oklch(.415 .018 60) !important; font-size: 11px !important; order: 2 !important; }
+  .page:where(:not(:global([data-theme='dark']) *)) .extraControl { min-height: 26px !important; padding: 4px 8px !important; border: 0 !important; border-radius: var(--lms-radius, 16px) !important; background: transparent !important; box-shadow: none !important; color: oklch(.415 .018 60) !important; font-size: 11px !important; order: 2 !important; }
   .page:where(:not(:global([data-theme='dark']) *)) .period { margin-top: 8px !important; align-items: flex-end !important; }
   .page:where(:not(:global([data-theme='dark']) *)) .periodNavigation > button { min-width: 40px !important; height: 40px !important; box-shadow: none !important; }
   .page:where(:not(:global([data-theme='dark']) *)) :is(.periodLabel, .statusLabel) { color: oklch(.3 .015 52) !important; }
   .page:where(:not(:global([data-theme='dark']) *)) [aria-label='Meeting summary'] { margin-top: 10px !important; }
   .page:where(:not(:global([data-theme='dark']) *)) [aria-label='Meeting summary'] > div:not(:first-child) { padding-left: 20px !important; border-left: 1px solid var(--coaching-control-line) !important; }
-  .page:where(:not(:global([data-theme='dark']) *)) [aria-label='Calendar data status'] { margin-top: 10px !important; padding: 10px 14px !important; border-color: var(--coaching-line) !important; border-radius: 16px !important; background: var(--coaching-surface) !important; box-shadow: none !important; }
+  .page:where(:not(:global([data-theme='dark']) *)) [aria-label='Calendar data status'] { margin-top: 10px !important; padding: 10px 14px !important; border-color: var(--coaching-line) !important; border-radius: var(--lms-radius, 16px) !important; background: var(--coaching-surface) !important; box-shadow: none !important; }
   .page:where(:not(:global([data-theme='dark']) *)) [aria-label='Ready to action summary'] { display: block !important; margin-top: 8px !important; padding: 16px !important; border-color: oklch(.885 .063 305) !important; background: oklch(.975 .012 305 / .6) !important; }
   .page:where(:not(:global([data-theme='dark']) *)) [aria-label='Ready to action summary'] > div > p:nth-child(2) { max-width: 760px !important; line-height: 1.6 !important; }
   .page:where(:not(:global([data-theme='dark']) *)) [aria-label='Ready to action summary'] > button { margin-top: 12px !important; font-size: 12px !important; box-shadow: none !important; }
@@ -220,16 +220,16 @@
 }
 
 @layer recordings-ui {
-  :global([data-theme='dark']) .page .hero { padding: 20px 24px; border: 1px solid var(--theme-border); border-radius: 26px; background: var(--theme-surface); }
+  :global([data-theme='dark']) .page .hero { padding: 20px 24px; border: 1px solid var(--theme-border); border-radius: var(--lms-radius, 16px); background: var(--theme-surface); }
   :global([data-theme='dark']) .page .breadcrumb { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 12px; font-size: 12px; }
   :global([data-theme='dark']) .page .heroHeading { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 16px; }
   :global([data-theme='dark']) .page .hero h1 { font-size: 30px; font-weight: 600; line-height: 1.25; }
   :global([data-theme='dark']) .page .heroHeading p { max-width: 600px; margin-top: 8px; font-size: 13.5px; }
   :global([data-theme='dark']) .page .heroActions, :global([data-theme='dark']) .page .heroBadges { display: flex; flex-wrap: wrap; gap: 8px; }
   :global([data-theme='dark']) .page .heroBadges { margin-top: 12px; }
-  :global([data-theme='dark']) .page .heroActions :is(a,button), :global([data-theme='dark']) .page .heroBadges span { display: inline-flex; align-items: center; gap: 6px; padding: 8px 12px; border: 1px solid var(--theme-border); border-radius: 16px; font-size: 12px; }
+  :global([data-theme='dark']) .page .heroActions :is(a,button), :global([data-theme='dark']) .page .heroBadges span { display: inline-flex; align-items: center; gap: 6px; padding: 8px 12px; border: 1px solid var(--theme-border); border-radius: var(--lms-radius, 16px); font-size: 12px; }
   :global([data-theme='dark']) .page .heroStats { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 10px; margin-top: 16px; }
-  :global([data-theme='dark']) .page .heroStats > div { display: flex; align-items: center; gap: 12px; padding: 12px 16px; border: 1px solid var(--theme-border); border-radius: 20px; background: var(--theme-bg); }
+  :global([data-theme='dark']) .page .heroStats > div { display: flex; align-items: center; gap: 12px; padding: 12px 16px; border: 1px solid var(--theme-border); border-radius: var(--lms-radius, 16px); background: var(--theme-bg); }
   :global([data-theme='dark']) .page .heroStats strong, :global([data-theme='dark']) .page .heroStats span { display: block; }
   :global([data-theme='dark']) .page .heroStats strong { font-size: 21px; }
   :global([data-theme='dark']) .page .heroStats span { font-size: 11.5px; }
@@ -262,7 +262,7 @@
     gap: 5px;
     padding: 12px 14px !important;
     border-left-width: 3px !important;
-    border-radius: 6px !important;
+    border-radius: var(--lms-radius, 16px) !important;
     box-shadow: none !important;
   }
   .page [data-meeting-card] > * { flex-shrink: 0; max-width: 100%; }
@@ -290,7 +290,7 @@
   .page:where(:not(:global([data-theme='dark']) *)) [data-meeting-people] > span { color: inherit !important; }
   .page [data-compact='false'][data-media-state='failed']:not([data-phase='upcoming'], [data-phase='cancelled']) [data-meeting-status] {
     padding: 1px 6px;
-    border-radius: 4px;
+    border-radius: var(--lms-radius, 16px);
     color: oklch(.48 .105 65) !important;
     background: oklch(.96 .035 85) !important;
   }
@@ -306,7 +306,7 @@
     gap: 20px !important;
     padding: 16px 20px !important;
     border: 1px solid oklch(var(--background-200)) !important;
-    border-radius: 16px !important;
+    border-radius: var(--lms-radius, 16px) !important;
     background: oklch(var(--background-50)) !important;
   }
   .period :is(.periodField, .statusFilter) {
@@ -330,7 +330,7 @@
     align-items: center;
     gap: 0;
     border: 1px solid oklch(var(--background-200)) !important;
-    border-radius: 10px !important;
+    border-radius: var(--lms-radius, 16px) !important;
     background: oklch(var(--background-50)) !important;
   }
   .period .periodNavigation > button {
@@ -342,7 +342,7 @@
     min-height: 38px !important;
     padding: 0 10px !important;
     border: 0 !important;
-    border-radius: 8px !important;
+    border-radius: var(--lms-radius, 16px) !important;
     background: transparent !important;
     color: oklch(var(--foreground-600));
     font-size: 13px;
@@ -352,7 +352,7 @@
   .period .periodNavigation > button:nth-child(2) { min-width: 68px !important; color: oklch(var(--primary-700)); }
   .period .periodNavigation > button:hover { background: oklch(var(--primary-500) / .08) !important; color: oklch(var(--primary-700)); }
   .period .periodNavigation > button:focus-visible { outline-offset: -3px; }
-  .period button[role='combobox'] { height: 40px !important; min-height: 40px !important; border-radius: 10px !important; }
+  .period button[role='combobox'] { height: 40px !important; min-height: 40px !important; border-radius: var(--lms-radius, 16px) !important; }
   .period .dateField { width: 180px; }
   .period .viewField { width: 156px; }
   .period .statusFilter { flex: 1 1 220px; max-width: 300px !important; }

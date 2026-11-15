@@ -12,7 +12,7 @@
     padding: .375rem 1rem !important;
     gap: .75rem !important;
     border: 1px solid #e9e1ef !important;
-    border-radius: 1rem !important;
+    border-radius: var(--lms-radius, 16px) !important;
     background: #fffc !important;
     color: #302b28 !important;
     box-shadow: none !important;
@@ -44,7 +44,7 @@
   .workspace-shell .kbc-workspace-topbar .kbc-navigation-menu {
     min-height: 2.5rem;
     border: 0 !important;
-    border-radius: .75rem !important;
+    border-radius: var(--lms-radius, 16px) !important;
     background: transparent !important;
     color: #5d2e88 !important;
     box-shadow: none !important;
@@ -54,7 +54,7 @@
     height: 2.5rem !important;
     padding: .25rem .75rem !important;
     border: 1px solid #e6deee !important;
-    border-radius: .875rem !important;
+    border-radius: var(--lms-radius, 16px) !important;
     background: #f7f4fb !important;
     box-shadow: none !important;
   }
@@ -96,7 +96,7 @@
 
   .workspace-shell .kbc-workspace-topbar .coach-header-search {
     border-color: #e0d5ec !important;
-    border-radius: .875rem !important;
+    border-radius: var(--lms-radius, 16px) !important;
     background: #f4f1f8 !important;
     color: #8b8179 !important;
   }

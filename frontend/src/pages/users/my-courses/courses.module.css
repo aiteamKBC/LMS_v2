@@ -9,13 +9,13 @@
 .heroSummary > span:nth-child(2) { background: #fffaed; border-color: #f7d78a; color: #765a18; }
 .heroSummary > small { font-size: .75rem; }
 .stats { display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); gap: .75rem; }
-.stats > div { min-width: 0; padding: .875rem; border: 1px solid #ded4eb; border-radius: 1rem; background: #fcfbfd; }
+.stats > div { min-width: 0; padding: .875rem; border: 1px solid #ded4eb; border-radius: var(--lms-radius, 16px); background: #fcfbfd; }
 .stats > div:nth-child(2) { border-color: #efc66e; }
 .stats dt { color: #776c65; font-size: .625rem; font-weight: 600; text-transform: uppercase; }
 .stats dd { margin: .375rem 0 .125rem; font-size: 1.5rem; line-height: 1.35; font-weight: 600; font-variant-numeric: tabular-nums; }
 .stats p { color: #776c65; font-size: .6875rem; }
 .cards { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); align-items: stretch; gap: .75rem; scroll-margin-top: 1rem; }
-.course { min-width: 0; overflow: hidden; border: 1px solid #ded4eb; border-radius: 1rem; background: #fcfbfd; }
+.course { min-width: 0; overflow: hidden; border: 1px solid #ded4eb; border-radius: var(--lms-radius, 16px); background: #fcfbfd; }
 .cover { display: flex; align-items: flex-start; min-height: 9rem; padding: .75rem; background: #e9e4d4 url('/assets/enrolment-course-cover.webp') center/cover; }
 .cover > span, .chips > span { display: inline-flex; align-items: center; gap: .375rem; padding: .125rem .625rem; border: 1px solid #edcc80; border-radius: 999px; background: #fff3d9; color: #694a14; font-size: .6875rem; }
 .courseBody { padding: 1rem; }
@@ -29,7 +29,7 @@
 .course progress::-webkit-progress-bar { border-radius: 999px; background: #e2d8ed; }
 .course progress::-webkit-progress-value { border-radius: 999px; background: #673793; }
 .course progress::-moz-progress-bar { border-radius: 999px; background: #673793; }
-.next { display: flex; align-items: flex-start; gap: .625rem; margin: .75rem 0; padding: .75rem; border: 1px solid #ded4eb; border-radius: .875rem; background: #fff; }
+.next { display: flex; align-items: flex-start; gap: .625rem; margin: .75rem 0; padding: .75rem; border: 1px solid #ded4eb; border-radius: var(--lms-radius, 16px); background: #fff; }
 .next > svg { flex-shrink: 0; margin-top: .125rem; color: #673793; }
 .next small { display: block; color: #84756e; font-size: .5625rem; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; }
 .next strong { display: block; font-size: .75rem; font-weight: 500; }
@@ -50,12 +50,12 @@
 .outlineBody ul { display: grid; gap: .5rem; padding: 0; margin: .5rem 0 0; list-style: none; }
 .outlineBody li { display: flex; align-items: flex-start; gap: .5rem; }
 .outlineBody li > svg { flex-shrink: 0; margin-top: .1875rem; }
-.more { display: flex; flex-direction: column; align-items: flex-start; min-width: 0; gap: .75rem; padding: 1rem; border: 1px dashed #ded4eb; border-radius: 1rem; background: #fcfbfdc9; }
-.moreIcon { display: grid; place-items: center; width: 2.5rem; height: 2.5rem; margin-bottom: .125rem; border-radius: 1rem; background: #dff0f2; color: #345c63; }
+.more { display: flex; flex-direction: column; align-items: flex-start; min-width: 0; gap: .75rem; padding: 1rem; border: 1px dashed #ded4eb; border-radius: var(--lms-radius, 16px); background: #fcfbfdc9; }
+.moreIcon { display: grid; place-items: center; width: 2.5rem; height: 2.5rem; margin-bottom: .125rem; border-radius: var(--lms-radius, 16px); background: #dff0f2; color: #345c63; }
 .more .button { margin-top: auto; }
-.notice { display: flex; align-items: flex-start; gap: .625rem; padding: .875rem 1rem; border: 1px solid #ded4eb; border-radius: 1rem; background: #eee9f4a3; color: #6d6263; font-size: .75rem; }
+.notice { display: flex; align-items: flex-start; gap: .625rem; padding: .875rem 1rem; border: 1px solid #ded4eb; border-radius: var(--lms-radius, 16px); background: #eee9f4a3; color: #6d6263; font-size: .75rem; }
 .notice svg { flex-shrink: 0; margin-top: .125rem; }
-.state { display: grid; justify-items: start; gap: .75rem; padding: 1.5rem; border: 1px solid #ded4eb; border-radius: 1rem; background: #fcfbfd; }
+.state { display: grid; justify-items: start; gap: .75rem; padding: 1.5rem; border: 1px solid #ded4eb; border-radius: var(--lms-radius, 16px); background: #fcfbfd; }
 .cards > .state { grid-column: 1 / -1; }
 .page :where(a,button,summary):focus-visible { outline: 3px solid #a379c2; outline-offset: 3px; }
 @media (min-width: 1024px) { .page { padding-inline: 1.25rem; } }

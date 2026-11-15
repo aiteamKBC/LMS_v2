@@ -63,8 +63,8 @@ export default function SupportReports() {
               return (
                 <div key={d.day} className="flex-1 flex flex-col items-center gap-1 h-full justify-end">
                   <div className="flex items-end gap-[2px] w-full max-w-[56px]" style={{ height: `${(Math.max(d.created, d.resolved) / maxVal) * 140}px` }}>
-                    <div className="flex-1 bg-primary-400 rounded-t-[2px]" style={{ height: `${(d.created / maxVal) * 140}px` }}></div>
-                    <div className="flex-1 bg-emerald-500 rounded-t-[2px]" style={{ height: `${(d.resolved / maxVal) * 140}px` }}></div>
+                    <div className="flex-1 bg-primary-400 rounded-t-2xl" style={{ height: `${(d.created / maxVal) * 140}px` }}></div>
+                    <div className="flex-1 bg-emerald-500 rounded-t-2xl" style={{ height: `${(d.resolved / maxVal) * 140}px` }}></div>
                   </div>
                   {d.escalated > 0 && (
                     <div className="w-full max-w-[56px] flex justify-center">

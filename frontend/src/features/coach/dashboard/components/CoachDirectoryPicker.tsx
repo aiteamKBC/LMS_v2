@@ -42,7 +42,7 @@ function ChartPanel({ title, subtitle, children }: { title: string; subtitle: st
   return <section className={styles.chartPanel}><div><h3>{title}</h3><p>{subtitle}</p></div><div className={styles.chart}>{children}</div></section>;
 }
 
-const tooltipStyle = { border: '1px solid #e6e0f1', borderRadius: 10, boxShadow: '0 8px 22px rgba(35, 22, 70, .09)', fontSize: 12 };
+const tooltipStyle = { border: '1px solid #e6e0f1', borderRadius: 'var(--lms-radius, 16px)', boxShadow: '0 8px 22px rgba(35, 22, 70, .09)', fontSize: 12 };
 
 /** Cross-coach performance view. Each card still opens that coach's read-only workspace. */
 export function CoachDirectoryPicker({ onSelect, onDirectoryLoaded }: {

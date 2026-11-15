@@ -101,7 +101,7 @@ export function EngagementOverviewChart({ learners, monthKey }: { learners: Mont
                 />
                 <YAxis tick={{ fontSize: 11, fill: 'var(--foreground-400)' }} tickLine={false} axisLine={false} allowDecimals={false} />
                 <Tooltip
-                  contentStyle={{ borderRadius: 8, border: '1px solid var(--background-200)', fontSize: 12 }}
+                  contentStyle={{ borderRadius: 'var(--lms-radius, 16px)', border: '1px solid var(--background-200)', fontSize: 12 }}
                   labelStyle={{ fontWeight: 600, marginBottom: 4 }}
                 />
                 {SERIES.map((series) => (

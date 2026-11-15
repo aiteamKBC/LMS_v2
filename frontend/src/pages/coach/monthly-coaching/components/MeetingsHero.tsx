@@ -32,7 +32,7 @@ export function MeetingsHero({ monthLabel, title = 'Meetings', subject = 'coachi
         </div>
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
           {actions}
-          <div className={`${styles.card} flex items-center gap-4 rounded-[20px] py-3 pl-3 pr-6`}>
+          <div className={`${styles.card} flex items-center gap-4 rounded-2xl py-3 pl-3 pr-6`}>
             <img src="/coach-meetings-calendar.webp" alt="" aria-hidden="true" width={72} height={72} className="h-[72px] w-[72px] shrink-0 object-contain drop-shadow-[0_10px_14px_rgb(91_33_182/0.25)]" />
             <p className={`${styles.cardText} text-[13px] leading-snug`}><strong className={`${styles.cardTitle} block text-[14px] font-bold`}>Build stronger learners</strong>through meaningful conversations.</p>
           </div>

@@ -295,7 +295,7 @@ export function PageSkeleton({ workspaceRole, hideSidebar = false }: { workspace
       {/* Sidebar rail — hidden below md, matching the real off-canvas drawer. */}
       {!hideSidebar && (
         <div
-          className={`hidden lg:block shrink-0 p-4 space-y-4 ${learnerShell ? 'kbc-learner-route-skeleton-sidebar' : 'my-3 ml-3 mr-3 rounded-[24px] bg-brand-deep'}`}
+          className={`hidden lg:block shrink-0 p-4 space-y-4 ${learnerShell ? 'kbc-learner-route-skeleton-sidebar' : 'my-3 ml-3 mr-3 rounded-2xl bg-brand-deep'}`}
           style={{ width: WORKSPACE_SIDEBAR_WIDTH, marginInline: 8 }}
         >
           <SkeletonBlock className="h-9 w-9 rounded-xl mx-auto" />
@@ -309,7 +309,7 @@ export function PageSkeleton({ workspaceRole, hideSidebar = false }: { workspace
 
       <div className="flex-1 min-w-0 flex flex-col overflow-hidden">
         {/* Header — same height, border and surface as Header.tsx. */}
-        <div className={`flex h-16 shrink-0 items-center gap-3 px-2 sm:px-3 md:px-4 lg:px-5 ${learnerShell ? 'kbc-learner-route-skeleton-header' : 'mx-2 mb-2 mt-2 rounded-[20px] border-b border-foreground-100 bg-background-50 lg:ml-0 lg:mr-3 lg:mt-3'}`}>
+        <div className={`flex h-16 shrink-0 items-center gap-3 px-2 sm:px-3 md:px-4 lg:px-5 ${learnerShell ? 'kbc-learner-route-skeleton-header' : 'mx-2 mb-2 mt-2 rounded-2xl border-b border-foreground-100 bg-background-50 lg:ml-0 lg:mr-3 lg:mt-3'}`}>
           <div className="min-w-0 flex-1 space-y-2">
             <SkeletonBlock className="h-3 w-48 max-w-[45%]" />
             <SkeletonBlock className="h-2 w-64 max-w-[60%]" />
