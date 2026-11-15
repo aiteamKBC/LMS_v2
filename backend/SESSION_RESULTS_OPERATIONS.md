@@ -99,7 +99,9 @@ python manage.py process_session_results --scheduled --limit 10
 
 Also schedule `python manage.py review_session_recordings` every five minutes with either external curriculum command. Use `python manage.py review_session_recordings --full` for an on-demand check that queues every confirmed missing or empty saved file.
 
-Choose one curriculum scheduler entry. The latter does not replace any separate coach-meeting scheduler. Both paths use row locks and a worker lease to prevent duplicate concurrent imports. During a long transfer, progress updates keep its lease alive; a genuinely stalled lease can be reclaimed after two hours. Failed jobs retry up to eight attempts per cycle. The scheduler starts a new cycle after another session in the series ends, after six hours for other exhausted failures, or after one hour when a known recording still lacks a ready private archive. Manual Sync also resets an exhausted job. Completing a linked catch-up queues the older session's exports for refresh too.
+Choose one curriculum scheduler entry. The latter does not replace any separate coach-meeting scheduler. Both paths use row locks and a worker lease to prevent duplicate concurrent imports. During a long transfer, progress updates keep its lease alive; a genuinely stalled lease can be reclaimed after two hours. Failed jobs retry up to eight attempts per cycle. The scheduler starts a new cycle after another session in the series ends, after six hours for other exhausted failures, or after one hour when a known recording or transcript still lacks a ready private archive. Manual Sync also resets an exhausted job. Completing a linked catch-up queues the older session's exports for refresh too.
+
+A lecture transcript PDF reads saved content only. If any part failed to archive, it reports that failure rather than claiming the part is still being saved. The message includes only a saved download HTTP status, when available; private Microsoft responses and URLs are never returned. Use **Sync attendance & files** to retry discovery and import, then reopen the PDF. **Retry PDF** only checks the saved archive again. A Microsoft `400` rejecting a transcript ID returned by its own listing is not proof of missing Azure app permissions; compare the listed ID and content response in the same verified meeting scope before changing credentials or tenant settings. Preserve all saved parts and let the worker retry after the provider recovers; do not publish a partial PDF or recreate the meeting.
 
 The Azure account/key already used by evidence storage are reused. The optional `AZURE_SESSION_RECORDINGS_CONTAINER` defaults to `session-recordings`; no new setting is required for that name. Do not disable authentication/CSRF or enable runtime schema bootstrap to work around missing setup.
 
@@ -299,3 +301,41 @@ references were compared with their pre-change backup and preserved. The four
 empty failed placeholders created during this task were removed; original
 Microsoft/Azure files were not deleted. This data verification does not mean
 the new application player has been deployed or browser-accepted.
+
+### Recovering rejected transcript downloads
+
+Graph can list a transcript using a MessagePack-CSharp Lz4BlockArray resource
+ID which its content endpoint rejects with HTTP 400. The shared transcript
+transport makes one bounded, lossless retry using the same serialized identity
+without the compression envelope. Meeting/owner paths, query, credentials and
+stored IDs remain unchanged. Other failures still propagate. This applies to
+lecture archives, coaching reads, legacy downloads and coaching archives.
+
+Metadata-only coaching refreshes and failed content reads preserve previously
+saved transcript text; the latest failure remains visible. A successful content
+retry replaces that part and clears its saved fetch error.
+
+The explicit repair command processes transcript files only, without meeting,
+attendance or recording synchronization. Run it in the deployed worker image
+with its existing private-storage role. Local credentials are not required or
+exported. Inspect first; repeat `--artifact-id` or `--live-session-id` for an
+explicit scope, or use the bounded default selection of missing active archives.
+
+```sh
+python manage.py repair_session_transcripts --limit 100
+python manage.py repair_session_transcripts --limit 100 --apply --expected-database <database-name> --expected-endpoint <neon-endpoint-id>
+```
+
+The endpoint ID is the host's first label, without `-pooler`. Apply refuses a
+different target. It skips series owned by a running worker and locks only the
+selected series job while archiving; retry a reported busy series later.
+`verifiedReady` requires both saved text and a nonempty private storage object.
+Partial or unverifiable repairs return a failing command status.
+
+Bunny interrupted-upload recovery replaces only a confirmed empty failed upload
+identity, retaining the previous GUID in the import journal. It preserves
+encoding, playable and nonempty media. Signed lecture playback uses the iframe
+host. Protected play-data requests use the signed iframe as their referrer;
+disabled MP4 fallback is reported explicitly, while staff original-file downloads
+continue through the authenticated Microsoft transport. Library DRM and domain
+restrictions are retained.

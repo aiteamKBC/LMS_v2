@@ -1128,7 +1128,7 @@ export function applyModuleWeekSessionPlan(
         // An additional meeting owns its confirmed schedule independently of
         // this week's main delivery slot, including after a week is inserted.
         if (trimmed(settings.extraTeamsMeetingUrl)) return component;
-        const calendarConfirmationPending = ['missing', 'ambiguous'].includes(trimmed(settings.teamsCalendarBinding));
+        const calendarConfirmationPending = ['missing', 'ambiguous', 'unverified'].includes(trimmed(settings.teamsCalendarBinding));
         // A live session runs on the day its week runs on. The date stored on
         // the component is a copy of the plan's, not a second opinion, so it
         // follows the plan whenever the plan moves -- which is what a changed
@@ -1294,6 +1294,7 @@ export interface ModuleCatalogueItem extends CoursePricing {
   startTime?: string;
   endTime?: string;
   weeklySchedule?: CurriculumModule['weeklySchedule'];
+  scheduleMode?: CurriculumModule['scheduleMode'];
   sessionHolidays?: CurriculumModule['sessionHolidays'];
   deliveryWeeks?: number;
   id: string;
@@ -2493,6 +2494,7 @@ export function curriculumModuleToCatalogue(module: CurriculumModule): ModuleCat
     tutor,
     coach,
     weeklySchedule: module.weeklySchedule || [],
+    scheduleMode: module.scheduleMode,
     sessionHolidays: module.sessionHolidays || [],
     deliveryWeeks: module.deliveryWeeks,
     deliveryMetadata: {

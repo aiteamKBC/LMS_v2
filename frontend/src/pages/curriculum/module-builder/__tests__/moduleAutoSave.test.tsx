@@ -439,6 +439,11 @@ describe('Module Builder auto-save', { timeout: 25000 }, () => {
     await userEvent.type(title, '!');
     await userEvent.click(screen.getByTestId('module-builder-save'));
     await waitFor(() => expect(saveState()).toBe('Save not confirmed - your changes are still here'));
+    // Returning to the tab can refresh only after opening has finished and
+    // enabled its listener; the input can render before that point.
+    await waitFor(() => expect(screen.queryByRole('heading', {
+      name: 'Opening module builder...',
+    })).not.toBeInTheDocument());
     fireEvent(window, new Event('focus'));
     await waitFor(() => expect(saveState()).toBe('All changes saved'));
     expect(screen.queryByText('Save not confirmed')).not.toBeInTheDocument();

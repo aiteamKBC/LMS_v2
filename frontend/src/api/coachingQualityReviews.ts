@@ -44,6 +44,7 @@ export interface QualitySummary {
   id: string; coachEmail: string; coachName: string; learnerId: string; learnerName: string;
   startsAt: string; status: 'draft' | 'completed'; version: number; updatedAt: string; title: string; actionCount: number;
   pdfVersion?: number | null; reviewType?: QualityReviewType | ''; formTitle?: string | null;
+  ratingCounts?: { gold: number; green: number; amber: number; red: number; na: number } | null;
 }
 export interface ReviewList { reviews: QualitySummary[]; coaches: { email: string; name: string }[]; nextOffset: number | null }
 export interface MeetingQualityCheck { id: string; learnerId: string; learnerName: string; reviewerName?: string; reviewType?: QualityReviewType | ''; formTitle?: string | null; status: string; version: number; pdfVersion: number | null; updatedAt: string }
