@@ -8,8 +8,11 @@
   --overview-accent: var(--learner-purple, #5b21b6);
   --overview-surface: var(--kbc-surface, #fff);
   --overview-border: var(--kbc-border, #e4e0ee);
-  --overview-text: var(--kbc-text, #1d1733);
-  --overview-muted: var(--kbc-muted, #5f6577);
+  /* Reading text is near black / dark gray, not the learner theme's --kbc-text
+     (#4f2d7f, a purple). Purple stays on --overview-accent: the programme
+     label, active tab, CTA, links, checks and focus rings. */
+  --overview-text: #1f1b24;
+  --overview-muted: #667085;
   --overview-band: color-mix(in srgb, var(--overview-accent) 8%, var(--overview-surface));
   --overview-soft: color-mix(in srgb, var(--overview-accent) 6%, var(--overview-surface));
   --overview-serif: Georgia, 'Times New Roman', Times, serif;
@@ -19,6 +22,11 @@
   width: 100%;
   min-width: 0;
   color: var(--overview-text);
+}
+/* Dark theme keeps the theme's own light text tokens. */
+:global([data-theme="dark"]) .page {
+  --overview-text: var(--kbc-text, #f6f8fb);
+  --overview-muted: var(--kbc-muted, #b6c4d5);
 }
 
 /* Breadcrumb ---------------------------------------------------------------- */
@@ -210,12 +218,21 @@
 .tab[aria-selected='true']::after { content: ''; position: absolute; inset: auto 0 -1px; height: 3px; border-radius: 3px 3px 0 0; background: var(--overview-accent); }
 .tab[aria-disabled='true'] { color: color-mix(in srgb, var(--overview-text) 42%, transparent); cursor: not-allowed; }
 .tab:not([aria-disabled='true']):not([aria-selected='true']):hover { color: var(--overview-accent); }
+/* The workspace shell colours every tab button (index.css
+   `.dashboard-theme .workspace-main [role="tablist"] button` (0,3,1) and its
+   [aria-selected="true"] variant (0,4,1)). Restate the tab colours above at a
+   higher, module-scoped specificity instead of editing the shared rules. */
+.page .tabList .tab.tab { color: var(--overview-text); }
+.page .tabList .tab.tab[aria-selected='true'] { color: var(--overview-accent); }
+.page .tabList .tab.tab[aria-disabled='true'] { color: color-mix(in srgb, var(--overview-text) 42%, transparent); }
+.page .tabList .tab.tab:not([aria-disabled='true']):not([aria-selected='true']):hover { color: var(--overview-accent); }
 .tabPanel { padding-top: 22px; min-width: 0; }
 
 /* Description tab ------------------------------------------------------------ */
 .description { display: grid; gap: 22px; max-width: 72ch; min-width: 0; }
 .block { display: grid; gap: 8px; min-width: 0; }
-.blockTitle { margin: 0; font-family: var(--overview-serif); font-size: clamp(20px, 1.9vw, 23px); font-weight: 700; line-height: 1.25; overflow-wrap: anywhere; }
+/* Explicit colour: the global `h1..h6` element rule would otherwise apply. */
+.blockTitle { margin: 0; color: var(--overview-text); font-family: var(--overview-serif); font-size: clamp(20px, 1.9vw, 23px); font-weight: 700; line-height: 1.25; overflow-wrap: anywhere; }
 .paragraph { font-size: 15px; line-height: 1.6; white-space: pre-line; overflow-wrap: anywhere; }
 .bullets { display: grid; gap: 6px; margin: 0; padding-left: 22px; font-size: 14.5px; line-height: 1.55; list-style: disc; overflow-wrap: anywhere; }
 .bullets li::marker { color: var(--overview-accent); }
@@ -304,6 +321,9 @@
 .gradeTable tbody th { font-weight: 600; overflow-wrap: anywhere; }
 .gradeTable tbody th small { display: block; margin-top: 2px; font-size: 12px; font-weight: 500; color: var(--overview-muted); }
 .gradeTable td { font-variant-numeric: tabular-nums; white-space: nowrap; }
+/* Beats the shell's `.dashboard-theme .workspace-main table tbody td` (0,2,3),
+   which would colour the values with the learner theme's purple. */
+.page .grades .gradeTable tbody :is(th, td) { color: var(--overview-text); }
 .gradeStatus { display: inline-flex; padding: 3px 9px; border-radius: 999px; background: color-mix(in srgb, var(--overview-text) 7%, var(--overview-surface)); font-size: 12px; font-weight: 600; }
 .gradeStatus[data-state='passed'] { background: var(--learner-success-soft, #e7f6ef); color: var(--learner-success, #167853); }
 .gradeStatus[data-state='attempted'] { background: var(--overview-band); color: var(--overview-accent); }
@@ -319,7 +339,7 @@
   background: var(--overview-surface);
   box-shadow: 0 4px 16px rgb(60 30 110 / .04);
 }
-.sideTitle { margin: 0; padding-bottom: 10px; border-bottom: 1px solid var(--overview-border); font-family: var(--overview-serif); font-size: 20px; font-weight: 700; line-height: 1.25; }
+.sideTitle { margin: 0; color: var(--overview-text); padding-bottom: 10px; border-bottom: 1px solid var(--overview-border); font-family: var(--overview-serif); font-size: 20px; font-weight: 700; line-height: 1.25; }
 .details { display: grid; gap: 4px; margin: 0; }
 .details > div { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 6px 0; }
 .details dt { display: inline-flex; align-items: center; gap: 12px; min-width: 0; font-size: 14px; color: var(--overview-text); }
@@ -327,7 +347,7 @@
 .details dd { margin: 0; font-size: 14px; font-weight: 700; font-variant-numeric: tabular-nums; }
 .requirement { display: grid; gap: 8px; }
 .requirement + .requirement { padding-top: 12px; border-top: 1px solid var(--overview-border); }
-.requirement h4 { margin: 0; color: var(--overview-accent); font-size: 14px; font-weight: 700; }
+.requirement h4 { margin: 0; color: var(--overview-text); font-size: 14px; font-weight: 700; }
 .requirement .bullets { font-size: 13.5px; }
 .sideText { font-size: 13.5px; line-height: 1.55; color: var(--overview-text); white-space: pre-line; overflow-wrap: anywhere; }
 .sideCard .bullets { font-size: 13.5px; }
