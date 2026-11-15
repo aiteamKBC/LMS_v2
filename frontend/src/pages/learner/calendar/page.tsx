@@ -642,8 +642,12 @@ function LearnerCalendarBody() {
   const aptemBooking = Boolean(rescheduleEvent?.bookingReviewId || rescheduleEvent?.importedReview
     || bookingSourceEvent?.bookingReviewId || bookingSourceEvent?.importedReview);
   const choosingProgrammeSession = !rescheduleEvent && !bookingSourceEvent && isProgrammeCycleSessionType(bookType);
+<<<<<<< HEAD
   const reviewSlotBooking = ['mcr', 'progress-review', 'review'].includes(bookType);
   const coachSlotBooking = !choosingProgrammeSession && (reviewSlotBooking || ['catch-up', 'student-support', 'gateway', 'other'].includes(bookType));
+=======
+  const reviewSlotBooking = !choosingProgrammeSession && ['mcr', 'progress-review', 'review'].includes(bookType);
+>>>>>>> origin/main
   const handledFocusEventRef = useRef<string | null>(null);
 
   const today = new Date();
@@ -1184,7 +1188,11 @@ function LearnerCalendarBody() {
 
   const handleBookSession = async () => {
     if (bookSubmitting || choosingProgrammeSession) return;
+<<<<<<< HEAD
     if (coachSlotBooking && (reviewCoachAvailabilityLoading || reviewCoachAvailabilityError
+=======
+    if (reviewSlotBooking && (reviewCoachAvailabilityLoading || reviewCoachAvailabilityError
+>>>>>>> origin/main
       || !availableReviewTimes.includes(bookTime)
       || (calendarConnections.length > 0 && (availabilityLoading || availabilityUnconfirmed)))) {
       setBookError(reviewCoachAvailabilityError || (availabilityUnconfirmed
@@ -1459,7 +1467,11 @@ function LearnerCalendarBody() {
                 : choosingProgrammeSession
                   ? 'Choose an existing session below to view its details, schedule it, or change its time.'
                 : coach
+<<<<<<< HEAD
                   ? <>Choose an available time with <strong className="text-foreground-700">{coach.name}</strong>. Sessions are booked directly without coach approval. Choose MCM or PR to manage your existing programme sessions.</>
+=======
+                  ? <>Choose the support you need. Catch-up bookings are scheduled immediately with <strong className="text-foreground-700">{coach.name}</strong>. Student Support, Gateway, and Other requests need coach approval. Choose MCM or PR to manage your existing programme sessions.</>
+>>>>>>> origin/main
                   : 'No coach has been assigned to you yet — please contact your programme team.'}
             </p>
             <div className="space-y-4">
@@ -1625,8 +1637,13 @@ function LearnerCalendarBody() {
             </div>
             <div className="flex gap-2 mt-5">
               <button onClick={() => setShowBookModal(false)} className="flex-1 px-4 py-2.5 rounded-xl border border-background-300 text-sm font-semibold text-foreground-600 hover:bg-background-100 transition-smooth cursor-pointer whitespace-nowrap">Cancel</button>
+<<<<<<< HEAD
               {!choosingProgrammeSession && <button onClick={handleBookSession} disabled={bookSubmitting || availabilityLoading || selectedSlotConflicts || Boolean(sameWeekSession) || Boolean(selectedLmsConflict) || Boolean(bookDateRestriction) || !bookDate || !bookTime || (coachSlotBooking && (reviewCoachAvailabilityLoading || Boolean(reviewCoachAvailabilityError) || !availableReviewTimes.includes(bookTime) || (calendarConnections.length > 0 && availabilityUnconfirmed)))} className="flex-1 px-4 py-2.5 rounded-xl bg-primary-500 text-white text-sm font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap disabled:opacity-50 disabled:cursor-not-allowed">
                 {bookSubmitting ? <><AppIcon className="ri-loader-4-line animate-spin mr-1"></AppIcon>{rescheduleEvent ? 'Rescheduling...' : 'Booking...'}</> : <><AppIcon className={rescheduleEvent || bookingSourceEvent ? 'ri-calendar-check-line mr-1' : 'ri-check-line mr-1'}></AppIcon>{rescheduleEvent ? 'Save New Time' : 'Book Session'}</>}
+=======
+              {!choosingProgrammeSession && <button onClick={handleBookSession} disabled={bookSubmitting || availabilityLoading || selectedSlotConflicts || Boolean(sameWeekSession) || Boolean(selectedLmsConflict) || Boolean(bookDateRestriction) || !bookDate || !bookTime || (reviewSlotBooking && (reviewCoachAvailabilityLoading || Boolean(reviewCoachAvailabilityError) || !availableReviewTimes.includes(bookTime) || (calendarConnections.length > 0 && availabilityUnconfirmed)))} className="flex-1 px-4 py-2.5 rounded-xl bg-primary-500 text-white text-sm font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap disabled:opacity-50 disabled:cursor-not-allowed">
+                {bookSubmitting ? <><AppIcon className="ri-loader-4-line animate-spin mr-1"></AppIcon>{rescheduleEvent ? 'Rescheduling...' : bookingSourceEvent || !genericBookingNeedsApproval ? 'Booking...' : 'Sending...'}</> : <><AppIcon className={rescheduleEvent || bookingSourceEvent ? 'ri-calendar-check-line mr-1' : 'ri-check-line mr-1'}></AppIcon>{rescheduleEvent ? 'Save New Time' : bookingSourceEvent || !genericBookingNeedsApproval ? 'Book Session' : 'Send Request'}</>}
+>>>>>>> origin/main
               </button>}
             </div>
           </div>
@@ -1649,8 +1666,12 @@ function LearnerCalendarBody() {
           </>}
           actions={<>
 
+<<<<<<< HEAD
               {(showEventDetails.timeToBeConfirmed || showEventDetails.needsInitialReviewBooking
                 || (showEventDetails.bookingStatus === 'not-scheduled' && ['student-support', 'gateway', 'other'].includes(showEventDetails.source || '')))
+=======
+              {(showEventDetails.timeToBeConfirmed || showEventDetails.needsInitialReviewBooking)
+>>>>>>> origin/main
                 && (!isProgrammeCycleSessionType(showEventDetails.bookingSessionType)
                   || ['not-scheduled', 'scheduled'].includes(showEventDetails.bookingStatus || ''))
                 && showEventDetails.bookingSessionType && (

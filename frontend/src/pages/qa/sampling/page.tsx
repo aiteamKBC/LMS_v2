@@ -3,33 +3,9 @@ import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { WorkspaceHeroBanner } from '@/components/feature/WorkspaceHeroBanner';
 import { roleNavMap } from '@/mocks/navigation';
 import { useToast } from "@/hooks/useToast";
+import { INITIAL_SAMPLING_DATA, type Sample } from '@/pages/qa/qaCalendarSources';
 
 const qaNav = roleNavMap.qa;
-
-interface Sample {
-  id: string;
-  type: string;
-  scope: string;
-  total: number;
-  sampled: number;
-  percentage: number;
-  status: 'Scheduled' | 'In Progress' | 'Completed';
-  officer: string;
-  startDate: string;
-  endDate: string;
-  methodology: string;
-}
-
-const INITIAL_SAMPLING_DATA: Sample[] = [
-  { id: 'sp-01', type: 'Evidence', scope: 'All learners — Cohort B (DM)', total: 120, sampled: 18, percentage: 15, status: 'In Progress', officer: 'Emma Clarke', startDate: '1 Jun', endDate: '15 Jun', methodology: 'Stratified random — 15% of all evidence items' },
-  { id: 'sp-02', type: 'OTJH', scope: 'All learners — Cohort A (BA)', total: 340, sampled: 34, percentage: 10, status: 'Scheduled', officer: '—', startDate: '15 Jun', endDate: '30 Jun', methodology: 'Systematic sampling — every 10th OTJH entry' },
-  { id: 'sp-03', type: 'KSB', scope: 'High-risk learners only', total: 45, sampled: 12, percentage: 27, status: 'Completed', officer: 'QA Lead', startDate: '15 May', endDate: '31 May', methodology: 'Targeted — all high-risk KSBs' },
-  { id: 'sp-04', type: 'Progress Reviews', scope: 'Cohort C (BA) — June 2026', total: 8, sampled: 3, percentage: 38, status: 'In Progress', officer: 'Emma Clarke', startDate: '5 Jun', endDate: '12 Jun', methodology: 'Random — 38% of all reviews' },
-  { id: 'sp-05', type: 'Evidence', scope: 'Cohort A (BA) — Marketing Module', total: 56, sampled: 8, percentage: 14, status: 'Completed', officer: 'James Whitfield', startDate: '1 May', endDate: '15 May', methodology: 'Random — 14% of module evidence' },
-  { id: 'sp-06', type: 'OTJH', scope: 'High-risk learners — Q2', total: 89, sampled: 22, percentage: 25, status: 'In Progress', officer: 'Emma Clarke', startDate: '1 Jun', endDate: '20 Jun', methodology: 'Targeted — 25% of flagged entries' },
-  { id: 'sp-07', type: 'Module', scope: 'All published modules', total: 24, sampled: 6, percentage: 25, status: 'Scheduled', officer: '—', startDate: '1 Jul', endDate: '15 Jul', methodology: 'Random — 25% of curriculum modules' },
-  { id: 'sp-08', type: 'Report', scope: 'Leadership reports — Q2', total: 12, sampled: 4, percentage: 33, status: 'Completed', officer: 'QA Lead', startDate: '15 May', endDate: '31 May', methodology: 'Random — 33% of quarterly reports' },
-];
 
 const statusConfig: Record<string, { bg: string; text: string; icon: string }> = {
   Scheduled: { bg: 'bg-foreground-100', text: 'text-foreground-500', icon: 'ri-calendar-line' },
