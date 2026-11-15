@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { REVIEWS } from "@/mocks/reviews";
 import { EMPTY_FILTERS, REVIEWER_NAME } from "@/pages/dashboard/constants";
-import type { AuditEntry, CheckStatus, Filters, RagLevel, Review, SortKey, SortState } from "@/pages/dashboard/types";
+import type { AuditEntry, CheckStatus, Filters, Review, SortKey, SortState } from "@/pages/dashboard/types";
 import { nowLabel, reviewRag } from "@/pages/dashboard/utils";
 import { Sidebar as LmsSidebar } from "@/components/feature/Sidebar";
 import Topbar from "@/pages/dashboard/components/Topbar";
@@ -13,10 +13,9 @@ import ReviewsTable from "@/pages/dashboard/components/ReviewsTable";
 import ReviewDrawer from "@/pages/dashboard/components/ReviewDrawer";
 import PdfPreviewModal from "@/pages/dashboard/components/PdfPreviewModal";
 import AnalyticsPanel from "@/pages/dashboard/components/AnalyticsPanel";
-import GeneralDashboard from "@/pages/dashboard/components/GeneralDashboard";
+import ExecutiveOverview from "@/pages/executive/page";
 import QualityTeamPage from "@/pages/dashboard/components/QualityTeamPage";
 import FeedbacksPage from "@/pages/dashboard/components/FeedbacksPage";
-import FormRegistryPage from "@/pages/dashboard/components/FormRegistryPage";
 import QualityReviewsPage from "@/pages/coaching-recordings/QualityReviewsPage";
 
 const STATUS_RANK: Record<string, number> = { Pending: 0, "In Review": 1, "Needs Correction": 2, Approved: 3, Rejected: 4 };
@@ -26,7 +25,6 @@ const VIEW_META: Record<string, { title: string; section: string }> = {
   checks: { title: "Quality Checks", section: "Quality Assurance" },
   "checks-feedback": { title: "Feedback Check", section: "Quality Assurance" },
   reviews: { title: "Reviews", section: "Quality Assurance" },
-  forms: { title: "Forms & quality categories", section: "Quality configuration" },
   analytics: { title: "Analytics", section: "Quality Assurance" },
   "quality-team": { title: "Quality Team", section: "Management" },
   feedbacks: { title: "Feedbacks", section: "Voice of the customer" },
@@ -37,7 +35,6 @@ const QUALITY_VIEW_NAV = [
   { id: "checks", label: "Sessions", icon: "ri-calendar-2-line" },
   { id: "checks-feedback", label: "Feedback Check", icon: "ri-chat-check-line" },
   { id: "reviews", label: "Reviews", icon: "ri-table-line" },
-  { id: "forms", label: "Forms & registry", icon: "ri-file-list-3-line" },
   { id: "analytics", label: "Analytics", icon: "ri-pie-chart-2-line" },
   { id: "quality-team", label: "Quality Team", icon: "ri-team-line" },
   { id: "feedbacks", label: "Feedbacks", icon: "ri-chat-smile-2-line" },
@@ -70,7 +67,10 @@ export default function QualityAssurancePage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [active, setActive] = useState(() => searchParams.get("view") || "overview");
+  const [active, setActive] = useState(() => {
+    const initialView = searchParams.get("view");
+    return QUALITY_VIEW_NAV.some((item) => item.id === initialView) ? initialView || "overview" : "overview";
+  });
   const [tab, setTab] = useState<"forms" | "feedback">("forms");
   const [filters, setFilters] = useState<Filters>(EMPTY_FILTERS);
   const [page, setPage] = useState(1);
@@ -291,32 +291,11 @@ export default function QualityAssurancePage() {
 
   const notify = (text: string) => setToast({ text, tone: "success" });
 
-  /** Dashboard donut drill-down: jump to the review queue filtered by a RAG level. */
-  const drillIntoRag = (level: RagLevel) => {
-    const count = reviews.filter((review) => reviewRag(review) === level).length;
-    setFilters({ ...EMPTY_FILTERS, rag: level });
-    setSelected([]);
-    setFocusId(null);
-    setSidebarOpen(false);
-    setActive("reviews");
-    setSearchParams({ view: "reviews" }, { replace: true });
-    document.title = `${VIEW_META.reviews.title} · Kent Business College LMS`;
-    window.setTimeout(() => {
-      const element = document.getElementById("reviews");
-      if (element) element.scrollIntoView({ behavior: "smooth", block: "start" });
-    }, 90);
-    setToast({
-      text: count > 0 ? `Showing ${count} ${level.toLowerCase()} review${count === 1 ? "" : "s"} in the queue` : `No ${level.toLowerCase()} reviews in this prototype`,
-      tone: "info",
-    });
-  };
-
   const isOverview = active === "overview";
   const isTeamView = active === "quality-team";
   const isFeedbacksView = active === "feedbacks";
   const isCalendarView = active === "checks";
-  const isRegistryView = active === "forms";
-  const showWorkspace = !isOverview && !isTeamView && !isFeedbacksView && !isCalendarView && !isRegistryView;
+  const showWorkspace = !isOverview && !isTeamView && !isFeedbacksView && !isCalendarView;
   const topMeta = VIEW_META[active] ?? VIEW_META.overview;
 
   return (
@@ -343,11 +322,9 @@ export default function QualityAssurancePage() {
         <Topbar onMenu={() => setSidebarOpen(true)} title={topMeta.title} section={topMeta.section} />
 
         {isCalendarView ? <QualityReviewsPage embedded /> : <main id="main-content" tabIndex={-1} className="mx-auto flex w-full max-w-[1560px] flex-col gap-4 px-4 py-4 md:px-6 md:py-5">
-          {isOverview ? <GeneralDashboard onSelectRag={drillIntoRag} /> : null}
+          {isOverview ? <ExecutiveOverview /> : null}
           {isTeamView ? <QualityTeamPage onToast={notify} /> : null}
           {isFeedbacksView ? <FeedbacksPage onToast={notify} /> : null}
-          {isRegistryView ? <FormRegistryPage /> : null}
-
           {showWorkspace ? (
             <>
               <KpiCards stats={stats} loading={loading} />
