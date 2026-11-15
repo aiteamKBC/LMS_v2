@@ -1,3 +1,5 @@
+import { DeliveryCalendarEditor } from './DeliveryCalendarEditor';
+import type { DeliveryCalendarPolicy } from '@/lib/curriculumApi';
 // ============================================================================
 // The create/edit forms for Programmes, Cohorts and Groups.
 //
@@ -60,6 +62,7 @@ const COHORT_FIELD_LABELS: Record<string, string> = {
   apprenticeshipEndOverride: 'apprenticeship end date',
   color: 'colour',
   excludedHolidayIds: 'holiday selection',
+  calendarPolicy: 'delivery calendar',
 };
 
 const PROGRAMME_FIELD_LABELS: Record<string, string> = {
@@ -305,6 +308,9 @@ export function CohortFormDrawer({
   // holiday is selected until someone turns one off, matching the "every
   // England bank holiday in this period applies" rule this replaces.
   const [excludedHolidayIds, setExcludedHolidayIds] = useState<string[]>([]);
+  const [calendarPolicy, setCalendarPolicy] = useState<DeliveryCalendarPolicy | null>(null);
+  const [calendarRows, setCalendarRows] = useState<CurriculumHoliday[]>([]);
+  const [calendarReady, setCalendarReady] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [preview, setPreview] = useState<CurriculumCohortEndDatePreview | null>(null);
@@ -325,6 +331,7 @@ export function CohortFormDrawer({
     apprenticeshipEndOverride,
     color,
     excludedHolidayIds: [...excludedHolidayIds].sort(),
+    calendarPolicy,
   };
   const dirty = !sameFormValues(liveValues, baseline.current);
   // Read by the merge below at the moment a colleague's save arrives, rather
@@ -371,6 +378,7 @@ export function CohortFormDrawer({
         apprenticeshipEndOverride: record.apprenticeshipEndOverride || '',
         color: record.color || '#6d28d9',
         excludedHolidayIds: [...new Set((record.excludedHolidayIds || []).map(normaliseKey).filter(Boolean))].sort(),
+        calendarPolicy: record.calendarPolicy || null,
       };
       if (verdict === 'seed') baseline.current = initial;
       // `take` decides each field: the stored value when this reader has not
@@ -388,6 +396,7 @@ export function CohortFormDrawer({
       setApprenticeshipEndOverride(coEdit.take(verdict, 'apprenticeshipEndOverride', initial.apprenticeshipEndOverride));
       setColor(coEdit.take(verdict, 'color', initial.color));
       setExcludedHolidayIds(coEdit.take(verdict, 'excludedHolidayIds', initial.excludedHolidayIds));
+      setCalendarPolicy(coEdit.take(verdict, 'calendarPolicy', initial.calendarPolicy));
       coEdit.publish();
       return;
     }
@@ -402,6 +411,7 @@ export function CohortFormDrawer({
       apprenticeshipEndOverride: '',
       color: '#6d28d9',
       excludedHolidayIds: [] as string[],
+      calendarPolicy: null as DeliveryCalendarPolicy | null,
     };
     baseline.current = initial;
     setName(initial.name);
@@ -414,6 +424,7 @@ export function CohortFormDrawer({
     setApprenticeshipEndOverride(initial.apprenticeshipEndOverride);
     setColor(initial.color);
     setExcludedHolidayIds(initial.excludedHolidayIds);
+    setCalendarPolicy(initial.calendarPolicy);
   }, [allowSeed, coEdit, cohort, defaults?.programmeId, guard.stored, open, programmes]);
 
   // `authoredPracticalEnd` above is also what the preview is given: in automatic
@@ -484,14 +495,14 @@ export function CohortFormDrawer({
   // and the save agree on.
   const periodHolidays = useMemo(() => {
     if (!periodStart || !periodEnd) return [] as CurriculumHoliday[];
-    return holidays
+    return (calendarPolicy ? calendarRows : holidays)
       .filter(holiday => {
         const holidayStart = cleanText(holiday.startDate);
         const holidayEnd = cleanText(holiday.endDate) || holidayStart;
         return Boolean(holidayStart) && holidayStart <= periodEnd && holidayEnd >= periodStart;
       })
       .sort((left, right) => cleanText(left.startDate).localeCompare(cleanText(right.startDate)));
-  }, [holidays, periodEnd, periodStart]);
+  }, [holidays, calendarPolicy, calendarRows, periodEnd, periodStart]);
 
   const excludedHolidaySet = useMemo(
     () => new Set(excludedHolidayIds.map(normaliseKey)),
@@ -537,6 +548,7 @@ export function CohortFormDrawer({
 
   const submit = async () => {
     const renameOnly = Boolean(cohort && isNameOnlyEdit(liveValues, baseline.current));
+    if (!calendarReady) { setError('Load the delivery calendar before saving.'); return; }
     if (!name.trim()) { setError('Give the cohort a name.'); return; }
     if (!renameOnly && !programmeId) { setError('Choose the programme this cohort belongs to.'); return; }
     if (!renameOnly && !startDate) { setError('Set the cohort start date.'); return; }
@@ -561,6 +573,7 @@ export function CohortFormDrawer({
         color,
         holidayIds,
         excludedHolidayIds,
+        calendarPolicy,
       };
       // What the list should show straight away. A create gets the stored row
       // back from the endpoint; an edit merges the payload over the record the
@@ -589,6 +602,7 @@ export function CohortFormDrawer({
           color,
           holidayIds,
           excludedHolidayIds,
+          calendarPolicy,
         };
         if (renameOnly) saved = { ...(guard.stored || cohort), name: payload.name };
       } else {
@@ -753,12 +767,16 @@ export function CohortFormDrawer({
         <ColorControl value={color} onChange={setColor} />
       </FormField>
 
-      <FormField
+      <DeliveryCalendarEditor value={calendarPolicy} onChange={setCalendarPolicy} legacyHolidays={holidays}
+        inheritedExcludedIds={excludedHolidayIds} startDate={periodStart} endDate={periodEnd}
+        onHolidaysChange={setCalendarRows} onReadyChange={setCalendarReady} />
+
+      {!calendarPolicy && <FormField
         as="group"
         label={periodLabel ? `Holidays in this cohort's period (${periodLabel})` : 'Holidays'}
         hint={periodLabel
-          ? `Every holiday inside ${periodLabel} applies to this cohort by default — England's bank holidays and the college's own closure periods alike. Untick one to keep it from clashing with module sessions; when a ticked one lands on a generated session, that session is skipped and the module end date extends by the clash. Either way, the cohort's practical and apprenticeship end dates stay fixed.`
-          : "Set the start date and duration. Every holiday inside the cohort's own period — bank holidays and the college's own closures — is then ticked by default: a clashing module session is skipped and the affected module end date extends, while cohort dates stay fixed."}
+          ? `Review the holidays inside ${periodLabel}. Untick a date to allow teaching. Selected holidays flag clashing sessions; they do not move module weeks or cohort dates. Resolve clashes before booking Teams.`
+          : 'Set the start date and duration to review holidays. Existing weeks and booked meetings are not moved automatically.'}
       >
         <HolidayPeriodList
           holidays={periodHolidays}
@@ -769,7 +787,7 @@ export function CohortFormDrawer({
           onSelectAll={selectAllHolidays}
           onClearAll={clearAllHolidays}
         />
-      </FormField>
+      </FormField>}
 
       {weekCapacity.totalWeeks > 0 && (
         <div className="rounded-xl border border-background-200 bg-background-100 p-3.5">

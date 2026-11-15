@@ -128,6 +128,9 @@ class SchemaNotProvisionedMiddleware:
                 {'error': str(exception), 'reason': 'unsupported-on-current-schema'},
                 status=409,
             )
+        from .country_calendars import CalendarUnavailable
+        if isinstance(exception, CalendarUnavailable):
+            return JsonResponse({'error': str(exception), 'code': 'holiday_calendar_unavailable'}, status=503)
         if not isinstance(exception, SchemaNotProvisioned):
             return None
         logger.error(
