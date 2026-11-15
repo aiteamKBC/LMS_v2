@@ -534,9 +534,9 @@ class KnownLearnerEmailTests(unittest.TestCase):
         result = self.ns['known_learner_emails']([' LEARNER@example.invalid ', 'learner@example.invalid', '', None])
         self.assertEqual(result, {'learner@example.invalid'})
         sql, params = self.read.call_args.args
-        self.assertIn('enrolment."Created_users"', sql)
         self.assertIn('"Learner".learners', sql)
-        self.assertEqual(params, [['learner@example.invalid'], ['learner@example.invalid']])
+        self.assertNotIn('Created_users', sql)
+        self.assertEqual(params, [['learner@example.invalid']])
 
     def test_guests_without_email_do_not_trigger_directory_queries(self):
         self.assertEqual(self.ns['known_learner_emails'](['', None, ' ']), set())

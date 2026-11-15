@@ -33,7 +33,7 @@ def programme_list_sources():
     if views.connection.vendor != 'postgresql':
         return {
             **{name: views.authoring_fetch_all(table, columns=fields) for name, table, fields, _ in sources},
-            'program_configs': views.get_program_config_rows(), 'ksb_profiles': [],
+            'program_configs': views.get_program_config_rows(),
         }
     views.ensure_module_authoring_tables()
     sources.append(('program_configs', 'programmes', None,
@@ -54,9 +54,6 @@ def programme_list_sources():
     # are parameters. JSON key selection tolerates optional legacy columns.
     row = views.fetch_all('select ' + ', '.join(selections), params)[0]
     result = {name: json.loads(value) if isinstance(value, str) else value for name, value in row.items()}
-    # Curriculum keeps no KSB profiles (curriculum.ksb_profiles was removed); a
-    # programme takes its KSBs from its standard. Kept as a key for build_programmes.
-    result['ksb_profiles'] = []
     return result
 
 
@@ -121,13 +118,11 @@ def build_programme_list(visibility, *, force=False):
         training = views.authoring_modules_as_training_rows(
             module_rows=source['modules'], group_rows=source['groups'], cohort_rows=source['cohorts'],
         )
-        profiles = source['ksb_profiles']
         if visibility != 'all':
             training = [row for row in training if views.is_operational_training_row(row)]
-            profiles = [row for row in profiles if row.get('is_active')]
         counts = views.authoring_programme_structure_counts(source=source)
         programmes = views.build_programmes(
-            training, source['program_configs'], profiles, include_config_only=visibility == 'all',
+            training, source['program_configs'], [], include_config_only=visibility == 'all',
             only_stats_for_ids=frozenset(), structure_counts=counts,
             learner_counts=programme_list_learner_counts(source),
         )
