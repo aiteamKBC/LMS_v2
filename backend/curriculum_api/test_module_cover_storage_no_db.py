@@ -49,6 +49,7 @@ class ModuleCoverStorageTests(unittest.TestCase):
         self.v.clean_str = lambda value: str(value if value is not None else '').strip()
         self.v.ContentFile = lambda raw: types.SimpleNamespace(read=lambda: raw)
         self.v.safe_upload_segment = lambda value, fallback: (str(value or '').strip() or fallback)
+        self.v.CoverImageError = type('CoverImageError', (ValueError,), {})
         # Read from views.py rather than restated, so a change to either the
         # path shape or the accepted image types is caught here.
         source = (ROOT / 'views.py').read_text(encoding='utf-8-sig')
@@ -105,16 +106,26 @@ class ModuleCoverStorageTests(unittest.TestCase):
         self.v.safe_upload_segment = lambda value, fallback: 'MOD-6'
         self.assertNotIn('..', self.store('../../etc/MOD-6', PNG))
 
-    def test_storage_failing_keeps_the_image_rather_than_losing_it(self):
-        """A module that will not save is worse than a cover in the column."""
+    def test_storage_failing_refuses_the_save_instead_of_keeping_base64(self):
+        """No image is ever kept as base64 in a column; the save is refused."""
         self.storage.fail = True
-        self.assertEqual(self.store('MOD-7', PNG), PNG)
+        with self.assertRaises(self.v.CoverImageError):
+            self.store('MOD-7', PNG)
 
-    def test_a_value_that_is_not_decodable_base64_is_not_silently_cleared(self):
-        broken = 'data:image/png;base64,!!!!'
-        self.assertEqual(self.store('MOD-8', broken), broken)
+    def test_a_value_that_is_not_decodable_base64_is_refused(self):
+        with self.assertRaises(self.v.CoverImageError):
+            self.store('MOD-8', 'data:image/png;base64,!!!!')
         self.assertEqual(self.storage.saved, [])
 
+    def test_an_inline_value_that_is_not_a_known_base64_image_is_refused(self):
+        for value in (
+            'data:image/x-icon;base64,AAAA',
+            'data:image/svg+xml;utf8,<svg></svg>',
+            'DATA:text/plain;base64,aGk=',
+        ):
+            with self.subTest(value=value), self.assertRaises(self.v.CoverImageError):
+                self.store('MOD-9', value)
+        self.assertEqual(self.storage.saved, [])
 
 if __name__ == '__main__':
     unittest.main(verbosity=2)

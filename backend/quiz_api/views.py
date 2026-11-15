@@ -26,7 +26,7 @@ from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_http_methods
 
 from .models import QuizAnswer, QuizPackage, QuizQuestion
-from .question_images import validate_question_image
+from .question_images import store_question_image, stored_answer_text
 from .answer_keys import choice_key_error, choice_label, quiz_publication_error
 from .key_readiness import quiz_requires_valid_key
 from .intake import InvalidQuizIntake, intake_error, key_indexes
@@ -3001,6 +3001,19 @@ def _csv_truthy(value):
     return flag in {"yes", "true", "1", "y", "correct"}
 
 
+def _store_question_images(questions):
+    """Store inline question/answer images as files before any row is written.
+
+    Questions here use the intake shape (``image_url``, answers with ``text``).
+    Raises ValueError when a picture cannot be stored; nothing is kept inline.
+    """
+    for question in questions:
+        question["image_url"] = store_question_image(question.get("image_url", ""))
+        for answer in question.get("answers", []):
+            answer["text"] = stored_answer_text(answer["text"])
+    return questions
+
+
 def _save_questions(quiz, questions):
     for index, question in enumerate(questions):
         question_record = QuizQuestion.objects.create(
@@ -3393,6 +3406,11 @@ def quizzes(request):
         if not 1 <= duration <= 1440:
             return JsonResponse({"error": "Quiz duration must be between 1 and 1440 minutes."}, status=400)
 
+        try:
+            _store_question_images(parsed_questions)
+        except ValueError as exc:
+            return JsonResponse({"error": str(exc)}, status=400)
+
         with transaction.atomic():
             quiz = QuizPackage.objects.create(
                 title=title,
@@ -3447,11 +3465,12 @@ def quizzes(request):
         if error:
             return JsonResponse({"error": error}, status=400)
         try:
-            prepared = [{"text": q["text"], "question_type": _normalise_question_type(q.get("questionType")),
-                         "image_url": validate_question_image(q.get("imageUrl")),
-                         "explanation": q.get("explanation") or "", "answers": [
-                             {"text": a["text"], "is_correct": a["isCorrect"], "sort_order": i}
-                             for i, a in enumerate(q["answers"])]} for q in initial]
+            prepared = _store_question_images([
+                {"text": q["text"], "question_type": _normalise_question_type(q.get("questionType")),
+                 "image_url": q.get("imageUrl") or "",
+                 "explanation": q.get("explanation") or "", "answers": [
+                     {"text": a["text"], "is_correct": a["isCorrect"], "sort_order": i}
+                     for i, a in enumerate(q["answers"])]} for q in initial])
         except ValueError as exc:
             return JsonResponse({"error": str(exc)}, status=400)
         manual_question_type = prepared[0]["question_type"]
@@ -4546,11 +4565,17 @@ def _quiz_questions_locked(request, pk):
     for index, question in enumerate(questions, start=1):
         if not isinstance(question, dict):
             return JsonResponse({"error": "Each question must be an object"}, status=400)
-        if "imageUrl" in question:
-            try:
-                question["imageUrl"] = validate_question_image(question["imageUrl"])
-            except ValueError as exc:
-                return JsonResponse({"error": f"Question {index}: {exc}"}, status=400)
+        try:
+            if "imageUrl" in question:
+                question["imageUrl"] = store_question_image(question["imageUrl"])
+            # Stored before answers are matched to existing rows, so an
+            # unchanged picture re-sent inline still finds its answer (same
+            # bytes, same URL) and keeps the identity past attempts use.
+            for answer in question.get("answers") or []:
+                if isinstance(answer, dict) and isinstance(answer.get("text"), str):
+                    answer["text"] = stored_answer_text(answer["text"])
+        except ValueError as exc:
+            return JsonResponse({"error": f"Question {index}: {exc}"}, status=400)
 
     requires_key = quiz_requires_valid_key(quiz)
     existing_questions = {

@@ -1,4 +1,4 @@
-"""Atomic canonical Free Course create, diff/upsert and guarded deletion."""
+"""Atomic canonical Free Course authoring, content archival and guarded course deletion."""
 from __future__ import annotations
 
 import hashlib
@@ -96,8 +96,9 @@ def _course_rows(*, lock=False):
         return _rows(cursor)
 
 
-def _tree(course_id, *, lock=False):
+def _tree(course_id, *, lock=False, include_deleted=False):
     suffix = " for update" if lock else ""
+    current = "" if include_deleted else " and deleted_at is null"
     with connection.cursor() as cursor:
         cursor.execute(
             "select * from curriculum.free_courses where id=%s" + suffix,
@@ -107,7 +108,7 @@ def _tree(course_id, *, lock=False):
         if not course:
             raise MutationError("free_course_not_found", "Free Course not found.", status=404)
         cursor.execute(
-            "select * from curriculum.free_course_weeks where course_id=%s order by id" + suffix,
+            "select * from curriculum.free_course_weeks where course_id=%s" + current + " order by id" + suffix,
             [course_id],
         )
         weeks = _rows(cursor)
@@ -116,7 +117,7 @@ def _tree(course_id, *, lock=False):
         if week_ids:
             cursor.execute(
                 "select * from curriculum.free_programme_components "
-                "where free_module_id = any(%s::varchar[]) order by id" + suffix,
+                "where free_module_id = any(%s::varchar[])" + current + " order by id" + suffix,
                 [week_ids],
             )
             components = _rows(cursor)
@@ -245,9 +246,12 @@ def _stored_cover(course_id, value):
     browser. Same helper, path shape and failure behaviour as module covers:
     URLs and '' pass through untouched.
     """
-    from .views import stored_module_cover_image  # lazy: views is heavy, keep this module light to import
+    from .views import CoverImageError, stored_module_cover_image  # lazy: views is heavy, keep this module light to import
 
-    return stored_module_cover_image(course_id, value)
+    try:
+        return stored_module_cover_image(course_id, value)
+    except CoverImageError as error:
+        raise MutationError("invalid_cover", str(error)) from error
 
 
 def _validate_shape(weeks):
@@ -432,6 +436,8 @@ def create_course(payload, *, staff_id, idempotency_key):
 
         document = documents.course_document(course_id, read_snapshot=False)
         document["clientIdMap"] = client_map
+        from .free_course_videos import queue_saved_videos
+        queue_saved_videos(course_id, [], document)
         etag = quote_etag(document["revision"])
         location = f"/curriculum_api/curriculum/free-courses/{course_id}/authoring/"
         with connection.cursor() as cursor:
@@ -515,15 +521,8 @@ def update_course(course_id, payload):
             raise MutationError("cross_course_id", "A deleted component does not belong to this course.", status=409)
 
         if deleted_weeks or deleted_components:
-            counts = _dependency_counts(course_id, list(deleted_weeks), list(deleted_components))
-            if any(counts.values()):
-                raise MutationError("dependent_records", "Assigned, progressed or quiz-linked content cannot be deleted.", status=409, dependencies=counts)
-            for component in components:
-                if component["id"] in deleted_components:
-                    settings = component.get("settings_json") or {}
-                    if isinstance(settings, dict) and str(settings.get("linkedQuizId") or "").strip():
-                        raise MutationError("dependent_quiz", "A component linked to a quiz cannot be deleted.", status=409,
-                                            componentId=component["id"])
+            # Archive content in place. Assignments, completions and quizzes keep
+            # their original identities; a new component never inherits history.
             for week_id in deleted_weeks:
                 remaining = [row["id"] for row in components if row["free_module_id"] == week_id and row["id"] not in deleted_components]
                 if remaining:
@@ -616,23 +615,23 @@ def update_course(course_id, payload):
                         client_id_map["components"][client_id] = component_id
 
             if deleted_components:
-                cursor.execute("delete from curriculum.free_programme_components where id=any(%s::varchar[])", [list(deleted_components)])
+                cursor.execute("update curriculum.free_programme_components set deleted_at=%s,updated_at=%s where id=any(%s::varchar[])", [now, now, list(deleted_components)])
             if deleted_weeks:
-                cursor.execute("delete from curriculum.free_course_weeks where id=any(%s::varchar[])", [list(deleted_weeks)])
+                cursor.execute("update curriculum.free_course_weeks set deleted_at=%s,updated_at=%s where id=any(%s::varchar[])", [now, now, list(deleted_weeks)])
 
             cursor.execute(
-                "update curriculum.free_course_weeks w set component_count=s.c,total_otjh=s.h,updated_at=case when w.component_count<>s.c or w.total_otjh<>s.h then %s else w.updated_at end from (select w2.id,count(c.id)::int c,coalesce(sum(c.expected_otjh),0) h from curriculum.free_course_weeks w2 left join curriculum.free_programme_components c on c.free_module_id=w2.id where w2.course_id=%s group by w2.id) s where w.id=s.id",
+                "update curriculum.free_course_weeks w set component_count=s.c,total_otjh=s.h,updated_at=case when w.component_count<>s.c or w.total_otjh<>s.h then %s else w.updated_at end from (select w2.id,count(c.id)::int c,coalesce(sum(c.expected_otjh),0) h from curriculum.free_course_weeks w2 left join curriculum.free_programme_components c on c.free_module_id=w2.id and c.deleted_at is null where w2.course_id=%s and w2.deleted_at is null group by w2.id) s where w.id=s.id",
                 [now, course_id],
             )
             cursor.execute(
-                "update curriculum.free_courses c set week_count=s.w,component_count=s.n,total_otjh=s.h,updated_at=case when c.week_count<>s.w or c.component_count<>s.n or c.total_otjh<>s.h then %s else c.updated_at end from (select count(distinct w.id)::int w,count(p.id)::int n,coalesce(sum(p.expected_otjh),0) h from curriculum.free_course_weeks w left join curriculum.free_programme_components p on p.free_module_id=w.id where w.course_id=%s) s where c.id=%s",
+                "update curriculum.free_courses c set week_count=s.w,component_count=s.n,total_otjh=s.h,updated_at=case when c.week_count<>s.w or c.component_count<>s.n or c.total_otjh<>s.h then %s else c.updated_at end from (select count(distinct w.id)::int w,count(p.id)::int n,coalesce(sum(p.expected_otjh),0) h from curriculum.free_course_weeks w left join curriculum.free_programme_components p on p.free_module_id=w.id and p.deleted_at is null where w.course_id=%s and w.deleted_at is null) s where c.id=%s",
                 [now, course_id, course_id],
             )
             cursor.execute(
                 "select count(distinct w.id)::int, count(p.id)::int, "
-                "count(*) filter (where w.status='active' and exists (select 1 from curriculum.free_programme_components p2 where p2.free_module_id=w.id))::int, "
-                "count(*) filter (where w.status='active' and not exists (select 1 from curriculum.free_programme_components p3 where p3.free_module_id=w.id))::int "
-                "from curriculum.free_course_weeks w left join curriculum.free_programme_components p on p.free_module_id=w.id where w.course_id=%s",
+                "count(*) filter (where w.status='active' and exists (select 1 from curriculum.free_programme_components p2 where p2.free_module_id=w.id and p2.deleted_at is null))::int, "
+                "count(*) filter (where w.status='active' and not exists (select 1 from curriculum.free_programme_components p3 where p3.free_module_id=w.id and p3.deleted_at is null))::int "
+                "from curriculum.free_course_weeks w left join curriculum.free_programme_components p on p.free_module_id=w.id and p.deleted_at is null where w.course_id=%s and w.deleted_at is null",
                 [course_id],
             )
             week_count, component_count, active_nonempty, active_empty = cursor.fetchone()
@@ -643,9 +642,9 @@ def update_course(course_id, payload):
             if component_count > MAX_COMPONENTS:
                 raise MutationError("limit_exceeded", "A course can contain at most 500 components.")
             cursor.execute(
-                "select 1 from curriculum.free_course_weeks where course_id=%s group by display_order having count(*)>1 "
+                "select 1 from curriculum.free_course_weeks where course_id=%s and deleted_at is null group by display_order having count(*)>1 "
                 "union all select 1 from curriculum.free_programme_components p join curriculum.free_course_weeks w on w.id=p.free_module_id "
-                "where w.course_id=%s group by p.free_module_id,p.display_order having count(*)>1 limit 1",
+                "where w.course_id=%s and w.deleted_at is null and p.deleted_at is null group by p.free_module_id,p.display_order having count(*)>1 limit 1",
                 [course_id, course_id],
             )
             if cursor.fetchone():
@@ -653,6 +652,8 @@ def update_course(course_id, payload):
 
         result = documents.course_document(course_id, read_snapshot=False)
         result["clientIdMap"] = client_id_map
+        from .free_course_videos import queue_saved_videos
+        queue_saved_videos(course_id, components, result, payload.get('importVideoComponentIds', []))
         return result
 
 
@@ -662,13 +663,14 @@ def delete_course(course_id, payload):
     with transaction.atomic():
         _catalogue_lock()
         require_mode(CANONICAL)
-        _course, weeks, components = _tree(course_id, lock=True)
+        # Permanent course deletion must also protect history of archived content.
+        _course, weeks, components = _tree(course_id, lock=True, include_deleted=True)
         current = documents.course_document(course_id, read_snapshot=False)
         _check_revision(expected, current["revision"], scope="course")
         counts = _dependency_counts(course_id, [row["id"] for row in weeks], [row["id"] for row in components])
         linked = []
         for row in components:
-            settings = row.get("settings_json") or {}
+            settings, _issue = documents._decode_settings(row.get("settings_json") or {})
             if isinstance(settings, dict) and str(settings.get("linkedQuizId") or "").strip():
                 linked.append(row["id"])
         if any(counts.values()) or linked:

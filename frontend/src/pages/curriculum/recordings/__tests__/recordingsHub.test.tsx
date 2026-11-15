@@ -14,11 +14,12 @@ vi.mock('../../hubs/useDeliverySessions', () => ({ useDeliverySessions: () => ({
 vi.mock('../../hubs/useDeliveryData', () => ({ useDeliveryOverview: () => ({ data: null, loading: false, error: null }) }));
 
 describe('Coach and tutor recordings entry points', () => {
-  it('offers exactly two destinations and keeps their existing recording URLs', () => {
+  it('offers recording and quality destinations with their existing URLs', () => {
     render(<MemoryRouter><RecordingsHub /></MemoryRouter>);
-    expect(screen.getAllByRole('link')).toHaveLength(2);
+    expect(screen.getAllByRole('link')).toHaveLength(3);
     expect(screen.getByRole('link', { name: /Coach Meetings & Recordings/ })).toHaveAttribute('href', '/curriculum/coaching-recordings');
     expect(screen.getByRole('link', { name: /Tutor Session Recordings/ })).toHaveAttribute('href', '/curriculum/recordings');
+    expect(screen.getByRole('link', { name: /Quality Assurance/ })).toHaveAttribute('href', '/curriculum/quality-demo');
   });
   it('keeps all recording destinations in the existing permissioned sidebar group', () => {
     const entry = curriculumNavItems.find(item => item.id === 'curriculum-coaching-recordings');

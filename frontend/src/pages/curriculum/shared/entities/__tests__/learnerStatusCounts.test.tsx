@@ -57,7 +57,8 @@ it('shows genuine zeroes but never turns a failed count read into zero', async (
   fireEvent.click(retry);
   expect(await screen.findByRole('button', { name: 'Group A: 0 all statuses learners' })).toBeVisible();
   expect(screen.getByRole('button', { name: 'Group A: 0 active learners' })).toBeVisible();
-  expect(screen.getByRole('button', { name: 'Group A: 0 withdrawn learners' })).toBeVisible();
+  // A status nobody holds is not shown as a permanent zero; All and Active always are.
+  expect(screen.queryByRole('button', { name: /withdrawn learners/ })).toBeNull();
 });
 
 it('reuses counts across filtering/remounts and refreshes after a new data revision', async () => {

@@ -129,8 +129,9 @@ and [SKIP LOCKED for concurrent queue consumers](https://www.postgresql.org/docs
   rate-limit and extraction failures remain visible; they never create an empty
   Bunny video or claim success. Downloads are anonymous by default. An
   administrator can opt in to a YouTube-only session export through
-  `YOUTUBE_COOKIES_FILE` on a server, or `YOUTUBE_COOKIES_TEXT` injected from an
-  ECS secret; see the session setup sections below. Browser profiles and account
+  `YOUTUBE_COOKIES_FILE` on a server, `YOUTUBE_COOKIES_TEXT` injected from an
+  ECS secret, or a single-line `YOUTUBE_COOKIES_B64` secret on Windows/Linux;
+  see the session setup sections below. Browser profiles and account
   passwords are never read by the application.
 - YouTube imports have no application file-size limit, for both programme
   modules and free courses. They retain the highest available quality selection;
@@ -273,6 +274,30 @@ the next attempt reads the replacement. To return to anonymous downloading,
 remove `YOUTUBE_COOKIES_FILE` and restart the affected services. This adds no
 migration, dependency, PO-token service or proxy. Existing failed imports are not
 automatically replayed by the configuration change.
+
+## YouTube session without a machine-specific file path
+
+The downloader accepts `YOUTUBE_COOKIES_B64` directly, including local Windows
+workers that do not use the Docker entrypoint. It contains the complete
+YouTube-only Netscape export encoded as Base64 on one line, not a filename.
+Put the value in the ignored `backend/.env` or inject it through the runtime's
+secret configuration. Leave `YOUTUBE_COOKIES_FILE` and `YOUTUBE_COOKIES_TEXT`
+unset; multiple configured inputs report a configuration error.
+
+The backend decodes and validates this input using the same format, domain,
+expiry and size checks as the existing inputs. Each import receives its own
+private temporary cookie file, which is removed after the attempt. No shared
+path needs to exist on the developer's machine. Base64 is encoding, not
+encryption: keep the value out of source control, logs and chat.
+
+Restart the backend and any separately running import workers after updating
+their environment, then explicitly retry the failed video save. The change
+does not replay imports or confirm that YouTube accepts the supplied session.
+
+Existing absolute-file and injected-text configurations remain supported.
+The Docker entrypoint still converts its Base64 secret to a private file and
+unsets the Base64 variable before starting the app; this change does not alter
+that deployment path.
 
 ## Optional YouTube session on AWS ECS
 

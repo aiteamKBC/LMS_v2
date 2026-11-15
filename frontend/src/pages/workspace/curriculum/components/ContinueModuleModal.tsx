@@ -3,13 +3,13 @@ import { AppIcon } from '@/components/feature/AppIcon';
 import type { HomeModule } from '../useCurriculumHome';
 import { HomeModal } from './HomeModal';
 import { clean } from './attentionMeta';
-import { ModuleStatusBadge } from './HomeParts';
+import { lastEditedLabel } from './HomeParts';
 
 export function ContinueModuleModal({ module, onClose }: { module: HomeModule; onClose: () => void }) {
   const weeks = Number(module.weeks || 0);
   const rows = [
     { label: 'Programme', value: clean(module.programme) || 'Not linked to a programme (reusable module)' },
-    { label: 'Status', value: <ModuleStatusBadge status={module.status} /> },
+    { label: 'Last edited', value: lastEditedLabel(module.lastUpdated) || 'No edit date recorded' },
     { label: 'Weeks', value: weeks ? `${weeks} ${weeks === 1 ? 'week' : 'weeks'}` : 'No weeks added yet' },
   ];
   return (

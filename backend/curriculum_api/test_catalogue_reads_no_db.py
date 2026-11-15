@@ -65,27 +65,17 @@ class KsbSourceReadTests(SimpleTestCase):
         self.assertEqual(result['ksbCount'], 0)
         self.assertEqual(result['knowledgeCount'], 0)
 
-    def test_summary_bypasses_overview_and_preserves_visibility(self):
-        with patch.object(views, 'get_ksb_profile_rows', return_value=[profile(), profile('KSBP-OLD', False)]), \
+    def test_sets_are_empty_and_read_nothing(self):
+        # A KSB set was one stored KSB profile; curriculum.ksb_profiles was
+        # removed, so every variant of the list answers [] without a read.
+        with patch.object(views, 'fetch_all', side_effect=AssertionError('no read')), \
              patch.object(views, 'get_cached_payload', side_effect=AssertionError('overview not needed')), \
-             patch.object(views, 'cached_curriculum_value', side_effect=lambda key, factory, **kwargs: factory()) as cached:
-            active = views.curriculum_ksb_sets(RequestFactory().get('/ksb-sets/?view=summary'))
-            all_sources = views.curriculum_ksb_sets(RequestFactory().get('/ksb-sets/?view=summary&visibility=all', HTTP_CACHE_CONTROL='no-cache'))
-        self.assertEqual(json.loads(active.content)['count'], 1)
-        self.assertEqual(json.loads(all_sources.content)['count'], 2)
-        self.assertEqual(cached.call_args.args[0], 'ksb-source-summaries:all')
-        self.assertTrue(cached.call_args.kwargs['force'])
-
-    def test_old_collection_contract_is_unchanged(self):
-        payload = {'schema': 'curriculum', 'ksbSets': [{'ksbs': [{'activities': [1]}]}]}
-        # Every set is built from one profile in this visibility, so a payload
-        # carrying a set implies a profile; with none the view answers [] without
-        # building the overview (see KsbSetsTests in test_shared_reads_no_db).
-        with patch.object(views, 'get_ksb_profile_rows', return_value=[{'id': 1, 'is_active': True}]), \
-                patch.object(views, 'get_cached_payload', return_value=payload) as fetch:
-            response = views.curriculum_ksb_sets(RequestFactory().get('/ksb-sets/?visibility=all'))
-        self.assertEqual(json.loads(response.content)['results'], payload['ksbSets'])
-        self.assertTrue(fetch.call_args.kwargs['compact'])
+             patch.object(views, 'cached_curriculum_value', side_effect=AssertionError('nothing to cache')):
+            for url in ('/ksb-sets/', '/ksb-sets/?visibility=all', '/ksb-sets/?view=summary',
+                        '/ksb-sets/?view=summary&visibility=all'):
+                body = json.loads(views.curriculum_ksb_sets(RequestFactory().get(url)).content)
+                self.assertEqual(body, {'schema': views.CURRICULUM_SCHEMA, 'count': 0, 'results': []})
+        self.assertEqual(views.get_ksb_profile_rows(), [])
 
     def test_definitions_are_not_found_and_read_nothing(self):
         # A KSB set was one stored KSB profile; none are stored any more
@@ -102,19 +92,6 @@ class KsbSourceReadTests(SimpleTestCase):
         summary = json.dumps(views.build_ksb_data([source], [], [], summary_only=True)[1]).encode()
         self.assertLess(len(summary), 1000)
         self.assertLess(len(summary), len(full) / 100)
-
-    def test_summary_cache_follows_write_epoch(self):
-        cache.clear()
-        self.addCleanup(cache.clear)
-        request = RequestFactory().get('/ksb-sets/?view=summary')
-        with patch.dict(views._CURRICULUM_CACHE, {}, clear=True), \
-             patch.object(views, 'shared_curriculum_epoch', return_value=800) as epoch, \
-             patch.object(views, 'get_ksb_profile_rows', side_effect=[[profile()], []]) as read:
-            first = views.curriculum_ksb_sets(request)
-            self.assertEqual(first.content, views.curriculum_ksb_sets(request).content)
-            epoch.return_value = 801
-            self.assertEqual(json.loads(views.curriculum_ksb_sets(request).content)['count'], 0)
-            self.assertEqual(read.call_count, 2)
 
 
 class ModuleCatalogueReadTests(SimpleTestCase):

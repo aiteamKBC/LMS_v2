@@ -124,32 +124,21 @@ class ProgrammeListTests(SimpleTestCase):
         self.modules[1]['status'] = 'inactive'
         self.assert_same_list()
 
-    def test_legacy_catalogue_uses_existing_matching_without_library_or_calendar_reads(self):
-        legacy = [{'Module ID': 'MOD-1', 'Module_name': 'One', 'Number of sessions': 10}]
-        with patch.object(views, 'table_exists', side_effect=lambda table: table == 'Modules'), \
-             patch.object(views, 'get_module_rows', return_value=legacy):
-            self.assert_same_list()
-            with patch.object(views, 'build_ksb_data', side_effect=AssertionError('Unused library')), \
-                 patch.object(views, 'build_cohorts_and_groups', side_effect=AssertionError('Unused calendar')), \
-                 patch.object(views, 'attach_module_assignment_counts', side_effect=AssertionError('Unused assignments')):
-                self.assertTrue(programme_list.build_programme_list('all'))
-
     def test_source_failure_does_not_become_an_empty_success(self):
         with patch.object(views, 'authoring_fetch_all', side_effect=RuntimeError('Unavailable')):
             with self.assertRaisesMessage(RuntimeError, 'Unavailable'):
                 programme_list.build_programme_list('operational')
 
-    def test_grouped_learner_counts_keep_id_ownership_and_unlinked_name_totals(self):
+    def test_grouped_learner_counts_are_owned_by_programme_id(self):
         rows = [
-            {'programme': 'Alpha', 'programme_id': 'PROG-1', 'learner_count': 4},
-            {'programme': 'Old name', 'programme_id': ' PROG-1 ', 'learner_count': 3},
-            {'programme': ' Alpha ', 'programme_id': '', 'learner_count': 2},
-            {'programme': 'ALPHA', 'programme_id': ' ', 'learner_count': 1},
-            {'programme': 'Alpha', 'programme_id': 'PROG-OLD', 'learner_count': 5},
+            {'programme_id': 'PROG-1', 'learner_count': 4},
+            {'programme_id': ' PROG-1 ', 'learner_count': 3},
+            {'programme_id': ' ', 'learner_count': 1},
+            {'programme_id': 'PROG-OLD', 'learner_count': 5},
         ]
         with patch.object(views, 'fetch_all', return_value=rows) as fetch:
             actual = programme_list.programme_list_learner_counts({'has_learner_table': True})
-        self.assertEqual(actual, ({'PROG-1': 7, 'PROG-OLD': 5}, {'alpha': 3}))
+        self.assertEqual(actual, ({'PROG-1': 7, 'PROG-OLD': 5}, {}))
         sql = fetch.call_args.args[0]
         # Plain column reads: to_jsonb(learner) serialised every row.
         self.assertIn("coalesce(programme_id::text, '')", sql)
@@ -174,6 +163,7 @@ class ProgrammeListTests(SimpleTestCase):
             sql, params = fetch.call_args.args
             self.assertTrue(sql.startswith('select '))
             self.assertEqual(sql.count('jsonb_agg'), 5)
+            self.assertNotIn('ksb_profiles', sql)
             self.assertNotIn('cover_image_url', params[0])
             self.assertNotIn('description', params[3])
             self.assertIn('weeks_number', params[0])

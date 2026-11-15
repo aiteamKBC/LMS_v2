@@ -24,7 +24,7 @@ export function ModuleLearnerCount({ moduleId, moduleName, refreshKey, onOpen }:
   return <span className="inline-flex items-center gap-1">
     <button type="button" disabled={opening} aria-busy={opening}
       aria-label={`${moduleName}: ${count == null ? 'view' : count} learners`}
-      title="Open assignments & progress for all assigned learners"
+      title="Learners assigned to this module, any status. Opens their assignments and progress"
       onClick={async event => {
         event.stopPropagation();
         setOpening(true);

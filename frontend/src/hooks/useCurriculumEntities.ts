@@ -32,6 +32,8 @@ import { useLiveRefresh } from '@/hooks/useRefreshOnReturn';
  */
 export interface CurriculumEntitiesOptions {
   includeStaff?: boolean;
+  /** With includeStaff: false skips the tutor directory for pages that list coaches only. */
+  includeTutors?: boolean;
   includeHolidays?: boolean;
   includeTeams?: boolean;
 }
@@ -64,7 +66,7 @@ const EMPTY: CurriculumEntities = {
 type LoadOptions = { silent?: boolean; skipCache?: boolean; revalidate?: boolean };
 
 export function useCurriculumEntities(options: CurriculumEntitiesOptions = {}) {
-  const { includeStaff = false, includeHolidays = false, includeTeams = false } = options;
+  const { includeStaff = false, includeTutors = includeStaff, includeHolidays = false, includeTeams = false } = options;
   const [entities, setEntities] = useState<CurriculumEntities>(EMPTY);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -89,7 +91,7 @@ export function useCurriculumEntities(options: CurriculumEntitiesOptions = {}) {
         skipCache: loadOptions.skipCache,
         revalidate: loadOptions.revalidate,
       });
-      const tutorsPending = includeStaff
+      const tutorsPending = includeStaff && includeTutors
         ? fetchCurriculumTutors(signal, { skipCache: loadOptions.skipCache, revalidate: loadOptions.revalidate }).catch(() => [])
         : Promise.resolve([]);
       const coachesPending = includeStaff
@@ -147,7 +149,7 @@ export function useCurriculumEntities(options: CurriculumEntitiesOptions = {}) {
         setRefreshing(false);
       }
     }
-  }, [includeHolidays, includeStaff, includeTeams]);
+  }, [includeHolidays, includeStaff, includeTeams, includeTutors]);
 
   /**
    * Write a record a save has already committed into the collections on screen,

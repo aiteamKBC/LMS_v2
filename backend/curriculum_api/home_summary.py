@@ -8,6 +8,7 @@ from django.http import JsonResponse
 from django.views.decorators.http import require_GET
 
 from . import views, curriculum_names
+from .module_authoring_facts import apply_authoring_facts, decode_counts, ksb_counts_selection
 
 
 def _clean(value):
@@ -39,7 +40,7 @@ def _date_value(value):
         return 0
 
 
-ATTENTION_ISSUES = ('programme-ksb-source', 'module-mapping', 'draft-content', 'group-coach', 'module-tutor')
+ATTENTION_ISSUES = ('programme-ksb-source', 'module-mapping', 'group-coach', 'module-tutor')
 # Keys of the cached projection that only the on-demand detail read returns.
 _DETAIL_KEYS = ('attentionRecords', 'programmeDetails')
 
@@ -66,10 +67,6 @@ def project_home(overview, programmes):
     modules = overview.get('modules') or []
     cohorts = overview.get('cohorts') or []
     groups = overview.get('groups') or []
-    # Only a module still marked 'draft' is unfinished authoring. The current
-    # curriculum database has no draft/published state (a module is 'active'
-    # or archived), so there nothing counts as a draft.
-    drafts = [module for module in modules if _key(module.get('status')) == 'draft']
 
     def needs_source(programme):
         return _zero(programme.get('ksbTotal')) and not _clean(programme.get('ksbProfileSourceId'))
@@ -77,7 +74,6 @@ def project_home(overview, programmes):
     counts = {
         'programme-ksb-source': sum(needs_source(programme) for programme in programmes),
         'module-mapping': sum(_zero(module.get('ksbCount')) for module in modules),
-        'draft-content': len(drafts),
         'group-coach': sum(_missing(group.get('coach')) for group in groups),
         'module-tutor': sum(_missing(module.get('tutor')) for module in modules),
     }
@@ -112,7 +108,6 @@ def project_home(overview, programmes):
             for p in programmes if needs_source(p)
         ],
         'module-mapping': [_module_rec(m) for m in modules if _zero(m.get('ksbCount'))],
-        'draft-content': [_module_rec(m) for m in drafts],
         'group-coach': [_group_rec(g) for g in groups if _missing(g.get('coach'))],
         'module-tutor': [_module_rec(m) for m in modules if _missing(m.get('tutor'))],
     }
@@ -172,7 +167,9 @@ def project_home(overview, programmes):
     focus.sort(key=lambda item: -item['issueCount'])
     focus = focus[:6]
     shown = {item['programme']['id'] for item in focus}
-    recent = sorted(drafts or modules, key=lambda module: -_date_value(module.get('lastUpdated')))[:5]
+    # The database has no draft/published state (a module is active or
+    # archived), so Continue working is simply the most recently edited modules.
+    recent = sorted(modules, key=lambda module: -_date_value(module.get('lastUpdated')))[:5]
     return {
         'stats': {
             'programmes': len(programmes),
@@ -186,7 +183,7 @@ def project_home(overview, programmes):
             'name': module.get('name') or '',
             'programme': module.get('programme') or '',
             'weeks': module.get('weeks') or 0,
-            'status': module.get('status') or '',
+            'lastUpdated': _clean(module.get('lastUpdated')),
         } for module in recent],
         'programmeFocus': focus,
         'attentionRecords': attention_records,
@@ -200,7 +197,7 @@ def project_home(overview, programmes):
 _HOME_MODULE_FIELDS = (
     'module_catalogue_id', 'title', 'programme_id', 'programme_name', 'cohort_id', 'cohort_name',
     'group_id', 'group_name', 'sessions_number', 'status', 'tutor_id', 'tutor_name', 'start_date', 'end_date',
-    'source_id', 'source_type',
+    'source_id', 'source_type', 'updated_at',
 )
 _HOME_GROUP_FIELDS = (
     'group_id', 'group_name', 'programme_id', 'programme_name', 'cohort_id', 'cohort_name',
@@ -223,18 +220,19 @@ def home_relationship_rows(*, include_weeks=False):
     if include_weeks:
         sources.append(('weeks', views.AUTHORING_WEEKS_TABLE, _HOME_WEEK_FIELDS, ''))
     if views.connection.vendor != 'postgresql':
+        # Test databases only. They carry no KSB mapping read view, so no
+        # module counts as mapped there.
         return {
             **{name: views.authoring_fetch_all(table, columns=fields) for name, table, fields, _ in sources},
             'program_configs': views.get_program_config_rows(), 'ksb_profiles': views.get_ksb_profile_rows(),
+            'ksb_counts': {},
         }
     views.ensure_module_authoring_tables()
     # Preserve the exact programme/profile order used by the ordinary readers.
-    # A missing legacy display_order column means all rows sort by name.
     sources.append(('program_configs', 'programmes', None,
                     "coalesce((to_jsonb(source_row)->>'display_order')::numeric, 0), name"))
-    has_profiles = views.table_exists('ksb_profiles')
-    if has_profiles:
-        sources.append(('ksb_profiles', 'ksb_profiles', None, 'is_active desc, name'))
+    # KSB profiles were retired; Home reads standard-backed KSB counts only.
+    # Do not probe the removed table on every cold request.
     # One database round trip, and one consistent statement snapshot. Selecting
     # keys from JSON handles optional legacy columns without three schema probes.
     # Table names and aliases are server constants; keys are bound parameters.
@@ -250,12 +248,16 @@ def home_relationship_rows(*, include_weeks=False):
             f'(select coalesce(jsonb_agg({expression}{order_sql}), \'[]\'::jsonb) '
             f'from {views.authoring_table_name(table)} source_row) as {views.quote_ident(name)}'
         )
+    # Distinct live KSB codes per module, in the same round trip. The delivery
+    # rows Home is built from carry no mappings of their own.
+    ksb_sql, ksb_params = ksb_counts_selection()
+    selections.append(f'{ksb_sql} as "ksb_counts"')
+    params.extend(ksb_params)
     result = views.fetch_all('select ' + ', '.join(selections), params)[0]
     # Django's PostgreSQL backend can return raw JSON strings for computed
     # columns, while standalone psycopg configurations may decode them already.
     decoded = {name: json.loads(value) if isinstance(value, str) else value for name, value in result.items()}
-    if not has_profiles:
-        decoded['ksb_profiles'] = []
+    decoded['ksb_profiles'] = []
     return decoded
 
 
@@ -266,8 +268,7 @@ def home_source_rows(visibility):
     and grouping rules here, but pass already-read rows instead of asking them
     to read the same tables again under different SQL orderings.
     """
-    legacy_catalogue = views.table_exists('Modules')
-    relationships = home_relationship_rows(include_weeks=visibility == 'all' and not legacy_catalogue)
+    relationships = home_relationship_rows(include_weeks=visibility == 'all')
     modules, groups, cohorts = (relationships[key] for key in ('modules', 'groups', 'cohorts'))
     # The raw jsonb_agg path bypasses authoring_fetch_all's curriculum_names.attach(),
     # which resolves tutor_name (modules.tutor_id -> tutors) and coach_name
@@ -278,18 +279,15 @@ def home_source_rows(visibility):
     training = views.authoring_modules_as_training_rows(
         module_rows=modules, group_rows=groups, cohort_rows=cohorts,
     )
-    if legacy_catalogue:
-        # Legacy catalogue KSB codes still contribute to Home's mapping gaps.
-        catalogue = views.get_module_rows()
-    else:
-        # Operational delivery rows already carry a numeric sessions_number,
-        # including zero. Only unused catalogue modules fall back to week titles.
-        weeks = relationships.get('weeks', [])
-        catalogue = views.authoring_modules_as_catalogue_rows(module_rows=modules, week_rows=weeks)
+    # Operational delivery rows already carry a numeric sessions_number,
+    # including zero. Only unused catalogue modules fall back to week titles.
+    weeks = relationships.get('weeks', [])
+    catalogue = views.authoring_modules_as_catalogue_rows(module_rows=modules, week_rows=weeks)
     rows = {
         'training': training, 'modules': catalogue, 'authoring_modules': modules,
         'ksb_profiles': relationships['ksb_profiles'], 'program_configs': relationships['program_configs'],
         'holidays': [], 'tutors': [], 'coaches': [], 'tutor_modules': [],
+        'ksb_counts': decode_counts(relationships.get('ksb_counts')),
     }
     delivery = {
         'modules': modules,
@@ -333,6 +331,9 @@ def build_home_summary(visibility, *, force=False):
         overview = views.build_curriculum_payload_from_rows(
             rows, visibility, compact=True, home_summary=True, delivery_source=delivery,
         )
+        # Idempotent: the payload builder applies the same facts once views.py
+        # passes rows['ksb_counts'] through; until then this call does it.
+        apply_authoring_facts(overview['modules'], rows['authoring_modules'], rows.get('ksb_counts'))
         if not home_programmes_need_enrichment(
             overview, rows['authoring_modules'], rows['program_configs'], include_archived=visibility == 'all',
         ):
@@ -372,7 +373,7 @@ def _home_projection(request):
             projection = project_home(shared.payload['overview'], shared.payload['programmes'])
             return projection, 'READ-MODEL-STALE' if shared.stale else 'READ-MODEL-HIT'
     projection = views.cached_curriculum_value(
-        f'home-summary:v2:{visibility}',
+        f'home-summary:v3:{visibility}',
         lambda: build_home_summary(visibility, force=force),
         force=force,
     )
