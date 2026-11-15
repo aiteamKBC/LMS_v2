@@ -36,7 +36,6 @@ def upcoming_session_components(cursor, sessions):
         WHERE c.module_catalogue_id=ANY(%s)
           AND lower(regexp_replace(btrim(coalesce(c.type,'')), '[[:space:]-]+', '_', 'g'))='live_session'
           AND {visible_child_sql('c')} AND {visible_week_sql('w')}
-          AND (m.deleted_at IS NULL OR COALESCE(m.deleted_via_parent,'')<>'')
         ORDER BY c.module_catalogue_id,c.display_order,c.id''', [module_ids])
     by_module = defaultdict(list)
     for component_id, module_id, _, _, _, settings in cursor.fetchall():

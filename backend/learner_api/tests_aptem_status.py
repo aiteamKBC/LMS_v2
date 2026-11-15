@@ -36,8 +36,10 @@ class AptemWithdrawalTests(SimpleTestCase):
         with patch.object(aptem_status, 'connections', {'enrolment': connection}):
             self.assertEqual(aptem_status.programme_status(source), 'Withdrawn')
             self.assertEqual(aptem_status.programme_status(source), 'Withdrawn')
-        cursor.execute.assert_called_once_with(
-            'SELECT "Program-Status" FROM "LMS"."Aptem_users" WHERE "ID"=%s', [4176])
+        sql, params = cursor.execute.call_args.args
+        self.assertIn('FROM "Learner".learners', sql)
+        self.assertIn('FROM "LMS".non_active_users', sql)
+        self.assertEqual(params, [4176, 4176])
         source.save.assert_not_called()
         self.assertEqual(source.programme_status, 'Active')
 

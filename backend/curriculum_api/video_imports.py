@@ -98,6 +98,9 @@ def _unassigned_programme(row):
 
 
 def target(kind, target_id):
+    if kind == 'free_course':
+        from .free_course_videos import target as free_course_target
+        return free_course_target(target_id)
     from .learning_storage import course, native_authoring_scope
 
     # A standalone course's public reference is not an ordinary module row.
@@ -441,6 +444,13 @@ def public_asset(asset):
 @csrf_protect
 @require_role('admin', 'staff')
 def component_video(request, kind, target_id, component_id):
+    if kind == 'free_course':
+        from .free_course_videos import component_video as free_course_video
+        return free_course_video(request, target_id, component_id)
+    return _component_video(request, kind, target_id, component_id)
+
+
+def _component_video(request, kind, target_id, component_id, *, expected_revision=None):
     if request.method not in ('GET', 'POST'):
         return JsonResponse({'error': 'Method not allowed.'}, status=405)
     if not enabled():
@@ -465,12 +475,15 @@ def component_video(request, kind, target_id, component_id):
                 raise VideoImportError('The programme, cohort or group no longer matches this module. Refresh before retrying.')
         uploaded = request.FILES.get('file')
         saved_settings = None
+        saved_document = []
         if uploaded:
             if not str(uploaded.name).lower().endswith('.mp4'):
                 raise VideoImportError('Choose an MP4 video file.')
             validate_video(uploaded)
+            extra = ({'expected_revision': expected_revision, 'on_saved': saved_document.append}
+                     if kind == 'free_course' else {})
             asset, saved_settings = save_mp4(kind, target_id, component, scope, uploaded,
-                                             title=request.POST.get('title', '')[:500])
+                                             title=request.POST.get('title', '')[:500], **extra)
             # The durable LMS file lets the supervised worker retry after a web
             # timeout or restart. Do not hold the upload request for Bunny IO.
             transaction.on_commit(wake_worker)
@@ -480,6 +493,8 @@ def component_video(request, kind, target_id, component_id):
         result = {'enabled': True, 'import': public_asset(asset) if asset else None}
         if saved_settings is not None:
             result['savedSettings'] = saved_settings
+        if saved_document:
+            result['course'] = saved_document[0]
         return JsonResponse(result, status=202)
     except VideoImportError as exc:
         return JsonResponse({'error': str(exc)}, status=400)

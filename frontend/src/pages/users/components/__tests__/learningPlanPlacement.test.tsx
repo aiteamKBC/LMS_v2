@@ -43,6 +43,7 @@ const { LearningPlanModal } = await import('../LearningPlanModal');
 const planResponse = (learner: Record<string, string>, plan: unknown[] = []) => ({
   learner: { id: '91', name: 'Aya Aya Test', programmeId: '', ...learner },
   plan,
+  planVersion: 'plan-v1',
   freeCourses: [],
   freeCourseAssignmentVersion: 'v1',
   preset: [],

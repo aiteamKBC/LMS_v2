@@ -1,11 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { fetchLearnerDetail, invalidateLearnerDetailCache } from '../learnerDetail';
-import { saveFreeCourseAssignments, saveLearningPlan, saveModuleLearners } from '../learningPlan';
+import { fetchLearningPlan, saveFreeCourseAssignments, saveLearningPlan, saveModuleLearners } from '../learningPlan';
 import { fetchLearnerCalendarEvents } from '../learnerCalendar';
 import { updateEnrolmentUser } from '../enrolmentUsers';
 import { fetchLearnerFreeCourses, invalidateLearnerFreeCourses } from '../freeCourses';
 
-const response = (value: unknown, ok = true) => ({ ok, status: ok ? 200 : 400, json: async () => value, text: async () => JSON.stringify(value) }) as Response;
+const response = (value: unknown, ok = true, status = ok ? 200 : 400) => ({ ok, status, json: async () => value, text: async () => JSON.stringify(value) }) as Response;
 const oldDetail = { id: '101', modules: ['Existing'] };
 const newDetail = { id: '101', modules: ['Existing', 'New'] };
 
@@ -13,13 +13,23 @@ describe('module assignment propagation', () => {
   beforeEach(() => { invalidateLearnerDetailCache(); invalidateLearnerFreeCourses(); });
   afterEach(() => { vi.unstubAllGlobals(); invalidateLearnerDetailCache(); invalidateLearnerFreeCourses(); });
 
+  it('stores the plan version returned by GET and tolerates the pre-activation response', async () => {
+    const fetch = vi.fn()
+      .mockResolvedValueOnce(response({ plan: [], planVersion: 'plan-v1' }))
+      .mockResolvedValueOnce(response({ plan: [] }));
+    vi.stubGlobal('fetch', fetch);
+
+    await expect(fetchLearningPlan('101')).resolves.toMatchObject({ planVersion: 'plan-v1' });
+    await expect(fetchLearningPlan('101')).resolves.toMatchObject({ planVersion: '' });
+  });
+
   it.each(['plan', 'roster'])('refreshes both learner kinds after a successful %s save', async (surface) => {
     const fetch = vi.fn().mockResolvedValueOnce(response(oldDetail)).mockResolvedValueOnce(response(oldDetail))
       .mockResolvedValueOnce(response({})).mockResolvedValue(response(newDetail));
     vi.stubGlobal('fetch', fetch);
     await fetchLearnerDetail('commercial', '101');
     await fetchLearnerDetail('apprenticeship', '102');
-    if (surface === 'plan') await saveLearningPlan('101', ['MOD-NEW']);
+    if (surface === 'plan') await saveLearningPlan('101', ['MOD-NEW'], 'plan-v1');
     else await saveModuleLearners('MOD-NEW', ['101']);
     expect(await fetchLearnerDetail('commercial', '101')).toEqual(newDetail);
     expect(await fetchLearnerDetail('apprenticeship', '102')).toEqual(newDetail);
@@ -30,7 +40,7 @@ describe('module assignment propagation', () => {
     const fetch = vi.fn().mockResolvedValueOnce(response(oldDetail)).mockResolvedValueOnce(response({ error: 'Save failed' }, false));
     vi.stubGlobal('fetch', fetch);
     await fetchLearnerDetail('commercial', '101');
-    await expect(saveLearningPlan('101', ['MOD-NEW'])).rejects.toThrow('Save failed');
+    await expect(saveLearningPlan('101', ['MOD-NEW'], 'plan-v1')).rejects.toThrow('Save failed');
     expect(await fetchLearnerDetail('commercial', '101')).toEqual(oldDetail);
     expect(fetch).toHaveBeenCalledTimes(2);
   });
@@ -56,7 +66,7 @@ describe('module assignment propagation', () => {
       .mockResolvedValueOnce(response(after));
     vi.stubGlobal('fetch', fetch);
     await fetchLearnerCalendarEvents('commercial', '101');
-    if (surface === 'plan') await saveLearningPlan('101', ['MOD-NEW']);
+    if (surface === 'plan') await saveLearningPlan('101', ['MOD-NEW'], 'plan-v1');
     else if (surface === 'roster') await saveModuleLearners('MOD-NEW', ['101']);
     else await updateEnrolmentUser('101', { programme: 'Assigned programme' });
     expect(await fetchLearnerCalendarEvents('commercial', '101')).toEqual(after);
@@ -86,6 +96,46 @@ describe('module assignment propagation', () => {
       }),
       body: JSON.stringify({ courseIds: ['B', 'A'], expectedVersion: 'v1' }),
     }));
+  });
+
+  it('writes the opaque plan version with the ordered module selection', async () => {
+    document.cookie = 'csrftoken=verified-token; path=/';
+    const fetch = vi.fn().mockResolvedValue(response({ planVersion: 'plan-v2' }));
+    vi.stubGlobal('fetch', fetch);
+
+    await saveLearningPlan('101', ['M-2', 'M-1'], 'plan-v1');
+
+    expect(fetch).toHaveBeenCalledWith('/learner_api/learning-plan/101/', expect.objectContaining({
+      method: 'PATCH',
+      credentials: 'same-origin',
+      headers: expect.objectContaining({
+        'X-CSRFToken': 'verified-token',
+        'X-Requested-With': 'XMLHttpRequest',
+      }),
+      body: JSON.stringify({
+        modules: [{ moduleId: 'M-2' }, { moduleId: 'M-1' }],
+        expectedPlanVersion: 'plan-v1',
+      }),
+    }));
+  });
+
+  it('preserves structured 409 details for stale-write handling', async () => {
+    const fetch = vi.fn().mockResolvedValue(response({
+      error: {
+        type: 'training_plan_conflict',
+        code: 'stale_plan_version',
+        message: 'The training plan changed after it was read.',
+        details: { currentPlanVersion: 'plan-v2' },
+      },
+    }, false, 409));
+    vi.stubGlobal('fetch', fetch);
+
+    await expect(saveLearningPlan('101', ['M-1'], 'plan-v1')).rejects.toMatchObject({
+      message: 'The training plan changed after it was read.',
+      status: 409,
+      code: 'stale_plan_version',
+      details: { currentPlanVersion: 'plan-v2' },
+    });
   });
 
   it('invalidates My Learning cards after a canonical assignment change', async () => {

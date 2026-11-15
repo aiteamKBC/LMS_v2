@@ -165,6 +165,10 @@ class Fixture(SimpleTestCase):
             'learner_api.monthly_submission._resolve_from_master': resolve,
             'learner_api.learner_detail.effective_training_plan': lambda _source: list(self.assigned),
             'learner_api.monthly_submission.effective_training_plan': lambda _source: list(self.assigned),
+            'learner_api.learner_detail.install_canonical_training_plan': lambda source, _profile: (
+                setattr(source, '_canonical_training_plan', list(self.assigned)) or list(self.assigned)),
+            'learner_api.monthly_submission.install_canonical_training_plan': lambda source, _profile=None: (
+                setattr(source, '_canonical_training_plan', list(self.assigned)) or list(self.assigned)),
             'learner_api.learner_detail._otjh_by_component_id': lambda components: dict(OTJH),
             'learner_api.learner_detail._otjh_by_legacy_title': lambda components: {},
             'learner_api.mappers.get_training_plan': lambda _source: [],
@@ -173,6 +177,7 @@ class Fixture(SimpleTestCase):
             'learner_api.monthly_submission._component_marking_statuses': lambda *_args: dict(MARKING),
             'learner_api.monthly_submission.learner_profile_for_source': resolve_profile,
             'learner_api.monthly_submission.connections': self.connections,
+            'learner_api.progress_transfer_store.read_state': lambda _pk: {'items': []},
             # Learner-detail stages that would otherwise query.
             'learner_api.learner_detail._linked_profile_ids': lambda pk: (55,),
             'learner_api.learner_detail._active_profile_for_source': lambda *args, **kwargs: self.profile,

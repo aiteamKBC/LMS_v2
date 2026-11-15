@@ -13,7 +13,7 @@ from .video_sources import source_url
 
 
 UPLOAD_ROOT = 'curriculum_component_uploads'
-VIDEO_PATH = re.compile(r'videos/(?:module|template)/[\w-]+/[\w-]+/[\w-]+\.mp4', re.ASCII)
+VIDEO_PATH = re.compile(r'videos/(?:module|template|free_course)/[\w-]+/[\w-]+/[\w-]+\.mp4', re.ASCII)
 
 
 def stored_video_path(source):
@@ -39,7 +39,7 @@ def stored_video(source):
         cleanup()
 
 
-def save_mp4(kind, target_id, component, scope, uploaded, *, title=''):
+def save_mp4(kind, target_id, component, scope, uploaded, *, title='', expected_revision=None, on_saved=None):
     """Return the durable import and a narrow settings patch for the editor.
 
     Storage IO happens before locking the component. A source/scope changed in
@@ -49,7 +49,7 @@ def save_mp4(kind, target_id, component, scope, uploaded, *, title=''):
     from . import video_imports as imports
     from .learning_storage import course
 
-    if kind not in ('module', 'template') or not all(
+    if kind not in ('module', 'template', 'free_course') or not all(
         re.fullmatch(r'[\w-]+', value, re.ASCII) for value in (target_id, component['id'])
     ):
         raise VideoImportError('The video component identity is invalid.')
@@ -77,7 +77,14 @@ def save_mp4(kind, target_id, component, scope, uploaded, *, title=''):
         # Lock the physical owner before resolving the component. This also
         # serializes a native course conversion against attaching the file.
         owner = course(target_id, lock=True) if kind == 'module' else None
-        if owner is not None:
+        if kind == 'free_course':
+            from .free_course_videos import check_revision
+            check_revision(target_id, expected_revision)
+            table_sql = views.authoring_table_name('free_programme_components')
+            weeks_sql = views.authoring_table_name('free_course_weeks')
+            where = f'id = %s AND deleted_at IS NULL AND free_module_id IN (SELECT id FROM {weeks_sql} WHERE course_id = %s AND deleted_at IS NULL)'
+            identity = [component['id'], target_id]
+        elif owner is not None:
             table_sql = views.authoring_table_name('free_programme_components')
             weeks_sql = views.authoring_table_name('free_course_weeks')
             where = f'content_ref = %s AND free_module_id IN (SELECT id FROM {weeks_sql} WHERE course_id = %s)'
@@ -108,5 +115,8 @@ def save_mp4(kind, target_id, component, scope, uploaded, *, title=''):
                 asset.status, asset.error = 'queued', ''
                 asset.save(update_fields=['status', 'error', 'updated_at'])
         transaction.on_commit(views.invalidate_curriculum_cache)
+        if on_saved is not None:
+            from .free_course_authoring import course_document
+            on_saved(course_document(target_id, read_snapshot=False))
     uploaded.seek(0)
     return asset, updates

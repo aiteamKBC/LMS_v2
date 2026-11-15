@@ -197,13 +197,20 @@ export function LearningPlanModal({ learnerId, learnerName, onClose, onSaved, re
       try {
         const res = await fetchLearningPlan(learnerId);
         if (cancelled) return;
-        setData((current) => freeDirtyRef.current && current
-          ? {
-              ...res,
+        setData((current) => {
+          if (!current) return res;
+          return {
+            ...res,
+            // The token belongs to the plan the staff member started editing.
+            // Taking a newer token while retaining their older local selection
+            // would let that selection overwrite the newer server plan.
+            planVersion: dirtyRef.current ? current.planVersion : res.planVersion,
+            ...(freeDirtyRef.current ? {
               freeCourses: current.freeCourses,
               freeCourseAssignmentVersion: current.freeCourseAssignmentVersion,
-            }
-          : res);
+            } : {}),
+          };
+        });
         // Keep this session's free-course edits; otherwise take the server's.
         if (!freeDirtyRef.current) setFreeCourses(res.freeCourses ?? []);
         setPlan((current) => {
@@ -361,18 +368,11 @@ export function LearningPlanModal({ learnerId, learnerName, onClose, onSaved, re
     return before !== plan.map((m) => m.moduleId).join('|');
   }, [data, plan]);
 
-  // Accepting the group's preset unchanged is the commonest outcome, so it has
-  // to be savable. `dirty` alone cannot express that: while nothing is saved,
-  // `data.plan` IS the preset, so agreeing with it looks like no change at all
-  // and the button would stay dead until you removed a module and added it back.
-  // An empty preset is the one thing still not worth saving — there is nothing
-  // to agree to, and removing modules makes the plan dirty in its own right.
-  // A module the group gained since the plan was agreed is shown on the plan but
-  // not stored on the learner yet, so saving is what adopts it. `dirty` cannot
-  // see that either — the server already merged it into `data.plan`, so the two
-  // match — hence the same allowance the unsaved preset gets.
-  // A change to the free-course assignments is its own reason to save, the same
-  // as a change to the module list.
+  // The second condition is temporary rollout compatibility with the still-wired
+  // legacy GET, which can return a non-empty unsaved suggestion. The canonical
+  // GET never does that: zero canonical modules means an empty plan, and adding
+  // the first module makes `dirty` true normally. This fallback does not become
+  // an assignment source for the prepared canonical PATCH.
   const freeCoursesDirty = useMemo(
     () => (data ? !freeCoursesEqual(freeCourses, data.freeCourses ?? []) : false),
     [data, freeCourses],
@@ -380,14 +380,11 @@ export function LearningPlanModal({ learnerId, learnerName, onClose, onSaved, re
 
   const planNeedsSave = useMemo(() => {
     if (!data) return false;
-    return dirty || (!data.saved && plan.length > 0) || plan.some((m) => m.inherited || m.fromAptem);
+    return dirty || (!data.saved && plan.length > 0);
   }, [data, dirty, plan]);
 
   const canSave = useMemo(() => {
     if (!data) return false;
-    // `fromAptem` rows are in the same position as `inherited` ones: the
-    // server merged them into the shown plan, so `dirty` is blind to them,
-    // and saving is what actually records them on the learner.
     return planNeedsSave || freeCoursesDirty;
   }, [data, freeCoursesDirty, planNeedsSave]);
 
@@ -515,7 +512,11 @@ export function LearningPlanModal({ learnerId, learnerName, onClose, onSaved, re
         freeDirtyRef.current = false;
       }
       if (planNeedsSave) {
-        res = await saveLearningPlan(learnerId, plan.map((m) => m.moduleId));
+        res = await saveLearningPlan(
+          learnerId,
+          plan.map((m) => m.moduleId),
+          data!.planVersion,
+        );
       }
       setData(res);
       setPlan(res.plan);

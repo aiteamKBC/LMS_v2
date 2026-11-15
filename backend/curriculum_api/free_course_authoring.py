@@ -191,7 +191,8 @@ def _quiz_rows(quiz_ids):
 def _quiz_link_rows(course_id, quiz_ids):
     quiz_ids = sorted({str(value) for value in quiz_ids if value is not None and str(value)})
     columns = ", ".join(_quote_ident(column) for column in QUIZ_LINK_REVISION_COLUMNS)
-    sql = f"select {columns} from {_table_name(QUIZ_LINKS_TABLE)} where \"free_course_id\" = %s"
+    sql = (f"select {columns} from {_table_name(QUIZ_LINKS_TABLE)} "
+           f'where ("free_course_id" = %s and {_current_quiz_link_clause()})')
     params = [course_id]
     if quiz_ids:
         placeholders = ", ".join(["%s"] * len(quiz_ids))
@@ -203,6 +204,18 @@ def _quiz_link_rows(course_id, quiz_ids):
     with connection.cursor() as cursor:
         cursor.execute(sql, params)
         return _dict_rows(cursor)
+
+
+def _current_quiz_link_clause():
+    # Keep historical quiz ownership intact, without reporting its archived
+    # week as a missing current owner. Explicit live component references still
+    # fetch these links through the OR branch and receive the usual validation.
+    links = _table_name(QUIZ_LINKS_TABLE)
+    weeks = _table_name(free_course_catalogue.FREE_COURSE_WEEKS_TABLE)
+    return (f"not exists (select 1 from {weeks} archived "
+            f"where archived.id={links}.free_course_week_id "
+            f"and archived.course_id={links}.free_course_id "
+            "and archived.deleted_at is not null)")
 
 
 @contextmanager
@@ -536,7 +549,8 @@ def _quiz_link_rows_for_courses(course_ids, quiz_ids):
     columns = ", ".join(_quote_ident(column) for column in QUIZ_LINK_REVISION_COLUMNS)
     clauses, params = [], []
     if course_ids:
-        clauses.append(f'"free_course_id" in ({", ".join(["%s"] * len(course_ids))})')
+        clauses.append(f'("free_course_id" in ({", ".join(["%s"] * len(course_ids))}) '
+                       f'and {_current_quiz_link_clause()})')
         params.extend(course_ids)
     if quiz_ids:
         clauses.append(
@@ -702,7 +716,7 @@ def _assemble_course_document(course, weeks, components, decoded, quiz_links, qu
         "policies": {
             "expectedRevisionRequired": True,
             "componentWeekMoveAllowed": False,
-            "assignedContentDeletionAllowed": False,
+            "assignedContentDeletionAllowed": True,
             "quizOwnershipEditingAllowed": False,
             "normalToFreeMode": "clone-only",
         },

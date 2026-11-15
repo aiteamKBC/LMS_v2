@@ -3,7 +3,7 @@ import { DndContext, KeyboardSensor, PointerSensor, closestCenter, useSensor, us
 import { SortableContext, arrayMove, sortableKeyboardCoordinates, useSortable, verticalListSortingStrategy } from '@dnd-kit/sortable';
 import { restrictToParentElement, restrictToVerticalAxis } from '@dnd-kit/modifiers';
 import { CSS } from '@dnd-kit/utilities';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { showCurriculumAlert, showCurriculumConfirm } from '@/components/feature/CurriculumSweetAlert';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { WorkspaceHeroBanner } from '@/components/feature/WorkspaceHeroBanner';
@@ -252,6 +252,7 @@ export function FreeCoursesWorkspace({ embedded = false, addRequest = 0, search 
   const [wizardOpen, setWizardOpen] = useState(false);
   const [editingCourseKey, setEditingCourseKey] = useState<string | null>(null);
   const navigate = useNavigate();
+  const location = useLocation();
   const [convertCard, setConvertCard] = useState<SavedFreeCourseCard | null>(null);
   const [convertProgrammes, setConvertProgrammes] = useState<CurriculumProgramme[]>([]);
   const [convertProgrammesLoading, setConvertProgrammesLoading] = useState(false);
@@ -522,25 +523,12 @@ export function FreeCoursesWorkspace({ embedded = false, addRequest = 0, search 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [addRequest]);
 
-  const openEditWizard = (card: SavedFreeCourseCard) => {
-    const components = card.weeks.flatMap((week, weekIndex) =>
-      (week.components || []).map((component, componentIndex) => freeModuleComponentToCourseComponent(component, week, weekIndex + componentIndex)),
-    );
-    setCourse(previous => ({
-      ...previous,
-      id: card.courseId,
-      title: card.title,
-      subtitle: card.description,
-      coverImageUrl: card.coverImageUrl,
-      isForSale: card.isForSale,
-      price: card.price,
-      components,
-    }));
-    setSelectedComponentId(components[0]?.id || '');
-    setCompletedPreviewIds(new Set());
-    setEditingCourseKey(card.key);
-    setWeekOrderIds(card.weeks.map(week => week.freeCourseWeekId || week.id));
-    setWizardOpen(true);
+  const openCourseBuilder = (card: SavedFreeCourseCard) => {
+    const params = new URLSearchParams({
+      freeCourse: card.courseId,
+      returnTo: `${location.pathname}${location.search}`,
+    });
+    navigate(`/curriculum/module-builder?${params.toString()}`);
   };
 
   const removeComponent = (componentId: string) => {
@@ -1067,7 +1055,7 @@ export function FreeCoursesWorkspace({ embedded = false, addRequest = 0, search 
                   <SavedFreeCourseCardView
                     key={card.key}
                     card={card}
-                    onEdit={() => openEditWizard(card)}
+                    onEdit={() => openCourseBuilder(card)}
                     onDelete={() => { void deleteFreeCourse(card); }}
                     onConvert={() => openConvertWizard(card)}
                   />

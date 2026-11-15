@@ -604,17 +604,22 @@ class PlannedAllocationTests(SimpleTestCase):
         # The Aptem plan names these components "…LMS Activity" / "… LMS Progress".
         self.assertEqual(journal_hours.LMS_COMPONENT_PATTERN, "%LMS%")
 
-    def test_the_plan_is_read_from_aptem_not_the_assignments_feed(self):
-        # The assignments feed carries "Assignment" components only, so the
-        # LMS Activity rows an auditor sees in Aptem are absent from it. The
-        # planned pool must come from the fetched plan itself.
+    def test_component_allocation_uses_preserved_historical_evidence_only(self):
         import inspect
         source = inspect.getsource(journal_hours.lms_planned_hours)
-        self.assertIn("{APTEM_PLAN}", source)
+        self.assertIn("APTEM_IDENTITY_CTES", source)
+        self.assertIn("source_kind = 'historical'", source)
         self.assertIn("components_json", source)
         self.assertNotIn("learner_assignments", source)
         self.assertIn("end_date", source)      # bucketed by the component's due date
-        self.assertEqual(journal_hours.APTEM_PLAN, '"LMS"."Aptem_users"')
+        self.assertEqual(journal_hours.HISTORICAL_COMPONENT_SOURCE, '"LMS".non_active_users')
+
+    def test_current_totals_are_not_fabricated_into_components(self):
+        import inspect
+        source = inspect.getsource(journal_hours.calculate)
+        self.assertIn("component_allocation_available", source)
+        self.assertIn("were not distributed", source)
+        self.assertIn('summary["learner_planned_hours"]', source)
 
     def test_each_button_asks_for_its_own_column(self):
         self.assertEqual(journal_hours.validate_fields(None), journal_hours.FIELD_BOTH)

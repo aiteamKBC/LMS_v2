@@ -60,6 +60,7 @@ import {
 // that used to live under Library. Loaded on first use; it carries its own
 // editors and drag-and-drop.
 const FreeCoursesWorkspace = lazy(() => import('../free-courses/page').then(module => ({ default: module.FreeCoursesWorkspace })));
+const FreeCourseBuilder = lazy(() => import('./FreeCourseBuilder'));
 // The delivery side of a module -- which cohort and group run it, when it runs
 // and whether its Teams series exists -- used to live on a separate Curriculum
 // -> Modules page. This catalogue lists it now, and each delivery row opens the
@@ -699,6 +700,11 @@ async function showDuplicateModuleSwal(
 }
 
 export default function ModuleBuilder() {
+  const [params] = useSearchParams();
+  const freeCourseId = params.get('freeCourse')?.trim();
+  if (freeCourseId) return <Suspense fallback={<p role="status">Loading free course editor...</p>}>
+    <FreeCourseBuilder key={freeCourseId} courseId={freeCourseId} />
+  </Suspense>;
   return <LearnerDirectoryProvider><ModuleBuilderContent /></LearnerDirectoryProvider>;
 }
 
@@ -9364,9 +9370,11 @@ function moduleFormTargetFromCatalogue(module: ModuleCatalogueItem, usage?: Modu
     groupId: usage?.groupId || module.groupId,
     sessionsNumber: module.sessionsNumber || usage?.sessions,
     sessionHolidays: module.sessionHolidays || module.sourceModule?.sessionHolidays,
+    calendarPolicy: module.calendarPolicy !== undefined ? module.calendarPolicy : module.sourceModule?.calendarPolicy,
     deliveryWeeks: module.deliveryWeeks || module.sourceModule?.deliveryWeeks,
     weeklySchedule: module.weeklySchedule || module.sourceModule?.weeklySchedule || [],
     scheduleMode: module.scheduleMode || module.sourceModule?.scheduleMode,
+    weekStartsOn: module.weekStartsOn ?? module.sourceModule?.weekStartsOn,
     weekDays: usage?.weekDays || String(module.deliveryMetadata?.weekDays || module.sourceModule?.weekDays || ''),
     startTime: usage?.startTime || String(module.deliveryMetadata?.startTime || module.sourceModule?.startTime || ''),
     endTime: usage?.endTime || String(module.deliveryMetadata?.endTime || module.sourceModule?.endTime || ''),

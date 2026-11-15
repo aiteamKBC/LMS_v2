@@ -1,33 +1,93 @@
--- Catch the learner-plan id sequences up to the rows already in their tables.
+-- DBA REVIEW ONLY: catch the learner-plan id sequences up to existing rows.
 --
--- Found 2026-11-14 on lms-ideal-architecture (br-raspy-sky-abvs8lq9):
---   "Learner".learner_training_plan_components  max(id) = 1663332, sequence last_value = 1663330
--- so the next inserts reuse existing ids and fail with
---   duplicate key value violates unique constraint "learner_training_plan_components_pkey".
--- Any write that adds a learner's plan components hits this, including module
--- assignment and the free-course adoption.
+-- Read-only Development evidence captured 2026-11-15 on
+-- lms-ideal-architecture (br-raspy-sky-abvs8lq9):
 --
--- Safe to run more than once. It only ever moves a sequence forward and changes
--- no table rows. Run it on the intended database only.
+--   table                                      max(id)  last_value  next value
+--   learner_training_plan_modules                11668       11668       11669
+--   learner_training_plan_weeks                 195651      195641      195642
+--   learner_training_plan_components           1696387     1695574     1695575
+--
+-- The weeks/components sequences can therefore generate an existing primary
+-- key. This script is idempotent and forward-only: it never lowers a sequence
+-- and it does not change learner-plan rows. The locks close the race between
+-- reading max(id) and setting each sequence. Confirm the branch printed below
+-- before execution. Do not run this file on shared Development or Production
+-- without the normal DBA/change-review approval.
 
-SELECT current_setting('neon.branch_id', true) AS branch;  -- confirm the target first
+BEGIN;
 
-SELECT setval('"Learner".learner_training_plan_modules_id_seq',
-              greatest((SELECT coalesce(max(id), 1) FROM "Learner".learner_training_plan_modules),
-                       (SELECT last_value FROM pg_sequences WHERE schemaname = 'Learner'
-                          AND sequencename = 'learner_training_plan_modules_id_seq')));
+SELECT current_setting('neon.branch_id', true) AS branch_to_confirm;
 
-SELECT setval('"Learner".learner_training_plan_weeks_id_seq',
-              greatest((SELECT coalesce(max(id), 1) FROM "Learner".learner_training_plan_weeks),
-                       (SELECT last_value FROM pg_sequences WHERE schemaname = 'Learner'
-                          AND sequencename = 'learner_training_plan_weeks_id_seq')));
+LOCK TABLE
+    "Learner".learner_training_plan_modules,
+    "Learner".learner_training_plan_weeks,
+    "Learner".learner_training_plan_components
+IN SHARE ROW EXCLUSIVE MODE;
 
-SELECT setval('"Learner".learner_training_plan_components_id_seq',
-              greatest((SELECT coalesce(max(id), 1) FROM "Learner".learner_training_plan_components),
-                       (SELECT last_value FROM pg_sequences WHERE schemaname = 'Learner'
-                          AND sequencename = 'learner_training_plan_components_id_seq')));
+SELECT setval(
+    '"Learner".learner_training_plan_modules_id_seq'::regclass,
+    GREATEST(
+        COALESCE((SELECT max(id) FROM "Learner".learner_training_plan_modules), 1),
+        COALESCE((SELECT last_value FROM pg_sequences
+                  WHERE schemaname = 'Learner'
+                    AND sequencename = 'learner_training_plan_modules_id_seq'), 1)
+    ),
+    true
+);
 
--- Verify: every sequence is at or above its table's max(id).
-SELECT 'components' AS tbl, (SELECT max(id) FROM "Learner".learner_training_plan_components) AS max_id,
-       (SELECT last_value FROM pg_sequences WHERE schemaname = 'Learner'
-          AND sequencename = 'learner_training_plan_components_id_seq') AS sequence_last;
+SELECT setval(
+    '"Learner".learner_training_plan_weeks_id_seq'::regclass,
+    GREATEST(
+        COALESCE((SELECT max(id) FROM "Learner".learner_training_plan_weeks), 1),
+        COALESCE((SELECT last_value FROM pg_sequences
+                  WHERE schemaname = 'Learner'
+                    AND sequencename = 'learner_training_plan_weeks_id_seq'), 1)
+    ),
+    true
+);
+
+SELECT setval(
+    '"Learner".learner_training_plan_components_id_seq'::regclass,
+    GREATEST(
+        COALESCE((SELECT max(id) FROM "Learner".learner_training_plan_components), 1),
+        COALESCE((SELECT last_value FROM pg_sequences
+                  WHERE schemaname = 'Learner'
+                    AND sequencename = 'learner_training_plan_components_id_seq'), 1)
+    ),
+    true
+);
+
+-- Every sequence must be at or above max(id) before COMMIT.
+WITH state(table_name, max_id, sequence_last) AS (
+    VALUES
+        (
+            'learner_training_plan_modules',
+            (SELECT max(id) FROM "Learner".learner_training_plan_modules),
+            (SELECT last_value FROM pg_sequences
+             WHERE schemaname = 'Learner'
+               AND sequencename = 'learner_training_plan_modules_id_seq')
+        ),
+        (
+            'learner_training_plan_weeks',
+            (SELECT max(id) FROM "Learner".learner_training_plan_weeks),
+            (SELECT last_value FROM pg_sequences
+             WHERE schemaname = 'Learner'
+               AND sequencename = 'learner_training_plan_weeks_id_seq')
+        ),
+        (
+            'learner_training_plan_components',
+            (SELECT max(id) FROM "Learner".learner_training_plan_components),
+            (SELECT last_value FROM pg_sequences
+             WHERE schemaname = 'Learner'
+               AND sequencename = 'learner_training_plan_components_id_seq')
+        )
+)
+SELECT table_name,
+       max_id,
+       sequence_last,
+       sequence_last >= COALESCE(max_id, 0) AS aligned
+FROM state
+ORDER BY table_name;
+
+COMMIT;

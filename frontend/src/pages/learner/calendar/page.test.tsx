@@ -4,7 +4,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testi
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { LearnerCalendarContent } from './page';
-import { bookLearnerCalendarSession, cancelLearnerCalendarSession, fetchLearnerCalendarEvents, fetchCalendarConnections, fetchPersonalCalendarAvailability, fetchReviewSlots, rescheduleLearnerCalendarSession, type LearnerCalendarEvent } from '@/api/learnerCalendar';
+import { bookLearnerCalendarSession, cancelLearnerCalendarSession, fetchLearnerCalendarEvents, fetchCalendarConnections, fetchPersonalCalendarAvailability, fetchReviewSlots, fetchCoachSessionSlots, rescheduleLearnerCalendarSession, type LearnerCalendarEvent } from '@/api/learnerCalendar';
 import { fetchReviewHistory } from '@/api/reviewHistory';
 import { fetchMeetingAttendance } from '@/api/meetingAttendance';
 import { fetchLearnerEventReviewInstance, fetchLearnerMeetingArtifacts } from '@/api/learnerCalendar';
@@ -24,6 +24,7 @@ vi.mock('@/api/learnerCalendar', async importOriginal => ({
   fetchLearnerCoach: vi.fn(async () => ({ coachName: 'Assigned coach', coachEmail: 'coach@example.test' })),
   fetchCalendarConnections: vi.fn(async () => ({ connections: [] })),
   fetchPersonalCalendarAvailability: vi.fn(async () => ({ busy: [] })),
+  fetchCoachSessionSlots: vi.fn(),
   fetchReviewSlots: vi.fn(async (_kind: string, _id: string, _date: string, duration: number) =>
     Array.from({ length: 32 }, (_, index) => 9 * 60 + index * 15)
       .filter(minutes => minutes + duration <= 17 * 60)
@@ -62,6 +63,10 @@ beforeEach(() => {
   vi.mocked(useLinkedLearner).mockReturnValue({ kind: 'commercial', id: '125' });
   vi.mocked(fetchCalendarConnections).mockResolvedValue({ connections: [] });
   vi.mocked(fetchPersonalCalendarAvailability).mockResolvedValue({ busy: [], errors: [], connectedProviders: [] });
+  vi.mocked(fetchCoachSessionSlots).mockImplementation(async (_kind, _id, _date, duration) =>
+    Array.from({ length: 32 }, (_, index) => 9 * 60 + index * 15)
+      .filter(minutes => minutes + duration <= 17 * 60)
+      .map(minutes => `${String(Math.floor(minutes / 60)).padStart(2, '0')}:${String(minutes % 60).padStart(2, '0')}`));
   vi.mocked(fetchReviewSlots).mockImplementation(async (_kind, _id, _date, duration) =>
     Array.from({ length: 32 }, (_, index) => 9 * 60 + index * 15)
       .filter(minutes => minutes + duration <= 17 * 60)
@@ -297,16 +302,16 @@ describe('programme sessions from the booking picker', () => {
     expect(await within(chooser).findByRole('button', { name: /Recovered review/ })).toBeVisible();
   });
 
-  it.each(['catch-up', 'student-support', 'gateway', 'other'] as const)('preserves the existing %s booking policy after leaving the programme session picker', async source => {
+  it.each(['catch-up', 'student-support', 'gateway', 'other'] as const)('preserves new %s bookings after leaving the programme session picker', async source => {
     setup([]);
     vi.mocked(bookLearnerCalendarSession).mockResolvedValue({ event: event({ source }) });
     const chooser = await openProgrammeSessions(/MCM Monthly Coaching Meeting/);
     const tile = { 'catch-up': /Catch-up Quick check-in/, 'student-support': /Student Support Help with/,
-      gateway: /Gateway Gateway review/, other: /Other Request another/ }[source];
+      gateway: /Gateway Gateway review/, other: /Other Book another/ }[source];
     fireEvent.click(within(chooser).getByRole('button', { name: tile }));
     if (source === 'other') fireEvent.change(within(chooser).getByRole('textbox', { name: /^Other/ }), { target: { value: 'Study advice' } });
-    fireEvent.change(within(chooser).getByLabelText('Time'), { target: { value: '11:00' } });
-    fireEvent.click(within(chooser).getByRole('button', { name: source === 'catch-up' ? 'Book Session' : 'Send Request' }));
+    await selectAvailableTime(chooser, '11:00');
+    fireEvent.click(within(chooser).getByRole('button', { name: 'Book Session' }));
     await waitFor(() => expect(bookLearnerCalendarSession).toHaveBeenCalledExactlyOnceWith('commercial', '125', expect.objectContaining({ sessionType: source })));
     expect(rescheduleLearnerCalendarSession).not.toHaveBeenCalled();
   });
@@ -649,9 +654,8 @@ describe('calendar event previews', () => {
     await screen.findAllByRole('button', { name: /Pending PR/ });
     fireEvent.click(screen.getByRole('button', { name: 'Book Coach Session' }));
     const dialog = await screen.findByRole('dialog', { name: 'Book a Coach Session' });
-    fireEvent.change(within(dialog).getByLabelText('Time'), { target: { value: '10:00' } });
-    expect(within(dialog).getByText(/overlaps another calendar event/)).toBeVisible();
-    expect(within(dialog).getByRole('button', { name: 'Book Session' })).toBeDisabled();
+    await selectAvailableTime(dialog, '09:00');
+    expect(within(dialog).queryByRole('option', { name: '10:00' })).not.toBeInTheDocument();
     expect(bookLearnerCalendarSession).not.toHaveBeenCalled();
   });
 
@@ -662,15 +666,61 @@ describe('calendar event previews', () => {
     expect(screen.getByRole('dialog', { name: 'Calendar Colour Preferences' })).toBeVisible();
   });
 
-  it('describes catch-up as an immediate booking while keeping support requests approval-based', async () => {
+  it('describes all coach sessions as direct bookings without approval', async () => {
     setup();
     await screen.findAllByRole('button', { name: /Catch-up with your coach/ });
     fireEvent.click(screen.getByRole('button', { name: 'Book Coach Session' }));
     const dialog = await screen.findByRole('dialog', { name: 'Book a Coach Session' });
-    expect(within(dialog).getByText(/Catch-up bookings are scheduled immediately/)).toBeVisible();
+    expect(within(dialog).getByText(/Sessions are booked directly without coach approval/)).toBeVisible();
     expect(within(dialog).getByRole('button', { name: 'Book Session' })).toBeVisible();
     fireEvent.click(within(dialog).getByRole('button', { name: /Student Support/ }));
-    expect(within(dialog).getByRole('button', { name: 'Send Request' })).toBeVisible();
+    expect(within(dialog).getByRole('button', { name: 'Book Session' })).toBeVisible();
+  });
+
+  it.each(['student-support', 'gateway', 'other'] as const)('books %s directly using only verified available times', async sessionType => {
+    vi.mocked(fetchCoachSessionSlots).mockResolvedValue(['11:00', '14:30']);
+    setup([], '?book=student-support');
+    const dialog = await screen.findByRole('dialog', { name: 'Book a Coach Session' });
+    if (sessionType !== 'student-support') fireEvent.click(within(dialog).getByRole('button', { name: sessionType === 'gateway' ? /Gateway/ : /Other/ }));
+    if (sessionType === 'other') fireEvent.change(within(dialog).getByPlaceholderText('Write the session type you need'), { target: { value: 'Study support' } });
+    await selectAvailableTime(dialog, '11:00');
+    expect(within(dialog).queryByRole('option', { name: '12:00' })).not.toBeInTheDocument();
+    expect(fetchCoachSessionSlots).toHaveBeenLastCalledWith('commercial', '125', isoDate, 60,
+      expect.objectContaining({ sessionType }));
+    vi.mocked(bookLearnerCalendarSession).mockResolvedValue({ event: event({ source: sessionType, title: 'Booked session', scheduledTime: '11:00' }) });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Book Session' }));
+    await waitFor(() => expect(bookLearnerCalendarSession).toHaveBeenCalledWith('commercial', '125', expect.objectContaining({
+      sessionType, scheduledDate: isoDate, scheduledTime: '11:00', timezoneOffsetMinutes: -60,
+    })));
+    expect(within(await screen.findByRole('dialog', { name: 'Booked session' })).getByRole('link', { name: 'Join Meeting' })).toBeVisible();
+  });
+
+  it('blocks direct booking when the coach calendar cannot be read and allows retry', async () => {
+    vi.mocked(fetchCoachSessionSlots).mockRejectedValue(new Error('Could not check the coach calendar.'));
+    setup([], '?book=student-support');
+    const dialog = await screen.findByRole('dialog', { name: 'Book a Coach Session' });
+    expect(await within(dialog).findByRole('alert')).toHaveTextContent('Could not check the coach calendar.');
+    expect(within(dialog).getByLabelText(/Time/)).toBeDisabled();
+    expect(within(dialog).getByRole('button', { name: 'Book Session' })).toBeDisabled();
+    expect(bookLearnerCalendarSession).not.toHaveBeenCalled();
+    vi.mocked(fetchCoachSessionSlots).mockResolvedValue(['11:00']);
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Retry availability' }));
+    await selectAvailableTime(dialog, '11:00');
+    expect(within(dialog).getByRole('button', { name: 'Book Session' })).toBeEnabled();
+  });
+
+  it('schedules a previous support request using its existing booking identity', async () => {
+    const pending = event({ source: 'student-support', title: 'Pending support', status: 'not-scheduled', invited: false, meetingLink: '' });
+    vi.mocked(rescheduleLearnerCalendarSession).mockResolvedValue({ event: { ...pending, status: 'scheduled', invited: true, meetingLink: 'https://teams.microsoft.com/meet/example' } });
+    setup([pending], '?event=catch-up%3A1');
+    fireEvent.click(within(await screen.findByRole('dialog', { name: 'Pending support' })).getByRole('button', { name: 'Schedule Student Support' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Reschedule Session' });
+    await selectAvailableTime(dialog, '11:00');
+    expect(fetchCoachSessionSlots).toHaveBeenLastCalledWith('commercial', '125', isoDate, 60,
+      expect.objectContaining({ sessionType: 'student-support', excludeEventKey: pending.eventKey }));
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Save New Time' }));
+    await waitFor(() => expect(rescheduleLearnerCalendarSession).toHaveBeenCalledWith('commercial', '125', expect.objectContaining({ eventKey: pending.eventKey, scheduledTime: '11:00' })));
+    expect(bookLearnerCalendarSession).not.toHaveBeenCalled();
   });
 
   it('shows horizontally scrollable source and status filters with distinct status colours', async () => {
@@ -950,7 +1000,7 @@ describe('calendar event previews', () => {
     expect(screen.queryByRole('dialog', { name: 'Catch-up with your coach' })).not.toBeInTheDocument();
     expect(screen.getByRole('dialog', { name: 'Reschedule Session' })).toBeVisible();
     expect(document.querySelector('input[type="date"]')).toHaveValue(isoDate);
-    expect(document.querySelector('input[type="time"]')).toHaveValue('10:00');
+    await waitFor(() => expect(screen.getByLabelText(/Time \(UK time/)).toHaveValue('10:00'));
     expect(rescheduleLearnerCalendarSession).not.toHaveBeenCalled();
   });
 
@@ -984,7 +1034,7 @@ describe('calendar event previews', () => {
       await user.click((await screen.findAllByRole('button', { name: new RegExp(title) }))[0]);
       const dialog = screen.getByRole('dialog', { name: title });
       expect(within(dialog).queryByRole('button', { name: 'Reschedule' })).not.toBeInTheDocument();
-      if (title === 'Pending support') expect(within(dialog).getByText(/after coach approval/)).toBeVisible();
+      if (title === 'Pending support') expect(within(dialog).getByText(/Choose an available time to confirm the booking/)).toBeVisible();
       await user.click(within(dialog).getByRole('button', { name: 'Close event details' }));
     }
   });
@@ -1054,7 +1104,7 @@ describe('calendar event previews', () => {
     await user.click((await screen.findAllByRole('button', { name: /Catch-up with your coach/ }))[0]);
     await user.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Reschedule' }));
     fireEvent.change(document.querySelector('input[type="date"]')!, { target: { value: nextDate } });
-    fireEvent.change(document.querySelector('input[type="time"]')!, { target: { value: '11:30' } });
+    await selectAvailableTime(screen.getByRole('dialog', { name: 'Reschedule Session' }), '11:30');
     await user.click(screen.getByRole('button', { name: 'Save New Time' }));
     await waitFor(() => expect(rescheduleLearnerCalendarSession).toHaveBeenCalledWith('commercial', '125', expect.objectContaining({ eventKey: 'catch-up:1', scheduledDate: nextDate, scheduledTime: '11:30' })));
     const dialog = await screen.findByRole('dialog', { name: 'Catch-up with your coach' });
@@ -1075,7 +1125,7 @@ describe('calendar event previews', () => {
     fireEvent.click(screen.getAllByRole('button', { name: /Catch-up with your coach/ })[0]);
     fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Reschedule' }));
     fireEvent.change(document.querySelector('input[type="date"]')!, { target: { value: nextDate } });
-    fireEvent.change(document.querySelector('input[type="time"]')!, { target: { value: '11:30' } });
+    await selectAvailableTime(screen.getByRole('dialog', { name: 'Reschedule Session' }), '11:30');
     await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Save New Time' })); });
     await waitFor(() => expect(rescheduleLearnerCalendarSession).toHaveBeenCalled());
     await within(await screen.findByRole('dialog', { name: 'Catch-up with your coach' })).findByText('11:30–12:30');

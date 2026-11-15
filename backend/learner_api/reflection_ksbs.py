@@ -17,12 +17,14 @@ class KsbReviewError(ValueError):
 def programme_catalogue(kind, learner_id):
     from .models import EnrolmentUser
     from .active_users import _resolve_programme_id, _resolve_ksb_profile_source_id
+    from .learning_plan import install_canonical_training_plan
     from .mappers import get_training_plan
     from .ksb_sources import resolve_source
 
     source = EnrolmentUser.all_learners.using('enrolment').filter(pk=learner_id, learner_type=kind).first()
     if source is None:
         raise KsbReviewError('The learner programme could not be verified.', 503)
+    install_canonical_training_plan(source)
     plan = get_training_plan(source)
     programme_id = _resolve_programme_id(source.programme, plan)
     source_id = _resolve_ksb_profile_source_id(programme_id, source.programme, plan)

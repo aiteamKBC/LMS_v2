@@ -5,6 +5,8 @@ Its temporary media are removed after the caller uploads them, including errors.
 """
 from __future__ import annotations
 
+import base64
+import binascii
 import importlib.util
 import json
 import os
@@ -33,13 +35,23 @@ def _prepare_cookies(directory):
     """
     configured = os.environ.get('YOUTUBE_COOKIES_FILE', '').strip()
     secret_text = os.environ.get('YOUTUBE_COOKIES_TEXT', '')
-    if configured and secret_text:
-        raise VideoImportError('Configure only one YouTube session source: YOUTUBE_COOKIES_FILE or YOUTUBE_COOKIES_TEXT.')
-    if not configured and not secret_text:
+    secret_base64 = os.environ.get('YOUTUBE_COOKIES_B64', '').strip()
+    if sum(bool(value) for value in (configured, secret_text, secret_base64)) > 1:
+        raise VideoImportError('Configure only one YouTube session source: YOUTUBE_COOKIES_FILE, YOUTUBE_COOKIES_TEXT or YOUTUBE_COOKIES_B64.')
+    if not configured and not secret_text and not secret_base64:
         return None
     invalid = 'The YouTube session file is invalid. Ask an administrator to supply a YouTube-only Netscape cookies file.'
     try:
-        if secret_text:
+        if secret_base64:
+            # A single-line secret works with .env on Windows and Linux without
+            # a machine-specific source path or the Docker entrypoint.
+            if len(secret_base64) > 4 * ((MAX_COOKIE_BYTES + 2) // 3):
+                raise VideoImportError(invalid)
+            try:
+                raw = base64.b64decode(secret_base64, validate=True)
+            except (binascii.Error, ValueError):
+                raise VideoImportError('YOUTUBE_COOKIES_B64 must contain a Base64-encoded YouTube-only Netscape cookies export.') from None
+        elif secret_text:
             # ECS can inject a Secrets Manager plaintext export. Never forward
             # this environment variable to the child or bake it into the image.
             if len(secret_text) > MAX_COOKIE_BYTES:

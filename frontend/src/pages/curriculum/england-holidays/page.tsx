@@ -1,3 +1,4 @@
+import { CountryCalendarPanel } from './CountryCalendarPanel';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { DatePickerField } from '@/components/feature/DatePickerField';
 import { showCurriculumAlert, showCurriculumConfirm } from '@/components/feature/CurriculumSweetAlert';
@@ -351,7 +352,7 @@ export default function CurriculumEnglandHolidaysPage() {
       roleLabel="Curriculum Designer"
       navItems={curriculumNavItems}
       workspaceLabel="Curriculum Studio"
-      pageTitle="Bank Holidays"
+      pageTitle="Holiday Calendars"
       pageSubtitle="GOV.UK bank holidays plus manually added dates"
       userName="Rachel Myers"
       userRole="Curriculum Designer"
@@ -359,7 +360,7 @@ export default function CurriculumEnglandHolidaysPage() {
       <div className="min-h-full space-y-4 bg-background-50 p-4 sm:p-5 lg:p-6">
         <EntityHero
           eyebrow="Curriculum Studio"
-          title="Bank Holidays"
+          title="Holiday Calendars"
           description="England and Wales bank holidays stay synced from GOV.UK. Add a manual holiday here when you need an extra non-delivery date in the same calendar."
           loading={loading && !loaded}
           stats={[
@@ -383,6 +384,8 @@ export default function CurriculumEnglandHolidaysPage() {
             />
           )}
         />
+
+        <CountryCalendarPanel onSynced={() => { void load(undefined, { fresh: true }); }} />
 
         {error && <InlineError message={error} onRetry={() => void load()} />}
 

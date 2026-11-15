@@ -14,6 +14,7 @@ from django.utils import timezone
 from . import video_imports as imports
 from .bunny_stream import VideoImportError, playback_url
 from .models import CurriculumVideoImport
+from .views import row_has_deleted_at
 from .video_uploads import stored_video_path
 
 VIDEO_ID = 'c1c2c3c4-1234-5678-abcd-123456789abc'
@@ -194,7 +195,7 @@ class VideoImportTests(TestCase):
         asset.video_id = VIDEO_ID
         asset.save()
         original = json.loads(json.dumps(self.component))
-        views = Mock()
+        views = Mock(row_has_deleted_at=row_has_deleted_at)
         with patch.object(imports, 'target', return_value=('components', [self.component], SCOPE)), \
              patch.object(imports, '_views', return_value=views), patch.object(imports, 'BunnyStream', return_value=self.client):
             result = imports.process(asset.id)
@@ -315,7 +316,7 @@ class VideoImportTests(TestCase):
 
     def test_component_create_uses_saved_scope_without_backfilling_siblings(self):
         request = RequestFactory().post('/components/', '{}', content_type='application/json')
-        views = Mock()
+        views = Mock(row_has_deleted_at=row_has_deleted_at)
         views.authoring_fetch_all.return_value = []
         sibling = {**self.component, 'id': 'OLD'}
         result = JsonResponse({'created': True, 'component': {'id': 'COMP1', 'moduleCatalogueId': 'MOD1'}}, status=201)
@@ -458,7 +459,7 @@ class VideoImportScopeTests(TestCase):
     def test_free_course_scope_comes_from_saved_module_type_and_name(self):
         for source_type, free in [('free_course', True), ('module_authoring', False)]:
             placement = {} if free else SCOPE
-            views = Mock()
+            views = Mock(row_has_deleted_at=row_has_deleted_at)
             views.authoring_fetch_all.side_effect = [
                 [{'module_catalogue_id': 'FREE1', 'title': 'Independent study', 'source_type': source_type, **placement}],
                 [{'id': 'COMP1', 'type': 'video'}],
@@ -477,7 +478,7 @@ class VideoImportScopeTests(TestCase):
             with self.subTest(programme=programme):
                 parent = {'module_catalogue_id': 'MOD1', 'title': 'Independent study',
                           'source_type': 'module_authoring', 'programme_id': None, 'programme_name': programme}
-                views = Mock()
+                views = Mock(row_has_deleted_at=row_has_deleted_at)
                 views.authoring_fetch_all.side_effect = [[parent], []]
                 with patch.object(imports, '_views', return_value=views):
                     _, _, scope = imports.target('module', 'MOD1')
@@ -495,7 +496,7 @@ class VideoImportScopeTests(TestCase):
             {'programme_id': None, 'programme_name': 'Unassigned creative studies'},
         ):
             with self.subTest(placement=placement):
-                views = Mock()
+                views = Mock(row_has_deleted_at=row_has_deleted_at)
                 views.authoring_fetch_all.side_effect = [
                     [{'module_catalogue_id': 'MOD1', 'title': 'MSP', **placement}], []]
                 with patch.object(imports, '_views', return_value=views):
@@ -504,7 +505,7 @@ class VideoImportScopeTests(TestCase):
 
     def test_attached_week_uses_unassigned_course_name_but_not_for_a_programme_module(self):
         for placement, free in (({}, True), (SCOPE, False)):
-            views = Mock()
+            views = Mock(row_has_deleted_at=row_has_deleted_at)
             views.authoring_fetch_all.side_effect = [
                 [{'id': 'W1', 'module_catalogue_id': 'MOD1', 'title': 'Week One'}], [],
                 [{'module_catalogue_id': 'MOD1', 'title': 'Independent study', **placement}],
@@ -515,14 +516,14 @@ class VideoImportScopeTests(TestCase):
             self.assertEqual(scope.get('collection_name'), 'Free course' if free else None)
 
     def test_unattached_week_template_is_not_mistaken_for_a_course(self):
-        views = Mock()
+        views = Mock(row_has_deleted_at=row_has_deleted_at)
         views.authoring_fetch_all.side_effect = [[{'id': 'W1', 'title': 'Week One'}], []]
         with patch.object(imports, '_views', return_value=views):
             _, _, scope = imports.target('template', 'W1')
         self.assertNotIn('free_course_module_id', scope)
 
     def test_free_course_template_uses_parent_course_name(self):
-        views = Mock()
+        views = Mock(row_has_deleted_at=row_has_deleted_at)
         views.authoring_fetch_all.side_effect = [
             [{'id': 'W1', 'module_catalogue_id': 'FREE1', 'title': 'Week One'}],
             [{'id': 'COMP1', 'type': 'video'}],
@@ -534,7 +535,7 @@ class VideoImportScopeTests(TestCase):
         self.assertEqual(scope['free_course_name'], 'Independent study')
 
     def test_template_prefix_uses_assigned_module_instead_of_week_title(self):
-        views = Mock()
+        views = Mock(row_has_deleted_at=row_has_deleted_at)
         views.AUTHORING_MODULES_TABLE = 'modules'
         views.WEEK_TEMPLATES_TABLE = 'templates'
         views.WEEK_TEMPLATE_COMPONENTS_TABLE = 'template_components'
@@ -551,7 +552,7 @@ class VideoImportScopeTests(TestCase):
         views.authoring_fetch_all.assert_any_call('modules', 'module_catalogue_id = %s', ['MOD1'], ensure_tables=False)
 
     def test_module_scope_keeps_its_saved_title_and_programme(self):
-        views = Mock()
+        views = Mock(row_has_deleted_at=row_has_deleted_at)
         views.authoring_fetch_all.side_effect = [
             [{'module_catalogue_id': 'MOD1', 'title': 'MSP', **SCOPE}],
             [{'id': 'COMP1', 'type': 'video'}],
@@ -569,7 +570,7 @@ class UnassignedCourseVideoTests(TestCase):
                        'programme_name': 'Unassigned programme'}
         self.component = {'id': 'COMP1', 'type': 'video', 'title': 'Introduction',
                           'settings_json': {'videoUrl': SOURCE, 'requiredProgressPercentage': 80}}
-        views = Mock(AUTHORING_MODULES_TABLE='modules', AUTHORING_COMPONENTS_TABLE='components')
+        views = Mock(row_has_deleted_at=row_has_deleted_at, AUTHORING_MODULES_TABLE='modules', AUTHORING_COMPONENTS_TABLE='components')
         views.authoring_fetch_all.side_effect = lambda table, *args, **kwargs: (
             [self.module] if table == 'modules' else [self.component])
         self.enterContext(patch.object(imports, '_views', return_value=views))

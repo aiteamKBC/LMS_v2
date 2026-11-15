@@ -37,7 +37,7 @@ It also fills **planned** hours for reading-only rows: Aptem's own plan carries
 components whose name contains "LMS" (e.g. "February - LMS Activity",
 "Implementation & Exam Prep - Portfolio Management (LMS Activity)"), each with
 its own planned hours and due date. Those are read from the fetched Aptem plan
-(``LMS.Aptem_users.components_json``) and bucketed by the component's due date;
+(the preserved historical component JSON) and bucketed by the component's due date;
 their planned hours for the month are shared across that month's reading-only
 activities — the ones
 that are a reading with no quiz attached.
@@ -52,6 +52,7 @@ import hashlib
 from decimal import Decimal
 
 from django.db import DatabaseError
+from learner_api.aptem_identity import APTEM_IDENTITY_CTES
 
 from . import rules
 from .service import ServiceError
@@ -66,7 +67,7 @@ ACTIVITIES = '"Last_audit"."activities"'
 # the only place the non-assignment components live — the assignments feed
 # (Last_audit.learner_assignments) carries "Assignment" types only, so the
 # "… - LMS Activity" rows an auditor sees in Aptem are missing from it.
-APTEM_PLAN = '"LMS"."Aptem_users"'
+HISTORICAL_COMPONENT_SOURCE = '"LMS".non_active_users'
 
 # Only these categories get a calculated value.
 ELIGIBLE_CATEGORIES = ("reading+quiz", "video", "audio")
@@ -343,17 +344,17 @@ def is_reading_only(row) -> bool:
 
 
 def lms_planned_hours(cursor, aptem_id: int, month: str):
-    """Aptem's planned hours for this learner's LMS components in this month.
+    """Preserved historical LMS-component hours for this learner/month.
 
     Returns ``(total_hours, component_count)``. The plan is read as it stands —
     nothing here writes to it.
     """
     cursor.execute(
-        f"""
+        f"""with {APTEM_IDENTITY_CTES}
         select coalesce(sum((component->>'planned_hours')::numeric), 0), count(*)
-        from {APTEM_PLAN} plan
+        from aptem_identity plan
         cross join lateral json_array_elements(plan.components_json) component
-        where plan."ID" = %s
+        where plan.aptem_id = %s and plan.source_kind = 'historical'
           and component->>'name' ilike %s
           and component->>'planned_hours' is not null
           and component->>'end_date' is not null
@@ -368,12 +369,12 @@ def lms_planned_hours(cursor, aptem_id: int, month: str):
 def lms_components(cursor, aptem_id: int, month: str) -> list:
     """The LMS components themselves, so the panel can show what was summed."""
     cursor.execute(
-        f"""
+        f"""with {APTEM_IDENTITY_CTES}
         select component->>'name', (component->>'planned_hours')::numeric,
                component->>'end_date'
-        from {APTEM_PLAN} plan
+        from aptem_identity plan
         cross join lateral json_array_elements(plan.components_json) component
-        where plan."ID" = %s
+        where plan.aptem_id = %s and plan.source_kind = 'historical'
           and component->>'name' ilike %s
           and component->>'planned_hours' is not null
           and component->>'end_date' is not null
@@ -384,6 +385,24 @@ def lms_components(cursor, aptem_id: int, month: str) -> list:
     )
     return [{"name": name, "planned_hours": str(hours), "due_date": due}
             for name, hours, due in cursor.fetchall()]
+
+
+def learner_hour_context(cursor, aptem_id: int) -> dict | None:
+    """Learner totals and whether a verified component split is preserved."""
+    cursor.execute(
+        f"""with {APTEM_IDENTITY_CTES}
+        select planned_hours, target_hours, completed_hours, source_kind,
+               components_json is not null as component_allocation_available
+        from aptem_identity where aptem_id=%s limit 1""",
+        [aptem_id],
+    )
+    row = cursor.fetchone()
+    if not row:
+        return None
+    return {
+        "planned_hours": row[0], "target_hours": row[1], "completed_hours": row[2],
+        "source_kind": row[3], "component_allocation_available": bool(row[4]),
+    }
 
 
 def planned_share(total_hours: Decimal, row_count: int) -> Decimal | None:
@@ -452,19 +471,48 @@ def calculate(cursor, *, aptem_id: int, month: str, actor,
         "planned_note": "",
     }
 
-    # Planned hours for reading-only rows: this month's Aptem LMS components,
-    # shared across them. The Aptem plan is only read, never written.
-    lms_total, lms_component_count = lms_planned_hours(cursor, aptem_id, month)
+    hour_context = learner_hour_context(cursor, aptem_id)
+    summary["learner_planned_hours"] = (
+        str(hour_context["planned_hours"])
+        if hour_context and hour_context["planned_hours"] is not None else None
+    )
+    summary["learner_target_hours"] = (
+        str(hour_context["target_hours"])
+        if hour_context and hour_context["target_hours"] is not None else None
+    )
+    summary["learner_completed_hours"] = (
+        str(hour_context["completed_hours"])
+        if hour_context and hour_context["completed_hours"] is not None else None
+    )
+    component_allocation_available = bool(
+        hour_context and hour_context["component_allocation_available"]
+    )
+    summary["component_allocation_available"] = component_allocation_available
+
+    # Allocate only preserved component evidence. The canonical learner total
+    # is shown separately and is never divided into fabricated components.
+    if wants_planned and component_allocation_available:
+        lms_total, lms_component_count = lms_planned_hours(cursor, aptem_id, month)
+        component_names = lms_components(cursor, aptem_id, month)
+    else:
+        lms_total, lms_component_count, component_names = Decimal("0"), 0, []
     reading_only_ids = [row["id"] for row in rows if is_reading_only(row)]
-    planned_each = planned_share(lms_total, len(reading_only_ids))
-    planned_by_row = planned_allocation(lms_total, reading_only_ids) if wants_planned else {}
-    summary["lms_planned_hours"] = str(lms_total)
+    planned_each = (planned_share(lms_total, len(reading_only_ids))
+                    if component_allocation_available else None)
+    planned_by_row = (planned_allocation(lms_total, reading_only_ids)
+                      if wants_planned and component_allocation_available else {})
+    summary["lms_planned_hours"] = str(lms_total) if component_allocation_available else None
     summary["lms_components"] = lms_component_count
-    summary["lms_component_names"] = lms_components(cursor, aptem_id, month)
+    summary["lms_component_names"] = component_names
     summary["reading_only_rows"] = len(reading_only_ids)
     summary["planned_each"] = str(planned_each) if planned_each is not None else None
     if wants_planned:
-        if planned_each is None:
+        if not component_allocation_available:
+            summary["planned_note"] = (
+                "Component-level planned-hour allocation is unavailable; "
+                "learner totals remain authoritative and were not distributed."
+            )
+        elif planned_each is None:
             if not lms_component_count:
                 summary["planned_note"] = "Aptem has no LMS component for this month."
             elif not reading_only_ids:

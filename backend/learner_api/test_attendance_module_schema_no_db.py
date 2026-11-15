@@ -89,15 +89,24 @@ class AttendanceModuleSchemaTests(SimpleTestCase):
 
     def test_current_subject_titles_keep_saved_order_and_scope(self):
         db = self.db
+        db.executescript('''
+            CREATE TABLE Learner.learners (id INTEGER PRIMARY KEY, enrolment_id INTEGER);
+            CREATE TABLE Learner.learner_training_plan_modules
+                (id INTEGER PRIMARY KEY, learner_id INTEGER, curriculum_module_id TEXT, position INTEGER);
+            INSERT INTO Learner.learners VALUES (21, 11);
+            INSERT INTO Learner.learner_training_plan_modules VALUES
+                (1,21,'M2',0),(2,21,'M1',1);
+        ''')
 
         class Cursor:
+            db = SimpleNamespace()
+
             def execute(self, sql, params):
-                self.result = db.execute(sql.replace('=ANY(%s)', ' IN (?, ?)'), params[0]).fetchall()
+                self.result = db.execute(sql.replace('%s', '?'), params).fetchall()
 
             def fetchall(self):
                 return self.result
 
-        with patch.object(student_activity, 'EnrolmentUser'), \
-             patch.object(student_activity, '_effective_plan_ids', return_value=['M2', 'M1']):
+        with patch.object(student_activity, 'read_sql', side_effect=lambda sql, _db: sql):
             rows = student_activity._effective_current_subjects(Cursor(), 11)
         self.assertEqual(rows, [{'id':'M2','title':'Module copy'}, {'id':'M1','title':'Module'}])

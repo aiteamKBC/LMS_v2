@@ -1,8 +1,9 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { MemoryRouter } from 'react-router-dom';
+import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
 import type { ReactNode } from 'react';
-import FreeCoursesPage from './page';
+import FreeCoursesPage, { FreeCoursesWorkspace } from './page';
+import FreeCourseBuilder from '../module-builder/FreeCourseBuilder';
 import * as api from '@/lib/curriculumApi';
 import { showCurriculumAlert } from '@/components/feature/CurriculumSweetAlert';
 import { fetchWeekTemplates, fetchWeekTemplateDetail, type WeekTemplate } from '@/pages/curriculum/week-builder/weekTemplateData';
@@ -10,7 +11,8 @@ import { fetchWeekTemplates, fetchWeekTemplateDetail, type WeekTemplate } from '
 vi.mock('@/components/feature/WorkspaceShell', () => ({ WorkspaceShell: ({ children }: { children: ReactNode }) => <div>{children}</div> }));
 vi.mock('@/components/feature/WorkspaceHeroBanner', () => ({ WorkspaceHeroBanner: ({ actions }: { actions: ReactNode }) => <div>{actions}</div> }));
 vi.mock('@/components/feature/CurriculumSweetAlert', () => ({ showCurriculumAlert: vi.fn().mockResolvedValue(undefined), showCurriculumConfirm: vi.fn() }));
-vi.mock('@/pages/curriculum/week-builder/weekTemplateData', () => ({ fetchWeekTemplates: vi.fn().mockResolvedValue([]), fetchWeekTemplateDetail: vi.fn() }));
+vi.mock('@/pages/curriculum/week-builder/weekTemplateData', () => ({ fetchWeekTemplates: vi.fn().mockResolvedValue([]), fetchWeekTemplateDetail: vi.fn(), fetchComponentPointsDefaults: vi.fn().mockResolvedValue({}), uploadWeekComponentResource: vi.fn() }));
+vi.mock('../shared/components/weekAuthoringLazy', () => ({ WeekComponentRail: () => null, ComponentEditor: () => null }));
 vi.mock('@/lib/curriculumApi', () => ({
   CurriculumApiError: class extends Error { status = 409; },
   fetchFreeCourseAuthoringCatalogue: vi.fn(), fetchFreeCourseAuthoringCatalogueWithDocuments: vi.fn(), fetchFreeCourseAuthoringCourse: vi.fn(),
@@ -36,12 +38,37 @@ beforeEach(() => {
   vi.mocked(api.updateFreeCourseAuthoring).mockResolvedValue(document);
 });
 
+function Address() { return <output data-testid="address">{useLocation().pathname}{useLocation().search}</output>; }
+function renderCatalogue(embedded = false) {
+  const initial = embedded ? '/curriculum/module-builder?catalogue=free&q=Paid' : '/curriculum/free-courses';
+  function Page() {
+    const location = useLocation();
+    return new URLSearchParams(location.search).has('freeCourse') ? <FreeCourseBuilder courseId="FREE-1" /> : <FreeCoursesWorkspace embedded />;
+  }
+  return render(<MemoryRouter initialEntries={[initial]}><Routes>
+    <Route path="/curriculum/free-courses" element={<FreeCoursesPage />} />
+    <Route path="/curriculum/module-builder" element={<Page />} />
+  </Routes><Address /></MemoryRouter>);
+}
 async function edit() {
-  render(<MemoryRouter><FreeCoursesPage /></MemoryRouter>);
+  renderCatalogue();
   fireEvent.click(await screen.findByRole('button', { name: 'Edit' }));
+  await screen.findByRole('button', { name: 'Save changes' });
 }
 
 describe('Free Course library loading', () => {
+  it.each([false, true])('opens Module Builder from the catalogue (embedded=%s) and returns to its search', async embedded => {
+    renderCatalogue(embedded);
+    fireEvent.click(await screen.findByRole('button', { name: 'Edit' }));
+    await screen.findByRole('button', { name: 'Save changes' });
+    const address = screen.getByTestId('address').textContent || '';
+    expect(address).toContain('/curriculum/module-builder?freeCourse=FREE-1');
+    expect(api.fetchFreeCourseAuthoringCourse).toHaveBeenCalledWith('FREE-1', expect.anything());
+    expect(api.updateFreeCourseAuthoring).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: 'Back to free courses' }));
+    expect(screen.getByTestId('address')).toHaveTextContent(embedded ? '/curriculum/module-builder?catalogue=free&q=Paid' : '/curriculum/free-courses');
+    expect(await screen.findByRole('button', { name: 'Edit' })).toBeInTheDocument();
+  });
   it('loads the catalogue and every course in one request', async () => {
     render(<MemoryRouter><FreeCoursesPage /></MemoryRouter>);
     expect(await screen.findByRole('button', { name: 'Edit' })).toBeTruthy();
@@ -105,14 +132,14 @@ describe('Revision-aware Free Course pricing', () => {
     fireEvent.change(screen.getByPlaceholderText('e.g. 49.99'), { target: { value: price } });
     fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
     expect(api.updateFreeCourseAuthoring).not.toHaveBeenCalled();
-    expect(showCurriculumAlert).toHaveBeenCalledWith(expect.objectContaining({ title: 'Check the course price' }));
+    expect(screen.getByRole('alert')).toHaveTextContent('Enter a GBP price');
   });
 
   it('keeps the draft and surfaces revision conflicts', async () => {
     await edit();
     vi.mocked(api.updateFreeCourseAuthoring).mockRejectedValueOnce(new api.CurriculumApiError('Changed', 409, '/authoring/'));
     fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
-    await waitFor(() => expect(showCurriculumAlert).toHaveBeenCalledWith(expect.objectContaining({ title: 'This Free Course changed' })));
+    expect(await screen.findByRole('alert')).toHaveTextContent('This Free Course changed');
     expect(screen.getByPlaceholderText('Name this free course')).toHaveValue('Paid course');
   });
 });

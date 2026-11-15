@@ -20,9 +20,8 @@ from login.sessions import authenticate_request
 
 from .learner_detail import SOURCE_MODELS
 from .active_users import completed_hours_value_from_progress
-from .models import EnrolmentUser, LearnerProfile, LearnerProgressEntry
+from .models import LearnerProfile, LearnerProgressEntry
 from .module_placement_sql import current_module_sql
-from .learning_plan import _effective_plan_ids
 from .student_activity_data import (read_audit_hour_totals, read_evidenced_ksb_counts_bulk,
                                     read_student_activity, read_student_material)
 from .student_activity_access import student_activity_available
@@ -771,32 +770,18 @@ def builder_subject_links(cursor, source, refs, read=None):
 
 
 def _effective_current_subjects(cursor, learner_id):
-    """Return the same effective module set shown by the enrolment plan.
-
-    A saved plan can gain modules inherited from its group after it was last
-    agreed.  Reading only the stored JSON made My Learning omit those modules
-    until somebody saved the plan again, while the enrolment modal already
-    counted them.  Reuse the plan's effective-assignment rule so both screens
-    agree without writing anything during a learner read.
-    """
-    # programme/group are placement properties (not columns); load the id
-    # columns that placement_ids reads instead.
-    learner = EnrolmentUser.all_learners.only(
-        'programme_id', 'group_id', 'learning_plan', 'training_plan',
-    ).get(pk=learner_id)
-    module_ids = _effective_plan_ids(learner, {})
-    if not module_ids:
-        return []
+    """Return saved canonical assignments in learner-specific order."""
     cursor.execute(read_sql('''
-        SELECT module_catalogue_id,title
-        FROM curriculum.modules
-        WHERE module_catalogue_id=ANY(%s)
-    ''', cursor.db), [module_ids])
-    titles = {module_id: title for module_id, title in cursor.fetchall()}
-    return [
-        {'id': module_id, 'title': titles[module_id]}
-        for module_id in module_ids if module_id in titles
-    ]
+        SELECT module.module_catalogue_id,module.title
+        FROM "Learner".learners learner
+        JOIN "Learner".learner_training_plan_modules plan
+          ON plan.learner_id=learner.id
+        JOIN curriculum.modules module
+          ON module.module_catalogue_id=plan.curriculum_module_id
+        WHERE learner.enrolment_id=%s
+        ORDER BY plan.position,plan.id
+    ''', cursor.db), [learner_id])
+    return [{'id': module_id, 'title': title} for module_id, title in cursor.fetchall()]
 
 
 @require_GET

@@ -627,6 +627,12 @@ def get_training_plan(source):
     """The structured plan for a CommercialUser or EnrolmentUser instance.
     Falls back to reconstructing one from the legacy CSV columns if the
     learner hasn't been re-saved since the structured format was introduced."""
+    # Learner-facing readers install the normalized relational assignment on
+    # the enrolment-side source before calling shared content resolvers.  An
+    # explicit empty canonical plan is authoritative: never refill it from a
+    # stale JSON/CSV snapshot or a group preset.
+    if hasattr(source, "_canonical_training_plan"):
+        return list(source._canonical_training_plan or [])
     plan = stored_training_plan(source)
     if plan is not None:
         return plan
