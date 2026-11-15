@@ -101,7 +101,7 @@ jobs:
           [ "$EVENT" = "workflow_dispatch" ] && all "manual run"
           BASE=$(curl -fsS -H "Authorization: Bearer $GH_TOKEN" \
             "https://api.github.com/repos/${{ github.repository }}/actions/workflows/deploy-aws.yml/runs?branch=main&status=success&per_page=1" \
-            | python3 -c 'import json,sys;r=json.load(sys.stdin)["workflow_runs"];print(r[0]["head_sha"] if r else "")') || BASE=""
+            | python3 -c 'import json,sys;r=json.load(sys.stdin)["workflow_runs"];print(r[0]["head_sha"] if r and r[0].get("event")=="push" else "")') || BASE=""
           if [ -z "$BASE" ] || ! git cat-file -e "$BASE^{commit}" 2>/dev/null; then all "no earlier successful deploy found"; fi
           echo "base=$BASE" >> "$GITHUB_OUTPUT"
           FILES=$(git diff --name-only "$BASE" "$COMMIT")
@@ -418,6 +418,18 @@ jobs:
         if: env.BACKEND == 'true'
         run: python3 .github/ci/calendar_release.py schema
 
+      - name: Retain release image and schema verification receipt
+        if: always() && env.BACKEND == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: calendar-release-receipt
+          path: |
+            .deploy-state/candidate.json
+            .deploy-state/schema-proof.json
+          include-hidden-files: true
+          if-no-files-found: ignore
+          retention-days: 14
+
       - name: Promote only the image that passed the schema gate
         if: env.BACKEND == 'true'
         run: bash .github/ci/deploy.sh promote
@@ -465,14 +477,3 @@ jobs:
       - name: Roll back to the last-good image and previous page
         if: failure()
         run: bash .github/ci/deploy.sh rollback
-
-      - name: Retain release image and schema verification receipt
-        if: always() && env.BACKEND == 'true'
-        uses: actions/upload-artifact@v4
-        with:
-          name: calendar-release-receipt
-          path: |
-            .deploy-state/candidate.json
-            .deploy-state/schema-proof.json
-          if-no-files-found: ignore
-          retention-days: 14

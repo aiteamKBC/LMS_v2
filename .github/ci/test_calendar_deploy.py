@@ -3,6 +3,8 @@ import os
 from pathlib import Path
 import shutil
 import subprocess
+import sys
+import json
 import tempfile
 import unittest
 
@@ -139,6 +141,17 @@ class WorkflowContractTests(unittest.TestCase):
         # Older application rollback still checks out current deployment tooling.
         deploy = workflow.split('  deploy:\n', 1)[1]
         self.assertIn('ref: ${{ github.sha }}', deploy)
+
+    def test_manual_rollback_never_becomes_a_false_changed_files_baseline(self):
+        workflow = (ROOT / '.github/workflows/deploy-aws.yml').read_text()
+        line = next(line for line in workflow.splitlines() if 'r=json.load(sys.stdin)["workflow_runs"]' in line)
+        script = line.split("python3 -c '", 1)[1].split("'", 1)[0]
+        for event, expected in (('push', COMMIT), ('workflow_dispatch', '')):
+            result = subprocess.run([sys.executable, '-c', script],
+                                    input=json.dumps({'workflow_runs': [{'event': event, 'head_sha': COMMIT}]}),
+                                    capture_output=True, text=True, timeout=10)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(result.stdout.strip(), expected)
 
 
 if __name__ == '__main__':
