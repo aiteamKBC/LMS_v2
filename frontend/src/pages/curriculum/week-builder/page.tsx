@@ -4,7 +4,7 @@ import { AssignmentTopicsEditor } from '../shared/AssignmentTopicsEditor';
 import { componentFileList, legacyComponentFile, serialiseComponentFiles, type ComponentFile } from '@/lib/componentFiles';
 import { moduleUploadedFiles, withStoredUploads } from './moduleUploadedFiles';
 import { MoveComponentButton } from './MoveComponentButton';
-import { Fragment, Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { Fragment, Suspense, createContext, lazy, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { DndContext, DragOverlay, KeyboardSensor, PointerSensor, closestCenter, pointerWithin, useSensor, useSensors, type CollisionDetection, type DragEndEvent, type DragStartEvent } from '@dnd-kit/core';
 import type { WebPoint } from '@/api/webWeekPoints';
@@ -1424,17 +1424,18 @@ const COMPONENT_PICKER_DESCRIPTIONS: Partial<Record<ModuleComponentType, string>
   assignment: 'Set a task for learners to submit.',
 };
 
-function ComponentTypePickerDialog({ atIndex, componentCount, onPick, onClose, onReuse, selfStudyOnly = false }: {
+function ComponentTypePickerDialog({ atIndex, componentCount, onPick, onClose, onReuse, selfStudyOnly = false, allowedTypes }: {
   atIndex: number;
   componentCount: number;
   onPick: (type: ModuleComponentType) => void;
   onClose: () => void;
   onReuse?: () => void;
   selfStudyOnly?: boolean;
+  allowedTypes?: readonly ModuleComponentType[];
 }) {
   const [search, setSearch] = useState('');
   const query = search.trim().toLowerCase();
-  const visibleTypes = weekPaletteTypes.filter(type => (!selfStudyOnly || type.type !== 'live-session') && (
+  const visibleTypes = weekPaletteTypes.filter(type => (!selfStudyOnly || type.type !== 'live-session') && (!allowedTypes || allowedTypes.includes(type.type)) && (
     !query
     || type.label.toLowerCase().includes(query)
     || type.group.toLowerCase().includes(query)
@@ -1546,6 +1547,7 @@ const pointCollisionDetection: CollisionDetection = args => {
 };
 
 export interface WeekComponentRailProps {
+  allowedTypes?: readonly ModuleComponentType[];
   /** Optional presentation of the same editable rows, without slicing mutation state. */
   renderComponentList?: (items: { component: ModuleComponent; members: ModuleComponent[]; node: ReactNode }[], searchTerm: string, actions: { addComponent: (pointId: string) => void }) => ReactNode;
   pointStructure?: { points: WebPoint[]; onChange: (points: WebPoint[]) => void };
@@ -1599,7 +1601,7 @@ export interface WeekComponentRailProps {
   recordingLinks?: RecordingLinkContext;
 }
 
-export function WeekComponentRail({ renderComponentList, componentSectionKey, pointStructure, weekId, displayWeek, components, selectedId, focusedId = '', onSelectId, onChange, pointsByType, variant = 'standalone', weekSessionDate, holidayDates, dateDriftByComponentId, onReuseComponents, otherWeeks, onCopyComponentToWeek, onMoveComponentToWeek, recordingLinks, selfStudyOnly = false }: WeekComponentRailProps) {
+export function WeekComponentRail({ renderComponentList, componentSectionKey, pointStructure, weekId, displayWeek, components, selectedId, focusedId = '', onSelectId, onChange, pointsByType, variant = 'standalone', weekSessionDate, holidayDates, dateDriftByComponentId, onReuseComponents, otherWeeks, onCopyComponentToWeek, onMoveComponentToWeek, recordingLinks, selfStudyOnly = false, allowedTypes }: WeekComponentRailProps) {
   const [pickerIndex, setPickerIndex] = useState<number | null>(null);
   const [pickerPointId, setPickerPointId] = useState<string | null>(null);
   const [activeDragId, setActiveDragId] = useState<string | null>(null);
@@ -1850,6 +1852,7 @@ export function WeekComponentRail({ renderComponentList, componentSectionKey, po
       )}
       {pickerIndex !== null && (
         <ComponentTypePickerDialog
+          allowedTypes={allowedTypes}
           selfStudyOnly={selfStudyOnly}
           atIndex={pickerIndex}
           componentCount={components.length}
@@ -2104,7 +2107,9 @@ export interface ComponentBodyProps {
   recordingLinks?: RecordingLinkContext;
 }
 
-export function ComponentEditor({ component, displayWeek, onChange, onBack, onSelectComponent, groupOptions, rulePoints, weekScope, weekSessionDate, weekSessionTime, uploadResource, moduleId, recordingLinks, videoTemplateId, selfStudyOnly = false }: { component: ModuleComponent; displayWeek?: SessionTitleWeek; onChange: (patch: Partial<ModuleComponent>) => void; onBack: () => void; onSelectComponent?: (id: string) => void; groupOptions: GroupOption[]; rulePoints?: number; weekScope: WeekScope; weekSessionDate?: string; weekSessionTime?: string; uploadResource?: WeekComponentUploader; moduleId?: string; recordingLinks?: RecordingLinkContext; videoTemplateId?: string; selfStudyOnly?: boolean }) {
+const CanonicalFreeCourseContext = createContext(false);
+
+export function ComponentEditor({ component, displayWeek, onChange, onBack, onSelectComponent, groupOptions, rulePoints, weekScope, weekSessionDate, weekSessionTime, uploadResource, moduleId, recordingLinks, videoTemplateId, selfStudyOnly = false, canonicalFreeCourse = false, quizEditor }: { component: ModuleComponent; displayWeek?: SessionTitleWeek; onChange: (patch: Partial<ModuleComponent>) => void; onBack: () => void; onSelectComponent?: (id: string) => void; groupOptions: GroupOption[]; rulePoints?: number; weekScope: WeekScope; weekSessionDate?: string; weekSessionTime?: string; uploadResource?: WeekComponentUploader; moduleId?: string; recordingLinks?: RecordingLinkContext; videoTemplateId?: string; selfStudyOnly?: boolean; canonicalFreeCourse?: boolean; quizEditor?: ReactNode }) {
   const editorRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     const editor = editorRef.current;
@@ -2114,7 +2119,7 @@ export function ComponentEditor({ component, displayWeek, onChange, onBack, onSe
   }, [component.id]);
   const definition = getComponentDefinition(component.type);
   const tone = toneFor(component.type);
-  const issues = validateWeekComponent(component);
+  const issues = validateWeekComponent(component).filter(issue => !canonicalFreeCourse || !issue.path.endsWith('.reflectionQuestion'));
   const setSetting = (key: string, value: ComponentSettingValue) => onChange({
     settings: component.type === 'live-session' && key === 'liveSessionUrl'
       ? manualLiveSessionLinkSettings(component.settings, String(value))
@@ -2127,6 +2132,7 @@ export function ComponentEditor({ component, displayWeek, onChange, onBack, onSe
   const sessionComponent = sessionGroup?.primary || component;
 
   return (
+    <CanonicalFreeCourseContext.Provider value={canonicalFreeCourse}>
     <div ref={editorRef} tabIndex={-1} role="region" aria-label="Component editor" className="scroll-mt-6 rounded-2xl border border-background-200 bg-background-50 overflow-hidden">
       <div className={`flex items-center gap-3 px-5 py-4 border-b ${tone.border} ${tone.soft}`}>
         <button onClick={onBack} title="Back to week overview" className="grid place-items-center w-8 h-8 shrink-0 rounded-lg text-foreground-500 hover:bg-background-50 hover:text-foreground-900 transition-smooth"><AppIcon className="ri-arrow-left-line"></AppIcon></button>
@@ -2156,14 +2162,14 @@ export function ComponentEditor({ component, displayWeek, onChange, onBack, onSe
           : component.type === 'reading' ? <ReadingBody {...bodyProps} />
           : component.type === 'podcast' ? <PodcastBody {...bodyProps} />
           : component.type === 'powerpoint' ? <PowerPointBody {...bodyProps} />
-          : component.type === 'quiz' ? <QuizBody {...bodyProps} />
+          : component.type === 'quiz' ? quizEditor ?? <QuizBody {...bodyProps} />
           : component.type === 'assignment' ? <AssignmentBody {...bodyProps} />
           : component.type === 'recording-placeholder' ? <SessionRecordingBody {...bodyProps} />
           : <GenericComponentBody {...bodyProps} />}
 
         {/* Group assignment applies to every component type — scoped to the
             week's programme + module (resolved in the editor). */}
-        <AssignedGroupsSection component={component} onChange={onChange} groupOptions={groupOptions} programmeId={weekScope.programmeId} groupName={weekScope.groupName} />
+        {!canonicalFreeCourse && <AssignedGroupsSection component={component} onChange={onChange} groupOptions={groupOptions} programmeId={weekScope.programmeId} groupName={weekScope.groupName} />}
 
         {issues.length > 0 && (
           <Section title="To fix before publish">
@@ -2174,6 +2180,7 @@ export function ComponentEditor({ component, displayWeek, onChange, onBack, onSe
         )}
       </div>
     </div>
+    </CanonicalFreeCourseContext.Provider>
   );
 }
 
@@ -2606,6 +2613,7 @@ function LiveSessionBody({ component, onChange, setSetting, rulePoints, weekSess
 // Builder's video authoring fields (source type, URL/embed, duration,
 // required progress, component content).
 function VideoBody({ component, onChange, setSetting, rulePoints, moduleId, videoTemplateId }: ComponentBodyProps) {
+  const canonicalFreeCourse = useContext(CanonicalFreeCourseContext);
   const s = (key: string) => String(component.settings[key] ?? '');
   const sourceType = normaliseVideoSourceType(s('sourceType') || s('provider'));
   const updateSourceType = (value: string) => onChange({
@@ -2615,9 +2623,9 @@ function VideoBody({ component, onChange, setSetting, rulePoints, moduleId, vide
   return (
     <>
       <Section title="Video details">
-        <CurriculumVideoUpload key={`${moduleId || videoTemplateId}:${component.id}`} targetKind={moduleId ? 'module' : 'template'} targetId={moduleId || videoTemplateId} componentId={component.id} title={component.title}
+        {!canonicalFreeCourse && <CurriculumVideoUpload key={`${moduleId || videoTemplateId}:${component.id}`} targetKind={moduleId ? 'module' : 'template'} targetId={moduleId || videoTemplateId} componentId={component.id} title={component.title}
           source={s('videoUrl') || s('embedCode')}
-          onUploaded={settings => onChange({ settings: { ...component.settings, ...settings } })} />
+          onUploaded={settings => onChange({ settings: { ...component.settings, ...settings } })} />}
         <Field editField="title" label="Title"><input value={component.title} onChange={e => onChange({ title: e.target.value })} className={inputClass} /></Field>
         <Field editField="description" label="Description" className="mt-4"><textarea value={component.description} onChange={e => onChange({ description: e.target.value })} rows={2} placeholder="What this video is about…" className={`${inputClass} resize-none`} /></Field>
 
@@ -4247,6 +4255,8 @@ function IconButton({ label, icon, tone = 'default', onClick }: { label: string;
 }
 
 function Field({ label, children, className = '', editField }: { label: string; children: ReactNode; className?: string; editField?: string }) {
+  const canonicalFreeCourse = useContext(CanonicalFreeCourseContext);
+  if (canonicalFreeCourse && (editField === 'expectedOtjh' || editField === 'reflectionQuestion')) return null;
   return (
     <label className={`block ${className}`}>
       <span className="block text-[11px] font-semibold text-foreground-500 mb-1">{label}</span>
@@ -4275,6 +4285,8 @@ function DurationFieldsControl({ value, onChange, label = 'Expected OTJH' }: { v
 // one, so switching it off asks first — the same confirm the Module Builder
 // puts on its Coach validation checkbox.
 function CoachValidationToggle({ component, onChange }: { component: ModuleComponent; onChange: (patch: Partial<ModuleComponent>) => void }) {
+  const canonicalFreeCourse = useContext(CanonicalFreeCourseContext);
+  if (canonicalFreeCourse) return null;
   return (
     <Toggle editField="coachValidationRequired"
       label="Coach validation"
@@ -4324,5 +4336,7 @@ function Toggle({ editField, ...props }: Parameters<typeof ToggleControl>[0] & {
 }
 
 function DurationFields({ editField, ...props }: Parameters<typeof DurationFieldsControl>[0] & { editField?: string }) {
+  const canonicalFreeCourse = useContext(CanonicalFreeCourseContext);
+  if (canonicalFreeCourse && editField === 'expectedOtjh') return null;
   return <CollaborativeField field={editField}><DurationFieldsControl {...props} /></CollaborativeField>;
 }
