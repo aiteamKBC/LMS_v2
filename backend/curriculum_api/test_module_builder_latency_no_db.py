@@ -164,12 +164,11 @@ class TutorCatalogueReadTests(SimpleTestCase):
         self.assertEqual(actual[0]['moduleCount'], 1)
         catalogue.assert_called_once_with(week_rows=[])
 
-    def test_tutor_legacy_catalogue_and_coach_group_path_are_preserved(self):
+    def test_tutor_catalogue_and_coach_group_path_are_preserved(self):
         with patch.object(views, 'get_staff_profile_rows', return_value=[{'name': 'Staff'}]), \
              patch.object(views, 'get_training_rows', return_value=[]), \
              patch.object(views, 'get_program_config_rows', return_value=[]), \
-             patch.object(views, 'table_exists', return_value=True), \
-             patch.object(views, 'get_module_rows', return_value=[]) as catalogue, \
+             patch.object(views, 'authoring_modules_as_catalogue_rows', return_value=[]) as catalogue, \
              patch.object(views, 'build_modules', return_value=[]), \
              patch.object(views, 'build_cohorts_and_groups', return_value=([], [{'id': 'G1', 'coach': 'Staff'}])) as groups:
             views.build_staff_user_profile_collection('tutor', 'all')

@@ -7788,7 +7788,8 @@ def fetch_coach_meeting_transcript_content(base: str, artifact_id: str, *, safe_
     }
     graph_request = urllib_request.Request(url, headers=request_headers, method="GET")
     try:
-        graph_response = urllib_request.urlopen(graph_request, timeout=45)
+        from curriculum_api.transcript_transport import open_transcript
+        graph_response = open_transcript(urllib_request.urlopen, graph_request, timeout=45)
         content_type = graph_response.headers.get("Content-Type") or "text/vtt"
         content = graph_response.read()
         graph_response.close()
@@ -8663,11 +8664,15 @@ def persist_coach_meeting_snapshots(
                     """
                     transcript_placeholders = "%s, %s, %s, %s, %s,"
                     transcript_update = """
-                        transcript_vtt = EXCLUDED.transcript_vtt,
-                        transcript_text = EXCLUDED.transcript_text,
-                        transcript_content_type = EXCLUDED.transcript_content_type,
-                        transcript_fetched_at = EXCLUDED.transcript_fetched_at,
-                        transcript_fetch_error = EXCLUDED.transcript_fetch_error,
+                        transcript_vtt = coalesce(nullif(EXCLUDED.transcript_vtt,''),coach_meeting_artifacts.transcript_vtt),
+                        transcript_text = coalesce(nullif(EXCLUDED.transcript_text,''),coach_meeting_artifacts.transcript_text),
+                        transcript_content_type = coalesce(nullif(EXCLUDED.transcript_content_type,''),coach_meeting_artifacts.transcript_content_type),
+                        transcript_fetched_at = coalesce(EXCLUDED.transcript_fetched_at,coach_meeting_artifacts.transcript_fetched_at),
+                        transcript_fetch_error = CASE
+                            WHEN coalesce(nullif(EXCLUDED.transcript_vtt,''),nullif(EXCLUDED.transcript_text,'')) IS NOT NULL
+                                THEN EXCLUDED.transcript_fetch_error
+                            ELSE coalesce(nullif(EXCLUDED.transcript_fetch_error,''),coach_meeting_artifacts.transcript_fetch_error)
+                            END,
                     """
                     transcript_values = [
                         clean_text(artifact.get("transcript_vtt")),
@@ -9383,7 +9388,8 @@ def coach_meeting_artifact_content_response(request, record, event_key, artifact
 
     graph_request = urllib_request.Request(url, headers=request_headers, method="GET")
     try:
-        graph_response = urllib_request.urlopen(graph_request, timeout=45)
+        from curriculum_api.transcript_transport import open_transcript
+        graph_response = open_transcript(urllib_request.urlopen, graph_request, timeout=45)
     except urllib_error.HTTPError as exc:
         if exc.code == 416 and artifact_type == "recording":
             response = HttpResponse(status=416)

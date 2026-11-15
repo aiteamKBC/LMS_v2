@@ -75,7 +75,7 @@ def intake_error(questions):
                         pair = None
                     valid = (isinstance(pair, dict) and isinstance(pair.get('imageUrl'), str)
                              and pair.get('kind', 'image_matching_pair') == 'image_matching_pair'
-                             and pair['imageUrl'].lower().startswith(('http://', 'https://', 'data:image/'))
+                             and pair['imageUrl'].lower().startswith(('http://', 'https://', 'data:image/', '/curriculum_api/curriculum/uploads/'))
                              and str(pair.get('match') or pair.get('right') or '').strip())
                 else:
                     parts = re.split(r'\s*(?:->|=>|=)\s*', text, maxsplit=1)

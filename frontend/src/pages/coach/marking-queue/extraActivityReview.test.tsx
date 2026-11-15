@@ -1,5 +1,5 @@
 import userEvent from '@testing-library/user-event';
-import { cleanup, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import CoachMarkingReviewPage from '../marking-review/page';
@@ -107,11 +107,16 @@ it.each([['accepted', 'Accept extra activity and send feedback'], ['rejected', '
   </Routes></MemoryRouter>);
   await screen.findByRole('heading', { name: submission.activityTitle });
   const user = userEvent.setup();
-  await user.type(screen.getByLabelText('Review feedback'), 'Evidence reviewed for this extra activity.');
+  const feedback = '<p>Evidence <strong>reviewed</strong> for this extra activity.</p>';
+  const editor = screen.getByRole('textbox', { name: 'Review feedback editor' });
+  // jsdom does not implement native rich-text editing. Supply the browser's
+  // resulting HTML and trigger the visible editor's real input handler.
+  editor.innerHTML = feedback;
+  fireEvent.input(editor);
   await user.click(screen.getByRole('button', { name: button }));
   await screen.findByText('Queue destination');
   const call = mocks.coachFetch.mock.calls.find(([, options]) => options?.method === 'PATCH');
-  expect(JSON.parse(call?.[1].body)).toMatchObject({ decision, feedback: 'Evidence reviewed for this extra activity.' });
+  expect(JSON.parse(call?.[1].body)).toMatchObject({ decision, feedback });
 });
 
 it('keeps the dedicated extra activity review in its own queue and shows coach provenance', async () => {
@@ -130,9 +135,14 @@ it('keeps the dedicated extra activity review in its own queue and shows coach p
   expect(await screen.findByText('Added and originally approved by: Original Coach')).toBeVisible();
   expect(screen.getByText('Full activity description')).toBeVisible();
   const user = userEvent.setup();
-  await user.type(screen.getByLabelText('Review feedback'), 'Reviewed this additional learning activity.');
+  const feedback = '<p>Reviewed this additional learning activity.</p>';
+  const editor = screen.getByRole('textbox', { name: 'Review feedback editor' });
+  editor.innerHTML = feedback;
+  fireEvent.input(editor);
   await user.click(screen.getByRole('button', { name: 'Accept extra activity and send feedback' }));
   expect(await screen.findByText('Extra activities destination')).toBeVisible();
+  const call = mocks.coachFetch.mock.calls.find(([, options]) => options?.method === 'PATCH');
+  expect(JSON.parse(call?.[1].body)).toMatchObject({ decision: 'accepted', feedback });
   expect(mocks.coachFetch.mock.calls.some(([url]) => url.includes('/marking-queue?'))).toBe(false);
 });
 

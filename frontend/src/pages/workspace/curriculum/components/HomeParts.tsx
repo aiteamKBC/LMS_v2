@@ -3,22 +3,14 @@ import { AppIcon } from '@/components/feature/AppIcon';
 import type { HomeModule, ProgrammeFocus } from '../useCurriculumHome';
 import { clean } from './attentionMeta';
 
-const STATUS_TONES: Record<string, string> = {
-  published: 'bg-emerald-50 text-emerald-700',
-  active: 'bg-emerald-50 text-emerald-700',
-  draft: 'bg-amber-50 text-amber-700',
-  archived: 'bg-background-200 text-foreground-600',
-};
-
-/** The module's own status in words; a blank status reads as a draft, as before. */
-export function ModuleStatusBadge({ status }: { status: string }) {
-  const key = clean(status).toLowerCase() || 'draft';
-  const label = key.charAt(0).toUpperCase() + key.slice(1);
-  return <span className={`inline-flex shrink-0 rounded-full px-2 py-1 text-[9px] font-extrabold uppercase ${STATUS_TONES[key] ?? 'bg-sky-50 text-sky-700'}`}>{label}</span>;
+/** When the module was last edited, as a date; '' when the database has no stamp. */
+export function lastEditedLabel(value: string) {
+  const parsed = new Date(clean(value));
+  return Number.isNaN(parsed.getTime()) ? '' : parsed.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
 }
 
 export function ContinueModuleRow({ module, onOpen }: { module: HomeModule; onOpen: () => void }) {
-  return <button type="button" onClick={onOpen} className="group flex min-h-[58px] w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left transition-all duration-200 hover:bg-primary-50/35 focus:outline-none focus:ring-2 focus:ring-primary-300 focus:ring-inset"><span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary-50 text-primary-700"><AppIcon className="ri-layout-4-line" /></span><span className="min-w-0 flex-1"><span className="block truncate text-[12px] font-bold text-foreground-900">{clean(module.name) || 'Untitled module'}</span><span className="mt-0.5 block truncate text-[10px] leading-4 text-foreground-500">{clean(module.programme) || 'Reusable module'} · {Number(module.weeks || 0)} weeks</span></span><ModuleStatusBadge status={module.status} /><AppIcon className="ri-arrow-right-s-line shrink-0 text-foreground-300 transition-colors group-hover:text-primary-600" /></button>;
+  return <button type="button" onClick={onOpen} className="group flex min-h-[58px] w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left transition-all duration-200 hover:bg-primary-50/35 focus:outline-none focus:ring-2 focus:ring-primary-300 focus:ring-inset"><span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary-50 text-primary-700"><AppIcon className="ri-layout-4-line" /></span><span className="min-w-0 flex-1"><span className="block truncate text-[12px] font-bold text-foreground-900">{clean(module.name) || 'Untitled module'}</span><span className="mt-0.5 block truncate text-[10px] leading-4 text-foreground-500">{clean(module.programme) || 'Reusable module'} · {Number(module.weeks || 0)} weeks</span></span>{lastEditedLabel(module.lastUpdated) && <span className="shrink-0 text-[10px] font-semibold text-foreground-500">Edited {lastEditedLabel(module.lastUpdated)}</span>}<AppIcon className="ri-arrow-right-s-line shrink-0 text-foreground-300 transition-colors group-hover:text-primary-600" /></button>;
 }
 
 export function ProgrammeFocusCard({ item, onOpen }: { item: ProgrammeFocus; onOpen: () => void }) {

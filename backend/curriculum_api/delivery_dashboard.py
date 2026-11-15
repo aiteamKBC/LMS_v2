@@ -9,7 +9,10 @@ from .calendar_read_rows import live_rows
 
 FLAGS = ('deleted_at', 'is_programme_deleted', 'is_deleted', 'isDeleted', 'isProgrammeDeleted', 'library_state')
 MODULE_FIELDS = ('module_catalogue_id', 'title', 'programme_id', 'programme_name', 'cohort_id',
-                 'cohort_name', 'group_id', 'group_name', 'sessions_number', 'status', 'tutor_name',
+                 'cohort_name', 'group_id', 'group_name', 'sessions_number', 'status',
+                 # tutor_name is not stored: curriculum_names resolves it from tutor_id,
+                 # so a read without tutor_id reports every module as untutored.
+                 'tutor_id', 'tutor_name',
                  'start_date', 'end_date', 'source_type', 'is_archived', *FLAGS)
 
 
@@ -42,12 +45,25 @@ def build_overview():
         allocated = {views.clean_str(row.get('id')) for row in training if views.is_operational_training_row(row)}
         visible_modules = [row for row in modules if views.clean_str(row.get('module_catalogue_id')) in allocated
                            and not views.module_authoring_row_is_archived(row)]
+        # Module Builder counts every live module; Delivery counts only those placed
+        # in a group. These totals let the page say where the others are.
+        live = [row for row in modules if not views.module_authoring_row_is_archived(row)
+                and not views.programme_deleted_row(row)]
+
+        def placed(row, key):
+            return bool(views.clean_str(row.get(key)))
+
         return {
+            'moduleTotals': {
+                'all': len(live),
+                'cohortOnly': sum(1 for row in live if placed(row, 'cohort_id') and not placed(row, 'group_id')),
+                'unplaced': sum(1 for row in live if not placed(row, 'cohort_id') and not placed(row, 'group_id')),
+            },
             'modules': [{
                 'id': views.clean_str(row.get('module_catalogue_id')),
                 'moduleCatalogueId': views.clean_str(row.get('module_catalogue_id')),
-                'groupId': views.clean_str(row.get('group_id')), 'cohortId': views.clean_str(row.get('cohort_id')),
-                'tutor': views.clean_str(row.get('tutor_name')), 'status': views.clean_str(row.get('status')),
+                'groupId': views.clean_str(row.get('group_id')),
+                'tutor': views.clean_str(row.get('tutor_name')),
                 'isFreeCourse': views.clean_str(row.get('source_type')).lower() == 'free_course',
             } for row in visible_modules],
             'cohorts': [{key: row.get(key) for key in ('id', 'status')} for row in cohort_rows],
@@ -126,7 +142,7 @@ def calendar_sessions(request):
 
 def response_for(request, section, build):
     try:
-        payload = views.cached_curriculum_value(f'delivery-dashboard:v1:{section}', build,
+        payload = views.cached_curriculum_value(f'delivery-dashboard:v3:{section}', build,
             force=views.request_bypasses_curriculum_cache(request), ttl=30)
     except DatabaseError:
         return JsonResponse({'error': 'Delivery data could not be loaded. Please try again.'}, status=503)

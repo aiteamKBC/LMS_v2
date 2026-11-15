@@ -3651,7 +3651,7 @@ class CurriculumPayloadPerformanceTests(SimpleTestCase):
             'sessionNames': ['Week 1', 'Week 2', 'Week 3'],
             'deliveryMetadata': {'teamsMeetingUrl': 'https://teams.example.invalid/x'},
             'author': '', 'assignments': 0, 'qualityScore': 72, 'sourceType': 'authoring',
-            'deliveryRowId': 17, 'legacyModuleId': 'old', 'invalidModuleCatalogueId': 'bad',
+            'deliveryRowId': 17, 'invalidModuleCatalogueId': 'bad',
             'somethingAddedNextYear': 'must not leak',
         }
 

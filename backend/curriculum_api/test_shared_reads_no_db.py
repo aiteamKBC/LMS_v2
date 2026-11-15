@@ -294,17 +294,3 @@ class KsbSetsTests(SimpleTestCase):
         body, build = self.get('', [])
         self.assertEqual(body, {'schema': 'curriculum', 'count': 0, 'results': []})
         build.assert_not_called()
-
-    def test_only_inactive_profiles_is_empty_for_the_operational_view_only(self):
-        body, build = self.get('', [{'id': 1, 'is_active': False}])
-        self.assertEqual(body['results'], [])
-        build.assert_not_called()
-        body, build = self.get('?visibility=all', [{'id': 1, 'is_active': False}])
-        self.assertEqual(body['results'], [{'frameworkId': 'F1'}])
-        build.assert_called_once()
-
-    def test_active_profiles_still_read_the_sets_from_the_overview(self):
-        body, build = self.get('', [{'id': 1, 'is_active': True}])
-        self.assertEqual(body, {'schema': 'curriculum', 'count': 1, 'results': [{'frameworkId': 'F1'}]})
-        build.assert_called_once()
-

@@ -17,6 +17,10 @@ class VideoImportError(Exception):
     """A safe, user-facing error (never an upstream body, URL or credential)."""
 
 
+class VideoUploadConflict(VideoImportError):
+    """The upload endpoint refuses a video identity that already received bytes."""
+
+
 COLLECTION_NAMES = {
     'PROG-MM-L6': ('Marketing Manager Level 6',),
     'PROG-ME-L4': ('Marketing Executive Level 4', 'Marketing Excutive Level 4'),
@@ -88,6 +92,9 @@ class BunnyStream:
         try:
             if response.status_code in (401, 403):
                 raise VideoImportError('Bunny rejected the library API key or its permissions.')
+            if (response.status_code == 400 and method.upper() == 'PUT'
+                    and re.fullmatch(r'/videos/[0-9a-fA-F-]{36}', path)):
+                raise VideoUploadConflict('Bunny has already received an upload for this video. Retry the saved import.')
             if not 200 <= response.status_code < 300:
                 raise VideoImportError(f'Bunny returned HTTP {response.status_code}. The original video is unchanged.')
             try:

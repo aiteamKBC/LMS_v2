@@ -74,13 +74,14 @@ class Command(BaseCommand):
                 moved += 1
                 moved_bytes += byte_count or 0
                 continue
-            stored = views.stored_module_cover_image(module_catalogue_id, value)
-            if stored == value:
-                # stored_module_cover_image() returns the value unchanged when it
-                # could not store it, and says why in the log.
+            try:
+                stored = views.stored_module_cover_image(module_catalogue_id, value)
+            except views.CoverImageError as error:
+                # Not a storable image (unknown type, bad base64) or storage is
+                # down; the log has the detail. The row is left as it was.
                 failed.append(module_catalogue_id)
                 self.stdout.write(
-                    self.style.WARNING(f'  {module_catalogue_id}: could not be stored, left as it was.')
+                    self.style.WARNING(f'  {module_catalogue_id}: could not be stored ({error}), left as it was.')
                 )
                 continue
             self.stdout.write(f'  {module_catalogue_id}: {byte_count:,} bytes -> {stored}')

@@ -23,6 +23,16 @@ from .quality_review_types import review_type, saved_type
 logger=logging.getLogger(__name__)
 
 
+def rating_counts(row):
+    value = row.get('rating_counts')
+    if isinstance(value, str):
+        try:
+            return json.loads(value)
+        except (TypeError, ValueError):
+            return None
+    return value
+
+
 def document_state(saved):
     if saved['status']!='completed':
         return None
@@ -192,7 +202,8 @@ def reviews(request):
           'learnerId':row['learner_id'],'learnerName':row['learner_name'],'startsAt':row['starts_at'].isoformat(),
           'status':row['status'],'version':row['version'],'updatedAt':row['updated_at'].isoformat(),
           'reviewerName':row.get('reviewer_name') or '',
-          'title':row['title'],'reviewType':row.get('review_type',''),'formTitle':row.get('form_title'),'actionCount':row['action_count'],'pdfVersion':row.get('pdf_version')} for row in rows], 'nextOffset':next_offset,'coaches':_coaches()})
+          'title':row['title'],'reviewType':row.get('review_type',''),'formTitle':row.get('form_title'),'actionCount':row['action_count'],
+          'ratingCounts':rating_counts(row),'pdfVersion':row.get('pdf_version')} for row in rows], 'nextOffset':next_offset,'coaches':_coaches()})
     value = body(request)
     data,failure = context(request,value.get('learnerId',''),value.get('reviewType'))
     if failure is not None:
