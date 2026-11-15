@@ -81,15 +81,18 @@ vi.mock('@/pages/curriculum/week-builder/weekTemplateData', () => ({
 vi.mock('@/pages/curriculum/shared/components/weekAuthoringLazy', () => ({
   ComponentEditor: ({ component, moduleId }: { component: { id: string; type: string; title: string; settings: Record<string, unknown> }; moduleId: string }) => component.type === 'video'
     ? <CurriculumVideoUpload targetId={moduleId} componentId={component.id} title={component.title} source={String(component.settings.videoUrl || '')} /> : null,
-  WeekComponentRail: ({ components, onChange, onSelectId, renderComponentList, selectedId }: {
+  WeekComponentRail: ({ components, onChange, onSelectId, renderComponentList, selectedId, otherWeeks, onMoveComponentToWeek }: {
     components: Array<{ id: string; title: string }>;
     onChange: (components: Array<{ id: string }>) => void;
     onSelectId: (id: string) => void;
     selectedId: string | null;
+    otherWeeks?: { id: string; label: string }[];
+    onMoveComponentToWeek?: (component: { id: string; title: string }, weekId: string) => void;
     renderComponentList?: (items: { component: { id: string; title: string }; node: ReactNode }[], searchTerm: string) => ReactNode;
   }) => (
     <>
       <button type="button" onClick={() => onChange([...components].reverse())}>Reorder components</button>
+      {components.length > 0 && otherWeeks?.length ? <button type="button" onClick={() => onMoveComponentToWeek?.(components[0], otherWeeks[0].id)}>Move first component to next week</button> : null}
       {renderComponentList
         ? renderComponentList(components.map(component => ({ component, node: <button type="button" aria-current={selectedId === component.id ? 'true' : undefined} onClick={() => onSelectId(component.id)}>{component.title}</button> })), '')
         : components.map(component => <button key={component.id} type="button" onClick={() => onSelectId(component.id)}>{component.title}</button>)}
@@ -287,14 +290,16 @@ describe('Module Builder auto-save', { timeout: 25000 }, () => {
     });
   });
 
-  it('shows draft Points under the expanded course week and opens their activities', async () => {
+  it('shows component cards inside their collapsible Point and retains unsaved Point edits', async () => {
     await openWorkspace();
     fireEvent.change(await screen.findByLabelText('Point 1 name'), { target: { value: 'Week introduction' } });
-    fireEvent.click(screen.getByRole('checkbox', { name: 'First reading' }));
+    fireEvent.click(screen.getByRole('checkbox', { name: 'First component' }));
     fireEvent.click(screen.getByRole('button', { name: 'Collapse Week one' }));
     fireEvent.click(screen.getByRole('button', { name: 'Expand Week one' }));
-    const nav = within(await screen.findByRole('navigation', { name: 'Week Points navigation' }));
+    const nav = within(await screen.findByRole('region', { name: 'Week components' }));
     fireEvent.click(nav.getByRole('button', { name: 'Week introduction, 1 activity' }));
+    expect(within(nav.getByRole('group', { name: 'Week introduction components' })).getByRole('button', { name: 'First component' })).toBeVisible();
+    expect(nav.queryByText('Other components')).not.toBeInTheDocument();
     fireEvent.click(nav.getByRole('button', { name: /First component/ }));
     await waitFor(() => expect(nav.getByRole('button', { name: /First component/ })).toHaveAttribute('aria-current', 'true'));
     expect(saveModuleStructure).not.toHaveBeenCalled();
@@ -368,8 +373,7 @@ describe('Module Builder auto-save', { timeout: 25000 }, () => {
     video.type = 'video';
     video.settings = { sourceType: 'YouTube', videoUrl: 'https://www.youtube.com/watch?v=abcdefghijk' };
     await openWorkspace('', structure);
-    await userEvent.click(await screen.findByRole('button', { name: 'Other components, 2 activities' }));
-    await userEvent.click(screen.getByText('First component'));
+    await userEvent.click(await screen.findByText('First component'));
     await userEvent.click(screen.getByTestId('module-builder-save'));
     await waitFor(() => expect(saveModuleStructure).toHaveBeenCalledTimes(1));
     expect(saveModuleStructure.mock.calls[0][2]).toMatchObject({ source: 'manual', importVideoComponentIds: ['COMPONENT-1'] });
@@ -381,8 +385,7 @@ describe('Module Builder auto-save', { timeout: 25000 }, () => {
     const structure = storedStructure();
     structure.weekStructure[0].components[0].type = 'video';
     await openWorkspace('', structure);
-    await userEvent.click(await screen.findByRole('button', { name: 'Other components, 2 activities' }));
-    await userEvent.click(screen.getByText('First component'));
+    await userEvent.click(await screen.findByText('First component'));
     await screen.findByText('Uploading to Bunny');
     await userEvent.click(screen.getByTestId('module-builder-save'));
     await waitFor(() => expect(saveModuleStructure).toHaveBeenCalledOnce());
@@ -480,8 +483,7 @@ describe('Module Builder auto-save', { timeout: 25000 }, () => {
       return { ...module, structureRevision: 'rev-2' };
     });
     await openWorkspace('', structure);
-    await userEvent.click(await screen.findByRole('button', { name: 'Other components, 2 activities' }));
-    await userEvent.click(screen.getByText('First component'));
+    await userEvent.click(await screen.findByText('First component'));
     const picker = screen.getByLabelText('Upload MP4 to LMS and Bunny');
     expect(picker).toBeEnabled();
     fireEvent.change(picker, { target: { files: [new File(['video'], 'new-video.mp4')] } });
@@ -498,7 +500,7 @@ describe('Module Builder auto-save', { timeout: 25000 }, () => {
     collaborationTest.enabled = true;
     const title = await openWorkspace('', { ...storedStructure(), isFreeCourse } as ReturnType<typeof storedStructure>);
     await userEvent.type(title, '!');
-    await userEvent.click(screen.getByRole('button', { name: 'Reorder components' }));
+    await userEvent.click(await screen.findByRole('button', { name: 'Reorder components' }));
     await userEvent.click(screen.getByTestId('module-builder-save'));
     await waitFor(() => expect(saveModuleStructure).toHaveBeenCalledTimes(1));
     expect(saveCalls()[0][1].weekStructure[0].title).toBe('Week one');
@@ -708,12 +710,81 @@ describe('Module Builder auto-save', { timeout: 25000 }, () => {
   it('saves the component order chosen in the course structure', async () => {
     await openWorkspace();
 
-    await userEvent.click(screen.getByRole('button', { name: 'Reorder components' }));
+    await userEvent.click(await screen.findByRole('button', { name: 'Reorder components' }));
     await userEvent.click(screen.getByTestId('module-builder-save'));
 
     await waitFor(() => expect(saveModuleStructure).toHaveBeenCalledTimes(1));
     expect(saveCalls()[0][1].weekStructure[0].components.map(component => component.id))
       .toEqual(['COMPONENT-2', 'COMPONENT-1']);
+  });
+
+  it('creates a new week without an Other components wrapper and preserves the existing week on save', async () => {
+    await openWorkspace();
+    await userEvent.click(screen.getByRole('button', { name: /^Week$/ }));
+    expect(await screen.findByLabelText('Week title')).toHaveValue('Week 2');
+    await screen.findByRole('button', { name: 'Collapse Week 2' });
+    expect(screen.queryByText('Other components')).not.toBeInTheDocument();
+    await userEvent.click(screen.getByTestId('module-builder-save'));
+    await waitFor(() => expect(saveModuleStructure).toHaveBeenCalledOnce());
+    expect(saveModuleStructure.mock.calls[0][1].weekStructure).toEqual([
+      expect.objectContaining({ id: 'WEEK-1', title: 'Week one', components: [
+        expect.objectContaining({ id: 'COMPONENT-1' }), expect.objectContaining({ id: 'COMPONENT-2' }),
+      ] }),
+      expect.objectContaining({ title: 'Week 2', weekNumber: 2, components: [] }),
+    ]);
+  });
+
+  it('removes a moved component from its source Point while saving it in the destination week', async () => {
+    const stored = storedStructure();
+    const source = stored.weekStructure[0];
+    const structure = { ...stored, weekStructure: [source, { ...source, id: 'WEEK-2', weekNumber: 2, title: 'Week two', components: [] }] };
+    vi.mocked(authoredWeekPoints).mockImplementation(async (moduleId, weekId, saved) => ({
+      moduleId, weekId, editorId: 'synthetic', csrfToken: 'synthetic', revision: saved ? 1 : 0,
+      points: saved?.points || (weekId === 'WEEK-1' ? [{ id: 'P1', title: 'Explore', componentIds: ['COMPONENT-1'] }] : []), activities: [],
+    }));
+    await openWorkspace('', structure);
+    await screen.findByRole('button', { name: 'Explore, 1 activity' });
+    await userEvent.click(screen.getByRole('button', { name: 'Move first component to next week' }));
+    await userEvent.click(screen.getByTestId('module-builder-save'));
+    await waitFor(() => expect(saveModuleStructure).toHaveBeenCalledOnce());
+    expect(saveModuleStructure.mock.calls[0][1].weekStructure.map((week: { components: { id: string }[] }) => week.components.map(component => component.id)))
+      .toEqual([['COMPONENT-2'], ['COMPONENT-1']]);
+    await waitFor(() => expect(vi.mocked(authoredWeekPoints).mock.calls.filter(call => call[2])).toHaveLength(1));
+    expect(vi.mocked(authoredWeekPoints).mock.calls.find(call => call[2]))
+      .toEqual(['MOD-AUTOSAVE-1', 'WEEK-1', expect.objectContaining({ points: [{ id: 'P1', title: 'Explore', componentIds: [] }] })]);
+  });
+
+  it('saves dragged weeks in their new order with dates assigned by timetable position', async () => {
+    const stored = storedStructure();
+    const first = { ...stored.weekStructure[0], components: stored.weekStructure[0].components.map(component => ({
+      ...component, settings: { readingContent: `Saved content for ${component.id}` },
+    })) };
+    const secondComponents = first.components.map(component => ({ ...component, id: `SECOND-${component.id}` }));
+    const structure = { ...stored, weekStructure: [
+      { ...first, sessionDate: '2026-11-16', sessionDay: 'Monday' },
+      { ...first, id: 'WEEK-2', weekNumber: 2, title: 'Week two', sessionDate: '2026-11-23', sessionDay: 'Monday', components: secondComponents },
+    ] };
+    const before = structuredClone(structure);
+    const title = await openWorkspace('', structure);
+    const source = (await screen.findByRole('button', { name: 'Collapse Week one' })).parentElement!;
+    const target = screen.getByRole('button', { name: 'Expand Week two' }).parentElement!;
+    const dataTransfer = { effectAllowed: 'none' };
+
+    fireEvent.dragStart(source, { dataTransfer });
+    fireEvent.dragOver(target, { dataTransfer });
+    fireEvent.drop(target, { dataTransfer });
+    fireEvent.dragEnd(source, { dataTransfer });
+
+    // The selected week stays selected as it moves, and nothing is saved until Save.
+    expect(title).toHaveValue('Week one');
+    expect(saveModuleStructure).not.toHaveBeenCalled();
+    await userEvent.click(screen.getByTestId('module-builder-save'));
+    await waitFor(() => expect(saveModuleStructure).toHaveBeenCalledOnce());
+    expect(saveModuleStructure.mock.calls[0][1].weekStructure).toEqual([
+      expect.objectContaining({ id: 'WEEK-2', weekNumber: 1, sessionDate: '2026-11-16', sessionDay: 'Monday', components: secondComponents.map(component => expect.objectContaining({ ...component, settings: expect.objectContaining(component.settings) })) }),
+      expect.objectContaining({ id: 'WEEK-1', weekNumber: 2, sessionDate: '2026-11-23', sessionDay: 'Monday', components: first.components.map(component => expect.objectContaining({ ...component, settings: expect.objectContaining(component.settings) })) }),
+    ]);
+    expect(structure).toEqual(before);
   });
 
   it('holds every edit until Save is pressed once auto save is turned off again', async () => {

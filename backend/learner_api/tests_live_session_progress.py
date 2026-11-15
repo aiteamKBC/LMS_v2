@@ -107,30 +107,54 @@ class LiveSessionProgressTests(SimpleTestCase):
         self.assertEqual(refreshed[0]['timeTrackingSource'], 'verified_teams_attendance')
         self.assertEqual(refreshed[0]['feedback'], 'Keep this reflection')
 
-    def test_manual_completion_gets_fixed_credit_without_fabricating_attendance(self):
+    def test_manual_completion_keeps_entered_time_without_fixed_credit(self):
         saved = [{'kind': 'component', 'componentId': 'C1', 'componentType': 'live_session',
-                  'moduleId': 'M1', 'submittedAt': NOW.isoformat(), 'timeTaken': '120:00',
-                  'reportedTime': '120.0 minutes', 'claimedSeconds': 7200,
+                  'moduleId': 'M1', 'submittedAt': NOW.isoformat(), 'timeTaken': '60:00',
+                  'reportedTime': '60.0 minutes', 'claimedSeconds': 3600,
                   'timeTrackingSource': 'signed_session_capped_visible_page:input',
                   'feedback': 'Keep the saved reflection', 'retakeTimeChoice': 'add'}]
         before = deepcopy(saved)
         credits = project_completed_live_credits([component()], saved * 2)
-        self.assertEqual(len(credits), 1)
-        self.assertEqual(credits[0]['hours'], 2.5)
-        self.assertEqual(credits[0]['timeTrackingSource'], 'completed_live_session')
-        self.assertNotIn('verifiedSeconds', credits[0])
+        self.assertEqual(credits, [])
         result = supplement_component_progress(saved, credits)
-        self.assertEqual(result[0]['reportedTime'], '150 minutes')
-        self.assertIsNone(result[0]['claimedSeconds'])
-        self.assertIsNone(result[0]['timeTaken'])
-        self.assertEqual(result[0]['retakeTimeChoice'], 'correct')
-        self.assertEqual(result[0]['feedback'], saved[0]['feedback'])
+        self.assertEqual(result, saved)
         self.assertEqual(supplement_component_progress(result, credits), result)
         self.assertEqual(saved, before)
-        metrics = {'M1': {'hours': {'actual': 2}}}
+        from .active_users import completed_hours_value_from_progress
+        self.assertEqual(completed_hours_value_from_progress(result), 1)
+        metrics = {'M1': {'hours': {'actual': 1}}, 'OTHER': {'hours': {'actual': 4}}}
         self.assertEqual(supplement_module_hours(metrics,
-            [{'component_ref': 'C1', 'actual_seconds': 7200, 'accepted': True}], credits
-        )['M1']['hours']['actual'], 2.5)
+            [{'component_ref': 'C1', 'actual_seconds': 3600, 'accepted': True}], credits), metrics)
+
+    def test_input_attempt_does_not_inherit_fixed_credit_from_a_legacy_attempt(self):
+        legacy = dict(kind='component', componentId='C1', moduleId='M1', submittedAt=NOW.isoformat())
+        manual = {**legacy, 'timeTrackingSource': 'signed_session_capped_visible_page:input'}
+        for attempts in ([legacy, manual], [manual, legacy]):
+            self.assertEqual(project_completed_live_credits([component()], attempts), [])
+        for changes in ({'passed': False}, {'moduleId': 'OTHER'}, {'componentId': 'OTHER'},
+                        {'deletedAt': NOW.isoformat()}, {'submittedAt': None}):
+            self.assertEqual(len(project_completed_live_credits([component()], [legacy, manual | changes])), 1)
+
+    def test_input_time_survives_reloading_absent_learner_in_both_delivery_modes(self):
+        for kind in ('commercial', 'apprenticeship'):
+            for mode in ('live', 'lazy'):
+                with self.subTest(kind=kind, mode=mode), \
+                     patch('learner_api.recorded_attendance.saved_delivery_mode', return_value=mode), \
+                     patch('learner_api.recorded_session_progress.read_recorded_credits', return_value=[]), \
+                     patch('learner_api.models.LearnerProgressEntry') as entries:
+                    source = SimpleNamespace(id=7, learner_type=kind,
+                        _case_file_profile=SimpleNamespace(pk=70, enrolment_id=7))
+                    entries.objects.using.return_value.filter.return_value.order_by.return_value.values.return_value = [
+                        dict(component_ref='C1', module_ref='M1', kind='component', passed=None, submitted_at=NOW,
+                             time_tracking_source='signed_session_capped_visible_page:input')]
+                    self.saved.side_effect = read_completed_live_credits
+                    credits = read_live_credits(source, components=[component()],
+                        register=[lecture(attendance_status='absent', attended_seconds=0)])
+                    self.assertEqual(credits, [])
+                    entries.objects.using.return_value.filter.assert_called_once_with(
+                        learner_id=70, component_ref__in=['C1'], kind='component', deleted_at__isnull=True)
+                    self.assertIn('time_tracking_source',
+                        entries.objects.using.return_value.filter.return_value.order_by.return_value.values.call_args.args)
 
     def test_saved_credit_requires_successful_owned_live_completion(self):
         saved = {'kind': 'component', 'componentId': 'C1', 'moduleId': 'M1', 'submittedAt': NOW.isoformat()}
@@ -144,7 +168,8 @@ class LiveSessionProgressTests(SimpleTestCase):
         source = SimpleNamespace(id=7, _case_file_profile=SimpleNamespace(pk=70, enrolment_id=7))
         with patch('learner_api.models.LearnerProgressEntry') as entries:
             entries.objects.using.return_value.filter.return_value.order_by.return_value.values.return_value = [
-                dict(component_ref='C1', module_ref='M1', kind='component', passed=None, submitted_at=NOW)]
+                dict(component_ref='C1', module_ref='M1', kind='component', passed=None, submitted_at=NOW,
+                     time_tracking_source='')]
             credits = read_completed_live_credits(source, [component()])
         entries.objects.using.assert_called_once_with('enrolment')
         entries.objects.using.return_value.filter.assert_called_once_with(

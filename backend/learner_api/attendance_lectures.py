@@ -957,6 +957,8 @@ def build_lectures(register, legacy_meta, legacy_activities, components, kind, l
                 lecture['title'] = _text(component.get('week_title')) or component['title'] or lecture['title']
                 lecture['contentSummary'] = component['description'] or component['settings'].get('sessionPurpose') or ''
                 lecture['componentHref'] = f"/learner/component/{kind}/{learner_id}/{component['id']}"
+                if component.get('week_id') is not None:
+                    lecture['weekId'] = str(component['week_id'])
                 lecture['ksbs'] = _component_ksbs(component)
                 if lecture['ksbs']:
                     lecture['ksbScope'] = 'lecture'

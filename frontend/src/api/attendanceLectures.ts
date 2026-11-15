@@ -14,6 +14,8 @@ export interface AttendanceLecture {
   startTime: string; endTime: string; durationMinutes: number | null;
   startsAt?: string | null; endsAt?: string | null; joinUrl?: string;
   componentHref?: string;
+  /** Authored training week of the mapped component; independent of occurrence rescheduling. */
+  weekId?: string;
   tutor?: string; coach?: string; attendanceConfirmed?: boolean; creditedMinutes?: number | null;
   contentSummary: string; ksbs: string[]; activities: LectureActivity[];
   ksbScope?: 'lecture' | 'activities' | 'module' | null;

@@ -5,11 +5,11 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { WebWeekPointsEditor } from './WebWeekPointsEditor';
 import { authoredWeekPoints, type AuthoredWeekPoints } from '@/api/webWeekPoints';
 
-function Workspace({ weekId = 'W1' }: { moduleId?: string; weekId?: string }) {
+function Workspace({ weekId = 'W1', activities }: { moduleId?: string; weekId?: string; activities?: AuthoredWeekPoints['activities'] }) {
   const drafts = useWeekPointDrafts('M1', ['W1', 'W2']);
   const [message, setMessage] = useState('');
   return <>
-    <WebWeekPointsEditor key={weekId} moduleId="M1" weekId={weekId} drafts={drafts} />
+    <WebWeekPointsEditor key={weekId} moduleId="M1" weekId={weekId} drafts={drafts} activities={activities} />
     <button onClick={() => { void drafts.save('M1', ['W1', 'W2']).then(() => setMessage('Week Points saved.')).catch(error => setMessage(error.message)); }}>Save module</button>
     <p role="alert">{message}</p>
   </>;
@@ -24,6 +24,15 @@ const initial: AuthoredWeekPoints = {
 beforeEach(() => { sessionStorage.clear(); vi.mocked(authoredWeekPoints).mockReset(); vi.mocked(authoredWeekPoints).mockResolvedValue(structuredClone(initial)); });
 
 describe('curriculum week Points', () => {
+  it('offers newly authored components without reloading or saving the week first', async () => {
+    render(<Workspace activities={[...initial.activities, { id: 'NEW', title: 'New video', type: 'video' }]} />);
+    await screen.findByRole('textbox', { name: 'Point 1 name' });
+    const first = within(screen.getByRole('group', { name: 'Point 1' }));
+    fireEvent.click(first.getByRole('checkbox', { name: 'New video' }));
+    expect(first.getByRole('checkbox', { name: 'New video' })).toBeChecked();
+    expect(within(screen.getByRole('group', { name: 'Point 2' })).getByRole('checkbox', { name: 'New video (in another Point)' })).toBeDisabled();
+    expect(vi.mocked(authoredWeekPoints).mock.calls.every(call => !call[2])).toBe(true);
+  });
   it('does not restore discarded edits after returning to the saved values', async () => {
     const { unmount } = render(<Workspace moduleId="M1" weekId="W1" />);
     const name = await screen.findByRole('textbox', { name: 'Point 1 name' });

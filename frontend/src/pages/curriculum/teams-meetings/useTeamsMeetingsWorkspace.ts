@@ -115,6 +115,8 @@ export const STATE_TONES: Record<CalendarState, string> = {
 };
 
 export interface MeetingRow {
+  scheduleMode?: CurriculumModule['scheduleMode'];
+  weeklySchedule?: CurriculumModule['weeklySchedule'];
   module: CurriculumModule;
   catalogueId: string;
   name: string;
@@ -703,6 +705,8 @@ export function useTeamsMeetingsWorkspace(options: TeamsMeetingsWorkspaceOptions
 
       return {
         module,
+        scheduleMode: module.scheduleMode,
+        weeklySchedule: module.weeklySchedule,
         catalogueId,
         name: cleanText(module.name, 'Untitled module'),
         programmeName: context.programmeName,
