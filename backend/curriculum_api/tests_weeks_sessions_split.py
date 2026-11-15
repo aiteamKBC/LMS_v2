@@ -15,10 +15,10 @@ import json
 from datetime import datetime
 
 from curriculum_api import views
-from curriculum_api.tests import CurriculumPersistenceHarness
+from curriculum_api.tests import CurriculumPersistenceTransactionHarness
 
 
-class WeeksAndSessionsAreStoredApart(CurriculumPersistenceHarness):
+class WeeksAndSessionsAreStoredApart(CurriculumPersistenceTransactionHarness):
     """The counts a module carries, and which of them each feature reads."""
 
     def create_module(self, *, week_days='Monday, Thursday', weeks=5, sessions=10):
@@ -63,6 +63,12 @@ class WeeksAndSessionsAreStoredApart(CurriculumPersistenceHarness):
         response = self.post_json('/curriculum_api/curriculum/groups/GROUP-DATA-1/modules/', {
             'moduleName': 'Two sessions each week',
             'startDate': '2026-09-07', 'weeks': 4, 'sessionsNumber': 8,
+            # A module override opts into Custom; Group remains the default.
+            'scheduleMode': 'custom',
+            'weeklySchedule': [
+                {'day': day, 'startTime': '09:00', 'endTime': '11:00'}
+                for day in ('Monday', 'Thursday')
+            ],
             'weekDays': 'Monday, Thursday', 'startTime': '09:00', 'endTime': '11:00',
             'tutor': 'Tutor One',
         })
@@ -97,6 +103,10 @@ class WeeksAndSessionsAreStoredApart(CurriculumPersistenceHarness):
 
         response = self.patch_json(f'/curriculum_api/curriculum/modules/{module_id}/', {
             'weekDays': 'Tuesday, Friday', 'sessionsNumber': 8,
+            'weeklySchedule': [
+                {'day': day, 'startTime': '09:00', 'endTime': '11:00'}
+                for day in ('Tuesday', 'Friday')
+            ],
         })
         self.assertEqual(response.status_code, 200, response.content)
         after = views.get_authoring_structure_payload(module_id)
@@ -138,6 +148,15 @@ class WeeksAndSessionsAreStoredApart(CurriculumPersistenceHarness):
         ``updated: True``. A trailing shell may go; an authored week may not.
         """
         catalogue_id = self.create_module(weeks=12, sessions=12, week_days='Monday')
+        # The catalogue's metadata-only create does not author week rows.
+        # Seed the authored structure this preservation regression exercises.
+        views.save_module_authoring_structure(catalogue_id, {
+            **views.get_authoring_structure_payload(catalogue_id),
+            'weekStructure': [
+                {'weekNumber': index + 1, 'title': f'Week {index + 1}', 'components': []}
+                for index in range(12)
+            ],
+        })
         structure = views.get_authoring_structure_payload(catalogue_id)
         weeks = structure['weekStructure']
         self.assertEqual(len(weeks), 12)
@@ -219,6 +238,8 @@ class WeeksAndSessionsAreStoredApart(CurriculumPersistenceHarness):
 
     def test_two_live_sessions_in_one_week_get_distinct_delivery_dates(self):
         """Each live component uses its delivery slot, not the week's first date."""
+        from coach_api.tests_support.persisted_fixtures import programme
+        programme('PROG-SPLIT')
         module_id = 'MOD-TWO-SESSIONS-SAME-WEEK'
         views.authoring_upsert(views.AUTHORING_MODULES_TABLE, ['module_catalogue_id'], {
             'module_catalogue_id': module_id,

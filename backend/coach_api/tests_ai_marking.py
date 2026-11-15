@@ -9,6 +9,7 @@ described as read when the file could not actually be parsed.
 from unittest.mock import patch
 
 from django.test import SimpleTestCase
+from django.core.files.uploadedfile import SimpleUploadedFile
 
 from .ai_marking import (
     EPA_BY_NAME,
@@ -20,6 +21,7 @@ from .ai_marking import (
     build_messages,
     generate_marking_feedback,
     extract_file_text,
+    extract_prompt_file,
     load_epa_plan,
 )
 
@@ -206,6 +208,18 @@ class ExtractFileTextTests(SimpleTestCase):
         # This runs while a coach waits on a button; a malformed upload must
         # degrade to "unreadable", never to a stack trace.
         self.assertEqual(extract_file_text("application/pdf", "broken.pdf", b"not a pdf"), "")
+
+    def test_a_coach_guidance_upload_is_read_without_becoming_evidence(self):
+        filename, text = extract_prompt_file(
+            SimpleUploadedFile("criteria.txt", b"Assess KSB alignment and measurable improvement.", content_type="text/plain")
+        )
+
+        self.assertEqual(filename, "criteria.txt")
+        self.assertIn("measurable improvement", text)
+
+    def test_guidance_upload_rejects_unsupported_files(self):
+        with self.assertRaises(ValueError):
+            extract_prompt_file(SimpleUploadedFile("criteria.exe", b"x", content_type="application/octet-stream"))
 
 
 class ViewAsGuardTests(SimpleTestCase):

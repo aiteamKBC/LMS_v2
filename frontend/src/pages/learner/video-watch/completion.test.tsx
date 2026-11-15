@@ -193,7 +193,7 @@ it.each(['commercial', 'apprenticeship'])('keeps a confirmed %s reflection submi
     fireEvent.click(await screen.findByRole('button', { name: 'Add lecture reflection' }));
     await waitFor(() => expect(screen.getByRole('button', { name: 'Review' })).toBeEnabled());
     fireEvent.click(screen.getByRole('button', { name: 'Review' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Submit for tutor review' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Submit' }));
     await screen.findByText('Your lecture reflection was submitted for tutor review. Your attendance and recorded study time are unchanged.');
     expect(status).toBe('submitted_for_tutor_review');
     expect(writes).toHaveLength(1);
@@ -287,7 +287,7 @@ it.each([
   expect(time).toHaveAttribute('readonly');
   expect(screen.getByRole('checkbox', { name: 'Add more learning time for this reflection' }).hasAttribute('disabled')).toBe(!done);
   fireEvent.click(screen.getByRole('button', { name: 'Review' }));
-  const submit = screen.getByRole('button', { name: 'Submit for tutor review' });
+  const submit = screen.getByRole('button', { name: 'Submit' });
   await waitFor(() => expect(submit).toBeEnabled());
   fireEvent.click(submit);
   await screen.findByText('Your lecture reflection was submitted for tutor review. Your attendance and recorded study time are unchanged.');
@@ -314,12 +314,12 @@ it('keeps the lecture reflection open on save failure and retries without a prog
   fireEvent.click(await screen.findByRole('button', { name: 'Add lecture reflection' }));
   await screen.findByDisplayValue('00:00:20');
   fireEvent.click(screen.getByRole('button', { name: 'Review' }));
-  fireEvent.click(screen.getByRole('button', { name: 'Submit for tutor review' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Submit' }));
   expect(await screen.findByText('Synthetic save failure')).toBeVisible();
   expect(screen.queryByText(/Your lecture reflection was submitted for tutor review/)).not.toBeInTheDocument();
   expect(submitComponentProgress).not.toHaveBeenCalled();
   vi.mocked(saveLearningReflectionSubmission).mockResolvedValue({ id: 'R-LECTURE', status: 'submitted_for_tutor_review' });
-  fireEvent.click(screen.getByRole('button', { name: 'Submit for tutor review' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Submit' }));
   await screen.findByText(/Your lecture reflection was submitted for tutor review/);
   expect(submitComponentProgress).not.toHaveBeenCalled();
 });
@@ -354,7 +354,7 @@ it.each(['commercial', 'apprenticeship'])('submits %s lecture reflection minutes
   fireEvent.click(screen.getByRole('checkbox', { name: 'Add more learning time for this reflection' }));
   fireEvent.change(screen.getByLabelText('Additional reflection time (minutes)'), { target: { value: '30' } });
   fireEvent.click(screen.getByRole('button', { name: 'Review' }));
-  fireEvent.click(screen.getByRole('button', { name: 'Submit for tutor review' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Submit' }));
   fireEvent.click(await screen.findByRole('button', { name: 'Confirm time' }));
   expect(await screen.findByText(/Its additional time is recorded/)).toBeVisible();
   expect(screen.getByText('· 02:30:00')).toBeVisible();
@@ -782,7 +782,7 @@ it.each(['commercial', 'apprenticeship'])('limits Live Session retakes using cre
   }
 });
 
-it.each(['commercial', 'apprenticeship'])('uses the fixed Live Session credit after manual completion and reopening for %s', async kind => {
+it.each(['commercial', 'apprenticeship'])('preserves legacy fixed Live Session credit after reopening for %s', async kind => {
   vi.mocked(readLearnerAttendanceMode).mockResolvedValue('lazy');
   const credited = { ...detail(true), componentProgress: [{ ...progress,
     componentType: 'live_session', reportedTime: '150 minutes', timeTaken: null,
@@ -804,6 +804,33 @@ it.each(['commercial', 'apprenticeship'])('uses the fixed Live Session credit af
   expect(screen.queryByRole('button', { name: 'Record another attempt' })).not.toBeInTheDocument();
   expect(screen.getByRole('button', { name: 'Manage reflection time' })).toBeVisible();
   expect(screen.getByRole('button', { name: 'Add lecture reflection' })).toBeVisible();
+});
+
+it.each(['commercial', 'apprenticeship'])('keeps one input hour after finishing and reopening an absent %s Live Session', async kind => {
+  const saved = { ...progress, componentType: 'live_session', reportedTime: '60 minutes',
+    timeTaken: '60:00', claimedSeconds: 3600, countedSeconds: 3600,
+    timeTrackingSource: 'signed_session_capped_visible_page:input',
+  };
+  const absent = { ...detail(), components: [{ ...first, attendanceCompleted: false }, empty, second] };
+  vi.mocked(fetchLearnerDetail).mockResolvedValueOnce(absent).mockResolvedValue({
+    ...absent, componentProgress: [saved],
+  } as unknown as LearnerDetail);
+  vi.mocked(submitComponentProgress).mockResolvedValue({ record: saved } as unknown as ComponentProgressResponse);
+  const view = mount('C1', kind);
+  fireEvent.change(await screen.findByLabelText('Hours spent'), { target: { value: '1' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Finish' }));
+  fireEvent.click(await screen.findByRole('button', { name: 'Confirm' }));
+  fireEvent.click(await screen.findByRole('button', { name: 'Confirm time' }));
+  await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('01:00:00'));
+  expect(submitComponentProgress).toHaveBeenCalledExactlyOnceWith('C1', kind, '1', expect.objectContaining({
+    timeTakenSeconds: 3600, timeEntrySource: 'input', reportedTime: '60 minutes',
+  }));
+  view.unmount();
+  mount('C1', kind);
+  expect(await screen.findByText('Completed')).toBeVisible();
+  expect(screen.getByRole('status')).toHaveTextContent('01:00:00');
+  expect(screen.getByRole('button', { name: 'Record another attempt' })).toBeVisible();
+  expect(submitComponentProgress).toHaveBeenCalledTimes(1);
 });
 
 it('retains live-session time on cancelling the prompt and restores keyboard focus', async () => {
@@ -1463,7 +1490,7 @@ it.each(['commercial', 'apprenticeship'])('uses the final lower reflection time 
   await waitFor(() => expect(screen.getByLabelText('Selected activity time')).toBeEnabled());
   fireEvent.click(screen.getByRole('button', { name: 'Review' }));
   fireEvent.change(screen.getByLabelText('Selected activity time'), { target: { value: '00:15:00' } });
-  fireEvent.click(screen.getByRole('button', { name: 'Submit for tutor review' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Submit' }));
   expect(submitComponentProgress).not.toHaveBeenCalled();
   fireEvent.click(await screen.findByRole('button', { name: 'Confirm time' }));
   await waitFor(() => expect(submitComponentProgress).toHaveBeenCalledWith('C1', kind, '1', expect.objectContaining({

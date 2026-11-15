@@ -71,7 +71,10 @@ export function useTutorAvailability(
   const key = enabled && slot
     ? JSON.stringify([
       slot.startDate,
+      slot.endDate,
       slot.sessionsNumber,
+      slot.scheduleMode,
+      slot.weeksNumber,
       slot.weekDays,
       slot.weeklySchedule,
       slot.startTime,

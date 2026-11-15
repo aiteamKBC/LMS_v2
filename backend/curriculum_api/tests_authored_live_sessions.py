@@ -399,6 +399,20 @@ class LiveSessionFollowsItsWeekTests(SimpleTestCase):
         })
         self.assertEqual(settings['sessionDate'], '2026-09-17')
 
+    def test_pending_calendar_binding_keeps_the_plan_without_claiming_a_verified_instant(self):
+        for binding in ('missing', 'ambiguous', 'unverified'):
+            with self.subTest(binding=binding):
+                settings, _week = self._apply({
+                    'teamsCalendarBinding': binding,
+                    'liveSessionUrl': 'https://teams.example/manual',
+                    'teamsStartDateTimeUtc': '2026-10-08T08:00:00Z',
+                })
+                self.assertEqual(settings['sessionDate'], '2026-09-17')
+                self.assertTrue(settings['sessionDateTimeUtc'].startswith('2026-09-17'))
+                self.assertEqual(settings['teamsStartDateTimeUtc'], '')
+                self.assertEqual(settings['teamsCalendarBinding'], binding)
+                self.assertEqual(settings['liveSessionUrl'], 'https://teams.example/manual')
+
 
 #: A Mon+Fri group. Both delivery days are planned slots, so a week owns two.
 TWO_DAY_MODULE = {
