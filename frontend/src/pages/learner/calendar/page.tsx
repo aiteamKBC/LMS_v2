@@ -487,7 +487,7 @@ function calendarWeekKey(isoDate: string): string | null {
   return `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, '0')}-${String(value.getDate()).padStart(2, '0')}`;
 }
 
-function isProgrammeCycleSessionType(value?: CalendarEvent['bookingSessionType']): boolean {
+function isProgrammeCycleSessionType(value?: BookableSessionType): boolean {
   return value ? PROGRAMME_CYCLE_SESSION_TYPES.has(value) : false;
 }
 
@@ -641,8 +641,9 @@ function LearnerCalendarBody() {
   const [reviewCoachAvailabilityRevision, setReviewCoachAvailabilityRevision] = useState(0);
   const aptemBooking = Boolean(rescheduleEvent?.bookingReviewId || rescheduleEvent?.importedReview
     || bookingSourceEvent?.bookingReviewId || bookingSourceEvent?.importedReview);
+  const choosingProgrammeSession = !rescheduleEvent && !bookingSourceEvent && isProgrammeCycleSessionType(bookType);
   const reviewSlotBooking = ['mcr', 'progress-review', 'review'].includes(bookType);
-  const coachSlotBooking = reviewSlotBooking || ['catch-up', 'student-support', 'gateway', 'other'].includes(bookType);
+  const coachSlotBooking = !choosingProgrammeSession && (reviewSlotBooking || ['catch-up', 'student-support', 'gateway', 'other'].includes(bookType));
   const handledFocusEventRef = useRef<string | null>(null);
 
   const today = new Date();
@@ -856,6 +857,13 @@ function LearnerCalendarBody() {
   }, [bankHolidayByDate, bookingCalendar, bookingToday]);
   const selectedDateRestriction = bookingDateRestriction(selectedIso);
   const bookDateRestriction = bookingDateRestriction(bookDate);
+  const programmeSessions = useMemo(() => myEvents.filter(event => event.source === bookType).sort((a, b) => {
+    const aUpcoming = Boolean(a.isoDate && a.isoDate >= bookingToday);
+    const bUpcoming = Boolean(b.isoDate && b.isoDate >= bookingToday);
+    return Number(bUpcoming) - Number(aUpcoming) || (aUpcoming
+      ? (a.isoDate || '').localeCompare(b.isoDate || '')
+      : (b.isoDate || '').localeCompare(a.isoDate || ''));
+  }), [myEvents, bookType, bookingToday]);
   const openBookSession = useCallback((date?: string, sourceEvent?: CalendarEvent | null) => {
     setRescheduleEvent(null);
     setBookingSourceEvent(sourceEvent || null);
@@ -987,8 +995,9 @@ function LearnerCalendarBody() {
     // An unparseable day has no instant (toISOString would throw and take the
     // page down); bookDateRestriction already asks for a valid date.
     const day = parseBookingDay(bookDate);
-    if (!showBookModal || calendarConnections.length === 0 || !day) {
+    if (!showBookModal || choosingProgrammeSession || calendarConnections.length === 0 || !day) {
       setBusySlots([]);
+      setAvailabilityLoading(false);
       setAvailabilityUnconfirmed(false);
       return;
     }
@@ -1006,7 +1015,7 @@ function LearnerCalendarBody() {
       .catch(() => { if (!cancelled) { setBusySlots([]); setAvailabilityUnconfirmed(true); } })
       .finally(() => { if (!cancelled) setAvailabilityLoading(false); });
     return () => { cancelled = true; };
-  }, [showBookModal, calendarConnections.length, bookDate, myLearner.kind, myLearner.id, aptemBooking]);
+  }, [showBookModal, choosingProgrammeSession, calendarConnections.length, bookDate, myLearner.kind, myLearner.id, aptemBooking]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1174,7 +1183,7 @@ function LearnerCalendarBody() {
   };
 
   const handleBookSession = async () => {
-    if (bookSubmitting) return;
+    if (bookSubmitting || choosingProgrammeSession) return;
     if (coachSlotBooking && (reviewCoachAvailabilityLoading || reviewCoachAvailabilityError
       || !availableReviewTimes.includes(bookTime)
       || (calendarConnections.length > 0 && (availabilityLoading || availabilityUnconfirmed)))) {
@@ -1439,7 +1448,7 @@ function LearnerCalendarBody() {
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm" onClick={() => setShowBookModal(false)}>
           <div role="dialog" aria-modal="true" aria-labelledby="calendar-booking-title" className="bg-background-50 rounded-2xl p-6 max-w-lg w-full mx-4 shadow-xl animate-in zoom-in-95 duration-200 max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center justify-between mb-2">
-              <h3 id="calendar-booking-title" className="text-lg font-heading font-bold text-foreground-900 flex items-center gap-2"><AppIcon className={`${rescheduleEvent || bookingSourceEvent ? 'ri-calendar-schedule-line' : 'ri-user-star-line'} text-primary-500`}></AppIcon>{rescheduleEvent ? 'Reschedule Session' : bookingSourceEvent ? `Schedule ${sessionTypeLabel(bookingSourceEvent.bookingSessionType)}` : 'Book a Coach Session'}</h3>
+              <h3 id="calendar-booking-title" className="text-lg font-heading font-bold text-foreground-900 flex items-center gap-2"><AppIcon className={`${rescheduleEvent || bookingSourceEvent || choosingProgrammeSession ? 'ri-calendar-schedule-line' : 'ri-user-star-line'} text-primary-500`}></AppIcon>{rescheduleEvent ? 'Reschedule Session' : bookingSourceEvent ? `Schedule ${sessionTypeLabel(bookingSourceEvent.bookingSessionType)}` : choosingProgrammeSession ? `Your ${sessionTypeLabel(bookType)} sessions` : 'Book a Coach Session'}</h3>
               <button aria-label="Close booking dialog" onClick={() => setShowBookModal(false)} className="w-8 h-8 rounded-lg flex items-center justify-center text-foreground-400 hover:bg-background-100 transition-smooth cursor-pointer"><AppIcon className="ri-close-line"></AppIcon></button>
             </div>
             <p className="text-sm text-foreground-500 mb-5">
@@ -1447,8 +1456,10 @@ function LearnerCalendarBody() {
                 ? <>Choose a new date and time for <strong className="text-foreground-700">{rescheduleEvent.title}</strong>. The existing Teams meeting will be updated.</>
                 : bookingSourceEvent
                   ? <>Choose a date and time for <strong className="text-foreground-700">{bookingSourceEvent.title}</strong>. This will book the official {sessionTypeLabel(bookingSourceEvent.bookingSessionType)} session for you and your coach.</>
+                : choosingProgrammeSession
+                  ? 'Choose an existing session below to view its details, schedule it, or change its time.'
                 : coach
-                  ? <>Choose an available time with <strong className="text-foreground-700">{coach.name}</strong>. Sessions are booked directly without coach approval. Monthly Coaching Meeting and Progress Review sessions use their official curriculum calendar cards.</>
+                  ? <>Choose an available time with <strong className="text-foreground-700">{coach.name}</strong>. Sessions are booked directly without coach approval. Choose MCM or PR to manage your existing programme sessions.</>
                   : 'No coach has been assigned to you yet — please contact your programme team.'}
             </p>
             <div className="space-y-4">
@@ -1468,6 +1479,7 @@ function LearnerCalendarBody() {
                 <label className="text-xs font-semibold text-foreground-500 mb-1.5 block">Session Type <span className="text-red-400">*</span></label>
                 <CoachSessionTypePicker
                   value={bookType}
+                  compact={choosingProgrammeSession}
                   onChange={(value) => {
                     setBookType(value);
                     setBookTime('');
@@ -1476,6 +1488,31 @@ function LearnerCalendarBody() {
                 />
                 {bookType === 'other' && <div className="mt-3"><label htmlFor="other-session-type" className="text-xs font-semibold text-foreground-500">Other <span className="text-red-400">*</span></label><input id="other-session-type" type="text" value={otherSessionType} onChange={(e) => { setOtherSessionType(e.target.value); setBookError(null); }} maxLength={100} placeholder="Write the session type you need" className="mt-1.5 w-full bg-background-100 border border-background-300 rounded-lg px-3 py-2 text-sm text-foreground-800 placeholder:text-foreground-400 focus:outline-none focus:ring-1 focus:ring-primary-400/40 focus:border-primary-300/50 transition-all" /></div>}
               </div>}
+              {choosingProgrammeSession ? (
+                <section aria-label="Existing programme sessions" className="space-y-3">
+                  {calendarLoading ? <p role="status" className="text-sm text-foreground-500">Loading your sessions…</p>
+                    : calendarError ? <p role="alert" className="text-sm text-red-700">{calendarError}</p>
+                    : programmeSessions.length ? programmeSessions.map(event => {
+                      const status = LEARNER_STATUS_META[learnerEventStatus(event)];
+                      return <button key={event.id} type="button" onClick={() => {
+                        setShowBookModal(false);
+                        setShowEventDetails(event);
+                        setCancelError('');
+                      }} className="flex w-full items-center gap-3 rounded-xl border border-background-300 bg-white p-4 text-left transition-smooth hover:border-primary-400 focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary-500">
+                        <span className="min-w-0 flex-1">
+                          <span className="block text-sm font-semibold text-foreground-900">{event.title}</span>
+                          <span className="mt-1 block text-xs text-foreground-500">{event.date} {event.isoDate?.slice(0, 4)} · {event.timeToBeConfirmed ? 'Time to be confirmed' : `${event.time} UK time`}</span>
+                          <span className={`mt-2 inline-flex rounded-full px-2 py-0.5 text-[10px] font-semibold ring-1 ring-inset ${status.badge}`}>{status.label}</span>
+                        </span>
+                        <span className="flex shrink-0 items-center gap-1 text-xs font-semibold text-primary-700">View session<AppIcon className="ri-arrow-right-line" /></span>
+                      </button>;
+                    }) : <p className="text-sm text-foreground-500">No {sessionTypeLabel(bookType)} sessions are available. Please contact your coach or programme team.</p>}
+                  {!calendarLoading && (calendarError || !programmeSessions.length) && <button type="button" onClick={() => {
+                    setCalendarLoading(true);
+                    refreshCalendar();
+                  }} className="text-sm font-semibold text-primary-700 underline">Refresh sessions</button>}
+                </section>
+              ) : <>
               <div className="grid grid-cols-2 gap-3">
                 <div><label className="text-xs font-semibold text-foreground-500 mb-1.5 block">Date <span className="text-red-400">*</span></label><input aria-label="Date" type="date" value={bookDate} min={bookingToday} onChange={(e) => { setBookDate(e.target.value); if (coachSlotBooking) setBookTime(''); }} className="w-full bg-background-100 border border-background-300 rounded-lg px-3 py-2 text-sm text-foreground-800 focus:outline-none focus:ring-1 focus:ring-primary-400/40 focus:border-primary-300/50 transition-all" /></div>
                 <div><label className="text-xs font-semibold text-foreground-500 mb-1.5 block">{coachSlotBooking ? 'Time (UK time · Europe/London)' : 'Time'} <span className="text-red-400">*</span></label>{coachSlotBooking ? (
@@ -1584,12 +1621,13 @@ function LearnerCalendarBody() {
                   </button>}
                 </div>
               )}
+              </>}
             </div>
             <div className="flex gap-2 mt-5">
               <button onClick={() => setShowBookModal(false)} className="flex-1 px-4 py-2.5 rounded-xl border border-background-300 text-sm font-semibold text-foreground-600 hover:bg-background-100 transition-smooth cursor-pointer whitespace-nowrap">Cancel</button>
-              <button onClick={handleBookSession} disabled={bookSubmitting || availabilityLoading || selectedSlotConflicts || Boolean(sameWeekSession) || Boolean(selectedLmsConflict) || Boolean(bookDateRestriction) || !bookDate || !bookTime || (coachSlotBooking && (reviewCoachAvailabilityLoading || Boolean(reviewCoachAvailabilityError) || !availableReviewTimes.includes(bookTime) || (calendarConnections.length > 0 && availabilityUnconfirmed)))} className="flex-1 px-4 py-2.5 rounded-xl bg-primary-500 text-white text-sm font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap disabled:opacity-50 disabled:cursor-not-allowed">
+              {!choosingProgrammeSession && <button onClick={handleBookSession} disabled={bookSubmitting || availabilityLoading || selectedSlotConflicts || Boolean(sameWeekSession) || Boolean(selectedLmsConflict) || Boolean(bookDateRestriction) || !bookDate || !bookTime || (coachSlotBooking && (reviewCoachAvailabilityLoading || Boolean(reviewCoachAvailabilityError) || !availableReviewTimes.includes(bookTime) || (calendarConnections.length > 0 && availabilityUnconfirmed)))} className="flex-1 px-4 py-2.5 rounded-xl bg-primary-500 text-white text-sm font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap disabled:opacity-50 disabled:cursor-not-allowed">
                 {bookSubmitting ? <><AppIcon className="ri-loader-4-line animate-spin mr-1"></AppIcon>{rescheduleEvent ? 'Rescheduling...' : 'Booking...'}</> : <><AppIcon className={rescheduleEvent || bookingSourceEvent ? 'ri-calendar-check-line mr-1' : 'ri-check-line mr-1'}></AppIcon>{rescheduleEvent ? 'Save New Time' : 'Book Session'}</>}
-              </button>
+              </button>}
             </div>
           </div>
         </div>
@@ -1613,6 +1651,8 @@ function LearnerCalendarBody() {
 
               {(showEventDetails.timeToBeConfirmed || showEventDetails.needsInitialReviewBooking
                 || (showEventDetails.bookingStatus === 'not-scheduled' && ['student-support', 'gateway', 'other'].includes(showEventDetails.source || '')))
+                && (!isProgrammeCycleSessionType(showEventDetails.bookingSessionType)
+                  || ['not-scheduled', 'scheduled'].includes(showEventDetails.bookingStatus || ''))
                 && showEventDetails.bookingSessionType && (
                 <button
                   type="button"
