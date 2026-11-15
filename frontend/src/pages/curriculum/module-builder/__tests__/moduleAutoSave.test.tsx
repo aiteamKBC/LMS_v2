@@ -373,7 +373,7 @@ describe('Module Builder auto-save', { timeout: 25000 }, () => {
     video.type = 'video';
     video.settings = { sourceType: 'YouTube', videoUrl: 'https://www.youtube.com/watch?v=abcdefghijk' };
     await openWorkspace('', structure);
-    await userEvent.click(await screen.findByText('First component'));
+    await userEvent.click(await screen.findByRole('button', { name: 'First component' }));
     await userEvent.click(screen.getByTestId('module-builder-save'));
     await waitFor(() => expect(saveModuleStructure).toHaveBeenCalledTimes(1));
     expect(saveModuleStructure.mock.calls[0][2]).toMatchObject({ source: 'manual', importVideoComponentIds: ['COMPONENT-1'] });
@@ -385,7 +385,7 @@ describe('Module Builder auto-save', { timeout: 25000 }, () => {
     const structure = storedStructure();
     structure.weekStructure[0].components[0].type = 'video';
     await openWorkspace('', structure);
-    await userEvent.click(await screen.findByText('First component'));
+    await userEvent.click(await screen.findByRole('button', { name: 'First component' }));
     await screen.findByText('Uploading to Bunny');
     await userEvent.click(screen.getByTestId('module-builder-save'));
     await waitFor(() => expect(saveModuleStructure).toHaveBeenCalledOnce());
@@ -488,7 +488,7 @@ describe('Module Builder auto-save', { timeout: 25000 }, () => {
       return { ...module, structureRevision: 'rev-2' };
     });
     await openWorkspace('', structure);
-    await userEvent.click(await screen.findByText('First component'));
+    await userEvent.click(await screen.findByRole('button', { name: 'First component' }));
     const picker = screen.getByLabelText('Upload MP4 to LMS and Bunny');
     expect(picker).toBeEnabled();
     fireEvent.change(picker, { target: { files: [new File(['video'], 'new-video.mp4')] } });
