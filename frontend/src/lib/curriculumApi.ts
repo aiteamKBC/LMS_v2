@@ -424,6 +424,7 @@ export interface CurriculumModule extends CoursePricing {
   sessionsNumber?: number;
   weeklySchedule?: CurriculumWeeklySession[];
   scheduleMode?: 'group' | 'custom';
+  weekStartsOn?: string | null;
   sessionHolidays?: CurriculumHoliday[];
   /** Teaching weeks, separate from imported content rows. */
   deliveryWeeks?: number;
@@ -4284,6 +4285,7 @@ export type CurriculumModuleInput = Partial<Pick<CurriculumModule, 'name' | 'wee
   coach?: string;
   weeklySchedule?: CurriculumWeeklySession[];
   scheduleMode?: 'group' | 'custom';
+  weekStartsOn?: string | null;
   weekDays?: string;
   startTime?: string;
   endTime?: string;
@@ -4321,6 +4323,7 @@ export type CurriculumModuleAttachmentInput = {
   tutor?: string;
   weeklySchedule?: CurriculumWeeklySession[];
   scheduleMode?: 'group' | 'custom';
+  weekStartsOn?: string | null;
   weekDays?: string;
   startTime?: string;
   endTime?: string;
@@ -4898,7 +4901,7 @@ export function previewCohortEndDate(input: {
   return postJson<CurriculumCohortEndDatePreview>('/curriculum/preview/cohort-end-date/', input);
 }
 
-export function previewModuleSessionPlan(input: { startDate?: string; endDate?: string; numberOfSessions?: number; sessionsNumber?: number; weeksNumber?: number; weeklySchedule?: CurriculumWeeklySession[]; weekDays?: string | string[]; deliveryDays?: string | string[]; holidays?: unknown[] }) {
+export function previewModuleSessionPlan(input: { startDate?: string; endDate?: string; numberOfSessions?: number; sessionsNumber?: number; weeksNumber?: number; scheduleMode?: 'group' | 'custom'; weekStartsOn?: string | null; weeklySchedule?: CurriculumWeeklySession[]; weekDays?: string | string[]; deliveryDays?: string | string[]; holidays?: unknown[] }) {
   return postJson<CurriculumSessionPlanPreview>('/curriculum/preview/module-session-plan/', input);
 }
 
@@ -4906,6 +4909,7 @@ export function previewModuleSessionPlan(input: { startDate?: string; endDate?: 
 export interface CurriculumTutorAvailabilityInput {
   endDate?: string;
   scheduleMode?: 'group' | 'custom';
+  weekStartsOn?: string | null;
   weeksNumber?: number;
   /** The destination group supplies delivery days and times when moving a course. */
   groupId?: string;

@@ -675,6 +675,12 @@ export function ModuleFormDrawer({
     setGroupEndTime(groupPattern?.endTime || '');
   };
   const scheduleComplete = !selectedGroup || deliveryDaysPerWeek === Number(sessionsPerWeek);
+  const needsWeekStart = scheduleMode === 'custom' && Number(sessionsPerWeek) > 1;
+  const usesFirstSessionWeeks = needsWeekStart && (!module || Boolean(module.weekStartsOn)
+    || scheduleMode !== baseline.current.scheduleMode || weekDays !== baseline.current.weekDays
+    || startDate !== baseline.current.startDate);
+  const weekStartsOn = usesFirstSessionWeeks ? firstDeliveryWeekday(startDate, weekDays) : '';
+  const weekStartComplete = !usesFirstSessionWeeks || Boolean(weekStartsOn);
   const weeksEntered = Math.max(0, Number(sessionsNumber) || 0);
   const groupStartDate = cleanText(selectedGroup?.startDate) || cleanText(selectedCohort?.startDate);
   const groupTotalSessions = Math.round(weeksEntered * Math.max(1, groupWeeklySchedule.length));
@@ -683,18 +689,18 @@ export function ModuleFormDrawer({
   // was fetched for is compared against it below, so a plan left over from the
   // previous weeks value is never read as this one's answer.
   const planInputs = useMemo(
-    () => JSON.stringify([scheduleMode, scheduleMode === 'custom' ? targetEndDate : '', startDate, totalSessions, weekDays, weeklySchedule, cohortHolidays.map(holiday => holiday.id)]),
-    [cohortHolidays, scheduleMode, targetEndDate, startDate, totalSessions, weekDays, weeklySchedule],
+    () => JSON.stringify([scheduleMode, needsWeekStart ? weekStartsOn : '', scheduleMode === 'custom' ? targetEndDate : '', startDate, totalSessions, weekDays, weeklySchedule, cohortHolidays.map(holiday => holiday.id)]),
+    [cohortHolidays, scheduleMode, needsWeekStart, weekStartsOn, targetEndDate, startDate, totalSessions, weekDays, weeklySchedule],
   );
   useEffect(() => {
-    if (!open || !startDate || weeksEntered <= 0 || !scheduleComplete || !validWeeklyTimes) { setPlan(null); setPlanFor(''); setPlanLoading(false); return undefined; }
+    if (!open || !startDate || weeksEntered <= 0 || !scheduleComplete || !weekStartComplete || !validWeeklyTimes) { setPlan(null); setPlanFor(''); setPlanLoading(false); return undefined; }
     let active = true;
     setPlanLoading(true);
     const timer = setTimeout(() => {
       previewModuleSessionPlan({
         startDate,
         numberOfSessions: totalSessions,
-        ...(scheduleMode === 'custom' ? { weeksNumber: weeksEntered, endDate: targetEndDate || projectModuleEndDate(startDate, weeksEntered) } : {}),
+        ...(scheduleMode === 'custom' ? { scheduleMode, weeksNumber: weeksEntered, endDate: targetEndDate || projectModuleEndDate(startDate, weeksEntered), ...(weekStartsOn ? { weekStartsOn } : {}) } : {}),
         weeklySchedule,
         weekDays,
         holidays: cohortHolidays,
@@ -704,7 +710,7 @@ export function ModuleFormDrawer({
         .finally(() => { if (active) setPlanLoading(false); });
     }, 300);
     return () => { active = false; clearTimeout(timer); };
-  }, [cohortHolidays, open, planInputs, scheduleComplete, totalSessions, startDate, weekDays, weeklySchedule, validWeeklyTimes, weeksEntered, scheduleMode, targetEndDate]);
+  }, [cohortHolidays, open, planInputs, scheduleComplete, weekStartComplete, needsWeekStart, weekStartsOn, totalSessions, startDate, weekDays, weeklySchedule, validWeeklyTimes, weeksEntered, scheduleMode, targetEndDate]);
 
   // The module's own calendar span -- start date plus the whole weeks entered.
   // Independent of the generated session plan, which answers a different
@@ -757,11 +763,11 @@ export function ModuleFormDrawer({
   // These are the same fields the save uses.
   // ==========================================================================
   const conflictSlot = useMemo(() => (
-    (scheduleMode === 'custom' ? weeklySchedule.length > 0 && scheduleComplete && validWeeklyTimes && startDate && totalSessions > 0 : groupWeeklySchedule.length > 0 && groupStartDate && groupTotalSessions > 0)
+    (scheduleMode === 'custom' ? weeklySchedule.length > 0 && scheduleComplete && weekStartComplete && validWeeklyTimes && startDate && totalSessions > 0 : groupWeeklySchedule.length > 0 && groupStartDate && groupTotalSessions > 0)
       ? {
         startDate: scheduleMode === 'custom' ? startDate : groupStartDate,
         sessionsNumber: scheduleMode === 'custom' ? totalSessions : groupTotalSessions,
-        ...(scheduleMode === 'custom' ? { scheduleMode, weeksNumber: weeksEntered, endDate } : {}),
+        ...(scheduleMode === 'custom' ? { scheduleMode, weeksNumber: weeksEntered, endDate, ...(weekStartsOn ? { weekStartsOn } : {}) } : {}),
         weekDays: scheduleMode === 'custom' ? weekDays : groupPattern?.days || undefined,
         weeklySchedule: scheduleMode === 'custom' ? weeklySchedule : groupWeeklySchedule,
         startTime: (scheduleMode === 'custom' ? weeklySchedule[0]?.startTime : groupWeeklySchedule[0]?.startTime) || undefined,
@@ -772,7 +778,7 @@ export function ModuleFormDrawer({
         moduleCatalogueId: module?.id || undefined,
       }
       : null
-  ), [cohortHolidays, cohortId, groupPattern?.days, groupStartDate, groupTotalSessions, groupWeeklySchedule, module?.id, selectedGroup?.cohortId, scheduleMode, weeklySchedule, scheduleComplete, validWeeklyTimes, startDate, totalSessions, weekDays, weeksEntered, endDate]);
+  ), [cohortHolidays, cohortId, groupPattern?.days, groupStartDate, groupTotalSessions, groupWeeklySchedule, module?.id, selectedGroup?.cohortId, scheduleMode, weeklySchedule, scheduleComplete, weekStartComplete, weekStartsOn, validWeeklyTimes, startDate, totalSessions, weekDays, weeksEntered, endDate]);
   // Destructured rather than used through the hook's return value, which is a
   // fresh object every render: the memos below key off the parts that actually
   // move, so a keystroke in the name field does not rebuild the picker.
@@ -1091,6 +1097,7 @@ export function ModuleFormDrawer({
       if (!endDate) { setError('Choose the module end date.'); return; }
       if (!tutor) { setError('Choose the tutor who delivers this module.'); return; }
       if (scheduleMode === 'custom' && !scheduleComplete) { setError(`Choose ${sessionsPerWeek} delivery days to match the sessions per week.`); return; }
+      if (!weekStartComplete) { setError('Set the module start date and delivery days to calculate its first live session.'); return; }
       if (scheduleMode === 'custom' && !validWeeklyTimes) { setError("Set each day's start and end time, with the end after the start."); return; }
       // Pre-empted rather than sent, for the same reason the clash below is: the
       // save refuses this and the sentence is already on screen under Tutor.
@@ -1218,6 +1225,7 @@ export function ModuleFormDrawer({
         tutor: tutor || undefined,
         weeklySchedule: groupSchedule,
         scheduleMode: custom ? 'custom' : 'group',
+        weekStartsOn: custom && weekStartsOn ? weekStartsOn : null,
         weekDays: groupWeekDays || undefined,
         startTime: groupSchedule[0]?.startTime || undefined,
         endTime: groupSchedule[0]?.endTime || undefined,
@@ -1277,6 +1285,7 @@ export function ModuleFormDrawer({
           groupName: selectedGroup?.name || undefined,
           weeklySchedule: primarySchedule,
           scheduleMode,
+          weekStartsOn: weekStartsOn || null,
           weekDays: primaryWeekDays || undefined,
           startTime: primarySchedule[0]?.startTime || undefined,
           endTime: primarySchedule[0]?.endTime || undefined,
@@ -1663,6 +1672,9 @@ export function ModuleFormDrawer({
               }}
             />
           </FormField>
+          {usesFirstSessionWeeks && <p className="text-[12px] text-primary-700">
+            Each week starts with its first live session{weekStartsOn ? ` (${weekStartsOn})` : ''}. Other live sessions are components in the same week.
+          </p>}
           {scheduleMode === 'custom' && <FormField label="Delivery days" as="group" required hint={`Choose ${sessionsPerWeek} day${sessionsPerWeek === '1' ? '' : 's'} each week (${deliveryDaysPerWeek} selected).`}>
             <WeekdayControl value={weekDays} maxSelections={Number(sessionsPerWeek)} onChange={setWeekDays} />
           </FormField>}
@@ -1952,6 +1964,20 @@ function canonicalDeliveryDays(value: string): string {
   const names = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
   const days = deliveryDayIndexes(value);
   return names.filter((_, index) => days.includes(index)).join(', ');
+}
+
+function firstDeliveryWeekday(startDate: string, weekDays: string): string {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(startDate)) return '';
+  const date = new Date(`${startDate}T12:00:00Z`);
+  if (Number.isNaN(date.getTime())) return '';
+  const days = deliveryDayIndexes(weekDays);
+  const names = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+  const startDay = (date.getUTCDay() + 6) % 7;
+  for (let offset = 0; offset < 7; offset += 1) {
+    const day = (startDay + offset) % 7;
+    if (days.includes(day)) return names[day];
+  }
+  return '';
 }
 
 function deliveryDayIndexes(weekDays: string): number[] {

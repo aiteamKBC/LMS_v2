@@ -1295,6 +1295,7 @@ export interface ModuleCatalogueItem extends CoursePricing {
   endTime?: string;
   weeklySchedule?: CurriculumModule['weeklySchedule'];
   scheduleMode?: CurriculumModule['scheduleMode'];
+  weekStartsOn?: CurriculumModule['weekStartsOn'];
   sessionHolidays?: CurriculumModule['sessionHolidays'];
   deliveryWeeks?: number;
   id: string;
@@ -2550,6 +2551,7 @@ export function curriculumModuleToCatalogue(module: CurriculumModule): ModuleCat
     coach,
     weeklySchedule: module.weeklySchedule || [],
     scheduleMode: module.scheduleMode,
+    weekStartsOn: module.weekStartsOn,
     sessionHolidays: module.sessionHolidays || [],
     deliveryWeeks: module.deliveryWeeks,
     deliveryMetadata: {

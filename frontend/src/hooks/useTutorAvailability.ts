@@ -74,6 +74,7 @@ export function useTutorAvailability(
       slot.endDate,
       slot.sessionsNumber,
       slot.scheduleMode,
+      slot.weekStartsOn,
       slot.weeksNumber,
       slot.weekDays,
       slot.weeklySchedule,
