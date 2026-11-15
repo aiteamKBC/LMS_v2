@@ -284,7 +284,9 @@ function CurriculumCohortsPageContent() {
             { icon: 'ri-calendar-event-line', label: 'Cohorts', value: totals.cohorts, detail: `${totals.active} active` },
             { icon: 'ri-team-line', label: 'Groups', value: totals.groups },
             { icon: 'ri-stack-line', label: 'Programmes', value: programmes.length },
-            { icon: 'ri-graduation-cap-line', label: 'Learners', value: totals.learners },
+            // cohort.learners counts lifecycle_status 'active' only; the row badges'
+            // "All" also counts delivery, onboarding and on-break learners.
+            { icon: 'ri-graduation-cap-line', label: 'Active learners', value: totals.learners },
           ]}
           primaryAction={{ label: 'Add Cohort', onClick: openCreate }}
           secondaryActions={(

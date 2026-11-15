@@ -1308,21 +1308,8 @@ def training_row_column_module_catalogue_id(row):
     return clean_str((row or {}).get(TRAINING_MODULE_CATALOGUE_COLUMN))
 
 
-def training_row_legacy_module_catalogue_id(row):
-    meta = (row or {}).get('_meta') or extract_notes_meta((row or {}).get('notes'))
-    return clean_str(meta.get(TRAINING_MODULE_CATALOGUE_COLUMN))
-
-
 def training_row_invalid_explicit_module_catalogue_id(row):
     value = training_row_column_module_catalogue_id(row)
-    return value if value and not is_canonical_module_catalogue_id(value) else ''
-
-
-def training_row_stale_legacy_module_catalogue_id(row):
-    column_value = training_row_column_module_catalogue_id(row)
-    if column_value:
-        return ''
-    value = training_row_legacy_module_catalogue_id(row)
     return value if value and not is_canonical_module_catalogue_id(value) else ''
 
 
@@ -1330,8 +1317,7 @@ def training_row_module_catalogue_id(row):
     column_value = training_row_column_module_catalogue_id(row)
     if column_value:
         return column_value if is_canonical_module_catalogue_id(column_value) else ''
-    legacy_value = training_row_legacy_module_catalogue_id(row)
-    return legacy_value if is_canonical_module_catalogue_id(legacy_value) else ''
+    return ''
 
 
 def link_training_row_to_catalogue(training_id, module_catalogue_id):
@@ -7616,7 +7602,7 @@ def unhook_programme_reusables(plan, removed):
             count(WEEK_TEMPLATES_TABLE, update_rows(WEEK_TEMPLATES_TABLE, where_sql, params, updates))
 
 
-def permanently_delete_programme_structure(plan):
+def permanently_delete_programme_structure(plan, force_content=False):
     """Delete an archived programme that no longer owns authored content.
 
     The order is dictated by the foreign keys migration 0038 added (children
@@ -7624,8 +7610,11 @@ def permanently_delete_programme_structure(plan):
     ``delete from curriculum.programmes`` cannot supply, which is why Postgres
     answers it with ``cohorts_programme_id_fkey``.
 
-    Authored content is *not* deleted: a programme that still owns weeks or
-    components is refused whole (``refuse_if_programme_owns_content``). Quizzes
+    Authored content is *not* deleted by the normal path: a programme that still
+    owns weeks or components is refused whole (``refuse_if_programme_owns_content``).
+    ``force_content=True`` is an explicit destructive override used only by the
+    forced-delete flow; it removes components and weeks before their modules.
+    Quizzes
     and week templates are kept, unhooked from it (``unhook_programme_reusables``);
     the delivery scaffolding - the programme, cohorts, groups, modules, live
     sessions and link rows - is what actually goes. Deleting a live session
@@ -7671,7 +7660,8 @@ def permanently_delete_programme_structure(plan):
     component_clause = curriculum_in_clause('component_id', child.get('componentIds'))
 
     # Refuse before anything is written, then unhook what is kept.
-    refuse_if_programme_owns_content(plan)
+    if not force_content:
+        refuse_if_programme_owns_content(plan)
     unhook_programme_reusables(plan, removed)
 
     # Mappings are placed by component; the plan's componentIds already hold
@@ -7679,6 +7669,15 @@ def permanently_delete_programme_structure(plan):
     wipe(AUTHORING_KSB_MAPPINGS_TABLE, [component_clause])
     wipe('quiz_component_links', [component_clause])
     wipe('quiz_course_links', [module_clause, week_clause])
+    if force_content:
+        # Authored content is explicitly opted into deletion here. Components
+        # must go before weeks, and both must go before their parent modules.
+        wipe(AUTHORING_COMPONENTS_TABLE, [
+            curriculum_in_clause('id', child.get('componentIds')),
+        ])
+        wipe(AUTHORING_WEEKS_TABLE, [
+            curriculum_in_clause('id', child.get('weekIds')),
+        ])
     wipe('tutor_module_notifications', [module_clause])
     wipe('module_completion_criteria', [module_clause])
     wipe('module_details', [module_clause])
@@ -7721,7 +7720,14 @@ def request_wants_permanent_programme_delete(request):
     return request_wants_permanent_delete(request)
 
 
-def permanent_programme_delete_response(identifier, programme=None, config=None):
+def request_wants_forced_programme_delete(request):
+    """Opt into deleting authored weeks/components as well as delivery rows."""
+    return request_wants_permanent_programme_delete(request) and truthy(
+        request.GET.get('force') or request.GET.get('cascade')
+    )
+
+
+def permanent_programme_delete_response(identifier, programme=None, config=None, force_content=False):
     """HTTP outcome of a permanent programme delete.
 
     Archived-only by design: ``is_archived`` is the switch that turns an
@@ -7760,7 +7766,7 @@ def permanent_programme_delete_response(identifier, programme=None, config=None)
 
     try:
         with transaction.atomic():
-            removed = permanently_delete_programme_structure(plan)
+            removed = permanently_delete_programme_structure(plan, force_content=force_content)
         # Again, now the delete is committed. The invalidation inside the
         # transaction cannot be the last word: a read arriving before the commit
         # refills every cache from rows that are on their way out, and the
@@ -7813,6 +7819,7 @@ def permanent_programme_delete_response(identifier, programme=None, config=None)
     return JsonResponse({
         'deleted': True,
         'permanent': True,
+        'forced': bool(force_content),
         'archived': False,
         'id': clean_str(identifier),
         'removed': removed,
@@ -8817,45 +8824,17 @@ def get_training_rows():
 
 
 def get_module_rows():
-    if not table_exists('Modules'):
-        return authoring_modules_as_catalogue_rows()
-    if not table_exists('Modules') and table_exists(AUTHORING_MODULES_TABLE):
-        rows = fetch_all(f'''
-            select *
-            from {table_name(AUTHORING_MODULES_TABLE)}
-            order by title, module_catalogue_id
-        ''')
-        return [
-            {
-                **row,
-                'Module ID': row.get('module_catalogue_id'),
-                'Module_name': row.get('title') or row.get('module_catalogue_id') or 'Module',
-                'Number of sessions': row.get('sessions_number') or 0,
-                'start_date': row.get('start_date'),
-                'end_date': row.get('end_date'),
-                'Module_colour': row.get('color') or '#6941c6',
-                'Notes': row.get('description') or '',
-                'session_ksb_json': '',
-            }
-            for row in rows
-        ]
-
-    return fetch_all(f'''
-        select *
-        from "{CURRICULUM_SCHEMA}"."Modules"
-        order by "Module_name", "Module ID"
-    ''')
+    # The authoring tables are the catalogue: the legacy curriculum."Modules"
+    # table no longer exists in the curriculum database.
+    return authoring_modules_as_catalogue_rows()
 
 
 @scoped_curriculum_read
 def get_ksb_profile_rows():
-    if not table_exists('ksb_profiles'):
-        return []
-    return fetch_all(f'''
-        select *
-        from {table_name("ksb_profiles")}
-        order by is_active desc, name
-    ''')
+    # curriculum.ksb_profiles was removed: a programme takes its KSBs from its
+    # apprenticeship standard (standard_ksbs). Kept as an empty source so the
+    # callers that still pass profiles through need no change.
+    return []
 
 
 # The standard KSB rows as last read, with the digest they were read under
@@ -9394,12 +9373,8 @@ def build_staff_user_profile_collection(role, visibility='operational'):
         )
         return build_staff_profiles(profile_rows, role, [], groups)
     # Tutor profiles only expose module identities/dates/status. Week titles
-    # and group statistics cannot affect those fields. Legacy catalogues keep
-    # their existing resolver, including non-authoring identifiers.
-    catalogue = (
-        authoring_modules_as_catalogue_rows(week_rows=[])
-        if not table_exists('Modules') else get_module_rows()
-    )
+    # and group statistics cannot affect those fields.
+    catalogue = authoring_modules_as_catalogue_rows(week_rows=[])
     modules = build_modules(
         catalogue,
         training_rows,
@@ -9717,7 +9692,7 @@ def get_curriculum_rows(compact=False):
     # five; each reader still makes its own call and finds its rows memoised.
     prefetch_authoring_reads([
         *training_index_reads(),
-        *([] if table_exists('Modules') else [((AUTHORING_WEEKS_TABLE,), {'columns': WEEK_INDEX_COLUMNS})]),
+        ((AUTHORING_WEEKS_TABLE,), {'columns': WEEK_INDEX_COLUMNS}),
     ])
     rows = {
         'training': get_training_rows(),
@@ -9774,7 +9749,6 @@ def build_modules(module_rows, training_rows, program_configs=None, include_unus
         group_id = group['id']
         catalogue_id = training_row_module_catalogue_id(row)
         invalid_explicit_id = training_row_invalid_explicit_module_catalogue_id(row)
-        stale_legacy_id = training_row_stale_legacy_module_catalogue_id(row)
         catalogue = module_catalog.get(str(catalogue_id)) or module_catalog.get(normalise(row.get('module_name')))
         name = row.get('module_name') or (catalogue.get('Module_name') if catalogue else f'Module {row.get("id")}')
         delivery_module_id = clean_str(row.get('id')) or catalogue_id
@@ -9803,7 +9777,6 @@ def build_modules(module_rows, training_rows, program_configs=None, include_unus
             'moduleCatalogueId': catalogue_id,
             'deliveryRowId': row.get('id'),
             'deliveryModuleId': delivery_module_id,
-            'legacyModuleId': stale_legacy_id,
             'invalidModuleCatalogueId': invalid_explicit_id,
             'structureId': canonical_module_id,
             'sourceId': catalogue_id,
@@ -11189,7 +11162,6 @@ def build_sessions(training_rows, module_rows, program_configs=None, authoring_m
         delivery_module_id = clean_str(row.get('id'))
         explicit_catalogue_id = training_row_module_catalogue_id(row)
         invalid_explicit_id = training_row_invalid_explicit_module_catalogue_id(row)
-        stale_legacy_id = training_row_stale_legacy_module_catalogue_id(row)
         module_id = explicit_catalogue_id or delivery_module_id
         cohort = actual_cohort_identity(row, program)
         if not cohort:
@@ -11261,7 +11233,6 @@ def build_sessions(training_rows, module_rows, program_configs=None, authoring_m
                 'moduleId': module_id,
                 'deliveryModuleId': delivery_module_id,
                 'moduleCatalogueId': (authoring_module or {}).get('module_catalogue_id') or explicit_catalogue_id or meta.get('module_catalogue_id') or '',
-                'legacyModuleId': stale_legacy_id,
                 'invalidModuleCatalogueId': invalid_explicit_id,
                 'weekId': (session_links[index].get('weekId') if index < len(session_links) else '') or f'{module_id}-week-{index + 1}',
                 'componentId': (session_links[index].get('componentId') if index < len(session_links) else '') or '',
@@ -13355,72 +13326,13 @@ def all_standard_required_ksbs():
     return definitions
 
 
-def profile_required_ksbs(identifier):
-    ident = clean_str(identifier).replace('ksb-', '', 1)
-    rows = get_ksb_profile_rows()
-    matched = None
-    for row in rows:
-        row_ids = {
-            clean_str(row.get('id')),
-            f'ksb-{clean_str(row.get("id"))}',
-            clean_str(row.get('ksb_profile_id')),
-            slugify(row.get('name') or ''),
-            *ksb_profile_context_ids(row, 'programme_ids'),
-        }
-        if clean_str(identifier) in row_ids or ident in row_ids:
-            matched = row
-            break
-    if not matched:
-        return []
-    source_id = ksb_profile_source_id(matched)
-    items = parse_json_value(matched.get('ksb_items'), [])
-    definitions = []
-    for item in items if isinstance(items, list) else []:
-        type_code = normalise_ksb_type(item.get('type'))
-        code = full_ksb_code(item)
-        if not code:
-            continue
-        definitions.append({
-            'ksb_id': clean_str(item.get('id')) or f'{source_id}:{code}',
-            'code': code,
-            'title': item.get('title') or code,
-            'description': item.get('description') or item.get('title') or '',
-            'ksb_type': ksb_type_from_value(type_code, code),
-            'source_type': 'framework',
-            'source_id': source_id,
-        })
-    return definitions
-
-
-def all_profile_required_ksbs(active_only=True):
-    definitions = []
-    seen = set()
-    for row in get_ksb_profile_rows():
-        if active_only and not truthy(row.get('is_active')):
-            continue
-        for definition in profile_required_ksbs(ksb_profile_source_id(row)):
-            identity = (
-                clean_str(definition.get('source_type')).lower(),
-                clean_str(definition.get('source_id')).lower(),
-                coverage_normalise_code(definition.get('code')),
-            )
-            if identity in seen:
-                continue
-            seen.add(identity)
-            definitions.append(definition)
-    return definitions
-
-
 def required_ksbs_for_source(source_type='', source_id=''):
     source_type, source_id = split_ksb_source(source_type, source_id)
     if source_type == 'standard' and not source_id:
         return all_standard_required_ksbs()
-    if source_type in {'framework', 'profile'} and not source_id:
-        return all_profile_required_ksbs()
     if source_type == 'standard' and source_id:
         return standard_required_ksbs(source_id)
-    if source_type in {'framework', 'profile'} and source_id:
-        return profile_required_ksbs(source_id)
+    # 'framework'/'profile' sources were KSB profiles, which no longer exist.
     return []
 
 
@@ -14360,7 +14272,6 @@ COMPACT_MODULE_LIST_DROPPED = {
     'deliveryMetadata': 'Not on the CurriculumModule TypeScript type at all, so nothing can read it off a response row. Every `deliveryMetadata` read in the frontend is of the object curriculumModuleToCatalogue() builds locally. Carries the Teams join URL, organiser and the attendee/presenter/co-organiser lists, so dropping it takes real attendee addresses out of a list response as well.',
     'qualityScore': 'Not on the CurriculumModule type; the catalogue item hardcodes 0.',
     'author': "Always '' out of build_modules() and authoring_summary_catalogue_item(). No reader.",
-    'legacyModuleId': 'No reference anywhere in the frontend.',
     'invalidModuleCatalogueId': 'No reference anywhere in the frontend. Read server-side by enrich_modules_with_authoring(), which runs before this projection.',
     'deliveryRowId': 'No reference on a module row (the one `deliveryRowId` read in the frontend is on a session).',
     'sourceType': 'No reader on a module row; curriculumModuleToCatalogue() explicitly sets its own to undefined. Read server-side before this projection.',
@@ -14676,6 +14587,10 @@ GROUPS_TABLE = 'groups'
 FREE_COURSES_TABLE = 'free_courses'
 FREE_PROGRAMME_MODULES_TABLE = 'free_course_weeks'
 FREE_PROGRAMME_COMPONENTS_TABLE = 'free_programme_components'
+# Canonical authoring tables.  These names are shared by the Home, Programme,
+# Delivery and module-authoring read/write helpers; removing the constants
+# leaves those paths with a runtime AttributeError even though the tables
+# themselves are the current normalized schema (not the retired catalogue).
 AUTHORING_MODULES_TABLE = 'modules'
 AUTHORING_WEEKS_TABLE = 'weeks'
 AUTHORING_COMPONENTS_TABLE = 'components'
@@ -25753,7 +25668,12 @@ def curriculum_programme_detail(request, identifier):
             log_curriculum_decision(
                 'programme.delete', outcome='permanent_requested', entity_id=identifier,
             )
-            return permanent_programme_delete_response(identifier, programme, config)
+            return permanent_programme_delete_response(
+                identifier,
+                programme,
+                config,
+                force_content=request_wants_forced_programme_delete(request),
+            )
 
         with transaction.atomic():
             soft_deleted = soft_delete_programme_authoring_structure(identifier, programme, config)
@@ -27969,14 +27889,14 @@ def component_source_inputs_fingerprint():
     """What a mapping's inferred KSB source depends on beyond the curriculum epoch.
 
     The component reads infer a mapping's source from the Skills England KSBs
-    (``standard_ksbs``) and, where it still exists, ``ksb_profiles``. Neither is
-    written through a curriculum handler, so no epoch bump retires a cached read
-    when they change. This is their row count and newest stamp: one round trip,
-    taken when a cached entry passes its ttl, so the entry is rebuilt only when
-    they have moved (see cached_curriculum_value's ``fingerprint``).
+    (``standard_ksbs``). It is not written through a curriculum handler, so no
+    epoch bump retires a cached read when it changes. This is its row count and
+    newest stamp: one round trip, taken when a cached entry passes its ttl, so
+    the entry is rebuilt only when it has moved (see cached_curriculum_value's
+    ``fingerprint``).
     """
     parts = []
-    for table in ('standard_ksbs', 'ksb_profiles'):
+    for table in ('standard_ksbs',):
         if not table_exists(table):
             parts.append((table, None))
             continue
@@ -29130,7 +29050,9 @@ def resolve_coverage_source(request, module_rows, scope='', identifier=''):
 
 def required_ksbs_for_resolved_source(source_type, source_id, origin):
     if origin == 'all-profiles':
-        return all_profile_required_ksbs()
+        # No source on the scope: there are no KSB profiles to fall back on, so
+        # coverage is mapping-only.
+        return []
     return required_ksbs_for_source(source_type, source_id)
 
 
@@ -29784,124 +29706,6 @@ PROGRESS_LINEAGE_COLUMN_BY_SCOPE = {
     'week': 'week_ref',
     'component': 'component_ref',
 }
-
-
-def learner_progress_ksb_totals(learner_ids, programme_ksb_codes):
-    """Per-learner achieved KSB weight only, without the rows that produced it.
-
-    Same question as ``learner_progress_ksb_consumption`` asked at programme
-    scope, answered by the same rule -- ``progress_counts_as_achieved`` decides
-    what counts, one completion per (learner, component, code) counts once, and a
-    code outside ``programme_ksb_codes`` contributes nothing -- but it reads only
-    the six columns those three checks need.
-
-    It exists because the caller that only wants a percentage was paying for a
-    whole drill-down. The full read selects eighteen columns of
-    ``learner_progress_entries`` (445 MB for 220k rows: ``feedback``,
-    ``component_title``, ``module_title`` and the rest are wide text), groups by
-    every one of them, and joins out to ``curriculum.components``,
-    ``curriculum.weeks`` and ``curriculum.modules`` to resolve titles nobody
-    reads. Measured from outside the database's region that ran past the 15s
-    statement timeout on every programme, so the programme card's KSB bar was not
-    slow -- it was failing, and rendering 0. Narrowed to the columns the rule
-    needs, with no joins, it completes.
-
-    Deliberately programme-scope only. Everything the scope filter does -- the
-    component list, the lineage fallback, ``in_scope``/``out_of_scope`` -- needs
-    the rows, so a narrower scope still goes through the full read. There is no
-    ``totals_only`` flag on that function for the same reason: a scope-aware
-    caller must not be able to ask for totals that skipped the scope check.
-
-    The summing happens in SQL, and it has to. Narrowing the columns alone left
-    ~177k rows on the wire for a 150-learner programme -- 0.6s of database time
-    against 42s of transfer and dict building, measured from outside the region.
-    What comes back now is one row per (learner, KSB code).
-
-    The completion rule is still applied in Python, because
-    ``learner_api.progress_rules`` says it lives in exactly one place and a SQL
-    copy would drift from it. It is not reimplemented here: the distinct
-    ``(kind, passed)`` pairs are read first -- there are a handful -- the rule
-    decides which of them count, and the pairs it accepts go back into the
-    aggregate as parameters. The rule answers; SQL only carries the answer.
-    """
-    if not learner_ids or connection.vendor != 'postgresql':
-        return {}
-    if not learner_schema_table_exists('learner_progress_entries') or not learner_schema_table_exists('learner_progress_ksbs'):
-        return {}
-    code_filter = sorted({coverage_normalise_code(code) for code in programme_ksb_codes if coverage_normalise_code(code)})
-    if not code_filter:
-        # No mapped codes means no denominator, so there is nothing to total.
-        # Also keeps the aggregate below from reading the whole KSB table for a
-        # filter that would discard every row anyway.
-        return {}
-    totals = defaultdict(dict)
-    try:
-        with connection.cursor() as cursor:
-            cursor.execute(
-                '''
-                select distinct p.kind, p.passed
-                from "Learner"."learner_progress_entries" p
-                where p.learner_id = any(%s)
-                ''',
-                [learner_ids],
-            )
-            outcome_pairs = [
-                (kind, passed) for kind, passed in cursor.fetchall()
-                if progress_counts_as_achieved(kind=kind, passed=passed)
-            ]
-            if not outcome_pairs:
-                return {}
-            # `is not distinct from` rather than `=`: an ungraded completion
-            # leaves `passed` NULL, and NULL = NULL is NULL, which would drop
-            # every row the rule just accepted.
-            outcome_sql = ' or '.join(
-                ['(p.kind is not distinct from %s and p.passed is not distinct from %s)'] * len(outcome_pairs)
-            )
-            outcome_params = [value for pair in outcome_pairs for value in pair]
-            cursor.execute(
-                f'''
-                select learner_id, code, sum(weight) as weight
-                from (
-                    -- One row per (learner, component, code): a component
-                    -- completed twice was earned once. The ordering picks the
-                    -- same winner the row-level read picks -- newest submission
-                    -- first, and the heaviest snapshot within it, which is the
-                    -- `max(weight)` the row-level read takes per progress row.
-                    select distinct on (
-                            p.learner_id,
-                            coalesce(nullif(btrim(p.component_ref), ''), 'progress:' || p.id),
-                            upper(btrim(k.ksb_code))
-                        )
-                        p.learner_id,
-                        upper(btrim(k.ksb_code)) as code,
-                        coalesce(k.weight, 0) as weight
-                    from "Learner"."learner_progress_entries" p
-                    join "Learner"."learner_progress_ksbs" k on k.progress_id = p.id{and_not_excluded('k', connection)}
-                    where p.learner_id = any(%s)
-                      -- upper(btrim(...)) is ksb_coverage.normalise_code() in
-                      -- SQL, so a stored code that differs only in case or
-                      -- padding still matches the mapped codes it is filtered
-                      -- against. Comparing the raw column would silently drop it.
-                      and upper(btrim(k.ksb_code)) = any(%s)
-                      and ({outcome_sql})
-                    order by p.learner_id,
-                             coalesce(nullif(btrim(p.component_ref), ''), 'progress:' || p.id),
-                             upper(btrim(k.ksb_code)),
-                             p.submitted_at desc nulls last, p.id desc,
-                             k.weight desc nulls last
-                ) achieved
-                group by learner_id, code
-                ''',
-                [learner_ids, code_filter, *outcome_params],
-            )
-            for learner_id, ksb_code, weight in cursor.fetchall():
-                code = coverage_normalise_code(ksb_code)
-                if code:
-                    totals[learner_id][code] = float(float_weight(weight or 0) or 0)
-    except Exception as exc:
-        logger.warning('Could not load learner progress KSB totals: %s', exc)
-        return {}
-    return dict(totals)
 
 
 def progress_scope_predicate(component_ids, lineage_column='', scope_ref=''):
@@ -33151,33 +32955,9 @@ def curriculum_ksb_set_definitions(request, identifier):
 @gzip_page
 @require_GET
 def curriculum_ksb_sets(request):
-    if request.GET.get('view') == 'summary':
-        visibility = curriculum_visibility(request)
-
-        def build():
-            profiles = get_ksb_profile_rows()
-            if visibility != 'all':
-                profiles = [row for row in profiles if row.get('is_active')]
-            # This list needs identities, programme links and definition counts,
-            # not the curriculum tree or per-definition coverage/activity data.
-            return build_ksb_data(profiles, [], [], summary_only=True)[1]
-
-        results = cached_curriculum_value(
-            f'ksb-source-summaries:{visibility}', build,
-            force=request_bypasses_curriculum_cache(request),
-        )
-        return curriculum_collection_response({'schema': CURRICULUM_SCHEMA}, 'ksbSets', results)
-    # Every set is one KSB profile in this visibility (see build_ksb_data), so
-    # with none there is nothing to build: answer from the profiles table
-    # instead of rebuilding the whole compact overview -- ~10 s on a cache miss
-    # -- to return an empty list. That is the usual case since programmes take
-    # their KSBs from standards.
-    profiles = get_ksb_profile_rows()
-    if curriculum_visibility(request) != 'all':
-        profiles = [profile for profile in profiles if profile.get('is_active')]
-    if not profiles:
-        return curriculum_collection_response({'schema': CURRICULUM_SCHEMA}, 'ksbSets', [])
-    return curriculum_collection_response(get_cached_payload(request, compact=True), 'ksbSets')
+    # Every KSB set was one stored KSB profile, and curriculum keeps none any more
+    # (curriculum.ksb_profiles was removed). Kept so older screens get an empty list.
+    return curriculum_collection_response({'schema': CURRICULUM_SCHEMA}, 'ksbSets', [])
 
 
 def curriculum_cohort_from_authoring_detail(detail):

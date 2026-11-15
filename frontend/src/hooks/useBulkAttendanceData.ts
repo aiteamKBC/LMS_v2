@@ -141,7 +141,6 @@ function toBulkData(
       module.moduleCatalogueId,
       module.deliveryModuleId,
       module.deliveryRowId,
-      module.legacyModuleId,
       module.invalidModuleCatalogueId,
       module.catalogueId,
     ]
@@ -188,7 +187,6 @@ function toBulkData(
       session.moduleId,
       session.deliveryModuleId,
       session.deliveryRowId,
-      session.legacyModuleId,
       session.invalidModuleCatalogueId,
     ].filter(Boolean).map(String);
     const mappedModuleId = aliases

@@ -58,6 +58,7 @@ import {
   permanentlyDeleteGroupWithConfirm,
   permanentlyDeleteModuleWithConfirm,
   permanentlyDeleteProgrammeWithConfirm,
+  forciblyDeleteProgrammeWithConfirm,
   restoreCohortWithConfirm,
   restoreGroupWithConfirm,
   restoreModuleWithConfirm,
@@ -1021,6 +1022,11 @@ export default function CurriculumArchivePage() {
     }
   };
 
+  const forceDeleteProgramme = (row: ArchiveRow) => runAction(row, () => forciblyDeleteProgrammeWithConfirm(
+    { id: row.id, name: row.name },
+    () => {},
+  ));
+
   const rowActions = (row: ArchiveRow) => (
     <NamedActions
       actions={[
@@ -1045,6 +1051,14 @@ export default function CurriculumArchivePage() {
           disabled: Boolean(row.deleteBlockedBy) || Boolean(busyKey),
           onClick: () => void deletePermanently(row),
         },
+        ...(row.kind === 'programme' && !row.deleteBlockedBy ? [{
+          icon: 'ri-delete-bin-2-line',
+          label: 'Force delete',
+          title: 'Permanently delete this programme and all authored weeks and components',
+          disabled: Boolean(busyKey),
+          busy: busyKey === row.key,
+          onClick: () => void forceDeleteProgramme(row),
+        }] : []),
       ]}
     />
   );
@@ -1274,6 +1288,21 @@ export default function CurriculumArchivePage() {
               <section className="space-y-1.5 rounded-xl border border-foreground-200/60 bg-background-50 px-4 py-3">
                 <h4 className="text-[11px] font-bold uppercase tracking-wider text-foreground-400">What the buttons do</h4>
                 <EffectCell row={openRow} />
+                {openRow.kind === 'programme' && !openRow.deleteBlockedBy && (
+                  <div className="mt-3 border-t border-red-200 pt-3">
+                    <p className="text-[11px] leading-5 text-red-700">
+                      Need to destroy authored weeks and components too? This is irreversible and can remove curriculum content referenced by learner delivery.
+                    </p>
+                    <button
+                      type="button"
+                      disabled={Boolean(busyKey)}
+                      onClick={() => { void forceDeleteProgramme(openRow); }}
+                      className="mt-2 rounded-lg border border-red-300 bg-red-50 px-3 py-1.5 text-[11px] font-bold text-red-700 hover:bg-red-100 disabled:opacity-50"
+                    >
+                      Force-delete all programme content
+                    </button>
+                  </div>
+                )}
               </section>
 
               <section className="rounded-xl border border-foreground-200/60 bg-background-50 px-4 py-1">

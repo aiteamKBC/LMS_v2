@@ -134,14 +134,6 @@ class HomeSourceTests(SimpleTestCase):
         week_calls = [kwargs for table, kwargs in self.calls if table == views.AUTHORING_WEEKS_TABLE]
         self.assertEqual(week_calls, [{'columns': ('module_catalogue_id', 'display_order', 'week_number', 'title')}])
 
-    def test_legacy_catalogue_ksb_codes_are_kept(self):
-        legacy = [{'Module ID': 'MOD-A', 'Module_name': 'First', 'session_ksb_json': '["K1"]'}]
-        with patch.object(views, 'table_exists', return_value=True), \
-             patch.object(views, 'get_module_rows', return_value=legacy):
-            self.assertEqual(home_summary.build_home_summary('operational'), previous_summary('operational'))
-            rows, _ = home_summary.home_source_rows('operational')
-        self.assertEqual(rows['modules'], legacy)
-
     def test_empty_provided_sources_do_not_trigger_fallback_database_reads(self):
         with patch.object(views, 'authoring_fetch_all', side_effect=AssertionError('Unexpected read')):
             self.assertEqual(views.authoring_modules_as_training_rows(module_rows=[], group_rows=[], cohort_rows=[]), [])

@@ -110,7 +110,7 @@ function CurriculumGroupsPageContent() {
   const [searchParams, setSearchParams] = useSearchParams();
   const {
     programmes, cohorts, groups, modules, coaches, loading, loaded, refreshing, error, reload, applyLocal,
-  } = useCurriculumEntities({ includeStaff: true });
+  } = useCurriculumEntities({ includeStaff: true, includeTutors: false });
 
   const [search, setSearch] = useState(() => searchParams.get('q') || '');
   const [programmeFilter, setProgrammeFilter] = useState(searchParams.get('programme') || '');
@@ -183,6 +183,19 @@ function CurriculumGroupsPageContent() {
     return Array.from(names).sort((a, b) => a.localeCompare(b));
   }, [coaches, groups]);
 
+  // The hero counts coaches actually on a group; coachNames above also lists
+  // directory coaches with no group, for the filter.
+  const staffing = useMemo(() => {
+    const assigned = new Set<string>();
+    let uncoached = 0;
+    groups.forEach(group => {
+      const names = coachesOfGroup(group);
+      if (!names.length) uncoached += 1;
+      names.forEach(name => assigned.add(name));
+    });
+    return { coaches: assigned.size, uncoached };
+  }, [groups]);
+
   const visibleGroups = useMemo(() => {
     const scoped = groupsForScope(groups, cohorts, programmes, {
       programmeId: programmeFilter,
@@ -194,7 +207,7 @@ function CurriculumGroupsPageContent() {
       const context = resolveGroupContext(group, cohorts, programmes);
       return matchesSearch(search, [
         group.name, group.id, context.cohortName, context.programmeName,
-        group.coach, group.tutor, scheduleLabel(group),
+        group.coach, scheduleLabel(group),
       ]);
     });
     return sortEntities(matched, GROUP_SORT_OPTIONS, sort);
@@ -284,7 +297,7 @@ function CurriculumGroupsPageContent() {
       const context = resolveGroupContext(saved, cohorts, programmes);
       const hit = matchesSearch(search, [
         saved.name, saved.id, context.cohortName, context.programmeName,
-        saved.coach, saved.tutor, scheduleLabel(saved),
+        saved.coach, scheduleLabel(saved),
       ]);
       if (!hit) setSearch('');
     }
@@ -327,8 +340,10 @@ function CurriculumGroupsPageContent() {
           stats={[
             { icon: 'ri-team-line', label: 'Groups', value: groups.length },
             { icon: 'ri-calendar-event-line', label: 'Cohorts', value: cohorts.length },
-            { icon: 'ri-user-star-line', label: 'Coaches', value: coachNames.length },
-            { icon: 'ri-stack-line', label: 'Modules', value: modules.length },
+            { icon: 'ri-user-star-line', label: 'Coaches on groups', value: staffing.coaches,
+              detail: staffing.uncoached ? `${staffing.uncoached} group${staffing.uncoached === 1 ? '' : 's'} without a coach` : undefined },
+            { icon: 'ri-stack-line', label: 'Modules in groups', value: modules.length,
+              detail: 'Modules with no group are counted in Module Builder' },
           ]}
           primaryAction={{ label: 'Add Group', onClick: () => { setEditing(null); setDrawerOpen(true); } }}
           secondaryActions={(

@@ -1613,15 +1613,18 @@ function ModuleBuilderContent() {
   const freeCourses = searchMatchingModules.filter(module => module.isFreeCourse);
   const filtered = freeCoursesOnly ? freeCourses : allModules ? matchingModules : activeModules;
 
+  // Every chip counts the same modules as "Modules": a placed-only count beside
+  // the catalogue total reads as modules missing a tutor or weeks.
   const deliveryStats = useMemo(() => ({
-    deliveries: deliveryUsages.length,
-    withTutor: deliveryUsages.filter(usage => Boolean(usage.tutor)).length,
-    sessions: deliveryUsages.reduce((total, usage) => total + (usage.sessions || 0), 0),
+    inCohort: catalogueModules.filter(module => (module.deliveryUsages || []).length > 0).length,
+    withTutor: catalogueModules.filter(module => Boolean(tutorDisplayName(module.tutor || module.sourceModule?.tutor))).length,
+    weeks: catalogueModules.reduce((total, module) => total + (module.weeks || 0), 0),
     teams: teamsMeetings.length,
-  }), [deliveryUsages, teamsMeetings]);
+  }), [catalogueModules, teamsMeetings]);
 
-  const published = catalogueModules.filter(module => module.status === 'published').length;
-  const draftCount = catalogueModules.filter(module => module.status === 'draft').length;
+  // Modules carry no draft/published status in the database (only active or
+  // archived), so the subtitle reports placement instead.
+  const unplacedCount = catalogueModules.filter(module => !module.isFreeCourse && !(module.deliveryUsages || []).length).length;
   const totalComponents = catalogueModules.reduce((total, module) => total + (module.lessonCount || 0), 0);
 
   const selectedWeek = workingModule?.weekStructure.find(week => week.id === selection?.weekId) || null;
@@ -4119,7 +4122,7 @@ function ModuleBuilderContent() {
   }
 
   return (
-    <WorkspaceShell role="curriculum" roleLabel="Curriculum Designer" navItems={curriculumNavItems} workspaceLabel="Curriculum Studio" pageTitle="Module Builder" pageSubtitle={`${catalogueModules.length} modules - ${published} published - ${draftCount} draft - ${totalComponents} components`} userName="Rachel Myers" userRole="Curriculum Designer">
+    <WorkspaceShell role="curriculum" roleLabel="Curriculum Designer" navItems={curriculumNavItems} workspaceLabel="Curriculum Studio" pageTitle="Module Builder" pageSubtitle={`${catalogueModules.length} modules - ${unplacedCount} not placed in a cohort yet - ${totalComponents} components`} userName="Rachel Myers" userRole="Curriculum Designer">
       <div className={catalogueStyles.page}>
         <div className={catalogueStyles.backdrop} aria-hidden="true">
           <img src="/assets/patterns/kbc-ibis-wreath.webp" alt="" className={catalogueStyles.ibis} decoding="async" />
@@ -4151,9 +4154,9 @@ function ModuleBuilderContent() {
           </div>
           <div className={catalogueStyles.summaryStats}>
             <BuilderStatChip icon="ri-stack-line" label="Modules" value={catalogueModules.length} />
-            <BuilderStatChip icon="ri-route-line" label="Deliveries" value={deliveryStats.deliveries} />
+            <BuilderStatChip icon="ri-route-line" label="In a cohort" value={deliveryStats.inCohort} />
             <BuilderStatChip icon="ri-presentation-line" label="With tutor" value={deliveryStats.withTutor} />
-            <BuilderStatChip icon="ri-calendar-2-line" label="Weeks" value={deliveryStats.sessions} />
+            <BuilderStatChip icon="ri-calendar-2-line" label="Weeks" value={deliveryStats.weeks} />
             <BuilderStatChip icon="ri-vidicon-line" label="Teams meetings" value={deliveryStats.teams} />
           </div>
         </div>
@@ -7421,193 +7424,11 @@ function ReviewKsbChip({ mapping, sourceLabels }: { mapping: KsbMapping; sourceL
   );
 }
 
-function SessionKsbSummaryColumn({ kind, mappings, module, sourceLabels }: {
-  kind: 'knowledge' | 'skill' | 'behaviour';
-  mappings: KsbMapping[];
-  module: ModuleCatalogueItem;
-  sourceLabels: Record<string, string>;
-}) {
-  const labels = {
-    knowledge: 'Knowledge',
-    skill: 'Skills',
-    behaviour: 'Behaviours',
-  };
-  return (
-    <section className="min-w-0 rounded-2xl border border-background-200 bg-background-100/35 p-3">
-      <div className="mb-3 flex items-center justify-between gap-2">
-        <p className="text-[11px] font-bold uppercase text-foreground-600">{labels[kind]}</p>
-        <span className="rounded-full bg-background-50 px-2 py-0.5 text-[10px] font-bold text-foreground-600">{mappings.length}</span>
-      </div>
-      <div className="space-y-2">
-        {mappings.map(mapping => (
-          <SessionKsbReadableCard key={mapping.id} mapping={mapping} module={module} />
-        ))}
-        {!mappings.length && <p className="rounded-xl border border-dashed border-background-300 bg-background-50 px-3 py-6 text-center text-[11px] font-semibold text-foreground-400">None mapped.</p>}
-      </div>
-    </section>
-  );
-}
-
-function SessionKsbReadableCard({ mapping, module }: { mapping: KsbMapping; module: ModuleCatalogueItem }) {
-  const classification = normaliseKsbMappingType(mapping.classification || mapping.type);
-  const weightClass = normaliseKsbWeightClass(mapping.weightClass || mapping.weight_class, classification);
-  const placements = ksbMappingPlacements(module, mapping);
-  return (
-    <article
-      title={mapping.description || mapping.code}
-      className={`rounded-xl border p-3 ${ksbCodeChipClass(mapping.code)}`}
-    >
-      <div className="flex flex-wrap items-center gap-1.5">
-        <span className="text-[12px] font-extrabold text-foreground-950">{mapping.code}</span>
-        <span className="rounded bg-white/70 px-1.5 py-0.5 text-[9px] font-bold">{ksbWeightClassLabel(weightClass)}</span>
-        <span className="rounded bg-white/70 px-1.5 py-0.5 text-[9px] font-bold">{clampKsbWeight(mapping.weight)}%</span>
-      </div>
-      {mapping.description && <p className="mt-2 text-[11px] font-semibold leading-relaxed text-foreground-700">{mapping.description}</p>}
-      <div className="mt-2 flex flex-wrap gap-1">
-        {placements.slice(0, 4).map(placement => (
-          <span key={placement} className="rounded-full bg-white/70 px-2 py-0.5 text-[9px] font-bold text-foreground-600">{placement}</span>
-        ))}
-        {placements.length > 4 && <span className="rounded-full bg-white/70 px-2 py-0.5 text-[9px] font-bold text-foreground-500">+{placements.length - 4} more</span>}
-      </div>
-    </article>
-  );
-}
-
-function ksbMappingPlacements(module: ModuleCatalogueItem, mapping: KsbMapping) {
-  const code = String(mapping.code || '').trim().toUpperCase();
-  const placements: string[] = [];
-  if (module.moduleKsbMappings.some(item => String(item.code || '').trim().toUpperCase() === code)) {
-    placements.push('Module level');
-  }
-  module.weekStructure.forEach(week => {
-    if (week.ksbMappings.some(item => String(item.code || '').trim().toUpperCase() === code)) {
-      placements.push(`Week ${week.weekNumber}`);
-    }
-    week.components.forEach(component => {
-      if (!component.ksbMappings.some(item => String(item.code || '').trim().toUpperCase() === code)) return;
-      const meta = componentTypes.find(item => item.type === component.type);
-      placements.push(`Week ${week.weekNumber} - ${readableComponentTitle(component.title) || meta?.label || 'Component'}`);
-    });
-  });
-  return [...new Set(placements)];
-}
-
-function SessionKsbMappingRow({ module, week, component, sourceLabels, onAddKsb, onRemoveKsb }: {
-  module: ModuleCatalogueItem;
-  week: ModuleWeek;
-  component: ModuleComponent;
-  sourceLabels: Record<string, string>;
-  onAddKsb: () => void;
-  onRemoveKsb: (mappingId: string) => void;
-}) {
-  const meta = componentTypes.find(item => item.type === component.type);
-  const tone = componentToneClasses(meta?.tone);
-  const groups = componentGroupLabels(module, component);
-  return (
-    <div className="grid gap-3 px-4 py-3 xl:grid-cols-[minmax(260px,0.95fr)_minmax(180px,0.55fr)_repeat(3,minmax(160px,1fr))_auto] xl:items-start">
-      <div className="min-w-0">
-        <div className="flex items-start gap-2.5">
-          <span className={`mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ${tone.soft} ${tone.text}`}>
-            <AppIcon className={`${meta?.icon || 'ri-file-line'} text-sm`}></AppIcon>
-          </span>
-          <div className="min-w-0">
-            <p className="truncate text-[12px] font-bold text-foreground-950">{readableComponentTitle(component.title)}</p>
-            <p className="mt-0.5 text-[10px] font-semibold text-foreground-400">Week {week.weekNumber} · {meta?.label || component.type}</p>
-            <p className="mt-1 text-[10px] text-foreground-400">{component.ksbMappings.length} mapping{component.ksbMappings.length === 1 ? '' : 's'}</p>
-          </div>
-        </div>
-      </div>
-      <div>
-        <p className="mb-1 text-[9px] font-bold uppercase text-foreground-400 xl:hidden">Groups</p>
-        <div className="flex flex-wrap gap-1">
-          {groups.map(group => (
-            <span key={group} className="rounded-full border border-primary-100 bg-primary-50 px-2 py-0.5 text-[10px] font-bold text-primary-700">{group}</span>
-          ))}
-          {!groups.length && <span className="text-[10px] font-semibold text-foreground-300">No group selected</span>}
-        </div>
-      </div>
-      {(['knowledge', 'skill', 'behaviour'] as const).map(kind => (
-        <SessionKsbColumn
-          key={kind}
-          kind={kind}
-          mappings={component.ksbMappings.filter(mapping => sessionKsbKind(mapping.code) === kind)}
-          sourceLabels={sourceLabels}
-          onRemove={onRemoveKsb}
-        />
-      ))}
-      <div className="flex justify-start xl:justify-end">
-        <button type="button" onClick={onAddKsb} className="inline-flex h-9 items-center justify-center gap-1.5 rounded-lg bg-primary-500 px-3 text-[11px] font-bold text-white transition-smooth hover:bg-primary-600">
-          <AppIcon className="ri-add-line"></AppIcon>
-          Add KSBs
-        </button>
-      </div>
-    </div>
-  );
-}
-
-function SessionKsbColumn({ kind, mappings, sourceLabels, onRemove }: {
-  kind: 'knowledge' | 'skill' | 'behaviour';
-  mappings: KsbMapping[];
-  sourceLabels: Record<string, string>;
-  onRemove: (mappingId: string) => void;
-}) {
-  const labels = {
-    knowledge: 'Knowledge',
-    skill: 'Skills',
-    behaviour: 'Behaviours',
-  };
-  return (
-    <div className="min-w-0 rounded-xl border border-background-200 bg-background-100/45 p-2">
-      <div className="mb-2 flex items-center justify-between gap-2">
-        <p className="text-[9px] font-bold uppercase text-foreground-400">{labels[kind]}</p>
-        <span className="rounded-full bg-background-50 px-1.5 py-0.5 text-[9px] font-bold text-foreground-500">{mappings.length}</span>
-      </div>
-      <div className="flex flex-wrap gap-1">
-        {mappings.map(mapping => (
-          <SessionKsbChip key={mapping.id} mapping={mapping} sourceLabels={sourceLabels} onRemove={() => onRemove(mapping.id)} />
-        ))}
-        {!mappings.length && <span className="text-[10px] font-semibold text-foreground-300">None</span>}
-      </div>
-    </div>
-  );
-}
-
-function SessionKsbChip({ mapping, sourceLabels, onRemove }: { mapping: KsbMapping; sourceLabels: Record<string, string>; onRemove: () => void }) {
-  const sourceLabel = ksbSourceLabel(mapping, sourceLabels);
-  const classification = normaliseKsbMappingType(mapping.classification || mapping.type);
-  const weightClass = normaliseKsbWeightClass(mapping.weightClass || mapping.weight_class, classification);
-  return (
-    <span
-      title={`${mapping.description || mapping.code} - ${sourceLabel}`}
-      className={`inline-flex max-w-full items-center gap-1 rounded-md border px-2 py-1 text-[10px] font-bold ${ksbCodeChipClass(mapping.code)}`}
-    >
-      <span>{mapping.code}</span>
-      <span className="rounded bg-white/70 px-1 text-[8px] font-semibold">{ksbWeightClassLabel(weightClass)}</span>
-      <span className="rounded bg-white/70 px-1 text-[8px] font-semibold">{clampKsbWeight(mapping.weight)}%</span>
-      <span className="max-w-[90px] truncate rounded bg-white/70 px-1 text-[8px] font-semibold">{sourceLabel}</span>
-      <button type="button" onClick={onRemove} className="ml-0.5 flex h-4 w-4 items-center justify-center rounded text-red-500 transition-smooth hover:bg-red-50" aria-label={`Remove ${mapping.code}`}>
-        <AppIcon className="ri-close-line text-[11px]"></AppIcon>
-      </button>
-    </span>
-  );
-}
-
 function sessionKsbKind(code: string): 'knowledge' | 'skill' | 'behaviour' {
   const prefix = String(code || '').trim().toUpperCase().slice(0, 1);
   if (prefix === 'S') return 'skill';
   if (prefix === 'B') return 'behaviour';
   return 'knowledge';
-}
-
-function componentGroupLabels(module: ModuleCatalogueItem, component: ModuleComponent) {
-  const settings = component.settings || {};
-  const names = Array.isArray(settings.selectedGroupNames) ? settings.selectedGroupNames : [];
-  const keys = Array.isArray(settings.selectedGroupKeys) ? settings.selectedGroupKeys : [];
-  const fallback = [module.group, module.groupId].filter(Boolean);
-  const labels = [...names, ...(names.length ? [] : keys), ...(names.length || keys.length ? [] : fallback)]
-    .map(value => String(value || '').trim())
-    .filter(Boolean);
-  return [...new Set(labels)];
 }
 
 function KsbSelectorModal({ standards, standardsLoading, ksbSets, ksbSetsLoading, initialSourceId, lockedSourceId, onClose, onAddMany }: {
@@ -7856,151 +7677,6 @@ function KsbSelectorModal({ standards, standardsLoading, ksbSets, ksbSetsLoading
         </div>
       </div>
     </div>
-  );
-}
-
-function CreateModuleModal({ programmeOptions, onClose, onCreate }: { programmeOptions: string[]; onClose: () => void; onCreate: (input: { programme: string; title: string; description: string; weeks: number; status: string }) => Promise<void> | void }) {
-  const [programme, setProgramme] = useState(programmeOptions[0] || 'Unassigned programme');
-  const [title, setTitle] = useState('');
-  const [description, setDescription] = useState('');
-  const [startMode, setStartMode] = useState<'blank' | 'weeks'>('blank');
-  const [weeks, setWeeks] = useState(1);
-  const [submitting, setSubmitting] = useState(false);
-  const [submitError, setSubmitError] = useState<string | null>(null);
-  const selectedWeeks = startMode === 'blank' ? 0 : Math.max(1, Math.round(weeks || 1));
-  return (
-    <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4" onClick={submitting ? undefined : onClose}>
-      <form
-        className="relative w-full max-w-2xl rounded-2xl bg-background-50 shadow-2xl overflow-hidden"
-        onClick={event => event.stopPropagation()}
-        onSubmit={async event => {
-          event.preventDefault();
-          if (!title.trim() || submitting) return;
-          setSubmitting(true);
-          setSubmitError(null);
-          try {
-            await onCreate({ programme, title: title.trim(), description, weeks: selectedWeeks, status: 'draft' });
-          } catch (err) {
-            setSubmitError(err instanceof Error ? err.message : 'Unable to create module.');
-            setSubmitting(false);
-          }
-        }}
-      >
-        <div className="px-5 py-4 bg-primary-950 text-white flex items-start justify-between gap-4">
-          <div>
-            <h3 className="text-base font-heading font-bold text-white">Create new module</h3>
-            <p className="mt-1 text-[12px] text-white/70">Set the module details first, then open the builder to add weeks, components and KSBs.</p>
-          </div>
-          <button type="button" onClick={onClose} disabled={submitting} className="w-8 h-8 shrink-0 rounded-lg bg-white/10 flex items-center justify-center hover:bg-white/20 disabled:opacity-50" aria-label="Close"><AppIcon className="ri-close-line"></AppIcon></button>
-        </div>
-        <fieldset disabled={submitting} className="p-5 space-y-5 disabled:opacity-70">
-          <div className="grid grid-cols-[32px_1fr] gap-3 rounded-xl border border-primary-100 bg-primary-50 px-4 py-3">
-            <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary-500 text-white text-[12px] font-bold">1</span>
-            <div>
-              <p className="text-[12px] font-bold text-primary-900">Module identity</p>
-              <p className="mt-1 text-[11px] text-primary-700">This is what designers will see in the catalogue and builder.</p>
-            </div>
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <SelectInput label="Programme" value={programme} options={programmeOptions.length ? programmeOptions : ['Unassigned programme']} onChange={setProgramme} />
-            <TextInput label="Module title" value={title} onChange={setTitle} required />
-          </div>
-          <TextArea label="Short description" value={description} onChange={setDescription} rows={3} />
-
-          <div className="space-y-3">
-            <div className="grid grid-cols-[32px_1fr] gap-3 rounded-xl border border-background-200 bg-background-100/60 px-4 py-3">
-              <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-background-50 text-foreground-700 text-[12px] font-bold">2</span>
-              <div>
-                <p className="text-[12px] font-bold text-foreground-900">Starting structure</p>
-                <p className="mt-1 text-[11px] text-foreground-500">Choose whether to start clean or pre-create week shells.</p>
-              </div>
-            </div>
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <button
-                type="button"
-                onClick={() => setStartMode('blank')}
-                className={`rounded-xl border px-4 py-3 text-left transition-smooth ${startMode === 'blank' ? 'border-primary-300 bg-primary-50 ring-2 ring-primary-100' : 'border-background-200 bg-background-50 hover:bg-background-100'}`}
-              >
-                <span className="flex items-center gap-2 text-[13px] font-bold text-foreground-950"><AppIcon className="ri-layout-row-line text-primary-600"></AppIcon>Blank builder</span>
-                <span className="mt-1 block text-[11px] leading-relaxed text-foreground-500">Create the module only. Add Week 1 manually when you are ready.</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => setStartMode('weeks')}
-                className={`rounded-xl border px-4 py-3 text-left transition-smooth ${startMode === 'weeks' ? 'border-primary-300 bg-primary-50 ring-2 ring-primary-100' : 'border-background-200 bg-background-50 hover:bg-background-100'}`}
-              >
-                <span className="flex items-center gap-2 text-[13px] font-bold text-foreground-950"><AppIcon className="ri-calendar-check-line text-primary-600"></AppIcon>Pre-create weeks</span>
-                <span className="mt-1 block text-[11px] leading-relaxed text-foreground-500">Open with week shells already created for a faster build.</span>
-              </button>
-            </div>
-
-            {startMode === 'weeks' && (
-              <div className="max-w-xs">
-                <NumberInput label="Number of weeks" value={weeks} min={1} step={1} onChange={setWeeks} />
-              </div>
-            )}
-          </div>
-
-          <div className="rounded-xl border border-background-200 bg-background-100/50 px-4 py-3">
-            <p className="text-[11px] font-semibold text-foreground-500">The module will be saved as a draft and opened in the authoring workspace.</p>
-          </div>
-
-          {submitError && (
-            <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-[12px] font-semibold text-red-700">
-              {submitError}
-            </div>
-          )}
-
-          <div className="flex flex-col-reverse sm:flex-row sm:justify-end gap-2 pt-1">
-            <button type="button" onClick={onClose} className="px-4 py-2 rounded-lg border border-background-200 text-[12px] font-semibold text-foreground-700 hover:bg-background-100">Cancel</button>
-            <button type="submit" disabled={!title.trim() || submitting} className="inline-flex items-center justify-center gap-2 px-4 py-2 rounded-lg bg-primary-500 text-white text-[12px] font-semibold hover:bg-primary-600 disabled:opacity-70 disabled:cursor-not-allowed">
-              {submitting && <span className="h-3.5 w-3.5 rounded-full border-2 border-white/40 border-t-white animate-spin" aria-hidden="true"></span>}
-              {submitting ? 'Creating module...' : 'Create and open builder'}
-            </button>
-          </div>
-        </fieldset>
-        {submitting && (
-          <div className="absolute inset-x-0 bottom-0 border-t border-primary-100 bg-primary-50 px-5 py-3">
-            <div className="flex items-center gap-3">
-              <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary-500 text-white">
-                <span className="h-4 w-4 rounded-full border-2 border-white/40 border-t-white animate-spin"></span>
-              </span>
-              <div>
-                <p className="text-[12px] font-bold text-primary-900">Creating draft module</p>
-                <p className="mt-0.5 text-[11px] text-primary-700">Saving the structure and opening the authoring workspace.</p>
-              </div>
-            </div>
-          </div>
-        )}
-      </form>
-    </div>
-  );
-}
-
-function KsbMappingPanel({ mappings, onAdd, onRemove }: { mappings: KsbMapping[]; onAdd: () => void; onRemove: (mappingId: string) => void }) {
-  return <KsbCards title="KSB mappings" mappings={mappings} onAdd={onAdd} onRemove={onRemove} />;
-}
-
-function ComponentKsbChips({ mappings, sourceLabels }: { mappings: KsbMapping[]; sourceLabels: Record<string, string> }) {
-  if (!mappings.length) {
-    return <span className="mt-1 block text-[9px] font-medium text-foreground-300">No KSBs mapped</span>;
-  }
-  return (
-    <span className="mt-1 flex flex-wrap gap-1">
-      {mappings.map(mapping => (
-        <span
-          key={mapping.id}
-          title={`${mapping.description || `${mapping.code} applied`} - ${ksbSourceLabel(mapping, sourceLabels)}`}
-          className={`inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[9px] font-bold ${ksbCodeChipClass(mapping.code)}`}
-        >
-          {mapping.code} applied
-          <span className="rounded-full bg-white/70 px-1 text-[8px]">{Number(mapping.weight || 0)}%</span>
-          <span className="max-w-[120px] truncate rounded-full bg-white/70 px-1 text-[8px] font-semibold">{ksbSourceLabel(mapping, sourceLabels)}</span>
-        </span>
-      ))}
-    </span>
   );
 }
 
@@ -8603,36 +8279,6 @@ function formatFileSize(size: number) {
   return `${(value / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-function DateInput({ label, value, onChange }: { label: string; value: string; onChange: (value: string) => void }) {
-  return (
-    <label className="block">
-      <span className="text-[10px] font-semibold text-foreground-400 uppercase">{label}</span>
-      <input type="date" value={value} onChange={event => onChange(event.target.value)} className="mt-1 w-full px-3 py-2 bg-background-50 border border-foreground-200/60 rounded-lg text-[13px] text-foreground-900 focus:outline-none focus:border-primary-300" />
-    </label>
-  );
-}
-
-function ReadOnlyMetricChip({ label, value, suffix, tone }: {
-  label: string;
-  value: string;
-  suffix: string;
-  tone: 'emerald' | 'amber';
-}) {
-  const toneClass = tone === 'emerald'
-    ? 'border-emerald-200 bg-emerald-50 text-emerald-800'
-    : 'border-amber-200 bg-amber-50 text-amber-800';
-
-  return (
-    <span className={`min-w-16 rounded-md border px-2 py-1 text-right text-[10px] font-bold ${toneClass}`} title={`${label}: ${value} ${suffix}`}>
-      <span className="block text-left text-[8px] uppercase text-foreground-400">{label}</span>
-      <span>
-        {value}
-        <span className="ml-1 text-[8px] opacity-70">{suffix}</span>
-      </span>
-    </span>
-  );
-}
-
 function CatalogueCover({ url, title }: { url: string; title: string }) {
   const [failed, setFailed] = useState(false);
 
@@ -8914,22 +8560,6 @@ function ModuleKsbMapModal({ module, sourceLabels, ksbSets, standards, programme
   const visiblePlacementCount = filteredRows.reduce((total, row) => total + row.placements.length, 0);
   const visibleWeight = filteredRows.reduce((total, row) => total + row.weight, 0);
   const visibleOtjh = uniquePlacementOtjh(filteredRows);
-  // The heatmap is the way in — it answers "where in this module is this
-  // taught?" at a glance, the same question the programme heatmap answers one
-  // level up. The card view is kept for the per-placement OTJH and points
-  // breakdown the matrix has no room for.
-  const [view, setView] = useState<'heatmap' | 'cards'>('heatmap');
-  const columns = useMemo(() => moduleKsbHeatmapColumns(module), [module]);
-  const weekCount = module.weekStructure.length;
-  const coveredWeeks = useMemo(() => {
-    const touched = new Set<string>();
-    filteredRows.forEach(row => {
-      row.placements.forEach(placement => {
-        if (placement.columnKey && placement.columnKey !== MODULE_KSB_COLUMN) touched.add(placement.columnKey);
-      });
-    });
-    return touched.size;
-  }, [filteredRows]);
   return (
     <div className="fixed inset-0 z-[88] flex items-center justify-center bg-black/45 p-4 backdrop-blur-sm" onClick={onClose}>
       <div className="flex max-h-[88vh] w-full max-w-7xl flex-col overflow-hidden rounded-2xl bg-background-50 shadow-2xl" onClick={event => event.stopPropagation()}>
@@ -9161,179 +8791,6 @@ function ModuleKsbMapCard({ row }: { row: ModuleKsbMapRow }) {
   );
 }
 
-/**
- * The module-scope answer to the programme's KSB heatmap. Same question asked
- * one level down: the programme matrix puts a module in every column, so this
- * one puts a week there, with the module's own mappings pinned in the first
- * column. Rows stay grouped by Knowledge / Skills / Behaviours, because a
- * flat alphabetical list of forty codes is what made the old panel view hard to
- * read in the first place.
- */
-function ModuleKsbHeatmapMatrix({ columns, groups, onBuild }: {
-  columns: ReturnType<typeof moduleKsbHeatmapColumns>;
-  groups: { key: 'K' | 'S' | 'B'; title: string; icon: string; rows: ModuleKsbMapRow[] }[];
-  onBuild: () => void;
-}) {
-  // Weeks are narrow because a week column only ever holds a count; the KSB and
-  // the trail are what need room. Everything scrolls inside the box rather than
-  // pushing the modal, so the header stays put while a 40-week module is read.
-  const gridTemplateColumns = `minmax(230px, 1.1fr) repeat(${columns.length}, minmax(60px, 72px)) minmax(96px, 0.4fr) minmax(220px, 1fr)`;
-  const visibleGroups = groups.filter(group => group.rows.length);
-
-  return (
-    <div className="max-h-[58vh] overflow-auto rounded-2xl border border-background-200 bg-background-50 shadow-sm">
-      <div className="min-w-[900px]">
-        <div className="sticky top-0 z-30 grid items-end gap-2 border-b border-background-200 bg-background-100 px-4 py-3" style={{ gridTemplateColumns }}>
-          {/* Frozen both ways, the same way the programme matrix does it: the
-              column heads must survive scrolling down and the KSB column must
-              survive scrolling right, or a cell loses the row it belongs to. */}
-          <span className="sticky left-0 z-10 -ml-4 bg-background-100 pl-4 text-[10px] font-bold uppercase text-foreground-400 shadow-[6px_0_8px_-8px_rgba(15,23,42,0.35)]">KSB outcome</span>
-          {columns.map(column => (
-            <span
-              key={column.key}
-              title={column.label}
-              className={`truncate text-center text-[10px] font-bold uppercase ${column.isModule ? 'text-sky-700' : 'text-foreground-400'}`}
-            >
-              {column.short}
-            </span>
-          ))}
-          <span className="text-center text-[10px] font-bold uppercase text-foreground-400">Weight</span>
-          <span className="text-[10px] font-bold uppercase text-foreground-400">Taught in</span>
-        </div>
-        <div className="divide-y divide-background-200">
-          {visibleGroups.map(group => (
-            <div key={group.key}>
-              <div className="sticky top-[45px] z-20 flex items-center gap-2 border-b border-background-200 bg-background-100/95 px-4 py-1.5 backdrop-blur-sm">
-                <AppIcon className={`${group.icon} text-[12px] text-foreground-500`}></AppIcon>
-                <span className="text-[10px] font-black uppercase tracking-wide text-foreground-600">{group.title}</span>
-                <span className={`rounded-full px-2 py-0.5 text-[9px] font-black ${ksbVisualTone(group.key).badgeClass}`}>{group.rows.length}</span>
-              </div>
-              <div className="divide-y divide-background-200">
-                {group.rows.map(row => (
-                  <ModuleKsbHeatmapRow key={`${row.code}-${row.source}`} row={row} columns={columns} />
-                ))}
-              </div>
-            </div>
-          ))}
-          {!visibleGroups.length && (
-            <div className="px-4 py-10 text-center">
-              <p className="text-[12px] font-bold text-foreground-600">Nothing matches that search.</p>
-              <button type="button" onClick={onBuild} className="mt-2 text-[11px] font-bold text-primary-600 underline-offset-2 hover:underline">
-                Open Edit mappings
-              </button>
-            </div>
-          )}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function ModuleKsbHeatmapRow({ row, columns }: {
-  row: ModuleKsbMapRow;
-  columns: ReturnType<typeof moduleKsbHeatmapColumns>;
-}) {
-  const cells = moduleKsbRowCells(row);
-  const kind = row.code.toUpperCase().slice(0, 1);
-  const tone = ksbVisualTone(kind);
-  const gridTemplateColumns = `minmax(230px, 1.1fr) repeat(${columns.length}, minmax(60px, 72px)) minmax(96px, 0.4fr) minmax(220px, 1fr)`;
-  const touchedColumns = columns.filter(column => (cells.get(column.key) || []).length);
-  const totalOtjh = row.placements.reduce((total, placement) => total + Number(placement.otjh || 0), 0);
-
-  return (
-    // Opaque, because the frozen first cell inherits this background to hide the
-    // week cells sliding underneath it.
-    <div className="grid items-stretch gap-2 bg-background-50 px-4 py-2.5 transition-smooth hover:bg-background-100" style={{ gridTemplateColumns }}>
-      <div className="sticky left-0 z-10 -ml-4 min-w-0 bg-inherit pl-4 shadow-[6px_0_8px_-8px_rgba(15,23,42,0.35)]">
-        <div className="flex flex-wrap items-center gap-1.5">
-          <span className={`rounded-lg border px-2 py-0.5 text-[11px] font-black ${ksbCodeChipClass(row.code)}`}>{row.code}</span>
-          <span className={`rounded-full px-2 py-0.5 text-[9px] font-bold ${tone.badgeClass}`}>{tone.label}</span>
-          {row.source && <span className="truncate rounded-full bg-background-100 px-2 py-0.5 text-[9px] font-bold text-foreground-500">{row.source}</span>}
-        </div>
-        <p className="mt-1 line-clamp-2 text-[11px] font-medium leading-relaxed text-foreground-700">{row.description || 'No description available.'}</p>
-      </div>
-      {columns.map(column => (
-        <ModuleKsbHeatCell key={column.key} column={column} placements={cells.get(column.key) || []} />
-      ))}
-      <div className="flex flex-col items-center justify-center gap-0.5">
-        <span className={`rounded-full px-2 py-0.5 text-[11px] font-black ${ksbCodeChipClass(row.code)}`}>{formatKsbWeight(row.weight)}</span>
-        <span className="text-[9px] font-semibold text-foreground-400">{formatKsbOtjh(totalOtjh)} · {row.placements.length} place{row.placements.length === 1 ? '' : 's'}</span>
-      </div>
-      <div className="flex min-w-0 flex-wrap content-start items-start gap-1">
-        {touchedColumns.map(column => {
-          const placements = cells.get(column.key) || [];
-          const components = placements.filter(placement => placement.detail).map(placement => placement.detail);
-          return (
-            <span
-              key={column.key}
-              title={components.length ? `${column.label}: ${components.join(', ')}` : `${column.label}: mapped at ${placements[0]?.scope.toLowerCase()} level`}
-              className="inline-flex max-w-full items-center gap-1 truncate rounded-md border border-background-200 bg-background-100 px-1.5 py-0.5 text-[9px] font-bold text-foreground-600"
-            >
-              <AppIcon className={`${column.isModule ? 'ri-stack-line' : 'ri-calendar-check-line'} text-[10px]`}></AppIcon>
-              <span className="truncate">{column.short}{components.length ? ` · ${components[0]}` : ''}{components.length > 1 ? ` +${components.length - 1}` : ''}</span>
-            </span>
-          );
-        })}
-        {!touchedColumns.length && <span className="text-[9px] font-bold text-foreground-300">Not placed</span>}
-      </div>
-    </div>
-  );
-}
-
-function ModuleKsbHeatCell({ column, placements }: {
-  column: ReturnType<typeof moduleKsbHeatmapColumns>[number];
-  placements: ModuleKsbPlacement[];
-}) {
-  const count = placements.length;
-  // A week can hold the KSB at week level and again on its components; saying
-  // which is what tells an author whether the teaching is actually placed.
-  const scopes = Array.from(new Set(placements.map(placement => placement.scope)));
-  const title = count
-    ? `${column.label} — ${placements.map(placement => placement.label).join(', ')}`
-    : `${column.label} — not mapped`;
-  return (
-    <div
-      title={title}
-      className={`grid min-h-11 place-items-center rounded-lg border text-[11px] font-black ${moduleKsbHeatCellClass(count, column.isModule)}`}
-    >
-      {count ? (
-        <span className="flex flex-col items-center leading-none">
-          <span>{count}</span>
-          <span className="mt-0.5 text-[8px] font-bold uppercase opacity-80">{scopes.includes('Component') ? 'comp' : scopes[0].toLowerCase()}</span>
-        </span>
-      ) : (
-        <span className="text-[10px] font-bold">·</span>
-      )}
-    </div>
-  );
-}
-
-function ModuleKsbHeatmapLegend({ weekCount }: { weekCount: number }) {
-  return (
-    <div className="mb-3 flex flex-col gap-3 rounded-xl border border-background-200 bg-background-50 px-4 py-2.5 lg:flex-row lg:items-center lg:justify-between">
-      <div className="flex flex-wrap items-center gap-2">
-        {(['K', 'S', 'B'] as const).map(key => {
-          const tone = ksbVisualTone(key);
-          return (
-            <span key={key} className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[10px] font-bold ${tone.badgeClass}`}>
-              <AppIcon className={`${tone.icon} text-[11px]`}></AppIcon>
-              {tone.label}
-            </span>
-          );
-        })}
-      </div>
-      <div className="flex flex-wrap items-center gap-2 text-[10px] font-semibold text-foreground-500">
-        <span>Placements per week</span>
-        <span className="grid h-5 w-8 place-items-center rounded border border-primary-100 bg-primary-50 text-primary-700">1</span>
-        <span className="grid h-5 w-8 place-items-center rounded border border-primary-300 bg-primary-200 text-primary-900">2</span>
-        <span className="grid h-5 w-8 place-items-center rounded border border-primary-500 bg-primary-600 text-white">3+</span>
-        <span className="grid h-5 w-14 place-items-center rounded border border-sky-200 bg-sky-50 text-[9px] text-sky-800">Module</span>
-        <span className="ml-1 text-foreground-400">{weekCount} week{weekCount === 1 ? '' : 's'} across the columns; weight is the mapping total, not a per-week split</span>
-      </div>
-    </div>
-  );
-}
-
 function KsbCoverageMetric({ label, value, compact = false }: { label: string; value: string; compact?: boolean }) {
   return (
     <div className={`rounded-lg border border-background-200 bg-background-100 ${compact ? 'px-2 py-1.5' : 'min-w-20 px-3 py-2'}`}>
@@ -9499,7 +8956,7 @@ function ModuleDeliveryRows({ module, teamsSummary, expectedSessions }: {
   if (!usages.length) {
     return (
       <p className="mt-3 rounded-lg border border-dashed border-background-300 bg-background-100/70 px-3 py-2 text-[11px] font-semibold text-foreground-500">
-        Not attached to a delivery yet. Add it to a group from New module to give it a cohort, tutor and dates.
+        Not attached to a delivery yet. Use Edit module to place it in a cohort and group and give it a tutor and dates.
       </p>
     );
   }
@@ -9538,17 +8995,7 @@ function ModuleDeliveryRows({ module, teamsSummary, expectedSessions }: {
             </span>
           </>
         );
-        if (!usage.deliveryModuleId) {
-          return <div key={usage.id} className={rowClasses}>{facts}</div>;
-        }
-        return (
-          <div
-            key={usage.id}
-            className={rowClasses}
-          >
-            {facts}
-          </div>
-        );
+        return <div key={usage.id} className={rowClasses}>{facts}</div>;
       })}
     </div>
   );
@@ -9874,19 +9321,6 @@ function moduleDeepLinkIdentifiers(module: ModuleBuilderListItem) {
   return Array.from(identifiers);
 }
 
-function moduleOptionKey(module: ModuleCatalogueItem) {
-  return [
-    module.catalogueId,
-    module.sourceModule?.moduleId,
-    module.sourceModule?.moduleCatalogueId,
-    module.id,
-    module.sourceModule?.id,
-    module.sourceModule?.sourceId,
-    cleanModuleMeta(module.sourceModule?.cohort),
-    cleanModuleMeta(module.sourceModule?.group),
-  ].filter(Boolean).join('::');
-}
-
 /** A catalogue item as the shared module form's target. */
 function moduleFormTargetFromCatalogue(module: ModuleCatalogueItem, usage?: ModuleDeliveryUsage | null): ModuleFormTarget {
   return {
@@ -10081,16 +9515,9 @@ function deliveryStatusText(status?: string) {
   return `Delivery: ${status.replace(/_/g, ' ')}`;
 }
 
-function moduleScheduleText(module: ModuleCatalogueItem) {
-  const weeks = module.weekStructure?.length || module.weeks || 0;
-  const sessions = module.sessionsNumber || weeks;
-  const range = module.startDate && module.endDate ? ` - ${module.startDate} to ${module.endDate}` : '';
-  return `${sessions} session${sessions === 1 ? '' : 's'} / ${weeks} week${weeks === 1 ? '' : 's'}${range}`;
-}
-
 function cleanModuleMeta(value?: string) {
   const text = String(value || '').trim();
-  if (!text || ['unassigned cohort', 'default group', 'unassigned'].includes(text.toLowerCase())) return '';
+  if (!text || ['unassigned cohort', 'unassigned programme', 'default group', 'unassigned'].includes(text.toLowerCase())) return '';
   return text;
 }
 
@@ -10329,52 +9756,6 @@ const MODULE_KSB_COLUMN = 'module';
 
 function moduleKsbWeekColumnKey(index: number) {
   return `week:${index}`;
-}
-
-/**
- * The heatmap's columns, in delivery order. A module's children are its weeks,
- * which is what the programme heatmap's module columns become one scope down —
- * so a reader sees the same shape and asks the same question of it: where in the
- * run is this KSB actually taught?
- */
-function moduleKsbHeatmapColumns(module: ModuleCatalogueItem) {
-  return [
-    { key: MODULE_KSB_COLUMN, short: 'Module', label: 'Module level', isModule: true },
-    ...module.weekStructure.map((week, index) => ({
-      key: moduleKsbWeekColumnKey(index),
-      short: `W${week.weekNumber || index + 1}`,
-      label: week.title || `Week ${week.weekNumber || index + 1}`,
-      isModule: false,
-    })),
-  ];
-}
-
-/**
- * One row's placements bucketed by column. A placement with no column key —
- * only possible for rows built by the programme-wide builder — is dropped
- * rather than guessed at.
- *
- * Deliberately no per-cell weight: the weight lives on the mapping, not the
- * placement, so it cannot be split between the cells a KSB appears in without
- * inventing precision. The row total gets its own column, and each cell says
- * only what it can stand behind — how many times, at what scope, and where.
- */
-function moduleKsbRowCells(row: ModuleKsbMapRow) {
-  const cells = new Map<string, ModuleKsbPlacement[]>();
-  row.placements.forEach(placement => {
-    if (!placement.columnKey) return;
-    cells.set(placement.columnKey, [...(cells.get(placement.columnKey) || []), placement]);
-  });
-  return cells;
-}
-
-/** Cell shading: how densely this KSB lands in one week, not its weight. */
-function moduleKsbHeatCellClass(count: number, isModule: boolean) {
-  if (!count) return 'border-dashed border-background-200 bg-background-100/40 text-foreground-300';
-  if (isModule) return 'border-sky-200 bg-sky-50 text-sky-800';
-  if (count >= 3) return 'border-primary-500 bg-primary-600 text-white';
-  if (count === 2) return 'border-primary-300 bg-primary-200 text-primary-900';
-  return 'border-primary-100 bg-primary-50 text-primary-700';
 }
 
 function moduleKsbMapRows(module: ModuleCatalogueItem, sourceLabels: Record<string, string>, source?: KsbSourceOption | null, allowSelectedSourceCodeFallback = false): ModuleKsbMapRow[] {
@@ -10674,15 +10055,6 @@ function createNamedComponent(week: ModuleWeek, type: ModuleComponentType, index
 
 function createNamedComponents(week: ModuleWeek, types: ModuleComponentType[]) {
   return types.map((type, index) => createNamedComponent(week, type, week.components.length + index + 1));
-}
-
-function nextModuleNumber(modules: ModuleCatalogueItem[]) {
-  const numbers = modules.flatMap(module => {
-    const text = `${module.title} ${module.catalogueId}`;
-    const matches = Array.from(text.matchAll(/\b(?:M|Module)\s*-?\s*(\d+)\b/gi));
-    return matches.map(match => Number(match[1])).filter(Number.isFinite);
-  });
-  return Math.max(modules.length, 0, ...numbers) + 1;
 }
 
 function componentToneClasses(tone = 'slate') {

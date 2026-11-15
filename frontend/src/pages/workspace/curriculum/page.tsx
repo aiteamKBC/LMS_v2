@@ -57,7 +57,7 @@ export default function CurriculumStudio() {
           <section className="grid items-stretch gap-4 xl:grid-cols-2">
             <NeedsAttention issues={issues} loading={loading} unavailable={unavailable} onOpen={issue => setActiveModal({ kind: 'attention', issue })} />
             <aside className="h-full rounded-2xl border border-foreground-200 bg-background-50 shadow-sm">
-              <SectionHeader title="Continue working" detail="Draft and recently updated modules." href="/curriculum/library" action="Open Library" />
+              <SectionHeader title="Continue working" detail="The modules edited most recently." href="/curriculum/library" action="Open Library" />
               <div className="p-3">
                 <div className="overflow-hidden rounded-xl border border-background-200 bg-background-100/35 divide-y divide-background-200/80">
                   {loading ? <LoadingRows count={4} /> : unavailable ? null : continueModules.length ? continueModules.map(module => <ContinueModuleRow key={module.id} module={module} onOpen={() => setActiveModal({ kind: 'module', module })} />) : <EmptyState icon="ri-layout-4-line" title="No modules yet" detail="Create your first reusable module from the Library." compact />}

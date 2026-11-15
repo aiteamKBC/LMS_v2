@@ -31,6 +31,7 @@ from django.http import JsonResponse
 from django.views.decorators.http import require_GET
 
 from . import views
+from .placed_learner_counts import placed_learner_counts
 
 
 KINDS = ('programme', 'cohort', 'group', 'module')
@@ -111,7 +112,8 @@ def archive_records():
             key=lambda row: views.format_created_at(row.get('deleted_at')), reverse=True,
         )
 
-        cohort_learners, group_learners = views.active_learner_delivery_counts()
+        # Every placed learner, not only 'active': the database refuses the delete for any of them.
+        cohort_learners, group_learners = placed_learner_counts()
         holiday_rows = views.get_holiday_rows_safe()
         cohort_rows_by_id = {
             views.clean_str(row.get('cohort_id')): row
