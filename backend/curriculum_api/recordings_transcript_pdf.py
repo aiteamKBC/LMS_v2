@@ -9,6 +9,7 @@ from login.permissions import require_access
 from .session_results import read
 from .session_results_policy import instant
 from .session_media_policy import artifact_metadata, transcript_timing_ready
+from .session_sync_issues import parse_sync_error
 
 log = logging.getLogger(__name__)
 
@@ -39,7 +40,7 @@ def lecture_transcript(request):
         start, end = instant(lecture['scheduled_start']), instant(lecture['scheduled_end'])
         if not start or not end or end <= start:
             return response_error('This lecture has no valid saved time window.', 409)
-        artifacts = read('''SELECT a.id,a.metadata,r.status,r.transcript_text
+        artifacts = read('''SELECT a.id,a.metadata,r.status,r.transcript_text,r.last_error
             FROM curriculum.live_session_artifacts a
             JOIN curriculum.live_session_occurrences o ON o.id=a.occurrence_id
             LEFT JOIN curriculum.session_result_archive r ON r.artifact_id=a.id AND r.occurrence_id=o.id
@@ -47,6 +48,15 @@ def lecture_transcript(request):
             ORDER BY a.created_datetime,a.id''', scope[1:])
         if not artifacts:
             return response_error('No saved transcript is available for this lecture yet. A recording can be available without a transcript.', 404)
+        failures = [row for row in artifacts if row['status'] == 'failed']
+        if failures:
+            message = 'Some transcript parts could not be saved.'
+            issues = [parse_sync_error(row.get('last_error')) for row in failures]
+            statuses = sorted({issue['httpStatus'] for issue in issues
+                               if issue and issue['stage'] == 'downloading' and issue['httpStatus']})
+            if statuses:
+                message += ' Microsoft could not return transcript content (' + ', '.join(f'HTTP {status}' for status in statuses) + ').'
+            return response_error(message + ' Use Sync attendance & files to retry the import, then reopen the PDF. Retrying the PDF only checks saved content.', 409)
         if any(row['status'] != 'ready' or not (row['transcript_text'] or '').strip() for row in artifacts):
             return response_error('Some transcript parts are still being saved. Please try again later.', 409)
         parts = [{'content': row['transcript_text'],

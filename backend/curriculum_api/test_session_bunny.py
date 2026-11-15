@@ -182,6 +182,45 @@ class SessionBunnyTests(TestCase):
         self.assertEqual(result.status, 'ready')
         download.assert_not_called(); client.create.assert_not_called(); client.upload.assert_not_called()
 
+    def test_empty_failed_upload_gets_one_replacement_without_losing_import_identity(self):
+        replacement = 'd1d2d3d4-1234-5678-abcd-123456789abc'
+        self.pending = self.asset()
+        original_id = self.pending.pk
+        self.pending.video_id, self.pending.status = VIDEO, 'failed'
+        self.pending.scope['bunny_fetch_requested_at'] = 1
+        self.pending.save()
+        client = self.bunny_client([])
+        client.video.side_effect = [
+            {'guid': VIDEO, 'status': 6, 'storageSize': 0, 'length': 0},
+            {'guid': replacement, 'status': 4},
+        ]
+        client.create.return_value = {'guid': replacement}
+        result, download, publish = self.transfer(client)
+        self.assertEqual((result.pk, result.status, result.video_id), (original_id, 'ready', replacement))
+        self.assertEqual(result.scope['interrupted_upload_ids'], [VIDEO])
+        self.assertNotIn('bunny_fetch_requested_at', result.scope)
+        self.assertEqual(result.scope['artifact_id'], 'A')
+        client.find_import.assert_called_with(original_id, exclude_video_ids=[VIDEO])
+        client.create.assert_called_once()
+        client.upload.assert_called_once()
+        self.assertEqual(client.upload.call_args.args[0], replacement)
+        download.assert_called_once()
+        publish.assert_called_once()
+
+    def test_failed_video_with_existing_media_is_never_replaced(self):
+        self.pending = self.asset()
+        self.pending.video_id = VIDEO
+        self.pending.save()
+        client = self.bunny_client([])
+        client.video.side_effect = [
+            {'guid': VIDEO, 'status': 6, 'storageSize': 100, 'length': 20},
+            {'guid': VIDEO, 'status': 4},
+        ]
+        result, _, _ = self.transfer(client)
+        self.assertEqual(result.video_id, VIDEO)
+        self.assertNotIn('interrupted_upload_ids', result.scope)
+        client.create.assert_not_called()
+
     def test_bunny_fetch_reads_sharepoint_directly_without_downloading_video_in_worker(self):
         self.pending = self.asset()
         client = self.bunny_client([0])

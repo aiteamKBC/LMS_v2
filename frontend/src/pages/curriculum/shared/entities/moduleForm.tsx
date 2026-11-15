@@ -1,3 +1,6 @@
+import { CALENDAR_DAYS, calendarSessionClashes } from './deliveryCalendar';
+import { DeliveryCalendarEditor } from './DeliveryCalendarEditor';
+import type { DeliveryCalendarPolicy } from '@/lib/curriculumApi';
 import { moduleFormTarget, type ModuleFormDeliveryRef, type ModuleFormTarget } from './moduleForm.helpers';
 export type { ModuleFormTarget } from './moduleForm.helpers';
 // ============================================================================
@@ -129,6 +132,7 @@ const MODULE_FIELD_LABELS: Record<string, string> = {
   color: 'colour',
   coverImage: 'cover image',
   pricing: 'course pricing',
+  calendarPolicy: 'delivery calendar',
 };
 
 const UNASSIGNED = 'unassigned';
@@ -219,6 +223,9 @@ export function ModuleFormDrawer({
   const [sessionsNumber, setSessionsNumber] = useState('1');
   const [sessionsPerWeek, setSessionsPerWeek] = useState('1');
   const [scheduleMode, setScheduleMode] = useState<'group' | 'custom'>('group');
+  const [calendarPolicy, setCalendarPolicy] = useState<DeliveryCalendarPolicy | null>(null);
+  const [calendarRows, setCalendarRows] = useState<CurriculumHoliday[] | null>(null);
+  const [calendarReady, setCalendarReady] = useState(true);
   const [weekDays, setWeekDays] = useState('');
   const [groupStartTime, setGroupStartTime] = useState('');
   const [groupEndTime, setGroupEndTime] = useState('');
@@ -311,7 +318,7 @@ export function ModuleFormDrawer({
   const liveValues = {
     name, programmeId, cohortId, groupIds, sessionsNumber, scheduleMode, sessionsPerWeek, weekDays,
     groupStartTime, groupEndTime, weeklyTimes, startDate, targetEndDate, tutor, status,
-    description, color, coverImage, deliveryPattern, pricing,
+    description, color, coverImage, deliveryPattern, pricing, calendarPolicy,
   };
   const dirty = !sameFormValues(liveValues, baseline.current);
   const liveRef = useRef<Record<string, unknown>>(liveValues);
@@ -466,6 +473,7 @@ export function ModuleFormDrawer({
       color: record?.color || parentGroup?.color || '#2563eb',
       coverImage: cleanText(record?.coverImage),
       pricing: { isForSale: record?.isForSale === true, price: record?.price ?? '' },
+      calendarPolicy: record?.calendarPolicy || null,
     };
     if (isFreeCourse) {
       initial.programmeId = '';
@@ -535,6 +543,7 @@ export function ModuleFormDrawer({
     setColor(coEdit.take(verdict, 'color', initial.color));
     setCoverImage(coEdit.take(verdict, 'coverImage', initial.coverImage));
     setPricing(coEdit.take(verdict, 'pricing', initial.pricing));
+    setCalendarPolicy(coEdit.take(verdict, 'calendarPolicy', initial.calendarPolicy));
     coEdit.publish();
   }, [allowSeed, attachedGroupIds, coEdit, cohorts, defaults?.cohortId, defaults?.groupId, defaults?.programmeId, groups, guard.stored, isFreeCourse, module, open, selectableProgrammes]);
 
@@ -599,9 +608,12 @@ export function ModuleFormDrawer({
   // period: a plan pushed later by the holidays it stepped over finishes after
   // the cohort's practical end date, and the sessions that overshoot still have
   // to step over the bank holidays they land on.
+  const effectiveCalendarPolicy = calendarPolicy || selectedCohort?.calendarPolicy || null;
+  const legacyCalendarHolidays = useMemo(() => holidaysForScheduling(holidays, selectedCohort?.startDate,
+    calendarPolicy ? [] : selectedCohort?.excludedHolidayIds), [holidays, selectedCohort, calendarPolicy]);
   const cohortHolidays = useMemo(
-    () => [...holidaysForScheduling(holidays, selectedCohort?.startDate, selectedCohort?.excludedHolidayIds), ...(module?.sessionHolidays || [])],
-    [holidays, selectedCohort, module?.sessionHolidays],
+    () => [...(calendarRows || (effectiveCalendarPolicy?.country && effectiveCalendarPolicy.country !== 'GB' ? [] : legacyCalendarHolidays)), ...(module?.sessionHolidays || [])],
+    [calendarRows, effectiveCalendarPolicy, legacyCalendarHolidays, module?.sessionHolidays],
   );
 
   // What the group this module is delivered by actually runs to -- which is
@@ -689,8 +701,8 @@ export function ModuleFormDrawer({
   // was fetched for is compared against it below, so a plan left over from the
   // previous weeks value is never read as this one's answer.
   const planInputs = useMemo(
-    () => JSON.stringify([scheduleMode, needsWeekStart ? weekStartsOn : '', scheduleMode === 'custom' ? targetEndDate : '', startDate, totalSessions, weekDays, weeklySchedule, cohortHolidays.map(holiday => holiday.id)]),
-    [cohortHolidays, scheduleMode, needsWeekStart, weekStartsOn, targetEndDate, startDate, totalSessions, weekDays, weeklySchedule],
+    () => JSON.stringify([scheduleMode, needsWeekStart ? weekStartsOn : '', scheduleMode === 'custom' ? targetEndDate : '', startDate, totalSessions, weekDays, weeklySchedule, cohortHolidays.map(holiday => holiday.id), calendarPolicy]),
+    [calendarPolicy, cohortHolidays, scheduleMode, needsWeekStart, weekStartsOn, targetEndDate, startDate, totalSessions, weekDays, weeklySchedule],
   );
   useEffect(() => {
     if (!open || !startDate || weeksEntered <= 0 || !scheduleComplete || !weekStartComplete || !validWeeklyTimes) { setPlan(null); setPlanFor(''); setPlanLoading(false); return undefined; }
@@ -704,13 +716,14 @@ export function ModuleFormDrawer({
         weeklySchedule,
         weekDays,
         holidays: cohortHolidays,
+        calendarPolicy,
       })
         .then(result => { if (active) { setPlan(result); setPlanFor(planInputs); } })
         .catch(() => { if (active) { setPlan(null); setPlanFor(''); } })
         .finally(() => { if (active) setPlanLoading(false); });
     }, 300);
     return () => { active = false; clearTimeout(timer); };
-  }, [cohortHolidays, open, planInputs, scheduleComplete, weekStartComplete, needsWeekStart, weekStartsOn, totalSessions, startDate, weekDays, weeklySchedule, validWeeklyTimes, weeksEntered, scheduleMode, targetEndDate]);
+  }, [calendarPolicy, cohortHolidays, open, planInputs, scheduleComplete, weekStartComplete, needsWeekStart, weekStartsOn, totalSessions, startDate, weekDays, weeklySchedule, validWeeklyTimes, weeksEntered, scheduleMode, targetEndDate]);
 
   // The module's own calendar span -- start date plus the whole weeks entered.
   // Independent of the generated session plan, which answers a different
@@ -749,7 +762,7 @@ export function ModuleFormDrawer({
   const cohortSoftStart = moduleSoftStartDate(selectedCohort?.startDate) || cleanText(selectedCohort?.startDate);
   // Not a refusal -- a weekend or bank-holiday start is still saved -- just a
   // heads-up, since the module will not actually deliver on that day.
-  const startDateNotice = useMemo(() => describeNonDeliveryDate(startDate, cohortHolidays), [startDate, cohortHolidays]);
+  const startDateNotice = useMemo(() => describeNonDeliveryDate(startDate, cohortHolidays, effectiveCalendarPolicy), [startDate, cohortHolidays, effectiveCalendarPolicy]);
   // ==========================================================================
   // Tutor availability, asked while the tutor is still being picked.
   //
@@ -774,6 +787,7 @@ export function ModuleFormDrawer({
         endTime: (scheduleMode === 'custom' ? weeklySchedule[0]?.endTime : groupWeeklySchedule[0]?.endTime) || undefined,
         cohortId: cohortId || cleanText(selectedGroup?.cohortId) || undefined,
         holidays: cohortHolidays,
+        calendarPolicy,
         // Editing: the module must not be reported as blocking its own slot.
         moduleCatalogueId: module?.id || undefined,
       }
@@ -1068,6 +1082,7 @@ export function ModuleFormDrawer({
       return;
     }
     const renameOnly = Boolean(module && isNameOnlyEdit(liveValues, baseline.current));
+    if (!calendarReady) { setError('Load the delivery calendar before saving.'); return; }
     const trimmed = name.trim();
     if (!trimmed) { setError('Give the module a name.'); return; }
     if (isFreeCourse && pricing.isForSale && (
@@ -1226,6 +1241,7 @@ export function ModuleFormDrawer({
         weeklySchedule: groupSchedule,
         scheduleMode: custom ? 'custom' : 'group',
         weekStartsOn: custom && weekStartsOn ? weekStartsOn : null,
+        ...(sameIdentifier(group.id, primaryGroupId) ? { calendarPolicy } : {}),
         weekDays: groupWeekDays || undefined,
         startTime: groupSchedule[0]?.startTime || undefined,
         endTime: groupSchedule[0]?.endTime || undefined,
@@ -1235,6 +1251,28 @@ export function ModuleFormDrawer({
         holidays: holidaysForScheduling(holidays, groupCohort?.startDate, groupCohort?.excludedHolidayIds),
       }) as Promise<{ created?: Array<Record<string, unknown>>; updatedModules?: Array<Record<string, unknown>> }>;
     };
+
+    if (module && JSON.stringify(calendarPolicy) !== JSON.stringify(baseline.current.calendarPolicy ?? null)) {
+      let dates: string[] = [];
+      try {
+        if (startDate && totalSessions > 0 && weeklySchedule.length) {
+          const review = await previewModuleSessionPlan({ startDate, endDate, numberOfSessions: totalSessions,
+            ...(scheduleMode === 'custom' ? { scheduleMode, weeksNumber: weeksEntered, weekStartsOn } : {}),
+            weeklySchedule, holidays: cohortHolidays, calendarPolicy });
+          dates = review.sessions.map(session => session.date);
+        }
+      } catch (reason) {
+        setError(reason instanceof Error ? reason.message : 'Could not review the affected session dates.');
+        return;
+      }
+      const clashes = calendarSessionClashes(dates, effectiveCalendarPolicy, cohortHolidays);
+      const summary = clashes.length ? clashes.slice(0, 8).map(item => `${item.date}: ${item.reason}`).join('; ')
+        + (clashes.length > 8 ? `; and ${clashes.length - 8} more dates.` : '')
+        : dates.length ? 'No planned session dates conflict with the selected calendar.' : 'This module has no dated schedule to review yet.';
+      if (!(await showCurriculumConfirm({ title: 'Review this module?s calendar changes',
+        text: `${summary} These settings affect only this module. Existing Teams meetings and historical records are not moved or cancelled by this save. Review and update the Teams calendar separately.`,
+        confirmButtonText: 'Save module calendar', cancelButtonText: 'Keep editing', onConfirm: async () => undefined }))) return;
+    }
 
     setSaving(true);
     setError(null);
@@ -1286,6 +1324,7 @@ export function ModuleFormDrawer({
           weeklySchedule: primarySchedule,
           scheduleMode,
           weekStartsOn: weekStartsOn || null,
+          calendarPolicy,
           weekDays: primaryWeekDays || undefined,
           startTime: primarySchedule[0]?.startTime || undefined,
           endTime: primarySchedule[0]?.endTime || undefined,
@@ -1435,6 +1474,7 @@ export function ModuleFormDrawer({
         ...(isFreeCourse ? { isFreeCourse: true, learnerRosterMode: 'manual' as const } : {}),
         ...coursePricing,
         title: trimmed,
+        calendarPolicy,
         description,
         programme: programme?.name || programmeId || 'Unassigned programme',
         programmeId: programme ? programmeIdentity(programme) : programmeId,
@@ -1633,6 +1673,12 @@ export function ModuleFormDrawer({
       </fieldset>}
       {/* Weeks describe the authored module structure. The selected Group owns
           the delivery days and clock; this form owns the module date window. */}
+      {!isFreeCourse && <DeliveryCalendarEditor module value={calendarPolicy} onChange={setCalendarPolicy}
+        inheritedPolicy={selectedCohort?.calendarPolicy} inheritedExcludedIds={selectedCohort?.excludedHolidayIds}
+        legacyHolidays={legacyCalendarHolidays} startDate={startDate || selectedCohort?.startDate || ''}
+        endDate={endDate || selectedCohort?.endDate || startDate}
+        onHolidaysChange={setCalendarRows} onReadyChange={setCalendarReady} />}
+
       <FormField
         label="Weeks"
         required={Boolean(selectedGroups.length)}
@@ -1894,12 +1940,13 @@ export function ModuleFormDrawer({
  * as typed -- but the module won't actually deliver that day, so the picker warns
  * about it instead of staying silent.
  */
-function describeNonDeliveryDate(dateValue: string, holidays: CurriculumHoliday[]): string {
+function describeNonDeliveryDate(dateValue: string, holidays: CurriculumHoliday[], policy?: DeliveryCalendarPolicy | null): string {
   const date = dateFromYmd(dateValue);
   if (!date) return '';
   // The weekend half of this check is the cohort drawer's too, so the sentence
   // lives in `model.ts` and both drawers read the one copy of it.
-  const weekend = weekendDateNotice(dateValue);
+  const weekday = CALENDAR_DAYS[(date.getDay() + 6) % 7];
+  const weekend = policy ? (policy.weekendDays.includes(weekday) ? `${weekday} is a weekly rest day for this calendar.` : '') : weekendDateNotice(dateValue);
   if (weekend) return weekend;
   const holiday = holidays.find(item => {
     const start = dateFromYmd(item.startDate);
@@ -1907,7 +1954,7 @@ function describeNonDeliveryDate(dateValue: string, holidays: CurriculumHoliday[
     return start && end && start <= date && date <= end;
   });
   if (holiday) {
-    return `That date is ${holiday.label || 'a bank holiday'} -- an England bank holiday, so no delivery runs then.`;
+    return policy ? `${holiday.source === 'authored' ? 'Manual closure' : 'Public holiday'}: ${holiday.label}. Review this session before booking Teams.` : `That date is ${holiday.label || 'a bank holiday'} -- an England bank holiday, so no delivery runs then.`;
   }
   return '';
 }

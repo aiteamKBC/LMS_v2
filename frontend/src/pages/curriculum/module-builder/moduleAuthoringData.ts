@@ -1,3 +1,4 @@
+import type { DeliveryCalendarPolicy } from '@/lib/curriculumApi';
 import { requestSessionSync } from '@/api/sessionResults';
 import { coachFetch } from '@/lib/coachFetch';
 import { localClockToUtcIso, zoneOffsetMs } from '@/lib/timeZones';
@@ -1297,6 +1298,7 @@ export interface ModuleCatalogueItem extends CoursePricing {
   scheduleMode?: CurriculumModule['scheduleMode'];
   weekStartsOn?: CurriculumModule['weekStartsOn'];
   sessionHolidays?: CurriculumModule['sessionHolidays'];
+  calendarPolicy?: CurriculumModule['calendarPolicy'];
   deliveryWeeks?: number;
   id: string;
   catalogueId: string;
@@ -1561,7 +1563,7 @@ export function createLocalModuleDraft(input: CoursePricing & { isFreeCourse?: b
   });
 }
 
-export async function createNewModule(input: CoursePricing & { isFreeCourse?: boolean; programme: string; title: string; description: string; weeks: number; status: ModuleStatus; programmeId?: string; programmeStatus?: string; cohortId?: string; cohortName?: string; groupId?: string; groupName?: string; ksbProfileSourceId?: string; sessionsNumber?: number; startDate?: string; endDate?: string; coverImage?: string; learnerRosterMode?: 'inherited' | 'manual'; teamsSharedSourceModuleId?: string; ksbRemapReport?: KsbRemapReport | null; moduleKsbMappings?: KsbMapping[]; weekStructure?: ModuleWeek[]; duplicateDestination?: boolean }) {
+export async function createNewModule(input: CoursePricing & { calendarPolicy?: DeliveryCalendarPolicy | null; isFreeCourse?: boolean; programme: string; title: string; description: string; weeks: number; status: ModuleStatus; programmeId?: string; programmeStatus?: string; cohortId?: string; cohortName?: string; groupId?: string; groupName?: string; ksbProfileSourceId?: string; sessionsNumber?: number; startDate?: string; endDate?: string; coverImage?: string; learnerRosterMode?: 'inherited' | 'manual'; teamsSharedSourceModuleId?: string; ksbRemapReport?: KsbRemapReport | null; moduleKsbMappings?: KsbMapping[]; weekStructure?: ModuleWeek[]; duplicateDestination?: boolean }) {
   if (input.isFreeCourse) {
     input = { ...input, programme: '', programmeId: '', programmeStatus: '', cohortId: '', cohortName: '', groupId: '', groupName: '', learnerRosterMode: 'manual', teamsSharedSourceModuleId: '', startDate: '', endDate: '' };
   }
@@ -1572,6 +1574,7 @@ export async function createNewModule(input: CoursePricing & { isFreeCourse?: bo
       body: JSON.stringify({
         title: draft.title,
         moduleType: 'authoring',
+        ...('calendarPolicy' in input ? { calendarPolicy: input.calendarPolicy } : {}),
         ...(input.isFreeCourse ? { isFreeCourse: true, catalogueId: draft.catalogueId } : {}),
         isForSale: draft.isForSale,
         price: draft.price,
@@ -2553,6 +2556,7 @@ export function curriculumModuleToCatalogue(module: CurriculumModule): ModuleCat
     scheduleMode: module.scheduleMode,
     weekStartsOn: module.weekStartsOn,
     sessionHolidays: module.sessionHolidays || [],
+    calendarPolicy: module.calendarPolicy,
     deliveryWeeks: module.deliveryWeeks,
     deliveryMetadata: {
       tutor,

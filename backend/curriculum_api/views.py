@@ -3677,7 +3677,7 @@ def curriculum_teams_meeting(request):
     try:
         event_payload, invited_people, presenters, co_organizers, attendees, utc_start, duration, repeat, occurrences = teams_event_payload(payload, graph_settings)
         targets = calendar_targets(payload, utc_start, duration, repeat, occurrences, graph_timezone_iana(graph_settings))
-        non_delivery_reason = teams_non_delivery_reason(targets, graph_timezone_iana(graph_settings))
+        non_delivery_reason = teams_non_delivery_reason(targets, graph_timezone_iana(graph_settings), module_catalogue_id=resolved_catalogue_id)
         if non_delivery_reason:
             return json_error(non_delivery_reason, status=400, code='non_delivery_date')
         payload = {**payload, 'hideAttendees': True, 'scheduledOccurrences': [
@@ -4391,7 +4391,7 @@ def curriculum_teams_meeting_schedule(request, live_session_id):
     try:
         targets = calendar_targets(payload, utc_start, duration, repeat, occurrences, graph_timezone_iana(graph_settings))
         if not payload.get('peopleOnly'):
-            non_delivery_reason = teams_non_delivery_reason(targets, graph_timezone_iana(graph_settings))
+            non_delivery_reason = teams_non_delivery_reason(targets, graph_timezone_iana(graph_settings), module_catalogue_id=series.get('module_catalogue_id'))
             if non_delivery_reason:
                 return json_error(non_delivery_reason, status=400, code='non_delivery_date')
         recurrence = local_calendar_recurrence(targets, repeat, graph_timezone_iana(graph_settings),
@@ -9381,13 +9381,20 @@ def england_non_delivery_reason(value, holiday_rows=None):
     return f'Sessions and meetings cannot be booked on an England and Wales bank holiday{suffix}.'
 
 
-def teams_non_delivery_reason(targets, time_zone='Europe/London', holiday_rows=None):
+def teams_non_delivery_reason(targets, time_zone='Europe/London', holiday_rows=None, module_catalogue_id=None):
     """Validate Teams target instants against the England business calendar."""
     try:
         zone = ZoneInfo(time_zone or 'Europe/London')
     except (KeyError, ValueError):
         zone = ZoneInfo('Europe/London')
     holidays = get_holiday_rows_safe() if holiday_rows is None else (holiday_rows or [])
+    policy = None
+    if module_catalogue_id:
+        from curriculum_api.delivery_calendar import module_policy, policy_holidays
+        module = authoring_module_exists(module_catalogue_id) or {}
+        policy = module_policy(module)
+        if policy is not None:
+            holidays = policy_holidays(policy, module.get('start_date'), module.get('end_date'), holidays)
     for target in targets or []:
         instant = (
             target.get('start') or target.get('startDateTimeUtc') or target.get('start_datetime')
@@ -9398,7 +9405,11 @@ def teams_non_delivery_reason(targets, time_zone='Europe/London', holiday_rows=N
         if not instant:
             continue
         local = instant.replace(tzinfo=instant.tzinfo or timezone.utc).astimezone(zone)
-        reason = england_non_delivery_reason(local.date(), holidays)
+        if policy is None:
+            reason = england_non_delivery_reason(local.date(), holidays)
+        else:
+            from curriculum_api.calendar_policy import non_delivery_reason
+            reason = non_delivery_reason(local.date(), policy, holidays)
         if reason:
             session_number = parse_int(
                 target.get('session_number') or target.get('sessionNumber'), 0,
@@ -11593,6 +11604,9 @@ def module_delivery_session_plan(module, session_count, start, holidays=None, we
     delivery_days = ', '.join(slot['day'] for slot in weekly) or module.get('session_week_day') or module.get('week_days') or module.get('delivery_days') or ''
     # A module-specific closure must not change other modules in its cohort.
     own_holidays = parse_json_value(module.get('session_holidays') or module.get('sessionHolidays'), [])
+    if module.get('calendar_policy') or module.get('calendarPolicy'):
+        from curriculum_api.delivery_calendar import module_holidays
+        holidays = module_holidays(module, holidays)
     applied_holidays = [*(holidays or []), *(own_holidays if isinstance(own_holidays, list) else [])]
     plan = build_module_session_plan(
         start, session_count, delivery_days, applied_holidays, week_count=week_count,
@@ -11954,7 +11968,8 @@ def module_session_dates(module, holiday_cache=None):
         clean_str(module.get('end_date')),
         clean_str(module.get('session_week_day')),
         clean_str(module.get('cohort_id')),
-        len(module.get('holidays') or ()),
+        json.dumps(module.get('holidays') or [], sort_keys=True, default=str),
+        json.dumps(module.get('calendar_policy') or module.get('calendarPolicy'), sort_keys=True, default=str),
         json.dumps(session_overrides(module), sort_keys=True),
     )
     cached = module.get('_session_dates')
@@ -12023,8 +12038,13 @@ def cohort_selected_holidays_by_cohort(cohort_ids):
         cohort_id = clean_str(cohort.get('cohort_id'))
         if not cohort_id:
             continue
+        calendar_rows = holiday_rows
+        if cohort.get('calendar_policy'):
+            from curriculum_api.calendar_policy import read_policy
+            from curriculum_api.delivery_calendar import policy_holidays
+            calendar_rows = policy_holidays(read_policy(cohort), cohort.get('start_date'), cohort_holiday_period_end(cohort), holiday_rows)
         grouped[cohort_id] = scheduling_holidays_from(
-            holiday_rows,
+            calendar_rows,
             cohort.get('start_date'),
             parse_json_value(cohort.get('excluded_holiday_ids'), []),
         )
@@ -12346,6 +12366,7 @@ def module_schedule_view(module, tutor_name=None):
         'schedule_mode': first('schedule_mode', 'scheduleMode') or 'group',
         'week_starts_on': module_week_starts_on(module),
         'session_holidays': parse_json_value(module.get('session_holidays') or module.get('sessionHolidays'), []),
+        'calendar_policy': module.get('calendarPolicy') if 'calendarPolicy' in module else module.get('calendar_policy'),
         'session_overrides': session_overrides(module),
         'session_start_time': first('session_start_time', 'startTime', 'start_time'),
         'session_end_time': first('session_end_time', 'endTime', 'end_time'),
@@ -12372,6 +12393,7 @@ def module_schedule_assignment_changed(before, after):
         'session_end_time',
         'weekly_schedule',
         'schedule_mode',
+        'calendar_policy',
     )
     if before.get('schedule_mode') == 'custom' or after.get('schedule_mode') == 'custom':
         keys += ('weeks_number', 'end_date', 'week_starts_on')
@@ -13764,7 +13786,7 @@ def holiday_row_source(row):
     """
     row = row or {}
     stated = clean_str(row.get('source')).lower()
-    if stated in {HOLIDAY_SOURCE_GOVUK, HOLIDAY_SOURCE_AUTHORED}:
+    if stated in {HOLIDAY_SOURCE_GOVUK, HOLIDAY_SOURCE_AUTHORED, 'calendarific'}:
         return stated
     if row.get('division') or row.get('holiday_date'):
         return HOLIDAY_SOURCE_GOVUK
@@ -13807,6 +13829,8 @@ def serialize_holiday_row(row):
         'color': clean_str(row.get('color')) or (BANK_HOLIDAY_COLOR if bank_holiday else AUTHORED_HOLIDAY_COLOR),
         'source': source,
     }
+    if row.get('country'):
+        item['country'] = row['country']
     if bank_holiday:
         # Only GOV.UK rows carry these, and only 'Substitute day' ever appears in
         # notes. Passed through so a picker can say why Boxing Day moved. An
@@ -13951,6 +13975,10 @@ def cohort_holiday_details(holiday_rows, excluded_ids, start_date, end_date):
 
 def cohort_authoring_payload(cohort, rows=None, groups=None, holiday_rows=None, extra=None):
     cohort = cohort or {}
+    calendar_update = {}
+    if 'calendarPolicy' in cohort or 'calendar_policy' in cohort:
+        from curriculum_api.delivery_calendar import policy_write
+        calendar_update = policy_write(cohort, None, COHORT_AUTHORING_DETAILS_TABLE)
     rows = rows or []
     groups = groups or []
     meta = {}
@@ -14008,8 +14036,17 @@ def cohort_authoring_payload(cohort, rows=None, groups=None, holiday_rows=None, 
         if not stored_cohort:
             stored_cohort = fetch_cohort_row(clean_str(cohort.get('id') or meta.get('cohort_id'))) or {}
         excluded_holiday_ids = parse_json_value(stored_cohort.get('excluded_holiday_ids'), [])
+    calendar_rows = holiday_rows or []
+    calendar_value = calendar_update.get('calendar_policy')
+    if not calendar_update:
+        stored_cohort = stored_cohort or fetch_cohort_row(clean_str(cohort.get('id') or meta.get('cohort_id'))) or {}
+        calendar_value = stored_cohort.get('calendar_policy')
+    if calendar_value:
+        from curriculum_api.calendar_policy import read_policy
+        from curriculum_api.delivery_calendar import policy_holidays
+        calendar_rows = policy_holidays(read_policy({'calendar_policy': calendar_value}), start_date, holiday_period_end, calendar_rows)
     holiday_info = cohort_holiday_details(
-        holiday_rows or [],
+        calendar_rows,
         excluded_holiday_ids,
         start_date,
         holiday_period_end,
@@ -14060,6 +14097,7 @@ def cohort_authoring_payload(cohort, rows=None, groups=None, holiday_rows=None, 
         payload['apprenticeship_end_override'] = apprenticeship_end_override or None
     if epa_sent or override_sent:
         payload['apprenticeship_end_date'] = apprenticeship_end_date or None
+    payload.update(calendar_update)
     payload.update(extra or {})
     return payload
 
@@ -14113,8 +14151,13 @@ def serialize_cohort_authoring_detail(row, holiday_rows=None):
     # for the old period. excluded_holiday_ids is the one column that IS read
     # back -- it is the human's own choice, not a derived cache, so there is
     # nothing to recompute it from.
+    calendar_rows = get_holiday_rows_safe() if holiday_rows is None else holiday_rows
+    if row.get('calendar_policy'):
+        from curriculum_api.calendar_policy import read_policy
+        from curriculum_api.delivery_calendar import policy_holidays
+        calendar_rows = policy_holidays(read_policy(row), row.get('start_date'), cohort_holiday_period_end(row), calendar_rows)
     holiday_info = cohort_holiday_details(
-        get_holiday_rows_safe() if holiday_rows is None else holiday_rows,
+        calendar_rows,
         parse_json_value(row.get('excluded_holiday_ids'), []),
         format_date(row.get('start_date')),
         cohort_holiday_period_end(row),
@@ -14153,6 +14196,7 @@ def serialize_cohort_authoring_detail(row, holiday_rows=None):
         'selectedHolidays': holiday_info['selectedHolidays'],
         'holidaysInRange': holiday_info['holidaysInRange'],
         'excludedHolidayIds': holiday_info['excludedHolidayIds'],
+        'calendarPolicy': parse_json_value(row.get('calendar_policy'), None),
         'holidaySummary': holiday_info['summary'],
         'notes': row.get('notes') or '',
         'sourceType': row.get('source_type') or 'curriculum_authoring',
@@ -14488,7 +14532,7 @@ COMPACT_MODULE_LIST_FIELDS = frozenset({
     # Status badges and the delivery label.
     'status', 'authoringStatus', 'deliveryStatus',
     # Read into the module edit form and saved back out of it. Not display-only.
-    'startDate', 'endDate', 'weeklySchedule', 'scheduleMode', 'sessionHolidays', 'deliveryWeeks',
+    'startDate', 'endDate', 'weeklySchedule', 'scheduleMode', 'sessionHolidays', 'deliveryWeeks', 'weekStartsOn', 'calendarPolicy',
     'weekDays', 'startTime', 'endTime', 'notes', 'color', 'coverImage',
     # Staffing shown on the row.
     'tutor', 'coach',
@@ -15190,6 +15234,7 @@ def provision_module_authoring_tables():
                 weekly_schedule {json_type},
                 schedule_mode varchar(16) not null default 'group',
                 week_starts_on varchar(9),
+                calendar_policy {json_type},
                 source_type varchar(64),
                 source_id varchar(255),
                 created_at timestamp not null default current_timestamp,
@@ -15633,6 +15678,7 @@ def provision_module_authoring_tables():
                 -- default to every holiday applying, same as before this
                 -- column existed.
                 excluded_holiday_ids {json_type},
+                calendar_policy {json_type},
                 notes text,
                 source_type varchar(64) not null default 'training_plan',
                 source_id varchar(128),
@@ -17534,6 +17580,12 @@ def validate_component_authoring_payload(component, path):
 
 def validate_module_authoring_payload(payload):
     errors = []
+    if 'calendarPolicy' in payload or 'calendar_policy' in payload:
+        from curriculum_api.calendar_policy import read_policy
+        try:
+            read_policy(payload)
+        except ValueError as exc:
+            errors.append({'path': 'calendarPolicy', 'message': str(exc)})
     if 'scheduleMode' in payload and payload['scheduleMode'] not in ('group', 'custom'):
         errors.append({'path': 'scheduleMode', 'message': 'Choose Group or Custom scheduling.'})
     try:
@@ -21783,6 +21835,7 @@ def get_authoring_structure_payload(module_catalogue_id, include_archived=False,
         'scheduleMode': module.get('schedule_mode') or 'group',
         'weekStartsOn': module_week_starts_on(module),
         'sessionHolidays': parse_json_value(module.get('session_holidays'), []),
+        'calendarPolicy': parse_json_value(module.get('calendar_policy'), None),
         'deliveryWeeks': module_delivery_week_count(module, weeks),
         # The pattern this module actually runs to: its group's, and its own
         # only where the group states none.
@@ -22253,6 +22306,7 @@ def get_authoring_structure_payloads(
             'scheduleMode': module.get('schedule_mode') or 'group',
             'weekStartsOn': module_week_starts_on(module),
             'sessionHolidays': parse_json_value(module.get('session_holidays'), []),
+        'calendarPolicy': parse_json_value(module.get('calendar_policy'), None),
             'deliveryWeeks': module_delivery_week_count(module, weeks),
             # The group's pattern first; the module's own only where it states none.
             'weekDays': delivery_module.get('session_week_day') or '',
@@ -22503,6 +22557,7 @@ def authoring_catalogue_summaries(include_programme_deleted=False, include_conte
             'scheduleMode': row.get('schedule_mode') or 'group',
             'weekStartsOn': module_week_starts_on(row),
             'sessionHolidays': parse_json_value(row.get('session_holidays'), []),
+        'calendarPolicy': parse_json_value(row.get('calendar_policy'), None),
             'weekDays': row.get('session_week_day') or '',
             'startTime': row.get('session_start_time') or '',
             'endTime': row.get('session_end_time') or '',
@@ -22682,6 +22737,7 @@ def authoring_summary_catalogue_item(summary):
         'weeklySchedule': summary.get('weeklySchedule') or [],
         'scheduleMode': summary.get('scheduleMode') or 'group',
         'weekStartsOn': summary.get('weekStartsOn'),
+        'calendarPolicy': summary.get('calendarPolicy'),
         'sessionHolidays': summary.get('sessionHolidays') or [],
         'deliveryWeeks': summary.get('deliveryWeeks'),
         'weekDays': summary.get('weekDays') or '',
@@ -22754,6 +22810,8 @@ def enrich_curriculum_modules_with_authoring_details(modules, *, child_rows=None
             'weeklySchedule': authoring.get('weeklySchedule') or [],
             'scheduleMode': authoring.get('scheduleMode') or 'group',
             'sessionHolidays': authoring.get('sessionHolidays') or [],
+            'calendarPolicy': authoring.get('calendarPolicy'),
+            'weekStartsOn': authoring.get('weekStartsOn'),
             'deliveryWeeks': authoring.get('deliveryWeeks'),
             'weekDays': authoring.get('weekDays') or module.get('weekDays') or '',
             'startTime': authoring.get('startTime') or module.get('startTime') or '',
@@ -23947,6 +24005,13 @@ def save_module_authoring_structure(
     # as a floor for week shells that have not had their live sessions authored.
     stored_sessions_number = max(stored_sessions_number, sum(module_structure_live_session_counts(weeks)))
 
+    calendar_update = {}
+    if 'calendarPolicy' in payload or 'calendar_policy' in payload:
+        from curriculum_api.delivery_calendar import policy_write
+        try:
+            calendar_update = policy_write(payload, existing_module_row, AUTHORING_MODULES_TABLE)
+        except ValueError as exc:
+            raise ModuleAuthoringValidationError([{'path': 'calendarPolicy', 'message': str(exc)}]) from exc
     saved_module_row = None
     with transaction.atomic():
         saved_module_row = authoring_upsert(AUTHORING_MODULES_TABLE, ['module_catalogue_id'], {
@@ -23996,9 +24061,10 @@ def save_module_authoring_structure(
             'weekly_schedule': json_db_value(weekly_schedule),
             'schedule_mode': schedule_mode,
             'week_starts_on': week_starts_on,
+            **calendar_update,
             'tutor_name': tutor_name or None,
             'tutor_email': tutor_email or None,
-        }, allow_null_columns={'price', 'week_starts_on'})
+        }, allow_null_columns={'price', 'week_starts_on', 'calendar_policy'})
         # Written only when the share itself changed. The `modules` column above
         # and this table say the same thing; rewriting the table on every save
         # meant every save could delete a share, which is how one went missing.
@@ -25718,7 +25784,7 @@ PROGRAMME_WORKSPACE_MODULE_FIELDS = frozenset({
     'programmeId', 'programme', 'cohortId', 'cohort', 'groupId', 'group',
     'weeks', 'sessionsNumber', 'ksbCount', 'lessons', 'quizzes', 'assignments',
     'status', 'authoringStatus', 'deliveryStatus', 'isProgrammeDeleted',
-    'startDate', 'endDate', 'weeklySchedule', 'scheduleMode', 'sessionHolidays', 'deliveryWeeks',
+    'startDate', 'endDate', 'weeklySchedule', 'scheduleMode', 'sessionHolidays', 'deliveryWeeks', 'weekStartsOn', 'calendarPolicy',
     'weekDays', 'startTime', 'endTime', 'notes', 'color', 'coverImage',
     'tutor', 'coach', 'ksbCodes', 'lastUpdated', 'weekStructureOutline',
 })
@@ -33016,6 +33082,7 @@ def curriculum_module_detail(request, identifier):
             'weeklySchedule': merged_weekly_schedule(payload, current),
             'scheduleMode': payload.get('scheduleMode', current.get('scheduleMode') or 'group'),
             'weekStartsOn': merged_week_starts_on(payload, current),
+            **({'calendarPolicy': payload['calendarPolicy']} if 'calendarPolicy' in payload else {'calendarPolicy': current.get('calendarPolicy')}),
             'weekDays': payload.get('weekDays') or current.get('weekDays') or current_delivery_metadata.get('weekDays') or '',
             'startTime': payload.get('startTime') or current.get('startTime') or current_delivery_metadata.get('startTime') or '',
             'endTime': payload.get('endTime') or current.get('endTime') or current_delivery_metadata.get('endTime') or '',
@@ -33402,6 +33469,7 @@ def curriculum_cohort_from_authoring_detail(detail):
         'color': detail.get('color') or '',
         'holidayIds': detail.get('holidayIds') or detail.get('holiday_ids') or [],
         'excludedHolidayIds': detail.get('excludedHolidayIds') or detail.get('excluded_holiday_ids') or [],
+        'calendarPolicy': parse_json_value(detail.get('calendarPolicy') if 'calendarPolicy' in detail else detail.get('calendar_policy'), None),
         'status': detail.get('status') or 'planned',
         'createdAt': detail.get('createdAt') or detail.get('created_at') or '',
         'updatedAt': detail.get('updatedAt') or detail.get('updated_at') or '',
@@ -33506,6 +33574,13 @@ def update_authoring_delivery_metadata(cohort=None, group=None):
 
 def create_curriculum_cohort(payload):
     """Create a cohort directly in ``curriculum.cohorts`` (normalized only)."""
+    calendar_update = {}
+    if 'calendarPolicy' in payload:
+        from curriculum_api.delivery_calendar import policy_write
+        try:
+            calendar_update = policy_write(payload, None, COHORT_AUTHORING_DETAILS_TABLE)
+        except ValueError as exc:
+            return json_error(str(exc), fields=['calendarPolicy'])
     missing = require_fields(payload, ['name', 'programme'])
     if missing:
         log_curriculum_decision('cohort.create', outcome='rejected', reason='missing-fields')
@@ -33623,6 +33698,8 @@ def create_curriculum_cohort(payload):
             parent_id=programme_id, matched_id=existing_id,
             reason='live-namesake-in-same-programme' if existing_id != clean_str(cohort_id) else 'same-id',
         )
+        updates.update(calendar_update)
+        nullable.append('calendar_policy')
         update_cohort_fields(existing_id, updates, allow_null_columns=tuple(nullable))
         invalidate_curriculum_cache()
         return JsonResponse({'created': False, 'cohort': curriculum_cohort_from_authoring_detail({
@@ -33655,6 +33732,7 @@ def create_curriculum_cohort(payload):
         'color': payload.get('color') or '',
         'holidayIds': holiday_ids,
         'excludedHolidayIds': excluded_holiday_ids,
+        **({'calendarPolicy': payload['calendarPolicy']} if 'calendarPolicy' in payload else {}),
         'groups': [],
         'modules': [],
     }
@@ -33710,6 +33788,7 @@ def create_curriculum_cohort(payload):
         'color': payload.get('color') or '',
         'holidayIds': holiday_ids,
         'excludedHolidayIds': excluded_holiday_ids,
+        **({'calendarPolicy': payload['calendarPolicy']} if 'calendarPolicy' in payload else {}),
         'status': cohort['status'],
     })}, status=201)
 
@@ -33807,6 +33886,12 @@ def curriculum_cohort_detail(request, identifier):
     # (or derived from them) are written. programme_id / group_ids / source_type
     # are never rebuilt from name-derived data.
     updates = {}
+    if 'calendarPolicy' in payload:
+        from curriculum_api.delivery_calendar import policy_write
+        try:
+            updates.update(policy_write(payload, cohort_row, COHORT_AUTHORING_DETAILS_TABLE))
+        except ValueError as exc:
+            return json_error(str(exc), fields=['calendarPolicy'])
     if 'name' in payload and clean_str(payload.get('name')):
         updates['cohort_name'] = clean_str(payload.get('name'))
     if 'startDate' in payload:
@@ -33855,7 +33940,7 @@ def curriculum_cohort_detail(request, identifier):
         # Stored dates, EPA boundaries and status are not authored by a rename.
         updates = {'cohort_name': updates['cohort_name']}
 
-    nullable = ['apprenticeship_end_date']
+    nullable = ['apprenticeship_end_date', 'calendar_policy']
     if epa_sent:
         nullable.append('epa_months')
     if override_sent:
@@ -35247,6 +35332,7 @@ def module_attachment_authoring_payload(item, group, cohort, catalogue_id, modul
         'weeklySchedule': merged_weekly_schedule(item, current_structure),
         'scheduleMode': item.get('scheduleMode', current_structure.get('scheduleMode') or 'group'),
         'weekStartsOn': merged_week_starts_on(item, current_structure),
+        'calendarPolicy': item['calendarPolicy'] if 'calendarPolicy' in item else current_structure.get('calendarPolicy'),
         'weekDays': schedule,
         'startTime': item.get('startTime') or group.get('startTime') or '',
         'endTime': item.get('endTime') or group.get('endTime') or '',
@@ -35822,7 +35908,8 @@ def curriculum_session_detail(request, identifier):
             'tutor_name': canonical_staff_assignment_name('tutor', payload.get('tutor')) if 'tutor' in payload else current.get('tutor_name'),
         }
         if payload.get('date'):
-            non_delivery_reason = england_non_delivery_reason(payload.get('date'))
+            from curriculum_api.delivery_calendar import date_non_delivery_reason
+            non_delivery_reason = date_non_delivery_reason(payload.get('date'), current)
             if non_delivery_reason:
                 return json_error(non_delivery_reason, status=400, code='non_delivery_date', fields=['date'])
             if int(week_number) != 1:
@@ -36184,7 +36271,10 @@ def curriculum_holiday_detail(request, identifier):
     if not source_table:
         return json_error('The holidays table is not provisioned.', status=404)
 
-    rows = fetch_all(f'select * from {table_name(source_table)} where id = %s', [identifier])
+    # Official ids are namespaced strings; manual ids may be integer columns.
+    # Comparing as text lets the read-only check below reject an official id
+    # without PostgreSQL trying to cast it to a manual row's numeric key.
+    rows = fetch_all(f'select * from {table_name(source_table)} where cast(id as text) = %s', [identifier])
     if not rows:
         # A GOV.UK id reaching a write is a client that has not noticed the two
         # kinds apart, so say which it is rather than "not found".

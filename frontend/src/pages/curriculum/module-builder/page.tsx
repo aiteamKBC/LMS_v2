@@ -9871,6 +9871,7 @@ function moduleFormTargetFromCatalogue(module: ModuleCatalogueItem, usage?: Modu
     groupId: usage?.groupId || module.groupId,
     sessionsNumber: module.sessionsNumber || usage?.sessions,
     sessionHolidays: module.sessionHolidays || module.sourceModule?.sessionHolidays,
+    calendarPolicy: module.calendarPolicy !== undefined ? module.calendarPolicy : module.sourceModule?.calendarPolicy,
     deliveryWeeks: module.deliveryWeeks || module.sourceModule?.deliveryWeeks,
     weeklySchedule: module.weeklySchedule || module.sourceModule?.weeklySchedule || [],
     scheduleMode: module.scheduleMode || module.sourceModule?.scheduleMode,
