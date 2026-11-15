@@ -65,7 +65,7 @@ export default function LearnerDirectoryModal({
         </header>
 
         <div className="border-b border-background-200 p-4">
-          <label className="flex h-11 items-center gap-2 rounded-md border border-background-300 bg-background-50 px-3 focus-within:border-primary-400">
+          <label data-search-field className="flex h-11 items-center gap-2 rounded-md border border-background-300 bg-background-50 px-3 focus-within:border-primary-400">
             <i className="ri-search-line text-base text-foreground-500" />
             <span className="sr-only">Search learner names</span>
             <input

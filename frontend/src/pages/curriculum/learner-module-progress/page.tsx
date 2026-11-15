@@ -352,7 +352,7 @@ export default function LearnerModuleProgressPage() {
               {FILTERS.map(option => <button key={option} type="button" aria-pressed={filter === option} className={`lmp-filter ${filter === option ? 'is-active' : ''} ${option !== 'all' ? `lmp-filter-${option}` : ''}`}
                 onClick={() => setFilter(option)}>{option !== 'all' && <AppIcon name={STATUS[option].icon} size={16} />}{option === 'all' ? 'All' : STATUS[option].label}</button>)}</div>
               <select aria-label="Activity type" value={typeFilter} onChange={event => setTypeFilter(event.target.value)}><option value="all">All activity types</option>{types.map(type => <option key={type} value={type}>{type}</option>)}</select>
-              <label className="lmp-search"><AppIcon name="ri-search-line" size={17} /><input aria-label="Search activities" placeholder="Search activities…" value={query} onChange={event => setQuery(event.target.value)} /></label>
+              <label data-search-field className="lmp-search"><AppIcon name="ri-search-line" size={17} /><input aria-label="Search activities" placeholder="Search activities…" value={query} onChange={event => setQuery(event.target.value)} /></label>
             </div>
             <div className="lmp-weekly-controls"><span>{matchingCount} of {activities.length} activities · Overall progress stays unchanged by filters</span>
               <div><button type="button" onClick={() => setCollapsed(new Set())}>Expand all</button><button type="button" onClick={() => setCollapsed(new Set(weeks.map(week => week.id)))}>Collapse all</button></div></div>

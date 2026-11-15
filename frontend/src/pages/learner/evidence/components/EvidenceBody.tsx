@@ -619,7 +619,7 @@ export function EvidenceBody({
             ═══════════════════════════════════ */}
         <section ref={filterRef} className={styles.toolbar} aria-label="Evidence filters">
           <div className={styles.toolbarRow}>
-            <label className={styles.search}>
+            <label data-search-field className={styles.search}>
               <AppIcon className="ri-search-line" />
               <input aria-label="Search evidence" type="search" placeholder="Search evidence, component or KSB..." value={searchQuery} onChange={event => setSearchQuery(event.target.value)} />
             </label>

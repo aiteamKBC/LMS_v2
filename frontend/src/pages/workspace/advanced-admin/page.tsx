@@ -42,7 +42,7 @@ export default function AdvancedAdminWorkspace() {
           <div><h2 className="text-xl font-semibold text-foreground-900">Assigned learners</h2>
             <p className="mt-1 text-sm text-foreground-600">{loading ? 'Loading…' : `${visible.length} of ${learners.length} learners`}</p></div>
           <div className="flex flex-wrap gap-3">
-            <label className="flex items-center gap-2 rounded-lg border border-foreground-200 px-3 py-2 text-sm">
+            <label data-search-field className="flex items-center gap-2 rounded-lg border border-foreground-200 px-3 py-2 text-sm">
               <Search size={17} aria-hidden="true" /><span className="sr-only">Search learners</span>
               <input value={search} onChange={event => setSearch(event.target.value)} placeholder="Search learners" className="min-w-48 bg-transparent outline-none" /></label>
             <label className="sr-only" htmlFor="advanced-admin-programme">Programme</label>

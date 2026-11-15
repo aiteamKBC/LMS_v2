@@ -1429,7 +1429,7 @@ export default function FreeCoursesPage() {
                   </div>
 
                   <div className="flex gap-2">
-                    <div className="flex h-10 min-w-0 flex-1 items-center gap-2 rounded-lg border border-background-300 px-3 focus-within:border-primary-400 focus-within:ring-2 focus-within:ring-primary-100">
+                    <div data-search-field className="flex h-10 min-w-0 flex-1 items-center gap-2 rounded-lg border border-background-300 px-3 focus-within:border-primary-400 focus-within:ring-2 focus-within:ring-primary-100">
                       <AppIcon name="ri-search-line" size={16} className="text-foreground-400" />
                       <input
                         type="text"

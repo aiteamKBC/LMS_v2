@@ -93,7 +93,7 @@ export default function EmployerDocumentsPage() {
               <Paperclip />
             </div>
 
-            <label className={styles.searchBox}>
+            <label data-search-field className={styles.searchBox}>
               <span className="sr-only">Search documents</span>
               <Search aria-hidden />
               <input

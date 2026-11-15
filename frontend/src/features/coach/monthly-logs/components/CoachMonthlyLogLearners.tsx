@@ -77,7 +77,7 @@ export function CoachMonthlyLogLearners({ selectedLearnerId, renderSelected }: {
       <aside className={styles.coachLearnerPanel} aria-label="Monthly log learners">
         <div className={styles.coachLearnerPanelHeader}>
           <h2>Learners</h2>
-          <label className={styles.coachLearnerSearch}>
+          <label data-search-field className={styles.coachLearnerSearch}>
             <span className="sr-only">Search learners</span>
             <AppIcon className="ri-search-line" aria-hidden="true" />
             <input type="search" placeholder="Search learners..." value={search} onChange={event => setSearch(event.target.value)} />

@@ -107,7 +107,7 @@ export function CoachDirectoryPicker({ onSelect, onDirectoryLoaded }: {
     <section className={styles.dashboard} aria-label="Coaches performance dashboard">
       <div className={styles.toolbar}>
         <div className={styles.titleBlock}><h2>Coaches Performance</h2><p>Coaching caseload, engagement, review delivery and learner risk signals</p></div>
-        <label className={styles.search}>
+        <label data-search-field className={styles.search}>
           <AppIcon className="ri-search-line" /><span className="sr-only">Search associate or coach</span>
           <input value={search} onChange={event => setSearch(event.target.value)} placeholder="Search associate or coach" />
         </label>

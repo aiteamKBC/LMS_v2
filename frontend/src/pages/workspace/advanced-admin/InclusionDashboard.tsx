@@ -167,7 +167,7 @@ export default function InclusionDashboard({ learnerId, learner }: { learnerId: 
       {!loading && !error && <>
         <div className="rounded-2xl border border-primary-100 p-3">
           <div className="flex flex-wrap items-center justify-between gap-3 border-b border-primary-100 pb-3">
-            <label className="flex min-w-[220px] flex-1 items-center gap-2 rounded-xl bg-slate-50 px-3 py-2 text-sm text-foreground-700 sm:max-w-lg"><Search size={16} aria-hidden="true" /><span className="sr-only">Search this learner's reports</span><input value={search} onChange={event => setSearch(event.target.value)} placeholder="Search this learner's reports" className="w-full bg-transparent outline-none" /></label>
+            <label data-search-field className="flex min-w-[220px] flex-1 items-center gap-2 rounded-xl bg-slate-50 px-3 py-2 text-sm text-foreground-700 sm:max-w-lg"><Search size={16} aria-hidden="true" /><span className="sr-only">Search this learner's reports</span><input value={search} onChange={event => setSearch(event.target.value)} placeholder="Search this learner's reports" className="w-full bg-transparent outline-none" /></label>
             <button type="button" aria-pressed={showArchived} onClick={() => { setShowArchived(value => !value); setSelectedReportId(null); setSelectedCaseId(null); }} className={`inline-flex items-center gap-2 rounded-xl border px-3 py-2 text-sm font-semibold ${showArchived ? 'border-primary-600 bg-primary-50 text-primary-900' : 'border-primary-200 text-primary-800'}`}><Archive size={15} />Archived</button>
           </div>
           <div className="mt-3 grid gap-2 md:grid-cols-3" aria-label="Report status">
