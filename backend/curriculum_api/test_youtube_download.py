@@ -1,4 +1,5 @@
 """Exercise cleanup, timeouts and safe downloader boundaries without networking."""
+import base64
 import io
 import json
 import os
@@ -28,6 +29,7 @@ class YouTubeDownloadTests(unittest.TestCase):
         self.enterContext(patch.dict(os.environ))
         os.environ.pop('YOUTUBE_COOKIES_FILE', None)
         os.environ.pop('YOUTUBE_COOKIES_TEXT', None)
+        os.environ.pop('YOUTUBE_COOKIES_B64', None)
         self.enterContext(patch('socket.socket.connect', side_effect=AssertionError('External network disabled')))
 
     def make_cookies(self, content=None):
@@ -404,6 +406,94 @@ class YouTubeDownloadTests(unittest.TestCase):
         self.assertFalse(Path(spawn.call_args.args[0][4]).exists())
         self.assertEqual(source.read_bytes(), original)
         stop.assert_called_with(child)
+
+    def test_base64_export_needs_no_source_file_and_is_private_per_attempt(self):
+        from yt_dlp.cookies import YoutubeDLCookieJar
+        exported = '\ufeff' + cookie_export().replace('\n', '\r\n')
+        encoded = base64.b64encode(exported.encode('utf-8')).decode('ascii')
+        os.environ['YOUTUBE_COOKIES_B64'] = encoded
+        with tempfile.TemporaryDirectory() as first, tempfile.TemporaryDirectory() as second:
+            first_copy = youtube._prepare_cookies(Path(first))
+            second_copy = youtube._prepare_cookies(Path(second))
+            self.assertIsNotNone(first_copy)
+            self.assertEqual(first_copy.parent, Path(first))
+            jar = YoutubeDLCookieJar(str(first_copy))
+            jar.load()
+            self.assertEqual([cookie.value for cookie in jar], [COOKIE_VALUE])
+            self.assertNotIn('Synthetic browser export', first_copy.read_text())
+            first_copy.write_text('changed by one downloader')
+            self.assertIn(COOKIE_VALUE, second_copy.read_text())
+            self.assertEqual(os.environ['YOUTUBE_COOKIES_B64'], encoded)
+            self.assertNotIn('YOUTUBE_COOKIES_FILE', os.environ)
+        self.assertFalse(first_copy.exists())
+        self.assertFalse(second_copy.exists())
+
+    def test_base64_export_rejects_competing_session_sources(self):
+        encoded = base64.b64encode(cookie_export().encode()).decode('ascii')
+        for competing in ({'YOUTUBE_COOKIES_FILE': '/private/cookies.txt'},
+                          {'YOUTUBE_COOKIES_TEXT': cookie_export()},
+                          {'YOUTUBE_COOKIES_FILE': '/private/cookies.txt',
+                           'YOUTUBE_COOKIES_TEXT': cookie_export()}):
+            with self.subTest(sources=list(competing)), tempfile.TemporaryDirectory() as temporary, \
+                 patch.object(youtube.os, 'environ', {'YOUTUBE_COOKIES_B64': encoded, **competing}):
+                with self.assertRaisesRegex(VideoImportError, 'only one YouTube session source') as raised:
+                    youtube._prepare_cookies(Path(temporary))
+                self.assertNotIn(COOKIE_VALUE, str(raised.exception))
+                self.assertNotIn(encoded, str(raised.exception))
+                self.assertEqual(list(Path(temporary).iterdir()), [])
+
+    def test_invalid_base64_exports_fail_before_downloader_without_leaking_values(self):
+        exports = (b'\xff', b'not Netscape', cookie_export(domain='.google.com').encode(),
+                   cookie_export(int(time.time()) - 60).encode(),
+                   cookie_export().replace('\t', '\\t').encode(),
+                   b'x' * (youtube.MAX_COOKIE_BYTES + 1))
+        encoded_values = ['invalid-base64-' + COOKIE_VALUE, '\u00e9',
+                          *[base64.b64encode(value).decode('ascii') for value in exports]]
+        for index, encoded in enumerate(encoded_values):
+            with self.subTest(case=index), tempfile.TemporaryDirectory() as temporary, \
+                 patch.object(youtube.os, 'environ', {'YOUTUBE_COOKIES_B64': encoded}), \
+                 patch.object(youtube.shutil, 'which', return_value='node'), \
+                 patch.object(youtube.importlib.util, 'find_spec', return_value=True), \
+                 patch.object(youtube.subprocess, 'Popen') as spawn:
+                with self.assertRaises(VideoImportError) as raised:
+                    youtube._run_download(URL, Path(temporary))
+                self.assertNotIn(COOKIE_VALUE, str(raised.exception))
+                self.assertNotIn(encoded, str(raised.exception))
+                self.assertEqual(list(Path(temporary).iterdir()), [])
+                spawn.assert_not_called()
+
+    def test_oversized_base64_is_rejected_before_decoding(self):
+        encoded = 'A' * (4 * ((youtube.MAX_COOKIE_BYTES + 2) // 3) + 4)
+        with tempfile.TemporaryDirectory() as temporary, \
+             patch.object(youtube.os, 'environ', {'YOUTUBE_COOKIES_B64': encoded}), \
+             patch('base64.b64decode') as decode:
+            with self.assertRaises(VideoImportError):
+                youtube._prepare_cookies(Path(temporary))
+            decode.assert_not_called()
+            self.assertEqual(list(Path(temporary).iterdir()), [])
+
+    def test_base64_secret_is_not_forwarded_and_private_copy_is_removed_after_failure(self):
+        encoded = base64.b64encode(cookie_export().encode()).decode('ascii')
+        os.environ['YOUTUBE_COOKIES_B64'] = encoded
+        copies = []
+
+        def fail_to_start(command, **kwargs):
+            copied = Path(command[6])
+            copies.append(copied)
+            self.assertIn(COOKIE_VALUE, copied.read_text())
+            self.assertFalse(any(key.startswith('YOUTUBE_COOKIES') for key in kwargs['env']))
+            self.assertNotIn(encoded, ' '.join(command))
+            self.assertNotIn(COOKIE_VALUE, ' '.join(command))
+            raise OSError('synthetic process failure')
+
+        with patch.object(youtube.shutil, 'which', return_value='node'), \
+             patch.object(youtube.importlib.util, 'find_spec', return_value=True), \
+             patch.object(youtube.subprocess, 'Popen', side_effect=fail_to_start):
+            with self.assertRaisesRegex(OSError, 'synthetic process failure'):
+                with youtube.download_youtube(URL):
+                    self.fail('No media should be returned')
+        self.assertEqual(len(copies), 1)
+        self.assertFalse(copies[0].parent.exists())
 
     def test_ecs_secret_export_is_parsed_and_kept_private_per_attempt(self):
         from yt_dlp.cookies import YoutubeDLCookieJar

@@ -11,6 +11,7 @@ from django.test import RequestFactory, TestCase
 
 from . import learning_storage as storage, video_imports as imports, video_uploads as uploads
 from .bunny_stream import VideoImportError
+from .views import row_has_deleted_at
 from .models import CurriculumVideoImport
 
 MP4 = b'\x00\x00\x00\x20ftypisom' + b'\x00' * 64
@@ -84,7 +85,7 @@ class VideoUploadStorageTests(TestCase):
             AUTHORING_MODULES_TABLE='modules', AUTHORING_COMPONENTS_TABLE='components',
             WEEK_TEMPLATES_TABLE='week_templates', WEEK_TEMPLATE_COMPONENTS_TABLE='week_template_components',
             authoring_fetch_all=fetch, authoring_table_name=lambda name: f'"{name}"',
-            invalidate_curriculum_cache=Mock(),
+            row_has_deleted_at=row_has_deleted_at, invalidate_curriculum_cache=Mock(),
         )
         self.enterContext(patch.object(imports, '_views', return_value=self.views))
         self.owner = self.enterContext(patch.object(storage, 'course', side_effect=course))

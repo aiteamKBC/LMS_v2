@@ -2,10 +2,11 @@ import { useEffect, useRef, useState } from 'react';
 import { AppIcon } from '@/components/feature/AppIcon';
 import { fetchWeekTemplates, fetchWeekTemplateDetail, filterWeekTemplatesForScope, type WeekTemplate } from '../week-builder/weekTemplateData';
 
-export function WeekTemplateImportModal({ scope, onClose, onImport }: {
+export function WeekTemplateImportModal({ scope, onClose, onImport, courseType }: {
   scope: { programmeId: string; programmeName: string };
   onClose: () => void;
   onImport: (template: WeekTemplate, count: number) => void | Promise<void>;
+  courseType?: 'free';
 }) {
   const [templates, setTemplates] = useState<WeekTemplate[]>([]);
   const [loading, setLoading] = useState(true);
@@ -21,13 +22,13 @@ export function WeekTemplateImportModal({ scope, onClose, onImport }: {
   useEffect(() => {
     let current = true;
     active.current = true;
-    fetchWeekTemplates({})
+    fetchWeekTemplates(courseType ? { courseType } : {})
       .then(rows => { if (current) { setTemplates(rows); setLoading(false); } })
       .catch(err => { if (current) { setError(err instanceof Error ? err.message : 'Unable to load week templates.'); setLoading(false); } });
     return () => { current = false; active.current = false; };
-  }, []);
+  }, [courseType]);
 
-  const list = filterWeekTemplatesForScope(templates, scope);
+  const list = filterWeekTemplatesForScope(templates, scope).filter(template => !courseType || template.courseType === courseType);
   const searchTerm = search.trim().toLocaleLowerCase();
   const filteredTemplates = searchTerm
     ? list.filter(template => [

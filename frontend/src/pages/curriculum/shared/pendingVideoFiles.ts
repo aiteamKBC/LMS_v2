@@ -3,6 +3,7 @@ import { coachFetch } from '@/lib/coachFetch';
 import { COMPONENT_UPLOAD_TIMEOUT_MS } from './componentUploadPolicy';
 
 export type VideoSettingsPatch = Record<string, string | number | boolean>;
+export const FreeCourseVideoScopeContext = createContext<string | undefined>(undefined);
 type VideoComponent = { id: string; type: string; title: string; settings: Record<string, unknown> };
 type PendingFile = { file: File; source: string; uploading?: boolean; error?: string };
 export const videoComponentSource = (component: VideoComponent) => String(component.settings.videoUrl || component.settings.embedCode || '');
@@ -40,9 +41,13 @@ export function usePendingVideoFiles(scopeKey: string) {
   const select = useCallback((id: string, file: File, source: string) => {
     replace({ ...current.current, [id]: { file, source } });
   }, [replace]);
+  const remapIds = useCallback((ids: Record<string, string>) => {
+    replace(Object.fromEntries(Object.entries(current.current).map(([id, file]) => [ids[id] || id, file])));
+  }, [replace]);
   const uploadSaved = useCallback(async (
-    kind: 'module' | 'template', targetId: string, components: VideoComponent[],
+    kind: 'module' | 'template' | 'free_course', targetId: string, components: VideoComponent[],
     onStored: (id: string, settings: VideoSettingsPatch, originalSource: string) => void,
+    options?: { fields?: () => Record<string, string>; onResponse?: (data: Record<string, unknown>) => void },
   ) => {
     if (controller.current) throw new Error('An MP4 upload is already in progress.');
     const originalScope = scope.current;
@@ -59,12 +64,14 @@ export function usePendingVideoFiles(scopeKey: string) {
         const body = new FormData();
         body.set('file', pending.file);
         body.set('title', component.title);
+        for (const [key, value] of Object.entries(options?.fields?.() || {})) body.set(key, value);
         const response = await coachFetch(`/curriculum_api/curriculum/videos/${kind}/${encodeURIComponent(targetId)}/${encodeURIComponent(id)}/`, {
           method: 'POST', body, signal: abort.signal,
         });
         const data = await response.json() as { error?: string; savedSettings?: VideoSettingsPatch };
         if (scope.current !== originalScope || generation.current !== originalGeneration || abort.signal.aborted) throw new Error('The MP4 upload was interrupted. Save again to retry.');
         if (!response.ok || !data.savedSettings) throw new Error(data.error || 'The MP4 could not be saved. Save again to retry.');
+        options?.onResponse?.(data);
         onStored(id, data.savedSettings, pending.source);
         remove(id);
       } catch (cause) {
@@ -76,7 +83,7 @@ export function usePendingVideoFiles(scopeKey: string) {
       } finally { clearTimeout(timer); if (controller.current === abort) controller.current = null; }
     }
   }, [remove, replace]);
-  return { files, select, remove, clear, uploadSaved, hasPending: Object.keys(files).length > 0 };
+  return { files, select, remove, clear, remapIds, uploadSaved, hasPending: Object.keys(files).length > 0 };
 }
 
 export const PendingVideoFilesContext = createContext<ReturnType<typeof usePendingVideoFiles> | null>(null);

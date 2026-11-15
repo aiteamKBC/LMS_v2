@@ -30,6 +30,13 @@ beforeEach(() => {
 });
 
 describe('Adding multiple weeks from a template', () => {
+  it('offers only free templates when opened from an independent Free Course', async () => {
+    vi.mocked(fetchWeekTemplates).mockResolvedValue([template(), { ...template(), id: 'FREE-WEEK', title: 'Independent week', courseType: 'free' }]);
+    render(<WeekTemplateImportModal courseType="free" scope={{ programmeId: '', programmeName: '' }} onClose={vi.fn()} onImport={vi.fn()} />);
+    expect(await screen.findByRole('button', { name: /Independent week/ })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /PCP Week/ })).not.toBeInTheDocument();
+    expect(fetchWeekTemplates).toHaveBeenCalledWith({ courseType: 'free' });
+  });
   it('filters templates by week number, title, or component count', async () => {
     vi.mocked(fetchWeekTemplates).mockResolvedValue([
       { ...template(), id: 'TEMPLATE-12', title: 'MSP Week 12: Designing outcomes', componentCount: 11 },

@@ -44,7 +44,8 @@ def _owned_component(course_id, week_id, component_id, *, lock=False):
             "from curriculum.free_programme_components c "
             "join curriculum.free_course_weeks w on w.id=c.free_module_id "
             "join curriculum.free_courses fc on fc.id=w.course_id "
-            "where fc.id=%s and w.id=%s and c.id=%s" + suffix,
+            "where fc.id=%s and w.id=%s and c.id=%s "
+            "and w.deleted_at is null and c.deleted_at is null" + suffix,
             [course_id, week_id, component_id],
         )
         row = cursor.fetchone()
