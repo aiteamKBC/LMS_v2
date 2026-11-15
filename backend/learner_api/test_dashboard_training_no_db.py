@@ -113,7 +113,7 @@ class TrainingProjectionTests(SimpleTestCase):
         from . import identity, case_file_sources
         from login import permissions
         factory = RequestFactory()
-        source = SimpleNamespace(pk=265)
+        source = SimpleNamespace(pk=265, _canonical_training_plan=[])
         owner = {'id': 8}
         profile = SimpleNamespace(pk=8, enrolment_id=265)
         for kind in ('commercial', 'apprenticeship'):
@@ -198,7 +198,7 @@ class TrainingProjectionTests(SimpleTestCase):
         from . import dashboard_tabs, identity
         owner = {'id': 8}
         profile = SimpleNamespace(pk=8, enrolment_id=265)
-        source = SimpleNamespace(pk=265)
+        source = SimpleNamespace(pk=265, _canonical_training_plan=[])
         with patch.object(dashboard_tabs.canonical, 'require_profile', return_value=owner), \
              patch.object(identity, 'learner_profile_for_source', return_value=profile), \
              patch.object(training, 'read_training', return_value={'timeline': {}}) as compact, \

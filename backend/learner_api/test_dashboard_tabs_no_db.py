@@ -81,7 +81,7 @@ class DashboardMonthlyHoursTests(SimpleTestCase):
 
     def test_training_tab_reuses_records_and_avoids_attendance_and_overview_reads(self):
         from . import identity, overview_week, training_plan_dashboard, attendance_lectures, module_progress, dashboard_training
-        source = SimpleNamespace(pk=5)
+        source = SimpleNamespace(pk=5, _canonical_training_plan=[])
         owner = {'id': 15}
         records = [{'id': 1}]
         with patch.object(dashboard_tabs.canonical, 'require_profile', return_value=owner), \

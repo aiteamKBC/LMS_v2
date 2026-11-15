@@ -10,7 +10,7 @@ from . import dashboard_header as header
 
 
 class DashboardHeaderTests(SimpleTestCase):
-    def test_effective_teaching_assignment_wins_over_overlapping_historical_membership(self):
+    def test_header_reads_only_saved_training_plan_assignments(self):
         source = SimpleNamespace(programme='P', cohort='C', group='G')
         historic = {'id': 'OLD', 'title': 'Historical course', 'start_date': date(2026, 9, 1),
                     'end_date': date(2027, 2, 1), 'sessions_number': 20, 'week_count': 20}
@@ -18,36 +18,26 @@ class DashboardHeaderTests(SimpleTestCase):
         connection = MagicMock()
         with patch.object(header, 'connections', {'enrolment': connection}), \
              patch.object(header, '_effective_plan_ids', return_value=['CURRENT']), \
-             patch.object(header.canonical_learning, 'curriculum_module_ids_for', return_value=['OLD']), \
+             patch.object(header.canonical_learning, 'curriculum_module_ids_for',
+                          side_effect=AssertionError('historical membership read')) as historical, \
              patch.object(header, 'rows', return_value=[historic, current]):
             ids, modules = header.dashboard_modules(source, {'id': 17})
-        self.assertEqual(set(ids), {'OLD', 'CURRENT'})
+        self.assertEqual(ids, ['CURRENT'])
+        historical.assert_not_called()
         candidates = header.weekly_header_candidates(modules, source)
         self.assertEqual([row['id'] for row in candidates], ['CURRENT'])
         self.assertEqual(header.selected_header_modules(candidates, '2026-11-12')[1][0]['id'], 'CURRENT')
-        # Imported-only learners retain their established fallback candidates.
-        source._dashboard_assigned_ids = set()
-        self.assertEqual({row['id'] for row in header.weekly_header_candidates(modules, source)}, {'OLD', 'CURRENT'})
 
-    def test_source_projection_keeps_plan_fallback_and_assignment_values_without_snapshots(self):
+    def test_source_projection_does_not_read_legacy_plan_json(self):
         model = MagicMock()
         query = model.all_learners.only.return_value
-        query.annotate.return_value = query
-        source = SimpleNamespace(_header_training_plan=[{'moduleId': 'M1', 'assignmentMode': 'explicit'}, None],
-                                 _header_learning_plan={'legacy': True})
+        source = SimpleNamespace()
         query.get.return_value = source
         self.assertIs(header.read_header_source(model, 7), source)
-        self.assertEqual(source.training_plan, source._header_training_plan)
-        self.assertEqual(source.learning_plan, {'legacy': True})
         fields = model.all_learners.only.call_args.args
         self.assertNotIn('training_plan', fields)
         self.assertNotIn('learning_plan', fields)
-        for call in query.annotate.call_args_list:
-            expression = next(iter(call.kwargs.values()))
-            self.assertIn("item->'moduleId'", expression.sql)
-            self.assertIn("ELSE 'null'::jsonb", expression.sql)
-            self.assertIn('ORDER BY position', expression.sql)
-            self.assertIn('ELSE "', expression.sql)
+        query.annotate.assert_not_called()
 
     def test_imported_header_booking_overlay_does_not_reread_deferred_review_bodies(self):
         from . import imported_review_calendar as imported
@@ -140,12 +130,15 @@ class DashboardHeaderTests(SimpleTestCase):
 
     def test_single_profile_read_keeps_canonical_identity_validation(self):
         source = SimpleNamespace(pk=7, email=' Learner@Example.test ', aptem_id='0009')
-        profile = SimpleNamespace(id=17, email='learner@example.test', aptem_id=9)
-        with patch.object(header, 'LearnerProfile') as model:
-            model.objects.filter.return_value.only.return_value.__getitem__.return_value = [profile]
+        profile = SimpleNamespace(id=17, email='learner@example.test', aptem_id=9, enrolment_id=7)
+        with patch.object(header, 'LearnerProfile') as model, \
+             patch.object(header, 'install_canonical_training_plan') as install:
+            queryset = model.objects.filter.return_value.only.return_value.prefetch_related.return_value
+            queryset.__getitem__.return_value = [profile]
             actual, owner = header.header_profile(source, 7)
         self.assertIs(actual, profile)
         self.assertEqual(owner['id'], 17)
+        install.assert_called_once_with(source, profile)
         model.objects.filter.assert_called_once_with(enrolment_id=7)
 
     def test_missing_duplicate_or_conflicting_profiles_fail_closed(self):
@@ -154,7 +147,8 @@ class DashboardHeaderTests(SimpleTestCase):
         for profiles in ([], [profile, profile], [SimpleNamespace(id=18, email='other@example.test', aptem_id=9)],
                          [SimpleNamespace(id=18, email=source.email, aptem_id=10)]):
             with self.subTest(profiles=profiles), patch.object(header, 'LearnerProfile') as model:
-                model.objects.filter.return_value.only.return_value.__getitem__.return_value = profiles
+                queryset = model.objects.filter.return_value.only.return_value.prefetch_related.return_value
+                queryset.__getitem__.return_value = profiles
                 with self.assertRaises(header.ServiceError):
                     header.header_profile(source, 7)
 

@@ -102,7 +102,6 @@ class WeeklyJsonNullTests(SimpleTestCase):
                 return {'weeks': plan['slots'], 'selectedWeek': None}
             with self.subTest(value=value), \
                  patch.dict(weekly.SOURCE_MODELS, {'commercial': model}), \
-                 patch.object(weekly, 'assignment_projection', return_value=MagicMock()), \
                  patch.object(weekly, 'read_dashboard_weekly', side_effect=read):
                 response = view(RequestFactory().get('/weekly'), 'commercial', 101)
             self.assertEqual(response.status_code, status)

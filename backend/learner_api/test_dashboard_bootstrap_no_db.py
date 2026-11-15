@@ -40,7 +40,7 @@ class BootstrapTests(SimpleTestCase):
 
     def test_canonical_monthly_dispatch_uses_same_authorized_calculations(self):
         from . import dashboard_tabs, dashboard_monthly, identity
-        source = SimpleNamespace(pk=7)
+        source = SimpleNamespace(pk=7, _canonical_training_plan=[])
         with patch.object(dashboard_tabs.canonical, 'require_profile', return_value={'id': 9}), \
              patch.object(identity, 'learner_profile_for_source', return_value=SimpleNamespace(pk=9, enrolment_id=7)), \
              patch.object(dashboard_monthly, 'read_monthly', return_value={'version': 2}) as read:

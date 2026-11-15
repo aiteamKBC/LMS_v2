@@ -8,7 +8,9 @@ vi.mock('@/api/learningPlan', async () => ({
   fetchLearningPlan: vi.fn(), saveLearningPlan: vi.fn(),
 }));
 vi.mock('@/lib/curriculumApi', () => ({ fetchFreeProgrammeModules: vi.fn(async () => []) }));
-vi.mock('@/hooks/useToast', () => ({ useToast: () => ({ success: vi.fn() }) }));
+vi.mock('@/hooks/useToast', () => ({
+  useToast: () => ({ success: vi.fn(), error: vi.fn(), info: vi.fn() }),
+}));
 
 const ordinary = { moduleId: 'M1', moduleTitle: 'Programme module', hours: 10, groupName: 'Group', programmeId: 'P1', programmeName: 'Programme' };
 const standalone = { ...ordinary, moduleId: 'M2', moduleTitle: 'Standalone skills', hours: 6, groupName: '', programmeId: '', programmeName: '', isFreeCourse: true };
@@ -17,7 +19,7 @@ function fixture(assigned = true, learnerType: 'commercial' | 'apprenticeship' =
     learner: { id: '7', name: 'Synthetic learner', learnerType, programme: 'Programme', programmeId: 'P1', cohortId: 'Cohort', groupId: 'Group', cohort: 'Cohort', group: 'Group', programmeStatus: 'Delivery' },
     plan: assigned ? [ordinary, standalone] : [ordinary], preset: [ordinary], available: assigned ? [] : [standalone],
     standaloneCourses: [{ freeCourseId: 'FC-1', moduleId: 'M2', courseName: 'Standalone skills' }],
-    freeCourses: [], freeCourseAssignmentVersion: '', saved: true, programmes: [], totals: {
+    planVersion: 'plan-v1', freeCourses: [], freeCourseAssignmentVersion: '', saved: true, programmes: [], totals: {
       moduleCount: 1, moduleHours: 10, freeCourseCount: assigned ? 1 : 0,
       freeCourseHours: assigned ? 6 : 0, plannedFreeCourseHours: assigned && learnerType === 'commercial' ? 6 : 0,
       meetingCount: 0, meetingHours: 0, totalHours: assigned && learnerType === 'commercial' ? 16 : 10,
@@ -50,7 +52,41 @@ describe('Learning plan free-course assignments', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Add free course' }));
     expect(screen.getByText((_content, element) => element?.tagName === 'SPAN' && element.textContent === '1 module · 1 free course · 16h total')).toBeVisible();
     fireEvent.click(screen.getByRole('button', { name: 'Save learning plan' }));
-    await waitFor(() => expect(saveLearningPlan).toHaveBeenCalledWith('7', ['M1', 'M2']));
+    await waitFor(() => expect(saveLearningPlan).toHaveBeenCalledWith('7', ['M1', 'M2'], 'plan-v1'));
+  });
+
+  it('keeps the original plan version when a background refresh lands over unsaved edits', async () => {
+    const initial = fixture(false);
+    const refreshed = { ...fixture(false), planVersion: 'plan-v2' };
+    vi.mocked(fetchLearningPlan)
+      .mockResolvedValueOnce(initial)
+      .mockResolvedValue(refreshed);
+    renderPlan();
+
+    fireEvent.change(await screen.findByLabelText('Free course to add'), { target: { value: 'FC-1' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Add free course' }));
+    fireEvent.focus(window);
+    await waitFor(() => expect(fetchLearningPlan).toHaveBeenCalledTimes(2));
+
+    fireEvent.click(screen.getByRole('button', { name: 'Save learning plan' }));
+    await waitFor(() => expect(saveLearningPlan).toHaveBeenCalledWith(
+      '7', ['M1', 'M2'], 'plan-v1',
+    ));
+  });
+
+  it('keeps unsaved module edits visible after a stale-version rejection', async () => {
+    vi.mocked(fetchLearningPlan).mockResolvedValue(fixture(false));
+    vi.mocked(saveLearningPlan).mockRejectedValueOnce(
+      new Error('The training plan changed after it was read.'),
+    );
+    renderPlan();
+
+    fireEvent.change(await screen.findByLabelText('Free course to add'), { target: { value: 'FC-1' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Add free course' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save learning plan' }));
+
+    expect(await screen.findByText('The training plan changed after it was read.')).toBeVisible();
+    expect(within(screen.getByRole('region', { name: 'Assigned free courses' })).getByText('Standalone skills')).toBeVisible();
   });
 
   it('removes the same assignment from the plan and preserves unrelated modules', async () => {
@@ -59,7 +95,7 @@ describe('Learning plan free-course assignments', () => {
     fireEvent.click(section.getByRole('button', { name: 'Remove Standalone skills' }));
     expect(screen.queryByText('Standalone skills', { selector: 'td' })).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Save learning plan' }));
-    await waitFor(() => expect(saveLearningPlan).toHaveBeenCalledWith('7', ['M1']));
+    await waitFor(() => expect(saveLearningPlan).toHaveBeenCalledWith('7', ['M1'], 'plan-v1'));
   });
 
   it('keeps an active learner removal confirmation for standalone courses', async () => {
@@ -111,7 +147,7 @@ describe('Learning plan free-course assignments', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Add free course' }));
     expect(screen.getByText((_content, element) => element?.tagName === 'SPAN' && element.textContent === '1 module · 1 free course · 10h total')).toBeVisible();
     fireEvent.click(screen.getByRole('button', { name: 'Save learning plan' }));
-    await waitFor(() => expect(saveLearningPlan).toHaveBeenCalledWith('7', ['M1', 'M2']));
+    await waitFor(() => expect(saveLearningPlan).toHaveBeenCalledWith('7', ['M1', 'M2'], 'plan-v1'));
   });
 
   it('resetting group modules retains independently assigned courses', async () => {
@@ -122,7 +158,7 @@ describe('Learning plan free-course assignments', () => {
     fireEvent.click(await screen.findByRole('button', { name: 'Reset to group default' }));
     expect(within(screen.getByRole('region', { name: 'Assigned free courses' })).getByText('Standalone skills')).toBeVisible();
     fireEvent.click(screen.getByRole('button', { name: 'Save learning plan' }));
-    await waitFor(() => expect(saveLearningPlan).toHaveBeenCalledWith('7', ['M1', 'M2']));
+    await waitFor(() => expect(saveLearningPlan).toHaveBeenCalledWith('7', ['M1', 'M2'], 'plan-v1'));
   });
 
   it('keeps standalone courses out of the core module picker', async () => {

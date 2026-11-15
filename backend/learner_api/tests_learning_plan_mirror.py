@@ -138,89 +138,42 @@ class SyncMirrorTests(SimpleTestCase):
             self.assertEqual(sync_learning_plan_mirror(Source()), 1)
 
 
-class ChildRowBatchingTests(SimpleTestCase):
-    """The mirror rebuild is three inserts, not one per module and per week.
-
-    Written row by row, a learner on five thirteen-week modules cost about 140
-    sequential round trips, which is what made assigning a single learner to a
-    module hang for seconds against a remote database.
-    """
+class ChildRowReconciliationTests(SimpleTestCase):
+    """The compatibility entry point delegates to the canonical writer."""
 
     def _replace(self, plan):
         from . import active_users
 
-        calls = []
+        learner = type(
+            "Learner",
+            (),
+            {"pk": 41, "_state": type("State", (), {"db": "enrolment"})()},
+        )()
+        snapshot = type("Snapshot", (), {"plan_version": "plan-v1"})()
+        result = object()
+        with patch(
+            "learner_api.training_plan_writes.training_plan_snapshot",
+            return_value=snapshot,
+        ) as read, patch(
+            "learner_api.training_plan_writes.reconcile_training_plan",
+            return_value=result,
+        ) as reconcile:
+            returned = active_users.replace_training_plan(learner, plan)
+        return returned, read, reconcile
 
-        def bulk(name):
-            def create(rows, **kwargs):
-                calls.append(name)
-                for index, row in enumerate(rows, 1):
-                    row.pk = index if name != 'weeks' else 100 + index
-                return list(rows)
-            return create
+    def test_delegates_without_delete_or_rebuild(self):
+        returned, read, reconcile = self._replace(PLAN)
 
-        validated = [
-            {
-                'payload': module,
-                'module_id': module['moduleId'],
-                'weeks': [
-                    {
-                        'payload': week,
-                        'week_id': week['weekId'],
-                        'components': [
-                            {'payload': component, 'component_id': component['componentId']}
-                            for component in week.get('components') or []
-                        ],
-                    }
-                    for week in module.get('weeks') or []
-                ],
-            }
-            for module in plan
-        ]
-        with patch.object(active_users, 'validate_training_plan_relationships', return_value=validated), \
-                patch.object(active_users, 'LearnerTrainingPlanModule') as modules, \
-                patch.object(active_users, 'LearnerTrainingPlanWeek') as weeks, \
-                patch.object(active_users, 'LearnerTrainingPlanComponent') as components:
-            modules.side_effect = lambda **kw: type('Row', (), {**kw, 'pk': None})()
-            weeks.side_effect = lambda **kw: type('Row', (), {**kw, 'pk': None})()
-            components.side_effect = lambda **kw: type('Row', (), {**kw, 'pk': None})()
-            modules.objects.bulk_create.side_effect = bulk('modules')
-            weeks.objects.bulk_create.side_effect = bulk('weeks')
-            components.objects.bulk_create.side_effect = bulk('components')
-            active_users.replace_training_plan(object(), plan)
-            return calls, modules, weeks, components
+        self.assertIsNotNone(returned)
+        read.assert_called_once_with(41, using="enrolment")
+        self.assertEqual(reconcile.call_args.args[:2], (41, PLAN))
+        self.assertEqual(reconcile.call_args.kwargs["expected_version"], "plan-v1")
+        self.assertTrue(reconcile.call_args.kwargs["reorder"])
 
-    def test_one_insert_per_level_and_a_single_delete(self):
-        calls, modules, weeks, components = self._replace(PLAN)
+    def test_empty_internal_plan_is_reconciled_not_bulk_deleted(self):
+        _returned, _read, reconcile = self._replace([])
 
-        self.assertEqual(calls, ['modules', 'weeks', 'components'])
-        modules.objects.filter.return_value.delete.assert_called_once_with()
-        self.assertEqual(len(modules.objects.bulk_create.call_args.args[0]), 1)
-        self.assertEqual(len(weeks.objects.bulk_create.call_args.args[0]), 2)
-        self.assertEqual(len(components.objects.bulk_create.call_args.args[0]), 2)
-
-    def test_every_component_is_filed_under_its_own_week(self):
-        # Batching the inserts is only safe while each child still points at the
-        # parent it belongs to; an off-by-one here would silently re-file a
-        # learner's components under the wrong week.
-        _calls, _modules, weeks, components = self._replace(PLAN)
-
-        week_rows = weeks.objects.bulk_create.call_args.args[0]
-        self.assertEqual([row.curriculum_week_id for row in week_rows], ['WEEK-1', 'WEEK-2'])
-        self.assertEqual([row.position for row in week_rows], [1, 2])
-        component_rows = components.objects.bulk_create.call_args.args[0]
-        self.assertEqual(
-            [row.curriculum_component_id for row in component_rows],
-            ['COMP-1', 'COMP-2'],
-        )
-        self.assertEqual({row.plan_week.curriculum_week_id for row in component_rows}, {'WEEK-1'})
-        self.assertEqual([row.position for row in component_rows], [1, 2])
-
-    def test_an_empty_plan_clears_without_inserting(self):
-        calls, modules, _weeks, _components = self._replace([])
-
-        self.assertEqual(calls, [])
-        modules.objects.filter.return_value.delete.assert_called_once_with()
+        self.assertEqual(reconcile.call_args.args[:2], (41, []))
 
 
 class CanonicalWeekMappingTests(SimpleTestCase):
@@ -342,10 +295,22 @@ class CanonicalPlanValidationTests(SimpleTestCase):
         with self.assertRaisesRegex(ValidationError, "appears more than once"):
             self._validate(duplicate)
 
-        with patch.object(
-            active_users, 'validate_training_plan_relationships',
-            side_effect=ValidationError('invalid canonical relationship'),
-        ), patch.object(active_users, 'LearnerTrainingPlanModule') as modules:
-            with self.assertRaises(ValidationError):
-                active_users.replace_training_plan(object(), PLAN)
-            modules.objects.filter.assert_not_called()
+        from .training_plan_writes import TrainingPlanValidationError
+
+        learner = type(
+            "Learner",
+            (),
+            {"pk": 41, "_state": type("State", (), {"db": "enrolment"})()},
+        )()
+        snapshot = type("Snapshot", (), {"plan_version": "plan-v1"})()
+        with patch(
+            "learner_api.training_plan_writes.training_plan_snapshot",
+            return_value=snapshot,
+        ), patch(
+            "learner_api.training_plan_writes.reconcile_training_plan",
+            side_effect=TrainingPlanValidationError(
+                "invalid_curriculum_hierarchy", "invalid canonical relationship"
+            ),
+        ):
+            with self.assertRaisesRegex(ValidationError, "invalid canonical relationship"):
+                active_users.replace_training_plan(learner, PLAN)

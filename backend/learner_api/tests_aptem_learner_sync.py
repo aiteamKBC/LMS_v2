@@ -323,8 +323,8 @@ class AptemDetailCommandTests(SimpleTestCase):
         self.assertEqual(rows[0]["start_date"], date(2025, 1, 2))
         self.assertIsNone(rows[1]["end_date"])
         statements = [call.args[0] for call in cursor.execute.call_args_list]
-        self.assertIn('"LMS"."Aptem_users"', statements[0])
-        self.assertIn('"LMS"."non_active_users"', statements[1])
+        self.assertIn('"Learner".learners', statements[0])
+        self.assertIn('"LMS".non_active_users', statements[1])
         self.assertTrue(all(sql.endswith("FOR SHARE") for sql in statements))
         self.assertTrue(all(call.args[1] == [[10001, 10002]] for call in cursor.execute.call_args_list))
 

@@ -26,6 +26,7 @@ from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET
 
 from learner_api import evidence_storage
+from learner_api.aptem_identity import APTEM_IDENTITY_CTES
 
 from .db_source import resolve
 
@@ -125,58 +126,26 @@ def _month_range(start, end):
 
 def _load_learner(cursor, aptem_id):
     cursor.execute(
-        f"""
-        SELECT aptem_id, learner_id, learner_name, learner_email,
-               programme_name, programme_status, coach_name, coach_email,
-               planned_hours_total, planned_hours_monthly
-        FROM {LEARNERS} WHERE aptem_id = %s
-        """,
-        [aptem_id],
-    )
-    rows = _dict_rows(cursor)
-    if rows:
-        return rows[0]
-
-    # An ILR-backed Aptem learner can legitimately precede the normalized
-    # Last_audit roster.  The manual report is keyed by Aptem ID, so retaining
-    # that real identity lets the learner use the report immediately without
-    # inventing an LMS match.
-    cursor.execute(
-        """
-        SELECT aptem."ID" AS aptem_id,
-               NULL::bigint AS learner_id,
-               aptem."FullName" AS learner_name,
-               aptem."Email" AS learner_email,
-               COALESCE(
-                   NULLIF(btrim(aptem."Program Name"), ''),
-                   NULLIF(btrim(aptem."Group"), '')
-               ) AS programme_name,
-               NULLIF(btrim(aptem."Program-Status"), '') AS programme_status,
-               NULLIF(btrim(aptem."OwnerName"), '') AS coach_name,
-               NULLIF(btrim(aptem."OwnerEmail"), '') AS coach_email,
-               ilr.planned_hours AS planned_hours_total,
-               COALESCE(monthly.planned_hours_monthly, '{}'::jsonb) AS planned_hours_monthly,
-               ilr.learn_start_date AS programme_start_date
-        FROM "LMS"."Aptem_users" aptem
-        JOIN LATERAL (
-            SELECT delivery.planned_hours, delivery.learn_start_date
-            FROM "Audit".ilr_learning_deliveries delivery
-            WHERE (
-                NULLIF(btrim(aptem."Email"), '') IS NOT NULL
-                AND lower(btrim(delivery.email)) = lower(btrim(aptem."Email"))
-            ) OR (
-                NULLIF(btrim(aptem."FullName"), '') IS NOT NULL
-                AND lower(btrim(concat_ws(' ', delivery.given_names, delivery.family_name))) =
-                    lower(btrim(aptem."FullName"))
-            )
-            ORDER BY delivery.aim_seq_number,
-                     delivery.updated_at DESC NULLS LAST,
-                     delivery.id DESC
-            LIMIT 1
-        ) ilr ON TRUE
+        f"""WITH {APTEM_IDENTITY_CTES}
+        SELECT COALESCE(identity.aptem_id, audit.aptem_id) AS aptem_id,
+               COALESCE(identity.learner_id, audit.learner_id) AS learner_id,
+               COALESCE(NULLIF(identity.full_name, ''), audit.learner_name) AS learner_name,
+               COALESCE(NULLIF(identity.email, ''), audit.learner_email) AS learner_email,
+               COALESCE(NULLIF(identity.programme_name, ''), audit.programme_name) AS programme_name,
+               COALESCE(NULLIF(identity.programme_status, ''), audit.programme_status) AS programme_status,
+               COALESCE(NULLIF(identity.coach_name, ''), audit.coach_name) AS coach_name,
+               COALESCE(NULLIF(identity.coach_email, ''), audit.coach_email) AS coach_email,
+               CASE WHEN identity.aptem_id IS NOT NULL
+                    THEN identity.planned_hours ELSE audit.planned_hours_total END AS planned_hours_total,
+               COALESCE(audit.planned_hours_monthly, monthly.planned_hours_monthly, '{{}}'::jsonb)
+                    AS planned_hours_monthly,
+               identity.start_date AS programme_start_date
+        FROM (SELECT %s::bigint AS aptem_id) requested
+        LEFT JOIN aptem_identity identity ON identity.aptem_id=requested.aptem_id
+        LEFT JOIN {LEARNERS} audit ON audit.aptem_id=requested.aptem_id
         LEFT JOIN fetching_evidence.learner_hours_monthly monthly
-          ON monthly.learner_id = aptem."ID"
-        WHERE aptem."ID" = %s
+          ON monthly.learner_id=requested.aptem_id
+        WHERE identity.aptem_id IS NOT NULL OR audit.aptem_id IS NOT NULL
         LIMIT 1
         """,
         [aptem_id],

@@ -36,17 +36,25 @@ class Command(BaseCommand):
                             help="Polling interval with --watch (minimum 60; default 900).")
 
     def _sources(self, scoped_ids, *, lock=False):
-        # API-for-aptem intentionally separates Active/OnBreak from the other
-        # statuses. Reading only Aptem_users loses explicit withdrawals.
+        # Current learner facts are normalized; preserved inactive rows retain
+        # explicit withdrawals and other historical terminal states.
         rows = []
         with connections[ALIAS].cursor() as cursor:
-            for table in ('"LMS"."Aptem_users"', '"LMS"."non_active_users"'):
-                sql = f'SELECT "ID"::text, "FullName", "Program-Status", "Start-Date", "End-Date" FROM {table}'
+            sources = (
+                ('SELECT aptem_id::text, full_name, programme_status, start_date, end_date '
+                 'FROM "Learner".learners WHERE aptem_id IS NOT NULL', 'aptem_id'),
+                ('SELECT "ID"::text, "FullName", "Program-Status", "Start-Date", "End-Date" '
+                 'FROM "LMS".non_active_users inactive WHERE NOT EXISTS ('
+                 'SELECT 1 FROM "Learner".learners current '
+                 'WHERE current.aptem_id=inactive."ID")', '"ID"'),
+            )
+            for base_sql, order_column in sources:
+                sql = base_sql
                 params = []
                 if scoped_ids:
-                    sql += ' WHERE "ID" = ANY(%s)'
+                    sql += (' AND ' if ' WHERE ' in sql else ' WHERE ') + f'{order_column} = ANY(%s)'
                     params.append([int(ident) for ident in sorted(scoped_ids)])
-                sql += ' ORDER BY "ID"'
+                sql += f' ORDER BY {order_column}'
                 if lock:
                     sql += " FOR SHARE"
                 cursor.execute(sql, params)
