@@ -61,6 +61,68 @@ describe('delivery calendar choices', () => {
     expect(screen.getByTestId('policy').textContent).toBe('null');
   });
 
+  it('keeps extra holidays optional and preserves an unfinished entry when its form is hidden', async () => {
+    render(<Harness module inheritedPolicy={calendarPreset('SA')} />);
+    await waitFor(() => expect(screen.getByTestId('effective').textContent).toContain('Saudi public day'));
+    fireEvent.click(screen.getByRole('button', { name: 'Customize this module' }));
+    const original = screen.getByTestId('policy').textContent;
+    expect(screen.queryByRole('textbox', { name: 'Holiday name' })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Add an extra holiday (optional)' }));
+    fireEvent.change(screen.getByRole('textbox', { name: 'Holiday name' }), { target: { value: 'College break' } });
+    fireEvent.change(screen.getByLabelText('First day off'), { target: { value: '2026-09-24' } });
+    fireEvent.change(screen.getByLabelText('Last day off (optional)'), { target: { value: '2026-09-25' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Hide extra holiday form' }));
+    expect(screen.queryByRole('textbox', { name: 'Holiday name' })).not.toBeInTheDocument();
+    expect(screen.getByTestId('policy').textContent).toBe(original);
+    fireEvent.click(screen.getByRole('button', { name: 'Add an extra holiday (optional)' }));
+    expect(screen.getByRole('textbox', { name: 'Holiday name' })).toHaveValue('College break');
+    expect(screen.getByLabelText('First day off')).toHaveValue('2026-09-24');
+    expect(screen.getByLabelText('Last day off (optional)')).toHaveValue('2026-09-25');
+    expect(screen.getByTestId('policy').textContent).toBe(original);
+  });
+
+  it('saves an extra holiday for this module without changing the cohort or clearing it with public holidays', async () => {
+    const inherited = calendarPreset('SA');
+    render(<Harness module inheritedPolicy={inherited} />);
+    await waitFor(() => expect(screen.getByTestId('effective').textContent).toContain('Saudi public day'));
+    fireEvent.click(screen.getByRole('button', { name: 'Customize this module' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Add an extra holiday (optional)' }));
+    fireEvent.change(screen.getByRole('textbox', { name: 'Holiday name' }), { target: { value: 'College break' } });
+    fireEvent.change(screen.getByLabelText('First day off'), { target: { value: '2026-09-24' } });
+    fireEvent.change(screen.getByLabelText('Last day off (optional)'), { target: { value: '2026-09-25' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Add holiday' }));
+    expect(screen.queryByRole('textbox', { name: 'Holiday name' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Add an extra holiday (optional)' })).toHaveFocus();
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Apply public holidays' }));
+    const selected = JSON.parse(screen.getByTestId('policy').textContent || '{}');
+    expect(selected).toMatchObject({ country: 'SA', weekendDays: ['Friday', 'Saturday'], observePublicHolidays: false,
+      manualHolidays: [{ label: 'College break', startDate: '2026-09-24', endDate: '2026-09-25', source: 'authored' }] });
+    expect(selected.manualHolidays).toHaveLength(1);
+    await waitFor(() => expect(JSON.parse(screen.getByTestId('effective').textContent || '[]')).toEqual(selected.manualHolidays));
+    expect(inherited).toEqual(calendarPreset('SA'));
+    expect(screen.getByRole('checkbox', { name: /College break/ })).toBeChecked();
+  });
+
+  it('preserves an extra holiday draft through a country change and saves a single-day break', async () => {
+    render(<Harness />);
+    fireEvent.click(screen.getByRole('button', { name: 'Customize England calendar' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Add an extra holiday (optional)' }));
+    fireEvent.change(screen.getByRole('textbox', { name: 'Holiday name' }), { target: { value: 'Campus break' } });
+    fireEvent.change(screen.getByLabelText('First day off'), { target: { value: '2026-09-24' } });
+    fireEvent.change(screen.getByLabelText('Country'), { target: { value: 'SA' } });
+    await waitFor(() => expect(screen.getByTestId('effective').textContent).toContain('Saudi public day'));
+    expect(screen.getByRole('textbox', { name: 'Holiday name' })).toHaveValue('Campus break');
+    expect(screen.getByLabelText('First day off')).toHaveValue('2026-09-24');
+    fireEvent.click(screen.getByRole('button', { name: 'Add holiday' }));
+    fireEvent.change(screen.getByLabelText('Country'), { target: { value: 'GB' } });
+    const selected = JSON.parse(screen.getByTestId('policy').textContent || '{}');
+    expect(selected).toMatchObject({ country: 'GB', weekendDays: ['Saturday', 'Sunday'],
+      manualHolidays: [{ label: 'Campus break', startDate: '2026-09-24', endDate: '2026-09-24', source: 'authored' }] });
+    await waitFor(() => expect(screen.getByTestId('effective').textContent).toContain('Campus break'));
+    fireEvent.click(screen.getByRole('button', { name: 'Add an extra holiday (optional)' }));
+    expect(screen.getByRole('textbox', { name: 'Holiday name' })).toHaveValue('');
+  });
+
   it('blocks an unavailable provider without pretending the holiday list is valid', async () => {
     vi.mocked(importCountryCalendar).mockRejectedValueOnce(new Error('Provider unavailable'));
     render(<Harness />);
