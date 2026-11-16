@@ -28905,6 +28905,23 @@ def office_preview_link(relative_path):
     return f'/curriculum_api/office-preview/{token}/{urllib_parse.quote(Path(relative_path).name)}'
 
 
+def curriculum_upload_storage_error(error):
+    """A controlled upload-read response with no provider details."""
+    logger.warning(
+        'Curriculum upload storage read failed (%s)',
+        type(error).__name__,
+    )
+    if isinstance(error, upload_storage.UploadStorageAccessDenied):
+        return json_error(
+            'The file store refused access to this file. Please contact support.',
+            status=403,
+        )
+    return json_error(
+        'The file store is temporarily unavailable. Please try again later.',
+        status=503,
+    )
+
+
 @require_GET
 def curriculum_office_preview_file(request, token, filename):
     """Serve the upload an ``office_preview_link`` token names, without a session."""
@@ -28916,7 +28933,10 @@ def curriculum_office_preview_file(request, token, filename):
             or not relative_path.startswith(f'{COMPONENT_UPLOAD_ROOT}/')
             or '..' in relative_path.split('/')):
         raise Http404('File not found.')
-    opened = upload_storage.open_stream(relative_path)
+    try:
+        opened = upload_storage.open_stream(relative_path)
+    except upload_storage.UploadStorageReadError as error:
+        return curriculum_upload_storage_error(error)
     if opened is None:
         raise Http404('File not found.')
     stream, total_size, content_type = opened
@@ -28956,12 +28976,18 @@ def curriculum_uploaded_file(request, path):
     preview_requested = clean_str(request.GET.get('preview')).lower() in {'1', 'true', 'yes'}
     extension = Path(relative_path).suffix.lower()
     if preview_requested and extension in OFFICE_PREVIEW_EXTENSIONS:
-        probe = upload_storage.open_stream(relative_path, offset=0, length=1)
+        try:
+            probe = upload_storage.open_stream(relative_path, offset=0, length=1)
+        except upload_storage.UploadStorageReadError as error:
+            return curriculum_upload_storage_error(error)
         if probe is None:
             raise Http404('File not found.')
         if not probe[1]:
             raise Http404('This file is empty on the server. Ask the curriculum team to upload it again.')
-        source_url = upload_storage.signed_read_url(relative_path)
+        try:
+            source_url = upload_storage.signed_read_url(relative_path)
+        except upload_storage.UploadStorageReadError as error:
+            return curriculum_upload_storage_error(error)
         if not source_url:
             # No Azure copy to sign: the file is still on this server's disk.
             # Microsoft fetches without the learner's session, so it gets a
@@ -28993,7 +29019,10 @@ def curriculum_uploaded_file(request, path):
         response['Cache-Control'] = 'private, no-store'
         return response
 
-    probe = upload_storage.open_stream(relative_path, offset=0, length=1)
+    try:
+        probe = upload_storage.open_stream(relative_path, offset=0, length=1)
+    except upload_storage.UploadStorageReadError as error:
+        return curriculum_upload_storage_error(error)
     if probe is None:
         raise Http404('File not found.')
     _discard, total_size, content_type = probe
@@ -29017,7 +29046,10 @@ def curriculum_uploaded_file(request, path):
         return response
 
     offset, length = requested if requested else (0, total_size)
-    opened = upload_storage.open_stream(relative_path, offset=offset, length=length)
+    try:
+        opened = upload_storage.open_stream(relative_path, offset=offset, length=length)
+    except upload_storage.UploadStorageReadError as error:
+        return curriculum_upload_storage_error(error)
     if opened is None:
         raise Http404('File not found.')
     stream, _total, _content_type = opened

@@ -30,7 +30,7 @@ def _email(value) -> str:
     return str(value or "").strip().casefold()
 
 
-def annotate_attendance_completion(components, learner_profile):
+def annotate_attendance_completion(components, learner_profile, *, manual_context=None):
     """Read-only completion evidence, never an extra progress/hour ledger row.
 
     Verified Teams evidence respects authoring requirements. An explicit staff
@@ -78,7 +78,8 @@ def annotate_attendance_completion(components, learner_profile):
         ''', [profile_id, list({item['componentId'] for item in candidates})])
         verified = {(str(cid), str(mid)): ended for cid, mid, ended in cursor.fetchall()}
     from .manual_attendance_completion import read_manual_completion
-    manual = read_manual_completion(candidates, learner_profile)
+    manual = read_manual_completion(
+        candidates, learner_profile, context=manual_context)
     for key, (present, ended) in manual.items():
         if present:
             verified[key] = ended

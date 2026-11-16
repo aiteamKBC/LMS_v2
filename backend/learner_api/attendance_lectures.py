@@ -392,7 +392,10 @@ def normalize_native_occurrences(source, result):
     return result
 
 
-def lecture_register(source, *, module_ids=None, records=None, learner_profile_id=None, apply_adjustments=True, preloaded=None, scheduled=None, credit_projection=False):
+def lecture_register(
+        source, *, module_ids=None, records=None, learner_profile_id=None,
+        apply_adjustments=True, preloaded=None, scheduled=None,
+        credit_projection=False, recorded_mode=None):
     # Bulk consumers can preload source rows; all schedule, recovery and saved
     # confirmation rules still run through this same learner register.
     loaded_schedule = scheduled is None
@@ -481,7 +484,9 @@ def lecture_register(source, *, module_ids=None, records=None, learner_profile_i
     from .attendance_confirmation import apply_confirmations, read_confirmations
     merged = _merge_register_duplicates(apply_confirmations(result, (projection_call('attendance_confirmations', read_confirmations, source.id) if preloaded is None else preloaded['confirmations'])))
     from .recorded_attendance import apply_recorded_attendance
-    merged = projection_call('attendance_recorded', apply_recorded_attendance, merged, source)
+    merged = projection_call(
+        'attendance_recorded', apply_recorded_attendance, merged, source,
+        **({} if recorded_mode is None else {'mode': recorded_mode}))
     if not apply_adjustments:
         return merged
     if learner_profile_id is None and credit_projection:

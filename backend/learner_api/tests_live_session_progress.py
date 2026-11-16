@@ -5,7 +5,8 @@ from unittest.mock import MagicMock, patch
 
 from django.test import SimpleTestCase
 
-from .live_session_progress import (project_live_credits, read_catalogue_live_credits, read_live_credits,
+from .live_session_progress import (project_live_credits,
+    read_catalogue_live_credits, read_live_credits,
     project_completed_live_credits, read_completed_live_credits,
     supplement_component_progress, supplement_module_hours, LIVE_SESSION_CREDIT_MINUTES)
 from .module_progress import aggregate_module_progress
@@ -222,7 +223,9 @@ class LiveSessionProgressTests(SimpleTestCase):
             with patch('learner_api.attendance_lectures.lecture_register', return_value=[lecture()]) as register, \
                  patch('learner_api.live_session_progress.timezone.now', return_value=NOW):
                 self.assertEqual(read_live_credits(source, components=[component()])[0]['hours'], LIVE_SESSION_CREDIT_MINUTES / 60)
-                register.assert_called_once_with(source, module_ids=['M1'], credit_projection=True)
+                register.assert_called_once_with(
+                    source, module_ids=['M1'], credit_projection=True,
+                    recorded_mode='live')
 
     def test_non_live_catalogue_does_not_read_attendance(self):
         with patch('learner_api.attendance_lectures.lecture_register') as register:
