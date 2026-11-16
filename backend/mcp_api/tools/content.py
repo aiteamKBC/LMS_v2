@@ -16,13 +16,18 @@ so a mismatch rolls everything back.
 """
 from __future__ import annotations
 
+import copy
 from django.db import transaction
 
 from ..changes import Validation, WriteTool, register_write_tool
 from ..dispatch import DispatchError, call_api
 from ..settings import content_editing_enabled
-from . import ToolError
-from .components import ID, LiveModuleWarning, draft_module, stored_duration
+from . import ToolError, ToolResult, tool
+from .components import DEFAULTS, ID, LiveModuleWarning, draft_module, stored_duration
+from .fields import (
+    DETAIL_FIELDS, DURATION, MEDIA_URL, SETTINGS, editable_settings, requested_details,
+    requested_settings, setting_kind,
+)
 from .markdown import markdown_to_html
 from .quizzes import _UNSAFE, programme_ksb_source, structure_revision
 from .read import CURRICULUM, _archived, _s
@@ -259,44 +264,44 @@ class AddLessonContent(LiveModuleWarning, WriteTool):
                            "replaced_existing": bool(payload["replaces_chars"])}}
 
 
-# --- update_component --------------------------------------------------------------------
+# --- update_component / get_component -------------------------------------------------------
 
-#: Component fields this tool may change, as (argument, LMS field).
-DETAIL_FIELDS = (("title", "title"), ("description", "description"), ("expected_otjh", "expectedOtjh"),
-                 ("points", "points"))
+def _lms_errors(component):
+    """The LMS's own component validation messages for ``component``."""
+    from curriculum_api.views import validate_component_authoring_payload
+
+    return {f"{error.get('path', '')}: {error.get('message', '')}"
+            for error in validate_component_authoring_payload(copy.deepcopy(component), "component")}
 
 
 class UpdateComponent(LiveModuleWarning, WriteTool):
     name = "update_component"
     description = (
-        "Preview changing an existing component's title, description (Markdown, no HTML), expected OTJ hours or "
-        "points. Only the fields you give change; the component's content, links, settings and KSB mappings are "
-        "kept. Use the content tools for lesson text, quizzes and videos. Apply only after confirmation."
+        "Preview changing anything on an existing component, as its editor in the LMS would: title, description, "
+        "expected OTJ hours, points, duration_minutes, reflection and validation options, and its type's settings "
+        "(settings: an object of setting names to new values). Call get_component first: it lists the settings "
+        "this component has, their current values and which ones can be changed. media_url is a shortcut for a "
+        "Podcast's episode link (External Link) or a Video's YouTube link; never put a link meant to be played into "
+        "the description. Text is plain text or Markdown, no HTML. Only what you give changes. Lesson text, uploaded "
+        "files, MP4 videos, linked quizzes, KSB mappings and Teams session details have their own tools or stay in "
+        "the LMS. Apply only after confirmation."
     )
     input_schema = {"type": "object", "properties": {
         "programme_id": ID, "module_id": ID, "component_id": ID,
-        "title": {"type": "string", "minLength": 1, "maxLength": 200},
-        "description": {"type": "string", "maxLength": 10000},
-        "expected_otjh": {"type": "number", "minimum": 0, "maximum": 1000},
-        "points": {"type": "integer", "minimum": 0, "maximum": 10000},
+        **{arg: schema for arg, _, schema in DETAIL_FIELDS},
+        "duration_minutes": DURATION, "media_url": MEDIA_URL, "settings": SETTINGS,
     }, "required": ["module_id", "component_id"], "additionalProperties": False}
 
     def validate(self, request, arguments):
         _, module, component, names = _module_and_component(request, arguments)
-        changes = {}
-        for arg, field in DETAIL_FIELDS:
-            if arg not in arguments:
-                continue
-            value = arguments[arg]
-            if isinstance(value, str):
-                value = " ".join(value.split()) if arg == "title" else value.strip()
-                if _UNSAFE.search(value):
-                    raise ToolError(f"Write the {arg} as plain text or Markdown; HTML is not allowed.")
-            if arg == "title" and not value:
-                raise ToolError("Give the component a title.")
-            if value != component.get(field):
-                changes[field] = value
-        if not changes:
+        current = component.get("settings") if isinstance(component.get("settings"), dict) else {}
+        wanted = requested_settings(_s(component.get("type")), arguments)
+        settings = {key: value for key, value in wanted.items() if current.get(key) != value}
+        changes = {field: value for field, value in requested_details(arguments).items()
+                   if value != component.get(field)}
+        duration_before = stored_duration(component)
+        duration = arguments.get("duration_minutes", duration_before)
+        if not changes and not settings and duration == duration_before:
             raise ToolError("Those values are already set; there is nothing to change.")
         if "title" in changes:
             week = next(w for w in module.get("weekStructure") or []
@@ -305,39 +310,101 @@ class UpdateComponent(LiveModuleWarning, WriteTool):
                           and " ".join(_s(c.get("title")).split()).casefold() == changes["title"].casefold()), None)
             if clash:
                 raise ToolError(f"Another component in this week is already called that (id {clash.get('id')}).")
-        return Validation({**{key: arguments[key] for key in ("programme_id", *(a for a, _ in DETAIL_FIELDS))
-                              if key in arguments},
+        # The LMS's own rules (link formats, reflection question, status needs), refusing only new problems.
+        after = {**component, **changes, "settings": {**current, **settings}}
+        errors = sorted(_lms_errors(after) - _lms_errors(component))
+        echoed = ("programme_id", *(arg for arg, _, _ in DETAIL_FIELDS), "duration_minutes", "media_url", "settings")
+        return Validation({**{key: arguments[key] for key in echoed if key in arguments},
                            "module_id": _s(module.get("catalogueId") or module.get("moduleCatalogueId")),
                            "component_id": _s(component.get("id")), "names": names,
                            "before": {field: component.get(field) for field in changes}, "changes": changes,
-                           "component_duration": stored_duration(component)})
+                           "settings_before": {key: current.get(key) for key in settings}, "new_settings": settings,
+                           "duration_before": duration_before, "component_duration": duration},
+                          [f"The LMS would refuse this: {error}" for error in errors])
 
     def preview(self, request, payload):
         names = payload["names"]
-        lines = [f"{field}: {payload['before'][field]!r} → {value!r}" for field, value in payload["changes"].items()]
+        before = {**payload["before"], **payload["settings_before"]}
+        after = {**payload["changes"], **payload["new_settings"]}
+        if payload["component_duration"] != payload["duration_before"]:
+            before["durationMinutes"] = payload["duration_before"]
+            after["durationMinutes"] = payload["component_duration"]
+        lines = [f"{key}: {before[key]!r} → {value!r}" for key, value in after.items()]
         return {"summary": f"Change '{names['component']}' ({names['module']} › {names['week']}): " + "; ".join(lines) + ".",
-                "details": {"names": names, "before": payload["before"], "after": payload["changes"]}}
+                "details": {"names": names, "before": before, "after": after}}
 
     def apply(self, request, payload, progress):
-        changes = payload["changes"]
+        changes, settings, duration = payload["changes"], payload["new_settings"], payload["component_duration"]
 
         def work():
             recheck = self.validate(request, payload)
             if recheck.errors or recheck.payload != payload:
                 raise ToolError("The component changed since the preview. Prepare a new preview.")
             body = {"expectedRevision": structure_revision(request, payload["module_id"]), **changes,
-                    "duration": payload["component_duration"]}
+                    "duration": duration}
             if "expectedOtjh" in changes:
                 body["expected_otjh"] = changes["expectedOtjh"]  # both spellings keep a numeric zero
+            if settings:
+                body["settings"] = settings  # merged into the stored settings by the LMS
             call_api(request, "PATCH", f"{CURRICULUM}/components/{payload['component_id']}/", json_body=body)
             saved = _component_after(request, payload["module_id"], payload["component_id"])
-            if any(saved.get(field) != value for field, value in changes.items()):
+            saved_settings = saved.get("settings") if isinstance(saved.get("settings"), dict) else {}
+            if (any(saved.get(field) != value for field, value in changes.items())
+                    or any(saved_settings.get(key) != value for key, value in settings.items())
+                    or stored_duration(saved) != duration):
                 raise ToolError("The component did not read back as changed, so nothing was saved.")
 
         _run(progress, "Saving the component", work)
         progress.done("Updated the component", component_id=payload["component_id"])
+        changed = [*changes, *settings, *(["durationMinutes"] if duration != payload["duration_before"] else [])]
         return {"summary": f"Updated '{changes.get('title', payload['names']['component'])}'.",
-                "result": {"component_id": payload["component_id"], "changed": sorted(changes)}}
+                "result": {"component_id": payload["component_id"], "changed": sorted(changed)}}
+
+
+@tool("get_component",
+      "Show everything on one component, as its editor in the LMS shows it: title, description, hours, points, "
+      "duration, reflection and validation options, and every setting with its current value. editable_settings "
+      "lists the settings update_component can change, with the kind of value each takes. Use it before "
+      "update_component. Before create_curriculum_component, give only type to list that type's settings and "
+      "their LMS defaults.",
+      {"type": "object", "properties": {"module_id": ID, "component_id": ID,
+                                        "type": {"type": "string", "enum": list(DEFAULTS)}},
+       "additionalProperties": False})
+def get_component(request, arguments):
+    if "type" in arguments:
+        if "module_id" in arguments or "component_id" in arguments:
+            raise ToolError("Give either type (for a new component) or module_id and component_id, not both.")
+        defaults = editable_settings(arguments["type"])
+        data = {"type": arguments["type"], "settings": defaults,
+                "editable_settings": {key: setting_kind(default) for key, default in sorted(defaults.items())}}
+        lines = [f"Settings a new {arguments['type']} component can be given (LMS default shown):"]
+        lines += [f"- settings.{key} ({setting_kind(default)}): {default!r}"
+                  for key, default in sorted(defaults.items())]
+        return ToolResult("\n".join(lines), data)
+    if not arguments.get("module_id") or not arguments.get("component_id"):
+        raise ToolError("Give module_id and component_id for an existing component, or type for a new one.")
+    module_id, component_id = _s(arguments["module_id"]), _s(arguments["component_id"])
+    if module_id.startswith("training-module-"):
+        # That GET can provision authoring records; a read tool must never trigger writes.
+        raise ToolError("Use find_modules to look up the saved module id; nothing was created or changed.")
+    _status, module = call_api(request, "GET", f"{CURRICULUM}/modules/{module_id}/structure/")
+    found = next(((w, c) for w in (module or {}).get("weekStructure") or [] for c in w.get("components") or []
+                  if _s(c.get("id")) == component_id), None)
+    if found is None:
+        raise ToolError("That component is not in that module. Use get_module_structure to find its id.")
+    week, component = found
+    settings = component.get("settings") if isinstance(component.get("settings"), dict) else {}
+    editable = editable_settings(component.get("type"))
+    fields = {arg: component.get(field) for arg, field, _ in DETAIL_FIELDS}
+    fields["duration_minutes"] = stored_duration(component)
+    data = {"component_id": component_id, "type": _s(component.get("type")), "week": _s(week.get("title")),
+            "fields": fields, "settings": settings,
+            "editable_settings": {key: setting_kind(default) for key, default in sorted(editable.items())}}
+    lines = [f"[{data['type']}] {fields['title']} (component_id {component_id}, {data['week']})"]
+    lines += [f"- {key}: {value!r}" for key, value in fields.items() if key != "title"]
+    lines += [f"- settings.{key}: {settings.get(key)!r}{'' if key in editable else ' (not editable here)'}"
+              for key in sorted(settings)]
+    return ToolResult("\n".join(lines), data)
 
 
 register_write_tool(MapKsbs())

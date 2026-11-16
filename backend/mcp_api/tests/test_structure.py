@@ -24,6 +24,7 @@ class StructureTestCase(TransportTestCase):
         self.enterContext(mock.patch.object(changes, "McpPendingChange", SimpleNamespace(objects=self.pending)))
         self.programmes, self.cohorts, self.groups = copy.deepcopy(PROGRAMMES), copy.deepcopy(COHORTS), copy.deepcopy(GROUPS)
         self.modules, self.writes, self.answer = copy.deepcopy(MODULES), [], None
+        self.dropped = set()
         for target in (read, structure):
             self.enterContext(mock.patch.object(target, "call_api", side_effect=self.api))
         self.enterContext(mock.patch.object(structure.transaction, "atomic", mock.MagicMock()))
@@ -37,6 +38,10 @@ class StructureTestCase(TransportTestCase):
             return 200, {"results": reads[path]}
         if method == "GET" and path == f"{c}/standards/st0122-v1-2/":
             return 200, {"id": "st0122-v1-2", "name": "Digital marketer"}
+        if method == "GET" and path == f"{c}/modules/MOD-NEW/structure/":
+            # What the LMS stored from the create body (a test can make it drop a field).
+            body = next(b for m, p, b in reversed(self.writes) if p == f"{c}/modules/")
+            return 200, {key: value for key, value in body.items() if key not in self.dropped}
         self.writes.append((method, path, copy.deepcopy(json_body)))
         if self.answer:
             return self.answer
@@ -44,7 +49,9 @@ class StructureTestCase(TransportTestCase):
             return 201, {"created": True, "programme": {"id": "PROG-NEW", "ksbProfileSourceId": json_body.get("ksbProfileSourceId", "")}}
         if path.endswith("/cohorts/"):
             from curriculum_api.views import cohort_practical_end_date
-            end = cohort_practical_end_date(json_body["startDate"], json_body["durationMonths"])
+            # As create_curriculum_cohort: an authored practical end date wins over the calculated one.
+            end = json_body.get("endDate") or cohort_practical_end_date(json_body["startDate"],
+                                                                         json_body["durationMonths"])
             return 201, {"created": True, "cohort": {"id": "COHORT-NEW", "startDate": json_body["startDate"], "endDate": str(end)}}
         if path.endswith("/groups/"):
             return 201, {"created": True, "group": {"id": "GROUP-NEW", "status": "planned"}}
@@ -79,7 +86,7 @@ class ProgrammeTests(StructureTestCase):
         preview, applied = self.create("create_programme", {"name": "Data Analyst L4", "level": 4, "standard_id": "st0122-v1-2"})
         self.assertIn("no draft state", preview["details"]["note"])
         (_, path, body), = self.writes
-        self.assertEqual(body, {"name": "Data Analyst L4", "description": "", "level": "LVL-4",
+        self.assertEqual(body, {"name": "Data Analyst L4", "description": "", "color": "#6941c6", "level": "LVL-4",
                                 "ksbProfileSourceId": "standard:st0122-v1-2"})
         self.assertEqual(applied["result"]["programme_id"], "PROG-NEW")
 
@@ -158,3 +165,39 @@ class ModuleTests(StructureTestCase):
                       self.error("create_module", {"programme_id": "PROG-1", "cohort_id": "COHORT-1", "title": "X"}))
         with mock.patch.dict("os.environ", {"MCP_STRUCTURE_CREATION_ENABLED": "0"}):
             self.assertIn("not enabled", self.error("create_module", {"programme_id": "PROG-1", "title": "X"}))
+
+
+class FullFormCreateTests(StructureTestCase):
+    def test_cohort_takes_an_authored_end_date_override_and_colour(self):
+        self.create("create_cohort", {"programme_id": "PROG-1", "name": "Mar-26", "start_date": "2026-03-02",
+                                      "practical_end_date": "2028-02-28", "apprenticeship_end_override": "2028-06-30",
+                                      "color": "#123ABC"})
+        (_, _, body), = self.writes
+        self.assertEqual((body["endDate"], body["apprenticeshipEndOverride"], body["color"]),
+                         ("2028-02-28", "2028-06-30", "#123abc"))
+
+    def test_module_takes_the_form_and_builder_fields_and_confirms_them(self):
+        _, applied = self.create("create_module", {
+            "programme_id": "PROG-1", "title": "Pricing", "weeks": 2, "color": "#00AA00", "start_date": "2026-04-01",
+            "end_date": "2026-06-30", "tutor": "Sarah Jones", "sessions_number": 8, "intent": "Why it matters",
+            "quizzes_completed_required": True, "background": "Context", "epa_requirements": ["Portfolio"]})
+        (_, _, body), = self.writes
+        self.assertEqual((body["color"], body["startDate"], body["tutor"], body["sessionsNumber"]),
+                         ("#00aa00", "2026-04-01", "Sarah Jones", 8))
+        self.assertTrue(body["completionCriteria"]["quizzesCompletedRequired"])
+        self.assertEqual(body["completionCriteria"]["averageScoreRequired"], 70)  # the LMS default is kept
+        self.assertEqual((body["advancedDetails"], body["epaRequirements"]), ({"intent": "Why it matters"}, ["Portfolio"]))
+        self.assertEqual(applied["result"]["module_id"], "MOD-NEW")
+
+    def test_module_field_the_lms_did_not_save_rolls_the_creation_back(self):
+        self.dropped = {"background"}
+        result = self.run_tool("create_module", {"programme_id": "PROG-1", "title": "Pricing", "background": "Context"})
+        applied = self.run_tool("apply_change", {"preview_id": result["structuredContent"]["preview_id"]})
+        self.assertTrue(applied.get("isError"))
+        self.assertIn("background", applied["content"][0]["text"])
+
+    def test_html_and_bad_colours_are_refused_at_creation(self):
+        self.assertIn("HTML", self.error("create_module", {"programme_id": "PROG-1", "title": "X", "intent": "<b>x</b>"}))
+        self.assertIn("hex code", self.error("create_group", {"programme_id": "PROG-1", "cohort_id": "COHORT-1",
+                                                               "name": "New", "color": "blue!!!"}))
+        self.assertEqual(self.writes, [])

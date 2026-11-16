@@ -7,7 +7,7 @@ from contextlib import contextmanager
 from django.db import connection, transaction
 from django.utils.text import get_valid_filename
 
-from . import upload_storage
+from . import learning_storage, upload_storage
 from .bunny_stream import VideoImportError
 from .video_sources import source_url
 
@@ -76,10 +76,17 @@ def save_mp4(kind, target_id, component, scope, uploaded, *, title=''):
     parent = 'module_catalogue_id' if kind == 'module' else 'week_template_id'
     table_sql = views.authoring_table_name(table)
     with transaction.atomic():
+        # A free course owns its components in native storage; its course row lock
+        # serialises every write to them (learning_storage.upsert takes the same lock).
+        free_course = kind == 'module' and learning_storage.course(target_id, lock=True) is not None
         with connection.cursor() as cursor:
-            lock = ' FOR UPDATE' if connection.vendor == 'postgresql' else ''
-            cursor.execute(f'SELECT settings_json FROM {table_sql} WHERE id = %s AND {parent} = %s{lock}',
-                           [component['id'], target_id])
+            if free_course:
+                cursor.execute(f'SELECT settings_json FROM {learning_storage.native_read_table(table)} '
+                               'WHERE id = %s AND module_catalogue_id = %s', [component['id'], target_id])
+            else:
+                lock = ' FOR UPDATE' if connection.vendor == 'postgresql' else ''
+                cursor.execute(f'SELECT settings_json FROM {table_sql} WHERE id = %s AND {parent} = %s{lock}',
+                               [component['id'], target_id])
             row = cursor.fetchone()
             _, rows, current_scope = imports.target(kind, target_id)
             current = next((r for r in rows if r['id'] == component['id']), None)
@@ -91,8 +98,11 @@ def save_mp4(kind, target_id, component, scope, uploaded, *, title=''):
             if source_url(settings) not in (source_url(imports._settings(component)), url):
                 raise VideoImportError('The video source changed during upload. Refresh before retrying.')
             saved = {**settings, **updates}
-            cursor.execute(f'UPDATE {table_sql} SET settings_json = %s WHERE id = %s AND {parent} = %s',
-                           [json.dumps(saved), component['id'], target_id])
+            if free_course:
+                learning_storage.update(table, 'id = %s', [component['id']], {'settings_json': saved})
+            else:
+                cursor.execute(f'UPDATE {table_sql} SET settings_json = %s WHERE id = %s AND {parent} = %s',
+                               [json.dumps(saved), component['id'], target_id])
             asset = imports.enqueue(kind, target_id, {**current, 'settings_json': saved}, current_scope, title=title)
             if asset.status == 'failed':
                 asset.status, asset.error = 'queued', ''
