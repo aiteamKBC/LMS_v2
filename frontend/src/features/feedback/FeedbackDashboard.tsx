@@ -17,6 +17,15 @@ const dateLabel = (value: string) => new Intl.DateTimeFormat('en-GB', { day: '2-
 const weekLabel = (value: string) => new Intl.DateTimeFormat('en-GB', { day: '2-digit', month: 'short', timeZone: 'UTC' }).format(new Date(`${value}T12:00:00Z`));
 const tick = { fill: '#8f86a4', fontSize: 10 };
 
+function SplitTooltip({ active, payload }: { active?: boolean; payload?: ReadonlyArray<{ payload?: { label?: string; value?: number; color?: string } }> }) {
+  const item = payload?.[0]?.payload;
+  if (!active || !item) return null;
+  return <div className={styles.splitTooltip}>
+    <span className={styles.splitTooltipDot} style={{ background: item.color }} />
+    <div><strong>{item.label} responses</strong><span>{item.value ?? 0} selected responses</span></div>
+  </div>;
+}
+
 function Panel({ title, subtitle, icon, right, children, className = '' }: { title: string; subtitle?: string; icon?: ReactNode; right?: ReactNode; children: ReactNode; className?: string }) {
   return <section aria-label={title} className={`${styles.card} ${className}`}><header className={styles.cardHeader}><div><div className={styles.title}>{icon}<h3>{title}</h3></div>{subtitle && <p className={styles.subtitle}>{subtitle}</p>}</div>{right}</header>{children}</section>;
 }
@@ -66,7 +75,7 @@ function DashboardContent({ report, onViewResponse }: { report: FeedbackDashboar
     <div className={styles.mainGrid}>
       <ReviewList report={report} onViewResponse={onViewResponse} />
       <Panel title="Feedback Response Split" right={<span className={styles.badge}>Selected feedback</span>}>
-        {counts.total ? <div className={styles.split}><div className={styles.donut}><Plot label="Insights response split" height={206}><PieChart><Pie data={pie} dataKey="value" nameKey="label" innerRadius={61} outerRadius={83} paddingAngle={1} isAnimationActive={false}>{pie.map(item => <Cell key={item.key} fill={item.color} />)}</Pie><Tooltip isAnimationActive={false} /></PieChart></Plot><div className={styles.donutCenter}><strong>{counts.total}</strong><span>Submitted feedback</span></div></div><ul className={`${styles.legend} ${styles.splitLegend}`}>{pie.map(item => <li key={item.key}><i aria-hidden="true" style={{ background: item.color }} /><div><span>{item.label} responses</span><strong>{item.value} ({Math.round(item.value / counts.total * 100)}%)</strong></div></li>)}</ul></div> : <p className={styles.empty}>No submitted feedback in this selection.</p>}
+        {counts.total ? <div className={styles.split}><div className={styles.donut}><Plot label="Insights response split" height={206}><PieChart><Pie data={pie} dataKey="value" nameKey="label" innerRadius={61} outerRadius={83} paddingAngle={1} isAnimationActive={false}>{pie.map(item => <Cell key={item.key} fill={item.color} />)}</Pie><Tooltip content={<SplitTooltip />} position={{ x: 6, y: 6 }} wrapperStyle={{ pointerEvents: 'none' }} isAnimationActive={false} /></PieChart></Plot><div className={styles.donutCenter}><strong>{counts.total}</strong><span>Submitted feedback</span></div></div><ul className={`${styles.legend} ${styles.splitLegend}`}>{pie.map(item => <li key={item.key}><i aria-hidden="true" style={{ background: item.color }} /><div><span>{item.label} responses</span><strong>{item.value} ({Math.round(item.value / counts.total * 100)}%)</strong></div></li>)}</ul></div> : <p className={styles.empty}>No submitted feedback in this selection.</p>}
       </Panel>
     </div>
     <div className={styles.charts}>
