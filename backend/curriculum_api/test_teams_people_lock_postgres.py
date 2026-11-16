@@ -8,7 +8,7 @@ from unittest import skipUnless
 from unittest.mock import Mock, patch
 import uuid
 
-from django.db import connection, transaction
+from django.db import DatabaseError, connection, transaction
 from django.test import SimpleTestCase
 
 from . import teams_people_refresh as refresh
@@ -78,6 +78,14 @@ class PeopleLockPostgresTests(SimpleTestCase):
             self.peer.set_autocommit(True)
         with refresh.people_sync_lock(self.live_id):
             self.assertFalse(self.peer_try())
+        self.assert_no_lock_left()
+
+    def test_database_error_releases_lock_even_when_the_transaction_is_aborted(self):
+        with self.assertRaises(DatabaseError):
+            with refresh.people_sync_lock(self.live_id):
+                with connection.cursor() as cursor:
+                    cursor.execute('SELECT %s::integer', ['not-an-integer'])
+        self.assertTrue(self.peer_try())
         self.assert_no_lock_left()
 
     def test_nested_caller_holds_lock_until_its_outer_transaction_ends(self):
