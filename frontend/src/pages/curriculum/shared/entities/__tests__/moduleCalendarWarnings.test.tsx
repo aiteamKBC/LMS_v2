@@ -34,6 +34,8 @@ function drawer(policy: DeliveryCalendarPolicy | null = null) {
 }
 
 async function customDays(extraDay: 'Sat' | 'Sun') {
+  await userEvent.click(screen.getByRole('combobox', { name: /Study week starts on/i }));
+  await userEvent.click(screen.getByRole('option', { name: /^Tuesday$/ }));
   await userEvent.click(screen.getByRole('combobox', { name: /Sessions per week/i }));
   await userEvent.click(screen.getByRole('option', { name: '2' }));
   const days = screen.getByRole('group', { name: /Delivery days/i });

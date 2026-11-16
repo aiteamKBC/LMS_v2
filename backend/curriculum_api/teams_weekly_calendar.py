@@ -6,7 +6,7 @@ import uuid
 
 from django.http import JsonResponse
 from .teams_calendar_checks import (CalendarMismatch, calendar_targets, dropped_sessions_sentence, publish_attendees,
-                                    sessions_a_rewrite_would_drop, verify_calendar)
+                                    sessions_a_rewrite_would_drop, verify_calendar, read_calendar_instances)
 from .teams_schedule_notice import same_schedule, schedule_snapshot
 from .teams_update_guard import (claim_announcement, finish_announcement, graph_failure_outcome, logical_change_id,
                                  targets_snapshot)
@@ -93,6 +93,7 @@ def save_weekday_calendar(payload, graph_settings, series=None):
         **payload,
         'hideAttendees': True,
     }
+    max_sessions = v.teams_module_session_limit(series.get('module_catalogue_id') or combined.get('moduleCatalogueId'))
     promote_presenters = not series.get('id') or roles_changed(
         v.teams_series_email_list(combined.get('presenters')),
         v.teams_series_email_list(combined.get('coOrganizers')),
@@ -160,7 +161,7 @@ def save_weekday_calendar(payload, graph_settings, series=None):
                 'transactionId': f"{combined.get('transactionId') or 'TEAMS-' + str(combined.get('moduleCatalogueId') or series.get('id'))}-{day}",
             }
             event_body, invited_people, presenters, co_organizers, stored_attendees, start, duration, repeat, count = v.teams_event_payload(
-                day_payload, graph_settings, promote_presenters=promote_presenters,
+                day_payload, graph_settings, promote_presenters=promote_presenters, max_sessions=max_sessions,
             )
             event_body.setdefault('recurrence', None)
             prepared.append((day, day_payload, event_body, invited_people, stored_attendees, presenters, co_organizers))
@@ -214,7 +215,7 @@ def save_weekday_calendar(payload, graph_settings, series=None):
             try:
                 targets = calendar_targets(day_payload, day_payload['startDateTimeUtc'], day_payload['durationMinutes'],
                                            day_payload['repeat'], len(day_payload['scheduledOccurrences']),
-                                           v.graph_timezone_iana(graph_settings))
+                                           v.graph_timezone_iana(graph_settings), max_sessions=max_sessions)
                 if not event_id:
                     raise CalendarMismatch(f'{day} has no Teams series saved for its sessions.')
                 verify_calendar(microsoft_graph_request, owner, event_id, targets, previous.get('joinUrl') or '',
@@ -247,7 +248,7 @@ def save_weekday_calendar(payload, graph_settings, series=None):
                 previous = {'eventId': series.get('graph_event_id'), 'joinUrl': series.get('join_url'), 'onlineMeetingId': series.get('online_meeting_id')}
             event_id = v.clean_str(previous.get('eventId'))
             targets = calendar_targets(day_payload, day_payload['startDateTimeUtc'], day_payload['durationMinutes'],
-                                       day_payload['repeat'], len(day_payload['scheduledOccurrences']), v.graph_timezone_iana(graph_settings))
+                                       day_payload['repeat'], len(day_payload['scheduledOccurrences']), v.graph_timezone_iana(graph_settings), max_sessions=max_sessions)
             dates_already_verified = False
             if event_id:
                 current = microsoft_graph_request('GET', f'users/{owner}/events/{quote(event_id, safe="")}')
@@ -340,23 +341,29 @@ def save_weekday_calendar(payload, graph_settings, series=None):
             else:
                 option_failures.extend(option_warnings)
             if day_payload['repeat'] != 'none':
+                stale = []
                 if not combined.get('peopleOnly') and not dates_already_verified:
                     # The third value is the occurrences the shift PROVED removable:
                     # here, with no stored rows handed in, only the recurrence's own
                     # weekly filler. A week this calendar actually owns is never in
                     # it -- see `vacated_occurrence_keys` / `tracked_occurrence_keys`.
                     shift_warnings, _, stale = v.apply_teams_occurrence_shifts(owner, quote(event_id, safe=''), body['subject'], targets, invited_people)
-                    # Reported, never deleted: see flag_teams_occurrence_leftovers.
-                    leftover_slots.extend(v.flag_teams_occurrence_leftovers(
-                        stale,
-                        live_session_id=v.clean_str(body.get('liveSessionId')),
-                        module_catalogue_id=v.clean_str(combined.get('moduleCatalogueId')),
-                        source='weekday_series_cleanup',
-                    ))
                     warnings.extend(shift_warnings)
+                pruned, holiday_warnings = v.prune_study_week_fillers(
+                    microsoft_graph_request, owner, event_id,
+                    v.clean_str(series.get('module_catalogue_id') or combined.get('moduleCatalogueId')),
+                    targets, graph_settings, stored_rows, allow_delete=not people_only,
+                )
+                warnings.extend(holiday_warnings)
+                leftover_slots.extend(v.flag_teams_occurrence_leftovers(
+                    [item for item in stale if item.get('instance_id') not in pruned],
+                    live_session_id=v.clean_str(body.get('liveSessionId')),
+                    module_catalogue_id=v.clean_str(combined.get('moduleCatalogueId')),
+                    source='weekday_series_cleanup',
+                ))
                 query = urlencode({'startDateTime': (min(item['start'] for item in targets) - timedelta(days=7)).isoformat(),
                                    'endDateTime': (max(item['end'] for item in targets) + timedelta(days=7)).isoformat(), '$top': 200})
-                instances = (microsoft_graph_request('GET', f'users/{owner}/events/{quote(event_id, safe="")}/instances?{query}') or {}).get('value') or []
+                instances = read_calendar_instances(microsoft_graph_request, f'users/{owner}/events/{quote(event_id, safe="")}/instances?{query}')
             else:
                 instances = [event]
             available = [graph_event_utc(item) for item in instances]
