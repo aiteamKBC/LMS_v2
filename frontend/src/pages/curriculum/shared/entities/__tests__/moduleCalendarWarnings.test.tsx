@@ -70,7 +70,7 @@ describe('module delivery-day warnings use the effective calendar', () => {
     expect(days.getByRole('button', { name: 'Fri', exact: true })).toHaveAttribute('title', expect.stringContaining('Saudi Arabia'));
     expect(days.getByRole('button', { name: 'Sun', exact: true })).not.toHaveAttribute('title');
     await waitFor(() => expect(previewModuleSessionPlan).toHaveBeenLastCalledWith(expect.objectContaining({
-      cohortId: 'COHORT-1', calendarPolicy: null, weekDays: 'Thursday, Saturday',
+      calendarPolicy: null, weekDays: 'Thursday, Saturday', numberOfSessions: 2,
     })));
   });
 
