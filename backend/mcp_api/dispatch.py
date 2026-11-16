@@ -34,6 +34,8 @@ _SEG = r"[^/?#]+"
 VIDEO_UPLOAD_PATH = r"/curriculum_api/curriculum/videos/module/[\w-]+/[\w-]+/"
 COMPONENT_CREATE_PATH = "/curriculum_api/curriculum/components/"
 FILE_UPLOAD_PATH = r"/curriculum_api/curriculum/components/[\w-]+/upload/"
+#: The module structure save, allowed only as the Module Builder's partial save (never a full rewrite).
+STRUCTURE_SAVE_PATH = rf"/curriculum_api/curriculum/modules/(?!training-module-){_SEG}/structure/"
 UPLOAD_PATHS = (VIDEO_UPLOAD_PATH, FILE_UPLOAD_PATH)
 ALLOWED_CALLS = (
     ("GET", r"/curriculum_api/curriculum/programmes/"),
@@ -57,7 +59,7 @@ ALLOWED_CALLS = (
     ("POST", rf"/curriculum_api/curriculum/components/{_SEG}/ksb-mappings/"),
     # Step 8 (edit_quiz_draft): add/update/archive questions of an unattempted draft quiz.
     ("PATCH", r"/quiz_api/quizzes/\d+/questions/"),
-    # Step 10 (tools/structure.py): single-entity creates only -- never programmes/tree/, never PATCH/DELETE.
+    # Step 10 (tools/structure.py): single-entity creates only -- never programmes/tree/, never DELETE.
     ("GET", r"/curriculum_api/curriculum/standards/"),
     ("GET", rf"/curriculum_api/curriculum/standards/{_SEG}/"),
     ("GET", r"/curriculum_api/curriculum/coaches/"),
@@ -67,6 +69,15 @@ ALLOWED_CALLS = (
     ("POST", r"/curriculum_api/curriculum/modules/"),
     # Step 9 (map_ksbs): change an existing mapping. Its DELETE is not allowed.
     ("PATCH", rf"/curriculum_api/curriculum/ksb-mappings/{_SEG}/"),
+    # tools/structure_edit.py: the drawers' guarded PATCHes and the Module Builder's partial
+    # structure save. The lookaheads keep sibling routes (tree/reorder/archived saves) out.
+    ("GET", r"/curriculum_api/curriculum/record-snapshot/"),
+    ("PATCH", rf"/curriculum_api/curriculum/programmes/(?!(?:tree|reorder)/){_SEG}/"),
+    ("PATCH", rf"/curriculum_api/curriculum/cohorts/(?!archived/){_SEG}/"),
+    ("PATCH", rf"/curriculum_api/curriculum/groups/(?!archived/){_SEG}/"),
+    ("PATCH", rf"/curriculum_api/curriculum/modules/(?!(?:archived|resolve-structures|catalogue-activity|tutor-email)/"
+              rf"|training-module-){_SEG}/"),
+    ("PATCH", STRUCTURE_SAVE_PATH),
 )
 
 FORBIDDEN_KEYS = frozenset({"removemissing", "hydrationcomplete", "permanent"})
@@ -137,6 +148,10 @@ def call_api(request, method, path, *, query=None, json_body=None, uploaded_file
     if is_upload and uploaded_file is None:
         raise DispatchError("Provide an MP4 file for this video upload." if re.fullmatch(VIDEO_UPLOAD_PATH, path, re.ASCII)
                             else "Provide the file for this upload.")
+    if method == "PATCH" and re.fullmatch(STRUCTURE_SAVE_PATH, path) and (
+            not isinstance(json_body, dict) or json_body.get("saveMode") != "partial"
+            or not isinstance(json_body.get("structureDelta"), dict) or not json_body.get("expectedRevision")):
+        raise DispatchError("Only the Module Builder's guarded partial save is available to the assistant.")
     if json_body is not None:
         found = forbidden_key(json_body)
         if found:

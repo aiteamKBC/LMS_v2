@@ -142,6 +142,7 @@ def save_weekday_calendar(payload, graph_settings, series=None):
             non_delivery_reason = v.teams_non_delivery_reason(
                 requested_targets,
                 v.graph_timezone_iana(graph_settings),
+                module_catalogue_id=series.get('module_catalogue_id') or combined.get('moduleCatalogueId'),
             )
             if non_delivery_reason:
                 return v.json_error(non_delivery_reason, status=400, code='non_delivery_date')

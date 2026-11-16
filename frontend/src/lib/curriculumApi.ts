@@ -360,6 +360,7 @@ export interface CoursePricing {
 }
 
 export interface CurriculumModule extends CoursePricing {
+  calendarPolicy?: DeliveryCalendarPolicy | null;
   /** Standalone self-study course, assigned directly to learners. */
   isFreeCourse?: boolean;
   id: string;
@@ -424,6 +425,7 @@ export interface CurriculumModule extends CoursePricing {
   sessionsNumber?: number;
   weeklySchedule?: CurriculumWeeklySession[];
   scheduleMode?: 'group' | 'custom';
+  weekStartsOn?: string | null;
   sessionHolidays?: CurriculumHoliday[];
   /** Teaching weeks, separate from imported content rows. */
   deliveryWeeks?: number;
@@ -1503,6 +1505,7 @@ export type CurriculumKsbFrameworkInput = {
 };
 
 export interface CurriculumCohort {
+  calendarPolicy?: DeliveryCalendarPolicy | null;
   id: string;
   name: string;
   programme: string;
@@ -1794,7 +1797,8 @@ export interface CurriculumHoliday {
   type?: string;
   color?: string;
   /** Which of the two calendars this came from. Only an authored one can be edited. */
-  source?: 'gov.uk' | 'authored';
+  source?: 'gov.uk' | 'authored' | 'calendarific';
+  country?: string;
   /** GOV.UK rows only, and only ever 'Substitute day' — the holiday moved off a weekend. */
   notes?: string;
   /** GOV.UK rows only: whether the day is marked as a flag-flying one. */
@@ -1867,6 +1871,7 @@ export interface EnglandHoliday {
 }
 
 export interface CurriculumCohortAuthoringDetail {
+  calendarPolicy?: DeliveryCalendarPolicy | null;
   cohortId: string;
   cohortName: string;
   programmeId: string;
@@ -4268,6 +4273,7 @@ export type CurriculumProgrammeInput = Partial<Pick<CurriculumProgramme, 'name' 
   requiredOtjh?: number | string | null;
 };
 export type CurriculumModuleInput = Partial<Pick<CurriculumModule, 'name' | 'weeks' | 'color' | 'notes' | 'coverImage'>> & CoursePricing & {
+  calendarPolicy?: DeliveryCalendarPolicy | null;
   programmeId?: string;
   programmeName?: string;
   programme?: string;
@@ -4284,6 +4290,7 @@ export type CurriculumModuleInput = Partial<Pick<CurriculumModule, 'name' | 'wee
   coach?: string;
   weeklySchedule?: CurriculumWeeklySession[];
   scheduleMode?: 'group' | 'custom';
+  weekStartsOn?: string | null;
   weekDays?: string;
   startTime?: string;
   endTime?: string;
@@ -4302,11 +4309,12 @@ export type CurriculumModuleInput = Partial<Pick<CurriculumModule, 'name' | 'wee
   allowTutorConflict?: boolean;
 };
 export type CurriculumComponentInput = Partial<Omit<CurriculumComponent, 'lastEdited'>>;
-export type CurriculumCohortInput = { id?: string; cohortId?: string; name?: string; programme?: string; programmeId?: string; startDate?: string; endDate?: string; durationMonths?: number; epaMonths?: number | null; /** null clears the manual apprenticeship end date and restores the calculated one. */ apprenticeshipEndOverride?: string | null; color?: string; moduleName?: string; sessionsNumber?: number; /** The ticked ids -- the holidays this cohort's module sessions must skip. */ holidayIds?: Array<string | number>; /** The unticked ids, from the same in-period list. Sent alongside `holidayIds` so an explicit empty array ("Select all") is never mistaken for the key being omitted. */ excludedHolidayIds?: Array<string | number> };
+export type CurriculumCohortInput = { calendarPolicy?: DeliveryCalendarPolicy | null; id?: string; cohortId?: string; name?: string; programme?: string; programmeId?: string; startDate?: string; endDate?: string; durationMonths?: number; epaMonths?: number | null; /** null clears the manual apprenticeship end date and restores the calculated one. */ apprenticeshipEndOverride?: string | null; color?: string; moduleName?: string; sessionsNumber?: number; /** The ticked ids -- the holidays this cohort's module sessions must skip. */ holidayIds?: Array<string | number>; /** The unticked ids, from the same in-period list. Sent alongside `holidayIds` so an explicit empty array ("Select all") is never mistaken for the key being omitted. */ excludedHolidayIds?: Array<string | number> };
 export type CurriculumGroupInput = { id?: string; groupId?: string; name?: string; cohortId?: string; programmeId?: string; tutor?: string; coach?: string; color?: string; weekDays?: string; startTime?: string; endTime?: string; startDate?: string; endDate?: string; moduleName?: string; sessionsNumber?: number; /** Honoured by PATCH /curriculum/groups/<id>/ only. */ status?: string; /** See CurriculumModuleInput.allowTutorConflict. */ allowTutorConflict?: boolean };
 export type CurriculumSessionInput = Partial<Pick<CurriculumSession, 'date' | 'startTime' | 'endTime' | 'tutor'>>;
 export type CurriculumStaffingInput = { groupId?: string; tutor?: string; coach?: string; /** See CurriculumModuleInput.allowTutorConflict. */ allowTutorConflict?: boolean };
 export type CurriculumModuleAttachmentInput = {
+  calendarPolicy?: DeliveryCalendarPolicy | null;
   moduleName: string;
   programmeId?: string;
   cohortId?: string;
@@ -4321,6 +4329,7 @@ export type CurriculumModuleAttachmentInput = {
   tutor?: string;
   weeklySchedule?: CurriculumWeeklySession[];
   scheduleMode?: 'group' | 'custom';
+  weekStartsOn?: string | null;
   weekDays?: string;
   startTime?: string;
   endTime?: string;
@@ -4898,14 +4907,16 @@ export function previewCohortEndDate(input: {
   return postJson<CurriculumCohortEndDatePreview>('/curriculum/preview/cohort-end-date/', input);
 }
 
-export function previewModuleSessionPlan(input: { startDate?: string; endDate?: string; numberOfSessions?: number; sessionsNumber?: number; weeksNumber?: number; weeklySchedule?: CurriculumWeeklySession[]; weekDays?: string | string[]; deliveryDays?: string | string[]; holidays?: unknown[] }) {
+export function previewModuleSessionPlan(input: { calendarPolicy?: DeliveryCalendarPolicy | null; startDate?: string; endDate?: string; numberOfSessions?: number; sessionsNumber?: number; weeksNumber?: number; scheduleMode?: 'group' | 'custom'; weekStartsOn?: string | null; weeklySchedule?: CurriculumWeeklySession[]; weekDays?: string | string[]; deliveryDays?: string | string[]; holidays?: unknown[] }) {
   return postJson<CurriculumSessionPlanPreview>('/curriculum/preview/module-session-plan/', input);
 }
 
 /** The slot a tutor is being asked about. Matches the module's own schedule fields. */
 export interface CurriculumTutorAvailabilityInput {
+  calendarPolicy?: DeliveryCalendarPolicy | null;
   endDate?: string;
   scheduleMode?: 'group' | 'custom';
+  weekStartsOn?: string | null;
   weeksNumber?: number;
   /** The destination group supplies delivery days and times when moving a course. */
   groupId?: string;
@@ -5604,4 +5615,71 @@ export function resolveReviewClash(programmeId: string, input: ReviewClashResolu
   return postJson<ReviewClashResolutionResponse>(
     `/curriculum/programmes/${encodeURIComponent(programmeId)}/reviews/clashes/resolve/`, input,
   );
+}
+
+
+/** Null inherits the existing delivery calendar; no default migration/backfill. */
+export interface DeliveryCalendarPolicy {
+  country: string;
+  weekendDays: string[];
+  observePublicHolidays: boolean;
+  excludedHolidayIds: string[];
+  manualHolidays: CurriculumHoliday[];
+}
+
+export interface CountryCalendarStatus {
+  country: string;
+  year: number;
+  fetchedAt: string;
+  due: boolean;
+  expired: boolean;
+  count: number;
+  message: string;
+}
+
+export async function importCountryCalendar(country: string, startDate: string, endDate: string): Promise<{ holidays: CurriculumHoliday[] }> {
+  const firstYear = Number(startDate.slice(0, 4));
+  const lastYear = Number(endDate.slice(0, 4));
+  if (!Number.isInteger(firstYear) || !Number.isInteger(lastYear) || lastYear < firstYear || lastYear - firstYear > 6) {
+    throw new Error('Choose a delivery period of at most seven calendar years.');
+  }
+  const holidays: CurriculumHoliday[] = [];
+  // Separate bounded requests keep long course periods within HTTP timeouts.
+  for (let year = firstYear; year <= lastYear; year += 1) {
+    const result = await fetchJson<{ holidays: CurriculumHoliday[] }>('/curriculum/country-calendars/', {
+      method: 'POST', csrf: true, timeoutMs: 30000,
+      body: JSON.stringify({ country, startDate: `${year}-01-01`, endDate: `${year}-12-31` }),
+    });
+    holidays.push(...result.holidays);
+  }
+  return { holidays: holidays.filter(row => row.startDate <= endDate && (row.endDate || row.startDate) >= startDate) };
+}
+
+export function fetchCountryCalendars(): Promise<{ calendars: CountryCalendarStatus[] }> {
+  return fetchJson('/curriculum/country-calendars/', { skipCache: true });
+}
+
+export async function syncCountryCalendars(): Promise<{ success: boolean; calendars: Array<CountryCalendarStatus & { status: string }>; england: { status: string } }> {
+  const saved = await fetchCountryCalendars();
+  const calendars: Array<CountryCalendarStatus & { status: string }> = [];
+  let england: { status: string; message?: string } = { status: 'error' };
+  try {
+    const response = await fetchJson<{ england: { status: string } }>('/curriculum/country-calendars/sync/', {
+      method: 'POST', csrf: true, timeoutMs: 30000, body: JSON.stringify({ country: 'GB' }),
+    });
+    england = response.england;
+  } catch (reason) {
+    england = { status: 'error', message: reason instanceof Error ? reason.message : 'England sync failed' };
+  }
+  for (const row of saved.calendars) {
+    try {
+      const response = await fetchJson<{ calendar: CountryCalendarStatus & { status: string } }>('/curriculum/country-calendars/sync/', {
+        method: 'POST', csrf: true, timeoutMs: 30000, body: JSON.stringify({ country: row.country, year: row.year }),
+      });
+      calendars.push(response.calendar);
+    } catch (reason) {
+      calendars.push({ ...row, status: 'error', message: reason instanceof Error ? reason.message : 'Sync failed' });
+    }
+  }
+  return { success: england.status === 'ok' && calendars.every(row => row.status === 'ok'), england, calendars };
 }

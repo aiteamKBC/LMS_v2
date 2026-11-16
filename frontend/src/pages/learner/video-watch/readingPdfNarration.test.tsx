@@ -1,4 +1,5 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import type { JourneyComponent } from '@/utils/learnerJourney';
 import { StrictMode } from 'react';
@@ -72,7 +73,14 @@ async function startReading() {
   await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Read aloud' })));
 }
 
+async function waitForSpeechCalls(count: number) {
+  await act(async () => {
+    await vi.waitFor(() => expect(speak).toHaveBeenCalledTimes(count));
+  });
+}
+
 async function finishSpeech() {
+  await waitForSpeechCalls(1);
   for (let index = 0; index < speak.mock.calls.length; index += 1) {
     expect(index).toBeLessThan(20);
     await act(async () => {
@@ -88,6 +96,7 @@ it('reads the activity text then only the currently open PDF page, without toolb
   expect(screen.getByText('Page 2 of 3')).toBeVisible();
   vi.useFakeTimers();
   await startReading();
+  await waitForSpeechCalls(1);
   expect(speak.mock.calls[0][0].text).toBe('Activity introduction.');
   await finishSpeech();
   expect(speak.mock.calls.map(([utterance]) => utterance.text)).toEqual(['Activity introduction.', 'Document 1 page 2.']);
@@ -99,6 +108,7 @@ it('reads a PDF-only activity served from a protected URL identified by filename
   render(reading({ contentHtml: '', resourceUrl: '/materials/123/', fileName: 'Reading.pdf' }));
   await screen.findByText('Page 1 of 3');
   await startReading();
+  await waitForSpeechCalls(1);
   expect(speak.mock.calls.map(([utterance]) => utterance.text)).toEqual(['Document 1 page 1.']);
   expect(fetch).toHaveBeenCalledWith('/materials/123/', expect.objectContaining({ credentials: 'same-origin' }));
 });
@@ -160,8 +170,8 @@ it.each(['stop', 'page change', 'close preview', 'unmount'])('discards pending P
   const view = render(reading({ resourceUrl: null, contentHtml: '<a href="/book.pdf">Reference book</a>' }));
   fireEvent.click(screen.getByRole('button', { name: 'Preview file: Reference book' }));
   await screen.findByText('Page 1 of 3');
-  await startReading();
-  expect(pdfText).toHaveBeenCalledOnce();
+  await userEvent.click(screen.getByRole('button', { name: 'Read aloud' }));
+  await waitFor(() => expect(pdfText).toHaveBeenCalledOnce());
   if (action === 'unmount') view.unmount();
   else fireEvent.click(screen.getByRole('button', { name: action === 'stop' ? 'Stop reading'
     : action === 'page change' ? 'Next page' : 'Hide preview: Reference book' }));
@@ -175,6 +185,7 @@ it('stops already queued PDF speech when the learner changes the open page', asy
   await screen.findByText('Page 1 of 3');
   vi.useFakeTimers();
   await startReading();
+  await waitForSpeechCalls(1);
   act(() => speak.mock.calls[0][0].onend?.({} as SpeechSynthesisEvent));
   fireEvent.click(screen.getByRole('button', { name: 'Next page' }));
   await act(async () => vi.runAllTimersAsync());
@@ -187,11 +198,14 @@ it('keeps the PDF-only button independent and prevents overlap with activity nar
   render(reading());
   fireEvent.click(await screen.findByRole('button', { name: 'Next page' }));
   await startReading();
+  await waitForSpeechCalls(1);
   expect(speak.mock.calls[0][0].text).toBe('Activity introduction.');
   await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Read page aloud' })));
+  await waitForSpeechCalls(2);
   expect(screen.getByRole('button', { name: 'Read aloud' })).toHaveAttribute('aria-pressed', 'false');
   expect(speak.mock.calls[1][0].text).toBe('Document 1 page 2.');
   await startReading();
+  await waitForSpeechCalls(3);
   expect(screen.getByRole('button', { name: 'Read page aloud' })).toHaveAttribute('aria-pressed', 'false');
   expect(speak.mock.calls[2][0].text).toBe('Activity introduction.');
   expect(cancel).toHaveBeenCalledTimes(2);
@@ -202,7 +216,7 @@ it('explains when the open PDF page has no extractable text', async () => {
   render(reading());
   await screen.findByText('Page 1 of 3');
   await startReading();
-  expect(screen.getByRole('alert')).toHaveTextContent('No readable text was found on the open PDF page');
+  expect(await screen.findByRole('alert')).toHaveTextContent('No readable text was found on the open PDF page');
   expect(speak).not.toHaveBeenCalled();
   expect(screen.getByRole('button', { name: 'Read aloud' })).toHaveAttribute('aria-pressed', 'false');
 });
@@ -212,11 +226,12 @@ it('reports a PDF that is still loading instead of silently skipping it', async 
   vi.mocked(fetch).mockReturnValue(new Promise(resolve => { resolveFile = resolve; }));
   render(reading());
   await startReading();
-  expect(screen.getByRole('alert')).toHaveTextContent('The PDF is still loading');
+  expect(await screen.findByRole('alert')).toHaveTextContent('The PDF is still loading');
   expect(speak).not.toHaveBeenCalled();
   await act(async () => resolveFile(new Response(new Uint8Array([1]), { status: 200 })));
   await screen.findByText('Page 1 of 3');
   await startReading();
+  await waitForSpeechCalls(1);
   expect(screen.queryByRole('alert')).not.toBeInTheDocument();
   expect(speak).toHaveBeenCalledOnce();
 });
@@ -229,6 +244,7 @@ it('reports PDF text extraction errors and allows a retry', async () => {
   expect(await screen.findByRole('alert')).toHaveTextContent('Could not read this content aloud');
   expect(speak).not.toHaveBeenCalled();
   await startReading();
+  await waitForSpeechCalls(1);
   expect(screen.queryByRole('alert')).not.toBeInTheDocument();
   expect(speak).toHaveBeenCalledOnce();
 });

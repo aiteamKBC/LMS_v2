@@ -57,6 +57,20 @@ beforeEach(() => {
 afterEach(() => { clearAllCachedResources(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
 describe('compact My Learning route', () => {
+  it.each(['commercial', 'apprenticeship'] as const)('shows each course KSB percentage from the catalogue (%s)', async kind => {
+    const catalogue = makeCatalogue(kind);
+    catalogue.modules[0].ksbProgress = { completed: 1, total: 4, percent: 25, status: 'ready' };
+    catalogue.modules[1].ksbProgress = { completed: 2, total: 3, percent: 66.67, status: 'ready' };
+    vi.mocked(fetch).mockImplementation(async input => String(input).includes('/certificates/')
+      ? reply({ template: null, csrfToken: '' }) : reply(catalogue));
+    route(`/learner/my-learning/${kind}/7`);
+    const first = within((await screen.findByRole('heading', { name: 'One' })).closest('article')!);
+    expect(first.getByRole('progressbar', { name: 'One KSBs achieved' })).toHaveAttribute('aria-valuenow', '25');
+    expect(first.queryByText('1 of 2 completed')).not.toBeInTheDocument();
+    expect(screen.getByRole('progressbar', { name: 'Old KSBs achieved' })).toHaveAttribute('aria-valuenow', '66.67');
+    expect(first.getByRole('progressbar', { name: 'One hours progress' })).toHaveAttribute('aria-valuenow', '10');
+  });
+
   it.each(['commercial', 'apprenticeship'] as const)('opens standalone content only from Free courses when absent from My courses (%s)', async kind => {
     const catalogue = makeCatalogue(kind);
     catalogue.modules = catalogue.modules.filter(card => card.id !== 'current:M1');

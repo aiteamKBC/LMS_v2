@@ -61,7 +61,7 @@ class Command(BaseCommand):
             scheduled_scope = ' AND o.live_session_id=ANY(%s)' if requested_ids else ''
             with connections['default'].cursor() as cursor:
                 # A series can exhaust its attempts before its next lecture. Reopen
-                # it sooner when a known recording still lacks a private archive.
+                # it sooner when a known recording or transcript lacks an archive.
                 cursor.execute('''INSERT INTO curriculum.session_result_jobs(live_session_id)
                     SELECT DISTINCT o.live_session_id FROM curriculum.live_session_occurrences o
                     JOIN curriculum.live_sessions s ON s.id=o.live_session_id
@@ -101,7 +101,7 @@ class Command(BaseCommand):
                                                 LEFT JOIN curriculum.session_result_archive pending_archive
                                                   ON pending_archive.artifact_id=pending_artifact.id
                                                 WHERE pending_occurrence.live_session_id=session_result_jobs.live_session_id
-                                                  AND pending_artifact.artifact_type='recording'
+                                                  AND pending_artifact.artifact_type IN ('recording','transcript')
                                                   AND coalesce(pending_archive.status,'')<>'ready'
                                             )))))) ''', scope_params)
         processed, failed = 0, 0

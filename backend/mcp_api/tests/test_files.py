@@ -33,7 +33,7 @@ class FileTestCase(TransportTestCase):
         self.enterContext(mock.patch.object(changes, "McpPendingChange", fake))
         self.enterContext(mock.patch.object(files, "McpPendingChange", fake))
         self.module, self.bytes, self.content_type = copy.deepcopy(MODULE), PDF, "application/pdf"
-        self.calls, self.downloads, self.uploads = [], [], []
+        self.calls, self.downloads, self.uploads, self.upload_meta = [], [], [], []
         self.media = Path(self.enterContext(tempfile.TemporaryDirectory()))
         for target in (read, components, content, quizzes, files):
             self.enterContext(mock.patch.object(target, "call_api", side_effect=self.api))
@@ -71,6 +71,8 @@ class FileTestCase(TransportTestCase):
             return 200, copy.deepcopy(self.module)
         self.calls.append((method, path, copy.deepcopy(json_body)))
         if method == "POST" and path.endswith("/upload/"):
+            # The LMS view (component_upload_metadata) reads both, as a real request upload has them.
+            self.upload_meta.append((uploaded_file.content_type, uploaded_file.size))
             data = b"".join(uploaded_file.chunks())
             self.uploads.append(data)
             url = f"/curriculum_api/curriculum/uploads/M1/{path.split('/')[-3]}/{uploaded_file.name}"
@@ -105,6 +107,7 @@ class SaveComponentFileTests(FileTestCase):
         self.assertEqual((m1, p1), ("POST", "/curriculum_api/curriculum/components/RD1/upload/"))
         self.assertEqual(form, {"componentType": "reading", "moduleCatalogueId": "M1"})
         self.assertEqual(self.uploads, [PDF])
+        self.assertEqual(self.upload_meta, [("application/pdf", len(PDF))])
         self.assertEqual(patch["expectedRevision"], "rev-1")
         self.assertEqual(patch["settings"]["readingSource"], "LMS resource")
         self.assertTrue(patch["settings"]["resourceUrl"].startswith("/curriculum_api/curriculum/uploads/"))
