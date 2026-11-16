@@ -1,6 +1,7 @@
 export const moduleLearnerStatuses = [
   { value: 'all', label: 'All statuses' },
   { value: 'active', label: 'Active' },
+  { value: 'onboarding', label: 'Onboarding' },
   { value: 'withdrawn', label: 'Withdrawn' },
   { value: 'on break', label: 'On break' },
   { value: 'completed', label: 'Completed' },

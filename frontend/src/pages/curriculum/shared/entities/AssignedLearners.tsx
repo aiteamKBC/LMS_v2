@@ -88,7 +88,7 @@ function DirectoryDialog({ target, store, onClose, onManage, initialStatus = 'ac
         className="mt-2 block min-h-10 w-full rounded-xl border border-background-300 bg-background-50 px-3 py-2 text-sm outline-none focus:border-primary-400 focus:ring-2 focus:ring-primary-100" /></label>
       <label className="text-xs font-semibold text-foreground-600">Status<select value={status} disabled={membershipBusy} onChange={event => { setStatus(event.target.value); setPage(1); }}
         className="mt-2 block min-h-10 rounded-xl border border-background-300 bg-background-50 px-3 py-2 text-sm outline-none focus:border-primary-400 focus:ring-2 focus:ring-primary-100"><option value="active">Active learners</option><option value="all">All statuses</option>
-        {[...new Set(['withdrawn', 'on break', 'completed', ...(!['active', 'all'].includes(initialStatus) ? [initialStatus] : [])])].map(value => <option key={value} value={value}>{learnerStatusLabel(value)}</option>)}
+        {[...new Set(['onboarding', 'withdrawn', 'on break', 'completed', ...(!['active', 'all'].includes(initialStatus) ? [initialStatus] : [])])].map(value => <option key={value} value={value}>{learnerStatusLabel(value)}</option>)}
       </select></label>
     </div>
     <p role="status" className="mb-3 text-xs text-foreground-500">{loading ? 'Loading assigned learners…' : result ? `${result.total} assigned learners${search.trim() ? ` · ${result.filteredTotal} matching` : ''}` : ''}</p>
