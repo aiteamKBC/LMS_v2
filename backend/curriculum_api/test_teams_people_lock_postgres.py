@@ -157,3 +157,19 @@ class PeopleLockPostgresTests(SimpleTestCase):
             cache.set.assert_not_called()
         self.assertTrue(self.peer_try())
         self.assert_no_lock_left()
+
+    def test_post_commit_publication_failure_retains_retry_receipt_and_releases_lock(self):
+        cache = Mock()
+        cache.get.return_value = None
+        def read(_live_id):
+            refresh._after_commit('invalidate_cache', Mock(side_effect=RuntimeError('Synthetic cache failure')))
+            return {'changed': True}
+        with patch.object(refresh, 'cache', cache), patch.object(refresh, '_refresh_people', side_effect=read):
+            with self.assertRaises(RuntimeError) as failure:
+                refresh.refresh_people(self.live_id)
+            self.assertEqual(refresh._failure_details(failure.exception), ('unexpected_error', 'invalidate_cache'))
+            cache.set.assert_called_once()
+            self.assertEqual(cache.set.call_args.args[1]['status'], 'failed')
+            self.assertIn('attemptEpoch', cache.set.call_args.args[1])
+        self.assertTrue(self.peer_try())
+        self.assert_no_lock_left()

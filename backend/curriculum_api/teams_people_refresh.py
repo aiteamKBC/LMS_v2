@@ -186,25 +186,29 @@ def _refresh_people(live_id):
 
 def refresh_people(live_id, *, automatic=False):
     """The button and existing session worker enter this same service."""
-    with people_sync_lock(live_id):
-        with _diagnostic_phase('cache_read'):
-            info = sync_info(live_id)
-        if automatic and time.time() - info.get('attemptEpoch', 0) < CHECK_SECONDS:
-            return {'skipped': True}
-        checked = datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z')
-        state = {'attemptEpoch': time.time(), 'checkedAt': checked, 'status': 'failed',
-                 'message': 'The latest Teams role check failed. Saved roles were kept; retry Sync.',
-                 'lastSuccessAt': info.get('lastSuccessAt')}
-        try:
+    state = None
+    try:
+        with people_sync_lock(live_id):
+            with _diagnostic_phase('cache_read'):
+                info = sync_info(live_id)
+            if automatic and time.time() - info.get('attemptEpoch', 0) < CHECK_SECONDS:
+                return {'skipped': True}
+            checked = datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z')
+            state = {'attemptEpoch': time.time(), 'checkedAt': checked, 'status': 'failed',
+                     'message': 'The latest Teams role check failed. Saved roles were kept; retry Sync.',
+                     'lastSuccessAt': info.get('lastSuccessAt')}
             result = _refresh_people(live_id)
-        except Exception:
+            _after_commit('cache_write', lambda: cache.set(f'teams-people-sync:{live_id}',
+                          {**state, 'status': 'synced', 'lastSuccessAt': checked,
+                           'message': 'People and roles are synced with Teams.'}, 86400))
+        return result
+    except Exception:
+        # Includes commit/publication failures after the reader returns. A
+        # refused lock or cooldown skip never creates a failed check receipt.
+        if state is not None:
             with _diagnostic_phase('cache_write'):
                 cache.set(f'teams-people-sync:{live_id}', state, 86400)
-            raise
-        _after_commit('cache_write', lambda: cache.set(f'teams-people-sync:{live_id}',
-                      {**state, 'status': 'synced', 'lastSuccessAt': checked,
-                       'message': 'People and roles are synced with Teams.'}, 86400))
-        return result
+        raise
 
 
 def saved_people(live_id):
