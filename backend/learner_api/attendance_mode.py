@@ -134,6 +134,11 @@ def attendance_mode(request, kind, learner_id):
             cur.execute(f'''INSERT INTO {TABLE} (learner_id) VALUES (%s)
                 ON CONFLICT (learner_id) DO NOTHING''', [learner_id])
             state = _state(cur, learner_id, lock=True)
+            # The preference key is an enrolment id; link only its profiles.
+            # Fill missing links even on retries, preserving any existing link.
+            cur.execute('''UPDATE "Learner".learners SET attendance_preference_id=%s
+                WHERE enrolment_id=%s AND attendance_preference_id IS NULL''',
+                        [learner_id, learner_id])
             if mode == 'lazy' and state['mode'] == 'lazy':
                 return JsonResponse(_payload(state, manager_available=True))
             if approval and _payload(state)['status'] == 'pending' and state['email_sent']:

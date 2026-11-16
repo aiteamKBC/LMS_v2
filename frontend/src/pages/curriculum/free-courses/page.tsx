@@ -7,6 +7,8 @@ import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { showCurriculumAlert, showCurriculumConfirm } from '@/components/feature/CurriculumSweetAlert';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { WorkspaceHeroBanner } from '@/components/feature/WorkspaceHeroBanner';
+import { DatePickerField } from '@/components/feature/DatePickerField';
+import { cohortDeliveryWindow, formatDateLabel, moduleCohortDateError, moduleSoftStartDate } from '../shared/entities/model';
 import { curriculumNavItems } from '@/mocks/navigation';
 import { formatHoursMinutes } from '@/lib/format';
 import { CurriculumApiError, cloneModuleToFreeCourseAuthoring, createFreeCourseAuthoring, createFreeCourseQuiz, deleteFreeCourseAuthoring, fetchCurriculumProgrammeDetail, fetchCurriculumProgrammes, fetchFreeCourseAuthoringCatalogue, fetchFreeCourseAuthoringCatalogueWithDocuments, fetchFreeCourseAuthoringCourse, injectFreeCourseIntoGroup, unlinkFreeCourseQuiz, updateFreeCourseAuthoring, type ConvertFreeCourseResult, type CurriculumModule, type CurriculumProgramme, type CurriculumProgrammeDetail, type FreeCourseAuthoringDocument, type FreeProgrammeModule } from '@/lib/curriculumApi';
@@ -261,6 +263,8 @@ export function FreeCoursesWorkspace({ embedded = false, addRequest = 0, search 
   const [convertDetailLoading, setConvertDetailLoading] = useState(false);
   const [convertCohortId, setConvertCohortId] = useState('');
   const [convertGroupId, setConvertGroupId] = useState('');
+  const [convertStartDate, setConvertStartDate] = useState('');
+  const [convertEndDate, setConvertEndDate] = useState('');
   const [converting, setConverting] = useState(false);
   // Real programmes only — never offer the synthetic FREE-COURSES container.
   const convertProgrammeOptions = useMemo(
@@ -268,7 +272,16 @@ export function FreeCoursesWorkspace({ embedded = false, addRequest = 0, search 
     [convertProgrammes],
   );
   const convertCohorts = convertDetail?.cohorts ?? [];
-  const convertGroups = convertCohorts.find(cohort => cohort.id === convertCohortId)?.groups ?? [];
+  const convertCohort = convertCohorts.find(cohort => cohort.id === convertCohortId);
+  const convertGroups = convertCohort?.groups ?? [];
+  const convertWindow = cohortDeliveryWindow(convertCohort);
+  const convertSoftStart = moduleSoftStartDate(convertWindow.start) || convertWindow.start;
+  const convertStartError = moduleCohortDateError(convertCohort, convertStartDate, undefined);
+  const convertEndError = convertStartDate && convertEndDate && convertEndDate < convertStartDate
+    ? 'End date must be on or after the start date.'
+    : moduleCohortDateError(convertCohort, undefined, convertEndDate);
+  const convertDatesValid = Boolean(convertStartDate && convertEndDate && !convertStartError && !convertEndError);
+  const convertDestinationValid = Boolean(convertProgrammeId && convertCohort && convertGroups.some(group => group.id === convertGroupId));
   // Import a programme module -> a new free course (the reverse direction).
   const [importOpen, setImportOpen] = useState(false);
   const [importProgrammeId, setImportProgrammeId] = useState('');
@@ -908,6 +921,8 @@ export function FreeCoursesWorkspace({ embedded = false, addRequest = 0, search 
     setConvertDetail(null);
     setConvertCohortId('');
     setConvertGroupId('');
+    setConvertStartDate('');
+    setConvertEndDate('');
   };
 
   const closeConvertWizard = () => {
@@ -919,10 +934,18 @@ export function FreeCoursesWorkspace({ embedded = false, addRequest = 0, search 
     const card = convertCard;
     if (!card || converting) return;
     const groupId = convertGroupId.trim();
-    if (!groupId) {
+    if (!convertDestinationValid) {
       await showCurriculumAlert({
         title: 'Pick a destination',
         text: 'Choose the programme, cohort and group to inject this course into.',
+        icon: 'warning',
+      });
+      return;
+    }
+    if (!convertDatesValid) {
+      await showCurriculumAlert({
+        title: 'Choose module dates',
+        text: convertStartError || convertEndError || 'Choose the module start and end dates before adding it to the programme.',
         icon: 'warning',
       });
       return;
@@ -944,6 +967,8 @@ export function FreeCoursesWorkspace({ embedded = false, addRequest = 0, search 
             courseId: card.courseId,
             mode: 'clone',
             groupId,
+            startDate: convertStartDate,
+            endDate: convertEndDate,
           });
           await refreshSavedCourses();
         },
@@ -1523,7 +1548,7 @@ export function FreeCoursesWorkspace({ embedded = false, addRequest = 0, search 
                     <select
                       value={convertProgrammeId}
                       onChange={event => { setConvertProgrammeId(event.target.value); setConvertCohortId(''); setConvertGroupId(''); }}
-                      disabled={convertProgrammesLoading}
+                      disabled={converting || convertProgrammesLoading}
                       className="w-full rounded-lg border border-background-300 bg-white px-3 py-2.5 text-sm text-foreground-900 focus:border-primary-400 focus:outline-none focus:ring-2 focus:ring-primary-100 disabled:opacity-60"
                     >
                       <option value="">{convertProgrammesLoading ? 'Loading programmes…' : 'Select a programme'}</option>
@@ -1539,7 +1564,7 @@ export function FreeCoursesWorkspace({ embedded = false, addRequest = 0, search 
                       <select
                         value={convertCohortId}
                         onChange={event => { setConvertCohortId(event.target.value); setConvertGroupId(''); }}
-                        disabled={!convertProgrammeId || convertDetailLoading}
+                        disabled={converting || !convertProgrammeId || convertDetailLoading}
                         className="w-full rounded-lg border border-background-300 bg-white px-3 py-2.5 text-sm text-foreground-900 focus:border-primary-400 focus:outline-none focus:ring-2 focus:ring-primary-100 disabled:opacity-60"
                       >
                         <option value="">{!convertProgrammeId ? 'Select a programme first' : convertDetailLoading ? 'Loading cohorts…' : convertCohorts.length ? 'Select a cohort' : 'No cohorts in this programme'}</option>
@@ -1553,7 +1578,7 @@ export function FreeCoursesWorkspace({ embedded = false, addRequest = 0, search 
                       <select
                         value={convertGroupId}
                         onChange={event => setConvertGroupId(event.target.value)}
-                        disabled={!convertCohortId}
+                        disabled={converting || !convertCohortId || convertDetailLoading}
                         className="w-full rounded-lg border border-background-300 bg-white px-3 py-2.5 text-sm text-foreground-900 focus:border-primary-400 focus:outline-none focus:ring-2 focus:ring-primary-100 disabled:opacity-60"
                       >
                         <option value="">{!convertCohortId ? 'Select a cohort first' : convertGroups.length ? 'Select a group' : 'No groups in this cohort'}</option>
@@ -1562,6 +1587,20 @@ export function FreeCoursesWorkspace({ embedded = false, addRequest = 0, search 
                         ))}
                       </select>
                     </label>
+                  </div>
+
+                  <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                    <DatePickerField label="Start date" required value={convertStartDate} onChange={setConvertStartDate}
+                      disabled={converting || !convertCohort || convertDetailLoading}
+                      min={convertSoftStart || undefined} max={convertWindow.end || undefined}
+                      error={convertStartError || undefined}
+                      helper={convertCohort
+                        ? `Choose this module's start date. Cohort window ${formatDateLabel(convertWindow.start)} - ${formatDateLabel(convertWindow.end)}. Soft start allowed from ${formatDateLabel(convertSoftStart)}.`
+                        : 'Choose a cohort first, then set the module dates.'} />
+                    <DatePickerField label="End date" required value={convertEndDate} onChange={setConvertEndDate}
+                      disabled={converting || !convertCohort || convertDetailLoading}
+                      min={convertStartDate || convertSoftStart || undefined} max={convertWindow.end || undefined}
+                      error={convertEndError || undefined} helper="Choose this module's planned finish date." />
                   </div>
 
                   <p className="rounded-lg border border-background-200 bg-background-50 px-3 py-2.5 text-[11px] leading-5 text-foreground-500">
@@ -1581,7 +1620,7 @@ export function FreeCoursesWorkspace({ embedded = false, addRequest = 0, search 
                   <button
                     type="button"
                     onClick={() => { void submitConvert(); }}
-                    disabled={converting || !convertGroupId}
+                    disabled={converting || convertDetailLoading || !convertDestinationValid || !convertDatesValid}
                     className="inline-flex h-10 items-center justify-center gap-2 rounded-lg bg-primary-700 px-4 text-sm font-bold text-white transition hover:bg-primary-600 disabled:opacity-60"
                   >
                     <AppIcon name={converting ? 'ri-loader-4-line' : 'ri-exchange-line'} className={converting ? 'animate-spin' : ''} size={15} />

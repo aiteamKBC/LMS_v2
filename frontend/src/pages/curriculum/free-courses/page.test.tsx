@@ -5,7 +5,7 @@ import type { ReactNode } from 'react';
 import FreeCoursesPage, { FreeCoursesWorkspace } from './page';
 import FreeCourseBuilder from '../module-builder/FreeCourseBuilder';
 import * as api from '@/lib/curriculumApi';
-import { showCurriculumAlert } from '@/components/feature/CurriculumSweetAlert';
+import { showCurriculumAlert, showCurriculumConfirm } from '@/components/feature/CurriculumSweetAlert';
 import { fetchWeekTemplates, fetchWeekTemplateDetail, type WeekTemplate } from '@/pages/curriculum/week-builder/weekTemplateData';
 
 vi.mock('@/components/feature/WorkspaceShell', () => ({ WorkspaceShell: ({ children }: { children: ReactNode }) => <div>{children}</div> }));
@@ -55,6 +55,103 @@ async function edit() {
   fireEvent.click(await screen.findByRole('button', { name: 'Edit' }));
   await screen.findByRole('button', { name: 'Save changes' });
 }
+
+describe('Programme conversion dates', () => {
+  const programmes = [{ id: 'P1', sourceId: 'P1', name: 'Programme one' }];
+  const detail = {
+    cohorts: [
+      { id: 'C1', name: 'Cohort one', startDate: '2026-09-01', endDate: '2027-08-31', practicalEndDate: '2027-05-31',
+        groups: [{ id: 'G1', name: 'Group one' }] },
+      { id: 'C2', name: 'Cohort two', startDate: '2027-01-01', endDate: '2027-12-31', groups: [{ id: 'G2', name: 'Group two' }] },
+    ],
+  };
+  beforeEach(() => {
+    vi.mocked(api.fetchCurriculumProgrammes).mockResolvedValue(programmes as api.CurriculumProgramme[]);
+    vi.mocked(api.fetchCurriculumProgrammeDetail).mockResolvedValue(detail as api.CurriculumProgrammeDetail);
+    vi.mocked(api.injectFreeCourseIntoGroup).mockReset().mockResolvedValue({ mode: 'clone', programmeId: 'P1',
+      programmeName: 'Programme one', cohortId: 'C1', groupId: 'G1', moduleCatalogueId: 'MOD-NEW' });
+    vi.mocked(showCurriculumConfirm).mockReset().mockImplementation(async ({ onConfirm }) => { await onConfirm(); return true; });
+  });
+  async function open(embedded = false) {
+    renderCatalogue(embedded);
+    fireEvent.click(await screen.findByRole('button', { name: 'Convert to programme' }));
+    await screen.findByRole('option', { name: 'Programme one' });
+    fireEvent.change(screen.getByLabelText('Programme'), { target: { value: 'P1' } });
+    await screen.findByRole('option', { name: 'Cohort one' });
+    fireEvent.change(screen.getByLabelText('Cohort'), { target: { value: 'C1' } });
+    fireEvent.change(screen.getByLabelText('Group'), { target: { value: 'G1' } });
+  }
+  function date(label: string, value: string) {
+    const input = screen.getByRole('combobox', { name: label });
+    fireEvent.change(input, { target: { value } });
+    fireEvent.blur(input);
+  }
+
+  it.each([false, true])('requires chosen dates and sends them from both catalogue entry points (embedded=%s)', async embedded => {
+    await open(embedded);
+    expect(screen.getByRole('combobox', { name: 'Start date' })).toHaveValue('');
+    expect(screen.getByRole('combobox', { name: 'End date' })).toHaveValue('');
+    expect(screen.getByRole('button', { name: 'Add module' })).toBeDisabled();
+    date('Start date', '01/10/2026');
+    expect(screen.getByRole('button', { name: 'Add module' })).toBeDisabled();
+    date('End date', '15/12/2026');
+    fireEvent.click(screen.getByRole('button', { name: 'Add module' }));
+    await waitFor(() => expect(api.injectFreeCourseIntoGroup).toHaveBeenCalledExactlyOnceWith('FREE-COURSES', {
+      courseId: 'FREE-1', mode: 'clone', groupId: 'G1', startDate: '2026-10-01', endDate: '2026-12-15',
+    }));
+    await waitFor(() => expect(screen.getByTestId('address')).toHaveTextContent('/curriculum/module-builder?module=MOD-NEW&programme=P1'));
+    expect(api.updateFreeCourseAuthoring).not.toHaveBeenCalled();
+    expect(api.deleteFreeCourseAuthoring).not.toHaveBeenCalled();
+  });
+
+  it('revalidates the finish when the selected start moves past it', async () => {
+    await open();
+    date('Start date', '01/10/2026'); date('End date', '15/10/2026');
+    date('Start date', '01/11/2026');
+    expect(screen.getByText('End date must be on or after the start date.')).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Add module' })).toBeDisabled();
+    expect(api.injectFreeCourseIntoGroup).not.toHaveBeenCalled();
+  });
+
+  it('retains dates when changing cohorts and refuses dates outside the new delivery window', async () => {
+    await open();
+    date('Start date', '01/10/2026'); date('End date', '15/12/2026');
+    fireEvent.change(screen.getByLabelText('Cohort'), { target: { value: 'C2' } });
+    fireEvent.change(screen.getByLabelText('Group'), { target: { value: 'G2' } });
+    expect(screen.getByRole('combobox', { name: 'Start date' })).toHaveValue('01/10/2026');
+    expect(screen.getByText(/cannot start more than one month before/)).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Add module' })).toBeDisabled();
+    date('Start date', '01/12/2026');
+    expect(screen.getByRole('button', { name: 'Add module' })).toBeEnabled();
+  });
+
+  it('uses the practical end as the date-picker limit', async () => {
+    await open(); date('Start date', '01/10/2026'); date('End date', '01/06/2027');
+    expect(screen.getByText('Cannot be after 31/05/2027')).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Add module' })).toBeDisabled();
+    date('End date', '31/05/2027');
+    expect(screen.getByRole('button', { name: 'Add module' })).toBeEnabled();
+  });
+
+  it('preserves chosen dates after a failed save and resets them when reopening', async () => {
+    vi.mocked(api.injectFreeCourseIntoGroup).mockRejectedValueOnce(new Error('Destination changed'));
+    // The shared confirmation dialog displays errors and returns false after dismissal.
+    vi.mocked(showCurriculumConfirm).mockImplementationOnce(async ({ onConfirm }) => {
+      try { await onConfirm(); } catch { return false; }
+      return true;
+    });
+    await open(); date('Start date', '01/10/2026'); date('End date', '15/12/2026');
+    fireEvent.click(screen.getByRole('button', { name: 'Add module' }));
+    await waitFor(() => expect(api.injectFreeCourseIntoGroup).toHaveBeenCalledOnce());
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Add module' })).toBeEnabled());
+    expect(screen.getByRole('combobox', { name: 'Start date' })).toHaveValue('01/10/2026');
+    expect(screen.getByRole('combobox', { name: 'End date' })).toHaveValue('15/12/2026');
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Convert to programme' }));
+    expect(screen.getByRole('combobox', { name: 'Start date' })).toHaveValue('');
+    expect(screen.getByRole('combobox', { name: 'End date' })).toHaveValue('');
+  });
+});
 
 describe('Free Course library loading', () => {
   it.each([false, true])('opens Module Builder from the catalogue (embedded=%s) and returns to its search', async embedded => {

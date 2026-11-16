@@ -4017,7 +4017,7 @@ export function fetchEnglandHolidays(signal?: AbortSignal, options: { skipCache?
 // `fetchCurriculumModules` applies. Nothing that reads this endpoint renders
 // those titles; the module workspace derives its own from the authored week
 // structure. A caller that needs them must take the full response.
-export function fetchCurriculumOverview(signal?: AbortSignal, options: { compact?: boolean; skipCache?: boolean; revalidate?: boolean; timeoutMs?: number; visibility?: 'operational' | 'all' } = {}): Promise<CurriculumOverview> {
+export function fetchCurriculumOverview(signal?: AbortSignal, options: { compact?: boolean; skipCache?: boolean; revalidate?: boolean; timeoutMs?: number; visibility?: 'operational' | 'all'; learnerSource?: 'profiles' } = {}): Promise<CurriculumOverview> {
   // Capped so a slow backend fails into its own error+Retry banner instead of
   // hanging on the browser's multi-minute default. 90s, not 30s: a forced rebuild
   // is ~13s on its own, and behind the browser's six-per-host queue on a busy
@@ -4025,6 +4025,7 @@ export function fetchCurriculumOverview(signal?: AbortSignal, options: { compact
   const query = new URLSearchParams();
   if (options.compact) query.set('compact', 'true');
   if (options.visibility === 'all') query.set('visibility', 'all');
+  if (options.learnerSource) query.set('learner_source', options.learnerSource);
   const suffix = query.toString() ? `?${query.toString()}` : '';
   return fetchJson<CurriculumOverview>(`/curriculum/overview/${suffix}`, { signal, skipCache: options.skipCache, revalidate: options.revalidate, timeoutMs: options.timeoutMs ?? 90000 });
 }
@@ -4955,6 +4956,9 @@ export interface ConvertFreeCourseInput {
   mode: 'clone' | 'move';
   /** The EXISTING group the course is injected into as a new module. */
   groupId: string;
+  /** Explicit module dates; never default to the cohort's start date. */
+  startDate: string;
+  endDate: string;
 }
 
 export interface ConvertFreeCourseResult {

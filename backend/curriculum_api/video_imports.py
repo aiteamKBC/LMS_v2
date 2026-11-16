@@ -262,6 +262,14 @@ def process(import_id, file_obj=None, *, session_lease_id=None):
             from .session_bunny import transfer_recording
             transfer_recording(asset, lease_id=session_lease_id)
             return asset
+        from .video_dedup import upload_owner, reuse_owner
+        owner = upload_owner(asset, file_obj)
+        # Existing duplicate copies remain intact. New imports share the owner's
+        # copy, and a shared reference always follows its owner's upload lease.
+        if owner.pk != asset.pk and (not asset.video_id or asset.video_id == owner.video_id):
+            reuse_owner(asset, owner, process=process, client=BunnyStream(asset.library_id),
+                        matches_current_source=_matches_current_source, file_obj=file_obj)
+            return asset
         if (asset.scope.get('free_course_module_id') and not asset.video_id
                 and asset.scope.get('collection_name') != FREE_COURSE_COLLECTION):
             # Pending work from the earlier course-name route must use the

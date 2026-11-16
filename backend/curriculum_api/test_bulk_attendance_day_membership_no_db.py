@@ -2,10 +2,8 @@
 import ast
 from datetime import date, datetime, time, timedelta
 from pathlib import Path
-from types import ModuleType, SimpleNamespace
-import sys
+from types import SimpleNamespace
 import unittest
-from unittest.mock import patch
 from zoneinfo import ZoneInfo
 
 
@@ -53,21 +51,17 @@ class DayMembershipTests(unittest.TestCase):
                              for index, moment in enumerate(moments)])
         registers = Query([{'occurrence_id': index, 'learner_profile_id': index,
                             'attendance_status': None if index == 2 else 'present'} for index in range(4)])
-        profiles = Query([{'id': index, 'aptem_id': str(300 + index)} for index in range(4)])
         namespace = {
             'datetime': datetime, 'time': time, 'timedelta': timedelta,
             'timezone': SimpleNamespace(get_current_timezone=lambda: zone,
                                         make_aware=lambda moment, tz: moment.replace(tzinfo=tz)),
             'LiveSessionOccurrence': SimpleNamespace(objects=occurrences),
             'LiveSessionLearnerAttendance': SimpleNamespace(objects=registers),
-            'LearnerProfile': SimpleNamespace(objects=profiles),
+            'aptem_ids_by_profile': lambda ids: {key: str(300 + key) for key in ids},
         }
         exec(compile(ast.Module(body=[function], type_ignores=[]), str(source), 'exec'), namespace)
-        coach = ModuleType('coach_api.views')
-        coach.resolve_effective_aptem_ids = lambda rows: ({row.id: row.aptem_id for row in rows}, [])
-        with patch.dict(sys.modules, {'coach_api.views': coach}):
-            self.assertEqual(namespace['read_live_day_learner_ids'](date(2026, 10, 25)), {'301', '302'})
-            self.assertEqual(namespace['read_live_day_learner_ids'](date(2020, 1, 2)), set())
+        self.assertEqual(namespace['read_live_day_learner_ids'](date(2026, 10, 25)), {'301', '302'})
+        self.assertEqual(namespace['read_live_day_learner_ids'](date(2020, 1, 2)), set())
 
 
 if __name__ == '__main__':

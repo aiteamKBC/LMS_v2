@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, render, renderHook, screen, waitFor, within } from '@testing-library/react';
 import { beforeEach, expect, it, vi } from 'vitest';
 import type { ReactNode } from 'react';
 import type { CurriculumOverview } from '@/lib/curriculumApi';
@@ -50,7 +50,7 @@ vi.mock('@/components/feature/WorkspaceShell', () => ({
 
 import AttendancePage from './page';
 import { resetKbcRecentCache } from './kbcRecentCache';
-import { resetBulkAttendanceDataCache } from '@/hooks/useBulkAttendanceData';
+import { resetBulkAttendanceDataCache, useBulkAttendanceData } from '@/hooks/useBulkAttendanceData';
 
 const overview = {
   programmes: [{ id: 'P1', name: 'Engineering' }],
@@ -88,6 +88,90 @@ beforeEach(() => {
   mocks.liveDayRecords.mockResolvedValue([]);
   mocks.liveMonthRecords.mockResolvedValue({ occurrences: [], records: [] });
   mocks.kbcMonthRecords.mockResolvedValue([]);
+});
+
+it('keeps the learner source on both filter reads when the compact overview fails', async () => {
+  mocks.overview.mockRejectedValueOnce(new Error('Compact unavailable')).mockResolvedValue(overview);
+  const { result } = renderHook(() => useBulkAttendanceData());
+  await waitFor(() => expect(result.current.filtersLoading || result.current.loading).toBe(false));
+  expect(mocks.overview).toHaveBeenNthCalledWith(1, expect.any(AbortSignal), {
+    compact: true, visibility: 'all', learnerSource: 'profiles',
+  });
+  expect(mocks.overview).toHaveBeenNthCalledWith(2, expect.any(AbortSignal), {
+    visibility: 'all', learnerSource: 'profiles',
+  });
+  expect(result.current.learners).toHaveLength(directory.length);
+  expect(result.current.error).toBeNull();
+});
+
+it('uses profile placement keys when programme and group names are duplicated', async () => {
+  mocks.overview.mockResolvedValue({
+    ...overview,
+    programmes: [{ id: 'P1', name: 'Engineering' }, { id: 'P2', name: 'Engineering' }],
+    cohorts: [
+      { id: 'C1', name: 'Autumn', programmeId: 'P1', endDate: '2099-01-01' },
+      { id: 'C2', name: 'Spring', programmeId: 'P2', endDate: '2099-02-01' },
+    ],
+    groups: [
+      { id: 'G1', name: 'Group A', cohortId: 'C1' },
+      { id: 'G2', name: 'Group A', cohortId: 'C2' },
+    ],
+  });
+  mocks.directory.mockResolvedValue({ learners: [{
+    ...directory[0], profileId: '91', programmeId: 'P2', cohortId: 'C2', groupId: 'G2',
+    group: 'Group A', endDate: '2027-03-01', statusSource: 'learner', attendanceMode: 'lazy',
+  }], warnings: [] });
+  const { result } = renderHook(() => useBulkAttendanceData());
+  await waitFor(() => expect(result.current.filtersLoading || result.current.loading).toBe(false));
+  expect(result.current.learners[0]).toMatchObject({
+    id: 'kbc:301', kbcId: '301', curriculumId: '91',
+    programmeId: 'P2', cohortId: 'C2', groupId: 'G2',
+    endDate: '2027-03-01', attendanceMode: 'lazy',
+  });
+  expect(mocks.roster).not.toHaveBeenCalled();
+});
+
+it('preserves explicitly empty profile placements and status instead of guessing from legacy labels', async () => {
+  mocks.overview.mockResolvedValue({
+    ...overview, groups: [{ id: 'G1', name: 'Group A', cohortId: 'C1' }],
+  });
+  mocks.directory.mockResolvedValue({ learners: [{
+    ...directory[0], profileId: '91', programmeId: '', cohortId: '', groupId: '',
+    group: 'Group A', status: '', kbcStatus: 'Completed', endDate: '', statusSource: 'learner',
+  }], warnings: [] });
+  const { result } = renderHook(() => useBulkAttendanceData());
+  await waitFor(() => expect(result.current.filtersLoading || result.current.loading).toBe(false));
+  expect(result.current.learners[0]).toMatchObject({
+    programmeId: '', cohortId: '', groupId: '', status: '', endDate: '',
+  });
+});
+
+it('shows the profile cohort while keeping Aptem history and saved record keys', async () => {
+  mocks.directory.mockResolvedValue({ learners: [{
+    ...directory[0], profileId: '91', programmeId: 'P1', cohortId: 'C1', groupId: '',
+    statusSource: 'learner',
+  }], warnings: [] });
+  const record = {
+    recordKey: 'live:7', learnerId: '301', sessionDate: '2026-10-14',
+    moduleName: 'Saved Module', lectureName: 'Saved lecture', attendance: 'present', source: 'live',
+  };
+  mocks.kbcRecent.mockResolvedValue({ recent: { '301': [record] }, warnings: [] });
+  mocks.kbcHistory.mockResolvedValue({ records: [record], warnings: [] });
+  render(<AttendancePage />);
+  expect((await screen.findAllByText('Autumn'))[0]).toBeVisible();
+  expect((await screen.findAllByText('Saved Module'))[0]).toBeVisible();
+  fireEvent.click(screen.getByRole('button', { name: 'View details for Alex Example' }));
+  await waitFor(() => expect(mocks.kbcHistory).toHaveBeenCalledWith(
+    '301', expect.any(AbortSignal), { source: 'all', email: 'alex@example.invalid' },
+  ));
+  const dialog = await screen.findByRole('dialog', { name: 'Alex Example' });
+  expect(await within(dialog).findByText('Saved lecture')).toBeVisible();
+  expect(mocks.save).not.toHaveBeenCalled();
+  fireEvent.click(within(dialog).getByRole('button', { name: 'Change present to absent for Saved lecture' }));
+  await act(async () => {
+    fireEvent.click(within(dialog).getByRole('button', { name: /^Save$/ }));
+  });
+  expect(mocks.save).toHaveBeenCalledWith([{ source: 'live', recordKey: 'live:7', attendance: 'absent' }]);
 });
 
 it('shows recording completion separately from waiting in Last 4 and learner details', async () => {
