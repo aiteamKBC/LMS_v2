@@ -1371,24 +1371,35 @@ it.each(['commercial', 'apprenticeship'])('restores a multi-day %s reading draft
   expect(startTimeTracking).not.toHaveBeenCalled();
 });
 
-it('offers recovery inside the reflection popup and preserves the entered duration after an offline save', async () => {
+it.each(['commercial', 'apprenticeship'].flatMap(kind =>
+  [false, true].map(pendingStart => ({ kind, pendingStart })),
+))('offers recovery inside the reflection popup and preserves the entered duration after an offline save ($kind, pending start: $pendingStart)', async ({ kind, pendingStart }) => {
   session.outsideWorkingHours = false;
   const persistent = { sessionId: 'OFFLINE', trackingToken: 'original-token', startedAt: new Date().toISOString(),
     countingMode: 'visible_page' as const, persistent: true };
-  vi.mocked(startTimeTracking).mockResolvedValue(persistent);
+  let finishStart!: (value: typeof persistent) => void;
+  vi.mocked(startTimeTracking).mockReturnValue(pendingStart
+    ? new Promise(resolve => { finishStart = resolve; })
+    : Promise.resolve(persistent));
   vi.mocked(checkpointTimeTracking).mockRejectedValueOnce(new Error('Connection lost. Your draft is kept.'))
     .mockImplementation(async value => ({ ...value, persistent: true, savedSeconds: 300 }));
   vi.mocked(fetchLearnerDetail).mockResolvedValue({ ...detail(), components: [{ ...first, reflectionRequired: true }] } as unknown as LearnerDetail);
-  mount();
+  mount('C1', kind);
   fireEvent.change(await screen.findByLabelText('Minutes spent'), { target: { value: '20' } });
   fireEvent.click(screen.getByRole('button', { name: 'Finish' }));
   const dialog = await screen.findByRole('dialog', { name: 'Do you want to complete a reflection?' });
   fireEvent.click(within(dialog).getByRole('button', { name: 'No, finish without reflection' }));
   fireEvent.click(await screen.findByRole('button', { name: 'Confirm time' }));
-  fireEvent.click(await within(dialog).findByRole('button', { name: 'Restore saved time' }));
+  if (pendingStart) await act(async () => { finishStart(persistent); });
+  const restore = await within(dialog).findByRole('button', { name: 'Restore saved time' });
+  await waitFor(() => expect(restore).toBeEnabled());
+  expect(JSON.parse(localStorage.getItem(`learner_activity_timer:v1:${kind}:1:C1`)!)).toMatchObject({
+    session: { sessionId: 'OFFLINE', trackingToken: 'original-token' },
+  });
+  fireEvent.click(restore);
   await screen.findByText(/Your time has been restored/);
   fireEvent.click(within(dialog).getByRole('button', { name: 'No, finish without reflection' }));
-  await waitFor(() => expect(submitComponentProgress).toHaveBeenCalledWith('C1', 'apprenticeship', '1', expect.objectContaining({
+  await waitFor(() => expect(submitComponentProgress).toHaveBeenCalledWith('C1', kind, '1', expect.objectContaining({
     trackingToken: 'original-token', timeTakenSeconds: 1200, timeEntrySource: 'input', skipReflection: true,
   })));
   expect(startTimeTracking).toHaveBeenCalledTimes(1);

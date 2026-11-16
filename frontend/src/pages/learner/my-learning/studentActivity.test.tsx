@@ -950,7 +950,9 @@ describe('subject months, weeks and completion', () => {
     expect(screen.queryByRole('button', { name: 'Finish' })).not.toBeInTheDocument();
     expect(requests.mock.calls.filter(([, options]) => options?.method === 'POST')).toHaveLength(2);
     fireEvent.click(screen.getByRole('button', { name: 'All subjects' }));
-    expect(screen.getByText('2 of 3 completed')).toBeInTheDocument();
+    expect(screen.getByRole('region', { name: 'Previous learning progress' })).toHaveTextContent('2 of 3 previous activities completed');
+    expect(screen.queryByText('2 of 3 completed')).not.toBeInTheDocument();
+    expect(screen.getByRole('progressbar', { name: 'Leadership KSBs achieved' })).not.toHaveAttribute('aria-valuenow');
   });
 
   it('keeps progress unchanged on a failed submit and retries the same attempt', async () => {
