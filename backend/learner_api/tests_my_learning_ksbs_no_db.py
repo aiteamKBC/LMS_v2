@@ -58,19 +58,27 @@ class MyLearningKsbTests(SimpleTestCase):
         })
         self.assertEqual(result, {'completed': 1, 'total': 3, 'percent': 33.33, 'status': 'ready'})
 
-    def test_batch_read_preserves_inline_precedence_and_scopes_legacy_codes_to_owned_records(self):
-        rows = [dict(component_id='C1', inline_mappings=[{'code': 'K1'}, {'code': 'K1'}],
-                     normalized_mappings=[{'code': 'STALE'}]),
-                dict(component_id='C2', inline_mappings=[], normalized_mappings=[{'code': 'S1'}])]
+    def test_batch_read_uses_normalized_schema_and_scopes_historical_codes_to_owned_records(self):
+        rows = [dict(component_id='C1', normalized_mappings=[{'code': 'STALE'}]),
+                dict(component_id='C2', normalized_mappings=[{'code': 'S1'}])]
         lineage = {('50', 'material:7'): {'10'}, ('51', 'quiz:7'): {'11'}}
         with patch.object(ksbs.canonical, 'query', side_effect=[rows, [
                 {'id': 10, 'codes': ['K2']}, {'id': 11, 'codes': ['B1']} ]]) as query, \
                 patch.object(ksbs, 'and_not_excluded', return_value=' AND excluded_ksbs_are_ignored'):
-            result = ksbs.read_card_ksb_mappings({'id': 9}, native([component('C1'), component('C2')]), lineage)
+            result = ksbs.read_card_ksb_mappings({'id': 9}, native([
+                component('C1', ksbMappings=[{'code': 'K1'}, {'code': 'K1'}]),
+                component('C2'),
+            ]), lineage)
         self.assertEqual(result, {'C1': {'K1'}, 'C2': {'S1'},
             'catalogue:50:material:7': {'K2'}, 'catalogue:51:quiz:7': {'B1'}})
         self.assertEqual(query.call_count, 2)
-        self.assertEqual(query.call_args_list[0].args[1], [['C1', 'C2']])
+        component_statement, component_params = query.call_args_list[0].args
+        self.assertEqual(component_params, [['C1', 'C2']])
+        self.assertIn('JOIN curriculum.standard_ksbs standard_ksb', component_statement)
+        self.assertIn('standard_ksb.id = mapping.standard_ksb_id', component_statement)
+        self.assertIn("'code',standard_ksb.ksb_code", component_statement)
+        self.assertNotIn('c.ksb_mappings', component_statement)
+        self.assertNotIn('mapping.ksb_code', component_statement)
         statement, params = query.call_args_list[1].args
         self.assertIn('p.learner_id=%s', statement)
         self.assertIn('p.deleted_at IS NULL', statement)

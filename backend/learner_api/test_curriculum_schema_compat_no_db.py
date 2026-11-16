@@ -14,7 +14,7 @@ from curriculum_api.week_visibility import visible_child_sql
 from curriculum_api.schema_compat import inactive_condition
 
 from . import (active_users, attendance_lectures, components, dashboard_header, dashboard_metrics, dashboard_training,
-               learner_detail, my_learning, overview_week,
+               learner_detail, my_learning, my_learning_ksbs, overview_week,
                training_plan_dashboard)
 
 
@@ -106,7 +106,7 @@ class CanonicalKsbReadTests(SimpleTestCase):
     def test_priority_readers_do_not_query_removed_child_columns(self):
         source = '\n'.join(inspect.getsource(module) for module in (
             attendance_lectures, dashboard_header, dashboard_metrics, dashboard_training,
-            learner_detail, my_learning, overview_week,
+            learner_detail, my_learning, my_learning_ksbs, overview_week,
             training_plan_dashboard,
         ))
         forbidden = re.compile(

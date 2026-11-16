@@ -1,19 +1,20 @@
 """Narrow, read-only KSB point facts for the My Learning subject cards."""
 from django.db import connections
+from curriculum_api.canonical_read_sql import component_ksb_codes_sql
 from curriculum_api.learning_storage import read_sql
 from curriculum_api.week_visibility import visible_child_sql
 
 from . import canonical_learning as canonical
 from .dashboard_metrics import point_codes, ratio, unavailable
 from .ksb_exclusions import and_not_excluded
-from .learner_detail import _component_ksb_items
 
 
 def read_card_ksb_mappings(owner, native, record_ids):
     """Read codes in batches within the card's existing assignment/lineage scope.
 
-    Inline mappings take precedence over normalized mappings, as in learner-
-    detail. Historical codes come only from this learner's exact progress rows.
+    Mappings already present in the native projection take precedence over a
+    normalized lookup. Historical codes come only from this learner's exact
+    progress rows.
     """
     components = [*native.get('components', []), *native.get('retiredQuizComponents', [])]
     facts = {c['componentId']: point_codes(c['ksbMappings']) for c in components
@@ -22,16 +23,13 @@ def read_card_ksb_mappings(owner, native, record_ids):
     connection = connections['enrolment']
     if component_ids:
         rows = canonical.query(read_sql(f'''
-            SELECT c.id AS component_id,c.ksb_mappings AS inline_mappings,
-                coalesce((SELECT jsonb_agg(jsonb_build_object('code',m.ksb_code))
-                    FROM curriculum.ksb_mappings m WHERE m.component_id=c.id
-                    AND {visible_child_sql('m')}),'[]'::jsonb) AS normalized_mappings
+            SELECT c.id AS component_id,
+                {component_ksb_codes_sql('c')} AS normalized_mappings
             FROM curriculum.components c
             WHERE c.id=ANY(%s) AND {visible_child_sql('c')}
         ''', connection), [component_ids])
         for row in rows:
-            inline = _component_ksb_items(row['inline_mappings'])
-            facts[row['component_id']] = point_codes(inline or row['normalized_mappings'])
+            facts.setdefault(row['component_id'], point_codes(row['normalized_mappings']))
 
     owned_ids = sorted({int(record_id) for ids in record_ids.values() for record_id in ids
                         if str(record_id).isdigit()})
