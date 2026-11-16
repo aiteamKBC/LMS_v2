@@ -65,7 +65,7 @@ export default function OverviewKpis({ records, actions, forms, availability, on
           hint={availability.feedback ? 'Free-text comments never change a RAG status' : 'Feedback response data is unavailable'}
           icon="ri-chat-3-line"
           accent="secondary"
-          to="/curriculum/quality-demo?view=feedbacks"
+          to="/engagement/feedbacks"
           linkLabel="View feedback"
         />
 
@@ -98,11 +98,10 @@ export default function OverviewKpis({ records, actions, forms, availability, on
           hint="Reported descriptively only — never banded"
           icon="ri-question-line"
           accent="secondary"
-          to="/curriculum/quality-demo?view=checks"
+          to="/curriculum/coaching-recordings/reviews"
           linkLabel="See quality checks"
         />
       </div>
     </section>
   );
 }
-

@@ -95,7 +95,6 @@ const MigratedReviewTemplates = lazyRoute(() => import("../pages/curriculum/revi
 const CurriculumDeliveryHub = lazyRoute(() => import("../pages/curriculum/hubs/page").then(module => ({ default: module.CurriculumDeliveryHub })));
 const CurriculumBulkAttendance = lazyRoute(() => import("../pages/curriculum/bulk-attendance/page"));
 const CurriculumQualityHub = lazyRoute(() => import("../pages/curriculum/hubs/page").then(module => ({ default: module.CurriculumQualityHub })));
-const CurriculumQualityDemo = lazyRoute(() => import("../pages/dashboard/page"));
 const CoachingQualityReviewsPage = lazyRoute(() => import("../pages/coaching-recordings/QualityReviewsPage"));
 const CoachingQualityFormsPage = lazyRoute(() => import("../pages/coaching-recordings/QualityFormsPage"));
 const CoachAuditTrailPage = lazyRoute(() => import("../pages/coach/audit-trail/page"));
@@ -1194,7 +1193,9 @@ const routes: RouteObject[] = [
   },
   {
     path: "/curriculum/quality-demo",
-    element: <CurriculumQualityDemo />,
+    // Kept as a compatibility URL for bookmarks, but the old mock dashboard
+    // is retired. Quality has one live workspace and one source of truth.
+    element: <Navigate to="/curriculum/quality" replace />,
   },
   {
     path: "/curriculum/module-builder",

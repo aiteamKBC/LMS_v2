@@ -132,7 +132,6 @@ export default function ExecutiveOverview() {
   }, [records]);
   const openAuditType = (formId: string) => {
     const params = new URLSearchParams({
-      view: "checks",
       type: formId,
       from: auditDateRange.from,
       to: auditDateRange.to,
@@ -140,7 +139,7 @@ export default function ExecutiveOverview() {
       status: "all",
     });
     setAuditTypesOpen(false);
-    navigate(`/curriculum/quality-demo?${params.toString()}`);
+    navigate(`/curriculum/coaching-recordings/reviews?${params.toString()}`);
   };
 
   if (loading) {
@@ -321,4 +320,3 @@ export default function ExecutiveOverview() {
     </div>
   );
 }
-

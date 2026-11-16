@@ -23,7 +23,7 @@ END = START + timedelta(hours=1)
 
 
 def record(**changes):
-    return SimpleNamespace(**{'event_key': 'mcr:1', 'learner_id': 1, 'review_template_id': 'mcm-template',
+    return SimpleNamespace(**{'event_key': 'mcr:1', 'learner_id': 1, 'learner_profile_id': 1, 'review_template_id': 'mcm-template',
         'scheduled_date': date(2026, 10, 20), 'scheduled_time': time(10), 'duration_minutes': 60,
         'status': 'scheduled', 'sync_state': 'synced', 'graph_event_id': 'graph-1', **changes})
 
@@ -176,7 +176,9 @@ class QualityEvidenceTests(SimpleTestCase):
     def test_migration_graph_and_cache_fields_match_without_connecting_to_a_database(self):
         from django.conf import settings
         from django.db.migrations.loader import MigrationLoader
-        with override_settings(MIGRATION_MODULES={**settings.MIGRATION_MODULES, 'coach_api': 'coach_api.migrations'}):
+        with override_settings(MIGRATION_MODULES={**settings.MIGRATION_MODULES,
+                                                   'coach_api': 'coach_api.migrations',
+                                                   'curriculum_api': 'curriculum_api.migrations'}):
             loader = MigrationLoader(None)
             loader.graph.validate_consistency()
             state = loader.project_state([('coach_api', '0027_coaching_quality_suggestion')])

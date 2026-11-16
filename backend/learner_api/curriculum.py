@@ -25,7 +25,6 @@ import json
 
 from django.db import DatabaseError, connections
 from django.http import JsonResponse
-from django.views.decorators.csrf import csrf_exempt
 
 from curriculum_api.programme_name_sql import programme_name_sql
 from curriculum_api.week_visibility import visible_child_sql, visible_week_sql
@@ -339,35 +338,3 @@ def ksb_profile(request):
         return _error(f"Database error: {exc}", 502)
 
     return JsonResponse({"standard": standard, "results": results})
-
-
-@csrf_exempt
-def legacy_otjh(request):
-    """Best-effort OTJH lookup for older saved training-plan components."""
-    if request.method != "POST":
-        return _error("Method not allowed.", 405)
-    from .learner_detail import _otjh_by_legacy_title
-
-    try:
-        payload = json.loads(request.body or b"{}")
-    except json.JSONDecodeError:
-        return _error("Invalid JSON body.", 400)
-
-    items = payload.get("items")
-    if not isinstance(items, list):
-        return _error("items must be a list of {module, week, component}.", 400)
-
-    components_arg = [
-        {"module": it.get("module"), "week": it.get("week"), "component": it.get("component")}
-        for it in items if isinstance(it, dict)
-    ]
-
-    def run():
-        by_key = _otjh_by_legacy_title(components_arg)
-        return {
-            f"{mod}|{wk}|{comp}": otjh
-            for (mod, wk, comp), otjh in by_key.items()
-            if otjh is not None
-        }
-
-    return _guard(run)
