@@ -90,18 +90,27 @@ def sync_info(live_id):
 
 @contextmanager
 def people_sync_lock(live_id):
-    """One manual/automatic reader per series, across serving processes."""
+    """Keep one reader per series on the transaction pinned by the pooler.
+
+    Session advisory locks cannot be paired with an unlock through transaction
+    pooling. Commit/rollback owns this lock's release. Retain the existing
+    key instead of bypassing legacy owners during a rolling deployment.
+    """
     key = 'curriculum:teams-people:' + str(live_id)
-    with _diagnostic_phase('lock'), connection.cursor() as cursor:
-        cursor.execute('SELECT pg_try_advisory_lock(hashtextextended(%s, 0))', [key])
-        acquired = cursor.fetchone()[0]
-    if not acquired:
-        raise _state_error('lock_busy', 'People sync is already running for this meeting. Wait, then retry.')
-    try:
+    with _diagnostic_phase('lock'), transaction.atomic():
+        with connection.cursor() as cursor:
+            cursor.execute('SELECT pg_try_advisory_xact_lock(hashtextextended(%s, 0))', [key])
+            acquired = cursor.fetchone()[0]
+        if not acquired:
+            raise _state_error('lock_busy', 'People sync is already running for this meeting. Wait, then retry.')
         yield
-    finally:
-        with _diagnostic_phase('lock'), connection.cursor() as cursor:
-            cursor.execute('SELECT pg_advisory_unlock(hashtextextended(%s, 0))', [key])
+
+
+def _after_commit(phase, callback):
+    def publish():
+        with _diagnostic_phase(phase):
+            callback()
+    transaction.on_commit(publish)
 
 
 def read_people(series, read):
@@ -167,8 +176,8 @@ def _refresh_people(live_id):
                 v.update_authoring_rows(v.LIVE_SESSIONS_TABLE, 'id = %s', [live_id],
                                         {**updates, 'updated_at': datetime.now(timezone.utc)})
     if updates:
-        with _diagnostic_phase('invalidate_cache'):
-            v.invalidate_curriculum_cache(content_scope=series.get('module_catalogue_id'))
+        _after_commit('invalidate_cache',
+                      lambda: v.invalidate_curriculum_cache(content_scope=series.get('module_catalogue_id')))
     elevated = set(values['presenters'] + values['coOrganizers'])
     return {'form': {'organizerEmail': series['organizer_email'], **values,
                      'attendees': [email for email in values['attendees'] if email not in elevated]},
@@ -177,25 +186,29 @@ def _refresh_people(live_id):
 
 def refresh_people(live_id, *, automatic=False):
     """The button and existing session worker enter this same service."""
-    with people_sync_lock(live_id):
-        with _diagnostic_phase('cache_read'):
-            info = sync_info(live_id)
-        if automatic and time.time() - info.get('attemptEpoch', 0) < CHECK_SECONDS:
-            return {'skipped': True}
-        checked = datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z')
-        state = {'attemptEpoch': time.time(), 'checkedAt': checked, 'status': 'failed',
-                 'message': 'The latest Teams role check failed. Saved roles were kept; retry Sync.',
-                 'lastSuccessAt': info.get('lastSuccessAt')}
-        try:
+    state = None
+    try:
+        with people_sync_lock(live_id):
+            with _diagnostic_phase('cache_read'):
+                info = sync_info(live_id)
+            if automatic and time.time() - info.get('attemptEpoch', 0) < CHECK_SECONDS:
+                return {'skipped': True}
+            checked = datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z')
+            state = {'attemptEpoch': time.time(), 'checkedAt': checked, 'status': 'failed',
+                     'message': 'The latest Teams role check failed. Saved roles were kept; retry Sync.',
+                     'lastSuccessAt': info.get('lastSuccessAt')}
             result = _refresh_people(live_id)
-        except Exception:
+            _after_commit('cache_write', lambda: cache.set(f'teams-people-sync:{live_id}',
+                          {**state, 'status': 'synced', 'lastSuccessAt': checked,
+                           'message': 'People and roles are synced with Teams.'}, 86400))
+        return result
+    except Exception:
+        # Includes commit/publication failures after the reader returns. A
+        # refused lock or cooldown skip never creates a failed check receipt.
+        if state is not None:
             with _diagnostic_phase('cache_write'):
                 cache.set(f'teams-people-sync:{live_id}', state, 86400)
-            raise
-        with _diagnostic_phase('cache_write'):
-            cache.set(f'teams-people-sync:{live_id}', {**state, 'status': 'synced',
-                      'lastSuccessAt': checked, 'message': 'People and roles are synced with Teams.'}, 86400)
-        return result
+        raise
 
 
 def saved_people(live_id):
