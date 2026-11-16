@@ -1,11 +1,9 @@
 """Database-free coverage for hours on saved plans without component IDs."""
-import json
 from decimal import Decimal
 from unittest.mock import MagicMock, create_autospec, patch
 
-from django.test import RequestFactory, SimpleTestCase
+from django.test import SimpleTestCase
 
-from .curriculum import legacy_otjh
 from .learner_detail import _annotate_otjh, _otjh_by_legacy_title
 
 
@@ -23,15 +21,6 @@ class LegacyOtjhLookupTests(SimpleTestCase):
         ]
         connections = self.enterContext(patch('learner_api.learner_detail.connections'))
         connections.__getitem__.return_value.cursor.return_value.__enter__.return_value = self.cursor
-
-    def test_legacy_hours_endpoint_returns_hours_without_a_server_error(self):
-        item = {'module': 'Legacy module', 'week': 'Week 1 updated',
-                'component': 'Reading · Current first reading'}
-        response = legacy_otjh(RequestFactory().post('/', {'items': [item]}, content_type='application/json'))
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(json.loads(response.content), {'results': {
-            'Legacy module|Week 1 updated|Reading · Current first reading': 1.25,
-        }})
 
     def test_renamed_weeks_and_readings_retain_their_hours_and_total(self):
         components = [

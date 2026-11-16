@@ -30,7 +30,7 @@ export function cleanText(value: unknown, fallback = ''): string {
 }
 
 /**
- * Resolve the one record an identifier names, spending every id before any name.
+ * Resolve the one record an identifier names from canonical identity fields.
  *
  * Names are not unique in this data -- the same module title is authored in two
  * programmes, two cohorts are both called "October 2026" -- so a lookup that
@@ -39,10 +39,9 @@ export function cleanText(value: unknown, fallback = ''): string {
  * (the module catalogue sorts drafts first), not an identity one. That is how a
  * programme row reading 240h30m opened a namesake module totalling 24h32m.
  *
- * An id pass over the whole collection therefore has to fail completely before
- * the name pass starts. Matching by name at all stays deliberate: ids disagree
- * across the delivery and authoring sides, and older records reference their
- * parent by name, so the fallback is what keeps those resolvable.
+ * Names are display values, not identities. If an API payload has lost its
+ * canonical id, the caller must surface that data problem instead of opening a
+ * same-named record from another programme or cohort.
  */
 export function findByIdentifierThenName<T>(
   items: T[],
@@ -54,8 +53,7 @@ export function findByIdentifierThenName<T>(
   const key = normalise(identifier);
   if (!key) return undefined;
   const matches = (values: unknown[]) => values.map(normalise).filter(Boolean).includes(key);
-  return items.find(item => matches(identityValues(item)))
-    || items.find(item => matches(nameValues(item)));
+  return items.find(item => matches(identityValues(item)));
 }
 
 /**

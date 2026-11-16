@@ -1097,7 +1097,9 @@ function ModuleBuilderContent() {
 
   const catalogueModules = useMemo(() => {
     void storageVersion;
-    const remoteModules = modules.map(module => curriculumModuleToCatalogue(module));
+    const remoteModules = modules
+      .map(module => curriculumModuleToCatalogue(module))
+      .filter((module): module is ModuleCatalogueItem => Boolean(module));
     return buildMasterModuleList(remoteModules, [])
       .filter(module => (
         !hiddenModuleIds.has(module.catalogueId)

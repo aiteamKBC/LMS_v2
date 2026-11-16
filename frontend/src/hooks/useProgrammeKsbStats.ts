@@ -117,5 +117,8 @@ export function withProgrammeKsbStats<T extends Pick<CurriculumProgramme, 'id' |
     learnerKsbCodesStarted: found.learnerKsbCodesStarted,
     learnerKsbCodesComplete: found.learnerKsbCodesComplete,
     learnerKsbCodesTotal: found.learnerKsbCodesTotal,
+    learnerKsbAchievedCount: found.learnerKsbAchievedCount,
+    learnerKsbTargetCount: found.learnerKsbTargetCount,
+    learnerKsbAchievementPercentage: found.learnerKsbAchievementPercentage,
   };
 }

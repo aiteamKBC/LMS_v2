@@ -327,6 +327,9 @@ export interface CurriculumProgramme {
   learnerKsbCodesStarted?: number;
   learnerKsbCodesComplete?: number;
   learnerKsbCodesTotal?: number;
+  learnerKsbAchievedCount?: number;
+  learnerKsbTargetCount?: number;
+  learnerKsbAchievementPercentage?: number;
   learners: number;
   cohorts: number;
   groups?: number;
@@ -3409,6 +3412,9 @@ export interface ProgrammeKsbStats {
   learnerKsbCodesStarted: number;
   learnerKsbCodesComplete: number;
   learnerKsbCodesTotal: number;
+  learnerKsbAchievedCount: number;
+  learnerKsbTargetCount: number;
+  learnerKsbAchievementPercentage: number;
 }
 
 export function fetchProgrammeKsbStats(id: string, signal?: AbortSignal, options: { visibility?: 'all' | 'operational'; revalidate?: boolean } = {}): Promise<ProgrammeKsbStats> {
