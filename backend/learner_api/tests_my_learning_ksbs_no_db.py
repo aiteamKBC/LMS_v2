@@ -5,9 +5,10 @@ from django.test import SimpleTestCase
 
 from . import my_learning as learning
 from . import my_learning_ksbs as ksbs
-from .tests_my_learning_no_db import component, metadata, native
+from .tests_my_learning_no_db import component, fake_connections, metadata, native
 
 
+@patch.object(ksbs, 'connections', fake_connections())
 class MyLearningKsbTests(SimpleTestCase):
     def cards(self, content, mappings):
         meta = metadata()
