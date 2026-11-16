@@ -46,6 +46,7 @@ from .teams_weekly_calendar import calendar_groups, save_weekday_calendar, store
 from .teams_options_retry import microsoft_update_summary
 from .session_overrides import apply_session_overrides, override_clock, session_overrides
 from .session_artifact_placement import recording_matches_occurrence
+from .study_week_teams import prune_study_week_fillers
 from .attendance_identity import keep_directory_lookup, resolve_directory_accounts
 from .teams_calendar_checks import (CalendarMismatch, attendee_differences, attendees_already_match, calendar_targets, event_organizer_address,
                                     graph_calendar_time, local_calendar_recurrence, publish_attendees, remove_attendees_silently,
@@ -3774,8 +3775,14 @@ def curriculum_teams_meeting(request):
             meeting_options,
             missing=missing_occurrences,
         )
-        # Never deleted: the weekly filler a gap leaves behind is reported and
-        # left on Teams. See flag_teams_occurrence_leftovers.
+        pruned, holiday_warnings = prune_study_week_fillers(
+            microsoft_graph_request, owner_key, event_id, clean_str(payload.get('moduleCatalogueId')),
+            targets, graph_settings,
+        )
+        stale_deletions = [item for item in stale_deletions if item.get('instance_id') not in pruned]
+        shift_warnings.extend(holiday_warnings)
+        # Legacy/unproven leftovers stay reported on Teams. Only the opted-in,
+        # verified holiday padding above may be removed.
         leftover_slots = flag_teams_occurrence_leftovers(
             stale_deletions,
             live_session_id=clean_str(payload.get('liveSessionId')),
@@ -4565,6 +4572,14 @@ def curriculum_teams_meeting_schedule(request, live_session_id):
         warnings, recreated_details = refresh_standalone_occurrence_options(
             owner_key, event_id, current_occurrences, invited_people, meeting_options, groups=option_groups,
         )
+
+    if repeat != 'none':
+        pruned, holiday_warnings = prune_study_week_fillers(
+            microsoft_graph_request, owner_key, event_id, clean_str(series.get('module_catalogue_id')),
+            targets, graph_settings, current_occurrences, allow_delete=not people_only,
+        )
+        stale_deletions = [item for item in stale_deletions if item.get('instance_id') not in pruned]
+        warnings.extend(holiday_warnings)
 
     join_url = clean_str((event.get('onlineMeeting') or {}).get('joinUrl')) or clean_str(series.get('join_url'))
     # Only the changed (or still unapplied) option groups, and no call at all
@@ -12308,6 +12323,8 @@ def module_live_session_clock(module_row, start_time='', duration_minutes=0, *, 
     Component settings from imports and old defaults are not schedule overrides.
     Explicit per-session reschedules and per-weekday slots still take precedence.
     This only resolves values for readers; it performs no storage or Graph writes.
+    Explicit study weeks stamp their automatic slots before calling readers;
+    a manually dated component without such a slot keeps its authored clock.
     """
     slot_start, slot_end, slot_duration = module_session_clock(module_row, group_row, session_date)
     if override_clock(module_row, session_date):
@@ -12317,7 +12334,8 @@ def module_live_session_clock(module_row, start_time='', duration_minutes=0, *, 
         for row in (module_row, group_row)
         for key in ('session_start_time', 'session_end_time')
     )
-    if has_schedule and not booked:
+    manual_study_clock = module_week_boundary_mode(module_row) == 'calendar' and bool(clean_str(start_time))
+    if has_schedule and not booked and not manual_study_clock:
         return slot_start, slot_end, slot_duration
     start = clean_str(start_time) or slot_start
     duration = parse_int(duration_minutes, 0) or slot_duration
@@ -14574,7 +14592,7 @@ COMPACT_MODULE_LIST_FIELDS = frozenset({
     # Status badges and the delivery label.
     'status', 'authoringStatus', 'deliveryStatus',
     # Read into the module edit form and saved back out of it. Not display-only.
-    'startDate', 'endDate', 'weeklySchedule', 'scheduleMode', 'sessionHolidays', 'deliveryWeeks', 'weekStartsOn', 'calendarPolicy',
+    'startDate', 'endDate', 'weeklySchedule', 'scheduleMode', 'sessionHolidays', 'deliveryWeeks', 'weekStartsOn', 'weekBoundaryMode', 'calendarPolicy',
     'weekDays', 'startTime', 'endTime', 'notes', 'color', 'coverImage',
     # Staffing shown on the row.
     'tutor', 'coach',
@@ -20936,7 +20954,8 @@ def apply_module_session_plan_to_weeks(module, group_row, weeks, *, holidays=Non
                 planned_day = clean_str(planned.get('day'))
                 planned_rescheduled = bool(planned.get('rescheduled'))
                 slot_time, _slot_end, slot_duration = module_live_session_clock(
-                    module, settings.get('sessionTime'), settings.get('durationMinutes'),
+                    module, '' if module_week_boundary_mode(module) else settings.get('sessionTime'),
+                    0 if module_week_boundary_mode(module) else settings.get('durationMinutes'),
                     booked=booked_at_microsoft, group_row=group_row, session_date=session_date,
                 )
                 planned_settings = {
@@ -25899,7 +25918,7 @@ PROGRAMME_WORKSPACE_MODULE_FIELDS = frozenset({
     'programmeId', 'programme', 'cohortId', 'cohort', 'groupId', 'group',
     'weeks', 'sessionsNumber', 'ksbCount', 'lessons', 'quizzes', 'assignments',
     'status', 'authoringStatus', 'deliveryStatus', 'isProgrammeDeleted',
-    'startDate', 'endDate', 'weeklySchedule', 'scheduleMode', 'sessionHolidays', 'deliveryWeeks', 'weekStartsOn', 'calendarPolicy',
+    'startDate', 'endDate', 'weeklySchedule', 'scheduleMode', 'sessionHolidays', 'deliveryWeeks', 'weekStartsOn', 'weekBoundaryMode', 'calendarPolicy',
     'weekDays', 'startTime', 'endTime', 'notes', 'color', 'coverImage',
     'tutor', 'coach', 'ksbCodes', 'lastUpdated', 'weekStructureOutline',
 })
@@ -33310,7 +33329,10 @@ def curriculum_module_detail(request, identifier):
                 result = get_authoring_structure_payload(module_catalogue_id)
                 result['qualityChecklist'] = module_authoring_quality_check(result)[0]
             else:
-                result = save_module_authoring_structure(module_catalogue_id, structure_payload)
+                try:
+                    result = save_module_authoring_structure(module_catalogue_id, structure_payload)
+                except ModuleAuthoringValidationError as exc:
+                    return json_error(str(exc), fields=list(dict.fromkeys(error['path'] for error in exc.errors)), validationErrors=exc.errors)
             announce_saved(module_catalogue_id)
         # A tutor change made straight against one module has to mirror onto the
         # raise the assignment notification, exactly as the tree save and the

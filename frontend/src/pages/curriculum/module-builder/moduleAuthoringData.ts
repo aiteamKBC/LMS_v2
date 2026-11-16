@@ -596,7 +596,8 @@ function liveSessionClock(
   planned?: ModuleWeekSessionPlan['sessions'][number],
 ): { startTime: string; durationMinutes: number } {
   const booked = Boolean(settings.teamsLiveSessionId && Number(settings.teamsSessionNumber || 0) > 0);
-  if (!booked && (!settings.sessionRescheduled || planned?.rescheduled)) {
+  const manualStudyClock = module.weekBoundaryMode === 'calendar' && !planned && Boolean(trimmed(settings.sessionTime));
+  if (!booked && !manualStudyClock && (!settings.sessionRescheduled || planned?.rescheduled)) {
     const day = new Date(`${date}T12:00:00Z`);
     const weekday = !Number.isNaN(day.getTime())
       ? new Intl.DateTimeFormat('en-US', { weekday: 'long', timeZone: 'UTC' }).format(day)

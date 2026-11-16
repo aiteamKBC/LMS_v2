@@ -340,20 +340,26 @@ def save_weekday_calendar(payload, graph_settings, series=None):
             else:
                 option_failures.extend(option_warnings)
             if day_payload['repeat'] != 'none':
+                stale = []
                 if not combined.get('peopleOnly') and not dates_already_verified:
                     # The third value is the occurrences the shift PROVED removable:
                     # here, with no stored rows handed in, only the recurrence's own
                     # weekly filler. A week this calendar actually owns is never in
                     # it -- see `vacated_occurrence_keys` / `tracked_occurrence_keys`.
                     shift_warnings, _, stale = v.apply_teams_occurrence_shifts(owner, quote(event_id, safe=''), body['subject'], targets, invited_people)
-                    # Reported, never deleted: see flag_teams_occurrence_leftovers.
-                    leftover_slots.extend(v.flag_teams_occurrence_leftovers(
-                        stale,
-                        live_session_id=v.clean_str(body.get('liveSessionId')),
-                        module_catalogue_id=v.clean_str(combined.get('moduleCatalogueId')),
-                        source='weekday_series_cleanup',
-                    ))
                     warnings.extend(shift_warnings)
+                pruned, holiday_warnings = v.prune_study_week_fillers(
+                    microsoft_graph_request, owner, event_id,
+                    v.clean_str(series.get('module_catalogue_id') or combined.get('moduleCatalogueId')),
+                    targets, graph_settings, stored_rows, allow_delete=not people_only,
+                )
+                warnings.extend(holiday_warnings)
+                leftover_slots.extend(v.flag_teams_occurrence_leftovers(
+                    [item for item in stale if item.get('instance_id') not in pruned],
+                    live_session_id=v.clean_str(body.get('liveSessionId')),
+                    module_catalogue_id=v.clean_str(combined.get('moduleCatalogueId')),
+                    source='weekday_series_cleanup',
+                ))
                 query = urlencode({'startDateTime': (min(item['start'] for item in targets) - timedelta(days=7)).isoformat(),
                                    'endDateTime': (max(item['end'] for item in targets) + timedelta(days=7)).isoformat(), '$top': 200})
                 instances = (microsoft_graph_request('GET', f'users/{owner}/events/{quote(event_id, safe="")}/instances?{query}') or {}).get('value') or []

@@ -17,7 +17,8 @@ const plan: ModuleWeekSessionPlan = {
 function moduleDraft() {
   return { ...createLocalModuleDraft({ title: 'Synthetic module', programme: 'Synthetic programme', description: '', weeks: 3,
     status: 'draft', startDate: '2026-11-19', endDate: '2026-12-06' }),
-    weekBoundaryMode: 'calendar' as const, weekStartsOn: 'Monday' };
+    weekBoundaryMode: 'calendar' as const, weekStartsOn: 'Monday',
+    weeklySchedule: [{ day: 'Thursday', startTime: '09:00', endTime: '10:00' }] };
 }
 
 describe('explicit study weeks', () => {

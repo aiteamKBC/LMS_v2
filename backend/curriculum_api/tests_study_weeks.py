@@ -2,6 +2,7 @@
 import copy
 from contextlib import ExitStack
 from types import SimpleNamespace
+from datetime import datetime, timezone
 import importlib
 from django.db import connection
 from unittest.mock import patch
@@ -9,6 +10,20 @@ from curriculum_api import views
 from curriculum_api.tests import CurriculumPersistenceTransactionHarness
 from coach_api.tests_support.persisted_fixtures import curriculum_session
 from curriculum_api.tests_module_weekly_schedule import GraphCalendar, GRAPH_SETTINGS
+
+
+class StudyWeekGraphCalendar(GraphCalendar):
+    """Graph's occurrence identity is mandatory proof before pruning padding."""
+    fail_delete = False
+
+    def __call__(self, *args, **kwargs):
+        if args[0] == 'DELETE' and self.fail_delete:
+            raise RuntimeError('Synthetic holiday cleanup failure')
+        result = super().__call__(*args, **kwargs)
+        for master_id, instances in self.instances.items():
+            for instance in instances:
+                instance.update(type='occurrence', seriesMasterId=master_id)
+        return result
 
 
 class StudyWeekPersistenceTests(CurriculumPersistenceTransactionHarness):
@@ -59,6 +74,78 @@ class StudyWeekPersistenceTests(CurriculumPersistenceTransactionHarness):
         self.assertEqual([c['title'] for c in after['weekStructure'][1]['components']], ['Independent reading', 'Optional workshop'])
         self.assertEqual(after['weekStructure'][1]['components'][1]['settings']['sessionDate'], '2026-09-17')
         self.assertEqual(after['weekStartsOn'], 'Monday')
+        row = views.authoring_module_exists(module['catalogueId'])
+        sessions = views.build_sessions_from_authoring_modules([row])
+        manual = next(session for session in sessions if session['title'] == 'Optional workshop')
+        self.assertEqual(manual['startTime'], '14:00')
+
+    def test_programme_workspace_edit_retains_the_explicit_week_layout(self):
+        module = self.create_delivery()
+        compact = views.programme_modules_workspace_payload({'flat': {'modules': [module]}})['flat']['modules'][0]
+        self.assertEqual(compact['weekBoundaryMode'], 'calendar')
+        self.assertEqual(compact['weekStartsOn'], 'Monday')
+        result = self.patch_json(f"/curriculum_api/curriculum/modules/{module['catalogueId']}/", {
+            'name': 'Renamed from programme workspace', 'weekStartsOn': compact['weekStartsOn'],
+            'weekBoundaryMode': compact['weekBoundaryMode'],
+        })
+        self.assertEqual(result.status_code, 200, result.content)
+        after = views.get_authoring_structure_payload(module['catalogueId'])
+        self.assertEqual(after['weekStartsOn'], 'Monday')
+        self.assertEqual(after['weekStructure'], module['weekStructure'])
+
+    def test_learner_materials_use_selected_study_windows_even_without_live_sessions(self):
+        from learner_api.builder_activity_dates import read_builder_activity_dates
+        from learner_api.my_learning import catalogue_module_rows
+        module = self.create_delivery()
+        weeks = copy.deepcopy(module['weekStructure'])
+        for index, week in enumerate(weeks):
+            week['components'].append({'id': f'COMP-STUDY-READ-{index}', 'type': 'lesson',
+                'title': 'Independent reading', 'settings': {}})
+        result = self.patch_json(f"/curriculum_api/curriculum/modules/{module['catalogueId']}/", {'weekStructure': weeks})
+        self.assertEqual(result.status_code, 200, result.content)
+        metadata = {}
+        with connection.cursor() as cursor:
+            direct = read_builder_activity_dates(cursor, [module['catalogueId']])
+            catalogue_module_rows(cursor, [module['catalogueId']], identity_metadata=metadata)
+            # My Learning reuses its catalogue metadata, with components loaded
+            # by its existing component reader. Both paths must own the same weeks.
+            metadata.pop('schedule_components')
+            cursor.execute('SELECT id,module_catalogue_id,week_id,title,type,settings_json FROM curriculum.components WHERE module_catalogue_id=%s', [module['catalogueId']])
+            components = cursor.fetchall()
+            metadata['schedule_components'] = components
+            reused = read_builder_activity_dates(cursor, [module['catalogueId']], resolved_metadata=metadata)
+        for index, (start, end) in enumerate((('2026-09-10', '2026-09-13'),
+                ('2026-09-14', '2026-09-20'), ('2026-09-21', '2026-09-27'))):
+            for dates in (direct, reused):
+                placement = dates[f'COMP-STUDY-READ-{index}']
+                self.assertEqual(placement['date'], start)
+                self.assertEqual((placement['week_start'], placement['week_end']), (start, end))
+                self.assertEqual((placement['delivery_week']['start'], placement['delivery_week']['end']), (start, end))
+
+    def test_learner_training_slots_keep_week_identity_across_a_holiday_gap(self):
+        from learner_api.training_plan_dashboard import attach_curriculum_slots
+        module = self.create_delivery()
+        row = {**views.authoring_module_exists(module['catalogueId']), 'id': module['catalogueId']}
+        learner_module = {'id': row['id']}
+        week_metadata = {(row['id'], index + 1): {'id': week['id'], 'title': week['title'], 'learningOutcomes': []}
+                         for index, week in enumerate(module['weekStructure'])}
+        attach_curriculum_slots([row], {row['id']: learner_module}, {row['id']: 3}, week_metadata,
+                                strict=True, holiday_loader=lambda ids: {})
+        slots = learner_module['curriculumSlots']
+        self.assertTrue(slots)
+        for slot in slots:
+            self.assertEqual(slot['weekId'], module['weekStructure'][slot['weekNumber'] - 1]['id'])
+
+    def test_new_group_layout_still_inherits_changed_group_clocks(self):
+        group = views.fetch_group_row('GROUP-DATA-1')
+        module = self.create_delivery(scheduleMode='group', weeklySchedule=[], weekDays=group.get('session_week_day'), calendarPolicy=None)
+        response = self.patch_json('/curriculum_api/curriculum/groups/GROUP-DATA-1/', {'startTime': '13:00', 'endTime': '14:30'})
+        self.assertEqual(response.status_code, 200, response.content)
+        after = views.get_authoring_structure_payload(module['catalogueId'])
+        live = [component for week in after['weekStructure'] for component in week['components'] if component['type'] == 'live-session']
+        self.assertTrue(live)
+        self.assertTrue(all(component['settings']['sessionTime'] == '13:00' for component in live))
+        self.assertTrue(all(component['settings']['durationMinutes'] == 90 for component in live))
 
     def test_an_entirely_closed_module_does_not_fall_back_to_weekly_live_sessions(self):
         module = self.create_delivery(weeks=1, calendarPolicy={'country': 'GB', 'observePublicHolidays': False,
@@ -149,7 +236,7 @@ class StudyWeekPersistenceTests(CurriculumPersistenceTransactionHarness):
             self.assertEqual(response.status_code, 400, response.content)
             self.assertEqual(views.get_authoring_structure_payload(module['catalogueId']), before)
 
-    def test_mock_teams_create_and_update_keep_the_holiday_week_out_of_the_series(self):
+    def assert_teams_holiday_gap(self, series_mode, fail_first_cleanup=False):
         module = self.create_delivery(weeks=4, startDate='2027-03-01', calendarPolicy={
             'country': 'GB', 'observePublicHolidays': False,
             'manualHolidays': [{'label': 'Synthetic closure', 'startDate': '2027-03-10', 'endDate': '2027-03-10'}],
@@ -158,13 +245,16 @@ class StudyWeekPersistenceTests(CurriculumPersistenceTransactionHarness):
         plan = views.module_session_plan_for_weeks(row, 4, holidays=[])
         dates = [session['date'] for session in plan['sessions']]
         self.assertEqual(dates, ['2027-03-02', '2027-03-04', '2027-03-16', '2027-03-18', '2027-03-23', '2027-03-25'])
-        graph = GraphCalendar()
+        graph = StudyWeekGraphCalendar()
+        graph.fail_delete = fail_first_cleanup
         payload = {'title': 'Synthetic study weeks', 'moduleCatalogueId': module['catalogueId'],
                    'organizerEmail': 'tutor@example.com', 'attendees': ['learner@example.com'],
                    'startDateTimeUtc': dates[0] + 'T09:00:00Z', 'localStartDateTime': dates[0] + 'T09:00',
-                   'durationMinutes': 60, 'repeat': 'weekly', 'repeatOccurrences': len(dates), 'seriesMode': 'per_day',
+                   'durationMinutes': 60, 'repeat': 'weekly', 'repeatOccurrences': len(dates), 'seriesMode': series_mode,
                    'scheduledOccurrences': [{'sessionNumber': index + 1, 'startDateTimeUtc': day + 'T09:00:00Z', 'durationMinutes': 60} for index, day in enumerate(dates)]}
         with ExitStack() as stack:
+            clock = stack.enter_context(patch('curriculum_api.study_week_teams.datetime'))
+            clock.now.return_value = datetime(2026, 11, 16, tzinfo=timezone.utc)
             for target, kwargs in (
                 ('coach_api.views.microsoft_graph_request', {'side_effect': graph}),
                 ('coach_api.views.has_graph_credentials', {'return_value': True}),
@@ -173,7 +263,17 @@ class StudyWeekPersistenceTests(CurriculumPersistenceTransactionHarness):
             ):
                 stack.enter_context(patch(target, **kwargs))
             response = self.post_json('/curriculum_api/curriculum/teams-meetings/', payload)
-            self.assertEqual(response.status_code, 201, response.content)
+            if fail_first_cleanup:
+                self.assertEqual(response.status_code, 502, response.content)
+                self.assertTrue(all(not event.get('attendees') for event in graph.events.values()))
+                live_id = response.json()['liveSessionId']
+                masters_before_retry = len(graph.posts)
+                graph.fail_delete = False
+                response = self.patch_json(f'/curriculum_api/curriculum/teams-meetings/{live_id}/schedule/', payload)
+                self.assertEqual(response.status_code, 200, response.content)
+                self.assertEqual(len(graph.posts), masters_before_retry)
+            else:
+                self.assertEqual(response.status_code, 201, response.content)
             meeting = response.json()['meeting']
             occurrences = views.authoring_fetch_all(views.LIVE_SESSION_OCCURRENCES_TABLE, 'live_session_id = %s', [meeting['liveSessionId']], 'session_number')
             self.assertEqual([item['scheduled_start'].date().isoformat() for item in occurrences], dates)
@@ -185,3 +285,15 @@ class StudyWeekPersistenceTests(CurriculumPersistenceTransactionHarness):
             self.assertEqual(sorted(item['start']['dateTime'][:10] for group in graph.instances.values() for item in group), dates)
             after = views.get_authoring_structure_payload(module['catalogueId'])
             self.assertEqual(after['weekStructure'][1]['components'], [])
+
+    def test_mock_teams_create_and_update_keep_the_holiday_week_out_of_per_day_series(self):
+        self.assert_teams_holiday_gap('per_day')
+
+    def test_mock_teams_create_and_update_keep_the_holiday_week_out_of_a_shared_series(self):
+        self.assert_teams_holiday_gap('auto')
+
+    def test_per_day_cleanup_failure_keeps_invitations_pending_and_retries_same_masters(self):
+        self.assert_teams_holiday_gap('per_day', fail_first_cleanup=True)
+
+    def test_shared_cleanup_failure_keeps_invitations_pending_and_retries_same_master(self):
+        self.assert_teams_holiday_gap('auto', fail_first_cleanup=True)
