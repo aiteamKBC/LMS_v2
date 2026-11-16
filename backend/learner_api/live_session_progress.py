@@ -76,7 +76,9 @@ def project_live_credits(components, register, *, now=None):
     return result
 
 
-def read_live_credits(source, *, components=None, module_ids=None, register=None):
+def read_live_credits(
+        source, *, components=None, module_ids=None, register=None,
+        manual_context=None):
     from .attendance_lectures import lecture_register
     if components is None:
         module_ids = sorted(set(module_ids or []))
@@ -99,9 +101,11 @@ def read_live_credits(source, *, components=None, module_ids=None, register=None
     components = list(components)
     scope = sorted({c['moduleId'] for c in components if c.get('moduleId')
                     and str(c.get('type') or '').replace('-', '_') in {'live_session', 'recording_placeholder'}})
+    delivery_mode = None
     if scope:
         from .recorded_attendance import saved_delivery_mode
-        if saved_delivery_mode(getattr(source, 'pk', None) or source.id) == 'lazy':
+        delivery_mode = saved_delivery_mode(getattr(source, 'pk', None) or source.id)
+        if delivery_mode == 'lazy':
             from .recorded_session_progress import read_recorded_credits
             credits = read_recorded_credits(source, scope, register=register)
             return _with_completed_live_credits(source, components, credits)
@@ -109,9 +113,11 @@ def read_live_credits(source, *, components=None, module_ids=None, register=None
     if not live:
         return []
     if register is None:
-        register = lecture_register(source, module_ids=sorted({c['moduleId'] for c in live}), credit_projection=True)
+        register = lecture_register(
+            source, module_ids=sorted({c['moduleId'] for c in live}),
+            credit_projection=True, recorded_mode=delivery_mode)
     verified = projection_call('credit_projection', project_live_credits, live, register)
-    states, manual = read_manual_live_credits(source, live)
+    states, manual = read_manual_live_credits(source, live, context=manual_context)
     # A staff decision replaces the provider credit for the same component;
     # it must not add 2.5 hours on top of the existing two-hour Teams credit.
     credits = [credit for credit in verified
@@ -293,10 +299,11 @@ def read_catalogue_live_credits(source, components):
             if (credit['componentId'], credit['moduleId']) not in states] + manual
 
 
-def read_manual_live_credits(source, components):
+def read_manual_live_credits(source, components, *, context=None):
     from .manual_attendance_completion import read_manual_credit_evidence
     profile = _credit_profile(source)
-    return read_manual_credit_evidence(components, profile) if profile is not None else ({}, [])
+    return read_manual_credit_evidence(
+        components, profile, context=context) if profile is not None else ({}, [])
 
 
 def _credit_profile(source):

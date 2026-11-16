@@ -19,7 +19,7 @@ describe('Coach and tutor recordings entry points', () => {
     expect(screen.getAllByRole('link')).toHaveLength(3);
     expect(screen.getByRole('link', { name: /Coach Meetings & Recordings/ })).toHaveAttribute('href', '/curriculum/coaching-recordings');
     expect(screen.getByRole('link', { name: /Tutor Session Recordings/ })).toHaveAttribute('href', '/curriculum/recordings');
-    expect(screen.getByRole('link', { name: /Quality Assurance/ })).toHaveAttribute('href', '/curriculum/quality-demo');
+    expect(screen.getByRole('link', { name: /Quality Assurance/ })).toHaveAttribute('href', '/curriculum/quality');
   });
   it('keeps all recording destinations in the existing permissioned sidebar group', () => {
     const entry = curriculumNavItems.find(item => item.id === 'curriculum-coaching-recordings');

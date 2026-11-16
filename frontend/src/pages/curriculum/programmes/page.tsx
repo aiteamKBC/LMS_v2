@@ -1069,11 +1069,15 @@ function CurriculumProgrammesContent() {
               // work left is authoring its codes, not picking a different one.
               const ksbSourceIsEmpty = hasAppliedKsbSource && appliedSource.ksbCount < 1;
               const mappingCoverage = hasAppliedKsbSource && prog.ksbTotal > 0 ? Math.round((prog.ksbMapped / prog.ksbTotal) * 100) : 0;
-              // Learner-consumed KSB progress. Read straight off the programme
-              // payload, so unlike the design-mapping figure above it does not
-              // wait on the standards and cannot flicker to 0 mid-load.
-              const learnerKsbProgress = Math.max(0, Math.min(100, Math.round(prog.learnerKsbProgressPercentage || 0)));
+              // Learner-declared KSB achievement, hydrated from the programme
+              // stats response after the card itself has rendered.
+              const learnerKsbProgress = Math.max(0, Math.min(100, Math.round(prog.learnerKsbAchievementPercentage ?? prog.learnerKsbProgressPercentage ?? 0)));
               const learnerKsbLearnerCount = prog.learnerKsbLearnerCount || 0;
+              const learnerKsbAchievedCount = prog.learnerKsbAchievedCount || 0;
+              const learnerKsbTargetCount = prog.learnerKsbTargetCount || ((prog.learnerKsbCodesTotal || 0) * learnerKsbLearnerCount);
+              const learnerKsbMappedCount = prog.learnerKsbCodesTotal || 0;
+              const learnerKsbStandardCount = prog.ksbTotal || 0;
+              const learnerKsbUnmappedCount = Math.max(learnerKsbStandardCount - learnerKsbMappedCount, 0);
               const hasLearnerKsbDenominator = (prog.learnerKsbExpectedWeight || 0) > 0 && learnerKsbLearnerCount > 0;
               const cardColor = normaliseHex(prog.color || '#6941c6');
               const isDraftProgramme = programmeIsDraft(prog);
@@ -1283,17 +1287,21 @@ function CurriculumProgrammesContent() {
                   <div className="col-span-2 py-1 sm:col-span-5"><p className="mb-1 text-[9px] uppercase text-foreground-400">Learners</p><LearnerStatusCounts target={{ scope: 'programme', id: prog.sourceId || prog.id, name: prog.name }} refreshKey={listedProgrammeById.get(prog.id) ?? prog} /></div>
                   <button
                     type="button"
-                    onClick={openTab('coverage', 'mapping')}
-                    title={`Open KSB coverage for ${prog.name}`}
+                    onClick={openTab('coverage', 'achievement')}
+                    title={`Open learner KSB achievement for ${prog.name}. The applied source contains ${learnerKsbStandardCount} total KSBs; ${learnerKsbMappedCount} are mapped to programme components and ${learnerKsbUnmappedCount} are not mapped.`}
                     className="col-span-2 rounded-lg px-1 py-0.5 text-left transition-smooth hover:bg-primary-100/60 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-300 sm:col-span-5"
                   >
                     <div className="flex items-baseline justify-between gap-2">
-                      <p className="text-[9px] text-foreground-400 uppercase">KSB Progress</p>
-                      <p className="text-[9px] font-semibold text-foreground-400">
-                        {hasLearnerKsbDenominator
-                          ? `${prog.learnerKsbCodesStarted || 0}/${prog.learnerKsbCodesTotal || 0} KSBs · ${learnerKsbLearnerCount} learner${learnerKsbLearnerCount === 1 ? '' : 's'}`
-                          : `Mapping ${hasAppliedKsbSource ? `${mappingCoverage}%` : 'not applied'}`}
-                      </p>
+                      <p className="text-[9px] text-foreground-400 uppercase">Learner KSB Achievement</p>
+                      <div className="text-right text-[9px] font-semibold leading-4 text-foreground-400">
+                        <p>{hasLearnerKsbDenominator
+                          ? `${learnerKsbAchievedCount} achieved / ${learnerKsbTargetCount} possible`
+                          : `Mapping ${hasAppliedKsbSource ? `${mappingCoverage}%` : 'not applied'}`}</p>
+                        <p title="The applied KSB source is the full standard; mapped KSBs are the codes connected to programme components and used in learner achievement.">
+                          {learnerKsbLearnerCount} learners · {learnerKsbMappedCount} mapped of {learnerKsbStandardCount} total KSBs
+                          {learnerKsbUnmappedCount > 0 ? ` · ${learnerKsbUnmappedCount} not mapped` : ''}
+                        </p>
+                      </div>
                     </div>
                     <div className="flex items-center gap-1.5 mt-0.5">
                       <div className="flex-1 h-1.5 bg-background-200 rounded-full overflow-hidden">
@@ -1302,9 +1310,14 @@ function CurriculumProgrammesContent() {
                           style={{ width: `${hasLearnerKsbDenominator ? learnerKsbProgress : 0}%` }}
                         ></div>
                       </div>
-                      <span className="text-[10px] font-semibold">
+                      <span
+                        className="text-[10px] font-semibold"
+                        title={hasLearnerKsbDenominator
+                          ? `${learnerKsbProgress}% of learner/KSB targets achieved (${learnerKsbAchievedCount} achieved out of ${learnerKsbTargetCount} possible). Each learner/KSB pair counts once when the learner declares that KSB in a submitted or accepted reflection, or completes a mapped KSB activity.`
+                          : 'Each learner/KSB pair counts once when the learner declares that KSB in a submitted or accepted reflection, or completes a mapped KSB activity.'}
+                      >
                         {hasLearnerKsbDenominator
-                          ? `${learnerKsbProgress}%`
+                          ? `${learnerKsbProgress}% achieved`
                           : learnerKsbLearnerCount === 0 ? 'No learners' : 'Needs mapping'}
                       </span>
                     </div>

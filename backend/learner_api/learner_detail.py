@@ -2634,6 +2634,15 @@ def build_learner_detail(source, pk, *, compact=False, read_only=False, quiz_vie
     # during this request, which must not count as a verified link.
     linked_profile_ids = _linked_profile_ids(pk)
     learner_profile = _active_profile_for_source(source, pk, **({'heal': False} if activity_component_id else {}))
+    if (activity_component_id and learner_profile is not None
+            and len(linked_profile_ids) == 1
+            and str(linked_profile_ids[0]) == str(learner_profile.pk)
+            and str(learner_profile.enrolment_id) == str(pk)):
+        # Request-local reuse only. Attendance readers apply these same checks
+        # before trusting a canonical/profile pair, so this avoids resolving an
+        # already verified identity again without broadening ownership.
+        source._canonical_profile = {'id': learner_profile.pk}
+        source._case_file_profile = learner_profile
     activity_owner = None
     if activity_component_id:
         activity_assignments, activity_owner = _activity_plan_assignments(
@@ -2717,7 +2726,12 @@ def build_learner_detail(source, pk, *, compact=False, read_only=False, quiz_vie
     # Attendance affects activity completion only; the hours snapshot above
     # and every stored progress record remain unchanged.
     from .teams_attendance import annotate_attendance_completion
-    annotated = annotate_attendance_completion(attendance_components, learner_profile)
+    manual_context = None
+    if activity_component_id and learner_profile is not None:
+        from .manual_attendance_completion import read_manual_context
+        manual_context = read_manual_context(attendance_components, learner_profile)
+    annotated = annotate_attendance_completion(
+        attendance_components, learner_profile, manual_context=manual_context)
     if activity_component_id:
         by_identity = {id(original): replacement for original, replacement in zip(attendance_components, annotated)}
         detail['components'] = [by_identity.get(id(c), c) for c in detail['components']]
@@ -2727,19 +2741,32 @@ def build_learner_detail(source, pk, *, compact=False, read_only=False, quiz_vie
     # Carry earned completion into an explicitly verified replacement without
     # manufacturing attempts or changing the persisted hours/attendance above.
     from .replacement_learning import annotate_replacement_learning, approved_retained_components
-    detail['components'] = annotate_replacement_learning(detail['components'], pk)
+    from . import progress_transfer_store
+    transfer_items = None
+    if activity_component_id:
+        transfer_items = progress_transfer_store.read_state(pk)['items']
+        detail['components'] = annotate_replacement_learning(
+            detail['components'], pk, items=transfer_items)
+    else:
+        detail['components'] = annotate_replacement_learning(detail['components'], pk)
     # Explicitly retained (unmatched) old components have no destination
     # component to attach to; add them the same way My Learning does.
-    from . import progress_transfer_store
+    if transfer_items is None:
+        transfer_items = progress_transfer_store.read_state(pk)['items']
     current_module_ids = {c.get('moduleId') for c in detail['components'] if c.get('moduleId')}
     detail['retiredQuizComponents'] = [*detail.get('retiredQuizComponents', []),
-        *approved_retained_components(progress_transfer_store.read_state(pk)['items'], current_module_ids)]
+        *approved_retained_components(transfer_items, current_module_ids)]
 
     from .live_session_progress import read_live_credits, supplement_component_progress
+    credit_components = (
+        _activity_module_components(detail['components'], activity_component_id)
+        if activity_component_id else detail['components']
+    )
+    live_credits = read_live_credits(
+        source, components=credit_components,
+        **({'manual_context': manual_context} if activity_component_id else {}))
     detail['componentProgress'] = supplement_component_progress(
-        detail.get('componentProgress') or [], read_live_credits(source, components=(
-            _activity_module_components(detail['components'], activity_component_id)
-            if activity_component_id else detail['components'])))
+        detail.get('componentProgress') or [], live_credits)
 
     if compact:
         # Nullable optional fields dominate the JSON for large plans. Omission

@@ -69,7 +69,7 @@ class ActivityViewerProjectionTests(SimpleTestCase):
             mock(prefix + '_activity_plan_assignments', side_effect=lambda _source, _profile, identity: (
                 plan, reader._activity_plan_module(plan, identity)
             ))
-            mock(prefix + '_linked_profile_ids', return_value=())
+            mock(prefix + '_linked_profile_ids', return_value=(9,))
             mock(prefix + 'to_learner_detail', return_value=detail)
             mock(prefix + 'access_gate', return_value={})
             mock(prefix + 'learning_access', return_value={})
@@ -96,9 +96,15 @@ class ActivityViewerProjectionTests(SimpleTestCase):
             mock(prefix + '_append_week_quizzes', side_effect=lambda weeks, rows, **kwargs: (weeks, rows))
             mock(prefix + 'retain_quiz_progress')
             attendance = mock('learner_api.teams_attendance.annotate_attendance_completion',
-                              side_effect=lambda rows, profile: [{**row, 'attendanceCompleted': True} for row in rows])
-            mock('learner_api.replacement_learning.annotate_replacement_learning', side_effect=lambda rows, pk: rows)
-            mock('learner_api.progress_transfer_store.read_state', return_value={'items': []})
+                              side_effect=lambda rows, profile, **kwargs: [
+                                  {**row, 'attendanceCompleted': True} for row in rows])
+            manual_context = ({}, [], [])
+            manual = mock('learner_api.manual_attendance_completion.read_manual_context',
+                          return_value=manual_context)
+            replacement = mock('learner_api.replacement_learning.annotate_replacement_learning',
+                               side_effect=lambda rows, pk, **kwargs: rows)
+            transfer_state = mock('learner_api.progress_transfer_store.read_state',
+                                  return_value={'items': []})
             credits = mock('learner_api.live_session_progress.read_live_credits', return_value=[])
             mock('learner_api.live_session_progress.supplement_component_progress', side_effect=lambda rows, credits: rows)
             result = reader.build_learner_detail(source, 7, compact=True, read_only=True,
@@ -109,6 +115,14 @@ class ActivityViewerProjectionTests(SimpleTestCase):
             expected = ['OTHER'] if selected == 'OTHER' else ['LIVE', 'READ']
             self.assertEqual([row['componentId'] for row in attendance.call_args.args[0]], expected)
             self.assertEqual([row['componentId'] for row in credits.call_args.kwargs['components']], expected)
+            self.assertIs(credits.call_args.kwargs['manual_context'], manual_context)
+            self.assertEqual(credits.call_args.args[0]._canonical_profile, {'id': 9})
+            self.assertIs(credits.call_args.args[0]._case_file_profile,
+                          profile_read.return_value)
+            self.assertIs(manual.call_args.args[0], attendance.call_args.args[0])
+            self.assertIs(attendance.call_args.kwargs['manual_context'], manual_context)
+            transfer_state.assert_called_once_with(7)
+            self.assertEqual(replacement.call_args.kwargs, {'items': []})
             self.assertEqual([row['componentId'] for row in result['components']], expected)
             self.assertTrue(result['components'][0]['attendanceCompleted'])
             return result

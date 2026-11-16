@@ -9985,6 +9985,9 @@ def _programme_ksb_stats(source_id, required_ksb_codes, only_stats_for_ids):
             'learnerKsbCodesStarted': 0,
             'learnerKsbCodesComplete': 0,
             'learnerKsbCodesTotal': 0,
+            'learnerKsbAchievedCount': 0,
+            'learnerKsbTargetCount': 0,
+            'learnerKsbAchievementPercentage': 0,
         }
     return {
         'ksbMapped': programme_component_ksb_mapping_count(source_id, required_ksb_codes),
@@ -10498,13 +10501,13 @@ def programme_learner_ksb_progress(programme_id, required_codes=None):
     programme learner-KSB-impact endpoint applies, so the card and the drill-down
     can never disagree:
 
-      * achieved weight comes from the Component Progress snapshot only
-        (``learner_progress_ksbs``); a reflection's own KSB declaration is
-        supplementary evidence and is never summed in.
+      * weighted progress continues to come from the Component Progress
+        snapshot (``learner_progress_ksbs``); the separate learner/KSB count
+        also accepts an explicit KSB declaration in a submitted reflection.
       * per KSB, achieved weight is capped at the mapped weight, so one
         over-weighted activity cannot push the programme past 100%.
       * the denominator is the mapped weight of the programme's components, i.e.
-        what the design actually asks the learners to consume.
+        what the design actually asks the programme learners to consume.
 
     Returns a dict; every field is 0/empty when there is nothing to measure, so
     the caller never has to special-case a missing programme.
@@ -10517,6 +10520,9 @@ def programme_learner_ksb_progress(programme_id, required_codes=None):
         'learnerKsbCodesStarted': 0,
         'learnerKsbCodesComplete': 0,
         'learnerKsbCodesTotal': 0,
+        'learnerKsbAchievedCount': 0,
+        'learnerKsbTargetCount': 0,
+        'learnerKsbAchievementPercentage': 0,
     }
     try:
         expected = programme_ksb_design_value(
@@ -10531,6 +10537,9 @@ def programme_learner_ksb_progress(programme_id, required_codes=None):
     if not expected:
         return empty
 
+    # Keep the learner roster identical to the programme card's Learners
+    # metric. This makes the KSB denominator and the visible learner count use
+    # the same assignment source.
     learners = assigned_learners_for_programme(programme_id, '')
     learner_ids = [
         int(row.get('id')) for row in learners
@@ -10543,6 +10552,7 @@ def programme_learner_ksb_progress(programme_id, required_codes=None):
     if not learner_ids:
         return result
 
+    declared = learner_declared_ksb_codes(learner_ids, list(expected))
     try:
         # Totals only: this returns a percentage and four counts, never a row.
         # See learner_progress_ksb_totals() for why the drill-down read is the
@@ -10550,17 +10560,24 @@ def programme_learner_ksb_progress(programme_id, required_codes=None):
         progress_totals = learner_progress_ksb_totals(learner_ids, list(expected), compact=True)
     except Exception as exc:
         logger.warning('Could not load learner KSB consumption for programme %s: %s', programme_id, exc)
-        return result
+        progress_totals = {}
 
     achieved = merge_ksb_totals(progress_totals)
     consumed_total = 0.0
     started_codes = set()
     complete_codes = set()
+    achieved_pairs = set()
     # Summed per learner against a per-learner denominator: the programme figure
     # is the cohort's average completion of the mapped weight, not one learner's
     # progress diluted across the roster.
     for learner_id in learner_ids:
         weights = achieved.get(learner_id, {}) or {}
+        learner_codes = {
+            code for code, weight in weights.items()
+            if float(weight or 0) > 0
+        }
+        learner_codes.update(declared.get(learner_id, set()))
+        achieved_pairs.update((learner_id, code) for code in learner_codes if code in expected)
         for code, expected_weight in expected.items():
             consumed_weight = float(weights.get(code, 0) or 0)
             if consumed_weight <= 0:
@@ -10578,6 +10595,12 @@ def programme_learner_ksb_progress(programme_id, required_codes=None):
     )
     result['learnerKsbCodesStarted'] = len(started_codes)
     result['learnerKsbCodesComplete'] = len(complete_codes)
+    result['learnerKsbAchievedCount'] = len(achieved_pairs)
+    result['learnerKsbTargetCount'] = len(expected) * len(learner_ids)
+    result['learnerKsbAchievementPercentage'] = (
+        min(round((len(achieved_pairs) / result['learnerKsbTargetCount']) * 100), 100)
+        if result['learnerKsbTargetCount'] else 0
+    )
     return result
 
 
@@ -13225,15 +13248,9 @@ def curriculum_results_response(results, request=None):
 
 def module_belongs_to_group(module, group):
     module_group_id = clean_str(module.get('groupId') or module.get('group_id'))
-    module_group_name = clean_str(module.get('group') or module.get('groupName') or module.get('group_name'))
     group_module_ids = {
         normalise(item)
         for item in (group.get('moduleIds') or group.get('module_ids') or [])
-        if clean_str(item)
-    }
-    group_module_names = {
-        normalise(item)
-        for item in (group.get('modules') or group.get('moduleNames') or group.get('module_names') or [])
         if clean_str(item)
     }
     module_ids = [
@@ -13248,14 +13265,7 @@ def module_belongs_to_group(module, group):
     ]
     if any(normalise(value) in group_module_ids for value in module_ids if clean_str(value)):
         return True
-    if module_group_id or module_group_name:
-        return (
-            (bool(module_group_id) and matches_curriculum_identifier(module_group_id, group.get('id')))
-            or (bool(module_group_name) and normalise(module_group_name) == normalise(group.get('name')))
-        )
-    return (
-        bool(module.get('name')) and normalise(module.get('name')) in group_module_names
-    )
+    return bool(module_group_id) and matches_curriculum_identifier(module_group_id, group.get('id'))
 
 
 def normalise_skills_england_type(value):
@@ -23036,6 +23046,9 @@ def enrich_programmes_with_module_counts(programmes, modules, modules_enriched=F
             'learnerKsbCodesStarted': 0,
             'learnerKsbCodesComplete': 0,
             'learnerKsbCodesTotal': 0,
+            'learnerKsbAchievedCount': 0,
+            'learnerKsbTargetCount': 0,
+            'learnerKsbAchievementPercentage': 0,
             'learners': 0,
             'cohorts': len(cohort_keys),
             'lastUpdated': max([clean_str(module.get('lastUpdated')) for module in free_programme_modules] or ['']),
@@ -25282,6 +25295,7 @@ PROGRAMME_KSB_STAT_FIELDS = (
     'learnerKsbProgressPercentage', 'learnerKsbConsumedWeight',
     'learnerKsbExpectedWeight', 'learnerKsbLearnerCount',
     'learnerKsbCodesStarted', 'learnerKsbCodesComplete', 'learnerKsbCodesTotal',
+    'learnerKsbAchievedCount', 'learnerKsbTargetCount', 'learnerKsbAchievementPercentage',
 )
 
 
@@ -25410,6 +25424,15 @@ def curriculum_programme_tree_detail(request, identifier):
         )
         if not payload:
             return encode_json_error_entry('Programme not found.', status=404)
+        issues = canonical_programme_detail_issues(payload)
+        if issues:
+            return encode_json_error_entry(
+                'Canonical curriculum data is incomplete.',
+                status=422,
+                code='CANONICAL_DATA_REQUIRED',
+                validationErrors=issues,
+                message='Fix the listed canonical records before opening this programme.',
+            )
         return encode_json_entry(payload)
 
     # The encoded response is what is cached (see http_cache): the same key
@@ -25494,9 +25517,60 @@ def programme_detail_section_entry(identifier, visibility, section, workspace_vi
     )
     if not payload:
         return encode_json_error_entry('Programme not found.', status=404)
+    issues = canonical_programme_detail_issues(payload)
+    if issues:
+        return encode_json_error_entry(
+            'Canonical curriculum data is incomplete.',
+            status=422,
+            code='CANONICAL_DATA_REQUIRED',
+            validationErrors=issues,
+            message='Fix the listed canonical records before opening this programme.',
+        )
     if workspace_view:
         payload = programme_modules_workspace_payload(payload)
     return encode_json_entry(payload)
+
+
+def canonical_programme_detail_issues(payload):
+    """Return actionable validation messages for a canonical detail document.
+
+    A detail response must be navigable from normalized ids.  Name-based
+    membership is a legacy representation and is deliberately surfaced as a
+    data error instead of being silently interpreted by the UI.
+    """
+    flat = payload.get('flat') if isinstance(payload, dict) else None
+    if not isinstance(flat, dict):
+        return ['The programme detail is missing its canonical flat data.']
+
+    issues = []
+    for kind in ('cohorts', 'groups', 'modules'):
+        for item in flat.get(kind) or []:
+            if not isinstance(item, dict):
+                issues.append(f'Canonical {kind[:-1]} record is not an object.')
+                continue
+            if not clean_str(item.get('id') or item.get('sourceId')):
+                label = clean_str(item.get('name')) or 'unnamed record'
+                issues.append(f'Canonical {kind[:-1]} "{label}" is missing its id.')
+
+    for group in flat.get('groups') or []:
+        if not isinstance(group, dict):
+            continue
+        legacy_names = group.get('modules') or group.get('moduleNames') or group.get('module_names')
+        canonical_ids = group.get('moduleIds') or group.get('module_ids')
+        if legacy_names and not canonical_ids:
+            label = clean_str(group.get('name')) or clean_str(group.get('id')) or 'unnamed group'
+            issues.append(f'Group "{label}" has legacy module-name membership; canonical module ids are required.')
+
+    for module in flat.get('modules') or []:
+        if not isinstance(module, dict):
+            continue
+        if (module.get('group') or module.get('groupName') or module.get('group_name')) and not (
+            module.get('groupId') or module.get('group_id')
+        ):
+            label = clean_str(module.get('name')) or clean_str(module.get('id')) or 'unnamed module'
+            issues.append(f'Module "{label}" has a legacy group-name link; canonical group id is required.')
+
+    return list(dict.fromkeys(issues))
 
 
 def cached_programme_detail_section(identifier, visibility, section, workspace_view, *, force=False):
@@ -28856,6 +28930,23 @@ def office_preview_link(relative_path):
     return f'/curriculum_api/office-preview/{token}/{urllib_parse.quote(Path(relative_path).name)}'
 
 
+def curriculum_upload_storage_error(error):
+    """A controlled upload-read response with no provider details."""
+    logger.warning(
+        'Curriculum upload storage read failed (%s)',
+        type(error).__name__,
+    )
+    if isinstance(error, upload_storage.UploadStorageAccessDenied):
+        return json_error(
+            'The file store refused access to this file. Please contact support.',
+            status=403,
+        )
+    return json_error(
+        'The file store is temporarily unavailable. Please try again later.',
+        status=503,
+    )
+
+
 @require_GET
 def curriculum_office_preview_file(request, token, filename):
     """Serve the upload an ``office_preview_link`` token names, without a session."""
@@ -28867,7 +28958,10 @@ def curriculum_office_preview_file(request, token, filename):
             or not relative_path.startswith(f'{COMPONENT_UPLOAD_ROOT}/')
             or '..' in relative_path.split('/')):
         raise Http404('File not found.')
-    opened = upload_storage.open_stream(relative_path)
+    try:
+        opened = upload_storage.open_stream(relative_path)
+    except upload_storage.UploadStorageReadError as error:
+        return curriculum_upload_storage_error(error)
     if opened is None:
         raise Http404('File not found.')
     stream, total_size, content_type = opened
@@ -28907,12 +29001,18 @@ def curriculum_uploaded_file(request, path):
     preview_requested = clean_str(request.GET.get('preview')).lower() in {'1', 'true', 'yes'}
     extension = Path(relative_path).suffix.lower()
     if preview_requested and extension in OFFICE_PREVIEW_EXTENSIONS:
-        probe = upload_storage.open_stream(relative_path, offset=0, length=1)
+        try:
+            probe = upload_storage.open_stream(relative_path, offset=0, length=1)
+        except upload_storage.UploadStorageReadError as error:
+            return curriculum_upload_storage_error(error)
         if probe is None:
             raise Http404('File not found.')
         if not probe[1]:
             raise Http404('This file is empty on the server. Ask the curriculum team to upload it again.')
-        source_url = upload_storage.signed_read_url(relative_path)
+        try:
+            source_url = upload_storage.signed_read_url(relative_path)
+        except upload_storage.UploadStorageReadError as error:
+            return curriculum_upload_storage_error(error)
         if not source_url:
             # No Azure copy to sign: the file is still on this server's disk.
             # Microsoft fetches without the learner's session, so it gets a
@@ -28944,7 +29044,10 @@ def curriculum_uploaded_file(request, path):
         response['Cache-Control'] = 'private, no-store'
         return response
 
-    probe = upload_storage.open_stream(relative_path, offset=0, length=1)
+    try:
+        probe = upload_storage.open_stream(relative_path, offset=0, length=1)
+    except upload_storage.UploadStorageReadError as error:
+        return curriculum_upload_storage_error(error)
     if probe is None:
         raise Http404('File not found.')
     _discard, total_size, content_type = probe
@@ -28968,7 +29071,10 @@ def curriculum_uploaded_file(request, path):
         return response
 
     offset, length = requested if requested else (0, total_size)
-    opened = upload_storage.open_stream(relative_path, offset=offset, length=length)
+    try:
+        opened = upload_storage.open_stream(relative_path, offset=offset, length=length)
+    except upload_storage.UploadStorageReadError as error:
+        return curriculum_upload_storage_error(error)
     if opened is None:
         raise Http404('File not found.')
     stream, _total, _content_type = opened
@@ -30518,6 +30624,58 @@ def learner_progress_ksb_totals(learner_ids, programme_ksb_codes, *, compact=Fal
         learner_id: dict(code_totals)
         for learner_id, code_totals in totals.items()
     }
+
+
+def learner_declared_ksb_codes(learner_ids, programme_ksb_codes):
+    """Return KSB codes explicitly selected by each learner in a reflection.
+
+    A learner declaration is a set membership signal, not a weighted amount:
+    selecting K1 in several reflections still achieves K1 once for that
+    learner. Draft reflections are excluded; submitted and accepted reflections
+    are the learner's saved declaration in the Learner schema.
+    """
+    if not learner_ids or connection.vendor != 'postgresql':
+        return {}
+    if not learner_schema_table_exists('learning_reflection_submissions') or not learner_schema_table_exists('learner_progress_entries'):
+        return {}
+    columns = learner_schema_columns('learning_reflection_submissions')
+    if 'ksb_codes' not in columns or 'status' not in columns or 'progress_entry_id' not in columns:
+        return {}
+    allowed = {
+        coverage_normalise_code(code)
+        for code in programme_ksb_codes
+        if coverage_normalise_code(code)
+    }
+    if not allowed:
+        return {}
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                '''
+                select pe.learner_id, r.ksb_codes
+                from "Learner".learning_reflection_submissions r
+                join "Learner".learner_progress_entries pe on pe.id = r.progress_entry_id
+                where pe.learner_id = any(%s)
+                  and r.status in ('submitted_for_tutor_review', 'accepted')
+                ''',
+                [learner_ids],
+            )
+            rows = rows_as_dicts(cursor)
+    except Exception as exc:
+        logger.warning('Could not load learner-declared KSB codes: %s', exc)
+        return {}
+
+    declared = defaultdict(set)
+    for row in rows:
+        values = parse_json_value(row.get('ksb_codes'), [])
+        if not isinstance(values, list):
+            continue
+        learner_id = row.get('learner_id')
+        for value in values:
+            code = coverage_normalise_code(value.get('code') if isinstance(value, dict) else value)
+            if code in allowed:
+                declared[learner_id].add(code)
+    return dict(declared)
 
 
 def parse_ksb_weights(value):

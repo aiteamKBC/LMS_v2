@@ -71,13 +71,14 @@ def approved_retained_components(transfers, current_module_ids):
             for component in item.get('retainedTransferComponents') or [] if component.get('componentId')]
 
 
-def annotate_replacement_learning(components, enrolment_id):
+def annotate_replacement_learning(components, enrolment_id, *, items=None):
     """Expose only the server-owned, approved and frozen component matches."""
     from django.db import connections
     from .progress_transfer_store import read_state
     if not components:
         return []
-    items = read_state(enrolment_id)['items']
+    if items is None:
+        items = read_state(enrolment_id)['items']
     modules = {item['moduleId'] for item in items if item['status'] == 'approved' and item.get('matchedComponents')}
     ids = [c['componentId'] for c in components if c.get('componentId') and c.get('moduleId') in modules]
     settings = {}

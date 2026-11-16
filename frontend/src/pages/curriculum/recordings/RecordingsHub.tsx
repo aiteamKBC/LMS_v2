@@ -41,7 +41,7 @@ export default function RecordingsHub() {
               meta: 'Coach selected first, then the meeting calendar is shown', action: 'Open coaching recordings',
             },
             {
-              title: 'Quality Assurance', heading: 'Quality assurance', href: '/curriculum/quality-demo',
+              title: 'Quality Assurance', heading: 'Quality assurance', href: '/curriculum/quality',
               eyebrow: 'Quality management', image: '',
               description: 'Review quality checks, manage forms and monitor curriculum issues in one workspace.',
               features: [

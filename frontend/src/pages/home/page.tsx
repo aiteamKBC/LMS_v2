@@ -1,18 +1,16 @@
-import { useCountUp, useInView } from '@/hooks/useCountUp';
+import { useInView } from '@/hooks/useCountUp';
 import { BrandLockup } from '@/components/BrandLockup';
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { PORTAL_WORKSPACES } from '@/lib/portalWorkspaces';
 
 // ── Workspaces shown as launch buttons on the home page ──
-// Each maps to a demo account so entering a section signs you in as the
-// matching role (no password). Sections without a dedicated demo user reuse
-// the closest account. `demoEmail` on the shared list is that mapping.
+// The shared `demoEmail` flag controls which sections are exposed here; the
+// click itself only navigates the already-authenticated user.
 interface WorkspaceSection {
   slug: string;
   label: string;
   icon: string;
-  email: string;
   workspacePath: string;
   /** Visually featured on the launcher grid */
   highlighted?: boolean;
@@ -22,16 +20,14 @@ interface WorkspaceSection {
 // workspace switcher cannot drift apart on labels, icons or paths.
 //
 // Workspaces with no demo account are filtered out rather than rendered with a
-// dead button: entering a section here signs the visitor in as that account with
-// no password, so Super Admin — which has no demoEmail — is offered by the
-// switcher to an authenticated administrator and by nothing on this page.
+// dead button, so workspaces without a demo account remain available through
+// the authenticated workspace switcher instead.
 const WORKSPACE_SECTIONS: WorkspaceSection[] = PORTAL_WORKSPACES.flatMap((w) =>
   w.demoEmail
     ? [{
         slug: w.slug,
         label: w.label,
         icon: w.icon,
-        email: w.demoEmail,
         workspacePath: w.path,
         highlighted: true,
       }]
@@ -40,7 +36,6 @@ const WORKSPACE_SECTIONS: WorkspaceSection[] = PORTAL_WORKSPACES.flatMap((w) =>
 
 function CountUpStat({ end, suffix = '', prefix = '', duration = 1200, label }: { end: number; suffix?: string; prefix?: string; duration?: number; label: string }) {
   const { ref, isInView } = useInView();
-  const { count } = useCountUp({ end, duration, startOnMount: false });
   const [displayValue, setDisplayValue] = useState(0);
   const [hasStarted, setHasStarted] = useState(false);
 

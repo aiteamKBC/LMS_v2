@@ -1414,7 +1414,9 @@ function isCanonicalModuleCatalogueId(value: unknown) {
 }
 
 function canonicalModuleCatalogueId(module: CurriculumModule) {
-  return [module.moduleCatalogueId, module.catalogueId, module.moduleId, module.structureId]
+  const explicit = String(module.moduleCatalogueId || '').trim();
+  if (explicit) return explicit;
+  return [module.catalogueId, module.moduleId, module.structureId]
     .map(value => String(value || '').trim())
     .find(isCanonicalModuleCatalogueId) || '';
 }
@@ -2427,10 +2429,13 @@ function sessionNameCount(module: CurriculumModule): number {
   return module.sessionNames?.length || module.sessionNamesCount || 0;
 }
 
-export function curriculumModuleToCatalogue(module: CurriculumModule): ModuleCatalogueItem {
+export function curriculumModuleToCatalogue(module: CurriculumModule): ModuleCatalogueItem | null {
   const canonicalId = canonicalModuleCatalogueId(module);
-  // Temporary legacy fallback: unlinked delivery rows still open through their delivery identifier.
-  const catalogueId = canonicalId || String(module.deliveryModuleId || module.id || module.sourceId);
+  // Delivery identifiers and row ids are not Module Builder identities. An
+  // unlinked row is a data-integrity problem and must not be opened as a
+  // fabricated catalogue module.
+  if (!canonicalId) return null;
+  const catalogueId = canonicalId;
   const id = `module-${catalogueId}`;
   const title = cleanUserFacingText(module.name) || `Module ${catalogueId}`;
   const description = cleanUserFacingText(module.notes || '');
