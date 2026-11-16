@@ -315,7 +315,7 @@ def curriculum_week_teams_meeting(request, module_catalogue_id):
             v.teams_event_payload(single, graph_settings)
         )
         targets = v.calendar_targets(single, utc_start, duration, 'none', 1, v.graph_timezone_iana(graph_settings))
-        non_delivery = v.teams_non_delivery_reason(targets, v.graph_timezone_iana(graph_settings))
+        non_delivery = v.teams_non_delivery_reason(targets, v.graph_timezone_iana(graph_settings), module_catalogue_id=resolved_id)
         if non_delivery:
             return v.json_error(non_delivery, status=400, code='non_delivery_date')
     except (TypeError, ValueError, KeyError) as exc:
@@ -674,7 +674,7 @@ def curriculum_week_teams_meeting_detail(request, module_catalogue_id, live_sess
             v.teams_event_payload(single, graph_settings, promote_presenters=promote_presenters)
         )
         targets = v.calendar_targets(single, utc_start, duration, 'none', 1, v.graph_timezone_iana(graph_settings))
-        non_delivery = v.teams_non_delivery_reason(targets, v.graph_timezone_iana(graph_settings))
+        non_delivery = v.teams_non_delivery_reason(targets, v.graph_timezone_iana(graph_settings), module_catalogue_id=resolved_id)
         if non_delivery:
             return v.json_error(non_delivery, status=400, code='non_delivery_date')
     except (TypeError, ValueError, KeyError) as exc:

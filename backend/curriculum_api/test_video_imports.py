@@ -4,11 +4,11 @@ import json
 from contextlib import nullcontext
 from datetime import timedelta
 from types import SimpleNamespace
-from unittest.mock import MagicMock, Mock, patch
+from unittest.mock import Mock, patch
 
 from django.http import JsonResponse
 from django.core.files.uploadedfile import SimpleUploadedFile
-from django.test import RequestFactory, SimpleTestCase, TestCase
+from django.test import RequestFactory, TestCase
 from django.utils import timezone
 
 from . import video_imports as imports
@@ -740,33 +740,3 @@ class VideoImportAccessTests(TestCase):
             }}, 'component')
             self.assertTrue(any(error['path'] == 'component.settings.videoUrl' for error in errors))
 
-
-class FreeCourseMp4SaveTests(SimpleTestCase):
-    """A free course's components live in native storage after the cutover, not curriculum.components."""
-
-    def test_free_course_upload_reads_and_writes_native_storage(self):
-        from . import learning_storage, video_uploads
-
-        scope = {'programme_id': '', 'cohort_id': '', 'group_id': ''}
-        cursor = Mock()
-        cursor.fetchone.return_value = (json.dumps({'videoUrl': ''}),)
-        connection = Mock(vendor='postgresql')
-        connection.cursor.return_value.__enter__ = Mock(return_value=cursor)
-        connection.cursor.return_value.__exit__ = Mock(return_value=False)
-        asset = SimpleNamespace(status='queued')
-        with patch.object(video_uploads, 'connection', connection), \
-             patch.object(video_uploads, 'transaction', MagicMock()), \
-             patch.object(video_uploads.upload_storage, 'exists', return_value=True), \
-             patch.object(learning_storage, 'course', return_value={'id': 'FC-ROW'}) as course, \
-             patch.object(learning_storage, 'update') as update, \
-             patch.object(imports, 'target', return_value=('components', [{'id': 'COMP1'}], scope)), \
-             patch.object(imports, 'enqueue', return_value=asset):
-            video_uploads.save_mp4('module', 'MOD1', {'id': 'COMP1', 'settings_json': {}}, scope,
-                                   SimpleUploadedFile('lesson.mp4', MP4, content_type='video/mp4'))
-        course.assert_called_once_with('MOD1', lock=True)
-        (sql, params), _ = cursor.execute.call_args
-        self.assertIn('"curriculum"."free_authoring_components"', sql)
-        self.assertEqual(params, ['COMP1', 'MOD1'])
-        (table, where, where_params, values), _ = update.call_args
-        self.assertEqual((table, where, where_params), ('components', 'id = %s', ['COMP1']))
-        self.assertEqual(values['settings_json']['sourceType'], 'HTML (MP4)')

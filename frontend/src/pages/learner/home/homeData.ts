@@ -78,7 +78,7 @@ export function upcomingEvents(schedule?: {
 }
 
 const HOME_EVENT = {
-  session: { kind: 'lecture', detail: 'Learning session', href: '/learner/attendance' },
+  session: { kind: 'lecture', detail: 'Learning session', href: '/learner/calendar' },
   assignment: { kind: 'assignment', detail: 'Assignment due', href: '/learner/monthly-submission' },
   review: { kind: 'review', detail: 'Progress review', href: '/learner/calendar' },
 } as const;
@@ -90,7 +90,7 @@ const ukDay = new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/London' });
  * Friday (UK), already merged and in time order. A cached response can outlive
  * the week it was read in, so only events on next week's UK weekdays remain.
  */
-export function homeUpcomingEvents(schedule?: UpcomingSchedule | null, now = new Date()): HomeEvent[] {
+export function homeUpcomingEvents(schedule?: UpcomingSchedule | null, now = new Date(), learnerKind?: string, learnerId?: string): HomeEvent[] {
   const today = new Date(`${ukDay.format(now)}T00:00:00Z`);
   const monday = new Date(today.getTime() + (7 - (today.getUTCDay() + 6) % 7) * 86_400_000);
   const [first, last] = [0, 4].map(days => new Date(monday.getTime() + days * 86_400_000).toISOString().slice(0, 10));
@@ -101,7 +101,9 @@ export function homeUpcomingEvents(schedule?: UpcomingSchedule | null, now = new
   })
     .map(event => {
       const { kind, detail, href } = HOME_EVENT[event.type];
-      return { id: `${event.type}-${event.id}`, kind, title: event.title, date: event.date, href,
+      const destination = event.type === 'session' && event.componentId && learnerKind && learnerId
+        ? `/learner/component/${learnerKind}/${encodeURIComponent(learnerId)}/${encodeURIComponent(event.componentId)}` : href;
+      return { id: `${event.type}-${event.id}`, kind, title: event.title, date: event.date, href: destination,
         detail: event.type === 'review' && !event.booked ? 'Review to be booked' : detail };
     });
 }

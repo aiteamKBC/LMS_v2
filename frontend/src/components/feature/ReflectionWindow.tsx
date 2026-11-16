@@ -1547,7 +1547,7 @@ function ReflectionWindowForm({
                 >
                   {submitting || reflectionSaving
                     ? <><AppIcon className="ri-loader-4-line animate-spin" /> Saving...</>
-                    : unchangedSubmission ? 'Submitted for tutor review' : <><AppIcon className="ri-edit-line" /> Submit for tutor review</>}
+                    : unchangedSubmission ? 'Submitted for tutor review' : <><AppIcon className="ri-edit-line" /> Submit</>}
                 </button>
               ) : (
                 <button

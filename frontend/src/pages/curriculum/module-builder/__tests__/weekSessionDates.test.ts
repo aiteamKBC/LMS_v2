@@ -85,6 +85,30 @@ function withSeventhWeek(module: ModuleCatalogueItem) {
   });
 }
 
+it('keeps Thursday and the following Tuesday together in first-session weeks and in the Teams plan', () => {
+  const draft = createLocalModuleDraft({ programme: 'Programme', title: 'Custom weeks', description: '', weeks: 2, status: 'draft' });
+  const module = {
+    ...draft, scheduleMode: 'custom' as const, weekStartsOn: 'Thursday', sessionsNumber: 4,
+    weeklySchedule: [
+      { day: 'Tuesday', startTime: '09:00', endTime: '10:00' },
+      { day: 'Thursday', startTime: '09:00', endTime: '10:00' },
+    ],
+    weekStructure: draft.weekStructure.map(week => ({
+      ...week, components: [createEmptyComponent(week.id, 'live-session', 1), createEmptyComponent(week.id, 'live-session', 2)],
+    })),
+  };
+  const dates = ['2026-09-10', '2026-09-15', '2026-09-17', '2026-09-22'];
+  const plan = planFor(dates);
+  plan.sessions = plan.sessions.map((session, index) => ({ ...session, weekNumber: Math.floor(index / 2) + 1 }));
+  const result = applyModuleWeekSessionPlan(module, plan);
+  expect(result.weekStructure.map(week => week.sessionDate)).toEqual(['2026-09-10', '2026-09-17']);
+  expect(result.weekStructure.map(week => week.components.map(component => component.settings.sessionDate)))
+    .toEqual([dates.slice(0, 2), dates.slice(2)]);
+  expect(moduleTeamsPlannedSessions(result, plan).map(session => session.date)).toEqual(dates);
+  expect([...moduleWeekIdBySessionNumber(result, plan.sessions).values()])
+    .toEqual([result.weekStructure[0].id, result.weekStructure[0].id, result.weekStructure[1].id, result.weekStructure[1].id]);
+});
+
 describe('explicit session identity when non-teaching weeks move', () => {
   it('keeps booked dates in their authored slots when Teams numbering omits orientation and an extra event', () => {
     const dates = ['2026-09-11', '2026-09-18', '2026-09-25', '2026-10-02', '2026-10-09', '2026-10-16'];
@@ -160,6 +184,25 @@ describe('explicit session identity when non-teaching weeks move', () => {
 });
 
 describe('dating a week added in the builder', () => {
+  it.each(['missing', 'ambiguous', 'unverified'])('keeps the planned instant without confirming a %s calendar binding', binding => {
+    const module = sixWeekModule({ weeklySchedule: [{ day: 'Saturday', startTime: '09:00', endTime: '11:00' }] });
+    module.weekStructure[0].components = [createEmptyComponent(module.weekStructure[0].id, 'live-session', 1)];
+    const live = module.weekStructure[0].components[0];
+    live.settings = {
+      ...live.settings,
+      teamsCalendarBinding: binding,
+      liveSessionUrl: 'https://teams.example/manual',
+      teamsStartDateTimeUtc: '2030-01-01T09:00:00Z',
+    };
+    const dated = applyModuleWeekSessionPlan(module, planFor(SATURDAY_DATES));
+    const settings = dated.weekStructure[0].components[0].settings;
+    expect(settings.sessionDate).toBe(SATURDAY_DATES[0]);
+    expect(String(settings.sessionDateTimeUtc)).toContain(SATURDAY_DATES[0]);
+    expect(settings.teamsStartDateTimeUtc).toBe('');
+    expect(settings.teamsCalendarBinding).toBe(binding);
+    expect(settings.liveSessionUrl).toBe('https://teams.example/manual');
+  });
+
   it('schedules all sixteen imported live sessions without consuming a date for the holiday row', () => {
     const draft = createLocalModuleDraft({ programme: 'Al Fanar', title: 'PCP', description: '', weeks: 1, sessionsNumber: 3, status: 'draft' });
     const weeks = Array.from({ length: 16 }, (_, index) => {

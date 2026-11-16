@@ -102,6 +102,9 @@ class SchemaNotProvisionedMiddleware:
         return self.get_response(request)
 
     def process_exception(self, request, exception):
+        from .country_calendars import CalendarUnavailable
+        if isinstance(exception, CalendarUnavailable):
+            return JsonResponse({'error': str(exception), 'code': 'holiday_calendar_unavailable'}, status=503)
         if not isinstance(exception, SchemaNotProvisioned):
             return None
         logger.error(

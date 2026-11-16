@@ -20,6 +20,8 @@ export interface ModuleFormDeliveryRef {
   endDate?: string;
   sessions?: number;
   weeklySchedule?: CurriculumWeeklySession[];
+  scheduleMode?: 'group' | 'custom';
+  weekStartsOn?: string | null;
   weekDays?: string;
   startTime?: string;
   endTime?: string;
@@ -43,7 +45,10 @@ export interface ModuleFormTarget extends CoursePricing {
   groupId?: string;
   sessionsNumber?: number;
   weeklySchedule?: CurriculumWeeklySession[];
+  scheduleMode?: 'group' | 'custom';
+  weekStartsOn?: string | null;
   sessionHolidays?: CurriculumModule['sessionHolidays'];
+  calendarPolicy?: CurriculumModule['calendarPolicy'];
   deliveryWeeks?: number;
   weekDays?: string;
   startTime?: string;
@@ -86,7 +91,10 @@ export function moduleFormTarget(module: CurriculumModule | undefined | null): M
     groupId: module.groupId,
     sessionsNumber: module.sessionsNumber,
     weeklySchedule: module.weeklySchedule,
+    scheduleMode: module.scheduleMode,
+    weekStartsOn: module.weekStartsOn,
     sessionHolidays: module.sessionHolidays,
+    calendarPolicy: module.calendarPolicy,
     deliveryWeeks: module.deliveryWeeks,
     weekDays: module.weekDays,
     startTime: module.startTime,

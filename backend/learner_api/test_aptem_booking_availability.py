@@ -6,7 +6,7 @@ from unittest.mock import MagicMock, patch
 
 from django.test import RequestFactory, SimpleTestCase
 
-from coach_api import views, booking_availability
+from coach_api import views
 from coach_api.models import CoachCalendarEvent
 from coach_api.test_review_source_separation import profile, source, base_event, imported_row
 from . import calendar
@@ -16,9 +16,15 @@ from . import tests_booking_calendar
 class AptemBookingAvailabilityTests(SimpleTestCase):
     def setUp(self):
         self.factory = RequestFactory()
+        # Exercise the current slot preflight; only transport/storage
+        # responses are synthetic, not the availability validator.
+        self.graph = self.enterContext(patch.object(views, "microsoft_graph_request", side_effect=self.free_schedule))
+        self.records = MagicMock()
+        self.records.exclude.return_value = self.records
+        self.records.__iter__.return_value = iter(())
+        self.records.first.return_value = None
+        self.enterContext(patch.object(CoachCalendarEvent.objects, "filter", return_value=self.records))
         self.personal = self.enterContext(patch("learner_api.calendar_connections.booking_conflicts", return_value=False))
-        self.local = self.enterContext(patch.object(booking_availability, "ensure_coach_calendar_available"))
-        self.outlook = self.enterContext(patch.object(booking_availability, "ensure_coach_outlook_available"))
         self.sync = self.enterContext(patch.object(views, "synchronize_reserved_calendar_event"))
         self.persist = self.enterContext(patch.object(views, "persist_calendar_sync_reservation"))
         self.reserve_imported = self.enterContext(patch(
@@ -35,6 +41,16 @@ class AptemBookingAvailabilityTests(SimpleTestCase):
         self.enterContext(patch.object(calendar, "_follow_first_session_start_date"))
         self.enterContext(patch.object(calendar, "_booking_response_event", return_value={"eventKey": "saved"}))
 
+    def free_schedule(self, method, path, payload=None, **kwargs):
+        if method != "POST" or not path.endswith("/calendar/getSchedule"):
+            raise AssertionError("Unexpected external request in availability fixture")
+        return {"value": [{"scheduleId": payload["schedules"][0], "availabilityView": "0" * 96}]}
+
+    def busy_schedule(self, method, path, payload=None, **kwargs):
+        response = self.free_schedule(method, path, payload, **kwargs)
+        response["value"][0]["availabilityView"] = "2" * 96
+        return response
+
     def payload(self):
         return {"scheduledDate": "2026-11-20", "scheduledTime": "11:30", "durationMinutes": 60, "timezoneOffsetMinutes": -120,
                 "expectedBooking": {"scheduledDate": "2026-09-08", "scheduledTime": "10:00", "durationMinutes": 60}}
@@ -42,8 +58,7 @@ class AptemBookingAvailabilityTests(SimpleTestCase):
     def test_new_booking_rejects_busy_or_unknown_coach_before_any_calendar_write(self):
         for kind in ("commercial", "apprenticeship"):
             for family in ("Monthly Coaching Meeting", "Progress Review", "Progress Review (+ Skills Radar)"):
-                for error, status in ((views.LearnerCalendarConflict("Your coach is busy"), 409),
-                                      (booking_availability.CoachAvailabilityUnavailable("Could not check coach"), 503)):
+                for status in (409, 503):
                     with self.subTest(kind=kind, family=family, status=status):
                         event = base_event(imported_row(review_type=family))
                         person = source(); person.username = "Synthetic learner"
@@ -54,7 +69,7 @@ class AptemBookingAvailabilityTests(SimpleTestCase):
                              patch.object(calendar.CoachCalendarEvent.objects, "filter") as lookup, \
                              patch.object(calendar.CoachCalendarEvent.objects, "get_or_create") as create:
                             lookup.return_value.first.return_value = None
-                            self.outlook.side_effect = error
+                            self.graph.side_effect = self.busy_schedule if status == 409 else RuntimeError("Synthetic calendar outage")
                             request = self.factory.post("/book/", data=json.dumps({**self.payload(), "reviewId": event["reviewId"], "sessionType": event["source"], "assignmentMonth": "2026-11"}), content_type="application/json")
                             response = unwrap(calendar.learner_calendar_book)(request, kind, 121)
                             self.assertEqual(response.status_code, status, response.content)
@@ -65,13 +80,12 @@ class AptemBookingAvailabilityTests(SimpleTestCase):
     def test_reschedule_rejects_busy_or_unavailable_before_mutating_the_record(self):
         for kind in ("commercial", "apprenticeship"):
             for session_type in ("mcr", "progress-review"):
-                for error, status in ((views.LearnerCalendarConflict("Your coach is busy"), 409),
-                                      (booking_availability.CoachAvailabilityUnavailable("Could not check coach"), 503)):
+                for status in (409, 503):
                     with self.subTest(kind=kind, session_type=session_type, status=status):
                         record = tests_booking_calendar.RescheduleEndpointTests.scheduled_record()
                         record.event_type = session_type
                         record._imported_review_event = {"reviewSource": "aptem", "reviewId": "401", "learnerId": "101"}
-                        self.outlook.side_effect = error
+                        self.graph.side_effect = self.busy_schedule if status == 409 else RuntimeError("Synthetic calendar outage")
                         with patch.dict(calendar.SOURCE_MODELS, {kind: MagicMock()}), patch.object(calendar, "_learner_booking_record", return_value=record):
                             request = self.factory.patch("/reschedule/", data=json.dumps({**self.payload(), "eventKey": record.event_key}), content_type="application/json")
                             response = unwrap(calendar.learner_calendar_reschedule)(request, kind, 121)
@@ -90,7 +104,7 @@ class AptemBookingAvailabilityTests(SimpleTestCase):
         self.assertEqual(response.status_code, 200, response.content)
         self.assertEqual(self.personal.call_args.kwargs["business_time_zone"], "Europe/London")
         self.assertEqual(self.personal.call_args.kwargs["exclude_scheduled_date"], date(2026, 9, 8))
-        self.assertEqual(self.local.call_args.kwargs["exclude_record_id"], record.pk)
+        self.records.exclude.assert_any_call(pk=record.pk)
         self.persist.assert_called_once_with(record, review_event=record._imported_review_event)
         self.assertEqual(record.graph_event_id, "graph-event-1")
 
