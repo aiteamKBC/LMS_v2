@@ -4,7 +4,10 @@ from unittest.mock import patch
 
 from django.test import SimpleTestCase
 
-from .manual_attendance_completion import project_manual_completion, read_manual_completion, project_manual_credits
+from .manual_attendance_completion import (
+    project_manual_completion, project_manual_credits,
+    read_manual_completion, read_manual_credit_evidence,
+)
 
 
 NOW = datetime(2026, 10, 25, 12, tzinfo=timezone.utc)
@@ -128,8 +131,23 @@ class ManualAttendanceCompletionTests(SimpleTestCase):
             corrections.filter.return_value = []
             records.filter.return_value = []
             self.assertEqual(read_manual_completion([{'moduleId': 'M1'}], SimpleNamespace(pk=7, enrolment_id=70)), {})
-        corrections.filter.assert_called_once_with(learner_id=7)
-        records.filter.assert_called_once_with(learner_id=7)
+        corrections.filter.assert_called_once_with(learner_profile_id=7)
+        records.filter.assert_called_once_with(learner_profile_id=7)
+
+    def test_frozen_context_is_reused_for_completion_and_credit_without_rereading(self):
+        context = ({('C1', 'M1'): (True, NOW)}, [component(expected_otjh=2.5)],
+                   [occurrence()])
+        profile = SimpleNamespace(pk=7, enrolment_id=70)
+        candidates = [{'componentId': 'C1', 'moduleId': 'M1'}]
+        with patch('learner_api.manual_attendance_completion._read_manual_context',
+                   side_effect=AssertionError('context reread')):
+            self.assertEqual(
+                read_manual_completion(candidates, profile, context=context), context[0])
+            states, credits = read_manual_credit_evidence(
+                candidates, profile, context=context)
+        self.assertIs(states, context[0])
+        self.assertEqual(credits[0]['componentId'], 'C1')
+        self.assertEqual(credits[0]['hours'], 2.5)
 
     def test_reader_loads_all_module_cards_to_keep_single_card_reads_unambiguous(self):
         with patch('coach_api.models.CoachAttendanceSourceAdjustment.objects') as corrections, \

@@ -12,14 +12,21 @@ from __future__ import annotations
 
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
+from azure.core.exceptions import (
+    ClientAuthenticationError,
+    ResourceNotFoundError,
+    ServiceRequestError,
+)
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import Client, SimpleTestCase, override_settings
 
 from curriculum_api import upload_storage
 from curriculum_api.management.commands.repoint_programme_audit_to_azure import (
-    attachment_id_from_row, attachment_id_from_url, stable_urls,
+    attachment_id_from_row,
+    attachment_id_from_url,
+    stable_urls,
 )
 from curriculum_api.views import (
     COMPONENT_UPLOAD_MAX_BYTES,
@@ -157,7 +164,12 @@ class LocalBackendTests(SimpleTestCase):
         self.media = Path(self._directory.name)
 
     def local(self):
-        return override_settings(MEDIA_ROOT=self.media, AZURE_STORAGE_ACCOUNT='', AZURE_STORAGE_KEY='')
+        return override_settings(
+            MEDIA_ROOT=self.media,
+            STORAGE_BACKEND='azure',
+            AZURE_STORAGE_ACCOUNT='',
+            AZURE_STORAGE_KEY='',
+        )
 
     def test_uploads_go_to_disk_and_are_found_there(self):
         with self.local():
@@ -278,6 +290,7 @@ class AzureBackendTests(SimpleTestCase):
     def azure(self):
         return override_settings(
             MEDIA_ROOT=self.media,
+            STORAGE_BACKEND='azure',
             AZURE_STORAGE_ACCOUNT='kbcdocs',
             AZURE_STORAGE_KEY='key',
             AZURE_CURRICULUM_CONTAINER='curriculum-uploads',
@@ -421,7 +434,10 @@ class RangeServingTests(SimpleTestCase):
 
     def local(self):
         return override_settings(
-            MEDIA_ROOT=self.media, AZURE_STORAGE_ACCOUNT='', AZURE_STORAGE_KEY='',
+            MEDIA_ROOT=self.media,
+            STORAGE_BACKEND='azure',
+            AZURE_STORAGE_ACCOUNT='',
+            AZURE_STORAGE_KEY='',
         )
 
     def test_a_whole_file_is_served_with_ranges_advertised(self):
@@ -430,6 +446,40 @@ class RangeServingTests(SimpleTestCase):
             self.assertEqual(response.status_code, 200)
             self.assertEqual(response['Accept-Ranges'], 'bytes')
             self.assertEqual(b''.join(response.streaming_content), self.payload)
+
+    def test_pdf_is_served_inline_with_its_original_bytes(self):
+        path = self.media / COMPONENT_UPLOAD_ROOT / 'MOD-1' / 'COMP-1' / 'reading.pdf'
+        payload = b'%PDF-1.7\nsynthetic learner reading\n%%EOF'
+        path.write_bytes(payload)
+
+        with self.local():
+            response = self.client.get(
+                '/curriculum_api/curriculum/uploads/MOD-1/COMP-1/reading.pdf',
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response['Content-Type'], 'application/pdf')
+        self.assertFalse(
+            response.get('Content-Disposition', '').lower().startswith('attachment;'),
+        )
+        self.assertEqual(b''.join(response.streaming_content), payload)
+
+    def test_assignment_download_keeps_the_original_file_bytes(self):
+        path = self.media / COMPONENT_UPLOAD_ROOT / 'MOD-1' / 'COMP-1' / 'brief.docx'
+        payload = b'synthetic assignment brief'
+        path.write_bytes(payload)
+
+        with self.local():
+            response = self.client.get(
+                '/curriculum_api/curriculum/uploads/MOD-1/COMP-1/brief.docx',
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response['Content-Type'],
+            'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        )
+        self.assertEqual(b''.join(response.streaming_content), payload)
 
     def test_a_range_comes_back_as_exactly_those_bytes(self):
         with self.local():
@@ -455,6 +505,103 @@ class RangeServingTests(SimpleTestCase):
         with self.local():
             response = self.client.get('/curriculum_api/curriculum/uploads/../../secrets.env')
             self.assertIn(response.status_code, (301, 404))
+
+
+class S3ReadFailureClassificationTests(SimpleTestCase):
+    def setUp(self):
+        self._directory = TemporaryDirectory()
+        self.addCleanup(self._directory.cleanup)
+        self.media = Path(self._directory.name)
+
+    def s3(self, **overrides):
+        values = {
+            'MEDIA_ROOT': self.media,
+            'STORAGE_BACKEND': 's3',
+            'AWS_S3_STORAGE_BUCKET': 'curriculum-files-test',
+            'AZURE_STORAGE_ACCOUNT': 'curriculum-account',
+            'AZURE_STORAGE_KEY': '',
+            'AZURE_CURRICULUM_CONTAINER': 'curriculum-uploads',
+        }
+        values.update(overrides)
+        return override_settings(**values)
+
+    def blob_failure(self, error):
+        service = MagicMock()
+        service.get_blob_client.return_value.get_blob_properties.side_effect = error
+        return patch(
+            'curriculum_api.upload_storage.evidence_storage._service_client',
+            return_value=service,
+        )
+
+    def test_provider_confirmed_missing_object_remains_missing(self):
+        with self.s3(), self.blob_failure(ResourceNotFoundError('not found')):
+            self.assertIsNone(upload_storage.open_stream(RELATIVE))
+
+    def test_missing_sdk_is_storage_unavailable_not_missing(self):
+        with self.s3(), patch(
+            'curriculum_api.upload_storage.evidence_storage._service_client',
+            side_effect=ModuleNotFoundError('botocore'),
+        ), self.assertRaises(upload_storage.UploadStorageUnavailable):
+            upload_storage.open_stream(RELATIVE)
+
+    def test_incomplete_s3_configuration_is_storage_unavailable(self):
+        with self.s3(AWS_S3_STORAGE_BUCKET=''), self.assertRaises(
+            upload_storage.UploadStorageUnavailable,
+        ):
+            upload_storage.open_stream(RELATIVE)
+
+    def test_connection_failure_is_storage_unavailable(self):
+        with self.s3(), self.blob_failure(ServiceRequestError('offline')), self.assertRaises(
+            upload_storage.UploadStorageUnavailable,
+        ):
+            upload_storage.open_stream(RELATIVE)
+
+    def test_provider_access_denial_is_distinct(self):
+        denied = ClientAuthenticationError('provider detail must stay private')
+        denied.status_code = 403
+        denied.error_code = 'AuthorizationFailure'
+        with self.s3(), self.blob_failure(denied), self.assertRaises(
+            upload_storage.UploadStorageAccessDenied,
+        ):
+            upload_storage.open_stream(RELATIVE)
+
+
+class UploadReadFailureResponseTests(SimpleTestCase):
+    def setUp(self):
+        self.client = Client()
+        self.url = '/curriculum_api/curriculum/uploads/MOD-1/COMP-1/reading.pdf'
+
+    @patch(
+        'curriculum_api.views.upload_storage.open_stream',
+        side_effect=upload_storage.UploadStorageUnavailable(),
+    )
+    def test_storage_unavailable_is_a_retryable_non_leaking_response(self, _opened):
+        response = self.client.get(self.url)
+
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(
+            response.json(),
+            {'error': 'The file store is temporarily unavailable. Please try again later.'},
+        )
+        self.assertNotIn('bucket', response.content.decode().lower())
+
+    @patch(
+        'curriculum_api.views.upload_storage.open_stream',
+        side_effect=upload_storage.UploadStorageAccessDenied(),
+    )
+    def test_storage_access_denial_is_controlled_and_non_leaking(self, _opened):
+        response = self.client.get(self.url)
+
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(
+            response.json(),
+            {'error': 'The file store refused access to this file. Please contact support.'},
+        )
+
+    @patch('curriculum_api.views.upload_storage.open_stream', return_value=None)
+    def test_a_genuinely_missing_object_remains_a_404(self, _opened):
+        response = self.client.get(self.url)
+        self.assertEqual(response.status_code, 404)
 
 
 class OfficePreviewTests(SimpleTestCase):

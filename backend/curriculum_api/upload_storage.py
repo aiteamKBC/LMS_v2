@@ -22,13 +22,17 @@ from __future__ import annotations
 import logging
 import mimetypes
 import tempfile
-from threading import Lock
 from pathlib import Path
+from threading import Lock
 
+from azure.core.exceptions import (
+    AzureError,
+    ResourceNotFoundError,
+)
+from config import blob_storage
 from django.conf import settings
 from django.core.exceptions import SuspiciousFileOperation
 from django.core.files.storage import default_storage
-
 from learner_api import evidence_storage
 
 logger = logging.getLogger(__name__)
@@ -44,6 +48,18 @@ CURRICULUM_AZURE_TIMEOUT_SECONDS = 30
 _ready_containers = set()
 _ready_containers_lock = Lock()
 
+
+class UploadStorageReadError(Exception):
+    """A curriculum upload could not be read for a non-missing reason."""
+
+
+class UploadStorageUnavailable(UploadStorageReadError):
+    """The configured upload backend cannot currently serve reads."""
+
+
+class UploadStorageAccessDenied(UploadStorageReadError):
+    """The upload backend explicitly refused access to the requested object."""
+
 #: Prefix of the URL an upload is recorded under, unchanged by where bytes live.
 UPLOAD_URL_PREFIX = '/curriculum_api/curriculum/uploads/'
 
@@ -51,6 +67,33 @@ UPLOAD_URL_PREFIX = '/curriculum_api/curriculum/uploads/'
 def azure_enabled() -> bool:
     """True when uploads should go to Azure rather than to local disk."""
     return bool(evidence_storage.azure_configured() and container_name())
+
+
+def _remote_read_expected() -> bool:
+    """Whether an absent local upload should have a configured remote source.
+
+    A developer with no Azure account/key intentionally uses local-only storage.
+    S3 mode is different: selecting it declares that the bucket-backed service is
+    the source, so an incomplete account/bucket/container is a service
+    configuration failure rather than proof that an individual object is gone.
+    """
+    if blob_storage.s3_enabled():
+        return True
+    account = bool(getattr(settings, 'AZURE_STORAGE_ACCOUNT', ''))
+    key = bool(getattr(settings, 'AZURE_STORAGE_KEY', ''))
+    return account or key
+
+
+def _raise_read_error(error: Exception) -> None:
+    """Translate provider/dependency failures without exposing their details."""
+    status = getattr(error, 'status_code', None)
+    code = str(getattr(error, 'error_code', '') or '').lower()
+    if status in (401, 403) or code in {
+        'accessdenied', 'authorizationfailure', 'authenticationfailed',
+        'invalidauthenticationinfo',
+    }:
+        raise UploadStorageAccessDenied from error
+    raise UploadStorageUnavailable from error
 
 
 def container_name() -> str:
@@ -189,19 +232,29 @@ def open_stream(relative_path, offset=0, length=None):
         span = total - offset if length is None else length
         return _bounded_file_stream(path, offset, max(span, 0)), total, ''
     if not azure_enabled():
+        if _remote_read_expected():
+            raise UploadStorageUnavailable
         return None
     media_type = mimetypes.guess_type(str(relative_path))[0] or ''
     # download_blob() reads its initial range before returning a downloader.
     # The default 32 MiB delays video headers and metadata even with chunks().
     options = {'download_chunk_bytes': VIDEO_DOWNLOAD_CHUNK_BYTES} if media_type.startswith('video/') else {}
-    client = evidence_storage._service_client(**options).get_blob_client(
-        container_name(), blob_name_for(relative_path),
-    )
     try:
+        client = evidence_storage._service_client(**options).get_blob_client(
+            container_name(), blob_name_for(relative_path),
+        )
         properties = client.get_blob_properties()
-    except Exception:
+        downloader = client.download_blob(offset=offset or 0, length=length)
+    except ResourceNotFoundError:
         return None
-    downloader = client.download_blob(offset=offset or 0, length=length)
+    except (ImportError, AzureError) as error:
+        _raise_read_error(error)
+    except Exception as error:
+        logger.exception(
+            'Unexpected curriculum upload storage read failure (%s)',
+            type(error).__name__,
+        )
+        _raise_read_error(error)
     return downloader.chunks(), properties.size, (properties.content_settings.content_type or '')
 
 
@@ -283,11 +336,24 @@ def signed_read_url(relative_path) -> str:
     the normal evidence-storage TTL.
     """
     if not azure_enabled():
+        if _remote_read_expected():
+            raise UploadStorageUnavailable
         return ''
     blob_name = blob_name_for(relative_path)
-    if not evidence_storage.blob_exists(container_name(), blob_name):
+    try:
+        if not evidence_storage.blob_exists(container_name(), blob_name):
+            return ''
+        return evidence_storage.get_read_sas(container_name(), blob_name)
+    except ResourceNotFoundError:
         return ''
-    return evidence_storage.get_read_sas(container_name(), blob_name)
+    except (ImportError, AzureError) as error:
+        _raise_read_error(error)
+    except Exception as error:
+        logger.exception(
+            'Unexpected curriculum upload signed-read failure (%s)',
+            type(error).__name__,
+        )
+        _raise_read_error(error)
 
 
 #: Bulk uploads are big and the link is shared with other transfers, so they get

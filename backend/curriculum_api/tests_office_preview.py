@@ -6,15 +6,16 @@ downloads the file from Microsoft's servers, and when an upload had no blob to
 sign the preview page handed it the learner's own session-protected upload URL,
 which the API gate refuses to anyone without a session.
 """
+import json
 from unittest import mock
 from urllib.parse import unquote
 
 from django.core import signing
 from django.http import Http404
 from django.test import RequestFactory, SimpleTestCase
+from login.api_gate import is_gated
 
 from curriculum_api import views
-from login.api_gate import is_gated
 
 UPLOAD = f'{views.COMPONENT_UPLOAD_ROOT}/MOD-1/COMP-1/Reading pack.doc'
 
@@ -48,6 +49,23 @@ class OfficePreviewLinkTests(SimpleTestCase):
         self.assertEqual(response['Content-Type'], 'application/msword')
         self.assertEqual(response['Cache-Control'], 'private, no-store')
         self.assertEqual(b''.join(response.streaming_content), b'DOC')
+
+    def test_storage_unavailable_is_a_controlled_retryable_response(self):
+        token = views.office_preview_link(UPLOAD).split('/')[3]
+        with mock.patch.object(
+            views.upload_storage,
+            'open_stream',
+            side_effect=views.upload_storage.UploadStorageUnavailable(),
+        ):
+            response = views.curriculum_office_preview_file(
+                RequestFactory().get('/'), token, 'Reading pack.doc',
+            )
+
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(
+            json.loads(response.content),
+            {'error': 'The file store is temporarily unavailable. Please try again later.'},
+        )
 
     def test_refuses_a_forged_or_expired_token(self):
         forged = signing.dumps(UPLOAD, salt='some-other-purpose', compress=True)
@@ -85,6 +103,23 @@ class UploadPreviewPageTests(SimpleTestCase):
         page = self.preview('https://store.blob.core.windows.net/c/doc?sig=abc').content.decode()
 
         self.assertIn('store.blob.core.windows.net', unquote(page))
+
+    def test_signed_preview_access_denial_is_controlled(self):
+        request = RequestFactory().get(
+            '/curriculum_api/curriculum/uploads/MOD-1/COMP-1/Reading pack.doc?preview=1',
+        )
+        with mock.patch.object(views.upload_storage, 'open_stream', return_value=_opened()), \
+                mock.patch.object(
+                    views.upload_storage,
+                    'signed_read_url',
+                    side_effect=views.upload_storage.UploadStorageAccessDenied(),
+                ):
+            response = views.curriculum_uploaded_file(
+                request, 'MOD-1/COMP-1/Reading pack.doc',
+            )
+
+        self.assertEqual(response.status_code, 403)
+        self.assertNotIn('storage', response.content.decode().lower())
 
 
 class EmptyUploadTests(SimpleTestCase):
