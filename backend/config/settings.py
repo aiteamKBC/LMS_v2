@@ -413,6 +413,7 @@ INSTALLED_APPS = [
     # Platform authentication (auth schema on the Neon enrolment database).
     # Its tables are unmanaged and created by `manage.py apply_login_tables`.
     'login',
+    'qms_api',
 ]
 
 MIDDLEWARE = [

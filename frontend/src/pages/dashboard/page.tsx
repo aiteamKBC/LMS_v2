@@ -16,6 +16,7 @@ import AnalyticsPanel from "@/pages/dashboard/components/AnalyticsPanel";
 import ExecutiveOverview from "@/pages/executive/page";
 import QualityTeamPage from "@/pages/dashboard/components/QualityTeamPage";
 import FeedbacksPage from "@/pages/dashboard/components/FeedbacksPage";
+import DeepDivePage from "@/pages/dashboard/components/DeepDivePage";
 import QualityReviewsPage from "@/pages/coaching-recordings/QualityReviewsPage";
 
 const STATUS_RANK: Record<string, number> = { Pending: 0, "In Review": 1, "Needs Correction": 2, Approved: 3, Rejected: 4 };
@@ -28,6 +29,7 @@ const VIEW_META: Record<string, { title: string; section: string }> = {
   analytics: { title: "Analytics", section: "Quality Assurance" },
   "quality-team": { title: "Quality Team", section: "Management" },
   feedbacks: { title: "Feedbacks", section: "Voice of the customer" },
+  "deep-dive": { title: "Deep Dive", section: "Quality Assurance" },
 };
 
 const QUALITY_VIEW_NAV = [
@@ -38,6 +40,7 @@ const QUALITY_VIEW_NAV = [
   { id: "analytics", label: "Analytics", icon: "ri-pie-chart-2-line" },
   { id: "quality-team", label: "Quality Team", icon: "ri-team-line" },
   { id: "feedbacks", label: "Feedbacks", icon: "ri-chat-smile-2-line" },
+  { id: "deep-dive", label: "Deep Dive", icon: "ri-file-chart-line" },
 ] as const;
 
 const QUALITY_SIDEBAR_NAV = [
@@ -58,6 +61,12 @@ const QUALITY_SIDEBAR_NAV = [
     label: "Weekly Calendar",
     icon: "ri-calendar-schedule-line",
     href: "/curriculum/coaching-recordings?view=week",
+  },
+  {
+    id: "quality-demo-deep-dive",
+    label: "Deep Dive",
+    icon: "ri-file-chart-line",
+    href: "/curriculum/quality-demo?view=deep-dive",
   },
 ];
 
@@ -295,7 +304,8 @@ export default function QualityAssurancePage() {
   const isTeamView = active === "quality-team";
   const isFeedbacksView = active === "feedbacks";
   const isCalendarView = active === "checks";
-  const showWorkspace = !isOverview && !isTeamView && !isFeedbacksView && !isCalendarView;
+  const isDeepDiveView = active === "deep-dive";
+  const showWorkspace = !isOverview && !isTeamView && !isFeedbacksView && !isCalendarView && !isDeepDiveView;
   const topMeta = VIEW_META[active] ?? VIEW_META.overview;
 
   return (
@@ -325,6 +335,7 @@ export default function QualityAssurancePage() {
           {isOverview ? <ExecutiveOverview /> : null}
           {isTeamView ? <QualityTeamPage onToast={notify} /> : null}
           {isFeedbacksView ? <FeedbacksPage onToast={notify} /> : null}
+          {isDeepDiveView ? <DeepDivePage /> : null}
           {showWorkspace ? (
             <>
               <KpiCards stats={stats} loading={loading} />
