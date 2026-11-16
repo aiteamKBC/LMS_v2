@@ -744,13 +744,17 @@ def load_context(source, owner, subject_id=None, *, purpose='catalogue', records
         records = (records_override if records_override is not None else canonical.entries_for(owner, **record_options)) if purpose == 'catalogue' else []
     resolved, modules = None, None
     if subject_id is None and purpose == 'catalogue':
-        resolved = {}
+        # ``catalogue_module_rows`` normally owns this metadata shape.  An
+        # explicitly empty canonical plan skips that query, but downstream
+        # readers still consume the same empty collections.
+        resolved = dict(
+            module_titles={}, free_course_module_ids=[], weeks=[], covers={},
+            quiz_modules={}, schedule_modules={}, schedule_components=[],
+            live_credit_components=[], imported_courses={},
+        )
         with projection_stage('module_metadata'):
             with connections['enrolment'].cursor() as cur:
                 modules = catalogue_module_rows(cur, ids, identity_metadata=resolved) if ids else {}
-        resolved.setdefault('module_titles', {})
-        resolved.setdefault('weeks', [])
-        resolved.setdefault('covers', {})
     content_source, content_plan = source, assigned
     if subject_id is not None and not subject_id.startswith('activity:'):
         # A module link already identifies the content scope. Keep the full
