@@ -55,6 +55,13 @@ class ProgrammeKsbDesignCacheTests(SimpleTestCase):
         self.assertEqual(views.programme_component_ksb_mapping_count('P1', ['K1', 'K2']), 2)
         self.assertEqual(len(self.scope_reads), 2)
 
+    def test_declared_ksb_counts_once_per_learner_and_code(self):
+        with patch.object(views, 'learner_declared_ksb_codes', return_value={1: {'K1', 'K2'}}):
+            result = views.programme_learner_ksb_progress('P1')
+        self.assertEqual(result['learnerKsbAchievedCount'], 2)
+        self.assertEqual(result['learnerKsbTargetCount'], 2)
+        self.assertEqual(result['learnerKsbAchievementPercentage'], 100)
+
     def test_the_required_set_keys_the_mapped_count(self):
         self.assertEqual(views.programme_component_ksb_mapping_count('P1', ['K1', 'K2']), 2)
         self.assertEqual(views.programme_component_ksb_mapping_count('P1', ['K1']), 1)

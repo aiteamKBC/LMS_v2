@@ -318,7 +318,9 @@ describe('Delivery dashboard using existing curriculum reads', () => {
 
   it('does not run Delivery data readers on Library or Quality', () => {
     const library = render(<MemoryRouter><CurriculumLibraryHub /></MemoryRouter>);
-    expect(screen.getByRole('link', { name: /Week Templates/ })).toHaveAttribute('href', '/curriculum/week-builder');
+    const weekTemplateLinks = screen.getAllByRole('link', { name: /Week Templates/ });
+    expect(weekTemplateLinks).toHaveLength(2);
+    expect(weekTemplateLinks[0]).toHaveAttribute('href', '/curriculum/week-builder');
     library.unmount();
     render(<MemoryRouter><CurriculumQualityHub /></MemoryRouter>);
     expect(screen.getByRole('link', { name: /^Quality Forms/ })).toHaveAttribute('href', '/curriculum/quality/forms');

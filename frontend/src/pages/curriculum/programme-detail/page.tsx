@@ -810,23 +810,6 @@ function collectComponentKsbRollup(components: CurriculumComponent[], moduleName
     .sort((left, right) => sortKsbCodes(left.ksb, right.ksb));
 }
 
-function fallbackKsbRollup(codes: string[], moduleName: string, weight?: number): KsbRollupItem[] {
-  const unique = [...new Set(codes.map(ksbKey).filter(Boolean))].sort(sortKsbCodes);
-  const fallbackWeight = clampCoverageWeight(weight || 0);
-  return unique.map(code => ({
-    ksb: code,
-    title: code,
-    weight: fallbackWeight,
-    count: 1,
-    source: 'fallback' as const,
-    evidence: [{
-      module: moduleName,
-      scope: 'live',
-      weight: fallbackWeight,
-    }],
-  }));
-}
-
 function cohortStatus(status: string): Cohort['status'] {
   if (status === 'archived') return 'archived';
   if (status === 'planned' || status === 'completed') return status;
@@ -1524,24 +1507,20 @@ function buildLiveProgramme(data: ProgrammeDetailData | null, routeId: string): 
       (!row.programme || isProgrammeMatch(source, row.programme))
     ));
     const weeksData = buildModuleWeeks(liveModule.id, liveModule.name, moduleSessions, moduleComponents, liveModule.weekStructure || [], moduleComponentSummary);
-    const fallbackKsbCodes = liveModule.ksbCodes?.length ? liveModule.ksbCodes : [...new Set([
-      ...moduleSessions.flatMap(session => session.ksbCodes || []),
-      ...moduleComponents.flatMap(component => [
-        ...(component.ksbRefs || []),
-        ...(component.ksbMappings || []).map(mapping => mapping.code),
-      ]),
-    ])];
     const componentRollup = collectComponentKsbRollup(moduleComponents, liveModule.name);
-    // Before the full list is loaded, the summary names the same codes the
-    // list's mappings carry (live mappings with a code, on live components), so
-    // the module's KSBs are known without it. Weights and evidence are not: the
-    // codes stand in as a code-only roll-up until the list arrives.
+    // The summary is canonical and carries persisted component mappings. Do
+    // not synthesize KSB rows from session or module hints.
     const summaryKsbCodes = moduleComponents.length ? [] : moduleComponentSummary.flatMap(row => row.ksbCodes || []);
     const ksbRollup = componentRollup.length
       ? componentRollup
-      : summaryKsbCodes.length
-        ? fallbackKsbRollup(summaryKsbCodes, liveModule.name)
-        : fallbackKsbRollup(fallbackKsbCodes, liveModule.name);
+      : summaryKsbCodes.map(code => ({
+        ksb: ksbKey(code),
+        title: ksbKey(code),
+        weight: 0,
+        count: 1,
+        source: 'authoring' as const,
+        evidence: [],
+      })).filter(item => Boolean(item.ksb));
     const ksbTags = ksbRollup.map(item => item.ksb);
     // The module's OTJH is the sum of every component's Expected OTJH across
     // every week -- the same minute-based rule the Module Builder header uses.
@@ -1616,9 +1595,10 @@ function buildLiveProgramme(data: ProgrammeDetailData | null, routeId: string): 
     const groupModuleIds = (group.moduleIds ?? []).map(normalise);
     if (groupModuleIds.length && moduleIdentityKeys.some(key => groupModuleIds.includes(key))) return true;
 
-    // Name-only membership is retained for legacy rows with no group context.
-    // It must never override an explicit group id/name from another group.
-    return (group.modules ?? []).some(name => normalise(name) === normalise(module.name));
+    // Canonical delivery membership is ID-based. Name-only matching can attach
+    // a module to the wrong group when names are reused, so an unlinked row is
+    // intentionally left unassigned and surfaced as a data-quality issue.
+    return false;
   };
 
   const cohorts = programmeCohorts.map(cohort => {
@@ -3085,7 +3065,7 @@ function ProgrammeDetailContent() {
   useEffect(() => {
     if (!needsCoverage || !programmeLoaded) return undefined;
     // Overview needs the applied standard's identity and counts. Detailed KSB
-    // tabs also use authored descriptions as a fallback for legacy mappings.
+    // tabs resolve descriptions from canonical authored profiles only.
     if (summaryCoverageOnly && explicitKsbSourceId && standardSource) return undefined;
     if (programmeKsbSets.length) return undefined;
     const controller = new AbortController();

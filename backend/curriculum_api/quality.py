@@ -1,21 +1,9 @@
 """Curriculum Quality reads.
 
 Quality does not own a record store of its own. Everything here is derived from
-the authoring tables that already hold the curriculum, so a number on a Quality
-page is the same number the record's own page shows.
-
-The audit trail below is the weaker of the two histories here. It is derived
-from ``created_at`` / ``updated_at`` / ``deleted_at`` alone, so it covers every
-record but can only say *what* moved and *when* -- those tables carry no author
-column, and ``deleted_by`` holds the write handler's reason code
-(``component-delete``), not a person. It therefore reports the reason and states
-plainly that no author is recorded.
-
-The version history in ``versioning`` is the stronger one, and for modules,
-weeks and components it supersedes the trail: it records the content itself, a
-field-level diff, and the signed-in account that saved. It needs its tables to
-exist, which is why every read here answers ``available: false`` with the SQL to
-run rather than failing, and why the derived trail stays.
+the canonical authoring tables and revision log, so a number on a Quality page
+is the same number the record's own page shows. The audit trail is canonical
+only; timestamp-derived reads from legacy schemas are intentionally excluded.
 """
 from __future__ import annotations
 
@@ -353,11 +341,8 @@ def curriculum_quality_audit_trail(request):
 
     Answered from ``curriculum.record_revisions`` -- the log the write helpers
     fill -- whenever those tables exist, which is what lets the trail name an
-    actor and show a before and an after. History from before each record
-    type's first revision is recovered from the records' own timestamps and
-    read into the same feed (``system_audit.derived.read_hybrid``); every event
-    says which of the two it came from. Where the log does not exist at all,
-    the timestamp reading is the whole trail.
+    actor and show a before and an after. If the log is not installed, the API
+    reports that explicitly rather than reading legacy timestamp tables.
 
     ``authorRecorded`` on the response says which of the two the caller is
     looking at, so the page can report honestly rather than showing an empty
@@ -369,13 +354,13 @@ def curriculum_quality_audit_trail(request):
     title/context/id, ``?scope=`` + ``?scopeId=`` narrow to one programme,
     cohort, group or module.
     """
-    if versioning.history_available():
-        try:
-            return revision_trail(request)
-        except Exception:
-            logger.warning('Could not read the revision audit trail.', exc_info=True)
-            return JsonResponse({'error': 'Audit history could not be read. Please retry.'}, status=503)
-    return derived_trail(request)
+    if not versioning.history_available():
+        return history_off_response()
+    try:
+        return revision_trail(request)
+    except Exception:
+        logger.warning('Could not read the revision audit trail.', exc_info=True)
+        return JsonResponse({'error': 'Audit history could not be read. Please retry.'}, status=503)
 
 
 def revision_trail(request):
@@ -460,19 +445,10 @@ def revision_trail(request):
     if structured:
         columns += ['actor_type', 'triggered_by_email', 'triggered_by_name', 'source', 'metadata']
 
-    # The log is the authority from each record type's first revision onward;
-    # before it, the records' own timestamps are all the history there is, and
-    # they are read in beside the log as one feed (`system_audit.derived`). Not
-    # for a filter only the log can answer -- a scope read from the snapshot's
-    # ancestry, an automated source, a kind of actor -- because a timestamp
-    # cannot say any of those, and adding it would show what was excluded.
+    # Quality history is canonical-only. Never supplement it from timestamp
+    # scans of legacy schemas; those rows cannot be safely reconstructed as
+    # Quality revisions.
     from system_audit import derived
-    recover = not (
-        (scope_id and scope in {'module', 'programme', 'cohort', 'group'})
-        or (structured and source_filter and source_filter != 'all' and source_filter in versioning.SOURCES)
-        or (structured and actor_type_filter and actor_type_filter != 'all'
-            and actor_type_filter in versioning.ACTOR_TYPES)
-    )
     hybrid = {
         'since': since,
         'revision_table': revisions_table,
@@ -487,18 +463,7 @@ def revision_trail(request):
         'limit': limit,
         'page': page,
     }
-    recovery_failed = False
-    try:
-        with transaction.atomic():
-            result = derived.read_hybrid(recover=recover, **hybrid)
-    except Exception:
-        if not recover:
-            raise
-        # The log on its own is still a true answer. It is given, and the
-        # response says the older history could not be read this time, rather
-        # than the whole trail failing over the part that is only a supplement.
-        logger.warning('Could not recover pre-log history; reading the revision log alone.', exc_info=True)
-        recovery_failed = True
+    with transaction.atomic():
         result = derived.read_hybrid(recover=False, **hybrid)
 
     total = result['total']
@@ -510,10 +475,7 @@ def revision_trail(request):
     # joined on in the same statement, in the order the combined feed put them.
     events = []
     for row in result['rows']:
-        if row.get('provenance') == derived.PROVENANCE_REVISION:
-            events.append(revision_event({column: row.get(f'rev_{column}') for column in columns}))
-        else:
-            events.append(derived_event(row))
+        events.append(revision_event({column: row.get(f'rev_{column}') for column in columns}))
 
     # Counted in SQL over the whole combined window rather than over the page,
     # so the headline figures answer "what happened in this period" and do not
@@ -521,12 +483,6 @@ def revision_trail(request):
     action_counts = {action: 0 for action in ACTIONS}
     action_counts.update(result['action_counts'])
     entity_counts = result['entity_counts']
-    try:
-        recovered_workspaces = derived.coverage() if recover and not recovery_failed else []
-    except Exception:
-        logger.warning('Could not read timestamp coverage.', exc_info=True)
-        recovered_workspaces = []
-
     return JsonResponse({
         'generatedAt': datetime.utcnow().isoformat(),
         'windowDays': days,
@@ -545,12 +501,12 @@ def revision_trail(request):
         # event read as though the log had seen it.
         'provenanceCounts': {
             derived.PROVENANCE_REVISION: int(result['provenance_counts'].get(derived.PROVENANCE_REVISION, 0)),
-            derived.PROVENANCE_TIMESTAMPS: int(result['provenance_counts'].get(derived.PROVENANCE_TIMESTAMPS, 0)),
+            derived.PROVENANCE_TIMESTAMPS: 0,
         },
         # Whether older, timestamp-recovered history was read into this feed.
         # False for a filter only the log can answer, and when it failed.
-        'recoveredHistory': recover and not recovery_failed,
-        'recoveryFailed': recovery_failed,
+        'recoveredHistory': False,
+        'recoveryFailed': False,
         # Where each record type's revision history begins. Recovered events of
         # that type stop strictly before it; null means the log has none yet.
         'revisionStartedAt': {
@@ -567,12 +523,11 @@ def revision_trail(request):
         # decide which filters it can honestly offer.
         'structuredMetadata': structured,
         'workspaces': audit_pages.workspace_options(),
-        # Real history from the log, and history recovered from timestamps
-        # before it. Never the same moment twice: see `derived.read_hybrid`.
+        # Only the canonical revision log is reported here.
         **coverage_keys(
             audit_pages.workspace_options(),
             revision=system_writes.change_workspaces(),
-            derived=recovered_workspaces if recover and not recovery_failed else [],
+            derived=[],
         ),
         'sources': sorted(versioning.SOURCES),
         'actorTypes': sorted(versioning.ACTOR_TYPES),
@@ -588,7 +543,7 @@ def revision_trail(request):
         # once Action or Record type has narrowed the feed.
         'actors': merge_actors(revision_actors(
             since, workspace, entity_filter, action_filter, source_filter, actor_type_filter,
-        ), result['recovered_actors']),
+        ), []),
         'events': events,
     })
 
@@ -829,185 +784,17 @@ def context_line(entity_type, context):
     registered = versioning.ENTITY_CONTEXT_FIELDS.get(entity_type)
     order = registered or ('programme_name', 'cohort_name', 'group_name', 'module_name')
     parts = [curriculum_views.clean_str(context.get(key)) for key in order]
-    return ' › '.join(part for part in parts if part)
-
-
-def derived_trail(request):
-    """The trail read from the records' own timestamps, across the whole LMS.
-
-    Used only where the revision log does not exist. Every table it can read is
-    declared in ``system_audit.derived``, which also says what each stamp is
-    allowed to prove. Filtered, counted and paged in SQL over the whole window,
-    so a page, its total and the headline counts always describe the same set.
-    """
-    from system_audit import derived, pages as audit_pages
-    workspace = curriculum_views.clean_str(request.GET.get('workspace')).lower()
-    days = parse_bounded_int(request.GET.get('days'), DEFAULT_WINDOW_DAYS, 1, change_window_limit(workspace))
-    limit = parse_bounded_int(request.GET.get('limit'), DEFAULT_PAGE_SIZE, 1, MAX_LIMIT)
-    page = parse_bounded_int(request.GET.get('page'), 1, 1, 10_000)
-    entity_filter = curriculum_views.clean_str(request.GET.get('entity')).lower()
-    action_filter = curriculum_views.clean_str(request.GET.get('action')).lower()
-    actor_filter = curriculum_views.clean_str(request.GET.get('actor')).lower()
-    search = curriculum_views.clean_str(request.GET.get('search')).lower()
-    since = datetime.utcnow() - timedelta(days=days)
-
-    try:
-        curriculum_views.ensure_module_authoring_tables()
-    except Exception:
-        logger.warning('Audit trail could not verify authoring tables.', exc_info=True)
-
-    try:
-        result = derived.read(
-            since=since,
-            workspace=workspace,
-            entity=entity_filter,
-            action=action_filter if action_filter in ACTIONS else '',
-            search=search,
-            actor=actor_filter,
-            limit=limit,
-            page=page,
-        )
-        derived_workspaces = derived.coverage()
-    except Exception:
-        logger.warning('Could not read the timestamp audit trail.', exc_info=True)
-        return JsonResponse({'error': 'Audit history could not be read. Please retry.'}, status=503)
-
-    action_counts = {action: 0 for action in ACTIONS}
-    action_counts.update(result['action_counts'])
-    workspaces = audit_pages.workspace_options()
-    return JsonResponse({
-        'generatedAt': datetime.utcnow().isoformat(),
-        'windowDays': days,
-        'since': since.isoformat(),
-        'limit': limit,
-        'page': result['page'],
-        'pageSize': limit,
-        'pages': result['pages'],
-        'total': result['total'],
-        'truncated': result['total'] > limit,
-        'actionCounts': action_counts,
-        'entityCounts': result['entity_counts'],
-        # Named so the page can say which record types are missing instead of
-        # quietly under-reporting.
-        'unreadable': sorted(set(result['unreadable'])),
-        # A timestamp does not record who moved it. Some rows name a person of
-        # their own, and those are shown; the reading as a whole cannot.
-        'authorRecorded': False,
-        'source': 'timestamps',
-        # Same keys as the revision trail, so a caller never branches on which
-        # reading it got to know what it may ask for.
-        'structuredMetadata': False,
-        'sources': [],
-        'actorTypes': [],
-        'workspaces': workspaces,
-        **coverage_keys(workspaces, revision=[], derived=derived_workspaces),
-        'entityTypes': derived_entity_options(),
-        'actors': [
-            {
-                'email': curriculum_views.clean_str(row.get('email')),
-                'name': curriculum_views.clean_str(row.get('name')),
-                'changes': int(row.get('changes') or 0),
-            }
-            for row in result['actors']
-        ],
-        'events': [derived_event(row) for row in result['rows']],
-    })
+    return ' â€º '.join(part for part in parts if part)
 
 
 def coverage_keys(workspaces, *, revision, derived):
-    """Which workspaces this response can speak for, and through what.
-
-    ``changeWorkspaces`` keeps its old meaning -- "covered by this response" --
-    so an older page still reads it correctly. The three lists beside it are
-    the honest breakdown: real revision history, timestamps only, and nothing.
-    """
+    """Return canonical revision coverage; derived timestamp history is retired."""
     covered = sorted(set(revision) | set(derived))
     return {
         'changeWorkspaces': covered,
         'revisionWorkspaces': sorted(revision),
         'derivedWorkspaces': sorted(derived),
         'uncoveredWorkspaces': [entry['value'] for entry in workspaces if entry['value'] not in covered],
-    }
-
-
-def derived_entity_options():
-    """The record types the timestamp reading can show, named as the log names them."""
-    from system_audit import derived, writes as system_writes
-    seen = {}
-    for source in derived.DERIVED_AUDIT_SOURCES:
-        label = (ENTITY_LABELS.get(source.entity) or system_writes.ENTITY_LABELS.get(source.entity)
-                 or (source.entity.replace('_', ' ').capitalize(), ''))[0]
-        seen.setdefault(source.entity, label)
-    return sorted(({'value': key, 'label': label} for key, label in seen.items()),
-                  key=lambda option: option['label'].lower())
-
-
-def derived_event(row):
-    """One timestamp-derived event, in the same shape as a revision event.
-
-    The keys this reading cannot know are empty rather than absent, and empty
-    is the honest answer: a timestamp does not record what a record held before.
-    """
-    from system_audit import derived, pages as audit_pages, writes as system_writes
-    entity = curriculum_views.clean_str(row.get('entity'))
-    source = next((item for item in derived.DERIVED_AUDIT_SOURCES if item.entity == entity), None)
-    label, href = ENTITY_LABELS.get(entity) or system_writes.ENTITY_LABELS.get(entity) or (
-        entity.replace('_', ' ').capitalize() or 'Record', '',
-    )
-    if source is not None and source.href:
-        href = source.href
-    action = curriculum_views.clean_str(row.get('action')) or 'recorded'
-    at = iso(row.get('at'))
-    entity_id = curriculum_views.clean_str(row.get('entity_id'))
-    title_join = ' '
-    if source is not None:
-        title_join = source.title_join if source.title_join is not None else (
-            (versioning.ENTITY_FACT_FIELDS.get(entity) or {}).get('title_join') or ' ')
-    title = (title_join.join(derived.split(row.get('title')))
-             or ' '.join(derived.split(row.get('title_fallback'))) or entity_id)
-    actor = curriculum_views.clean_str(row.get('actor'))
-    reason = curriculum_views.clean_str(row.get('reason'))
-    workspace = system_writes.workspace_for_entity(entity) or ''
-    return {
-        'id': f'{row.get("origin")}:{entity_id}:{action}:{at}',
-        # Read back from a timestamp the record keeps: weaker evidence than a
-        # revision, and said so wherever the event is shown.
-        'provenance': 'timestamps',
-        'provenanceLabel': PROVENANCE_LABELS['timestamps'],
-        'at': at,
-        'action': action,
-        'actionLabel': ACTION_LABELS.get(action, action.title()),
-        'entity': entity,
-        'entityLabel': label,
-        'workspace': workspace,
-        'workspaceLabel': audit_pages.WORKSPACES.get(workspace, workspace.title() if workspace else ''),
-        'entityId': entity_id,
-        'revisionNo': 0,
-        'title': title,
-        'context': ' › '.join(derived.split(row.get('context'))),
-        'parents': {},
-        'moduleCatalogueId': '',
-        'parentId': '',
-        'versionLabel': '',
-        'contentStatus': '',
-        # Exactly what the row records, for the event that column describes.
-        # Never the current user, and never "System" unless the row says so.
-        'actorName': actor,
-        'actorEmail': actor.lower() if '@' in actor else '',
-        'actorType': '',
-        'actorTypeLabel': '',
-        'triggeredByEmail': '',
-        'triggeredByName': '',
-        'source': '',
-        'sourceLabel': '',
-        'metadata': {},
-        'changes': [],
-        'snapshot': None,
-        # The write handler's reason code, only ever set by an archive. Not a
-        # person: see the module docstring.
-        'reason': reason if action == 'archived' else '',
-        'viaParent': curriculum_views.clean_str(row.get('via_parent')) if action == 'archived' else '',
-        'href': system_writes.record_href(entity, entity_id, fallback=href),
     }
 
 

@@ -9,7 +9,6 @@ import styles from '@/pages/users/presentation/EnrolmentForms.module.css';
 import motion from '@/pages/users/presentation/EnrolmentMotion.module.css';
 import {
   fetchProgrammes, fetchCohorts, fetchGroups, fetchModules, fetchWeeks, fetchComponents,
-  fetchLegacyOtjh, legacyOtjhKey,
   type CurriculumItem, type WeekItem, type ComponentItem,
 } from '@/api/curriculum';
 import { fetchCommercialUser, updateCommercialProgramme } from '@/api/commercialUsers';
@@ -191,28 +190,6 @@ export default function TrainingPlanPage() {
         builtModules.push({ id: m.moduleId, title: m.moduleTitle, weeks: builtWeeks });
       }
       if (cancelled) return;
-
-      // Plans saved before the structured format existed carry client-generated
-      // week/component ids (e.g. "component-mrc76lez-...") that don't exist in
-      // curriculum.module_authoring_components, so the id-based lookup above
-      // leaves their expectedOtjh null. Recover what we can by title instead —
-      // unmatched ones (module/week renamed since the plan was saved) stay null.
-      const legacyLookups: { moduleId: string; weekId: string; module: string; week: string; component: string }[] = [];
-      builtModules.forEach((m) => m.weeks.forEach((w) => w.components.forEach((c) => {
-        if (c.expectedOtjh == null) legacyLookups.push({ moduleId: m.id, weekId: w.id, module: m.title, week: w.title, component: c.title });
-      })));
-      if (legacyLookups.length > 0) {
-        const hoursByKey = await fetchLegacyOtjh(legacyLookups.map((l) => ({ module: l.module, week: l.week, component: l.component })));
-        if (cancelled) return;
-        if (Object.keys(hoursByKey).length > 0) {
-          builtModules.forEach((m) => m.weeks.forEach((w) => w.components.forEach((c) => {
-            if (c.expectedOtjh == null) {
-              const hours = hoursByKey[legacyOtjhKey(m.title, w.title, c.title)];
-              if (hours != null) c.expectedOtjh = hours;
-            }
-          })));
-        }
-      }
 
       setWeekOptions(nextWeekOptions);
       setComponentOptions(nextComponentOptions);
