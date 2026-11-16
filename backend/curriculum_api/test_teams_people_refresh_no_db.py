@@ -31,6 +31,9 @@ class PeopleRefreshTests(SimpleTestCase):
         self.cached.get.return_value = None
         self.cached.get_many.return_value = {}
         self.addCleanup(cached.stop)
+        committed = patch.object(refresh.transaction, 'on_commit', side_effect=lambda callback: callback())
+        committed.start()
+        self.addCleanup(committed.stop)
         self.series = {'id': 'LIVE', 'status': 'active', 'meeting_type': 'live-session', 'module_catalogue_id': 'MODULE',
                        'organizer_email': 'owner@example.invalid', 'graph_event_id': 'EVENT', 'join_url': JOIN,
                        'online_meeting_id': 'ONLINE', 'presenters': ['tutor@example.invalid'], 'co_organizers': [], 'attendees': []}
@@ -223,6 +226,7 @@ class PeopleRefreshTests(SimpleTestCase):
         cursor.fetchall.return_value = [('LIVE-SYNTHETIC',)]
         cursor.fetchone.return_value = (False,)
         with patch.object(refresh, 'people_sync_lock', REAL_SYNC_LOCK), \
+                patch.object(refresh.transaction, 'atomic', return_value=nullcontext()), \
                 patch.object(refresh, 'connection', SimpleNamespace(cursor=lambda: cursor)), \
                 patch.object(refresh, 'refresh_people', side_effect=service):
             with self.assertLogs(refresh.log, level='WARNING') as logs:
@@ -319,7 +323,9 @@ class PeopleSyncCoordinationTests(SimpleTestCase):
         cursor = Mock()
         cursor.__enter__ = Mock(return_value=cursor)
         cursor.__exit__ = Mock(return_value=False)
-        with patch.object(refresh, 'connection', SimpleNamespace(cursor=lambda: cursor)):
+        atomic = Mock(return_value=nullcontext())
+        with patch.object(refresh.transaction, 'atomic', atomic), \
+                patch.object(refresh, 'connection', SimpleNamespace(cursor=lambda: cursor)):
             cursor.fetchone.return_value = (False,)
             with self.assertRaisesRegex(refresh.CalendarStateError, 'already running'):
                 with REAL_SYNC_LOCK('LIVE'):
@@ -330,9 +336,22 @@ class PeopleSyncCoordinationTests(SimpleTestCase):
             with self.assertRaises(ValueError):
                 with REAL_SYNC_LOCK('LIVE'):
                     raise ValueError('synthetic failure')
-        self.assertIn('pg_try_advisory_lock', cursor.execute.call_args_list[0].args[0])
-        self.assertIn('pg_advisory_unlock', cursor.execute.call_args_list[-1].args[0])
-        self.assertEqual(cursor.execute.call_args_list[0].args[1], cursor.execute.call_args_list[-1].args[1])
+        self.assertEqual(atomic.call_count, 2)
+        self.assertEqual(cursor.execute.call_count, 1)
+        self.assertIn('pg_try_advisory_xact_lock', cursor.execute.call_args.args[0])
+        self.assertEqual(cursor.execute.call_args.args[1], ['curriculum:teams-people:LIVE'])
+
+    def test_success_callbacks_wait_for_commit_and_preserve_error_phase(self):
+        publish = Mock()
+        with patch.object(refresh.transaction, 'on_commit') as committed:
+            refresh._after_commit('cache_write', publish)
+        publish.assert_not_called()
+        committed.call_args.args[0]()
+        publish.assert_called_once_with()
+        publish.side_effect = RuntimeError('private cache details')
+        with self.assertRaises(RuntimeError) as failure:
+            committed.call_args.args[0]()
+        self.assertEqual(refresh._failure_details(failure.exception), ('unexpected_error', 'cache_write'))
 
     def test_existing_scheduled_worker_calls_shared_service_and_keeps_session_outcome(self):
         from .management.commands import process_session_results as worker
