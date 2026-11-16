@@ -143,6 +143,9 @@ export interface ModuleComponent {
 }
 
 export interface ModuleWeek {
+  studyWeekStartDate?: string;
+  studyWeekEndDate?: string;
+  studyWeekHolidays?: ModuleSlotHoliday[];
   id: string;
   /** The week this independent copy was placed from, when it has one. */
   copiedFromId?: string;
@@ -195,6 +198,7 @@ export interface ModuleMonthGroup {
  * "Unscheduled" heading over the whole list tells a reader nothing.
  */
 export function moduleWeekDeliveryDate(week: ModuleWeek): string {
+  if (week.studyWeekStartDate) return week.studyWeekStartDate;
   const primary = week.components.find(component => component.type === 'live-session' && !component.settings?.extraTeamsMeetingUrl);
   return (primary && sessionDeliveryDate(primary.settings || {})) || sessionDeliveryDate({ sessionDate: week.sessionDate });
 }
@@ -246,6 +250,8 @@ function monthLabelOf(key: string) {
  * after it.
  */
 export interface ModuleWeekSessionPlan {
+  weeks?: import('@/lib/curriculumApi').CurriculumStudyWeek[];
+  calendarEndDate?: string;
   /**
    * `weekNumber` is the Monday-to-Sunday window this date falls in, counting
    * the module's own starting week as 1. It is what pairs a planned date with
@@ -288,11 +294,12 @@ export interface ModuleSlotHoliday {
  * per closure -- in the module's own pattern, never a hardcoded seven days.
  */
 export interface ModuleSessionSlot {
+  weekNumber?: number;
+  cause?: string;
   slotNumber: number;
   date: string;
   day: string;
   type: 'live-session' | 'reading-week';
-  cause?: string;
   sessionNumber: number | null;
   holidays: ModuleSlotHoliday[];
 }
@@ -315,6 +322,7 @@ export function moduleDeliveryDaysPerWeek(module: ModuleCatalogueItem): number {
 
 /** Imported content may have one row per live session, plus reading-only rows. */
 export function moduleUsesSessionRows(module: ModuleCatalogueItem, plannedSessionCount = module.sessionsNumber || 0): boolean {
+  if (module.weekBoundaryMode === 'calendar') return false;
   const counts = module.weekStructure.map(week => week.components.filter(component => component.type === 'live-session').length);
   const days = module.weeklySchedule?.length
     || String(module.deliveryMetadata?.weekDays || '').split(',').filter(day => day.trim()).length
@@ -360,11 +368,14 @@ export function moduleWeekSessionSlots(
 ): number[] {
   if (!module) return [];
   const weeks = module.weekStructure;
+  if (module.weekBoundaryMode === 'calendar' && plannedSessions === undefined) {
+    return weeks.map(week => week.components.filter(component => component.type === 'live-session').length);
+  }
   const plan = plannedSessions || [];
   // The plan, counted into the Mon-Sun windows the backend numbered it into.
   // A week with no delivery day in its own window gets nothing rather than
   // borrowing the next week's date.
-  if (plan.some(session => Number(session.weekNumber) > 0)) {
+  if (module.weekBoundaryMode === 'calendar' || plan.some(session => Number(session.weekNumber) > 0)) {
     const countByWeekNumber = new Map<number, number>();
     plan.forEach(session => {
       const weekNumber = Number(session.weekNumber) || 0;
@@ -411,6 +422,7 @@ export function weekDeliverySlotCapacity(
   plannedSessions?: ModuleWeekSessionPlan['sessions'],
 ): number {
   if (!module || weekIndex < 0) return 0;
+  if (module.weekBoundaryMode === 'calendar' && plannedSessions !== undefined) return moduleWeekSessionSlots(module, plannedSessions)[weekIndex] || 0;
   const plan = plannedSessions || [];
   const plannedWeeks = plan.reduce((furthest, session) => Math.max(furthest, Number(session.weekNumber) || 0), 0);
   if (plannedWeeks > 0 && weekIndex + 1 <= plannedWeeks && weekIndex < module.weekStructure.length) {
@@ -450,6 +462,7 @@ export function liveSessionSlotOverflow(
   if (!module || adding <= 0) return null;
   const week = module.weekStructure[weekIndex];
   if (!week) return null;
+  if (module.weekBoundaryMode === 'calendar' && week.studyWeekHolidays?.length) return null;
   const capacity = weekDeliverySlotCapacity(module, weekIndex, plannedSessions);
   const existing = (week.components || []).filter(component => component.type === 'live-session').length;
   const beyond = Math.max(0, existing + adding - capacity);
@@ -960,9 +973,19 @@ export function applyModuleComponentUpdate(module: ModuleCatalogueItem, componen
  */
 export function weeksTouchedByHoliday(
   module: ModuleCatalogueItem | null | undefined,
-  plan: Pick<ModuleWeekSessionPlan, 'sessions' | 'slots'> | null | undefined,
+  plan: Pick<ModuleWeekSessionPlan, 'sessions' | 'slots' | 'weeks'> | null | undefined,
 ): Map<string, ModuleSessionSlot[]> {
   const byWeekId = new Map<string, ModuleSessionSlot[]>();
+  if (module?.weekBoundaryMode === 'calendar') {
+    module.weekStructure.forEach((week, index) => {
+      const window = plan?.weeks?.find(item => item.weekNumber === index + 1);
+      const holidays = window?.holidays || week.studyWeekHolidays || [];
+      if (holidays.length) byWeekId.set(week.id, [{ slotNumber: index + 1, weekNumber: index + 1,
+        date: window?.startDate || week.studyWeekStartDate || '', day: '', type: 'reading-week',
+        cause: 'holiday-week', sessionNumber: null, holidays }]);
+    });
+    return byWeekId;
+  }
   const slots = plan?.slots || [];
   if (!module || !slots.length) return byWeekId;
   const weekIdBySessionNumber = moduleWeekIdBySessionNumber(module, plan?.sessions);
@@ -1073,7 +1096,7 @@ export function applyModuleWeekSessionPlan(
   options: { followEndDate?: boolean } = {},
 ): ModuleCatalogueItem {
   const sessions = plan?.sessions || [];
-  if (!sessions.length) return module;
+  if (!sessions.length && !(module.weekBoundaryMode === 'calendar' && plan.weeks?.length)) return module;
   // How many planned dates one authored week owns. A Mon+Fri module runs two
   // sessions for every week it authors, so a ten-week module spends twenty
   // planned dates -- and it spends them whether or not the live-session
@@ -1085,6 +1108,7 @@ export function applyModuleWeekSessionPlan(
   let weeksMoved = false;
   let sessionIndex = 0;
   const weekStructure = module.weekStructure.map((week, weekIndex) => {
+    const window = module.weekBoundaryMode === 'calendar' ? plan.weeks?.find(item => item.weekNumber === weekIndex + 1) : undefined;
     const liveComponents = week.components.filter(component => component.type === 'live-session');
     const slotCount = slotCounts[weekIndex] ?? 1;
     const slots = sessions.slice(sessionIndex, sessionIndex + slotCount);
@@ -1208,15 +1232,16 @@ export function applyModuleWeekSessionPlan(
       }
     }
     if (
-      components === week.components
+      (!window || (week.studyWeekStartDate === window.startDate && week.studyWeekEndDate === window.endDate && JSON.stringify(week.studyWeekHolidays) === JSON.stringify(window.holidays)))
+      && components === week.components
       && (week.sessionDate || '') === sessionDate
       && (week.sessionDay || '') === sessionDay
     ) return week;
     weeksMoved = true;
-    return { ...week, components, sessionDate, sessionDay };
+    return { ...week, components, sessionDate, sessionDay, ...(window ? { studyWeekStartDate: window.startDate, studyWeekEndDate: window.endDate, studyWeekHolidays: window.holidays } : {}) };
   });
   const currentEndDate = String(module.endDate || '').trim();
-  const endDateFollowsPlan = options.followEndDate !== false
+  const endDateFollowsPlan = module.weekBoundaryMode !== 'calendar' && options.followEndDate !== false
     && (!currentEndDate || sessions.some(session => session.date === currentEndDate));
   const endDate = endDateFollowsPlan && plan.finalEndDate ? plan.finalEndDate : module.endDate;
   if (!weeksMoved && endDate === module.endDate) return module;
@@ -1297,6 +1322,7 @@ export interface ModuleCatalogueItem extends CoursePricing {
   weeklySchedule?: CurriculumModule['weeklySchedule'];
   scheduleMode?: CurriculumModule['scheduleMode'];
   weekStartsOn?: CurriculumModule['weekStartsOn'];
+  weekBoundaryMode?: CurriculumModule['weekBoundaryMode'];
   sessionHolidays?: CurriculumModule['sessionHolidays'];
   calendarPolicy?: CurriculumModule['calendarPolicy'];
   deliveryWeeks?: number;
@@ -1563,7 +1589,7 @@ export function createLocalModuleDraft(input: CoursePricing & { isFreeCourse?: b
   });
 }
 
-export async function createNewModule(input: CoursePricing & { calendarPolicy?: DeliveryCalendarPolicy | null; isFreeCourse?: boolean; programme: string; title: string; description: string; weeks: number; status: ModuleStatus; programmeId?: string; programmeStatus?: string; cohortId?: string; cohortName?: string; groupId?: string; groupName?: string; ksbProfileSourceId?: string; sessionsNumber?: number; startDate?: string; endDate?: string; coverImage?: string; learnerRosterMode?: 'inherited' | 'manual'; teamsSharedSourceModuleId?: string; ksbRemapReport?: KsbRemapReport | null; moduleKsbMappings?: KsbMapping[]; weekStructure?: ModuleWeek[]; duplicateDestination?: boolean }) {
+export async function createNewModule(input: CoursePricing & { weekBoundaryMode?: 'calendar'; weekStartsOn?: string; calendarPolicy?: DeliveryCalendarPolicy | null; isFreeCourse?: boolean; programme: string; title: string; description: string; weeks: number; status: ModuleStatus; programmeId?: string; programmeStatus?: string; cohortId?: string; cohortName?: string; groupId?: string; groupName?: string; ksbProfileSourceId?: string; sessionsNumber?: number; startDate?: string; endDate?: string; coverImage?: string; learnerRosterMode?: 'inherited' | 'manual'; teamsSharedSourceModuleId?: string; ksbRemapReport?: KsbRemapReport | null; moduleKsbMappings?: KsbMapping[]; weekStructure?: ModuleWeek[]; duplicateDestination?: boolean }) {
   if (input.isFreeCourse) {
     input = { ...input, programme: '', programmeId: '', programmeStatus: '', cohortId: '', cohortName: '', groupId: '', groupName: '', learnerRosterMode: 'manual', teamsSharedSourceModuleId: '', startDate: '', endDate: '' };
   }
@@ -1575,6 +1601,7 @@ export async function createNewModule(input: CoursePricing & { calendarPolicy?: 
         title: draft.title,
         moduleType: 'authoring',
         ...('calendarPolicy' in input ? { calendarPolicy: input.calendarPolicy } : {}),
+        ...(input.weekBoundaryMode ? { weekBoundaryMode: input.weekBoundaryMode, weekStartsOn: input.weekStartsOn } : {}),
         ...(input.isFreeCourse ? { isFreeCourse: true, catalogueId: draft.catalogueId } : {}),
         isForSale: draft.isForSale,
         price: draft.price,
@@ -2555,6 +2582,7 @@ export function curriculumModuleToCatalogue(module: CurriculumModule): ModuleCat
     weeklySchedule: module.weeklySchedule || [],
     scheduleMode: module.scheduleMode,
     weekStartsOn: module.weekStartsOn,
+    weekBoundaryMode: module.weekBoundaryMode,
     sessionHolidays: module.sessionHolidays || [],
     calendarPolicy: module.calendarPolicy,
     deliveryWeeks: module.deliveryWeeks,

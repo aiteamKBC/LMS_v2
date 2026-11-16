@@ -39,7 +39,7 @@ from django.views.decorators.http import require_GET
 from django.views.decorators.gzip import gzip_page
 from django.views.decorators.clickjacking import xframe_options_sameorigin
 from login.permissions import require_role
-from .weekly_schedule import module_weekly_schedule, merged_weekly_schedule, module_week_starts_on, merged_week_starts_on, first_weekly_session_day
+from .weekly_schedule import module_weekly_schedule, merged_weekly_schedule, module_week_starts_on, merged_week_starts_on, first_weekly_session_day, module_week_boundary_mode, merged_week_boundary_mode
 from .learning_storage import native_only, with_course_storage
 from .course_pricing import API_FIELDS as COURSE_PRICING_FIELDS, pricing_payload, pricing_values
 from .teams_weekly_calendar import calendar_groups, save_weekday_calendar, stored_calendar_series, graph_event_utc
@@ -6789,7 +6789,7 @@ def build_module_session_plan(start_value, number_of_sessions, delivery_days, ho
     }
 
 
-def module_calendar_end_date(start_value, week_count):
+def module_calendar_end_date(start_value, week_count, module=None):
     """The module's End Date field: the calendar span of its authored weeks,
     counted from the start date.
 
@@ -6801,6 +6801,9 @@ def module_calendar_end_date(start_value, week_count):
     field; this is the one server-side callers use whenever a module payload
     arrives with no explicit ``endDate`` to fall back on.
     """
+    if module_week_boundary_mode(module):
+        from .study_weeks import study_week_end_date
+        return study_week_end_date(start_value, week_count, module_week_starts_on(module))
     start = parse_date(start_value)
     weeks = max(0, parse_int(week_count, 0))
     if not start or weeks <= 0:
@@ -11604,7 +11607,8 @@ def module_delivery_session_plan(module, session_count, start, holidays=None, we
     if any(item.get('_calendarError') for item in (holidays or [])):
         from curriculum_api.country_calendars import CalendarUnavailable
         raise CalendarUnavailable(next(item['_calendarError'] for item in holidays if item.get('_calendarError')))
-    if not week_count and clean_str(module.get('schedule_mode') or module.get('scheduleMode')) == 'custom':
+    calendar_weeks = module_week_boundary_mode(module) == 'calendar'
+    if not week_count and (calendar_weeks or clean_str(module.get('schedule_mode') or module.get('scheduleMode')) == 'custom'):
         week_count = parse_int(module.get('weeks_number') or module.get('weeksNumber'), 0)
     weekly = module_weekly_schedule(module)
     delivery_days = ', '.join(slot['day'] for slot in weekly) or module.get('session_week_day') or module.get('week_days') or module.get('delivery_days') or ''
@@ -11614,6 +11618,17 @@ def module_delivery_session_plan(module, session_count, start, holidays=None, we
         from curriculum_api.delivery_calendar import module_holidays
         holidays = module_holidays(module, holidays)
     applied_holidays = [*(holidays or []), *(own_holidays if isinstance(own_holidays, list) else [])]
+    if calendar_weeks:
+        from .study_weeks import build_study_week_plan
+        if not start or week_count <= 0:
+            return {'sessions': [], 'slots': [], 'weeks': [], 'skippedHolidays': [], 'finalEndDate': '', 'warnings': ['Set the module start date and study weeks.']}
+        plan = build_study_week_plan(start, week_count, parse_delivery_days(delivery_days),
+                                     holiday_details_by_date(applied_holidays), module_week_starts_on(module),
+                                     parse_date(module.get('end_date') or module.get('endDate')))
+        for session in plan['sessions']:
+            clock, end, duration = module_session_clock({**module, 'session_overrides': {}}, session_date=session['date'])
+            session.update(startTime=clock, endTime=end, durationMinutes=duration)
+        return apply_session_overrides(plan, module)
     plan = build_module_session_plan(
         start, session_count, delivery_days, applied_holidays, week_count=week_count,
         week_starts_on=first_weekly_session_day(start, weekly)
@@ -11980,6 +11995,7 @@ def module_session_dates(module, holiday_cache=None):
         start,
         clean_str(module.get('schedule_mode')),
         module_week_starts_on(module),
+        module_week_boundary_mode(module),
         parse_int(module.get('weeks_number'), 0),
         clean_str(module.get('end_date')),
         clean_str(module.get('session_week_day')),
@@ -12381,6 +12397,7 @@ def module_schedule_view(module, tutor_name=None):
         'weekly_schedule': weekly,
         'schedule_mode': first('schedule_mode', 'scheduleMode') or 'group',
         'week_starts_on': module_week_starts_on(module),
+        'week_boundary_mode': module_week_boundary_mode(module),
         'session_holidays': parse_json_value(module.get('session_holidays') or module.get('sessionHolidays'), []),
         'calendar_policy': module.get('calendarPolicy') if 'calendarPolicy' in module else module.get('calendar_policy'),
         'session_overrides': session_overrides(module),
@@ -12413,6 +12430,8 @@ def module_schedule_assignment_changed(before, after):
     )
     if before.get('schedule_mode') == 'custom' or after.get('schedule_mode') == 'custom':
         keys += ('weeks_number', 'end_date', 'week_starts_on')
+    if before.get('week_boundary_mode') or after.get('week_boundary_mode'):
+        keys += ('weeks_number', 'end_date', 'week_starts_on', 'week_boundary_mode')
     return any(clean_str(before.get(key)) != clean_str(after.get(key)) for key in keys)
 
 
@@ -15257,6 +15276,7 @@ def provision_module_authoring_tables():
                 weekly_schedule {json_type},
                 schedule_mode varchar(16) not null default 'group',
                 week_starts_on varchar(9),
+                week_boundary_mode varchar(16),
                 calendar_policy {json_type},
                 source_type varchar(64),
                 source_id varchar(255),
@@ -15283,6 +15303,7 @@ def provision_module_authoring_tables():
             cursor.execute(f'alter table {authoring_table_name(AUTHORING_MODULES_TABLE)} add column if not exists weekly_schedule {json_type}')
             cursor.execute(f"alter table {authoring_table_name(AUTHORING_MODULES_TABLE)} add column if not exists schedule_mode varchar(16) not null default 'group'")
             cursor.execute(f'alter table {authoring_table_name(AUTHORING_MODULES_TABLE)} add column if not exists week_starts_on varchar(9)')
+            cursor.execute(f'alter table {authoring_table_name(AUTHORING_MODULES_TABLE)} add column if not exists week_boundary_mode varchar(16)')
             cursor.execute(f'alter table {authoring_table_name(AUTHORING_MODULES_TABLE)} add column if not exists source_type varchar(64)')
             cursor.execute(f'alter table {authoring_table_name(AUTHORING_MODULES_TABLE)} add column if not exists source_id varchar(255)')
             cursor.execute(f'alter table {authoring_table_name(AUTHORING_MODULES_TABLE)} add column if not exists tutor_name varchar(255)')
@@ -15326,6 +15347,8 @@ def provision_module_authoring_tables():
                 cursor.execute(f'alter table {authoring_table_name(AUTHORING_MODULES_TABLE)} add column weekly_schedule {json_type}')
             if 'schedule_mode' not in columns:
                 cursor.execute(f"alter table {authoring_table_name(AUTHORING_MODULES_TABLE)} add column schedule_mode varchar(16) not null default 'group'")
+            if 'week_boundary_mode' not in columns:
+                cursor.execute(f'alter table {authoring_table_name(AUTHORING_MODULES_TABLE)} add column week_boundary_mode varchar(16)')
             if 'week_starts_on' not in columns:
                 cursor.execute(f'alter table {authoring_table_name(AUTHORING_MODULES_TABLE)} add column week_starts_on varchar(9)')
             if 'source_type' not in columns:
@@ -17613,6 +17636,7 @@ def validate_module_authoring_payload(payload):
         errors.append({'path': 'scheduleMode', 'message': 'Choose Group or Custom scheduling.'})
     try:
         module_week_starts_on(payload)
+        module_week_boundary_mode(payload)
     except ValueError as exc:
         errors.append({'path': 'weekStartsOn', 'message': str(exc)})
     try:
@@ -20824,9 +20848,16 @@ def apply_module_session_plan_to_weeks(module, group_row, weeks, *, holidays=Non
     # its own window (a module whose group pauses a week) simply gets nothing
     # rather than borrowing the next week's date.
     try:
-        slots_by_week, session_plan = module_week_delivery_slots(
-            module, group_row, len(weeks), holidays=holidays,
-        )
+        study_windows = []
+        if module_week_boundary_mode(module) == 'calendar':
+            study_plan = module_session_plan_for_weeks(module_delivery_row(module, group_row), len(weeks), holidays=holidays)
+            study_windows = study_plan.get('weeks') or []
+            session_plan = study_plan.get('sessions') or []
+            slots_by_week = [[slot for slot in session_plan if slot.get('weekNumber') == index + 1] for index in range(len(weeks))]
+        else:
+            slots_by_week, session_plan = module_week_delivery_slots(
+                module, group_row, len(weeks), holidays=holidays,
+            )
     except ValueError as exc:
         from curriculum_api.country_calendars import CalendarUnavailable
         if not isinstance(exc, CalendarUnavailable):
@@ -20839,6 +20870,9 @@ def apply_module_session_plan_to_weeks(module, group_row, weeks, *, holidays=Non
         return
     session_start_time, _session_end_time, session_duration = module_session_clock(module, group_row)
     for week_index, week in enumerate(weeks):
+        if week_index < len(study_windows):
+            window = study_windows[week_index]
+            week.update(studyWeekStartDate=window['startDate'], studyWeekEndDate=window['endDate'], studyWeekHolidays=window['holidays'])
         live_components = [component for component in week.get('components') or [] if component.get('type') == 'live-session']
         slots = slots_by_week[week_index] if week_index < len(slots_by_week) else []
         # The week itself runs on the first of its delivery days.
@@ -21875,6 +21909,7 @@ def get_authoring_structure_payload(module_catalogue_id, include_archived=False,
         'weeklySchedule': module_weekly_schedule(delivery_module),
         'scheduleMode': module.get('schedule_mode') or 'group',
         'weekStartsOn': module_week_starts_on(module),
+        'weekBoundaryMode': module_week_boundary_mode(module),
         'sessionHolidays': parse_json_value(module.get('session_holidays'), []),
         'calendarPolicy': parse_json_value(module.get('calendar_policy'), None),
         'calendarError': module.get('_calendar_error') or '',
@@ -22354,6 +22389,7 @@ def get_authoring_structure_payloads(
             'weeklySchedule': module_weekly_schedule(delivery_module),
             'scheduleMode': module.get('schedule_mode') or 'group',
             'weekStartsOn': module_week_starts_on(module),
+            'weekBoundaryMode': module_week_boundary_mode(module),
             'sessionHolidays': parse_json_value(module.get('session_holidays'), []),
         'calendarPolicy': parse_json_value(module.get('calendar_policy'), None),
         'calendarError': module.get('_calendar_error') or '',
@@ -22606,6 +22642,7 @@ def authoring_catalogue_summaries(include_programme_deleted=False, include_conte
             'weeklySchedule': module_weekly_schedule(row),
             'scheduleMode': row.get('schedule_mode') or 'group',
             'weekStartsOn': module_week_starts_on(row),
+            'weekBoundaryMode': module_week_boundary_mode(row),
             'sessionHolidays': parse_json_value(row.get('session_holidays'), []),
         'calendarPolicy': parse_json_value(row.get('calendar_policy'), None),
             'weekDays': row.get('session_week_day') or '',
@@ -22787,6 +22824,7 @@ def authoring_summary_catalogue_item(summary):
         'weeklySchedule': summary.get('weeklySchedule') or [],
         'scheduleMode': summary.get('scheduleMode') or 'group',
         'weekStartsOn': summary.get('weekStartsOn'),
+        'weekBoundaryMode': summary.get('weekBoundaryMode'),
         'calendarPolicy': summary.get('calendarPolicy'),
         'sessionHolidays': summary.get('sessionHolidays') or [],
         'deliveryWeeks': summary.get('deliveryWeeks'),
@@ -22862,6 +22900,7 @@ def enrich_curriculum_modules_with_authoring_details(modules, *, child_rows=None
             'sessionHolidays': authoring.get('sessionHolidays') or [],
             'calendarPolicy': authoring.get('calendarPolicy'),
             'weekStartsOn': authoring.get('weekStartsOn'),
+        'weekBoundaryMode': authoring.get('weekBoundaryMode'),
             'deliveryWeeks': authoring.get('deliveryWeeks'),
             'weekDays': authoring.get('weekDays') or module.get('weekDays') or '',
             'startTime': authoring.get('startTime') or module.get('startTime') or '',
@@ -24026,8 +24065,27 @@ def save_module_authoring_structure(
         authored_week_count = len(weeks) or module_stored_week_count(existing_module_row)
     weekly_schedule = merged_weekly_schedule(payload, existing_module_row)
     schedule_mode = payload.get('scheduleMode', existing_module_row.get('schedule_mode') or 'group')
-    week_starts_on = merged_week_starts_on(payload, existing_module_row) if schedule_mode == 'custom' else None
-    if schedule_mode == 'custom' and len(weekly_schedule) > 1 and (week_starts_on or not existing_module_row):
+    try:
+        week_boundary_mode = merged_week_boundary_mode(payload, existing_module_row)
+    except ValueError as exc:
+        raise ModuleAuthoringValidationError([{'path': 'weekBoundaryMode', 'message': str(exc)}]) from exc
+    week_starts_on = merged_week_starts_on(payload, existing_module_row) if schedule_mode == 'custom' or week_boundary_mode else None
+    if week_boundary_mode and not week_starts_on:
+        raise ModuleAuthoringValidationError([{'path': 'weekStartsOn', 'message': 'Choose the first day of the study week.'}])
+    if week_boundary_mode and authored_week_count > 104:
+        raise ModuleAuthoringValidationError([{'path': 'weeksNumber', 'message': 'Choose between 1 and 104 study weeks.'}])
+    if week_boundary_mode and authored_week_count:
+        from .study_weeks import build_study_week_plan
+        study_start = parse_date(payload.get('startDate', payload.get('start_date', existing_module_row.get('start_date'))))
+        study_end = parse_date(payload.get('endDate', payload.get('end_date', existing_module_row.get('end_date'))))
+        if study_start:
+            try:
+                build_study_week_plan(study_start, authored_week_count, set(), {}, week_starts_on, study_end)
+            except ValueError as exc:
+                raise ModuleAuthoringValidationError([{'path': 'endDate', 'message': str(exc)}]) from exc
+    if week_boundary_mode and not has_column(AUTHORING_MODULES_TABLE, 'week_boundary_mode'):
+        raise ModuleAuthoringValidationError([{'path': 'weekBoundaryMode', 'message': 'Apply curriculum migration 0091 before saving study weeks.'}])
+    if not week_boundary_mode and schedule_mode == 'custom' and len(weekly_schedule) > 1 and (week_starts_on or not existing_module_row):
         week_starts_on = first_weekly_session_day(
             payload.get('startDate', payload.get('start_date', existing_module_row.get('start_date'))), weekly_schedule,
         )
@@ -24111,10 +24169,11 @@ def save_module_authoring_structure(
             'weekly_schedule': json_db_value(weekly_schedule),
             'schedule_mode': schedule_mode,
             'week_starts_on': week_starts_on,
+            'week_boundary_mode': week_boundary_mode,
             **calendar_update,
             'tutor_name': tutor_name or None,
             'tutor_email': tutor_email or None,
-        }, allow_null_columns={'price', 'week_starts_on', 'calendar_policy'})
+        }, allow_null_columns={'price', 'week_starts_on', 'week_boundary_mode', 'calendar_policy'})
         # Written only when the share itself changed. The `modules` column above
         # and this table say the same thing; rewriting the table on every save
         # meant every save could delete a share, which is how one went missing.
@@ -25304,15 +25363,20 @@ def curriculum_preview_module_session_plan(request):
         return json_error('Invalid JSON body.')
     try:
         module_week_starts_on(payload)
+        if module_week_boundary_mode(payload) and not module_week_starts_on(payload):
+            raise ValueError("Choose the first day of the study week.")
     except ValueError as exc:
         return json_error(str(exc), fields=['weekStartsOn'])
     try:
         weekly = module_weekly_schedule(payload)
     except ValueError as exc:
         return json_error(str(exc), fields=['weeklySchedule'])
-    if payload.get('endDate') and payload.get('weeksNumber'):
-        slot = {**module_schedule_view(payload), 'schedule_mode': 'custom'}
-        return JsonResponse(module_delivery_session_plan(slot, 0, parse_date(payload.get('startDate')), payload.get('holidays') or [], week_count=parse_int(payload.get('weeksNumber'), 0)))
+    if module_week_boundary_mode(payload) or (payload.get('endDate') and payload.get('weeksNumber')):
+        slot = {**module_schedule_view(payload), 'schedule_mode': payload.get('scheduleMode') or 'custom'}
+        try:
+            return JsonResponse(module_delivery_session_plan(slot, 0, parse_date(payload.get('startDate')), payload.get('holidays') or [], week_count=parse_int(payload.get('weeksNumber'), 0)))
+        except ValueError as exc:
+            return json_error(str(exc), fields=['weeksNumber', 'endDate'])
     plan = build_module_session_plan(
         payload.get('startDate') or payload.get('start_date'),
         payload.get('numberOfSessions') or payload.get('sessionsNumber') or payload.get('weeks'),
@@ -25356,6 +25420,7 @@ def curriculum_preview_tutor_availability(request):
         return json_error('Invalid JSON body.')
     try:
         module_week_starts_on(payload)
+        module_week_boundary_mode(payload)
     except ValueError as exc:
         return json_error(str(exc), fields=['weekStartsOn'])
     try:
@@ -26817,7 +26882,7 @@ def save_tree_group_modules(group, cohort, modules, preserve_missing=False):
         attachment_weeks = attachment_week_structure({**module, 'startDate': start_date}, current_structure, schedule=module_schedule)
         session_count = attachment_session_count(module, attachment_weeks)
         attachment_weeks_count = parse_int(module.get('weeksNumber') or module.get('weeks'), 0) or len(attachment_weeks)
-        end_date = module.get('endDate') or module_calendar_end_date(start_date, attachment_weeks_count) or cohort.get('endDate')
+        end_date = module.get('endDate') or module_calendar_end_date(start_date, attachment_weeks_count, module) or cohort.get('endDate')
         # Same cohort window the group-modules endpoint enforces: the tree save
         # writes the same module rows, so it cannot be the way around the rule.
         date_error = module_cohort_date_error(module_name, start_date, end_date, cohort)
@@ -27143,6 +27208,7 @@ def curriculum_module_collection(request):
         payload = {**payload, 'isFreeCourse': True}
     try:
         module_week_starts_on(payload)
+        module_week_boundary_mode(payload)
     except ValueError as exc:
         return json_error(str(exc), fields=['weekStartsOn'])
     try:
@@ -27201,6 +27267,8 @@ def curriculum_module_collection(request):
             'weeksNumber': payload.get('weeks') or payload.get('weeksNumber') or 0,
             'weeklySchedule': payload.get('weeklySchedule'),
             'scheduleMode': payload.get('scheduleMode') or 'group',
+            'weekStartsOn': module_week_starts_on(payload),
+            'weekBoundaryMode': module_week_boundary_mode(payload),
             'weekDays': payload.get('weekDays'),
             'startTime': payload.get('startTime'),
             'endTime': payload.get('endTime'),
@@ -27295,6 +27363,8 @@ def curriculum_module_collection(request):
         'weeksNumber': payload.get('weeks') or payload.get('weeksNumber') or 0,
         'weeklySchedule': payload.get('weeklySchedule'),
         'scheduleMode': payload.get('scheduleMode') or 'group',
+        'weekStartsOn': module_week_starts_on(payload),
+        'weekBoundaryMode': module_week_boundary_mode(payload),
         'weekDays': payload.get('weekDays'),
         'startTime': payload.get('startTime'),
         'endTime': payload.get('endTime'),
@@ -27645,6 +27715,7 @@ def curriculum_module_structure(request, module_catalogue_id):
             return storage_error
     try:
         module_week_starts_on(payload)
+        module_week_boundary_mode(payload)
     except ValueError as exc:
         return json_error(str(exc), fields=['weekStartsOn'])
     try:
@@ -28424,6 +28495,8 @@ def curriculum_module_session_plan(request, module_catalogue_id):
             module_row = module_delivery_row(module_row, fetch_group_row(module_row['group_id']) or {})
         requested_sessions = max(0, parse_int(request.GET.get('sessions'), 0))
         requested_weeks = max(0, parse_int(request.GET.get('weeks'), 0))
+        if module_week_boundary_mode(module_row) and requested_weeks > 104:
+            return json_error('Choose between 1 and 104 study weeks.', fields=['weeks'])
         if requested_sessions:
             plan = module_session_plan_for_count(module_row, requested_sessions)
         else:
@@ -33051,6 +33124,7 @@ def curriculum_module_detail(request, identifier):
         rename_only = curriculum_name_only_patch(payload, allow_title=True)
         try:
             module_week_starts_on(payload)
+            merged_week_boundary_mode(payload, existing_authoring)
         except ValueError as exc:
             return json_error(str(exc), fields=['weekStartsOn'])
         try:
@@ -33134,6 +33208,7 @@ def curriculum_module_detail(request, identifier):
             'weeklySchedule': merged_weekly_schedule(payload, current),
             'scheduleMode': payload.get('scheduleMode', current.get('scheduleMode') or 'group'),
             'weekStartsOn': merged_week_starts_on(payload, current),
+            'weekBoundaryMode': merged_week_boundary_mode(payload, current),
             **({'calendarPolicy': payload['calendarPolicy']} if 'calendarPolicy' in payload else {'calendarPolicy': current.get('calendarPolicy')}),
             'weekDays': payload.get('weekDays') or current.get('weekDays') or current_delivery_metadata.get('weekDays') or '',
             'startTime': payload.get('startTime') or current.get('startTime') or current_delivery_metadata.get('startTime') or '',
@@ -34322,7 +34397,7 @@ def resync_group_module_delivery_counts(previous_rows, delivery_updates):
             continue
         module_row = {**previous_row, **delivery_updates}
         sessions = weeks * delivery_days_per_week(module_row)
-        end_date = module_calendar_end_date(module_row.get('start_date'), weeks) or format_date(module_row.get('end_date'))
+        end_date = module_calendar_end_date(module_row.get('start_date'), weeks, module_row) or format_date(module_row.get('end_date'))
         if (
             sessions == parse_int(previous_row.get('sessions_number'), 0)
             and weeks == parse_int(previous_row.get('weeks_number'), 0)
@@ -35346,10 +35421,21 @@ def permanent_module_delete_response(module_row):
 def module_attachment_authoring_payload(item, group, cohort, catalogue_id, module_name, session_count, start_date, end_date, current_structure=None, source_type='module_authoring', source_id=''):
     current_structure = current_structure or {}
     weekly = merged_weekly_schedule(item, current_structure)
+    try:
+        week_boundary_mode = merged_week_boundary_mode(item, current_structure)
+    except ValueError as exc:
+        raise ModuleAuthoringValidationError([{'path': 'weekBoundaryMode', 'message': str(exc)}]) from exc
+    if week_boundary_mode and not merged_week_starts_on(item, current_structure):
+        raise ModuleAuthoringValidationError([{'path': 'weekStartsOn', 'message': 'Choose the first day of the study week.'}])
     week_starts_on = merged_week_starts_on(item, current_structure)
-    if item.get('scheduleMode', current_structure.get('scheduleMode')) == 'custom' and len(weekly) > 1 and (week_starts_on or not current_structure):
+    if not week_boundary_mode and item.get('scheduleMode', current_structure.get('scheduleMode')) == 'custom' and len(weekly) > 1 and (week_starts_on or not current_structure):
         week_starts_on = first_weekly_session_day(start_date, weekly)
-    item = {**item, 'weekStartsOn': week_starts_on, 'startDate': start_date, 'endDate': end_date}
+    item = {**item, 'weekStartsOn': week_starts_on, 'weekBoundaryMode': week_boundary_mode, 'startDate': start_date, 'endDate': end_date}
+    if week_boundary_mode:
+        item = {**item, 'cohortId': cohort['id'],
+                'holidays': cohort_selected_holidays_by_cohort([cohort['id']]).get(cohort['id'], []),
+                'weekDays': item.get('weekDays') or group.get('weekDays') or group.get('schedule'),
+                'startTime': item.get('startTime') or group.get('startTime'), 'endTime': item.get('endTime') or group.get('endTime')}
     schedule = ', '.join(slot['day'] for slot in weekly) or clean_str(item.get('weekDays') or item.get('deliveryDays') or group.get('weekDays') or group.get('schedule'))
     has_explicit_tutor = 'tutor' in item or 'tutorName' in item or 'tutor_name' in item
     explicit_tutor = clean_str(item.get('tutor') or item.get('tutorName') or item.get('tutor_name'))
@@ -35384,6 +35470,7 @@ def module_attachment_authoring_payload(item, group, cohort, catalogue_id, modul
         'weeklySchedule': merged_weekly_schedule(item, current_structure),
         'scheduleMode': item.get('scheduleMode', current_structure.get('scheduleMode') or 'group'),
         'weekStartsOn': merged_week_starts_on(item, current_structure),
+        'weekBoundaryMode': merged_week_boundary_mode(item, current_structure),
         'calendarPolicy': item['calendarPolicy'] if 'calendarPolicy' in item else current_structure.get('calendarPolicy'),
         'weekDays': schedule,
         'startTime': item.get('startTime') or group.get('startTime') or '',
@@ -35532,18 +35619,25 @@ def attachment_week_structure(item, current_structure=None, week_count=None, ses
     weekly = module_weekly_schedule(item)
     # A fresh custom delivery authors actual sessions inside each calendar week.
     # Existing structures above, including reading weeks and bookings, stay intact.
-    if item.get('scheduleMode') == 'custom' and len(weekly) > 1:
+    calendar_weeks = module_week_boundary_mode(item) == 'calendar'
+    if calendar_weeks or (item.get('scheduleMode') == 'custom' and len(weekly) > 1):
         row = {
-            'schedule_mode': 'custom',
+            'schedule_mode': item.get('scheduleMode') or 'group',
+            'week_boundary_mode': module_week_boundary_mode(item),
             'week_starts_on': module_week_starts_on(item)
             or (first_weekly_session_day(item.get('startDate'), weekly) if not current_structure else None),
+            'calendar_policy': item.get('calendarPolicy'),
+            'cohort_id': item.get('cohortId'),
             'end_date': item.get('endDate'),
             'weekly_schedule': weekly,
-            'session_week_day': ', '.join(slot['day'] for slot in weekly),
-            'session_start_time': weekly[0]['startTime'],
-            'session_end_time': weekly[0]['endTime'],
+            'session_week_day': ', '.join(slot['day'] for slot in weekly) or schedule,
+            'session_start_time': weekly[0]['startTime'] if weekly else item.get('startTime'),
+            'session_end_time': weekly[0]['endTime'] if weekly else item.get('endTime'),
         }
-        plan = module_delivery_session_plan(row, 0, parse_date(item.get('startDate')), week_count=target)
+        try:
+            plan = module_delivery_session_plan(row, 0, parse_date(item.get('startDate')), item.get('holidays') or [], week_count=target)
+        except ValueError as exc:
+            raise ModuleAuthoringValidationError([{'path': 'endDate', 'message': str(exc)}]) from exc
         for session in plan.get('sessions') or []:
             week_index = parse_int(session.get('weekNumber'), 1) - 1
             if not 0 <= week_index < len(weeks):
@@ -35685,6 +35779,10 @@ def curriculum_group_modules(request, identifier):
             return json_error('Each module attachment must be an object.', status=400)
         try:
             module_week_starts_on(item)
+            if module_week_boundary_mode(item) and not module_week_starts_on(item):
+                raise ValueError('Choose the first day of the study week.')
+            if module_week_boundary_mode(item) and parse_int(item.get('weeksNumber') or item.get('weeks'), 0) > 104:
+                raise ValueError('Choose between 1 and 104 study weeks.')
         except ValueError as exc:
             return json_error(str(exc), fields=['weekStartsOn'])
         try:
@@ -35743,7 +35841,7 @@ def curriculum_group_modules(request, identifier):
                 delivery_days = ', '.join(slot['day'] for slot in weekly) or item.get('weekDays') or group.get('weekDays') or group.get('schedule')
                 session_count = attachment_session_count(item)
                 item_weeks = parse_int(item.get('weeksNumber') or item.get('weeks'), 0)
-                end_date = item.get('endDate') or module_calendar_end_date(start_date, item_weeks) or cohort.get('endDate')
+                end_date = item.get('endDate') or module_calendar_end_date(start_date, item_weeks, item) or cohort.get('endDate')
                 # Checked after the plan is generated, so a start date that sits
                 # inside the cohort but whose sessions run past its end is caught
                 # too -- whether the end date was sent or calculated here.
@@ -35766,7 +35864,7 @@ def curriculum_group_modules(request, identifier):
                 # now; module_attachment_authoring_payload otherwise falls back to the
                 # stored structure and the new content would need a manual Save.
                 structure_payload = module_attachment_authoring_payload(
-                    {**item, 'weekStructure': attachment_week_structure({**item, 'startDate': start_date, 'endDate': end_date}, current_structure, session_count=session_count, schedule=delivery_days)},
+                    item,
                     group,
                     cohort,
                     catalogue_id,
