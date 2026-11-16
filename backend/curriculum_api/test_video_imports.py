@@ -13,7 +13,7 @@ from django.utils import timezone
 
 from . import video_imports as imports
 from .bunny_stream import VideoImportError, playback_url
-from .models import CurriculumVideoImport
+from .models import CurriculumVideoImport, CurriculumVideoSource
 from .views import row_has_deleted_at
 from .video_uploads import stored_video_path
 
@@ -68,12 +68,14 @@ class VideoImportTests(TestCase):
     def test_large_youtube_video_reaches_bunny_for_programme_and_free_course(self):
         from .video_sources import MAX_VIDEO_BYTES, download_video
 
-        source = 'https://www.youtube.com/watch?v=abcdefghijk'
-        self.component['settings_json']['videoUrl'] = source
         free_scope = {'free_course_module_id': 'MOD1', 'free_course_name': 'Independent study',
                       'course_type': 'free_course', 'collection_name': 'Free course'}
         self.client.free_course_collection.return_value = 'free-collection'
-        for scope, collection in ((SCOPE, 'collection'), (free_scope, 'free-collection')):
+        # Distinct videos exercise each collection's upload route. Same-source
+        # cross-course reuse is covered by test_video_dedup.
+        for scope, collection, video in ((SCOPE, 'collection', 'abcdefghijk'), (free_scope, 'free-collection', 'lmnopqrstuv')):
+            source = 'https://www.youtube.com/watch?v=' + video
+            self.component['settings_json']['videoUrl'] = source
             with self.subTest(free=bool(scope.get('free_course_module_id'))):
                 # Simulate a large seekable video without allocating hundreds of MB.
                 stream = Mock(wraps=io.BytesIO(MP4))
@@ -380,6 +382,7 @@ class FreeCourseVideoImportTests(TestCase):
                 imports.process(asset.id)
                 self.assertEqual(self.bunny.create.call_count, 1)
                 self.bunny.metadata.assert_called_once_with(VIDEO_ID, {**self.scope, 'component_id': 'COMP1'}, 'Introduction')
+                CurriculumVideoSource.objects.all().delete()
                 CurriculumVideoImport.objects.all().delete()
                 self.bunny.reset_mock()
 
@@ -740,3 +743,4 @@ class VideoImportAccessTests(TestCase):
                 'sourceType': source_type, 'videoUrl': url,
             }}, 'component')
             self.assertTrue(any(error['path'] == 'component.settings.videoUrl' for error in errors))
+

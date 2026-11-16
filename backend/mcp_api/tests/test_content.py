@@ -77,11 +77,10 @@ class ContentTestCase(TransportTestCase):
             mapping.update({k: json_body[k] for k in ("classification", "weightClass", "weight")})
             self.bump()
             return 200, {"updated": True}
-        if method == "PATCH" and path == "/curriculum_api/curriculum/components/RD1/":
-            component = self.component("RD1")
+        if method == "PATCH" and path.startswith("/curriculum_api/curriculum/components/"):
+            component = self.component(path.rstrip("/").rsplit("/", 1)[-1])
             component["settings"].update(json_body.get("settings") or {})
-            component.update({k: json_body[k] for k in ("title", "description", "expectedOtjh", "points")
-                              if k in json_body})
+            component.update({field: json_body[field] for _, field, _ in content.DETAIL_FIELDS if field in json_body})
             # The real PATCH re-derives durationMinutes from `duration` (hours x 60 when absent).
             component["settings"]["durationMinutes"] = json_body.get(
                 "duration", round(component.get("expectedOtjh", 2) * 60))
@@ -231,3 +230,120 @@ class UpdateComponentTests(ContentTestCase):
     def test_lesson_text_patch_also_preserves_duration(self):
         self.apply(self.preview("add_lesson_content", LESSON_ARGS)["preview_id"])
         self.assertEqual(self.writes[-1][2]["duration"], 0)
+
+
+class UpdateComponentMediaTests(ContentTestCase):
+    BASE = {"programme_id": "PROG-1", "module_id": "M1"}
+    SPOTIFY = "https://open.spotify.com/track/2rc9bqGb0ob4s0wcPUWK6b"
+    YOUTUBE = "https://youtu.be/ZHcD5Hd2KIA"
+
+    def setUp(self):
+        super().setUp()
+        self.module["weekStructure"][0]["components"].append(
+            {"id": "PC1", "title": "Podcast", "type": "podcast", "description": "",
+             "settings": {"podcastSource": "External URL", "podcastUrl": "", "transcript": "Kept"}})
+
+    def test_podcast_link_is_saved_as_its_external_url_not_the_description(self):
+        data = self.preview("update_component", {**self.BASE, "component_id": "PC1", "media_url": self.SPOTIFY})
+        self.assertIn(f"podcastUrl: '' → '{self.SPOTIFY}'", data["summary"])
+        result = self.apply(data["preview_id"])
+        self.assertFalse(result.get("isError"), result)
+        (_, path, body), = self.writes
+        self.assertEqual(path, "/curriculum_api/curriculum/components/PC1/")
+        self.assertEqual(body["settings"], {"podcastUrl": self.SPOTIFY})  # source already External URL
+        self.assertNotIn("description", body)
+        self.assertEqual(self.component("PC1")["settings"]["transcript"], "Kept")
+
+    def test_youtube_link_becomes_the_video_source(self):
+        result = self.apply(self.preview("update_component", {**self.BASE, "component_id": "V1",
+                                                              "media_url": self.YOUTUBE})["preview_id"])
+        self.assertFalse(result.get("isError"), result)
+        (_, path, body), = self.writes
+        self.assertEqual(path, "/curriculum_api/curriculum/components/V1/")
+        self.assertEqual(body["settings"], {"sourceType": "YouTube", "provider": "YouTube", "videoUrl": self.YOUTUBE})
+
+    def test_bad_links_and_wrong_component_types_are_refused(self):
+        refused = {
+            ("V1", "https://vimeo.com/1"): "must be a YouTube link",
+            ("PC1", "http://example.com/a.mp3"): "full https address",
+            ("PC1", "https://user:pw@example.com/a.mp3"): "full https address",
+            ("RD1", self.YOUTUBE): "only for Podcast and Video",
+        }
+        for (component_id, url), text in refused.items():
+            self.assertIn(text, self.error("update_component", {**self.BASE, "component_id": component_id,
+                                                                 "media_url": url}))
+        self.component("V1")["settings"].update(sourceType="YouTube", provider="YouTube", videoUrl=self.YOUTUBE)
+        self.assertIn("nothing to change", self.error("update_component", {**self.BASE, "component_id": "V1",
+                                                                            "media_url": self.YOUTUBE}))
+        self.assertEqual(self.writes, [])
+
+    def test_media_url_and_the_same_setting_together_are_refused(self):
+        args = {**self.BASE, "component_id": "V1", "media_url": self.YOUTUBE,
+                "settings": {"videoUrl": "https://youtu.be/other"}}
+        self.assertIn("not both", self.error("update_component", args))
+
+    def test_link_that_does_not_read_back_is_refused(self):
+        preview_id = self.preview("update_component", {**self.BASE, "component_id": "PC1",
+                                                       "media_url": self.SPOTIFY})["preview_id"]
+        self.lost_write = True
+        result = self.apply(preview_id)
+        self.assertTrue(result.get("isError"))
+        self.assertIn("nothing was saved", result["content"][0]["text"].lower())
+
+
+class UpdateComponentSettingsTests(ContentTestCase):
+    BASE = {"programme_id": "PROG-1", "module_id": "M1", "component_id": "RD1"}
+
+    def test_any_editable_setting_fields_and_duration_change_together(self):
+        args = {**self.BASE, "settings": {"difficulty": "Advanced", "requiredReading": False,
+                                          "estimatedReadingTime": 30, "learnerInstruction": "Read **section 2**."},
+                "tutor_validation_required": True, "duration_minutes": 45}
+        data = self.preview("update_component", args)
+        self.assertIn("difficulty: None → 'Advanced'", data["summary"])
+        self.assertIn("durationMinutes: 0 → 45", data["summary"])
+        result = self.apply(data["preview_id"])
+        self.assertFalse(result.get("isError"), result)
+        (_, _, body), = self.writes
+        self.assertEqual(body["settings"], {"difficulty": "Advanced", "requiredReading": False,
+                                            "estimatedReadingTime": 30, "learnerInstruction": "Read **section 2**."})
+        self.assertEqual((body["tutorValidationRequired"], body["duration"]), (True, 45))
+        self.assertEqual(self.component("RD1")["settings"]["durationMinutes"], 45)
+
+    def test_locked_unknown_mistyped_html_and_approval_are_refused(self):
+        refused = {
+            "embedCode": ("<iframe>", "cannot be set"),
+            "readingContent": ("Text", "cannot be set"),
+            "uploadedFileUrl": ("https://x.example/a.pdf", "cannot be set"),
+            "notASetting": ("x", "cannot be set"),
+            "requiredReading": ("yes", "must be true or false"),
+            "estimatedReadingTime": ("30", "must be a number"),
+            "learnerInstruction": ("<script>x</script>", "HTML is not allowed"),
+            "contentStatus": ("Approved", "reviewer's sign-off"),
+        }
+        for key, (value, text) in refused.items():
+            self.assertIn(text, self.error("update_component", {**self.BASE, "settings": {key: value}}), key)
+        self.assertEqual(self.writes, [])
+
+    def test_lms_validation_runs_in_the_preview(self):
+        text = self.error("update_component", {**self.BASE, "settings": {"resourceUrl": "not a link"}})
+        self.assertIn("Enter a valid reading URL", text)
+        text = self.error("update_component", {**self.BASE, "reflection_required": True, "reflection_question": ""})
+        self.assertIn("reflection question is required", text)
+        self.assertEqual(self.writes, [])
+
+    def test_teams_and_schedule_settings_are_not_editable(self):
+        editable = content.editable_settings("live-session")
+        self.assertIn("sessionPurpose", editable)
+        self.assertFalse({"sessionDate", "liveSessionUrl", "selectedGroupKeys"} & editable.keys())
+        self.assertFalse([key for key in editable if key.startswith("teams")])
+
+    def test_get_component_shows_values_and_what_can_change(self):
+        self.component("RD1")["settings"]["embedCode"] = "<b>x</b>"
+        data = self.preview("get_component", {"module_id": "M1", "component_id": "RD1"})
+        self.assertEqual(data["editable_settings"]["requiredReading"], "true or false")
+        self.assertEqual(data["editable_settings"]["estimatedReadingTime"], "a number")
+        self.assertNotIn("embedCode", data["editable_settings"])
+        self.assertEqual(data["settings"]["embedCode"], "<b>x</b>")
+        self.assertIn("settings.embedCode: '<b>x</b>' (not editable here)", self.run_tool(
+            "get_component", {"module_id": "M1", "component_id": "RD1"})["content"][0]["text"])
+        self.assertEqual(self.writes, [])

@@ -148,8 +148,13 @@ def _read_manual_context(candidates, profile):
     return project_manual_completion(components, occurrences, adjustments, manual, modules), components, occurrences
 
 
-def read_manual_completion(candidates, profile):
-    return _read_manual_context(candidates, profile)[0]
+def read_manual_context(candidates, profile):
+    """Freeze the manual-attendance facts for equivalent request projections."""
+    return _read_manual_context(candidates, profile)
+
+
+def read_manual_completion(candidates, profile, *, context=None):
+    return (context if context is not None else _read_manual_context(candidates, profile))[0]
 
 
 def project_manual_credits(candidates, states, components, occurrences):
@@ -182,6 +187,7 @@ def project_manual_credits(candidates, states, components, occurrences):
     return list(credits.values())
 
 
-def read_manual_credit_evidence(candidates, profile):
-    states, components, occurrences = _read_manual_context(candidates, profile)
+def read_manual_credit_evidence(candidates, profile, *, context=None):
+    states, components, occurrences = (
+        context if context is not None else _read_manual_context(candidates, profile))
     return states, project_manual_credits(candidates, states, components, occurrences)

@@ -9928,13 +9928,16 @@ def build_modules(module_rows, training_rows, program_configs=None, include_unus
     return modules
 
 
-def attach_module_assignment_counts(modules):
+def attach_module_assignment_counts(modules, *, learner_profiles=False):
     """Set each module row's real `assignments` count, in one bulk pass.
 
     Every card shows this eagerly, so it has to be cheap for a whole list, not
     one query per module.
 
-    The counting rule lives in `learner_assignments.bulk_assigned_learner_counts`
+    Bulk Attendance opts into the canonical profile/plan-module membership
+    rule shared by its scope rosters. Other callers retain the legacy counts.
+
+    The legacy counting rule lives in `learner_assignments.bulk_assigned_learner_counts`
     and is still the reference implementation; what runs here is the jsonb
     rewrite of it, because the original reads every learner row whole -- 11 MB of
     Learning_plan to produce a few integers, measured at 47-84 s from outside the
@@ -9943,12 +9946,18 @@ def attach_module_assignment_counts(modules):
     `manage.py compare_assignment_counts` runs both and diffs every module; it
     reports 268/268 identical.
     """
-    from .learner_assignment_counts_sql import bulk_assigned_learner_counts_sql as bulk_assigned_learner_counts
-
     def key_for(module):
         return clean_str(module.get('moduleCatalogueId')) or clean_str(module.get('catalogueId')) or clean_str(module.get('id'))
 
-    counts = bulk_assigned_learner_counts({key_for(module) for module in modules})
+    module_ids = {key_for(module) for module in modules}
+    if learner_profiles:
+        from .learner_status_counts import status_counts
+        module_ids.discard('')
+        totals = status_counts('module', sorted(module_ids)) if module_ids else {}
+        counts = {key: value['total'] if value is not None else 0 for key, value in totals.items()}
+    else:
+        from .learner_assignment_counts_sql import bulk_assigned_learner_counts_sql
+        counts = bulk_assigned_learner_counts_sql(module_ids)
     for module in modules:
         module['assignments'] = counts.get(key_for(module), 0)
 
@@ -12954,11 +12963,12 @@ def get_cached_curriculum_rows(compact=False, force=False):
     )
 
 
-def build_curriculum_payload(visibility='operational', compact=False, force=False):
+def build_curriculum_payload(visibility='operational', compact=False, force=False, *, learner_profiles=False):
     logger.info('build_curriculum_payload: running DB build for visibility=%s compact=%s', visibility, compact)
     with curriculum_read_scope():
         rows = get_cached_curriculum_rows(compact=compact, force=force)
-        return build_curriculum_payload_from_rows(rows, visibility, compact=compact)
+        identity_options = {'learner_profiles': True} if learner_profiles else {}
+        return build_curriculum_payload_from_rows(rows, visibility, compact=compact, **identity_options)
 
 
 def curriculum_sessions_from_rows(rows, training_rows, authoring_modules, cohorts, groups, holiday_rows, *, list_only_summaries=False):
@@ -13033,12 +13043,12 @@ def get_cached_sessions(request):
     )
 
 
-def build_curriculum_payload_from_rows(rows, visibility='operational', compact=False, *, home_summary=False, module_list=False, delivery_source=None, programme_list=False):
+def build_curriculum_payload_from_rows(rows, visibility='operational', compact=False, *, home_summary=False, module_list=False, delivery_source=None, programme_list=False, learner_profiles=False):
     with curriculum_read_scope():
-        return _build_curriculum_payload_from_rows(rows, visibility, compact=compact, home_summary=home_summary, module_list=module_list, delivery_source=delivery_source, programme_list=programme_list)
+        return _build_curriculum_payload_from_rows(rows, visibility, compact=compact, home_summary=home_summary, module_list=module_list, delivery_source=delivery_source, programme_list=programme_list, learner_profiles=learner_profiles)
 
 
-def _build_curriculum_payload_from_rows(rows, visibility='operational', compact=False, *, home_summary=False, module_list=False, delivery_source=None, programme_list=False):
+def _build_curriculum_payload_from_rows(rows, visibility='operational', compact=False, *, home_summary=False, module_list=False, delivery_source=None, programme_list=False, learner_profiles=False):
     # Only the dedicated Home projection opts in. Its intermediate rows are not
     # cached as an overview: other pages still need the counts/library details.
     if (home_summary or module_list or programme_list) and not compact:
@@ -13124,7 +13134,8 @@ def _build_curriculum_payload_from_rows(rows, visibility='operational', compact=
         # learner assignments, cohort calendars or the complete KSB library.
         return {'schema': CURRICULUM_SCHEMA, 'programmes': programmes, 'modules': modules}
     if not home_summary:
-        attach_module_assignment_counts(modules)
+        identity_options = {'learner_profiles': True} if learner_profiles else {}
+        attach_module_assignment_counts(modules, **identity_options)
     if module_list:
         # Programme metadata above is needed for the existing visibility rules;
         # cohorts, group learner counts and the KSB library are not list inputs.
@@ -14467,10 +14478,13 @@ def compact_module_list_rows(modules):
 def curriculum_overview(request):
     visibility = curriculum_visibility(request)
     compact = request.GET.get('compact') in {'1', 'true', 'yes'}
+    learner_profiles = request.GET.get('learner_source') == 'profiles'
     cache_key = f'overview:{visibility}:{"compact" if compact else "full"}'
+    if learner_profiles:
+        cache_key += ':learner-profiles'
     force = request_bypasses_curriculum_cache(request)
 
-    if compact and not force and getattr(settings, 'CURRICULUM_HOME_SHARED_READ_MODEL_ENABLED', False):
+    if compact and not learner_profiles and not force and getattr(settings, 'CURRICULUM_HOME_SHARED_READ_MODEL_ENABLED', False):
         from .read_model import enqueue_curriculum_home_refresh, get_curriculum_home
         shared = get_curriculum_home(visibility)
         if shared is not None and isinstance(shared.payload.get('overview'), dict):
@@ -14481,7 +14495,8 @@ def curriculum_overview(request):
             return response
 
     def build_overview():
-        return build_curriculum_payload(visibility, compact=compact, force=force)
+        identity_options = {'learner_profiles': True} if learner_profiles else {}
+        return build_curriculum_payload(visibility, compact=compact, force=force, **identity_options)
 
     # A client that asks for fresh data gets it. Every Curriculum Studio screen
     # reloads with `skipCache` straight after a save, which sends Cache-Control:
@@ -14499,7 +14514,7 @@ def curriculum_overview(request):
             'ksbSets': [],
         }
     response = JsonResponse(payload)
-    if compact and getattr(settings, 'CURRICULUM_HOME_SHARED_READ_MODEL_ENABLED', False):
+    if compact and not learner_profiles and getattr(settings, 'CURRICULUM_HOME_SHARED_READ_MODEL_ENABLED', False):
         from .read_model import enqueue_curriculum_home_refresh
         enqueue_curriculum_home_refresh(
             visibility, reason='forced-read' if force else 'missing-read-model',
@@ -27843,7 +27858,7 @@ def _scrub_free_course_learner_assignments(course_id):
         )
 
 
-def inject_free_course_into_group(course_id, group_id, *, free_programme_id='FREE-COURSES', mode='clone'):
+def inject_free_course_into_group(course_id, group_id, *, free_programme_id='FREE-COURSES', mode='clone', start_date=None, end_date=None):
     """Inject one free course as a new module into an EXISTING programme group.
 
     The course's weeks/components become a module appended to the group the
@@ -27864,6 +27879,13 @@ def inject_free_course_into_group(course_id, group_id, *, free_programme_id='FRE
     mode = clean_str(mode).lower() or 'clone'
     if mode not in {'clone', 'move'}:
         raise ValueError('mode must be "clone" or "move".')
+    dates = {}
+    for field, label, value in (('startDate', 'start', start_date), ('endDate', 'end', end_date)):
+        if not isinstance(value, str) or not re.fullmatch(r'\d{4}-\d{2}-\d{2}', value) or not parse_date(value):
+            raise ValueError(f'Choose a valid module {label} date (YYYY-MM-DD).')
+        dates[field] = value
+    if dates['endDate'] < dates['startDate']:
+        raise ValueError('The module end date must be on or after its start date.')
 
     source_rows = [
         row for row in get_free_programme_modules_payload(clean_str(free_programme_id) or 'FREE-COURSES')
@@ -27875,6 +27897,7 @@ def inject_free_course_into_group(course_id, group_id, *, free_programme_id='FRE
     course_title = clean_str(header.get('courseName')) or 'Untitled course'
 
     module_payload = {
+        **dates,
         'moduleName': course_title,
         'title': course_title,
         # module_attachment_authoring_payload reads the description from `notes`
@@ -27934,6 +27957,8 @@ def curriculum_free_programme_convert(request, programme_id):
             clean_str(payload.get('groupId') or payload.get('group_id')),
             free_programme_id=clean_str(programme_id),
             mode=clean_str(payload.get('mode')) or 'clone',
+            start_date=payload.get('startDate'),
+            end_date=payload.get('endDate'),
         )
     except StaleModuleStructureWrite as exc:
         # The target group already holds a module with the course's title, and
@@ -28905,6 +28930,23 @@ def office_preview_link(relative_path):
     return f'/curriculum_api/office-preview/{token}/{urllib_parse.quote(Path(relative_path).name)}'
 
 
+def curriculum_upload_storage_error(error):
+    """A controlled upload-read response with no provider details."""
+    logger.warning(
+        'Curriculum upload storage read failed (%s)',
+        type(error).__name__,
+    )
+    if isinstance(error, upload_storage.UploadStorageAccessDenied):
+        return json_error(
+            'The file store refused access to this file. Please contact support.',
+            status=403,
+        )
+    return json_error(
+        'The file store is temporarily unavailable. Please try again later.',
+        status=503,
+    )
+
+
 @require_GET
 def curriculum_office_preview_file(request, token, filename):
     """Serve the upload an ``office_preview_link`` token names, without a session."""
@@ -28916,7 +28958,10 @@ def curriculum_office_preview_file(request, token, filename):
             or not relative_path.startswith(f'{COMPONENT_UPLOAD_ROOT}/')
             or '..' in relative_path.split('/')):
         raise Http404('File not found.')
-    opened = upload_storage.open_stream(relative_path)
+    try:
+        opened = upload_storage.open_stream(relative_path)
+    except upload_storage.UploadStorageReadError as error:
+        return curriculum_upload_storage_error(error)
     if opened is None:
         raise Http404('File not found.')
     stream, total_size, content_type = opened
@@ -28956,12 +29001,18 @@ def curriculum_uploaded_file(request, path):
     preview_requested = clean_str(request.GET.get('preview')).lower() in {'1', 'true', 'yes'}
     extension = Path(relative_path).suffix.lower()
     if preview_requested and extension in OFFICE_PREVIEW_EXTENSIONS:
-        probe = upload_storage.open_stream(relative_path, offset=0, length=1)
+        try:
+            probe = upload_storage.open_stream(relative_path, offset=0, length=1)
+        except upload_storage.UploadStorageReadError as error:
+            return curriculum_upload_storage_error(error)
         if probe is None:
             raise Http404('File not found.')
         if not probe[1]:
             raise Http404('This file is empty on the server. Ask the curriculum team to upload it again.')
-        source_url = upload_storage.signed_read_url(relative_path)
+        try:
+            source_url = upload_storage.signed_read_url(relative_path)
+        except upload_storage.UploadStorageReadError as error:
+            return curriculum_upload_storage_error(error)
         if not source_url:
             # No Azure copy to sign: the file is still on this server's disk.
             # Microsoft fetches without the learner's session, so it gets a
@@ -28993,7 +29044,10 @@ def curriculum_uploaded_file(request, path):
         response['Cache-Control'] = 'private, no-store'
         return response
 
-    probe = upload_storage.open_stream(relative_path, offset=0, length=1)
+    try:
+        probe = upload_storage.open_stream(relative_path, offset=0, length=1)
+    except upload_storage.UploadStorageReadError as error:
+        return curriculum_upload_storage_error(error)
     if probe is None:
         raise Http404('File not found.')
     _discard, total_size, content_type = probe
@@ -29017,7 +29071,10 @@ def curriculum_uploaded_file(request, path):
         return response
 
     offset, length = requested if requested else (0, total_size)
-    opened = upload_storage.open_stream(relative_path, offset=offset, length=length)
+    try:
+        opened = upload_storage.open_stream(relative_path, offset=offset, length=length)
+    except upload_storage.UploadStorageReadError as error:
+        return curriculum_upload_storage_error(error)
     if opened is None:
         raise Http404('File not found.')
     stream, _total, _content_type = opened

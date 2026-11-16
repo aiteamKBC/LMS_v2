@@ -481,7 +481,8 @@ describe('Course structure component dragging', () => {
     expect(pointsChanged).toHaveBeenLastCalledWith([
       expect.objectContaining({ id: 'P1', componentIds: [] }), expect.objectContaining({ id: 'P2', componentIds: ['VIDEO', 'READ', 'QUIZ'] }),
     ]);
-    expect(within(screen.getByRole('group', { name: 'Practice components' })).getByRole('button', { name: 'Delete Activity READ' })).toBeVisible();
+    const practice = await screen.findByRole('group', { name: 'Practice components' });
+    expect(within(practice).getByRole('button', { name: 'Delete Activity READ' })).toBeVisible();
     await userEvent.click(screen.getByRole('button', { name: 'Save Point drafts' }));
     await waitFor(() => expect(vi.mocked(authoredWeekPoints).mock.calls.some(call => call[2]?.points[1].componentIds.join(',') === 'VIDEO,READ,QUIZ')).toBe(true));
   });

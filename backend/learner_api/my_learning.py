@@ -488,7 +488,7 @@ def next_title(items, today):
     return next((i['title'] for i in entries if not i['completed']), None)
 
 
-def assemble_cards(native, current, courses, definitions, done, started, hours, metadata, records, modules, credits, *, search=None, include_activity_items=False, show_current_replacements=False):
+def assemble_cards(native, current, courses, definitions, done, started, hours, metadata, records, modules, credits, *, search=None, include_activity_items=False, show_current_replacements=False, ksb_mappings=None):
     """Programme-wide counts with the same explicit import/replacement identities as My Learning."""
     from .progress_transfer_policy import merged_percent
     from .progress_demo import credit as demo_credit
@@ -667,6 +667,9 @@ def assemble_cards(native, current, courses, definitions, done, started, hours, 
             subject['actualHours'] = round(transfer['hours'] + (native_hours.get(subject.get('moduleId'), {}).get('hours', {}).get('actual') or 0), 6)
             # Keep the component-derived status, including a started native
             # attempt with no completed components yet (0% is not "Upcoming").
+        if ksb_mappings is not None:
+            from .my_learning_ksbs import card_ksb_progress
+            subject['ksbProgress'] = card_ksb_progress(items, ksb_mappings)
         if include_activity_items:
             # Internal curriculum-directory projection of this exact population.
             # Bodies, evidence and resource URLs never leave the reader.
@@ -741,13 +744,17 @@ def load_context(source, owner, subject_id=None, *, purpose='catalogue', records
         records = (records_override if records_override is not None else canonical.entries_for(owner, **record_options)) if purpose == 'catalogue' else []
     resolved, modules = None, None
     if subject_id is None and purpose == 'catalogue':
-        resolved = {}
+        # ``catalogue_module_rows`` normally owns this metadata shape.  An
+        # explicitly empty canonical plan skips that query, but downstream
+        # readers still consume the same empty collections.
+        resolved = dict(
+            module_titles={}, free_course_module_ids=[], weeks=[], covers={},
+            quiz_modules={}, schedule_modules={}, schedule_components=[],
+            live_credit_components=[], imported_courses={},
+        )
         with projection_stage('module_metadata'):
             with connections['enrolment'].cursor() as cur:
                 modules = catalogue_module_rows(cur, ids, identity_metadata=resolved) if ids else {}
-        resolved.setdefault('module_titles', {})
-        resolved.setdefault('weeks', [])
-        resolved.setdefault('covers', {})
     content_source, content_plan = source, assigned
     if subject_id is not None and not subject_id.startswith('activity:'):
         # A module link already identifies the content scope. Keep the full
@@ -844,9 +851,14 @@ def read_catalogue(source, kind, owner, *, upcoming_only=False):
     from .subject_store import covers_for
     assigned, ids, records, native, courses, definitions, done, started, hours, metadata, credits = load_context(source, owner)
     modules = metadata['modules']
+    ksb_mappings = None
+    if not upcoming_only:
+        from .my_learning_ksbs import read_card_ksb_mappings
+        with projection_stage('card_ksbs'):
+            ksb_mappings = read_card_ksb_mappings(owner, native, metadata['record_ids'])
     with projection_stage('card_aggregation'):
         cards, summary = assemble_cards(native, metadata['current_subjects'], courses, definitions, done, started, hours, metadata, records, modules, credits,
-                                       show_current_replacements=True)
+                                       show_current_replacements=True, ksb_mappings=ksb_mappings)
         # Standalone assignments open from Free courses. Keep their ownership,
         # content and actual-hours records intact; this is only the My courses list.
         free_ids = set(metadata.get('free_course_module_ids', []))

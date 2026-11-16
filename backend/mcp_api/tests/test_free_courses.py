@@ -90,6 +90,6 @@ class FreeCourseWriteTests(ComponentTestCase):
         result = self.run_tool({"module_id": "MOD-FREE-1"}, name=weeks.NAME)
         self.assertFalse(result.get("isError"), result)
         types = [c["type"] for c in result["structuredContent"]["details"]["components"]]
-        self.assertEqual(types, ["reading", "video", "reflection"])
+        self.assertEqual(types, ["reading", "video", "podcast", "powerpoint"])
         self.assertFalse(self.apply(result["structuredContent"]["preview_id"]).get("isError"))
-        self.assertEqual([p["type"] for p in self.posts], ["reading", "video", "reflection"])
+        self.assertEqual([p["type"] for p in self.posts], ["reading", "video", "podcast", "powerpoint"])

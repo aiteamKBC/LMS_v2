@@ -14,7 +14,7 @@ from mcp_api.tools import components, weeks
 ARGS = {"programme_id": "P1", "module_id": "M1"}
 #: Captured before WeekTestCase patches it, for the lock's own test.
 REAL_LOCK = weeks._locked_new_week
-TEMPLATE_TYPES = ["live-session", "recording-placeholder", "reading", "video", "reflection"]
+TEMPLATE_TYPES = ["live-session", "recording-placeholder", "reading", "video", "podcast", "powerpoint"]
 
 
 class WeekTestCase(ComponentTestCase):
@@ -110,7 +110,7 @@ class CreateWeekApplyTests(WeekTestCase):
         self.assertEqual(self.posts[1]["settings"]["linkedLiveSessionModuleId"], "M1")
         data = result["structuredContent"]["result"]
         self.assertEqual(data["week_number"], 3)
-        self.assertEqual([c["component_id"] for c in data["components"]], [f"COMP-{i}" for i in range(1, 6)])
+        self.assertEqual([c["component_id"] for c in data["components"]], [f"COMP-{i}" for i in range(1, 7)])
         # Existing weeks are untouched.
         self.assertEqual(self.module["weekStructure"][:2], MODULE["weekStructure"])
 
@@ -119,7 +119,7 @@ class CreateWeekApplyTests(WeekTestCase):
         first = self.apply(preview_id)
         second = self.apply(preview_id)
         self.assertFalse(second.get("isError"), second)
-        self.assertEqual(len(self.posts), 5)
+        self.assertEqual(len(self.posts), 6)
         self.assertEqual(first["structuredContent"]["result"], second["structuredContent"]["result"])
 
     def test_week_added_after_preview_requires_a_new_preview(self):
@@ -132,7 +132,7 @@ class CreateWeekApplyTests(WeekTestCase):
         first, second = self.preview_week(), self.preview_week()
         self.assertFalse(self.apply(first).get("isError"))
         self.assert_error(self.apply(second), "prepare it again")
-        self.assertEqual(len(self.posts), 5)
+        self.assertEqual(len(self.posts), 6)
 
     def test_unconfirmed_component_reports_rollback_and_is_not_retried(self):
         self.fail_on_post = 3

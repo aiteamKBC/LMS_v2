@@ -29,7 +29,7 @@ def main():
     with patch('socket.socket.connect', side_effect=AssertionError('External network disabled in regression tests')):
         state = ProjectState()
         with connection.schema_editor() as editor:
-            for name in ('0077_curriculum_video_import', '0078_curriculum_video_changes'):
+            for name in ('0077_curriculum_video_import', '0078_curriculum_video_changes', '0091_curriculum_video_source'):
                 migration = importlib.import_module('curriculum_api.migrations.' + name).Migration(name, 'curriculum_api')
                 state = migration.apply(state, editor)
         suite = unittest.defaultTestLoader.loadTestsFromNames([
@@ -39,6 +39,8 @@ def main():
             'curriculum_api.test_session_captions',
             'curriculum_api.test_youtube_download',
             'curriculum_api.test_video_changes',
+            'curriculum_api.test_video_dedup',
+            'curriculum_api.test_free_course_video_worker',
             'curriculum_api.tests_upload_storage.LocalBackendTests',
             'curriculum_api.tests_upload_storage.AzureBackendTests',
             'curriculum_api.tests_upload_storage.RangeServingTests',

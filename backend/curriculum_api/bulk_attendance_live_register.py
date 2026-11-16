@@ -1,8 +1,7 @@
 """Read, and correct, the LMS live-session register for the bulk attendance page.
 
-Reads never match learners by name or email: a learner reaches a KBC id only
-through the stable Aptem identity rule the coach dashboard uses
-(Created_users.aptem_id, then the profile copy).
+Reads use Learner.learners.aptem_id for the historical KBC key. Learner
+identity never depends on an enrolment row or a name/email match.
 
 A saved correction also uses the existing staff correction ledger, so completion
 can distinguish manual attendance from provider evidence after a Teams sync.
@@ -13,8 +12,7 @@ from datetime import datetime, time, timedelta
 from django.db import DatabaseError, connections, router, transaction
 from django.utils import timezone
 
-from learner_api.models import LearnerProfile
-
+from .bulk_attendance_identity import aptem_ids_by_profile, profiles_by_aptem_ids
 from .bulk_attendance_live_policy import build_live_records
 from .models import LiveSession, LiveSessionLearnerAttendance, LiveSessionOccurrence, ModuleAuthoringModule
 from .session_results_policy import instant
@@ -70,29 +68,8 @@ def _lecture_titles(rows, occurrences, local_date):
 
 
 def _candidate_profile_ids(kbc_ids):
-    """Profiles that may resolve to one of ``kbc_ids``: a superset, never a guess.
-
-    The Aptem rule reads Created_users.aptem_id first and the profile copy as
-    the fallback, so a profile is a candidate when either copy names a requested
-    id. read_live_register_records() still resolves every candidate through the
-    same rule and keeps only the profiles that land on a requested id.
-    """
-    from django.db.models.functions import Trim
-
-    from learner_api.models import EnrolmentUser
-
-    numeric = [int(value) for value in kbc_ids]
-    enrolment_ids = list(
-        EnrolmentUser.all_learners
-        .annotate(trimmed_aptem_id=Trim('aptem_id'))
-        .filter(trimmed_aptem_id__in=list(kbc_ids))
-        .values_list('pk', flat=True)
-    )
-    by_profile = set(LearnerProfile.objects.filter(aptem_id__in=numeric).values_list('id', flat=True))
-    by_enrolment = set(
-        LearnerProfile.objects.filter(enrolment_id__in=enrolment_ids).values_list('id', flat=True)
-    ) if enrolment_ids else set()
-    return by_profile | by_enrolment
+    """Only profiles with one unambiguous learner-owned register key."""
+    return {profile.id for profile in profiles_by_aptem_ids(kbc_ids).values()}
 
 
 def read_live_register_records(kbc_id=None, kbc_ids=None):
@@ -129,18 +106,9 @@ def read_live_register_records(kbc_id=None, kbc_ids=None):
     ).values_list('module_catalogue_id', 'title'))
     for row in rows:
         row['module_title'] = module_titles.get(row['module_catalogue_id'])
-    from coach_api.views import resolve_effective_aptem_ids
-
-    # Only the identity columns: the full profile rows take tens of seconds.
-    profiles = (
-        LearnerProfile.objects
-        .filter(id__in={row['learner_profile_id'] for row in rows})
-        .only('id', 'enrolment_id', 'aptem_id')
-    )
-    aptem_by_profile, _conflicts = resolve_effective_aptem_ids(profiles)
-    kbc_id_by_profile = {profile_id: str(aptem_id) for profile_id, aptem_id in aptem_by_profile.items()}
+    kbc_id_by_profile = aptem_ids_by_profile({row['learner_profile_id'] for row in rows})
     if requested is not None:
-        # A candidate whose effective Aptem id is another learner's is not ours.
+        # Keep the requested page scope even if a profile changed during the read.
         kbc_id_by_profile = {
             profile_id: value for profile_id, value in kbc_id_by_profile.items() if value in requested
         }
@@ -191,12 +159,7 @@ def read_live_day_learner_ids(session_date):
     profile_ids = list(LiveSessionLearnerAttendance.objects.filter(
         occurrence_id__in=occurrence_ids,
     ).values_list('learner_profile_id', flat=True).distinct())
-    profiles = list(LearnerProfile.objects.filter(id__in=profile_ids).only('id', 'enrolment_id', 'aptem_id'))
-    if not profiles:
-        return set()
-    from coach_api.views import resolve_effective_aptem_ids
-    identities, _conflicts = resolve_effective_aptem_ids(profiles)
-    return {str(identity) for identity in identities.values() if identity is not None}
+    return set(aptem_ids_by_profile(profile_ids).values())
 
 
 def save_live_attendance(changes, *, actor=''):

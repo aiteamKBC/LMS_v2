@@ -1,6 +1,7 @@
 """Idempotent attendance-to-feedback delivery and reconciliation."""
 from __future__ import annotations
 
+from collections import Counter
 from dataclasses import dataclass
 from datetime import datetime, timezone as datetime_timezone
 import logging
@@ -9,7 +10,7 @@ from secrets import SystemRandom
 from django.db import IntegrityError, connection, transaction
 from django.utils import timezone
 
-from learner_api.models import EnrolmentUser
+from learner_api.models import EnrolmentUser, LearnerProfile
 
 from .models import FeedbackDelivery, FeedbackDeliveryQuestion, FeedbackDeliveryRecipient, FeedbackForm, FeedbackResponse
 from .feedback_delivery_guard import audit, is_creation_guard_rejection, rejected_form_id, tag_transaction
@@ -145,7 +146,7 @@ def ensure_delivery_questions(delivery):
         return True
 
 
-def sync_post_lecture_feedback(occurrence, attendees, *, attendance_finalized=False):
+def sync_post_lecture_feedback(occurrence, attendees, *, attendance_finalized=False, use_learner_profiles=False):
     """Create delivery recipients for published templates matching a lecture.
 
     ``attendance_finalized`` must be explicit so a partial/importing register
@@ -165,10 +166,19 @@ def sync_post_lecture_feedback(occurrence, attendees, *, attendance_finalized=Fa
     attendees = list(attendees)
     attendee_ids = list(dict.fromkeys(_required(item.learner_id, 'Learner ID') for item in attendees))
     attendees_by_id = {str(item.learner_id).strip(): item for item in attendees}
-    learners = {
-        str(item.id): item
-        for item in EnrolmentUser.all_learners.filter(id__in=attendee_ids)
-    }
+    if use_learner_profiles:
+        # Keep recipient/history keys while reading identity only from learners.
+        profiles = list(LearnerProfile.objects.filter(enrolment_id__in=attendee_ids)
+                        .select_related('programme_record')
+                        .only('id', 'enrolment_id', 'full_name', 'email', 'programme_record__name'))
+        counts = Counter(profile.enrolment_id for profile in profiles)
+        learners = {str(profile.enrolment_id): profile for profile in profiles
+                    if profile.enrolment_id is not None and counts[profile.enrolment_id] == 1}
+    else:
+        learners = {
+            str(item.id): item
+            for item in EnrolmentUser.all_learners.filter(id__in=attendee_ids)
+        }
     missing = [learner_id for learner_id in attendee_ids if learner_id not in learners]
     form = _form_for_occurrence(occurrence_key, module_id, occurrence.starts_at)
     forms = [form] if form else []
@@ -216,8 +226,12 @@ def sync_post_lecture_feedback(occurrence, attendees, *, attendance_finalized=Fa
                 FeedbackDeliveryRecipient.objects.update_or_create(
                     delivery=delivery, enrolment_id=learner_id,
                     defaults={
-                        'learner_name': attendee.learner_name or learner.username or learner.email or f'Learner {learner_id}',
-                        'programme': attendee.programme or learner.programme or '',
+                        'learner_name': attendee.learner_name or (
+                            learner.full_name if use_learner_profiles else learner.username
+                        ) or learner.email or f'Learner {learner_id}',
+                        'programme': attendee.programme or (
+                            getattr(learner.programme_record, 'name', '') if use_learner_profiles else learner.programme
+                        ) or '',
                         'attendance_reference': str(attendee.attendance_reference or '').strip(),
                         'due_date': form.due_date,
                         'revoked_at': None,
@@ -243,7 +257,7 @@ def _aware_utc(value):
     return timezone.make_aware(value, datetime_timezone.utc)
 
 
-def reconcile_feedback_after_attendance_commit(occurrence_ids, *, using):
+def reconcile_feedback_after_attendance_commit(occurrence_ids, *, using, use_learner_profiles=False):
     """Refresh only the saved lectures once their attendance transaction commits.
 
     The existing reconciliation still checks finalization, form creation time
@@ -255,10 +269,12 @@ def reconcile_feedback_after_attendance_commit(occurrence_ids, *, using):
                             if str(value or '').strip()))
     if not ids:
         return
+    # Bulk Attendance opts in; Teams sync and workers retain their own identity path.
+    identity_options = {'use_learner_profiles': True} if use_learner_profiles else {}
 
     def reconcile():
         try:
-            sync_post_lecture_feedback_from_attendance(occurrence_ids=ids)
+            sync_post_lecture_feedback_from_attendance(occurrence_ids=ids, **identity_options)
         except Exception as error:
             # Driver messages may contain names, answers or connection details.
             logger.warning('Live Sessions Feedback pending after attendance commit: %s occurrence(s), %s',
@@ -267,7 +283,8 @@ def reconcile_feedback_after_attendance_commit(occurrence_ids, *, using):
     transaction.on_commit(reconcile, using=using)
 
 
-def sync_post_lecture_feedback_from_attendance(*, live_session_ids=None, occurrence_ids=None):
+def sync_post_lecture_feedback_from_attendance(*, live_session_ids=None, occurrence_ids=None,
+                                             use_learner_profiles=False):
     """Reconcile finalized curriculum attendance into feedback deliveries.
 
     Only ``present`` rows qualify. An occurrence is final when the same
@@ -286,15 +303,27 @@ def sync_post_lecture_feedback_from_attendance(*, live_session_ids=None, occurre
         filters.append('o.id = ANY(%s)')
         params.append(occurrence_ids)
     scope = ''.join(f' AND {item}' for item in filters)
+    if use_learner_profiles:
+        identity_cte = '''
+            SELECT l.id AS profile_id, l.enrolment_id AS learner_id
+              FROM "Learner".learners l
+             WHERE l.enrolment_id IS NOT NULL
+               AND NOT EXISTS (
+                   SELECT 1 FROM "Learner".learners duplicate
+                    WHERE duplicate.enrolment_id=l.enrolment_id AND duplicate.id<>l.id
+               )'''
+        identity_join = 'u.profile_id = a.learner_profile_id'
+    else:
+        identity_cte = '''
+            SELECT lower(btrim("Email")) AS email_key, min(id) AS learner_id
+              FROM enrolment."Created_users"
+             WHERE coalesce(btrim("Email"), '') <> ''
+             GROUP BY lower(btrim("Email"))
+            HAVING count(*) = 1'''
+        identity_join = 'u.email_key = lower(btrim(a.learner_email))'
     with connection.cursor() as cursor:
-        cursor.execute('''
-            WITH unique_learners AS (
-                SELECT lower(btrim("Email")) AS email_key, min(id) AS learner_id
-                  FROM enrolment."Created_users"
-                 WHERE coalesce(btrim("Email"), '') <> ''
-                 GROUP BY lower(btrim("Email"))
-                HAVING count(*) = 1
-            )
+        cursor.execute(f'''
+            WITH unique_learners AS ({identity_cte})
             SELECT a.occurrence_id,
                    a.module_catalogue_id,
                    coalesce(nullif(m.title, ''), nullif(s.module_title, ''), a.module_catalogue_id) AS module_title,
@@ -321,7 +350,7 @@ def sync_post_lecture_feedback_from_attendance(*, live_session_ids=None, occurre
          LEFT JOIN curriculum.groups g ON g.group_id = m.group_id
          LEFT JOIN curriculum.cohorts c ON c.cohort_id = g.cohort_id
          LEFT JOIN curriculum.programmes p ON p.programme_id = c.programme_id
-         LEFT JOIN unique_learners u ON u.email_key = lower(btrim(a.learner_email))
+         LEFT JOIN unique_learners u ON {identity_join}
              WHERE lower(btrim(o.status)) = 'completed'
                AND o.actual_end IS NOT NULL
                AND coalesce(btrim(o.attendance_report_id), '') <> ''
@@ -349,6 +378,7 @@ def sync_post_lecture_feedback_from_attendance(*, live_session_ids=None, occurre
 
     results = []
     rejected = 0
+    identity_options = {'use_learner_profiles': True} if use_learner_profiles else {}
     for occurrence_id, bucket in grouped.items():
         row = bucket['row']
         title = str(row['module_title'] or '').strip()
@@ -375,6 +405,7 @@ def sync_post_lecture_feedback_from_attendance(*, live_session_ids=None, occurre
                 ),
                 bucket['attendees'],
                 attendance_finalized=True,
+                **identity_options,
             )
         except IntegrityError as error:
             # sync_post_lecture_feedback's atomic block has already rolled back.

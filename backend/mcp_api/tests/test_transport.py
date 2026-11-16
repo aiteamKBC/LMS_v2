@@ -104,18 +104,20 @@ class ProtocolTests(TransportTestCase):
         self.assertEqual(set(REGISTRY), {
             "apply_change", "cancel_change", "list_my_pending_changes", "test_whoami",
             "find_programmes", "find_cohorts_groups", "find_modules", "get_module_structure", "list_module_weeks", "find_free_courses", "list_ksb_standards",
-            "list_standard_ksbs", "ksb_coverage", "get_quiz", "list_books", "search_books",
+            "list_standard_ksbs", "ksb_coverage", "get_quiz", "get_component", "list_books", "search_books",
             "save_curriculum_video", "get_video_import_status",
             "create_curriculum_component", "create_week", "create_quiz_draft", "map_ksbs", "add_lesson_content",
             "edit_quiz_draft", "clone_quiz_version", "update_component", "save_component_file",
             "create_programme", "create_cohort", "create_group", "create_module",
+            "update_programme", "update_cohort", "update_group", "update_module", "update_week",
         })
         self.assertEqual({name for name, t in REGISTRY.items() if t.writes},
                          {"apply_change", "save_curriculum_video", "create_curriculum_component", "create_week",
                           "create_quiz_draft", "map_ksbs", "add_lesson_content",
                           "edit_quiz_draft", "clone_quiz_version", "update_component",
                           "save_component_file", "create_programme", "create_cohort", "create_group",
-                          "create_module"})
+                          "create_module", "update_programme", "update_cohort", "update_group", "update_module",
+                          "update_week"})
 
     def test_invalid_json_unknown_method_and_batch(self):
         bad = self.post("{not json")
@@ -304,10 +306,12 @@ class DispatchTests(SimpleTestCase):
         self.request = SimpleNamespace(login_account=SimpleNamespace(pk=5, role="staff"))
 
     def test_not_allowlisted_is_refused(self):
-        # Single-entity creates are allowed (Step 10); the tree save, edits and deletes never are.
+        # Single-entity creates and guarded edits are allowed; the tree save, reorders and deletes never are.
         for method, path in (
             ("POST", "/curriculum_api/curriculum/programmes/tree/"),
-            ("PATCH", "/curriculum_api/curriculum/programmes/PROG-1/"),
+            ("PATCH", "/curriculum_api/curriculum/programmes/tree/"),
+            ("PATCH", "/curriculum_api/curriculum/programmes/reorder/"),
+            ("PATCH", "/curriculum_api/curriculum/groups/archived/"),
             ("DELETE", "/curriculum_api/curriculum/cohorts/C1/"),
             ("GET", "/curriculum_api/curriculum/programmes/tree/"),
             ("GET", "/learner_api/enrolment-users/"),

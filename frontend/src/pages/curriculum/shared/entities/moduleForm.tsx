@@ -1,4 +1,4 @@
-import { CALENDAR_DAYS, calendarSessionClashes } from './deliveryCalendar';
+import { CALENDAR_COUNTRIES, CALENDAR_DAYS, calendarSessionClashes } from './deliveryCalendar';
 import { DeliveryCalendarEditor } from './DeliveryCalendarEditor';
 import type { DeliveryCalendarPolicy } from '@/lib/curriculumApi';
 import { moduleFormTarget, type ModuleFormDeliveryRef, type ModuleFormTarget } from './moduleForm.helpers';
@@ -609,6 +609,13 @@ export function ModuleFormDrawer({
   // the cohort's practical end date, and the sessions that overshoot still have
   // to step over the bank holidays they land on.
   const effectiveCalendarPolicy = calendarPolicy || selectedCohort?.calendarPolicy || null;
+  const restDays = effectiveCalendarPolicy?.weekendDays;
+  const usesEnglandRestDays = !effectiveCalendarPolicy || (effectiveCalendarPolicy.country === 'GB'
+    && restDays?.length === 2 && restDays.includes('Saturday') && restDays.includes('Sunday'));
+  const restDayCountry = effectiveCalendarPolicy?.country === 'GB' ? 'England'
+    : CALENDAR_COUNTRIES.find(([code]) => code === effectiveCalendarPolicy?.country)?.[1] || effectiveCalendarPolicy?.country;
+  const restDayHint = usesEnglandRestDays ? undefined
+    : `Weekly rest days for ${restDayCountry}: ${CALENDAR_DAYS.filter(day => restDays?.includes(day)).join(', ')}. Delivery on these days is unusual.`;
   const legacyCalendarHolidays = useMemo(() => holidaysForScheduling(holidays, selectedCohort?.startDate,
     calendarPolicy ? [] : selectedCohort?.excludedHolidayIds), [holidays, selectedCohort, calendarPolicy]);
   const cohortHolidays = useMemo(
@@ -1722,7 +1729,8 @@ export function ModuleFormDrawer({
             Each week starts with its first live session{weekStartsOn ? ` (${weekStartsOn})` : ''}. Other live sessions are components in the same week.
           </p>}
           {scheduleMode === 'custom' && <FormField label="Delivery days" as="group" required hint={`Choose ${sessionsPerWeek} day${sessionsPerWeek === '1' ? '' : 's'} each week (${deliveryDaysPerWeek} selected).`}>
-            <WeekdayControl value={weekDays} maxSelections={Number(sessionsPerWeek)} onChange={setWeekDays} />
+            <WeekdayControl value={weekDays} maxSelections={Number(sessionsPerWeek)} onChange={setWeekDays}
+              restDays={restDays} restDayHint={restDayHint} />
           </FormField>}
           {scheduleMode === 'custom' && <div className="flex flex-wrap items-center justify-between gap-2">
             <p className="text-[12px] font-semibold text-primary-700">Custom · {sessionsPerWeek} session{sessionsPerWeek === '1' ? '' : 's'} per week · {modulePatternLabel}</p>

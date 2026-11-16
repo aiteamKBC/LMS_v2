@@ -145,6 +145,19 @@ class CurriculumVideoChange(models.Model):
         db_table = 'curriculum_video_change'
 
 
+class CurriculumVideoSource(models.Model):
+    """One durable upload owner for a source within a Bunny library."""
+
+    source_key = models.CharField(max_length=64, primary_key=True)
+    library_id = models.CharField(max_length=32)
+    owner_import = models.ForeignKey(CurriculumVideoImport, on_delete=models.PROTECT,
+                                     related_name='owned_video_sources')
+    created_at = models.DateTimeField(default=timezone.now)
+
+    class Meta:
+        db_table = 'curriculum_video_source'
+
+
 class ModuleAuthoringModule(StatusLifecycleModel):
     """``curriculum.modules`` on the normalised schema.
 

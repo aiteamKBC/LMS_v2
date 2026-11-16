@@ -55,7 +55,7 @@ export interface Learner {
   curriculumId?: string;
   name: string;
   email: string;
-  /** LMS enrolment email when it differs from the KBC directory email. */
+  /** Alternate email retained for compatibility with older directory responses. */
   lmsEmail?: string;
   programme?: string;
   group?: string;
@@ -64,7 +64,7 @@ export interface Learner {
   cohortId: string;
   groupId: string;
   endDate: string;
-  /** LMS enrolment status, or the KBC status for learners not enrolled. */
+  /** Programme status from the learner profile (legacy responses may use KBC). */
   status?: string;
   /** Saved delivery mode; absent preferences are represented as live. */
   attendanceMode?: "live" | "lazy";

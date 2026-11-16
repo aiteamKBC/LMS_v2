@@ -476,6 +476,47 @@ class MyLearningIdentityProjectionTests(SimpleTestCase):
             else:
                 module_read.assert_not_called();dates.assert_not_called();credits.assert_not_called();query.assert_not_called()
 
+    def test_zero_module_catalogue_uses_complete_empty_metadata_without_inheriting_a_plan(self):
+        from . import models, weekly_learning, live_session_progress, subject_origins, previous_learning_groups, builder_activity_dates
+        source=SimpleNamespace(pk=7,id=7,aptem_id=7,programme='Programme',cohort='',group='',
+            _canonical_training_plan=[])
+        profile=SimpleNamespace(pk=9,enrolment_id=7)
+        manager=MagicMock();manager.only.return_value.filter.return_value.first.return_value=profile
+        content=native()
+        with ExitStack() as stack:
+            stack.enter_context(patch.object(models.LearnerProfile,'objects',manager))
+            stack.enter_context(patch.object(learning,'connections',fake_connections()))
+            stack.enter_context(patch.object(learning,'request_preset_cache',return_value={}))
+            plan=stack.enter_context(patch.object(learning,'effective_training_plan',return_value=[]))
+            stack.enter_context(patch('learner_api.student_activity_access.student_activity_available',return_value=True))
+            stack.enter_context(patch.object(canonical,'entries_for',return_value=[]))
+            stack.enter_context(patch.object(canonical,'owned_source_courses',return_value=[]))
+            module_read=stack.enter_context(patch.object(learning,'catalogue_module_rows'))
+            native_read=stack.enter_context(patch.object(weekly_learning,'build_learning_content_summary',return_value=content))
+            credits=stack.enter_context(patch.object(live_session_progress,'read_catalogue_live_credits',return_value=[]))
+            imports=stack.enter_context(patch.object(subject_origins,'read_imported_courses'))
+            stack.enter_context(patch.object(subject_origins,'read_replacement_courses',return_value={}))
+            stack.enter_context(patch.object(previous_learning_groups,'read_previous_learning_groups',return_value={}))
+            stack.enter_context(patch.object(builder_activity_dates,'read_builder_activity_dates',return_value={}))
+            context=learning.load_context(source,{'id':9,'progress_transfer_active':False})
+
+        self.assertEqual(context[0], [])
+        self.assertEqual(context[1], [])
+        self.assertEqual(context[3]['components'], [])
+        self.assertEqual(context[3]['componentProgress'], [])
+        self.assertEqual(context[9]['modules'], {})
+        self.assertEqual(context[10], [])
+        plan.assert_called_once_with(source,{})
+        module_read.assert_not_called()
+        credits.assert_called_once_with(source,[])
+        imports.assert_not_called()
+        resolved=native_read.call_args.kwargs['resolved_metadata']
+        self.assertEqual(resolved, {
+            'module_titles': {}, 'free_course_module_ids': [], 'weeks': [], 'covers': {},
+            'quiz_modules': {}, 'schedule_modules': {}, 'schedule_components': [],
+            'live_credit_components': [], 'imported_courses': {},
+        })
+
     def test_offset_instants_preserve_dst_and_do_not_use_machine_time(self):
         self.assertEqual(learning.session_instant('2026-10-25T10:00:00+01:00'),learning.session_instant('2026-10-25T09:00:00Z'))
         self.assertIsNone(learning.session_instant('invalid'))
@@ -677,6 +718,7 @@ def fixture_responses(*, standalone=False, kind='commercial'):
     with ExitStack() as stack:
         stack.enter_context(patch.object(learning,'load_context',side_effect=lambda *args,**kwargs:deepcopy(context)))
         stack.enter_context(patch.object(learning,'connections',fake_connections()))
+        stack.enter_context(patch('learner_api.my_learning_ksbs.connections',fake_connections()))
         stack.enter_context(patch.object(canonical,'query',side_effect=query))
         stack.enter_context(patch.object(learning,'journal_enabled',return_value=True))
         stack.enter_context(patch.object(course_catalogue_display,'read_export_placements',return_value=[]))
