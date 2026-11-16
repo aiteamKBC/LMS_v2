@@ -35,9 +35,9 @@ function drawer(policy: DeliveryCalendarPolicy | null = null) {
 
 async function customDays(extraDay: 'Sat' | 'Sun') {
   await userEvent.click(screen.getByRole('combobox', { name: /Sessions per week/i }));
-  await userEvent.click(screen.getByRole('option', { name: '2', exact: true }));
+  await userEvent.click(screen.getByRole('option', { name: '2' }));
   const days = screen.getByRole('group', { name: /Delivery days/i });
-  await userEvent.click(within(days).getByRole('button', { name: extraDay, exact: true }));
+  await userEvent.click(within(days).getByRole('button', { name: extraDay }));
   return within(days);
 }
 
@@ -56,9 +56,9 @@ describe('module delivery-day warnings use the effective calendar', () => {
     expect(screen.queryByRole('group', { name: /Delivery days/i })).not.toBeInTheDocument();
     const days = await customDays('Sat');
     expect(days.getByText(englandHint)).toBeVisible();
-    expect(days.getByRole('button', { name: 'Sat', exact: true })).toHaveAttribute('title', englandHint);
-    expect(days.getByRole('button', { name: 'Sun', exact: true })).toHaveAttribute('title', englandHint);
-    expect(days.getByRole('button', { name: 'Fri', exact: true })).not.toHaveAttribute('title');
+    expect(days.getByRole('button', { name: 'Sat' })).toHaveAttribute('title', englandHint);
+    expect(days.getByRole('button', { name: 'Sun' })).toHaveAttribute('title', englandHint);
+    expect(days.getByRole('button', { name: 'Fri' })).not.toHaveAttribute('title');
     expect(importCountryCalendar).not.toHaveBeenCalled();
   });
 
@@ -67,8 +67,8 @@ describe('module delivery-day warnings use the effective calendar', () => {
     const days = await customDays('Sat');
     expect(days.getByText(/Weekly rest days for Saudi Arabia: Friday, Saturday/)).toBeVisible();
     expect(days.queryByText(/England/)).not.toBeInTheDocument();
-    expect(days.getByRole('button', { name: 'Fri', exact: true })).toHaveAttribute('title', expect.stringContaining('Saudi Arabia'));
-    expect(days.getByRole('button', { name: 'Sun', exact: true })).not.toHaveAttribute('title');
+    expect(days.getByRole('button', { name: 'Fri' })).toHaveAttribute('title', expect.stringContaining('Saudi Arabia'));
+    expect(days.getByRole('button', { name: 'Sun' })).not.toHaveAttribute('title');
     await waitFor(() => expect(previewModuleSessionPlan).toHaveBeenLastCalledWith(expect.objectContaining({
       calendarPolicy: null, weekDays: 'Thursday, Saturday', numberOfSessions: 2,
     })));
@@ -78,7 +78,7 @@ describe('module delivery-day warnings use the effective calendar', () => {
     drawer(calendarPreset('SA'));
     const days = await customDays('Sun');
     expect(days.queryByText(/delivery on these days is unusual/i)).not.toBeInTheDocument();
-    expect(days.getByRole('button', { name: 'Sun', exact: true })).not.toHaveAttribute('title');
+    expect(days.getByRole('button', { name: 'Sun' })).not.toHaveAttribute('title');
   });
 
   it('updates the warning when the module country changes, without changing its delivery days', async () => {
@@ -90,15 +90,15 @@ describe('module delivery-day warnings use the effective calendar', () => {
     fireEvent.change(calendar.getByLabelText('Country'), { target: { value: 'SA' } });
     expect(days.getByText(/Weekly rest days for Saudi Arabia: Friday, Saturday/)).toBeVisible();
     expect(days.queryByText(englandHint)).not.toBeInTheDocument();
-    expect(days.getByRole('button', { name: 'Thu', exact: true })).toHaveAttribute('aria-pressed', 'true');
-    expect(days.getByRole('button', { name: 'Sat', exact: true })).toHaveAttribute('aria-pressed', 'true');
+    expect(days.getByRole('button', { name: 'Thu' })).toHaveAttribute('aria-pressed', 'true');
+    expect(days.getByRole('button', { name: 'Sat' })).toHaveAttribute('aria-pressed', 'true');
     await waitFor(() => expect(previewModuleSessionPlan).toHaveBeenLastCalledWith(expect.objectContaining({
       weekDays: 'Thursday, Saturday', calendarPolicy: expect.objectContaining({ country: 'SA', weekendDays: ['Friday', 'Saturday'] }),
     })));
     fireEvent.change(calendar.getByLabelText('Country'), { target: { value: 'GB' } });
     expect(days.getByText(englandHint)).toBeVisible();
-    expect(days.getByRole('button', { name: 'Fri', exact: true })).not.toHaveAttribute('title');
-    expect(days.getByRole('button', { name: 'Sun', exact: true })).toHaveAttribute('title', englandHint);
+    expect(days.getByRole('button', { name: 'Fri' })).not.toHaveAttribute('title');
+    expect(days.getByRole('button', { name: 'Sun' })).toHaveAttribute('title', englandHint);
   });
 
   it('honors module rest-day overrides, an empty list and restoring cohort inheritance', async () => {
@@ -106,17 +106,17 @@ describe('module delivery-day warnings use the effective calendar', () => {
     const days = await customDays('Sat');
     const calendar = within(screen.getByRole('region', { name: 'Delivery calendar' }));
     await userEvent.click(calendar.getByRole('button', { name: 'Customize this module' }));
-    await userEvent.click(calendar.getByRole('checkbox', { name: 'Saturday', exact: true }));
+    await userEvent.click(calendar.getByRole('checkbox', { name: 'Saturday' }));
     expect(days.queryByText(/delivery on these days is unusual/i)).not.toBeInTheDocument();
-    expect(days.getByRole('button', { name: 'Sat', exact: true })).not.toHaveAttribute('title');
-    expect(days.getByRole('button', { name: 'Fri', exact: true })).toHaveAttribute('title', expect.stringContaining('Friday'));
-    await userEvent.click(calendar.getByRole('checkbox', { name: 'Friday', exact: true }));
-    expect(days.getByRole('button', { name: 'Fri', exact: true })).not.toHaveAttribute('title');
+    expect(days.getByRole('button', { name: 'Sat' })).not.toHaveAttribute('title');
+    expect(days.getByRole('button', { name: 'Fri' })).toHaveAttribute('title', expect.stringContaining('Friday'));
+    await userEvent.click(calendar.getByRole('checkbox', { name: 'Friday' }));
+    expect(days.getByRole('button', { name: 'Fri' })).not.toHaveAttribute('title');
     await waitFor(() => expect(previewModuleSessionPlan).toHaveBeenLastCalledWith(expect.objectContaining({
       weekDays: 'Thursday, Saturday', calendarPolicy: expect.objectContaining({ country: 'SA', weekendDays: [] }),
     })));
     await userEvent.click(calendar.getByRole('button', { name: 'Use cohort calendar' }));
     expect(days.getByText(/Weekly rest days for Saudi Arabia: Friday, Saturday/)).toBeVisible();
-    expect(days.getByRole('button', { name: 'Sat', exact: true })).toHaveAttribute('title', expect.stringContaining('Saudi Arabia'));
+    expect(days.getByRole('button', { name: 'Sat' })).toHaveAttribute('title', expect.stringContaining('Saudi Arabia'));
   });
 });
