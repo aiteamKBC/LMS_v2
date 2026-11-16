@@ -402,11 +402,19 @@ class ComponentContractTests(SimpleTestCase):
         self.assertTrue(dispatch.is_allowed("PATCH", "/curriculum_api/curriculum/components/C1/"))
         for method, path in (("PUT", dispatch.COMPONENT_CREATE_PATH),
                              ("DELETE", "/curriculum_api/curriculum/components/C1/"),
-                             ("PATCH", "/curriculum_api/curriculum/modules/M1/structure/"),
+                             ("PUT", "/curriculum_api/curriculum/modules/M1/structure/"),
                              ("DELETE", "/curriculum_api/curriculum/modules/M1/weeks/W1/"),
                              ("DELETE", "/quiz_api/quizzes/1/"),
-                             ("PATCH", "/curriculum_api/curriculum/modules/M1/")):
+                             ("DELETE", "/curriculum_api/curriculum/modules/M1/"),
+                             ("PATCH", "/curriculum_api/curriculum/modules/archived/"),
+                             ("PATCH", "/curriculum_api/curriculum/modules/training-module-7/structure/")):
             self.assertFalse(dispatch.is_allowed(method, path))
+        # The structure save is only ever the Module Builder's guarded partial save, never a full rewrite.
+        request = SimpleNamespace(login_account=SimpleNamespace(pk=5, role="staff"))
+        for body in ({"title": "x"}, {"saveMode": "partial", "structureDelta": {}},
+                     {"saveMode": "full", "structureDelta": {}, "expectedRevision": "r"}):
+            with self.subTest(body=body), self.assertRaisesRegex(dispatch.DispatchError, "partial save"):
+                dispatch.call_api(request, "PATCH", "/curriculum_api/curriculum/modules/M1/structure/", json_body=body)
 
 
 class ComponentVideoHandoffTests(VideoTestCase):
@@ -459,3 +467,49 @@ class LiveModuleWarningTests(ComponentTestCase):
 
     def test_no_learners_no_warning(self):
         self.assertEqual(self.run_tool()["structuredContent"]["warnings"], [])
+
+
+class ComponentFullFormTests(ComponentTestCase):
+    """Creation takes everything the LMS add-component form does, checked like update_component."""
+
+    def test_settings_options_and_duration_are_created_and_confirmed(self):
+        args = {**ARGS, "type": "reading", "title": "Marketing reading", "description": "Read **chapter 2**.",
+                "duration_minutes": 45, "reflection_required": True, "reflection_question": "What changed?",
+                "coach_validation_required": False,
+                "settings": {"difficulty": "Advanced", "requiredReading": False, "estimatedReadingTime": 30}}
+        result = self.run_tool(args)
+        self.assertFalse(result.get("isError"), result)
+        details = result["structuredContent"]["details"]
+        self.assertEqual(details["settings_you_set"], args["settings"])
+        self.assertFalse(details["coach_validation_required"])
+        applied = self.apply(result["structuredContent"]["preview_id"])
+        self.assertFalse(applied.get("isError"), applied)
+        (body,) = self.posts
+        self.assertEqual({k: body["settings"][k] for k in args["settings"]}, args["settings"])
+        self.assertEqual(body["duration"], 45)
+        self.assertEqual((body["reflectionRequired"], body["reflectionQuestion"], body["coachValidationRequired"]),
+                         (True, "What changed?", False))
+
+    def test_youtube_video_and_podcast_link_at_creation(self):
+        self.assertFalse(self.apply(self.preview(media_url="https://youtu.be/ZHcD5Hd2KIA")).get("isError"))
+        self.assertEqual(self.posts[-1]["settings"]["videoUrl"], "https://youtu.be/ZHcD5Hd2KIA")
+        self.assertEqual(self.posts[-1]["settings"]["sourceType"], "YouTube")
+        self.assertFalse(self.apply(self.preview(type="podcast", title="Episode 1",
+                                                 media_url="https://open.spotify.com/track/x")).get("isError"))
+        self.assertEqual(self.posts[-1]["settings"]["podcastUrl"], "https://open.spotify.com/track/x")
+
+    def test_locked_settings_html_and_lms_rule_breaks_are_refused(self):
+        self.assert_error(self.run_tool({**ARGS, "settings": {"embedCode": "x"}}), "cannot be set")
+        self.assert_error(self.run_tool({**ARGS, "description": "<b>x</b>"}), "HTML is not allowed")
+        self.assert_error(self.run_tool({**ARGS, "type": "reading", "settings": {"resourceUrl": "not a link"}}),
+                          "Enter a valid reading URL")
+        self.assertEqual(self.pending.rows, [])
+        self.assertEqual(self.posts, [])
+
+    def test_get_component_lists_a_types_settings_for_creation(self):
+        result = self.run_tool({"type": "podcast"}, name="get_component")
+        self.assertFalse(result.get("isError"), result)
+        data = result["structuredContent"]
+        self.assertEqual(data["editable_settings"]["transcript"], "text")
+        self.assertNotIn("embedCode", data["settings"])
+        self.assert_error(self.run_tool({"type": "podcast", "module_id": "M1"}, name="get_component"), "not both")

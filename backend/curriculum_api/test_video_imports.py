@@ -739,3 +739,4 @@ class VideoImportAccessTests(TestCase):
                 'sourceType': source_type, 'videoUrl': url,
             }}, 'component')
             self.assertTrue(any(error['path'] == 'component.settings.videoUrl' for error in errors))
+
