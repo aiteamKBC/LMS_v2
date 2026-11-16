@@ -22,6 +22,37 @@ function moduleDraft() {
 }
 
 describe('explicit study weeks', () => {
+  it('sends every authored session for1-7 days and1,2,16 weeks without truncating shared calendars', () => {
+    const names = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+    const dayAt = (offset: number) => new Date(Date.UTC(2027, 2, 1 + offset)).toISOString().slice(0, 10);
+    for (const weeks of [1, 2, 16]) {
+      for (let count = 1; count <= 7; count += 1) {
+        const draft = { ...createLocalModuleDraft({ title: 'Calendar matrix', programme: 'Synthetic programme',
+          description: '', weeks, status: 'draft', startDate: dayAt(0), endDate: dayAt(weeks * 7 - 1) }),
+        weekBoundaryMode: 'calendar' as const, weekStartsOn: 'Monday',
+        weeklySchedule: names.slice(0, count).map(day => ({ day, startTime: '09:00', endTime: '10:00' })) };
+        draft.weekStructure.forEach(week => {
+          week.components = names.slice(0, count).map((_, index) => createEmptyComponent(week.id, 'live-session', index + 1));
+        });
+        const dates = Array.from({ length: weeks * 7 }, (_, index) => index).filter(index => index % 7 < count);
+        const matrix: ModuleWeekSessionPlan = {
+          sessions: dates.map((offset, index) => ({ sessionNumber: index + 1, weekNumber: Math.floor(offset / 7) + 1,
+            date: dayAt(offset), day: names[offset % 7], startTime: '09:00', durationMinutes: 60, skippedHolidays: [] })),
+          weeks: draft.weekStructure.map((_, index) => ({ weekNumber: index + 1, startDate: dayAt(index * 7),
+            endDate: dayAt(index * 7 + 6), holidays: [], holidayWeek: false })), slots: [], warnings: [],
+          skippedHolidays: [], finalEndDate: dayAt(dates[dates.length - 1]),
+        };
+        const dated = applyModuleWeekSessionPlan(draft, matrix);
+        const sent = moduleTeamsPlannedSessions(dated, matrix);
+        expect(sent).toHaveLength(weeks * count);
+        expect(new Set(sent.map(session => session.componentId)).size).toBe(weeks * count);
+        expect(sent.map(session => session.date)).toEqual(dates.map(dayAt));
+        expect(sent.every(session => session.startTime === '09:00' && session.endTime === '10:00')).toBe(true);
+        expect(dated.endDate).toBe(dayAt(weeks * 7 - 1));
+      }
+    }
+  });
+
   it('keeps three week containers and one holiday notice even when the holiday is before the live day', () => {
     const module = applyModuleWeekSessionPlan(moduleDraft(), plan);
     expect(module.weekStructure).toHaveLength(3);

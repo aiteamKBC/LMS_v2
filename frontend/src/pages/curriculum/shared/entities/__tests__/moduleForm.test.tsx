@@ -175,6 +175,25 @@ async function choose(field: string, option: string) {
 }
 
 describe('ModuleFormDrawer', () => {
+  it.each([0, 1])('shows the verified count of%i live sessions when partial/holiday weeks reduce it', async count => {
+    const previous = previewModuleSessionPlanMock.getMockImplementation();
+    previewModuleSessionPlanMock.mockResolvedValue({
+      sessions: Array.from({ length: count }, (_, index) => ({ sessionNumber: index + 1, date: '2026-09-02', day: 'Wednesday', skippedHolidays: [] })),
+      skippedHolidays: [], warnings: [], finalEndDate: count ? '2026-09-02' : '',
+    });
+    try {
+      renderDrawer({ lockGroup: true, defaults: { programmeId: 'PROG-DATA', cohortId: 'COHORT-1', groupId: 'GROUP-1' } });
+      const weeks = screen.getByRole('spinbutton', { name: /^Weeks/i });
+      await userEvent.clear(weeks);
+      await userEvent.type(weeks, '2');
+      await choose('Study week starts on', 'Monday');
+      expect(await screen.findByText(new RegExp(`${count} live session${count === 1 ? '' : 's'} planned across 2 study weeks`))).toBeInTheDocument();
+      expect(screen.queryByText(/weeks ×/)).not.toBeInTheDocument();
+    } finally {
+      previewModuleSessionPlanMock.mockImplementation(previous!);
+    }
+  });
+
   beforeEach(() => {
     createGroupModuleMock.mockClear();
     previewModuleSessionPlanMock.mockClear();

@@ -52,7 +52,7 @@ from .teams_calendar_checks import (CalendarMismatch, attendee_differences, atte
                                     graph_calendar_time, local_calendar_recurrence, publish_attendees, remove_attendees_silently,
                                     safe_teams_join_url,
                                     dropped_sessions_sentence, sessions_a_rewrite_would_drop,
-                                    unconfirmed_attendee_detail, utc_datetime, verify_calendar)
+                                    unconfirmed_attendee_detail, utc_datetime, verify_calendar, read_calendar_instances)
 
 from learner_api.ksb_exclusions import and_not_excluded
 from learner_api.progress_rules import (
@@ -2005,7 +2005,7 @@ def saved_live_session_occurrences(live_session_id):
                                [live_session_id], 'session_number')
 
 
-def persist_live_session_series(payload, event, warnings, graph_settings, organizer, attendees, presenters, online_meeting_id='', co_organizers=(), *, persist_occurrences=True):
+def persist_live_session_series(payload, event, warnings, graph_settings, organizer, attendees, presenters, online_meeting_id='', co_organizers=(), *, persist_occurrences=True, max_sessions=52):
     ensure_module_authoring_tables()
     ensure_live_session_tracking_tables()
     module_catalogue_id = clean_str(payload.get('moduleCatalogueId'))
@@ -2056,7 +2056,7 @@ def persist_live_session_series(payload, event, warnings, graph_settings, organi
         'timezone': graph_settings.get('timezone') or '',
         'duration_minutes': max(15, min(1440, int(payload.get('durationMinutes') or 60))),
         'repeat_pattern': clean_str(payload.get('repeat')).lower() or 'none',
-        'repeat_occurrences': max(1, min(52, int(payload.get('repeatOccurrences') or 1))),
+        'repeat_occurrences': max(1, min(max_sessions, int(payload.get('repeatOccurrences') or 1))),
         'lobby_bypass': clean_str(payload.get('lobbyBypass')).lower() or 'invited',
         'recording': clean_str(payload.get('recording')).lower() or 'none',
         'spoken_language': clean_str(payload.get('spokenLanguage')) or 'en-GB',
@@ -2078,7 +2078,7 @@ def persist_live_session_series(payload, event, warnings, graph_settings, organi
         parse_graph_datetime(payload.get('startDateTimeUtc')) or now,
         max(15, min(1440, int(payload.get('durationMinutes') or 60))),
         clean_str(payload.get('repeat')).lower() or 'none',
-        max(1, min(52, int(payload.get('repeatOccurrences') or 1))),
+        max(1, min(max_sessions, int(payload.get('repeatOccurrences') or 1))),
     )
     return live_session_id, len(occurrence_rows)
 
@@ -2322,7 +2322,19 @@ def teams_calendar_subject(payload, series=None):
     )
 
 
-def teams_event_payload(payload, graph_settings, *, promote_presenters=True):
+def teams_module_session_limit(module_catalogue_id):
+    """Legacy calendars keep52; stored study weeks permit their bounded1-7 days.
+
+    The request cannot opt itself into a larger limit: only the saved module's
+    creation-time layout and authored week count provide that entitlement.
+    """
+    module = authoring_module_exists(module_catalogue_id) if module_catalogue_id else None
+    if module and module_week_boundary_mode(module) == 'calendar':
+        return max(52, min(104, module_stored_week_count(module)) * 7)
+    return 52
+
+
+def teams_event_payload(payload, graph_settings, *, promote_presenters=True, max_sessions=52):
     title = teams_calendar_subject(payload)
     local_start_raw = clean_str(payload.get('localStartDateTime'))
     utc_start_raw = clean_str(payload.get('startDateTimeUtc'))
@@ -2339,7 +2351,7 @@ def teams_event_payload(payload, graph_settings, *, promote_presenters=True):
     repeat = clean_str(payload.get('repeat')).lower() or 'none'
     if repeat not in TEAMS_REPEAT_VALUES:
         raise ValueError('Unsupported repeat option.')
-    occurrences = max(1, min(52, int(payload.get('repeatOccurrences') or 12)))
+    occurrences = max(1, min(max_sessions, int(payload.get('repeatOccurrences') or 12)))
     co_organizers = teams_attendee_emails(payload.get('coOrganizers'))
     # A co-organiser may also be listed as a presenter. Teams gives each person
     # one role (co-organiser wins), so keeping both only keeps the author's list.
@@ -2371,7 +2383,7 @@ def teams_event_payload(payload, graph_settings, *, promote_presenters=True):
             or (local_start.tzinfo is not None and local_start.astimezone(timezone.utc) != utc_start)):
         raise ValueError('The meeting local time and UTC time do not match the selected calendar time zone. Review the session time.')
     graph_zone = graph_settings.get('timezone') or 'GMT Standard Time'
-    targets = calendar_targets(payload, utc_start, duration, repeat, occurrences, zone_name)
+    targets = calendar_targets(payload, utc_start, duration, repeat, occurrences, zone_name, max_sessions=max_sessions)
     event = {
         'subject': title,
         'body': {'contentType': 'HTML', 'content': teams_event_body_html(title, details)},
@@ -2393,7 +2405,7 @@ def teams_event_payload(payload, graph_settings, *, promote_presenters=True):
     # Holiday shifts stretch the calendar span past the Nth weekly slot, so size the
     # recurrence by the span the wizard actually needs. Sizing it by session count
     # leaves the trailing shifted dates with no instance to move onto.
-    recurrence = local_calendar_recurrence(targets, repeat, zone_name, graph_zone)
+    recurrence = local_calendar_recurrence(targets, repeat, zone_name, graph_zone, max_sessions=max_sessions)
     if recurrence:
         event['recurrence'] = recurrence
     # Return normalized timing too, for the component settings response.
@@ -2586,8 +2598,8 @@ def teams_expanded_instances(owner_key, event_key, instance_query, expected, dea
 
     instances, waited = [], 0.0
     while True:
-        response = microsoft_graph_request('GET', f'users/{owner_key}/events/{event_key}/instances?{instance_query}')
-        instances = [graph_event_utc(item) for item in (response.get('value') or [])] if isinstance(response, dict) else []
+        instances = [graph_event_utc(item) for item in read_calendar_instances(
+            microsoft_graph_request, f'users/{owner_key}/events/{event_key}/instances?{instance_query}')]
         if len(instances) >= expected or waited >= deadline_seconds:
             return sorted(instances, key=lambda item: clean_str((item.get('start') or {}).get('dateTime')))
         time.sleep(2.0)
@@ -2732,7 +2744,7 @@ def apply_teams_occurrence_shifts(
     # Graph pages /instances at 10 by default. Without an explicit $top the later
     # sessions of a long series are simply invisible here, so their holiday shifts
     # were never applied and the pairing below mistook present-but-unlisted slots
-    # for missing ones. Series length is capped at 52 occurrences, so one page fits.
+    # for missing ones. Read every page before reconciling a longer study series.
     instance_query = urllib_parse.urlencode({
         'startDateTime': instance_start,
         'endDateTime': instance_end,
@@ -2897,8 +2909,8 @@ def apply_teams_occurrence_shifts(
             # the series here only spends another round trip on a calendar that
             # already matches the plan.
             return warnings, recreated_details, stale_deletions
-        instance_response = microsoft_graph_request('GET', f'users/{owner_key}/events/{event_key}/instances?{instance_query}')
-        instances = [graph_event_utc(item) for item in (instance_response.get('value') or [])] if isinstance(instance_response, dict) else []
+        instances = [graph_event_utc(item) for item in read_calendar_instances(
+            microsoft_graph_request, f'users/{owner_key}/events/{event_key}/instances?{instance_query}')]
         # Session-aware, not date-set-aware. The old rule here deleted every
         # instance whose start was absent from `series_target_keys`, which turned
         # an omission into a cancellation: a week moved to its own additional
@@ -3676,8 +3688,9 @@ def curriculum_teams_meeting(request):
         )
 
     try:
-        event_payload, invited_people, presenters, co_organizers, attendees, utc_start, duration, repeat, occurrences = teams_event_payload(payload, graph_settings)
-        targets = calendar_targets(payload, utc_start, duration, repeat, occurrences, graph_timezone_iana(graph_settings))
+        max_sessions = teams_module_session_limit(resolved_catalogue_id)
+        event_payload, invited_people, presenters, co_organizers, attendees, utc_start, duration, repeat, occurrences = teams_event_payload(payload, graph_settings, max_sessions=max_sessions)
+        targets = calendar_targets(payload, utc_start, duration, repeat, occurrences, graph_timezone_iana(graph_settings), max_sessions=max_sessions)
         non_delivery_reason = teams_non_delivery_reason(targets, graph_timezone_iana(graph_settings), module_catalogue_id=resolved_catalogue_id)
         if non_delivery_reason:
             return json_error(non_delivery_reason, status=400, code='non_delivery_date')
@@ -3732,6 +3745,7 @@ def curriculum_teams_meeting(request):
         live_session_id, _ = persist_live_session_series(
             payload, event, ['Invitations pending calendar verification.'], graph_settings,
             organizer, attendees, presenters, co_organizers=co_organizers, persist_occurrences=False,
+            max_sessions=max_sessions,
         )
     except Exception:
         logger.exception('The prepared Teams calendar could not be saved.')
@@ -4394,15 +4408,16 @@ def curriculum_teams_meeting_schedule(request, live_session_id):
     repeat = clean_str(payload.get('repeat') or series.get('repeat_pattern')).lower() or 'none'
     if repeat not in TEAMS_REPEAT_VALUES:
         return json_error('Unsupported repeat option.', status=400)
-    occurrences = max(1, min(52, int(payload.get('repeatOccurrences') or series.get('repeat_occurrences') or 1)))
+    max_sessions = teams_module_session_limit(series.get('module_catalogue_id'))
+    occurrences = max(1, min(max_sessions, int(payload.get('repeatOccurrences') or series.get('repeat_occurrences') or 1)))
     try:
-        targets = calendar_targets(payload, utc_start, duration, repeat, occurrences, graph_timezone_iana(graph_settings))
+        targets = calendar_targets(payload, utc_start, duration, repeat, occurrences, graph_timezone_iana(graph_settings), max_sessions=max_sessions)
         if not payload.get('peopleOnly'):
             non_delivery_reason = teams_non_delivery_reason(targets, graph_timezone_iana(graph_settings), module_catalogue_id=series.get('module_catalogue_id'))
             if non_delivery_reason:
                 return json_error(non_delivery_reason, status=400, code='non_delivery_date')
         recurrence = local_calendar_recurrence(targets, repeat, graph_timezone_iana(graph_settings),
-                                               graph_settings.get('timezone') or 'GMT Standard Time')
+                                               graph_settings.get('timezone') or 'GMT Standard Time', max_sessions=max_sessions)
     except (ValueError, TypeError, KeyError) as exc:
         return json_error(str(exc), status=400)
     payload = {**payload, 'scheduledOccurrences': [
@@ -5077,6 +5092,7 @@ def curriculum_teams_meeting_artifacts(request, live_session_id):
     )
     if request.method == 'GET':
         from .teams_calendar_integrity import off_schedule_runs, read_events
+        review_limit = teams_module_session_limit(series.get('module_catalogue_id'))
         logged = read_events([live_session_id])
         for occurrence in occurrences:
             # Calls on this link that were not this session, said with their dates.
@@ -5105,7 +5121,8 @@ def curriculum_teams_meeting_artifacts(request, live_session_id):
             for artifact in occurrence['artifacts']:
                 artifact['metadata'] = parse_json_value(artifact.get('metadata'), {})
         return JsonResponse({
-            'series': {**stamp_live_session_instants(series), 'timeZoneIana': graph_timezone_iana(teams_schedule_settings({}, series=series))},
+            'series': {**stamp_live_session_instants(series), 'timeZoneIana': graph_timezone_iana(teams_schedule_settings({}, series=series)),
+                       **({'reviewSessionLimit': review_limit} if review_limit > 52 else {})},
             'occurrences': [stamp_live_session_instants(occurrence) for occurrence in occurrences],
             'leftoverSlots': stored_leftover_slots(live_session_id),
         })
@@ -5804,15 +5821,19 @@ def note_previous_content_modules(table, *, where_sql=None, where_params=None, k
     if connection.vendor != 'postgresql':
         content_cache.retire_all()
         return
+    read_source = table_name(table)
+    if native_only():
+        from .learning_storage import native_read_table
+        read_source = native_read_table(bare)
     try:
         if where_sql is not None:
-            rows = fetch_all(f'select distinct module_catalogue_id from {table_name(table)} where {where_sql}',
+            rows = fetch_all(f'select distinct module_catalogue_id from {read_source} where {where_sql}',
                              list(where_params or []))
         elif list(key_columns or []) == ['id']:
             ids = [payload.get('id') for payload in payloads if payload and payload.get('id') not in (None, '')]
             if not ids:
                 return
-            rows = fetch_all(f'select distinct module_catalogue_id from {table_name(table)} where id = any(%s)',
+            rows = fetch_all(f'select distinct module_catalogue_id from {read_source} where id = any(%s)',
                              [ids])
         else:
             content_cache.retire_all()

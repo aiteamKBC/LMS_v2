@@ -1800,7 +1800,15 @@ export function ModuleFormDrawer({
               </div>
             </div>
           ))}</>}
-          <p className="text-[12px] text-foreground-500">Each day repeats at its own time every week. {weeksEntered} weeks × {sessionsPerWeek} sessions = {Math.round(weeksEntered * Number(sessionsPerWeek))} sessions. Different times use separate Teams series and links.</p>
+          {usesCalendarWeeks ? <p className="text-[12px] text-foreground-500">
+            {plan && Array.isArray(plan.sessions) && planFor === planInputs
+              ? `${plan.sessions.length} live session${plan.sessions.length === 1 ? '' : 's'} planned across ${weeksEntered} study week${weeksEntered === 1 ? '' : 's'}. This accounts for partial opening weeks and applied holidays.`
+              : planLoading ? 'Calculating live sessions…'
+                : weekStartComplete && startDate && weeksEntered > 0
+                  ? 'Live-session count has not been verified. Saving will validate the schedule.'
+                  : 'Choose the study-week start and module dates to verify the live-session count.'}
+            {' '}Each teaching day keeps its own time. Different times use separate Teams series and links.
+          </p> : <p className="text-[12px] text-foreground-500">Each day repeats at its own time every week. {weeksEntered} weeks × {sessionsPerWeek} sessions = {Math.round(weeksEntered * Number(sessionsPerWeek))} sessions. Different times use separate Teams series and links.</p>}
         </div>
       )}
       {!isFreeCourse && <div className="grid gap-4 sm:grid-cols-2">

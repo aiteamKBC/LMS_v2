@@ -2,7 +2,9 @@
 import copy
 from contextlib import ExitStack
 from types import SimpleNamespace
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
+from urllib.parse import parse_qs, urlencode, urlsplit
 import importlib
 from django.db import connection
 from unittest.mock import patch
@@ -16,6 +18,12 @@ class StudyWeekGraphCalendar(GraphCalendar):
     """Graph's occurrence identity is mandatory proof before pruning padding."""
     fail_delete = False
 
+    def __init__(self):
+        super().__init__()
+        # A non-recurring event has no weekday. The base fixture's empty
+        # failure marker otherwise rejects a perfectly valid one-session event.
+        self.fail_day = None
+
     def __call__(self, *args, **kwargs):
         if args[0] == 'DELETE' and self.fail_delete:
             raise RuntimeError('Synthetic holiday cleanup failure')
@@ -23,6 +31,13 @@ class StudyWeekGraphCalendar(GraphCalendar):
         for master_id, instances in self.instances.items():
             for instance in instances:
                 instance.update(type='occurrence', seriesMasterId=master_id)
+        if args[0] == 'GET' and isinstance(result, dict) and isinstance(result.get('value'), list) and getattr(self, 'page_size', None):
+            path = args[1]
+            skip = int(parse_qs(urlsplit(path).query).get('$skip', ['0'])[0])
+            values = result['value']
+            result['value'] = values[skip:skip + self.page_size]
+            if skip + self.page_size < len(values):
+                result['@odata.nextLink'] = 'https://graph.microsoft.com/v1.0/' + path.split('?')[0] + '?' + urlencode({'$skip': skip + self.page_size})
         return result
 
 
@@ -297,3 +312,123 @@ class StudyWeekPersistenceTests(CurriculumPersistenceTransactionHarness):
 
     def test_shared_cleanup_failure_keeps_invitations_pending_and_retries_same_master(self):
         self.assert_teams_holiday_gap('auto', fail_first_cleanup=True)
+
+    def test_one_to_seven_days_one_two_and_sixteen_weeks_keep_every_link_on_create_and_update(self):
+        """Business matrix, including112 sessions and the March DST transition."""
+        from curriculum_api.weekly_schedule import WEEKDAYS
+        graph = StudyWeekGraphCalendar()
+        first_snapshot = None
+        with ExitStack() as stack:
+            clock = stack.enter_context(patch('curriculum_api.study_week_teams.datetime'))
+            clock.now.return_value = datetime(2026, 11, 16, tzinfo=timezone.utc)
+            for target, kwargs in (
+                ('coach_api.views.microsoft_graph_request', {'side_effect': graph}),
+                ('coach_api.views.has_graph_credentials', {'return_value': True}),
+                ('coach_api.views.get_graph_settings', {'return_value': GRAPH_SETTINGS}),
+                ('curriculum_api.views.apply_teams_meeting_options', {'side_effect': lambda owner, url, **kw: (True, {'id': 'meeting-' + url.rsplit('/', 1)[-1]}, [])}),
+            ):
+                stack.enter_context(patch(target, **kwargs))
+            for weeks in (1, 2, 16):
+                for count in range(1, 8):
+                    for mode in ('auto', 'per_day'):
+                        with self.subTest(weeks=weeks, days=count, mode=mode):
+                            module = self.create_delivery(moduleName=f'Synthetic matrix {weeks}-{count}-{mode}', tutor='',
+                                weeks=weeks, startDate='2027-03-01',
+                                weeklySchedule=[{'day': day, 'startTime': '09:00', 'endTime': '10:00'} for day in WEEKDAYS[:count]],
+                                calendarPolicy={'country': 'SA', 'observePublicHolidays': False, 'weekendDays': [], 'manualHolidays': []})
+                            expected = [(datetime(2027, 3, 1, 9, tzinfo=ZoneInfo('Europe/London')) + timedelta(days=offset)).astimezone(timezone.utc)
+                                        for offset in range(weeks * 7) if offset % 7 < count]
+                            self.assertEqual(sum(len(week['components']) for week in module['weekStructure']), len(expected))
+                            payload = {'title': module['title'], 'moduleCatalogueId': module['catalogueId'],
+                                'organizerEmail': 'tutor@example.com', 'attendees': ['learner@example.com'],
+                                'startDateTimeUtc': expected[0].isoformat(), 'localStartDateTime': '2027-03-01T09:00',
+                                'scheduleTimeZone': 'Europe/London', 'durationMinutes': 60,
+                                'repeat': 'weekly', 'repeatOccurrences': len(expected), 'seriesMode': mode,
+                                'scheduledOccurrences': [{'sessionNumber': index + 1, 'startDateTimeUtc': at.isoformat(), 'durationMinutes': 60}
+                                                         for index, at in enumerate(expected)]}
+                            before_masters = set(graph.events)
+                            graph.page_size = 5 if weeks == 16 and count == 2 else None
+                            created = self.post_json('/curriculum_api/curriculum/teams-meetings/', payload)
+                            self.assertEqual(created.status_code, 201, created.content)
+                            live_id = created.json()['meeting']['liveSessionId']
+                            masters = set(graph.events) - before_masters
+                            self.assertEqual(len(masters), count if mode == 'per_day' else 1)
+                            rows = views.authoring_fetch_all(views.LIVE_SESSION_OCCURRENCES_TABLE, 'live_session_id=%s', [live_id], 'session_number')
+                            self.assertEqual([row['scheduled_start'].replace(tzinfo=timezone.utc) if row['scheduled_start'].tzinfo is None
+                                              else row['scheduled_start'].astimezone(timezone.utc) for row in rows], expected)
+                            links = [(row['graph_event_id'], row['join_url']) for row in rows]
+                            self.assertEqual(len({url for _, url in links}), len(masters))
+                            provider_starts = []
+                            for master in masters:
+                                for item in graph.instances.get(master, [graph.events[master]]):
+                                    raw = datetime.fromisoformat(item['start']['dateTime'])
+                                    if raw.tzinfo is None:
+                                        zone = 'Europe/London' if item['start']['timeZone'] == 'GMT Standard Time' else item['start']['timeZone']
+                                        raw = raw.replace(tzinfo=ZoneInfo(zone))
+                                    provider_starts.append(raw.astimezone(timezone.utc))
+                            self.assertEqual(sorted(provider_starts), expected)
+                            posts = len(graph.posts)
+                            updated = self.patch_json(f'/curriculum_api/curriculum/teams-meetings/{live_id}/schedule/', payload)
+                            self.assertEqual(updated.status_code, 200, updated.content)
+                            self.assertEqual(len(graph.posts), posts)
+                            after = views.authoring_fetch_all(views.LIVE_SESSION_OCCURRENCES_TABLE, 'live_session_id=%s', [live_id], 'session_number')
+                            self.assertEqual([(row['graph_event_id'], row['join_url']) for row in after], links)
+                            if weeks == 16 and count == 7 and mode == 'auto':
+                                artifacts = self.client.get(f'/curriculum_api/curriculum/teams-meetings/{live_id}/artifacts/')
+                                self.assertEqual(artifacts.status_code, 200, artifacts.content)
+                                self.assertEqual(artifacts.json()['series']['reviewSessionLimit'], 112)
+                            if first_snapshot is None:
+                                first_snapshot = live_id, links
+            if first_snapshot:
+                rows = views.authoring_fetch_all(views.LIVE_SESSION_OCCURRENCES_TABLE, 'live_session_id=%s', [first_snapshot[0]], 'session_number')
+                self.assertEqual([(row['graph_event_id'], row['join_url']) for row in rows], first_snapshot[1])
+
+    def test_closed_single_week_cannot_create_an_automatic_empty_teams_series(self):
+        module = self.create_delivery(startDate='2027-03-01', weeks=1, calendarPolicy={
+            'country': 'GB', 'observePublicHolidays': False, 'manualHolidays': [
+                {'label': 'Closed week', 'startDate': '2027-03-03', 'endDate': '2027-03-03'}]})
+        self.assertEqual(module['weekStructure'][0]['components'], [])
+        with patch('coach_api.views.microsoft_graph_request') as graph, \
+                patch('coach_api.views.has_graph_credentials', return_value=True), \
+                patch('coach_api.views.get_graph_settings', return_value=GRAPH_SETTINGS):
+            result = self.post_json('/curriculum_api/curriculum/teams-meetings/', {
+                'title': 'No automatic sessions', 'moduleCatalogueId': module['catalogueId'],
+                'organizerEmail': 'tutor@example.com', 'startDateTimeUtc': '2027-03-01T09:00:00Z',
+                'localStartDateTime': '2027-03-01T09:00', 'repeat': 'weekly', 'scheduledOccurrences': []})
+        self.assertEqual(result.status_code, 400, result.content)
+        graph.assert_not_called()
+        self.assertEqual(views.get_authoring_structure_payload(module['catalogueId'])['weekStructure'], module['weekStructure'])
+
+    def test_saturday_teaching_requires_an_explicit_calendar_override_and_keeps_its_link(self):
+        graph = StudyWeekGraphCalendar()
+        with ExitStack() as stack:
+            for target, kwargs in (
+                ('coach_api.views.microsoft_graph_request', {'side_effect': graph}),
+                ('coach_api.views.has_graph_credentials', {'return_value': True}),
+                ('coach_api.views.get_graph_settings', {'return_value': GRAPH_SETTINGS}),
+                ('curriculum_api.views.apply_teams_meeting_options', {'side_effect': lambda owner, url, **kw: (True, {'id': 'meeting-' + url.rsplit('/', 1)[-1]}, [])}),
+            ):
+                stack.enter_context(patch(target, **kwargs))
+            for policy, expected in ((None, 400), ({'country': 'GB', 'observePublicHolidays': False,
+                    'weekendDays': ['Sunday'], 'manualHolidays': []}, 201)):
+                with self.subTest(policy=policy):
+                    module = self.create_delivery(moduleName='Saturday override' if policy else 'Saturday default',
+                        startDate='2027-03-06', weeks=1, tutor='', calendarPolicy=policy,
+                        weeklySchedule=[{'day': 'Saturday', 'startTime': '09:00', 'endTime': '10:00'}])
+                    payload = {'moduleCatalogueId': module['catalogueId'], 'title': 'Saturday workshop',
+                        'organizerEmail': 'tutor@example.com', 'attendees': ['learner@example.com'],
+                        'localStartDateTime': '2027-03-06T09:00', 'startDateTimeUtc': '2027-03-06T09:00:00Z',
+                        'durationMinutes': 60, 'repeat': 'none', 'repeatOccurrences': 1,
+                        'scheduledOccurrences': [{'sessionNumber': 1, 'startDateTimeUtc': '2027-03-06T09:00:00Z', 'durationMinutes': 60}]}
+                    posts = len(graph.posts)
+                    created = self.post_json('/curriculum_api/curriculum/teams-meetings/', payload)
+                    self.assertEqual(created.status_code, expected, created.content)
+                    if expected == 400:
+                        self.assertEqual(len(graph.posts), posts)
+                    else:
+                        live_id = created.json()['meeting']['liveSessionId']
+                        link = created.json()['meeting']['joinUrl']
+                        updated = self.patch_json(f'/curriculum_api/curriculum/teams-meetings/{live_id}/schedule/', payload)
+                        self.assertEqual(updated.status_code, 200, updated.content)
+                        self.assertEqual(updated.json()['meeting']['joinUrl'], link)
+                        self.assertEqual(len(graph.posts), posts + 1)

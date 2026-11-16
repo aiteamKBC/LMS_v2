@@ -101,3 +101,34 @@ class StudyWeekTeamsGuardTests(SimpleTestCase):
         self.fail_delete = False
         self.assertEqual(self.prune(), ({'AUTO-PADDING'}, []))
         self.assertEqual(self.prune(), (set(), []))
+
+    def test_a_failed_second_page_cannot_delete_even_the_first_pages_padding(self):
+        calls = []
+        def paged(method, path):
+            calls.append((method, path))
+            if len(calls) == 1:
+                return {'value': copy.deepcopy(self.events), '@odata.nextLink':
+                    'https://graph.microsoft.com/v1.0/users/synthetic-owner/events/MASTER/instances?$skip=1'}
+            raise RuntimeError('Synthetic later-page failure')
+        removed, warnings = prune_study_week_fillers(paged, 'synthetic-owner', 'MASTER', 'MOD-SYNTHETIC', self.targets, {})
+        self.assertEqual(removed, set())
+        self.assertTrue(warnings)
+        self.assertEqual([method for method, _ in calls], ['GET', 'GET'])
+        self.assertEqual(len(self.events), 1)
+
+    def test_partial_delete_failure_retries_only_the_remaining_padding(self):
+        self.events.append({**copy.deepcopy(self.events[0]), 'id': 'SECOND-PADDING'})
+        original = self.graph
+        failed = False
+        def partial(method, path):
+            nonlocal failed
+            if method == 'DELETE' and path.endswith('/SECOND-PADDING') and not failed:
+                failed = True
+                raise RuntimeError('Synthetic second deletion failure')
+            return original(method, path)
+        removed, warnings = prune_study_week_fillers(partial, 'synthetic-owner', 'MASTER', 'MOD-SYNTHETIC', self.targets, {})
+        self.assertEqual(removed, {'AUTO-PADDING'})
+        self.assertTrue(warnings)
+        self.assertEqual([item['id'] for item in self.events], ['SECOND-PADDING'])
+        self.assertEqual(self.prune(), ({'SECOND-PADDING'}, []))
+        self.assertEqual(self.prune(), (set(), []))

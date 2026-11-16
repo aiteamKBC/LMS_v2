@@ -3,7 +3,7 @@ from datetime import datetime, timedelta, timezone
 from urllib.parse import quote, urlencode
 from zoneinfo import ZoneInfo
 
-from .teams_calendar_checks import event_instant, utc_datetime
+from .teams_calendar_checks import event_instant, utc_datetime, read_calendar_instances
 from .weekly_schedule import module_week_boundary_mode
 
 
@@ -37,13 +37,8 @@ def prune_study_week_fillers(request, owner, master_id, module_id, targets, grap
         base = f'users/{owner}/events/{quote(master_id, safe="")}'
 
         def read_candidates():
-            response = request('GET', base + '/instances?' + query)
-            if not isinstance(response, dict) or not isinstance(response.get('value'), list):
-                raise ValueError('Invalid provider calendar response')
-            if response.get('@odata.nextLink'):
-                raise ValueError('Incomplete provider calendar')
             candidates = []
-            for event in response.get('value') or []:
+            for event in read_calendar_instances(request, base + '/instances?' + query):
                 instant = event_instant(event, 'start')
                 identity = str(event.get('id') or '')
                 if (event.get('isCancelled') or instant <= datetime.now(timezone.utc)

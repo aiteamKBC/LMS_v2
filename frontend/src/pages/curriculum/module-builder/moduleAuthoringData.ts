@@ -3382,6 +3382,8 @@ export async function removeAiMaterial(moduleCatalogueId: string) {
 }
 
 export interface TeamsMeetingInput {
+  /** Local review context only; the API derives its own bound from the saved module. */
+  reviewSessionLimit?: number;
   scheduleTimeZone?: 'Africa/Cairo' | 'Europe/London';
   seriesMode?: 'auto' | 'shared' | 'per_day';
   title: string;
@@ -3913,8 +3915,9 @@ export async function createTeamsMeeting(
   options: { confirmUncertain?: boolean; onSubmitted?: () => void } = {},
 ) {
   // Review and send the same snapshot, even if a background refresh changes the form.
-  const reviewed: TeamsMeetingInput = JSON.parse(JSON.stringify({ ...input, hideAttendees: true }));
-  await reviewCalendar({ ...reviewed, summaryEmail: true }, reviewed.scheduleTimeZone || getCalendarTimeZone());
+  const { reviewSessionLimit, ...sentInput } = input;
+  const reviewed: TeamsMeetingInput = JSON.parse(JSON.stringify({ ...sentInput, hideAttendees: true }));
+  await reviewCalendar({ ...reviewed, summaryEmail: true }, reviewed.scheduleTimeZone || getCalendarTimeZone(), reviewSessionLimit);
   // The author has confirmed the review: from here the create is under way,
   // and the caller can start showing its progress.
   options.onSubmitted?.();
@@ -3923,7 +3926,10 @@ export async function createTeamsMeeting(
   return apiJson<TeamsMeetingResult>(`/curriculum/teams-meetings/${options.confirmUncertain ? '?confirmUncertain=1' : ''}`, {
     method: 'POST',
     body: JSON.stringify(reviewed),
-    timeoutMs: 45000,
+    // A long study calendar can create several verified weekday masters in
+    // sequence. Keep the old budget for legacy/short creates, and wait for
+    // the bounded long operation instead of abandoning it after45 seconds.
+    timeoutMs: reviewSessionLimit && reviewSessionLimit > 52 && (reviewed.scheduledOccurrences?.length || 0) > 52 ? 300000 : 45000,
   }).then(result => {
     // This POST goes through this module's own client, so it never triggers the
     // curriculum GET cache's mutation invalidation. Clear it here so the module
@@ -4006,7 +4012,7 @@ export async function updateTeamsMeetingSchedule(liveSessionId: string, input: P
       recording: reviewed.recording ?? series.recording, lobbyBypass: reviewed.lobbyBypass ?? series.lobby_bypass, spokenLanguage: reviewed.spokenLanguage ?? series.spoken_language,
       calendarSeries: series.calendar_series, previousOccurrences: occurrences,
       seriesMode: series.calendar_series?.length ? 'per_day' : 'shared',
-    }, series.timeZoneIana || getCalendarTimeZone());
+    }, series.timeZoneIana || getCalendarTimeZone(), series.reviewSessionLimit);
   }
   // The review is complete. The caller can now replace its form with a
   // progress panel without showing it behind the confirmation dialog.
@@ -4100,6 +4106,7 @@ export interface TeamsMeetingOccurrence {
 
 export interface TeamsMeetingArtifactsResult {
   series: {
+    reviewSessionLimit?: number;
     meeting_type?: string;
     timezone?: string;
     timeZoneIana?: string;

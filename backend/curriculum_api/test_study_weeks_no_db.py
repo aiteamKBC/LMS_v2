@@ -45,6 +45,50 @@ class StudyWeekTests(unittest.TestCase):
         self.assertEqual(len(plan['sessions']), 14)
         self.assertFalse(any(w['holidayWeek'] for w in plan['weeks']))
 
+    def test_every_teaching_day_combination_and_partial_week_matches_an_independent_calendar(self):
+        # Walk civil days and start a new bucket at the chosen weekday. This
+        # oracle does not use the planner's anchor/end-date calculations.
+        cases = 0
+        for offset in range(7):
+            start = date(2027, 3, 1) + timedelta(days=offset)
+            for boundary in range(7):
+                for weeks in (1, 2, 16):
+                    buckets, current = [[]], start
+                    while True:
+                        if current > start and current.weekday() == boundary:
+                            if len(buckets) == weeks:
+                                break
+                            buckets.append([])
+                        buckets[-1].append(current)
+                        current += timedelta(days=1)
+                    closed_day = buckets[-1][len(buckets[-1]) // 2]
+                    for mask in range(1, 128):
+                        days = {day for day in range(7) if mask & (1 << day)}
+                        for closed in (False, True):
+                            with self.subTest(start=start, boundary=boundary, weeks=weeks, mask=mask, closed=closed):
+                                plan = build_study_week_plan(start, weeks, days, self.holiday(closed_day) if closed else {}, WEEKDAYS[boundary])
+                                expected = [(number, day.isoformat()) for number, bucket in enumerate(buckets, 1)
+                                            for day in bucket if day.weekday() in days and not (closed and number == weeks)]
+                                self.assertEqual([(s['weekNumber'], s['date']) for s in plan['sessions']], expected)
+                                self.assertEqual([(w['startDate'], w['endDate']) for w in plan['weeks']],
+                                                 [(bucket[0].isoformat(), bucket[-1].isoformat()) for bucket in buckets])
+                                self.assertEqual([s['sessionNumber'] for s in plan['sessions']], list(range(1, len(expected) + 1)))
+                                self.assertEqual(plan['calendarEndDate'], buckets[-1][-1].isoformat())
+                                cases += 1
+        self.assertEqual(cases, 37338)
+
+    def test_leap_year_year_end_and_the_full_104_week_window_keep_unique_dates(self):
+        for start in (date(2027, 12, 30), date(2028, 2, 28), date(2027, 10, 25)):
+            for boundary in WEEKDAYS:
+                with self.subTest(start=start, boundary=boundary):
+                    plan = build_study_week_plan(start, 104, set(range(7)), {}, boundary)
+                    dates = [session['date'] for session in plan['sessions']]
+                    self.assertEqual(len(plan['weeks']), 104)
+                    self.assertEqual(len(dates), len(set(dates)))
+                    self.assertEqual(dates[0], start.isoformat())
+                    self.assertEqual(dates[-1], plan['calendarEndDate'])
+                    self.assertLessEqual(len(dates), 728)
+
     def test_invalid_counts_and_an_end_before_the_final_week_are_rejected(self):
         for count in (0, -1, 105, 10**9):
             with self.subTest(count=count), self.assertRaisesRegex(ValueError, '1 and 104'):
