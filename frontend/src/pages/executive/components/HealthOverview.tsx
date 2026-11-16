@@ -13,9 +13,10 @@ import type { QualityAction, QualityRecord } from "@/types/qms";
 interface HealthOverviewProps {
   records: QualityRecord[];
   actions: QualityAction[];
+  availability: { actions: boolean; criticalIssues: boolean };
 }
 
-export default function HealthOverview({ records, actions }: HealthOverviewProps) {
+export default function HealthOverview({ records, actions, availability }: HealthOverviewProps) {
   const counts = countByRag(records);
   const assessed = assessedTotal(counts);
   const coverage = records.length ? (assessed / records.length) * 100 : 0;
@@ -75,11 +76,11 @@ export default function HealthOverview({ records, actions }: HealthOverviewProps
             Critical risk
           </p>
           <p className="mt-1 font-heading text-[22px] font-semibold leading-none text-[var(--rag-red-fg)]">
-            {formatNumber(critical.length)}
+            {availability.criticalIssues ? formatNumber(critical.length) : '—'}
           </p>
           <p className="mt-1.5 text-[11.5px] leading-relaxed text-foreground-600">
-            {critical.length
-              ? `${linkedActions.length} linked open action${linkedActions.length === 1 ? "" : "s"}`
+            {!availability.criticalIssues ? 'Critical issue data is unavailable' : critical.length
+              ? availability.actions ? `${linkedActions.length} linked open action${linkedActions.length === 1 ? "" : "s"}` : 'Linked action status is unavailable'
               : "No critical red outcomes in scope"}
           </p>
         </div>

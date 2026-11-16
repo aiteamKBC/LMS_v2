@@ -11,15 +11,19 @@ const FORM_COLORS = [
 ];
 
 const RAG_COLORS = {
+  gold: "#b58a1c",
   green: "#2f8f57",
   amber: "#d98a2b",
   red: "#c65353",
+  na: "#8d86b6",
 } as const;
 
 const RAG_ITEMS = [
+  { key: "gold", label: "Gold", color: RAG_COLORS.gold },
   { key: "green", label: "Green", color: RAG_COLORS.green },
   { key: "amber", label: "Amber", color: RAG_COLORS.amber },
   { key: "red", label: "Red", color: RAG_COLORS.red },
+  { key: "na", label: "Not applicable", color: RAG_COLORS.na },
 ] as const;
 
 const FEEDBACK_ITEMS = [
@@ -29,11 +33,13 @@ const FEEDBACK_ITEMS = [
 ] as const;
 
 function qualityRagItems(records: QualityRecord[]): DonutDatum[] {
-  const counts = { green: 0, amber: 0, red: 0 };
+  const counts = { gold: 0, green: 0, amber: 0, red: 0, na: 0 };
   records.forEach((record) => {
+    counts.gold += record.ratingCounts?.gold ?? 0;
     counts.green += record.ratingCounts?.green ?? 0;
     counts.amber += record.ratingCounts?.amber ?? 0;
     counts.red += record.ratingCounts?.red ?? 0;
+    counts.na += record.ratingCounts?.na ?? 0;
   });
   return RAG_ITEMS.map((item) => ({ ...item, value: counts[item.key] }));
 }
@@ -71,6 +77,8 @@ function RatingCard({
   centerLabel,
   footer,
   ariaLabel,
+  centerValue,
+  available = true,
 }: {
   title: string;
   description: string;
@@ -78,16 +86,19 @@ function RatingCard({
   centerLabel: string;
   footer: string;
   ariaLabel: string;
+  centerValue?: string;
+  available?: boolean;
 }) {
   const total = items.reduce((sum, item) => sum + item.value, 0);
   return (
     <section className="rounded-xl border border-background-200 bg-background-50 p-4" aria-label={title}>
       <h2 className="font-heading text-[15px] font-semibold text-foreground-950">{title}</h2>
       <p className="mt-0.5 text-[12px] leading-relaxed text-foreground-600">{description}</p>
+      {!available ? <p className="mt-4 border-t border-background-200 pt-4 text-[12px] text-foreground-600">Feedback rating data is unavailable.</p> : <>
       <div className="mt-4 border-t border-background-200 pt-4">
         <DonutChart
           data={items}
-          centerValue={leadPercentage(items)}
+          centerValue={centerValue ?? leadPercentage(items)}
           centerLabel={centerLabel}
           ariaLabel={ariaLabel}
           showAllItems
@@ -96,6 +107,7 @@ function RatingCard({
       <p className="mt-4 border-t border-background-200 pt-3 text-[11px] text-foreground-600">
         {total ? `${formatNumber(total)} ${footer}` : `No ${footer} returned`}
       </p>
+      </>}
     </section>
   );
 }
@@ -104,10 +116,12 @@ export default function QualityDonuts({
   records,
   selectedCoach,
   selectedTutor,
+  feedbackAvailable,
 }: {
   records: QualityRecord[];
   selectedCoach: string;
   selectedTutor: string;
+  feedbackAvailable: boolean;
 }) {
   const qualityRecords = records.filter((record) => record.category === "Quality Audit");
   const qualityItems = qualityRagItems(qualityRecords);
@@ -121,12 +135,13 @@ export default function QualityDonuts({
     <div className="space-y-4">
       <section aria-label="Quality rating dashboard" className="grid grid-cols-1 gap-4 xl:grid-cols-3">
         <RatingCard
-          title="Overall rating"
-          description={`All quality checks · ${coachLabel} · ${tutorLabel}`}
+          title="Criterion ratings"
+          description={`Stored criteria · ${coachLabel} · ${tutorLabel}`}
           items={qualityItems}
-          centerLabel="GREEN"
-          footer="checks rated"
-          ariaLabel="Overall Green Amber Red quality rating distribution"
+          centerValue={formatNumber(qualityItems.reduce((sum, item) => sum + item.value, 0))}
+          centerLabel="criteria"
+          footer="criteria with stored ratings"
+          ariaLabel="Stored Gold Green Amber Red and Not applicable criterion ratings"
         />
         <RatingCard
           title="Feedback quality"
@@ -135,6 +150,7 @@ export default function QualityDonuts({
           centerLabel="POSITIVE"
           footer="feedback responses rated"
           ariaLabel="Feedback positive neutral negative distribution"
+          available={feedbackAvailable}
         />
       </section>
 

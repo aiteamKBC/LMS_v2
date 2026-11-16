@@ -28,9 +28,10 @@ const STATUS_ICON: Record<ActionStatus, string> = {
 interface ActionsListProps {
   actions: QualityAction[];
   limit?: number;
+  available: boolean;
 }
 
-export default function ActionsList({ actions, limit = 7 }: ActionsListProps) {
+export default function ActionsList({ actions, limit = 7, available }: ActionsListProps) {
   const today = todayIso(TIME_ZONE_LABEL);
   const open = actions.filter(isOpenAction);
   const priorityWeight = { Critical: 0, High: 1, Medium: 2, Low: 3 };
@@ -59,7 +60,12 @@ export default function ActionsList({ actions, limit = 7 }: ActionsListProps) {
         </Link>
       }
     >
-      {sorted.length === 0 ? (
+      {!available ? (
+        <div className="px-5 py-10 text-center">
+          <p className="text-[13px] font-medium text-foreground-900">Action status data is unavailable</p>
+          <p className="mt-1 text-[12px] text-foreground-600">Recorded action totals do not confirm whether actions are open, overdue or resolved.</p>
+        </div>
+      ) : sorted.length === 0 ? (
         <div className="px-5 py-10 text-center">
           <i className="ri-checkbox-circle-line text-[22px] text-[var(--rag-green-fg)]" aria-hidden="true" />
           <p className="mt-2 text-[13px] font-medium text-foreground-900">No open actions in scope</p>
