@@ -78,6 +78,14 @@ class HomeSessionComponentTests(SimpleTestCase):
         self.assertIn(links.visible_child_sql('c'), sql)
         self.assertIn(links.visible_week_sql('w'), sql)
 
+    def test_normalized_curriculum_query_uses_status_visibility_not_removed_module_columns(self):
+        self.resolve([component('RIGHT', teamsOccurrenceId='O2')])
+        sql, _params = self.cursor.execute.call_args.args
+        self.assertIn(links.visible_child_sql('c'), sql)
+        self.assertIn(links.visible_week_sql('w'), sql)
+        self.assertNotIn('m.deleted_at', sql)
+        self.assertNotIn('m.deleted_via_parent', sql)
+
     def test_shared_occurrence_keeps_each_delivery_modules_own_component(self):
         result = self.resolve([
             component('A', teamsOccurrenceId='O2'), component('B', module='M2', teamsOccurrenceId='O2'),

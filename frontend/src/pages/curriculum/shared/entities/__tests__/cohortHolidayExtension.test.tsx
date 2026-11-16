@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -107,7 +107,8 @@ describe('cohort holidays follow the cohort dates', () => {
     render(<CohortFormDrawer {...baseProps()} />);
 
     await screen.findByText('Summer bank holiday');
-    const checkboxes = screen.getAllByRole('checkbox');
+    const holidays = within(screen.getByRole('group', { name: /holidays in this cohort's period/i }));
+    const checkboxes = holidays.getAllByRole('checkbox');
     expect(checkboxes).toHaveLength(2);
     for (const checkbox of checkboxes) expect(checkbox).toBeChecked();
     expect(screen.getByRole('button', { name: /select all/i })).toBeDisabled();
@@ -153,11 +154,18 @@ describe('cohort holidays follow the cohort dates', () => {
     render(<CohortFormDrawer {...baseProps()} />);
 
     await screen.findByText('Summer bank holiday');
-    await userEvent.click(screen.getByRole('button', { name: /clear all/i }));
-    for (const checkbox of screen.getAllByRole('checkbox')) expect(checkbox).not.toBeChecked();
+    const holidays = within(screen.getByRole('group', { name: /holidays in this cohort's period/i }));
+    await userEvent.click(holidays.getByRole('button', { name: /clear all/i }));
+    for (const checkbox of holidays.getAllByRole('checkbox')) expect(checkbox).not.toBeChecked();
     expect(screen.getByText(/0 selected/i)).toBeTruthy();
+    expect(screen.getByRole('checkbox', { name: 'Saturday' })).toBeChecked();
+    expect(screen.getByRole('checkbox', { name: 'Sunday' })).toBeChecked();
+    expect(screen.getByRole('checkbox', { name: 'Apply public holidays' })).toBeChecked();
 
-    await userEvent.click(screen.getByRole('button', { name: /select all/i }));
-    for (const checkbox of screen.getAllByRole('checkbox')) expect(checkbox).toBeChecked();
+    await userEvent.click(holidays.getByRole('button', { name: /select all/i }));
+    for (const checkbox of holidays.getAllByRole('checkbox')) expect(checkbox).toBeChecked();
+    expect(screen.getByRole('checkbox', { name: 'Saturday' })).toBeChecked();
+    expect(screen.getByRole('checkbox', { name: 'Sunday' })).toBeChecked();
+    expect(screen.getByRole('checkbox', { name: 'Apply public holidays' })).toBeChecked();
   });
 });

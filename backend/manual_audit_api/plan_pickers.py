@@ -26,6 +26,7 @@ from django.db import DatabaseError, connections
 from django.http import HttpRequest, JsonResponse
 from django.views.decorators.http import require_GET
 
+from learner_api.aptem_identity import CURRENT_APTEM_IDENTITY_CTE
 from .common import CONN, duration_min_sql, normalize_lms_category
 from .plan_tables import assignment_name_key, ensure_plan_tables
 
@@ -738,15 +739,15 @@ def picker_assignment_evidence(request: HttpRequest) -> JsonResponse:
 
 
 def _programme_variant_rows(cur):
-    """(programme variant, aptem count, cohort count) straight from Aptem."""
+    """Return normalized current programme placement coverage."""
     cur.execute(
-        '''
-        select btrim(au."Program Name") as programme,
+        f'''with {CURRENT_APTEM_IDENTITY_CTE}
+        select btrim(identity.programme_name) as programme,
                count(*) as aptem_learners,
                count(l.aptem_id) as in_cohort
-        from "LMS"."Aptem_users" au
-        left join "Manual_audit".learners l on l.aptem_id = au."ID"
-        where coalesce(btrim(au."Program Name"), '') <> ''
+        from current_aptem_identity identity
+        left join "Manual_audit".learners l on l.aptem_id = identity.aptem_id
+        where coalesce(btrim(identity.programme_name), '') <> ''
         group by 1
         '''
     )
@@ -780,14 +781,14 @@ def picker_aptem_groups(request: HttpRequest) -> JsonResponse:
     try:
         with connections[CONN].cursor() as cur:
             cur.execute(
-                '''
-                select btrim(au."Group") as group_name,
+                f'''with {CURRENT_APTEM_IDENTITY_CTE}
+                select btrim(identity.group_name) as group_name,
                        count(*) as aptem_learners,
                        count(l.aptem_id) as in_cohort
-                from "LMS"."Aptem_users" au
-                left join "Manual_audit".learners l on l.aptem_id = au."ID"
-                where btrim(au."Program Name") = %s
-                  and coalesce(btrim(au."Group"), '') <> ''
+                from current_aptem_identity identity
+                left join "Manual_audit".learners l on l.aptem_id = identity.aptem_id
+                where btrim(identity.programme_name) = %s
+                  and coalesce(btrim(identity.group_name), '') <> ''
                 group by 1
                 order by 2 desc, 1
                 ''',
@@ -818,7 +819,7 @@ def picker_aptem_learners(request: HttpRequest) -> JsonResponse:
         with connections[CONN].cursor() as cur:
             ensure_plan_tables(cur)
             cur.execute(
-                '''
+                f'''with {CURRENT_APTEM_IDENTITY_CTE}
                 select l.aptem_id, l.learner_name, l.learner_email,
                        btrim(au."Program Name"), btrim(au."Group"),
                        (
@@ -833,8 +834,8 @@ def picker_aptem_learners(request: HttpRequest) -> JsonResponse:
                            and jsonb_typeof(lm.aptem_training_plan::jsonb) = 'array'
                            and jsonb_array_length(lm.aptem_training_plan::jsonb) > 0
                        ) as has_training_plan
-                from "LMS"."Aptem_users" au
-                join "Manual_audit".learners l on l.aptem_id = au."ID"
+                from current_aptem_identity identity
+                join "Manual_audit".learners l on l.aptem_id = identity.aptem_id
                 left join "Audit".learner_match lm on lm.aptem_id = l.aptem_id
                 where l.learner_name ilike %s
                    or l.learner_email ilike %s
@@ -879,12 +880,12 @@ def picker_training_plan(request: HttpRequest) -> JsonResponse:
     try:
         with connections[CONN].cursor() as cur:
             cur.execute(
-                '''
+                f'''with {CURRENT_APTEM_IDENTITY_CTE}
                 select lm.aptem_id, lm.aptem_training_plan
-                from "LMS"."Aptem_users" au
-                join "Manual_audit".learners l on l.aptem_id = au."ID"
+                from current_aptem_identity identity
+                join "Manual_audit".learners l on l.aptem_id = identity.aptem_id
                 join "Audit".learner_match lm on lm.aptem_id = l.aptem_id
-                where btrim(au."Program Name") = %s
+                where btrim(identity.programme_name) = %s
                   and lm.aptem_training_plan is not null
                   and jsonb_typeof(lm.aptem_training_plan::jsonb) = 'array'
                   and jsonb_array_length(lm.aptem_training_plan::jsonb) > 0

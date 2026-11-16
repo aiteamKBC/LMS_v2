@@ -4,6 +4,7 @@ from coach_api import migrated_template_views
 
 from system_audit import activity as system_activity
 
+from . import calendar_endpoints
 from . import activity, learner_assignments, programme_audit, quality, review_schedule, review_types, reviews, views
 from .archive_index import curriculum_archive_index
 from .programme_ksb_stats_batch import curriculum_programmes_ksb_stats
@@ -340,6 +341,8 @@ urlpatterns = [
     path('curriculum/sessions/<str:identifier>/', views.curriculum_session_detail, name='curriculum-session-detail'),
     path('curriculum/staffing/', views.curriculum_staffing_collection, name='curriculum-staffing'),
     path('curriculum/staffing/<str:identifier>/', views.curriculum_staffing_detail, name='curriculum-staffing-detail'),
+    path('curriculum/country-calendars/', calendar_endpoints.country_calendars, name='country-calendars'),
+    path('curriculum/country-calendars/sync/', calendar_endpoints.sync_country_calendars, name='country-calendars-sync'),
     path('curriculum/holidays/', views.curriculum_holiday_collection, name='curriculum-holidays'),
     path('curriculum/holidays/<str:identifier>/', views.curriculum_holiday_detail, name='curriculum-holiday-detail'),
     # The GOV.UK half of the calendar on its own, in the feed's own shape

@@ -663,6 +663,11 @@ def targets_for(owner, *, month=None):
 
 def curriculum_module_ids_for(owner):
     """Current curriculum module ids linked through the consolidated source catalogue."""
+    # Learner Training Plan readers mark their validated owner when this
+    # historical/imported catalogue is not an assignment source. Coach and
+    # previous-learning readers retain the existing membership behaviour.
+    if owner.get('_canonical_plan_only'):
+        return []
     return [record['module_id'] for record in query('''
         SELECT DISTINCT c.curriculum_module_ref AS module_id
         FROM "Learner".learner_source_course_memberships membership

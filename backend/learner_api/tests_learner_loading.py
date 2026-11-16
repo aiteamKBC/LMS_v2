@@ -36,12 +36,13 @@ class CompactLearnerLoadingTests(SimpleTestCase):
         component = {"module": "Module", "week": None, "component": "Reading",
                      "expectedOtjh": None, "contentHtml": None, "hasReadingContent": True,
                      "reflectionRequired": False, "ksbMappingCount": 0}
-        profile = SimpleNamespace(ksbs=[])
+        profile = SimpleNamespace(ksbs=[], enrolment_id=125)
         with ExitStack() as stack:
             work = {}
-            for name in ("advance_learner", "hydrate_source_training_plan", "_apply_cohort_schedule",
+            for name in ("advance_learner", "_apply_cohort_schedule",
                          "persist_live_otjh_snapshot", "_apply_live_otjh_snapshot"):
                 work[name] = stack.enter_context(patch.object(detail, name))
+            install = stack.enter_context(patch.object(detail, "install_canonical_training_plan", return_value=[]))
             resolve = stack.enter_context(patch.object(detail, "_active_profile_for_source", return_value=profile))
             stack.enter_context(patch.object(detail, "_linked_profile_ids", return_value=()))
             stack.enter_context(patch("learner_api.active_users.refresh_learner_ksb_snapshot", return_value=refreshed_ksbs))
@@ -60,8 +61,9 @@ class CompactLearnerLoadingTests(SimpleTestCase):
             replacement_read = stack.enter_context(patch(
                 "learner_api.progress_transfer_store.read_state", return_value={"items": []}))
             totals = stack.enter_context(patch.object(detail, "_live_otjh_snapshot", return_value={}))
+            source = SimpleNamespace(programme="", attendance_type="Recorded")
             result = detail.build_learner_detail(
-                SimpleNamespace(programme="", attendance_type="Recorded"), 125, compact=compact, read_only=quiz_view, quiz_view=quiz_view,
+                source, 125, compact=compact, read_only=quiz_view, quiz_view=quiz_view,
             )
             if quiz_view:
                 totals.assert_not_called()
@@ -69,6 +71,7 @@ class CompactLearnerLoadingTests(SimpleTestCase):
                     if task is not work["_apply_cohort_schedule"]:
                         task.assert_not_called()
             replacement_read.assert_called_once_with(125)
+            install.assert_called_once_with(source, profile)
             self.resolved_plan = master.call_args.kwargs["assigned_modules"]
             self.quiz_plan = quizzes.call_args.kwargs["assigned_modules"]
         return result, resolve.call_count

@@ -384,6 +384,17 @@ type KsbTarget =
 
 type DragState = { type: 'week'; weekId: string } | null;
 
+type AssignmentFilter = 'all' | 'needs-programme' | 'needs-cohort' | 'needs-group' | 'needs-tutor' | 'needs-dates';
+
+const ASSIGNMENT_FILTER_OPTIONS: SelectOption[] = [
+  { value: 'all', label: 'All assignment states' },
+  { value: 'needs-programme', label: 'Needs programme' },
+  { value: 'needs-cohort', label: 'Needs cohort' },
+  { value: 'needs-group', label: 'Needs group' },
+  { value: 'needs-tutor', label: 'Needs tutor' },
+  { value: 'needs-dates', label: 'Needs dates' },
+];
+
 type ModuleDeliveryUsage = {
   id: string;
   moduleId: string;
@@ -718,6 +729,12 @@ function ModuleBuilderContent() {
   const allModules = catalogueMode === 'all';
   const freeCoursesOnly = catalogueMode === 'free';
   const [programmeFilter, setProgrammeFilter] = useState<string>(() => requestedCreateScopeRef.current.programmeName || 'All');
+  const [assignmentFilter, setAssignmentFilter] = useState<AssignmentFilter>(() => {
+    const requested = searchParams.get('assignment');
+    return ASSIGNMENT_FILTER_OPTIONS.some(option => option.value === requested)
+      ? requested as AssignmentFilter
+      : 'all';
+  });
   // The delivery filters the Modules page used to carry. They read the module's
   // own deliveries rather than a second fetch of cohorts and groups, so the
   // cascade can never offer a cohort or group no module is actually delivered to.
@@ -1505,16 +1522,15 @@ function ModuleBuilderContent() {
     return Array.from(options, ([value, label]) => ({ value, label })).sort((a, b) => a.label.localeCompare(b.label));
   }, [cohortFilter, curriculumProgrammes, deliveryUsages, programmeFilter, scopeGroups]);
 
-  /** Every tutor who could be assigned: the staff roster plus anyone already on a delivery. */
+  /** Tutors come from the curriculum tutor catalogue returned by the API. */
   const tutorNames = useMemo(() => {
     const names = new Set<string>();
     tutorProfiles.forEach(profile => {
       const name = tutorDisplayName(profile.name) || tutorDisplayName(profile.email);
       if (name) names.add(name);
     });
-    deliveryUsages.forEach(usage => { if (usage.tutor) names.add(usage.tutor); });
     return Array.from(names).sort((a, b) => a.localeCompare(b));
-  }, [deliveryUsages, tutorProfiles]);
+  }, [tutorProfiles]);
 
   // Drop a child filter its parent no longer contains, so the cascade can never
   // show a contradictory Programme / Cohort / Group combination. Held until the
@@ -1574,11 +1590,12 @@ function ModuleBuilderContent() {
       ['cohort', cohortFilter],
       ['group', groupFilter],
       ['tutor', tutorFilter],
+      ['assignment', assignmentFilter === 'all' ? '' : assignmentFilter],
       ['q', search],
       ['catalogue', catalogueMode === 'active' ? '' : catalogueMode],
     ] as const).forEach(([key, value]) => { if (value) next.set(key, value); else next.delete(key); });
     if (next.toString() !== searchParams.toString()) setSearchParams(next, { replace: true });
-  }, [catalogueMode, cohortFilter, groupFilter, programmeFilter, search, searchParams, setSearchParams, tutorFilter]);
+  }, [assignmentFilter, catalogueMode, cohortFilter, groupFilter, programmeFilter, search, searchParams, setSearchParams, tutorFilter]);
 
   const changeFilter = useCallback((apply: () => void) => {
     filtersTouchedRef.current = true;
@@ -1602,6 +1619,7 @@ function ModuleBuilderContent() {
   });
   const matchingModules = searchMatchingModules.filter(module => {
     if (programmeFilter !== 'All' && !moduleBelongsToProgrammeFilter(module, programmeFilter, curriculumProgrammes)) return false;
+    if (!moduleAssignmentFilterMatches(module, assignmentFilter)) return false;
     // A delivery filter is a question about deliveries, so a module qualifies
     // only when one single delivery answers all of them at once -- never one
     // delivery for the cohort and a different one for the tutor.
@@ -4209,7 +4227,7 @@ function ModuleBuilderContent() {
                   <span className="rounded-full bg-background-100 px-2.5 py-1 text-[10px] font-bold text-foreground-500">{freeCoursesOnly ? (freeCourseCounts ? freeCourseCounts.shown : '—') : filtered.length} shown</span>
                   <span className={`text-[10px] font-semibold ${catalogueMode === 'active' ? 'text-emerald-700' : 'text-foreground-500'}`}>{freeCoursesOnly ? 'Free courses' : allModules ? 'All modules' : 'Active modules'}</span>
                 </div>
-                <p className="mt-1 text-[11px] text-foreground-500">Scoped modules can share titles while keeping their own programme, delivery and KSB mapping.</p>
+                <p className="mt-1 text-[11px] text-foreground-500">Scoped modules can share titles while keeping their own programme, delivery and KSB mapping. Use Assignment state to find modules that still need a programme, cohort, group, tutor or dates.</p>
               </div>
               <div className="flex min-w-0 flex-wrap items-center justify-end gap-2 sm:flex-nowrap xl:shrink-0">
                 <div role="group" aria-label="Catalogue view" className="grid w-full min-w-0 grid-cols-3 gap-1 rounded-xl border border-background-200 bg-background-100 p-1 sm:flex sm:w-auto">
@@ -4252,11 +4270,12 @@ function ModuleBuilderContent() {
                 </div>
                 <button
                   type="button"
-                  disabled={catalogueMode === 'active' && !search && programmeFilter === 'All' && !deliveryFiltersActive}
+                  disabled={catalogueMode === 'active' && !search && programmeFilter === 'All' && !deliveryFiltersActive && assignmentFilter === 'all'}
                   onClick={() => changeFilter(() => {
                     setCatalogueMode('active');
                     setSearch('');
                     setProgrammeFilter('All');
+                    setAssignmentFilter('all');
                     setCohortFilter('');
                     setGroupFilter('');
                     setTutorFilter('');
@@ -4269,7 +4288,7 @@ function ModuleBuilderContent() {
               </div>
             </div>
             <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2 2xl:grid-cols-12">
-              <div className="relative min-w-0 sm:col-span-2 2xl:col-span-4">
+              <div className="relative min-w-0 sm:col-span-2 2xl:col-span-2">
                 <AppIcon className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-400 text-sm"></AppIcon>
                 <input type="text" aria-label="Search modules" value={search} onChange={event => { const value = event.target.value; changeFilter(() => setSearch(value)); }} placeholder="Search modules, tutors, cohorts..." className="h-11 w-full rounded-lg border border-foreground-200/70 bg-background-100 pl-9 pr-3 text-[13px] text-foreground-900 outline-none transition-smooth placeholder:text-foreground-400 focus:border-primary-300 focus:bg-background-50" />
               </div>
@@ -4312,6 +4331,15 @@ function ModuleBuilderContent() {
                   ? 'All groups'
                   : !cohortFilter ? 'Choose cohort first' : 'No groups in this cohort'}
                 clearable
+                size="sm"
+                className="min-w-0 w-full 2xl:col-span-2"
+              />
+              <SelectMenu
+                ariaLabel="Assignment state"
+                value={assignmentFilter}
+                onChange={value => changeFilter(() => setAssignmentFilter(value as AssignmentFilter))}
+                options={ASSIGNMENT_FILTER_OPTIONS}
+                placeholder="Assignment state"
                 size="sm"
                 className="min-w-0 w-full 2xl:col-span-2"
               />
@@ -9342,9 +9370,11 @@ function moduleFormTargetFromCatalogue(module: ModuleCatalogueItem, usage?: Modu
     groupId: usage?.groupId || module.groupId,
     sessionsNumber: module.sessionsNumber || usage?.sessions,
     sessionHolidays: module.sessionHolidays || module.sourceModule?.sessionHolidays,
+    calendarPolicy: module.calendarPolicy !== undefined ? module.calendarPolicy : module.sourceModule?.calendarPolicy,
     deliveryWeeks: module.deliveryWeeks || module.sourceModule?.deliveryWeeks,
     weeklySchedule: module.weeklySchedule || module.sourceModule?.weeklySchedule || [],
     scheduleMode: module.scheduleMode || module.sourceModule?.scheduleMode,
+    weekStartsOn: module.weekStartsOn ?? module.sourceModule?.weekStartsOn,
     weekDays: usage?.weekDays || String(module.deliveryMetadata?.weekDays || module.sourceModule?.weekDays || ''),
     startTime: usage?.startTime || String(module.deliveryMetadata?.startTime || module.sourceModule?.startTime || ''),
     endTime: usage?.endTime || String(module.deliveryMetadata?.endTime || module.sourceModule?.endTime || ''),
@@ -9502,6 +9532,20 @@ function moduleDeliverySearchText(module: ModuleBuilderListItem) {
   return (module.deliveryUsages || [])
     .map(usage => `${usage.cohort} ${usage.group} ${usage.tutor} ${usage.deliveryStatus}`)
     .join(' ');
+}
+
+function moduleAssignmentFilterMatches(module: ModuleBuilderListItem, filter: AssignmentFilter) {
+  // Free courses are intentionally independent of programme/cohort/group
+  // delivery, so they should not appear as incomplete assignments.
+  if (filter === 'all' || module.isFreeCourse) return true;
+  const programmeAssigned = Boolean(cleanModuleMeta(module.programmeId || module.programmeName || module.sourceModule?.programmeId || module.sourceModule?.programme));
+  const usages = module.deliveryUsages || [];
+  if (filter === 'needs-programme') return !programmeAssigned;
+  if (!usages.length) return filter === 'needs-cohort' || filter === 'needs-group' || filter === 'needs-tutor' || filter === 'needs-dates';
+  if (filter === 'needs-cohort') return usages.some(usage => !cleanModuleMeta(usage.cohortId || usage.cohort));
+  if (filter === 'needs-group') return usages.some(usage => !cleanModuleMeta(usage.groupId || usage.group));
+  if (filter === 'needs-tutor') return usages.some(usage => !tutorDisplayName(usage.tutor));
+  return usages.some(usage => !cleanModuleMeta(usage.startDate) || !cleanModuleMeta(usage.endDate));
 }
 
 /** A tutor name, with the backend's "Unassigned" placeholder read as no tutor. */

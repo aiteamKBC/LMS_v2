@@ -26,8 +26,8 @@ from .response_cache import cached_learner_read
 from . import canonical_learning as canonical
 from .journal_sources import learner_journal_view, enabled as journal_enabled
 from .learner_detail import SOURCE_MODELS
-from .learning_plan import effective_training_plan, request_preset_cache
-from .mappers import stored_training_plan
+from .learning_plan import (CANONICAL_TRAINING_PLAN_PREFETCH, effective_training_plan,
+                            install_canonical_training_plan, request_preset_cache)
 from .progress_rules import progress_counts_as_achieved
 from .projection_performance import projection_stage, local_catalogue_trace
 
@@ -35,32 +35,9 @@ from .projection_performance import projection_stage, local_catalogue_trace
 # EnrolmentUser properties resolved from the pk (_learner_placement_names), so
 # they cannot be listed in .only(); load the concrete ids that placement_ids reads.
 SOURCE_FIELDS = ('id', 'aptem_id', 'email', 'programme_id', 'cohort_id', 'group_id',
-                 'learning_plan', 'training_plan', 'learner_type', 'username')
+                 'learner_type', 'username')
 UK = ZoneInfo('Europe/London')
 logger = logging.getLogger(__name__)
-
-
-def hydrate_legacy_plan_fields(source, model):
-    """Fetch the three wide CSV-era plan columns only for an actual legacy row.
-
-    Structured learners already carry their complete assignment in
-    ``training_plan``/``learning_plan``. Selecting the old modules, weeks and
-    components snapshots for every catalogue request transferred a second,
-    unused curriculum tree before the canonical set-based projection ran.
-    """
-    # Focused view tests and compatibility callers may provide a deliberately
-    # minimal source object after mocking the reader. A real EnrolmentUser
-    # always exposes both concrete plan attributes (loaded or deferred).
-    if not hasattr(source, 'training_plan') and not hasattr(source, 'learning_plan'):
-        return source
-    if stored_training_plan(source) is not None:
-        return source
-    legacy = model.all_learners.filter(pk=source.pk).values(
-        'modules', 'weeks', 'components',
-    ).get()
-    for field, value in legacy.items():
-        setattr(source, field, value)
-    return source
 
 
 def percent(done, total):
@@ -723,10 +700,13 @@ def load_context(source, owner, subject_id=None, *, purpose='catalogue', records
     install_request_caches(source)
     source._canonical_profile = owner
     with projection_stage('profile'):
-        profile = LearnerProfile.objects.only('id', 'enrolment_id', 'email').filter(pk=owner['id'], enrolment_id=source.pk).first()
+        profile = (LearnerProfile.objects.only('id', 'enrolment_id', 'email')
+                   .filter(pk=owner['id'], enrolment_id=source.pk)
+                   .prefetch_related(CANONICAL_TRAINING_PLAN_PREFETCH).first())
     if profile is None:
         raise ServiceError('The consolidated learner identity needs review.', 'identity_review_required', 409)
     source._case_file_profile = profile
+    install_canonical_training_plan(source, profile)
     with projection_stage('assignments'):
         assigned = effective_training_plan(source, request_preset_cache(source))
     from .student_activity_access import student_activity_available
@@ -780,6 +760,7 @@ def load_context(source, owner, subject_id=None, *, purpose='catalogue', records
             or (subject_id.startswith('unlinked:') and not entry.get('moduleId')
                 and entry.get('moduleTitle') == subject_id[9:])]
         content_source = copy(source)
+        content_source._canonical_training_plan = content_plan
         content_source.training_plan = content_plan
         content_source.learning_plan = content_plan
     with projection_stage('native_learning'):
@@ -1167,7 +1148,6 @@ def my_learning(request,kind,pk,subject_id=None,resource=None):
     try:
         with projection_stage('source'):
             source=model.all_learners.only(*SOURCE_FIELDS).get(pk=pk)
-            hydrate_legacy_plan_fields(source, model)
         with projection_stage('owner'):
             owner=canonical.require_profile(pk)
         if resource == 'search':

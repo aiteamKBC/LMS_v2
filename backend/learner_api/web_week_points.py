@@ -47,9 +47,7 @@ def learner_plan(kind, learner_id):
     source.training_plan = source._weekly_training_plan
     source.learning_plan = source._weekly_learning_plan
     owner = canonical_learning.require_profile(learner_id)
-    module_ids = list(dict.fromkeys([
-        *_effective_plan_ids(source, {}), *canonical_learning.curriculum_module_ids_for(owner),
-    ]))
+    module_ids = list(dict.fromkeys(_effective_plan_ids(source, {})))
     if not module_ids:
         return {'weeks': {}}
     with connections['enrolment'].cursor() as cursor:

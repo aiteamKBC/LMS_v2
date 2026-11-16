@@ -114,9 +114,8 @@ def assigned_curriculum_module_ids(learner):
 # coach see the same official calendar row.
 BOOKABLE_TYPES = ("catch-up", "student-support", "first-session", "mcr", "progress-review", "review", "gateway", "other")
 
-# Catch-ups use the learner-selected slot immediately. These are the session
-# types whose learner-created bookings remain requests for coach placement.
-COACH_APPROVAL_TYPES = frozenset(("student-support", "gateway", "other"))
+# These sessions book directly in verified coach availability, without approval.
+DIRECT_COACH_BOOKING_TYPES = frozenset(("student-support", "gateway", "other"))
 
 # The Microsoft Graph invite subject uses the same wording as the page — see
 # coach_api.BOOKED_EVENT_TITLES, which mirrors EVENT_TITLES above.
@@ -1643,6 +1642,18 @@ def _catchup_time_error(owner_email, scheduled_date, scheduled_time, duration_mi
     return _error("Your coach is not available at that time. Choose one of the available times.", 409)
 
 
+def _coach_session_time_error(owner_email, scheduled_date, scheduled_time, duration_minutes, *, record=None):
+    """Require verified Outlook working time and LMS availability for direct bookings."""
+    from .coach_availability import AvailabilityUnavailable, coach_session_slot_is_free
+    try:
+        if coach_session_slot_is_free(owner_email, scheduled_date, scheduled_time,
+                                      duration_minutes, record=record):
+            return None
+    except AvailabilityUnavailable as exc:
+        return _error(str(exc), 503)
+    return _error("Your coach is not available at that time. Choose one of the available times.", 409)
+
+
 @learner_self_or_staff(kwarg="pk")
 def learner_calendar(request, kind, pk):
     if request.method != "GET":
@@ -2116,8 +2127,7 @@ def learner_calendar_book(request, kind, pk):
                 payload = {**payload, "eventKey": resolved_event_key}
 
     # A supplied event key means the learner opened an official generated
-    # programme slot. Without one, MCM/PR requests from the general picker use
-    # the normal coach-approval path (including imported-review bookings).
+    # programme slot. Imported-review bookings keep their source associations.
     if session_type == 'review' and not _s(payload.get('eventKey')):
         return _error('Open a configured review from your calendar to schedule it.', 400)
     if session_type in {"mcr", "progress-review", "review"} and _s(payload.get("eventKey")):
@@ -2422,15 +2432,20 @@ def learner_calendar_book(request, kind, pk):
                 notes=notes,
             ):
                 return _error("Idempotency-Key was already used for a different booking.", 409)
-            if requires_coach_approval:
-                return JsonResponse(
-                    {
-                        "event": _serialize_event(replay),
-                        "warning": "",
-                        "approvalRequired": True,
-                    },
-                    status=200,
-                )
+            if session_type in DIRECT_COACH_BOOKING_TYPES and replay.status == CoachCalendarEvent.STATUS_NOT_SCHEDULED:
+                busy_error = _coach_session_time_error(owner_email, scheduled_date, scheduled_time,
+                                                      duration_minutes, record=replay)
+                if busy_error:
+                    return busy_error
+                from .calendar_connections import booking_conflicts
+                if booking_conflicts(kind, pk, scheduled_date, scheduled_time, duration_minutes,
+                                     timezone_offset_minutes, business_time_zone="Europe/London",
+                                     exclude_scheduled_date=replay.scheduled_date,
+                                     exclude_scheduled_time=replay.scheduled_time,
+                                     exclude_duration_minutes=replay.duration_minutes):
+                    return _error("That time overlaps an event in your connected personal calendar. Please choose another time.", 409)
+                replay.status = CoachCalendarEvent.STATUS_SCHEDULED
+                replay = persist_calendar_sync_reservation(replay)
             replay, warning, _attempted = synchronize_reserved_calendar_event(
                 replay.pk, build_booked_calendar_event(replay)
             )
@@ -2445,6 +2460,11 @@ def learner_calendar_book(request, kind, pk):
                 status=200,
             )
 
+        if session_type in DIRECT_COACH_BOOKING_TYPES:
+            busy_error = _coach_session_time_error(owner_email, scheduled_date, scheduled_time, duration_minutes)
+            if busy_error:
+                return busy_error
+
         from .calendar_connections import booking_conflicts
         if booking_conflicts(
             kind,
@@ -2453,6 +2473,7 @@ def learner_calendar_book(request, kind, pk):
             scheduled_time,
             duration_minutes,
             timezone_offset_minutes,
+            **({"business_time_zone": "Europe/London"} if session_type in DIRECT_COACH_BOOKING_TYPES else {}),
         ):
             return _error(
                 "That time overlaps an event in your connected personal calendar. Please choose another time.",
@@ -2471,18 +2492,9 @@ def learner_calendar_book(request, kind, pk):
             duration_minutes=duration_minutes,
             notes=notes,
             idempotency_key=idempotency_key,
-            initial_status=CoachCalendarEvent.STATUS_NOT_SCHEDULED if requires_coach_approval else CoachCalendarEvent.STATUS_SCHEDULED,
+            initial_status=CoachCalendarEvent.STATUS_SCHEDULED,
             **({"local_mcm_review_id": imported_review_id} if assignment_booking and imported_review_id else {}),
         )
-        if requires_coach_approval:
-            return JsonResponse(
-                {
-                    "event": _serialize_event(record),
-                    "warning": "",
-                    "approvalRequired": True,
-                },
-                status=201 if created else 200,
-            )
         record, warning, _attempted = synchronize_reserved_calendar_event(
             record.pk, build_booked_calendar_event(record)
         )
@@ -2584,7 +2596,9 @@ def learner_calendar_reschedule(request, kind, pk):
         record = _learner_booking_record(kind, pk, event_key)
         if record is None:
             return _error("Booking not found.", 404)
-        if record.status != CoachCalendarEvent.STATUS_SCHEDULED:
+        pending_direct_booking = (record.event_type in DIRECT_COACH_BOOKING_TYPES
+                                  and record.status == CoachCalendarEvent.STATUS_NOT_SCHEDULED)
+        if record.status != CoachCalendarEvent.STATUS_SCHEDULED and not pending_direct_booking:
             return _error("Only an upcoming scheduled session can be rescheduled.", 409)
         imported_event = getattr(record, '_imported_review_event', None)
         review_reschedule = _s(record.event_type).lower() in REVIEW_BOOKING_TYPES
@@ -2631,8 +2645,14 @@ def learner_calendar_reschedule(request, kind, pk):
                                              duration_minutes, exclude_event_key=record.event_key)
             if busy_error:
                 return busy_error
+        if record.event_type in DIRECT_COACH_BOOKING_TYPES:
+            busy_error = _coach_session_time_error(record.owner_email, scheduled_date, scheduled_time,
+                                                  duration_minutes, record=record)
+            if busy_error:
+                return busy_error
         if (
             not imported_event
+            and not pending_direct_booking
             and record.scheduled_date == scheduled_date
             and record.scheduled_time == scheduled_time
             and record.duration_minutes == duration_minutes
@@ -2666,7 +2686,8 @@ def learner_calendar_reschedule(request, kind, pk):
             exclude_scheduled_date=record.scheduled_date,
             exclude_scheduled_time=record.scheduled_time,
             exclude_duration_minutes=record.duration_minutes,
-            **({"business_time_zone": "Europe/London"} if review_reschedule else {}),
+            **({"business_time_zone": "Europe/London"}
+               if review_reschedule or record.event_type in DIRECT_COACH_BOOKING_TYPES else {}),
         ):
             return _error(
                 "That time overlaps an event in your connected personal calendar. Please choose another time.",
@@ -2676,6 +2697,8 @@ def learner_calendar_reschedule(request, kind, pk):
         record.scheduled_date = scheduled_date
         record.scheduled_time = scheduled_time
         record.duration_minutes = duration_minutes
+        if pending_direct_booking:
+            record.status = CoachCalendarEvent.STATUS_SCHEDULED
         imported_event = getattr(record, '_imported_review_event', None)
         if imported_event:
             record, needs_sync = reserve_imported_booking(

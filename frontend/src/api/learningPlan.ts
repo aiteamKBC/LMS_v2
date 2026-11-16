@@ -106,8 +106,15 @@ export interface LearningPlanResponse {
     programmeStatus: string;
     learnerType?: 'apprenticeship' | 'commercial';
   };
-  /** The current plan — the saved one, or the group preset if never saved. */
+  /** The canonical learner-owned plan. Zero modules means no Training Plan. */
   plan: LearningPlanModule[];
+  /**
+   * Opaque optimistic-concurrency token for the canonical module/week/component
+   * row ids, Curriculum ids and positions. An empty string is returned
+   * only while the Backend GET contract is being rolled out; the canonical
+   * writer will reject it once that write path is enabled.
+   */
+  planVersion: string;
   /**
    * Free courses assigned to this learner. Canonical ownership and ordering
    * live in Learner.learner_free_courses, separately from module hours/KSBs.
@@ -145,22 +152,62 @@ export interface LearningPlanResponse {
   totals: LearningPlanTotals;
 }
 
+export class LearningPlanApiError extends Error {
+  readonly status: number;
+  readonly code: string;
+  readonly details: Record<string, unknown>;
+
+  constructor(
+    message: string,
+    status: number,
+    code = '',
+    details: Record<string, unknown> = {},
+  ) {
+    super(message);
+    this.name = 'LearningPlanApiError';
+    this.status = status;
+    this.code = code;
+    this.details = details;
+  }
+}
+
 async function parse(res: Response) {
   if (!res.ok) {
     let message = `Request failed (${res.status})`;
+    let code = '';
+    let details: Record<string, unknown> = {};
     try {
-      const body = await res.json();
-      if (body?.error) message = body.error;
+      const body = await res.json() as Record<string, unknown>;
+      const error = body?.error;
+      if (typeof error === 'string') {
+        message = error;
+      } else if (error && typeof error === 'object') {
+        const structured = error as Record<string, unknown>;
+        if (typeof structured.message === 'string') message = structured.message;
+        if (typeof structured.code === 'string') code = structured.code;
+        if (structured.details && typeof structured.details === 'object') {
+          details = structured.details as Record<string, unknown>;
+        }
+      } else if (typeof body?.detail === 'string') {
+        message = body.detail;
+      }
     } catch {
       // Non-JSON error body (proxy/HTML error page) — keep the status message.
     }
-    throw new Error(message);
+    throw new LearningPlanApiError(message, res.status, code, details);
   }
   return res.json();
 }
 
 export async function fetchLearningPlan(learnerId: string | number): Promise<LearningPlanResponse> {
-  return parse(await fetch(`${BASE}/${learnerId}/`));
+  const result = await parse(await fetch(`${BASE}/${learnerId}/`)) as LearningPlanResponse;
+  // Phase 2B is deployed before the Backend writer is activated. Normalizing a
+  // missing token keeps the current read-only/legacy endpoint compatible while
+  // still ensuring every prepared PATCH carries an explicit field.
+  return {
+    ...result,
+    planVersion: typeof result.planVersion === 'string' ? result.planVersion : '',
+  };
 }
 
 /**
@@ -170,19 +217,32 @@ export async function fetchLearningPlan(learnerId: string | number): Promise<Lea
 export async function saveLearningPlan(
   learnerId: string | number,
   moduleIds: string[],
+  expectedPlanVersion: string,
 ): Promise<LearningPlanResponse> {
-  const body: { modules: { moduleId: string }[] } = {
+  const body: { modules: { moduleId: string }[]; expectedPlanVersion: string } = {
     modules: moduleIds.map((moduleId) => ({ moduleId })),
+    expectedPlanVersion,
   };
+  const csrf = cookie('csrftoken');
   const result = await parse(
     await fetch(`${BASE}/${learnerId}/`, {
       method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
+      credentials: 'same-origin',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(csrf ? {
+          'X-CSRFToken': csrf,
+          'X-Requested-With': 'XMLHttpRequest',
+        } : {}),
+      },
       body: JSON.stringify(body),
     }),
-  );
+  ) as LearningPlanResponse;
   invalidateLearnerDetailCache();
-  return result;
+  return {
+    ...result,
+    planVersion: typeof result.planVersion === 'string' ? result.planVersion : '',
+  };
 }
 
 export interface FreeCourseAssignmentsResponse {

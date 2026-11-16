@@ -2,6 +2,7 @@
 
 from django.core.management.base import BaseCommand
 from django.db import connections, transaction
+from learner_api.aptem_identity import APTEM_IDENTITY_CTES
 
 
 LEARNERS = '"Last_audit"."learners"'
@@ -79,12 +80,12 @@ class Command(BaseCommand):
                     ), 'Unknown')
                     WHERE l.aptem_id IS NOT NULL
                 """)
-                cursor.execute(f"""
+                cursor.execute(f"""WITH {APTEM_IDENTITY_CTES}
                     UPDATE {LEARNERS} l
-                    SET coach_name = NULLIF(btrim(u."OwnerName"), ''),
-                        coach_email = NULLIF(btrim(u."OwnerEmail"), '')
-                    FROM "LMS"."Aptem_users" u
-                    WHERE u."ID" = l.aptem_id
+                    SET coach_name = NULLIF(btrim(identity.coach_name), ''),
+                        coach_email = NULLIF(btrim(identity.coach_email), '')
+                    FROM aptem_identity identity
+                    WHERE identity.aptem_id = l.aptem_id
                 """)
                 cursor.execute(f"""
                     ALTER TABLE {ATTENDANCE}

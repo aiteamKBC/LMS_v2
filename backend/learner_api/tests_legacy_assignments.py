@@ -106,7 +106,8 @@ class LegacyAssignmentTests(SimpleTestCase):
         sql, params = cursor.execute.call_args.args
         self.assertEqual(params, ['commercial', '125', '', ''])
         self.assertIn('u.aptem_id', sql)
-        self.assertIn('u."Email"', sql)
+        self.assertIn('learner.enrolment_id = u.id', sql)
+        self.assertIn('learner.aptem_id::text', sql)
         self.assertIn("r.status = 'completed'", sql)
         self.assertIn('source_evidence_ids', sql)
         self.assertNotIn('learning_reflection_submissions', sql)
@@ -177,9 +178,9 @@ class RestoredAssignmentTests(SimpleTestCase):
                 self.assertEqual(restored_rows(kind, 501, 'aptem:601:evidence:701'), [{'evidence_id': 701}])
             sql, params = cursor.execute.call_args.args
             self.assertEqual(params, [kind, '501', 'aptem:601:evidence:701', 'aptem:601:evidence:701'])
-            for gate in ('r.enrolment_id=u.id', 'r.aptem_id=a."ID"', 'r.revoked_at IS NULL',
+            for gate in ('r.enrolment_id=u.id', 'r.aptem_id=learner.aptem_id', 'r.revoked_at IS NULL',
                          'e.learner_id=r.aptem_id', 'e.evidence_id=r.evidence_id',
-                         'e.component_id=r.component_id', 'u."Email"'):
+                         'e.component_id=r.component_id', 'learner.enrolment_id = u.id'):
                 self.assertIn(gate, sql)
 
     def test_unassessed_and_referred_uploads_keep_status_dates_and_read_only_files(self):

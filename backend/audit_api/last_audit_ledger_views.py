@@ -18,6 +18,7 @@ from urllib.parse import parse_qs, urlparse
 from django.db import DatabaseError, connections
 from django.http import HttpRequest, HttpResponse, JsonResponse
 from django.views.decorators.http import require_GET
+from learner_api.aptem_identity import APTEM_IDENTITY_CTES
 
 from .db_source import cache_scope, resolve
 from .learner_exclusions import is_excluded_learner
@@ -491,47 +492,40 @@ def cohort(request: HttpRequest) -> JsonResponse:
     where = "WHERE " + " AND ".join(conditions) if conditions else ""
 
     sql = f"""
-        WITH learner_roster AS (
-            SELECT l.aptem_id, l.learner_name, l.learner_email,
-                   l.programme_name, l.programme_status,
-                   l.coach_name, l.coach_email,
+        WITH {APTEM_IDENTITY_CTES},
+        learner_roster AS (
+            SELECT l.aptem_id,
+                   COALESCE(NULLIF(identity.full_name, ''), l.learner_name) AS learner_name,
+                   COALESCE(NULLIF(identity.email, ''), l.learner_email) AS learner_email,
+                   COALESCE(NULLIF(identity.programme_name, ''), l.programme_name) AS programme_name,
+                   COALESCE(NULLIF(identity.programme_status, ''), l.programme_status) AS programme_status,
+                   COALESCE(NULLIF(identity.coach_name, ''), l.coach_name) AS coach_name,
+                   COALESCE(NULLIF(identity.coach_email, ''), l.coach_email) AS coach_email,
                    l.declared_lms_id, l.learner_id,
-                   l.planned_hours_total, l.planned_hours_monthly
+                   CASE WHEN identity.aptem_id IS NOT NULL
+                        THEN identity.planned_hours ELSE l.planned_hours_total END AS planned_hours_total,
+                   l.planned_hours_monthly
             FROM {LEARNERS} l
+            LEFT JOIN aptem_identity identity ON identity.aptem_id=l.aptem_id
 
             UNION ALL
 
-            SELECT aptem."ID" AS aptem_id,
-                   aptem."FullName" AS learner_name,
-                   aptem."Email" AS learner_email,
-                   COALESCE(
-                       NULLIF(btrim(aptem."Program Name"), ''),
-                       NULLIF(btrim(aptem."Group"), '')
-                   ) AS programme_name,
-                   NULLIF(btrim(aptem."Program-Status"), '') AS programme_status,
-                   NULLIF(btrim(aptem."OwnerName"), '') AS coach_name,
-                   NULLIF(btrim(aptem."OwnerEmail"), '') AS coach_email,
+            SELECT identity.aptem_id,
+                   identity.full_name AS learner_name,
+                   identity.email AS learner_email,
+                   identity.programme_name,
+                   identity.programme_status,
+                   identity.coach_name,
+                   identity.coach_email,
                    NULL::bigint AS declared_lms_id,
                    NULL::bigint AS learner_id,
-                   NULL::numeric AS planned_hours_total,
+                   identity.planned_hours AS planned_hours_total,
                    '{{}}'::jsonb AS planned_hours_monthly
-            FROM "LMS"."Aptem_users" aptem
-            WHERE aptem."ID" IS NOT NULL
+            FROM aptem_identity identity
+            WHERE identity.aptem_id IS NOT NULL
               AND NOT EXISTS (
                   SELECT 1 FROM {LEARNERS} existing
-                  WHERE existing.aptem_id = aptem."ID"
-              )
-              AND EXISTS (
-                  SELECT 1
-                  FROM "Audit".ilr_learning_deliveries ilr_delivery
-                  WHERE (
-                      NULLIF(btrim(aptem."Email"), '') IS NOT NULL
-                      AND lower(btrim(ilr_delivery.email)) = lower(btrim(aptem."Email"))
-                  ) OR (
-                      NULLIF(btrim(aptem."FullName"), '') IS NOT NULL
-                      AND lower(btrim(concat_ws(' ', ilr_delivery.given_names, ilr_delivery.family_name))) =
-                          lower(btrim(aptem."FullName"))
-                  )
+                  WHERE existing.aptem_id = identity.aptem_id
               )
         ), learner_groups AS (
             SELECT gl.learner_id,
@@ -597,15 +591,9 @@ def cohort(request: HttpRequest) -> JsonResponse:
                      updated_at DESC NULLS LAST, id DESC
         )
         SELECT l.aptem_id, l.learner_name, l.learner_email, l.programme_name,
-               COALESCE(
-                   CASE
-                       WHEN lower(btrim(COALESCE(l.programme_status, ''))) IN ('', 'unknown') THEN NULL
-                       ELSE btrim(l.programme_status)
-                   END,
-                   NULLIF(btrim(aptem."Program-Status"), '')
-               ) AS programme_status,
-               COALESCE(NULLIF(btrim(l.coach_name), ''), NULLIF(btrim(aptem."OwnerName"), '')) AS coach_name,
-               COALESCE(NULLIF(btrim(l.coach_email), ''), NULLIF(btrim(aptem."OwnerEmail"), '')) AS coach_email,
+               NULLIF(btrim(l.programme_status), '') AS programme_status,
+               NULLIF(btrim(l.coach_name), '') AS coach_name,
+               NULLIF(btrim(l.coach_email), '') AS coach_email,
                l.declared_lms_id,
                l.learner_id AS verified_lms_id,
                COALESCE(lg.groups, ARRAY[]::text[]) AS groups,
@@ -618,7 +606,7 @@ def cohort(request: HttpRequest) -> JsonResponse:
                COALESCE(rt.mapped_seconds, 0) AS lms_mapped_seconds,
                COALESCE(at.mapped_seconds, 0) AS attendance_seconds,
                ilr.planned_hours AS ilr_planned_hours,
-               -- Aptem's OWN plan (mirror of LMS."Aptem_users"."Planned" and
+               -- The preserved learner plan total and
                -- its monthly split) — what the learner's journal reports as the
                -- programme/monthly plan, so both screens quote one number.
                l.planned_hours_total AS aptem_planned_total,
@@ -630,7 +618,6 @@ def cohort(request: HttpRequest) -> JsonResponse:
         LEFT JOIN attendance_totals at ON at.aptem_id = l.aptem_id
         LEFT JOIN attendance_months am ON am.aptem_id = l.aptem_id
         LEFT JOIN ilr_profiles ilr ON ilr.email_key = lower(l.learner_email)
-        LEFT JOIN "LMS"."Aptem_users" aptem ON aptem."ID" = l.aptem_id
         {where}
         ORDER BY lower(COALESCE(l.learner_name, '')), l.aptem_id
     """

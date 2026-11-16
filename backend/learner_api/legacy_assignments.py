@@ -20,24 +20,26 @@ CLASSIFIED_SQL = '''
                (e.completed_date AT TIME ZONE 'Europe/London')::date,
                v.completed_date,
                (e.submission_date AT TIME ZONE 'Europe/London')::date) AS activity_date,
-      a."FullName" AS learner_name, a."Program Name" AS programme_name,
+      learner.full_name AS learner_name,
+      programme.name AS programme_name,
       run.id AS run_id
     FROM enrolment."Created_users" u
-    JOIN "LMS"."Aptem_users" a ON a."ID"::text = btrim(u.aptem_id)
-      AND nullif(lower(btrim(u."Email")), '') = lower(btrim(a."Email"))
+    JOIN "Learner".learners learner ON learner.enrolment_id = u.id
+      AND learner.aptem_id::text = ltrim(btrim(u.aptem_id), '0')
+    LEFT JOIN curriculum.programmes programme ON programme.programme_id = learner.programme_id
     JOIN LATERAL (
       SELECT r.id FROM fetching_evidence.assignment_classification_runs r
-      WHERE r.learner_id = a."ID" AND r.status = 'completed'
+      WHERE r.learner_id = learner.aptem_id AND r.status = 'completed'
       ORDER BY (r.source_fingerprint IS NOT NULL) DESC,
                r.completed_at DESC NULLS LAST, r.id DESC LIMIT 1
     ) run ON true
     JOIN fetching_evidence.assignment_classification_evaluations v
-      ON v.run_id = run.id AND v.learner_id = a."ID"
+      ON v.run_id = run.id AND v.learner_id = learner.aptem_id
     JOIN fetching_evidence.evidence_items e
       ON e.learner_id = v.learner_id AND e.component_id = v.component_id
       AND (e.evidence_id = v.evidence_id OR v.source_evidence_ids @> to_jsonb(e.evidence_id))
     WHERE lower(btrim(u."Learner_type")) = %s AND u.id::text = %s
-      AND (%s = '' OR 'aptem:' || a."ID"::text || ':evidence:' || e.evidence_id::text = %s)
+      AND (%s = '' OR 'aptem:' || learner.aptem_id::text || ':evidence:' || e.evidence_id::text = %s)
     ORDER BY e.evidence_id, v.id
 '''
 
@@ -52,19 +54,21 @@ RESTORED_SQL = '''
                (e.submission_date AT TIME ZONE 'Europe/London')::date) AS activity_date,
       coalesce((e.completed_date_override AT TIME ZONE 'Europe/London')::date,
                (e.completed_date AT TIME ZONE 'Europe/London')::date) AS original_completed_date,
-      a."FullName" AS learner_name, a."Program Name" AS programme_name,
+      learner.full_name AS learner_name,
+      programme.name AS programme_name,
       NULL::bigint AS run_id, 'imported_legacy' AS submission_origin
     FROM enrolment."Created_users" u
-    JOIN "LMS"."Aptem_users" a ON a."ID"::text = btrim(u.aptem_id)
-      AND nullif(lower(btrim(u."Email")), '') = lower(btrim(a."Email"))
+    JOIN "Learner".learners learner ON learner.enrolment_id = u.id
+      AND learner.aptem_id::text = ltrim(btrim(u.aptem_id), '0')
+    LEFT JOIN curriculum.programmes programme ON programme.programme_id = learner.programme_id
     JOIN "Learner".legacy_assignment_visibility r
-      ON r.enrolment_id=u.id AND r.aptem_id=a."ID" AND r.revoked_at IS NULL
+      ON r.enrolment_id=u.id AND r.aptem_id=learner.aptem_id AND r.revoked_at IS NULL
     JOIN fetching_evidence.evidence_items e
       ON e.learner_id=r.aptem_id AND e.evidence_id=r.evidence_id
       AND e.component_id=r.component_id
     WHERE lower(btrim(u."Learner_type")) = %s AND u.id::text = %s
       AND e.evidence_kind='File' AND nullif(e.file_blob, '') IS NOT NULL
-      AND (%s = '' OR 'aptem:' || a."ID"::text || ':evidence:' || e.evidence_id::text = %s)
+      AND (%s = '' OR 'aptem:' || learner.aptem_id::text || ':evidence:' || e.evidence_id::text = %s)
     ORDER BY e.evidence_id
 '''
 

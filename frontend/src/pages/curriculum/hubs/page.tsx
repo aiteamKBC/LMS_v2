@@ -114,7 +114,7 @@ function DeliveryHub() {
   const modules = data?.modules ?? []; const cohorts = data?.cohorts ?? []; const groups = data?.groups ?? [];
   return <HubShell kind="delivery"><DeliveryHubContent overview={data} loading={loading} error={error}
     unavailable={!data && !loading && Boolean(error)} onRetry={reload} description={HUB_COPY.delivery.description}
-    cards={hubCards('delivery', { modules: modules.length, cohorts: cohorts.length, groups: groups.length, draftModules: 0, mappingGaps: 0 })
+    cards={hubCards('delivery', { modules: modules.length, cohorts: cohorts.length, groups: groups.length, sessions: 0, draftModules: 0, mappingGaps: 0 })
       .map(card => card.href === '/curriculum/module-builder' ? { ...card, meta: `${modules.length} in groups`, note: moduleTotalsNote(modules.length, data?.moduleTotals) } : card)}
     attentionItems={[
       { label: 'Groups without a coach', value: groups.filter(group => isMissingAssignment(group.coach)).length, href: '/curriculum/groups', icon: 'ri-user-search-line', staffing: 'coach' },
@@ -138,11 +138,13 @@ function CurriculumHubView({ kind, programmes, programmesLoading = false, progra
   const modules = useMemo(() => data?.modules ?? [], [data?.modules]);
   const cohorts = useMemo(() => data?.cohorts ?? [], [data?.cohorts]);
   const groups = useMemo(() => data?.groups ?? [], [data?.groups]);
+  const sessions = useMemo(() => data?.sessions ?? [], [data?.sessions]);
 
   const draftModules = modules.filter(module => normalise(module.status) !== 'published');
   const modulesWithoutKsb = modules.filter(module => Number(module.ksbCount || 0) === 0);
   const unassignedTutors = modules.filter(module => isMissingAssignment(module.tutor));
   const unassignedCoaches = groups.filter(group => isMissingAssignment(group.coach));
+  const activeCohorts = cohorts.filter(cohort => normalise(cohort.status) === 'active');
   const programmesWithoutKsb = programmes.filter(programme => (
     Number(programme.ksbTotal || 0) === 0 && !clean(programme.ksbProfileSourceId)
   ));
@@ -151,6 +153,7 @@ function CurriculumHubView({ kind, programmes, programmesLoading = false, progra
     modules: modules.length,
     cohorts: cohorts.length,
     groups: groups.length,
+    sessions: sessions.length,
     draftModules: draftModules.length,
     mappingGaps: modulesWithoutKsb.length,
   });
@@ -159,6 +162,9 @@ function CurriculumHubView({ kind, programmes, programmesLoading = false, progra
   const summaryStats = hubStats(kind, {
     programmes: programmes.length,
     modules: modules.length,
+    cohorts: activeCohorts.length,
+    groups: groups.length,
+    sessions: sessions.length,
     issues: programmesWithoutKsb.length + modulesWithoutKsb.length + unassignedTutors.length + unassignedCoaches.length,
   });
 
@@ -232,6 +238,7 @@ function hubCards(kind: HubKind, counts: {
   modules: number;
   cohorts: number;
   groups: number;
+  sessions: number;
   draftModules: number;
   mappingGaps: number;
 }): HubCard[] {
@@ -251,8 +258,8 @@ function hubCards(kind: HubKind, counts: {
       { title: 'Groups', description: 'Assign coaches, delivery days and group schedules.', href: '/curriculum/groups', icon: 'ri-team-line', meta: `${counts.groups} groups`, tone: 'sky' },
       { title: 'Module Builder', description: 'Build reusable module content with weeks and components.', href: '/curriculum/module-builder', icon: 'ri-layout-4-line', meta: `${counts.modules} modules`, tone: 'primary' },
       { title: 'Teams Meetings', description: 'Review and restore the meetings attached to live sessions.', href: '/curriculum/teams-meetings', icon: 'ri-vidicon-line', tone: 'primary' },
-      { title: 'Bank Holidays', description: 'One non-delivery calendar: GOV.UK bank holidays stay synced here, and workshops or closures can be added with start and end dates.', href: '/curriculum/england-holidays', icon: 'ri-flag-line', tone: 'amber' },
-      { title: 'Session Calendar', description: 'See every curriculum session in one chronological view.', href: '/curriculum/session-calendar', icon: 'ri-calendar-schedule-line', meta: 'Loading', tone: 'emerald' },
+      { title: 'Holiday Calendars', description: 'One non-delivery calendar: GOV.UK bank holidays stay synced here, and workshops or closures can be added with start and end dates.', href: '/curriculum/england-holidays', icon: 'ri-flag-line', tone: 'amber' },
+      { title: 'Session Calendar', description: 'See every curriculum session in one chronological view.', href: '/curriculum/session-calendar', icon: 'ri-calendar-schedule-line', meta: `${counts.sessions} sessions`, tone: 'emerald' },
     ];
   }
   return [
@@ -266,11 +273,16 @@ function hubCards(kind: HubKind, counts: {
   ];
 }
 
-function hubStats(kind: 'library' | 'quality', counts: { programmes: number; modules: number; issues: number }) {
+function hubStats(kind: HubKind, counts: { programmes: number; modules: number; cohorts: number; groups: number; sessions: number; issues: number }) {
   if (kind === 'library') return [
     { label: 'Programmes', value: counts.programmes, icon: 'ri-stack-line' },
     { label: 'Reusable modules', value: counts.modules, icon: 'ri-layout-4-line' },
     { label: 'Authoring issues', value: counts.issues, icon: 'ri-error-warning-line', tone: 'amber' as const },
+  ];
+  if (kind === 'delivery') return [
+    { label: 'Active cohorts', value: counts.cohorts, icon: 'ri-group-line' },
+    { label: 'Delivery groups', value: counts.groups, icon: 'ri-team-line' },
+    { label: 'Scheduled sessions', value: counts.sessions, icon: 'ri-calendar-check-line' },
   ];
   return [
     { label: 'Programmes checked', value: counts.programmes, icon: 'ri-stack-line' },

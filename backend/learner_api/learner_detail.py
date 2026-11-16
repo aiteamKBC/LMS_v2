@@ -32,12 +32,13 @@ from old_otjh.service import ServiceError
 from curriculum_api import content_cache
 from curriculum_api.session_component_identity import occurrence_fallbacks as _live_session_occurrence_fallbacks
 
-from .active_users import fmt_hours, hydrate_source_training_plan, target_by_elapsed_time, week_by_elapsed_time
+from .active_users import (fmt_hours, hydrate_source_training_plan,
+                           target_by_elapsed_time, week_by_elapsed_time)
 from .identity import learner_profile_for_source
 from .aptem_status import programme_status
 from .constants import DEFAULT_PROGRAMME_STATUS
 from .learner_progression import access_gate, advance_learner
-from .learning_plan import effective_training_plan
+from .learning_plan import effective_training_plan, install_canonical_training_plan
 from .programme_access import cohort_programme_filter, learning_access
 from .mappers import _s, get_training_plan, to_learner_detail
 from .models import EnrolmentUser, LearnerProfile
@@ -2496,6 +2497,105 @@ def _activity_module_components(components, component_id):
             not c.get('moduleId') and c.get('module') == selected.get('module'))]
 
 
+def _activity_plan_assignments(source, learner_profile, component_id):
+    """All assigned module identities plus the selected module's saved tree.
+
+    One normalized query validates the component through the exact learner ->
+    plan module -> plan week -> plan component hierarchy. Unrelated modules are
+    retained as identities for programme/KSB rules, but their children are not
+    transferred merely to open one activity.
+    """
+    source_id = getattr(source, 'pk', None) or getattr(source, 'id', None)
+    if (learner_profile is None or source_id is None
+            or str(getattr(learner_profile, 'enrolment_id', None)) != str(source_id)):
+        raise ActivityComponentNotFound()
+    with connections['enrolment'].cursor() as cursor:
+        cursor.execute('''
+            WITH owner_modules AS (
+                SELECT DISTINCT plan_module.id AS plan_module_id
+                FROM "Learner".learner_training_plan_modules plan_module
+                JOIN "Learner".learner_training_plan_weeks plan_week
+                  ON plan_week.plan_module_id=plan_module.id
+                JOIN "Learner".learner_training_plan_components plan_component
+                  ON plan_component.plan_week_id=plan_week.id
+                WHERE plan_module.learner_id=%s
+                  AND plan_component.curriculum_component_id=%s
+            )
+            SELECT plan_module.id,plan_module.curriculum_module_id,
+                   owner.plan_module_id IS NOT NULL,
+                   plan_week.id,plan_week.curriculum_week_id,
+                   plan_component.id,plan_component.curriculum_component_id
+            FROM "Learner".learner_training_plan_modules plan_module
+            LEFT JOIN owner_modules owner ON owner.plan_module_id=plan_module.id
+            LEFT JOIN "Learner".learner_training_plan_weeks plan_week
+              ON plan_week.plan_module_id=plan_module.id
+             AND owner.plan_module_id IS NOT NULL
+            LEFT JOIN "Learner".learner_training_plan_components plan_component
+              ON plan_component.plan_week_id=plan_week.id
+            WHERE plan_module.learner_id=%s
+            ORDER BY plan_module.position,plan_module.id,
+                     plan_week.position,plan_week.id,
+                     plan_component.position,plan_component.id
+        ''', [learner_profile.pk, component_id, learner_profile.pk])
+        rows = cursor.fetchall()
+
+    assignments = {}
+    weeks = {}
+    owners = set()
+    for plan_module_id, module_id, is_owner, plan_week_id, week_id, _plan_component_id, assigned_component_id in rows:
+        module = assignments.setdefault(plan_module_id, {
+            'moduleId': _s(module_id) or None,
+            'weeks': [],
+        })
+        if not is_owner:
+            continue
+        owners.add(plan_module_id)
+        if plan_week_id is None:
+            continue
+        week = weeks.get(plan_week_id)
+        if week is None:
+            week = {'weekId': _s(week_id) or None, 'components': []}
+            weeks[plan_week_id] = week
+            module['weeks'].append(week)
+        if assigned_component_id:
+            week['components'].append({'componentId': _s(assigned_component_id)})
+
+    if len(owners) != 1:
+        raise ActivityComponentNotFound()
+    owner = assignments[next(iter(owners))]
+    if not owner.get('moduleId'):
+        raise ActivityComponentNotFound()
+    return list(assignments.values()), owner
+
+
+def _activity_plan_module(assigned_modules, component_id):
+    """Return the one canonical assignment that owns ``component_id``.
+
+    The normalized learner plan is the ownership record. Looking the component
+    up through its current programme placement would lose a learner's saved
+    placement after re-parenting and reject explicit cross-programme modules.
+    Duplicate ownership is rejected as ambiguous rather than granting access to
+    an arbitrary module.
+    """
+    component_id = _s(component_id)
+    matches = []
+    for module in assigned_modules or []:
+        if not isinstance(module, dict):
+            continue
+        owns_component = any(
+            _s(component.get('componentId')) == component_id
+            for week in module.get('weeks') or []
+            if isinstance(week, dict)
+            for component in week.get('components') or []
+            if isinstance(component, dict)
+        )
+        if owns_component:
+            matches.append(module)
+    if len(matches) != 1:
+        raise ActivityComponentNotFound()
+    return matches[0]
+
+
 def _linked_profile_ids(pk):
     """Ids of the profiles already linked to this enrolment (at most two read)."""
     return tuple(LearnerProfile.objects.filter(enrolment_id=pk).values_list("pk", flat=True)[:2])
@@ -2530,16 +2630,29 @@ def build_learner_detail(source, pk, *, compact=False, read_only=False, quiz_vie
     # keeps the learner workspace correct between scheduled daily sweeps.
     if not read_only:
         advance_learner(source)
-    # Plans selected during enrolment used to contain only module ids. Fill
-    # in the authored weeks/components before serialising the learner page,
-    # which also repairs learners activated before this behaviour existed.
-    if not read_only:
-        hydrate_source_training_plan(source)
-    assigned_modules = effective_training_plan(source)
     # Read before resolution: the resolver may link an email-matched profile
     # during this request, which must not count as a verified link.
     linked_profile_ids = _linked_profile_ids(pk)
     learner_profile = _active_profile_for_source(source, pk, **({'heal': False} if activity_component_id else {}))
+    activity_owner = None
+    if activity_component_id:
+        activity_assignments, activity_owner = _activity_plan_assignments(
+            source, learner_profile, activity_component_id)
+        source._canonical_training_plan = activity_assignments
+    else:
+        install_canonical_training_plan(source, learner_profile)
+    assigned_modules = effective_training_plan(source)
+    resolution_assignments = assigned_modules
+    if activity_component_id:
+        # Authorize against the complete learner-owned assignment first, then
+        # resolve only the owning module's live Curriculum graph. Every assigned
+        # module identity remains attached to ``source`` for existing
+        # identity/KSB/progress rules; only the owner carries its saved children.
+        # Keep the pure hierarchy check as a guard against an incomplete or
+        # ambiguous projection from the normalized ownership query above.
+        if _activity_plan_module(assigned_modules, activity_component_id) is not activity_owner:
+            raise ActivityComponentNotFound()
+        resolution_assignments = [activity_owner]
 
     if learner_profile and not learner_profile.ksbs and not read_only:
         try:
@@ -2565,7 +2678,7 @@ def build_learner_detail(source, pk, *, compact=False, read_only=False, quiz_vie
     # edits in Module Builder reflect here immediately (structured-plan learners).
     detail["modules"], detail["week"], detail["components"] = _resolve_from_master(
         detail["modules"], detail["week"], detail["components"],
-        assigned_modules=assigned_modules,
+        assigned_modules=resolution_assignments,
         **({"compact": True} if compact else {}),
         **({"strict": True} if activity_component_id else {}),
     )
@@ -2574,7 +2687,7 @@ def build_learner_detail(source, pk, *, compact=False, read_only=False, quiz_vie
     )
     detail["components"], detail["totalExpectedOtjh"] = _annotate_otjh(detail["components"])
     detail["week"], detail["components"] = _append_week_quizzes(
-        detail["week"], detail["components"], assigned_modules=assigned_modules,
+        detail["week"], detail["components"], assigned_modules=resolution_assignments,
     )
     # Quiz runners need the plan, progress and reflection requirements, not
     # dashboard totals or their persistence on a GET request.
