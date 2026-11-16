@@ -160,6 +160,51 @@ def collection(request, account, body, *, staff):
     return {'ticket': saved}
 
 
+def create_staff_ticket(*, learner_account, ticket, actor_name='Support'):
+    """Create an LMS ticket for an authenticated staff workflow.
+
+    The learner account is resolved server-side from the feedback response; the
+    caller cannot supply ownership. The ticket UUID is deterministic so a retry
+    cannot create a second ticket.
+    """
+    if not learner_account or getattr(learner_account, 'subject_type', None) != 'learner':
+        raise TicketError('This feedback response is not linked to a learner account.', 409)
+    ticket_id = str(ticket['id'])
+    now = timezone.now().isoformat()
+    data = {
+        **ticket,
+        'id': ticket_id,
+        'status': 'open',
+        'submitted': now,
+        'lastUpdate': now,
+        'requester': getattr(learner_account, 'display_name', '') or 'Learner',
+        'assignedTo': '',
+        'assignedTeam': 'Quality Team',
+        'portalAssignedTeam': 'Quality Team',
+        'messages': 0,
+        'timeline': [{'event': 'Opened', 'timestamp': now, 'detail': actor_name}],
+        'replies': [],
+        'attachments': [],
+    }
+    with transaction.atomic(using='enrolment'), connections['enrolment'].cursor() as cursor:
+        cursor.execute(
+            f'INSERT INTO {TABLE} (id,owner_account_id,enrolment_id,data) VALUES (%s,%s,%s,%s::jsonb) ON CONFLICT(id) DO NOTHING',
+            [ticket_id, learner_account.pk, learner_account.subject_id, json.dumps(data)],
+        )
+        cursor.execute(f'SELECT data FROM {TABLE} WHERE id=%s AND owner_account_id=%s FOR UPDATE', [ticket_id, learner_account.pk])
+        row = cursor.fetchone()
+        if not row:
+            raise TicketError('The quality ticket could not be loaded.', 503)
+        saved = unpack(row)
+        if saved.get('assignedTeam') != 'Quality Team':
+            raise TicketError('This request ID belongs to a different ticket.', 409)
+    try:
+        assistant_conversations.record_ticket(account=learner_account, ticket=saved)
+    except assistant_conversations.AssistantConversationSyncError as exc:
+        raise TicketError(str(exc), 503) from exc
+    return saved
+
+
 def detail(request, account, body, ticket_id, *, staff):
     with files.upload_session() as staged, transaction.atomic(using='enrolment'), connections['enrolment'].cursor() as cursor:
         where, params = ('', []) if staff else (' AND owner_account_id=%s', [account.pk])

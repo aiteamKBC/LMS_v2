@@ -6,7 +6,7 @@ import { feedbackApi, type FeedbackDashboardReport } from '@/api/feedback';
 import { FeedbackDashboard } from './FeedbackDashboard';
 import { dashboardPeriod, negativeCategories, rankedQuestions, ukCalendarDate, weeklyClassifications } from './feedbackDashboardData';
 
-vi.mock('@/api/feedback', async original => ({ ...await original<typeof import('@/api/feedback')>(), feedbackApi: { insightsDashboard: vi.fn() } }));
+vi.mock('@/api/feedback', async original => ({ ...await original<typeof import('@/api/feedback')>(), feedbackApi: { insightsDashboard: vi.fn(), createQualityTicket: vi.fn().mockResolvedValue({ ticket: { id: 'quality-ticket', assignedTeam: 'Quality Team' } }) } }));
 // jsdom supplies no layout; keep real Recharts and supply only missing dimensions.
 vi.mock('recharts', async original => ({ ...await original<typeof import('recharts')>(), ResponsiveContainer: ({ children }: { children: ReactElement<{ width?: number; height?: number }> }) => cloneElement(children, { width: 500, height: 235 }) }));
 

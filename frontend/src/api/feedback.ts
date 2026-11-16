@@ -326,6 +326,7 @@ export const feedbackApi = {
     return request<{ responses: FeedbackResponse[] }>(`/responses/?${params}`);
   },
   response: (id: number) => request<{ response: FeedbackResponse }>(`/responses/${id}/`),
+  createQualityTicket: (id: number) => request<{ ticket: { id: string; assignedTeam: string } }>(`/responses/${id}/quality-ticket/`, { method: 'POST' }),
   analytics: (filters?: { formId?: number; formType?: FeedbackFormType }) => {
     const params = new URLSearchParams();
     if (filters?.formId) params.set('formId', String(filters.formId));

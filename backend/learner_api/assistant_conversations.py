@@ -61,6 +61,7 @@ def _portal_metadata(*, ticket: dict, public_id: str) -> str:
         'ticket_public_id': public_id,
         'requester_role': 'learner',
         'requester_source': 'lms_learners',
+        'assigned_team': ticket.get('portalAssignedTeam') or 'Unassigned',
         'technical_subcategory': 'LMS' if category == 'Technical' else None,
     })
 
@@ -114,6 +115,7 @@ def _create_portal_ticket(cursor, *, account, ticket: dict, ticket_id: str) -> s
     public_id = f'KBC-{portal_numeric_id:06d}'
     category = _portal_category(ticket.get('category', ''))
     priority = _portal_priority(ticket.get('priority', ''))
+    assigned_team = "'Quality Team'" if ticket.get('portalAssignedTeam') == 'Quality Team' else "'Unassigned'"
     subject = str(ticket.get('title', '') or '').strip()
     inquiry = f"{subject}\n\n{ticket.get('description', '')}".strip()
     metadata = _portal_metadata(ticket=ticket, public_id=public_id)
@@ -124,7 +126,7 @@ def _create_portal_ticket(cursor, *, account, ticket: dict, ticket_id: str) -> s
              assigned_team, priority, metadata, technical_subcategory,
              subject, submitted_for_learner_id, can_show_conversation,
              can_receive_chat)
-            VALUES (%s, %s, %s, %s, %s, 'Open', 'Unassigned', %s,
+            VALUES (%s, %s, %s, %s, %s, 'Open', {assigned_team}, %s,
                     %s::jsonb, %s, %s, %s, TRUE, TRUE)''',
         [
             portal_numeric_id, public_id, learner_id, category, inquiry,
@@ -179,7 +181,7 @@ def _write_assistant_conversation(cursor, *, account, ticket: dict, public_id: s
             'learner',
             'support',
             _message(ticket),
-            'Your support ticket has been submitted to LMS Support.',
+            f"Your support ticket has been submitted to {ticket.get('portalAssignedTeam') or 'LMS Support'}.",
             True,
             public_id,
         ],

@@ -18,7 +18,7 @@ from azure.storage.blob import ContentSettings
 from django.conf import settings
 from django.core.validators import validate_email
 from django.core.exceptions import ValidationError
-from django.db import DatabaseError, IntegrityError, connection, transaction
+from django.db import DatabaseError, IntegrityError, connection, connections, transaction
 from django.db.models import Prefetch, Q
 from django.http import HttpResponse, JsonResponse
 from django.utils import timezone
@@ -26,13 +26,15 @@ from django.utils.dateparse import parse_date, parse_datetime
 from django.middleware.csrf import get_token
 
 from learner_api.models import EnrolmentUser
+from learner_api import support_tickets
+from login.identity import account_for_subject
 from learner_api import evidence_storage
 from learner_api.profile_photo import normalize_photo
 
 from .helpers import json_body, json_error
 from .feedback_delivery import QR_SCHEDULE_SOURCE, ensure_delivery_questions, lecture_after_form_creation
 from .feedback_analytics import lecture_analytics_options, question_analytics
-from .feedback_scoring import validate_analytics_settings
+from .feedback_scoring import IMPORTANCE_WEIGHTS, analytics_settings, answer_score, score_classification, validate_analytics_settings
 from .feedback_question_overrides import effective_question_ids
 from .module_feedback import MODULE_FORM_TYPES, assigned_active_module_ids, module_delivery_accessible, sync_module_feedback
 from .review_feedback import ALL_REVIEW_FORM_TYPES, EMPLOYER_REVIEW_FORM_TYPE, sync_review_feedback
@@ -958,6 +960,72 @@ def response_detail(request, pk):
     return JsonResponse({'response': _response_dict(response, include_answers=True)})
 
 
+def _feedback_response_score(response):
+    weighted = []
+    for answer in FeedbackAnswer.objects.filter(response=response).select_related('question'):
+        question = answer.question
+        settings = analytics_settings(question.question_type, question.config or {})
+        if not settings['includeInOverall']:
+            continue
+        score = answer_score(question.question_type, question.config or {}, answer.answer)
+        if score is not None:
+            weighted.append((score, IMPORTANCE_WEIGHTS.get(settings['importance'], 2)))
+    weight = sum(item[1] for item in weighted)
+    return sum(score * importance for score, importance in weighted) / weight if weight else None
+
+
+def ensure_quality_ticket_for_response(response, *, actor='Feedback automation'):
+    """Open one idempotent Quality Team ticket when a response is negative."""
+    if not isinstance(response, FeedbackResponse):
+        return None
+    if 'assistant_conversations' not in connections.databases:
+        raise support_tickets.TicketError('The technicalsupport database connection is not configured.', 503)
+    if response.status != 'completed' or score_classification(_feedback_response_score(response)) != 'negative':
+        return None
+    try:
+        learner_id = int(str(response.learner_id))
+    except (TypeError, ValueError):
+        raise support_tickets.TicketError('This response is not linked to a learner account.', 409) from None
+    learner_account = account_for_subject('learner', learner_id)
+    context = getattr(response.delivery, 'session_title', '') or getattr(response.delivery, 'module_name', '') or response.form.title
+    ticket_id = uuid.uuid5(uuid.NAMESPACE_URL, f'lms-feedback-quality:{response.id}')
+    ticket = {
+        'title': f'Quality review: {context}'[:200],
+        'description': (
+            f'Negative feedback response #{response.id} requires Quality Team review.\n\n'
+            f'Feedback form: {response.form.title}\n'
+            f'Learner: {response.learner_name or "Learner"}\n'
+            f'Context: {context}\n'
+            f'Response submitted: {response.submitted_at.isoformat() if response.submitted_at else "Unknown"}'
+        ),
+        'category': 'Learning Support',
+        'priority': 'high',
+    }
+    return support_tickets.create_staff_ticket(
+        learner_account=learner_account,
+        ticket={'id': str(ticket_id), **ticket},
+        actor_name=actor,
+    )
+
+
+@require_staff
+def response_quality_ticket(request, pk):
+    """Create or retrieve the Quality Team ticket for a negative response."""
+    if request.method != 'POST':
+        return json_error('Method not allowed.', status=405)
+    try:
+        response = FeedbackResponse.objects.select_related('form', 'delivery').get(pk=pk)
+    except FeedbackResponse.DoesNotExist:
+        return json_error('Feedback response not found.', status=404)
+    try:
+        saved = ensure_quality_ticket_for_response(response, actor=actor_name(request) or 'Quality reviewer')
+    except support_tickets.TicketError as exc:
+        return json_error(str(exc), status=exc.status)
+    if saved is None:
+        return json_error('Only negative completed feedback can be escalated.', status=409)
+    return JsonResponse({'ticket': support_tickets.public_ticket(saved)}, status=201)
+
+
 @require_staff
 def analytics(request):
     if request.method != 'GET':
@@ -1846,6 +1914,11 @@ def save_owned_response(request, *, learner_id, learner_name, form, delivery, re
             response.save(update_fields=['status', 'submitted_at', 'updated_at'])
         else:
             response.save(update_fields=['updated_at'])
+    if submit:
+        try:
+            ensure_quality_ticket_for_response(response)
+        except support_tickets.TicketError as exc:
+            logger.warning('Could not open Quality Team ticket for feedback response %s: %s', response.id, exc)
     return JsonResponse({'response': {
         'id': response.id, 'status': response.status,
         'submittedAt': _iso(response.submitted_at), 'updatedAt': _iso(response.updated_at),

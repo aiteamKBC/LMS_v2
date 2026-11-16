@@ -22,6 +22,7 @@ urlpatterns = [
     path('feedback/learners/', feedback.learner_options, name='feedback-learners'),
     path('feedback/responses/', feedback.responses_collection, name='feedback-responses'),
     path('feedback/responses/<int:pk>/', feedback.response_detail, name='feedback-response-detail'),
+    path('feedback/responses/<int:pk>/quality-ticket/', feedback.response_quality_ticket, name='feedback-response-quality-ticket'),
     path('feedback/analytics/', feedback.analytics, name='feedback-analytics'),
     path('feedback/analytics/questions/', feedback.question_analytics_detail, name='feedback-question-analytics'),
     path('feedback/analytics/insights/', feedback.insights_dashboard, name='feedback-insights-dashboard'),

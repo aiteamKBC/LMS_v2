@@ -48,8 +48,26 @@ function ReviewList({ report, onViewResponse }: { report: FeedbackDashboardRepor
   const pages = Math.max(1, Math.ceil(negatives.length / 5));
   const current = Math.min(page, pages);
   const visible = expanded ? negatives.slice((current - 1) * 5, current * 5) : negatives.slice(0, 3);
+  const [qualityTickets, setQualityTickets] = useState<Record<number, 'pending' | 'sent' | 'error'>>({});
+  const [qualityErrors, setQualityErrors] = useState<Record<number, string>>({});
+  useEffect(() => {
+    let active = true;
+    negatives.forEach(item => {
+      setQualityTickets(value => ({ ...value, [item.responseId]: 'pending' }));
+      setQualityErrors(value => ({ ...value, [item.responseId]: '' }));
+      feedbackApi.createQualityTicket(item.responseId).then(() => {
+        if (active) setQualityTickets(value => ({ ...value, [item.responseId]: 'sent' }));
+      }).catch(error => {
+        if (active) {
+          setQualityTickets(value => ({ ...value, [item.responseId]: 'error' }));
+          setQualityErrors(value => ({ ...value, [item.responseId]: error instanceof Error ? error.message : 'Quality ticket creation failed.' }));
+        }
+      });
+    });
+    return () => { active = false; };
+  }, [report]);
   return <Panel title="Action Needed — Feedback to Review" subtitle={`Negative scores below ${NEUTRAL_SCORE_MIN}% · review the original answers`} icon={<TriangleAlert size={25} />} className={styles.action} right={<button type="button" className={styles.link} disabled={!negatives.length} onClick={() => { setExpanded(value => !value); setPage(1); }}>{expanded ? 'Show latest' : `View all ${negatives.length}`} →</button>}>
-    {visible.length ? <div className={styles.reviewRows}>{visible.map(item => <article key={item.responseId} className={styles.reviewRow}><span className={styles.negativePill}><TriangleAlert size={12} />Needs review</span><div><strong>{item.contextTitle || item.formTitle}</strong><small>{item.formTitle} · v{item.version}{item.groupName ? ` · ${item.groupName}` : ''}</small><small>{item.scoredQuestions} scored questions · {item.respondent}</small></div><time dateTime={item.submittedAt || undefined}>{item.submittedAt ? dateLabel(item.submittedAt) : 'Date unavailable'}</time><span className={styles.score}>{item.score == null ? '—' : `${Math.round(item.score)}%`}</span><button type="button" className={styles.reviewButton} aria-label={`Review response ${item.responseId}`} onClick={() => onViewResponse(item.responseId)}>Review<ChevronRight size={12} /></button></article>)}</div> : <div className={styles.empty}>No negative responses in this selection.</div>}
+    {visible.length ? <div className={styles.reviewRows}>{visible.map(item => { const ticket = qualityTickets[item.responseId]; return <article key={item.responseId} className={styles.reviewRow}><span className={styles.negativePill}><TriangleAlert size={12} />Needs review</span><div><strong>{item.contextTitle || item.formTitle}</strong><small>{item.formTitle} · v{item.version}{item.groupName ? ` · ${item.groupName}` : ''}</small><small>{item.scoredQuestions} scored questions · {item.respondent}</small></div><time dateTime={item.submittedAt || undefined}>{item.submittedAt ? dateLabel(item.submittedAt) : 'Date unavailable'}</time><span className={styles.score}>{item.score == null ? '—' : `${Math.round(item.score)}%`}</span><span className={styles.reviewActions}><button type="button" className={styles.reviewButton} aria-label={`Review response ${item.responseId}`} onClick={() => onViewResponse(item.responseId)}>Review<ChevronRight size={12} /></button>{ticket && <span className={`${styles.qualityStatus} ${ticket === 'sent' ? styles.qualityOpen : ticket === 'error' ? styles.qualityFailed : ''}`}>{ticket === 'sent' ? 'Quality ticket: Open' : ticket === 'error' ? 'Quality ticket failed' : 'Opening Quality ticket…'}</span>}{qualityErrors[item.responseId] && <small className={styles.qualityError}>{qualityErrors[item.responseId]}</small>}</span></article>; })}</div> : <div className={styles.empty}>No negative responses in this selection.</div>}
     {expanded && pages > 1 && <div className={styles.pager}><button type="button" className={styles.link} disabled={current === 1} onClick={() => setPage(current - 1)}>Previous</button><span>{current} / {pages}</span><button type="button" className={styles.link} disabled={current === pages} onClick={() => setPage(current + 1)}>Next</button></div>}
   </Panel>;
 }
