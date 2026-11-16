@@ -63,6 +63,7 @@ class ReplacementVisibilityTests(SimpleTestCase):
         with ExitStack() as stack:
             stack.enter_context(patch.object(learning, 'load_context', side_effect=lambda *a, **kw: deepcopy(context)))
             stack.enter_context(patch.object(learning, 'connections', fake_connections()))
+            stack.enter_context(patch('learner_api.my_learning_ksbs.connections', fake_connections()))
             stack.enter_context(patch.object(learning, 'journal_enabled', return_value=True))
             stack.enter_context(patch.object(canonical, 'query', return_value=[]))
             stack.enter_context(patch.object(canonical, 'programme_planned_hours', return_value=10))
