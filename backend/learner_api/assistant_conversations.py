@@ -218,3 +218,26 @@ def record_ticket(*, account, ticket: dict) -> None:
         raise AssistantConversationSyncError(
             'The ticket was saved in the LMS, but its Ticketing system copy could not be saved. Please retry.'
         ) from exc
+
+
+def ticket_status(*, ticket_id: str) -> str | None:
+    """Read the current status of an LMS ticket from the Ticketing system."""
+    if 'assistant_conversations' not in connections.databases:
+        raise AssistantConversationSyncError(
+            'The Ticketing system connection is not configured.'
+        )
+
+    try:
+        with transaction.atomic(using='assistant_conversations'):
+            with connections['assistant_conversations'].cursor() as cursor:
+                cursor.execute(
+                    f"SELECT status FROM {PORTAL_TICKETS} "
+                    "WHERE metadata->>'lms_ticket_id'=%s LIMIT 1",
+                    [str(ticket_id)],
+                )
+                row = cursor.fetchone()
+        return str(row[0]) if row and row[0] is not None else None
+    except Exception as exc:
+        raise AssistantConversationSyncError(
+            'The Ticketing system ticket status could not be read. Please retry.'
+        ) from exc

@@ -6,7 +6,7 @@ import { feedbackApi, type FeedbackDashboardReport } from '@/api/feedback';
 import { FeedbackDashboard } from './FeedbackDashboard';
 import { dashboardPeriod, negativeCategories, rankedQuestions, ukCalendarDate, weeklyClassifications } from './feedbackDashboardData';
 
-vi.mock('@/api/feedback', async original => ({ ...await original<typeof import('@/api/feedback')>(), feedbackApi: { insightsDashboard: vi.fn(), createQualityTicket: vi.fn().mockResolvedValue({ ticket: { id: 'quality-ticket', assignedTeam: 'Quality Team' } }) } }));
+vi.mock('@/api/feedback', async original => ({ ...await original<typeof import('@/api/feedback')>(), feedbackApi: { insightsDashboard: vi.fn(), createQualityTicket: vi.fn().mockResolvedValue({ ticket: { id: 'quality-ticket', assignedTeam: 'Quality Team', status: 'Open' } }), qualityTicketStatus: vi.fn().mockResolvedValue({ ticket: { id: 'quality-ticket', assignedTeam: 'Quality Team', status: 'Open' } }) } }));
 // jsdom supplies no layout; keep real Recharts and supply only missing dimensions.
 vi.mock('recharts', async original => ({ ...await original<typeof import('recharts')>(), ResponsiveContainer: ({ children }: { children: ReactElement<{ width?: number; height?: number }> }) => cloneElement(children, { width: 500, height: 235 }) }));
 
@@ -48,6 +48,20 @@ describe('independent feedback insights dashboard', () => {
     expect(screen.queryByText('High priority')).not.toBeInTheDocument();
     await userEvent.click(screen.getByRole('button', { name: 'Review response 1' }));
     expect(open).toHaveBeenCalledWith(1);
+  });
+
+  it('displays the current Ticketing system status after a negative response is synced', async () => {
+    vi.mocked(feedbackApi.createQualityTicket).mockResolvedValueOnce({ ticket: { id: 'quality-ticket', assignedTeam: 'Quality Team', status: 'Closed' } });
+    render(<FeedbackDashboard onViewResponse={vi.fn()} />);
+    expect(await screen.findByText('Quality ticket: Closed')).toBeVisible();
+  });
+
+  it('refreshes the displayed status when the dashboard regains focus', async () => {
+    vi.mocked(feedbackApi.qualityTicketStatus).mockResolvedValueOnce({ ticket: { id: 'quality-ticket', assignedTeam: 'Quality Team', status: 'Closed' } });
+    render(<FeedbackDashboard onViewResponse={vi.fn()} />);
+    await screen.findByText('Quality ticket: Open');
+    window.dispatchEvent(new Event('focus'));
+    expect(await screen.findByText('Quality ticket: Closed')).toBeVisible();
   });
 
   it('combines type, date, classification, saved group and module filters on the separate read-only API', async () => {

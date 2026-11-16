@@ -961,9 +961,19 @@ def response_detail(request, pk):
 
 
 def _feedback_response_score(response):
+    selected_ids = None
+    delivery_id = getattr(response, 'delivery_id', None)
+    delivery = getattr(response, 'delivery', None) if delivery_id is not None else None
+    if delivery is not None:
+        recipient = FeedbackDeliveryRecipient.objects.filter(
+            delivery_id=delivery_id, learner_id=response.learner_id,
+        ).first()
+        selected_ids = _selected_delivery_question_ids(delivery, recipient, response)
     weighted = []
     for answer in FeedbackAnswer.objects.filter(response=response).select_related('question'):
         question = answer.question
+        if selected_ids is not None and question.id not in selected_ids:
+            continue
         settings = analytics_settings(question.question_type, question.config or {})
         if not settings['includeInOverall']:
             continue
@@ -974,21 +984,25 @@ def _feedback_response_score(response):
     return sum(score * importance for score, importance in weighted) / weight if weight else None
 
 
+def _quality_ticket_id(response_id):
+    return uuid.uuid5(uuid.NAMESPACE_URL, f'lms-feedback-quality:{response_id}')
+
+
 def ensure_quality_ticket_for_response(response, *, actor='Feedback automation'):
     """Open one idempotent Quality Team ticket when a response is negative."""
     if not isinstance(response, FeedbackResponse):
         return None
-    if 'assistant_conversations' not in connections.databases:
-        raise support_tickets.TicketError('The technicalsupport database connection is not configured.', 503)
     if response.status != 'completed' or score_classification(_feedback_response_score(response)) != 'negative':
         return None
+    if 'assistant_conversations' not in connections.databases:
+        raise support_tickets.TicketError('The technicalsupport database connection is not configured.', 503)
     try:
         learner_id = int(str(response.learner_id))
     except (TypeError, ValueError):
         raise support_tickets.TicketError('This response is not linked to a learner account.', 409) from None
     learner_account = account_for_subject('learner', learner_id)
     context = getattr(response.delivery, 'session_title', '') or getattr(response.delivery, 'module_name', '') or response.form.title
-    ticket_id = uuid.uuid5(uuid.NAMESPACE_URL, f'lms-feedback-quality:{response.id}')
+    ticket_id = _quality_ticket_id(response.id)
     ticket = {
         'title': f'Quality review: {context}'[:200],
         'description': (
@@ -1011,19 +1025,43 @@ def ensure_quality_ticket_for_response(response, *, actor='Feedback automation')
 @require_staff
 def response_quality_ticket(request, pk):
     """Create or retrieve the Quality Team ticket for a negative response."""
-    if request.method != 'POST':
+    if request.method not in {'GET', 'POST'}:
         return json_error('Method not allowed.', status=405)
     try:
         response = FeedbackResponse.objects.select_related('form', 'delivery').get(pk=pk)
     except FeedbackResponse.DoesNotExist:
         return json_error('Feedback response not found.', status=404)
+    if request.method == 'GET':
+        try:
+            current_status = support_tickets.assistant_conversations.ticket_status(
+                ticket_id=str(_quality_ticket_id(response.id)),
+            )
+        except support_tickets.assistant_conversations.AssistantConversationSyncError as exc:
+            return json_error(str(exc), status=503)
+        if not current_status:
+            return json_error('Quality ticket not found.', status=404)
+        return JsonResponse({'ticket': {
+            'id': str(_quality_ticket_id(response.id)),
+            'assignedTeam': 'Quality Team',
+            'status': current_status,
+        }})
     try:
         saved = ensure_quality_ticket_for_response(response, actor=actor_name(request) or 'Quality reviewer')
     except support_tickets.TicketError as exc:
         return json_error(str(exc), status=exc.status)
     if saved is None:
         return json_error('Only negative completed feedback can be escalated.', status=409)
-    return JsonResponse({'ticket': support_tickets.public_ticket(saved)}, status=201)
+    current_status = None
+    try:
+        current_status = support_tickets.assistant_conversations.ticket_status(ticket_id=saved['id'])
+    except support_tickets.assistant_conversations.AssistantConversationSyncError as exc:
+        # Ticket creation already succeeded. Keep the local result visible and
+        # let the next dashboard refresh retry the status read.
+        logger.warning('Could not read Quality Team ticket status for feedback response %s: %s', response.id, exc)
+    public = support_tickets.public_ticket(saved)
+    if current_status:
+        public['status'] = current_status
+    return JsonResponse({'ticket': public}, status=201)
 
 
 @require_staff
