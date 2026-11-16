@@ -11,8 +11,7 @@ from django.http import JsonResponse
 from django.utils import timezone
 from django.views.decorators.http import require_GET
 
-from learner_api.models import LearnerProfile
-
+from .bulk_attendance_identity import aptem_ids_by_profile
 from .models import INACTIVE_STATUSES, LiveSession, LiveSessionLearnerAttendance, LiveSessionOccurrence, ModuleAuthoringModule
 from .parallel_attendance_register import saved_parallel_links
 from .session_results_policy import instant
@@ -63,21 +62,7 @@ def _parse_month_request(request):
 
 
 def _aptem_ids_by_profile(profile_ids):
-    if not profile_ids:
-        return {}
-    profile_database = router.db_for_read(LearnerProfile) or "default"
-    profiles = list(
-        LearnerProfile.objects.using(profile_database)
-        .filter(id__in=profile_ids)
-        .only("id", "enrolment_id", "aptem_id", "email", "full_name")
-    )
-    from coach_api.views import resolve_effective_aptem_ids
-
-    return {
-        profile_id: str(aptem_id)
-        for profile_id, aptem_id in resolve_effective_aptem_ids(profiles)[0].items()
-        if aptem_id is not None
-    }
+    return aptem_ids_by_profile(profile_ids)
 
 
 @require_GET

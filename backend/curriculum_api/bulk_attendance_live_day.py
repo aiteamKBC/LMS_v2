@@ -9,13 +9,11 @@ import re
 from datetime import date
 
 from django.db import DatabaseError, connections, router, transaction
-from django.db.models import Q
 from django.http import JsonResponse
 from django.utils import timezone
 from django.views.decorators.http import require_POST
 
-from learner_api.models import EnrolmentUser, LearnerProfile
-
+from .bulk_attendance_identity import profiles_by_aptem_ids
 from .live_session_register import upsert_live_session_register
 from .models import LiveSession, LiveSessionLearnerAttendance, LiveSessionOccurrence
 from .session_results_policy import instant
@@ -110,42 +108,8 @@ def live_occurrence_for_date(database, module_catalogue_id, session_date, occurr
 
 def profiles_for_kbc_ids(learner_ids):
     """Resolve the stable KBC/Aptem identity to one learner profile each."""
-    source_database = router.db_for_read(EnrolmentUser) or "default"
-    source_rows = list(
-        EnrolmentUser.all_learners.using(source_database)
-        .filter(aptem_id__in=learner_ids)
-        .only("id", "aptem_id")
-    )
-    linked_enrolment_ids = [row.id for row in source_rows]
-    profile_database = router.db_for_read(LearnerProfile) or "default"
-    legacy_aptem_ids = [
-        int(learner_id)
-        for learner_id in learner_ids
-        if int(learner_id) <= 9_223_372_036_854_775_807
-    ]
-    profile_match = Q(enrolment_id__in=linked_enrolment_ids)
-    if legacy_aptem_ids:
-        profile_match |= Q(enrolment_id__isnull=True, aptem_id__in=legacy_aptem_ids)
-    profiles = list(
-        LearnerProfile.objects.using(profile_database)
-        .filter(profile_match)
-        .only("id", "enrolment_id", "aptem_id", "email", "full_name")
-    )
-    from coach_api.views import resolve_effective_aptem_ids
-
-    aptem_by_profile, _conflicts = resolve_effective_aptem_ids(profiles)
-    profiles_by_kbc_id = {}
-    for profile in profiles:
-        key = str(aptem_by_profile.get(profile.id) or "").strip()
-        if key in learner_ids:
-            profiles_by_kbc_id.setdefault(key, []).append(profile)
-
-    resolved = {}
-    for learner_id in learner_ids:
-        candidates = profiles_by_kbc_id.get(learner_id, [])
-        if len(candidates) == 1:
-            resolved[learner_id] = candidates[0]
-    if len(resolved) != len(learner_ids):
+    resolved = profiles_by_aptem_ids(learner_ids, fields=('email', 'full_name'))
+    if any(learner_id not in resolved for learner_id in learner_ids):
         raise LiveAttendanceTargetError(
             "Some selected learners do not have a unique LMS profile, so no attendance was added."
         )
@@ -216,7 +180,9 @@ def bulk_attendance_live_day(request):
             from .parallel_attendance_register import reconcile_parallel_attendance
             reconcile_parallel_attendance([occurrence['id']], database=database)
             from engagement_api.feedback_delivery import reconcile_feedback_after_attendance_commit
-            reconcile_feedback_after_attendance_commit([occurrence['id']], using=database)
+            reconcile_feedback_after_attendance_commit(
+                [occurrence['id']], using=database, use_learner_profiles=True,
+            )
     except LiveAttendanceTargetError as exc:
         return JsonResponse({"error": str(exc)}, status=409)
     except ValueError as exc:

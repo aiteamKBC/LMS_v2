@@ -2,16 +2,22 @@ import { coachFetch } from '@/lib/coachFetch';
 
 export interface BulkAttendanceDirectoryLearner {
   id: string;
+  /** Learner profile key; id remains the Aptem key used by attendance history. */
+  profileId?: string;
+  /** Canonical profile placement. An empty value means unassigned. */
+  programmeId?: string;
+  cohortId?: string;
+  groupId?: string;
   name: string;
   email: string;
   programme: string;
   group: string;
   endDate: string;
   kbcStatus?: string;
-  /** LMS enrolment status when the learner is enrolled, otherwise kbcStatus. */
+  /** Programme status from the learner profile. */
   status?: string;
-  statusSource?: 'enrolment' | 'kbc';
-  /** LMS enrolment email for the same KBC id, sent only when it differs from `email`. */
+  statusSource?: 'learner' | 'enrolment' | 'kbc';
+  /** Legacy directory compatibility; the canonical directory uses the profile email. */
   lmsEmail?: string;
   /** Saved learner delivery mode; learners without a saved preference are live. */
   attendanceMode?: 'live' | 'lazy';
@@ -64,7 +70,7 @@ function warningsFrom(payload: { warnings?: unknown }): string[] {
 
 export interface BulkAttendanceDirectoryResult {
   learners: BulkAttendanceDirectoryLearner[];
-  /** Set when enrolment statuses could not be read and KBC statuses are shown. */
+  /** Set when saved delivery modes are unavailable and the live default is shown. */
   warnings: string[];
 }
 

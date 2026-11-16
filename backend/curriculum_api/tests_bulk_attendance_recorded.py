@@ -1,10 +1,12 @@
 """Recorded learners in the bulk register; no database or external services."""
 from datetime import datetime, timedelta, timezone
+import sqlite3
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 from django.db import DatabaseError
 from django.test import SimpleTestCase
+from learner_api.models import EnrolmentUser, LearnerProfile
 
 from . import bulk_attendance_recorded as recorded
 from .bulk_attendance_kbc_history import _with_warnings
@@ -96,65 +98,82 @@ class BulkRecordedOutcomeTests(SimpleTestCase):
         self.watch.assert_not_called()
 
 
-class DirectoryEmailBridgeTests(SimpleTestCase):
-    def linked_cursor(self, rows):
-        cursor = MagicMock()
-        cursor.fetchall.return_value = rows
-        context = MagicMock()
-        context.__enter__.return_value = cursor
-        return cursor, context
-
-    def test_new_database_reads_lms_learners_and_never_connects_to_kbc(self):
-        cursor, context = self.linked_cursor([('301', 'A@Example.test'), ('302', 'b@example.test'),
-                                              ('302', 'c@example.test')])
-        with patch('curriculum_api.bulk_attendance_kbc_source.on_new_database', return_value=True), \
-             patch('curriculum_api.bulk_attendance_kbc_source.new_database_cursor', return_value=context) as linked, \
-             patch('curriculum_api.bulk_attendance_learners.learner_directory_dsn') as direct, \
-             patch('psycopg.connect') as connect:
-            self.assertEqual(recorded.directory_emails({'301', '302'}), {'301': 'a@example.test'})
-        linked.assert_called_once_with(read_only=True)
-        self.assertIn('"Learner".learners', cursor.execute.call_args[0][0])
-        direct.assert_not_called()
-        connect.assert_not_called()
-
-    def test_new_database_failure_is_reported_without_details(self):
-        cursor, context = self.linked_cursor([])
-        cursor.execute.side_effect = DatabaseError('host=secret')
-        with patch('curriculum_api.bulk_attendance_kbc_source.on_new_database', return_value=True), \
-             patch('curriculum_api.bulk_attendance_kbc_source.new_database_cursor', return_value=context):
-            with self.assertRaisesMessage(DatabaseError, 'The attendance identity bridge is unavailable.'):
-                recorded.directory_emails({'301'})
-
-
 class RecordedSourceIdentityTests(SimpleTestCase):
-    def test_legacy_email_bridge_uses_one_server_matched_enrolment_identity(self):
-        source = SimpleNamespace(id=17, aptem_id='old-id', learner_type='commercial', email='Legacy@Example.test')
+    def setUp(self):
+        # Created_users deliberately does not exist. Run the real mode join
+        # against a disposable fixture; ORM identity reads return profile rows.
+        self.database = sqlite3.connect(':memory:')
+        self.addCleanup(self.database.close)
+        self.database.execute("ATTACH DATABASE ':memory:' AS Learner")
+        self.database.executescript('''
+            CREATE TABLE "Learner".learners (id INTEGER, enrolment_id INTEGER, attendance_preference_id INTEGER);
+            CREATE TABLE "Learner".attendance_preferences (learner_id INTEGER PRIMARY KEY, mode TEXT, requested_mode TEXT);
+            INSERT INTO "Learner".learners VALUES (1,17,41), (2,18,42), (3,19,NULL);
+            INSERT INTO "Learner".attendance_preferences VALUES
+                (17,'lazy',NULL), (18,'live',NULL), (19,'lazy',NULL),
+                (41,'live','lazy'), (42,'lazy',NULL);
+        ''')
+        self.profiles = [SimpleNamespace(id=1, enrolment_id=17, aptem_id=301, learner_type='commercial'),
+                         SimpleNamespace(id=2, enrolment_id=18, aptem_id=302, learner_type='apprenticeship'),
+                         SimpleNamespace(id=3, enrolment_id=19, aptem_id=303, learner_type='commercial')]
         connection = MagicMock()
         cursor = connection.cursor.return_value.__enter__.return_value
-        cursor.fetchall.return_value = [(17,)]
-        with patch.object(recorded.EnrolmentUser, 'all_learners') as users, \
-             patch.object(recorded, 'connections', {'enrolment': connection}), \
-             patch.object(recorded, 'directory_emails', return_value={'301': 'legacy@example.test'}), \
-             patch('learner_api.attendance_mode._ready', return_value=True):
-            users.filter.return_value.only.return_value = []
-            users.annotate.return_value.filter.return_value.only.return_value = [source]
-            self.assertEqual(recorded.recorded_sources({'301'}), {'301': source})
-            users.annotate.return_value.filter.return_value.only.return_value = [source, source]
-            self.assertEqual(recorded.recorded_sources({'301'}), {})
+        def execute(sql, params):
+            ids = params[0]
+            sql = sql.replace('=ANY(%s)', ' IN (' + ','.join('?' for _ in ids) + ')')
+            cursor.fetchall.return_value = self.database.execute(sql, ids).fetchall()
+        cursor.execute.side_effect = execute
+        self.enterContext(patch.object(recorded, 'connections', {'enrolment': connection}))
+        self.enterContext(patch('learner_api.attendance_mode._ready', return_value=True))
+        self.enterContext(patch.object(EnrolmentUser.all_learners, 'get_queryset',
+                                      side_effect=AssertionError('Created_users must not be read')))
+        manager = self.enterContext(patch.object(LearnerProfile, 'objects'))
+        def filter_profiles(**kwargs):
+            query = MagicMock()
+            query.only.return_value = [p for p in self.profiles if p.aptem_id in kwargs['aptem_id__in']]
+            return query
+        manager.filter.side_effect = filter_profiles
 
-    def test_uses_only_active_saved_modes_and_refuses_ambiguous_aptem_identities(self):
-        sources = [SimpleNamespace(id=17, aptem_id='301', learner_type='commercial'),
-                   SimpleNamespace(id=18, aptem_id='302', learner_type='apprenticeship'),
-                   SimpleNamespace(id=19, aptem_id='303', learner_type='apprenticeship'),
-                   SimpleNamespace(id=20, aptem_id='303', learner_type='commercial')]
-        connection = MagicMock()
-        cursor = connection.cursor.return_value.__enter__.return_value
-        cursor.fetchall.return_value = [(17,), (19,), (20,)]
-        with patch.object(recorded.EnrolmentUser, 'all_learners') as users, \
-             patch.object(recorded, 'connections', {'enrolment': connection}), \
-             patch('learner_api.attendance_mode._ready', return_value=True):
-            users.filter.return_value.only.return_value = sources
-            actual = recorded.recorded_sources({'301', '302', '303'})
-        self.assertEqual(actual, {'301': sources[0]})
-        self.assertIn("mode='lazy'", cursor.execute.call_args.args[0])
-        self.assertNotIn('requested_mode', cursor.execute.call_args.args[0])
+    def test_saved_mode_uses_profile_fk_not_legacy_id_or_pending_request(self):
+        self.assertEqual(recorded.recorded_sources({'301', '302', '303'}),
+                         {'302': recorded.RecordingIdentity(18, 'apprenticeship', 2)})
+
+    def test_both_kinds_retain_their_historical_watch_keys_from_learners(self):
+        for kind in ('commercial', 'apprenticeship'):
+            with self.subTest(kind=kind):
+                self.profiles[1].learner_type = kind
+                self.assertEqual(recorded.recorded_sources({'302'})['302'],
+                                 recorded.RecordingIdentity(18, kind, 2))
+
+    def test_missing_aptem_does_not_fall_back_to_created_users_or_email(self):
+        self.profiles[1].aptem_id = None
+        self.assertEqual(recorded.recorded_sources({'302'}), {})
+
+    def test_duplicate_aptem_cannot_acquire_another_profiles_recording_credit(self):
+        self.profiles[0].aptem_id = 302
+        self.assertEqual(recorded.recorded_sources({'302'}), {})
+
+    def test_incomplete_recording_identity_is_reported_without_guessing_a_kind(self):
+        for field, value in (('enrolment_id', None), ('learner_type', None), ('learner_type', 'unknown')):
+            with self.subTest(field=field, value=value), patch.object(self.profiles[1], field, value):
+                with self.assertRaisesMessage(DatabaseError, 'historical recording identity'):
+                    recorded.recorded_sources({'302'})
+
+    def test_live_learner_does_not_need_a_recording_identity(self):
+        self.profiles[0].enrolment_id = None
+        self.profiles[0].learner_type = None
+        self.assertEqual(recorded.recorded_sources({'301'}), {})
+
+    def test_manual_corrections_use_exact_profile_and_keep_legacy_evidence_keys(self):
+        with patch('coach_api.models.CoachAttendanceSourceAdjustment.objects') as adjustments:
+            adjustments.filter.return_value.values.return_value = [
+                {'learner_profile_id': 2, 'source': 'microsoft-teams', 'source_id': 'OCC:shared',
+                 'status': 'absent', 'is_deleted': False},
+                {'learner_profile_id': 2, 'source': 'kbc-attendance', 'source_id': 'deleted',
+                 'status': None, 'is_deleted': True},
+                {'learner_profile_id': 2, 'source': 'kbc-attendance', 'source_id': 'unchanged',
+                 'status': None, 'is_deleted': False},
+            ]
+            actual = recorded.manual_corrections(recorded.recorded_sources({'302'}))
+            self.assertEqual(actual, {(18, 'microsoft-teams', 'OCC:shared'), (18, 'kbc-attendance', 'deleted')})
+            self.assertEqual(set(adjustments.filter.call_args.kwargs['learner_profile_id__in']), {2})

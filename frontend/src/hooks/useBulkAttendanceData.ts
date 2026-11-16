@@ -242,9 +242,8 @@ function toBulkData(
     if (email) placementsByEmail.set(email, [...(placementsByEmail.get(email) ?? []), placement]);
   });
   const learners: Learner[] = directory.map((learner) => {
-    // Only an unambiguous email match may supply curriculum placement. KBC
-    // IDs and curriculum learner IDs belong to different databases.
-    // The LMS email covers learners whose KBC directory email differs.
+    // Older directory responses need an unambiguous email match. The current
+    // response carries the learner profile's placement keys directly.
     const matches = [learner.email, learner.lmsEmail ?? ""]
       .map(normalize)
       .filter(Boolean)
@@ -255,19 +254,20 @@ function toBulkData(
     ])).values()];
     const placement = memberships.length === 1 ? memberships[0] : undefined;
     const matchingProgrammes = programmes.filter((item) => normalize(item.name) === normalize(learner.programme));
-    const programmeId = placement?.programmeId ?? (matchingProgrammes.length === 1 ? matchingProgrammes[0].id : "");
+    const programmeId = learner.programmeId ?? placement?.programmeId
+      ?? (matchingProgrammes.length === 1 ? matchingProgrammes[0].id : "");
     const matchingGroups = groups.filter((item) =>
       programmeId && cohortById.get(item.cohortId)?.programmeId === programmeId
       && normalize(item.name) === normalize(learner.group),
     );
     const group = matchingGroups.length === 1 ? matchingGroups[0] : undefined;
-    const cohortId = placement?.cohortId || group?.cohortId || "";
+    const cohortId = learner.cohortId ?? (placement?.cohortId || group?.cohortId || "");
     return {
       // Keep the KBC key stable; the separate curriculumId retains matches
       // for archive entries saved before the KBC directory became the source.
       id: `kbc:${learner.id}`,
       kbcId: String(learner.id),
-      curriculumId: placement?.id,
+      curriculumId: learner.profileId ?? placement?.id,
       name: learner.name || learner.email,
       email: learner.email,
       lmsEmail: learner.lmsEmail,
@@ -275,10 +275,11 @@ function toBulkData(
       group: learner.group,
       programmeId,
       cohortId,
-      groupId: placement?.groupId || group?.id || "",
-      endDate: placement?.endDate || cohortById.get(cohortId)?.endDate || learner.endDate,
-      status: learner.status || learner.kbcStatus || "",
-        attendanceMode: learner.attendanceMode === "lazy" ? "lazy" : "live",
+      groupId: learner.groupId ?? (placement?.groupId || group?.id || ""),
+      endDate: learner.profileId !== undefined ? learner.endDate
+        : placement?.endDate || cohortById.get(cohortId)?.endDate || learner.endDate,
+      status: learner.status ?? learner.kbcStatus ?? "",
+      attendanceMode: learner.attendanceMode === "lazy" ? "lazy" : "live",
     };
   });
 
@@ -360,9 +361,9 @@ export function useBulkAttendanceData(archiveIds: string[] = []): BulkAttendance
       // entities available in the cascading selectors.
       // A cancelled read is not a failure: falling back on an abort (StrictMode
       // remount, leaving the page) started the full ~25 MB overview for nobody.
-      fetchCurriculumOverview(controller.signal, { compact: true, visibility: "all" }).catch((reason: unknown) => {
+      fetchCurriculumOverview(controller.signal, { compact: true, visibility: "all", learnerSource: "profiles" }).catch((reason: unknown) => {
         if (controller.signal.aborted) throw reason;
-        return fetchCurriculumOverview(controller.signal, { visibility: "all" });
+        return fetchCurriculumOverview(controller.signal, { visibility: "all", learnerSource: "profiles" });
       }))
       .then((value) => {
         if (!controller.signal.aborted) {

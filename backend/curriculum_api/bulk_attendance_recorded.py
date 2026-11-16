@@ -1,92 +1,48 @@
 """Project saved recording outcomes without changing attendance evidence."""
 from collections import defaultdict
+from dataclasses import dataclass
 from datetime import date
 
 from django.db import DatabaseError, connections
-from django.db.models.functions import Lower
 from django.utils import timezone
 
-from learner_api.models import EnrolmentUser, LearnerProfile
 from learner_api.recorded_attendance import apply_recorded_attendance
+from .bulk_attendance_identity import profiles_by_aptem_ids
 from .models import LiveSession, LiveSessionLearnerAttendance, LiveSessionOccurrence
 
 
-def directory_emails(learner_ids):
-    """The same server-owned legacy email bridge used by the learner directory.
-
-    On the new database the register's directory is the LMS's own learner list
-    ("Learner".learners, keyed by the Aptem id that KBC records are filed
-    under), so the bridge reads it there through the pooled connection instead
-    of opening a direct connection to the KBC directory.
-    """
-    from .bulk_attendance_kbc_source import new_database_cursor, on_new_database
-
-    if on_new_database():
-        try:
-            with new_database_cursor(read_only=True) as cursor:
-                cursor.execute('''SELECT l.aptem_id::text, l.email FROM "Learner".learners l
-                    WHERE l.aptem_id::text = ANY(%s)''', [list(learner_ids)])
-                rows = cursor.fetchall()
-        except DatabaseError:
-            raise DatabaseError('The attendance identity bridge is unavailable.') from None
-        return _unique_emails(rows)
-
-    import psycopg
-    from .bulk_attendance_learners import learner_directory_dsn
-
-    dsn = learner_directory_dsn()
-    if not dsn:
-        return {}
-    try:
-        with psycopg.connect(dsn, connect_timeout=10) as connection:
-            connection.read_only = True
-            connection.execute("SET LOCAL statement_timeout = '10s'")
-            rows = connection.execute('''SELECT "ID"::text, "Email" FROM public.kbc_users_data
-                WHERE "ID"::text=ANY(%s)''', [list(learner_ids)]).fetchall()
-    except psycopg.Error:
-        raise DatabaseError('The attendance identity bridge is unavailable.') from None
-    return _unique_emails(rows)
-
-
-def _unique_emails(rows):
-    """{learner id: lower-cased email}; an id with more than one email is left out."""
-    by_id = defaultdict(set)
-    for learner_id, email in rows:
-        if email and str(email).strip():
-            by_id[str(learner_id)].add(str(email).strip().lower())
-    return {key: next(iter(values)) for key, values in by_id.items() if len(values) == 1}
+@dataclass(frozen=True)
+class RecordingIdentity:
+    """Legacy watch key stored on learners, independent of its enrolment row."""
+    id: int
+    learner_type: str
+    profile_id: int
 
 
 def recorded_sources(learner_ids):
-    """Resolve unique enrolment identities and active preferences, for both kinds."""
+    """Resolve evidence identities and the profile-linked mode, for both kinds."""
     from learner_api.attendance_mode import TABLE, _ready
 
-    sources = list(EnrolmentUser.all_learners.filter(aptem_id__in=learner_ids)
-                   .only('id', 'aptem_id', 'learner_type'))
-    by_aptem = defaultdict(list)
-    for source in sources:
-        by_aptem[str(source.aptem_id)].append(source)
-    emails = directory_emails(set(learner_ids) - set(by_aptem)) if set(learner_ids) - set(by_aptem) else {}
-    if emails:
-        by_email = defaultdict(list)
-        fallback = list(EnrolmentUser.all_learners.annotate(attendance_email=Lower('email'))
-                        .filter(attendance_email__in=set(emails.values()))
-                        .only('id', 'aptem_id', 'learner_type', 'email'))
-        sources.extend(fallback)
-        for source in fallback:
-            by_email[source.email.strip().lower()].append(source)
-        for key, email in emails.items():
-            by_aptem[key] = by_email.get(email, [])
-    if not sources:
+    profiles = profiles_by_aptem_ids(learner_ids, fields=('enrolment_id', 'learner_type'))
+    if not profiles:
         return {}
     with connections['enrolment'].cursor() as cursor:
         if not _ready(cursor):
             return {}
-        cursor.execute(f"SELECT learner_id FROM {TABLE} WHERE mode='lazy' AND learner_id=ANY(%s)",
-                       [[source.id for source in sources]])
+        cursor.execute(f'''SELECT l.id FROM "Learner".learners l
+            JOIN {TABLE} pref ON pref.learner_id=l.attendance_preference_id
+            WHERE pref.mode='lazy' AND l.id=ANY(%s)''',
+                       [[profile.id for profile in profiles.values()]])
         recorded_ids = {row[0] for row in cursor.fetchall()}
-    return {key: values[0] for key, values in by_aptem.items()
-            if len(values) == 1 and values[0].id in recorded_ids}
+    sources = {}
+    for key, profile in profiles.items():
+        if profile.id not in recorded_ids:
+            continue
+        if profile.enrolment_id is None or profile.learner_type not in {'commercial', 'apprenticeship'}:
+            # A guessed kind/id could credit another person's watch history.
+            raise DatabaseError('A recorded learner is missing its historical recording identity.')
+        sources[key] = RecordingIdentity(profile.enrolment_id, profile.learner_type, profile.id)
+    return sources
 
 
 def register_context(records):
@@ -105,8 +61,7 @@ def register_context(records):
 def manual_corrections(sources):
     from coach_api.models import CoachAttendanceSourceAdjustment
 
-    profiles = dict(LearnerProfile.objects.filter(enrolment_id__in=[source.id for source in sources.values()])
-                    .values_list('id', 'enrolment_id'))
+    profiles = {source.profile_id: source.id for source in sources.values()}
     return {(profiles[row['learner_profile_id']], row['source'], row['source_id'])
             for row in CoachAttendanceSourceAdjustment.objects.filter(learner_profile_id__in=profiles)
             .values('learner_profile_id', 'source', 'source_id', 'status', 'is_deleted')
