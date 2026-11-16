@@ -160,6 +160,7 @@ export function CompactModules({ kind, id, catalogue: incomingCatalogue, loading
         const card = catalogue.modules.find(item => item.id === subject.id)!;
         return <SubjectCard key={subject.id} subject={subject} cover={card.cover || undefined}
           teachingActive={moduleTeachingActive(catalogue.moduleActivity?.[subject.id], learningToday())}
+          ksbProgress={card.ksbProgress ?? null}
           tone={subjectTones.get(subject.id)} onOpen={() => open(subject)} template={certificate.template}
           csrfToken={certificate.csrfToken} kind={kind} learnerId={id} planModule={schedule.modules.find(item => item.id === subject.moduleId)}
           moduleProgress={card.actualHours == null ? undefined : { hours: { actual: card.actualHours } }} />;
