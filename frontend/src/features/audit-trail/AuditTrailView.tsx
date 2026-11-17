@@ -5,6 +5,7 @@ import { type ReactNode, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { AppIcon } from '@/components/feature/AppIcon';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
+import { WorkspaceHeroBanner } from '@/components/feature/WorkspaceHeroBanner';
 import { auditEventHref, auditFieldLabel, auditFieldValueLabel, auditValueLabel, auditValueTitle, clockLabel, durationLabel, spanLabel, stampLabel, timeMetaLabel } from './activityTime';
 import { useAuditRecordNames } from './auditNames';
 import { actionMeaning, changeStory } from './changeStory';
@@ -30,7 +31,6 @@ import {
 import {
   EntityEmptyState,
   EntityFilterBar,
-  EntityHero,
   EntityPagination,
   EntityTable,
   HeroSecondaryButton,
@@ -686,7 +686,7 @@ export default function AuditTrailView({ scope }: { scope: AuditTrailScope }) {
       pageTitle="Audit Trail"
       pageSubtitle={`Who used ${scope.subjectLabel}, and what they changed`}
     >
-      <div className="min-h-full space-y-4 bg-background-100 p-4 sm:p-5 lg:p-6">
+      <div className="min-h-full min-w-0 space-y-4 p-3 md:space-y-5 md:p-6">
         <AuditTrailOverview
           scope={scope}
           trail={trail}
@@ -696,36 +696,6 @@ export default function AuditTrailView({ scope }: { scope: AuditTrailScope }) {
           windowDays={Number(tab === 'changes' ? changeWindowDays : windowDays)}
           onWorkspace={scope.showWorkspaceFilter ? setWorkspace : undefined}
         />
-        {/* The reading half keeps the hero and its four counts. The Changes
-            half has its own compact header below, immediately above the log it
-            describes — stat tiles pushed the first row of a 1,694-row log
-            below the fold on every laptop. */}
-        {tab === 'people' && (
-          <EntityHero
-            eyebrow="Record activity"
-            title="Audit Trail"
-            description={
-              people && !people.visitsRecorded
-                ? `Who used ${scope.subjectLabel}. Page opens are not being recorded yet, so this is read from recorded changes and account sign-ins alone — it can say who saved something and when they signed in, never which pages they looked at.`
-                : `Who used ${scope.subjectLabel}: when they were here, which pages they opened, what they did on each, and what they changed. Open a person to see their visits in full.`
-            }
-            stats={[
-              { icon: 'ri-group-line', label: 'People', value: people?.totals.people ?? 0, detail: `Used ${scope.subjectLabel} in this period` },
-              { icon: 'ri-file-list-3-line', label: 'Pages opened', value: people?.totals.pageViews ?? 0, detail: 'Across everyone' },
-              { icon: 'ri-cursor-line', label: 'Actions', value: (people?.totals.readActions ?? 0) + (people?.totals.changes ?? 0), detail: 'Searches, exports and saves' },
-              { icon: 'ri-time-line', label: 'Window', value: `${people?.windowDays ?? windowDays}d`, detail: 'Period being read' },
-            ]}
-            loading={peopleLoading && !people}
-            secondaryActions={(
-              <HeroSecondaryButton
-                icon="ri-refresh-line"
-                label="Refresh"
-                onClick={() => setReloadToken(token => token + 1)}
-              />
-            )}
-          />
-        )}
-
         <WorkspaceTabs
           tabs={[
             { key: 'changes', label: 'Changes', icon: 'ri-history-line', count: trail?.total },
@@ -1055,49 +1025,42 @@ function AuditTrailOverview({
   };
 
   return (
-    <section className="overflow-hidden rounded-3xl border border-primary-200/70 bg-background-50 shadow-sm">
-      <div className="relative overflow-hidden bg-[radial-gradient(circle_at_88%_-30%,rgba(124,58,237,0.22),transparent_42%),linear-gradient(135deg,#24104f_0%,#4c1d95_58%,#6d28d9_100%)] px-5 py-5 text-white sm:px-6 sm:py-6">
-        <div className="relative flex flex-col gap-5 xl:flex-row xl:items-end xl:justify-between">
-          <div className="max-w-3xl">
-            <p className="text-[10px] font-bold uppercase tracking-[0.22em] text-violet-200">System oversight</p>
-            <h1 className="mt-2 font-heading text-2xl font-black tracking-tight sm:text-3xl">
-              {scope.showWorkspaceFilter ? 'Everything happening across the LMS' : `${scope.workspaceLabel} activity`}
-            </h1>
-            <p className="mt-2 max-w-2xl text-[13px] leading-6 text-violet-100/80">
-              Follow the people, records and actions behind every workspace in one place. Open any change for the exact fields, evidence and source behind it.
-            </p>
-          </div>
-          <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 xl:min-w-[470px]">
-            <OverviewStat label="Changes" value={total == null ? '—' : total.toLocaleString()} detail="in this window" />
-            <OverviewStat label="Workspaces" value={workspaceCount || '—'} detail="available to review" />
-            <OverviewStat label="Coverage" value={workspaceCount ? `${covered}/${workspaceCount}` : '—'} detail="with change history" />
-            <OverviewStat label="Window" value={`${windowDays}d`} detail="period being read" />
-          </div>
-        </div>
-      </div>
-
-      <div className="border-t border-background-200 px-4 py-4 sm:px-5">
-        <div className="flex flex-wrap items-end justify-between gap-3">
+    <>
+      <WorkspaceHeroBanner
+        heading="h1"
+        icon="ri-history-line"
+        eyebrow="System oversight"
+        title={scope.showWorkspaceFilter ? 'Everything happening across the LMS' : `${scope.workspaceLabel} activity`}
+        description="Follow the people, records and actions behind every workspace in one place. Open any change for the exact fields, evidence and source behind it."
+        stats={[
+          { label: 'Changes', value: <span title="In this window">{total == null ? '—' : total.toLocaleString()}</span> },
+          { label: 'Workspaces', value: <span title="Available to review">{workspaceCount || '—'}</span> },
+          { label: 'Coverage', value: <span title="With change history">{workspaceCount ? `${covered}/${workspaceCount}` : '—'}</span> },
+          { label: 'Window', value: <span title="Period being read">{windowDays}d</span> },
+        ]}
+      />
+      <section className="rounded-2xl border border-[var(--kbc-border)] bg-[var(--kbc-surface)] p-3 md:p-4">
+        <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
             <h2 className="font-heading text-[14px] font-bold text-foreground-950">Workspace coverage</h2>
-            <p className="mt-0.5 text-[11px] text-foreground-500">Choose a workspace to focus the feed. Status tells you how much evidence is available for it.</p>
+            <p className="mt-1 text-xs leading-5 text-foreground-500">Choose a workspace to focus the feed. Status tells you how much evidence is available for it.</p>
           </div>
-          <div className="flex flex-wrap items-center gap-2 text-[10px] font-semibold text-foreground-500">
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-[11px] font-semibold text-foreground-500">
             <span className="inline-flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-emerald-500" /> Full history</span>
             <span className="inline-flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-amber-500" /> Timestamp history</span>
             <span className="inline-flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-foreground-300" /> Not connected</span>
           </div>
         </div>
-        <div className="mt-3 grid max-h-56 gap-2 overflow-y-auto pr-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+        <div className="mt-4 grid min-w-0 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
           {scope.showWorkspaceFilter && (
             <button
               type="button"
               onClick={() => onWorkspace?.('')}
               aria-pressed={!workspace}
-              className={`flex min-w-0 items-center gap-2.5 rounded-xl border px-3 py-2.5 text-left transition-smooth ${!workspace ? 'border-primary-300 bg-primary-50 shadow-sm' : 'border-background-200 bg-background-50 hover:border-primary-200 hover:bg-primary-50/50'}`}
+              className={`flex min-h-[72px] min-w-0 items-center gap-3 rounded-xl border p-3 text-left transition-smooth ${!workspace ? 'border-primary-300 bg-primary-50 shadow-sm' : 'border-background-200 bg-background-50 hover:border-primary-200 hover:bg-primary-50/50'}`}
             >
-              <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary-100 text-primary-700"><AppIcon className="ri-apps-2-line text-base" /></span>
-              <span className="min-w-0"><span className="block truncate text-[12px] font-bold text-foreground-900">All workspaces</span><span className="block text-[10px] text-foreground-500">System-wide view</span></span>
+              <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary-100 text-primary-700"><AppIcon className="ri-apps-2-line text-base" /></span>
+              <span className="min-w-0 flex-1"><span className="block break-words text-[13px] font-bold text-foreground-900">All workspaces</span><span className="mt-0.5 block text-[11px] text-foreground-500">System-wide view</span></span>
               {!workspace && <AppIcon className="ml-auto shrink-0 text-primary-600 ri-check-line" />}
             </button>
           )}
@@ -1112,28 +1075,18 @@ function AuditTrailOverview({
                 onClick={() => onWorkspace?.(entry.value)}
                 disabled={!onWorkspace}
                 aria-pressed={selected}
-                className={`flex min-w-0 items-center gap-2.5 rounded-xl border px-3 py-2.5 text-left transition-smooth ${selected ? 'border-primary-300 bg-primary-50 shadow-sm' : 'border-background-200 bg-background-50 hover:border-primary-200 hover:bg-primary-50/50'} disabled:cursor-default`}
+                className={`flex min-h-[72px] min-w-0 items-center gap-3 rounded-xl border p-3 text-left transition-smooth ${selected ? 'border-primary-300 bg-primary-50 shadow-sm' : 'border-background-200 bg-background-50 hover:border-primary-200 hover:bg-primary-50/50'} disabled:cursor-default`}
               >
-                <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ${selected ? 'bg-primary-100 text-primary-700' : 'bg-background-100 text-foreground-500'}`}><AppIcon className={`${WORKSPACE_ICONS[entry.value] || 'ri-layout-grid-line'} text-base`} /></span>
-                <span className="min-w-0 flex-1"><span className="block truncate text-[12px] font-bold text-foreground-900">{label}</span><span className={`mt-0.5 inline-flex max-w-full truncate rounded-full border px-1.5 py-0.5 text-[9px] font-bold ${statusTone[status]}`}>{statusLabel[status]}</span></span>
+                <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg ${selected ? 'bg-primary-100 text-primary-700' : 'bg-background-100 text-foreground-500'}`}><AppIcon className={`${WORKSPACE_ICONS[entry.value] || 'ri-layout-grid-line'} text-base`} /></span>
+                <span className="min-w-0 flex-1"><span className="block break-words text-[13px] font-bold text-foreground-900">{label}</span><span className={`mt-1 inline-flex max-w-full rounded-full border px-2 py-0.5 text-[10px] font-bold ${statusTone[status]}`}>{statusLabel[status]}</span></span>
                 {selected && <AppIcon className="shrink-0 text-primary-600 ri-check-line" />}
               </button>
             );
           })}
           {!workspaces.length && <div className="col-span-full rounded-xl border border-dashed border-background-200 bg-background-50 px-3 py-4 text-[11px] text-foreground-400">Workspace coverage is loading…</div>}
         </div>
-      </div>
-    </section>
-  );
-}
-
-function OverviewStat({ label, value, detail }: { label: string; value: string | number; detail: string }) {
-  return (
-    <div className="rounded-2xl border border-white/15 bg-white/10 px-3 py-2.5 backdrop-blur-sm">
-      <p className="text-[9px] font-bold uppercase tracking-[0.14em] text-violet-200">{label}</p>
-      <p className="mt-1 text-xl font-black tabular-nums text-white">{value}</p>
-      <p className="mt-0.5 truncate text-[10px] text-violet-100/70">{detail}</p>
-    </div>
+      </section>
+    </>
   );
 }
 
@@ -1287,6 +1240,35 @@ function PeopleView({
             : `${people?.total ?? rows.length} ${(people?.total ?? rows.length) === 1 ? 'person' : 'people'}`
               + ` used ${scope.subjectLabel} in this period`
         }
+      />
+
+      <WorkspaceHeroBanner
+        icon="ri-group-line"
+        eyebrow="Record activity"
+        title="Audit Trail"
+        description={
+          people && !people.visitsRecorded
+            ? `Who used ${scope.subjectLabel}. Page opens are not being recorded yet, so this is read from recorded changes and account sign-ins alone — it can say who saved something and when they signed in, never which pages they looked at.`
+            : `Who used ${scope.subjectLabel}: when they were here, which pages they opened, what they did on each, and what they changed. Open a person to see their visits in full.`
+        }
+        stats={[
+          { icon: 'ri-group-line', label: 'People', value: people?.totals.people ?? 0, detail: `Used ${scope.subjectLabel} in this period` },
+          { icon: 'ri-file-list-3-line', label: 'Pages opened', value: people?.totals.pageViews ?? 0, detail: 'Across everyone' },
+          { icon: 'ri-cursor-line', label: 'Actions', value: (people?.totals.readActions ?? 0) + (people?.totals.changes ?? 0), detail: 'Searches, exports and saves' },
+          { icon: 'ri-time-line', label: 'Window', value: `${people?.windowDays ?? windowDays}d`, detail: 'Period being read' },
+        ].map(({ detail, ...stat }) => ({
+          ...stat,
+          value: loading && !people
+            ? <span className="inline-block h-5 w-10 animate-pulse rounded bg-background-200" />
+            : <span title={detail}>{stat.value}</span>,
+        }))}
+        actions={(
+          <HeroSecondaryButton
+            icon="ri-refresh-line"
+            label="Refresh"
+            onClick={onRetry}
+          />
+        )}
       />
 
       <EntityTable

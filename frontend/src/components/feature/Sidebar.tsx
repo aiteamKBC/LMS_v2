@@ -719,6 +719,25 @@ function ExpandedGroup({ item, isActive, isExpanded, onToggle, onNavigate, prese
 }) {
   const anyChildActive = item.children?.some(child => isActive(child.href, child.matchPaths)) ?? false;
   const activeChildIndex = item.children?.findIndex(child => isActive(child.href, child.matchPaths)) ?? -1;
+  const submenuRef = useRef<HTMLDivElement>(null);
+  const [activeLineHeight, setActiveLineHeight] = useState(0);
+
+  useLayoutEffect(() => {
+    const submenu = submenuRef.current;
+    if (presentation !== 'row' || !submenu) return;
+
+    // Theme borders, wrapped labels and zoom can change each row's height.
+    // End the highlight at the actual active connector instead of assuming 36px rows.
+    const updateLineHeight = () => {
+      const active = submenu.querySelector<HTMLElement>('[data-active-path="true"]');
+      setActiveLineHeight(active ? active.offsetTop + active.offsetHeight / 2 : 0);
+    };
+    updateLineHeight();
+    const observer = new ResizeObserver(updateLineHeight);
+    observer.observe(submenu);
+    submenu.querySelectorAll('.kbc-learner-submenu-item').forEach(child => observer.observe(child));
+    return () => observer.disconnect();
+  }, [activeChildIndex, isExpanded, item.children, presentation]);
 
   return (
     <div data-nav-group={item.id}>
@@ -759,6 +778,7 @@ function ExpandedGroup({ item, isActive, isExpanded, onToggle, onNavigate, prese
 
       {presentation !== 'rail' && (isExpanded || presentation === 'row') && item.children && (
         <div
+          ref={submenuRef}
           className={presentation === 'tiles' ? 'grid grid-cols-1 gap-2' : presentation === 'row' ? 'kbc-learner-submenu' : 'ml-[19px] mt-0.5 space-y-0.5 border-l border-foreground-100 pl-2'}
           data-open={presentation === 'row' ? isExpanded : undefined}
           aria-hidden={presentation === 'row' && !isExpanded ? true : undefined}
@@ -768,7 +788,7 @@ function ExpandedGroup({ item, isActive, isExpanded, onToggle, onNavigate, prese
               <span
                 key={activeChildIndex}
                 className="kbc-learner-submenu-track-fill"
-                style={{ '--kbc-active-line-height': `${activeChildIndex >= 0 ? (activeChildIndex + 0.5) * 36 : 0}px` } as CSSProperties}
+                style={{ '--kbc-active-line-height': `${activeLineHeight}px` } as CSSProperties}
               />
             </span>
           )}

@@ -6047,6 +6047,8 @@ html[data-theme="light"][data-accessibility="monochrome"] {
   padding: 1rem 1.25rem 1.5rem;
 }
 
+/* Match the solid white utility exactly so translucent hero tiles keep their
+   background and contrast in every workspace. */
 .dashboard-theme .ui-panel,
 .dashboard-theme .ui-metric-card,
 .dashboard-theme .ui-filter-toolbar,
@@ -6054,7 +6056,7 @@ html[data-theme="light"][data-accessibility="monochrome"] {
 .dashboard-theme .ui-action-row,
 .dashboard-theme .workspace-main .card-premium,
 .dashboard-theme .workspace-main :is(section, article, div)[class*="bg-background-50"][class*="rounded-"]:not(:has(> svg)),
-.dashboard-theme .workspace-main :is(section, article, div)[class*="bg-white"][class*="rounded-"]:not(:has(> svg)) {
+.dashboard-theme .workspace-main :is(section, article, div)[class~="bg-white"][class*="rounded-"]:not(:has(> svg)) {
   border: 1px solid var(--kbc-border) !important;
   border-radius: var(--kbc-radius-card) !important;
   background: var(--kbc-surface) !important;

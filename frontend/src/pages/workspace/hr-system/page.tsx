@@ -11,7 +11,6 @@ import styles from './workspace.module.css';
 
 const VIEWS = [
   { value: 'overview', label: 'Overview', icon: 'ri-dashboard-line' },
-  { value: 'learners', label: 'Learners', icon: 'ri-team-line' },
   { value: 'modules', label: 'Programme & modules', icon: 'ri-book-open-line' },
   { value: 'requests', label: 'Training requests', icon: 'ri-send-plane-line' },
   { value: 'certificates', label: 'Certificates', icon: 'ri-award-line' },
@@ -175,7 +174,7 @@ export default function HRSystemWorkspace() {
       <div className={styles.pageHeading}><div><p className={styles.eyebrow}><span className={styles.brandDot} /> KBC LEARNING · HR SYSTEM</p><h1>{view === 'overview' ? 'Learning that moves people forward.' : VIEWS.find(item => item.value === view)?.label}</h1><p className={styles.muted}>One clear view of programme hours, skills and the journey into Breathe HR.</p></div><button type="button" className={styles.primaryButton} onClick={() => go(view === 'connections' ? 'overview' : 'connections')}><AppIcon name="ri-links-line" />{view === 'connections' ? 'Back to overview' : 'Breathe connection'}</button></div>
       <div className={styles.demoNotice}><AppIcon name="ri-information-line" /><p><strong>Presentation demo.</strong> Three fictional learners. Sample hours, progress, KSBs and alerts. Sending from this screen is not enabled.</p><span>12 NOV 2026</span></div>
 
-      {(view === 'overview' || view === 'learners') && <>
+      {view === 'overview' && <>
         <div className={styles.metrics}>
           <div className={`${styles.metric} ${styles.featured}`}><div className={styles.metricTop}><span>Programme hours planned</span><AppIcon name="ri-time-line" /></div><strong>{number(DEMO_PROGRAMME.plannedHours * DEMO_LEARNERS.length)}<em>h</em></strong><p>850h × 3 learners <span>4 modules each</span></p></div>
           <div className={`${styles.metric} ${styles.mint}`}><div className={styles.metricTop}><span>Actual hours logged</span><AppIcon name="ri-bar-chart-line" /></div><strong>{number(DEMO_LEARNERS.reduce((sum, learner) => sum + actualHours(learner), 0))}<em>h</em></strong><p>900h · 810h · 360h <span>Across all learners</span></p></div>

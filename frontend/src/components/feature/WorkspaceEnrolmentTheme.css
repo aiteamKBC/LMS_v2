@@ -142,6 +142,13 @@
       color: var(--enrolment-ui-text) !important;
     }
 
+    /* The legacy hero rule fixes these values to a dark purple. Use the active
+       heading token on dark metric surfaces, including values with tooltips. */
+    [data-theme="dark"] .workspace-shell:not([data-workspace-role="curriculum"]):not(:has([data-audit-home="/workspace/auditor-copy"])) .workspace-hero-metric > p:last-child,
+    [data-theme="dark"] .workspace-shell:not([data-workspace-role="curriculum"]):not(:has([data-audit-home="/workspace/auditor-copy"])) .workspace-hero-metric > p:last-child > span {
+      color: var(--enrolment-ui-heading) !important;
+    }
+
     .workspace-shell:not([data-workspace-role="curriculum"]):not(:has([data-audit-home="/workspace/auditor-copy"])) .workspace-main :where(input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="color"]):not([type="hidden"]):not([type="file"]), select, textarea, button[role="combobox"], button[aria-haspopup="listbox"]) {
       border-color: var(--enrolment-ui-border) !important;
       border-radius: var(--lms-radius, 16px) !important;

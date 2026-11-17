@@ -35,16 +35,19 @@ describe('PageSkeleton', () => {
   it('reserves the real shell chrome so the swap to the page moves nothing', () => {
     const { container } = render(<PageSkeleton />);
 
+    expect(container.firstElementChild).toHaveClass('dashboard-theme', 'workspace-shell');
     // The rail comes from the same constant the real sidebar uses, so it cannot drift.
     const rail = container.querySelector<HTMLElement>(`[style*="width"]`);
     expect(rail?.style.width).toBe(`${SIDEBAR_EXPANDED_WIDTH}px`);
     expect(rail).toHaveClass('hidden', 'lg:block');
+    expect(rail).toHaveClass('kbc-workspace-sidebar');
     expect(rail?.style.marginInline).toBe('8px');
 
     // Header.tsx is h-16 and the shell's breadcrumb strip is h-8. Both used to
     // be missing or wrong here, which shifted the page vertically on every
     // navigation and then shifted it back.
     expect(container.querySelector('.h-16')).toHaveClass('mt-2', 'mb-2', 'lg:mt-3');
+    expect(container.querySelector('.h-16')).toHaveClass('kbc-workspace-topbar');
     expect(container.querySelector('.h-8')).not.toBeNull();
   });
 
@@ -71,10 +74,11 @@ describe('PageSkeleton', () => {
   it('keeps learner loading chrome aligned with the expanded learner shell', () => {
     const { container } = render(<PageSkeleton workspaceRole="learner" />);
     const root = container.firstElementChild;
-    const rail = container.querySelector<HTMLElement>('.kbc-learner-route-skeleton-sidebar');
-    expect(root).toHaveClass('kbc-learner-route-skeleton');
+    const rail = container.querySelector<HTMLElement>('.kbc-workspace-sidebar');
+    expect(root).toHaveClass('dashboard-theme', 'workspace-shell');
+    expect(root).toHaveAttribute('data-workspace-role', 'learner');
     expect(rail?.style.width).toBe(`${LEARNER_SIDEBAR_WIDTH}px`);
     expect(rail).toHaveClass('hidden', 'lg:block');
-    expect(container.querySelector('.kbc-learner-route-skeleton-header')).not.toBeNull();
+    expect(container.querySelector('.kbc-workspace-topbar')).not.toBeNull();
   });
 });

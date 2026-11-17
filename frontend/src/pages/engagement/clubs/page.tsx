@@ -16,6 +16,10 @@ import { useOperatorIdentity } from '@/hooks/useOperatorIdentity';
 import { LearnerPickerModal } from '@/pages/engagement/LearnerPickerModal';
 
 const engagementNav = roleNavMap.engagement;
+const CLUB_ACTION_FOCUS = 'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-300 focus-visible:ring-offset-1';
+const CLUB_PRIMARY_ACTION = `border border-[#E6DDCD] bg-[#F7F2E9] text-[#73552F] shadow-none hover:bg-[#EEE5D5] active:bg-[#E7DCC8] [html[data-theme=dark]_&]:border-[#5C5140] [html[data-theme=dark]_&]:bg-[#373128] [html[data-theme=dark]_&]:text-[#DDC9A7] [html[data-theme=dark]_&]:hover:bg-[#453C2F] [html[data-theme=dark]_&]:active:bg-[#504535] ${CLUB_ACTION_FOCUS}`;
+const CLUB_SECONDARY_ACTION = `border border-[#E5DEED] bg-[#F5F2F8] text-[#655575] shadow-none hover:bg-[#ECE6F2] active:bg-[#E3DAEC] [html[data-theme=dark]_&]:border-[#55485F] [html[data-theme=dark]_&]:bg-[#302836] [html[data-theme=dark]_&]:text-[#D8CBE4] [html[data-theme=dark]_&]:hover:bg-[#3C3145] [html[data-theme=dark]_&]:active:bg-[#473A52] ${CLUB_ACTION_FOCUS}`;
+const CLUB_FILTER_ACTIVE = 'border-[#D5C6E2] bg-[#ECE5F2] text-[#5D4671] shadow-none [html[data-theme=dark]_&]:border-[#62536D] [html[data-theme=dark]_&]:bg-[#393040] [html[data-theme=dark]_&]:text-[#E1D4EA]';
 
 // Clubs are organised by location (city/region). KBC does not provide
 // transport, so each club groups the learners who live near each other and
@@ -384,7 +388,7 @@ export default function EngagementClubsPage() {
         <div className="flex items-center gap-3 flex-wrap">
           <div className="flex items-center gap-1 bg-background-100 rounded-lg p-1 overflow-x-auto">
             {locations.map(loc => (
-              <button key={loc} onClick={() => setLocationFilter(loc)} className={`px-3 py-1.5 rounded-md text-[11px] font-semibold transition-smooth whitespace-nowrap cursor-pointer ${locationFilter === loc ? 'bg-[#541EA0] text-white shadow-sm' : 'text-foreground-500 hover:text-foreground-700'}`}>
+              <button key={loc} onClick={() => setLocationFilter(loc)} aria-pressed={locationFilter === loc} className={`px-3 py-1.5 rounded-md border text-[11px] font-semibold transition-smooth whitespace-nowrap cursor-pointer ${CLUB_ACTION_FOCUS} ${locationFilter === loc ? CLUB_FILTER_ACTIVE : 'border-transparent text-foreground-500 hover:text-foreground-700'}`}>
                 {loc === 'all' ? 'All locations' : loc}
               </button>
             ))}
@@ -417,7 +421,7 @@ export default function EngagementClubsPage() {
             Active only
           </label>
 
-          <button onClick={() => { setClubForm(emptyClubForm); setCreatingClub(true); }} className="ml-auto flex items-center gap-1.5 px-3.5 py-1.5 bg-primary-500 text-white rounded-lg text-[11px] font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap shadow-sm">
+          <button onClick={() => { setClubForm(emptyClubForm); setCreatingClub(true); }} className={`ml-auto flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-[11px] font-semibold transition-smooth cursor-pointer whitespace-nowrap ${CLUB_PRIMARY_ACTION}`}>
             <AppIcon className="ri-add-line text-sm"></AppIcon> Create club
           </button>
         </div>
@@ -473,7 +477,7 @@ export default function EngagementClubsPage() {
               <div className="space-y-2 mb-1">
                 <div className="flex items-center justify-between">
                   <p className="text-[11px] font-semibold text-foreground-500 uppercase tracking-wide">Meetings</p>
-                  <button onClick={() => { setAddingClubId(addingClubId === club.id ? null : club.id); setDraftTitle(''); }} className="flex items-center gap-1 px-2 py-1 rounded-md text-[10px] font-semibold text-primary-600 hover:bg-primary-50 transition-smooth cursor-pointer whitespace-nowrap">
+                  <button onClick={() => { setAddingClubId(addingClubId === club.id ? null : club.id); setDraftTitle(''); }} className={`flex items-center gap-1 px-2 py-1 rounded-md text-[10px] font-semibold transition-smooth cursor-pointer whitespace-nowrap ${CLUB_SECONDARY_ACTION}`}>
                     <AppIcon className="ri-add-line"></AppIcon> Add meeting
                   </button>
                 </div>
@@ -515,10 +519,10 @@ export default function EngagementClubsPage() {
                         )}
                       </div>
                       <div className="shrink-0 flex items-center gap-1">
-                        <button onClick={() => openAttendance(club, m)} className="flex items-center gap-1 px-2 py-1 rounded-md text-[10px] font-semibold text-secondary-600 hover:bg-secondary-50 transition-smooth cursor-pointer whitespace-nowrap">
+                        <button onClick={() => openAttendance(club, m)} className={`flex items-center gap-1 px-2 py-1 rounded-md text-[10px] font-semibold transition-smooth cursor-pointer whitespace-nowrap ${CLUB_SECONDARY_ACTION}`}>
                           <AppIcon className="ri-checkbox-circle-line"></AppIcon> Attendance
                         </button>
-                        <button onClick={() => openMeeting(club, m)} className="flex items-center gap-1 px-2 py-1 rounded-md text-[10px] font-semibold text-primary-600 hover:bg-primary-50 transition-smooth cursor-pointer whitespace-nowrap">
+                        <button onClick={() => openMeeting(club, m)} className={`flex items-center gap-1 px-2 py-1 rounded-md text-[10px] font-semibold transition-smooth cursor-pointer whitespace-nowrap ${CLUB_PRIMARY_ACTION}`}>
                           <AppIcon className="ri-edit-line"></AppIcon> Manage
                         </button>
                       </div>
@@ -528,11 +532,11 @@ export default function EngagementClubsPage() {
               </div>
 
               <div className="mt-auto flex items-center gap-2 pt-3 border-t border-foreground-200/40">
-                <button onClick={() => setMembersClubId(club.id)} className="flex items-center gap-1.5 px-3 py-1.5 bg-secondary-50 border border-secondary-200/50 text-secondary-700 rounded-lg text-[11px] font-medium hover:bg-secondary-100 transition-smooth cursor-pointer whitespace-nowrap">
+                <button onClick={() => setMembersClubId(club.id)} className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-medium transition-smooth cursor-pointer whitespace-nowrap ${CLUB_SECONDARY_ACTION}`}>
                   <AppIcon className="ri-group-line"></AppIcon> Members
                 </button>
                 <div className="flex-1"></div>
-                <button onClick={() => openManage(club)} className="flex items-center gap-1.5 px-3 py-1.5 bg-primary-500 text-white rounded-lg text-[11px] font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap">
+                <button onClick={() => openManage(club)} className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-semibold transition-smooth cursor-pointer whitespace-nowrap ${CLUB_PRIMARY_ACTION}`}>
                   <AppIcon className="ri-edit-line"></AppIcon> Manage
                 </button>
               </div>

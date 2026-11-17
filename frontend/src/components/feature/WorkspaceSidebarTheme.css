@@ -81,8 +81,15 @@
 
   .kbc-workspace-sidebar nav {
     background: transparent !important;
-    scrollbar-color: #ffffff59 transparent !important;
-    scrollbar-width: thin !important;
+    /* Hide the rail while retaining native wheel, touch and keyboard scrolling. */
+    scrollbar-width: none !important;
+    scrollbar-gutter: auto;
+  }
+
+  .kbc-workspace-sidebar nav::-webkit-scrollbar {
+    display: none !important;
+    width: 0 !important;
+    height: 0 !important;
   }
 
   .kbc-workspace-sidebar :is(.kbc-sidebar-theme-nav, .kbc-sidebar-nav) {
@@ -156,7 +163,7 @@
     color: white !important;
   }
 
-  /* Preserve the 36px rows used by the existing submenu progress track. */
+  /* Compact submenu rows; the progress track follows their rendered sizes. */
   .kbc-workspace-sidebar .kbc-learner-submenu-item > a {
     min-height: 36px !important;
     padding: 5px 8px !important;
