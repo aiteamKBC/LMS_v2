@@ -1,3 +1,4 @@
+import { LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
 import { lazy, Suspense, useEffect, useState } from 'react';
 import DOMPurify from 'dompurify';
 import { btnSecondary } from '@/pages/users/components/ui';
@@ -177,9 +178,9 @@ export function ProtectedFilePreview({ file }: { file: Activity['documents'][num
     void load();
     return () => { controller.abort(); if (objectUrl) URL.revokeObjectURL(objectUrl); };
   }, [file.url, file.display_name, file.content_type, retry]);
-  if (!loaded) return <p role="status" className="p-5 text-sm text-foreground-500">Loading document…</p>;
+  if (!loaded) return <p  className="p-5 text-sm text-foreground-500"><LoadingSkeleton label={"Loading document…"} /></p>;
   if (loaded.kind === 'error') return <div role="alert" className="space-y-3 p-4 text-sm"><p>{loaded.message}</p><button className={btnSecondary} onClick={() => setRetry(value => value + 1)}>Try again</button></div>;
-  if (loaded.kind === 'archive') return <Suspense fallback={<p role="status">Loading archive…</p>}><ArchivePreview buffer={loaded.buffer} title={file.display_name} /></Suspense>;
+  if (loaded.kind === 'archive') return <Suspense fallback={<p ><LoadingSkeleton label={"Loading archive…"} /></p>}><ArchivePreview buffer={loaded.buffer} title={file.display_name} /></Suspense>;
   if (loaded.kind === 'html') return <HtmlPreview html={loaded.html} title={file.display_name} />;
   if (loaded.kind === 'text') return <HtmlPreview html={`<pre>${escapeHtml(loaded.text)}</pre>`} title={file.display_name} />;
   if (loaded.kind === 'office') return <SourcePreview url={loaded.url} html={null} title={file.display_name} />;

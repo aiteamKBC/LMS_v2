@@ -1,3 +1,4 @@
+import { LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import Panel from "@/components/base/Panel";
@@ -25,6 +26,7 @@ import {
 } from "@/lib/qms";
 import type { DashboardFilters } from "@/types/qms";
 import { loadLiveQmsData, type LiveQmsData } from "./qualityData";
+import styles from "./ExecutiveOverview.module.css";
 
 const DEFAULT_FILTERS: DashboardFilters = {
   period: "Last 12 months",
@@ -144,7 +146,7 @@ export default function ExecutiveOverview() {
   };
 
   if (loading) {
-    return <div role="status" className="rounded-xl border border-background-200 bg-background-50 p-8 text-sm text-foreground-600">Loading live quality forms and saved reviews…</div>;
+    return <div  className="rounded-xl border border-background-200 bg-background-50 p-8 text-sm text-foreground-600"><LoadingSkeleton label={"Loading live quality forms and saved reviews…"} /></div>;
   }
 
   if (error) {
@@ -164,28 +166,28 @@ export default function ExecutiveOverview() {
   const tutors = Array.from(new Set(live.records.map(record => record.tutorName).filter((name): name is string => Boolean(name))));
 
   return (
-    <div className="space-y-5">
-      <header className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+    <div className={styles.overview}>
+      <header className={styles.hero}>
         <div className="min-w-0">
-          <p className="font-label text-[10.5px] font-semibold uppercase tracking-[0.14em] text-primary-700">
-            Quality overview · live LMS data
+          <p className={styles.eyebrow}>
+            <span className={styles.liveDot} aria-hidden="true" />
+            Quality assurance <span className={styles.liveLabel}>Live overview</span>
           </p>
-          <h1 className="mt-1 font-heading text-[26px] font-semibold leading-tight tracking-[-0.02em] text-foreground-950 md:text-[30px]">
+          <h1 className={styles.title}>
             Executive Overview
           </h1>
-          <p className="mt-1.5 max-w-2xl text-[13px] leading-relaxed text-foreground-600">
-            Every quality audit, learner and employer feedback form in one view — separated by form type,
-            policy version and the entity being evaluated.
+          <p className={styles.subtitle}>
+            A clearer view of quality, feedback and the areas that need your attention.
           </p>
         </div>
 
-        <div className="flex flex-col items-stretch gap-2 sm:flex-row sm:items-center">
+        <div className={styles.heroActions}>
           <button
             type="button"
             onClick={() => setShowPolicy((value) => !value)}
             aria-expanded={showPolicy}
             aria-controls="rag-policy-panel"
-            className="inline-flex items-center justify-center gap-1.5 whitespace-nowrap rounded-md border border-background-300 bg-background-50 px-3 py-2 font-label text-[12.5px] font-medium text-foreground-800 transition-colors hover:bg-background-100"
+            className={styles.secondaryButton}
           >
             <i className="ri-information-line text-[14px]" aria-hidden="true" />
             How RAG is calculated
@@ -197,7 +199,7 @@ export default function ExecutiveOverview() {
           <button
             type="button"
             onClick={() => exportRecordsCsv(records)}
-            className="inline-flex items-center justify-center gap-1.5 whitespace-nowrap rounded-md bg-primary-600 px-3.5 py-2 font-label text-[12.5px] font-semibold text-background-50 transition-colors hover:bg-primary-700"
+            className={styles.exportButton}
           >
             <i className="ri-download-2-line text-[14px]" aria-hidden="true" />
             Export {formatNumber(records.length)} records
@@ -232,10 +234,15 @@ export default function ExecutiveOverview() {
         </section>
       ) : null}
 
-      <div className="rounded-xl border border-primary-100 bg-primary-50/60 px-4 py-3 text-[12px] leading-relaxed text-foreground-700">
-        {live.notice}
-      </div>
+      <details className={styles.dataNotice}>
+        <summary>
+          <span><i className="ri-information-line" aria-hidden="true" /> About this data</span>
+          <span className={styles.refresh}>Updated {live.lastRefresh}</span>
+        </summary>
+        <p>{live.notice}</p>
+      </details>
 
+      <div className={styles.filters}>
       <FilterBar
         filters={filters}
         onChange={onChange}
@@ -252,6 +259,7 @@ export default function ExecutiveOverview() {
         fields={["period", "category", "formType", "feedbackType", "respondentType", "coach", "tutor", "rag", "query"]}
         resultLabel={`records · ${formatNumber(assessedInScope)} assessed · ${live.availability.actions ? `${formatNumber(openInScope)} open actions in scope` : 'action status unavailable'}`}
       />
+      </div>
 
       <OverviewKpis records={records} actions={actions} forms={forms} availability={live.availability} onOpenAuditTypes={() => setAuditTypesOpen(true)} />
 
@@ -259,8 +267,8 @@ export default function ExecutiveOverview() {
 
       <QualityDonuts records={records} selectedCoach={filters.coach} selectedTutor={filters.tutor} feedbackAvailable={live.availability.feedbackScores} />
 
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
-        <div className="lg:col-span-2">
+      <div className={styles.healthGrid}>
+        <div>
           <HealthOverview records={records} actions={actions} availability={live.availability} />
         </div>
         <CategoryRag records={records} />
@@ -270,6 +278,7 @@ export default function ExecutiveOverview() {
         title="Quality trend by month"
         description="Smoothed monthly record volume by status. Month labels reflect submission dates, not review dates."
         headingId="trend-heading"
+        className={styles.panel}
         action={
           <div className="flex flex-wrap items-center gap-x-4 gap-y-1 font-label text-[11px] text-foreground-600">
             <span>
@@ -290,14 +299,14 @@ export default function ExecutiveOverview() {
 
       <RegistryTable forms={forms} />
 
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
-        <div className="lg:col-span-2">
+      <div className={styles.healthGrid}>
+        <div>
           <ActionsList actions={actions} available={live.availability.actions} />
         </div>
       <ConcernList themes={live.concerns} available={live.availability.concerns} />
       </div>
 
-      <footer className="rounded-xl border border-background-300/70 bg-background-200/40 px-4 py-3.5">
+      <footer className={styles.notes}>
         <div className="flex flex-col gap-2 lg:flex-row lg:items-start lg:justify-between">
           <div className="space-y-1">
             <p className="flex items-center gap-1.5 font-label text-[11px] font-semibold uppercase tracking-[0.08em] text-foreground-700">

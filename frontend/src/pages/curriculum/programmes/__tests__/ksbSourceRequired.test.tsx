@@ -198,7 +198,7 @@ describe('Programmes page — a programme with no usable KSB source', { timeout:
     vi.mocked(fetchCurriculumKsbSourceDefinitions).mockReturnValueOnce(new Promise(done => { resolve = done; }));
     await renderProgrammes();
     await userEvent.click(await screen.findByRole('button', { name: 'View KSBs for Project Control Professional' }));
-    expect(await screen.findByText('Loading KSB definitions...')).toHaveAttribute('role', 'status');
+    expect(await screen.findByRole('status', { name: 'Loading KSB definitions...' })).toHaveAttribute('role', 'status');
     await userEvent.click(screen.getByRole('button', { name: 'Close KSB profile' }));
     await act(async () => { resolve(realProfile as unknown as CurriculumKsbSourceDefinitions); });
     expect(screen.queryByRole('button', { name: 'Close KSB profile' })).not.toBeInTheDocument();

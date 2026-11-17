@@ -8709,3 +8709,56 @@ html body #root .dashboard-theme .workspace-main table.signTable thead th {
   background: #a4adb7 !important;
   background-image: none !important;
 }
+
+/* Shared page alignment. Page containers fill the available content column;
+   cards keep their grid sizes and floating dialogs keep their own dimensions. */
+@media screen {
+  #root main:not(:where(dialog, [role="dialog"], [aria-modal="true"], .fixed, .absolute), :where(dialog, [role="dialog"], [aria-modal="true"], .fixed, .absolute) *) {
+    box-sizing: border-box;
+    width: 100% !important;
+    min-width: 0;
+    max-width: 100% !important;
+    margin-inline: 0 !important;
+    direction: ltr;
+    text-align: left;
+  }
+
+  #root main > :is(div, section, article, form):not(:where(dialog, [role="dialog"], [aria-modal="true"], .fixed, .absolute), :where(dialog, [role="dialog"], [aria-modal="true"], .fixed, .absolute) *) {
+    box-sizing: border-box;
+    width: 100% !important;
+    min-width: 0;
+    max-width: 100% !important;
+    margin-inline: 0 !important;
+  }
+
+  #root main :is(
+    .page-container,
+    .container,
+    div[class~="mx-auto"][class*="max-w-"],
+    section[class~="mx-auto"][class*="max-w-"],
+    article[class~="mx-auto"][class*="max-w-"],
+    form[class~="mx-auto"][class*="max-w-"],
+    p[class~="mx-auto"][class*="max-w-"]
+  ):not(:where(dialog, [role="dialog"], [aria-modal="true"], .fixed, .absolute), :where(dialog, [role="dialog"], [aria-modal="true"], .fixed, .absolute) *) {
+    box-sizing: border-box;
+    width: 100% !important;
+    min-width: 0;
+    max-width: none !important;
+    margin-inline: 0 !important;
+  }
+
+  #root main :is(h1, h2, h3, h4, h5, h6, p, label, legend, dt, dd, input, textarea, select, div, section, article, header, footer) {
+    text-align: left !important;
+  }
+
+  /* Retain column minimum widths so wide tables scroll inside their wrappers. */
+  body table {
+    width: 100% !important;
+    margin-inline: 0 !important;
+    direction: ltr;
+  }
+
+  body table :is(th, td) {
+    text-align: left !important;
+  }
+}

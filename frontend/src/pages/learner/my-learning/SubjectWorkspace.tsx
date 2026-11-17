@@ -268,7 +268,7 @@ export function SubjectCard({ subject, cover, tone = 'purple', onOpen, template,
 
 export function SubjectCardsSkeleton() {
   return <div role="status" className={styles.workspace} aria-label="Loading subjects">
-    <div className={styles.loadingHeader}><div><span className={styles.loadingLabel}>Loading subjects</span><p className={styles.loadingHint}>Getting your activities and progress ready…</p></div><BookOpen size={22} aria-hidden="true" /></div>
+    <div className={styles.loadingHeader} aria-hidden="true"><span className={`${styles.skeletonLine} ${styles.mediumLine}`} /></div>
     <div className={`${styles.stats} ${styles.skeletonStats}`} aria-hidden="true">{[0, 1, 2, 3].map(key => <div key={key} className={styles.stat}><span className={`${styles.skeletonLine} ${styles.mediumLine}`} /><span className={`${styles.skeletonLine} ${styles.shortLine}`} /></div>)}</div>
     <div className={styles.catalogueLayout} aria-hidden="true"><div className={styles.catalogueMain}><div className={styles.skeletonToolbar}><span className={`${styles.skeletonLine} ${styles.mediumLine}`} /></div><div className={styles.grid}>{[0, 1, 2, 3].map(key => <div key={key} className={`${styles.card} ${styles.skeleton}`}>
       <div className={styles.cover}><span className={styles.skeletonIcon} /><span className={styles.skeletonBadge} /></div>

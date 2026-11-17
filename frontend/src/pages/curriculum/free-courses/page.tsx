@@ -1,3 +1,4 @@
+import { LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
 import { useEffect, useMemo, useState } from 'react';
 import { DndContext, KeyboardSensor, PointerSensor, closestCenter, useSensor, useSensors, type DragEndEvent } from '@dnd-kit/core';
 import { SortableContext, arrayMove, sortableKeyboardCoordinates, useSortable, verticalListSortingStrategy } from '@dnd-kit/sortable';
@@ -1108,10 +1109,7 @@ export default function FreeCoursesPage() {
                         {expandedWeekIds.has(template.id) && (
                           <div className="mt-3 rounded-lg border border-background-200 bg-white">
                             {openingWeekId === template.id && !weekDetails[template.id] ? (
-                              <div className="flex items-center gap-2 px-3 py-3 text-xs font-semibold text-foreground-500">
-                                <AppIcon name="ri-loader-4-line" className="animate-spin" size={14} />
-                                Loading components
-                              </div>
+                              <div className="flex items-center gap-2 px-3 py-3 text-xs font-semibold text-foreground-500"><LoadingSkeleton label={"Loading components"} /></div>
                             ) : (
                               <div className="divide-y divide-background-100">
                                 {(weekDetails[template.id]?.components || template.components || []).length ? (
@@ -1496,7 +1494,7 @@ export default function FreeCoursesPage() {
                   {!importProgrammeId ? (
                     <p className="px-3 py-6 text-center text-sm text-foreground-500">Select a programme to see its modules.</p>
                   ) : importLoading ? (
-                    <p className="flex items-center gap-2 px-3 py-6 text-sm text-foreground-500"><AppIcon name="ri-loader-4-line" className="animate-spin" size={16} />Loading modules…</p>
+                    <p className="flex items-center gap-2 px-3 py-6 text-sm text-foreground-500"><LoadingSkeleton label={"Loading modules…"} /></p>
                   ) : importFiltered.length === 0 ? (
                     <p className="px-3 py-6 text-center text-sm text-foreground-500">{importOptions.length === 0 ? 'No modules are available to import here.' : 'No modules match your search.'}</p>
                   ) : (

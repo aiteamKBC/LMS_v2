@@ -1,3 +1,4 @@
+import { LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
 import { useEffect, useState } from 'react';
 import { SelectMenu } from '@/components/feature/SelectField';
 import { TutorClashNotice } from '@/components/feature/TutorClashNotice';
@@ -99,7 +100,7 @@ export function FreeCourseMoveDrawer({ module, programmes, onClose, onMoved }: {
       assigned learners and their progress stay intact. Learners in the selected group receive
       it through their normal learning plan. Live sessions and Teams become available from the usual module tools.
     </p>
-    {loading && <p role="status" className="text-[12px] text-foreground-500">Loading destinations...</p>}
+    {loading && <p  className="text-[12px] text-foreground-500"><LoadingSkeleton label={"Loading destinations..."} /></p>}
     {loadError && <button type="button" onClick={() => setRetry(value => value + 1)} className="text-[12px] font-bold text-primary-700 underline">Retry destinations</button>}
     <FormField label="Programme" required>
       <SelectMenu ariaLabel="Destination programme" value={programmeId} disabled={locked || loading}

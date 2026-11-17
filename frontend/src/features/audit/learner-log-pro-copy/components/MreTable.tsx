@@ -1,3 +1,4 @@
+import { LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { ChevronLeft, ChevronRight, Database, Plus, Search } from "lucide-react";
@@ -111,7 +112,7 @@ export function MreTable({
             <TableBody>
               {addingActivity && addLearner ? <InlineActivityCreateRow learnerId={Number(addLearner.learner_id)} learnerName={addLearner.learner} onCancel={() => setAddingActivity(false)} /> : null}
               {query.isLoading && (
-                <TableRow><TableCell colSpan={10} className="py-10 text-center text-sm text-muted-foreground">Loading learner data from Neon…</TableCell></TableRow>
+                <TableRow><TableCell colSpan={10} className="py-10 text-center text-sm text-muted-foreground"><LoadingSkeleton label={"Loading learner data from Neon…"} /></TableCell></TableRow>
               )}
               {items.map((activity) => (
                 <InlineActivityRow key={activity.id} row={activity} />

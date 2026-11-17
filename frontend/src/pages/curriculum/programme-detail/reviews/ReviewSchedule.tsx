@@ -1,3 +1,4 @@
+import { LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
 // Review Schedule / clash management -- previews each Review template's
 // projected occurrences for this Programme, grouped by calendar month, and
 // lets staff resolve a month where more than one Review falls due. Skipping
@@ -88,10 +89,7 @@ export function ReviewSchedulePanel({ programmeId }: { programmeId: string }) {
       {error && <InlineError message={error} onRetry={() => void load()} />}
 
       {loading && (
-        <div className="flex items-center justify-center gap-2 py-10 text-[12px] font-semibold text-foreground-400">
-          <AppIcon className="ri-loader-4-line animate-spin"></AppIcon>
-          Loading schedule...
-        </div>
+        <div className="flex items-center justify-center gap-2 py-10 text-[12px] font-semibold text-foreground-400"><LoadingSkeleton label={"Loading schedule..."} /></div>
       )}
 
       {!loading && !error && months && months.length === 0 && (

@@ -1,3 +1,4 @@
+import { LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
 import { useEffect, useState } from 'react';
 import { ArrowRightLeft } from 'lucide-react';
 import type { LearnerKind } from '@/api/learnerDetail';
@@ -55,7 +56,7 @@ function TransferDialog({ kind, learnerId, onRequested, onClose }: { kind: Learn
         <li>Your new percentage is completed components ÷ total components in the new module. It may differ from your old percentage because the module contents can differ. Recorded hours are preserved.</li>
         <li>Your previous learning records and evidence are retained.</li>
       </ul>
-      {loading && <p role="status">Loading eligible modules…</p>}
+      {loading && <p ><LoadingSkeleton label={"Loading eligible modules…"} /></p>}
       {error && <div role="alert"><p>{error}</p>{!preview && <button type="button" className="mt-2 underline" onClick={() => setRetry(value => value+1)}>Try again</button>}</div>}
       {pending && <p role="status" className="rounded-lg border border-amber-200 bg-amber-50 p-3">Request submitted. Awaiting administrator approval. Progress on the included old LMS modules is now frozen.</p>}
       {!loading && preview && !pending && !preview.eligible.length && <p role="status" className="rounded-lg border border-emerald-200 bg-emerald-50 p-3">{preview.requests.some(item => item.status === 'approved') ? 'Progress merged. Completed matches from the old LMS and existing completions in the new LMS count together, once per component. You can continue in your new modules.' : 'No old modules currently have a verified new LMS module to transfer to.'}</p>}

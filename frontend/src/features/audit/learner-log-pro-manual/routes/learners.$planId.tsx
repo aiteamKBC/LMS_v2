@@ -1,3 +1,4 @@
+import { LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
 // One learner's plan (the learner-first replacement of the group workspace):
 // months come straight from THEIR Aptem training plan (labels untouched),
 // each month holds 4 fixed weeks, and the auditor fills the weeks with
@@ -94,7 +95,7 @@ function LearnerPlanPage() {
   const [monthIndex, setMonthIndex] = useState<number | null>(null);
   const refresh = () => queryClient.invalidateQueries({ queryKey: ["plan-group", id] });
 
-  if (plan.isLoading) return <Shell><p className="py-16 text-center text-sm text-muted-foreground">Loading the learner's plan…</p></Shell>;
+  if (plan.isLoading) return <Shell><p className="py-16 text-center text-sm text-muted-foreground"><LoadingSkeleton label={"Loading the learner's plan…"} /></p></Shell>;
   if (plan.isError || !plan.data) {
     return <Shell><p className="py-16 text-center text-sm text-destructive">{plan.error instanceof Error ? plan.error.message : "Could not load the plan."}</p></Shell>;
   }
@@ -447,7 +448,7 @@ function PlanTableHeader() {
 // The learner's quiz attempt, rendered inline (score + every question with
 // their answer marked right/wrong).
 function QuizAttemptView({ attempt, state, loading }) {
-  if (loading) return <p className="py-3 text-center text-xs text-muted-foreground">Loading the quiz…</p>;
+  if (loading) return <p className="py-3 text-center text-xs text-muted-foreground"><LoadingSkeleton label={"Loading the quiz…"} /></p>;
   if (!attempt) {
     return <p className="py-3 text-center text-xs text-muted-foreground">{state === "not_attempted" ? "Not attempted yet — the learner has not taken this quiz." : "No quiz data."}</p>;
   }
@@ -533,7 +534,7 @@ function BundlePiece({ planId, member, item }: {
       </button>
       {open && (
         <div className="space-y-2 border-t border-border p-3">
-          {content.isLoading && <p className="py-2 text-center text-xs text-muted-foreground">Loading…</p>}
+          {content.isLoading && <p className="py-2 text-center text-xs text-muted-foreground"><LoadingSkeleton label={"Loading…"} /></p>}
           {content.data?.iframe_url && (
             <button
               type="button"
@@ -615,7 +616,7 @@ function PlanRowExpansion({ activity, member, planId }: {
 
   return (
     <div className="rounded-lg border border-border bg-[#f7f9fc] p-4">
-      {detail.isLoading && <p className="py-4 text-center text-xs text-muted-foreground">Loading the content…</p>}
+      {detail.isLoading && <p className="py-4 text-center text-xs text-muted-foreground"><LoadingSkeleton label={"Loading the content…"} /></p>}
       {detail.isError && <p className="py-4 text-center text-xs text-destructive">{detail.error instanceof Error ? detail.error.message : "Could not load."}</p>}
       {detail.data && (
         <div className="space-y-2">
@@ -1154,7 +1155,7 @@ function AttendancePicker({ data, month, weekSlot, saving, onAdd, refresh, onClo
           Add {chosen.length || ""} selected to Week {weekSlot}
         </Button>
       </div>
-      {grid.isLoading && <p className="py-8 text-center text-sm text-muted-foreground">Loading the attendance…</p>}
+      {grid.isLoading && <p className="py-8 text-center text-sm text-muted-foreground"><LoadingSkeleton label={"Loading the attendance…"} /></p>}
       {!grid.isLoading && rows.length === 0 && (
         <p className="py-8 text-center text-sm text-muted-foreground">
           No attendance records for {learnerName}
@@ -1312,7 +1313,7 @@ function CourseMaterialsPicker({ data, month, weekSlot, type, saving, onAdd, onC
     <Modal title={course ? `${course.name} — pick for Week ${weekSlot}` : `Enrolled courses — Week ${weekSlot}, ${month.label}`} onClose={onClose} wide>
       {!course && (
         <>
-          {courses.isLoading && <p className="py-8 text-center text-sm text-muted-foreground">Loading the courses…</p>}
+          {courses.isLoading && <p className="py-8 text-center text-sm text-muted-foreground"><LoadingSkeleton label={"Loading the courses…"} /></p>}
           {!courses.isLoading && (courses.data?.items ?? []).length === 0 && (
             <p className="py-8 text-center text-sm text-muted-foreground">This learner is not enrolled in any course.</p>
           )}
@@ -1391,7 +1392,7 @@ function CourseMaterialsPicker({ data, month, weekSlot, type, saving, onAdd, onC
               void onAdd(activities);
             }}>Add {chosen.length || ""} selected to Week {weekSlot}</Button>
           </div>
-          {materials.isLoading && <p className="py-8 text-center text-sm text-muted-foreground">Loading the course…</p>}
+          {materials.isLoading && <p className="py-8 text-center text-sm text-muted-foreground"><LoadingSkeleton label={"Loading the course…"} /></p>}
           {!materials.isLoading && items.length === 0 && (
             <p className="py-8 text-center text-sm text-muted-foreground">Nothing here{typeFilter !== "all" ? " of this type — try the All filter" : ""}{needle ? " matching the search" : ""}.</p>
           )}
@@ -1479,7 +1480,7 @@ function AssignmentFiles({ data, nameKey }: { data: PlanGroupDetail; nameKey: st
   const docs = (evidence.data?.items ?? []).flatMap((learner) => learner.documents);
   return (
     <div className="mt-2 rounded-lg border border-border bg-[#f7f9fc] p-3">
-      {evidence.isLoading && <p className="py-2 text-center text-xs text-muted-foreground">Loading the files…</p>}
+      {evidence.isLoading && <p className="py-2 text-center text-xs text-muted-foreground"><LoadingSkeleton label={"Loading the files…"} /></p>}
       {!evidence.isLoading && docs.length === 0 && <p className="py-2 text-center text-xs text-muted-foreground">No submitted document fetched yet.</p>}
       <ul className="space-y-1">
         {docs.map((doc) => (
@@ -1544,7 +1545,7 @@ function AssignmentPicker({ data, month, weekSlot, saving, onAdd, onClose }) {
 
   return (
     <Modal title={`Assignments — ${month.label}`} onClose={onClose} wide>
-      {assignments.isLoading && <p className="py-8 text-center text-sm text-muted-foreground">Loading assignments…</p>}
+      {assignments.isLoading && <p className="py-8 text-center text-sm text-muted-foreground"><LoadingSkeleton label={"Loading assignments…"} /></p>}
       {!assignments.isLoading && items.length === 0 && <p className="py-8 text-center text-sm text-muted-foreground">No assignments found for this learner.</p>}
       <ul className="divide-y divide-border">
         {items.map((item) => (
@@ -1728,7 +1729,7 @@ function AssignmentEvidenceModal({ data, activity, onClose }: {
   });
   return (
     <Modal title={`Evidence — ${activity.title}`} onClose={onClose} wide>
-      {evidence.isLoading && <p className="py-8 text-center text-sm text-muted-foreground">Loading evidence…</p>}
+      {evidence.isLoading && <p className="py-8 text-center text-sm text-muted-foreground"><LoadingSkeleton label={"Loading evidence…"} /></p>}
       <ul className="divide-y divide-border">
         {(evidence.data?.items ?? []).map((learner) => (
           <li key={learner.aptem_id} className="py-3">

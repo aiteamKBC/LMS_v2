@@ -21,6 +21,7 @@ import QualityReviewsPage from "@/pages/coaching-recordings/QualityReviewsPage";
 import { FEEDBACKS } from "@/mocks/feedbacks";
 import FeedbackDetailModal from "@/pages/executive/components/FeedbackDetailModal";
 import type { HeaderNotification } from "@/components/feature/Header";
+import styles from "./QualityShell.module.css";
 
 const STATUS_RANK: Record<string, number> = { Pending: 0, "In Review": 1, "Needs Correction": 2, Approved: 3, Rejected: 4 };
 
@@ -321,7 +322,7 @@ export default function QualityAssurancePage() {
   const topMeta = VIEW_META[active] ?? VIEW_META.overview;
 
   return (
-    <div className="quality-demo min-h-screen bg-background-100">
+    <div className={`quality-demo dashboard-theme workspace-shell bg-background-100 ${styles.shell}`} data-workspace-role="curriculum">
       <a
         href="#main-content"
         className="sr-only focus:not-sr-only focus:absolute focus:left-4 focus:top-4 focus:z-[80] focus:rounded-md focus:bg-primary-500 focus:px-3 focus:py-2 focus:text-[12px] focus:font-semibold focus:text-background-50"
@@ -340,9 +341,10 @@ export default function QualityAssurancePage() {
         onCloseMobile={() => setSidebarOpen(false)}
       />
 
-      <div className="lg:pl-[240px]">
+      <div className="workspace-content flex min-w-0 flex-1 flex-col">
         <Topbar onMenu={() => setSidebarOpen(true)} title={topMeta.title} section={topMeta.section} notifications={headerNotifications} onNotificationClick={setSelectedNotification} />
 
+        <div className={styles.body}>
         {isCalendarView ? <QualityReviewsPage embedded /> : <main id="main-content" tabIndex={-1} className="mx-auto flex w-full max-w-[1560px] flex-col gap-4 px-4 py-4 md:px-6 md:py-5">
           {isOverview ? <ExecutiveOverview /> : null}
           {isTeamView ? <QualityTeamPage onToast={notify} /> : null}
@@ -409,6 +411,7 @@ export default function QualityAssurancePage() {
             </p>
           </footer>
         </main>}
+        </div>
       </div>
 
       {activeReview ? (

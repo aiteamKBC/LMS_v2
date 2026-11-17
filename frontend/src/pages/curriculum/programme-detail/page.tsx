@@ -1,3 +1,4 @@
+import { LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { AppIcon } from '@/components/feature/AppIcon';
@@ -1862,7 +1863,7 @@ function StaffSlot({
  * something countable — mapped KSBs, published components — rather than a score,
  * so the number always has a definition the reader can check.
  */
-function ReadinessBar({ label, value, detail, color }: { label: string; value: number; detail: string; color: string }) {
+function ReadinessBar({ label, value, detail, color }: { label: string; value: number; detail: React.ReactNode; color: string }) {
   return (
     <div>
       <div className="mb-1.5 flex items-baseline justify-between gap-2">
@@ -1925,10 +1926,7 @@ function AttentionRow({ icon, tone, title, detail, action }: {
 /** Stands in for a view built from the programme's modules until they arrive. */
 function ModulesLoadingPanel() {
   return (
-    <div role="status" className="flex items-center gap-3 rounded-2xl border border-foreground-200/70 bg-background-50 p-5 text-[12px] font-semibold text-foreground-600">
-      <AppIcon className="ri-loader-4-line animate-spin text-base text-primary-600"></AppIcon>
-      Loading this programme's modules...
-    </div>
+    <div  className="flex items-center gap-3 rounded-2xl border border-foreground-200/70 bg-background-50 p-5 text-[12px] font-semibold text-foreground-600"><LoadingSkeleton label={"Loading this programme's modules..."} /></div>
   );
 }
 
@@ -2201,7 +2199,7 @@ function EnrolledLearnersPanel({
 
   return (
     <>
-      {loading && <p className="text-[12px] text-foreground-500">Loading assigned learners...</p>}
+      {loading && <p className="text-[12px] text-foreground-500"><LoadingSkeleton label={"Loading assigned learners..."} /></p>}
 
       {!loading && error && (
         <p className="rounded-lg border border-amber-200/60 bg-amber-50 px-3 py-2 text-[12px] text-amber-700">{error}</p>
@@ -3757,10 +3755,10 @@ function ProgrammeDetailContent() {
             { icon: 'ri-group-line', label: 'Cohorts', value: liveCohortCount, detail: archivedCohortCount ? `${archivedCohortCount} archived` : undefined },
             { icon: 'ri-team-line', label: 'Groups', value: totalGroups, detail: unstaffedGroupCount ? `${unstaffedGroupCount} need a coach` : 'All coached' },
             modulesLoading
-              ? { icon: 'ri-stack-line', label: 'Modules', value: '…', detail: 'Loading modules' }
+              ? { icon: 'ri-stack-line', label: 'Modules', value: '…', detail: <LoadingSkeleton label={'Loading modules'} /> }
               : { icon: 'ri-stack-line', label: 'Modules', value: activeModules.length, detail: archivedModuleCount ? `${archivedModuleCount} archived` : untutoredModules.length ? `${untutoredModules.length} need a tutor` : 'All tutored' },
             modulesLoading
-              ? { icon: 'ri-calendar-line', label: 'Weeks', value: '…', detail: 'Loading modules' }
+              ? { icon: 'ri-calendar-line', label: 'Weeks', value: '…', detail: <LoadingSkeleton label={'Loading modules'} /> }
               : { icon: 'ri-calendar-line', label: 'Weeks', value: totalWeeks, detail: `${componentTotal} components` },
             { icon: 'ri-time-line', label: 'OTJH', value: modulesLoading ? '…' : formatHoursMinutes(totalOtjh) },
             {
@@ -3909,7 +3907,7 @@ function ProgrammeDetailContent() {
                     value={otjhProgress}
                     color="bg-emerald-500"
                     detail={learnerOtjhLoading && !learnerOtjh
-                      ? 'Loading learner hours…'
+                      ? <LoadingSkeleton label={'Loading learner hours…'} />
                       : !learnerOtjh
                         ? 'Learner hours could not be read for this programme.'
                         : !learnerOtjhLearners
@@ -4625,10 +4623,7 @@ function ProgrammeDetailContent() {
             />
 
             {loading && !deliverySessions.length ? (
-              <div className="flex items-center justify-center gap-2 rounded-2xl border border-foreground-200/60 bg-background-50 px-4 py-10 text-[12px] text-foreground-500">
-                <AppIcon className="ri-loader-4-line animate-spin text-base"></AppIcon>
-                Loading sessions…
-              </div>
+              <div className="flex items-center justify-center gap-2 rounded-2xl border border-foreground-200/60 bg-background-50 px-4 py-10 text-[12px] text-foreground-500"><LoadingSkeleton label={"Loading sessions…"} /></div>
             ) : (
               <SessionsTree
                 sessions={filteredSessions}
@@ -4704,10 +4699,7 @@ function ProgrammeDetailContent() {
             </div>
 
             {backendCoverageLoading ? (
-              <div className="rounded-xl border border-background-200 bg-background-100 px-4 py-8 text-center text-[12px] font-semibold text-foreground-600">
-                <AppIcon className="ri-loader-4-line mr-2 animate-spin text-primary-600"></AppIcon>
-                Loading KSB coverage…
-              </div>
+              <div className="rounded-xl border border-background-200 bg-background-100 px-4 py-8 text-center text-[12px] font-semibold text-foreground-600"><LoadingSkeleton label={"Loading KSB coverage…"} /></div>
             ) : backendCoverageError ? (
               <InlineError
                 message={`Unable to load actual backend KSB coverage. No fallback or sample KSB data is being shown. ${backendCoverageError}`}
@@ -5033,7 +5025,7 @@ function ProgrammeDetailContent() {
             setGroupDrawerCohortId(null);
             setEditingGroup(null);
           }}>
-          {!pendingEditorReference.error && <p role="status">Loading editor options…</p>}
+          {!pendingEditorReference.error && <p ><LoadingSkeleton label={"Loading editor options…"} /></p>}
         </EntityDrawer>
       )}
       <CohortFormDrawer
@@ -6157,9 +6149,7 @@ function KsbPlacementPreviewModal({
                   </button>
                 </div>
               ) : (
-                <p role="status" className="rounded-xl border border-dashed border-background-200 bg-background-100/50 px-3 py-4 text-center text-[11px] font-semibold text-foreground-400">
-                  Loading this component&apos;s content…
-                </p>
+                <p  className="rounded-xl border border-dashed border-background-200 bg-background-100/50 px-3 py-4 text-center text-[11px] font-semibold text-foreground-400"><LoadingSkeleton label={"Loading this component's content…"} /></p>
               )}
 
               {clean(component.description) && (

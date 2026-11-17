@@ -1,3 +1,4 @@
+import { LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
 import { useEffect, useRef, useState } from "react";
 import type { InputHTMLAttributes } from "react";
 import { createPortal } from "react-dom";
@@ -683,7 +684,7 @@ export function InlineActivityCreateRow({ learnerId, learnerName, onCancel, defa
                 ))}
               </select>
             ) : (
-              <span className="text-destructive">{learnerGroups.isLoading ? "Loading groups…" : "No LMS group found for this learner"}</span>
+              <span className="text-destructive">{learnerGroups.isLoading ? <LoadingSkeleton label={"Loading groups…"} /> : "No LMS group found for this learner"}</span>
             )
           ) : null}
         </div>

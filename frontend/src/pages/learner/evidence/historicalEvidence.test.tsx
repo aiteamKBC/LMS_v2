@@ -138,7 +138,7 @@ describe('Previous evidence in the learner library', () => {
   it('does not replace an unfinished load with a no-evidence message', () => {
     show({ evidenceRecords: [], historicalRecords: [], historicalLoading: true });
     expect(screen.queryByText('No evidence found yet')).not.toBeInTheDocument();
-    expect(screen.getByText('Loading evidence…')).toBeVisible();
+    expect(screen.getByRole('status', { name: 'Loading evidence…' })).toBeVisible();
   });
   it('opens an activity selected as audit evidence through this learner’s existing content preview', async () => {
     const activity = { id: 19, title: 'Selected activity', category: 'assignment', month: '2026-08', activity_date: '2026-08-10',

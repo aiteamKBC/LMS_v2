@@ -1,3 +1,4 @@
+import { LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute, useRouter } from '@tanstack/react-router';
@@ -580,7 +581,7 @@ function JournalPage() {
             <div className="flex items-center gap-3">
               <div className="rounded-xl bg-[#f6f8fb] px-6 py-3 text-center">
                 <p className="text-[9px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">Reporting month</p>
-                <p className="mt-1 text-sm font-semibold text-[#182d48]">{metadata.isLoading ? "Loading…" : monthLabel}</p>
+                <p className="mt-1 text-sm font-semibold text-[#182d48]">{metadata.isLoading ? <LoadingSkeleton label={"Loading…"} /> : monthLabel}</p>
               </div>
               <Button
                 className="gap-2 bg-[#182d48] hover:bg-[#243f61]"
@@ -605,7 +606,7 @@ function JournalPage() {
           ) : selectedLearner && !learnerPeriods.length ? (
             <p className="py-10 text-center text-sm text-muted-foreground">No activity months are available for this learner.</p>
           ) : isLoading || !selectedLearner || !selectedPeriod ? (
-            <p className="py-10 text-center text-sm text-muted-foreground">Loading journal…</p>
+            <p className="py-10 text-center text-sm text-muted-foreground"><LoadingSkeleton label={"Loading journal…"} /></p>
           ) : learner ? (
             <div className="space-y-5 px-7 py-6">
               <div className="grid rounded-lg bg-[#f6f8fb] px-5 lg:grid-cols-3">

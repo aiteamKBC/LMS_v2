@@ -1,3 +1,4 @@
+import { LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
 import { useCallback, useEffect } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
@@ -112,7 +113,7 @@ export function EmployerProgressReviewsTab({ employerId, kind, learnerId, employ
       storedOnly={review.reviewSource === 'aptem'}
       hasTeamsMeeting showAttendance={false} showMeetingSummary={false} canCheck={false}
       visibleArtifactTypes={['recording']} className="border-primary-100 bg-primary-50/30" />}
-    {detail.isPending ? <p role="status" className={styles.loading}>Loading review…</p>
+    {detail.isPending ? <p  className={styles.loading}><LoadingSkeleton label={"Loading review…"} /></p>
       : detail.isError ? <div role="alert" className={styles.empty}><p>{errorMessage(detail.error)}</p><button type="button" className={styles.secondaryButton} onClick={() => void detail.refetch()}>Try again</button></div>
       : definition ? <LearnerReviewInstanceForm key={review?.eventKey} definition={definition} viewerRole="employer" signatoryName={employerName}
         onSaveAnswers={definition.instance ? saveAnswers : undefined}

@@ -1,3 +1,4 @@
+import { LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
 import { useEffect, useMemo, useState } from 'react';
 import DOMPurify from 'dompurify';
 import type { SubjectMaterial } from '@/api/studentActivity';
@@ -59,9 +60,7 @@ function AdminPdfPreview({ url, title }: { url: string; title: string }) {
   if (preview.error) return <p role="alert" className="rounded-xl border border-amber-300 bg-amber-50 p-4 text-sm text-amber-900">
     Could not show this PDF inline. {preview.error}
   </p>;
-  if (!preview.src) return <div role="status" className="flex h-[65vh] min-h-[320px] items-center justify-center rounded-xl border bg-white text-sm">
-    Loading PDF preview…
-  </div>;
+  if (!preview.src) return <div  className="flex h-[65vh] min-h-[320px] items-center justify-center rounded-xl border bg-white text-sm"><LoadingSkeleton label={"Loading PDF preview…"} /></div>;
   return <iframe title={title} src={preview.src} className="h-[65vh] min-h-[320px] w-full rounded-xl border bg-white" />;
 }
 

@@ -1,3 +1,4 @@
+import { LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
 import { Fragment, useMemo, useState } from 'react';
 import DOMPurify from 'dompurify';
 import { ChevronDown, ChevronRight, Clock3, Eye, FileText, Pencil } from 'lucide-react';
@@ -139,7 +140,7 @@ export default function AssessmentMarkingSection({ learner, assignments, submiss
     </div>
     <div className="rounded-2xl border border-[#dce5f7] bg-white p-2 shadow-sm sm:p-3">
       <div className="flex flex-wrap items-center justify-between gap-3 px-2 py-2"><h2 id="advanced-assessments" tabIndex={-1} className="text-xl font-bold focus-visible:outline focus-visible:outline-2 focus-visible:outline-violet-600">Assignments & Activities by Month</h2><label className="text-sm font-medium">Academic year <select aria-label="Academic year" value={year} onChange={event => { setYear(event.target.value); setOpenMonth(null); }} className="ml-2 rounded-lg border border-[#cdd9ef] bg-white px-3 py-2"><option value="all">All years</option>{years.map(value => <option key={value} value={value}>{value}</option>)}</select></label></div>
-      {loading && <p role="status" className="p-4">Loading assignments…</p>}
+      {loading && <p  className="p-4"><LoadingSkeleton label={"Loading assignments…"} /></p>}
       {!loading && !errors.auditAssignments && visible.length === 0 && <p className="p-4 text-[#52619a]">{assignments.length ? 'No work is scheduled or uploaded through the current month.' : 'No assignments or uploaded activities are recorded for this learner.'}</p>}
       {undated.length > 0 && year === 'all' && <p className="px-4 pb-2 text-xs text-[#52619a]">{undated.length} {undated.length === 1 ? 'record' : 'records'} without a calendar month {undated.length === 1 ? 'is' : 'are'} listed below and excluded from totals.</p>}
       <div className="space-y-2">{groups.map(([month, items], index) => {

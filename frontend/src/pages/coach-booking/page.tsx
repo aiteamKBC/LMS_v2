@@ -1,3 +1,4 @@
+import { LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
 import { useEffect, useState } from 'react';
 import { useParams, useSearchParams } from 'react-router-dom';
 import { ArrowRight, CalendarDays, CheckCircle2, ExternalLink, LifeBuoy, MessagesSquare, TrendingUp, UserRound } from 'lucide-react';
@@ -36,7 +37,7 @@ export default function CoachBookingPage() {
         <div className={styles.heroCopy}><p className={styles.eyebrow}>YOUR NEXT STEP STARTS HERE</p><h1>{coach ? `Book a session with ${coach.name}` : 'Coach bookings'}</h1><p>Make time for your learning. Choose the support you need and find a time that works for you.</p><span className={styles.accessNote}><CheckCircle2 size={16} aria-hidden="true" />No LMS account needed to view booking options</span></div>
         <div className={styles.heroIcon} aria-hidden="true"><CalendarDays strokeWidth={1.3} /></div>
       </header>
-      {loading && <p role="status" className={styles.message}>Loading booking options...</p>}
+      {loading && <p  className={styles.message}><LoadingSkeleton label={"Loading booking options..."} /></p>}
       {error && <div role="alert" className={styles.message}>{error}<button className={styles.retry} onClick={() => setReload(value => value + 1)}>Retry</button></div>}
       {coach && <>
       <section aria-label="Booking options">

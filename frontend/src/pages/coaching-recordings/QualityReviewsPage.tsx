@@ -1,3 +1,4 @@
+import { LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ArrowLeft, ClipboardCheck, RefreshCw } from 'lucide-react';
 import { Link, useSearchParams } from 'react-router-dom';
@@ -113,7 +114,7 @@ export default function QualityReviewsPage({ embedded = false }: { embedded?: bo
       </form>
       {error && <div role="alert" className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm">{error} <button className={`${button} ml-2`} onClick={() => setEpoch(value => value + 1)}>Retry reviews</button></div>}
       <section aria-label="Saved quality reviews" className="space-y-3">
-        <p role="status" className="text-xs text-foreground-500">{loading ? 'Loading saved reviews…' : `${rows.length} reviews loaded · Meeting dates in ${applied.timeZone}`}</p>
+        <p role="status" className="text-xs text-foreground-500">{loading ? <LoadingSkeleton label={'Loading saved reviews…'} /> : `${rows.length} reviews loaded · Meeting dates in ${applied.timeZone}`}</p>
         {!loading && !error && !rows.length && <div className="rounded-xl border border-background-200 bg-white p-8 text-center"><ClipboardCheck className="mx-auto text-primary-500" /><h2 className="mt-3 font-bold">No saved reviews match these filters</h2><p className="mt-2 text-sm text-foreground-600">Start a portfolio sampling review from a meeting in the coach calendar, or choose another period and status.</p></div>}
         {rows.map(row => <article key={row.id} className="flex flex-wrap items-center justify-between gap-4 rounded-xl border border-background-200 bg-white p-4 shadow-sm">
           <div className="min-w-0 flex-1 basis-64"><div className="flex flex-wrap items-center gap-2"><h2 className="break-words text-sm font-bold">{row.learnerName}</h2><span className={`rounded-full px-2 py-1 text-xs font-semibold ${row.status === 'completed' ? 'bg-emerald-50 text-emerald-800' : 'bg-amber-50 text-amber-800'}`}>{row.status === 'completed' ? 'Completed' : 'Draft'}</span></div>

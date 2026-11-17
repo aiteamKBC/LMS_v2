@@ -82,7 +82,8 @@ describe('All documents', () => {
     renderPage();
 
     expect(screen.getByRole('status', { name: 'Loading documents' })).toBeVisible();
-    expect(screen.getByTestId('documents-loading-spinner')).toHaveClass('animate-spin');
+    expect(screen.getByRole('status', { name: 'Loading documents' }).textContent).toBe('');
+    expect(screen.queryByTestId('documents-loading-spinner')).not.toBeInTheDocument();
   });
 
   it('uses the employer workspace menu and the learner look', async () => {

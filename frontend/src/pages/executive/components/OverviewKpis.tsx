@@ -8,6 +8,7 @@ import {
   isOpenAction,
 } from "@/lib/qms";
 import type { FormDefinition, QualityAction, QualityRecord } from "@/types/qms";
+import styles from "../ExecutiveOverview.module.css";
 
 interface OverviewKpisProps {
   records: QualityRecord[];
@@ -54,7 +55,7 @@ export default function OverviewKpis({ records, actions, forms, availability, on
 
   return (
     <section aria-label="Key quality indicators">
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-6">
+      <div className={styles.kpiGrid}>
         <KpiCard
           label="Completed audits"
           value={formatNumber(audits.length)}
@@ -86,6 +87,19 @@ export default function OverviewKpis({ records, actions, forms, availability, on
           accent="secondary"
           to="/curriculum/quality-demo?view=feedbacks"
           linkLabel="View feedback"
+        />
+
+        <KpiCard
+          label="Not assessed"
+          value={formatNumber(counts.unrated + counts.na)}
+          definition="Records without a Green, Amber or Red policy outcome."
+          hint={completedNotAssessed
+            ? `${formatNumber(completedNotAssessed)} completed record${completedNotAssessed === 1 ? "" : "s"} still has no policy outcome`
+            : "Includes drafts and records without an approved policy"}
+          icon="ri-question-line"
+          accent="secondary"
+          to="/curriculum/quality-demo?view=checks"
+          linkLabel="See quality checks"
         />
 
         <KpiCard
@@ -123,18 +137,6 @@ export default function OverviewKpis({ records, actions, forms, availability, on
           linkLabel="Open action tracker"
         />
 
-        <KpiCard
-          label="Not assessed"
-          value={formatNumber(counts.unrated + counts.na)}
-          definition="Records without a Green, Amber or Red policy outcome."
-          hint={completedNotAssessed
-            ? `${formatNumber(completedNotAssessed)} completed record${completedNotAssessed === 1 ? "" : "s"} still has no policy outcome`
-            : "Includes drafts and records without an approved policy"}
-          icon="ri-question-line"
-          accent="secondary"
-          to="/curriculum/quality-demo?view=checks"
-          linkLabel="See quality checks"
-        />
       </div>
     </section>
   );

@@ -1,3 +1,4 @@
+import { LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
 // ============================================================================
 // Scope achievement — one panel, every level of the hierarchy.
 //
@@ -1858,7 +1859,7 @@ export function ScopeAchievementPanel({
       </div>
 
       <div className="space-y-4 p-5">
-        {loading && !data && <p className="text-[12px] text-foreground-500">Loading learner achievement…</p>}
+        {loading && !data && <p className="text-[12px] text-foreground-500"><LoadingSkeleton label={"Loading learner achievement…"} /></p>}
 
         {error && <InlineError message={error} onRetry={() => load()} />}
 
@@ -2372,7 +2373,7 @@ export function ScopeLearnerAchievementDetail({
       </header>
 
       <div className="space-y-4 p-4">
-        {loading && !data && <p className="text-[12px] text-foreground-500">Loading this learner’s achievement…</p>}
+        {loading && !data && <p className="text-[12px] text-foreground-500"><LoadingSkeleton label={"Loading this learner’s achievement…"} /></p>}
 
         {error && <InlineError message={error} onRetry={() => load()} />}
 

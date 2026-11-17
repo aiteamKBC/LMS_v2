@@ -1,3 +1,4 @@
+import { LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   applyCurriculumLearnerAssignments, fetchLearnerAssignments,
@@ -279,7 +280,7 @@ function AssignmentForm({ target, onClose, onAssigned }: {
         </div>
       )}
 
-      {loading ? <p role="status" className="py-10 text-center text-[13px] text-foreground-500">Loading learners…</p>
+      {loading ? <p  className="py-10 text-center text-[13px] text-foreground-500"><LoadingSkeleton label={"Loading learners…"} /></p>
         : !data ? <button type="button" onClick={() => setRetry(value => value + 1)} className="text-[12px] font-bold text-primary-700">Try again</button>
           : <div className="overflow-hidden rounded-xl border border-foreground-200">
             {tab === 'available' ? (

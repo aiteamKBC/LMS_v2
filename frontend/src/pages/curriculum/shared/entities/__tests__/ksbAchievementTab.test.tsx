@@ -79,7 +79,7 @@ describe('KsbAchievementTab applied source', () => {
     expect(reads[0].aborted()).toBe(true);
     await flush();
 
-    expect(screen.getByText('Loading actual KSB consumption…')).toBeInTheDocument();
+    expect(screen.getByRole('status', { name: 'Loading actual KSB consumption…' })).toBeInTheDocument();
     expect(screen.queryByText('No KSB source is applied to this programme.')).not.toBeInTheDocument();
 
     reads[1].resolve(ST0845);
@@ -119,7 +119,7 @@ describe('KsbAchievementTab applied source', () => {
     view.rerenderWith('PROG-PCP-L6');
     await waitFor(() => expect(fetchAchievement).toHaveBeenLastCalledWith('PROG-PCP-L6', expect.anything(), expect.anything()));
     expect(screen.queryByText('No KSB source is applied to this programme.')).not.toBeInTheDocument();
-    expect(screen.getByText('Loading actual KSB consumption…')).toBeInTheDocument();
+    expect(screen.getByRole('status', { name: 'Loading actual KSB consumption…' })).toBeInTheDocument();
 
     next.resolve(ST0845);
     expect(await screen.findByText('Project controls professional (ST0845 v1.1)')).toBeInTheDocument();

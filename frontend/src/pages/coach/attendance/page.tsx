@@ -1,3 +1,4 @@
+import { LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { AppIcon } from '@/components/feature/AppIcon';
@@ -209,10 +210,10 @@ export default function CoachAttendance() {
 
   return <WorkspaceShell role="coach" roleLabel={coachNav.label} navItems={coachNav.items} workspaceLabel={coachNav.workspaceLabel} pageTitle="Attendance" pageSubtitle="Bulk and individual attendance" userName={coach.name} userRole="Progress Coach"><main className={styles.page}>
     <section className={styles.card} aria-labelledby="bulk-title"><CardHeading id="bulk-title" icon="ri-group-line" title="Bulk attendance" copy="Choose a programme, then a group or a module within that group. Select a session, choose learners and mark them Present or Absent. Click Apply bulk update to save changes for that session only. Use View to open a learner's full attendance history." />
-      {options.loading && <p role="status">Loading programme groups…</p>}
+      {options.loading && <p ><LoadingSkeleton label={"Loading programme groups…"} /></p>}
       {options.error && <p role="alert">Unable to load programme groups: {options.error}</p>}
       <button type="button" disabled={saving || options.loading} onClick={() => { options.reload(); moduleOptions.reload(); }}>Refresh options</button>
-      {programmeId && moduleOptions.loading && <p role="status">Loading attendance modules…</p>}
+      {programmeId && moduleOptions.loading && <p ><LoadingSkeleton label={"Loading attendance modules…"} /></p>}
       {programmeId && moduleOptions.error && <p role="alert">Unable to load attendance modules: {moduleOptions.error} <button type="button" onClick={moduleOptions.reload}>Retry modules</button></p>}
       <div className={styles.formRow}>
         <Field label="Programme"><select aria-label="Programme" value={programmeId} onChange={event => {
@@ -242,8 +243,8 @@ export default function CoachAttendance() {
       {selectedModule && !groupLoading && !sessionsError && !availableSessions.length && <p>Use View to see this module's attendance history.</p>}
       {moduleKey && !moduleOptions.loading && !selectedModule && !moduleOptions.error && <p role="alert">This module is no longer available in the selected group. Choose a group or module again.</p>}
       {sessionsError && <p role="alert">{sessionsError} <button type="button" onClick={() => setSessionsRetry(current => current + 1)}>Retry sessions</button></p>}
-      {sessionsLoading && <p role="status">Loading sessions...</p>}
-      {sessionLoading && <p role="status">Loading session attendance...</p>}
+      {sessionsLoading && <p ><LoadingSkeleton label={"Loading sessions..."} /></p>}
+      {sessionLoading && <p ><LoadingSkeleton label={"Loading session attendance..."} /></p>}
       <p>{hasValidSession ? 'Select learners to mark attendance.' : 'Select a session to begin marking attendance.'}</p>
       {selectedSession && <p className={styles.sessionScope} id="attendance-session-scope">Editing only: <strong>{sessionLabel(selectedSession)}</strong>. The table shows attendance for this session. Changes marked Unsaved need Apply bulk update.</p>}
       <div className={styles.editActions}><div className={styles.selectActions}><button className={styles.presentAction} type="button" disabled={!selectionEnabled || !selected.size || sessionLoading} onClick={() => stageStatus(selected, 'present')}><AppIcon name="ri-checkbox-circle-line" />Mark selected Present</button><button className={styles.absentAction} type="button" disabled={!selectionEnabled || !selected.size || sessionLoading} onClick={() => stageStatus(selected, 'absent')}><AppIcon name="ri-close-circle-line" />Mark selected Absent</button></div>
@@ -271,7 +272,7 @@ function SessionAttendance({ session, learner, pending, loading }: {
   session: Omit<AttendanceSessionOption, 'status'>; learner?: BulkLearner;
   pending?: 'present' | 'absent'; loading: boolean;
 }) {
-  if (loading) return <span className={styles.sessionState}>Loading attendance…</span>;
+  if (loading) return <span className={styles.sessionState}><LoadingSkeleton label={"Loading attendance…"} /></span>;
   const status = pending || learner?.status || 'unmarked';
   const label = !learner ? 'Unavailable' : status === 'present' ? 'Present' : status === 'absent' ? 'Absent'
     : status === 'upcoming' ? 'Upcoming' : status === 'in_progress' ? 'In progress' : 'Not marked';

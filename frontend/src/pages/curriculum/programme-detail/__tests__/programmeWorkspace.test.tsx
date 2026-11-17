@@ -949,7 +949,7 @@ describe('Programme workspace', { timeout: 15000 }, () => {
     expect(tabStrip().getByRole('button', { name: /Cohorts/ })).toHaveTextContent('1');
     expect(screen.getByRole('status', { name: 'Loading modules count' })).toBeInTheDocument();
     await openTab(/Modules/);
-    expect(screen.getByText("Loading this programme's modules...")).toBeInTheDocument();
+    expect(screen.getByRole('status', { name: "Loading this programme's modules..." })).toBeInTheDocument();
 
     deliverModules({ schema: 'test', flat: { modules, sessions: [] } });
     expect(await screen.findByRole('link', { name: /^Data Foundations/ })).toBeInTheDocument();

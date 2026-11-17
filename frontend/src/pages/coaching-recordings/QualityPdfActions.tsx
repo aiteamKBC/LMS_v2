@@ -1,3 +1,4 @@
+import { LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
 import { useEffect, useRef, useState } from 'react';
 import { Download, Eye } from 'lucide-react';
 import { attachedQualityPdf } from '@/api/coachingQualityReviews';
@@ -24,7 +25,7 @@ export default function QualityPdfActions({ reviewId, version, onPreviewChange }
   return <><p className="text-[10px] text-foreground-500">Saved PDF - version {version}</p><div className="flex flex-wrap gap-2"><button className={button} disabled={busy} onClick={() => void prepare(false)}><Eye size={13} />Preview PDF</button><button className={`${button} bg-primary-600 text-white`} disabled={busy} onClick={() => void prepare(true)}><Download size={13} />Download PDF</button></div>
     {error && !open && <p role="alert" className="mt-2 text-xs text-rose-700">{error}</p>}
     {open && <QualityModal title="Quality check PDF" top onClose={close} footer={<button className={button} disabled={!url || busy} onClick={() => void prepare(true)}><Download size={13} />Download PDF</button>}>
-      {url ? <AssignmentPdfPreview scrollableZoom url={url} filename={`Quality check - version ${version}.pdf`} label="Quality check PDF preview" /> : error ? <div role="alert">{error}<button className={`${button} ml-3`} onClick={() => void prepare(false)}>Retry PDF</button></div> : <p role="status">Loading saved quality PDF…</p>}
+      {url ? <AssignmentPdfPreview scrollableZoom url={url} filename={`Quality check - version ${version}.pdf`} label="Quality check PDF preview" /> : error ? <div role="alert">{error}<button className={`${button} ml-3`} onClick={() => void prepare(false)}>Retry PDF</button></div> : <p ><LoadingSkeleton label={"Loading saved quality PDF…"} /></p>}
     </QualityModal>}
   </>;
 }

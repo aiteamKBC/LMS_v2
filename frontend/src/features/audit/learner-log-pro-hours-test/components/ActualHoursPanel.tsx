@@ -1,3 +1,4 @@
+import { LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
 // "Validate and Calculate Actual Hours" — scoped to the learner whose journal is
 // open and the report month selected above it. There is deliberately no bulk or
 // all-learners variant: the server rejects a request without both values, and
@@ -309,7 +310,7 @@ export function ActualHoursPanel({ aptemId, month, learnerName }: {
           changes an active value.
         </p>
       ) : summary.isLoading ? (
-        <p className="px-6 py-5 text-xs text-muted-foreground">Loading the review…</p>
+        <p className="px-6 py-5 text-xs text-muted-foreground"><LoadingSkeleton label={"Loading the review…"} /></p>
       ) : summary.error ? (
         <p className="px-6 py-5 text-xs text-red-600">
           {summary.error instanceof Error ? summary.error.message : "Could not load the review."}

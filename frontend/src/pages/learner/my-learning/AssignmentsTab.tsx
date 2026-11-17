@@ -1,3 +1,4 @@
+import { LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
 import { assignmentMonth } from './assignmentMonth';
 import { readLearnerJson } from '@/api/learnerRead';
 import { useEffect, useMemo, useState } from 'react';
@@ -101,7 +102,7 @@ function AssignedList({ real, kind, id, canTake }: {
                 : 'Your tutor has not added the assignment brief or materials yet.'}</p>}</td>
             <td className="px-4 py-3">{row.week || 'Not specified'}</td>
             <td className="whitespace-nowrap px-4 py-3">{row.date ? new Date(`${row.date.slice(0, 10)}T12:00:00`).toLocaleDateString('en-GB') : 'Not scheduled'}</td>
-            <td className="px-4 py-3"><StatusBadge tone={stage === 'completed' ? 'positive' : 'neutral'} label={statusLabels[row.status] || row.status.replaceAll('_', ' ') || (error ? 'Status unavailable' : 'Loading status…')} /></td>
+            <td className="px-4 py-3"><StatusBadge tone={stage === 'completed' ? 'positive' : 'neutral'} label={statusLabels[row.status] || row.status.replaceAll('_', ' ') || (error ? 'Status unavailable' : <LoadingSkeleton label={'Loading status…'} />)} /></td>
             <td className="whitespace-nowrap px-4 py-3 text-right">{!row.hasContent && !row.hasSavedWork ? <span className="text-foreground-500">Awaiting brief</span> : kind && id && <Link className="rounded-lg border border-purple-200 px-4 py-2 font-medium text-purple-800 hover:bg-purple-50"
               to={`/learner/monthly-submission/${kind}/${id}/${encodeURIComponent(row.componentId!)}`}>{action}</Link>}</td>
           </tr>;
@@ -148,7 +149,7 @@ export function AssignmentsTab({ kind, id, real = null, loading: planLoading = f
     {planLoading && !real ? <RowsSkeleton /> : loadError ? <LearnerLoadError error={loadError} onRetry={onRetry} title="Your assignments could not be loaded" retryLabel="Retry assignments" /> : null}
     {hasAssigned && real && <AssignedList key={`${kind}:${id}`} real={real} kind={kind} id={id} canTake={canTake} />}
     {!planLoading && !loadError && !hasAssigned && !loading && !error && months.length === 0 && <Panel><EmptyState size="sm" title="No assignments linked yet" description="Assignments linked to your training plan will appear here." /></Panel>}
-    {loading ? <p role="status" className="text-sm text-slate-500">Loading previous assignments…</p> : error ? <LearnerLoadError error={error} onRetry={() => setRetry(n => n + 1)} title="Previous assignments could not be loaded" retryLabel="Retry" />
+    {loading ? <p  className="text-sm text-slate-500"><LoadingSkeleton label={"Loading previous assignments…"} /></p> : error ? <LearnerLoadError error={error} onRetry={() => setRetry(n => n + 1)} title="Previous assignments could not be loaded" retryLabel="Retry" />
       : months.length > 0 && <section aria-label="Previous assignments" className="space-y-3"><h2 className="text-base font-semibold text-slate-900">Previous assignments</h2>{months.map(([month, assignments], index) => <details key={month} open={index === 0} className="overflow-hidden rounded-2xl border border-purple-100 bg-white">
         <summary className="cursor-pointer bg-purple-50/50 px-5 py-4 font-semibold text-slate-900">
           {month ? new Date(`${month}-01T12:00:00`).toLocaleDateString('en-GB', { month: 'long', year: 'numeric' }) : 'Undated assignments'}

@@ -1,3 +1,4 @@
+import { LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
 import { useEffect, useState, type ReactNode } from 'react';
 import { BarChart3, CalendarDays, ChevronRight, ClipboardList, GraduationCap, Info, Lightbulb, SlidersHorizontal, ThumbsUp, TrendingUp, TriangleAlert, Users } from 'lucide-react';
 import { Bar, BarChart, CartesianGrid, Cell, Line, LineChart, Pie, PieChart, Tooltip, XAxis, YAxis } from 'recharts';
@@ -128,6 +129,6 @@ export function FeedbackDashboard({ onViewResponse }: { onViewResponse: (id: num
       <div className={styles.filter}><Users className={styles.filterIcon} size={34} /><label>Learner group<select aria-label="Insights learner group" value={group} disabled={!report} onChange={event => { setGroup(event.target.value); setModuleId(''); }}><option value="">All groups</option>{groups.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label></div>
       <div className={styles.filter}><GraduationCap className={styles.filterIcon} size={34} /><label>Module<select aria-label="Insights module" value={moduleId} disabled={!report || (!modules.length && !moduleId)} onChange={event => setModuleId(event.target.value)}><option value="">All modules</option>{modules.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}{moduleId && !modules.some(item => item.id === moduleId) && <option value={moduleId}>Selected module (not in current list)</option>}</select></label></div>
     </div><aside className={styles.scope}><Info size={21} /><div><strong>Showing data for {label}</strong>All panels follow this selection. Group and module use the values saved with the lecture or form.</div></aside></div>
-    {error ? <div role="alert" className={styles.error}>{error} <button type="button" className={styles.link} onClick={() => setRetry(value => value + 1)}>Retry insights</button></div> : report ? <DashboardContent report={report} onViewResponse={onViewResponse} /> : <div role="status" className={styles.loading}>Loading feedback insights…</div>}
+    {error ? <div role="alert" className={styles.error}>{error} <button type="button" className={styles.link} onClick={() => setRetry(value => value + 1)}>Retry insights</button></div> : report ? <DashboardContent report={report} onViewResponse={onViewResponse} /> : <div  className={styles.loading}><LoadingSkeleton label={"Loading feedback insights…"} /></div>}
   </section>;
 }

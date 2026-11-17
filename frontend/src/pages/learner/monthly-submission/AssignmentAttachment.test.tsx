@@ -40,7 +40,7 @@ it('opens two instruction PDFs automatically with independent pages, zoom, and c
   await screen.findAllByRole('button', { name: 'Zoom in' });
   const [first, second] = screen.getAllByRole('region', { name: 'Assignment attachment' });
   expect(within(first).getByText('Page 1 of 3')).toBeVisible();
-  expect(within(second).getByText('Loading PDF preview...')).toBeVisible();
+  expect(within(second).getByRole('status', { name: 'Loading PDF preview...' })).toBeVisible();
   finishSecond(new Response(new Uint8Array([1]), { status: 200 }));
   expect(await within(second).findByText('Page 1 of 3')).toBeVisible();
   await waitFor(() => expect(first.querySelector('canvas')?.width).toBe(1500));

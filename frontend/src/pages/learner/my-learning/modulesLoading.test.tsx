@@ -25,7 +25,7 @@ it('starts metadata before the plan/history and shares one HTTP request across S
   rerender(view(real, true));
   expect(vi.mocked(fetch).mock.calls.filter(call => String(call[0]).includes('/subject-covers/'))).toHaveLength(1);
   await act(async () => finish(new Response(JSON.stringify(metadata))));
-  expect(screen.getByRole('status')).toHaveTextContent('Loading subjects');
+  expect(screen.getByRole('status')).toHaveAccessibleName(expect.stringContaining('Loading subjects'));
   expect(screen.queryByRole('button', { name: /Leadership/ })).not.toBeInTheDocument();
   rerender(view(real, false, { activities: [], covers: {} } as unknown as StudentActivityResponse));
   await waitFor(() => expect(screen.getByRole('button', { name: /Leadership/ })).toBeVisible());

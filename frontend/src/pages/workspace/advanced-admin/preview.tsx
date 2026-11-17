@@ -1,3 +1,4 @@
+import { LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { ArrowLeft, LockKeyhole } from 'lucide-react';
@@ -60,10 +61,10 @@ export default function AdvancedAdminLearnerPreview() {
       <Link to={`/workspace/advanced-admin/learners/${id}/learning`} className="inline-flex items-center gap-2 text-sm font-semibold text-primary-700 hover:underline"><ArrowLeft size={16} />Back to learner record</Link>
       <p className="flex items-center gap-2 rounded-xl border border-primary-200 bg-primary-50 p-3 text-sm text-primary-900"><LockKeyhole size={17} aria-hidden="true" />Read-only learner view. Submitting, signing, attendance updates and sending messages are disabled.</p>
       {error && <p role="alert" className="rounded-xl border border-red-200 bg-red-50 p-5 text-red-700">{error}</p>}
-      {!learner && !error && <p role="status" className="rounded-xl border bg-white p-5">Loading learner…</p>}
+      {!learner && !error && <p  className="rounded-xl border bg-white p-5"><LoadingSkeleton label={"Loading learner…"} /></p>}
       {learner && <>
         {needsLearning && learningError && <p role="alert" className="rounded-xl border border-red-200 bg-red-50 p-5 text-red-700">{learningError}</p>}
-        {needsLearning && !learning && !learningError && <p role="status" className="rounded-xl border bg-white p-5">Loading learning…</p>}
+        {needsLearning && !learning && !learningError && <p  className="rounded-xl border bg-white p-5"><LoadingSkeleton label={"Loading learning…"} /></p>}
         {learning && (section === 'home' || section === 'dashboard') && <PreviewHome learning={learning} />}
         {learning && section === 'learning' && <ReadOnlyLearning key={id} learnerId={id} learning={learning} />}
         {learning && section === 'calendar' && <PreviewCalendar learnerId={id} learning={learning} />}

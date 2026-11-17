@@ -1,3 +1,4 @@
+import { LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
 import { LearnerDirectoryProvider } from '../shared/entities/AssignedLearners';
 import { LearnerStatusCounts } from '../shared/entities/LearnerStatusCounts';
 import { type CSSProperties, type FormEvent, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -1003,7 +1004,7 @@ function CurriculumProgrammesContent() {
                 <p className="mt-2 max-w-2xl text-[13px] leading-6 text-white/75">
                   Build programme structures, manage cohorts and groups, and keep module delivery plans connected to live LMS records.
                 </p>
-                <p className="mt-2 text-[12px] font-semibold text-white/70">{loading ? 'Loading live LMS programmes...' : heroSummary}</p>
+                <p className="mt-2 text-[12px] font-semibold text-white/70">{loading ? <LoadingSkeleton label={'Loading live LMS programmes...'} /> : heroSummary}</p>
               </div>
               <div className="curriculum-programme-hero-actions flex flex-col gap-2 sm:flex-row sm:items-center">
                 {/* A programme is independently saveable: this creates one from
@@ -1658,7 +1659,7 @@ function ProgrammeLearnerImpactModal({
             <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-emerald-200">Enrolled Learners</p>
             <h3 className="mt-2 truncate text-xl font-heading font-bold">{programme.name}</h3>
             <p className="mt-1 text-[12px] font-semibold text-white/70">
-              {loading ? 'Loading learner OTJH and KSB progress...' : `${assignedLearners.length} learner${assignedLearners.length === 1 ? '' : 's'} assigned to this programme.`}
+              {loading ? <LoadingSkeleton label={'Loading learner OTJH and KSB progress...'} /> : `${assignedLearners.length} learner${assignedLearners.length === 1 ? '' : 's'} assigned to this programme.`}
             </p>
           </div>
           <button type="button" onClick={onClose} className="flex h-9 w-9 items-center justify-center rounded-xl bg-white/10 text-white transition-smooth hover:bg-white/15" aria-label="Close learner impact">
@@ -1689,7 +1690,7 @@ function ProgrammeLearnerImpactModal({
           {error ? (
             <ProgrammeKsbEmptyState icon="ri-error-warning-line" title="Could not load learners" message={error} />
           ) : loading ? (
-            <ProgrammeKsbEmptyState icon="ri-loader-4-line animate-spin" title="Loading learner impact" message="Reading enrolled learners, OTJH totals and weighted KSB consumption." />
+            <LoadingSkeleton label={"Loading learner impact"} />
           ) : filteredLearners.length ? (
             <div className="space-y-3">
               {filteredLearners.map(learner => (
@@ -2012,7 +2013,7 @@ function ProgrammeKsbReviewModal({
             <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-primary-200">Programme KSB Coverage</p>
             <h3 className="mt-2 text-xl font-heading font-bold text-white">{programme.name}</h3>
             <p className="mt-1 text-[12px] font-semibold text-white/70">
-              {loading ? 'Loading applied KSBs...' : `${filteredItems.length} applied KSB${filteredItems.length === 1 ? '' : 's'} across ${totalPlacements} placement${totalPlacements === 1 ? '' : 's'}.`}
+              {loading ? <LoadingSkeleton label={'Loading applied KSBs...'} /> : `${filteredItems.length} applied KSB${filteredItems.length === 1 ? '' : 's'} across ${totalPlacements} placement${totalPlacements === 1 ? '' : 's'}.`}
             </p>
           </div>
           <button type="button" onClick={onClose} className="flex h-9 w-9 items-center justify-center rounded-xl bg-white/10 text-white transition-smooth hover:bg-white/15" aria-label="Close KSB review">
@@ -2036,7 +2037,7 @@ function ProgrammeKsbReviewModal({
           {error ? (
             <ProgrammeKsbEmptyState icon="ri-error-warning-line" title="Could not load programme KSBs" message={error} />
           ) : loading ? (
-            <ProgrammeKsbEmptyState icon="ri-loader-4-line animate-spin" title="Loading applied KSBs" message="Reading programme coverage from the LMS database." />
+            <LoadingSkeleton label={"Loading applied KSBs"} />
           ) : filteredItems.length ? (
             <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
               <ProgrammeKsbColumn title="Knowledge" tone="knowledge" items={groupedItems.knowledge} descriptions={descriptions} />
@@ -2085,7 +2086,7 @@ function ProgrammeKsbSourceModal({ review, onClose, onRetry }: { review: Program
             <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-primary-200">Applied KSB Profile</p>
             <h3 className="mt-2 truncate text-xl font-heading font-bold">{review.source.title}</h3>
             <p className="mt-1 text-[12px] font-semibold text-white/70">
-              {review.programme.name} - {review.loading ? 'Loading definitions' : review.error ? 'Definitions unavailable' : `${filteredItems.length} of ${items.length} KSBs shown`} - {review.source.detail}
+              {review.programme.name} - {review.loading ? <LoadingSkeleton label={'Loading definitions'} /> : review.error ? 'Definitions unavailable' : `${filteredItems.length} of ${items.length} KSBs shown`} - {review.source.detail}
             </p>
           </div>
           <button type="button" onClick={onClose} className="flex h-9 w-9 items-center justify-center rounded-xl bg-white/10 text-white transition-smooth hover:bg-white/15" aria-label="Close KSB profile">
@@ -2106,7 +2107,7 @@ function ProgrammeKsbSourceModal({ review, onClose, onRetry }: { review: Program
         </div>
 
         <div className="min-h-0 flex-1 overflow-auto p-4">
-          {review.loading ? <p role="status">Loading KSB definitions...</p> : review.error ? (
+          {review.loading ? <p ><LoadingSkeleton label={"Loading KSB definitions..."} /></p> : review.error ? (
             <div role="alert">
               <p>{review.error}</p>
               <button type="button" onClick={onRetry} className="mt-3 rounded-lg border border-primary-200 px-3 py-2 text-primary-700">Retry</button>
@@ -2245,7 +2246,7 @@ function ApplyProgrammeKsbSourceModal({
             {sourcesLoading && !options.length && (
               <div className="rounded-xl border border-primary-100 bg-primary-50 p-6 text-center">
                 <AppIcon className="ri-loader-4-line mb-2 inline-block animate-spin text-xl text-primary-600"></AppIcon>
-                <p className="text-sm font-bold text-foreground-800">Loading KSB sources...</p>
+                <p className="text-sm font-bold text-foreground-800"><LoadingSkeleton label={"Loading KSB sources..."} /></p>
                 <p className="mt-1 text-[12px] text-foreground-500">Your existing programme assignment is kept while the source details load.</p>
               </div>
             )}
@@ -3269,7 +3270,7 @@ function ProgrammeStructureEditor({
         </div>
 
         <div className="flex-1 overflow-y-auto p-6 space-y-4">
-          {(loading || staffLoading) && <div className="rounded-xl border border-primary-200 bg-primary-50 px-4 py-3 text-[12px] font-medium text-primary-700">Loading live curriculum structure...</div>}
+          {(loading || staffLoading) && <div className="rounded-xl border border-primary-200 bg-primary-50 px-4 py-3 text-[12px] font-medium text-primary-700"><LoadingSkeleton label={"Loading live curriculum structure..."} /></div>}
           {error && <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-[12px] font-medium text-red-700">{error}</div>}
           {staffError && <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-[12px] font-medium text-red-700">{staffError}</div>}
           {notice && <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-[12px] font-medium text-emerald-700">{notice}</div>}

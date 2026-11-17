@@ -176,7 +176,7 @@ describe('Saved Coaching Session evidence buttons', () => {
     expect(screen.queryByText(/No saved transcript is verified/)).not.toBeInTheDocument();
     fireEvent.click(within(section).getByRole('button', { name: 'Transcript' }));
     expect(screen.getByText('Actual attendee')).toBeInTheDocument();
-    expect(screen.getByRole('status')).toHaveTextContent('Loading transcript');
+    expect(screen.getByRole('status')).toHaveAccessibleName(expect.stringContaining('Loading transcript'));
     fireEvent.click(within(section).getByRole('button', { name: 'AI analysis' }));
     expect(loadSavedCoachingEvidence).toHaveBeenCalledTimes(1);
     await act(async () => finish(evidence()));

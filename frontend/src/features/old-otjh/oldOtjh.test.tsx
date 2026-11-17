@@ -286,7 +286,7 @@ describe('previous learning portal', () => {
   it('shows both cards while the record loads and keeps LMS available', async () => {
     vi.mocked(getSummary).mockImplementation(() => new Promise(() => {}));
     page();
-    expect(screen.getByRole('status')).toHaveTextContent('Loading your previous record');
+    expect(screen.getByRole('status')).toHaveAccessibleName(expect.stringContaining('Loading your previous record'));
     expect(screen.getByRole('link', { name: 'Review previous record' })).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Open LMS' }));
     expect(await screen.findByText('New LMS content')).toBeInTheDocument();

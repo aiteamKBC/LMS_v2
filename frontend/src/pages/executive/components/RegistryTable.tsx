@@ -3,6 +3,7 @@ import Panel from "@/components/base/Panel";
 import RagStackBar from "@/components/qms/RagStackBar";
 import { formatDate, formatNumber, formatPct } from "@/lib/qms";
 import type { FormDefinition } from "@/types/qms";
+import styles from "../ExecutiveOverview.module.css";
 
 interface RegistryTableProps {
   forms: FormDefinition[];
@@ -46,14 +47,16 @@ export default function RegistryTable({ forms }: RegistryTableProps) {
       title="Form registry"
       description="Every registered form type with its evaluation policy coverage. Expand a row for scoring detail."
       headingId="registry-heading"
+      className={styles.registry}
       bodyClassName="px-0 pb-1 pt-0"
+      action={<span className={styles.countBadge}>{formatNumber(forms.length)} form types</span>}
     >
-      <div className="kbc-scroll overflow-x-auto">
+      <div className={`kbc-scroll ${styles.registryScroll}`} tabIndex={0} role="region" aria-label="Registered quality forms">
         <table className="w-full min-w-[980px] border-collapse text-left">
           <caption className="sr-only">
             Registered quality forms, their respondent and subject, evaluation policy and status mix
           </caption>
-          <thead>
+          <thead className={styles.tableHead}>
             <tr className="border-b border-background-200">
               <th scope="col" className="px-4 py-2.5 sm:px-5">{headerButton("name", "Form")}</th>
               <th scope="col" className="px-3 py-2.5 font-label text-[10.5px] font-semibold uppercase tracking-[0.08em] text-foreground-600">
@@ -207,6 +210,7 @@ export default function RegistryTable({ forms }: RegistryTableProps) {
           </tbody>
         </table>
       </div>
+      <p className={styles.tableNote}>Expand a form to explore its scoring method, policy and access details.</p>
     </Panel>
   );
 }

@@ -1,3 +1,4 @@
+import { LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { LearnerKind } from '@/api/learnerDetail';
 import { AppIcon } from '@/components/feature/AppIcon';
@@ -198,7 +199,7 @@ export function AssignmentEvidence({
       {error && <p className="text-xs font-medium text-red-600 mb-3">{error}</p>}
 
       {loading ? (
-        <p className="text-xs text-foreground-400">Loading evidence…</p>
+        <p className="text-xs text-foreground-400"><LoadingSkeleton label={"Loading evidence…"} /></p>
       ) : files.length === 0 ? (
         <p className="text-xs text-foreground-400">No evidence uploaded yet.</p>
       ) : (

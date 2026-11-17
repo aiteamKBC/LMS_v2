@@ -1,3 +1,4 @@
+import { LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { EnrolmentWorkspaceShell as WorkspaceShell } from '../presentation/EnrolmentWorkspaceShell';
@@ -161,7 +162,7 @@ export default function EligibilityBuilderPage() {
           }
         />
 
-        {loading && <p className="text-[13px] text-foreground-400"><AppIcon className="ri-loader-4-line mr-2 inline animate-spin" />Loading the eligibility form…</p>}
+        {loading && <p className="text-[13px] text-foreground-400"><LoadingSkeleton label={"Loading the eligibility form…"} /></p>}
         {!loading && loadError && (
           <div className="rounded-2xl border border-red-200 bg-red-50 p-4 text-[13px] text-red-700">
             <AppIcon className="ri-error-warning-line mr-1.5 inline" />{loadError}

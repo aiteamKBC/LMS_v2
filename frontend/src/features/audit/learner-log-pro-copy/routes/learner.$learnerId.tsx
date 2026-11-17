@@ -1,3 +1,4 @@
+import { LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute } from '@tanstack/react-router';
 import { AuditLink as Link } from '@/features/audit/auditNavigation';
@@ -820,7 +821,7 @@ function LearnerProfilePage() {
   }
 
   if (profile.isLoading) {
-    return <div className="flex min-h-screen items-center justify-center bg-background text-sm text-muted-foreground">Loading learner profile…</div>;
+    return <div className="flex min-h-screen items-center justify-center bg-background text-sm text-muted-foreground"><LoadingSkeleton label={"Loading learner profile…"} /></div>;
   }
 
   if (profile.isError || !profile.data) {
@@ -1803,9 +1804,7 @@ function LearnerProfilePage() {
             </header>
             <div className="relative min-h-0 flex-1 bg-slate-800 p-2">
               {!contractPreviewUrl && !contractPreviewError && (
-                <div className="absolute inset-0 flex items-center justify-center gap-2 text-sm font-semibold text-white">
-                  <LoaderCircle className="h-5 w-5 animate-spin" /> Loading preview…
-                </div>
+                <div className="absolute inset-0 flex items-center justify-center gap-2 text-sm font-semibold text-white"><LoadingSkeleton label={"Loading preview…"} /></div>
               )}
               {contractPreviewError && (
                 <div className="absolute inset-0 flex items-center justify-center p-8 text-center text-sm font-semibold text-white">
@@ -2035,9 +2034,7 @@ function LearnerProfilePage() {
             </header>
             <div className="space-y-4 p-6">
               {monthlyReportActivities.isLoading ? (
-                <div className="flex items-center justify-center gap-2 rounded-md border border-border bg-background px-4 py-10 text-sm text-muted-foreground">
-                  <LoaderCircle className="h-5 w-5 animate-spin" /> Loading monthly report activities…
-                </div>
+                <div className="flex items-center justify-center gap-2 rounded-md border border-border bg-background px-4 py-10 text-sm text-muted-foreground"><LoadingSkeleton label={"Loading monthly report activities…"} /></div>
               ) : monthlyReportActivities.error ? (
                 <p className="rounded-md border border-destructive/25 bg-destructive/5 px-4 py-3 text-sm text-destructive">
                   {monthlyReportActivities.error instanceof Error
@@ -2146,9 +2143,7 @@ function LearnerProfilePage() {
             </header>
             <div className="relative min-h-0 flex-1 bg-slate-800 p-2">
               {!evidencePreviewUrl && !evidencePreviewError && (
-                <div className="absolute inset-0 flex items-center justify-center gap-2 text-sm font-semibold text-white">
-                  <LoaderCircle className="h-5 w-5 animate-spin" /> Loading preview…
-                </div>
+                <div className="absolute inset-0 flex items-center justify-center gap-2 text-sm font-semibold text-white"><LoadingSkeleton label={"Loading preview…"} /></div>
               )}
               {evidencePreviewError && (
                 <div className="absolute inset-0 flex items-center justify-center p-8 text-center text-sm font-semibold text-white">

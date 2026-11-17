@@ -1,3 +1,4 @@
+import { LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
 import { fileProbe } from './page.helpers';
 import { LearnerLoadError } from '@/components/feature/LearnerLoadError';
 import { archiveTimingDraft, timingSessionExpired } from '@/lib/timingRecovery';
@@ -2155,7 +2156,7 @@ export function InlineAttachmentPreview({ url, title, fileName, readingPreferenc
   if (preview?.status === 'loading') {
     return (
       <div className="grid min-h-[280px] place-items-center rounded-xl border border-background-300 bg-white text-sm font-semibold text-foreground-500 shadow-sm">
-        <span className="inline-flex items-center gap-2"><AppIcon className="ri-loader-4-line animate-spin" />Loading file preview...</span>
+        <span className="inline-flex items-center gap-2"><LoadingSkeleton label={"Loading file preview..."} /></span>
       </div>
     );
   }
@@ -2462,7 +2463,7 @@ function PdfCanvasPreview({ url, title, fileName, readingPreferences, annotation
   if (status === 'loading') {
     return (
       <div className="grid min-h-[420px] place-items-center rounded-xl border border-background-300 bg-white text-sm font-semibold text-foreground-500 shadow-sm">
-        <span className="inline-flex items-center gap-2"><AppIcon className="ri-loader-4-line animate-spin" />Loading PDF preview...</span>
+        <span className="inline-flex items-center gap-2"><LoadingSkeleton label={"Loading PDF preview..."} /></span>
       </div>
     );
   }

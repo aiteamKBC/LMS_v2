@@ -1,3 +1,4 @@
+import { LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import type { AuthUser } from '@/api/auth';
@@ -36,7 +37,7 @@ export default function CompletionNotifications({ account }: { account: AuthUser
         <p className="mt-1 text-xs text-foreground-600">MCM &amp; PR reminders at 24 and 72 hours. Completing the session in Aptem resolves the reminder after the source syncs.</p></div>
       <button type="button" disabled={busy} onClick={() => setAttempt(value => value + 1)} className="rounded-lg border border-primary-200 px-3 py-2 text-xs font-semibold text-primary-700 disabled:opacity-50">Refresh reminders</button>
     </div>
-    {busy && <p role="status" className="mt-3 text-xs text-foreground-600">Loading reminders…</p>}
+    {busy && <p  className="mt-3 text-xs text-foreground-600"><LoadingSkeleton label={"Loading reminders…"} /></p>}
     {error && <p role="alert" className="mt-3 text-sm text-red-700">{error}</p>}
     {!busy && !error && !items.length && <p className="mt-3 text-sm text-foreground-600">No verified completion reminders are currently available.</p>}
     <ul className="mt-3 divide-y divide-background-200">{items.map(item => <li key={item.id} className="flex flex-wrap items-center justify-between gap-3 py-3">

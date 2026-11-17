@@ -1,0 +1,51 @@
+/* Keep all filter dropdowns borderless even when the shared select is open. */
+.selectTrigger.selectTrigger {
+  height: 40px;
+  padding: 0 12px;
+  border: 0 !important;
+  border-radius: 10px;
+  background: oklch(var(--background-100));
+  box-shadow: none !important;
+  outline: none !important;
+}
+
+.selectTrigger.selectTrigger:hover,
+.selectTrigger.selectTrigger[aria-expanded='true'],
+.selectTrigger.selectTrigger:focus-visible {
+  background: oklch(var(--primary-50));
+}
+
+/* A visible keyboard cue without drawing a stroke around the control. */
+.selectTrigger:focus-visible > span:first-child {
+  text-decoration: underline;
+  text-underline-offset: 4px;
+}
+
+.selectTrigger > span:first-child {
+  font-size: 12.5px;
+  font-weight: 500;
+}
+
+.selectMenu.selectMenu {
+  border: 0;
+  border-radius: 12px;
+  box-shadow: 0 8px 28px -6px rgb(35 20 55 / 18%);
+}
+
+.searchInput.searchInput,
+.searchInput.searchInput.searchInput:focus {
+  border: 0 !important;
+  background: oklch(var(--background-50));
+  box-shadow: none !important;
+  outline: none !important;
+}
+
+/* Preserve a focus cue without bringing back the search field's frame. */
+.searchInput.searchInput.searchInput:focus {
+  background: oklch(var(--primary-50)) !important;
+}
+
+.selectMenu [role='option'] {
+  min-height: 36px;
+  border-radius: 8px;
+}

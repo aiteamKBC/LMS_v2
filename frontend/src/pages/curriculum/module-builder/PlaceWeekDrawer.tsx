@@ -1,3 +1,4 @@
+import { LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
 import { useEffect, useMemo, useState } from 'react';
 import { AppIcon } from '@/components/feature/AppIcon';
 import { showCurriculumAlert } from '@/components/feature/CurriculumSweetAlert';
@@ -83,7 +84,7 @@ export function PlaceWeekDrawer({ week, groupId, groupName, programmeId, onClose
           <button type="button" onClick={close} disabled={Boolean(savingId)} aria-label="Close" className="grid h-7 w-7 shrink-0 place-items-center rounded-md text-foreground-400 hover:bg-background-100 disabled:opacity-50"><AppIcon className="ri-close-line" /></button>
         </header>
         <div className="min-h-0 flex-1 overflow-y-auto p-4">
-          {loading ? <p className="py-8 text-center text-[12px] text-foreground-500">Loading modules...</p>
+          {loading ? <p className="py-8 text-center text-[12px] text-foreground-500"><LoadingSkeleton label={"Loading modules..."} /></p>
             : groupModules.length ? <div className="space-y-2">{groupModules.map(module => {
               const id = catalogueIdOf(module);
               const saving = savingId === id;

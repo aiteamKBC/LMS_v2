@@ -1,3 +1,4 @@
+import { LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
@@ -733,7 +734,7 @@ export default function EngagementClubsPage() {
                 <button onClick={() => setShowLearnerPicker(true)} className="w-full flex items-center justify-center gap-1.5 px-3 py-2 bg-primary-500 text-white rounded-lg text-[12px] font-semibold hover:bg-primary-600 transition-smooth cursor-pointer mb-2">
                   <AppIcon className="ri-add-line"></AppIcon> Assign a learner
                 </button>
-                {membersLoading && <p className="text-[11px] text-foreground-400 text-center py-4">Loading members…</p>}
+                {membersLoading && <p className="text-[11px] text-foreground-400 text-center py-4"><LoadingSkeleton label={"Loading members…"} /></p>}
                 {!membersLoading && members.length === 0 && (
                   <p className="text-[11px] text-foreground-400 text-center py-4">No learners assigned yet.</p>
                 )}
@@ -773,7 +774,7 @@ export default function EngagementClubsPage() {
                 <button onClick={() => setAttendanceCtx(null)} className="w-8 h-8 rounded-lg flex items-center justify-center text-foreground-400 hover:bg-background-100 transition-smooth cursor-pointer"><AppIcon className="ri-close-line"></AppIcon></button>
               </div>
 
-              {attendanceLoading && <p className="text-[11px] text-foreground-400 text-center py-8">Loading roster…</p>}
+              {attendanceLoading && <p className="text-[11px] text-foreground-400 text-center py-8"><LoadingSkeleton label={"Loading roster…"} /></p>}
 
               {!attendanceLoading && (
                 <>

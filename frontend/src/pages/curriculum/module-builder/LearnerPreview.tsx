@@ -1,3 +1,4 @@
+import { LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
 import { lazy, Suspense, useEffect, useRef, useState } from 'react';
 import DOMPurify from 'dompurify';
 import { SessionResults } from '@/components/feature/SessionResults';
@@ -30,7 +31,7 @@ function QuizPreview({ quizId }: { quizId: string }) {
     return () => controller.abort();
   }, [quizId]);
   if (error) return <p role="alert">{error}</p>;
-  if (!quiz) return <p role="status">Loading quiz preview…</p>;
+  if (!quiz) return <p ><LoadingSkeleton label={"Loading quiz preview…"} /></p>;
   if (quiz.quiz.packageType === 'scorm') return <iframe title={`${quiz.quiz.title} preview`} src={`/quiz_api/quizzes/${quiz.quiz.id}/scorm/`} sandbox="allow-scripts" className="h-[65vh] w-full rounded-xl border" />;
   return <div className="space-y-4">{quiz.questions.map((question, index) => {
     const pairs = question.answers.map(answer => parseQuizPairAnswer(answer.text, question.questionType === 'image_matching' ? 'image_matching' : 'matching'));
@@ -81,7 +82,7 @@ export function LearnerPreview({ module, initialComponentId, onClose }: {
           </button>)}
         </section>
       ) : <button key={primary.id} onClick={() => setSelected(primary.id)} aria-current={selected === primary.id ? 'true' : undefined} className={`mb-1 block w-full rounded-lg px-3 py-3 text-left text-sm ${selected === primary.id ? 'bg-primary-50 font-semibold text-primary-700' : 'hover:bg-background-50'}`}>{primary.title || 'Untitled component'}</button>)}</div>)}</nav>
-        <main className="overflow-auto p-4 md:p-7"><Suspense fallback={<p role="status">Loading content preview…</p>}>{!component ? <p>No components have been added yet.</p> : <div key={selected} className="mx-auto max-w-4xl space-y-5"><h2 className="text-xl font-bold">{component.title}</h2>
+        <main className="overflow-auto p-4 md:p-7"><Suspense fallback={<p ><LoadingSkeleton label={"Loading content preview…"} /></p>}>{!component ? <p>No components have been added yet.</p> : <div key={selected} className="mx-auto max-w-4xl space-y-5"><h2 className="text-xl font-bold">{component.title}</h2>
           {(current?.component.type === 'quiz' || current?.component.type === 'monthly-ksb-quiz') && quizId ? <QuizPreview quizId={quizId} /> : <>
             {component.assignmentBrief && !component.assignmentBriefHtml && <p className="whitespace-pre-wrap rounded-xl border bg-white p-5">{component.assignmentBrief}</p>}
             {component.assignmentBriefHtml && <div className="rich-text-surface rounded-xl border bg-white p-5" dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(component.assignmentBriefHtml) }} />}

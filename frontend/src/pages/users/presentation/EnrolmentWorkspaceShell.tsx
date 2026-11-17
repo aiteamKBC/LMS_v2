@@ -127,7 +127,7 @@ export function EnrolmentWorkspaceShell({ children, role, roleLabel, navItems, p
       {!hidePageChrome && <Header accountButtonRef={accountRef} pageTitle={pageTitle} pageSubtitle={pageSubtitle}
         headerExtras={headerExtras}
         userName={displayName} role={chromeRole} appearance={directoryLayout ? 'enrolment' : undefined} workspaceLabel={workspaceLabel} sidebarSignOut
-        pageIcon={activeHref ? <SidebarIcon id={destinations.find(item => item.href === activeHref)?.id} label={pageTitle} /> : undefined}
+        pageIcon={activeHref ? <SidebarIcon id={destinations.find(item => item.href === activeHref)?.id} label={typeof pageTitle === 'string' ? pageTitle : workspaceLabel} /> : undefined}
         onToggleMobileSidebar={() => setMobileOpen(value => !value)} mobileSidebarOpen={mobileOpen} mobileMenuButtonRef={menuRef}
         onOpenSearch={() => setSearchOpen(true)} />}
       {!hidePageChrome && (!hideBreadcrumbs || showBackButton) && <div className={`workspace-breadcrumbs ${styles.breadcrumbs}`}>

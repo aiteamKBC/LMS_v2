@@ -1,5 +1,5 @@
 /* Readdy V521 hub. The local layer wins over legacy shell !important rules;
-   every rule stays scoped to this page, its two links and decorative assets. */
+   every rule stays scoped to this page, its cards and decorative assets. */
 @layer workspace-breadcrumbs-ui {
   :global(.workspace-content):has(.page) > :global(.workspace-breadcrumbs) {
     background: transparent !important;
@@ -93,8 +93,8 @@
     z-index: 1 !important;
     display: grid !important;
     width: 100% !important;
-    max-width: 1024px !important;
-    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+    max-width: 1440px !important;
+    grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
     gap: 24px !important;
     margin: 0 auto !important;
     padding: 0 4px !important;
@@ -131,6 +131,16 @@
     --hub-hover-line: .808 .042 200;
   }
 
+  .page .card[href='/curriculum/quality-demo'] {
+    --hub-tone: .47 .105 65;
+    --hub-tone-middle: .405 .09 65;
+    --hub-tone-end: .34 .075 65;
+    --hub-eyebrow: .405 .09 65;
+    --hub-hover-line: .72 .13 75;
+    --hub-surface: .985 .025 85;
+    --hub-line: .86 .07 80;
+  }
+
   .page .hoverFill {
     position: absolute !important;
     inset: 0 !important;
@@ -154,7 +164,7 @@
   }
 
   .page .illustration img { display: block !important; width: 100% !important; height: 100% !important; object-fit: cover !important; }
-  .page .content { position: relative !important; display: flex !important; min-width: 0 !important; flex: 1 !important; flex-direction: column !important; padding: 32px !important; }
+  .page .content { position: relative !important; display: flex !important; min-width: 0 !important; flex: 1 !important; flex-direction: column !important; padding: 24px !important; }
 
   .page .eyebrow {
     margin: 0 !important;
@@ -214,11 +224,12 @@
   .page .footer {
     position: relative !important;
     display: flex !important;
-    align-items: center !important;
+    flex-direction: column !important;
+    align-items: stretch !important;
     justify-content: space-between !important;
     gap: 12px !important;
     margin-top: auto !important;
-    padding: 16px 28px !important;
+    padding: 16px 24px !important;
     border-top: 1px solid oklch(var(--hub-line)) !important;
     background: transparent !important;
     transition: border-color 300ms !important;
@@ -281,6 +292,8 @@
   /* Retain the application's existing dark palette rather than the light reference. */
   :global([data-theme='dark']) .page { background: var(--theme-bg, #0a0a0f) !important; color: var(--theme-text-primary) !important; }
   :global([data-theme='dark']) .page .card { background: var(--theme-surface) !important; border-color: var(--theme-border) !important; box-shadow: none !important; }
+  :global([data-theme='dark']) .page .card[href='/curriculum/quality-demo'] { background: oklch(.24 .025 65) !important; border-color: oklch(.43 .065 65) !important; }
+  :global([data-theme='dark']) .page .card[href='/curriculum/quality-demo']:not(:hover):not(:focus-visible) .eyebrow { color: oklch(.8 .11 80) !important; }
   :global([data-theme='dark']) .page .card:not(:hover):not(:focus-visible) :is(.title, .eyebrow) { color: var(--theme-text-primary) !important; }
   :global([data-theme='dark']) .page .card:not(:hover):not(:focus-visible) :is(.description, .meta) { color: var(--theme-text-muted) !important; }
   :global([data-theme='dark']) .page .card:not(:hover):not(:focus-visible) .features li { background: var(--theme-surface) !important; color: var(--theme-text-primary) !important; border-color: var(--theme-border) !important; box-shadow: none !important; }
