@@ -10,7 +10,7 @@ from django.views.decorators.csrf import csrf_exempt
 from login.permissions import staff_only
 from learner_api import learning_plan as plans
 
-from learner_api.placement_links import with_placements, placement_ids, RELATIONS, CACHE
+from learner_api.placement_links import with_placements, placement_ids, placement_profile, RELATIONS, CACHE
 from learner_api.active_users import hydrate_training_plan
 from learner_api.mappers import get_training_plan, stored_training_plan, training_plan_field
 from learner_api.models import EnrolmentUser, LearnerProfile
@@ -119,12 +119,17 @@ def _payload(target, learners):
 
 
 def _row(learner, assigned, module_count):
+    # The module card buckets by the profile's lifecycle status. Keep the
+    # drawer on that same canonical status instead of re-labelling the legacy
+    # programme status as lifecycle status in the browser.
+    profile = placement_profile(learner)
     return {
         'id': str(learner.pk), 'name': plans._s(learner.username) or plans._s(learner.email),
         'email': plans._s(learner.email), 'programme': plans._s(learner.programme),
         'company': plans._s(learner.employer) or plans._s(learner.organization),
         'cohort': plans._s(learner.cohort), 'group': plans._s(learner.group),
         'programmeStatus': plans._s(learner.programme_status),
+        'lifecycleStatus': plans._s(getattr(profile, 'lifecycle_status', '')),
         'learnerType': plans._s(learner.learner_type) or 'apprenticeship',
         'assigned': assigned, 'moduleCount': module_count,
     }
@@ -150,6 +155,24 @@ def _module_payload(target, learners):
                    'moduleCount': len(target['moduleIds'])},
         'learners': rows,
         'totals': {'learnerCount': len(rows), 'assignedCount': sum(row['assigned'] for row in rows)},
+    }
+
+
+def _module_assigned_payload(target):
+    """Compact membership read for the progress dialog, not its edit drawer."""
+    from .learner_status_counts import module_member_enrolment_ids
+
+    members = module_member_enrolment_ids(target['id']) or set()
+    learners = with_placements(EnrolmentUser.all_learners.filter(pk__in=members).only(
+        'id', 'username', 'email', 'programme_id', 'cohort_id', 'group_id',
+        'employer', 'organization', 'programme_status', 'learner_type',
+    ).order_by('username', 'id'))
+    rows = [_row(learner, True, 0) for learner in learners]
+    return {
+        'target': {**{key: target[key] for key in ('id', 'name', 'scope', 'programmeName')},
+                   'moduleCount': len(target['moduleIds'])},
+        'learners': rows,
+        'totals': {'learnerCount': len(rows), 'assignedCount': len(rows)},
     }
 
 
@@ -331,6 +354,8 @@ def _handle(request, scope, identifier):
         if target is None:
             return JsonResponse({'error': f'Active {scope} not found.'}, status=404)
         if request.method == 'GET':
+            if scope == 'module' and request.GET.get('assignedOnly') == '1':
+                return JsonResponse(_module_assigned_payload(target))
             learners = with_placements(EnrolmentUser.all_learners.only(
                 'id', 'username', 'email', 'programme_id', 'cohort_id', 'group_id',
                 'employer', 'organization', 'programme_status', 'learner_type',

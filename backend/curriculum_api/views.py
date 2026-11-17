@@ -32850,6 +32850,9 @@ def curriculum_module_learner_ksb_impact(request, module_catalogue_id):
             enrich(payload, getattr(request, 'login_account', None))
         except (SchemaNotProvisioned, DatabaseError):
             return json_error('Activity status storage is unavailable. Apply curriculum migration 0070.', status=503)
+        if request.GET.get('view') == 'summary':
+            from .learner_impact_summary import module_progress_dialog_summary
+            payload = module_progress_dialog_summary(payload)
     return error or JsonResponse(payload)
 
 

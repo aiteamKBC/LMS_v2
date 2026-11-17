@@ -834,8 +834,9 @@ function ModuleBuilderContent() {
   const learnerRequestRef = useRef(0);
   const [learnerProgress, setLearnerProgress] = useState<{
     target: LearnerAssignmentTarget;
-    impact: CurriculumScopeLearnerKsbImpactResponse;
+    impact: CurriculumScopeLearnerKsbImpactResponse | null;
     assignedLearners: CurriculumProgrammeAssignedLearner[];
+    progressError: string | null;
   } | null>(null);
   const [dragState, setDragState] = useState<DragState>(null);
   const [standards, setStandards] = useState<CurriculumStandard[]>([]);
@@ -1910,7 +1911,18 @@ function ModuleBuilderContent() {
     setActionMessage(null);
     setActionMessageRetry(null);
     try {
-      const directory = await fetchLearnerAssignments(target);
+      const directoryRequest = fetchLearnerAssignments(target, undefined, { assignedOnly: true });
+      // The catalogue already knows an empty module. Avoid an unnecessary
+      // progress read in that case, while opening known non-empty cards in
+      // parallel with their compact membership request.
+      const impactRequest = module.assignedLearnerCount === 0 ? null : fetchCurriculumScopeLearnerKsbImpact('module', identifier, {
+        learnerStatus: 'all', moduleProgress: true, view: 'summary',
+      });
+      // The progress read intentionally outlives the roster read. Mark a fast
+      // rejection handled immediately; its user-facing error is rendered in
+      // the dialog once the roster opens.
+      void impactRequest?.catch(() => undefined);
+      const directory = await directoryRequest;
       if (request !== learnerRequestRef.current) return null;
       // The assignment directory is the membership authority. The impact
       // endpoint adds OTJH/KSB progress, but may not return a newly/directly
@@ -1926,7 +1938,7 @@ function ModuleBuilderContent() {
           programmeStatus: learner.programmeStatus,
           cohort: learner.cohort,
           group: learner.group,
-          lifecycleStatus: learner.programmeStatus,
+          lifecycleStatus: learner.lifecycleStatus,
         }));
       const assignedCount = assignedLearners.length;
       if (module.catalogueId) setLearnerCountOverrides(previous => ({ ...previous, [module.catalogueId]: assignedCount }));
@@ -1934,10 +1946,26 @@ function ModuleBuilderContent() {
         setLearnerAssignmentTarget(target);
         return 0;
       }
-      const impact = await fetchCurriculumScopeLearnerKsbImpact('module', identifier, { learnerStatus: 'all', moduleProgress: true });
-      if (request !== learnerRequestRef.current) return null;
-      setLearnerProgress({ target, impact, assignedLearners });
+      // Let the user inspect the roster while the aggregate read is still
+      // running. The dialog keeps progress actions disabled until this promise
+      // settles, so it cannot navigate with incomplete figures.
+      setLearnerProgress({ target, impact: null, assignedLearners, progressError: null });
       rememberOpenLearners(module.catalogueId);
+      const pendingImpact = impactRequest || fetchCurriculumScopeLearnerKsbImpact('module', identifier, {
+        learnerStatus: 'all', moduleProgress: true, view: 'summary',
+      });
+      void pendingImpact.then(impact => {
+        if (request !== learnerRequestRef.current) return;
+        setLearnerProgress(current => current?.target.id === target.id
+          ? { ...current, impact, progressError: null }
+          : current);
+      }).catch(error => {
+        if (request !== learnerRequestRef.current) return;
+        const message = error instanceof Error ? error.message : `Unable to load progress for ${module.title}.`;
+        setLearnerProgress(current => current?.target.id === target.id
+          ? { ...current, progressError: message }
+          : current);
+      });
       return assignedCount;
     } catch (err) {
       if (request !== learnerRequestRef.current) return null;
@@ -4560,6 +4588,7 @@ function ModuleBuilderContent() {
             moduleId={learnerProgress.target.id}
             impact={learnerProgress.impact}
             assignedLearners={learnerProgress.assignedLearners}
+            progressError={learnerProgress.progressError}
             initialStatus={searchParams.get('learnerStatus') || 'all'}
             onStatusChange={status => setSearchParams(previous => {
               const next = new URLSearchParams(previous);

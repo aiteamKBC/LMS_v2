@@ -648,7 +648,7 @@ describe('Module Builder delivery catalogue', { timeout: 15000 }, () => {
     expect(cardFor('Data Foundations').getByRole('button', { name: 'Data Foundations: 1 learners' })).toBeInTheDocument();
     expect(screen.getByText('A Learner')).toBeInTheDocument();
     expect(screen.getByText('KSB weights achieved')).toBeInTheDocument();
-    expect(fetchCurriculumScopeLearnerKsbImpact).toHaveBeenCalledWith('module', 'MOD-1', { learnerStatus: 'all', moduleProgress: true });
+    expect(fetchCurriculumScopeLearnerKsbImpact).toHaveBeenCalledWith('module', 'MOD-1', { learnerStatus: 'all', moduleProgress: true, view: 'summary' });
 
     await userEvent.click(screen.getByRole('button', { name: 'Assign more learners' }));
     expect(await screen.findByRole('note')).toHaveTextContent('this module only');
@@ -668,8 +668,10 @@ describe('Module Builder delivery catalogue', { timeout: 15000 }, () => {
     await act(async () => finishFirst({ learners: assigned }));
     expect(screen.getByRole('dialog', { name: 'Network Basics learner progress' })).toBeInTheDocument();
     expect(screen.queryByRole('dialog', { name: 'Data Foundations learner progress' })).not.toBeInTheDocument();
-    expect(fetchCurriculumScopeLearnerKsbImpact).toHaveBeenCalledTimes(1);
-    expect(fetchCurriculumScopeLearnerKsbImpact).toHaveBeenCalledWith('module', 'MOD-2', { learnerStatus: 'all', moduleProgress: true });
+    // Both cards can start their compact progress request, but only the last
+    // click is allowed to render a dialog.
+    expect(fetchCurriculumScopeLearnerKsbImpact).toHaveBeenCalledTimes(2);
+    expect(fetchCurriculumScopeLearnerKsbImpact).toHaveBeenCalledWith('module', 'MOD-2', { learnerStatus: 'all', moduleProgress: true, view: 'summary' });
   });
 
   it('shows each module with the delivery it runs in', async () => {

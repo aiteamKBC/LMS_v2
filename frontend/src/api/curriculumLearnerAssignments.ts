@@ -17,6 +17,7 @@ export interface AssignmentLearner {
   cohort: string;
   group: string;
   programmeStatus: string;
+  lifecycleStatus: string;
   learnerType: string;
   assigned: boolean;
   moduleCount: number;
@@ -37,12 +38,13 @@ export interface LearnerAssignmentResult {
   failureMessage?: string;
 }
 
-function path(target: LearnerAssignmentTarget) {
-  return `/curriculum/${target.scope === 'cohort' ? 'cohorts' : 'modules'}/${encodeURIComponent(target.id)}/learner-assignments/`;
+function path(target: LearnerAssignmentTarget, assignedOnly = false) {
+  const base = `/curriculum/${target.scope === 'cohort' ? 'cohorts' : 'modules'}/${encodeURIComponent(target.id)}/learner-assignments/`;
+  return assignedOnly ? `${base}?assignedOnly=1` : base;
 }
 
-export function fetchLearnerAssignments(target: LearnerAssignmentTarget, signal?: AbortSignal) {
-  return fetchCurriculumJson<LearnerAssignmentDirectory>(path(target), {
+export function fetchLearnerAssignments(target: LearnerAssignmentTarget, signal?: AbortSignal, options: { assignedOnly?: boolean } = {}) {
+  return fetchCurriculumJson<LearnerAssignmentDirectory>(path(target, options.assignedOnly), {
     signal, revalidate: true, credentials: 'include', headers: { 'X-Requested-With': 'XMLHttpRequest' },
   });
 }

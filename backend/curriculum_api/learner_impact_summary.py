@@ -26,6 +26,14 @@ SUMMARY_KEPT_KEYS = (
     'otjhAchievement', 'ksbAchievement', 'ksbAchievementPolicy', 'learnerActivityCount',
 )
 
+# The Module Builder card needs the current-activity roll-ups, but not the
+# activity-by-component workbench that the learner drill-down uses.  Keeping
+# this separate from the programme summary avoids changing that contract.
+MODULE_PROGRESS_DIALOG_KEPT_KEYS = SUMMARY_KEPT_KEYS + (
+    'moduleProgressBasis', 'moduleProgressHoursSource',
+    'activityLogProgress', 'activityLogOtjh',
+)
+
 
 def _text(value):
     """``String(value || '').trim()``."""
@@ -141,4 +149,17 @@ def learner_impact_summary(payload):
     summary['view'] = SUMMARY_VIEW
     summary['activityLabels'] = labels
     summary['learnerKsbAchievements'] = lines_by_learner
+    return summary
+
+
+def module_progress_dialog_summary(payload):
+    """The compact response used by a Module Builder learner-count click.
+
+    ``learnerActivityPlan`` is deliberately retained only while
+    ``learner_activity_status.enrich`` calculates the displayed totals.  It is
+    one row per learner per component and is consumed by the detailed learner
+    progress page, not this dialog.
+    """
+    summary = {key: payload[key] for key in MODULE_PROGRESS_DIALOG_KEPT_KEYS if key in payload}
+    summary['view'] = 'module_progress_dialog'
     return summary
