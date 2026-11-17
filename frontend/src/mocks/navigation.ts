@@ -266,14 +266,14 @@ export const curriculumNavItems: SidebarNavItem[] = [
       { id: 'curriculum-recordings-hub', label: 'Recordings hub', icon: 'ri-layout-grid-line', href: '/curriculum/recordings-hub' },
       { id: 'curriculum-tutor-recordings', label: 'Tutor session recordings', icon: 'ri-presentation-line', href: '/curriculum/recordings' },
       { id: 'curriculum-coach-meetings', label: 'Coach meetings', icon: 'ri-user-settings-line', href: '/curriculum/coaching-recordings' },
+      {
+        id: 'curriculum-quality-assurance',
+        label: 'Quality Assurance',
+        icon: 'ri-shield-check-line',
+        href: '/curriculum/quality-demo',
+        matchPaths: ['/curriculum/coaching-recordings/reviews', '/curriculum/quality/forms'],
+      },
     ],
-  },
-  {
-    id: 'curriculum-quality-assurance',
-    label: 'Quality Assurance',
-    icon: 'ri-shield-check-line',
-    href: '/curriculum/quality-demo',
-    matchPaths: ['/curriculum/coaching-recordings/reviews', '/curriculum/quality/forms'],
   },
   {
     id: 'curriculum-bulk-attendance',

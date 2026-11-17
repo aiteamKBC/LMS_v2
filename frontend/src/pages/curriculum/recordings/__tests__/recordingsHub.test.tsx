@@ -24,7 +24,8 @@ describe('Coach and tutor recordings entry points', () => {
   it('uses the same quality destination from its card and the curriculum sidebar', () => {
     render(<MemoryRouter><RecordingsHub /></MemoryRouter>);
     const card = screen.getByRole('link', { name: 'Quality Assurance' });
-    const entry = curriculumNavItems.find(item => item.id === 'curriculum-quality-assurance');
+    const recordings = curriculumNavItems.find(item => item.id === 'curriculum-coaching-recordings');
+    const entry = recordings?.children?.find(item => item.id === 'curriculum-quality-assurance');
     expect(entry?.href).toBe(card.getAttribute('href'));
     expect(entry?.matchPaths).toContain('/curriculum/coaching-recordings/reviews');
     expect(card.querySelector('img')).toHaveAttribute('src', '/recordings-hub/quality.svg');
@@ -36,6 +37,7 @@ describe('Coach and tutor recordings entry points', () => {
       { id: 'curriculum-recordings-hub', label: 'Recordings hub', href: '/curriculum/recordings-hub' },
       { id: 'curriculum-tutor-recordings', label: 'Tutor session recordings', href: '/curriculum/recordings' },
       { id: 'curriculum-coach-meetings', label: 'Coach meetings', href: '/curriculum/coaching-recordings' },
+      { id: 'curriculum-quality-assurance', label: 'Quality Assurance', href: '/curriculum/quality-demo' },
     ]);
     expect(curriculumNavItems.find(item => item.href === '/curriculum/delivery')?.matchPaths).not.toContain('/curriculum/recordings');
   });
