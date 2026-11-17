@@ -96,7 +96,7 @@ export default function QualityReviewsPage({ embedded = false }: { embedded?: bo
         <div className="grid items-end gap-3 sm:grid-cols-2 lg:grid-cols-[minmax(0,1fr)_minmax(0,2fr)_auto_auto]">
         <label className="grid gap-1 text-xs font-semibold">Coach<RecordingSelect ariaLabel="Coach" value={filters.coachEmail} onChange={value => setFilters({ ...filters, coachEmail: value })}
           options={[{ value: '', label: 'All coaches' }, ...coaches.map(coach => ({ value: coach.email, label: coach.name }))]} /></label>
-        <label className="grid gap-1 text-xs font-semibold">Learner or meeting<input type="search" placeholder="Search a learner or meeting title" maxLength={200} className={control} value={filters.search} onChange={event => setFilters({ ...filters, search: event.target.value })} /></label>
+        <label className="grid gap-1 text-xs font-semibold">Learner or meeting<input type="search" placeholder="Search a learner or meeting title" maxLength={200} className={`${control} focus-visible:!outline-none`} value={filters.search} onChange={event => setFilters({ ...filters, search: event.target.value })} /></label>
         <button type="submit" className={`${button} bg-primary-600 text-white`} disabled={loading}>Apply filters</button>
         <button type="button" className={button} disabled={loading} onClick={reset}>Reset filters</button>
         </div>
