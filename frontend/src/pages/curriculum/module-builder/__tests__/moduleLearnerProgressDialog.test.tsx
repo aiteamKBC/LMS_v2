@@ -101,6 +101,27 @@ describe('ModuleLearnerProgressDialog', () => {
     expect(assignMore).toHaveBeenCalledTimes(1);
   });
 
+  it('shows the roster immediately and unlocks learner progress when the aggregate read arrives', () => {
+    const view = render(<MemoryRouter><ModuleLearnerProgressDialog moduleId="MOD-1" moduleName="Definition of Project Management"
+      impact={null} assignedLearners={impact.assignedLearners} onClose={vi.fn()} onAssignMore={vi.fn()} onRemoveLearner={vi.fn()} /></MemoryRouter>);
+
+    expect(screen.getByText('A Learner')).toBeInTheDocument();
+    expect(screen.getByRole('status', { name: 'Loading learner progress totals' })).toBeInTheDocument();
+    expect(screen.getByRole('status', { name: 'Loading progress for A Learner' })).toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: 'View progress' })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Remove' })).toBeDisabled();
+
+    view.rerender(<MemoryRouter><ModuleLearnerProgressDialog moduleId="MOD-1" moduleName="Definition of Project Management"
+      impact={impact} assignedLearners={impact.assignedLearners} onClose={vi.fn()} onAssignMore={vi.fn()} onRemoveLearner={vi.fn()} /></MemoryRouter>);
+    expect(screen.getByRole('link', { name: 'View progress' })).toBeInTheDocument();
+  });
+
+  it('mounts the dialog at document level so catalogue layout cannot clip its fixed overlay', () => {
+    render(<ModuleLearnerProgressDialog moduleName="Definition of Project Management" impact={impact} onClose={vi.fn()} onAssignMore={vi.fn()} onRemoveLearner={vi.fn()} />);
+
+    expect(screen.getByRole('dialog').parentElement?.parentElement).toBe(document.body);
+  });
+
   it('keeps every learner from the assignment directory visible when impact omits one', () => {
     render(
       <ModuleLearnerProgressDialog

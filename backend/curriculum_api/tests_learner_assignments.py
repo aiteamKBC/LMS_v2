@@ -136,6 +136,15 @@ class AssignmentTests(SimpleTestCase):
         self.assertEqual(data['totals'], {'learnerCount': 2, 'assignedCount': 1})
         self.assertEqual(data['learners'][0]['company'], 'Al Fanar')
 
+    def test_directory_exposes_profile_lifecycle_status_separately_from_programme_status(self):
+        row = learner([], programme_status='Onboarding')
+        profile = SimpleNamespace(lifecycle_status='active')
+        with patch('curriculum_api.learner_status_counts.module_member_enrolment_ids', return_value=set()), \
+                patch.object(assignments, 'placement_profile', return_value=profile):
+            data = assignments._payload(MODULE, [row])
+        self.assertEqual(data['learners'][0]['programmeStatus'], 'Onboarding')
+        self.assertEqual(data['learners'][0]['lifecycleStatus'], 'active')
+
     def test_target_collects_modules_in_all_cohort_groups(self):
         from . import views
         cohort = {'cohort_id': 'COHORT-1', 'cohort_name': 'September', 'programme_name': 'Business'}
