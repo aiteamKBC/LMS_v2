@@ -1,5 +1,6 @@
 import { Fragment, memo, useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useWebPointPlan } from '@/hooks/useWebPointPlan';
+import { LiveSessionLearningStatus } from '@/components/feature/LiveSessionLearningStatus';
 import { webPointGroups } from '@/utils/webPointActivities';
 import { AnimatedProgressCircle } from '@/components/ui/AnimatedProgressCircle';
 import { Link } from 'react-router-dom';
@@ -598,7 +599,9 @@ export const ActivitiesTableModern = memo(function ActivitiesTableModern({ compo
               <td className="px-2 py-2 text-center align-middle"><ActivityKsbs
                 mapped={summaries?.[component.componentId || '']?.ksbCodes ?? activityKsbCodes(component)}
                 reflections={reflectionKsbs?.[component.componentId || '']} recorded={recordedKsbs?.[component.componentId || '']} /></td>
-              <td className="px-2 py-2 text-center align-middle"><StatusBadge tone={STATUS_TONE[status]} label={STATUS_LABEL[status]} size="sm" showIcon={status === 'completed'} className="whitespace-nowrap text-[10px]" /></td>
+              <td className="px-2 py-2 text-center align-middle">{component.liveSessionLearning
+                ? <LiveSessionLearningStatus learning={component.liveSessionLearning} />
+                : <StatusBadge tone={STATUS_TONE[status]} label={STATUS_LABEL[status]} size="sm" showIcon={status === 'completed'} className="whitespace-nowrap text-[10px]" />}</td>
               {canOpenActivities && <td className="px-2 py-2 text-center align-middle">
                 {href ? <Link to={href} className={cn(
                   'inline-flex min-h-7 min-w-[64px] items-center justify-center whitespace-nowrap rounded-lg px-1.5 text-[10px] font-bold leading-none transition',

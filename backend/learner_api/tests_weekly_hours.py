@@ -8,6 +8,9 @@ from .weekly_hours import module_activity_hours, selected_activity_hours
 
 
 class WeeklyHoursTests(SimpleTestCase):
+    def setUp(self):
+        self.enterContext(patch('learner_api.live_session_progress.read_live_credits', return_value=[]))
+
     modules = [{'id': 'M1', 'title': 'Marketing'}, {'id': 'M2', 'title': 'Strategy'}]
 
     def test_dashboard_publishes_activity_hours_from_the_same_owner_read_as_overview(self):

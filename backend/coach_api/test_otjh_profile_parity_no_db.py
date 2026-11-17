@@ -17,6 +17,10 @@ class OtjhParityTests(SimpleTestCase):
     def setUp(self):
         # These tests cover recorded learning hours, not meeting-plan allowances.
         self.enterContext(patch('coach_api.migrated_otjh.planned_hours_bulk', return_value={}))
+        # Register allocations have their own real-SQL parity regressions.
+        # This fixture's ordered queries describe native/retained ledger rows.
+        self.enterContext(patch('learner_api.attendance_otjh.read_bulk', side_effect=lambda owners, read:
+            {int(owner['id']): {'lectures': [], 'protected': {}, 'frozen_rows': []} for owner in owners}))
 
     def test_source_text_window_and_profile_fallback_do_not_require_contracts(self):
         from coach_api.selectors.otjh import learner_programme_window

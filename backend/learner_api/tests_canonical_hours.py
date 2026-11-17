@@ -16,6 +16,8 @@ class CanonicalHoursTests(SimpleTestCase):
     owner = {'id': 101, 'enrolment_id': 201, 'learner_type': 'commercial'}
 
     def setUp(self):
+        self.enterContext(patch('learner_api.attendance_otjh.read_bulk', side_effect=lambda owners, read:
+            {int(o['id']): {'lectures': [], 'protected': {}, 'frozen_rows': []} for o in owners}))
         self.db = sqlite3.connect(':memory:')
         self.addCleanup(self.db.close)
         self.db.row_factory = sqlite3.Row

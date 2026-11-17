@@ -3,6 +3,8 @@ import { topicHasContent } from '@/lib/assignmentTopics';
 export { formatHoursMinutes } from '@/lib/format';
 
 export interface JourneyComponent {
+  liveSessionLearning?: import('@/api/learnerDetail').LiveSessionLearning;
+  liveSessionAccess?: import('@/api/learnerDetail').LiveSessionAccess;
   previousLearning?: import('@/api/learnerDetail').PreviousLearningCompletion;
   title: string;
   expectedOtjh: number | null;
@@ -299,9 +301,10 @@ const GRADED_PROGRESS_KINDS = new Set(['quiz']);
  * kind must have passed outright.
  */
 export function progressCountsAsAchieved(
-  record: { kind?: string | null; passed?: boolean | null } | null | undefined,
+  record: { kind?: string | null; passed?: boolean | null; completionEligible?: boolean } | null | undefined,
 ): boolean {
   if (!record) return false;
+  if (record.completionEligible === false) return false;
   if (record.passed === false) return false;
   if (GRADED_PROGRESS_KINDS.has(String(record.kind || '').trim().toLowerCase())) {
     return record.passed === true;
@@ -314,7 +317,7 @@ export function progressCountsAsAchieved(
  * attempt is excluded: it is history, not a completion. */
 export function completedComponentIds(real: {
   videoProgress?: { componentId: string; kind?: string; passed?: boolean | null }[];
-  componentProgress?: { componentId: string; kind?: string; passed?: boolean | null }[];
+  componentProgress?: { componentId: string; kind?: string; passed?: boolean | null; completionEligible?: boolean }[];
 } | null): Set<string> {
   const ids = new Set<string>();
   for (const v of real?.videoProgress || []) if (v.componentId && progressCountsAsAchieved(v)) ids.add(v.componentId);
@@ -328,6 +331,7 @@ export function completedComponentIds(real: {
  * completion source. Non-quiz rows are looked up in `completedIds`, which
  * callers build with `completedComponentIds`. */
 export function isComponentComplete(c: JourneyComponent, completedIds: Set<string>): boolean {
+  if (c.liveSessionLearning) return c.liveSessionLearning.status === 'completed';
   if (c.previousLearning?.completed === true) return true;
   if (c.type?.replace(/-/g, '_') === 'live_session' && c.attendanceCompleted === true) return true;
   if (c.isQuiz) return (c.quizAttempts || []).some((a) => a.passed);
@@ -346,8 +350,10 @@ export function recordedKsbEvidenceCodes(real: LearnerDetail | null): Set<string
     // quizAttempts is the graded bucket by construction — pre-'kind' rows land
     // there without one, so name the kind rather than relying on the field.
     ...(real?.quizAttempts || []).filter((attempt) => progressCountsAsAchieved({ kind: 'quiz', passed: attempt.passed })),
-    ...(real?.videoProgress || []).filter((entry) => progressCountsAsAchieved(entry)),
-    ...(real?.componentProgress || []).filter((entry) => progressCountsAsAchieved(entry)),
+    // Outstanding lecture requirements change activity completion, not the
+    // historical KSB evidence already stored on an achieved progress entry.
+    ...(real?.videoProgress || []).filter((entry) => progressCountsAsAchieved({ kind: entry.kind, passed: entry.passed })),
+    ...(real?.componentProgress || []).filter((entry) => progressCountsAsAchieved({ kind: entry.kind, passed: entry.passed })),
   ];
   for (const record of records) {
     for (const rawCode of record.ksbs || []) {
@@ -397,13 +403,15 @@ export function componentNoun(type: string | null | undefined): string {
 /** Does this activity contain something the learner can actually consume?
  * An id/title alone is not content and must never lead to an empty runner. */
 export function hasComponentContent(c: JourneyComponent): boolean {
+  // Recording readiness controls time entry, not access to the session page.
+  const type = (c.type || '').trim().toLowerCase().replace(/[\s-]+/g, '_');
+  if (type === 'live_session' && c.liveSessionAccess) return true;
   // Compact rows carry the server's verdict of the rule below (same fixture).
   if (typeof c.contentAvailable === 'boolean') return c.contentAvailable;
   const hasText = (value?: string | null) => Boolean(value?.replace(/<[^>]*>/g, '').replace(/&nbsp;|\s/g, '').trim());
   const hasUrl = (value?: string | null) => Boolean(value?.trim());
   if (c.isQuiz) return c.quizMeta?.quizId != null && (c.quizMeta.questions ?? 0) > 0;
 
-  const type = (c.type || '').trim().toLowerCase().replace(/[\s-]+/g, '_');
   if (type === 'quiz') return false; // Unlinked builder placeholders have no quiz to attempt.
   const hasDescription = hasText(c.description);
   if (type === 'video') return hasUrl(c.videoUrl) || Boolean(c.recordingSeriesId && c.recordingSessionNumber && c.recordingDate);
@@ -417,9 +425,8 @@ export function hasComponentContent(c: JourneyComponent): boolean {
   // drops the boilerplate prompt every component is seeded with, which would
   // otherwise have made an unedited reflection look empty.)
   if (type === 'reflection') return true;
-  if (type === 'live_session') {
-    return hasUrl(c.liveSessionUrl) || hasText(c.sessionDateTimeUtc) || hasText(c.sessionDate) || Boolean(c.teamsLiveSessionId) || hasDescription;
-  }
+  if (type === 'live_session') return hasUrl(c.liveSessionUrl) || hasText(c.sessionDateTimeUtc)
+    || hasText(c.sessionDate) || Boolean(c.teamsLiveSessionId) || hasDescription;
   // Builder rows can retain a default reflection question even when reflection
   // is disabled. That follow-up question is not the assignment's task/brief.
   if (type === 'assignment') {
@@ -697,6 +704,8 @@ export function buildLearnerJourney(real: LearnerJourneySource | null): JourneyM
             hasReadingContent: c.hasReadingContent, lessonContentHtml: c.lessonContentHtml,
             downloadAllowed: c.downloadAllowed, reflectionPrompt: c.reflectionPrompt,
             attendanceCompleted: c.attendanceCompleted, attendanceCompletedAt: c.attendanceCompletedAt,
+            liveSessionLearning: c.liveSessionLearning,
+            liveSessionAccess: c.liveSessionAccess,
             previousLearning: c.previousLearning,
             reflectionRequired: c.reflectionRequired,
             tutorValidationRequired: c.tutorValidationRequired,
