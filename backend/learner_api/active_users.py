@@ -427,82 +427,35 @@ def _component_learning_context(component_id):
     for alias in ("default", "enrolment"):
         try:
             with connections[alias].cursor() as cursor:
+                # The normalized curriculum schema exposes KSB mappings through
+                # this projection; ordinary components have no ksb_mappings column.
                 cursor.execute(
-                    read_sql("""
-                    select
-                        c.id,
-                        c.title,
-                        c.type,
-                        c.expected_otjh,
-                        c.points,
-                        c.ksb_mappings,
-                        w.id,
-                        w.title,
-                        m.module_catalogue_id,
-                        m.title,
-                        m.programme_id,
-                        coalesce(p.name, m.programme_name),
-                        m.cohort_id,
-                        m.cohort_name,
-                        m.group_id,
-                        m.group_name
-                    from curriculum.components c
-                    left join curriculum.weeks w on w.id = c.week_id
-                    left join curriculum.modules m on m.module_catalogue_id = c.module_catalogue_id
-                    left join curriculum.programmes p on p.programme_id = m.programme_id
-                    where c.id = %s
-                    limit 1
-                    """, connections[alias]),
+                    """
+                    SELECT
+                        s.component_id, s.component_title, s.component_type,
+                        s.expected_otjh, s.points, s.ksb_mappings,
+                        s.week_id, s.week_title,
+                        s.module_catalogue_id, s.module_title,
+                        s.programme_id, s.programme_name,
+                        s.cohort_id, s.cohort_name,
+                        s.group_id, s.group_name
+                    FROM curriculum.component_learning_summary s
+                    WHERE s.component_id = %s AND s.is_deleted = false
+                    LIMIT 1
+                    """,
                     [component_id],
                 )
                 row = cursor.fetchone()
                 if not row:
                     return {}
                 (
-                    _component_ref,
-                    component_title,
-                    component_type,
-                    expected_otjh,
-                    points,
-                    canonical_mappings,
-                    week_ref,
-                    week_title,
-                    module_ref,
-                    module_title,
-                    programme_ref,
-                    programme_title,
-                    cohort_ref,
-                    cohort_title,
-                    group_ref,
-                    group_title,
+                    _component_ref, component_title, component_type,
+                    expected_otjh, points, canonical_mappings,
+                    week_ref, week_title, module_ref, module_title,
+                    programme_ref, programme_title, cohort_ref, cohort_title,
+                    group_ref, group_title,
                 ) = row
                 mappings = _normalise_component_ksb_mappings(canonical_mappings)
-                if not mappings:
-                    cursor.execute(
-                        """
-                        select ksb_code, ksb_description, source_type, source_id, classification, weight, weight_class
-                          from curriculum.ksb_mappings
-                         where component_id = %s
-                           and coalesce(ksb_code, '') <> ''
-                           and deleted_at is null
-                           and coalesce(is_programme_deleted, false) = false
-                         order by ksb_code, id
-                        """,
-                        [component_id],
-                    )
-                    mappings = [
-                        {
-                            "code": _s(code).upper(),
-                            "description": _s(description),
-                            "sourceType": _s(source_type),
-                            "sourceId": _s(source_id),
-                            "classification": _s(classification),
-                            "weight": _decimal(weight),
-                            "weightClass": _normalise_weight_class(weight_class, classification),
-                        }
-                        for code, description, source_type, source_id, classification, weight, weight_class in cursor.fetchall()
-                        if _s(code)
-                    ]
                 context = {
                     "componentTitle": _s(component_title),
                     "componentType": _s(component_type),
