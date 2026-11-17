@@ -26,6 +26,24 @@ beforeEach(() => {
 });
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 
+it.each(['commercial', 'apprenticeship'] as const)('shows verified attendance and outstanding requirements for %s in the shared activity table', async kind => {
+  const response = payload();
+  response.selectedWeek!.activities[0] = { ...response.selectedWeek!.activities[0],
+    type: 'live_session', status: 'completed', actualHours: 2.5,
+    liveSessionLearning: { attendance: 'present', attendedSeconds: 7200,
+      attendedAt: '2026-10-05T10:00:00Z', status: 'completed', requirementsStatus: 'reflection-required' } };
+  transport.mockImplementation(async () => new Response(JSON.stringify(response)));
+  render(<MemoryRouter><CaseFileSessionProvider learnerId="101" coach="coach@example.test">
+    <CaseFileWeeklyLearningTab kind={kind} learnerId="201" />
+  </CaseFileSessionProvider></MemoryRouter>);
+  const row = within((await screen.findByText('Reading M1:1')).closest('tr')!);
+  expect(row.getByText('Attended')).toBeVisible();
+  expect(row.getByText('Follow-up: Reflection required')).toBeVisible();
+  expect(row.getByText('Attendance time: 2h')).toBeVisible();
+  expect(row.getByRole('cell', { name: '2h 30m' })).toBeVisible();
+  expect(row.getByText('Completed')).toBeVisible();
+});
+
 it.each(['commercial', 'apprenticeship'] as const)('shows actual time beside expected time for each %s activity', async kind => {
   const response = payload();
   response.selectedWeek!.activities[0] = { ...response.selectedWeek!.activities[0], expectedHours: 2, durationMinutes: 120, actualHours: 1.25 };

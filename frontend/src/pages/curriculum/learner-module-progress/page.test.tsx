@@ -1,7 +1,7 @@
 import { act, render, screen, within, fireEvent, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { CurriculumLearnerActivity, CurriculumLearnerActivityPlanItem, CurriculumScopeLearnerKsbImpactResponse } from '@/lib/curriculumApi';
+import type { CurriculumLearnerActivity, CurriculumLearnerActivityPlanItem, CurriculumScopeLearnerKsbImpactResponse, CurriculumRegisterAttendance } from '@/lib/curriculumApi';
 import LearnerModuleProgressPage from './page';
 import { buildProgressRows, resolveProgressLearner, overallPercent } from './progressView';
 import { completionEnd, localTimeInput } from './completionTime';
@@ -57,6 +57,97 @@ function withLogStates() {
 }
 
 describe('Activity status and Overall Progress', () => {
+  it.each<[CurriculumRegisterAttendance['status'], string]>([
+    ['present', 'Attended'], ['absent', 'Absent'], ['unmarked', 'Attendance not recorded'],
+    ['unlinked', 'Session not linked'], ['upcoming', 'Scheduled'],
+    ['in_progress', 'Session in progress'], ['cancelled', 'Session cancelled'],
+  ])('shows %s from the register and credits only confirmed live attendance', async (status, label) => {
+    const data = withLogStates();
+    const activity = data.learnerActivityPlan![5];
+    activity.registerAttendance = { status, occurrenceId: 'O1', sessionDate: '2026-10-14',
+      attendedSeconds: status === 'present' ? 7200 : null, firstJoinAt: null, lastLeaveAt: null,
+      ...(status === 'present' ? { creditedOtjh: 2.5 } : {}) };
+    fetchImpact.mockResolvedValue(data);
+    open();
+    const row = within((await screen.findByText('Test live-session c6')).closest('tr')!);
+    const badge = row.getByLabelText('Registered attendance');
+    expect(badge).toHaveTextContent(label);
+    expect(badge).toHaveTextContent(status === 'present' ? 'Completed' : 'Activity: Not Started');
+    if (status === 'present') expect(badge).not.toHaveTextContent('Not Started');
+    expect(row.getByRole('cell', { name: status === 'present' ? '02:30:00' : '00:00:00' })).toBeVisible();
+    expect(buildProgressRows(data, 'profile-1').filter(item => item.status === 'completed')).toHaveLength(status === 'present' ? 3 : 2);
+    expect(screen.getByRole('article', { name: 'Activities Progress' })).toHaveTextContent(`${status === 'present' ? 3 : 2} / 6 completed`);
+    if (status === 'present') expect(row.queryByRole('button', { name: /Change status/ })).not.toBeInTheDocument();
+    expect(saveStatus).not.toHaveBeenCalled();
+  });
+
+  it('keeps registered absence visible when Activity Log has a manual attendance completion', async () => {
+    const data = withLogStates();
+    const activity = data.learnerActivityPlan![5];
+    activity.displayStatus = 'completed'; activity.statusSource = 'manual';
+    activity.logState = { ...activity.logState!, attendanceMode: 'attended', actualOtjh: 1.25, acceptedOtjh: 1.25 };
+    activity.registerAttendance = { status: 'absent', occurrenceId: 'O1', sessionDate: '2026-10-14',
+      attendedSeconds: 0, firstJoinAt: null, lastLeaveAt: null };
+    fetchImpact.mockResolvedValue(data); open();
+    const row = within((await screen.findByText('Test live-session c6')).closest('tr')!);
+    expect(row.getByLabelText('Registered attendance')).toHaveTextContent('AbsentActivity: Completed');
+    expect(row.queryByText('Attended')).not.toBeInTheDocument();
+    expect(row.getByRole('cell', { name: '01:15:00' })).toBeVisible();
+    expect(saveStatus).not.toHaveBeenCalled();
+  });
+
+  it('shows attendance duration and join times separately in the activity details', async () => {
+    const data = withLogStates();
+    data.learnerActivityPlan![5].registerAttendance = { status: 'present', occurrenceId: 'O1',
+      sessionDate: '2026-10-14', attendedSeconds: 7200, creditedOtjh: 2.5,
+      firstJoinAt: '2026-10-14T08:00:00Z', lastLeaveAt: '2026-10-14T10:00:00Z' };
+    fetchImpact.mockResolvedValue(data); open();
+    fireEvent.click(await screen.findByRole('button', { name: 'View details for Test live-session c6' }));
+    expect(screen.getByText('Lecture attendance register')).toBeVisible();
+    expect(screen.getByText('Recorded attendance time').nextElementSibling).toHaveTextContent('02:00:00');
+    expect(screen.getByText('Credited OTH').nextElementSibling).toHaveTextContent('02:30:00');
+    expect(screen.getByText('Recorded OTH').nextElementSibling).toHaveTextContent('00:00:00');
+    expect(screen.getByText('First joined (UK time)').nextElementSibling).toHaveTextContent('09:00');
+    expect(screen.getByText('Last left (UK time)').nextElementSibling).toHaveTextContent('11:00');
+    expect(saveStatus).not.toHaveBeenCalled();
+  });
+
+  it('uses 2h30 instead of saved recording hours in the row, week and module totals', async () => {
+    const data = withLogStates();
+    const activity = data.learnerActivityPlan![5];
+    activity.logState = { ...activity.logState!, attendanceMode: 'recording', actualOtjh: 3.5, acceptedOtjh: 3.5 };
+    activity.registerAttendance = { status: 'present', occurrenceId: 'O1', sessionDate: '2026-10-14',
+      attendedSeconds: 7200, creditedOtjh: 2.5, firstJoinAt: null, lastLeaveAt: null };
+    data.activityLogOtjh = { learners: [{ learnerId: 'profile-1', plannedOtjh: 6, achievedOtjh: 5.5 }],
+      achievedTotal: 5.5, plannedTotal: 6, source: 'Activity Log' };
+    data.moduleProgressOtjh = { ...data.activityLogOtjh, achievedTotal: 4.5,
+      learners: [{ learnerId: 'profile-1', plannedOtjh: 6, achievedOtjh: 4.5 }] };
+    fetchImpact.mockResolvedValue(data); open();
+    const row = within((await screen.findByText('Test live-session c6')).closest('tr')!);
+    expect(row.getByRole('cell', { name: '02:30:00' })).toBeVisible();
+    expect(row.getByRole('cell', { name: /^Attended\s*2026-10-14$/ })).toBeVisible();
+    expect(screen.getByRole('article', { name: 'OTH Progress' })).toHaveTextContent('04:30:00 / 06:00:00');
+    expect(screen.getByRole('region', { name: 'Week 2 | Teams' })).toHaveTextContent('OTH: 02:30:00');
+    expect(screen.getByRole('article', { name: 'OTH Progress' })).toHaveTextContent('Live attendance');
+    expect(saveStatus).not.toHaveBeenCalled();
+  });
+
+  it('retains an explicit zero credit for another activity linked to the same lecture', async () => {
+    const data = withLogStates();
+    const original = data.learnerActivityPlan![5];
+    original.registerAttendance = { status: 'present', occurrenceId: 'O1', sessionDate: '2026-10-14',
+      attendedSeconds: 7200, creditedOtjh: 2.5, firstJoinAt: null, lastLeaveAt: null };
+    data.learnerActivityPlan!.push({ ...original, activityPlanId: 'profile-1:c7', componentId: 'c7', componentTitle: 'Duplicate lecture link',
+      registerAttendance: { ...original.registerAttendance, creditedOtjh: 0 },
+      logState: { ...original.logState!, actualOtjh: 2.5, acceptedOtjh: 2.5 } });
+    fetchImpact.mockResolvedValue(data); open();
+    const row = within((await screen.findByText('Duplicate lecture link')).closest('tr')!);
+    expect(row.getByRole('cell', { name: '00:00:00' })).toBeVisible();
+    expect(row.getByLabelText('Registered attendance')).toHaveTextContent('Attended');
+    expect(screen.getByRole('region', { name: 'Week 2 | Teams' })).toHaveTextContent('OTH: 02:30:00');
+    expect(screen.getByRole('article', { name: 'OTH Progress' })).toHaveTextContent('04:30:00 / 06:00:00');
+  });
+
   it('uses current hours and capped KSB weight, while showing historical and unallocated evidence separately', async () => {
     const data = withLogStates();
     data.moduleProgressBasis = 'current_activities';
@@ -239,23 +330,37 @@ describe('Activity status and Overall Progress', () => {
   });
 
   it.each(['input', 'timestamp'])('lets Watched recording use %s without asserting Attended', async mode => {
-    const data = withLogStates(); fetchImpact.mockResolvedValue(data); open(); await screen.findByText('Test live-session c6');
+    const data = withLogStates();
+    data.learnerActivityPlan![5].registerAttendance = { status: 'absent', occurrenceId: 'O1', sessionDate: '2026-10-01',
+      attendedSeconds: 0, firstJoinAt: null, lastLeaveAt: null };
+    data.moduleProgressOtjh = { learners: [{ learnerId: 'profile-1', plannedOtjh: 6, achievedOtjh: 2 }],
+      achievedTotal: 2, plannedTotal: 6, source: 'Live attendance + Activity Log' };
+    fetchImpact.mockResolvedValueOnce(data); open(); await screen.findByText('Test live-session c6');
     fireEvent.click(screen.getByRole('button', { name: 'Change status for Test live-session c6' }));
     fireEvent.click(screen.getByRole('radio', { name: /Watched recording/ })); fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
     const dialog = screen.getByRole('dialog', { name: 'Record watched recording' });
     expect(saveStatus).not.toHaveBeenCalled();
     fireEvent.click(within(dialog).getByRole('radio', { name: mode === 'input' ? /Input/ : /Timestamp/ }));
     fireEvent.change(within(dialog).getByLabelText('Minutes'), { target: { value: '30' } });
+    fireEvent.change(within(dialog).getByLabelText('Seconds'), { target: { value: '17' } });
     if (mode === 'input') fireEvent.change(within(dialog).getByLabelText('Activity date'), { target: { value: '2026-10-01' } });
     else fireEvent.change(within(dialog).getByLabelText('Start date and time (UK)'), { target: { value: '2026-10-01T14:04:13' } });
     const row = data.learnerActivityPlan![5];
-    saveStatus.mockResolvedValueOnce({ state: { ...row.logState!, revision: 1, attendanceMode: 'recording' } });
+    saveStatus.mockResolvedValueOnce({ state: { ...row.logState!, revision: 1, attendanceMode: 'recording',
+      actualOtjh: 1817 / 3600, acceptedOtjh: 1817 / 3600 } });
+    // A failed summary refresh must still retain the successfully saved time.
+    fetchImpact.mockRejectedValueOnce(new Error('synthetic refresh failure'));
     fireEvent.click(within(dialog).getByRole('button', { name: 'Save Completed' }));
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
-    expect(saveStatus.mock.calls[0][3]).toMatchObject({ attendanceMode: 'recording', durationSeconds: 1800, timeEntryMode: mode });
+    expect(saveStatus.mock.calls[0][3]).toMatchObject({ attendanceMode: 'recording', durationSeconds: 1817, timeEntryMode: mode });
     expect(saveStatus.mock.calls[0][3]).not.toHaveProperty('reason');
     if (mode === 'input') expect(saveStatus.mock.calls[0][3]).not.toHaveProperty('startedAt');
     else expect(saveStatus.mock.calls[0][3]).toHaveProperty('startedAt', '2026-10-01T13:04:13.000Z');
+    expect(screen.getByText('Test live-session c6').closest('tr')).toHaveTextContent('00:30:17');
+    expect(screen.getByRole('region', { name: 'Week 2 | Teams' })).toHaveTextContent('OTH: 00:30:17');
+    expect(screen.getByRole('article', { name: 'OTH Progress' })).toHaveTextContent('02:30:17 / 06:00:00');
+    expect(screen.getByText('Test live-session c6').closest('tr')).toHaveTextContent('Absent');
+    expect(screen.getByRole('alert')).toHaveTextContent('Status saved. Could not refresh summaries');
   });
 
   it('asks for an unlinked lecture date and keeps the choice on a failed save; permission hints remain respected', async () => {

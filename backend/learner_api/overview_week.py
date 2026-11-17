@@ -55,6 +55,8 @@ HOME_SOURCE_FIELDS = (
     # Read by the home card's programme period (_group_dates); deferring them
     # cost one query each.
     'programme', 'cohort', 'start_date', 'end_date',
+    # The catalogue/attendance readers consume these in the same request too.
+    'group', 'learner_type', 'training_plan', 'learning_plan',
 )
 from .student_activity_data import read_curriculum_schedules, apply_curriculum_schedules
 from .subject_dates import activity_schedule, as_date
@@ -488,17 +490,21 @@ def read_week(source, now=None, *, home_kind=None, dashboard_kind=None, home_sum
     historical, attempts, links = [], set(), {}
     old_hours, undated_hours = 0, 0
     early_metrics = None
+    canonical_records = None
     owned_profile = getattr(source, '_case_file_profile', None)
     if home_summary:
         # One verified SSOT identity serves the metrics, progress and
         # attendance reads below instead of each re-reading "Learner".learners.
         owner = canonical_learning.require_profile(source.pk)
         source._canonical_profile = owner
-        early_metrics = canonical_learning.metrics(source.pk, owner=owner)
+        canonical_records = canonical_learning.entries_for(owner, lineage_only=True)
+        early_metrics = canonical_learning.metrics(source.pk, owner=owner, records=canonical_records)
         if owned_profile is None:
             # require_profile matched exactly one row for this enrolment, so it
             # is the profile _direct_progress_records would otherwise look up.
-            owned_profile = LearnerProfile(id=owner['id'], enrolment_id=source.pk)
+            owned_profile = LearnerProfile(id=owner['id'], enrolment_id=source.pk, email=owner.get('email') or '')
+        if owned_profile.pk == owner['id'] and owned_profile.enrolment_id == source.pk:
+            source._case_file_profile = owned_profile
     progress = (_direct_progress_records(source.pk, profile=owned_profile) if owned_profile is not None
                 else _direct_progress_records(source.pk))
     attendance_module_ids = None
@@ -539,7 +545,8 @@ def read_week(source, now=None, *, home_kind=None, dashboard_kind=None, home_sum
                               activities=plan_activities)
         progress_card = read_home_progress(
             source, home_kind, plan_activities, native, progress, assigned, end,
-            attendance_module_ids=attendance_module_ids, canonical_metrics=early_metrics)
+            attendance_module_ids=attendance_module_ids, canonical_metrics=early_metrics,
+            canonical_records=canonical_records)
         # Week dates are always UK calendar dates; the card reads no time-zone label.
         progress_card['period'] = {key: progress_card['period'][key] for key in ('start', 'end')}
         return {'weekStart': start.isoformat(), 'weekEnd': end.isoformat(),

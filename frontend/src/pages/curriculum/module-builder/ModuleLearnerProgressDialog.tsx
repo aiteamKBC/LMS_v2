@@ -95,8 +95,8 @@ function Hint({ text, children }: { text: string; children: ReactNode }) {
 function otjhHint(achieved: number | null, planned: number, progress: number | null, whose: 'learner' | 'module') {
   if (achieved == null) {
     return whose === 'learner'
-      ? 'N/A: accepted Activity Log hours are unavailable for this learner. Reload to retrieve the recorded total.'
-      : 'N/A: accepted Activity Log hours are unavailable for this module. Reload to retrieve the recorded total.';
+      ? 'N/A: OTJH is unavailable for this learner. Reload to retrieve the recorded total.'
+      : 'N/A: OTJH is unavailable for this module. Reload to retrieve the recorded total.';
   }
   if (planned <= 0) {
     return whose === 'learner'
@@ -106,10 +106,10 @@ function otjhHint(achieved: number | null, planned: number, progress: number | n
   if (progress == null) return 'N/A: accepted records have missing time. Known recorded hours are shown; complete the time allocation before measuring progress.';
   if (!progress) {
     return whose === 'learner'
-      ? '0%: no accepted Activity Log hours are recorded for this learner in this module yet.'
-      : '0%: no accepted Activity Log hours are recorded for any assigned learner in this module yet.';
+      ? '0%: no credited OTJH is recorded for this learner in this module yet.'
+      : '0%: no credited OTJH is recorded for any assigned learner in this module yet.';
   }
-  return `${hoursPercentage(progress)}% of the planned OTJH, counted from accepted Activity Log hours.`;
+  return `${hoursPercentage(progress)}% of the planned OTJH.`;
 }
 
 function ksbHint(achieved: number, expected: number, whose: 'learner' | 'module') {
@@ -159,10 +159,12 @@ export function ModuleLearnerProgressDialog({ moduleName, moduleId, impact, assi
   );
   const otjhRows = impact.otjhAchievement?.learners || [];
   const ksbRows = impact.learnerKsbConsumption || [];
-  const log = impact.activityLogOtjh;
+  const log = impact.moduleProgressOtjh ?? impact.activityLogOtjh;
+  const hoursSource = impact.moduleProgressOtjh ? 'Live attendance + accepted Activity Log' : 'Activity Log accepted hours';
   const activity = (impact as CurriculumScopeLearnerKsbImpactResponse & { activityLogProgress?: ActivityLogProgress }).activityLogProgress;
   const [removingLearnerId, setRemovingLearnerId] = useState<string | null>(null);
   const [status, setStatus] = useState(() => moduleLearnerStatus(initialStatus));
+  const [search, setSearch] = useState('');
   const statusFor = (learner: CurriculumProgrammeAssignedLearner) => {
     const roster = impact.assignedLearners || [];
     const key = profileKey(learner, roster);
@@ -174,7 +176,11 @@ export function ModuleLearnerProgressDialog({ moduleName, moduleId, impact, assi
   for (const value of [status, ...learners.map(statusFor)]) {
     if (!statuses.some(option => option.value === value)) statuses.push({ value, label: learnerStatusLabel(value) });
   }
-  const visibleLearners = learners.filter(learner => status === 'all' || statusFor(learner) === status);
+  const searchName = search.trim().replace(/\s+/g, ' ').toLowerCase();
+  const visibleLearners = learners.filter(learner =>
+    (status === 'all' || statusFor(learner) === status)
+    && (learner.name || '').replace(/\s+/g, ' ').toLowerCase().includes(searchName),
+  );
   const totals = moduleProgressTotals(impact, visibleLearners.map(learner => profileKey(learner, impact.assignedLearners || [])));
   const activityPercent = totals.activity?.known && totals.activity.total > 0 ? totals.activity.completed / totals.activity.total * 100 : null;
   const totalHours = totals.hours;
@@ -235,7 +241,7 @@ export function ModuleLearnerProgressDialog({ moduleName, moduleId, impact, assi
             <p className="text-[10px] font-bold uppercase tracking-wider text-foreground-400">OTJH progress</p>
             <p className="mt-1 text-lg font-black text-foreground-900"><Hint text={otjhHint(totalHours ?? null, plannedHours, totalPercent, 'module')}>{totalHours == null ? 'N/A' : formatHoursClock(totalHours)}</Hint> <span className="text-[11px] font-bold text-foreground-400">/ {totals.hoursTargetsKnown ? formatHoursClock(plannedHours) : 'N/A'}</span></p>
             <ProgressBar value={totalPercent || 0} tone="primary" />
-            <p className="mt-1 text-[10px] font-semibold text-foreground-500"><Hint text={otjhHint(totalHours ?? null, plannedHours, totalPercent, 'module')}>{`${totalPercent == null ? 'N/A' : `${hoursPercentage(totalPercent)}%`} of assigned planned hours${log ? ' · Activity Log accepted hours' : ''}`}</Hint></p>
+            <p className="mt-1 text-[10px] font-semibold text-foreground-500"><Hint text={otjhHint(totalHours ?? null, plannedHours, totalPercent, 'module')}>{`${totalPercent == null ? 'N/A' : `${hoursPercentage(totalPercent)}%`} of assigned planned hours${log ? ` · ${hoursSource}` : ''}`}</Hint></p>
             {Boolean(totals.unallocatedHours) && <p className="mt-1 text-[10px] text-foreground-500">{plural(totals.unallocatedHours, 'accepted record')} without allocated time; recorded hours are included.</p>}
             {totals.historicalHours > 0 && <p className="mt-1 text-[10px] text-foreground-500">Historical OTJH: {formatHoursClock(totals.historicalHours)} · excluded from current progress.</p>}
             {totals.historicalUnallocatedHours > 0 && <p className="mt-1 text-[10px] text-foreground-500">{totals.historicalUnallocatedHours} historical accepted record(s) without allocated time.</p>}
@@ -252,6 +258,13 @@ export function ModuleLearnerProgressDialog({ moduleName, moduleId, impact, assi
 
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-background-200 px-4 py-3">
           <p role="status" className="text-[11px] font-semibold text-foreground-500">{visibleLearners.length} of {learners.length} assigned learners shown</p>
+          <label className="relative w-full sm:ml-auto sm:w-64">
+            <span className="sr-only">Search learners by name</span>
+            <AppIcon name="ri-search-line" size={15} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-foreground-400" />
+            <input type="search" value={search} onChange={event => setSearch(event.target.value)}
+              disabled={Boolean(removingLearnerId)} placeholder="Search by learner name..."
+              className="min-h-9 w-full rounded-lg border border-background-300 bg-background-50 py-2 pl-9 pr-3 text-xs text-foreground-900 focus:outline-none focus:ring-2 focus:ring-primary-200" />
+          </label>
           <label className="flex items-center gap-2 text-xs font-semibold text-foreground-600">Status
             <select aria-label="Learner status" value={status} disabled={Boolean(removingLearnerId)}
               onChange={event => { setStatus(event.target.value); onStatusChange?.(event.target.value); }}
@@ -265,7 +278,7 @@ export function ModuleLearnerProgressDialog({ moduleName, moduleId, impact, assi
           {learners.length === 0 ? (
             <p className="rounded-xl border border-dashed border-background-300 bg-background-100 px-4 py-8 text-center text-[12px] font-semibold text-foreground-500">No assigned learner progress was returned for this module.</p>
           ) : visibleLearners.length === 0 ? (
-            <p className="rounded-xl border border-dashed border-background-300 bg-background-100 px-4 py-8 text-center text-[12px] font-semibold text-foreground-500">No assigned learners match this status.</p>
+            <p className="rounded-xl border border-dashed border-background-300 bg-background-100 px-4 py-8 text-center text-[12px] font-semibold text-foreground-500">{searchName ? 'No assigned learners match your search and selected status.' : 'No assigned learners match this status.'}</p>
           ) : (
             <div className="grid gap-3 lg:grid-cols-2">
               {visibleLearners.map(learner => {

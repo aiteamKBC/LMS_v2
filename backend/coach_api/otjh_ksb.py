@@ -35,12 +35,18 @@ def read_hour_totals(owner):
         GROUP BY reporting_month''', [owner['id']])
     months = {row['month']: {**row, 'completed': float(row['completed'] or 0),
                             'submitted': float(row['submitted'] or 0)} for row in totals}
-    for record in (allocation for pending in pending_hour_records([owner])[owner['id']]
-                   for allocation in canonical.allocations(pending)):
+    pending = pending_hour_records([owner])[owner['id']]
+    for record in (allocation for entry in pending for allocation in canonical.allocations(entry)):
         month = record.get('reporting_month')
         row = months.setdefault(month, {'month': month, 'completed': 0, 'submitted': 0})
         field = 'completed' if record.get('accepted') is True else 'submitted'
         row[field] += canonical.recorded_seconds(record) / 3600
+    from learner_api.attendance_otjh import read_bulk, monthly_deltas
+    facts = read_bulk([owner], canonical.query)[int(owner['id'])]
+    for month, delta in monthly_deltas(facts, pending).items():
+        row = months.setdefault(month, {'month': month, 'completed': 0, 'submitted': 0})
+        row['completed'] += delta['hours']
+        row['submitted'] += delta['submitted']
     return list(months.values())
 
 

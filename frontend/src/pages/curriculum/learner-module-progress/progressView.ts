@@ -48,6 +48,8 @@ export function activityType(activity: ActivityLike): ActivityType {
 }
 
 function activityStatus(activity: ActivityLike, history: CurriculumLearnerActivity | null): ActivityStatus {
+  if (activityType(activity) === 'Attendance' && 'registerAttendance' in activity
+    && activity.registerAttendance?.status === 'present') return 'completed';
   if ('displayStatus' in activity) {
     if (activity.displayStatus === 'not_started') return 'not-started';
     if (activity.displayStatus === 'completed') return 'completed';
@@ -95,9 +97,20 @@ export function ratioPercent(value: number, total: number): number | null {
   return total > 0 ? Math.round(value / total * 10000) / 100 : null;
 }
 
+export function attendanceCredit(row: ProgressRow): number | undefined {
+  const registered = row.type === 'Attendance' && 'registerAttendance' in row.activity ? row.activity.registerAttendance : undefined;
+  return registered?.status === 'present' ? registered.creditedOtjh : undefined;
+}
+
+export function activityHours(row: ProgressRow): number | null | undefined {
+  return attendanceCredit(row) ?? ('logState' in row.activity && row.activity.logState
+    ? row.activity.logState.actualOtjh : row.history?.actualOtjh);
+}
+
 export function recordedHours(rows: ProgressRow[]): number | null {
   if (rows.every(row => 'logState' in row.activity && row.activity.logState)) {
-    return rows.reduce((sum, row) => sum + ('logState' in row.activity ? row.activity.logState?.acceptedOtjh || 0 : 0), 0);
+    return rows.reduce((sum, row) => sum + (attendanceCredit(row)
+      ?? ('logState' in row.activity ? row.activity.logState?.acceptedOtjh || 0 : 0)), 0);
   }
   const recorded = rows.filter(row => row.history);
   if (!recorded.length) return 0;

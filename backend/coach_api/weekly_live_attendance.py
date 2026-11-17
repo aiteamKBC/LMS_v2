@@ -11,10 +11,12 @@ LONDON = ZoneInfo('Europe/London')
 def read_weekly_live_evidence(source, owner, schedule_ids, content_ids):
     from learner_api.attendance_lectures import lecture_register
     from learner_api.live_session_progress import read_live_credits
+    from learner_api.attendance_learning import with_learning_requirements
     register = lecture_register(source, module_ids=schedule_ids, learner_profile_id=owner['id'], credit_projection=True)
     register = [row for row in register if row.get('source') == 'microsoft-teams'
                 and row.get('module_catalogue_id') in schedule_ids]
     credits = read_live_credits(source, module_ids=content_ids, register=register)
+    credits = with_learning_requirements(source, credits)
     dates = {(row['module_catalogue_id'], str(row.get('attendance_source_occurrence_id')
               or row.get('occurrence_id') or row.get('session_id'))): str(row.get('session_date'))
              for row in register}

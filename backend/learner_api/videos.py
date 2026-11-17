@@ -126,6 +126,10 @@ def submit_video_progress(request, component_id):
     except (DatabaseError, ValueError) as exc:
         return _error(f"Database error: {exc}", 502)
 
+    from .live_session_access import access_refusal
+    refused = access_refusal(kind, learner_id, component_id, source=source)
+    if refused is not None:
+        return refused
     try:
         active = learner_profile_for_source(source, learner_id, active_only=True)
         if active is None:
