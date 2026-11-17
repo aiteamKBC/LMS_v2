@@ -1,3 +1,4 @@
+import { LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
 // "Retrieve LMS activities": a checklist of everything Last_audit holds for
 // this learner-month — attendance sessions (live register) plus the learner's
 // own video/audio/reading+quiz results — grouped by category with select-all,
@@ -342,7 +343,7 @@ export function RetrieveActivitiesPanel({ aptemId, month, monthLabel, existingRe
       </div>
 
       {candidatesQuery.isLoading ? (
-        <p className="py-8 text-center text-sm text-muted-foreground"><LoaderCircle className="mr-2 inline h-4 w-4 animate-spin" />Loading the learner's LMS records…</p>
+        <p className="py-8 text-center text-sm text-muted-foreground"><LoadingSkeleton label="Loading the learner's LMS records…" variant="rows" /></p>
       ) : candidatesQuery.isError ? (
         <p className="py-8 text-center text-sm text-destructive">{candidatesQuery.error instanceof Error ? candidatesQuery.error.message : "Could not load the LMS records."}</p>
       ) : (

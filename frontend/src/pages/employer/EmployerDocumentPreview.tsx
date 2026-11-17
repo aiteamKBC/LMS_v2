@@ -1,3 +1,4 @@
+import { LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
 import { useEffect, useId, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Download, ExternalLink, FileText, LoaderCircle, X } from 'lucide-react';
@@ -77,9 +78,7 @@ export function EmployerDocumentPreview({ employerId, target, onClose }: {
           {error ? <div role="alert" className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-800">
             <p className="font-semibold">Could not open the document</p><p className="mt-1">{error}</p>
             <button type="button" onClick={() => setAttempt(value => value + 1)} className="mt-3 rounded-lg border border-red-300 px-3 py-2">Retry</button>
-          </div> : !content ? <div role="status" className="flex items-center justify-center gap-2 p-12 text-primary-700">
-            <LoaderCircle className="animate-spin" aria-hidden />Loading preview…
-          </div> : content.kind === 'pdf'
+          </div> : !content ? <div role="status" className="flex items-center justify-center gap-2 p-12 text-primary-700"><LoadingSkeleton label="Loading preview…" variant="rows" /></div> : content.kind === 'pdf'
             ? <AssignmentPdfPreview url={url} filename={content.filename} label={`${target.item.label} preview`} />
             : <>
               <p role="status" className="mb-4 rounded-xl border border-primary-100 bg-primary-50 p-3 text-sm text-primary-800">{content.unavailableReason}</p>

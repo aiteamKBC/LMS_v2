@@ -1,3 +1,4 @@
+import { LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
 import { Navigate } from 'react-router-dom';
 import { useAuth } from '@/hooks/useAuth';
 import { homeRouteFor } from '@/lib/routeAccess';
@@ -5,7 +6,7 @@ import { homeRouteFor } from '@/lib/routeAccess';
 /** Old review links lead to the same owned portal as employer sign-in. */
 export function EmployerReviewsEntry() {
   const { auth, isInitialized } = useAuth();
-  if (isInitialized === false) return <p role="status">Loading your account...</p>;
+  if (isInitialized === false) return <p role="status"><LoadingSkeleton label="Loading your account..." variant="rows" /></p>;
   const account = auth.account;
   if (!account) return <Navigate to="/login" replace />;
   if (account.role === 'employer') {

@@ -1,3 +1,4 @@
+import { LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
 import { useEffect, useState } from 'react';
 import { CheckCircle2, Loader2, XCircle } from 'lucide-react';
 import { fetchQuiz, type Quiz, type QuizAnswerValue } from '@/api/quizzes';
@@ -49,7 +50,7 @@ export function FreeCourseQuiz({ kind, learnerId, componentId, quizId, onPassed 
       </div>
     );
   }
-  if (!quiz) return <p role="status" className="p-3 text-sm text-foreground-500">Loading quiz…</p>;
+  if (!quiz) return <p role="status" className="p-3 text-sm text-foreground-500"><LoadingSkeleton label="Loading quiz…" variant="rows" /></p>;
   if (quiz.unavailableReason) return <p role="alert" className="p-3 text-sm text-red-700">{quiz.unavailableReason}</p>;
 
   if (result) {

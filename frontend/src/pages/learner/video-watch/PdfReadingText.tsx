@@ -1,3 +1,4 @@
+import { LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
 import { useContext, useEffect, useId, useMemo, useRef, useState } from 'react';
 import type { PDFDocumentProxy } from 'pdfjs-dist';
 import { sanitizeCurriculumHtml } from '@/lib/curriculumHtml';
@@ -107,7 +108,7 @@ export function PdfReadingText({ pdf, pageNumber, active, storageKey, preference
   if (error) return <div role="alert" className="p-5 text-sm text-red-700">{error}
     <button type="button" className="ml-2 underline" onClick={() => setRetry(value => value + 1)}>Retry text view</button>
   </div>;
-  if (loaded?.page !== pageNumber) return <p role="status" className="p-5 text-sm">Loading page text…</p>;
+  if (loaded?.page !== pageNumber) return <p role="status" className="p-5 text-sm"><LoadingSkeleton label="Loading page text…" variant="rows" /></p>;
   if (!sourceHtml) return <div className="p-5 text-sm">
     <p role="status">No readable text was found on this page. Extract text from this scanned page to use the reading tools.</p>
     <button type="button" disabled={extracting} onClick={() => void extractText()}

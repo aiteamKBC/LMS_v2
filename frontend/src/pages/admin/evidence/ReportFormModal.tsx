@@ -1,3 +1,4 @@
+import { LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
 import { useEffect, useState } from 'react';
 import {
   fetchAssessmentReportForm,
@@ -86,7 +87,7 @@ export function ReportFormModal({ learnerId, evidenceId, onClose, onSaved }: {
         <div className="flex min-h-0 flex-1 flex-col gap-3.5 overflow-y-auto px-[22px] py-5 pb-4">
           {error && <div role="alert" className="rounded-lg border border-red-200 bg-red-50 px-3 py-2.5 text-xs font-medium text-red-800">{error}</div>}
           {!prefill || !form ? (
-            !error && <p className="px-3 py-3 text-[12.5px] text-foreground-400" role="status">Loading…</p>
+            !error && <p className="px-3 py-3 text-[12.5px] text-foreground-400" role="status"><LoadingSkeleton label="Loading…" variant="rows" /></p>
           ) : (
             <>
               <ReportField label="Learner name"><input className={fieldClass} value={form.learner_name} onChange={event => set('learner_name', event.target.value)} /></ReportField>

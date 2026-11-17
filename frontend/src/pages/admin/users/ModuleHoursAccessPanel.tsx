@@ -1,3 +1,4 @@
+import { LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { fetchOwnModuleHoursAccess, fetchAccountModuleHoursAccess, saveAccountModuleHoursAccess, type ModuleHoursAccess } from '@/api/moduleHours';
 
@@ -34,7 +35,7 @@ export function ModuleHoursAccessPanel({ accountId, isAdmin }: { accountId: numb
   const dirty = draft && access && (draft.canMatch !== access.canMatch || draft.canManage !== access.canManage);
   return <section className="mt-4 space-y-3 border-t border-foreground-200/60 pt-4" aria-label="Module hours permissions">
     <p className="text-[12px] font-semibold text-foreground-800">Module hours permissions</p>
-    {allowed && loadedAccountId !== accountId && !error && <p className="text-[12px] text-foreground-500" role="status">Loading hours permissions…</p>}
+    {allowed && loadedAccountId !== accountId && !error && <p className="text-[12px] text-foreground-500" role="status"><LoadingSkeleton label="Loading hours permissions…" variant="rows" /></p>}
     {draft && loadedAccountId === accountId && <>
       <label className="flex items-start gap-2 text-[12px] text-foreground-700"><input type="checkbox" checked={draft.canMatch} disabled={saving} onChange={event => { setDraft({ ...draft, canMatch: event.target.checked }); setSaved(false); }} /><span><strong>Match Module Hours</strong><span className="mt-0.5 block text-[11px] text-foreground-500">Set or change the fixed hours target on modules this person can edit.</span></span></label>
       {(isAdmin || access?.canManage) && <label className="flex items-start gap-2 text-[12px] text-foreground-700"><input type="checkbox" checked={draft.canManage} disabled={saving || (!isAdmin && !draft.canManage)} onChange={event => { setDraft({ ...draft, canManage: event.target.checked }); setSaved(false); }} /><span>Manage module hours permissions<span className="mt-0.5 block text-[11px] text-foreground-500">Grant or revoke these permissions for staff accounts.</span></span></label>}

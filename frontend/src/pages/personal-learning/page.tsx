@@ -1,3 +1,4 @@
+import { LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ArrowRight, BookOpen, CalendarDays, GraduationCap, Info, Play, RefreshCw, UserRoundCheck } from 'lucide-react';
@@ -47,7 +48,7 @@ export default function PersonalCoursesPage() {
           {allowed && courses && !error && <span className={styles.courseCount}>{courses.length} {courses.length === 1 ? 'course' : 'courses'}</span>}
         </div>
         {!allowed ? <div className={styles.state} role="alert">Sign in as an administrator to view personal courses.</div> : error ? <div className={styles.state} role="alert"><Info size={26} aria-hidden="true" /><h3>Your courses could not be loaded</h3><p>{error}</p><button type="button" onClick={() => setReload(value => value + 1)} className={styles.button}><RefreshCw size={16} aria-hidden="true" />Try again</button></div>
-          : !courses ? <div className={styles.state} role="status"><BookOpen size={26} aria-hidden="true" /><p>Loading your courses…</p></div>
+          : !courses ? <div className={styles.state} role="status"><BookOpen size={26} aria-hidden="true" /><p><LoadingSkeleton label="Loading your courses…" variant="rows" /></p></div>
             : !courses.length ? <div className={styles.state}><BookOpen size={30} aria-hidden="true" /><h3>No personal courses yet</h3><p>Courses you have joined as a learner appear here. Module Builder's “Preview as learner” is a read-only preview and does not add a course.</p></div>
               : <div className={`${motion.staggerCards} ${styles.cards}`}>{courses.map(course => <article key={course.id} className={styles.course} aria-label={course.title}>
                 <div className={styles.cover}>

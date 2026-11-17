@@ -156,6 +156,12 @@
       color: var(--enrolment-ui-text) !important;
       font-family: var(--font-body) !important;
       box-shadow: none !important;
+      outline: none !important;
+    }
+
+    /* Keep focus inside the field border instead of drawing a second frame. */
+    .workspace-shell:not([data-workspace-role="curriculum"]):not(:has([data-audit-home="/workspace/auditor-copy"])) .workspace-main :where(input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="color"]):not([type="hidden"]):not([type="file"]), select, textarea, button[role="combobox"], button[aria-haspopup="listbox"]):focus {
+      border-color: var(--enrolment-ui-focus) !important;
     }
 
     .workspace-shell:not([data-workspace-role="curriculum"]):not(:has([data-audit-home="/workspace/auditor-copy"])) .workspace-main :is(input, textarea)::placeholder {
@@ -219,7 +225,7 @@
     .workspace-shell:not([data-workspace-role="curriculum"]):not(:has([data-audit-home="/workspace/auditor-copy"])) .workspace-main table tbody tr:not([aria-selected="true"]):not([data-state="selected"]):not([class*="bg-warning"]):not([class*="bg-red-"]):not([class*="bg-amber-"]):not([class*="bg-destructive"]):hover { background: var(--enrolment-ui-hover) !important; }
     .workspace-shell:not([data-workspace-role="curriculum"]):not(:has([data-audit-home="/workspace/auditor-copy"])) .workspace-main table tbody td { border-color: var(--enrolment-ui-divider) !important; }
 
-    .workspace-shell:not([data-workspace-role="curriculum"]):not(:has([data-audit-home="/workspace/auditor-copy"])) .workspace-main :is(a, button, input, select, textarea):focus-visible {
+    .workspace-shell:not([data-workspace-role="curriculum"]):not(:has([data-audit-home="/workspace/auditor-copy"])) .workspace-main :is(a, button, input[type="checkbox"], input[type="radio"], input[type="range"], input[type="color"], input[type="file"]):not([role="combobox"]):not([aria-haspopup="listbox"]):focus-visible {
       outline: 3px solid var(--enrolment-ui-focus) !important;
       outline-offset: 3px;
     }

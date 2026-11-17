@@ -20,7 +20,7 @@
 .root.root :global(.kbc-workspace-switcher-button *) { color: #54346d !important; }
 .root :global(.kbc-workspace-topbar > div > div > span[aria-hidden]) { color: #6f4b88; background: #f2ecf7; }
 .root :global(.kbc-topbar-user-name), .root :global(.kbc-topbar-icon-button) { color: #654b78 !important; }
-.content { container: hr-system / inline-size; width: 100%; max-width: 1680px; min-width: 0; margin: 0 auto 0 0; padding: clamp(16px, 2vw, 32px); }
+.content { container: hr-system / inline-size; width: 100%; max-width: none; min-width: 0; margin: 0 auto 0 0; padding: clamp(16px, 2vw, 32px); }
 .pageHeading { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 20px; margin-bottom: 22px; }
 .pageHeading > div { flex: 1 1 440px; min-width: 0; }
 .pageHeading > button { flex-shrink: 0; }

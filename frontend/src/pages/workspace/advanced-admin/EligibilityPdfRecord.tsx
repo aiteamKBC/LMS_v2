@@ -1,3 +1,4 @@
+import { LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
 import { useEffect, useState } from 'react';
 import { advancedAdminEligibilityForm, advancedAdminOriginalReviewPdf } from '@/api/advancedAdmin';
 import { buildReviewPdf, reviewDocumentFilename } from '@/pages/learner/onboarding/reviews/reviewDocument';
@@ -64,7 +65,7 @@ export default function EligibilityPdfRecord({ learnerId, recordKey, label, stat
     <summary className="cursor-pointer font-semibold">{label || 'Eligibility Review'} · {status} · {date?.slice(0, 10) || 'Date not recorded'}</summary>
     {open && <div className="mt-4 space-y-3">
       {error && <p role="alert" className="rounded-lg bg-red-50 p-3 text-red-700">{error}</p>}
-      {!error && !pdfUrl && <p role="status" className="text-foreground-600">Loading PDF…</p>}
+      {!error && !pdfUrl && <p role="status" className="text-foreground-600"><LoadingSkeleton label="Loading PDF…" variant="rows" /></p>}
       {pdfUrl && <>
         <a className="inline-block font-semibold text-primary-700 underline" href={pdfUrl} download={filename}>Download PDF</a>
         <iframe title={`${label || 'Eligibility Review'} PDF`} src={pdfUrl} className="h-[min(80vh,900px)] w-full rounded-lg border border-foreground-200" />

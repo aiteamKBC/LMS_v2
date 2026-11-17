@@ -1,3 +1,4 @@
+import { LoadingSkeleton, LoadingLabel } from '@/components/feature/LoadingSkeleton';
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { AppIcon } from '@/components/feature/AppIcon';
@@ -1872,7 +1873,7 @@ function ReadinessBar({ label, value, detail, color }: { label: string; value: n
       <div className="h-2 overflow-hidden rounded-full bg-background-200">
         <div className={`h-full rounded-full ${color}`} style={{ width: `${Math.min(100, Math.max(0, value))}%` }} />
       </div>
-      <p className="mt-1 text-[11px] text-foreground-400">{detail}</p>
+      <p className="mt-1 text-[11px] text-foreground-400"><LoadingLabel>{detail}</LoadingLabel></p>
     </div>
   );
 }
@@ -1900,8 +1901,8 @@ function AttentionRow({ icon, tone, title, detail, action }: {
       <span className="flex min-w-0 items-start gap-2.5">
         <AppIcon className={`${icon} mt-0.5 shrink-0 text-base`}></AppIcon>
         <span className="min-w-0">
-          <span className="block text-[13px] font-bold">{title}</span>
-          <span className="block text-[11px] font-semibold opacity-80">{detail}</span>
+          <span className="block text-[13px] font-bold"><LoadingLabel>{title}</LoadingLabel></span>
+          <span className="block text-[11px] font-semibold opacity-80"><LoadingLabel>{detail}</LoadingLabel></span>
         </span>
       </span>
       <button
@@ -1925,10 +1926,7 @@ function AttentionRow({ icon, tone, title, detail, action }: {
 /** Stands in for a view built from the programme's modules until they arrive. */
 function ModulesLoadingPanel() {
   return (
-    <div role="status" className="flex items-center gap-3 rounded-2xl border border-foreground-200/70 bg-background-50 p-5 text-[12px] font-semibold text-foreground-600">
-      <AppIcon className="ri-loader-4-line animate-spin text-base text-primary-600"></AppIcon>
-      Loading this programme's modules...
-    </div>
+    <div role="status" className="flex items-center gap-3 rounded-2xl border border-foreground-200/70 bg-background-50 p-5 text-[12px] font-semibold text-foreground-600"><LoadingSkeleton label="Loading this programme's modules..." variant="rows" /></div>
   );
 }
 
@@ -2201,7 +2199,7 @@ function EnrolledLearnersPanel({
 
   return (
     <>
-      {loading && <p className="text-[12px] text-foreground-500">Loading assigned learners...</p>}
+      {loading && <p className="text-[12px] text-foreground-500"><LoadingSkeleton label="Loading assigned learners..." variant="rows" /></p>}
 
       {!loading && error && (
         <p className="rounded-lg border border-amber-200/60 bg-amber-50 px-3 py-2 text-[12px] text-amber-700">{error}</p>
@@ -4625,10 +4623,7 @@ function ProgrammeDetailContent() {
             />
 
             {loading && !deliverySessions.length ? (
-              <div className="flex items-center justify-center gap-2 rounded-2xl border border-foreground-200/60 bg-background-50 px-4 py-10 text-[12px] text-foreground-500">
-                <AppIcon className="ri-loader-4-line animate-spin text-base"></AppIcon>
-                Loading sessions…
-              </div>
+              <div className="flex items-center justify-center gap-2 rounded-2xl border border-foreground-200/60 bg-background-50 px-4 py-10 text-[12px] text-foreground-500"><LoadingSkeleton label="Loading sessions…" variant="rows" /></div>
             ) : (
               <SessionsTree
                 sessions={filteredSessions}
@@ -4704,10 +4699,7 @@ function ProgrammeDetailContent() {
             </div>
 
             {backendCoverageLoading ? (
-              <div className="rounded-xl border border-background-200 bg-background-100 px-4 py-8 text-center text-[12px] font-semibold text-foreground-600">
-                <AppIcon className="ri-loader-4-line mr-2 animate-spin text-primary-600"></AppIcon>
-                Loading KSB coverage…
-              </div>
+              <div className="rounded-xl border border-background-200 bg-background-100 px-4 py-8 text-center text-[12px] font-semibold text-foreground-600"><LoadingSkeleton label="Loading KSB coverage…" variant="rows" /></div>
             ) : backendCoverageError ? (
               <InlineError
                 message={`Unable to load actual backend KSB coverage. No fallback or sample KSB data is being shown. ${backendCoverageError}`}
@@ -5033,7 +5025,7 @@ function ProgrammeDetailContent() {
             setGroupDrawerCohortId(null);
             setEditingGroup(null);
           }}>
-          {!pendingEditorReference.error && <p role="status">Loading editor options…</p>}
+          {!pendingEditorReference.error && <p role="status"><LoadingSkeleton label="Loading editor options…" variant="rows" /></p>}
         </EntityDrawer>
       )}
       <CohortFormDrawer
@@ -5104,7 +5096,7 @@ function QualityCheckCard({ title, count, clearText, issueText, icon, onClick }:
           {clear ? 'Clear' : count}
         </span>
       </div>
-      <p className="mt-3 text-[12px] font-bold text-foreground-900">{title}</p>
+      <p className="mt-3 text-[12px] font-bold text-foreground-900"><LoadingLabel>{title}</LoadingLabel></p>
       <p className={`mt-1 text-[11px] leading-5 ${clear ? 'text-emerald-700' : 'text-foreground-500'}`}>{clear ? clearText : issueText}</p>
       <span className="mt-auto inline-flex items-center gap-1 pt-3 text-[10px] font-bold text-primary-700">{clear ? 'Review' : 'Fix issue'} <AppIcon className="ri-arrow-right-line transition-transform group-hover:translate-x-0.5"></AppIcon></span>
     </button>
@@ -6083,7 +6075,7 @@ function KsbPlacementPreviewModal({
         <div className="flex items-start justify-between gap-3 bg-primary-950 px-5 py-4 text-white">
           <div className="min-w-0">
             <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-white/60">Placement preview</p>
-            <h3 className="mt-1 truncate font-heading text-base font-bold text-white">{title}</h3>
+            <h3 className="mt-1 truncate font-heading text-base font-bold text-white"><LoadingLabel>{title}</LoadingLabel></h3>
             <p className="mt-1 flex flex-wrap items-center gap-1.5 text-[10px] text-white/70">
               {type && <span className="rounded-full bg-white/15 px-2 py-0.5 font-bold uppercase tracking-wider">{type}</span>}
               {status && <span className="rounded-full bg-white/15 px-2 py-0.5 font-bold uppercase tracking-wider">{status}</span>}
@@ -6157,9 +6149,7 @@ function KsbPlacementPreviewModal({
                   </button>
                 </div>
               ) : (
-                <p role="status" className="rounded-xl border border-dashed border-background-200 bg-background-100/50 px-3 py-4 text-center text-[11px] font-semibold text-foreground-400">
-                  Loading this component&apos;s content…
-                </p>
+                <p role="status" className="rounded-xl border border-dashed border-background-200 bg-background-100/50 px-3 py-4 text-center text-[11px] font-semibold text-foreground-400"><LoadingSkeleton label="Loading this component&apos;s content…" variant="rows" /></p>
               )}
 
               {clean(component.description) && (

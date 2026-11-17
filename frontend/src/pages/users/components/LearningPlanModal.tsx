@@ -1,3 +1,4 @@
+import { LoadingControl } from '@/components/feature/LoadingSkeleton';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useToast } from "@/hooks/useToast";
 import {
@@ -954,7 +955,7 @@ export function LearningPlanModal({ learnerId, learnerName, onClose, onSaved, re
                   : 'Add a free course…';
               return (
                 <div className="mt-2 flex flex-col gap-2 sm:flex-row">
-                  <select
+                  <LoadingControl loading={freeCoursesLoading && available.length === 0}><select
                     className={`${inputClass} sm:max-w-[20rem]`}
                     value={freeCoursePicker}
                     onChange={(e) => setFreeCoursePicker(e.target.value)}
@@ -965,7 +966,7 @@ export function LearningPlanModal({ learnerId, learnerName, onClose, onSaved, re
                     {available.map((o) => (
                       <option key={o.freeCourseId} value={o.freeCourseId}>{o.courseName}</option>
                     ))}
-                  </select>
+                  </select></LoadingControl>
                   <button
                     type="button"
                     className={btnSecondary}

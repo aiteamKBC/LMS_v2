@@ -1,3 +1,4 @@
+import { LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
 import { useEffect, useState, type ComponentType } from 'react';
 import { useParams } from 'react-router-dom';
 import {
@@ -106,14 +107,8 @@ export default function EmployerDocumentsPage() {
           </section>
 
           {loading && !data && (
-            <div role="status" aria-label="Loading documents" aria-live="polite" className={styles.loadingState}>
-              <span className={styles.loadingIcon}>
-                <LoaderCircle data-testid="documents-loading-spinner" aria-hidden className={`${styles.spinningIcon} animate-spin`} />
-              </span>
-              <div>
-                <p>Loading documents...</p>
-                <span>Preparing learner documents</span>
-              </div>
+            <div role="status" aria-label="Loading documents" className="p-5">
+              <LoadingSkeleton label="Loading documents" variant="cards" />
             </div>
           )}
 

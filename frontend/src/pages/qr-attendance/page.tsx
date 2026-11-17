@@ -1,3 +1,4 @@
+import { LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
 import { useEffect, useRef, useState } from 'react';
 import { QRCodeSVG } from 'qrcode.react';
 import { CheckCircle2, Download, Layers, Link, LoaderCircle, Mail, QrCode, Search } from 'lucide-react';
@@ -175,7 +176,7 @@ export default function QRAttendancePage() {
           <h1 id="qr-attendance-heading">QR Attendance</h1>
           <p>Confirm your attendance for a programme lecture</p>
         </header>
-        {!config && !error && <p role="status" className="mb-5 text-sm text-foreground-600">Loading attendance…</p>}
+        {!config && !error && <p role="status" className="mb-5 text-sm text-foreground-600"><LoadingSkeleton label="Loading attendance…" variant="rows" /></p>}
         <form onSubmit={findLectures} className="qr-step qr-email-step">
           <StepLabel number={1}><label htmlFor="qr-email">Your Registered Email</label></StepLabel>
           <div className="qr-email-fields">
@@ -261,7 +262,7 @@ export default function QRAttendancePage() {
             <legend><StepLabel number={3}>Choose Lecture</StepLabel></legend>
             {config && <p className="mb-2 text-xs text-foreground-600">Attendance is available only on the lecture date, all day in college time ({config.timeZone}).</p>}
             {!moduleId && <p className="qr-lecture-placeholder rounded-xl border border-dashed border-primary-200 bg-background-50 px-4 py-6 text-center text-sm leading-6 text-foreground-600">{identified ? 'Choose a module to see its lectures.' : 'Your available lectures will appear here.'}</p>}
-            {loadingLectures && <p role="status" className="flex items-center gap-2 rounded-xl bg-primary-50 px-4 py-6 text-sm text-primary-700"><LoaderCircle aria-hidden="true" size={18} className="motion-safe:animate-spin" />Loading lectures…</p>}
+            {loadingLectures && <p role="status" className="flex items-center gap-2 rounded-xl bg-primary-50 px-4 py-6 text-sm text-primary-700"><LoadingSkeleton label="Loading lectures…" variant="rows" /></p>}
             {moduleId && !loadingLectures && !lectureError && !lectures.length && <p role="status" className="rounded-xl border border-dashed border-primary-200 bg-background-50 px-4 py-6 text-sm leading-6 text-foreground-600">No lectures are scheduled for this module. Please choose another module.</p>}
             {lectureError && <div role="alert" className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">{lectureError}<button type="button" className="ml-2 inline-flex min-h-11 items-center px-2 font-semibold underline focus-visible:ring-2 focus-visible:ring-red-500" onClick={() => void chooseModule(moduleId)}>Retry</button></div>}
             {config && lectures.length > 0 && <>

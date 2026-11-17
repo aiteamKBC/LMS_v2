@@ -1,3 +1,4 @@
+import { LoadingSkeleton, LoadingLabel } from '@/components/feature/LoadingSkeleton';
 //
 // The monthly learner report, rebuilt around the employee-arranged ledger.
 // Original planned hours come from Last_audit.learners.planned_hours_monthly
@@ -180,7 +181,7 @@ function ProfileGroup({ label, value, secondaryLabel, secondaryValue }: { label:
       </div>
       <div>
         <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">{secondaryLabel}</p>
-        <p className="mt-1.5 font-mono text-sm font-medium text-[#182d48]">{secondaryValue || "—"}</p>
+        <p className="mt-1.5 font-mono text-sm font-medium text-[#182d48]"><LoadingLabel>{secondaryValue || "—"}</LoadingLabel></p>
       </div>
     </div>
   );
@@ -933,7 +934,7 @@ function JournalPage() {
             <div className="flex items-center gap-3">
               <div className="rounded-xl bg-[#f6f8fb] px-6 py-3 text-center">
                 <p className="text-[9px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">Reporting month</p>
-                <p className="mt-1 text-sm font-semibold text-[#182d48]">{metadata.isLoading || summary.isLoading ? "Loading…" : monthLabel}</p>
+                <p className="mt-1 text-sm font-semibold text-[#182d48]">{metadata.isLoading || summary.isLoading ? <LoadingSkeleton label="Loading…" variant="text" /> : monthLabel}</p>
               </div>
               <Button
                 asChild
@@ -970,7 +971,7 @@ function JournalPage() {
           ) : selectedLearner && summary.data && !summaryMonths.length ? (
             <p className="py-10 text-center text-sm text-muted-foreground">No planned months or arranged activities exist for this learner yet.</p>
           ) : isLoading || !selectedLearner || !selectedPeriod ? (
-            <p className="py-10 text-center text-sm text-muted-foreground">Loading journal…</p>
+            <p className="py-10 text-center text-sm text-muted-foreground"><LoadingSkeleton label="Loading journal…" variant="rows" /></p>
           ) : summary.data ? (
             <div className="space-y-5 px-7 py-6">
               <div className="grid rounded-lg bg-[#f6f8fb] px-5 lg:grid-cols-3">

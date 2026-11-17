@@ -1,3 +1,4 @@
+import { LoadingLabel } from '@/components/feature/LoadingSkeleton';
 import type { ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import { ArrowLeft, ArrowRight, BookOpen, BriefcaseBusiness, Building2, CalendarDays, ChevronRight, Clock, GraduationCap, Mail, Map, Phone, Play, UserRound, UsersRound } from 'lucide-react';
@@ -60,11 +61,11 @@ export function LearnerDashboardHero(props: LearnerDashboardHeroProps) {
               </span>
               <span className={styles.headerFact}>
                 <Clock aria-hidden="true" />
-                <span><span className={styles.headerFactLabel}>Start date</span><strong>{startDate}</strong></span>
+                <span><span className={styles.headerFactLabel}>Start date</span><strong><LoadingLabel>{startDate}</LoadingLabel></strong></span>
               </span>
               <span className={styles.headerFact}>
                 <CalendarDays aria-hidden="true" />
-                <span><span className={styles.headerFactLabel}>End date</span><strong>{plannedEnd}</strong></span>
+                <span><span className={styles.headerFactLabel}>End date</span><strong><LoadingLabel>{plannedEnd}</LoadingLabel></strong></span>
               </span>
             </div>
             <p className={styles.quote}>“Progress turns goals into reality.”</p>
@@ -107,7 +108,7 @@ export function LearnerDashboardHero(props: LearnerDashboardHeroProps) {
             <span className={styles.icon}><UserRound aria-hidden="true" /></span>
             <dl>
               <dt>Coach</dt>
-              <dd>{coach}</dd>
+              <dd><LoadingLabel>{coach}</LoadingLabel></dd>
               {coachEmail && <dd className={styles.contactLine}><Mail aria-hidden="true" /><a href={`mailto:${coachEmail}`}>{coachEmail}</a></dd>}
               {coachPhone && <dd className={styles.contactLine}><Phone aria-hidden="true" /><a href={`tel:${coachPhone.replace(/[^+\d]/g, '')}`}>{coachPhone}</a></dd>}
             </dl>
@@ -134,7 +135,7 @@ export function LearnerDashboardHero(props: LearnerDashboardHeroProps) {
                   <ChevronRight aria-hidden="true" />
                 </Link>}
               </li>)}
-            </ul> : <p className={styles.modulePlaceholder} role="status">{modulePlaceholder}</p>}
+            </ul> : <p className={styles.modulePlaceholder} role="status"><LoadingLabel>{modulePlaceholder}</LoadingLabel></p>}
           </div>
           <p className={styles.cardMotto}>Building your skills.</p>
         </section>

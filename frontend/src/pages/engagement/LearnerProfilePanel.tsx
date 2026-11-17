@@ -1,3 +1,4 @@
+import { LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
@@ -161,9 +162,7 @@ export function LearnerProfilePanel({ learnerId, learnerName, programme, cohort,
           </div>
 
           {loading && (
-            <div className="flex items-center justify-center gap-2 py-8 text-foreground-400 text-[11px]">
-              <AppIcon className="ri-loader-4-line animate-spin"></AppIcon> Loading profile…
-            </div>
+            <div className="flex items-center justify-center gap-2 py-8 text-foreground-400 text-[11px]"><LoadingSkeleton label="Loading profile…" variant="rows" /></div>
           )}
 
           {!loading && (

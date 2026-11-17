@@ -1,3 +1,4 @@
+import { LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
 import { ArrowRight, Coins, Gift, Trophy } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import type { LearnerKind } from '@/api/learnerDetail';
@@ -13,7 +14,7 @@ export function DashboardRewards({ kind, learnerId, canOpenRewards = true, enabl
       {canOpenRewards && <Link to="/learner/rewards">View rewards<ArrowRight size={15} /></Link>}
     </header>
     {error && <div className={styles.error} role="alert"><span>{error}</span><button type="button" onClick={refresh}>Retry rewards</button></div>}
-    {loading && !data ? <p role="status" className={styles.empty}>Loading rewards and points…</p> : <>
+    {loading && !data ? <p role="status" className={styles.empty}><LoadingSkeleton label="Loading rewards and points…" variant="rows" /></p> : <>
       <div className={styles.content}>
         <div className={styles.points}>
           <div className={styles.balance}><span className={styles.coin}><Coins size={24} /></span><div><span>Available points</span><strong>{balance == null ? '—' : balance.toLocaleString('en-GB')}</strong><small>Ready to use on rewards</small></div></div>

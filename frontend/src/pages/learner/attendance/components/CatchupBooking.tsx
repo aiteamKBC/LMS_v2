@@ -1,3 +1,4 @@
+import { LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
 import { useEffect, useState, type MutableRefObject } from 'react';
 import { bookLearnerCalendarSession, fetchCatchupSlots, fetchLearnerCalendarEvents, ukOffsetForDate, type BookingCalendarRules, type LearnerCalendarEvent } from '@/api/learnerCalendar';
 import type { MissedAttendanceSession } from '@/api/absenceReports';
@@ -138,7 +139,7 @@ export default function CatchupBooking({ lecture, selectedKey, onSelect, onBooke
 
   return <div className={styles.catchupBooking} aria-busy={busy || loading}>
     <div className={styles.bookingHeading}><strong>Your catch-up session</strong><button type="button" disabled={busy || loading || disabled} onClick={() => setRevision(value => value + 1)}>Refresh bookings</button></div>
-    {loading && <p role="status">Loading your bookings…</p>}
+    {loading && <p role="status"><LoadingSkeleton label="Loading your bookings…" variant="rows" /></p>}
     {loadError && <p role="alert">{loadError}</p>}
     {!loading && available.length > 0 && <label>Use an existing catch-up booking
       <select aria-label="Catch-up booking" disabled={busy || disabled} value={selected?.eventKey || ''} onChange={event => { setNotice(''); onSelect(available.find(item => item.eventKey === event.target.value) || null); }}>

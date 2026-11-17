@@ -1,3 +1,4 @@
+import { LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { AppIcon } from './AppIcon';
@@ -215,7 +216,7 @@ export function SessionResults({ seriesId, sessionNumber, moduleId, displayTitle
     {session?.archiveReady === false && <p role="status" className="m-4 rounded-lg bg-amber-50 p-3 text-sm text-amber-900">{learner || preview
       ? 'Saved recordings and transcripts are not ready for playback yet. Please contact your tutor.'
       : 'Recording storage needs setup. Saved attendance is available below; synchronization and playback are unavailable until setup is complete.'}</p>}
-    {loading ? <p role="status" className="p-5 text-sm">Loading saved session…</p> : !session ? !error && !saved.error && <p className="p-5 text-sm">This session has not been linked yet.</p> : <>
+    {loading ? <p role="status" className="p-5 text-sm"><LoadingSkeleton label="Loading saved session…" variant="rows" /></p> : !session ? !error && !saved.error && <p className="p-5 text-sm">This session has not been linked yet.</p> : <>
       {learner && !preview && !recordingsOnly && recordedSessionsLearner && !upcoming && !liveAttendanceSatisfied
         && ['recorded', 'awaiting_recording'].includes(session.learningOutcome || '') && <div className="m-4 rounded-xl border bg-background-50 p-4 text-sm" role="status">
           <strong>{session.learningOutcome === 'recorded' ? 'Completed by recording' : 'Awaiting recording'}</strong>

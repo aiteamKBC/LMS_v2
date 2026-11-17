@@ -1,3 +1,4 @@
+import { LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
 import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { StatusBadge } from '@/components/ui/StatusBadge';
@@ -160,7 +161,7 @@ export default function ReviewsHome(props: ReviewsHomeProps) {
       status: progressTimelineStatus(state, definitions),
       markerSelection: isAptemReview(state.session),
     }))} />}
-    {props.loading && !sessions.length ? <div className={styles.loading} role="status">Loading your reviews…</div>
+    {props.loading && !sessions.length ? <div className={styles.loading} role="status"><LoadingSkeleton label="Loading your reviews…" variant="rows" /></div>
       : props.error && !sessions.length ? <div className={styles.empty}><h2>Your reviews could not be loaded</h2><p>Use Try again above to reload your reviews.</p></div>
       : <>
         {props.loading && <p role="status" className={styles.refreshStatus}>Updating your reviews…</p>}

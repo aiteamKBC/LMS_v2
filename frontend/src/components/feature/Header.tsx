@@ -1,3 +1,4 @@
+import { LoadingLabel } from '@/components/feature/LoadingSkeleton';
 import { useState, useRef, useEffect, useLayoutEffect, useCallback, type ReactNode, type RefObject } from 'react';
 import { Link } from 'react-router-dom';
 import { createPortal } from 'react-dom';
@@ -307,9 +308,9 @@ export function Header({ accountButtonRef, pageTitle, pageIcon, pageSubtitle, he
             {pageIcon ?? <AppIcon className="ri-dashboard-line h-5 w-5" />}
           </span>
           <div className="min-w-0">
-            <p className="kbc-topbar-title truncate font-heading text-[15px] font-bold leading-tight tracking-tight text-foreground-900">{pageTitle}</p>
+            <p className="kbc-topbar-title truncate font-heading text-[15px] font-bold leading-tight tracking-tight text-foreground-900"><LoadingLabel>{pageTitle}</LoadingLabel></p>
             {pageSubtitle && (
-              <p className={`${usesLearnerHeader ? 'hidden sm:block' : ''} kbc-topbar-subtitle mt-1 truncate text-[11.5px] leading-tight text-foreground-400`}>{pageSubtitle}</p>
+              <p className={`${usesLearnerHeader ? 'hidden sm:block' : ''} kbc-topbar-subtitle mt-1 truncate text-[11.5px] leading-tight text-foreground-400`}><LoadingLabel>{pageSubtitle}</LoadingLabel></p>
             )}
           </div>
         </div>

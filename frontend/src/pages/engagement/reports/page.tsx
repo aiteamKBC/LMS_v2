@@ -5,6 +5,7 @@ import { WorkspaceHeroBanner } from '@/components/feature/WorkspaceHeroBanner';
 import { roleNavMap } from '@/mocks/navigation';
 import { useOperatorIdentity } from '@/hooks/useOperatorIdentity';
 import { useToast } from "@/hooks/useToast";
+import styles from './reports.module.css';
 import {
   fetchLearnerAnalytics, fetchReportData,
   type LearnerAnalyticsRow, type PointsRewardsReport, type ClubActivityReport, type EventAttendanceReport,
@@ -54,16 +55,15 @@ function downloadCsv(filename: string, csv: string) {
   URL.revokeObjectURL(url);
 }
 
-// Compact select used for the per-report filter bar — same visual language
-// (light border, small text) across every report's filter row.
+// Shared styling keeps the report filters aligned with the programme input.
 function FilterSelect({ value, onChange, options, label }: { value: string; onChange: (v: string) => void; options: { value: string; label: string }[]; label: string }) {
   return (
-    <label className="flex items-center gap-1.5 text-[10px] font-medium text-foreground-500">
+    <label className={styles.field}>
       {label}
       <select
         value={value}
         onChange={e => onChange(e.target.value)}
-        className="px-2 py-1 rounded-md border border-foreground-200/60 bg-background-50 text-[10px] text-foreground-700 focus:outline-none focus:ring-1 focus:ring-primary-400/40 cursor-pointer"
+        className={styles.control}
       >
         {options.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
       </select>
@@ -215,78 +215,84 @@ export default function EngagementReportsPage() {
           </div>
         </div>
 
-        <div className="bg-background-50 rounded-xl border border-foreground-200/60 overflow-hidden">
-          <div className="p-4 border-b border-foreground-400/50 flex items-center justify-between">
-            <span className="text-sm font-heading font-semibold text-foreground-900">Available Reports</span>
-            <span className="text-[10px] text-foreground-400 bg-background-100 px-2 py-1 rounded-full">{filtered.length} reports</span>
+        <section className={styles.library} aria-labelledby="available-reports-title">
+          <div className={styles.libraryHeader}>
+            <div>
+              <h2 id="available-reports-title" className={styles.libraryTitle}>Available Reports</h2>
+              <p className={styles.libraryDescription}>Choose a report, set your filters, and generate a preview.</p>
+            </div>
+            <span className={styles.reportCount}>{filtered.length} {filtered.length === 1 ? 'report' : 'reports'}</span>
           </div>
-          <div className="divide-y divide-background-200/30">
+          <div className={styles.reportGrid}>
             {filtered.map(report => (
-              <div key={report.id}>
-                <div className="p-4 flex items-center gap-4 flex-wrap">
-                  <span className={`w-10 h-10 rounded-lg flex items-center justify-center shrink-0 ${report.bg} ${report.text}`}>
-                    <AppIcon className={`${report.icon} text-sm`}></AppIcon>
-                  </span>
-                  <div className="flex-1 min-w-[220px]">
-                    <div className="flex items-center gap-2 flex-wrap mb-1">
-                      <span className="text-[13px] font-semibold text-foreground-900">{report.name}</span>
-                      <span className="text-[8px] font-semibold px-1.5 py-0.5 rounded-full bg-[#F5F3FF] text-[#6D28D9]">{report.category}</span>
-                    </div>
-                    <p className="text-[11px] text-foreground-500">{report.description}</p>
-                    <p className="text-[10px] text-foreground-400 mt-1">Last generated: {lastGenerated[report.id] ?? 'Never'}</p>
-
-                    {/* Per-report filters — narrow the data before generating/downloading */}
-                    <div className="flex items-center gap-3 flex-wrap mt-2">
-                      {report.id === 'engagement-scoreboard' && (
-                        <>
-                          <label className="flex items-center gap-1.5 text-[10px] font-medium text-foreground-500">
-                            Programme
-                            <input
-                              type="text" value={scoreboardProgramme} onChange={e => setScoreboardProgramme(e.target.value)}
-                              placeholder="e.g. Business Admin" className="px-2 py-1 rounded-md border border-foreground-200/60 bg-background-50 text-[10px] text-foreground-700 placeholder:text-foreground-400 focus:outline-none focus:ring-1 focus:ring-primary-400/40 w-40"
-                            />
-                          </label>
-                          <FilterSelect label="Risk" value={scoreboardRisk} onChange={v => setScoreboardRisk(v as RiskFilter)} options={[
-                            { value: 'all', label: 'All' }, { value: 'red', label: 'Red' }, { value: 'amber', label: 'Amber' }, { value: 'green', label: 'Green' },
-                          ]} />
-                        </>
-                      )}
-                      {report.id === 'points-rewards' && (
-                        <FilterSelect label="Category" value={pointsCategory} onChange={setPointsCategory} options={[
-                          { value: 'all', label: 'All' },
-                          ...(pointsRewards?.byCategory.map(c => ({ value: c.category, label: c.category })) ?? []),
-                        ]} />
-                      )}
-                      {report.id === 'club-activity' && (
-                        <FilterSelect label="Location" value={clubLocation} onChange={setClubLocation} options={[
-                          { value: 'all', label: 'All' },
-                          ...Array.from(new Set(clubActivity?.clubs.map(c => c.location) ?? [])).map(l => ({ value: l, label: l })),
-                        ]} />
-                      )}
-                      {report.id === 'event-attendance' && (
-                        <FilterSelect label="Type" value={eventType} onChange={setEventType} options={[
-                          { value: 'all', label: 'All' },
-                          ...Array.from(new Set(eventAttendance?.events.map(e => e.type) ?? [])).map(t => ({ value: t, label: t.charAt(0).toUpperCase() + t.slice(1) })),
-                        ]} />
-                      )}
-                    </div>
+              <article key={report.id} aria-labelledby={`${report.id}-title`} className={`${styles.card} ${expandedId === report.id ? styles.expandedCard : ''}`}>
+                <div className={styles.cardBody}>
+                  <div className={styles.cardHeader}>
+                    <span className={`${styles.reportIcon} ${report.bg} ${report.text}`} aria-hidden="true">
+                      <AppIcon className={`${report.icon} text-xl`}></AppIcon>
+                    </span>
+                    <span className={styles.category}>{report.category}</span>
                   </div>
-                  <div className="flex items-center gap-2 shrink-0">
+                  <h3 id={`${report.id}-title`} className={styles.reportTitle}>{report.name}</h3>
+                  <p className={styles.description}>{report.description}</p>
+                  <p className={styles.lastGenerated}>
+                    <AppIcon className="ri-time-line" aria-hidden="true" />
+                    Last generated: <span>{lastGenerated[report.id] ?? 'Never'}</span>
+                  </p>
+                </div>
+
+                <div className={styles.cardFooter}>
+                  <div className={styles.filters}>
+                    {report.id === 'engagement-scoreboard' && (
+                      <>
+                        <label className={`${styles.field} ${styles.programmeField}`}>
+                          Programme
+                          <input
+                            type="text" value={scoreboardProgramme} onChange={e => setScoreboardProgramme(e.target.value)}
+                            placeholder="e.g. Business Admin" className={styles.control}
+                          />
+                        </label>
+                        <FilterSelect label="Risk" value={scoreboardRisk} onChange={v => setScoreboardRisk(v as RiskFilter)} options={[
+                          { value: 'all', label: 'All' }, { value: 'red', label: 'Red' }, { value: 'amber', label: 'Amber' }, { value: 'green', label: 'Green' },
+                        ]} />
+                      </>
+                    )}
+                    {report.id === 'points-rewards' && (
+                      <FilterSelect label="Category" value={pointsCategory} onChange={setPointsCategory} options={[
+                        { value: 'all', label: 'All' },
+                        ...(pointsRewards?.byCategory.map(c => ({ value: c.category, label: c.category })) ?? []),
+                      ]} />
+                    )}
+                    {report.id === 'club-activity' && (
+                      <FilterSelect label="Location" value={clubLocation} onChange={setClubLocation} options={[
+                        { value: 'all', label: 'All' },
+                        ...Array.from(new Set(clubActivity?.clubs.map(c => c.location) ?? [])).map(l => ({ value: l, label: l })),
+                      ]} />
+                    )}
+                    {report.id === 'event-attendance' && (
+                      <FilterSelect label="Type" value={eventType} onChange={setEventType} options={[
+                        { value: 'all', label: 'All' },
+                        ...Array.from(new Set(eventAttendance?.events.map(e => e.type) ?? [])).map(t => ({ value: t, label: t.charAt(0).toUpperCase() + t.slice(1) })),
+                      ]} />
+                    )}
+                  </div>
+                  <div className={styles.actions}>
                     <button
                       onClick={() => generate(report)}
                       disabled={generatingId === report.id}
-                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#B27715] text-white text-[10px] font-semibold hover:bg-[#986511] active:bg-[#80540E] transition-smooth cursor-pointer whitespace-nowrap disabled:opacity-50 disabled:cursor-not-allowed"
+                      className={`${styles.action} ${styles.generate}`}
                     >
-                      <AppIcon className="ri-play-line"></AppIcon> {generatingId === report.id ? 'Generating…' : 'Generate'}
+                      <AppIcon className={generatingId === report.id ? 'ri-loader-4-line animate-spin' : 'ri-play-line'} aria-hidden="true" />
+                      {generatingId === report.id ? 'Generating…' : 'Generate'}
                     </button>
-                    <button onClick={() => downloadReport(report)} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-[#A7F3D0] bg-[#ECFDF5] text-[#059669] text-[10px] font-semibold hover:bg-[#D1FAE5] active:bg-[#A7F3D0] transition-smooth cursor-pointer whitespace-nowrap">
-                      <AppIcon className="ri-download-line"></AppIcon> Download CSV
+                    <button onClick={() => downloadReport(report)} className={`${styles.action} ${styles.download}`}>
+                      <AppIcon className="ri-download-line" aria-hidden="true" /> Download CSV
                     </button>
                   </div>
                 </div>
 
                 {expandedId === report.id && (
-                  <div className="px-4 pb-4">
+                  <div className={styles.preview}>
                     <div className="rounded-lg border border-foreground-200/60 bg-background-100/40 p-4 overflow-x-auto">
                       {report.id === 'engagement-scoreboard' && scoreboardFiltered && <ScoreboardPreview rows={scoreboardFiltered} />}
                       {report.id === 'points-rewards' && pointsFiltered && <PointsRewardsPreview data={pointsFiltered} />}
@@ -295,10 +301,10 @@ export default function EngagementReportsPage() {
                     </div>
                   </div>
                 )}
-              </div>
+              </article>
             ))}
           </div>
-        </div>
+        </section>
       </div>
     </WorkspaceShell>
   );

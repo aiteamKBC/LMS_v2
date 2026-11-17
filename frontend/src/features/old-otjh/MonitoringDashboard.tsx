@@ -1,3 +1,4 @@
+import { LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
 import { useEffect, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
@@ -126,7 +127,7 @@ export function MonitoringDashboard() {
         <label><span>Programme</span><select value={filters.programme} onChange={event => setFilter('programme', event.target.value)}><option value="">All programmes</option>{data?.programmes.map(programme => <option key={programme}>{programme}</option>)}</select></label>
       </div>
       <div className={styles.filterNote}><span>Signature counts are for required months. Both roles may still need to sign for the same learner.</span>{hasFilters && <button className={styles.textButton} onClick={clearFilters}>Clear filters</button>}</div>
-      {query.isPending && <div role="status" className={styles.loading}>Loading learner records…</div>}
+      {query.isPending && <div role="status" className={styles.loading}><LoadingSkeleton label="Loading learner records…" variant="rows" /></div>}
       {data && <div className={styles.tableWrap} aria-busy={query.isFetching}><table className={styles.table} aria-label="Active learner records">
         <thead><tr>{['Learner', 'Coach', 'Review progress', 'Learner signed', 'Coach signed', 'Review state', ''].map((label, index) => <th key={index} scope="col">{label || <span className="sr-only">Open record</span>}</th>)}</tr></thead>
         <tbody>{data.learners.map(learner => <LearnerRow key={learner.enrolment_id} learner={learner} />)}</tbody>

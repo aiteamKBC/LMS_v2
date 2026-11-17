@@ -1,3 +1,4 @@
+import { LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { AppIcon } from '@/components/feature/AppIcon';
 import { getMigratedTemplate, type MigratedTemplate } from '@/api/migratedReviewTemplates';
@@ -24,7 +25,7 @@ export function TemplateStatistics({ template }: { template: MigratedTemplate })
     {counts ? <p className="flex flex-wrap gap-x-4 gap-y-1" title="Includes conditional questions. Headings are not counted as questions.">
       <span><strong className="text-foreground-800">{counts.questions}</strong> {counts.questions === 1 ? 'question' : 'questions'}</span>
       <span><strong className="text-foreground-800">{counts.sections}</strong> {counts.sections === 1 ? 'section' : 'sections'}</span>
-    </p> : <p>{failed ? 'Question and section counts unavailable.' : 'Loading form details…'}</p>}
+    </p> : <p>{failed ? 'Question and section counts unavailable.' : <LoadingSkeleton label="Loading form details…" variant="text" />}</p>}
     <p>Updated {updatedLabel(template) || 'date unavailable'}</p>
   </div>;
 }

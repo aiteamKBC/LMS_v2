@@ -1,3 +1,4 @@
+import { LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
 import { useEffect, useState } from 'react';
 import { loadDailyResults, type DailyResults } from '../dailyResults';
 import { SessionRecordingPlayer } from '@/components/feature/SessionRecordingPlayer';
@@ -65,7 +66,7 @@ export default function LectureAttendance({ lecture, timeZone }: { lecture: Lect
         : <span>Attendance not linked to a saved session</span>}
     </div>
     {open && linked && <section className="mt-3 space-y-3" aria-label={`Attendance for ${lecture.module} on ${lecture.date}`}>
-      {busy && <p role="status">Loading attendance...</p>}
+      {busy && <p role="status"><LoadingSkeleton label="Loading attendance..." variant="rows" /></p>}
       {error && <p role="alert" className="text-red-700">{error}</p>}
       {data && <>
         <div className="flex flex-wrap items-center justify-between gap-2">

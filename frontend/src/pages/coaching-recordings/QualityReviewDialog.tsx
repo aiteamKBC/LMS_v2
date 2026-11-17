@@ -1,3 +1,4 @@
+import { LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Check, FileDown, Plus, Save, Trash2, Upload } from 'lucide-react';
 import { Link } from 'react-router-dom';
@@ -141,7 +142,7 @@ export default function QualityReviewDialog({ teachingLecture, eventKey = '', re
         <button className={button} disabled={busy || loading || !formType || !selected || !form} onClick={() => void save('draft')}><Save size={14} />Save draft</button>
         <button className={`${button} bg-primary-600 text-white`} disabled={busy || loading || !formType || !selected || !form} onClick={() => void save('completed')}><Check size={14} />Complete review</button>
       </div></>}>
-      {loading ? <p role="status" className="py-12 text-center text-sm">Loading the saved form…</p> : <>
+      {loading ? <p role="status" className="py-12 text-center text-sm"><LoadingSkeleton label="Loading the saved form…" variant="rows" /></p> : <>
         {error && <div role="alert" className="mb-4 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-950">{error}
           {conflict && <button className={`${button} ml-2`} onClick={() => { if (!dirty || window.confirm('Replace your edits with the saved version?')) { invalidateQualityReviews(); setReload(value => value + 1); } }}>Reload saved version</button>}
           {!form && <button className={`${button} ml-2`} onClick={() => setReload(value => value + 1)}>Retry form</button>}</div>}

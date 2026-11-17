@@ -1,3 +1,4 @@
+import { LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
 import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { ArrowLeft, Archive, FileText, Search } from 'lucide-react';
@@ -163,7 +164,7 @@ export default function InclusionDashboard({ learnerId, learner }: { learnerId: 
     <section className="space-y-5 rounded-2xl border border-primary-100 bg-white p-5 shadow-sm">
       <div><h2 className="text-lg font-bold text-primary-950">Inclusion Dashboard</h2><p className="mt-1 text-sm text-primary-600">Saved screening reports and support tickets for {learner.name}.</p></div>
       {error && <p role="alert" className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-800">{error}</p>}
-      {loading && <p role="status" className="rounded-xl bg-primary-50 p-4 text-sm text-primary-800">Loading Inclusion records…</p>}
+      {loading && <p role="status" className="rounded-xl bg-primary-50 p-4 text-sm text-primary-800"><LoadingSkeleton label="Loading Inclusion records…" variant="rows" /></p>}
       {!loading && !error && <>
         <div className="rounded-2xl border border-primary-100 p-3">
           <div className="flex flex-wrap items-center justify-between gap-3 border-b border-primary-100 pb-3">

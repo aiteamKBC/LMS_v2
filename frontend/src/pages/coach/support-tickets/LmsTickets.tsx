@@ -1,3 +1,4 @@
+import { LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { coachLmsAttachmentUrl, loadCoachLmsTickets, replyToCoachLmsTicket, type CoachLmsTicketsResponse } from '@/api/coachLmsSupportTickets';
@@ -37,7 +38,7 @@ export function LmsTickets({ accountId, coachEmail, active }: { accountId?: numb
   const draft = selected ? drafts[selected.id] : undefined;
   const readOnly = query.data?.readOnly || Boolean(coachEmail);
 
-  if (query.isPending) return <p role="status" className="p-6 text-sm text-foreground-500">Loading LMS tickets...</p>;
+  if (query.isPending) return <p role="status" className="p-6 text-sm text-foreground-500"><LoadingSkeleton label="Loading LMS tickets..." variant="rows" /></p>;
   if (query.isError) return <EmptyState variant="error" title="Unable to load LMS tickets" description={query.error.message}
     action={<button type="button" className={FIELD} onClick={() => void query.refetch()}>Try again</button>} />;
   if (!query.data.tickets.length) return <EmptyState title="No LMS tickets" description="None of the learners on your caseload have raised an LMS support ticket." />;

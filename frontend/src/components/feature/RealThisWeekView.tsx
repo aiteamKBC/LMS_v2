@@ -1,3 +1,4 @@
+import { LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, type NavigateFunction } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
@@ -273,7 +274,7 @@ function LmsSourceLibrary({ real }: { real: LearnerDetail | null }) {
       </div>
 
       {loading ? (
-        <div className="p-6"><EmptyState text="Loading LMS components..." /></div>
+        <div className="p-6"><LoadingSkeleton label="Loading LMS components..." variant="rows" /></div>
       ) : error ? (
         <div className="p-6"><EmptyState text={error} /></div>
       ) : !student ? (

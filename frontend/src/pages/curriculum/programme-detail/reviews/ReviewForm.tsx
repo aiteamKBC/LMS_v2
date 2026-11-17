@@ -1,3 +1,4 @@
+import { LoadingSkeleton, LoadingControl } from '@/components/feature/LoadingSkeleton';
 // Add / Edit Review -- a large structured modal, sectioned (General, Schedule,
 // Eligibility, Participants & Permissions, Form Builder) rather than a page
 // route, matching how other multi-part curriculum configuration is authored in
@@ -1131,10 +1132,7 @@ export function ReviewFormModal({ programmeId, review, defaultStartDate, onClose
       )}
     >
       {loading ? (
-        <div className="flex items-center justify-center gap-2 py-16 text-[12px] font-semibold text-foreground-400">
-          <AppIcon className="ri-loader-4-line animate-spin"></AppIcon>
-          Loading review...
-        </div>
+        <div className="flex items-center justify-center gap-2 py-16 text-[12px] font-semibold text-foreground-400"><LoadingSkeleton label="Loading review..." variant="rows" /></div>
       ) : loadError ? (
         <div className="py-10 text-center text-[12px] font-semibold text-red-600">{loadError}</div>
       ) : (
@@ -1183,7 +1181,7 @@ export function ReviewFormModal({ programmeId, review, defaultStartDate, onClose
               >
                 <div className="flex flex-wrap items-center gap-2">
                   <div className="w-72">
-                    <SelectControl
+                    {<LoadingControl loading={(typesLoading)}><SelectControl
                       value={reviewTypeId}
                       onChange={(id) => {
                         setReviewTypeId(id);
@@ -1196,7 +1194,7 @@ export function ReviewFormModal({ programmeId, review, defaultStartDate, onClose
                       disabled={typesLoading}
                       placeholder={typesLoading ? 'Loading review types...' : 'Select a review type'}
                       options={reviewTypeOptions.map(type => ({ value: type.id, label: type.name }))}
-                    />
+                    /></LoadingControl>}
                   </div>
                   <button
                     type="button"
@@ -1247,7 +1245,7 @@ export function ReviewFormModal({ programmeId, review, defaultStartDate, onClose
             {applicability.scope !== 'programme' && (
               <FormField label={applicability.scope === 'cohort' ? 'Cohorts' : 'Groups'} as="group">
                 {placementError ? <div role="alert" className="text-sm text-red-600">{placementError}<button type="button" aria-label="Reload cohorts and groups" title="Reload cohorts and groups" onClick={() => setPlacementRevision(value => value + 1)} className="ml-2 p-2"><AppIcon className="ri-refresh-line" /></button></div>
-                  : !placement ? <p role="status" className="text-sm text-foreground-500">Loading...</p>
+                  : !placement ? <p role="status" className="text-sm text-foreground-500"><LoadingSkeleton label="Loading..." variant="rows" /></p>
                   : <MultiSelectControl value={applicability.ids} onChange={ids => setApplicability(current => ({ ...current, ids }))} options={placementOptions} selectAllLabel={applicability.scope === 'cohort' ? 'cohorts' : 'groups'} />}
               </FormField>
             )}

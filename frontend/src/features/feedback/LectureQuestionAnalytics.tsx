@@ -1,3 +1,4 @@
+import { LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
 import { useEffect, useMemo, useState } from 'react';
 import { feedbackApi, type FeedbackAnalyticsData, type FeedbackAnalyticsFilters, type FeedbackQuestionReport } from '@/api/feedback';
 import { QuestionAnalytics } from './QuestionAnalytics';
@@ -55,7 +56,7 @@ export function LectureQuestionAnalytics({ data, scope, showLectures = true, onV
       {search && !visibleLectures.length && <p role="status" className="mt-3 text-xs text-foreground-500">No lectures match your search.</p>}
       <p className="mt-4 break-words rounded-lg bg-white p-3 text-xs font-semibold text-primary-800">Question report: {label}</p>
     </div>}
-    {loading && <p role="status" className="p-5 text-sm text-foreground-500">{showLectures ? 'Loading lecture question results…' : 'Loading question results…'}</p>}
+    {loading && <p role="status" className="p-5 text-sm text-foreground-500">{showLectures ? <LoadingSkeleton label="Loading lecture question results…" variant="text" /> : <LoadingSkeleton label="Loading question results…" variant="text" />}</p>}
     {error && <div role="alert" className="mt-4 rounded-xl border border-rose-200 bg-rose-50 p-4 text-xs text-rose-800">{error}<button type="button" onClick={() => setRetry(value => value + 1)} className="ml-3 font-bold underline">{showLectures ? 'Retry lecture results' : 'Retry question results'}</button></div>}
     {report && !error && <>
       {report.selectionPending && <p role="status" className="mt-4 rounded-xl bg-amber-50 p-4 text-xs text-amber-800">This legacy lecture has no saved question selection yet. Analytics does not draw questions or change its availability.</p>}

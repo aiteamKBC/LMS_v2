@@ -1,3 +1,4 @@
+import { LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   createBulkAttendanceLiveDay,
@@ -475,7 +476,7 @@ export default function MonthlyGrid({
           {!moduleCatalogueId && !groupId ? (
             <p className="rounded-lg border border-background-300 bg-background-50 p-6 text-sm text-foreground-600">Choose a Module or Group to view monthly attendance.</p>
           ) : loading || readLoading ? (
-            <p role="status" className="rounded-lg border border-background-300 bg-background-50 p-6 text-sm text-foreground-600">Loading monthly attendance…</p>
+            <p role="status" className="rounded-lg border border-background-300 bg-background-50 p-6 text-sm text-foreground-600"><LoadingSkeleton label="Loading monthly attendance…" variant="rows" /></p>
           ) : error && !currentResult ? (
             <div role="alert" className="rounded-lg border border-danger-200 bg-background-50 p-6 text-sm text-danger-700">{error} <button type="button" onClick={() => setRetry((value) => value + 1)} className="underline">Retry</button></div>
           ) : days.length === 0 ? (

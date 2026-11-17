@@ -1,3 +1,4 @@
+import { LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
 import { useEffect, useState } from 'react';
 import { ExternalLink, Download, FileText, MessageSquare } from 'lucide-react';
 import DOMPurify from 'dompurify';
@@ -37,7 +38,7 @@ export function HistoricalEvidencePreview({ item, kind, learnerId, onClose }: {
         {item.component_name && <span>{item.component_name}</span>}
       </div>
       {error ? <div role="alert" className={styles.notice}>{error}<button onClick={() => setRetry(value => value + 1)}>Retry evidence</button></div>
-        : !detail ? <p role="status">Loading evidence and documents…</p> : <>
+        : !detail ? <p role="status"><LoadingSkeleton label="Loading evidence and documents…" variant="rows" /></p> : <>
           {(detail.documents.length > 0 || detail.note || detail.item.activity) && <div className={styles.documents} aria-label="Evidence documents">
             {detail.documents.map(doc => <button key={doc.part} type="button" aria-pressed={part === doc.part} onClick={() => setPart(doc.part)}>
               <FileText size={15} /><span>{doc.part === 'report' ? 'Assessment report' : doc.part === 'original' ? 'Original file' : doc.name}</span>

@@ -1,3 +1,4 @@
+import { LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useSearchParams } from 'react-router-dom';
 import type { DashboardTabsProps } from '../DashboardTabs';
@@ -94,7 +95,7 @@ function TrainingPlanContent({ kind, learnerId, programmeStartDate, programmeEnd
           programmeStartDate={programmeStartDate || payload.timeline.programmeStartDate} detailsMode="overview" selectedMonth={selectedMonth} selectedId={selectedId}
           onMonthChange={changeMonth} onModuleSelect={module => setSelection({ identity, id: module.id, month: selectedMonth })}
           detailLoading={detailLoading} detailError={detailError} onRetryDetail={retryDetail} /></div>
-        {detailLoading ? <section className={`${styles.panel} ${layout.overview}`} aria-label="Module overview"><p role="status">Loading module details?</p></section>
+        {detailLoading ? <section className={`${styles.panel} ${layout.overview}`} aria-label="Module overview"><p role="status"><LoadingSkeleton label="Loading module details?" variant="rows" /></p></section>
           : detailError ? <section className={`${styles.panel} ${layout.overview}`} aria-label="Module overview"><p role="alert">{detailError} <button type="button" onClick={retryDetail}>Retry module details</button></p></section>
           : <ModuleOverview module={detail} hasModules={modules.length > 0} coachName={timelineData.coach.name} href={detail ? `/learner/modules/${kind}/${learnerId}?subject=${encodeURIComponent(detail.id)}` : ''} canOpenActivities showSchedule={false} />}
       </div>

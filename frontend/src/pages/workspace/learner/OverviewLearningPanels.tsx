@@ -1,3 +1,4 @@
+import { LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { ArrowRight, BookOpen, CalendarDays, Clock3, Info, RefreshCw, Target, Video } from 'lucide-react';
@@ -53,7 +54,7 @@ export function OverviewLearningPanels({ kind, learnerId, week: sharedWeek, sche
         {module && module.total > 0 ? <div className={styles.progressSection}><div className={styles.progressLabel}><span>{module.completed} of {module.total} activities complete</span><strong>{module.percent}%</strong></div><div className={styles.meter} role="progressbar" aria-label="This week's activity progress" aria-valuemin={0} aria-valuemax={100} aria-valuenow={module.percent ?? undefined}><span style={{ width: `${Math.min(100, Math.max(0, module.percent ?? 0))}%` }} /></div></div>
           : !week.error && <div className={styles.empty}><CalendarDays size={26} aria-hidden="true" /><div><h3>No activities scheduled this week</h3><p>You can still explore your modules and continue learning.</p></div></div>}
         <div className={styles.facts}>
-          <div className={styles.fact}><span><Video size={16} aria-hidden="true" />Live session</span><strong>{schedule.loading ? 'Loading…' : schedule.error && !schedule.data ? 'Unavailable' : live ? `${dateLabel(ukDate(live.start))} · ${ukTime(live.start)}` : 'Not scheduled'}</strong>{live && <small>UK time</small>}</div>
+          <div className={styles.fact}><span><Video size={16} aria-hidden="true" />Live session</span><strong>{schedule.loading ? <LoadingSkeleton label="Loading…" variant="text" /> : schedule.error && !schedule.data ? 'Unavailable' : live ? `${dateLabel(ukDate(live.start))} · ${ukTime(live.start)}` : 'Not scheduled'}</strong>{live && <small>UK time</small>}</div>
           <div className={styles.fact}><span><Target size={16} aria-hidden="true" />KSBs covered</span><strong title={displayedKsbCodes.join(', ') || undefined}>{displayedKsbCodes.length ? displayedKsbCodes.join(', ') : module?.total ? 'Not mapped yet' : '—'}</strong>
             {moduleKsbFallback ? <small>Module-level mapping · this week's activities have no direct KSB mapping</small>
               : module?.ksbMappingMissing && <small>Some activity mappings are missing</small>}</div>

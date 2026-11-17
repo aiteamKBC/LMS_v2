@@ -1,3 +1,4 @@
+import { LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
 import { ExtraActivities } from '../monthly-submission/ExtraActivities';
 import { fetchExtraActivities, useExtraActivities } from '@/api/extraActivities';
 import { monthlyActivities as completedMonthlyActivities } from './monthlyActivities';
@@ -361,7 +362,7 @@ export function MonthlyAssignmentSteps({ step, data, onChange, answers, onAnswer
           <div className="min-h-0 space-y-4 overflow-y-auto p-4">
             <div className="grid grid-cols-3 gap-2" role="group" aria-label="KSB categories">{[['K', 'Knowledge'], ['S', 'Skills'], ['B', 'Behaviours']].map(([code, label]) => <button type="button" key={code} aria-pressed={ksbCategory === code} onClick={() => setKsbCategory(code)} className={`rounded-xl border p-3 text-sm ${ksbCategory === code ? 'border-primary-600 bg-primary-50 text-primary-700' : 'border-slate-200'}`}><strong className="block">{code}</strong>{label}</button>)}</div>
             <input autoFocus aria-label="Search programme KSBs" placeholder="Search by code or description" className={inputClass} value={ksbSearch} onChange={e => setKsbSearch(e.target.value)} />
-            {ksbLoading ? <p role="status">Loading programme KSBs?</p> : ksbLoadError ? <div role="alert"><p>{ksbLoadError}</p><button type="button" className={buttonClass} onClick={() => void loadProgrammeKsbs()}>Retry</button></div> : <div className="space-y-2">
+            {ksbLoading ? <p role="status"><LoadingSkeleton label="Loading programme KSBs?" variant="rows" /></p> : ksbLoadError ? <div role="alert"><p>{ksbLoadError}</p><button type="button" className={buttonClass} onClick={() => void loadProgrammeKsbs()}>Retry</button></div> : <div className="space-y-2">
               {programmeKsbs.filter(k => k.code.toUpperCase().startsWith(ksbCategory) && `${k.code} ${k.description}`.toLowerCase().includes(ksbSearch.toLowerCase())).map(k => {
                 const assigned = mappings.some(m => m.code === k.code) || data.claims.some(c => c.code === k.code);
                 return <label key={k.code} className={`flex min-h-14 items-center gap-3 rounded-xl border p-4 ${assigned ? 'border-slate-200 bg-slate-100 text-slate-500' : 'cursor-pointer border-primary-100 hover:bg-primary-50'}`}><input type="checkbox" disabled={disabled || assigned} checked={assigned || selectedKsbs.includes(k.code)} onChange={e => setSelectedKsbs(current => e.target.checked ? [...current, k.code] : current.filter(code => code !== k.code))} className="m-0 h-4 w-4 shrink-0 accent-blue-600 disabled:cursor-not-allowed" /><span className={`min-w-0 text-sm font-medium leading-6 tracking-normal ${assigned ? 'text-slate-500' : 'text-slate-800'}`}><strong>{k.code}</strong>{assigned && <span className="ml-2 text-xs">Already assigned</span>}<span className="mt-1 block break-words">{k.description}</span></span></label>;
@@ -399,7 +400,7 @@ export function MonthlyAssignmentSteps({ step, data, onChange, answers, onAnswer
           </tr>)}</tbody>
         </table>
         {detail && !completedActivities.length && <p className="p-3 text-sm">No completed activities recorded for this month.</p>}
-        {!detail && <p className="p-3 text-sm">Loading your recorded activities…</p>}
+        {!detail && <p className="p-3 text-sm"><LoadingSkeleton label="Loading your recorded activities…" variant="rows" /></p>}
       </div>
       {activityDetails && <Modal title="Learning and impact" onClose={() => setActivityDetails(null)} size="max-w-2xl">
         <div className="mb-5 rounded-xl bg-slate-50 p-4">

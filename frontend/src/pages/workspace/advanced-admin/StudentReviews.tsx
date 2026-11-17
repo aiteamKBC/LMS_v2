@@ -1,3 +1,4 @@
+import { LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
 import { useCallback, useEffect, useState } from 'react';
 import { BarChart3, Check, Clock3, FileText } from 'lucide-react';
 import { advancedAdminReviewPdfSignatures, type AdvancedAdminCoachingSession, type AdvancedAdminLearner, type AdvancedAdminReview } from '@/api/advancedAdmin';
@@ -120,7 +121,7 @@ export default function StudentReviews({ learnerId, learner, reviews, coaching, 
     {reviewsError && <p role="alert" className="rounded-lg bg-red-50 p-3 text-sm text-red-700">Reviews: {reviewsError}</p>}
     {coachingError && <p role="alert" className="rounded-lg bg-amber-50 p-3 text-sm text-amber-800">Meeting reports: {coachingError}</p>}
     {pdfError && <p role="alert" className="rounded-lg bg-amber-50 p-3 text-sm text-amber-800">PDF reports: {pdfError}</p>}
-    {loading && !all.length && !reviewsError && <p role="status" className="rounded-xl border bg-white p-4 text-sm">Loading reviews…</p>}
+    {loading && !all.length && !reviewsError && <p role="status" className="rounded-xl border bg-white p-4 text-sm"><LoadingSkeleton label="Loading reviews…" variant="rows" /></p>}
     {families.map(family => <div key={family} className="overflow-hidden rounded-2xl border border-foreground-200 bg-white shadow-sm">
       <div className="flex items-center justify-between border-b border-foreground-200 px-4 py-3">
         <h3 className="font-bold text-primary-950">{family === 'mcm' ? 'MCM Reviews' : 'Progress Reviews'}</h3>

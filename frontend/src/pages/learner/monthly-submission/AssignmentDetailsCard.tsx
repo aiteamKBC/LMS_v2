@@ -1,3 +1,4 @@
+import { LoadingLabel } from '@/components/feature/LoadingSkeleton';
 import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { ArrowRight, CalendarDays, CheckCircle2, Clock3, ExternalLink, FileText, MessageCircle } from 'lucide-react';
@@ -96,7 +97,7 @@ export function AssignmentDetailsCard({ assignment, group, kind, learnerId }: {
       <aside className={styles.facts} aria-label="Assignment information">
         <dl>
           {assignment.submissionCount !== undefined && <div><dt>Submission history</dt><dd>{assignment.submissionCount} submission{assignment.submissionCount === 1 ? '' : 's'}</dd></div>}
-          <div><dt><Clock3 size={16} aria-hidden="true" />Actual hours</dt><dd>{actualHours}{latestAttempt && !selectedHistory?.loading && !selectedHistory?.error && <small>Submission {latestAttempt.number} · Latest submission</small>}</dd></div>
+          <div><dt><Clock3 size={16} aria-hidden="true" />Actual hours</dt><dd><LoadingLabel>{actualHours}</LoadingLabel>{latestAttempt && !selectedHistory?.loading && !selectedHistory?.error && <small>Submission {latestAttempt.number} · Latest submission</small>}</dd></div>
           <div><dt><CalendarDays size={16} aria-hidden="true" />Training Plan month</dt><dd>{group.label}{group.month && group.label !== monthName(group.month) && <small>{monthName(group.month)}</small>}</dd></div>
           <div><dt><Clock3 size={16} aria-hidden="true" />Expected OTJ hours</dt><dd>{assignment.expectedOtjh != null ? `${assignment.expectedOtjh} hours` : 'Not specified'}</dd></div>
           <div><dt>Planned date</dt><dd>{assignment.date ? new Date(`${assignment.date}T12:00:00Z`).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'Europe/London' }) : 'Not scheduled'}</dd></div>

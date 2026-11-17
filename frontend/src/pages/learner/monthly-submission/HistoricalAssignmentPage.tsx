@@ -1,3 +1,4 @@
+import { LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
 import { useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import DOMPurify from 'dompurify';
@@ -32,7 +33,7 @@ export function HistoricalFilePreview({ file, url }: { file: EvidenceRecord; url
   return <div className="space-y-3">
     <a className="inline-block rounded-lg bg-white px-4 py-2 text-sm font-semibold text-purple-800" href={originalUrl} target="_blank" rel="noopener noreferrer">Open / download original file</a>
     {isArchiveSpreadsheet ? <ArchiveSpreadsheetPreview url={url} /> : isDocx ? <div className="rounded-lg bg-white p-6 text-slate-900">
-      {error ? <p role="alert">{error}</p> : loading ? <p role="status">Loading document…</p> : html ? <div className="prose max-w-none" dangerouslySetInnerHTML={{ __html: html }} /> : <p>No text preview is available. Open the original file above.</p>}
+      {error ? <p role="alert">{error}</p> : loading ? <p role="status"><LoadingSkeleton label="Loading document…" variant="rows" /></p> : html ? <div className="prose max-w-none" dangerouslySetInnerHTML={{ __html: html }} /> : <p>No text preview is available. Open the original file above.</p>}
     </div> : <iframe title={file.filename} src={url} className="h-[65vh] w-full rounded-lg bg-white" referrerPolicy="no-referrer" />}
   </div>;
 }
@@ -88,7 +89,7 @@ export default function HistoricalAssignmentPage() {
     pageTitle="Historical assignment" pageSubtitle={submission?.activityTitle || ''} userName={submission?.learnerName || 'Learner'} userRole="Learner">
     <main className="mx-auto max-w-6xl space-y-5 p-5 sm:p-8">
       <Link className="text-sm font-semibold text-purple-800" to={`/learner/my-learning/${kind}/${id}?tab=assignments`}>← Back to assignments</Link>
-      {loading ? <p role="status">Loading assignment…</p> : error ? <div role="alert">{error}<button className="ml-3 underline" onClick={() => window.location.reload()}>Retry</button></div> : submission && id && activityId && (kind === 'commercial' || kind === 'apprenticeship') && <>
+      {loading ? <p role="status"><LoadingSkeleton label="Loading assignment…" variant="rows" /></p> : error ? <div role="alert">{error}<button className="ml-3 underline" onClick={() => window.location.reload()}>Retry</button></div> : submission && id && activityId && (kind === 'commercial' || kind === 'apprenticeship') && <>
         <div className="rounded-xl border border-purple-100 bg-purple-50 p-4 text-sm text-purple-900">
           <p>Original status: {submission.legacyAssignment?.sourceStatus || submission.status}. Completed: {submission.dateCompleted || 'Not recorded'}. Uploaded: {submission.submittedAt ? new Date(submission.submittedAt).toLocaleDateString('en-GB', { timeZone: 'Europe/London' }) : 'Not recorded'}.</p>
           <p className="mt-2">Read the original content in the eight assignment sections. Open Evidence to view the source files, or Preview to see all sections together.</p>

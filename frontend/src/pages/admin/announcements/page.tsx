@@ -272,14 +272,14 @@ export default function AdminAnnouncementsPage() {
       >
         <div className="overflow-hidden rounded-2xl border border-[var(--kbc-border)] bg-[var(--kbc-surface)]">
           <div className="overflow-x-auto">
-            <table className="w-full text-[13px]">
+            <table className="w-full text-[13px] [&_th]:!text-left [&_td]:!text-left">
               <thead>
                 <tr className="border-b border-foreground-400/50">
                   <th className="px-4 py-2.5 text-left text-[10px] font-medium uppercase tracking-wider text-foreground-400">Message</th>
                   <th className="px-4 py-2.5 text-left text-[10px] font-medium uppercase tracking-wider text-foreground-400">Status</th>
                   <th className="px-4 py-2.5 text-left text-[10px] font-medium uppercase tracking-wider text-foreground-400">From</th>
                   <th className="px-4 py-2.5 text-left text-[10px] font-medium uppercase tracking-wider text-foreground-400">Until</th>
-                  <th className="px-4 py-2.5 text-right text-[10px] font-medium uppercase tracking-wider text-foreground-400">Action</th>
+                  <th className="px-4 py-2.5 text-left text-[10px] font-medium uppercase tracking-wider text-foreground-400">Action</th>
                 </tr>
               </thead>
               <tbody>
@@ -297,7 +297,7 @@ export default function AdminAnnouncementsPage() {
                     <td className="px-4 py-2.5"><StatusBadge status={row.status} tone={STATUS_TONE[row.status]} /></td>
                     <td className="whitespace-nowrap px-4 py-2.5 text-[11px] text-foreground-500">{fmtDateTime(row.startsAt)}</td>
                     <td className="whitespace-nowrap px-4 py-2.5 text-[11px] text-foreground-500">{fmtDateTime(row.endsAt)}</td>
-                    <td className="whitespace-nowrap px-4 py-2.5 text-right">
+                    <td className="whitespace-nowrap px-4 py-2.5">
                       {confirmingDelete === row.id ? (
                         <span className="inline-flex items-center gap-2">
                           <button

@@ -1,3 +1,4 @@
+import { LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
 import { useEffect, useId, useState, type ReactNode } from 'react';
 import { authoredWeekPoints } from '@/api/webWeekPoints';
 import { componentAuthoringDefinitions } from './componentAuthoringModel';
@@ -40,7 +41,7 @@ export function WeekPointsNavigation({ moduleId, weekId, drafts, components, sel
     {error ? <>
       <p role="alert">{error}</p>
       <button type="button" onClick={() => setRetry(value => value + 1)} className="mt-1 text-primary-700 underline">Retry loading Points</button>
-    </> : <p role="status">Loading Points…</p>}
+    </> : <p role="status"><LoadingSkeleton label="Loading Points…" variant="rows" /></p>}
   </div>;
   if (!draft.points.length && !components.length) return null;
 

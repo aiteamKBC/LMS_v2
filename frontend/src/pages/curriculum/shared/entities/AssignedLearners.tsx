@@ -1,3 +1,4 @@
+import { LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
 import { useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Modal } from '@/pages/users/components/Modal';
 import { AppIcon } from '@/components/feature/AppIcon';
@@ -91,7 +92,7 @@ function DirectoryDialog({ target, store, onClose, onManage, initialStatus = 'ac
         {[...new Set(['withdrawn', 'on break', 'completed', ...(!['active', 'all'].includes(initialStatus) ? [initialStatus] : [])])].map(value => <option key={value} value={value}>{learnerStatusLabel(value)}</option>)}
       </select></label>
     </div>
-    <p role="status" className="mb-3 text-xs text-foreground-500">{loading ? 'Loading assigned learners…' : result ? `${result.total} assigned learners${search.trim() ? ` · ${result.filteredTotal} matching` : ''}` : ''}</p>
+    <p role="status" className="mb-3 text-xs text-foreground-500">{loading ? <LoadingSkeleton label="Loading assigned learners…" variant="text" /> : result ? `${result.total} assigned learners${search.trim() ? ` · ${result.filteredTotal} matching` : ''}` : ''}</p>
     {error && <div role="alert" className="rounded-lg border border-primary-200 bg-primary-50 p-3 text-sm">{error}<button type="button" onClick={() => setRetry(value => value + 1)} className="ml-2 font-semibold underline">Retry</button></div>}
     {result && <><AssignedLearnerList target={target} learners={result.learners} onChanged={reloadMembership} onBusyChange={setMembershipBusy} />{!result.learners.length && <p className="py-6 text-center text-sm text-foreground-500">{search.trim() ? 'No learners match this search.' : 'No assigned learners in this view.'}</p>}
       {result.filteredTotal > result.pageSize && <nav aria-label="Learner pages" className="mt-3 flex items-center justify-end gap-3 text-xs">

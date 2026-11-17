@@ -1,3 +1,4 @@
+import { LoadingLabel } from '@/components/feature/LoadingSkeleton';
 // ============================================================================
 // The app's select control: one styled, keyboard-driven dropdown to use instead
 // of a native `<select>`, whose popup is drawn by the operating system and can
@@ -324,7 +325,7 @@ export function SelectMenu({
       >
         {selected?.icon && <AppIcon className={`${selected.icon} shrink-0 text-foreground-400`}></AppIcon>}
         <span className={`min-w-0 flex-1 truncate text-[14px] ${selected ? 'font-semibold text-foreground-900' : 'font-medium text-foreground-400'}`}>
-          {selected ? selected.label : placeholder}
+          <LoadingLabel>{selected ? selected.label : placeholder}</LoadingLabel>
         </span>
         {selected?.meta && (
           <span className="shrink-0 rounded-full bg-background-100 px-2 py-0.5 text-[11px] font-bold text-foreground-500">{selected.meta}</span>
@@ -404,7 +405,7 @@ export function SelectMenu({
                   >
                     {option.icon && <AppIcon className={`${option.icon} shrink-0 text-base ${active ? 'text-primary-600' : 'text-foreground-400'}`}></AppIcon>}
                     <span className="min-w-0 flex-1">
-                      <span className="block whitespace-normal break-words text-[13px] font-medium">{option.label}</span>
+                      <span className="block whitespace-normal break-words text-[13px] font-medium"><LoadingLabel>{option.label}</LoadingLabel></span>
                       {option.description && (
                         <span className="mt-0.5 block whitespace-normal break-words text-[12px] font-medium text-foreground-400">{option.description}</span>
                       )}

@@ -1,3 +1,4 @@
+import { LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
 import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import { FileText, ChevronDown } from 'lucide-react';
 import { loadSavedCoachingEvidence, invalidateCoachingDetails, type CoachingMeeting, type SavedCoachingEvidence } from '@/api/coachingRecordings';
@@ -69,7 +70,7 @@ export default function SavedMeetingEvidence({ evidence, eventKey, reference, ca
       </button>
       {active === kind && <div id={`${id}-${kind}`} className="border-t border-background-100 p-3">
         {kind === 'analysis' && <CompletionNotice completion={data?.completion} />}
-        {busy && <p role="status" className="text-xs text-foreground-600">Loading {kind === 'transcript' ? 'transcript' : 'saved AI analysis'}…</p>}
+        {busy && <p role="status" className="text-xs text-foreground-600"><LoadingSkeleton label="Loading" variant="text" />{kind === 'transcript' ? 'transcript' : 'saved AI analysis'}…</p>}
         {error && <p role="alert" className="text-xs text-amber-900">{error} <button className="underline" onClick={() => select(kind, true)}>Retry saved evidence</button></p>}
         {!busy && (kind === 'analysis' ? analysisState : data?.state) === 'unavailable' && <p role="alert" className="text-xs text-amber-900">The Coaching Session source could not be checked. <button className="underline" onClick={() => select(kind, true)}>Retry saved evidence</button></p>}
         {!busy && (kind === 'analysis' ? analysisState : data?.state) === 'ambiguous' && <p role="alert" className="text-xs text-amber-900">More than one source meeting matches. Evidence is withheld until the meeting can be confirmed.</p>}

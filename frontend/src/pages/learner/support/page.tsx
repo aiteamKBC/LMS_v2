@@ -1,3 +1,4 @@
+import { LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
 import { useState, useEffect, useRef } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
@@ -366,7 +367,7 @@ export default function SupportPage() {
       userName={fullName || 'Learner'} userRole={auth.account?.programme || 'Learner'}
     >
       <div className=" page-container min-w-0 w-full space-y-3 p-3 md:space-y-4 md:p-6">
-        {ticketsLoading && <p role="status">Loading your tickets...</p>}
+        {ticketsLoading && <p role="status"><LoadingSkeleton label="Loading your tickets..." variant="rows" /></p>}
         {ticketsError && <div role="alert">{ticketsError} <button onClick={() => setReload(value => value + 1)}>Retry</button></div>}
         {ticketSuccess && <p role="status">{ticketSuccess}</p>}
         {ticketError && !ticketModalOpen && !replyModalOpen && <p role="alert">{ticketError}</p>}

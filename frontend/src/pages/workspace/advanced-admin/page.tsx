@@ -1,3 +1,4 @@
+import { LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
 import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Search } from 'lucide-react';
@@ -40,7 +41,7 @@ export default function AdvancedAdminWorkspace() {
       <div className="rounded-2xl border border-foreground-200 bg-white p-5 shadow-sm">
         <div className="flex flex-wrap items-end justify-between gap-4">
           <div><h2 className="text-xl font-semibold text-foreground-900">Assigned learners</h2>
-            <p className="mt-1 text-sm text-foreground-600">{loading ? 'Loading…' : `${visible.length} of ${learners.length} learners`}</p></div>
+            <p className="mt-1 text-sm text-foreground-600">{loading ? <LoadingSkeleton label="Loading…" variant="text" /> : `${visible.length} of ${learners.length} learners`}</p></div>
           <div className="flex flex-wrap gap-3">
             <label data-search-field className="flex items-center gap-2 rounded-lg border border-foreground-200 px-3 py-2 text-sm">
               <Search size={17} aria-hidden="true" /><span className="sr-only">Search learners</span>
@@ -53,7 +54,7 @@ export default function AdvancedAdminWorkspace() {
         </div>
       </div>
       {error && <p role="alert" className="rounded-lg border border-red-200 bg-red-50 p-4 text-red-700">{error}</p>}
-      {loading ? <p className="p-5">Loading learners…</p> : !error && <>
+      {loading ? <p className="p-5"><LoadingSkeleton label="Loading learners…" variant="rows" /></p> : !error && <>
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
           {visible.map(learner => <Link key={learner.id} to={`/workspace/advanced-admin/learners/${learner.id}/learning`}
           className="rounded-2xl border border-foreground-200 bg-white p-5 shadow-sm transition hover:border-primary-400 hover:shadow-md focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary-600">

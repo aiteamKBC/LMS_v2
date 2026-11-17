@@ -1,3 +1,4 @@
+import { LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
 //
 // Evidence explorer: EVERYTHING the learner ever uploaded to Aptem (files and
 // notes, all mirrored to Azure), classified by what the document actually IS —
@@ -230,7 +231,7 @@ function EvidenceExplorerPage() {
         {!learner ? (
           <p className="py-10 text-center text-sm text-muted-foreground">No learner was provided — open this page from a learner's journal.</p>
         ) : evidence.isLoading ? (
-          <p className="py-10 text-center text-sm text-muted-foreground"><LoaderCircle className="mr-2 inline h-4 w-4 animate-spin" />Loading the learner's evidence…</p>
+          <p className="py-10 text-center text-sm text-muted-foreground"><LoadingSkeleton label="Loading the learner's evidence…" variant="rows" /></p>
         ) : evidence.isError ? (
           <p className="py-10 text-center text-sm text-destructive">{evidence.error instanceof Error ? evidence.error.message : "Could not load the evidence."}</p>
         ) : !items.length ? (

@@ -1,3 +1,4 @@
+import { LoadingControl } from '@/components/feature/LoadingSkeleton';
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import * as SelectPrimitive from '@radix-ui/react-select';
 import { useNavigate, useParams } from 'react-router-dom';
@@ -288,7 +289,7 @@ export function FormBuilder() {
           {model.deliveryScope === 'module' && <>
             {curriculumError && <div role="alert" className="mb-3 flex items-center justify-between gap-3 rounded-lg border border-red-200 bg-red-50 p-3 text-xs text-red-700"><span>{curriculumError}</span><button type="button" disabled={curriculumLoading} onClick={() => void loadCurriculumOptions()} className="shrink-0 rounded-md border border-red-300 bg-white px-3 py-1.5 font-semibold disabled:opacity-50">Retry</button></div>}
             <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-            <ScopeSelect label="Programme" value={model.programmeId} disabled={locked || curriculumLoading} options={curriculumOptions.programmes} placeholder={curriculumLoading ? 'Loading programmes...' : 'Choose programme'} onChange={programmeId => setModel(current => ({ ...current, programmeId, cohortId: '', groupId: '', moduleCatalogueId: '' }))} />
+            {<LoadingControl loading={(curriculumLoading)}><ScopeSelect label="Programme" value={model.programmeId} disabled={locked || curriculumLoading} options={curriculumOptions.programmes} placeholder={curriculumLoading ? 'Loading programmes...' : 'Choose programme'} onChange={programmeId => setModel(current => ({ ...current, programmeId, cohortId: '', groupId: '', moduleCatalogueId: '' }))} /></LoadingControl>}
             <ScopeSelect label="Cohort" value={model.cohortId} disabled={locked || !model.programmeId} options={cohorts} placeholder="Choose cohort" onChange={cohortId => setModel(current => ({ ...current, cohortId, groupId: '', moduleCatalogueId: '' }))} />
             <ScopeSelect label="Group" value={model.groupId} disabled={locked || !model.cohortId} options={groups} placeholder="Choose group" onChange={groupId => setModel(current => ({ ...current, groupId, moduleCatalogueId: '' }))} />
             <ScopeSelect label="Module" value={model.moduleCatalogueId} disabled={locked || !model.groupId} options={modules} placeholder="Choose module" onChange={moduleCatalogueId => setModel(current => ({ ...current, moduleCatalogueId }))} />

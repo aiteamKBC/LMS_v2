@@ -1,3 +1,4 @@
+import { LoadingLabel } from '@/components/feature/LoadingSkeleton';
 // Imported explicitly rather than left to unplugin-auto-import: the Vitest
 // config deliberately does not load that plugin, so a page that relies on it
 // cannot be rendered in a test at all. Every page with tests spells these out.
@@ -1078,7 +1079,7 @@ function AuditTrailOverview({
                 className={`flex min-h-[72px] min-w-0 items-center gap-3 rounded-xl border p-3 text-left transition-smooth ${selected ? 'border-primary-300 bg-primary-50 shadow-sm' : 'border-background-200 bg-background-50 hover:border-primary-200 hover:bg-primary-50/50'} disabled:cursor-default`}
               >
                 <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg ${selected ? 'bg-primary-100 text-primary-700' : 'bg-background-100 text-foreground-500'}`}><AppIcon className={`${WORKSPACE_ICONS[entry.value] || 'ri-layout-grid-line'} text-base`} /></span>
-                <span className="min-w-0 flex-1"><span className="block break-words text-[13px] font-bold text-foreground-900">{label}</span><span className={`mt-1 inline-flex max-w-full rounded-full border px-2 py-0.5 text-[10px] font-bold ${statusTone[status]}`}>{statusLabel[status]}</span></span>
+                <span className="min-w-0 flex-1"><span className="block break-words text-[13px] font-bold text-foreground-900">{label}</span><span className={`mt-1 inline-flex max-w-full rounded-full border px-2 py-0.5 text-[10px] font-bold ${statusTone[status]}`}><LoadingLabel>{statusLabel[status]}</LoadingLabel></span></span>
                 {selected && <AppIcon className="shrink-0 text-primary-600 ri-check-line" />}
               </button>
             );

@@ -1,3 +1,4 @@
+import { LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import Swal from 'sweetalert2';
@@ -148,7 +149,7 @@ export default function LearnerFeedbackFormPage() {
           onBack={() => { setStep(step - 1); setInvalidQuestionIds(new Set()); }} onNext={nextStep}
           onSubmit={() => void save(true)} submitting={saving}
           footerStatus={!viewerReadOnly && form.allowSaveContinue ? <span aria-live="polite" className={`text-[11px] font-medium ${autoSaveStatus === 'error' ? 'text-red-600' : 'text-foreground-400'}`}>{autoSaveStatus === 'pending' || autoSaveStatus === 'saving' ? 'Saving…' : autoSaveStatus === 'saved' ? 'All changes saved' : autoSaveStatus === 'error' ? 'Automatic save failed' : ''}</span> : null} />
-      </div> : <p className="text-center text-sm text-foreground-400">Loading form…</p>}
+      </div> : <p className="text-center text-sm text-foreground-400"><LoadingSkeleton label="Loading form…" variant="rows" /></p>}
     </div>
   </WorkspaceShell>;
 }

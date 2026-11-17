@@ -1,3 +1,4 @@
+import { LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
 import { lazy, Suspense, useId, useState } from 'react';
 import { Download, Eye, Paperclip, X } from 'lucide-react';
 import styles from './monthlySubmission.module.css';
@@ -34,7 +35,7 @@ export function AssignmentAttachment({ url, fileName, title, defaultExpanded = f
       </div>
     </div>
     <div id={previewId} hidden={!expanded} className={styles.attachmentPreview}>
-      {expanded && <Suspense fallback={<p role="status">Loading file preview…</p>}>
+      {expanded && <Suspense fallback={<p role="status"><LoadingSkeleton label="Loading file preview…" variant="rows" /></p>}>
         <AttachmentPreview url={url} fileName={name} title={title} pdfTools={pdfTools} allowAnnotatedDownload />
       </Suspense>}
     </div>

@@ -1,3 +1,4 @@
+import { LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
@@ -43,7 +44,7 @@ export default function CoachExtraActivitiesPage() {
           <label>Status<select value={status} onChange={e => { setStatus(e.target.value); setPage(1); }}><option value="all">All statuses</option><option value="pending">Awaiting review</option><option value="accepted">Accepted</option><option value="referred">Referred back</option></select></label>
         </div><p>Learners add their own activities and evidence. Select an activity below to review it and record your decision.</p></section>
         {error && <div role="alert">{error} <button type="button" onClick={() => setVersion(v => v + 1)}>Retry activities</button></div>}
-        {loading && coach.email && <p role="status">Loading extra activities...</p>}
+        {loading && coach.email && <p role="status"><LoadingSkeleton label="Loading extra activities..." variant="rows" /></p>}
         {!loading && !error && coach.email && !rows.length && <p>No extra activities match these filters.</p>}
         {!loading && !error && rows.map(row => <article className={styles.panel} key={row.id}>
           <div className={styles.actions}><span className={styles.badge}>Extra activity</span><span>{labels[row.status] || row.status}</span></div>

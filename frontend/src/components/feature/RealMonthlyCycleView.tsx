@@ -1,3 +1,4 @@
+import { LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { roleNavMap } from '@/mocks/navigation';
@@ -706,7 +707,7 @@ export function RealMonthlyCycleView({
         {(busy || loadError) && (
           <div className={`rounded-xl border px-4 py-3 text-sm ${loadError ? 'border-red-200 bg-red-50 text-red-700' : 'border-background-300 bg-background-50 text-foreground-500'}`}>
             <AppIcon className={`${loadError ? 'ri-error-warning-line' : 'ri-loader-4-line animate-spin'} mr-2`}></AppIcon>
-            {loadError || 'Loading the complete monthly record…'}
+            {loadError || <LoadingSkeleton label="Loading the complete monthly record…" variant="text" />}
           </div>
         )}
 

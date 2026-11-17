@@ -1,3 +1,4 @@
+import { LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
 import { assignmentMonth } from './assignmentMonth';
 import { readLearnerJson } from '@/api/learnerRead';
 import { useEffect, useMemo, useState } from 'react';
@@ -148,7 +149,7 @@ export function AssignmentsTab({ kind, id, real = null, loading: planLoading = f
     {planLoading && !real ? <RowsSkeleton /> : loadError ? <LearnerLoadError error={loadError} onRetry={onRetry} title="Your assignments could not be loaded" retryLabel="Retry assignments" /> : null}
     {hasAssigned && real && <AssignedList key={`${kind}:${id}`} real={real} kind={kind} id={id} canTake={canTake} />}
     {!planLoading && !loadError && !hasAssigned && !loading && !error && months.length === 0 && <Panel><EmptyState size="sm" title="No assignments linked yet" description="Assignments linked to your training plan will appear here." /></Panel>}
-    {loading ? <p role="status" className="text-sm text-slate-500">Loading previous assignments…</p> : error ? <LearnerLoadError error={error} onRetry={() => setRetry(n => n + 1)} title="Previous assignments could not be loaded" retryLabel="Retry" />
+    {loading ? <p role="status" className="text-sm text-slate-500"><LoadingSkeleton label="Loading previous assignments…" variant="rows" /></p> : error ? <LearnerLoadError error={error} onRetry={() => setRetry(n => n + 1)} title="Previous assignments could not be loaded" retryLabel="Retry" />
       : months.length > 0 && <section aria-label="Previous assignments" className="space-y-3"><h2 className="text-base font-semibold text-slate-900">Previous assignments</h2>{months.map(([month, assignments], index) => <details key={month} open={index === 0} className="overflow-hidden rounded-2xl border border-purple-100 bg-white">
         <summary className="cursor-pointer bg-purple-50/50 px-5 py-4 font-semibold text-slate-900">
           {month ? new Date(`${month}-01T12:00:00`).toLocaleDateString('en-GB', { month: 'long', year: 'numeric' }) : 'Undated assignments'}

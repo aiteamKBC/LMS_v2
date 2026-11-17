@@ -1,3 +1,4 @@
+import { LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
 import { useState, useMemo, useRef, useEffect, useCallback, useId } from 'react';
 import { AppIcon } from '@/components/feature/AppIcon';
 import { RightSlidePanel } from '@/components/feature/RightSlidePanel';
@@ -591,9 +592,7 @@ export function EvidenceBody({
         </div>}
         <section>
           {loadingAny && (
-            <div className="mb-3 flex items-center gap-2 text-xs text-foreground-400">
-              <AppIcon className="ri-loader-4-line animate-spin" /> Loading evidence…
-            </div>
+            <div className="mb-3 flex items-center gap-2 text-xs text-foreground-400"><LoadingSkeleton label="Loading evidence…" variant="rows" /></div>
           )}
           <div className={styles.summary} aria-label="Evidence summary">
             <div className={styles.summaryTotal}>
