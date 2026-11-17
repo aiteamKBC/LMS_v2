@@ -20,6 +20,9 @@ export default function HealthOverview({ records, actions, availability }: Healt
   const counts = countByRag(records);
   const assessed = assessedTotal(counts);
   const coverage = records.length ? (assessed / records.length) * 100 : 0;
+  const completedNotAssessed = records.filter(
+    (record) => record.reviewStatus === "completed" && (record.rag === "unrated" || record.rag === "na"),
+  ).length;
   const unratedForms = Object.entries(
     records
       .filter((record) => record.rag === "unrated" || record.rag === "na")
@@ -69,6 +72,11 @@ export default function HealthOverview({ records, actions, availability }: Healt
               ? unratedForms.slice(0, 2).map(([name, total]) => `${name.replace(" — ", " ")} (${total})`).join(" · ")
               : "Every form in scope has an approved policy"}
           </p>
+          {completedNotAssessed ? (
+            <p className="mt-1 text-[11px] leading-relaxed text-amber-800">
+              {formatNumber(completedNotAssessed)} completed record{completedNotAssessed === 1 ? "" : "s"} still have no policy outcome.
+            </p>
+          ) : null}
         </div>
 
         <div className="border-t border-background-200 pt-3 sm:border-l sm:border-t-0 sm:pl-3 sm:pt-0">

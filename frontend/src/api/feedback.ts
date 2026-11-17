@@ -318,11 +318,13 @@ export const feedbackApi = {
     if (sourceKey) params.set('source', sourceKey);
     return request<{ recipients: FeedbackRecipient[]; sources: FeedbackAssignmentSource[]; lectures: FeedbackLectureOption[]; total: number; page: number; pageSize: number }>(`/forms/${id}/recipients/?${params}`);
   },
-  responses: (filters?: { formId?: number; status?: string; learner?: string }) => {
+  responses: (filters?: { formId?: number; status?: string; learner?: string; submittedFrom?: string; submittedTo?: string }) => {
     const params = new URLSearchParams();
     if (filters?.formId) params.set('formId', String(filters.formId));
     if (filters?.status) params.set('status', filters.status);
     if (filters?.learner) params.set('learner', filters.learner);
+    if (filters?.submittedFrom) params.set('submittedFrom', filters.submittedFrom);
+    if (filters?.submittedTo) params.set('submittedTo', filters.submittedTo);
     return request<{ responses: FeedbackResponse[] }>(`/responses/?${params}`);
   },
   response: (id: number) => request<{ response: FeedbackResponse }>(`/responses/${id}/`),

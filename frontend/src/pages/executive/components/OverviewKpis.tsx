@@ -1,6 +1,7 @@
 import KpiCard from "@/components/base/KpiCard";
 import { TIME_ZONE_LABEL, todayIso } from "@/pages/curriculum/recordings/utils";
 import {
+  assessedTotal,
   countByRag,
   formatNumber,
   formatPct,
@@ -24,7 +25,14 @@ export default function OverviewKpis({ records, actions, forms, availability, on
   const feedback = records.filter(
     (record) => record.respondentType === "Learner" || record.respondentType === "Employer",
   );
+  const feedbackNeedsAssessment = feedback.filter(
+    (record) => record.feedbackClassification === "neutral" || record.feedbackClassification === "negative",
+  ).length;
   const counts = countByRag(records);
+  const assessed = assessedTotal(counts);
+  const completedNotAssessed = records.filter(
+    (record) => record.reviewStatus === "completed" && ["unrated", "na"].includes(record.rag),
+  ).length;
   const critical = records.filter((record) => record.critical && record.rag === "red");
   const openActions = actions.filter(isOpenAction);
   const overdueActions = openActions.filter(
@@ -50,12 +58,23 @@ export default function OverviewKpis({ records, actions, forms, availability, on
         <KpiCard
           label="Completed audits"
           value={formatNumber(audits.length)}
-          definition="Quality audits with a recorded submission date in the period."
+          definition="Quality audits with a completed saved review in the period."
           hint={auditCoverageHint}
           icon="ri-file-shield-2-line"
           accent="primary"
           onLinkClick={onOpenAuditTypes}
           linkLabel="Open audit records"
+        />
+
+        <KpiCard
+          label="Assessed records"
+          value={formatNumber(assessed)}
+          definition="Records with an approved policy outcome: Green, Amber or Red."
+          hint={records.length ? `${formatPct((assessed / records.length) * 100)} of in-scope records` : "No records in scope"}
+          icon="ri-shield-check-line"
+          accent="primary"
+          to="/curriculum/quality-demo?view=checks"
+          linkLabel="View quality checks"
         />
 
         <KpiCard
@@ -67,6 +86,19 @@ export default function OverviewKpis({ records, actions, forms, availability, on
           accent="secondary"
           to="/curriculum/quality-demo?view=feedbacks"
           linkLabel="View feedback"
+        />
+
+        <KpiCard
+          label="Feedback needs assessment"
+          value={availability.feedback ? formatNumber(feedbackNeedsAssessment) : '—'}
+          definition="Neutral (Amber) and Negative (Red) feedback needs review; Positive (Green) feedback does not."
+          hint={availability.feedback
+            ? feedbackNeedsAssessment ? "Review the original responses and decide whether follow-up is required" : "No Amber or Red feedback in scope"
+            : "Feedback response data is unavailable"}
+          icon="ri-alert-line"
+          accent={feedbackNeedsAssessment ? "critical" : "secondary"}
+          to="/curriculum/quality-demo?view=feedbacks"
+          linkLabel="Review feedback"
         />
 
         <KpiCard
@@ -94,8 +126,10 @@ export default function OverviewKpis({ records, actions, forms, availability, on
         <KpiCard
           label="Not assessed"
           value={formatNumber(counts.unrated + counts.na)}
-          definition="Records without an approved evaluation policy."
-          hint="Reported descriptively only — never banded"
+          definition="Records without a Green, Amber or Red policy outcome."
+          hint={completedNotAssessed
+            ? `${formatNumber(completedNotAssessed)} completed record${completedNotAssessed === 1 ? "" : "s"} still has no policy outcome`
+            : "Includes drafts and records without an approved policy"}
           icon="ri-question-line"
           accent="secondary"
           to="/curriculum/quality-demo?view=checks"

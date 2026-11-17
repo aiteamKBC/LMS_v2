@@ -15,16 +15,46 @@ describe('executive overview source availability', () => {
   it('distinguishes unavailable indicators from a confirmed empty result', () => {
     const { rerender } = render(<MemoryRouter><OverviewKpis records={[]} actions={[]} forms={[]}
       availability={{ actions: false, criticalIssues: false, feedback: false }} /></MemoryRouter>);
-    expect(screen.getAllByText('—')).toHaveLength(3);
+    expect(screen.getAllByText('—')).toHaveLength(4);
     expect(screen.getByText('Critical issue data is unavailable')).toBeInTheDocument();
     expect(screen.getByText('Action status data is unavailable')).toBeInTheDocument();
-    expect(screen.getByText('Feedback response data is unavailable')).toBeInTheDocument();
+    expect(screen.getAllByText('Feedback response data is unavailable')).toHaveLength(2);
     expect(screen.queryByText('No critical concerns in scope')).not.toBeInTheDocument();
     rerender(<MemoryRouter><OverviewKpis records={[]} actions={[]} forms={[]}
       availability={{ actions: true, criticalIssues: true, feedback: true }} /></MemoryRouter>);
     expect(screen.queryByText('Critical issue data is unavailable')).not.toBeInTheDocument();
     expect(screen.getByText('No critical concerns in scope')).toBeInTheDocument();
     expect(screen.getByText('0 past target date')).toBeInTheDocument();
+  });
+
+  it('keeps completion separate from assessed policy outcomes', () => {
+    const base: QualityRecord = {
+      id: 'completed-review', formId: 'MCM', formName: 'Synthetic MCM', category: 'Quality Audit',
+      subjectType: 'Coach', subjectName: 'Synthetic Coach', department: 'Not available', programme: 'Not available',
+      respondentType: 'Coach', respondentName: 'Synthetic Coach', auditor: 'Synthetic Reviewer', assessedOn: '2026-10-20',
+      rag: 'unrated', policyVersion: null, critical: false, summary: 'Completed review', learnerRef: null,
+      answeredQuestions: 1, totalQuestions: 1, reviewStatus: 'completed',
+    };
+    render(<MemoryRouter><OverviewKpis records={[base, { ...base, id: 'assessed-review', rag: 'green', policyVersion: 'qms-v1' }]}
+      actions={[]} forms={[]} availability={{ actions: true, criticalIssues: true, feedback: true }} /></MemoryRouter>);
+    expect(screen.getByText('Assessed records')).toBeInTheDocument();
+    expect(screen.getByText('Records with an approved policy outcome: Green, Amber or Red.')).toBeInTheDocument();
+    expect(screen.getByText('1 completed record still has no policy outcome')).toBeInTheDocument();
+  });
+
+  it('flags neutral and negative feedback for assessment but not positive feedback', () => {
+    const feedback: QualityRecord = {
+      id: 'neutral-feedback', formId: 'feedback-1', formName: 'Synthetic Feedback', category: 'Learner Feedback',
+      subjectType: 'Coach', subjectName: 'Synthetic Coach', department: 'Not available', programme: 'Not available',
+      respondentType: 'Learner', respondentName: 'Synthetic Learner', auditor: 'Feedback response', assessedOn: '2026-10-20',
+      rag: 'unrated', policyVersion: null, critical: false, summary: 'Completed feedback', learnerRef: 'learner-1',
+      answeredQuestions: 1, totalQuestions: 1, reviewStatus: 'completed', feedbackClassification: 'neutral',
+    };
+    render(<MemoryRouter><OverviewKpis records={[feedback, { ...feedback, id: 'positive-feedback', feedbackClassification: 'positive' }]}
+      actions={[]} forms={[]} availability={{ actions: true, criticalIssues: true, feedback: true }} /></MemoryRouter>);
+    expect(screen.getByText('Feedback needs assessment')).toBeInTheDocument();
+    expect(screen.getByText('Neutral (Amber) and Negative (Red) feedback needs review; Positive (Green) feedback does not.')).toBeInTheDocument();
+    expect(screen.getByText('Review the original responses and decide whether follow-up is required')).toBeInTheDocument();
   });
 
   it('does not claim actions were resolved when their statuses are unavailable', () => {

@@ -63,7 +63,7 @@ async function request<T>(url: string, init: RequestInit = {}): Promise<T> {
     if (!response.ok) throw new QualityReviewError(value.error || 'The quality review could not be loaded or saved.', response.status, value.code);
     return value as T;
   } catch (error) {
-    if (controller.signal.aborted) throw new QualityReviewError('This request took too long. Your edits are still here; retry the save.', 503);
+    if (controller.signal.aborted) throw new QualityReviewError('The quality data request took too long. Please retry.', 503, 'timeout');
     throw error;
   } finally { clearTimeout(timer); }
 }

@@ -149,8 +149,8 @@ async function loadFeedbackData(start: string, end: string) {
   try {
     const [{ forms }, { responses }, insights] = await Promise.all([
       feedbackApi.listForms(),
-      feedbackApi.responses(),
-      feedbackApi.insightsDashboard({}).catch(() => null),
+      feedbackApi.responses({ submittedFrom: start, submittedTo: end }),
+      feedbackApi.insightsDashboard({ submittedFrom: start, submittedTo: end }).catch(() => null),
     ]);
     const classifications = new Map<number, FeedbackScoreClass>();
     insights?.analytics.insights?.classification?.responses.forEach(row => classifications.set(row.responseId, row.classification));

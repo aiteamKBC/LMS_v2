@@ -98,6 +98,8 @@ describe('executive overview live data', () => {
     mocks.feedbackForms.mockResolvedValue({ forms: [form] });
     mocks.feedbackResponses.mockResolvedValue({ responses: [response, { ...response, id: 2, submittedAt: '2024-10-20T10:00:00Z' }] });
     const data = await loadLiveQmsData(new AbortController().signal);
+    expect(mocks.feedbackResponses).toHaveBeenCalledWith({ submittedFrom: '2025-11-15', submittedTo: '2026-11-15' });
+    expect(mocks.insights).toHaveBeenCalledWith({ submittedFrom: '2025-11-15', submittedTo: '2026-11-15' });
     expect(data.records.map(record => record.id)).toEqual([summary.id, 'feedback-response-1']);
     expect(data.forms.find(item => item.id === 'feedback-42')).toMatchObject({ submissions: 1, ragSupported: false });
   });

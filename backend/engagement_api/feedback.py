@@ -921,6 +921,11 @@ def _response_dict(response, *, include_answers=False, include_activity=False, r
 def responses_collection(request):
     if request.method != 'GET':
         return json_error('Method not allowed.', status=405)
+    from .feedback_insights import submission_period
+    try:
+        period = submission_period(request.GET.get('submittedFrom'), request.GET.get('submittedTo'))
+    except ValueError as error:
+        return json_error(str(error), status=400)
     responses = FeedbackResponse.objects.select_related(
         'form', 'delivery', 'review_delivery', 'employer_review_delivery',
         'event_recipient__event', 'rsvp_recipient__campaign__event',
@@ -938,6 +943,20 @@ def responses_collection(request):
         responses = responses.filter(status=request.GET['status'])
     if request.GET.get('learner'):
         responses = responses.filter(learner_name__icontains=request.GET['learner'])
+    submitted_from = period.get('submitted_from')
+    submitted_until = period.get('submitted_until')
+    if submitted_from is not None:
+        responses = responses.filter(
+            Q(submitted_at__gte=submitted_from)
+            | Q(submitted_at__isnull=True, updated_at__gte=submitted_from)
+            | Q(submitted_at__isnull=True, updated_at__isnull=True, started_at__gte=submitted_from)
+        )
+    if submitted_until is not None:
+        responses = responses.filter(
+            Q(submitted_at__lt=submitted_until)
+            | Q(submitted_at__isnull=True, updated_at__lt=submitted_until)
+            | Q(submitted_at__isnull=True, updated_at__isnull=True, started_at__lt=submitted_until)
+        )
     responses = list(responses)
     review_coaches = _response_review_coaches(responses)
     return JsonResponse({'responses': [

@@ -210,3 +210,16 @@ class ResponseActivityTests(SimpleTestCase):
                 self.assertEqual(rows.filter.call_args_list, [
                     mock.call(form_id='31'), mock.call(status='completed'), mock.call(learner_name__icontains='Synthetic'),
                 ])
+
+    def test_collection_can_bound_fallback_response_dates(self):
+        request = RequestFactory().get('/?submittedFrom=2026-10-01&submittedTo=2026-10-31')
+        with _patched(_account(role='staff', subject_type='staff')), \
+                mock.patch.object(feedback.FeedbackResponse.objects, 'select_related') as query:
+            rows = query.return_value
+            rows.prefetch_related.return_value = rows
+            rows.order_by.return_value = rows
+            rows.filter.return_value = rows
+            rows.__iter__.return_value = iter([])
+            self.assertEqual(feedback.responses_collection(request).status_code, 200)
+            self.assertEqual(rows.filter.call_count, 2)
+            self.assertTrue(all(call.args for call in rows.filter.call_args_list))
