@@ -61,6 +61,7 @@ def _portal_metadata(*, ticket: dict, public_id: str) -> str:
         'ticket_public_id': public_id,
         'requester_role': 'learner',
         'requester_source': 'lms_learners',
+        'assigned_team': ticket.get('portalAssignedTeam') or 'Unassigned',
         'technical_subcategory': 'LMS' if category == 'Technical' else None,
     })
 
@@ -114,6 +115,7 @@ def _create_portal_ticket(cursor, *, account, ticket: dict, ticket_id: str) -> s
     public_id = f'KBC-{portal_numeric_id:06d}'
     category = _portal_category(ticket.get('category', ''))
     priority = _portal_priority(ticket.get('priority', ''))
+    assigned_team = "'Quality Team'" if ticket.get('portalAssignedTeam') == 'Quality Team' else "'Unassigned'"
     subject = str(ticket.get('title', '') or '').strip()
     inquiry = f"{subject}\n\n{ticket.get('description', '')}".strip()
     metadata = _portal_metadata(ticket=ticket, public_id=public_id)
@@ -124,7 +126,7 @@ def _create_portal_ticket(cursor, *, account, ticket: dict, ticket_id: str) -> s
              assigned_team, priority, metadata, technical_subcategory,
              subject, submitted_for_learner_id, can_show_conversation,
              can_receive_chat)
-            VALUES (%s, %s, %s, %s, %s, 'Open', 'Unassigned', %s,
+            VALUES (%s, %s, %s, %s, %s, 'Open', {assigned_team}, %s,
                     %s::jsonb, %s, %s, %s, TRUE, TRUE)''',
         [
             portal_numeric_id, public_id, learner_id, category, inquiry,
@@ -179,7 +181,7 @@ def _write_assistant_conversation(cursor, *, account, ticket: dict, public_id: s
             'learner',
             'support',
             _message(ticket),
-            'Your support ticket has been submitted to LMS Support.',
+            f"Your support ticket has been submitted to {ticket.get('portalAssignedTeam') or 'LMS Support'}.",
             True,
             public_id,
         ],
@@ -215,4 +217,53 @@ def record_ticket(*, account, ticket: dict) -> None:
     except Exception as exc:
         raise AssistantConversationSyncError(
             'The ticket was saved in the LMS, but its Ticketing system copy could not be saved. Please retry.'
+        ) from exc
+
+
+def close_open_quality_ticket(*, ticket_id: str) -> str:
+    """Close only this existing Quality ticket; never create a missing copy."""
+    if 'assistant_conversations' not in connections.databases:
+        raise AssistantConversationSyncError('The Ticketing system connection is not configured.')
+    try:
+        with transaction.atomic(using='assistant_conversations'), connections['assistant_conversations'].cursor() as cursor:
+            cursor.execute('SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))', [str(ticket_id)])
+            cursor.execute(
+                f"SELECT id, status, assigned_team FROM {PORTAL_TICKETS} "
+                "WHERE metadata->>'lms_ticket_id'=%s FOR UPDATE", [str(ticket_id)],
+            )
+            rows = cursor.fetchall()
+            if len(rows) != 1 or rows[0][2] != 'Quality Team':
+                raise AssistantConversationSyncError('The linked Quality ticket could not be identified.')
+            portal_id, status, _ = rows[0]
+            if status == 'Open':
+                cursor.execute(
+                    f"UPDATE {PORTAL_TICKETS} SET status='Closed', closed_at=NOW(), updated_at=NOW() "
+                    "WHERE id=%s AND status='Open'", [portal_id],
+                )
+                return 'Closed'
+            return str(status)
+    except Exception as exc:
+        raise AssistantConversationSyncError('The linked Quality ticket could not be closed in technicalsupport. Please retry.') from exc
+
+
+def ticket_status(*, ticket_id: str) -> str | None:
+    """Read the current status of an LMS ticket from the Ticketing system."""
+    if 'assistant_conversations' not in connections.databases:
+        raise AssistantConversationSyncError(
+            'The Ticketing system connection is not configured.'
+        )
+
+    try:
+        with transaction.atomic(using='assistant_conversations'):
+            with connections['assistant_conversations'].cursor() as cursor:
+                cursor.execute(
+                    f"SELECT status FROM {PORTAL_TICKETS} "
+                    "WHERE metadata->>'lms_ticket_id'=%s LIMIT 1",
+                    [str(ticket_id)],
+                )
+                row = cursor.fetchone()
+        return str(row[0]) if row and row[0] is not None else None
+    except Exception as exc:
+        raise AssistantConversationSyncError(
+            'The Ticketing system ticket status could not be read. Please retry.'
         ) from exc

@@ -146,6 +146,19 @@ export interface FeedbackResponse {
   assignedAt?: string | null;
 }
 
+export interface FeedbackResponseEmail {
+  id: string; subject: string; body: string; to: string; from: string; sentBy: string;
+  status: 'sending' | 'sent' | 'failed' | 'unknown'; error: string;
+  createdAt: string; sentAt: string | null;
+  qualityTicket?: { status: 'not_required' | 'pending' | 'closed' | 'failed'; error: string };
+}
+
+export interface FeedbackResponseEmailContext {
+  recipient: { name: string; email: string } | null;
+  sender: string; replyTo: string; canSend: boolean; reason: string;
+  emails: FeedbackResponseEmail[];
+}
+
 export interface FeedbackResponseActivity {
   kind: 'lecture' | 'review' | 'module' | 'event' | 'general';
   title: string;
@@ -277,7 +290,7 @@ async function request<T>(path: string, init?: globalThis.RequestInit, timeoutMs
       },
     });
     const body = await response.json().catch(() => ({})) as { error?: string };
-    if (!response.ok) throw new Error(body.error || `Request failed (${response.status})`);
+    if (!response.ok) throw Object.assign(new Error(body.error || `Request failed (${response.status})`), { status: response.status });
     return body as T;
   } catch (error) {
     if (controller?.signal.aborted) throw new Error('Curriculum options took too long to load. Please try again.');
@@ -326,6 +339,11 @@ export const feedbackApi = {
     return request<{ responses: FeedbackResponse[] }>(`/responses/?${params}`);
   },
   response: (id: number) => request<{ response: FeedbackResponse }>(`/responses/${id}/`),
+  responseEmails: (id: number) => request<FeedbackResponseEmailContext>(`/responses/${id}/emails/`),
+  retryEmailTicketClose: (id: number, emailId: string) => request<{ email: FeedbackResponseEmail }>(`/responses/${id}/emails/${emailId}/close-quality-ticket/`, { method: 'POST', body: '{}' }),
+  sendResponseEmail: (id: number, payload: { requestId: string; subject: string; body: string; expectedRecipient: string }) => request<{ email: FeedbackResponseEmail }>(`/responses/${id}/emails/`, { method: 'POST', body: JSON.stringify(payload) }),
+  createQualityTicket: (id: number) => request<{ ticket: { id: string; assignedTeam: string; status: string } }>(`/responses/${id}/quality-ticket/`, { method: 'POST' }),
+  qualityTicketStatus: (id: number) => request<{ ticket: { id: string; assignedTeam: string; status: string } }>(`/responses/${id}/quality-ticket/`),
   analytics: (filters?: { formId?: number; formType?: FeedbackFormType }) => {
     const params = new URLSearchParams();
     if (filters?.formId) params.set('formId', String(filters.formId));
