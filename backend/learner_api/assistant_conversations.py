@@ -220,6 +220,32 @@ def record_ticket(*, account, ticket: dict) -> None:
         ) from exc
 
 
+def close_open_quality_ticket(*, ticket_id: str) -> str:
+    """Close only this existing Quality ticket; never create a missing copy."""
+    if 'assistant_conversations' not in connections.databases:
+        raise AssistantConversationSyncError('The Ticketing system connection is not configured.')
+    try:
+        with transaction.atomic(using='assistant_conversations'), connections['assistant_conversations'].cursor() as cursor:
+            cursor.execute('SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))', [str(ticket_id)])
+            cursor.execute(
+                f"SELECT id, status, assigned_team FROM {PORTAL_TICKETS} "
+                "WHERE metadata->>'lms_ticket_id'=%s FOR UPDATE", [str(ticket_id)],
+            )
+            rows = cursor.fetchall()
+            if len(rows) != 1 or rows[0][2] != 'Quality Team':
+                raise AssistantConversationSyncError('The linked Quality ticket could not be identified.')
+            portal_id, status, _ = rows[0]
+            if status == 'Open':
+                cursor.execute(
+                    f"UPDATE {PORTAL_TICKETS} SET status='Closed', closed_at=NOW(), updated_at=NOW() "
+                    "WHERE id=%s AND status='Open'", [portal_id],
+                )
+                return 'Closed'
+            return str(status)
+    except Exception as exc:
+        raise AssistantConversationSyncError('The linked Quality ticket could not be closed in technicalsupport. Please retry.') from exc
+
+
 def ticket_status(*, ticket_id: str) -> str | None:
     """Read the current status of an LMS ticket from the Ticketing system."""
     if 'assistant_conversations' not in connections.databases:

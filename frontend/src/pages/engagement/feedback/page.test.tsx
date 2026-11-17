@@ -21,7 +21,7 @@ vi.mock('@/api/feedback', async importOriginal => {
     ...actual,
     feedbackApi: {
       ...actual.feedbackApi,
-      listForms: vi.fn(), responses: vi.fn(), response: vi.fn(), analytics: vi.fn(), questionAnalytics: vi.fn(), insightsDashboard: vi.fn(), versions: vi.fn(), recipients: vi.fn(),
+      listForms: vi.fn(), responses: vi.fn(), response: vi.fn(), responseEmails: vi.fn(), sendResponseEmail: vi.fn(), analytics: vi.fn(), questionAnalytics: vi.fn(), insightsDashboard: vi.fn(), versions: vi.fn(), recipients: vi.fn(),
     },
   };
 });
@@ -152,8 +152,33 @@ describe('feedback form version history', () => {
     expect(within(dialog).queryByRole('button', { name: 'Close' })).not.toBeInTheDocument();
     await user.click(within(dialog).getByRole('button', { name: 'Export PDF' }));
     await waitFor(() => expect(downloadFeedbackResponsePdf).toHaveBeenCalledWith(expect.objectContaining({ id: 91 })));
+    vi.mocked(feedbackApi.responseEmails).mockResolvedValue({
+      recipient: { name: 'Example Learner', email: 'learner@example.test' },
+      sender: 'Quality.Support@kentbusinesscollege.com', replyTo: 'Quality.Support@kentbusinesscollege.com',
+      canSend: true, reason: '', emails: [],
+    });
+    await user.click(within(dialog).getByRole('button', { name: 'Email respondent' }));
+    await screen.findByLabelText('Message');
+    await user.click(within(dialog).getByRole('button', { name: 'Close email panel' }));
+    expect(within(dialog).queryByRole('textbox', { name: 'Message' })).not.toBeInTheDocument();
+    expect(within(dialog).getByRole('button', { name: 'Email respondent' })).toHaveFocus();
+    expect(within(dialog).getByText('Original Tutor')).toBeVisible();
+    await user.click(within(dialog).getByRole('button', { name: 'Email respondent' }));
+    await user.type(await screen.findByLabelText('Message'), 'Unsent follow-up draft');
+    await user.click(within(dialog).getByRole('button', { name: /^Close email$/ }));
+    const reopenEmail = within(dialog).getByRole('button', { name: 'Email respondent' });
+    expect(reopenEmail).toHaveAttribute('aria-expanded', 'false');
+    expect(reopenEmail).toHaveFocus();
+    await user.keyboard('{Enter}');
+    expect(within(dialog).getByRole('textbox', { name: 'Message' })).toHaveValue('Unsent follow-up draft');
+    expect(feedbackApi.responseEmails).toHaveBeenCalledExactlyOnceWith(91);
+    expect(feedbackApi.sendResponseEmail).not.toHaveBeenCalled();
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValueOnce(false).mockReturnValueOnce(true);
+    await user.click(within(dialog).getByRole('button', { name: 'Back' }));
+    expect(within(dialog).getByLabelText('Message')).toHaveValue('Unsent follow-up draft');
     await user.click(within(dialog).getByRole('button', { name: 'Back' }));
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    confirm.mockRestore();
   });
 
   it('shows every feedback type in one related-activity column without empty lecture columns', async () => {

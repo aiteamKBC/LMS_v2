@@ -1,10 +1,11 @@
 import { cloneElement, type ReactElement } from 'react';
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { feedbackApi, type FeedbackDashboardReport } from '@/api/feedback';
 import { FeedbackDashboard } from './FeedbackDashboard';
 import { dashboardPeriod, negativeCategories, rankedQuestions, ukCalendarDate, weeklyClassifications } from './feedbackDashboardData';
+import { notifyQualityTicketClosed } from './qualityTicketEvents';
 
 vi.mock('@/api/feedback', async original => ({ ...await original<typeof import('@/api/feedback')>(), feedbackApi: { insightsDashboard: vi.fn(), createQualityTicket: vi.fn().mockResolvedValue({ ticket: { id: 'quality-ticket', assignedTeam: 'Quality Team', status: 'Open' } }), qualityTicketStatus: vi.fn().mockResolvedValue({ ticket: { id: 'quality-ticket', assignedTeam: 'Quality Team', status: 'Open' } }) } }));
 // jsdom supplies no layout; keep real Recharts and supply only missing dimensions.
@@ -35,6 +36,26 @@ beforeEach(() => {
 afterEach(() => vi.useRealTimers());
 
 describe('independent feedback insights dashboard', () => {
+  it('immediately reflects closure of the matching response without recreating tickets', async () => {
+    render(<FeedbackDashboard onViewResponse={vi.fn()} />);
+    await screen.findByText('Quality ticket: Open');
+    const creations = vi.mocked(feedbackApi.createQualityTicket).mock.calls.length;
+    act(() => notifyQualityTicketClosed(99));
+    expect(screen.getByText('Quality ticket: Open')).toBeVisible();
+    act(() => notifyQualityTicketClosed(1));
+    expect(screen.getByText('Quality ticket: Closed')).toBeVisible();
+    expect(feedbackApi.createQualityTicket).toHaveBeenCalledTimes(creations);
+  });
+  it('ignores an older status read that finishes after the email closes the ticket', async () => {
+    let finish!: (value: Awaited<ReturnType<typeof feedbackApi.qualityTicketStatus>>) => void;
+    vi.mocked(feedbackApi.qualityTicketStatus).mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+    render(<FeedbackDashboard onViewResponse={vi.fn()} />);
+    await screen.findByText('Quality ticket: Open');
+    act(() => window.dispatchEvent(new Event('focus')));
+    act(() => notifyQualityTicketClosed(1));
+    await act(async () => finish({ ticket: { id: 'quality-ticket', assignedTeam: 'Quality Team', status: 'Open' } }));
+    expect(screen.getByText('Quality ticket: Closed')).toBeVisible();
+  });
   it('uses real score classifications, displays the reference panels and opens original negative answers', async () => {
     const open = vi.fn();
     render(<FeedbackDashboard onViewResponse={open} />);

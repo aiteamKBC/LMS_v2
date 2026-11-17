@@ -38,6 +38,7 @@ from .feedback_scoring import IMPORTANCE_WEIGHTS, analytics_settings, answer_sco
 from .feedback_question_overrides import effective_question_ids
 from .module_feedback import MODULE_FORM_TYPES, assigned_active_module_ids, module_delivery_accessible, sync_module_feedback
 from .review_feedback import ALL_REVIEW_FORM_TYPES, EMPLOYER_REVIEW_FORM_TYPE, sync_review_feedback
+from .quality_tickets import quality_ticket_id as _quality_ticket_id
 from .models import (
     FeedbackAnswer, FeedbackAssignment, FeedbackDelivery, FeedbackDeliveryRecipient,
     FeedbackDeliveryQuestionOverride,
@@ -982,10 +983,6 @@ def _feedback_response_score(response):
             weighted.append((score, IMPORTANCE_WEIGHTS.get(settings['importance'], 2)))
     weight = sum(item[1] for item in weighted)
     return sum(score * importance for score, importance in weighted) / weight if weight else None
-
-
-def _quality_ticket_id(response_id):
-    return uuid.uuid5(uuid.NAMESPACE_URL, f'lms-feedback-quality:{response_id}')
 
 
 def ensure_quality_ticket_for_response(response, *, actor='Feedback automation'):

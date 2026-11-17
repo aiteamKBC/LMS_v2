@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { BarChart3, CalendarDays, ChevronRight, ClipboardList, GraduationCap, Info, Lightbulb, SlidersHorizontal, ThumbsUp, TrendingUp, TriangleAlert, Users } from 'lucide-react';
 import { Bar, BarChart, CartesianGrid, Cell, Line, LineChart, Pie, PieChart, Tooltip, XAxis, YAxis } from 'recharts';
 import { feedbackApi, type FeedbackDashboardFilters, type FeedbackDashboardReport, type FeedbackFormType, type FeedbackScoreClass } from '@/api/feedback';
@@ -6,6 +6,7 @@ import { Plot } from './FeedbackInsightCharts';
 import { dashboardPeriod, FEEDBACK_TYPE_LABELS, negativeCategories, rankedQuestions, ukCalendarDate, weeklyClassifications } from './feedbackDashboardData';
 import styles from './FeedbackDashboard.module.css';
 import { NEUTRAL_SCORE_MIN, POSITIVE_SCORE_MIN, SCORE_CLASSIFICATION_TEXT } from './scoreClassification';
+import { QUALITY_TICKET_CHANGED } from './qualityTicketEvents';
 
 const kinds = [
   { key: 'positive', label: 'Positive', color: '#179b59' },
@@ -44,7 +45,7 @@ function QuestionRanking({ report, kind }: { report: FeedbackDashboardReport; ki
 function ReviewList({ report, onViewResponse }: { report: FeedbackDashboardReport; onViewResponse: (id: number) => void }) {
   const [expanded, setExpanded] = useState(false);
   const [page, setPage] = useState(1);
-  const negatives = report.insights!.classification!.responses.filter(item => item.classification === 'negative');
+  const negatives = useMemo(() => report.insights!.classification!.responses.filter(item => item.classification === 'negative'), [report]);
   const pages = Math.max(1, Math.ceil(negatives.length / 5));
   const current = Math.min(page, pages);
   const visible = expanded ? negatives.slice((current - 1) * 5, current * 5) : negatives.slice(0, 3);
@@ -55,13 +56,15 @@ function ReviewList({ report, onViewResponse }: { report: FeedbackDashboardRepor
     .replace(/\b\w/g, character => character.toUpperCase());
   useEffect(() => {
     let active = true;
+    const revisions: Record<number, number> = {};
     negatives.forEach(item => {
+      const revision = revisions[item.responseId] || 0;
       setQualityTickets(value => ({ ...value, [item.responseId]: 'pending' }));
       setQualityErrors(value => ({ ...value, [item.responseId]: '' }));
       feedbackApi.createQualityTicket(item.responseId).then(({ ticket }) => {
-        if (active) setQualityTickets(value => ({ ...value, [item.responseId]: ticket.status || 'Open' }));
+        if (active && (revisions[item.responseId] || 0) === revision) setQualityTickets(value => ({ ...value, [item.responseId]: ticket.status || 'Open' }));
       }).catch(error => {
-        if (active) {
+        if (active && (revisions[item.responseId] || 0) === revision) {
           setQualityTickets(value => ({ ...value, [item.responseId]: 'error' }));
           setQualityErrors(value => ({ ...value, [item.responseId]: error instanceof Error ? error.message : 'Quality ticket creation failed.' }));
         }
@@ -69,22 +72,33 @@ function ReviewList({ report, onViewResponse }: { report: FeedbackDashboardRepor
     });
     const refreshStatuses = () => {
       negatives.forEach(item => {
+        const revision = revisions[item.responseId] || 0;
         feedbackApi.qualityTicketStatus(item.responseId).then(({ ticket }) => {
-          if (active) setQualityTickets(value => ({ ...value, [item.responseId]: ticket.status || 'Open' }));
+          if (active && (revisions[item.responseId] || 0) === revision) setQualityTickets(value => ({ ...value, [item.responseId]: ticket.status || 'Open' }));
         }).catch(() => {
           // Keep the last known state visible when a transient refresh fails.
         });
       });
     };
     const refreshOnFocus = () => refreshStatuses();
+    const ticketChanged = (event: Event) => {
+      const detail = (event as CustomEvent<{ responseId: number; status: string }>).detail;
+      if (negatives.some(item => item.responseId === detail.responseId)) {
+        revisions[detail.responseId] = (revisions[detail.responseId] || 0) + 1;
+        setQualityTickets(value => ({ ...value, [detail.responseId]: detail.status }));
+        setQualityErrors(value => ({ ...value, [detail.responseId]: '' }));
+      }
+    };
+    window.addEventListener(QUALITY_TICKET_CHANGED, ticketChanged);
     window.addEventListener('focus', refreshOnFocus);
     const interval = window.setInterval(refreshStatuses, 30000);
     return () => {
       active = false;
       window.removeEventListener('focus', refreshOnFocus);
+      window.removeEventListener(QUALITY_TICKET_CHANGED, ticketChanged);
       window.clearInterval(interval);
     };
-  }, [report]);
+  }, [negatives]);
   return <Panel title="Action Needed — Feedback to Review" subtitle={`Negative scores below ${NEUTRAL_SCORE_MIN}% · review the original answers`} icon={<TriangleAlert size={25} />} className={styles.action} right={<button type="button" className={styles.link} disabled={!negatives.length} onClick={() => { setExpanded(value => !value); setPage(1); }}>{expanded ? 'Show latest' : `View all ${negatives.length}`} →</button>}>
     {visible.length ? <div className={styles.reviewRows}>{visible.map(item => { const ticket = qualityTickets[item.responseId]; const normalizedStatus = ticket && !['pending', 'error'].includes(ticket) ? ticket.toLowerCase().replace(/[-_\s]+/g, '-') : ''; return <article key={item.responseId} className={styles.reviewRow}><span className={styles.negativePill}><TriangleAlert size={12} />Needs review</span><div><strong>{item.contextTitle || item.formTitle}</strong><small>{item.formTitle} · v{item.version}{item.groupName ? ` · ${item.groupName}` : ''}</small><small>{item.scoredQuestions} scored questions · {item.respondent}</small></div><time dateTime={item.submittedAt || undefined}>{item.submittedAt ? dateLabel(item.submittedAt) : 'Date unavailable'}</time><span className={styles.score}>{item.score == null ? '—' : `${Math.round(item.score)}%`}</span><span className={styles.reviewActions}><button type="button" className={styles.reviewButton} aria-label={`Review response ${item.responseId}`} onClick={() => onViewResponse(item.responseId)}>Review<ChevronRight size={12} /></button>{ticket && <span className={`${styles.qualityStatus} ${ticket === 'pending' ? '' : ticket === 'error' ? styles.qualityFailed : normalizedStatus === 'open' ? styles.qualityOpen : normalizedStatus === 'closed' ? styles.qualityClosed : normalizedStatus === 'resolved' ? styles.qualityResolved : normalizedStatus === 'in-progress' ? styles.qualityInProgress : ''}`}>{ticket === 'pending' ? 'Opening Quality ticket…' : ticket === 'error' ? 'Quality ticket failed' : `Quality ticket: ${formatQualityStatus(ticket)}`}</span>}{qualityErrors[item.responseId] && <small className={styles.qualityError}>{qualityErrors[item.responseId]}</small>}</span></article>; })}</div> : <div className={styles.empty}>No negative responses in this selection.</div>}
     {expanded && pages > 1 && <div className={styles.pager}><button type="button" className={styles.link} disabled={current === 1} onClick={() => setPage(current - 1)}>Previous</button><span>{current} / {pages}</span><button type="button" className={styles.link} disabled={current === pages} onClick={() => setPage(current + 1)}>Next</button></div>}

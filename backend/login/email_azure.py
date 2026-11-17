@@ -52,6 +52,7 @@ between "sent" and "printed to a console".
 from __future__ import annotations
 
 import logging
+import hashlib
 import os
 import threading
 import time
@@ -74,6 +75,7 @@ _HTTP_TIMEOUT = 15.0
 # requests from several threads.
 _token_lock = threading.Lock()
 _token_cache = {"value": None, "expires_at": 0.0}
+_application_token_caches = {}
 #: Refresh this many seconds before actual expiry.
 _TOKEN_SKEW = 120
 
@@ -123,9 +125,9 @@ def mail_config():
     return config
 
 
-def is_configured():
+def is_configured(configuration=None):
     """Whether a real send can be attempted right now."""
-    cfg = mail_config()
+    cfg = mail_config() if configuration is None else configuration
     return bool(
         cfg["enabled"]
         and cfg["tenant_id"]
@@ -150,16 +152,23 @@ def missing_settings():
     ]
 
 
-def _access_token(force_refresh=False):
+def _access_token(force_refresh=False, *, configuration=None):
     """Client-credentials token for Graph, cached until shortly before expiry."""
-    cfg = mail_config()
-    if not is_configured():
+    cfg = mail_config() if configuration is None else configuration
+    if not (is_configured() if configuration is None else is_configured(configuration)):
         raise EmailNotConfigured("Azure mail is not configured.")
 
     with _token_lock:
+        cache = _token_cache
+        if configuration is not None:
+            # A dedicated sender must never reuse another app's bearer token.
+            # Hash the credentials so no plaintext secret is retained in keys.
+            identity = '\0'.join(str(cfg[key]) for key in ('tenant_id', 'client_id', 'client_secret'))
+            key = hashlib.sha256(identity.encode()).hexdigest()
+            cache = _application_token_caches.setdefault(key, {"value": None, "expires_at": 0.0})
         now = time.time()
-        if not force_refresh and _token_cache["value"] and _token_cache["expires_at"] > now:
-            return _token_cache["value"]
+        if not force_refresh and cache["value"] and cache["expires_at"] > now:
+            return cache["value"]
 
         response = httpx.post(
             _TOKEN_ENDPOINT.format(tenant=cfg["tenant_id"]),
@@ -183,8 +192,8 @@ def _access_token(force_refresh=False):
         if not token:
             raise EmailSendError("Azure token response contained no access_token.")
 
-        _token_cache["value"] = token
-        _token_cache["expires_at"] = now + max(
+        cache["value"] = token
+        cache["expires_at"] = now + max(
             int(payload.get("expires_in", 3600)) - _TOKEN_SKEW, 60
         )
         return token
@@ -240,12 +249,19 @@ def brand_logo_attachment():
     }
 
 
-def send_mail(*, to, subject, html_body, text_body=None, sender_name=None, save_to_sent=False, attachments=None):
+def send_mail(*, to, subject, html_body, text_body=None, sender_name=None, save_to_sent=False, attachments=None,
+              sender_mailbox=None, reply_to=None, redact_logs=False, configuration=None):
     """Send one message. Returns ``(sent, detail)``.
 
     ``save_to_sent`` keeps a copy in the sender mailbox's Sent Items. Off by
     default so routine notifications do not pile up in the shared mailbox;
     invitations and password resets opt in so staff can see what was sent.
+
+    Trusted server workflows may supply a different ``sender_mailbox`` and
+    ``reply_to``. Existing callers retain the configured default mailbox.
+    ``redact_logs`` suppresses addresses, content and provider error bodies.
+    ``configuration`` is an optional server-owned mail app configuration with
+    its own credentials and token cache; omitted for the normal login mail app.
 
     ``attachments`` is an optional list of ``{"name", "content_type", "content"}``
     (content as bytes), sent as Graph file attachments -- e.g. a calendar invite.
@@ -258,8 +274,10 @@ def send_mail(*, to, subject, html_body, text_body=None, sender_name=None, save_
     success to the end user, because whether our mail transport is set up is not
     something an anonymous caller should be able to probe.
     """
-    if not is_configured():
-        missing = ", ".join(missing_settings()) or "AZURE_MAIL_ENABLED=false"
+    cfg = mail_config() if configuration is None else configuration
+    if not (is_configured() if configuration is None else is_configured(configuration)):
+        missing = ((", ".join(missing_settings()) or "AZURE_MAIL_ENABLED=false")
+                   if configuration is None else 'Dedicated mail application is incomplete or disabled')
 
         # The body carries a live single-use invitation/reset token. Print it
         # only when DEBUG is on, where the developer needs the link to walk
@@ -268,7 +286,9 @@ def send_mail(*, to, subject, html_body, text_body=None, sender_name=None, save_
         # logs are read by more people than should be able to seize an account.
         from django.conf import settings
 
-        if settings.DEBUG:
+        if redact_logs:
+            logger.warning("Azure mail not configured. Message NOT sent.")
+        elif settings.DEBUG:
             logger.warning(
                 "Azure mail not configured (%s). Message NOT sent.\n"
                 "  To:      %s\n  Subject: %s\n  Body:\n%s",
@@ -289,11 +309,11 @@ def send_mail(*, to, subject, html_body, text_body=None, sender_name=None, save_
         if logo:
             attachments = [*(attachments or []), logo]
 
-    cfg = mail_config()
+    sender = sender_mailbox or cfg['sender']
     try:
-        token = _access_token()
+        token = _access_token() if configuration is None else _access_token(configuration=configuration)
         response = httpx.post(
-            f"{GRAPH_BASE}/users/{cfg['sender']}/sendMail",
+            f"{GRAPH_BASE}/users/{sender}/sendMail",
             headers={
                 "Authorization": f"Bearer {token}",
                 "Content-Type": "application/json",
@@ -303,11 +323,12 @@ def send_mail(*, to, subject, html_body, text_body=None, sender_name=None, save_
                     "subject": subject,
                     "body": {"contentType": "HTML", "content": html_body},
                     "toRecipients": [{"emailAddress": {"address": to}}],
+                    **({"replyTo": [{"emailAddress": {"address": reply_to}}]} if reply_to else {}),
                     **({"attachments": [_file_attachment(item) for item in attachments]} if attachments else {}),
                     # Keep the configured mailbox as the authenticated sender,
                     # while showing the staff member who initiated the message
                     # in clients that honour the Graph display name.
-                    **({"from": {"emailAddress": {"address": cfg["sender"], "name": sender_name.strip()}}}
+                    **({"from": {"emailAddress": {"address": sender, "name": sender_name.strip()}}}
                        if isinstance(sender_name, str) and sender_name.strip() else {}),
                 },
                 "saveToSentItems": bool(save_to_sent),
@@ -317,16 +338,25 @@ def send_mail(*, to, subject, html_body, text_body=None, sender_name=None, save_
     except EmailNotConfigured as exc:
         return False, str(exc)
     except (EmailSendError, httpx.HTTPError) as exc:
-        logger.error("Azure mail send failed for %s: %s", to, exc)
+        if redact_logs:
+            logger.error("Azure mail send failed (%s).", type(exc).__name__)
+        else:
+            logger.error("Azure mail send failed for %s: %s", to, exc)
         return False, str(exc)[:500]
 
     # 202 Accepted is the documented success for sendMail.
     if response.status_code in (200, 202):
-        logger.info("Invitation/reset mail sent to %s", to)
+        if redact_logs:
+            logger.info("Azure mail accepted for sending.")
+        else:
+            logger.info("Invitation/reset mail sent to %s", to)
         return True, None
 
     detail = f"graph {response.status_code}: {response.text[:400]}"
-    logger.error("Azure mail send failed for %s: %s", to, detail)
+    if redact_logs:
+        logger.error("Azure mail send rejected (HTTP %s).", response.status_code)
+    else:
+        logger.error("Azure mail send failed for %s: %s", to, detail)
     return False, detail
 
 

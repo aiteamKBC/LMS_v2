@@ -4,6 +4,7 @@ import Swal from 'sweetalert2';
 import { feedbackApi, type FeedbackAnalyticsData, type FeedbackAssignmentSource, type FeedbackForm, type FeedbackFormType, type FeedbackFormVersion, type FeedbackLearnerOption, type FeedbackRecipient, type FeedbackResponse, type FeedbackResponseActivity } from '@/api/feedback';
 import { LectureQuestionAnalytics } from '@/features/feedback/LectureQuestionAnalytics';
 import { FeedbackDashboard } from '@/features/feedback/FeedbackDashboard';
+import { ResponseEmailPanel } from '@/features/feedback/ResponseEmailPanel';
 import { FEEDBACK_TYPE_LABELS } from '@/features/feedback/feedbackDashboardData';
 import { ThemedSelect, type ThemedSelectOption } from '@/components/feature/ThemedSelect';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
@@ -422,6 +423,28 @@ function lectureSourceContext(source: FeedbackAssignmentSource) {
 
 function ResponseDialog({ response, onClose }: { response: FeedbackResponse; onClose: () => void }) {
   const [downloading, setDownloading] = useState(false);
+  const [emailOpen, setEmailOpen] = useState(false);
+  const [emailMounted, setEmailMounted] = useState(false);
+  const [emailDirty, setEmailDirty] = useState(false);
+  const [emailSending, setEmailSending] = useState(false);
+  const emailPanel = useRef<HTMLDivElement>(null);
+  const emailToggle = useRef<HTMLButtonElement>(null);
+  const emailPanelId = `feedback-response-email-${response.id}`;
+  useEffect(() => {
+    if (emailOpen) {
+      emailPanel.current?.scrollIntoView?.({ block: 'start', behavior: 'smooth' });
+      emailPanel.current?.querySelector<HTMLButtonElement>('button')?.focus();
+    }
+  }, [emailOpen]);
+  const closeEmail = () => {
+    if (emailSending) return;
+    setEmailOpen(false);
+    emailToggle.current?.focus();
+  };
+  const close = () => {
+    if (emailSending) return;
+    if (!emailDirty || window.confirm('Discard your unsent email message?')) onClose();
+  };
   const download = async () => {
     setDownloading(true);
     try {
@@ -433,7 +456,7 @@ function ResponseDialog({ response, onClose }: { response: FeedbackResponse; onC
       setDownloading(false);
     }
   };
-  return <Modal title="Feedback response" onClose={onClose} hideClose>
+  return <Modal title="Feedback response" onClose={close} hideClose>
     <div className="mb-4 grid grid-cols-3 gap-3 rounded-lg bg-background-100 p-3 text-xs">
       <div><span className="text-foreground-400">{response.formType === 'post_progress_review_employer' ? 'Employer' : 'Learner'}</span><p className="font-semibold">{response.learnerName}</p></div>
       <div><span className="text-foreground-400">Form</span><p className="font-semibold">{response.formTitle}</p></div>
@@ -444,10 +467,17 @@ function ResponseDialog({ response, onClose }: { response: FeedbackResponse; onC
       <div><span className="text-foreground-400">Lecture date</span><p className="font-semibold">{formatDate(response.sessionStartsAt)}</p></div>
       <div><span className="text-foreground-400">Tutor</span><p className="font-semibold">{response.tutorName || 'Not recorded'}</p></div>
     </div>}
+    <div id={emailPanelId} ref={emailPanel} hidden={!emailOpen}>
+      {emailMounted && <ResponseEmailPanel response={response} onDirtyChange={setEmailDirty} onSendingChange={setEmailSending} onClose={closeEmail} />}
+    </div>
     <FormRenderer sections={response.sections || []} answers={Object.fromEntries((response.sections || []).flatMap(s => s.questions.map(q => [String(q.id), q.answer ?? null])))} readOnly />
-    <div className="sticky bottom-4 z-10 ml-auto mt-5 flex w-fit justify-end gap-3">
+    <div className="sticky bottom-4 z-10 ml-auto mt-5 flex w-fit flex-wrap justify-end gap-3">
+      <button ref={emailToggle} type="button" disabled={emailSending} aria-expanded={emailOpen} aria-controls={emailPanelId} onClick={() => {
+        if (emailOpen) closeEmail();
+        else { setEmailMounted(true); setEmailOpen(true); }
+      }} className={`${button} border border-primary-200 bg-white text-primary-700 disabled:opacity-50`}>{emailOpen ? 'Close email' : 'Email respondent'}</button>
       <button type="button" disabled={downloading} onClick={() => void download()} className={`${button} inline-flex items-center gap-1.5 bg-primary-600 text-white shadow-sm hover:bg-primary-700 disabled:opacity-50`}><i className="ri-download-2-line" aria-hidden="true" />{downloading ? 'Preparing PDF...' : 'Export PDF'}</button>
-      <button type="button" onClick={onClose} className={`${button} border border-foreground-200 bg-white text-foreground-700 hover:bg-background-100`}>Back</button>
+      <button type="button" disabled={emailSending} onClick={close} className={`${button} border border-foreground-200 bg-white text-foreground-700 hover:bg-background-100 disabled:opacity-50`}>Back</button>
     </div>
   </Modal>;
 }

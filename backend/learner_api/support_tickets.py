@@ -205,6 +205,39 @@ def create_staff_ticket(*, learner_account, ticket, actor_name='Support'):
     return saved
 
 
+def close_feedback_ticket(*, ticket_id, learner_id, actor_name):
+    """Synchronize closure of one server-identified feedback ticket.
+
+    Remote commits first. A local commit failure remains retryable: the next
+    attempt sees the remote Closed state and finishes the local update once.
+    The local row lock also serializes ticket creation and staff updates.
+    """
+    with transaction.atomic(using='enrolment'), connections['enrolment'].cursor() as cursor:
+        cursor.execute(f'SELECT data, enrolment_id FROM {TABLE} WHERE id=%s FOR UPDATE', [str(ticket_id)])
+        row = cursor.fetchone()
+        if not row:
+            return 'not_required'
+        saved = unpack(row)
+        if str(row[1]) != str(learner_id) or saved.get('assignedTeam') != 'Quality Team':
+            raise TicketError('The linked Quality ticket does not match this feedback response.', 409)
+        if saved.get('status') not in {'open', 'closed'}:
+            return 'not_required'
+        remote_status = assistant_conversations.close_open_quality_ticket(ticket_id=str(ticket_id))
+        if remote_status != 'Closed':
+            # Pending and any other non-open remote status are preserved.
+            return 'not_required'
+        if saved.get('status') != 'closed':
+            now = timezone.now().isoformat()
+            saved['status'], saved['lastUpdate'] = 'closed', now
+            saved.setdefault('timeline', []).append({
+                'event': 'Closed', 'timestamp': now,
+                'detail': f'{actor_name}: feedback follow-up email accepted for sending.',
+            })
+            cursor.execute(f'UPDATE {TABLE} SET data=%s::jsonb WHERE id=%s',
+                           [json.dumps(saved), str(ticket_id)])
+        return 'closed'
+
+
 def detail(request, account, body, ticket_id, *, staff):
     with files.upload_session() as staged, transaction.atomic(using='enrolment'), connections['enrolment'].cursor() as cursor:
         where, params = ('', []) if staff else (' AND owner_account_id=%s', [account.pk])
