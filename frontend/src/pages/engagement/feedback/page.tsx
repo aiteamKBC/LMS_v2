@@ -12,6 +12,7 @@ import { FormRenderer } from '@/features/feedback/FormRenderer';
 import { useOperatorIdentity } from '@/hooks/useOperatorIdentity';
 import { roleNavMap } from '@/mocks/navigation';
 import responseTableStyles from './ResponsesTable.module.css';
+import { useFeedbackTabResource } from '@/features/feedback/useFeedbackTabResource';
 
 type Tab = 'overview' | 'forms' | 'responses' | 'analytics' | 'insights';
 const nav = roleNavMap.engagement;
@@ -21,27 +22,25 @@ export default function FeedbackPage() {
   const operator = useOperatorIdentity();
   const navigate = useNavigate();
   const [tab, setTab] = useState<Tab>('overview');
-  const [forms, setForms] = useState<FeedbackForm[]>([]);
-  const [responses, setResponses] = useState<FeedbackResponse[]>([]);
-  const [analytics, setAnalytics] = useState<FeedbackAnalyticsData | null>(null);
-  const [summary, setSummary] = useState({ totalForms: 0, publishedForms: 0, draftForms: 0, totalResponses: 0 });
+  const [revision, setRevision] = useState(0);
+  const [insightsOpened, setInsightsOpened] = useState(false);
+  const formData = useFeedbackTabResource(feedbackApi.listForms, tab !== 'insights', revision);
+  const responseData = useFeedbackTabResource(feedbackApi.responses, tab === 'responses' || tab === 'analytics', revision);
+  const analyticsData = useFeedbackTabResource(feedbackApi.analytics, tab === 'overview' || tab === 'analytics', revision);
+  const forms = useMemo(() => formData.data?.forms || [], [formData.data]);
+  const responses = responseData.data?.responses || [];
+  const analytics = analyticsData.data?.analytics || null;
+  const summary = formData.data?.summary;
   const [search, setSearch] = useState('');
   const [status, setStatusFilter] = useState('all');
   const [assigning, setAssigning] = useState<FeedbackForm | null>(null);
   const [recipientForm, setRecipientForm] = useState<FeedbackForm | null>(null);
   const [versionForm, setVersionForm] = useState<FeedbackForm | null>(null);
   const [viewing, setViewing] = useState<FeedbackResponse | null>(null);
-  const [loading, setLoading] = useState(true);
-
-  const refresh = useCallback(async () => {
-    setLoading(true);
-    try {
-      const [formData, responseData, analyticsData] = await Promise.all([feedbackApi.listForms(), feedbackApi.responses(), feedbackApi.analytics()]);
-      setForms(formData.forms); setSummary(formData.summary); setResponses(responseData.responses); setAnalytics(analyticsData.analytics);
-    } catch (error) { void Swal.fire({ icon: 'error', title: 'Could not load feedback', text: error instanceof Error ? error.message : 'Unexpected error.' }); }
-    finally { setLoading(false); }
-  }, []);
-  useEffect(() => { void refresh(); }, [refresh]);
+  const refresh = useCallback(() => setRevision(value => value + 1), []);
+  const required = tab === 'insights' ? [] : tab === 'responses' ? [formData, responseData] : tab === 'analytics' ? [formData, responseData, analyticsData] : [formData];
+  const loading = required.some(resource => resource.loading);
+  const unavailable = required.some(resource => !resource.data);
 
   const filtered = useMemo(() => forms.filter(form => (status === 'all' || form.status === status) && form.title.toLowerCase().includes(search.toLowerCase())), [forms, search, status]);
 
@@ -69,17 +68,18 @@ export default function FeedbackPage() {
         <div className="flex flex-wrap items-center justify-between gap-4"><div><p className="text-xs font-semibold uppercase tracking-widest text-purple-200">Reports / Feedback</p><h1 className="mt-1 font-heading text-2xl font-bold !text-white">Feedback Forms</h1><p className="mt-1 max-w-2xl text-sm text-purple-100">Build flexible forms, assign them to learners, monitor completion, and review responses.</p></div><button onClick={() => navigate('/engagement/reports/feedback/create')} className="rounded-lg bg-white px-4 py-2.5 text-xs font-bold text-[#541EA0] shadow-sm">+ Create Feedback Form</button></div>
       </div>
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">{[
-        ['Total Forms', summary.totalForms, 'ri-file-list-3-line'], ['Published', summary.publishedForms, 'ri-send-plane-line'], ['Draft', summary.draftForms, 'ri-draft-line'], ['Responses', summary.totalResponses, 'ri-chat-check-line'],
+        ['Total Forms', summary?.totalForms ?? '—', 'ri-file-list-3-line'], ['Published', summary?.publishedForms ?? '—', 'ri-send-plane-line'], ['Draft', summary?.draftForms ?? '—', 'ri-draft-line'], ['Responses', summary?.totalResponses ?? '—', 'ri-chat-check-line'],
       ].map(([label, value, icon]) => <div key={String(label)} className="rounded-xl border border-foreground-200/60 bg-background-50 p-4"><div className="flex items-center justify-between"><div><p className="text-xs text-foreground-500">{label}</p><p className="mt-1 text-2xl font-bold text-foreground-900">{value}</p></div><span className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary-50 text-primary-600"><i className={`${icon} text-lg`} /></span></div></div>)}</div>
       </>}
-      <div className="flex gap-1 overflow-x-auto rounded-lg bg-background-100 p-1">{(['overview', 'forms', 'responses', 'analytics', 'insights'] as Tab[]).map(value => <button key={value} aria-pressed={tab === value} onClick={() => setTab(value)} className={`${button} !transition-none whitespace-nowrap ${tab === value ? '!bg-[#541EA0] !text-white shadow-sm' : '!bg-transparent !text-foreground-600 hover:!bg-white'}`}>{value === 'insights' ? 'Feedback Insights' : value[0].toUpperCase() + value.slice(1)}</button>)}</div>
-      {loading ? <div className="rounded-xl border bg-white p-10 text-center text-sm text-foreground-400">Loading feedback…</div> : <>
-        {tab === 'overview' && <Overview analytics={analytics} forms={forms} onViewForms={() => setTab('forms')} />}
+      <div className="flex gap-1 overflow-x-auto rounded-lg bg-background-100 p-1">{(['overview', 'forms', 'responses', 'analytics', 'insights'] as Tab[]).map(value => <button key={value} aria-pressed={tab === value} onClick={() => { if (value === 'insights') setInsightsOpened(true); setTab(value); }} className={`${button} !transition-none whitespace-nowrap ${tab === value ? '!bg-[#541EA0] !text-white shadow-sm' : '!bg-transparent !text-foreground-600 hover:!bg-white'}`}>{value === 'insights' ? 'Feedback Insights' : value[0].toUpperCase() + value.slice(1)}</button>)}</div>
+      {required.map((resource, index) => resource.error && <div key={index} role="alert" className="rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800">{resource.error} <button type="button" className="font-semibold underline" onClick={resource.reload}>Retry feedback</button></div>)}
+      {loading ? <div role="status" className="rounded-xl border bg-white p-10 text-center text-sm text-foreground-400">Loading feedback…</div> : !unavailable && <>
+        {tab === 'overview' && <><Overview analytics={analytics} forms={forms} analyticsLoading={analyticsData.loading} onViewForms={() => setTab('forms')} />{analyticsData.error && <div role="alert" className="text-sm text-rose-700">{analyticsData.error} <button type="button" onClick={analyticsData.reload}>Retry overview analytics</button></div>}</>}
         {tab === 'forms' && <FormsTable forms={filtered} search={search} status={status} onSearch={setSearch} onStatus={setStatusFilter} onEdit={form => navigate(`/engagement/reports/feedback/forms/${form.id}/edit`)} onPreview={form => navigate(`/engagement/reports/feedback/forms/${form.id}/preview`)} onAssign={setAssigning} onViewRecipients={setRecipientForm} onViewVersions={setVersionForm} onResponses={() => setTab('responses')} onAction={action} />}
         {tab === 'responses' && <ResponsesTable responses={responses} forms={forms} onOpen={response => void openResponse(response)} />}
         {tab === 'analytics' && analytics && <AnalyticsView data={analytics} forms={forms} responses={responses} onViewResponse={id => void openResponse({ id })} />}
-        {tab === 'insights' && <FeedbackDashboard onViewResponse={id => void openResponse({ id })} />}
       </>}
+      {insightsOpened && <div hidden={tab !== 'insights'}><FeedbackDashboard active={tab === 'insights'} revision={revision} onViewResponse={id => void openResponse({ id })} /></div>}
     </div>
     {assigning && <AssignmentDialog form={assigning} onClose={() => setAssigning(null)} onAssigned={() => { setAssigning(null); void refresh(); }} />}
     {recipientForm && <RecipientsDialog form={recipientForm} onClose={() => setRecipientForm(null)} />}
@@ -88,8 +88,8 @@ export default function FeedbackPage() {
   </WorkspaceShell>;
 }
 
-function Overview({ analytics, forms, onViewForms }: { analytics: FeedbackAnalyticsData | null; forms: FeedbackForm[]; onViewForms: () => void }) {
-  return <div className="grid gap-5 xl:grid-cols-[1.4fr_1fr]"><div className="rounded-xl border border-foreground-200/60 bg-background-50 p-5"><div className="mb-4 flex items-center justify-between"><h2 className="font-heading text-sm font-semibold text-foreground-900">Recently updated forms</h2><button onClick={onViewForms} className="text-xs font-semibold text-primary-600">View all</button></div><div className="divide-y divide-background-200">{forms.slice(0, 5).map(form => <div key={form.id} className="flex items-center justify-between py-3"><div><p className="text-sm font-medium text-foreground-800">{form.title}</p><p className="text-[11px] text-foreground-400">Updated {formatDate(form.updatedAt)}</p></div><Status status={form.status} /></div>)}{!forms.length && <p className="py-8 text-center text-sm text-foreground-400">Create your first feedback form to get started.</p>}</div></div>{analytics && <AnalyticsView data={analytics} compact />}</div>;
+function Overview({ analytics, forms, onViewForms, analyticsLoading = false }: { analytics: FeedbackAnalyticsData | null; forms: FeedbackForm[]; onViewForms: () => void; analyticsLoading?: boolean }) {
+  return <div className="grid gap-5 xl:grid-cols-[1.4fr_1fr]"><div className="rounded-xl border border-foreground-200/60 bg-background-50 p-5"><div className="mb-4 flex items-center justify-between"><h2 className="font-heading text-sm font-semibold text-foreground-900">Recently updated forms</h2><button onClick={onViewForms} className="text-xs font-semibold text-primary-600">View all</button></div><div className="divide-y divide-background-200">{forms.slice(0, 5).map(form => <div key={form.id} className="flex items-center justify-between py-3"><div><p className="text-sm font-medium text-foreground-800">{form.title}</p><p className="text-[11px] text-foreground-400">Updated {formatDate(form.updatedAt)}</p></div><Status status={form.status} /></div>)}{!forms.length && <p className="py-8 text-center text-sm text-foreground-400">Create your first feedback form to get started.</p>}</div></div>{analytics ? <AnalyticsView data={analytics} compact /> : analyticsLoading && <p role="status" className="p-5 text-sm text-foreground-500">Loading overview analytics…</p>}</div>;
 }
 
 function FormsTable({ forms, search, status, onSearch, onStatus, onEdit, onPreview, onAssign, onViewRecipients, onViewVersions, onResponses, onAction }: { forms: FeedbackForm[]; search: string; status: string; onSearch: (v: string) => void; onStatus: (v: string) => void; onEdit: (f: FeedbackForm) => void; onPreview: (f: FeedbackForm) => void; onAssign: (f: FeedbackForm) => void; onViewRecipients: (f: FeedbackForm) => void; onViewVersions: (f: FeedbackForm) => void; onResponses: () => void; onAction: (f: FeedbackForm, a: 'publish' | 'draft' | 'close' | 'duplicate' | 'delete') => void }) {

@@ -36,6 +36,45 @@ beforeEach(() => {
 afterEach(() => vi.useRealTimers());
 
 describe('independent feedback insights dashboard', () => {
+  it('keeps cached filter results visible when revalidation fails and supports retry', async () => {
+    const user = userEvent.setup();
+    render(<FeedbackDashboard onViewResponse={vi.fn()} />);
+    await screen.findByRole('region', { name: 'Submitted feedback' });
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Insights date range' }), '0');
+    await waitFor(() => expect(feedbackApi.insightsDashboard).toHaveBeenCalledTimes(2));
+    vi.mocked(feedbackApi.insightsDashboard).mockRejectedValueOnce(new Error('Refresh unavailable'));
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Insights date range' }), '8');
+    expect(await screen.findByRole('alert')).toHaveTextContent('Showing the previous report. Refresh unavailable');
+    expect(screen.getByRole('region', { name: 'Submitted feedback' })).toBeVisible();
+    await user.click(screen.getByRole('button', { name: 'Retry insights' }));
+    await waitFor(() => expect(screen.queryByRole('alert')).not.toBeInTheDocument());
+  });
+
+  it('pauses report and ticket refreshes while its tab is inactive', async () => {
+    const open = vi.fn();
+    const { rerender } = render(<FeedbackDashboard onViewResponse={open} />);
+    await screen.findByText('Quality ticket: Open');
+    rerender(<FeedbackDashboard active={false} onViewResponse={open} />);
+    const reports = vi.mocked(feedbackApi.insightsDashboard).mock.calls.length;
+    const statusReads = vi.mocked(feedbackApi.qualityTicketStatus).mock.calls.length;
+    act(() => window.dispatchEvent(new Event('focus')));
+    expect(feedbackApi.insightsDashboard).toHaveBeenCalledTimes(reports);
+    expect(feedbackApi.qualityTicketStatus).toHaveBeenCalledTimes(statusReads);
+    rerender(<FeedbackDashboard active onViewResponse={open} />);
+    expect(screen.getByRole('region', { name: 'Submitted feedback' })).toBeVisible();
+    await waitFor(() => expect(feedbackApi.insightsDashboard).toHaveBeenCalledTimes(reports + 1));
+  });
+
+  it('clears cached learner report data when revalidation is unauthorized', async () => {
+    const user = userEvent.setup();
+    render(<FeedbackDashboard onViewResponse={vi.fn()} />);
+    await screen.findByRole('region', { name: 'Submitted feedback' });
+    vi.mocked(feedbackApi.insightsDashboard).mockRejectedValueOnce(Object.assign(new Error('Session expired'), { status: 401 }));
+    await user.click(screen.getByRole('button', { name: 'Refresh insights' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('Session expired');
+    expect(screen.queryByRole('region', { name: 'Submitted feedback' })).not.toBeInTheDocument();
+    expect(screen.queryByText('Business Communication — Session 3')).not.toBeInTheDocument();
+  });
   it('immediately reflects closure of the matching response without recreating tickets', async () => {
     render(<FeedbackDashboard onViewResponse={vi.fn()} />);
     await screen.findByText('Quality ticket: Open');

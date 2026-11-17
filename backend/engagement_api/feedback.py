@@ -39,6 +39,7 @@ from .feedback_question_overrides import effective_question_ids
 from .module_feedback import MODULE_FORM_TYPES, assigned_active_module_ids, module_delivery_accessible, sync_module_feedback
 from .review_feedback import ALL_REVIEW_FORM_TYPES, EMPLOYER_REVIEW_FORM_TYPE, sync_review_feedback
 from .quality_tickets import quality_ticket_id as _quality_ticket_id
+from .form_reporting import form_report_counts
 from .models import (
     FeedbackAnswer, FeedbackAssignment, FeedbackDelivery, FeedbackDeliveryRecipient,
     FeedbackDeliveryQuestionOverride,
@@ -158,12 +159,15 @@ def _assigned_count(form):
     return manual_count + delivery_count + review_count
 
 
-def form_dict(form, *, include_structure=False):
-    response_query = FeedbackResponse.objects.filter(form=form)
-    if form.form_type in VERSIONED_FORM_TYPES:
-        response_query = FeedbackResponse.objects.filter(form__template_key=form.template_key)
-    responses = list(response_query)
-    completed = sum(r.status == 'completed' for r in responses)
+def form_dict(form, *, include_structure=False, reporting=None):
+    if reporting is None:
+        response_query = FeedbackResponse.objects.filter(form=form)
+        if form.form_type in VERSIONED_FORM_TYPES:
+            response_query = FeedbackResponse.objects.filter(form__template_key=form.template_key)
+        responses = list(response_query)
+        reporting = {'assigned': _assigned_count(form), 'started': len(responses),
+                     'completed': sum(r.status == 'completed' for r in responses),
+                     'history': form.form_type in VERSIONED_FORM_TYPES and _form_has_history(form)}
     data = {
         'id': form.id, 'title': form.title, 'formType': form.form_type,
         'deliveryScope': form.delivery_scope,
@@ -183,10 +187,10 @@ def form_dict(form, *, include_structure=False):
         'allowEditAfterSubmission': form.allow_edit_after_submission,
         'createdBy': form.created_by, 'createdAt': _iso(form.created_at),
         'updatedAt': _iso(form.updated_at), 'publishedAt': _iso(form.published_at),
-        'assignedCount': _assigned_count(form), 'responseCount': completed,
-        'startedCount': len(responses),
-        'structureLocked': form.form_type not in VERSIONED_FORM_TYPES and bool(responses),
-        'willCreateVersion': form.form_type in VERSIONED_FORM_TYPES and _form_has_history(form),
+        'assignedCount': reporting['assigned'], 'responseCount': reporting['completed'],
+        'startedCount': reporting['started'],
+        'structureLocked': form.form_type not in VERSIONED_FORM_TYPES and bool(reporting['started']),
+        'willCreateVersion': form.form_type in VERSIONED_FORM_TYPES and reporting['history'],
     }
     if include_structure:
         data['sections'] = [_section_dict(s) for s in form.sections.all()]
@@ -218,10 +222,10 @@ def _form_version_dict(form):
     }
 
 
-def _forms_queryset(*, current_only=False):
-    queryset = FeedbackForm.objects.prefetch_related(
-        'assignments', 'responses', 'sections__questions',
-    )
+def _forms_queryset(*, current_only=False, prefetch=True):
+    queryset = FeedbackForm.objects.all()
+    if prefetch:
+        queryset = queryset.prefetch_related('assignments', 'responses', 'sections__questions')
     if current_only:
         queryset = queryset.filter(is_current=True)
     return queryset.order_by('-updated_at')
@@ -524,9 +528,10 @@ def _apply_metadata(form, payload):
 def forms_collection(request):
     if request.method == 'GET':
         sync_module_feedback()
-        forms = list(_forms_queryset(current_only=True))
+        forms = list(_forms_queryset(current_only=True, prefetch=False))
+        reporting = form_report_counts(forms, versioned_types=VERSIONED_FORM_TYPES, employer_type=EMPLOYER_REVIEW_FORM_TYPE)
         return JsonResponse({
-            'forms': [form_dict(f) for f in forms],
+            'forms': [form_dict(f, reporting=reporting[f.id]) for f in forms],
             'summary': {
                 'totalForms': len(forms),
                 'publishedForms': sum(f.status == 'published' for f in forms),
@@ -1070,7 +1075,7 @@ def analytics(request):
     form_type = request.GET.get('formType')
     if form_type and form_type not in FORM_TYPES:
         return json_error('Unknown feedback form type.', status=400)
-    forms = _forms_queryset(current_only=True)
+    forms = _forms_queryset(current_only=True, prefetch=False)
     if form_type:
         forms = forms.filter(form_type=form_type)
     family_ids = None
@@ -1084,7 +1089,9 @@ def analytics(request):
     elif form_type:
         template_keys = forms.values_list('template_key', flat=True)
         family_ids = FeedbackForm.objects.filter(template_key__in=template_keys).values_list('id', flat=True)
-    assigned = sum(_assigned_count(f) for f in forms)
+    forms = list(forms)
+    reporting = form_report_counts(forms, versioned_types=VERSIONED_FORM_TYPES, employer_type=EMPLOYER_REVIEW_FORM_TYPE)
+    assigned = sum(row['assigned'] for row in reporting.values())
     responses = FeedbackResponse.objects.all()
     if family_ids is not None:
         responses = responses.filter(form_id__in=family_ids)
@@ -1093,9 +1100,15 @@ def analytics(request):
     rating_questions = FeedbackQuestion.objects.filter(question_type='rating')
     if family_ids is not None:
         rating_questions = rating_questions.filter(section__form_id__in=family_ids)
+    rating_questions = list(rating_questions)
+    rating_answers = {}
+    for question_id, value in FeedbackAnswer.objects.filter(
+        question_id__in=[question.id for question in rating_questions], response__status='completed',
+    ).values_list('question_id', 'answer'):
+        rating_answers.setdefault(question_id, []).append(value)
     ratings = []
     for question in rating_questions:
-        values = [a.answer for a in question.answers.filter(response__status='completed')]
+        values = rating_answers.get(question.id, [])
         numeric = [float(v) for v in values if isinstance(v, (int, float))]
         if numeric:
             config = question.config or {}
