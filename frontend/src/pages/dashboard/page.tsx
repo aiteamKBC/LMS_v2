@@ -18,6 +18,9 @@ import QualityTeamPage from "@/pages/dashboard/components/QualityTeamPage";
 import FeedbacksPage from "@/pages/dashboard/components/FeedbacksPage";
 import DeepDivePage from "@/pages/dashboard/components/DeepDivePage";
 import QualityReviewsPage from "@/pages/coaching-recordings/QualityReviewsPage";
+import { FEEDBACKS } from "@/mocks/feedbacks";
+import FeedbackDetailModal from "@/pages/executive/components/FeedbackDetailModal";
+import type { HeaderNotification } from "@/components/feature/Header";
 
 const STATUS_RANK: Record<string, number> = { Pending: 0, "In Review": 1, "Needs Correction": 2, Approved: 3, Rejected: 4 };
 
@@ -90,6 +93,15 @@ export default function QualityAssurancePage() {
   const [focusId, setFocusId] = useState<string | null>(null);
   const [pdfId, setPdfId] = useState<string | null>(null);
   const [toast, setToast] = useState<{ text: string; tone: "success" | "info" } | null>(null);
+  const [selectedNotification, setSelectedNotification] = useState<HeaderNotification | null>(null);
+  const redFeedbacks = FEEDBACKS.filter((item) => item.rag === "Red");
+  const headerNotifications: HeaderNotification[] = redFeedbacks.map((item) => ({
+    id: item.id,
+    title: `${item.author} · Red feedback`,
+    description: item.comment,
+    meta: `${item.source} · ${item.coach} · ${item.topic}`,
+    tone: "red",
+  }));
 
   const runLoad = () => {
     setLoading(true);
@@ -329,7 +341,7 @@ export default function QualityAssurancePage() {
       />
 
       <div className="lg:pl-[240px]">
-        <Topbar onMenu={() => setSidebarOpen(true)} title={topMeta.title} section={topMeta.section} />
+        <Topbar onMenu={() => setSidebarOpen(true)} title={topMeta.title} section={topMeta.section} notifications={headerNotifications} onNotificationClick={setSelectedNotification} />
 
         {isCalendarView ? <QualityReviewsPage embedded /> : <main id="main-content" tabIndex={-1} className="mx-auto flex w-full max-w-[1560px] flex-col gap-4 px-4 py-4 md:px-6 md:py-5">
           {isOverview ? <ExecutiveOverview /> : null}
@@ -412,6 +424,11 @@ export default function QualityAssurancePage() {
       ) : null}
 
       {pdfReview ? <PdfPreviewModal review={pdfReview} onClose={() => setPdfId(null)} /> : null}
+
+      {selectedNotification ? (() => {
+        const feedback = redFeedbacks.find((item) => item.id === selectedNotification.id);
+        return feedback ? <FeedbackDetailModal feedback={feedback} onClose={() => setSelectedNotification(null)} onOpenWorkspace={() => { setSelectedNotification(null); setSearchParams({ view: "feedbacks" }, { replace: true }); }} /> : null;
+      })() : null}
 
       {toast ? (
         <div className="pointer-events-none fixed bottom-5 right-5 z-[70] no-print">

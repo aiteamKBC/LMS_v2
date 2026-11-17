@@ -32,6 +32,16 @@ interface HeaderProps {
   personalLearning?: boolean;
   /** The sidebar carries its own Sign out (the learner look), so the floating one would duplicate it. */
   sidebarSignOut?: boolean;
+  notifications?: HeaderNotification[];
+  onNotificationClick?: (notification: HeaderNotification) => void;
+}
+
+export interface HeaderNotification {
+  id: string;
+  title: string;
+  description: string;
+  meta?: string;
+  tone?: 'red' | 'amber' | 'info';
 }
 
 /** "Demo Admin" -> "DA". A single word falls back to its first two letters. */
@@ -174,13 +184,14 @@ export function SignOutConfirmModal({
 }
 
 // Notification sound
-export function Header({ accountButtonRef, pageTitle, pageIcon, pageSubtitle, headerExtras, onOpenSearch, userName = 'Sarah Mitchell', onToggleMobileSidebar, mobileSidebarOpen = false, mobileMenuButtonRef, role, appearance, workspaceLabel, personalLearning = false, sidebarSignOut = false }: HeaderProps) {
+export function Header({ accountButtonRef, pageTitle, pageIcon, pageSubtitle, headerExtras, onOpenSearch, userName = 'Sarah Mitchell', onToggleMobileSidebar, mobileSidebarOpen = false, mobileMenuButtonRef, role, appearance, workspaceLabel, personalLearning = false, sidebarSignOut = false, notifications = [], onNotificationClick }: HeaderProps) {
   const { auth, logout } = useAuth();
   const { theme, toggleTheme } = useTheme();
   // Profile is the only dropdown left in the header, so the state that used to
   // coordinate six of them is gone along with them — as are the hard-coded
   // notification, task and message lists that fed their badge counts.
   const [profileOpen, setProfileOpen] = useState(false);
+  const [notificationsOpen, setNotificationsOpen] = useState(false);
   const [signOutOpen, setSignOutOpen] = useState(false);
   const [accessibilityOpen, setAccessibilityOpen] = useState(false);
   // Sending the reset email is an action with an outcome, so the item reports
@@ -191,6 +202,7 @@ export function Header({ accountButtonRef, pageTitle, pageIcon, pageSubtitle, he
   const [monochrome, setMonochrome] = useState(readMonochromePreference);
 
   const profileRef = useRef<HTMLDivElement>(null);
+  const notificationsRef = useRef<HTMLDivElement>(null);
 
   /** Email this person a password-reset link.
    *
@@ -238,10 +250,20 @@ export function Header({ accountButtonRef, pageTitle, pageIcon, pageSubtitle, he
     function handleClick(e: MouseEvent) {
       const target = e.target as Node;
       if (profileRef.current && !profileRef.current.contains(target)) setProfileOpen(false);
+      if (notificationsRef.current && !notificationsRef.current.contains(target)) setNotificationsOpen(false);
     }
     document.addEventListener('mousedown', handleClick);
     return () => document.removeEventListener('mousedown', handleClick);
   }, []);
+
+  useEffect(() => {
+    if (!notificationsOpen) return;
+    function handleKey(e: KeyboardEvent) {
+      if (e.key === 'Escape') setNotificationsOpen(false);
+    }
+    document.addEventListener('keydown', handleKey);
+    return () => document.removeEventListener('keydown', handleKey);
+  }, [notificationsOpen]);
 
   // Escape closes the menu — it opens from a button, so the keyboard has to be
   // able to get back out of it.
@@ -328,6 +350,44 @@ export function Header({ accountButtonRef, pageTitle, pageIcon, pageSubtitle, he
 
       {/* Profile and its existing account actions. */}
       <div className="flex shrink-0 items-center gap-0.5 lg:border-l lg:border-white/15 lg:pl-4">
+        {notifications.length ? (
+          <div className="relative" ref={notificationsRef}>
+            <button
+              type="button"
+              aria-label={`Notifications${notifications.length ? ` (${notifications.length})` : ''}`}
+              aria-haspopup="menu"
+              aria-expanded={notificationsOpen}
+              className={`relative flex h-10 w-10 items-center justify-center rounded-xl text-white ring-1 transition-smooth focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/80 ${notificationsOpen ? 'bg-primary-50 text-primary-700 ring-primary-200' : 'ring-transparent hover:bg-primary-50/60 hover:text-primary-700 hover:ring-primary-100'}`}
+              onClick={() => { setNotificationsOpen(value => !value); setProfileOpen(false); }}
+            >
+              <AppIcon name="ri-notification-3-line" className="text-[18px]" aria-hidden="true" />
+              <span className="absolute right-1 top-1 flex min-h-4 min-w-4 items-center justify-center rounded-full bg-red-500 px-1 text-[9px] font-bold leading-none text-white ring-2 ring-background-50">{notifications.length > 9 ? '9+' : notifications.length}</span>
+            </button>
+            {notificationsOpen ? (
+              <div role="menu" aria-label="Notifications" className="absolute right-0 top-full z-50 mt-2 w-[min(23rem,calc(100vw-2rem))] overflow-hidden rounded-2xl bg-background-50 ring-1 ring-foreground-100 shadow-[0_20px_44px_-20px_oklch(var(--foreground-950)/0.32)]">
+                <div className="flex items-center justify-between border-b border-background-200 px-4 py-3">
+                  <p className="text-[13px] font-semibold text-foreground-900">Notifications</p>
+                  <span className="rounded-full bg-red-100 px-2 py-0.5 text-[10px] font-semibold text-red-700">{notifications.length} red feedback{notifications.length === 1 ? '' : 's'}</span>
+                </div>
+                <div className="max-h-[min(26rem,70vh)] overflow-y-auto p-2">
+                  {notifications.map((notification) => (
+                    <button
+                      key={notification.id}
+                      type="button"
+                      role="menuitem"
+                      className="flex w-full items-start gap-2.5 rounded-xl px-2.5 py-3 text-left transition hover:bg-red-50/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-200"
+                      onClick={() => { setNotificationsOpen(false); onNotificationClick?.(notification); }}
+                    >
+                      <span className="mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-lg bg-red-100 text-red-700"><AppIcon name="ri-alert-line" className="text-[14px]" aria-hidden="true" /></span>
+                      <span className="min-w-0 flex-1"><span className="block truncate text-[12px] font-semibold text-foreground-900">{notification.title}</span><span className="mt-0.5 block line-clamp-2 text-[11px] leading-relaxed text-foreground-600">{notification.description}</span>{notification.meta ? <span className="mt-1 block text-[10px] text-foreground-400">{notification.meta}</span> : null}</span>
+                      <i className="ri-arrow-right-s-line mt-1 text-[16px] text-foreground-400" aria-hidden="true" />
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ) : null}
+          </div>
+        ) : null}
         <div className="relative" ref={profileRef}>
           <button
             ref={accountButtonRef}

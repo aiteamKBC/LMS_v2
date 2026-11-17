@@ -69,21 +69,25 @@ export default function RagTrendChart({ data }: RagTrendChartProps) {
       </ul>
 
       <div
-        className="h-[260px] w-full"
+        className="w-full"
         role="img"
         aria-label={`Monthly quality record volume by status, ${data.length} months. ${data
           .map((point) => `${point.label}: ${point.total} records`)
           .join(", ")}.`}
       >
-        <ResponsiveContainer width="100%" height="100%">
-          <LineChart data={data} margin={{ top: 4, right: 8, bottom: 0, left: -18 }}>
+        <div className="h-[300px] w-full">
+          <ResponsiveContainer width="100%" height="100%">
+            <LineChart data={data} margin={{ top: 4, right: 8, bottom: 42, left: -18 }}>
             <CartesianGrid stroke="oklch(var(--background-200))" vertical={false} />
             <XAxis
               dataKey="label"
-              tick={{ fill: "oklch(var(--foreground-600))", fontSize: 11 }}
+              tick={{ fill: "oklch(var(--foreground-600))", fontSize: 10 }}
               tickLine={false}
               axisLine={{ stroke: "oklch(var(--background-300))" }}
               interval={0}
+              angle={-35}
+              textAnchor="end"
+              height={58}
             />
             <YAxis
               tick={{ fill: "oklch(var(--foreground-600))", fontSize: 11 }}
@@ -106,8 +110,9 @@ export default function RagTrendChart({ data }: RagTrendChartProps) {
                 connectNulls
               />
             ))}
-          </LineChart>
-        </ResponsiveContainer>
+            </LineChart>
+          </ResponsiveContainer>
+        </div>
       </div>
     </div>
   );

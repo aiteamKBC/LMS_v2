@@ -100,7 +100,7 @@ export default function ExecutiveOverview() {
     () => data ? applyFilters(data.records, { ...filters, period: "All records" }) : [],
     [data, filters],
   );
-  const trend = useMemo(() => buildMonthlySeries(trendRecords, 12), [trendRecords]);
+  const trend = useMemo(() => buildMonthlySeries(trendRecords), [trendRecords]);
 
   const forms = useMemo(
     () =>

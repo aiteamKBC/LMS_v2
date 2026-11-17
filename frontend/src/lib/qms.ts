@@ -181,12 +181,24 @@ export interface MonthlyPoint {
   total: number;
 }
 
-export function buildMonthlySeries(records: QualityRecord[], months = 12): MonthlyPoint[] {
+export function buildMonthlySeries(records: QualityRecord[], months?: number): MonthlyPoint[] {
   const points: MonthlyPoint[] = [];
-  const end = new Date(`${todayIso(TIME_ZONE_LABEL)}T00:00:00Z`);
+  const actualMonthKeys = records
+    .map((record) => record.assessedOn.slice(0, 7))
+    .filter((key) => /^\d{4}-\d{2}$/.test(key))
+    .sort();
+  if (!actualMonthKeys.length && months === undefined) return points;
 
-  for (let i = months - 1; i >= 0; i -= 1) {
-    const date = new Date(Date.UTC(end.getUTCFullYear(), end.getUTCMonth() - i, 1));
+  const today = new Date(`${todayIso(TIME_ZONE_LABEL)}T00:00:00Z`);
+  const latest = actualMonthKeys.length
+    ? new Date(`${actualMonthKeys.at(-1)}-01T00:00:00Z`)
+    : today;
+  const end = months === undefined ? latest : today;
+  const first = months === undefined
+    ? new Date(`${actualMonthKeys[0]}-01T00:00:00Z`)
+    : new Date(Date.UTC(end.getUTCFullYear(), end.getUTCMonth() - months + 1, 1));
+
+  for (let date = first; date <= end; date = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth() + 1, 1))) {
     const year = date.getUTCFullYear();
     const month = date.getUTCMonth();
     const key = `${year}-${String(month + 1).padStart(2, "0")}`;
