@@ -61,6 +61,81 @@ const impact = {
 } as unknown as CurriculumScopeLearnerKsbImpactResponse;
 
 describe('ModuleLearnerProgressDialog', () => {
+  it('shows live credit and selected activity hours consistently in the learner card and filtered header', () => {
+    const other = { ...impact.assignedLearners[0], id: 'learner-2', name: 'Jordan Lee' };
+    const activityLogOtjh = { learners: [
+      { learnerId: 'learner-1', plannedOtjh: 4, achievedOtjh: 1.25 },
+      { learnerId: 'learner-2', plannedOtjh: 4, achievedOtjh: 1 },
+    ], achievedTotal: 2.25, plannedTotal: 8, source: 'Activity Log' };
+    const enriched = { ...impact, assignedLearners: [...impact.assignedLearners, other], activityLogOtjh,
+      moduleProgressOtjh: { ...activityLogOtjh, achievedTotal: 4.75, learners: [
+        { ...activityLogOtjh.learners[0], achievedOtjh: 3.75 }, activityLogOtjh.learners[1],
+      ] },
+    };
+    render(<ModuleLearnerProgressDialog moduleName="Digital Leadership" impact={enriched}
+      onClose={vi.fn()} onAssignMore={vi.fn()} onRemoveLearner={vi.fn()} />);
+    const totals = within(screen.getByRole('group', { name: 'Shown learner progress totals' }));
+    expect(totals.getByText('04:45:00')).toBeInTheDocument();
+    expect(screen.getByText('03:45:00 / 04:00:00')).toBeInTheDocument();
+    expect(screen.queryByText('01:15:00 / 04:00:00')).not.toBeInTheDocument();
+    expect(screen.getByText(/Live attendance \+ accepted Activity Log/)).toBeInTheDocument();
+    fireEvent.change(screen.getByRole('searchbox', { name: 'Search learners by name' }), { target: { value: 'A Learner' } });
+    expect(totals.getByText('03:45:00')).toBeInTheDocument();
+    expect(screen.getAllByRole('article')).toHaveLength(1);
+  });
+
+  it('searches learner names without changing assignment links and updates the shown totals', () => {
+    const selected = { ...impact.assignedLearners[0], name: 'Alex Morgan' };
+    const other = { ...selected, id: 'learner-2', name: 'Jordan Lee' };
+    const enriched = { ...impact, assignedLearners: [selected, other],
+      otjhAchievement: { ...impact.otjhAchievement, learners: [
+        ...impact.otjhAchievement.learners,
+        { ...impact.otjhAchievement.learners[0], learnerId: other.id, achievedOtjh: 1 },
+      ] },
+    };
+    render(<MemoryRouter><ModuleLearnerProgressDialog moduleName="Digital Leadership" moduleId="MOD-1"
+      impact={enriched} onClose={vi.fn()} onAssignMore={vi.fn()} onRemoveLearner={vi.fn()} /></MemoryRouter>);
+    const search = screen.getByRole('searchbox', { name: 'Search learners by name' });
+    const totals = within(screen.getByRole('group', { name: 'Shown learner progress totals' }));
+    expect(totals.getByText('03:00:00')).toBeInTheDocument();
+    fireEvent.change(search, { target: { value: '  mORg  ' } });
+    expect(screen.getByText('Alex Morgan')).toBeInTheDocument();
+    expect(screen.queryByText('Jordan Lee')).not.toBeInTheDocument();
+    expect(screen.getByText('1 of 2 assigned learners shown')).toBeInTheDocument();
+    expect(screen.getByText('2 learners assigned to this module')).toBeInTheDocument();
+    expect(totals.getByText('02:00:00')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'View progress' })).toHaveAttribute('href',
+      '/curriculum/learner-module-progress?moduleId=MOD-1&learnerId=learner-1');
+    fireEvent.change(search, { target: { value: 'alex   morgan' } });
+    expect(screen.getAllByRole('article')).toHaveLength(1);
+    fireEvent.change(search, { target: { value: '' } });
+    expect(screen.getAllByRole('article')).toHaveLength(2);
+    expect(totals.getByText('03:00:00')).toBeInTheDocument();
+  });
+
+  it('combines name search with status and recovers from an empty result', () => {
+    const learners = [impact.assignedLearners[0], {
+      ...impact.assignedLearners[0], id: 'learner-2', name: 'Alex Morgan',
+      lifecycleStatus: 'Withdrawn', programmeStatus: 'Withdrawn',
+    }];
+    render(<ModuleLearnerProgressDialog moduleName="Digital Leadership" impact={impact}
+      assignedLearners={learners} initialStatus="active"
+      onClose={vi.fn()} onAssignMore={vi.fn()} onRemoveLearner={vi.fn()} />);
+    const search = screen.getByRole('searchbox', { name: 'Search learners by name' });
+    fireEvent.change(search, { target: { value: 'alex' } });
+    expect(screen.queryByRole('article')).not.toBeInTheDocument();
+    expect(screen.getByText('0 of 2 assigned learners shown')).toBeInTheDocument();
+    expect(screen.getByText('No assigned learners match your search and selected status.')).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText('Learner status'), { target: { value: 'withdrawn' } });
+    expect(screen.getByText('Alex Morgan')).toBeInTheDocument();
+    expect(search).toHaveValue('alex');
+    fireEvent.change(search, { target: { value: 'unknown' } });
+    expect(screen.queryByRole('article')).not.toBeInTheDocument();
+    fireEvent.change(search, { target: { value: '' } });
+    expect(screen.getByText('Alex Morgan')).toBeInTheDocument();
+    expect(screen.queryByText('A Learner')).not.toBeInTheDocument();
+  });
+
   it('shows recorded hours and missing allocations without hiding the learner or module total', () => {
     const enriched = { ...impact, activityLogOtjh: {
       learners: [{ learnerId: 'learner-1', plannedOtjh: 4, achievedOtjh: 1.25, unallocatedAcceptedRecords: 2 }],

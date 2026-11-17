@@ -38,6 +38,11 @@ def rollup(items):
 
 
 def native_state(component, detail):
+    if component.get('liveSessionLearning'):
+        learning = component['liveSessionLearning']
+        done = learning['status'] == 'completed'
+        return {'status': 'completed' if done else 'in-progress',
+                'completedAt': learning.get('attendedAt') if done else None}
     ident = str(component.get('componentId') or '')
     records = [*({**row, 'kind': 'quiz'} for row in detail.get('quizAttempts', [])),
                *detail.get('videoProgress', []), *detail.get('componentProgress', [])]
@@ -60,7 +65,8 @@ def native_entry(component, detail):
         row.get('componentId') == cid and progress_counts_as_achieved(row.get('kind'), row.get('passed'))
         for row in [*detail.get('videoProgress', []), *detail.get('componentProgress', [])])
     return {**component, 'title': component.get('component') or '', 'quizAttempts': attempts,
-            '_done': bool(done) or component.get('attendanceCompleted') is True}
+            '_done': (component['liveSessionLearning']['status'] == 'completed'
+                      if component.get('liveSessionLearning') else bool(done) or component.get('attendanceCompleted') is True)}
 
 
 def week_key(item):
