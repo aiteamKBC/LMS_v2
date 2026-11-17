@@ -10,10 +10,11 @@ from .learner_detail import _component_ksb_items
 
 
 def read_card_ksb_mappings(owner, native, record_ids):
-    """Read codes in batches within the card's existing assignment/lineage scope.
+    """Read KSBs from normalized curriculum component summary and owned progress.
 
-    Inline mappings take precedence over normalized mappings, as in learner-
-    detail. Historical codes come only from this learner's exact progress rows.
+    The component summary supplies the compatibility JSON projection; ordinary
+    curriculum.components no longer stores ksb_mappings on normalized branches.
+    Historical codes come only from this learner's exact progress rows.
     """
     components = [*native.get('components', []), *native.get('retiredQuizComponents', [])]
     facts = {c['componentId']: point_codes(c['ksbMappings']) for c in components
@@ -22,11 +23,11 @@ def read_card_ksb_mappings(owner, native, record_ids):
     connection = connections['enrolment']
     if component_ids:
         rows = canonical.query(read_sql(f'''
-            SELECT c.id AS component_id,c.ksb_mappings AS inline_mappings,
-                coalesce((SELECT jsonb_agg(jsonb_build_object('code',m.ksb_code))
-                    FROM curriculum.ksb_mappings m WHERE m.component_id=c.id
-                    AND {visible_child_sql('m')}),'[]'::jsonb) AS normalized_mappings
+            SELECT c.id AS component_id,
+                COALESCE(s.ksb_mappings, '[]'::jsonb) AS inline_mappings,
+                COALESCE(s.component_ksb_mappings, '[]'::jsonb) AS normalized_mappings
             FROM curriculum.components c
+            LEFT JOIN curriculum.component_learning_summary s ON s.component_id=c.id
             WHERE c.id=ANY(%s) AND {visible_child_sql('c')}
         ''', connection), [component_ids])
         for row in rows:
