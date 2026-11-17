@@ -46,11 +46,13 @@ def catalogue_module_rows(cur, ids, *, identity_metadata):
     from .training_plan_dashboard import rows, plan_module, is_educational_live_session_week
     from .student_activity import _builder_cover_url
     from .subject_origins import imported_course_links
-    cur.execute(read_sql('''SELECT m.module_catalogue_id AS id,m.title,m.cover_image_url,
+    from .builder_activity_dates import STUDY_WEEK_SCHEDULE_SQL
+    cur.execute(read_sql(f'''SELECT m.module_catalogue_id AS id,m.title,m.cover_image_url,
         m.start_date,m.end_date,m.tutor_name,m.programme_id,m.programme_name,
         m.cohort_name,m.group_name,m.total_otjh,m.sessions_number,m.source_type,m.source_id,
         m.session_week_day,m.session_start_time,m.session_end_time,m.cohort_id,
-        to_jsonb(m)->'session_overrides' AS session_overrides
+        to_jsonb(m)->'session_overrides' AS session_overrides,
+        {STUDY_WEEK_SCHEDULE_SQL} AS study_schedule
         FROM curriculum.modules m WHERE m.module_catalogue_id=ANY(%s)
           AND (m.deleted_at IS NULL OR COALESCE(m.deleted_via_parent,'')<>'')
         ORDER BY m.title''', cur.db),[ids])

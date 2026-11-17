@@ -22,6 +22,7 @@ export interface ModuleFormDeliveryRef {
   weeklySchedule?: CurriculumWeeklySession[];
   scheduleMode?: 'group' | 'custom';
   weekStartsOn?: string | null;
+  weekBoundaryMode?: 'calendar' | null;
   weekDays?: string;
   startTime?: string;
   endTime?: string;
@@ -47,6 +48,7 @@ export interface ModuleFormTarget extends CoursePricing {
   weeklySchedule?: CurriculumWeeklySession[];
   scheduleMode?: 'group' | 'custom';
   weekStartsOn?: string | null;
+  weekBoundaryMode?: 'calendar' | null;
   sessionHolidays?: CurriculumModule['sessionHolidays'];
   calendarPolicy?: CurriculumModule['calendarPolicy'];
   deliveryWeeks?: number;
@@ -93,6 +95,7 @@ export function moduleFormTarget(module: CurriculumModule | undefined | null): M
     weeklySchedule: module.weeklySchedule,
     scheduleMode: module.scheduleMode,
     weekStartsOn: module.weekStartsOn,
+    weekBoundaryMode: module.weekBoundaryMode,
     sessionHolidays: module.sessionHolidays,
     calendarPolicy: module.calendarPolicy,
     deliveryWeeks: module.deliveryWeeks,

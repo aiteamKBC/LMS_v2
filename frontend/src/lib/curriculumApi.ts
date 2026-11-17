@@ -426,6 +426,7 @@ export interface CurriculumModule extends CoursePricing {
   weeklySchedule?: CurriculumWeeklySession[];
   scheduleMode?: 'group' | 'custom';
   weekStartsOn?: string | null;
+  weekBoundaryMode?: 'calendar' | null;
   sessionHolidays?: CurriculumHoliday[];
   /** Teaching weeks, separate from imported content rows. */
   deliveryWeeks?: number;
@@ -2495,8 +2496,18 @@ export interface CurriculumProgrammeDetailModules {
   flat: Pick<CurriculumProgrammeDetail['flat'], 'modules' | 'sessions'>;
 }
 
+export interface CurriculumStudyWeek {
+  weekNumber: number;
+  startDate: string;
+  endDate: string;
+  holidayWeek: boolean;
+  holidays: Array<{ id?: string; label: string; startDate: string; endDate: string; type?: string; notes?: string; source?: string }>;
+}
+
 export interface CurriculumSessionPlanPreview {
-  sessions: Array<{ sessionNumber: number; date: string; day: string; startTime?: string; endTime?: string; durationMinutes?: number; skippedHolidays: string[] }>;
+  weeks?: CurriculumStudyWeek[];
+  calendarEndDate?: string;
+  sessions: Array<{ sessionNumber: number; weekNumber?: number; date: string; day: string; startTime?: string; endTime?: string; durationMinutes?: number; skippedHolidays: string[] }>;
   skippedHolidays: string[];
   finalEndDate: string;
   warnings: string[];
@@ -4306,6 +4317,7 @@ export type CurriculumModuleInput = Partial<Pick<CurriculumModule, 'name' | 'wee
   weeklySchedule?: CurriculumWeeklySession[];
   scheduleMode?: 'group' | 'custom';
   weekStartsOn?: string | null;
+  weekBoundaryMode?: 'calendar' | null;
   weekDays?: string;
   startTime?: string;
   endTime?: string;
@@ -4345,6 +4357,7 @@ export type CurriculumModuleAttachmentInput = {
   weeklySchedule?: CurriculumWeeklySession[];
   scheduleMode?: 'group' | 'custom';
   weekStartsOn?: string | null;
+  weekBoundaryMode?: 'calendar' | null;
   weekDays?: string;
   startTime?: string;
   endTime?: string;
@@ -4922,7 +4935,7 @@ export function previewCohortEndDate(input: {
   return postJson<CurriculumCohortEndDatePreview>('/curriculum/preview/cohort-end-date/', input);
 }
 
-export function previewModuleSessionPlan(input: { calendarPolicy?: DeliveryCalendarPolicy | null; startDate?: string; endDate?: string; numberOfSessions?: number; sessionsNumber?: number; weeksNumber?: number; scheduleMode?: 'group' | 'custom'; weekStartsOn?: string | null; weeklySchedule?: CurriculumWeeklySession[]; weekDays?: string | string[]; deliveryDays?: string | string[]; holidays?: unknown[] }) {
+export function previewModuleSessionPlan(input: { calendarPolicy?: DeliveryCalendarPolicy | null; startDate?: string; endDate?: string; numberOfSessions?: number; sessionsNumber?: number; weeksNumber?: number; scheduleMode?: 'group' | 'custom'; weekStartsOn?: string | null; weekBoundaryMode?: 'calendar' | null; weeklySchedule?: CurriculumWeeklySession[]; weekDays?: string | string[]; deliveryDays?: string | string[]; holidays?: unknown[] }) {
   return postJson<CurriculumSessionPlanPreview>('/curriculum/preview/module-session-plan/', input);
 }
 
@@ -4932,6 +4945,7 @@ export interface CurriculumTutorAvailabilityInput {
   endDate?: string;
   scheduleMode?: 'group' | 'custom';
   weekStartsOn?: string | null;
+  weekBoundaryMode?: 'calendar' | null;
   weeksNumber?: number;
   /** The destination group supplies delivery days and times when moving a course. */
   groupId?: string;
