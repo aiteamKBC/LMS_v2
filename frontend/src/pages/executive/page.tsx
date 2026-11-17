@@ -244,6 +244,7 @@ export default function ExecutiveOverview() {
 
       <div className={styles.filters}>
       <FilterBar
+        collapsible
         filters={filters}
         onChange={onChange}
         onReset={() => setFilters(DEFAULT_FILTERS)}

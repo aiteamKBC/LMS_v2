@@ -1,0 +1,10 @@
+/* Keep the shared focus outline from framing the interactive chart surface. */
+.chart :global(.recharts-surface):focus {
+  outline: none !important;
+}
+
+/* Retain a keyboard focus cue alongside Recharts' active point and tooltip. */
+.chart:has(:global(.recharts-surface):focus-visible) > ul {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}

@@ -34,14 +34,15 @@
 
 .searchInput.searchInput,
 .searchInput.searchInput.searchInput:focus {
-  border: 0 !important;
+  border: 1px solid oklch(var(--background-300)) !important;
   background: oklch(var(--background-50));
   box-shadow: none !important;
   outline: none !important;
 }
 
-/* Preserve a focus cue without bringing back the search field's frame. */
+/* Highlight the search field's frame for keyboard and pointer focus. */
 .searchInput.searchInput.searchInput:focus {
+  border-color: oklch(var(--primary-400)) !important;
   background: oklch(var(--primary-50)) !important;
 }
 

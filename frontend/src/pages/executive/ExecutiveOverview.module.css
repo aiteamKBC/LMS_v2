@@ -115,12 +115,14 @@
 }
 
 .filters > section { padding: 20px; }
-.filters > section > div:first-child { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
+.filters > section > [data-filter-fields] { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
 .filters label { margin-bottom: 7px; font-size: 10px; letter-spacing: .06em; }
 .filters :is(select, input) { min-height: 40px; border-radius: 9px; }
 
 .kpiGrid { display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); gap: 16px; }
 .kpiGrid > div { grid-column: span 3; min-width: 0; border-radius: 14px; padding: 20px; box-shadow: none !important; }
+/* Keep the four headline cards outlined over the shared dashboard card theme. */
+.kpiGrid > div:nth-child(-n + 4) { border: 1px solid oklch(var(--primary-200)) !important; }
 .kpiGrid > div > div:first-child > p { font-size: 10px; line-height: 1.6; letter-spacing: .065em; }
 .kpiGrid > div > div:first-child > span { width: 34px; height: 34px; border-radius: 11px; }
 .kpiGrid > div > div:nth-child(2) > span:first-child { font-size: 36px; font-variant-numeric: tabular-nums; }
@@ -163,8 +165,8 @@
 :global([data-theme='dark']) .eyebrow { color: oklch(var(--foreground-700)); }
 
 @container (min-width: 1200px) {
-  .filters > section > div:first-child { grid-template-columns: repeat(5, minmax(0, 1fr)); }
-  .filters > section > div:first-child > div:last-child { grid-column: span 2; }
+  .filters > section > [data-filter-fields] { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+  .filters > section > [data-filter-fields] > div:last-child { grid-column: span 2; }
 }
 
 @container (min-width: 1000px) {
@@ -188,8 +190,8 @@
 
 @container (max-width: 540px) {
   .filters > section { padding: 16px; }
-  .filters > section > div:first-child { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px 10px; }
-  .filters > section > div:first-child > div:last-child { grid-column: 1 / -1; }
+  .filters > section > [data-filter-fields] { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px 10px; }
+  .filters > section > [data-filter-fields] > div:last-child { grid-column: 1 / -1; }
   .heroActions { width: 100%; }
   .heroActions > button { flex: 1; padding-inline: 10px; font-size: 11px; }
   .kpiGrid { gap: 10px; }

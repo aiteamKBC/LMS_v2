@@ -21,6 +21,49 @@ const filters: DashboardFilters = {
   query: '',
 };
 
+it('opens filters by keyboard, keeps selections when collapsed and resets while closed', async () => {
+  const user = userEvent.setup();
+  function Harness() {
+    const [value, setValue] = useState(filters);
+    return <FilterBar collapsible filters={value} fields={['period', 'query']}
+      onChange={patch => setValue(current => ({ ...current, ...patch }))}
+      onReset={() => setValue(filters)} resultCount={7} />;
+  }
+  render(<Harness />);
+  const toggle = screen.getByRole('button', { name: 'Filters' });
+  const panel = document.getElementById(toggle.getAttribute('aria-controls')!);
+  expect(toggle).toHaveAttribute('aria-expanded', 'false');
+  expect(panel).not.toBeVisible();
+  expect(screen.queryByRole('combobox')).not.toBeInTheDocument();
+  expect(screen.queryByRole('searchbox')).not.toBeInTheDocument();
+  expect(screen.getByText('records in scope', { exact: false })).toBeVisible();
+
+  await user.tab();
+  expect(toggle).toHaveFocus();
+  await user.keyboard('{Enter}');
+  expect(toggle).toHaveAttribute('aria-expanded', 'true');
+  expect(panel).toBeVisible();
+  await user.tab();
+  expect(screen.getByRole('combobox', { name: 'Reporting period' })).toHaveFocus();
+  await user.click(screen.getByRole('combobox', { name: 'Reporting period' }));
+  await user.click(screen.getByRole('option', { name: 'Last 30 days' }));
+  await user.type(screen.getByRole('searchbox'), 'reference');
+  await user.click(toggle);
+  expect(panel).not.toBeVisible();
+  expect(screen.getByText(/2 filters applied/)).toBeVisible();
+
+  await user.keyboard(' ');
+  expect(screen.getByRole('combobox', { name: 'Reporting period' })).toHaveTextContent('Last 30 days');
+  expect(screen.getByRole('searchbox')).toHaveValue('reference');
+  await user.click(toggle);
+  await user.click(screen.getByRole('button', { name: 'Reset filters' }));
+  expect(toggle).toHaveAttribute('aria-expanded', 'false');
+  expect(screen.getByRole('button', { name: 'Reset filters' })).toBeDisabled();
+  await user.click(toggle);
+  expect(screen.getByRole('combobox', { name: 'Reporting period' })).toHaveTextContent('Last 12 months');
+  expect(screen.getByRole('searchbox')).toHaveValue('');
+});
+
 it('keeps the existing periods and changes only the selected period', async () => {
   const user = userEvent.setup();
   const onChange = vi.fn();

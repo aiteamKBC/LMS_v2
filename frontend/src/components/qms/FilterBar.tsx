@@ -1,3 +1,4 @@
+import { useId, useState } from "react";
 import { PERIODS, RAG_META, RAG_ORDER, formatNumber } from "@/lib/qms";
 import type { DashboardFilters } from "@/types/qms";
 import { SelectMenu, type SelectMenuProps } from "@/components/feature/SelectField";
@@ -38,6 +39,7 @@ interface FilterBarProps {
   tutors?: string[];
   searchLabel?: string;
   searchPlaceholder?: string;
+  collapsible?: boolean;
 }
 
 function Label({ htmlFor, children }: { htmlFor: string; children: string }) {
@@ -80,7 +82,10 @@ export default function FilterBar({
   tutors = [],
   searchLabel = "Search",
   searchPlaceholder = "Coach, learner, form or record reference",
+  collapsible = false,
 }: FilterBarProps) {
+  const [expanded, setExpanded] = useState(false);
+  const panelId = useId();
   const activeCount = [
     filters.period !== "Last 12 months",
     filters.department !== "All departments",
@@ -98,9 +103,48 @@ export default function FilterBar({
   return (
     <section
       aria-label="Global filters"
-      className="rounded-xl border border-background-200 bg-background-50 p-3 sm:p-4"
+      className="flex flex-col rounded-xl border border-background-200 bg-background-50 p-3 sm:p-4"
     >
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-6">
+      <div className={`flex flex-wrap items-center gap-3 text-[12px] text-foreground-600 ${collapsible ? "" : "order-last mt-3 border-t border-background-200 pt-2.5"}`}>
+        {collapsible ? (
+          <button
+            type="button"
+            aria-expanded={expanded}
+            aria-controls={panelId}
+            onClick={() => setExpanded(value => !value)}
+            className="inline-flex min-h-10 items-center gap-2 rounded-lg bg-primary-50 px-3 py-2 font-label text-[12.5px] font-semibold text-primary-700 transition-colors hover:bg-primary-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-600"
+          >
+            <i className="ri-filter-3-line text-[16px]" aria-hidden="true" />
+            Filters
+            <i className={expanded ? "ri-arrow-up-s-line" : "ri-arrow-down-s-line"} aria-hidden="true" />
+          </button>
+        ) : null}
+        <p className={collapsible ? "order-last min-w-0 basis-full sm:order-none sm:flex-1 sm:basis-0" : "min-w-0 flex-1 basis-full sm:basis-0"}>
+          <span className="font-semibold text-foreground-900">{formatNumber(resultCount)}</span>{" "}
+          {resultLabel}
+          {activeCount > 0 ? (
+            <span className="ml-2 text-foreground-500">
+              · {activeCount} filter{activeCount > 1 ? "s" : ""} applied
+            </span>
+          ) : null}
+        </p>
+        <button
+          type="button"
+          onClick={onReset}
+          disabled={activeCount === 0}
+          className="inline-flex w-fit items-center gap-1.5 rounded-md border border-background-300 px-2.5 py-1 font-label text-[11.5px] font-medium text-foreground-700 transition-colors hover:bg-background-50 disabled:cursor-not-allowed disabled:opacity-45"
+        >
+          <i className="ri-refresh-line text-[13px]" aria-hidden="true" />
+          Reset filters
+        </button>
+      </div>
+
+      <div
+        id={panelId}
+        data-filter-fields
+        hidden={collapsible && !expanded}
+        className={`${collapsible && !expanded ? "hidden" : "grid"} grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-6 ${collapsible ? "mt-3 border-t border-background-200 pt-3" : ""}`}
+      >
         {fields.includes("period") ? (
           <div className="min-w-0">
             <Label htmlFor="filter-period">Reporting period</Label>
@@ -262,27 +306,6 @@ export default function FilterBar({
             </div>
           </div>
         ) : null}
-      </div>
-
-      <div className="mt-3 flex flex-col gap-2 border-t border-background-200 pt-2.5 text-[12px] text-foreground-600 sm:flex-row sm:items-center sm:justify-between">
-        <p>
-          <span className="font-semibold text-foreground-900">{formatNumber(resultCount)}</span>{" "}
-          {resultLabel}
-          {activeCount > 0 ? (
-            <span className="ml-2 text-foreground-500">
-              · {activeCount} filter{activeCount > 1 ? "s" : ""} applied
-            </span>
-          ) : null}
-        </p>
-        <button
-          type="button"
-          onClick={onReset}
-          disabled={activeCount === 0}
-          className="inline-flex w-fit items-center gap-1.5 rounded-md border border-background-300 px-2.5 py-1 font-label text-[11.5px] font-medium text-foreground-700 transition-colors hover:bg-background-50 disabled:cursor-not-allowed disabled:opacity-45"
-        >
-          <i className="ri-refresh-line text-[13px]" aria-hidden="true" />
-          Reset filters
-        </button>
       </div>
     </section>
   );

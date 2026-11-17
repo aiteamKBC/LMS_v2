@@ -28,6 +28,8 @@ export default function LearnerFeedbackFormPage() {
   const learnerKind = isLearner ? account.learnerType || 'apprenticeship' : resolved.kind;
   const viewerReadOnly = Boolean(account && !isLearner);
   const [form, setForm] = useState<FeedbackForm | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState('');
   const [answers, setAnswers] = useState<Record<string, FeedbackAnswerValue>>({});
   const answersRef = useRef<Record<string, FeedbackAnswerValue>>({});
   const [step, setStep] = useState(0);
@@ -40,19 +42,34 @@ export default function LearnerFeedbackFormPage() {
   const autoSaveChain = useRef<Promise<void>>(Promise.resolve());
 
   useEffect(() => {
-    if (!isInitialized || (!formId && !deliveryId && !reviewDeliveryId) || (viewerReadOnly && !learnerId)) return;
+    if (!isInitialized || (viewerReadOnly && !learnerId)) return;
+    if (!formId && !deliveryId && !reviewDeliveryId) {
+      setLoading(false);
+      return;
+    }
+    let active = true;
+    setLoading(true);
+    setLoadError('');
     const previewLearner = viewerReadOnly ? learnerId : undefined;
     const load = eventRecipientId && formId
       ? feedbackApi.myEventForm(eventRecipientId, Number(formId), previewLearner)
       : reviewDeliveryId ? feedbackApi.myReviewDelivery(Number(reviewDeliveryId), previewLearner)
         : deliveryId ? feedbackApi.myDelivery(Number(deliveryId), previewLearner) : feedbackApi.myForm(Number(formId), previewLearner);
     load.then(({ form: loaded }) => {
+      if (!active) return;
+      if (!loaded) throw new Error('This feedback form is unavailable.');
       setForm(loaded);
       const loadedAnswers = loaded.response?.answers || {};
       answersRef.current = loadedAnswers;
       setAnswers(loadedAnswers);
       setComplete(loaded.response?.status === 'completed');
-    }).catch(error => void Swal.fire({ icon: 'error', title: 'Could not open form', text: error.message }));
+    }).catch(error => {
+      if (!active) return;
+      const message = error instanceof Error ? error.message : 'This feedback form is unavailable.';
+      setLoadError(message);
+      void Swal.fire({ icon: 'error', title: 'Could not open form', text: message });
+    }).finally(() => { if (active) setLoading(false); });
+    return () => { active = false; };
   }, [deliveryId, eventRecipientId, formId, isInitialized, learnerId, reviewDeliveryId, viewerReadOnly]);
 
   useEffect(() => () => {
@@ -149,7 +166,8 @@ export default function LearnerFeedbackFormPage() {
           onBack={() => { setStep(step - 1); setInvalidQuestionIds(new Set()); }} onNext={nextStep}
           onSubmit={() => void save(true)} submitting={saving}
           footerStatus={!viewerReadOnly && form.allowSaveContinue ? <span aria-live="polite" className={`text-[11px] font-medium ${autoSaveStatus === 'error' ? 'text-red-600' : 'text-foreground-400'}`}>{autoSaveStatus === 'pending' || autoSaveStatus === 'saving' ? 'Saving…' : autoSaveStatus === 'saved' ? 'All changes saved' : autoSaveStatus === 'error' ? 'Automatic save failed' : ''}</span> : null} />
-      </div> : <p className="text-center text-sm text-foreground-400"><LoadingSkeleton label={"Loading form…"} /></p>}
+      </div> : loading ? <p className="text-sm text-foreground-400"><LoadingSkeleton label="Loading form…" /></p>
+        : <p role="alert" className="text-sm text-red-600">{loadError || 'This feedback form is unavailable.'}</p>}
     </div>
   </WorkspaceShell>;
 }

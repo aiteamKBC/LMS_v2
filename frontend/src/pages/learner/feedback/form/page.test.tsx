@@ -47,6 +47,22 @@ describe('learner feedback automatic save', () => {
     } });
   });
 
+  it('ends the loading placeholder when the form request fails', async () => {
+    vi.mocked(feedbackApi.myForm).mockRejectedValueOnce(new Error('Feedback service unavailable'));
+    render(<MemoryRouter initialEntries={['/learner/feedback/4']}><Routes><Route path="/learner/feedback/:formId" element={<LearnerFeedbackFormPage />} /></Routes></MemoryRouter>);
+    expect(await screen.findByRole('alert')).toHaveTextContent('Feedback service unavailable');
+    expect(screen.queryByRole('status', { name: 'Loading form…' })).not.toBeInTheDocument();
+    expect(feedbackApi.saveResponse).not.toHaveBeenCalled();
+  });
+
+  it('ends the loading placeholder when no feedback form is returned', async () => {
+    vi.mocked(feedbackApi.myForm).mockResolvedValueOnce({ form: null });
+    render(<MemoryRouter initialEntries={['/learner/feedback/4']}><Routes><Route path="/learner/feedback/:formId" element={<LearnerFeedbackFormPage />} /></Routes></MemoryRouter>);
+    expect(await screen.findByRole('alert')).toHaveTextContent('This feedback form is unavailable.');
+    expect(screen.queryByRole('status', { name: 'Loading form…' })).not.toBeInTheDocument();
+    expect(feedbackApi.saveResponse).not.toHaveBeenCalled();
+  });
+
   it.each(['mid_module', 'end_module'] as const)('submits %s using the owned delivery', async formType => {
     vi.mocked(feedbackApi.myDelivery).mockResolvedValue({ form: { ...form, formType, title: 'Module feedback' } });
     vi.mocked(feedbackApi.saveDeliveryResponse).mockResolvedValue({ response: {
