@@ -46,6 +46,16 @@
           "group_name": null
         },
         "actualHours": 0,
+        "ksbProgress": {
+          "completed": null,
+          "total": null,
+          "percent": null,
+          "status": "unavailable",
+          "reason": "activity_points_missing",
+          "unmappedActivities": 1,
+          "mappedCompleted": 0,
+          "mappedTotal": 0
+        },
         "cover": null
       },
       {
@@ -69,6 +79,16 @@
           "group_name": null
         },
         "actualHours": 1.0,
+        "ksbProgress": {
+          "completed": null,
+          "total": null,
+          "percent": null,
+          "status": "unavailable",
+          "reason": "activity_points_missing",
+          "unmappedActivities": 2,
+          "mappedCompleted": 0,
+          "mappedTotal": 0
+        },
         "cover": "https://assets.example.test/cover.png"
       },
       {
@@ -83,6 +103,16 @@
         "nextTitle": "Previous material 2",
         "finalTestPassed": false,
         "planModule": null,
+        "ksbProgress": {
+          "completed": null,
+          "total": null,
+          "percent": null,
+          "status": "unavailable",
+          "reason": "activity_points_missing",
+          "unmappedActivities": 4,
+          "mappedCompleted": 0,
+          "mappedTotal": 0
+        },
         "actualHours": 2,
         "cover": null
       }

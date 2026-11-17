@@ -50,9 +50,10 @@ function displayDate(value: string, zone: string) {
   return { full, date: full.slice(0, separator), clock: full.slice(separator + 2) };
 }
 
-export function calendarReviewHtml(input: ReviewedCalendar, zone: string): string {
+export function calendarReviewHtml(input: ReviewedCalendar, zone: string, reviewSessionLimit = 52): string {
   const sessions = input.scheduledOccurrences || [];
-  if (!sessions.length || sessions.length > 52) throw new Error('Review between 1 and 52 session dates before sending.');
+  const limit = Math.max(52, Math.min(728, Math.floor(Number(reviewSessionLimit) || 52)));
+  if (!sessions.length || sessions.length > limit) throw new Error(`Review between 1 and ${limit} session dates before sending.`);
   const email = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
   const people = [input.organizerEmail, ...(input.attendees || []), ...(input.presenters || []), ...(input.coOrganizers || [])];
   if (people.some(value => !email.test(value))) throw new Error('Check the organizer and invitation email addresses.');
@@ -147,8 +148,8 @@ export function calendarReviewHtml(input: ReviewedCalendar, zone: string): strin
   </div>`;
 }
 
-export async function reviewCalendar(input: ReviewedCalendar, zone: string): Promise<CalendarReviewChoice> {
-  const html = calendarReviewHtml(input, zone);
+export async function reviewCalendar(input: ReviewedCalendar, zone: string, reviewSessionLimit = 52): Promise<CalendarReviewChoice> {
+  const html = calendarReviewHtml(input, zone, reviewSessionLimit);
   const notifyAttendees = Boolean(input.notifyOnUpdate);
   const result = await Swal.fire({
     title: 'Review Teams calendar', html, width: 1120, input: 'checkbox',

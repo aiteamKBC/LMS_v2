@@ -46,11 +46,13 @@ def catalogue_module_rows(cur, ids, *, identity_metadata):
     from .training_plan_dashboard import rows, plan_module, is_educational_live_session_week
     from .student_activity import _builder_cover_url
     from .subject_origins import imported_course_links
-    cur.execute(read_sql('''SELECT m.module_catalogue_id AS id,m.title,m.cover_image_url,
+    from .builder_activity_dates import STUDY_WEEK_SCHEDULE_SQL
+    cur.execute(read_sql(f'''SELECT m.module_catalogue_id AS id,m.title,m.cover_image_url,
         m.start_date,m.end_date,m.tutor_name,m.programme_id,m.programme_name,
         m.cohort_name,m.group_name,m.total_otjh,m.sessions_number,m.source_type,m.source_id,
         m.session_week_day,m.session_start_time,m.session_end_time,m.cohort_id,
-        to_jsonb(m)->'session_overrides' AS session_overrides
+        to_jsonb(m)->'session_overrides' AS session_overrides,
+        {STUDY_WEEK_SCHEDULE_SQL} AS study_schedule
         FROM curriculum.modules m WHERE m.module_catalogue_id=ANY(%s)
           AND (m.deleted_at IS NULL OR COALESCE(m.deleted_via_parent,'')<>'')
         ORDER BY m.title''', cur.db),[ids])
@@ -225,7 +227,7 @@ def next_title(items, today):
     return next((i['title'] for i in entries if not i['completed']), None)
 
 
-def assemble_cards(native, current, courses, definitions, done, started, hours, metadata, records, modules, credits, *, search=None, include_activity_items=False, show_current_replacements=False):
+def assemble_cards(native, current, courses, definitions, done, started, hours, metadata, records, modules, credits, *, search=None, include_activity_items=False, show_current_replacements=False, ksb_mappings=None):
     """Programme-wide counts with the same explicit import/replacement identities as My Learning."""
     from .progress_transfer_policy import merged_percent
     from .progress_demo import credit as demo_credit
@@ -402,6 +404,9 @@ def assemble_cards(native, current, courses, definitions, done, started, hours, 
             subject['actualHours'] = round(transfer['hours'] + (native_hours.get(subject.get('moduleId'), {}).get('hours', {}).get('actual') or 0), 6)
             # Keep the component-derived status, including a started native
             # attempt with no completed components yet (0% is not "Upcoming").
+        if ksb_mappings is not None:
+            from .my_learning_ksbs import card_ksb_progress
+            subject['ksbProgress'] = card_ksb_progress(items, ksb_mappings)
         if include_activity_items:
             # Internal curriculum-directory projection of this exact population.
             # Bodies, evidence and resource URLs never leave the reader.
@@ -557,9 +562,14 @@ def read_catalogue(source, kind, owner, *, upcoming_only=False):
     from .subject_store import covers_for
     assigned, ids, records, native, courses, definitions, done, started, hours, metadata, credits = load_context(source, owner)
     modules = metadata['modules']
+    ksb_mappings = None
+    if not upcoming_only:
+        from .my_learning_ksbs import read_card_ksb_mappings
+        with projection_stage('card_ksbs'):
+            ksb_mappings = read_card_ksb_mappings(owner, native, metadata['record_ids'])
     with projection_stage('card_aggregation'):
         cards, summary = assemble_cards(native, metadata['current_subjects'], courses, definitions, done, started, hours, metadata, records, modules, credits,
-                                       show_current_replacements=True)
+                                       show_current_replacements=True, ksb_mappings=ksb_mappings)
         # Standalone assignments open from Free courses. Keep their ownership,
         # content and actual-hours records intact; this is only the My courses list.
         free_ids = set(metadata.get('free_course_module_ids', []))

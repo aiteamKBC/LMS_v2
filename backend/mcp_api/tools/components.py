@@ -15,6 +15,7 @@ from ..changes import Validation, WriteTool, register_write_tool
 from ..dispatch import COMPONENT_CREATE_PATH, call_api
 from ..settings import component_creation_enabled
 from . import ToolError
+from .fields import DETAIL_FIELDS, DURATION, MEDIA_URL, SETTINGS, requested_details, requested_settings
 from .read import CURRICULUM, _archived, _programme_by_id
 
 NAME = "create_curriculum_component"
@@ -36,6 +37,9 @@ DEFAULTS = {
     "coaching-preparation": (0.5, 10, True, True),
 }
 
+#: Detail fields beyond title, description, hours and points (which create takes directly).
+EXTRA_DETAILS = ("reflection_required", "reflection_question", "tutor_validation_required",
+                 "coach_validation_required")
 
 #: Stands in for the programme of a free-course module (``source_type = 'free_course'``),
 #: which belongs to none. It has no KSB standard, so KSB tools refuse free courses.
@@ -195,9 +199,13 @@ def confirmed_component(status, data, body):
 
 
 def _body(payload):
-    return component_body(payload["target"], payload["type"], payload["title"], payload["description"],
+    body = component_body(payload["target"], payload["type"], payload["title"], payload["description"],
                           DEFAULTS[payload["type"]], hours=payload.get("expected_otjh"),
-                          points=payload.get("points"))
+                          points=payload.get("points"), settings=payload.get("component_settings"))
+    body.update(payload.get("details") or {})
+    if "duration_minutes" in payload:
+        body["duration"] = payload["duration_minutes"]  # the save stores it as settings.durationMinutes
+    return body
 
 
 @contextmanager
@@ -236,11 +244,15 @@ def _locked_parents(target):
 class CreateComponent(LiveModuleWarning, WriteTool):
     name = NAME
     description = (
-        "Preview creation of one non-Teams content component in an existing draft module and week. "
-        "Look up programme/module/week ids first. Supported types are listed in the type field; Teams, "
-        "recordings and retired workplace-evidence are excluded. This creates a draft container, not quiz "
-        "questions or media. After confirmation use apply_change; it returns component_id. For a video, "
-        "pass that id to save_curriculum_video. Never invent parent ids or create a second matching title."
+        "Preview creation of one non-Teams content component in an existing draft module and week, filled in as "
+        "the LMS's add-component form would be: title, description, expected OTJ hours, points, duration_minutes, "
+        "reflection and validation options, and any of the type's settings (settings: setting name to value; "
+        "get_component on a component of the same type lists them and the kind of value each takes). media_url "
+        "sets a Podcast's episode link or a Video's YouTube link. Look up programme/module/week ids first. Teams, "
+        "recordings and retired workplace-evidence are excluded. Quiz questions, lesson text, files and MP4 videos "
+        "are added afterwards with their own tools. After confirmation use apply_change; it returns component_id. "
+        "For an MP4 video, pass that id to save_curriculum_video. Never invent parent ids or create a second "
+        "matching title."
     )
     input_schema = {"type": "object", "properties": {
         "programme_id": ID, "module_id": ID, "week_id": ID,
@@ -249,6 +261,8 @@ class CreateComponent(LiveModuleWarning, WriteTool):
         "description": {"type": "string", "maxLength": 10000},
         "expected_otjh": {"type": "number", "minimum": 0},
         "points": {"type": "integer", "minimum": 0},
+        **{arg: schema for arg, _, schema in DETAIL_FIELDS if arg in EXTRA_DETAILS},
+        "duration_minutes": DURATION, "media_url": MEDIA_URL, "settings": SETTINGS,
     }, "required": ["module_id", "week_id", "type", "title"], "additionalProperties": False}
 
     def validate(self, request, arguments):
@@ -261,14 +275,19 @@ class CreateComponent(LiveModuleWarning, WriteTool):
             raise ToolError("Give the component a title.")
         if not math.isfinite(arguments.get("expected_otjh", 0)):
             raise ToolError("Expected OTJH must be a finite non-negative number.")
+        details = requested_details({key: arguments[key] for key in ("description", *EXTRA_DETAILS)
+                                     if key in arguments})
         target = _target(request, {**arguments, "title": title})
         defaults = DEFAULTS[arguments["type"]]
         payload = {
-            **{key: arguments[key] for key in ("module_id", "week_id", "type")},
+            # The tool's own inputs, so apply's re-validation reproduces this payload exactly.
+            **{key: arguments[key] for key in ("module_id", "week_id", "type", "duration_minutes", "media_url",
+                                               "settings", *EXTRA_DETAILS) if key in arguments},
             "programme_id": str(arguments.get("programme_id") or "").strip(),
-            "title": title, "description": arguments.get("description", "").strip(),
+            "title": title, "description": details.pop("description", ""),
             "expected_otjh": arguments.get("expected_otjh", defaults[0]),
             "points": arguments.get("points", defaults[1]), "target": target,
+            "component_settings": requested_settings(arguments["type"], arguments), "details": details,
         }
         payload["body"] = _body(payload)
         errors = validate_component_authoring_payload(payload["body"], "component")
@@ -282,8 +301,10 @@ class CreateComponent(LiveModuleWarning, WriteTool):
                 **target, "type": payload["type"], "title": payload["title"], "description": payload["description"],
                 "expected_otjh": body["expectedOtjh"], "points": body["points"],
                 "reflection_required": body["reflectionRequired"], "reflection_question": body["reflectionQuestion"],
-                "tutor_validation_required": body["tutorValidationRequired"], "coach_validation_required": True,
-                "content_status": "Draft", "settings": body["settings"],
+                "tutor_validation_required": body["tutorValidationRequired"],
+                "coach_validation_required": body["coachValidationRequired"],
+                "content_status": "Draft", "duration_minutes": body["duration"], "settings": body["settings"],
+                "settings_you_set": payload["component_settings"],
                 "content_note": "Creates a draft container. Add media or questions separately; nothing is published.",
             },
         }

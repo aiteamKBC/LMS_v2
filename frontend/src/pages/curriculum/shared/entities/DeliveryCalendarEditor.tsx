@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { importCountryCalendar, type CurriculumHoliday, type DeliveryCalendarPolicy } from '@/lib/curriculumApi';
 import { CALENDAR_COUNTRIES, CALENDAR_DAYS, calendarPreset, effectiveCalendarHolidays } from './deliveryCalendar';
 
@@ -22,6 +22,9 @@ export function DeliveryCalendarEditor(props: Props) {
   const [manualName, setManualName] = useState('');
   const [manualStart, setManualStart] = useState('');
   const [manualEnd, setManualEnd] = useState('');
+  const [showExtraHoliday, setShowExtraHoliday] = useState(false);
+  const extraHolidayId = useId();
+  const extraHolidayToggle = useRef<HTMLButtonElement>(null);
   const callbacks = useRef(props);
   callbacks.current = props;
   const inherited = value === null && module;
@@ -66,7 +69,13 @@ export function DeliveryCalendarEditor(props: Props) {
         ? { ...policy, excludedHolidayIds: [...new Set([...policy.excludedHolidayIds, ...(inheritedExcludedIds || []).map(String)])] }
         : null)}>{inherited ? 'Customize this module' : 'Use cohort calendar'}</button>}
     </div>
-    {inherited ? <p className="text-xs text-foreground-600">Using the cohort calendar: {label}. Weekly rest days: {policy.weekendDays.join(', ') || 'None'}.</p>
+    <p className="text-xs text-foreground-600">{module
+      ? 'Teaching days and times come from the Group, unless you choose a Custom weekly schedule. This section sets days off.'
+      : 'Groups set teaching days and times. Modules inherit these holiday settings unless customized.'}</p>
+    {inherited ? <>
+      <p className="text-xs text-foreground-600">Using the cohort calendar: {label}. Weekly rest days: {policy.weekendDays.join(', ') || 'None'}.</p>
+      <p className="text-xs text-foreground-500">Edit the cohort calendar for shared changes. Customize this module only if it needs different days off.</p>
+    </>
       : <>
         <label className="block text-xs font-semibold">Country
           <select className="mt-1 w-full rounded-lg border border-background-300 bg-white p-2 text-sm" value={policy.country}
@@ -76,6 +85,7 @@ export function DeliveryCalendarEditor(props: Props) {
         </label>
         <fieldset>
           <legend className="text-xs font-semibold">Weekly rest days — confirm or change</legend>
+          <p className="mt-1 text-xs text-foreground-500">Select days off each week. Public holidays are separate, and the Group timetable stays unchanged.</p>
           <div className="mt-2 flex flex-wrap gap-3">{CALENDAR_DAYS.map(day => <label key={day} className="flex items-center gap-1 text-xs">
             <input type="checkbox" checked={policy.weekendDays.includes(day)} onChange={() => update({ weekendDays: policy.weekendDays.includes(day)
               ? policy.weekendDays.filter(item => item !== day) : [...policy.weekendDays, day] })} />{day}
@@ -83,33 +93,43 @@ export function DeliveryCalendarEditor(props: Props) {
         </fieldset>
         <label className="flex items-center gap-2 text-xs"><input type="checkbox" checked={policy.observePublicHolidays}
           onChange={event => update({ observePublicHolidays: event.target.checked })} />Apply public holidays</label>
+        <p className="text-xs text-foreground-500">Apply official holiday dates for {label}, separately from weekly rest days and extra holidays.</p>
       </>}
     {foreign && !requestKey && <p className="text-xs text-amber-700">Set the start and end dates to load the required holiday years.</p>}
     {requestKey && !ready && !error && <p role="status" className="text-xs">Loading the saved country calendar…</p>}
     {error && <p role="alert" className="text-xs text-red-700">{error} Change the country/dates or retry from Holiday Calendars.</p>}
     {!inherited && value !== null && <>
       <fieldset className="max-h-48 space-y-2 overflow-y-auto">
-        <legend className="text-xs font-semibold">Holidays — untick a date to allow teaching</legend>
+        <legend className="text-xs font-semibold">Public and extra holidays</legend>
+        <p className="text-xs text-foreground-500">Selected dates are days off. Untick a date if teaching should go ahead.</p>
         {[...rows, ...policy.manualHolidays].map(row => <label key={String(row.id)} className="flex items-start gap-2 text-xs">
           <input type="checkbox" checked={!policy.excludedHolidayIds.includes(String(row.id)) && (policy.observePublicHolidays || row.source === 'authored')}
             disabled={!policy.observePublicHolidays && row.source !== 'authored'} onChange={() => toggleHoliday(String(row.id))} />
-          <span>{row.startDate}{row.endDate !== row.startDate ? ` – ${row.endDate}` : ''}: {row.label} ({row.source === 'authored' ? 'Manual' : 'Public'})</span>
+          <span>{row.startDate}{row.endDate !== row.startDate ? ` – ${row.endDate}` : ''}: {row.label} ({row.source === 'authored' ? 'Extra holiday' : 'Public holiday'})</span>
           {row.source === 'authored' && policy.manualHolidays.some(item => item.id === row.id) && <button type="button" className="ml-auto text-red-700"
             aria-label={`Remove ${row.label}`} onClick={() => update({ manualHolidays: policy.manualHolidays.filter(item => item.id !== row.id) })}>Remove</button>}
         </label>)}
       </fieldset>
-      <fieldset className="space-y-2">
-        <legend className="text-xs font-semibold">Add a manual closure for this {module ? 'module' : 'cohort'}</legend>
-        <label className="block text-xs">Closure name<input className="mt-1 w-full rounded-lg border p-2" value={manualName} onChange={event => setManualName(event.target.value)} /></label>
+      <button ref={extraHolidayToggle} type="button" className="text-xs font-semibold text-primary-700"
+        aria-expanded={showExtraHoliday} aria-controls={extraHolidayId} onClick={() => setShowExtraHoliday(!showExtraHoliday)}>
+        {showExtraHoliday ? 'Hide extra holiday form' : 'Add an extra holiday (optional)'}
+      </button>
+      <div id={extraHolidayId} hidden={!showExtraHoliday}>{showExtraHoliday && <fieldset className="space-y-2">
+        <legend className="text-xs font-semibold">Extra holiday for this {module ? 'module' : 'cohort'} (optional)</legend>
+        <p className="text-xs text-foreground-500">Use this for a one-off break, such as a college break. Leave it empty if no extra holiday is needed.</p>
+        <label className="block text-xs">Holiday name<input className="mt-1 w-full rounded-lg border p-2" placeholder="e.g. College break" value={manualName} onChange={event => setManualName(event.target.value)} /></label>
         <div className="flex gap-2">
-          <label className="text-xs">From<input type="date" className="block rounded-lg border p-2" value={manualStart} onChange={event => setManualStart(event.target.value)} /></label>
-          <label className="text-xs">To (optional)<input type="date" className="block rounded-lg border p-2" value={manualEnd} min={manualStart} onChange={event => setManualEnd(event.target.value)} /></label>
+          <label className="text-xs">First day off<input type="date" className="block rounded-lg border p-2" value={manualStart} onChange={event => setManualStart(event.target.value)} /></label>
+          <label className="text-xs">Last day off (optional)<input type="date" className="block rounded-lg border p-2" value={manualEnd} min={manualStart} onChange={event => setManualEnd(event.target.value)} /></label>
         </div>
+        <p className="text-xs text-foreground-500">Leave the last day blank for a single day off.</p>
         <button type="button" className="text-xs font-semibold text-primary-700" disabled={!manualName.trim() || !manualStart || Boolean(manualEnd && manualEnd < manualStart)} onClick={() => {
           update({ manualHolidays: [...policy.manualHolidays, { id: `manual:${crypto.randomUUID()}`, label: manualName.trim(), startDate: manualStart, endDate: manualEnd || manualStart, source: 'authored' }] });
           setManualName(''); setManualStart(''); setManualEnd('');
-        }}>Add closure</button>
-      </fieldset>
+          setShowExtraHoliday(false);
+          extraHolidayToggle.current?.focus();
+        }}>Add holiday</button>
+      </fieldset>}</div>
     </>}
     {!module && value === null && <button type="button" className="text-xs font-semibold text-primary-700" onClick={() => onChange(policy)}>Customize England calendar</button>}
     {!module && value !== null && <button type="button" className="text-xs font-semibold text-primary-700" onClick={() => onChange(null)}>Restore England default</button>}

@@ -1,4 +1,4 @@
-import { CALENDAR_DAYS, calendarSessionClashes } from './deliveryCalendar';
+import { CALENDAR_COUNTRIES, CALENDAR_DAYS, calendarSessionClashes } from './deliveryCalendar';
 import { DeliveryCalendarEditor } from './DeliveryCalendarEditor';
 import type { DeliveryCalendarPolicy } from '@/lib/curriculumApi';
 import { moduleFormTarget, type ModuleFormDeliveryRef, type ModuleFormTarget } from './moduleForm.helpers';
@@ -133,6 +133,7 @@ const MODULE_FIELD_LABELS: Record<string, string> = {
   coverImage: 'cover image',
   pricing: 'course pricing',
   calendarPolicy: 'delivery calendar',
+  selectedWeekStart: 'study week starts on',
 };
 
 const UNASSIGNED = 'unassigned';
@@ -285,6 +286,7 @@ export function ModuleFormDrawer({
   // "Book anyway" retry so the later groups attach to the same module rather
   // than each minting their own.
   const createdCatalogueId = useRef('');
+  const [selectedWeekStart, setSelectedWeekStart] = useState('');
   const [plan, setPlan] = useState<CurriculumSessionPlanPreview | null>(null);
   const [planFor, setPlanFor] = useState('');
   const seededPlanKey = useRef('');
@@ -318,7 +320,7 @@ export function ModuleFormDrawer({
   const liveValues = {
     name, programmeId, cohortId, groupIds, sessionsNumber, scheduleMode, sessionsPerWeek, weekDays,
     groupStartTime, groupEndTime, weeklyTimes, startDate, targetEndDate, tutor, status,
-    description, color, coverImage, deliveryPattern, pricing, calendarPolicy,
+    description, color, coverImage, deliveryPattern, pricing, calendarPolicy, selectedWeekStart,
   };
   const dirty = !sameFormValues(liveValues, baseline.current);
   const liveRef = useRef<Record<string, unknown>>(liveValues);
@@ -474,6 +476,7 @@ export function ModuleFormDrawer({
       coverImage: cleanText(record?.coverImage),
       pricing: { isForSale: record?.isForSale === true, price: record?.price ?? '' },
       calendarPolicy: record?.calendarPolicy || null,
+      selectedWeekStart: record?.weekBoundaryMode === 'calendar' ? record.weekStartsOn || '' : '',
     };
     if (isFreeCourse) {
       initial.programmeId = '';
@@ -521,6 +524,7 @@ export function ModuleFormDrawer({
     // touched it, theirs where they have, theirs plus a sentence where both
     // changed it. On a plain seed every one of these is the stored value, which
     // is exactly what it always was.
+    setSelectedWeekStart(coEdit.take(verdict, 'selectedWeekStart', initial.selectedWeekStart));
     setName(coEdit.take(verdict, 'name', initial.name));
     setProgrammeId(coEdit.take(verdict, 'programmeId', initial.programmeId));
     setCohortId(coEdit.take(verdict, 'cohortId', initial.cohortId));
@@ -609,6 +613,13 @@ export function ModuleFormDrawer({
   // the cohort's practical end date, and the sessions that overshoot still have
   // to step over the bank holidays they land on.
   const effectiveCalendarPolicy = calendarPolicy || selectedCohort?.calendarPolicy || null;
+  const restDays = effectiveCalendarPolicy?.weekendDays;
+  const usesEnglandRestDays = !effectiveCalendarPolicy || (effectiveCalendarPolicy.country === 'GB'
+    && restDays?.length === 2 && restDays.includes('Saturday') && restDays.includes('Sunday'));
+  const restDayCountry = effectiveCalendarPolicy?.country === 'GB' ? 'England'
+    : CALENDAR_COUNTRIES.find(([code]) => code === effectiveCalendarPolicy?.country)?.[1] || effectiveCalendarPolicy?.country;
+  const restDayHint = usesEnglandRestDays ? undefined
+    : `Weekly rest days for ${restDayCountry}: ${CALENDAR_DAYS.filter(day => restDays?.includes(day)).join(', ')}. Delivery on these days is unusual.`;
   const legacyCalendarHolidays = useMemo(() => holidaysForScheduling(holidays, selectedCohort?.startDate,
     calendarPolicy ? [] : selectedCohort?.excludedHolidayIds), [holidays, selectedCohort, calendarPolicy]);
   const cohortHolidays = useMemo(
@@ -687,12 +698,14 @@ export function ModuleFormDrawer({
     setGroupEndTime(groupPattern?.endTime || '');
   };
   const scheduleComplete = !selectedGroup || deliveryDaysPerWeek === Number(sessionsPerWeek);
+  const usesCalendarWeeks = !isFreeCourse && (!module || module.weekBoundaryMode === 'calendar');
+  const weekBoundaryMode = usesCalendarWeeks ? 'calendar' as const : undefined;
   const needsWeekStart = scheduleMode === 'custom' && Number(sessionsPerWeek) > 1;
-  const usesFirstSessionWeeks = needsWeekStart && (!module || Boolean(module.weekStartsOn)
+  const usesFirstSessionWeeks = !usesCalendarWeeks && needsWeekStart && (!module || Boolean(module.weekStartsOn)
     || scheduleMode !== baseline.current.scheduleMode || weekDays !== baseline.current.weekDays
     || startDate !== baseline.current.startDate);
-  const weekStartsOn = usesFirstSessionWeeks ? firstDeliveryWeekday(startDate, weekDays) : '';
-  const weekStartComplete = !usesFirstSessionWeeks || Boolean(weekStartsOn);
+  const weekStartsOn = usesCalendarWeeks ? selectedWeekStart : usesFirstSessionWeeks ? firstDeliveryWeekday(startDate, weekDays) : '';
+  const weekStartComplete = (!usesCalendarWeeks && !usesFirstSessionWeeks) || Boolean(weekStartsOn);
   const weeksEntered = Math.max(0, Number(sessionsNumber) || 0);
   const groupStartDate = cleanText(selectedGroup?.startDate) || cleanText(selectedCohort?.startDate);
   const groupTotalSessions = Math.round(weeksEntered * Math.max(1, groupWeeklySchedule.length));
@@ -701,8 +714,8 @@ export function ModuleFormDrawer({
   // was fetched for is compared against it below, so a plan left over from the
   // previous weeks value is never read as this one's answer.
   const planInputs = useMemo(
-    () => JSON.stringify([scheduleMode, needsWeekStart ? weekStartsOn : '', scheduleMode === 'custom' ? targetEndDate : '', startDate, totalSessions, weekDays, weeklySchedule, cohortHolidays.map(holiday => holiday.id), calendarPolicy]),
-    [calendarPolicy, cohortHolidays, scheduleMode, needsWeekStart, weekStartsOn, targetEndDate, startDate, totalSessions, weekDays, weeklySchedule],
+    () => JSON.stringify([scheduleMode, weekBoundaryMode, weekStartsOn, scheduleMode === 'custom' ? targetEndDate : '', startDate, totalSessions, weekDays, weeklySchedule, cohortHolidays.map(holiday => holiday.id), calendarPolicy]),
+    [calendarPolicy, cohortHolidays, scheduleMode, weekBoundaryMode, weekStartsOn, targetEndDate, startDate, totalSessions, weekDays, weeklySchedule],
   );
   useEffect(() => {
     if (!open || !startDate || weeksEntered <= 0 || !scheduleComplete || !weekStartComplete || !validWeeklyTimes) { setPlan(null); setPlanFor(''); setPlanLoading(false); return undefined; }
@@ -712,7 +725,7 @@ export function ModuleFormDrawer({
       previewModuleSessionPlan({
         startDate,
         numberOfSessions: totalSessions,
-        ...(scheduleMode === 'custom' ? { scheduleMode, weeksNumber: weeksEntered, endDate: targetEndDate || projectModuleEndDate(startDate, weeksEntered), ...(weekStartsOn ? { weekStartsOn } : {}) } : {}),
+        ...((scheduleMode === 'custom' || usesCalendarWeeks) ? { scheduleMode, weeksNumber: weeksEntered, endDate: targetEndDate || projectModuleEndDate(startDate, weeksEntered, usesCalendarWeeks ? weekStartsOn : ''), ...(weekStartsOn ? { weekStartsOn } : {}), weekBoundaryMode } : {}),
         weeklySchedule,
         weekDays,
         holidays: cohortHolidays,
@@ -723,14 +736,14 @@ export function ModuleFormDrawer({
         .finally(() => { if (active) setPlanLoading(false); });
     }, 300);
     return () => { active = false; clearTimeout(timer); };
-  }, [calendarPolicy, cohortHolidays, open, planInputs, scheduleComplete, weekStartComplete, needsWeekStart, weekStartsOn, totalSessions, startDate, weekDays, weeklySchedule, validWeeklyTimes, weeksEntered, scheduleMode, targetEndDate]);
+  }, [calendarPolicy, cohortHolidays, open, planInputs, scheduleComplete, weekStartComplete, needsWeekStart, usesCalendarWeeks, weekBoundaryMode, weekStartsOn, totalSessions, startDate, weekDays, weeklySchedule, validWeeklyTimes, weeksEntered, scheduleMode, targetEndDate]);
 
   // The module's own calendar span -- start date plus the whole weeks entered.
   // Independent of the generated session plan, which answers a different
   // question (where sessions land) and must never decide this field.
   const projectedEndDate = useMemo(
-    () => projectModuleEndDate(startDate, weeksEntered),
-    [startDate, weeksEntered],
+    () => projectModuleEndDate(startDate, weeksEntered, usesCalendarWeeks ? weekStartsOn : ''),
+    [startDate, weeksEntered, usesCalendarWeeks, weekStartsOn],
   );
   const calculatedEndDate = projectedEndDate || '';
   const manualEndDate = cleanText(targetEndDate);
@@ -739,7 +752,9 @@ export function ModuleFormDrawer({
   const endDate = manualEndDate || (weeksEntered > 0 ? calculatedEndDate || cleanText(module?.endDate) : '');
   // Either what the date is made of, or the backend's own sentence naming what
   // is still missing before it can be calculated.
-  const endDateHelper = endDate
+  const endDateHelper = usesCalendarWeeks && weekStartsOn && endDate
+    ? `${sessionsNumber} study week${Number(sessionsNumber) === 1 ? '' : 's'}. The opening partial week counts as week 1.${manualEndDate ? ' End date set by hand.' : ''}`
+    : endDate
     ? manualEndDate
       ? calculatedEndDate && calculatedEndDate !== manualEndDate
         ? `Set by hand. ${sessionsNumber} week${Number(sessionsNumber) === 1 ? '' : 's'} from the start date would put it at ${formatDateLabel(calculatedEndDate)}.`
@@ -776,11 +791,11 @@ export function ModuleFormDrawer({
   // These are the same fields the save uses.
   // ==========================================================================
   const conflictSlot = useMemo(() => (
-    (scheduleMode === 'custom' ? weeklySchedule.length > 0 && scheduleComplete && weekStartComplete && validWeeklyTimes && startDate && totalSessions > 0 : groupWeeklySchedule.length > 0 && groupStartDate && groupTotalSessions > 0)
+    (scheduleMode === 'custom' || usesCalendarWeeks ? weeklySchedule.length > 0 && scheduleComplete && weekStartComplete && validWeeklyTimes && startDate && totalSessions > 0 : groupWeeklySchedule.length > 0 && groupStartDate && groupTotalSessions > 0)
       ? {
-        startDate: scheduleMode === 'custom' ? startDate : groupStartDate,
-        sessionsNumber: scheduleMode === 'custom' ? totalSessions : groupTotalSessions,
-        ...(scheduleMode === 'custom' ? { scheduleMode, weeksNumber: weeksEntered, endDate, ...(weekStartsOn ? { weekStartsOn } : {}) } : {}),
+        startDate: scheduleMode === 'custom' || usesCalendarWeeks ? startDate : groupStartDate,
+        sessionsNumber: scheduleMode === 'custom' || usesCalendarWeeks ? totalSessions : groupTotalSessions,
+        ...((scheduleMode === 'custom' || usesCalendarWeeks) ? { scheduleMode, weeksNumber: weeksEntered, endDate, ...(weekStartsOn ? { weekStartsOn } : {}), weekBoundaryMode } : {}),
         weekDays: scheduleMode === 'custom' ? weekDays : groupPattern?.days || undefined,
         weeklySchedule: scheduleMode === 'custom' ? weeklySchedule : groupWeeklySchedule,
         startTime: (scheduleMode === 'custom' ? weeklySchedule[0]?.startTime : groupWeeklySchedule[0]?.startTime) || undefined,
@@ -792,7 +807,7 @@ export function ModuleFormDrawer({
         moduleCatalogueId: module?.id || undefined,
       }
       : null
-  ), [calendarPolicy, cohortHolidays, cohortId, groupPattern?.days, groupStartDate, groupTotalSessions, groupWeeklySchedule, module?.id, selectedGroup?.cohortId, scheduleMode, weeklySchedule, scheduleComplete, weekStartComplete, weekStartsOn, validWeeklyTimes, startDate, totalSessions, weekDays, weeksEntered, endDate]);
+  ), [calendarPolicy, cohortHolidays, cohortId, groupPattern?.days, groupStartDate, groupTotalSessions, groupWeeklySchedule, module?.id, selectedGroup?.cohortId, scheduleMode, weeklySchedule, scheduleComplete, weekStartComplete, weekStartsOn, usesCalendarWeeks, weekBoundaryMode, validWeeklyTimes, startDate, totalSessions, weekDays, weeksEntered, endDate]);
   // Destructured rather than used through the hook's return value, which is a
   // fresh object every render: the memos below key off the parts that actually
   // move, so a keystroke in the name field does not rebuild the picker.
@@ -974,7 +989,7 @@ export function ModuleFormDrawer({
   //                         not shortening it: an edited module's saved end
   //                         date loads as a manual one, and holding it here
   //                         turned a five-week module into a one-week one.
-  const weeksBetweenDates = (from: string, to: string) => projectModuleWeeks(from, to);
+  const weeksBetweenDates = (from: string, to: string) => projectModuleWeeks(from, to, usesCalendarWeeks ? weekStartsOn : '');
   const changeStartDate = (value: string) => {
     setStartDate(value);
     setTargetEndDate('');
@@ -1097,6 +1112,7 @@ export function ModuleFormDrawer({
       price: pricing.isForSale ? pricing.price.trim() : null,
       currency: 'GBP' as const,
     } : {};
+    if (!renameOnly && usesCalendarWeeks && !weekStartComplete) { setError('Choose the first day of the study week.'); return; }
     if (!renameOnly && !lockGroup && !placementOptional) {
       if (!programmeId) { setError('Choose the programme this module belongs to.'); return; }
       if (!cohortId) { setError('Choose the cohort this module runs for.'); return; }
@@ -1112,7 +1128,7 @@ export function ModuleFormDrawer({
       if (!endDate) { setError('Choose the module end date.'); return; }
       if (!tutor) { setError('Choose the tutor who delivers this module.'); return; }
       if (scheduleMode === 'custom' && !scheduleComplete) { setError(`Choose ${sessionsPerWeek} delivery days to match the sessions per week.`); return; }
-      if (!weekStartComplete) { setError('Set the module start date and delivery days to calculate its first live session.'); return; }
+      if (!weekStartComplete) { setError(usesCalendarWeeks ? 'Choose the first day of the study week.' : 'Set the module start date and delivery days to calculate its first live session.'); return; }
       if (scheduleMode === 'custom' && !validWeeklyTimes) { setError("Set each day's start and end time, with the end after the start."); return; }
       // Pre-empted rather than sent, for the same reason the clash below is: the
       // save refuses this and the sentence is already on screen under Tutor.
@@ -1240,7 +1256,8 @@ export function ModuleFormDrawer({
         tutor: tutor || undefined,
         weeklySchedule: groupSchedule,
         scheduleMode: custom ? 'custom' : 'group',
-        weekStartsOn: custom && weekStartsOn ? weekStartsOn : null,
+        weekStartsOn: usesCalendarWeeks ? weekStartsOn : custom && weekStartsOn ? weekStartsOn : null,
+        ...(weekBoundaryMode ? { weekBoundaryMode } : {}),
         ...(sameIdentifier(group.id, primaryGroupId) ? { calendarPolicy } : {}),
         weekDays: groupWeekDays || undefined,
         startTime: groupSchedule[0]?.startTime || undefined,
@@ -1257,7 +1274,7 @@ export function ModuleFormDrawer({
       try {
         if (startDate && totalSessions > 0 && weeklySchedule.length) {
           const review = await previewModuleSessionPlan({ startDate, endDate, numberOfSessions: totalSessions,
-            ...(scheduleMode === 'custom' ? { scheduleMode, weeksNumber: weeksEntered, weekStartsOn } : {}),
+            ...((scheduleMode === 'custom' || usesCalendarWeeks) ? { scheduleMode, weeksNumber: weeksEntered, weekStartsOn, weekBoundaryMode } : {}),
             weeklySchedule, holidays: cohortHolidays, calendarPolicy });
           dates = review.sessions.map(session => session.date);
         }
@@ -1324,6 +1341,7 @@ export function ModuleFormDrawer({
           weeklySchedule: primarySchedule,
           scheduleMode,
           weekStartsOn: weekStartsOn || null,
+          ...(weekBoundaryMode ? { weekBoundaryMode } : {}),
           calendarPolicy,
           weekDays: primaryWeekDays || undefined,
           startTime: primarySchedule[0]?.startTime || undefined,
@@ -1475,6 +1493,7 @@ export function ModuleFormDrawer({
         ...coursePricing,
         title: trimmed,
         calendarPolicy,
+        ...(weekBoundaryMode ? { weekBoundaryMode, weekStartsOn } : {}),
         description,
         programme: programme?.name || programmeId || 'Unassigned programme',
         programmeId: programme ? programmeIdentity(programme) : programmeId,
@@ -1679,6 +1698,16 @@ export function ModuleFormDrawer({
         endDate={endDate || selectedCohort?.endDate || startDate}
         onHolidaysChange={setCalendarRows} onReadyChange={setCalendarReady} />}
 
+      {usesCalendarWeeks && <FormField label="Study week starts on" required
+        hint="This sets the week containers for all components. Live sessions use the teaching days selected below.">
+        <SelectControl value={selectedWeekStart} disabled={Boolean(module)}
+          options={[{ value: '', label: 'Choose a weekday' }, ...STUDY_WEEKDAYS.map(day => ({ value: day, label: day }))]}
+          onChange={value => { setSelectedWeekStart(value); setTargetEndDate(''); }} />
+        {selectedWeekStart && <p className="mt-2 rounded-lg border border-primary-200 bg-primary-50 px-3 py-2 text-xs leading-5 text-primary-800">
+          Study week: {selectedWeekStart}–{STUDY_WEEKDAYS[(STUDY_WEEKDAYS.indexOf(selectedWeekStart) + 6) % 7]}.
+          {' '}A partial opening week counts as week 1. Holiday weeks remain open for materials; live sessions are not added automatically.
+        </p>}
+      </FormField>}
       <FormField
         label="Weeks"
         required={Boolean(selectedGroups.length)}
@@ -1722,7 +1751,8 @@ export function ModuleFormDrawer({
             Each week starts with its first live session{weekStartsOn ? ` (${weekStartsOn})` : ''}. Other live sessions are components in the same week.
           </p>}
           {scheduleMode === 'custom' && <FormField label="Delivery days" as="group" required hint={`Choose ${sessionsPerWeek} day${sessionsPerWeek === '1' ? '' : 's'} each week (${deliveryDaysPerWeek} selected).`}>
-            <WeekdayControl value={weekDays} maxSelections={Number(sessionsPerWeek)} onChange={setWeekDays} />
+            <WeekdayControl value={weekDays} maxSelections={Number(sessionsPerWeek)} onChange={setWeekDays}
+              restDays={restDays} restDayHint={restDayHint} />
           </FormField>}
           {scheduleMode === 'custom' && <div className="flex flex-wrap items-center justify-between gap-2">
             <p className="text-[12px] font-semibold text-primary-700">Custom · {sessionsPerWeek} session{sessionsPerWeek === '1' ? '' : 's'} per week · {modulePatternLabel}</p>
@@ -1770,7 +1800,15 @@ export function ModuleFormDrawer({
               </div>
             </div>
           ))}</>}
-          <p className="text-[12px] text-foreground-500">Each day repeats at its own time every week. {weeksEntered} weeks × {sessionsPerWeek} sessions = {Math.round(weeksEntered * Number(sessionsPerWeek))} sessions. Different times use separate Teams series and links.</p>
+          {usesCalendarWeeks ? <p className="text-[12px] text-foreground-500">
+            {plan && Array.isArray(plan.sessions) && planFor === planInputs
+              ? `${plan.sessions.length} live session${plan.sessions.length === 1 ? '' : 's'} planned across ${weeksEntered} study week${weeksEntered === 1 ? '' : 's'}. This accounts for partial opening weeks and applied holidays.`
+              : planLoading ? 'Calculating live sessions…'
+                : weekStartComplete && startDate && weeksEntered > 0
+                  ? 'Live-session count has not been verified. Saving will validate the schedule.'
+                  : 'Choose the study-week start and module dates to verify the live-session count.'}
+            {' '}Each teaching day keeps its own time. Different times use separate Teams series and links.
+          </p> : <p className="text-[12px] text-foreground-500">Each day repeats at its own time every week. {weeksEntered} weeks × {sessionsPerWeek} sessions = {Math.round(weeksEntered * Number(sessionsPerWeek))} sessions. Different times use separate Teams series and links.</p>}
         </div>
       )}
       {!isFreeCourse && <div className="grid gap-4 sm:grid-cols-2">
@@ -2065,12 +2103,15 @@ function ymdOf(date: Date): string {
  * question from how long the module itself runs. Returns '' only when there
  * is nothing to count from -- no start date, or no weeks.
  */
-function projectModuleEndDate(startDate: string, weeks: number): string {
+const STUDY_WEEKDAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+
+function projectModuleEndDate(startDate: string, weeks: number, weekday = ''): string {
   const start = dateFromYmd(startDate);
   const weekCount = Math.max(0, Math.round(Number(weeks) || 0));
   if (!start || weekCount <= 0) return '';
   const end = new Date(start);
-  end.setDate(end.getDate() + weekCount * 7 - 1);
+  const offset = weekday ? ((start.getDay() + 6) % 7 - STUDY_WEEKDAYS.indexOf(weekday) + 7) % 7 : 0;
+  end.setDate(end.getDate() - offset + weekCount * 7 - 1);
   return ymdOf(end);
 }
 
@@ -2082,10 +2123,11 @@ function projectModuleEndDate(startDate: string, weeks: number): string {
  * 0 whenever there is nothing to count -- a missing date, or an end date
  * before the start.
  */
-function projectModuleWeeks(startDate: string, endDate: string): number {
+function projectModuleWeeks(startDate: string, endDate: string, weekday = ''): number {
   const start = dateFromYmd(startDate);
   const end = dateFromYmd(endDate);
   if (!start || !end || end < start) return 0;
+  if (weekday) start.setDate(start.getDate() - (((start.getDay() + 6) % 7 - STUDY_WEEKDAYS.indexOf(weekday) + 7) % 7));
   const calendarDays = Math.round((end.getTime() - start.getTime()) / 86400000) + 1;
   return clampModuleWeeks(Math.ceil(calendarDays / 7));
 }
