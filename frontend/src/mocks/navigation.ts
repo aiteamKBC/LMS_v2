@@ -269,6 +269,13 @@ export const curriculumNavItems: SidebarNavItem[] = [
     ],
   },
   {
+    id: 'curriculum-quality-assurance',
+    label: 'Quality Assurance',
+    icon: 'ri-shield-check-line',
+    href: '/curriculum/quality-demo',
+    matchPaths: ['/curriculum/coaching-recordings/reviews', '/curriculum/quality/forms'],
+  },
+  {
     id: 'curriculum-bulk-attendance',
     label: 'Bulk Attendance',
     icon: 'ri-calendar-check-line',

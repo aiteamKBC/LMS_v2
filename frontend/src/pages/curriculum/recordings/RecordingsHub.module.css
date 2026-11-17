@@ -151,19 +151,21 @@
   }
 
   .page .illustration {
-    position: absolute !important;
-    right: -48px !important;
-    bottom: -48px !important;
-    width: 220px !important;
-    height: 220px !important;
+    position: relative !important;
+    display: block !important;
+    width: 200px !important;
+    max-width: calc(100% - 48px) !important;
+    height: 200px !important;
+    flex-shrink: 0 !important;
+    align-self: center !important;
+    margin: 24px 0 0 !important;
     overflow: hidden !important;
-    border-radius: 50% !important;
+    border-radius: 16px !important;
     pointer-events: none !important;
-    opacity: 0 !important;
-    transition: opacity 500ms !important;
+    opacity: 1 !important;
   }
 
-  .page .illustration img { display: block !important; width: 100% !important; height: 100% !important; object-fit: cover !important; }
+  .page .illustration img { display: block !important; width: 100% !important; height: 100% !important; object-fit: contain !important; }
   .page .content { position: relative !important; display: flex !important; min-width: 0 !important; flex: 1 !important; flex-direction: column !important; padding: 24px !important; }
 
   .page .eyebrow {
@@ -259,7 +261,6 @@
 
   .page .card:is(:hover, :focus-visible) { z-index: 2 !important; transform: translateY(-4px) !important; border-color: oklch(var(--hub-hover-line)) !important; }
   .page .card:is(:hover, :focus-visible) .hoverFill { opacity: 1 !important; }
-  .page .card:is(:hover, :focus-visible) .illustration { opacity: .15 !important; }
   .page .card:is(:hover, :focus-visible) :is(.eyebrow, .description, .meta) { color: oklch(var(--hub-background) / .85) !important; }
   .page .card:is(:hover, :focus-visible) .title { color: oklch(var(--hub-background)) !important; }
   .page .card:is(:hover, :focus-visible) .features li { border-color: oklch(var(--hub-background) / .25) !important; background: oklch(var(--hub-background) / .15) !important; color: oklch(var(--hub-background)) !important; }
@@ -275,6 +276,7 @@
   }
   @media (max-width: 767px) {
     .page { padding: 20px 16px !important; }
+    .page .illustration { width: 160px !important; height: 160px !important; margin-top: 20px !important; }
     .page .content { padding: 28px !important; }
     .page .footer { padding-inline: 24px !important; }
   }

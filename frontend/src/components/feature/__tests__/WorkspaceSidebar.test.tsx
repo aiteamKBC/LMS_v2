@@ -496,6 +496,17 @@ it('lets Curriculum open each recording destination and toggle the group without
   }
 });
 
+it('opens Quality Assurance from the sidebar and keeps its active state distinct from Quality', async () => {
+  const { rail } = showWorkspace('curriculum', '/curriculum/recordings-hub');
+  const link = within(rail).getByRole('link', { name: 'Quality Assurance' });
+  expect(link).toHaveAttribute('href', '/curriculum/quality-demo');
+  expect(link.querySelector('svg')).toHaveClass('lucide-shield-check');
+  await act(async () => { fireEvent.click(link); });
+  expect(screen.getByTestId('route')).toHaveTextContent('/curriculum/quality-demo');
+  expect(link).toHaveAttribute('aria-current', 'page');
+  expect(within(rail).getByRole('link', { name: 'Quality' })).not.toHaveAttribute('aria-current');
+});
+
 it('keeps the existing Recordings permission gate on the entire group', () => {
   denied.add('curriculum-coaching-recordings');
   const { rail } = showWorkspace('curriculum', '/curriculum/quality');
