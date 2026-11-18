@@ -159,6 +159,32 @@ class SessionDeliveryClockTests(unittest.TestCase):
         self.n['fetch_group_row'].assert_called_once_with('GROUP-CLOCK')
         self.assertEqual(self.module, before)
 
+    def test_plan_endpoint_preserves_calendar_week_windows_including_paused_weeks(self):
+        self.module['week_boundary_mode'] = 'calendar'
+        self.plan['weeks'] = [
+            {'weekNumber': 1, 'startDate': '2026-10-19', 'endDate': '2026-10-25',
+             'holidayWeek': False, 'holidays': []},
+            {'weekNumber': 2, 'startDate': '2026-10-26', 'endDate': '2026-11-01',
+             'holidayWeek': True, 'holidays': [{'label': 'Synthetic closure', 'startDate': '2026-10-30', 'endDate': '2026-10-30'}]},
+        ]
+        for sessions in (copy.deepcopy(self.plan['sessions']), []):
+            with self.subTest(sessions=sessions):
+                self.plan['sessions'] = sessions
+                before = copy.deepcopy(self.plan)
+                result = self.n['curriculum_module_session_plan'](
+                    types.SimpleNamespace(method='GET', GET={'weeks': '2'}), 'MOD-CLOCK')
+                self.assertEqual(result['weeks'], before['weeks'])
+                self.assertEqual(result['sessions'], sessions)
+                self.assertEqual(self.plan, before)
+
+    def test_plan_endpoint_keeps_legacy_numeric_week_count(self):
+        for query in ({'weeks': '3'}, {}):
+            with self.subTest(query=query):
+                result = self.n['curriculum_module_session_plan'](
+                    types.SimpleNamespace(method='GET', GET=query), 'MOD-CLOCK')
+                self.assertEqual(result['weeks'], int(query.get('weeks', '2')))
+                self.assertEqual(result['sessions'], self.plan['sessions'])
+
     def test_group_clock_is_inherited_when_module_has_no_clock(self):
         module = {'module_catalogue_id': 'MOD-CLOCK', 'group_id': 'GROUP-CLOCK'}
         settings = self.stamp(module, self.module)[0]['components'][0]['settings']

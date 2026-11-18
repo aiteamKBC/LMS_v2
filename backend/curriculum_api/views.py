@@ -28550,7 +28550,9 @@ def curriculum_module_session_plan(request, module_catalogue_id):
     return JsonResponse({
         **plan,
         'moduleCatalogueId': catalogue_id,
-        'weeks': requested_weeks or module_stored_week_count(module_row),
+        # Calendar plans carry the study-week windows the builder reads. Keep
+        # the numeric count only for legacy plans that do not contain them.
+        'weeks': plan.get('weeks', requested_weeks or module_stored_week_count(module_row)),
         'startDate': format_date(module_row.get('start_date')),
         'weekDays': clean_str(module_row.get('session_week_day')),
     })
