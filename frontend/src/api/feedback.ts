@@ -197,12 +197,13 @@ export interface FeedbackClassificationReport extends FeedbackClassCounts {
 }
 
 export interface FeedbackDashboardReport extends FeedbackQuestionReport {
+  forms?: { id: number; title: string; formType: string }[];
   groups: { id: string; name: string }[];
   modules?: { id: string; name: string }[];
   coverage: { assigned: number | null; submitted: number; rate: number | null };
 }
 export interface FeedbackDashboardFilters {
-  formType?: FeedbackFormType; groupId?: string; moduleId?: string; classification?: FeedbackScoreClass;
+  formId?: number; includeForms?: boolean; formType?: string; groupId?: string; moduleId?: string; classification?: FeedbackScoreClass;
   submittedFrom?: string; submittedTo?: string;
 }
 
@@ -365,6 +366,8 @@ export const feedbackApi = {
   },
   insightsDashboard: (filters: FeedbackDashboardFilters) => {
     const params = new URLSearchParams();
+    if (filters.formId) params.set('formId', String(filters.formId));
+    if (filters.includeForms) params.set('includeForms', '1');
     for (const key of ['formType', 'groupId', 'moduleId', 'classification', 'submittedFrom', 'submittedTo'] as const) {
       if (filters[key]) params.set(key, filters[key]);
     }

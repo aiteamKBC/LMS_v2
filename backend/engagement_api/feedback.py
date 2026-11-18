@@ -10,6 +10,7 @@ from __future__ import annotations
 from copy import deepcopy
 from io import BytesIO
 import logging
+import re
 from pathlib import PurePath
 import uuid
 
@@ -36,6 +37,8 @@ from .feedback_delivery import QR_SCHEDULE_SOURCE, ensure_delivery_questions, le
 from .feedback_analytics import lecture_analytics_options, question_analytics
 from .feedback_scoring import IMPORTANCE_WEIGHTS, analytics_settings, answer_score, score_classification, validate_analytics_settings
 from .feedback_question_overrides import effective_question_ids
+
+QUALITY_DASHBOARD_HIDDEN_FORM_TITLE_PATTERN = r'\(\s*t\s*\)'
 from .module_feedback import MODULE_FORM_TYPES, assigned_active_module_ids, module_delivery_accessible, sync_module_feedback
 from .review_feedback import ALL_REVIEW_FORM_TYPES, EMPLOYER_REVIEW_FORM_TYPE, sync_review_feedback
 from .quality_tickets import quality_ticket_id as _quality_ticket_id
@@ -1151,14 +1154,20 @@ def insights_dashboard(request):
     """Independent, read-only insights. Never sync attendance or initialize a draw."""
     if request.method != 'GET':
         return json_error('Method not allowed.', status=405)
-    from .feedback_analytics import dashboard_groups, dashboard_modules
+    from .feedback_analytics import dashboard_forms, dashboard_groups, dashboard_modules
     from .feedback_insights import submission_period
     kind = request.GET.get('formType')
+    form_id = request.GET.get('formId')
     classification = request.GET.get('classification')
     group = request.GET.get('groupId')
     module = request.GET.get('moduleId')
     if kind and kind not in FORM_TYPES:
-        return json_error('Unknown feedback form type.', status=400)
+        if (not re.fullmatch(r'[A-Za-z0-9_]{1,40}', kind)
+                or not FeedbackForm.objects.filter(form_type=kind).exclude(
+                    title__iregex=QUALITY_DASHBOARD_HIDDEN_FORM_TITLE_PATTERN).exists()):
+            return json_error('Unknown feedback form type.', status=400)
+    if form_id and (not form_id.isdecimal() or int(form_id) < 1):
+        return json_error('Invalid feedback form.', status=400)
     if classification and classification not in {'positive', 'neutral', 'negative', 'unscored'}:
         return json_error('Unknown response classification.', status=400)
     if group and (len(group) > 255 or any(ord(character) < 32 for character in group)):
@@ -1169,12 +1178,21 @@ def insights_dashboard(request):
         period = submission_period(request.GET.get('submittedFrom'), request.GET.get('submittedTo'))
     except ValueError as error:
         return json_error(str(error), status=400)
-    family_ids = list(FeedbackForm.objects.filter(form_type=kind).values_list('id', flat=True)) if kind else None
+    if form_id:
+        selected = FeedbackForm.objects.filter(pk=int(form_id)).first()
+        if not selected or re.search(QUALITY_DASHBOARD_HIDDEN_FORM_TITLE_PATTERN, selected.title, re.IGNORECASE) or (kind and selected.form_type != kind):
+            return json_error('Feedback form is not available in this report.', status=400)
+        family_ids = list(FeedbackForm.objects.filter(template_key=selected.template_key).values_list('id', flat=True))
+    else:
+        family_ids = list(FeedbackForm.objects.filter(form_type=kind).values_list('id', flat=True)) if kind else None
     return JsonResponse({'analytics': {
         **question_analytics(family_ids, group_id=group, classification=classification, dashboard=True,
-                             **({'module_id': module} if module else {}), **period),
-        'groups': dashboard_groups(family_ids),
-        'modules': dashboard_modules(family_ids, group_id=group),
+                             **({'module_id': module} if module else {}), **period,
+                             excluded_form_title_pattern=QUALITY_DASHBOARD_HIDDEN_FORM_TITLE_PATTERN),
+        'groups': dashboard_groups(family_ids, excluded_form_title_pattern=QUALITY_DASHBOARD_HIDDEN_FORM_TITLE_PATTERN),
+        'modules': dashboard_modules(family_ids, group_id=group, excluded_form_title_pattern=QUALITY_DASHBOARD_HIDDEN_FORM_TITLE_PATTERN),
+        **({'forms': dashboard_forms(excluded_form_title_pattern=QUALITY_DASHBOARD_HIDDEN_FORM_TITLE_PATTERN)}
+           if request.GET.get('includeForms') == '1' else {}),
     }})
 
 

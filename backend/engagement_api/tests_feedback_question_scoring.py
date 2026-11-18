@@ -616,28 +616,84 @@ class FeedbackDashboardReadTests(SimpleTestCase):
             mock.patch.object(feedback, 'question_analytics', return_value={}) as report,
             mock.patch.object(reporting, 'dashboard_groups', return_value=[{'id': 'G1', 'name': 'Group One'}]),
             mock.patch.object(reporting, 'dashboard_modules', return_value=[{'id': 'M1', 'name': 'Marketing'}]) as modules,
+            mock.patch.object(reporting, 'dashboard_forms', return_value=[]),
             mock.patch.object(feedback, 'sync_module_feedback') as sync,
             mock.patch.object(feedback, 'ensure_delivery_questions') as draw,
         ):
-            response = feedback.insights_dashboard.__wrapped__(RequestFactory().get('/?formType=post_lecture&groupId=G1&moduleId=M1&classification=negative&submittedFrom=2026-10-01&submittedTo=2026-10-25'))
+            response = feedback.insights_dashboard.__wrapped__(RequestFactory().get('/?formType=post_lecture&includeForms=1&groupId=G1&moduleId=M1&classification=negative&submittedFrom=2026-10-01&submittedTo=2026-10-25'))
         self.assertEqual(response.status_code, 200)
-        report.assert_called_once_with([4, 5], group_id='G1', module_id='M1', classification='negative', dashboard=True, **submission_period('2026-10-01', '2026-10-25'))
-        modules.assert_called_once_with([4, 5], group_id='G1')
+        report.assert_called_once_with([4, 5], group_id='G1', module_id='M1', classification='negative', dashboard=True, excluded_form_title_pattern=feedback.QUALITY_DASHBOARD_HIDDEN_FORM_TITLE_PATTERN, **submission_period('2026-10-01', '2026-10-25'))
+        modules.assert_called_once_with([4, 5], group_id='G1', excluded_form_title_pattern=feedback.QUALITY_DASHBOARD_HIDDEN_FORM_TITLE_PATTERN)
         sync.assert_not_called()
         draw.assert_not_called()
         self.assertEqual(json.loads(response.content)['analytics']['groups'][0]['id'], 'G1')
         self.assertEqual(json.loads(response.content)['analytics']['modules'][0]['id'], 'M1')
+        self.assertEqual(json.loads(response.content)['analytics']['forms'], [])
 
     def test_dashboard_rejects_bad_filters_before_queries(self):
-        for query in ['formType=wrong', 'classification=high', 'groupId=' + 'x' * 256, 'groupId=bad%00group', 'moduleId=' + 'x' * 256, 'moduleId=bad%00module', 'submittedFrom=2026-02-30', 'submittedFrom=2026-10-26&submittedTo=2026-10-01']:
-            with self.subTest(query=query), mock.patch.object(feedback, 'question_analytics') as report, mock.patch.object(reporting, 'dashboard_groups') as groups:
+        for query in ['formType=wrong', 'formId=nope', 'formId=-1', 'classification=high', 'groupId=' + 'x' * 256, 'groupId=bad%00group', 'moduleId=' + 'x' * 256, 'moduleId=bad%00module', 'submittedFrom=2026-02-30', 'submittedFrom=2026-10-26&submittedTo=2026-10-01']:
+            with self.subTest(query=query), mock.patch.object(feedback, 'question_analytics') as report, mock.patch.object(reporting, 'dashboard_groups') as groups, mock.patch.object(feedback.FeedbackForm.objects, 'filter', return_value=queryset()):
+                feedback.FeedbackForm.objects.filter.return_value.exists.return_value = False
                 self.assertEqual(feedback.insights_dashboard.__wrapped__(RequestFactory().get('/?' + query)).status_code, 400)
                 report.assert_not_called()
                 groups.assert_not_called()
 
+    def test_dashboard_accepts_new_type_when_a_visible_form_exists(self):
+        forms = queryset([71])
+        forms.exists.return_value = True
+        with (
+            mock.patch.object(feedback.FeedbackForm.objects, 'filter', return_value=forms),
+            mock.patch.object(feedback, 'question_analytics', return_value={}) as report,
+            mock.patch.object(reporting, 'dashboard_groups', return_value=[]),
+            mock.patch.object(reporting, 'dashboard_modules', return_value=[]),
+        ):
+            response = feedback.insights_dashboard.__wrapped__(RequestFactory().get('/?formType=custom_pulse'))
+        self.assertEqual(response.status_code, 200)
+        forms.exclude.assert_called_with(title__iregex=feedback.QUALITY_DASHBOARD_HIDDEN_FORM_TITLE_PATTERN)
+        self.assertEqual(report.call_args.args[0], [71])
+
+    def test_dashboard_filters_selected_form_across_versions_and_rejects_hidden_form(self):
+        selected = Row(id=49, title='Progress Review Feedback Form', template_key='template-1', form_type='post_progress_review')
+        forms = queryset([47, 49])
+        with (
+            mock.patch.object(feedback.FeedbackForm.objects, 'filter', return_value=forms) as form_query,
+            mock.patch.object(feedback, 'question_analytics', return_value={}) as report,
+            mock.patch.object(reporting, 'dashboard_groups', return_value=[]),
+            mock.patch.object(reporting, 'dashboard_modules', return_value=[]),
+            mock.patch.object(reporting, 'dashboard_forms', return_value=[]),
+        ):
+            forms.first.return_value = selected
+            response = feedback.insights_dashboard.__wrapped__(RequestFactory().get('/?formType=post_progress_review&formId=49'))
+            self.assertEqual(response.status_code, 200)
+            self.assertNotIn('forms', json.loads(response.content)['analytics'])
+            form_query.assert_any_call(template_key='template-1')
+            self.assertEqual(report.call_args.args[0], [47, 49])
+            forms.first.return_value = Row(id=50, title='Well being (T)', template_key='hidden', form_type='mid_module')
+            self.assertEqual(feedback.insights_dashboard.__wrapped__(RequestFactory().get('/?formId=50')).status_code, 400)
+            forms.first.return_value = None
+            self.assertEqual(feedback.insights_dashboard.__wrapped__(RequestFactory().get('/?formId=999')).status_code, 400)
+
+    def test_dashboard_form_options_use_current_visible_forms_without_sync(self):
+        rows = queryset([
+            Row(id=47, title='Monthly Coaching Meeting Feedback Form', form_type='post_mcm_review', template_key='mcm', version=1),
+            Row(id=49, title='Progress Review Feedback Form', form_type='post_progress_review', template_key='pr', version=2),
+        ])
+        rows.order_by.return_value = rows
+        with mock.patch.object(reporting.FeedbackForm.objects, 'all', return_value=rows) as forms:
+            choices = reporting.dashboard_forms(excluded_form_title_pattern=feedback.QUALITY_DASHBOARD_HIDDEN_FORM_TITLE_PATTERN)
+        forms.assert_called_once_with()
+        rows.exclude.assert_called_once_with(title__iregex=feedback.QUALITY_DASHBOARD_HIDDEN_FORM_TITLE_PATTERN)
+        self.assertEqual([choice['formType'] for choice in choices], ['post_mcm_review', 'post_progress_review'])
+
+    def test_dashboard_excludes_t_by_title_without_excluding_its_form_type(self):
+        responses = queryset([])
+        with mock.patch.object(reporting.FeedbackResponse.objects, 'filter', return_value=responses):
+            reporting.completed_report_responses(excluded_form_title_pattern=feedback.QUALITY_DASHBOARD_HIDDEN_FORM_TITLE_PATTERN)
+        responses.exclude.assert_called_once_with(form__title__iregex=feedback.QUALITY_DASHBOARD_HIDDEN_FORM_TITLE_PATTERN)
+
     def test_dashboard_requires_staff_and_get_without_weakening_other_roles(self):
         for role, expected in [('staff', 200), ('admin', 200), ('learner', 403), ('employer', 403), ('coach', 403)]:
-            with self.subTest(role=role), mock.patch('engagement_api.permissions.authenticate_request', return_value=Row(role=role)), mock.patch.object(feedback, 'question_analytics', return_value={}), mock.patch.object(reporting, 'dashboard_groups', return_value=[]), mock.patch.object(reporting, 'dashboard_modules', return_value=[]):
+            with self.subTest(role=role), mock.patch('engagement_api.permissions.authenticate_request', return_value=Row(role=role)), mock.patch.object(feedback, 'question_analytics', return_value={}), mock.patch.object(reporting, 'dashboard_groups', return_value=[]), mock.patch.object(reporting, 'dashboard_modules', return_value=[]), mock.patch.object(reporting, 'dashboard_forms', return_value=[]):
                 self.assertEqual(feedback.insights_dashboard(RequestFactory().get('/')).status_code, expected)
         with mock.patch('engagement_api.permissions.authenticate_request', return_value=None):
             self.assertEqual(feedback.insights_dashboard(RequestFactory().get('/')).status_code, 401)

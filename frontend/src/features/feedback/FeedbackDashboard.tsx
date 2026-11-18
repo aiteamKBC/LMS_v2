@@ -4,7 +4,7 @@ import { BarChart3, CalendarDays, ChevronRight, ClipboardList, GraduationCap, In
 import { Bar, BarChart, CartesianGrid, Cell, Line, LineChart, Pie, PieChart, Tooltip, XAxis, YAxis } from 'recharts';
 import { feedbackApi, type FeedbackDashboardFilters, type FeedbackDashboardReport, type FeedbackFormType, type FeedbackScoreClass } from '@/api/feedback';
 import { Plot } from './FeedbackInsightCharts';
-import { dashboardPeriod, FEEDBACK_TYPE_LABELS, negativeCategories, rankedQuestions, ukCalendarDate, weeklyClassifications } from './feedbackDashboardData';
+import { dashboardPeriod, FEEDBACK_TYPE_LABELS, negativeCategories, qualityDashboardFeedbackTypeEntries, rankedQuestions, ukCalendarDate, weeklyClassifications } from './feedbackDashboardData';
 import styles from './FeedbackDashboard.module.css';
 import { NEUTRAL_SCORE_MIN, POSITIVE_SCORE_MIN, SCORE_CLASSIFICATION_TEXT } from './scoreClassification';
 import { QUALITY_TICKET_CHANGED } from './qualityTicketEvents';
@@ -115,7 +115,7 @@ function DashboardContent({ report, onViewResponse, active }: { report: Feedback
   const trend = weeklyClassifications(counts);
   const best = [...report.insights!.categories].filter(item => item.score != null).sort((a, b) => b.score! - a.score! || b.scoredAnswers - a.scoredAnswers)[0];
   const concern = negativeCategories(report.questionMetrics)[0];
-  const most = [...counts.byType].map(item => ({ ...item, total: item.positive + item.negative + item.neutral + item.unscored })).sort((a, b) => b.total - a.total)[0];
+  const most = counts.byType.map(item => ({ ...item, total: item.positive + item.negative + item.neutral + item.unscored })).sort((a, b) => b.total - a.total)[0];
   const kpis = [
     { label: 'Submitted feedback', value: counts.total, icon: <ClipboardList size={23} />, note: 'Completed responses in selection', tone: '' },
     { label: 'Positive responses', value: counts.positive, icon: <ThumbsUp size={23} />, note: scored ? `${Math.round(counts.positive / scored * 100)}% of scored responses` : 'No scored responses', tone: styles.green },
@@ -207,7 +207,7 @@ export function FeedbackDashboard({ onViewResponse, active: enabled = true, revi
   return <section aria-label="Feedback Insights dashboard" className={styles.root}>
     <header className={styles.hero}><span className={styles.heroIcon}><BarChart3 size={28} /></span><div><h2>Feedback Insights</h2><p>Monitor positive and negative feedback, response trends and questions that need your attention.</p></div></header>
     <div className={styles.filters}><div className={styles.filterFields}>
-      <div className={styles.filter}><ClipboardList className={styles.filterIcon} size={34} /><label>Feedback type filter<select aria-label="Insights feedback type" value={formType} onChange={event => { setFormType(event.target.value as typeof formType); setGroup(''); setModuleId(''); }}><option value="all">All Feedback Types</option>{Object.entries(FEEDBACK_TYPE_LABELS).map(([value, text]) => <option key={value} value={value}>{text}</option>)}</select></label></div>
+      <div className={styles.filter}><ClipboardList className={styles.filterIcon} size={34} /><label>Feedback type filter<select aria-label="Insights feedback type" value={formType} onChange={event => { setFormType(event.target.value as typeof formType); setGroup(''); setModuleId(''); }}><option value="all">All Feedback Types</option>{qualityDashboardFeedbackTypeEntries().map(([value, text]) => <option key={value} value={value}>{text}</option>)}</select></label></div>
       <div className={styles.filter}><CalendarDays className={styles.filterIcon} size={34} /><label>Date range<select aria-label="Insights date range" value={weeks} onChange={event => setWeeks(Number(event.target.value))}><option value={4}>Last 4 weeks</option><option value={8}>Last 8 weeks</option><option value={12}>Last 12 weeks</option><option value={0}>All time</option></select></label></div>
       <div className={styles.filter}><SlidersHorizontal className={styles.filterIcon} size={34} /><label>Classification<select aria-label="Insights classification" value={classification} onChange={event => setClassification(event.target.value as typeof classification)}><option value="all">All classifications</option>{kinds.map(item => <option key={item.key} value={item.key}>{item.label}</option>)}</select></label></div>
       <div className={styles.filter}><Users className={styles.filterIcon} size={34} /><label>Learner group<select aria-label="Insights learner group" value={group} disabled={!report} onChange={event => { setGroup(event.target.value); setModuleId(''); }}><option value="">All groups</option>{groups.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label></div>
