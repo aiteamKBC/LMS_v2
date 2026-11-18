@@ -1,7 +1,7 @@
 """Weekly performance regressions: synthetic records, database access forbidden."""
 from datetime import date, datetime, timedelta, timezone
 from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, Mock, patch
 
 from django.db import DatabaseError
 from django.test import SimpleTestCase
@@ -65,24 +65,26 @@ class WeeklyCompactContractTests(SimpleTestCase):
 
 
 class WeeklyHoursProjectionTests(SimpleTestCase):
-    def reader(self, records=(), markings=(), extras=()):
-        def read(sql, params):
-            if 'FROM "Learner".learner_progress_entries progress' in sql:
-                return records
-            if 'WITH owners(profile_id,enrolment_id,learner_kind)' in sql:
-                return extras
-            if 'FROM "Learner".learning_reflection_submissions' in sql:
-                return markings
-            if any(table in sql for table in (
-                'FROM "Learner".learner_monthly_signatures',
-                'FROM "Learner".learner_monthly_locks',
-                'FROM curriculum.live_session_learner_attendance r',
+    def query_with_attendance(self, owner, responses):
+        ledger = Mock(side_effect=responses)
+        attendance = Mock(return_value=[])
+        def query(sql, params):
+            for table, copies in (
+                ('learner_monthly_signatures', 1),
+                ('learner_monthly_locks', 3),
+                ('live_session_learner_attendance', 1),
+            ):
+                if table in sql:
+                    self.assertEqual(params, [owner['id']] * copies)
+                    return attendance(sql, params)
+            if not any(fragment in sql for fragment in (
+                'FROM "Learner".learner_progress_entries progress',
+                'WITH owners(profile_id,enrolment_id,learner_kind)',
+                'FROM "Learner".learning_reflection_submissions',
             )):
-                # No attendance/protected months in these saved-work fixtures.
-                # Real register SQL and ownership are covered in tests_attendance_otjh.
-                return []
-            raise AssertionError('Unexpected weekly hours query')
-        return read
+                self.fail('Unexpected weekly hours query')
+            return ledger(sql, params)
+        return query, ledger, attendance
 
     def test_hours_projection_matches_canonical_across_types_and_lineages(self):
         at = datetime(2026, 10, 5, 9, tzinfo=timezone.utc)
@@ -101,8 +103,11 @@ class WeeklyHoursProjectionTests(SimpleTestCase):
                                     actual_seconds=1200, accepted=True, actual_basis='staff:module-progress')]
                     with patch('learner_api.current_learning.query', return_value=[]):
                         expected = canonical_learning.progress_records_with_completion(records, current_records(owner, records))
-                    with patch.object(canonical_learning, 'query', side_effect=self.reader(records)) as query:
+                    read, ledger, attendance = self.query_with_attendance(owner, [records, []])
+                    with patch.object(canonical_learning, 'query', side_effect=read) as query:
                         actual = canonical_learning.weekly_hour_records(owner)
+                    self.assertEqual(ledger.call_count, 2)
+                    self.assertEqual(attendance.call_count, 3)
                     modules = [{'id': mid, 'title': mid} for mid in ('module-alpha', 'module-beta')]
                     self.assertEqual(weekly_hours.module_activity_hours(actual, modules),
                                      weekly_hours.module_activity_hours(expected, modules))
@@ -125,8 +130,11 @@ class WeeklyHoursProjectionTests(SimpleTestCase):
         owner = {'id': 17, 'enrolment_id': 201, 'learner_type': 'commercial'}
         with patch('learner_api.current_learning.query', return_value=markings):
             expected = canonical_learning.progress_records_with_completion(records, current_records(owner, records))
-        with patch.object(canonical_learning, 'query', side_effect=self.reader(records, markings)) as query:
+        read, ledger, attendance = self.query_with_attendance(owner, [records, markings, []])
+        with patch.object(canonical_learning, 'query', side_effect=read) as query:
             actual = canonical_learning.weekly_hour_records(owner)
+        self.assertEqual(ledger.call_count, 3)
+        self.assertEqual(attendance.call_count, 3)
         modules = [{'id': 'M1', 'title': 'Module'}]
         self.assertEqual(weekly_hours.module_activity_hours(actual, modules),
                          weekly_hours.module_activity_hours(expected, modules))
@@ -140,19 +148,22 @@ class WeeklyHoursProjectionTests(SimpleTestCase):
         self.assertEqual(query.call_args_list[0].args[1], [17, 17])
         self.assertEqual(query.call_args_list[1].args[1][-1], ['A1'])
 
-    def test_hours_without_pending_assignments_read_extras_and_bounded_attendance(self):
-        with patch.object(canonical_learning, 'query', side_effect=self.reader()) as query:
-            self.assertEqual(canonical_learning.weekly_hour_records(
-                {'id': 17, 'enrolment_id': 201, 'learner_type': 'commercial'}), [])
-        self.assertEqual(query.call_count, 5)  # Ledger, extras and three bounded attendance reads.
-        self.assertIn("s.activity_type='extra_activity'", query.call_args_list[1].args[0])
-        self.assertEqual(query.call_args_list[1].args[1], [17, '201', 'commercial'])
-        self.assertIn('learner_monthly_signatures', query.call_args_list[2].args[0])
-        self.assertEqual(query.call_args_list[2].args[1], [17])
-        self.assertIn('learner_monthly_locks', query.call_args_list[3].args[0])
-        self.assertEqual(query.call_args_list[3].args[1], [17, 17, 17])
-        self.assertIn('live_session_learner_attendance', query.call_args_list[4].args[0])
-        self.assertEqual(query.call_args_list[4].args[1], [17])
+    def test_hours_without_pending_assignments_read_only_standalone_extras(self):
+        owner = {'id': 17, 'enrolment_id': 201, 'learner_type': 'commercial'}
+        read, ledger, attendance = self.query_with_attendance(owner, [[], []])
+        with patch.object(canonical_learning, 'query', side_effect=read) as query:
+            self.assertEqual(canonical_learning.weekly_hour_records(owner), [])
+        # Preserve the two-query ledger budget; attendance adds three scoped reads.
+        self.assertEqual(ledger.call_count, 2)
+        self.assertEqual(attendance.call_count, 3)
+        self.assertIn("s.activity_type='extra_activity'", ledger.call_args_list[1].args[0])
+        self.assertEqual(ledger.call_args_list[1].args[1], [17, '201', 'commercial'])
+        self.assertEqual(query.call_count, 5)
+        for call, table, expected in zip(attendance.call_args_list,
+                ('learner_monthly_signatures', 'learner_monthly_locks', 'live_session_learner_attendance'),
+                ([17], [17, 17, 17], [17])):
+            self.assertIn(table, call.args[0])
+            self.assertEqual(call.args[1], expected)
 
     def test_standalone_reviewed_extra_matches_full_hour_projection(self):
         owner = {'id': 17, 'enrolment_id': 201, 'learner_type': 'commercial'}
@@ -162,9 +173,12 @@ class WeeklyHoursProjectionTests(SimpleTestCase):
         with patch('learner_api.current_learning.subject_attempt_rows', return_value=[]), \
              patch('learner_api.current_learning.query', return_value=[extra]):
             expected = canonical_learning.progress_records_with_completion([], current_records(owner, []))
+        read, ledger, attendance = self.query_with_attendance(owner, [[], [extra]])
         with patch('learner_api.current_learning.subject_attempt_rows', return_value=[]), \
-             patch.object(canonical_learning, 'query', side_effect=self.reader(extras=[extra])):
+             patch.object(canonical_learning, 'query', side_effect=read):
             result = canonical_learning.weekly_hour_records(owner)
+        self.assertEqual(ledger.call_count, 2)
+        self.assertEqual(attendance.call_count, 3)
         self.assertEqual(result, expected)
         self.assertEqual(result[0]['actual_seconds'], 3600)
         self.assertEqual(result[0]['reporting_month'], '2026-09')
