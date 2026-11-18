@@ -20,7 +20,6 @@ import {
   exportRecordsCsv,
   formatNumber,
   formatPct,
-  isOpenAction,
 } from "@/lib/qms";
 import type { DashboardFilters } from "@/types/qms";
 import { filterOptions, keepConsistent } from "./filterOptions";
@@ -85,36 +84,6 @@ export default function ExecutiveOverview({ attentionPanel }: { attentionPanel?:
   const appliedFilters = useDeferredValue(filters);
   const updating = appliedFilters !== filters;
   const records = useMemo(() => data ? applyFilters(data.records, appliedFilters) : [], [data, appliedFilters]);
-
-  const scopedIds = useMemo(() => new Set(records.map((record) => record.id)), [records]);
-  const actions = useMemo(
-    () =>
-      (data?.actions ?? []).filter(
-        (action) =>
-          scopedIds.has(action.recordId) ||
-          (isOpenAction(action) &&
-            appliedFilters.category === "All form categories" &&
-            appliedFilters.formType === "All form types" &&
-            appliedFilters.respondentType === "All feedback types" &&
-            appliedFilters.feedbackType === "All feedback types" &&
-            appliedFilters.coach === "All coaches" &&
-            appliedFilters.tutor === "All tutors" &&
-            appliedFilters.department === "All departments" &&
-            appliedFilters.programme === "All programmes"),
-      ),
-    [
-      data?.actions,
-      scopedIds,
-      appliedFilters.category,
-      appliedFilters.formType,
-      appliedFilters.respondentType,
-      appliedFilters.feedbackType,
-      appliedFilters.coach,
-      appliedFilters.tutor,
-      appliedFilters.department,
-      appliedFilters.programme,
-    ],
-  );
 
   const trendRecords = useMemo(
     () => data ? applyFilters(data.records, { ...appliedFilters, period: "All records" }) : [],
@@ -276,7 +245,7 @@ export default function ExecutiveOverview({ attentionPanel }: { attentionPanel?:
       />
       </div>
 
-      <OverviewKpis records={records} actions={actions} forms={forms} availability={live.availability} onOpenAuditTypes={openAuditTypes} />
+      <OverviewKpis records={records} forms={forms} availability={live.availability} onOpenAuditTypes={openAuditTypes} />
 
       {auditTypesOpen ? <MeetingTypesModal records={records} onClose={() => setAuditTypesOpen(false)} onOpenType={openAuditType} /> : null}
 
