@@ -698,10 +698,13 @@ export function ModuleFormDrawer({
     setGroupEndTime(groupPattern?.endTime || '');
   };
   const scheduleComplete = !selectedGroup || deliveryDaysPerWeek === Number(sessionsPerWeek);
-  const usesCalendarWeeks = !isFreeCourse && (!module || module.weekBoundaryMode === 'calendar');
+  // Use the same saved version that seeded the fields, rather than a cached
+  // catalogue row that can still describe the previous week model.
+  const savedWeekModel = guard.stored || module;
+  const usesCalendarWeeks = !isFreeCourse && (!module || savedWeekModel?.weekBoundaryMode === 'calendar');
   const weekBoundaryMode = usesCalendarWeeks ? 'calendar' as const : undefined;
   const needsWeekStart = scheduleMode === 'custom' && Number(sessionsPerWeek) > 1;
-  const usesFirstSessionWeeks = !usesCalendarWeeks && needsWeekStart && (!module || Boolean(module.weekStartsOn)
+  const usesFirstSessionWeeks = !usesCalendarWeeks && needsWeekStart && (!module || Boolean(savedWeekModel?.weekStartsOn)
     || scheduleMode !== baseline.current.scheduleMode || weekDays !== baseline.current.weekDays
     || startDate !== baseline.current.startDate);
   const weekStartsOn = usesCalendarWeeks ? selectedWeekStart : usesFirstSessionWeeks ? firstDeliveryWeekday(startDate, weekDays) : '';
