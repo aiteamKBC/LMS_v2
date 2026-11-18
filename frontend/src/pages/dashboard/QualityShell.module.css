@@ -11,6 +11,12 @@
   padding: 8px 12px 0 8px;
 }
 
+@media (min-width: 1024px) {
+  .shell > :global(.workspace-content) {
+    padding-left: 24px;
+  }
+}
+
 /* Keep the header inside the same gutters as the breadcrumb row. The shared
    chrome layer owns its colors and controls, so override only its spacing. */
 @layer workspace-chrome {
