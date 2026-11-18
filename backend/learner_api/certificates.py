@@ -6,6 +6,7 @@ from datetime import datetime
 from django.db import DatabaseError, connections, transaction
 from django.http import JsonResponse
 from django.middleware.csrf import get_token
+from django.views.decorators.cache import never_cache
 
 from login.permissions import staff_only
 from old_otjh.service import ServiceError
@@ -78,6 +79,8 @@ def _certificate_dict(row):
         "pdfBlobUrl": row[7] or "",
         "verificationToken": str(row[8]),
         "verificationUrl": f"/verify-certificate/{row[8]}",
+        "revision": int(snapshot.get("certificateRevision") or 1),
+        "correctedAt": snapshot.get("correctedAt"),
     }
     if len(row) > 9:
         data["moduleRef"] = row[9] or ""
@@ -515,6 +518,8 @@ def issue_learner_certificate(request, kind, pk):
                     )
                 else:
                     row = _issued_certificate(cursor, kind, pk, template["id"], template["version"])
+                    if not row:
+                        return _error("This certificate is no longer active. Contact an administrator.", 409)
     except SOURCE_DOES_NOT_EXIST:
         return _error("Learner not found.", 404)
     except ValueError as exc:
@@ -592,21 +597,8 @@ def issue_learner_module_certificate(request, kind, pk, module_ref):
             with connections["enrolment"].cursor() as cursor:
                 existing = _issued_certificate(cursor, kind, pk, template["id"], template["version"], module_ref)
                 if existing:
-                    cursor.execute(
-                        '''UPDATE "Learner".learner_certificates
-                           SET progress_percent=%s, snapshot=%s::jsonb, module_title=%s
-                           WHERE id=%s
-                           RETURNING id,certificate_number,template_id,template_version,
-                                     progress_percent,snapshot,issued_at,pdf_blob_url,verification_token,
-                                     module_ref,module_title''',
-                        [
-                            eligibility["progressPercent"],
-                            json.dumps(snapshot),
-                            eligibility["moduleTitle"],
-                            existing[0],
-                        ],
-                    )
-                    existing = cursor.fetchone() or existing
+                    # Another request may have issued and then corrected this
+                    # certificate while eligibility was loading. Keep that copy.
                     return JsonResponse({
                         "certificate": _certificate_dict(existing),
                         "template": template,
@@ -645,6 +637,8 @@ def issue_learner_module_certificate(request, kind, pk, module_ref):
                     )
                 else:
                     row = _issued_certificate(cursor, kind, pk, template["id"], template["version"], module_ref)
+                    if not row:
+                        return _error("This certificate is no longer active. Contact an administrator.", 409)
     except ServiceError as exc:
         return _error(str(exc), exc.status)
     except SOURCE_DOES_NOT_EXIST:
@@ -657,6 +651,7 @@ def issue_learner_module_certificate(request, kind, pk, module_ref):
     return JsonResponse({"certificate": _certificate_dict(row), "template": template, "eligibility": eligibility, "issued": True})
 
 
+@never_cache
 def verify_certificate(request, token):
     if request.method != "GET":
         return _error("Method not allowed.", 405)
@@ -666,10 +661,10 @@ def verify_certificate(request, token):
                 '''SELECT lc.id,lc.certificate_number,lc.template_id,lc.template_version,
                           lc.progress_percent,lc.snapshot,lc.issued_at,lc.pdf_blob_url,lc.verification_token,
                           lc.module_ref,lc.module_title,lc.learner_kind,lc.learner_id,
-                          ct.title,ct.body_text,ct.layout_config
+                          ct.title,ct.body_text,ct.layout_config,lc.status
                    FROM "Learner".learner_certificates lc
                    JOIN "Learner".certificate_templates ct ON ct.id=lc.template_id
-                   WHERE lc.verification_token=%s AND lc.status='issued'
+                   WHERE lc.verification_token=%s
                    LIMIT 1''',
                 [token],
             )
@@ -678,6 +673,9 @@ def verify_certificate(request, token):
         return _error("Certificate verification is unavailable.", 503)
     if not row:
         return _error("Certificate not found.", 404)
+    if len(row) > 16 and row[16] != 'issued':
+        return _error("This certificate has been revoked." if row[16] == 'revoked'
+                      else "This certificate has been replaced by a newer template version.", 410)
     if len(row) > 15:
         row = list(row)
         row[5] = _snapshot_with_fallbacks(row[5], row[11], row[12], row[9], row[10], row[13], row[14], row[15])
