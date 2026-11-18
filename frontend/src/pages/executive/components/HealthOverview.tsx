@@ -1,4 +1,5 @@
 import Panel from "@/components/base/Panel";
+import criticalStyles from "./CriticalCard.module.css";
 import RagStackBar from "@/components/qms/RagStackBar";
 import {
   assessedTotal,
@@ -79,7 +80,7 @@ export default function HealthOverview({ records, actions, availability }: Healt
           ) : null}
         </div>
 
-        <div className="border-t border-background-200 pt-3 sm:border-l sm:border-t-0 sm:pl-3 sm:pt-0">
+        <div className={`${criticalStyles.card} rounded-lg border p-3`}>
           <p className="font-label text-[10.5px] font-semibold uppercase tracking-[0.09em] text-foreground-600">
             Compliance critical risk
           </p>

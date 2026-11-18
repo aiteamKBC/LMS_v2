@@ -461,17 +461,17 @@ it('uses the learner-style collapsible navigation for Curriculum and keeps Quali
 });
 
 it.each([
-  ['/curriculum/recordings-hub', 'Recordings hub'],
+  ['/curriculum/recordings-hub', 'Recording Quality'],
   ['/curriculum/recordings', 'Tutor session recordings'],
   ['/curriculum/recordings/42', 'Tutor session recordings'],
   ['/curriculum/coaching-recordings', 'Coach meetings'],
   ['/curriculum/coaching-recordings/42', 'Coach meetings'],
   ['/curriculum/quality-demo', 'Quality Assurance'],
-  ['/curriculum/quality-demo?view=checks', 'Quality Assurance'],
-])('opens Recordings with only the matching destination selected on %s', (path, label) => {
+  ['/curriculum/quality-demo?view=deep-dive', 'Deep Dive'],
+])('opens Recording Quality with only the matching destination selected on %s', (path, label) => {
   localStorage.setItem('kbc_sidebar_expanded', '[]');
   const { rail } = showWorkspace('curriculum', path);
-  expect(within(rail).getByRole('button', { name: 'Recordings' })).toHaveAttribute('aria-expanded', 'true');
+  expect(within(rail).getByRole('button', { name: 'Toggle Recording Quality pages' })).toHaveAttribute('aria-expanded', 'true');
   const links = within(rail).getAllByRole('link').filter(link => link.hasAttribute('aria-current'));
   expect(links).toHaveLength(1);
   expect(links[0]).toHaveAccessibleName(label);
@@ -479,17 +479,19 @@ it.each([
 
 it('lets Curriculum open each recording destination and toggle the group without changing routes', async () => {
   const { rail } = showWorkspace('curriculum', '/curriculum/quality');
-  const group = within(rail).getByRole('button', { name: 'Recordings' });
+  const group = within(rail).getByRole('button', { name: 'Toggle Recording Quality pages' });
   fireEvent.click(group);
   expect(group).toHaveAttribute('aria-expanded', 'false');
   expect(within(rail).queryByRole('link', { name: 'Tutor session recordings' })).toBeNull();
   expect(screen.getByTestId('route')).toHaveTextContent('/curriculum/quality');
   fireEvent.click(group);
   for (const [name, href] of [
-    ['Recordings hub', '/curriculum/recordings-hub'],
+    ['Recording Quality', '/curriculum/recordings-hub'],
     ['Coach meetings', '/curriculum/coaching-recordings'],
     ['Tutor session recordings', '/curriculum/recordings'],
     ['Quality Assurance', '/curriculum/quality-demo'],
+    ['Quality Checks', '/curriculum/coaching-recordings/reviews'],
+    ['Deep Dive', '/curriculum/quality-demo?view=deep-dive'],
   ]) {
     const link = within(rail).getByRole('link', { name });
     expect(link).toHaveAttribute('href', href);
@@ -510,26 +512,87 @@ it('opens Quality Assurance from the sidebar and keeps its active state distinct
   expect(within(rail).getByRole('link', { name: 'Quality' })).not.toHaveAttribute('aria-current');
 });
 
+it.each([
+  ['/curriculum/coaching-recordings/reviews?status=draft&type=PR', 'Quality Checks'],
+  ['/curriculum/quality/forms?type=PR', 'Quality Checks'],
+  ['/curriculum/quality-demo?view=deep-dive', 'Deep Dive'],
+])('opens Recording Quality with the quality pages as direct children on %s', (path, label) => {
+  localStorage.setItem('kbc_sidebar_expanded', '[]');
+  const { rail } = showWorkspace('curriculum', path);
+  const group = rail.querySelector('[data-nav-group="curriculum-coaching-recordings"]') as HTMLElement;
+  expect(group.parentElement?.closest('[data-nav-group]')).toBeNull();
+  expect(rail.querySelector('[data-nav-group="curriculum-quality-assurance"]')).toBeNull();
+  expect(within(group).getByRole('button', { name: 'Toggle Recording Quality pages' })).toHaveAttribute('aria-expanded', 'true');
+  expect(within(group).getAllByRole('link').map(link => link.textContent)).toEqual(['Recording Quality', 'Tutor session recordings', 'Coach meetings', 'Quality Assurance', 'Quality Checks', 'Deep Dive']);
+  const activeLinks = within(rail).getAllByRole('link').filter(link => link.hasAttribute('aria-current'));
+  expect(activeLinks).toHaveLength(1);
+  expect(activeLinks[0]).toHaveAccessibleName(label);
+});
+
+it('opens Recording Quality from the main menu without a duplicate hub entry', async () => {
+  const { rail } = showWorkspace('curriculum', '/curriculum/quality');
+  const home = within(rail).getByRole('link', { name: 'Recording Quality' });
+  expect(home).toHaveAttribute('href', '/curriculum/recordings-hub');
+  expect(within(rail).queryByRole('link', { name: 'Recordings hub' })).toBeNull();
+  await act(async () => { fireEvent.click(home); });
+  expect(screen.getByTestId('route')).toHaveTextContent('/curriculum/recordings-hub');
+  expect(home).toHaveAttribute('aria-current', 'page');
+  expect(within(rail).getByRole('button', { name: 'Toggle Recording Quality pages' })).toHaveAttribute('aria-expanded', 'true');
+});
+
+it('preserves the hub permission without hiding the recording pages', () => {
+  denied.add('curriculum-recordings-hub');
+  const { rail } = showWorkspace('curriculum', '/curriculum/recordings');
+  expect(within(rail).queryByRole('link', { name: 'Recording Quality' })).toBeNull();
+  expect(within(rail).getByRole('button', { name: 'Recording Quality' })).toBeVisible();
+  expect(within(rail).getByRole('link', { name: 'Tutor session recordings' })).toBeVisible();
+});
+
+it('toggles Recording Quality without changing the selected quality page', () => {
+  const { rail } = showWorkspace('curriculum', '/curriculum/quality-demo');
+  const toggle = within(rail).getByRole('button', { name: 'Toggle Recording Quality pages' });
+  fireEvent.click(toggle);
+  expect(toggle).toHaveAttribute('aria-expanded', 'false');
+  expect(within(rail).queryByRole('link', { name: 'Quality Assurance' })).toBeNull();
+  expect(screen.getByTestId('route')).toHaveTextContent('/curriculum/quality-demo');
+  fireEvent.click(toggle);
+  expect(toggle).toHaveAttribute('aria-expanded', 'true');
+  expect(within(rail).getByRole('link', { name: 'Quality Assurance' })).toHaveAttribute('aria-current', 'page');
+});
+
 it('keeps the existing Recordings permission gate on the entire group', () => {
   denied.add('curriculum-coaching-recordings');
   const { rail } = showWorkspace('curriculum', '/curriculum/quality');
-  expect(within(rail).queryByRole('button', { name: 'Recordings' })).toBeNull();
-  for (const name of ['Recordings hub', 'Tutor session recordings', 'Coach meetings', 'Quality Assurance']) {
+  expect(within(rail).queryByRole('button', { name: 'Toggle Recording Quality pages' })).toBeNull();
+  for (const name of ['Recording Quality', 'Tutor session recordings', 'Coach meetings', 'Quality Assurance', 'Quality Checks', 'Deep Dive']) {
     expect(within(rail).queryByRole('link', { name })).toBeNull();
   }
   expect(within(rail).getByRole('link', { name: 'Quality' })).toBeVisible();
 });
 
-it('keeps the Quality Assurance permission gate within Recordings', () => {
+it('keeps the Quality Assurance permission gate on its overview and both children', () => {
   denied.add('curriculum-quality-assurance');
   const { rail } = showWorkspace('curriculum', '/curriculum/recordings-hub');
   expect(within(rail).queryByRole('link', { name: 'Quality Assurance' })).toBeNull();
+  expect(within(rail).queryByRole('link', { name: 'Quality Checks' })).toBeNull();
+  expect(within(rail).queryByRole('link', { name: 'Deep Dive' })).toBeNull();
+  expect(within(rail).getByRole('link', { name: 'Coach meetings' })).toBeVisible();
+});
+
+it('honours each moved page restriction without hiding the other recording destinations', () => {
+  denied.add('curriculum-quality-checks');
+  const { rail } = showWorkspace('curriculum', '/curriculum/quality-demo');
+  expect(within(rail).queryByRole('link', { name: 'Quality Checks' })).toBeNull();
+  expect(within(rail).getByRole('link', { name: 'Quality Assurance' })).toBeVisible();
+  expect(within(rail).getByRole('link', { name: 'Deep Dive' })).toBeVisible();
   expect(within(rail).getByRole('link', { name: 'Coach meetings' })).toBeVisible();
 });
 
 it.each([
   ['Coach meetings', '/curriculum/coaching-recordings'],
   ['Quality Assurance', '/curriculum/quality-demo'],
+  ['Quality Checks', '/curriculum/coaching-recordings/reviews'],
+  ['Deep Dive', '/curriculum/quality-demo?view=deep-dive'],
 ])('opens %s from the mobile menu and closes the drawer', async (name, href) => {
   showWorkspace('curriculum', '/curriculum/recordings');
   fireEvent.click(screen.getByRole('button', { name: 'Open mobile navigation' }));

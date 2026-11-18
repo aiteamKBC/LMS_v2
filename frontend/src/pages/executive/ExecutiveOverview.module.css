@@ -7,6 +7,61 @@
   padding: 8px 0 12px;
 }
 
+.policyAttentionRow { display: grid; grid-template-columns: minmax(0, 1fr); gap: 20px; }
+.policyAttentionRow > * { min-width: 0; }
+.attentionPanel > section { height: 100%; }
+.attentionPanel > section > div:first-child { flex-wrap: wrap; }
+.withPolicy .attentionPanel ul { max-height: 260px; }
+
+.policyPanel {
+  --rag-green-bg: #dcfce7;
+  --rag-green-fg: #166534;
+  --rag-green-ink: #16a34a;
+  --rag-amber-bg: #fef3c7;
+  --rag-amber-fg: #92400e;
+  --rag-amber-ink: #d97706;
+  --rag-red-bg: #fee2e2;
+  --rag-red-fg: #991b1b;
+  --rag-red-ink: #dc2626;
+  --rag-grey-bg: #e2e8f0;
+  --rag-grey-fg: #475569;
+  --rag-grey-ink: #64748b;
+  padding: 14px;
+}
+
+.statusList { display: grid; gap: 6px; margin-top: 12px; }
+
+.statusCard {
+  --status-color: var(--rag-grey-ink);
+  display: grid;
+  grid-template-columns: 112px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  padding: 7px 8px;
+  border-color: color-mix(in srgb, var(--status-color) 30%, oklch(var(--background-50)));
+  background: color-mix(in srgb, var(--status-color) 7%, oklch(var(--background-50)));
+}
+
+.statusCard > span { justify-self: start; }
+.statusCard[data-status='green'] { --status-color: var(--rag-green-ink); }
+.statusCard[data-status='amber'] { --status-color: var(--rag-amber-ink); }
+.statusCard[data-status='red'] { --status-color: var(--rag-red-ink); }
+
+:global([data-theme='dark']) .policyPanel {
+  --rag-green-bg: #143825;
+  --rag-green-fg: #86efac;
+  --rag-green-ink: #4ade80;
+  --rag-amber-bg: #422e12;
+  --rag-amber-fg: #fde68a;
+  --rag-amber-ink: #fbbf24;
+  --rag-red-bg: #451c23;
+  --rag-red-fg: #fca5a5;
+  --rag-red-ink: #f87171;
+  --rag-grey-bg: #293548;
+  --rag-grey-fg: #cbd5e1;
+  --rag-grey-ink: #94a3b8;
+}
+
 .hero {
   display: flex;
   align-items: center;
@@ -144,6 +199,8 @@
 .formDistribution { grid-column: 1 / -1; }
 
 .healthGrid { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); gap: 20px; }
+.trendRegistryGrid { display: grid; grid-template-columns: minmax(0, 1fr); gap: 20px; }
+.trendRegistryGrid > section { min-width: 0; }
 .healthGrid > div { min-width: 0; }
 .healthGrid h2, .panel h2, .registry h2 { font-size: 15px; }
 .healthGrid :global([class~='bg-secondary-100/70']) p { color: oklch(var(--foreground-700)); }
@@ -170,6 +227,10 @@
 }
 
 @container (min-width: 1000px) {
+  .policyAttentionRow.withPolicy { grid-template-columns: minmax(300px, 1fr) minmax(0, 2fr); }
+  .trendRegistryGrid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .trendRegistryGrid > section > div:first-child { flex-direction: column; }
+  .trendRegistryGrid .registryScroll { max-height: 360px; }
   .analyticsGrid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .formDistribution { grid-column: auto; }
   .ratingCard > div > div { grid-template-columns: 1fr; justify-items: center; gap: 24px; }

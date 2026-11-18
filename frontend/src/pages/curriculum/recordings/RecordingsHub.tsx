@@ -7,11 +7,11 @@ import { RecordingsPageHelp } from './help/RecordingsPageHelp';
 
 export default function RecordingsHub() {
   return <WorkspaceShell role="curriculum" roleLabel="Curriculum Designer" navItems={curriculumNavItems}
-    workspaceLabel="Curriculum Studio" pageTitle="Coach & Tutor Recordings"
+    workspaceLabel="Curriculum Studio" pageTitle="Recording Quality"
     pageSubtitle="Choose a recording workspace to review sessions and quality checks.">
     <main className={styles.page}>
       <div className={styles.introduction}>
-        <h1>Coach & Tutor Recordings</h1>
+        <h1>Recording Quality</h1>
         <p>Choose the sessions you want to review.</p>
       </div>
       <div className={styles.cards}>

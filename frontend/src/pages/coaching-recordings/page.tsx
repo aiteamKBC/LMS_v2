@@ -278,13 +278,13 @@ export default function CoachingRecordingsPage({ workspace = 'curriculum' }: { w
       {workspace === 'curriculum' && <header className={styles.hero}>
         <nav aria-label="Breadcrumb" className={styles.breadcrumb}>
           <Link to="/curriculum">Curriculum</Link><ChevronRight size={12} aria-hidden="true" />
-          <Link to="/curriculum/recordings-hub">Recordings hub</Link><ChevronRight size={12} aria-hidden="true" />
+          <Link to="/curriculum/recordings-hub">Recording Quality</Link><ChevronRight size={12} aria-hidden="true" />
           <span aria-current="page">Coach meetings &amp; recordings</span>
         </nav>
         <div className={styles.heroHeading}>
           <div><h1>Coach Meetings &amp; Recordings</h1><p>See every meeting on a coach's calendar by its original title, with the recording, attendance and quality check attached to it.</p></div>
           <div className={styles.heroActions}>
-            <Link to="/curriculum/recordings-hub"><ArrowLeft size={14} aria-hidden="true" />Recordings hub</Link>
+            <Link to="/curriculum/recordings-hub"><ArrowLeft size={14} aria-hidden="true" />Recording Quality</Link>
             <Link to="/curriculum/coaching-recordings/reviews"><ShieldCheck size={14} aria-hidden="true" />Quality checks</Link>
             <button type="button" disabled={loading || refreshing} onClick={() => setRevision(value => value + 1)}><RefreshCw size={14} aria-hidden="true" />Refresh calendars</button>
           </div>

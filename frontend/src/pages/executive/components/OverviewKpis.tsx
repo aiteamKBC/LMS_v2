@@ -1,4 +1,5 @@
 import KpiCard from "@/components/base/KpiCard";
+import criticalStyles from "./CriticalCard.module.css";
 import { TIME_ZONE_LABEL, todayIso } from "@/pages/curriculum/recordings/utils";
 import {
   assessedTotal,
@@ -104,6 +105,7 @@ export default function OverviewKpis({ records, actions, forms, availability, on
 
         <KpiCard
           label="Critical feedback"
+          className={criticalStyles.card}
           value={availability.feedbackScores ? formatNumber(criticalFeedback) : '—'}
           definition="Negative scored feedback needing immediate review. This is a feedback classification, not an Assessed policy outcome."
           hint={!availability.feedbackScores ? 'Feedback classification data is unavailable' : criticalFeedback ? "Open the original responses to review" : "No Negative feedback in scope"}

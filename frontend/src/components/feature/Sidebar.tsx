@@ -99,8 +99,12 @@ export interface SidebarNavItem {
   id: string;
   label: string;
   icon: string;
-  /** Leaf destination. Navigation groups intentionally omit it. */
+  /** Leaf destination, or an optional overview for a navigation group. */
   href?: string;
+  /** Preserve a former parent's visibility restriction when a destination moves. */
+  permissionParentId?: string;
+  /** Enable a group's overview link with its own destination permission. */
+  overviewPermissionId?: string;
   /** Optional router state forwarded when opening this destination. */
   state?: unknown;
   /** Optional page-resolved selection for destinations with query-string tabs. */
@@ -403,11 +407,14 @@ export function Sidebar({
   }, [activeDropdown]);
 
   const filteredNavItems = useMemo(() => {
+    const visible = (item: SidebarNavItem) => canSeeNavItem(item.id)
+      && (!item.permissionParentId || canSeeNavItem(item.permissionParentId));
     return navItems
-      .filter(item => canSeeNavItem(item.id))
+      .filter(visible)
       .map(item => ({
         ...item,
-        children: item.children?.filter(child => canSeeNavItem(child.id)),
+        href: item.overviewPermissionId && !canSeeNavItem(item.overviewPermissionId) ? undefined : item.href,
+        children: item.children?.filter(visible),
       }))
       .filter(item => Boolean(item.href || item.children?.length));
   }, [navItems, canSeeNavItem]);
@@ -438,7 +445,8 @@ export function Sidebar({
   const navHrefs = useMemo(
     () => filteredNavItems.flatMap(item => [
       item.href,
-      ...(item.children?.map(child => child.href) ?? []),
+      ...(item.matchPaths ?? []),
+      ...(item.children?.flatMap(child => [child.href, ...(child.matchPaths ?? [])]) ?? []),
     ]).filter(Boolean),
     [filteredNavItems],
   );
@@ -461,25 +469,39 @@ export function Sidebar({
     // Nested sibling routes can share a prefix (for example /learner/clubs
     // and /learner/clubs/events). Only the most specific matching item should
     // receive the active style.
-    return matchPaths.length > 0 || !navHrefs.some(candidate =>
+    return matchPaths.some(candidate => location.pathname === candidate || location.pathname.startsWith(candidate + '/')) || !navHrefs.some(candidate =>
       candidate.length > href.length
       && (location.pathname === candidate || location.pathname.startsWith(candidate + '/'))
     );
   }, [filteredNavItems, location.pathname, location.search, navHrefs, queryMatchedHref]);
 
-  // Keep the section containing the current route open when navigation is
-  // supplied dynamically by the active role/configuration.
-  useEffect(() => {
-    const activeGroupIds = filteredNavItems
-      .filter(item => item.children?.some(child => isActive(child.href, child.matchPaths)))
-      .map(item => item.id);
+  const revealActiveGroups = useCallback((activeGroupIds: string[]) => {
     if (activeGroupIds.length === 0) return;
     setExpandedGroups(prev => {
       const next = new Set(prev);
       activeGroupIds.forEach(id => next.add(id));
       return next.size === prev.size ? prev : next;
     });
-  }, [filteredNavItems, isActive]);
+  }, []);
+
+  // Keep the existing automatic disclosure behavior in other workspaces.
+  useEffect(() => {
+    if (role === 'curriculum') return;
+    revealActiveGroups(filteredNavItems
+      .filter(item => item.children?.some(child => isActive(child.href, child.matchPaths)))
+      .map(item => item.id));
+  }, [role, filteredNavItems, isActive, revealActiveGroups]);
+
+  // Curriculum pages supply resolved selections. Recreating that navigation
+  // must not reopen a section the user just closed on the same route.
+  const activeGroupKey = JSON.stringify(filteredNavItems
+    .filter(item => item.children?.length && ((item.overviewPermissionId && isActive(item.href, item.matchPaths))
+      || item.children.some(child => isActive(child.href, child.matchPaths))))
+    .map(item => item.id));
+  useEffect(() => {
+    if (role !== 'curriculum') return;
+    revealActiveGroups(JSON.parse(activeGroupKey) as string[]);
+  }, [role, activeGroupKey, location.pathname, location.search, revealActiveGroups]);
 
   const hasChildren = (item: SidebarNavItem) => item.children && item.children.length > 0;
 
@@ -1013,10 +1035,28 @@ function ExpandedGroup({ item, isActive, isExpanded, onToggle, onNavigate, prese
 }) {
   const anyChildActive = item.children?.some(child => isActive(child.href, child.matchPaths)) ?? false;
   const activeChildIndex = item.children?.findIndex(child => isActive(child.href, child.matchPaths)) ?? -1;
+  const overviewActive = isActive(item.href, item.matchPaths);
 
   return (
     <div data-nav-group={item.id}>
-      {presentation === 'tiles' ? (
+      {item.href && item.overviewPermissionId ? (
+        <div className={`flex min-w-0 items-stretch ${presentation === 'rail' ? '' : 'gap-px'}`}>
+          <NavItemLink item={item} onClick={onNavigate} aria-current={overviewActive ? 'page' : undefined}
+            title={presentation === 'rail' ? item.label : undefined}
+            className={`relative flex min-w-0 flex-1 items-center text-[13px] font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-white/80 ${presentation === 'rail' ? 'h-12 w-12 justify-center rounded-xl' : 'min-h-12 gap-3 px-3 py-2'} ${overviewActive || anyChildActive ? 'bg-brand-accent text-white shadow-sm' : 'bg-white/10 text-white/75 hover:bg-white/20 hover:text-white'}`}>
+            <SidebarIcon id={item.id} label={item.label} sourceIcon={item.icon} size={20} className="shrink-0" />
+            <span className={presentation === 'rail' ? 'sr-only' : 'min-w-0 flex-1 text-left'}>{item.label}</span>
+          </NavItemLink>
+          {presentation !== 'rail' && (
+            <button type="button" onClick={onToggle}
+              aria-label={`Toggle ${item.label} pages`} aria-expanded={isExpanded}
+              className="flex w-7 shrink-0 items-center justify-center bg-white/10 text-white/75 hover:bg-white/20 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-white/80">
+              <ChevronDown size={14} strokeWidth={1.8} aria-hidden="true"
+                className={`transition-transform motion-reduce:transition-none ${isExpanded ? 'rotate-180' : ''}`} />
+            </button>
+          )}
+        </div>
+      ) : presentation === 'tiles' ? (
         <div className="mb-3 flex min-h-12 items-center gap-2.5 rounded-lg border border-white/90 bg-brand-accent px-3 py-2 text-[13px] font-semibold leading-snug text-white shadow-sm">
           <SidebarIcon id={item.id} label={item.label} sourceIcon={item.icon} size={17} />
           <span className="min-w-0 flex-1">{item.label}</span>

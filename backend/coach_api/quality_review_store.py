@@ -2,7 +2,10 @@
 from contextlib import contextmanager
 from hashlib import sha256
 import json
+import logging
 import uuid
+
+logger = logging.getLogger(__name__)
 
 
 class ReviewConflict(Exception):
@@ -26,13 +29,18 @@ def connect(*, write=False):
     if not dsn:
         raise ReviewUnavailable('The quality review store is not configured.')
     try:
-        with psycopg.connect(dsn, row_factory=dict_row, connect_timeout=3,
+        # Opening the remote store can take longer than three seconds, even
+        # when the saved review and its tables are available. Keep query and
+        # lock deadlines separate from the connection handshake budget.
+        with psycopg.connect(dsn, row_factory=dict_row, connect_timeout=10,
              options='-c default_transaction_read_only=' + ('off' if write else 'on')) as connection:
             connection.execute("SET LOCAL statement_timeout='5000ms'")
             connection.execute("SET LOCAL lock_timeout='2000ms'")
             yield connection
-    except psycopg.Error:
+    except psycopg.Error as error:
         # Never return DSNs, SQL parameters or user evidence in an exception.
+        logger.warning('Quality review database operation failed (%s, SQLSTATE %s).',
+                       type(error).__name__, error.sqlstate or 'unavailable')
         raise ReviewUnavailable('Quality reviews could not be saved or loaded. Please retry.') from None
 
 
