@@ -348,7 +348,7 @@ export default function QualityAssurancePage() {
         <Topbar onMenu={() => setSidebarOpen(true)} title={topMeta.title} section={topMeta.section} notifications={headerNotifications} onNotificationClick={selectNotification} />
 
         <div className={styles.body}>
-        <main id="main-content" tabIndex={-1} className="mx-auto flex w-full max-w-[1560px] flex-col gap-4 px-4 py-4 md:px-6 md:py-5">
+        <main id="main-content" tabIndex={-1} className="flex w-full flex-col gap-4 py-4 md:py-5">
           {isOverview ? <ExecutiveOverview attentionPanel={<NeedsAttentionCard notifications={headerNotifications} onNotificationClick={selectNotification} loading={qualityNotifications.loading} error={qualityNotifications.error} onRefresh={qualityNotifications.refresh} />} /> : null}
           {isTeamView ? <QualityTeamPage onToast={notify} /> : null}
           {isFeedbacksView ? <FeedbacksPage /> : null}
