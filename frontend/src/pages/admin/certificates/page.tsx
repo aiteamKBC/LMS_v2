@@ -631,10 +631,7 @@ export default function CertificateBuilderPage() {
                 className="min-h-20 w-full rounded-xl border border-foreground-200 p-3 text-sm font-semibold outline-none focus:ring-2 focus:ring-primary-200"
               />
             </label>
-            <label className="flex items-center gap-2 text-sm font-semibold">
-              <input type="checkbox" checked={form.requireFinalTest} onChange={(event) => setForm({ ...form, requireFinalTest: event.target.checked })} />
-              Require final test pass
-            </label>
+            <p className="text-sm text-foreground-600">Certificates unlock when completed activities ÷ total course activities reaches the percentage above. OTJ hours do not affect eligibility, and no separate final exam is required.</p>
             <div className="rounded-2xl border border-foreground-100 bg-[var(--kbc-surface)] p-3">
               <div className="mb-3 flex items-center justify-between gap-2">
                 <div>

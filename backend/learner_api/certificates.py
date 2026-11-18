@@ -8,8 +8,11 @@ from django.http import JsonResponse
 from django.middleware.csrf import get_token
 
 from login.permissions import staff_only
+from old_otjh.service import ServiceError
 
 from .learner_detail import SOURCE_MODELS, build_learner_detail
+from .certificate_progress import course_progress
+from .journal_sources import learner_journal_view, learner_journal_reads
 
 
 CERTIFICATE_TYPE = "progress-achievement"
@@ -41,7 +44,8 @@ def _template_dict(row):
         "title": row[2],
         "bodyText": row[3],
         "minimumProgress": float(row[4]),
-        "requireFinalTest": row[5],
+        # Retain the response field for older clients. Eligibility is progress-only.
+        "requireFinalTest": False,
         "layoutConfig": _json_dict(row[6]),
     }
 
@@ -261,7 +265,7 @@ def _component_activity_progress(detail, components):
 
 def _subject_ref(value):
     ref = _clean_text(value)
-    if not ref or len(ref) > 180 or not re.fullmatch(r"(current|legacy|unlinked):[-\w .:]+", ref):
+    if not ref or len(ref) > 180 or not re.fullmatch(r"(current|legacy|unlinked|free):[-\w .:]+", ref):
         raise ValueError("Unknown module.")
     return ref
 
@@ -331,7 +335,7 @@ def _snapshot_with_fallbacks(snapshot, kind, pk, module_ref="", module_title="",
         source = _load_source(kind, pk)
         detail = build_learner_detail(source, pk)
         fallback_learner = _learner_identity(detail, source, kind, pk)
-    except (SOURCE_DOES_NOT_EXIST, ValueError, DatabaseError):
+    except SOURCE_DOES_NOT_EXIST + (ValueError, DatabaseError):
         fallback_learner = {}
 
     current_learner = data.get("learner") if isinstance(data.get("learner"), dict) else {}
@@ -366,10 +370,8 @@ def _eligibility(kind, pk, template):
     detail = build_learner_detail(source, pk)
     progress = _learner_progress(detail)
     missing = []
-    if progress["progressPercent"] < template["minimumProgress"]:
+    if not progress["trackableTotal"] or progress["trackableDone"] * 100 < template["minimumProgress"] * progress["trackableTotal"]:
         missing.append("progress")
-    if template["requireFinalTest"] and not progress["finalTestPassed"]:
-        missing.append("final_test")
     return {
         **progress,
         "eligible": not missing,
@@ -383,20 +385,18 @@ def _eligibility(kind, pk, template):
 
 def _module_eligibility(kind, pk, module_ref, template):
     source = _load_source(kind, pk)
-    detail = build_learner_detail(source, pk)
-    progress = _module_progress(detail, module_ref)
+    progress = course_progress(source, module_ref)
     missing = []
-    if progress["progressPercent"] < template["minimumProgress"]:
+    if (not progress["trackableTotal"] or progress.get("demoProgress")
+            or progress["trackableDone"] * 100 < template["minimumProgress"] * progress["trackableTotal"]):
         missing.append("progress")
-    if template["requireFinalTest"] and not progress["finalTestPassed"]:
-        missing.append("final_test")
     return {
         **progress,
         "eligible": not missing,
         "missing": missing,
         "minimumProgress": template["minimumProgress"],
         "learner": {
-            **_learner_identity(detail, source, kind, pk),
+            **_learner_identity({}, source, kind, pk),
         },
     }
 
@@ -526,6 +526,7 @@ def issue_learner_certificate(request, kind, pk):
 
 
 @staff_only(allow_own_learner="pk")
+@learner_journal_view
 def learner_module_certificate_status(request, kind, pk, module_ref):
     if request.method != "GET":
         return _error("Method not allowed.", 405)
@@ -537,6 +538,8 @@ def learner_module_certificate_status(request, kind, pk, module_ref):
                 return JsonResponse({"configured": True, "template": None, "certificate": None})
             certificate = _certificate_dict(_issued_certificate(cursor, kind, pk, template["id"], template["version"], module_ref))
         eligibility = _module_eligibility(kind, pk, module_ref, template)
+    except ServiceError as exc:
+        return _error(str(exc), exc.status)
     except SOURCE_DOES_NOT_EXIST:
         return _error("Learner not found.", 404)
     except ValueError as exc:
@@ -547,6 +550,7 @@ def learner_module_certificate_status(request, kind, pk, module_ref):
 
 
 @staff_only(allow_own_learner="pk")
+@learner_journal_view
 def issue_learner_module_certificate(request, kind, pk, module_ref):
     if request.method != "POST":
         return _error("Method not allowed.", 405)
@@ -641,6 +645,8 @@ def issue_learner_module_certificate(request, kind, pk, module_ref):
                     )
                 else:
                     row = _issued_certificate(cursor, kind, pk, template["id"], template["version"], module_ref)
+    except ServiceError as exc:
+        return _error(str(exc), exc.status)
     except SOURCE_DOES_NOT_EXIST:
         return _error("Learner not found.", 404)
     except ValueError as exc:
@@ -678,11 +684,12 @@ def verify_certificate(request, token):
         if _clean_text(row[9]):
             try:
                 source = _load_source(row[11], row[12])
-                progress = _module_progress(build_learner_detail(source, row[12]), row[9])
+                with learner_journal_reads():
+                    progress = course_progress(source, row[9])
                 row[4] = progress["progressPercent"]
                 row[5]["progressPercent"] = progress["progressPercent"]
                 row[5]["trackableDone"] = progress["trackableDone"]
                 row[5]["trackableTotal"] = progress["trackableTotal"]
-            except (SOURCE_DOES_NOT_EXIST, ValueError, DatabaseError):
+            except SOURCE_DOES_NOT_EXIST + (ValueError, DatabaseError, ServiceError):
                 pass
     return JsonResponse({"valid": True, "certificate": _certificate_dict(row)})

@@ -84,7 +84,7 @@ export function Cover({ title, url, large = false, fallbackUrl }: { title: strin
   </div>;
 }
 
-function SubjectCertificateAction({
+export function SubjectCertificateAction({
   subject,
   template,
   csrfToken,
@@ -345,13 +345,13 @@ export function StudentActivityPanel({ data: incomingData, loading, error, onRet
   const [savedProgress, setSavedProgress] = useState<{ identity: string; activities: Record<string, SubjectAttemptResult> }>({ identity, activities: {} });
   useEffect(() => {
     setCertificateConfig({ template: null, csrfToken: '' });
-    if (view !== 'catalogue' || selected || requestedActivity || !kind || !learnerId) return;
+    if (!kind || !learnerId) return;
     let cancelled = false;
     fetchLearnerCertificateTemplate(kind, learnerId)
       .then((result) => { if (!cancelled) setCertificateConfig({ template: result.template, csrfToken: result.csrfToken || '' }); })
       .catch(() => { if (!cancelled) setCertificateConfig({ template: null, csrfToken: '' }); });
     return () => { cancelled = true; };
-  }, [view, kind, learnerId, selected, requestedActivity]);
+  }, [kind, learnerId]);
   const updatedData = useMemo(() => {
     if (!data || savedProgress.identity !== identity) return data;
     return { ...data, activities: data.activities.map((item) => {
@@ -455,6 +455,7 @@ export function StudentActivityPanel({ data: incomingData, loading, error, onRet
     </header>}
     {imageError && <LearnerLoadError title="Some subject details could not be refreshed" error={imageError} onRetry={retryMetadata} />}
     {error && <LearnerLoadError title="Your learning information could not be refreshed" error={error} onRetry={onRetry} />}
+    {active && <SubjectCertificateAction subject={active} template={certificateConfig.template} csrfToken={certificateConfig.csrfToken} kind={kind} learnerId={learnerId} />}
     {data?.source_status === 'historical' && data.verification_status !== 'verified' && <Notice tone="attention" role="status" title="Showing saved previous learning" actions={<button type="button" onClick={onRetry} className="min-h-11 rounded-lg border border-primary-200 px-4 py-2 text-sm font-semibold text-primary-700">Try again</button>}>The latest results could not be verified.</Notice>}
     {selected && !active && <p role="alert" className={styles.empty}>This module is not available in your learning plan. <button onClick={() => select()}>Show your modules</button></p>}
     {view === 'map' && <div className={styles.mapToolbar}>
