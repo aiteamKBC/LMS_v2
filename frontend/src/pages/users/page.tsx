@@ -2,7 +2,7 @@ import { LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
 import { DELIVERY_STATUS, PLAN_EDITABLE_STATUSES, isLearnerRow, combinedType, fillBlanks, mergeDirectoryRows, differs, rowTypes, matches, type DirectoryRow } from './page.helpers';
 import { WorkspaceMetricContent } from '@/components/ui/WorkspaceMetricContent';
 import { useId, useMemo, useRef, useState, useEffect, type ReactNode } from 'react';
-import { Building2, Columns2, ListFilter, MoreVertical, ShieldUser, Upload } from 'lucide-react';
+import { Building2, Columns2, ListFilter, MoreVertical, ShieldUser } from 'lucide-react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { EnrolmentWorkspaceShell as WorkspaceShell } from './presentation/EnrolmentWorkspaceShell';
 import { AppIcon } from '@/components/feature/AppIcon';
@@ -24,6 +24,7 @@ import { SendInvitationButton } from './components/SendInvitationButton';
 import { CopyInvitationLinkButton } from './components/CopyInvitationLinkButton';
 import { CreateUserModal } from './components/CreateUserModal';
 import { DownloadLearnerTemplateButton } from './components/DownloadLearnerTemplateButton';
+import { ExportDirectoryButton } from './components/ExportDirectoryButton';
 import { ImportLearnersModal } from './components/ImportLearnersModal';
 import { CreateStaffModal } from './components/CreateStaffModal';
 import { CreateEmployerModal } from './components/CreateEmployerModal';
@@ -597,7 +598,7 @@ export default function UsersListPage() {
             </div>
             <div className="flex items-center gap-2">
               <button type="button" className="hidden items-center gap-1.5 rounded-lg border border-foreground-100 px-3 py-2 text-[12px] font-medium text-foreground-600 transition hover:border-primary-200 hover:text-primary-700 sm:inline-flex"><Columns2 size={14} aria-hidden="true" />Columns</button>
-              <button type="button" className="inline-flex items-center gap-1.5 rounded-lg border border-foreground-100 px-3 py-2 text-[12px] font-medium text-foreground-600 transition hover:border-primary-200 hover:text-primary-700"><Upload size={14} aria-hidden="true" />Export</button>
+              <ExportDirectoryButton rows={filtered} attendanceModes={attendanceModes} disabled={loading || Boolean(error)} />
             </div>
           </div>
           <div className="overflow-x-auto">

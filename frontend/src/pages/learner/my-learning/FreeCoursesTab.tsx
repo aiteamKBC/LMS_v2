@@ -4,10 +4,11 @@ import { Navigate, useLocation, useNavigate } from 'react-router-dom';
 import { ArrowRight, BookOpen, CheckCircle2, ChevronLeft, ChevronRight, FileText, Headphones, HelpCircle, Layers3, Loader2, PenLine, Presentation, Sparkles, Video } from 'lucide-react';
 import { fetchLearnerFreeCourses, markFreeCourseActivityComplete, peekLearnerFreeCourses, type FreeCourse, type FreeCourseActivity } from '@/api/freeCourses';
 import type { LearnerKind } from '@/api/learnerDetail';
+import { fetchLearnerCertificateTemplate, type CertificateTemplateSummary } from '@/api/learnerCertificates';
 import { computeLocks, hasContent, isQuiz } from './freeCourseAccess';
 import { Panel } from '@/components/ui/Panel';
 import { EmptyState, EmptyStateAction } from '@/components/ui/EmptyState';
-import { Cover } from './SubjectWorkspace';
+import { Cover, SubjectCertificateAction } from './SubjectWorkspace';
 import styles from './SubjectWorkspace.module.css';
 
 // Download the material players / quiz engine only when a learner opens an
@@ -47,13 +48,13 @@ function courseProgress(course: FreeCourse, isDone: (activity: FreeCourseActivit
       if (isDone(activity)) done += 1;
     }
   }
-  return { done, completable, percent: completable ? Math.round((done / completable) * 100) : 0 };
+  return { done, completable, percent: completable ? Math.round((done / completable) * 10000) / 100 : 0 };
 }
 
 /** A compact progress bar matching the normal SubjectCard's `Progress compact`
  *  (that component isn't exported, so its markup is mirrored here). */
 function CourseProgressBar({ done, total, label }: { done: number; total: number; label: string }) {
-  const percent = total ? Math.round((done / total) * 100) : 0;
+  const percent = total ? Math.round((done / total) * 10000) / 100 : 0;
   return (
     <div className="space-y-2">
       <div className="flex items-center justify-between gap-2 text-xs">
@@ -67,7 +68,23 @@ function CourseProgressBar({ done, total, label }: { done: number; total: number
   );
 }
 
-function FreeCourseCard({ course, tone, isDone, onOpen }: { course: FreeCourse; tone: string; isDone: (activity: FreeCourseActivity) => boolean; onOpen: () => void }) {
+type CertificateConfig = { template: CertificateTemplateSummary | null; csrfToken: string };
+
+function FreeCourseCertificate({ course, isDone, certificate, kind, learnerId }: {
+  course: FreeCourse; isDone: (activity: FreeCourseActivity) => boolean; certificate: CertificateConfig; kind?: LearnerKind; learnerId?: string;
+}) {
+  if (course.moduleId) return null; // Builder courses use the normal module workspace action.
+  const progress = courseProgress(course, isDone);
+  return <SubjectCertificateAction subject={{ id: `free:${course.freeCourseId}`, title: course.courseName, source: 'current', activities: [],
+    card: { activityCount: progress.completable, completedActivityCount: progress.done, progress: progress.percent,
+      status: progress.percent === 100 ? 'Completed' : 'In progress', finalTestPassed: false } }}
+    template={certificate.template} csrfToken={certificate.csrfToken} kind={kind} learnerId={learnerId} />;
+}
+
+function FreeCourseCard({ course, tone, isDone, onOpen, certificate, kind, learnerId }: {
+  course: FreeCourse; tone: string; isDone: (activity: FreeCourseActivity) => boolean; onOpen: () => void;
+  certificate: CertificateConfig; kind?: LearnerKind; learnerId?: string;
+}) {
   const activities = course.moduleId ? course.activityCount ?? 0 : activityCount(course);
   const weeks = course.moduleId ? course.weekCount ?? 0 : course.weeks.length;
   const progress = courseProgress(course, isDone);
@@ -114,6 +131,7 @@ function FreeCourseCard({ course, tone, isDone, onOpen }: { course: FreeCourse; 
           <span className={styles.cardAction}>Open course<ArrowRight size={16} aria-hidden="true" /></span>
         </div>
       </button>
+      <FreeCourseCertificate course={course} isDone={isDone} certificate={certificate} kind={kind} learnerId={learnerId} />
     </article>
   );
 }
@@ -121,7 +139,7 @@ function FreeCourseCard({ course, tone, isDone, onOpen }: { course: FreeCourse; 
 /** Content on the left, the activity list on the right — the same master/detail
  *  shape as the normal module player (lg:grid-cols-[1fr_320px]). No progress,
  *  completion or hours: free courses carry none. */
-function FreeCourseDetail({ course, tone, kind, learnerId, activeId, isDone, onSelect, onComplete, onQuizPassed, completingId, completeError, onBack }: {
+function FreeCourseDetail({ course, tone, kind, learnerId, activeId, isDone, onSelect, onComplete, onQuizPassed, completingId, completeError, onBack, certificate }: {
   course: FreeCourse; tone: string; kind: LearnerKind; learnerId: string; activeId: string | null;
   isDone: (activity: FreeCourseActivity) => boolean;
   onSelect: (componentId: string) => void;
@@ -130,6 +148,7 @@ function FreeCourseDetail({ course, tone, kind, learnerId, activeId, isDone, onS
   completingId: string | null;
   completeError: string;
   onBack: () => void;
+  certificate: CertificateConfig;
 }) {
   const flat = useMemo(() => course.weeks.map((week) => ({
     weekTitle: week.weekTitle || `Week ${week.weekNumber || ''}`.trim(),
@@ -174,6 +193,7 @@ function FreeCourseDetail({ course, tone, kind, learnerId, activeId, isDone, onS
         </div>
       </div>
 
+      <FreeCourseCertificate course={course} isDone={isDone} certificate={certificate} kind={kind} learnerId={learnerId} />
       {ordered.length === 0 ? (
         <p className="rounded-xl border bg-white p-6 text-sm text-foreground-500">Activities will appear here when they are added to this course.</p>
       ) : (
@@ -329,6 +349,16 @@ export function FreeCoursesTab({ kind, id }: { kind?: LearnerKind; id?: string }
   };
 
   const identity = `${kind}:${id}`;
+  const [certificateState, setCertificateState] = useState<CertificateConfig & { identity: string }>({ identity, template: null, csrfToken: '' });
+  useEffect(() => {
+    let disposed = false;
+    setCertificateState({ identity, template: null, csrfToken: '' });
+    if (kind && id) void fetchLearnerCertificateTemplate(kind, id).then(value => {
+      if (!disposed) setCertificateState({ identity, template: value.template, csrfToken: value.csrfToken || '' });
+    }).catch(() => { /* Certificate configuration does not gate learning. */ });
+    return () => { disposed = true; };
+  }, [kind, id, identity]);
+  const certificate: CertificateConfig = certificateState.identity === identity ? certificateState : { template: null, csrfToken: '' };
   const [state, setState] = useState<{ identity: string; courses: FreeCourse[] | null; error: string }>(
     () => ({ identity, courses: (kind && id ? peekLearnerFreeCourses(kind, id) : undefined) ?? null, error: '' }),
   );
@@ -408,6 +438,7 @@ export function FreeCoursesTab({ kind, id }: { kind?: LearnerKind; id?: string }
         completingId={completingId}
         completeError={completeError}
         onBack={() => select()}
+        certificate={certificate}
       />
     );
   }
@@ -421,7 +452,7 @@ export function FreeCoursesTab({ kind, id }: { kind?: LearnerKind; id?: string }
       </header>
       <div className={styles.freeGrid}>
         {courses.map((course) => (
-          <FreeCourseCard key={course.freeCourseId} course={course} tone={tones.get(course.freeCourseId) ?? 'purple'} isDone={isDone} onOpen={() => course.moduleId ? navigate(moduleLocation(course.moduleId)) : select(course.freeCourseId)} />
+          <FreeCourseCard key={course.freeCourseId} course={course} tone={tones.get(course.freeCourseId) ?? 'purple'} isDone={isDone} onOpen={() => course.moduleId ? navigate(moduleLocation(course.moduleId)) : select(course.freeCourseId)} certificate={certificate} kind={kind} learnerId={id} />
         ))}
       </div>
     </section>

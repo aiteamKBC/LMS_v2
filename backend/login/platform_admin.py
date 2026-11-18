@@ -137,7 +137,7 @@ def certificate_template(request):
                     VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb,%s,%s,CASE WHEN %s THEN now() END)
                     RETURNING id,published_at''',
                     [str(payload.get("name") or "Progress certificate")[:160], "progress-achievement", version,
-                     "published" if publish else "draft", title, body, threshold, bool(payload.get("requireFinalTest")),
+                     "published" if publish else "draft", title, body, threshold, False,
                      json.dumps(layout), actor, actor if publish else "", publish])
                 template_id, published_at = cursor.fetchone()
                 cursor.execute('INSERT INTO "Learner".certificate_audit_logs (actor_email,action,template_id,details) VALUES (%s,%s,%s,%s::jsonb)', [actor, "published" if publish else "draft-saved", template_id, json.dumps({"version": version, "supersededCertificates": superseded_count})])
@@ -149,7 +149,7 @@ def certificate_template(request):
                     "title": title,
                     "bodyText": body,
                     "minimumProgress": threshold,
-                    "requireFinalTest": bool(payload.get("requireFinalTest")),
+                    "requireFinalTest": False,
                     "layoutConfig": layout,
                     "publishedAt": published_at.isoformat() if published_at else None,
                 }})
@@ -171,12 +171,12 @@ def certificate_template(request):
     except DatabaseError:
         return _error("Certificate tables are not installed. Run learner_api/sql/certificate_management.sql in Neon.", 503)
     templates = [
-        {"id": item[0], "name": item[1], "version": item[2], "status": item[3], "title": item[4], "bodyText": item[5], "minimumProgress": float(item[6]), "requireFinalTest": item[7], "layoutConfig": _json_dict(item[8]), "publishedAt": item[9].isoformat() if item[9] else None}
+        {"id": item[0], "name": item[1], "version": item[2], "status": item[3], "title": item[4], "bodyText": item[5], "minimumProgress": float(item[6]), "requireFinalTest": False, "layoutConfig": _json_dict(item[8]), "publishedAt": item[9].isoformat() if item[9] else None}
         for item in rows
     ]
     if not row:
         return JsonResponse({"template": None, "templates": templates})
-    return JsonResponse({"template": {"id": row[0], "name": row[1], "version": row[2], "status": row[3], "title": row[4], "bodyText": row[5], "minimumProgress": float(row[6]), "requireFinalTest": row[7], "layoutConfig": _json_dict(row[8]), "publishedAt": row[9].isoformat() if row[9] else None}, "templates": templates})
+    return JsonResponse({"template": {"id": row[0], "name": row[1], "version": row[2], "status": row[3], "title": row[4], "bodyText": row[5], "minimumProgress": float(row[6]), "requireFinalTest": False, "layoutConfig": _json_dict(row[8]), "publishedAt": row[9].isoformat() if row[9] else None}, "templates": templates})
 
 
 def _error(message, status, code=None):

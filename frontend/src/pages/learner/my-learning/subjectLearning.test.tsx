@@ -123,13 +123,41 @@ describe('shared subject and week selection', () => {
     expect(learningDeadlines([subject], '2050-01-01')).toEqual([{ id: 'due', title: 'Activity due', type: 'assignment', date: '2050-10-10', subjectId: 'current:M1' }]);
   });
 
-  it('requires a passed final quiz when the certificate template says so', () => {
-    const quiz = { ...entry('final', '2026-09-10', true), native: { componentId: 'FINAL', title: 'Final Test', isQuiz: true, quizAttempts: [{ passed: false }] } } as SubjectEntry;
-    const subject: Subject = { id: 'current:M1', title: 'Current', source: 'current', activities: [quiz] };
-    const template = { id: 1, version: 2, title: 'Certificate', minimumProgress: 100, requireFinalTest: true };
+  // Certificates now depend only on course progress, including older published
+  // templates which still contain requireFinalTest=true.
+  it.each(['current:M1', 'unlinked:Course', 'legacy:50', 'free:FC-1'])('unlocks %s at the configured progress without a final exam', id => {
+    const subject: Subject = { id, title: 'Course', source: id.startsWith('legacy:') ? 'legacy' : 'current',
+      activities: Array.from({ length: 5 }, (_, i) => entry(String(i), '2026-09-10', i < 3)) };
+    const template = { id: 1, version: 2, title: 'Certificate', minimumProgress: 80, requireFinalTest: true };
     expect(certificateEligible(subject, template)).toBe(false);
-    quiz.native!.quizAttempts = [{ passed: true, grade: 1, quizId: 1, startedAt: '2026-09-10T09:00:00Z', submittedAt: '2026-09-10T09:10:00Z' }];
+    subject.activities[3].completed = true;
     expect(certificateEligible(subject, template)).toBe(true);
+    expect(certificateEligible(subject, null)).toBe(false);
+    expect(certificateEligible({ ...subject, activities: [] }, { ...template, minimumProgress: 0 })).toBe(false);
+    expect(certificateEligible({ ...subject, demoProgress: true }, template)).toBe(false);
+  });
+
+  it('uses completed activities even when an aggregate or hours percentage differs', () => {
+    const subject: Subject = { id: 'legacy:50', title: 'Course', source: 'legacy', activities: [entry('1', '', false)], aggregateProgress: 100, acceptedHours: 100 };
+    const template = { title: 'Certificate', minimumProgress: 80, requireFinalTest: false };
+    expect(certificateEligible(subject, template)).toBe(false);
+    expect(certificateEligible({ ...subject, aggregateProgress: 0, acceptedHours: 0, activities: [entry('1', '', true)] }, template)).toBe(true);
+  });
+
+  it.each(['current:M1', 'legacy:50', 'free:FC-1'])('uses the activity counts on the %s card and applies the configured threshold exactly', id => {
+    const subject: Subject = { id, title: 'Course', source: 'current', activities: [], acceptedHours: 100,
+      card: { activityCount: 200, completedActivityCount: 159, progress: 80, finalTestPassed: false, status: 'In progress' } };
+    const template = { title: 'Certificate', minimumProgress: 80, requireFinalTest: false };
+    expect(certificateEligible(subject, template)).toBe(false); // 79.5% cannot round up to 80%.
+    subject.card!.completedActivityCount = 160;
+    subject.card!.progress = 20;
+    subject.acceptedHours = 0;
+    expect(certificateEligible(subject, template)).toBe(true);
+    expect(certificateEligible(subject, { ...template, minimumProgress: 100 })).toBe(false);
+    subject.card!.completedActivityCount = 199;
+    expect(certificateEligible(subject, { ...template, minimumProgress: 100 })).toBe(false);
+    subject.card!.completedActivityCount = 200;
+    expect(certificateEligible(subject, { ...template, minimumProgress: 100 })).toBe(true);
   });
 
   it('keeps a calendar week together across two months and preserves every activity', () => {
