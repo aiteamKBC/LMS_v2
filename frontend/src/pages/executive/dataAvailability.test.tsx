@@ -14,16 +14,16 @@ afterEach(cleanup);
 describe('executive overview source availability', () => {
   it('distinguishes unavailable indicators from a confirmed empty result', () => {
     const { rerender } = render(<MemoryRouter><OverviewKpis records={[]} actions={[]} forms={[]}
-      availability={{ actions: false, criticalIssues: false, feedback: false }} /></MemoryRouter>);
+      availability={{ actions: false, criticalIssues: false, feedback: false, feedbackScores: false }} /></MemoryRouter>);
     expect(screen.getAllByText('—')).toHaveLength(4);
-    expect(screen.getByText('Critical issue data is unavailable')).toBeInTheDocument();
+    expect(screen.getAllByText('Feedback classification data is unavailable')).toHaveLength(2);
     expect(screen.getByText('Action status data is unavailable')).toBeInTheDocument();
-    expect(screen.getAllByText('Feedback response data is unavailable')).toHaveLength(2);
-    expect(screen.queryByText('No critical concerns in scope')).not.toBeInTheDocument();
+    expect(screen.getByText('Feedback response data is unavailable')).toBeInTheDocument();
+    expect(screen.queryByText('No Negative feedback in scope')).not.toBeInTheDocument();
     rerender(<MemoryRouter><OverviewKpis records={[]} actions={[]} forms={[]}
-      availability={{ actions: true, criticalIssues: true, feedback: true }} /></MemoryRouter>);
-    expect(screen.queryByText('Critical issue data is unavailable')).not.toBeInTheDocument();
-    expect(screen.getByText('No critical concerns in scope')).toBeInTheDocument();
+      availability={{ actions: true, criticalIssues: true, feedback: true, feedbackScores: true }} /></MemoryRouter>);
+    expect(screen.queryByText('Feedback classification data is unavailable')).not.toBeInTheDocument();
+    expect(screen.getByText('No Negative feedback in scope')).toBeInTheDocument();
     expect(screen.getByText('0 past target date')).toBeInTheDocument();
   });
 
@@ -36,13 +36,13 @@ describe('executive overview source availability', () => {
       answeredQuestions: 1, totalQuestions: 1, reviewStatus: 'completed',
     };
     render(<MemoryRouter><OverviewKpis records={[base, { ...base, id: 'assessed-review', rag: 'green', policyVersion: 'qms-v1' }]}
-      actions={[]} forms={[]} availability={{ actions: true, criticalIssues: true, feedback: true }} /></MemoryRouter>);
+      actions={[]} forms={[]} availability={{ actions: true, criticalIssues: true, feedback: true, feedbackScores: true }} /></MemoryRouter>);
     expect(screen.getByText('Assessed records')).toBeInTheDocument();
     expect(screen.getByText('Records with an approved policy outcome: Green, Amber or Red.')).toBeInTheDocument();
     expect(screen.getByText('1 completed record still has no policy outcome')).toBeInTheDocument();
   });
 
-  it('flags neutral and negative feedback for assessment but not positive feedback', () => {
+  it('counts Negative feedback as critical and Neutral plus Negative as needing review without marking them assessed', () => {
     const feedback: QualityRecord = {
       id: 'neutral-feedback', formId: 'feedback-1', formName: 'Synthetic Feedback', category: 'Learner Feedback',
       subjectType: 'Coach', subjectName: 'Synthetic Coach', department: 'Not available', programme: 'Not available',
@@ -50,11 +50,15 @@ describe('executive overview source availability', () => {
       rag: 'unrated', policyVersion: null, critical: false, summary: 'Completed feedback', learnerRef: 'learner-1',
       answeredQuestions: 1, totalQuestions: 1, reviewStatus: 'completed', feedbackClassification: 'neutral',
     };
-    render(<MemoryRouter><OverviewKpis records={[feedback, { ...feedback, id: 'positive-feedback', feedbackClassification: 'positive' }]}
-      actions={[]} forms={[]} availability={{ actions: true, criticalIssues: true, feedback: true }} /></MemoryRouter>);
-    expect(screen.getByText('Feedback needs assessment')).toBeInTheDocument();
-    expect(screen.getByText('Neutral (Amber) and Negative (Red) feedback needs review; Positive (Green) feedback does not.')).toBeInTheDocument();
+    render(<MemoryRouter><OverviewKpis records={[feedback, { ...feedback, id: 'negative-feedback', feedbackClassification: 'negative' }, { ...feedback, id: 'positive-feedback', feedbackClassification: 'positive' }]}
+      actions={[]} forms={[]} availability={{ actions: false, criticalIssues: false, feedback: true, feedbackScores: true }} /></MemoryRouter>);
+    expect(screen.getByText('Feedback to review')).toBeInTheDocument();
+    expect(within(screen.getByText('Feedback to review').closest('.group') as HTMLElement).getByText('2')).toBeInTheDocument();
+    expect(within(screen.getByText('Critical feedback').closest('.group') as HTMLElement).getByText('1')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Review critical feedback' })).toHaveAttribute('href', '/curriculum/quality-demo?view=feedbacks&classification=negative');
     expect(screen.getByText('Review the original responses and decide whether follow-up is required')).toBeInTheDocument();
+    expect(within(screen.getByText('Open actions').closest('.group') as HTMLElement).getByText('—')).toBeInTheDocument();
+    expect(within(screen.getByText('Assessed records').closest('.group') as HTMLElement).getByText('0')).toBeInTheDocument();
   });
 
   it('does not claim actions were resolved when their statuses are unavailable', () => {

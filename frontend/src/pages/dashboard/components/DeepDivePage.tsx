@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { fetchEnrolmentBoard, fetchEnrolmentUsers } from "@/api/enrolmentUsers";
-import { fetchDeepDiveRecords, importDeepDiveWorkbook, markDeepDiveRecordReviewed, sha256File, syncDeepDiveFromCreatedUsers, updateDeepDiveRecord, workbookToDeepDiveRows, type DeepDiveOperationalDetails, type DeepDiveRecord, type DeepDiveReviewItem } from "@/api/deepDive";
+import { fetchDeepDiveIlrContact, fetchDeepDiveRecord, fetchDeepDiveSummaries, importDeepDiveWorkbook, markDeepDiveRecordReviewed, sha256File, syncDeepDiveFromCreatedUsers, updateDeepDiveRecord, workbookToDeepDiveRows, type DeepDiveOperationalDetails, type DeepDiveRecord, type DeepDiveReviewItem } from "@/api/deepDive";
 import type { EnrolmentBoard, UserListRow } from "@/pages/users/types";
 
 type ReviewStatusFilter = "all" | "reviewed" | "awaiting";
@@ -22,6 +22,27 @@ function programmeLabel(learner: UserListRow) {
 function recordText(record: DeepDiveRecord, key: string) {
   const value = record.raw?.[key];
   return typeof value === "string" || typeof value === "number" ? String(value) : "";
+}
+
+function IlrContactFields({ recordId }: { recordId: string }) {
+  const [contact, setContact] = useState<{ uln: string | null; postcode: string | null } | null>(null);
+  const [error, setError] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    setContact(null);
+    setError(false);
+    void fetchDeepDiveIlrContact(recordId)
+      .then((value) => { if (!cancelled) setContact(value); })
+      .catch(() => { if (!cancelled) setError(true); });
+    return () => { cancelled = true; };
+  }, [recordId]);
+
+  const display = (value: string | null | undefined) => error ? "Unavailable" : contact ? value || "Not recorded" : "Loading…";
+  return <>
+    <div className="flex justify-between gap-3 border-b border-background-100 pb-2"><dt className="text-foreground-500">ULN</dt><dd className="text-right text-foreground-800">{display(contact?.uln)}</dd></div>
+    <div className="flex justify-between gap-3 border-b border-background-100 pb-2"><dt className="text-foreground-500">Learner postcode</dt><dd className="text-right text-foreground-800">{display(contact?.postcode)}</dd></div>
+  </>;
 }
 
 function operationalText(value?: string | null) {
@@ -127,6 +148,10 @@ export default function DeepDivePage() {
   const [selectedBoard, setSelectedBoard] = useState<EnrolmentBoard | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailError, setDetailError] = useState("");
+  const [loadedRecordId, setLoadedRecordId] = useState<string | null>(null);
+  const [recordDetailLoading, setRecordDetailLoading] = useState(false);
+  const [recordDetailError, setRecordDetailError] = useState("");
+  const [recordRetry, setRecordRetry] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [deepDiveError, setDeepDiveError] = useState("");
@@ -152,26 +177,15 @@ export default function DeepDivePage() {
     setDeepDiveError("");
     setImportMessage("");
 
-    void Promise.allSettled([
-      // Deep Dive syncs from the learner source, which contains both apprenticeship
-      // and commercial learners. Load the complete learner directory so the
-      // stored LMS learner id can resolve to the authoritative row regardless
-      // of learner type.
-      fetchEnrolmentUsers(),
-      fetchDeepDiveRecords(),
-    ]).then(async ([learnerResult, deepDiveResult]) => {
-      if (cancelled) return;
-      if (learnerResult.status === "rejected") {
-        setError(learnerResult.reason instanceof Error ? learnerResult.reason.message : "Learner data could not be loaded.");
-        setLoading(false);
-        return;
-      }
+    void fetchDeepDiveSummaries()
+      .then((result) => { if (!cancelled) setDeepDiveRecords(result.records); })
+      .catch((reason) => { if (!cancelled) setDeepDiveError(reason instanceof Error ? reason.message : "Deep Dive records could not be loaded."); })
+      .finally(() => { if (!cancelled) setLoading(false); });
 
-      setLearners(learnerResult.value);
-      if (deepDiveResult.status === "fulfilled") setDeepDiveRecords(deepDiveResult.value.records);
-      else setDeepDiveError("The Deep Dive workbook has not been imported yet. Upload the current workbook to include all learners.");
-      setLoading(false);
-    });
+    // Directory details can enrich the rows later without delaying the table.
+    void fetchEnrolmentUsers()
+      .then((result) => { if (!cancelled) setLearners(result); })
+      .catch((reason) => { if (!cancelled) setError(reason instanceof Error ? reason.message : "Learner data could not be loaded."); });
 
     return () => { cancelled = true; };
   }, [retry]);
@@ -218,7 +232,8 @@ export default function DeepDivePage() {
 
   const selectedRow = selectedId ? mergedRows.find((row) => row.key === selectedId) ?? null : null;
   const selected = selectedRow?.learner ?? null;
-  const selectedRecord = selectedRow?.record ?? null;
+  const selectedRecordSummary = selectedRow?.record ?? null;
+  const selectedRecord = loadedRecordId === selectedRecordSummary?.id ? selectedRecordSummary : null;
   const selectedLmsId = selectedRow?.lmsId ?? null;
   const operational = selectedRecord?.operational;
   const deepDiveReviewedCount = mergedRows.filter(({ record }) => Boolean(record?.reviewedBy)).length;
@@ -229,6 +244,29 @@ export default function DeepDivePage() {
     { label: "Learners reviewed", value: deepDiveReviewedCount, caption: "Deep Dive records marked reviewed", kind: "reviewed" as const },
     { label: "Awaiting review", value: deepDiveAwaitingReviewCount, caption: "Deep Dive records not yet reviewed", kind: "awaiting" as const },
   ];
+
+  useEffect(() => {
+    const id = selectedRecordSummary?.id;
+    if (!id) {
+      setLoadedRecordId(null);
+      setRecordDetailLoading(false);
+      setRecordDetailError("");
+      return;
+    }
+    let cancelled = false;
+    setLoadedRecordId(null);
+    setRecordDetailLoading(true);
+    setRecordDetailError("");
+    void fetchDeepDiveRecord(id)
+      .then((detail) => {
+        if (cancelled) return;
+        setDeepDiveRecords((current) => current.map((record) => record.id === id && detail.version >= record.version ? detail : record));
+        setLoadedRecordId(id);
+      })
+      .catch((reason) => { if (!cancelled) setRecordDetailError(reason instanceof Error ? reason.message : "Deep Dive details could not be loaded."); })
+      .finally(() => { if (!cancelled) setRecordDetailLoading(false); });
+    return () => { cancelled = true; };
+  }, [selectedRecordSummary?.id, recordRetry]);
 
   useEffect(() => {
     if (!selectedLmsId) {
@@ -363,10 +401,6 @@ export default function DeepDivePage() {
     return <div role="status" className="rounded-xl border border-background-200 bg-background-50 p-8 text-sm text-foreground-600">Loading Deep Dive learner journey…</div>;
   }
 
-  if (error) {
-    return <div role="alert" className="rounded-xl border border-amber-200 bg-amber-50 p-5 text-sm text-amber-950"><p>{error}</p><button type="button" className="mt-3 rounded-md bg-primary-600 px-3 py-2 font-label text-[12px] font-semibold text-background-50" onClick={() => setRetry((value) => value + 1)}>Retry Deep Dive</button></div>;
-  }
-
   return (
     <div className="space-y-5">
       <header className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
@@ -379,10 +413,11 @@ export default function DeepDivePage() {
       </header>
 
       <div className="rounded-xl border border-primary-100 bg-primary-50/50 px-4 py-3 text-[12px] leading-relaxed text-foreground-700">
-        <span className="font-semibold text-foreground-900">Source:</span> Imported Deep Dive workbook rows and matched LMS learner records. The monthly sync adds the next 30 learners without creating accounts or overwriting authoritative LMS fields.
+        <span className="font-semibold text-foreground-900">Source:</span> Imported Deep Dive workbook rows and matched LMS learner records. The monthly sync adds the next 30 learners grouped by ILR postcode area; learners without an ILR postcode remain eligible. It does not create accounts or overwrite authoritative LMS fields.
       </div>
 
-      {deepDiveError ? <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-[12px] text-amber-950">{deepDiveError}</div> : null}
+      {deepDiveError ? <div role="alert" className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-[12px] text-amber-950">{deepDiveError}<button type="button" className="ml-3 font-semibold underline" onClick={() => setRetry((value) => value + 1)}>Retry</button></div> : null}
+      {error ? <div role="alert" className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-[12px] text-amber-950">Learner directory: {error}<button type="button" className="ml-3 font-semibold underline" onClick={() => setRetry((value) => value + 1)}>Retry</button></div> : null}
       {importMessage ? <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-[12px] text-emerald-900">{importMessage}</div> : null}
 
       <section className="grid gap-3 sm:grid-cols-3" aria-label="Deep Dive summary">
@@ -443,8 +478,10 @@ export default function DeepDivePage() {
             {editing && selectedRecord ? <section className="rounded-xl border border-primary-100 bg-primary-50/40 p-4"><label className="text-[11px] font-medium text-foreground-700">Notes<textarea value={editValues.notes} onChange={(event) => setEditValues((current) => ({ ...current, notes: event.target.value }))} rows={5} placeholder="Add operational notes for this learner…" className="mt-1.5 w-full resize-y rounded-md border border-background-300 bg-background-50 px-3 py-2 text-[12px] text-foreground-900 outline-none focus:border-primary-400 focus:ring-2 focus:ring-primary-100" /></label></section> : null}
             {detailLoading ? <div role="status" className="rounded-lg bg-background-100 px-4 py-5 text-[12px] text-foreground-600">Loading learner details…</div> : null}
             {detailError ? <div role="alert" className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-[12px] text-amber-950">{detailError}</div> : null}
+            {recordDetailLoading ? <div role="status" className="rounded-lg bg-background-100 px-4 py-5 text-[12px] text-foreground-600">Loading Deep Dive details…</div> : null}
+            {recordDetailError ? <div role="alert" className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-[12px] text-amber-950">{recordDetailError}<button type="button" className="ml-3 font-semibold underline" onClick={() => setRecordRetry((value) => value + 1)}>Retry</button></div> : null}
             <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4"><div className="rounded-lg bg-background-100 p-3"><p className="text-[10px] font-semibold uppercase tracking-[0.08em] text-foreground-500">Status</p><p className="mt-1 text-[12px] font-semibold text-foreground-900">{selected.programmeStatus || "Not recorded"}</p></div><div className="rounded-lg bg-background-100 p-3"><p className="text-[10px] font-semibold uppercase tracking-[0.08em] text-foreground-500">Coach</p><p className="mt-1 text-[12px] text-foreground-800">{selectedBoard?.user.owner || selected.coachName || "Not recorded"}</p></div><div className="rounded-lg bg-background-100 p-3"><p className="text-[10px] font-semibold uppercase tracking-[0.08em] text-foreground-500">Start</p><p className="mt-1 text-[12px] text-foreground-800">{displayDate(selectedRecord?.startDate || selectedBoard?.programme.learnerStartDate || selected.learnerStartDate || selected.startDate)}</p></div><div className="rounded-lg bg-background-100 p-3"><p className="text-[10px] font-semibold uppercase tracking-[0.08em] text-foreground-500">Practical end</p><p className="mt-1 text-[12px] text-foreground-800">{displayDate(selectedRecord?.practicalEndDate || selectedBoard?.programme.learnerEndDate || selected.learnerEndDate || selected.endDate)}</p></div></div>
-            <div className="grid gap-4 md:grid-cols-2"><div><h3 className="font-heading text-[14px] font-semibold text-foreground-900">Contact & ownership</h3><dl className="mt-2 space-y-2 text-[12px]"><div className="flex justify-between gap-3 border-b border-background-100 pb-2"><dt className="text-foreground-500">Email</dt><dd className="text-right text-foreground-800">{selectedBoard?.contact.email || selected.email || "Not recorded"}</dd></div><div className="flex justify-between gap-3 border-b border-background-100 pb-2"><dt className="text-foreground-500">ULN</dt><dd className="text-right text-foreground-800">{selectedRecord?.uln || "Not recorded"}</dd></div><div className="flex justify-between gap-3 border-b border-background-100 pb-2"><dt className="text-foreground-500">Qualification / level</dt><dd className="text-right text-foreground-800">{[selectedRecord?.qualification, selectedRecord?.level].filter(Boolean).join(" · ") || "Not recorded"}</dd></div></dl></div><div><h3 className="font-heading text-[14px] font-semibold text-foreground-900">Gateway / EPA</h3><dl className="mt-2 space-y-2 text-[12px]"><div className="flex justify-between gap-3 border-b border-background-100 pb-2"><dt className="text-foreground-500">Apprenticeship end</dt><dd className="text-right text-foreground-800">{displayDate(selectedRecord?.apprenticeshipEndDate)}</dd></div><div className="flex justify-between gap-3 border-b border-background-100 pb-2"><dt className="text-foreground-500">Planned Gateway</dt><dd className="text-right text-foreground-800">{displayDate(selectedRecord?.plannedGatewayDate)}</dd></div><div className="flex justify-between gap-3 border-b border-background-100 pb-2"><dt className="text-foreground-500">Planned EPA</dt><dd className="text-right text-foreground-800">{displayDate(selectedRecord?.plannedEpaDate)}</dd></div></dl></div><div><h3 className="font-heading text-[14px] font-semibold text-foreground-900">Review ownership</h3><dl className="mt-2 space-y-2 text-[12px]"><div className="flex justify-between gap-3 border-b border-background-100 pb-2"><dt className="text-foreground-500">Reviewed by</dt><dd className="text-right text-foreground-800">{selectedRecord?.reviewedBy || "Not recorded"}</dd></div><div className="flex justify-between gap-3 border-b border-background-100 pb-2"><dt className="text-foreground-500">Reviewed at</dt><dd className="text-right text-foreground-800">{displayDate(selectedRecord?.reviewedAt?.slice(0, 10))}</dd></div></dl></div></div>
+            <div className="grid gap-4 md:grid-cols-2"><div><h3 className="font-heading text-[14px] font-semibold text-foreground-900">Contact & ownership</h3><dl className="mt-2 space-y-2 text-[12px]"><div className="flex justify-between gap-3 border-b border-background-100 pb-2"><dt className="text-foreground-500">Email</dt><dd className="text-right text-foreground-800">{selectedBoard?.contact.email || selected.email || "Not recorded"}</dd></div>{selectedRecordSummary ? <IlrContactFields key={selectedRecordSummary.id} recordId={selectedRecordSummary.id} /> : null}<div className="flex justify-between gap-3 border-b border-background-100 pb-2"><dt className="text-foreground-500">Qualification / level</dt><dd className="text-right text-foreground-800">{[selectedRecord?.qualification, selectedRecord?.level].filter(Boolean).join(" · ") || "Not recorded"}</dd></div></dl></div><div><h3 className="font-heading text-[14px] font-semibold text-foreground-900">Gateway / EPA</h3><dl className="mt-2 space-y-2 text-[12px]"><div className="flex justify-between gap-3 border-b border-background-100 pb-2"><dt className="text-foreground-500">Apprenticeship end</dt><dd className="text-right text-foreground-800">{displayDate(selectedRecord?.apprenticeshipEndDate)}</dd></div><div className="flex justify-between gap-3 border-b border-background-100 pb-2"><dt className="text-foreground-500">Planned Gateway</dt><dd className="text-right text-foreground-800">{displayDate(selectedRecord?.plannedGatewayDate)}</dd></div><div className="flex justify-between gap-3 border-b border-background-100 pb-2"><dt className="text-foreground-500">Planned EPA</dt><dd className="text-right text-foreground-800">{displayDate(selectedRecord?.plannedEpaDate)}</dd></div></dl></div><div><h3 className="font-heading text-[14px] font-semibold text-foreground-900">Review ownership</h3><dl className="mt-2 space-y-2 text-[12px]"><div className="flex justify-between gap-3 border-b border-background-100 pb-2"><dt className="text-foreground-500">Reviewed by</dt><dd className="text-right text-foreground-800">{selectedRecord?.reviewedBy || "Not recorded"}</dd></div><div className="flex justify-between gap-3 border-b border-background-100 pb-2"><dt className="text-foreground-500">Reviewed at</dt><dd className="text-right text-foreground-800">{displayDate(selectedRecord?.reviewedAt?.slice(0, 10))}</dd></div></dl></div></div>
             {editing && selectedRecord ? <div className="rounded-xl border border-primary-100 bg-primary-50/40 p-4"><div className="flex items-start justify-between gap-3"><div><h3 className="font-heading text-[14px] font-semibold text-foreground-900">Edit Deep Dive details</h3><p className="mt-1 text-[11px] text-foreground-600">These values are saved to the imported Deep Dive record and do not overwrite the LMS learner profile.</p></div><span className="text-[10px] text-foreground-500">v{selectedRecord.version}</span></div><div className="mt-3 grid gap-3 sm:grid-cols-2"><label className="text-[11px] font-medium text-foreground-700">Full name<input value={editValues.fullName} onChange={(event) => setEditValues((current) => ({ ...current, fullName: event.target.value }))} className="mt-1 h-9 w-full rounded-md border border-background-300 bg-background-50 px-2.5 text-[12px]" /></label><label className="text-[11px] font-medium text-foreground-700">ULN<input value={editValues.uln} onChange={(event) => setEditValues((current) => ({ ...current, uln: event.target.value }))} className="mt-1 h-9 w-full rounded-md border border-background-300 bg-background-50 px-2.5 text-[12px]" /></label><label className="text-[11px] font-medium text-foreground-700">Qualification<input value={editValues.qualification} onChange={(event) => setEditValues((current) => ({ ...current, qualification: event.target.value }))} className="mt-1 h-9 w-full rounded-md border border-background-300 bg-background-50 px-2.5 text-[12px]" /></label><label className="text-[11px] font-medium text-foreground-700">Level<input value={editValues.level} onChange={(event) => setEditValues((current) => ({ ...current, level: event.target.value }))} className="mt-1 h-9 w-full rounded-md border border-background-300 bg-background-50 px-2.5 text-[12px]" /></label><label className="text-[11px] font-medium text-foreground-700">Start date<input type="date" value={editValues.startDate} onChange={(event) => setEditValues((current) => ({ ...current, startDate: event.target.value }))} className="mt-1 h-9 w-full rounded-md border border-background-300 bg-background-50 px-2.5 text-[12px]" /></label><label className="text-[11px] font-medium text-foreground-700">Practical end date<input type="date" value={editValues.practicalEndDate} onChange={(event) => setEditValues((current) => ({ ...current, practicalEndDate: event.target.value }))} className="mt-1 h-9 w-full rounded-md border border-background-300 bg-background-50 px-2.5 text-[12px]" /></label><label className="text-[11px] font-medium text-foreground-700">Planned Gateway<input type="date" value={editValues.plannedGatewayDate} onChange={(event) => setEditValues((current) => ({ ...current, plannedGatewayDate: event.target.value }))} className="mt-1 h-9 w-full rounded-md border border-background-300 bg-background-50 px-2.5 text-[12px]" /></label><label className="text-[11px] font-medium text-foreground-700">Planned EPA<input type="date" value={editValues.plannedEpaDate} onChange={(event) => setEditValues((current) => ({ ...current, plannedEpaDate: event.target.value }))} className="mt-1 h-9 w-full rounded-md border border-background-300 bg-background-50 px-2.5 text-[12px]" /></label><label className="text-[11px] font-medium text-foreground-700">Reviewed by<input value={editValues.reviewedBy} onChange={(event) => setEditValues((current) => ({ ...current, reviewedBy: event.target.value }))} className="mt-1 h-9 w-full rounded-md border border-background-300 bg-background-50 px-2.5 text-[12px]" /></label></div>{editError ? <p role="alert" className="mt-3 text-[11px] text-red-700">{editError}</p> : null}<div className="mt-3 flex justify-end"><button type="button" disabled={savingEdit} onClick={() => void saveDeepDiveEdit()} className="rounded-md bg-primary-600 px-3 py-2 text-[11px] font-semibold text-background-50 disabled:opacity-60">{savingEdit ? "Saving…" : "Save changes"}</button></div></div> : null}
             <div><h3 className="font-heading text-[14px] font-semibold text-foreground-900">Programme milestones</h3>{selectedBoard?.milestones?.length ? <div className="mt-2 space-y-2">{selectedBoard.milestones.slice(0, 8).map((milestone) => <div key={milestone.id} className="flex flex-col gap-1 rounded-lg border border-background-200 px-3 py-2.5 sm:flex-row sm:items-center sm:justify-between"><div><p className="text-[12px] font-semibold text-foreground-800">{milestone.description || "Milestone"}</p><p className="text-[11px] text-foreground-500">{milestone.programme || programmeLabel(selected)}</p></div><span className="text-[11px] text-foreground-600">{displayDate(milestone.date)} · {milestone.status || "Not recorded"}</span></div>)}</div> : <p className="mt-2 text-[12px] text-foreground-500">No milestones are recorded on this learner board.</p>}</div>
           </div>

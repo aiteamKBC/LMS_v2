@@ -346,7 +346,7 @@ export default function QualityAssurancePage() {
         {isCalendarView ? <QualityReviewsPage embedded /> : <main id="main-content" tabIndex={-1} className="mx-auto flex w-full max-w-[1560px] flex-col gap-4 px-4 py-4 md:px-6 md:py-5">
           {isOverview ? <ExecutiveOverview /> : null}
           {isTeamView ? <QualityTeamPage onToast={notify} /> : null}
-          {isFeedbacksView ? <FeedbacksPage onToast={notify} /> : null}
+          {isFeedbacksView ? <FeedbacksPage /> : null}
           {isDeepDiveView ? <DeepDivePage /> : null}
           {showWorkspace ? (
             <>

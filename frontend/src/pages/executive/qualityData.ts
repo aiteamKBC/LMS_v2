@@ -149,25 +149,30 @@ async function loadFeedbackData(start: string, end: string) {
   try {
     const [{ forms }, { responses }, insights] = await Promise.all([
       feedbackApi.listForms(),
-      feedbackApi.responses({ submittedFrom: start, submittedTo: end }),
+      feedbackApi.responses({ status: 'completed', submittedFrom: start, submittedTo: end }),
       feedbackApi.insightsDashboard({ submittedFrom: start, submittedTo: end }).catch(() => null),
     ]);
     const classifications = new Map<number, FeedbackScoreClass>();
     insights?.analytics.insights?.classification?.responses.forEach(row => classifications.set(row.responseId, row.classification));
     const inPeriod = responses.filter(row => {
       const date = (row.submittedAt || row.updatedAt || row.startedAt).slice(0, 10);
-      return date >= start && date <= end;
+      return row.status === 'completed' && date >= start && date <= end;
     });
+    // The forms index lists current versions only; completed responses may belong to older versions.
+    const currentIds = new Set(forms.map(form => form.id));
+    const historicalIds = [...new Set(inPeriod.map(row => row.formId).filter(id => !currentIds.has(id)))];
+    const historicalForms = await Promise.all(historicalIds.map(async id => (await feedbackApi.getForm(id)).form));
+    const allForms = [...forms, ...historicalForms];
     const rowsByForm = new Map<number, FeedbackResponse[]>();
     inPeriod.forEach(row => rowsByForm.set(row.formId, [...(rowsByForm.get(row.formId) ?? []), row]));
     return {
-      forms: forms.map(form => feedbackFormDefinition(form, rowsByForm.get(form.id) ?? [], classifications)),
-      records: forms.flatMap(form => feedbackRecords(form, rowsByForm.get(form.id) ?? [], classifications)),
+      forms: allForms.map(form => feedbackFormDefinition(form, rowsByForm.get(form.id) ?? [], classifications)),
+      records: allForms.flatMap(form => feedbackRecords(form, rowsByForm.get(form.id) ?? [], classifications)),
       feedbackTypes: [...new Map(
-        [...forms.map(form => form.formType), ...inPeriod.map(row => row.formType)]
+        [...allForms.map(form => form.formType), ...inPeriod.map(row => row.formType)]
           .map(type => [type, feedbackTypeLabel(type)] as const),
       )].map(([id, name]) => ({ id, name })),
-      scoresAvailable: insights !== null,
+      scoresAvailable: Boolean(insights?.analytics.insights?.classification),
     };
   } catch {
     return null;
@@ -268,11 +273,13 @@ export async function loadLiveQmsData(signal: AbortSignal): Promise<LiveQmsData>
   const end = todayIso(TIME_ZONE_LABEL);
   const start = addDays(end, -365);
   const [catalog, rows, feedback] = await Promise.all([
-    qualityForms(signal),
+    qualityForms(signal, false, true),
     allReviews(start, end, signal),
     loadFeedbackData(start, end),
   ]);
   const definitions = await Promise.all(catalog.forms.map(async card => {
+    const bundled = catalog.templates?.[card.reviewType];
+    if (bundled) return [card.reviewType, bundled] as const;
     try {
       const result = await qualityDefinition(signal, card.reviewType);
       return [card.reviewType, result.template] as const;

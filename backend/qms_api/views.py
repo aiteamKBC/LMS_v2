@@ -1,7 +1,8 @@
+from collections import Counter, defaultdict
 import json
 import re
 
-from django.db import DatabaseError, IntegrityError, transaction
+from django.db import DatabaseError, IntegrityError, connections, transaction
 from django.http import JsonResponse
 from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
@@ -137,6 +138,40 @@ def _raw_text(raw, *keys):
     return ""
 
 
+def _lms_summary_context(learner_ids):
+    """Fields needed by the Deep Dive table, without detail-only source reads."""
+    ids = {int(value) for value in learner_ids if value is not None}
+    if not ids:
+        return {}
+    from learner_api.models import EnrolmentUser
+
+    learners = EnrolmentUser.all_learners.filter(id__in=ids).only(
+        "id", "username", "email", "programme_status", "programme", "cohort",
+        "learner_type", "reference_number", "coach_name", "coach_email",
+        "learner_start_date", "learner_end_date", "start_date", "end_date",
+        "apprenticeship_end_date",
+    )
+    return {
+        str(learner.id): {
+            "fullName": _text(learner.username),
+            "email": _text(learner.email),
+            "programmeStatus": _text(learner.programme_status),
+            "programme": _text(learner.programme),
+            "cohort": _text(learner.cohort),
+            "learnerType": _text(learner.learner_type),
+            "reference": _text(learner.reference_number),
+            "coachName": _text(learner.coach_name),
+            "coachEmail": _text(learner.coach_email),
+            "learnerStartDate": _text(learner.learner_start_date),
+            "learnerEndDate": _text(learner.learner_end_date),
+            "startDate": _text(learner.start_date),
+            "endDate": _text(learner.end_date),
+            "apprenticeshipEndDate": _text(learner.apprenticeship_end_date),
+        }
+        for learner in learners
+    }
+
+
 def _lms_context(learner_ids):
     """Read the authoritative learner fields for the current QMS response.
 
@@ -250,10 +285,14 @@ def _lms_context(learner_ids):
             numeric_placeholders = ", ".join(["%s"] * len(numeric_aptem_ids))
             text_placeholders = ", ".join(["%s"] * len(numeric_aptem_ids))
 
-            def fetch_rows(schema, table, key_column, params):
+            def fetch_rows(schema, table, key_column, params, selected_columns=None):
+                selection = (
+                    ", ".join('"' + column.replace('"', '""').replace('%', '%%') + '"' for column in selected_columns)
+                    if selected_columns else "*"
+                )
                 with connections["default"].cursor() as cursor:
                     cursor.execute(
-                        f'SELECT * FROM "{schema}"."{table}" '
+                        f'SELECT {selection} FROM "{schema}"."{table}" '
                         f'WHERE "{key_column}" IN ({numeric_placeholders if key_column == "ID" else text_placeholders})',
                         params,
                     )
@@ -262,7 +301,11 @@ def _lms_context(learner_ids):
 
             mcr_rows = fetch_rows("LMS", "MCR", "ID", numeric_aptem_ids)
             pr_rows = fetch_rows("LMS", "PR", "ID", numeric_aptem_ids)
-            aptem_rows = fetch_rows("LMS", "Aptem_users", "ID", numeric_aptem_ids)
+            aptem_rows = fetch_rows("LMS", "Aptem_users", "ID", numeric_aptem_ids, (
+                "ID", "Planned", "Exepected", "Completed", "TargetComp%", "CompletedComp%",
+                "ProgressVariance", "Progress-Hours", "Coach-RAG", "OTJHoursStatus",
+                "TotalTargetKSB", "TotalCompletedKSB", "KSBStatus", "Disability",
+            ))
             inclusion_rows = fetch_rows("kbc_quality_reporting", "inclusion_learners", "learner_id", [str(value) for value in numeric_aptem_ids])
             with connections["default"].cursor() as cursor:
                 cursor.execute(
@@ -525,6 +568,143 @@ def _lms_matches(records):
     return matches
 
 
+def _ilr_contact(record):
+    """Read a learner's ILR identifiers without copying them into the QMS row."""
+    from enrolment_api.models import WizardPlr
+    from learner_api.models import EnrolmentUser
+
+    uln = _text(record.uln, 64)
+    learner = None
+    if record.lms_learner_id is not None:
+        learner = EnrolmentUser.all_learners.filter(id=record.lms_learner_id).only("email").first()
+        linked_uln = _text(
+            WizardPlr.objects.filter(
+                learner_kind="apprenticeship", learner_id=record.lms_learner_id,
+            ).values_list("uln", flat=True).first(), 64,
+        )
+        if uln and linked_uln and uln != linked_uln:
+            return {"uln": None, "postcode": None}
+        uln = linked_uln or uln
+
+    email = _text(getattr(learner, "email", "") if learner else _raw_text(record.raw, "email"))
+    if not uln and not email:
+        return {"uln": None, "postcode": None}
+
+    with connections["enrolment"].cursor() as cursor:
+        if uln:
+            cursor.execute(
+                '''
+                select nullif(btrim(uln::text), ''), nullif(btrim(postcode), '')
+                from "Audit".ilr_learning_deliveries
+                where uln = %s
+                order by (nullif(btrim(postcode), '') is not null) desc,
+                         updated_at desc nulls last, id desc
+                limit 1
+                ''',
+                [uln],
+            )
+        else:
+            # Shared email addresses must not expose another learner's ILR data.
+            cursor.execute(
+                '''
+                with matches as (
+                    select nullif(btrim(uln::text), '') as learner_uln,
+                           nullif(btrim(postcode), '') as learner_postcode,
+                           updated_at, id
+                    from "Audit".ilr_learning_deliveries
+                    where lower(btrim(email)) = lower(%s)
+                ), unique_identity as (
+                    select count(distinct learner_uln) as learner_count from matches
+                )
+                select learner_uln, learner_postcode
+                from matches cross join unique_identity
+                where learner_count = 1 and learner_uln is not null
+                order by (learner_postcode is not null) desc,
+                         updated_at desc nulls last, id desc
+                limit 1
+                ''',
+                [email],
+            )
+        row = cursor.fetchone()
+    return {"uln": row[0], "postcode": row[1]} if row else {"uln": None, "postcode": None}
+
+
+def _postcode_area(postcode):
+    """Use the leading letters of a UK postcode as its area (CT1 1AA → CT)."""
+    match = re.fullmatch(r"\s*([A-Z]{1,2})[0-9][0-9A-Z]?\s+[0-9][A-Z]{2}\s*", _text(postcode, 32), re.I)
+    return match.group(1).upper() if match else None
+
+
+def _ilr_postcodes_for_learners(learners):
+    """Resolve ILR postcodes in bulk, only through unambiguous ULN or email."""
+    from enrolment_api.models import WizardPlr
+
+    learner_ids = [learner.id for learner in learners]
+    if not learner_ids:
+        return {}
+    ulns_by_id = defaultdict(set)
+    for learner_id, uln in WizardPlr.objects.filter(
+        learner_kind="apprenticeship", learner_id__in=learner_ids,
+    ).values_list("learner_id", "uln"):
+        if value := _text(uln, 64):
+            ulns_by_id[learner_id].add(value)
+
+    emails = Counter(_text(learner.email).casefold() for learner in learners if _text(learner.email))
+    wanted_ulns = {value for values in ulns_by_id.values() for value in values}
+    if not wanted_ulns and not emails:
+        return {}
+
+    by_uln = {}
+    by_email = {}
+    email_ulns = defaultdict(set)
+    with connections["enrolment"].cursor() as cursor:
+        cursor.execute(
+            '''
+            select nullif(btrim(uln), ''), lower(nullif(btrim(email), '')),
+                   nullif(btrim(postcode), '')
+            from "Audit".ilr_learning_deliveries
+            where uln = any(%s) or lower(btrim(email)) = any(%s)
+            order by updated_at desc nulls last, id desc
+            ''',
+            [sorted(wanted_ulns), sorted(emails)],
+        )
+        for uln, email, postcode in cursor.fetchall():
+            if email and uln:
+                email_ulns[email].add(uln)
+            if not uln or not _postcode_area(postcode):
+                continue
+            by_uln.setdefault(uln, postcode)
+            if email:
+                by_email.setdefault(email, (uln, postcode))
+
+    postcodes = {}
+    for learner in learners:
+        linked_ulns = ulns_by_id.get(learner.id, set())
+        if len(linked_ulns) == 1:
+            uln = next(iter(linked_ulns))
+            if uln in by_uln:
+                postcodes[learner.id] = by_uln[uln]
+            continue
+        if linked_ulns:
+            continue
+        email = _text(learner.email).casefold()
+        if email and emails[email] == 1 and len(email_ulns[email]) == 1 and email in by_email:
+            postcodes[learner.id] = by_email[email][1]
+    return postcodes
+
+
+def _postcode_ordered_candidates(learners, existing_ids, postcodes):
+    """Keep each postcode area together; unknown postcodes stay in the queue."""
+    eligible = (learner for learner in learners if str(learner.id) not in existing_ids)
+
+    def sort_key(learner):
+        postcode = postcodes.get(learner.id)
+        area = _postcode_area(postcode)
+        return area is None, area or "", _text(postcode).upper(), learner.id
+
+    return sorted(eligible, key=sort_key)
+
+
 def _created_user_values(user):
     full_name = _text(getattr(user, "username", ""), 511)
     parts = full_name.split()
@@ -571,6 +751,33 @@ def deep_dive_records(request):
     except DatabaseError:
         return JsonResponse({"error": "Deep Dive records could not be loaded."}, status=502)
     return JsonResponse({"count": len(rows), "records": [_serialize(row, context, reviewer_names) for row in rows]})
+
+
+@staff_only()
+def deep_dive_record_summaries(request):
+    if request.method != "GET":
+        return JsonResponse({"error": "Method not allowed."}, status=405)
+    try:
+        rows = list(DeepDiveRecord.objects.all()[:10000])
+        context = _lms_summary_context(row.lms_learner_id for row in rows)
+        reviewer_names = _reviewer_names(rows)
+    except DatabaseError:
+        return JsonResponse({"error": "Deep Dive records could not be loaded."}, status=502)
+    return JsonResponse({"count": len(rows), "records": [_serialize(row, context, reviewer_names) for row in rows]})
+
+
+@staff_only()
+def deep_dive_ilr_contact(request, record_id):
+    if request.method != "GET":
+        return JsonResponse({"error": "Method not allowed."}, status=405)
+    try:
+        record = DeepDiveRecord.objects.get(pk=record_id)
+        contact = _ilr_contact(record)
+    except DeepDiveRecord.DoesNotExist:
+        return JsonResponse({"error": "Deep Dive record not found."}, status=404)
+    except DatabaseError:
+        return JsonResponse({"error": "ILR contact details could not be loaded."}, status=502)
+    return JsonResponse(contact)
 
 
 @csrf_exempt
@@ -654,7 +861,7 @@ def deep_dive_import(request):
 @csrf_exempt
 @staff_only(writes_only=True)
 def deep_dive_sync(request):
-    """Add the next 30 Created_users rows once per calendar month.
+    """Add the next 30 Created_users rows by ILR postcode once per month.
 
     This copies existing learner rows into Deep Dive only. It never creates or
     changes an enrolment user, and the identity key makes retries idempotent.
@@ -673,9 +880,10 @@ def deep_dive_sync(request):
             "id", "learner_type", "username", "email", "reference_number", "date_of_birth",
             "learner_start_date", "learner_end_date", "start_date", "end_date",
             "practical_period_end_date", "apprenticeship_end_date", "programme", "cohort",
-        ).order_by("id"))
+        ))
         existing_ids = {str(value) for value in DeepDiveRecord.objects.filter(lms_learner_id__isnull=False).values_list("lms_learner_id", flat=True)}
-        candidates = [learner for learner in learners if str(learner.id) not in existing_ids][:30]
+        postcodes = _ilr_postcodes_for_learners(learners)
+        candidates = _postcode_ordered_candidates(learners, existing_ids, postcodes)[:30]
         actor = _actor(request)
         added = []
         with transaction.atomic():
@@ -689,7 +897,7 @@ def deep_dive_sync(request):
     except IntegrityError:
         return JsonResponse({"error": f"Deep Dive sync already ran for {month_key}.", "month": month_key}, status=409)
     except DatabaseError:
-        return JsonResponse({"error": "Created_users could not be read or Deep Dive rows could not be saved."}, status=502)
+        return JsonResponse({"error": "Learner or ILR data could not be read, or Deep Dive rows could not be saved."}, status=502)
     remaining = max(0, len(learners) - len(existing_ids) - len(added))
     context = _lms_context(record.lms_learner_id for record in added)
     reviewer_names = _reviewer_names(added)
@@ -697,7 +905,7 @@ def deep_dive_sync(request):
 
 
 @csrf_exempt
-@staff_only(writes_only=True)
+@staff_only()
 def deep_dive_record_detail(request, record_id):
     try:
         record = DeepDiveRecord.objects.get(pk=record_id)

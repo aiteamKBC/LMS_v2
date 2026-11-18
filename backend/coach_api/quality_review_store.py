@@ -290,7 +290,7 @@ def reviews_for_meeting(identity, offset=0):
     return rows[:30],offset+30 if len(rows)>30 else None
 
 
-def form_catalog(*, editing=False):
+def form_catalog(*, editing=False, include_definitions=False):
     from .quality_feedback_catalog import default_summaries
     entries = {row['reviewType']:row for row in default_summaries()}
     if editing:
@@ -299,7 +299,9 @@ def form_catalog(*, editing=False):
     with connect() as connection:
         rows = connection.execute('''SELECT payload->>'reviewType' AS kind,
             payload->'draft'->>'title' AS draft_title,payload->'published'->>'title' AS title,
-            revision,payload->>'publishedAt' AS published_at FROM lms_quality.form_template
+            revision,payload->>'publishedAt' AS published_at'''
+            + (''',payload''' if include_definitions else '')
+            + ''' FROM lms_quality.form_template
             WHERE payload->>'reviewType' IS NOT NULL ORDER BY id LIMIT 501''').fetchall()
     if len(rows)>500:
         raise ReviewUnavailable('The form library is too large to load. Contact an administrator.')
@@ -313,7 +315,13 @@ def form_catalog(*, editing=False):
             continue
         entries[kind]={**(builtin or {'reviewType':kind,'group':'Custom forms','legacy':False}),
             'title':row['draft_title'] if editing else row['title'], 'published':published,'revision':row['revision']}
-    return list(entries.values())
+    catalog = list(entries.values())
+    if not include_definitions:
+        return catalog
+    from .quality_form_definition import initial_state
+    stored = {row['kind']: _payload(row) for row in rows if row['kind'] and row['payload']}
+    templates = {kind: stored.get(kind) or initial_state(kind) for kind in entries}
+    return catalog, templates
 
 
 def read_evidence_rows(connection, review_id, sections, *, preview=False):

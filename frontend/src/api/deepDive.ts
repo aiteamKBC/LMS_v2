@@ -112,6 +112,19 @@ export function fetchDeepDiveRecords() {
   return readLearnerJson<{ count: number; records: DeepDiveRecord[] }>('/qms_api/deep-dive/records/');
 }
 
+export function fetchDeepDiveSummaries() {
+  return readLearnerJson<{ count: number; records: DeepDiveRecord[] }>('/qms_api/deep-dive/records/summary/');
+}
+
+export function fetchDeepDiveRecord(id: string) {
+  return readLearnerJson<{ record: DeepDiveRecord }>(`/qms_api/deep-dive/records/${encodeURIComponent(id)}/`)
+    .then((result) => result.record);
+}
+
+export function fetchDeepDiveIlrContact(id: string) {
+  return readLearnerJson<{ uln: string | null; postcode: string | null }>(`/qms_api/deep-dive/records/${encodeURIComponent(id)}/ilr/`);
+}
+
 export function importDeepDiveWorkbook(sourceFileName: string, sourceFileHash: string, records: DeepDiveImportRow[]) {
   return write<{ count: number; matched: number; records: DeepDiveRecord[] }>('/qms_api/deep-dive/import/', { sourceFileName, sourceFileHash, records });
 }

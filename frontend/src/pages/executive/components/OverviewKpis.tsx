@@ -13,7 +13,7 @@ interface OverviewKpisProps {
   records: QualityRecord[];
   actions: QualityAction[];
   forms: FormDefinition[];
-  availability: { actions: boolean; criticalIssues: boolean; feedback: boolean };
+  availability: { actions: boolean; criticalIssues: boolean; feedback: boolean; feedbackScores: boolean };
   onOpenAuditTypes?: () => void;
 }
 
@@ -25,15 +25,15 @@ export default function OverviewKpis({ records, actions, forms, availability, on
   const feedback = records.filter(
     (record) => record.respondentType === "Learner" || record.respondentType === "Employer",
   );
-  const feedbackNeedsAssessment = feedback.filter(
+  const feedbackToReview = feedback.filter(
     (record) => record.feedbackClassification === "neutral" || record.feedbackClassification === "negative",
   ).length;
+  const criticalFeedback = feedback.filter((record) => record.feedbackClassification === "negative").length;
   const counts = countByRag(records);
   const assessed = assessedTotal(counts);
   const completedNotAssessed = records.filter(
     (record) => record.reviewStatus === "completed" && ["unrated", "na"].includes(record.rag),
   ).length;
-  const critical = records.filter((record) => record.critical && record.rag === "red");
   const openActions = actions.filter(isOpenAction);
   const overdueActions = openActions.filter(
     (action) => action.status === "Overdue" || action.dueOn < today,
@@ -89,27 +89,27 @@ export default function OverviewKpis({ records, actions, forms, availability, on
         />
 
         <KpiCard
-          label="Feedback needs assessment"
-          value={availability.feedback ? formatNumber(feedbackNeedsAssessment) : '—'}
-          definition="Neutral (Amber) and Negative (Red) feedback needs review; Positive (Green) feedback does not."
-          hint={availability.feedback
-            ? feedbackNeedsAssessment ? "Review the original responses and decide whether follow-up is required" : "No Amber or Red feedback in scope"
-            : "Feedback response data is unavailable"}
+          label="Feedback to review"
+          value={availability.feedbackScores ? formatNumber(feedbackToReview) : '—'}
+          definition="Negative and Neutral feedback awaiting a quality review; Positive feedback needs no follow-up."
+          hint={availability.feedbackScores
+            ? feedbackToReview ? "Review the original responses and decide whether follow-up is required" : "No Negative or Neutral feedback in scope"
+            : "Feedback classification data is unavailable"}
           icon="ri-alert-line"
-          accent={feedbackNeedsAssessment ? "critical" : "secondary"}
+          accent={feedbackToReview ? "accent" : "secondary"}
           to="/curriculum/quality-demo?view=feedbacks"
           linkLabel="Review feedback"
         />
 
         <KpiCard
-          label="Critical issues"
-          value={availability.criticalIssues ? formatNumber(critical.length) : '—'}
-          definition="Red outcomes with a critical compliance concern flagged."
-          hint={!availability.criticalIssues ? 'Critical issue data is unavailable' : critical.length ? "Immediate review or escalation required" : "No critical concerns in scope"}
+          label="Critical feedback"
+          value={availability.feedbackScores ? formatNumber(criticalFeedback) : '—'}
+          definition="Negative scored feedback needing immediate review. This is a feedback classification, not an Assessed policy outcome."
+          hint={!availability.feedbackScores ? 'Feedback classification data is unavailable' : criticalFeedback ? "Open the original responses to review" : "No Negative feedback in scope"}
           icon="ri-alert-line"
-          accent={availability.criticalIssues ? 'critical' : 'secondary'}
-          to="/qa/escalations"
-          linkLabel="Review critical actions"
+          accent={criticalFeedback ? 'critical' : 'secondary'}
+          to="/curriculum/quality-demo?view=feedbacks&classification=negative"
+          linkLabel="Review critical feedback"
         />
 
         <KpiCard

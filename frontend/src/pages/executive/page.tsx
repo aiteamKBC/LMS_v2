@@ -306,8 +306,9 @@ export default function ExecutiveOverview() {
             </p>
             <p className="max-w-3xl text-[11.5px] leading-relaxed text-foreground-600">
               Reporting period {live.periodLabel}. Counts are records with a session date inside the
-              selected period. “Assessed” excludes records with no approved policy. Critical issues are red
-              outcomes with a flagged compliance concern. Actions count open items linked to in-scope records.
+              selected period. “Assessed” excludes records with no approved policy. Critical feedback counts
+              Negative scored responses; compliance critical risk requires a separate flagged outcome. Actions count
+              open items linked to in-scope records.
             </p>
           </div>
           <div className="shrink-0 space-y-1 lg:text-right">

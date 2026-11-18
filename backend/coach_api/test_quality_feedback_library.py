@@ -141,6 +141,12 @@ class FeedbackStorageTests(SimpleTestCase):
         self.assertTrue(any(card['reviewType']==kind and card['published'] for card in store.form_catalog()))
         self.assertEqual(api.selected_definition(None,kind)['title'],'Custom observation')
 
+    def test_catalog_can_bundle_definitions_in_the_same_store_read(self):
+        catalog, templates = store.form_catalog(include_definitions=True)
+        self.assertEqual(len(catalog), 15)
+        self.assertIn('FORM_PROGRESS_REVIEW', templates)
+        self.assertEqual(templates['FORM_PROGRESS_REVIEW']['published']['reviewType'], 'FORM_PROGRESS_REVIEW')
+
     def test_builtin_draft_preserves_original_published_questions_until_publish(self):
         definition=default_definition('FORM_SAFEGUARDING');original=deepcopy(definition)
         definition['sections'][1]['criteria'][0]['text']='Edited safeguarding criterion'

@@ -72,8 +72,12 @@ export function invalidateQualityReviews() { reads.invalidate(); }
 async function read<T>(url: string, signal?: AbortSignal): Promise<T> {
   return await withCallerSignal(reads.read(url), signal) as T;
 }
-export function qualityForms(signal?: AbortSignal, editing = false) {
-  return read<{ forms: QualityFormCard[] }>(`${base}/forms${editing ? '?editing=1' : ''}`, signal);
+export function qualityForms(signal?: AbortSignal, editing = false, includeDefinitions = false) {
+  const params = new URLSearchParams();
+  if (editing) params.set('editing', '1');
+  if (includeDefinitions) params.set('includeDefinitions', '1');
+  const query = params.toString();
+  return read<{ forms: QualityFormCard[]; templates?: Record<string, QualityTemplateState> }>(`${base}/forms${query ? `?${query}` : ''}`, signal);
 }
 export async function createQualityForm(title: string, requestId: string) {
   const result = await request<{ template: QualityTemplateState }>(`${base}/forms`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title, requestId }) });

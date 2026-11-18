@@ -81,7 +81,7 @@ export default function HealthOverview({ records, actions, availability }: Healt
 
         <div className="border-t border-background-200 pt-3 sm:border-l sm:border-t-0 sm:pl-3 sm:pt-0">
           <p className="font-label text-[10.5px] font-semibold uppercase tracking-[0.09em] text-foreground-600">
-            Critical risk
+            Compliance critical risk
           </p>
           <p className="mt-1 font-heading text-[22px] font-semibold leading-none text-[var(--rag-red-fg)]">
             {availability.criticalIssues ? formatNumber(critical.length) : '—'}
