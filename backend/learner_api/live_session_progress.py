@@ -307,7 +307,7 @@ def supplement_module_hours(metrics, records, credits):
     projected_occurrences = set()
     for record in records:
         if record.get('attendance_occurrence_id'):
-            projected_occurrences.add((str(record.get('module_ref')), str(record['attendance_occurrence_id'])))
+            projected_occurrences.add((str(record['attendance_occurrence_id']), str(record.get('module_ref'))))
         component_id = str(record.get('component_ref') or '')
         if component_id not in component_ids:
             continue
@@ -326,7 +326,7 @@ def supplement_module_hours(metrics, records, credits):
         if credit_ids & corrected and not presence:
             continue
         seconds = sum(seconds_by_component[identity] for identity in credit_ids)
-        if (str(module_id), str(credit.get('occurrenceId'))) in projected_occurrences:
+        if (str(credit.get('occurrenceId')), str(module_id)) in projected_occurrences:
             # The shared ledger has already applied this occurrence, including
             # when its saved allocation used another linked component card.
             continue

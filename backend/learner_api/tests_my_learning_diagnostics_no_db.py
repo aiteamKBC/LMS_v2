@@ -217,6 +217,32 @@ class SafeCatalogueReductionTests(SimpleTestCase):
         self.assertEqual(records.visits,0)
         self.assertEqual(live.supplement_module_hours(metrics,records,iter(credits))['M1']['hours']['actual'],4)
 
+    def test_live_credit_occurrence_index_keeps_module_scope_and_visits_records_once(self):
+        class CountedList(list):
+            visits = 0
+            def __iter__(self):
+                for row in super().__iter__():
+                    self.visits += 1
+                    yield row
+        records = CountedList([
+            # A linked recording card already carries the credit for this occurrence.
+            {'component_ref': 'RECORDING', 'attendance_occurrence_id': 'O1', 'module_ref': 'M1',
+             'accepted': True, 'actual_seconds': 9000},
+            {'attendance_occurrence_id': 'O2', 'module_ref': 'M2'},
+        ])
+        metrics = {'M1': {'hours': {'actual': 2.5}}, 'M2': {'hours': {'actual': 0}}}
+        credits = [
+            {'componentId': 'LIVE1', 'moduleId': 'M1', 'occurrenceId': 'O1', 'hours': 2.5},
+            {'componentId': 'LIVE2', 'moduleId': 'M2', 'occurrenceId': 'O1', 'hours': 2.5},
+            {'componentId': 'LIVE3', 'moduleId': 'M1', 'occurrenceId': 'O2', 'hours': 2.5},
+        ]
+        saved = deepcopy(metrics)
+        result = live.supplement_module_hours(metrics, records, iter(credits * 20))
+        self.assertEqual(result['M1']['hours']['actual'], 5)
+        self.assertEqual(result['M2']['hours']['actual'], 2.5)
+        self.assertEqual(records.visits, len(records))
+        self.assertEqual(metrics, saved)
+
     def test_projected_attendance_index_is_scoped_to_occurrence_and_module_in_one_pass(self):
         class CountedList(list):
             visits=0

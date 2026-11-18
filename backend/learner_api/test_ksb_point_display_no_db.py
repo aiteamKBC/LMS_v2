@@ -57,7 +57,7 @@ class KsbPointDisplayTests(unittest.TestCase):
                 if table in sql:
                     self.assertEqual(params, expected)
                     return []
-            if 'FROM "Learner".learners l' in sql:
+            if 'u.id AS account_record_id' in sql:
                 return owners
             if 'FROM "Learner".learner_progress_entries p' in sql:
                 self.assertEqual(params, [[700, 701]])
