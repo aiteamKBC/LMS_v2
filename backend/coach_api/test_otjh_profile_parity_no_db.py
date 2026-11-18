@@ -17,6 +17,10 @@ class OtjhParityTests(SimpleTestCase):
     def setUp(self):
         # These tests cover recorded learning hours, not meeting-plan allowances.
         self.enterContext(patch('coach_api.migrated_otjh.planned_hours_bulk', return_value={}))
+        # Register allocations have their own real-SQL parity regressions.
+        # This fixture's ordered queries describe native/retained ledger rows.
+        self.enterContext(patch('learner_api.attendance_otjh.read_bulk', side_effect=lambda owners, read:
+            {int(owner['id']): {'lectures': [], 'protected': {}, 'frozen_rows': []} for owner in owners}))
 
     def test_source_text_window_and_profile_fallback_do_not_require_contracts(self):
         from coach_api.selectors.otjh import learner_programme_window
@@ -195,12 +199,12 @@ class OtjhParityTests(SimpleTestCase):
         request = RequestFactory().get("/coach_api/coach/dashboard/learners")
         request.coach_email = "coach@example.invalid"
         with patch("coach_api.dashboard_cache.get_cached_dashboard_section", side_effect=lambda *a: deepcopy(stale)), \
-             patch('coach_api.activity_plan_snapshots.attach_snapshots') as attach_plans, \
              patch("coach_api.services.dashboard.profile_dates.fetch_dashboard_profile_dates", return_value=[row]), \
              patch("coach_api.services.dashboard.otjh.otjh_summary_bulk", side_effect=[{80:facts}, {80:{**facts, "actual":15, "planned":30}}]), \
              patch("coach_api.dashboard_view.schedule_coach_dashboard_refresh"), \
              patch("coach_api.dashboard_view.snapshot_needs_refresh", return_value=False), \
              patch("coach_api.dashboard_cache.cache_dashboard_section"), \
+             patch("coach_api.activity_plan_snapshots.attach_snapshots") as attach_snapshots, \
              patch("coach_api.services.dashboard.sections.timezone.localdate", return_value=date(2026,1,1)), \
              patch("coach_api.services.dashboard.service.timezone.localdate", return_value=date(2026,1,1)):
             first = unwrap(coach_dashboard_section)(request, "learners")
@@ -208,7 +212,8 @@ class OtjhParityTests(SimpleTestCase):
         import json
         self.assertEqual(first.status_code, 200, first.content)
         self.assertEqual(second.status_code, 200, second.content)
-        self.assertEqual(attach_plans.call_count, 2)
+        self.assertEqual(attach_snapshots.call_count, 2)
+        self.assertEqual([call.args[0] for call in attach_snapshots.call_args_list], [request.coach_email] * 2)
         a, b = [json.loads(response.content)["results"][0]["otjh"] for response in (first, second)]
         self.assertEqual(a["completed"],10)
         self.assertEqual(a["targetToDate"],10)

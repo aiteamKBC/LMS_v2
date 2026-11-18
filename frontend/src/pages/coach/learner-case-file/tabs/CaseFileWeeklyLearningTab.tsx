@@ -30,6 +30,7 @@ export function CaseFileWeeklyLearningTab({ kind, learnerId }: { kind: LearnerKi
   const moduleId = current?.moduleId || weeks[0]?.moduleId;
   const activities: JourneyComponent[] = (selected?.activities || []).map(activity => ({
     componentId: activity.id, title: activity.title, type: activity.type,
+    liveSessionLearning: activity.liveSessionLearning,
     expectedOtjh: activity.expectedHours, durationMinutes: activity.durationMinutes,
     isQuiz: activity.isQuiz,
   }));

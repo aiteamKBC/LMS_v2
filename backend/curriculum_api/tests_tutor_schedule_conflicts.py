@@ -14,6 +14,7 @@ from datetime import date
 from unittest.mock import patch
 
 from curriculum_api import views
+from coach_api.tests_support.persisted_fixtures import curriculum_session
 from curriculum_api.tests import (
     CurriculumPersistenceHarness, CurriculumPersistenceTransactionHarness, staff_directory, staff_user_row,
 )
@@ -82,6 +83,7 @@ class TutorConflictHarness(CurriculumPersistenceTransactionHarness):
 
     def setUp(self):
         super().setUp()
+        curriculum_session(self, self.client)
         directory = staff_directory(*[
             staff_user_row(name, access='tutor', row_id=index + 1)
             for index, name in enumerate(self.TUTORS)
@@ -689,18 +691,13 @@ class CrossGroupConflictTests(TutorConflictHarness):
 
 
 class HolidayShiftConflictTests(TutorConflictHarness):
-    """A clash is about the day a session actually runs on.
+    """Holiday warnings keep authored dates; explicit exceptions move bookings.
 
-    England's bank holidays move the sessions that land on them onto the next
-    delivery day -- what the session list, the Teams series and the module
-    form's own preview all show. Dating a schedule without them left the
-    conflict check answering about a timetable nobody runs: it reported a clash
-    on a closed day, and passed the real collision on the day the session had
-    moved to.
-
-    Nothing is ticked to make that happen any more. A cohort's holidays are the
-    bank holidays its own dates contain, so the closed day is closed for every
-    cohort alike and both sides of a clash check shift together.
+    Keep the historical class name for existing runners. The current contract
+    is documented in tests_holiday_reading_weeks and curriculum-notice-review:
+    selecting a holiday never moves or cancels a session automatically. The
+    saved calendar, availability preview and conflict check must agree on that
+    date until the author explicitly changes it.
     """
 
     #: Boxing Day 2026 falls on a Saturday, so GOV.UK moves it to Monday the
@@ -714,8 +711,7 @@ class HolidayShiftConflictTests(TutorConflictHarness):
         'bunting': True,
     }]
 
-    #: Four Mondays from 7 December, stepping over the closed 28th, so the last
-    #: session runs on 4 January rather than 28 December.
+    #: Four authored Mondays, including Boxing Day's substitute date.
     MONDAY_SLOT = {
         'startDate': '2026-12-07',
         'sessionsNumber': 4,
@@ -723,6 +719,13 @@ class HolidayShiftConflictTests(TutorConflictHarness):
         'startTime': '10:00',
         'endTime': '12:00',
     }
+
+    def seed_group(self):
+        payload = self.tree_payload()
+        group = payload['cohorts'][0]['groups'][0]
+        group.update(weekDays='Monday', tutor='Unassigned', modules=[])
+        self.assertEqual(self.post_json('/curriculum_api/curriculum/programmes/tree/', payload).status_code, 200)
+        return 'GROUP-DATA-1'
 
     def seed_open_group(self):
         """A group in another programme, under a cohort of its own."""
@@ -734,23 +737,23 @@ class HolidayShiftConflictTests(TutorConflictHarness):
         )
         payload['programme']['name'] = 'Open Programme'
         group = payload['cohorts'][0]['groups'][0]
-        group['tutor'] = 'Unassigned'
-        group['modules'][0]['tutor'] = 'Unassigned'
+        group.update(weekDays='Monday', tutor='Unassigned', modules=[])
         self.assertEqual(
             self.post_json('/curriculum_api/curriculum/programmes/tree/', payload).status_code,
             200,
         )
 
     @patch('curriculum_api.views.get_holiday_rows')
-    def test_the_day_a_session_shifted_onto_is_taken(self, holidays):
-        """The clash the old dating passed as free."""
+    def test_holiday_alone_does_not_reserve_the_next_delivery_day(self, holidays):
         holidays.return_value = self.HOLIDAY_ROWS
         self.seed_group()
-        self.add_module('Module Alpha', tutor='Tutor Solo', **self.MONDAY_SLOT)
+        alpha = self.catalogue_id(self.add_module('Module Alpha', tutor='Tutor Solo', **self.MONDAY_SLOT))
+        self.assertEqual(sorted(day.isoformat() for day in views.module_session_dates(self.module_row(alpha))),
+                         ['2026-12-07', '2026-12-14', '2026-12-21', '2026-12-28'])
 
         self.add_module(
             'Module Beta',
-            expect=409,
+            expect=200,
             startDate='2027-01-04',
             sessionsNumber=1,
             weekDays='Monday',
@@ -760,37 +763,7 @@ class HolidayShiftConflictTests(TutorConflictHarness):
         )
 
     @patch('curriculum_api.views.get_holiday_rows')
-    def test_the_closed_day_itself_is_free(self, holidays):
-        """The clash the old dating invented.
-
-        Module Alpha no longer occupies 28 December, so the days around it are
-        not a collision for anyone else.
-        """
-        holidays.return_value = self.HOLIDAY_ROWS
-        self.seed_group()
-        self.add_module('Module Alpha', tutor='Tutor Solo', **self.MONDAY_SLOT)
-        self.seed_open_group()
-
-        response = self.post_json('/curriculum_api/curriculum/groups/GROUP-OPEN-1/modules/', {
-            'moduleName': 'Open Module',
-            'startDate': '2026-12-21',
-            'sessionsNumber': 1,
-            'weekDays': 'Monday',
-            'startTime': '10:00',
-            'endTime': '12:00',
-            'tutor': 'Tutor Free',
-        })
-        self.assertEqual(response.status_code, 200, response.content)
-
-    @patch('curriculum_api.views.get_holiday_rows')
-    def test_a_cohort_nobody_configured_still_steps_over_the_holiday(self, holidays):
-        """The point of dropping the tick: no cohort can be left running on it.
-
-        This group's cohort was never given holidays of any kind. Its module is
-        asked to start on the closed Monday and is planned onto the next one
-        instead -- which is where Module Alpha also ended up, so the tutor the
-        two share is refused.
-        """
+    def test_a_holiday_date_stays_booked_until_the_author_changes_it(self, holidays):
         holidays.return_value = self.HOLIDAY_ROWS
         self.seed_group()
         self.add_module('Module Alpha', tutor='Tutor Solo', **self.MONDAY_SLOT)
@@ -808,7 +781,26 @@ class HolidayShiftConflictTests(TutorConflictHarness):
         self.assertEqual(response.status_code, 409, response.content)
 
     @patch('curriculum_api.views.get_holiday_rows')
-    def test_the_preview_dates_the_slot_the_way_the_save_will(self, holidays):
+    def test_an_unconfigured_cohort_cannot_bypass_the_authored_date_clash(self, holidays):
+        """Holiday configuration cannot silently free another module's slot."""
+        holidays.return_value = self.HOLIDAY_ROWS
+        self.seed_group()
+        self.add_module('Module Alpha', tutor='Tutor Solo', **self.MONDAY_SLOT)
+        self.seed_open_group()
+
+        response = self.post_json('/curriculum_api/curriculum/groups/GROUP-OPEN-1/modules/', {
+            'moduleName': 'Open Module',
+            'startDate': '2026-12-28',
+            'sessionsNumber': 1,
+            'weekDays': 'Monday',
+            'startTime': '10:00',
+            'endTime': '12:00',
+            'tutor': 'Tutor Solo',
+        })
+        self.assertEqual(response.status_code, 409, response.content)
+
+    @patch('curriculum_api.views.get_holiday_rows')
+    def test_preview_and_save_share_the_unshifted_dates(self, holidays):
         """Otherwise the warning names dates the save would never have named."""
         holidays.return_value = self.HOLIDAY_ROWS
         self.seed_group()
@@ -823,28 +815,80 @@ class HolidayShiftConflictTests(TutorConflictHarness):
         result = response.json()
         self.assertEqual(
             result['sessionDates'],
-            ['2026-12-07', '2026-12-14', '2026-12-21', '2027-01-04'],
+            ['2026-12-07', '2026-12-14', '2026-12-21', '2026-12-28'],
         )
         self.assertFalse(result['available'])
         self.assertEqual(
             result['conflicts'][0]['dates'],
-            ['2026-12-07', '2026-12-14', '2026-12-21', '2027-01-04'],
+            ['2026-12-07', '2026-12-14', '2026-12-21', '2026-12-28'],
         )
 
     @patch('curriculum_api.views.get_holiday_rows')
-    def test_holidays_the_caller_sends_are_used(self, holidays):
-        """A form previewing dates that are not stored yet still gets it right."""
-        # Nothing stored, so only what the caller sent can move these dates.
+    def test_caller_holidays_flag_the_plan_without_moving_preview_dates(self, holidays):
         holidays.return_value = []
         self.seed_group()
-
-        response = self.post_json('/curriculum_api/curriculum/preview/tutor-availability/', {
+        payload = {
             **self.MONDAY_SLOT,
             'holidays': [{'label': 'Boxing Day', 'startDate': '2026-12-28', 'endDate': '2026-12-28'}],
             'tutor': 'Tutor Solo',
-        })
+        }
+        response = self.post_json('/curriculum_api/curriculum/preview/tutor-availability/', payload)
         self.assertEqual(response.status_code, 200, response.content)
         self.assertEqual(
             response.json()['sessionDates'],
-            ['2026-12-07', '2026-12-14', '2026-12-21', '2027-01-04'],
+            ['2026-12-07', '2026-12-14', '2026-12-21', '2026-12-28'],
         )
+        response = self.post_json('/curriculum_api/curriculum/preview/module-session-plan/', payload)
+        self.assertEqual(response.status_code, 200, response.content)
+        plan = response.json()
+        self.assertEqual(plan['skippedHolidays'], ['2026-12-28'])
+        self.assertEqual(plan['sessions'][-1]['date'], '2026-12-28')
+        self.assertEqual(plan['sessions'][-1]['skippedHolidays'], ['2026-12-28'])
+        self.assertEqual(plan['finalEndDate'], plan['originalEndDate'])
+
+    @patch('curriculum_api.views.get_holiday_rows')
+    def test_explicit_move_reserves_the_new_date_and_releases_the_original(self, holidays):
+        holidays.return_value = self.HOLIDAY_ROWS
+        self.seed_group()
+        alpha = self.catalogue_id(self.add_module('Module Alpha', tutor='Tutor Solo', **self.MONDAY_SLOT))
+        views.update_authoring_rows(views.AUTHORING_MODULES_TABLE, 'module_catalogue_id = %s', [alpha], {
+            'session_overrides': views.json_db_value({'4': {
+                'date': '2027-01-04', 'startTime': '10:00', 'endTime': '12:00', 'durationMinutes': 120,
+            }}),
+        })
+        self.assertEqual(sorted(day.isoformat() for day in views.module_session_dates(self.module_row(alpha))),
+                         ['2026-12-07', '2026-12-14', '2026-12-21', '2027-01-04'])
+        self.add_module('Module Beta', expect=409, tutor='Tutor Solo', startDate='2027-01-04',
+                        sessionsNumber=1, weekDays='Monday')
+        self.seed_open_group()
+        response = self.post_json('/curriculum_api/curriculum/groups/GROUP-OPEN-1/modules/', {
+            'moduleName': 'Freed original slot', 'tutor': 'Tutor Solo',
+            'startDate': '2026-12-28', 'sessionsNumber': 1,
+            'weekDays': 'Monday', 'startTime': '10:00', 'endTime': '12:00',
+        })
+        self.assertEqual(response.status_code, 200, response.content)
+
+    @patch('curriculum_api.views.get_holiday_rows')
+    def test_custom_two_day_schedule_keeps_its_window_across_a_holiday(self, holidays):
+        holidays.return_value = self.HOLIDAY_ROWS
+        self.seed_group()
+        slot = {
+            **self.MONDAY_SLOT, 'scheduleMode': 'custom', 'sessionsNumber': 8,
+            'weeksNumber': 4, 'endDate': '2027-01-03',
+            'weeklySchedule': [
+                {'day': 'Monday', 'startTime': '10:00', 'endTime': '12:00'},
+                {'day': 'Thursday', 'startTime': '18:00', 'endTime': '19:00'},
+            ],
+        }
+        self.add_module('Custom holiday delivery', tutor='Tutor Solo', **slot)
+        response = self.post_json('/curriculum_api/curriculum/preview/tutor-availability/', {
+            **slot, 'tutor': 'Tutor Solo', 'cohortId': 'COHORT-DATA-1',
+        })
+        self.assertEqual(response.status_code, 200, response.content)
+        self.assertEqual(response.json()['sessionDates'], [
+            '2026-12-07', '2026-12-10', '2026-12-14', '2026-12-17',
+            '2026-12-21', '2026-12-24', '2026-12-28', '2026-12-31',
+        ])
+        self.assertFalse(response.json()['available'])
+        self.add_module('Next week is free', tutor='Tutor Solo', startDate='2027-01-04',
+                        sessionsNumber=1, weekDays='Monday')

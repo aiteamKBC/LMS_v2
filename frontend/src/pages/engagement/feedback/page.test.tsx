@@ -1,10 +1,10 @@
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { ReactNode } from 'react';
 import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { feedbackApi, type FeedbackForm, type FeedbackResponse, type FeedbackResponseActivity } from '@/api/feedback';
+import { feedbackApi, type FeedbackDashboardReport, type FeedbackForm, type FeedbackResponse, type FeedbackResponseActivity } from '@/api/feedback';
 import { downloadFeedbackResponsePdf } from '@/features/feedback/feedbackResponsePdf';
 import FeedbackPage from './page';
 
@@ -21,7 +21,7 @@ vi.mock('@/api/feedback', async importOriginal => {
     ...actual,
     feedbackApi: {
       ...actual.feedbackApi,
-      listForms: vi.fn(), responses: vi.fn(), response: vi.fn(), analytics: vi.fn(), questionAnalytics: vi.fn(), insightsDashboard: vi.fn(), versions: vi.fn(), recipients: vi.fn(),
+      listForms: vi.fn(), responses: vi.fn(), response: vi.fn(), responseEmails: vi.fn(), sendResponseEmail: vi.fn(), analytics: vi.fn(), questionAnalytics: vi.fn(), insightsDashboard: vi.fn(), versions: vi.fn(), recipients: vi.fn(),
     },
   };
 });
@@ -35,6 +35,13 @@ const form: FeedbackForm = {
   createdBy: 'Staff', createdAt: '2026-09-24T10:00:00Z', updatedAt: '2026-09-25T10:00:00Z', publishedAt: '2026-09-24T10:00:00Z',
   assignedCount: 22, responseCount: 3, startedCount: 3, structureLocked: false, willCreateVersion: true,
 };
+
+function emptyInsights(): FeedbackDashboardReport {
+  return { groups: [], modules: [], coverage: { assigned: 0, submitted: 0, rate: null }, questionMetrics: [],
+    overallScore: { score: null, scoredQuestions: 0, includedQuestions: 0 },
+    insights: { stars: { average: null, answers: 0, distribution: [] }, categories: [], trend: [], undatedScoredAnswers: 0,
+      classification: { total: 0, positive: 0, negative: 0, neutral: 0, unscored: 0, responses: [], byType: [], trend: [] } } };
+}
 
 function contextResponse(id: number, formType: FeedbackResponse['formType'], activity: FeedbackResponseActivity,
   changes: Partial<FeedbackResponse> = {}): FeedbackResponse {
@@ -71,6 +78,77 @@ describe('feedback form version history', () => {
         { deliveryId: 31, occurrenceKey: 'session-1', sessionTitle: 'Martech - Thur - Session 1', moduleName: 'Martech - Thur', startsAt: '2026-09-17T09:30:00Z', assignedCount: 12, responseCount: 1 },
       ],
     });
+  });
+
+  it('opens Insights while the initial Forms and legacy Analytics requests are still pending', async () => {
+    vi.mocked(feedbackApi.listForms).mockReturnValue(new Promise(() => {}));
+    vi.mocked(feedbackApi.analytics).mockReturnValue(new Promise(() => {}));
+    vi.mocked(feedbackApi.insightsDashboard).mockResolvedValue({ analytics: emptyInsights() });
+    const user = userEvent.setup();
+    render(<MemoryRouter><FeedbackPage /></MemoryRouter>);
+    await user.click(screen.getByRole('button', { name: 'Feedback Insights' }));
+    expect(await screen.findByRole('region', { name: 'Submitted feedback' })).toBeVisible();
+    expect(screen.queryByText('Loading feedback…')).not.toBeInTheDocument();
+    expect(feedbackApi.responses).not.toHaveBeenCalled();
+  });
+
+  it('loads responses only when needed and keeps them when switching back to the tab', async () => {
+    const user = userEvent.setup();
+    render(<MemoryRouter><FeedbackPage /></MemoryRouter>);
+    await screen.findByRole('heading', { name: 'Recently updated forms' });
+    expect(feedbackApi.responses).not.toHaveBeenCalled();
+    await user.click(screen.getByRole('button', { name: 'Forms', pressed: false }));
+    await screen.findByRole('table', { name: 'Feedback forms' });
+    expect(feedbackApi.responses).not.toHaveBeenCalled();
+    await user.click(screen.getByRole('button', { name: 'Responses', pressed: false }));
+    await screen.findByRole('table', { name: 'Feedback responses' });
+    await user.click(screen.getByRole('button', { name: 'Forms', pressed: false }));
+    await user.click(screen.getByRole('button', { name: 'Responses', pressed: false }));
+    expect(feedbackApi.responses).toHaveBeenCalledTimes(1);
+  });
+
+  it('retains Insights filters and the previous report immediately on return, then revalidates', async () => {
+    vi.mocked(feedbackApi.insightsDashboard).mockResolvedValue({ analytics: emptyInsights() });
+    const user = userEvent.setup();
+    render(<MemoryRouter><FeedbackPage /></MemoryRouter>);
+    await user.click(screen.getByRole('button', { name: 'Feedback Insights' }));
+    await screen.findByRole('region', { name: 'Submitted feedback' });
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Insights date range' }), '0');
+    await waitFor(() => expect(feedbackApi.insightsDashboard).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(screen.queryByText('Updating insights…')).not.toBeInTheDocument());
+    await user.click(screen.getByRole('button', { name: 'Forms', pressed: false }));
+    let finish!: (value: { analytics: FeedbackDashboardReport }) => void;
+    vi.mocked(feedbackApi.insightsDashboard).mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+    await user.click(screen.getByRole('button', { name: 'Feedback Insights' }));
+    expect(screen.getByRole('combobox', { name: 'Insights date range' })).toHaveValue('0');
+    expect(screen.getByRole('region', { name: 'Submitted feedback' })).toBeVisible();
+    expect(screen.getByText('Updating insights…')).toBeVisible();
+    expect(feedbackApi.insightsDashboard).toHaveBeenCalledTimes(3);
+    await act(async () => finish({ analytics: emptyInsights() }));
+  });
+
+  it('invalidates tab data and the Insights cache after a successful form change', async () => {
+    vi.mocked(feedbackApi.insightsDashboard).mockResolvedValue({ analytics: emptyInsights() });
+    const update = vi.spyOn(feedbackApi, 'setStatus').mockResolvedValue({ form: { ...form, status: 'draft' } });
+    try {
+      const user = userEvent.setup();
+      render(<MemoryRouter><FeedbackPage /></MemoryRouter>);
+      await user.click(screen.getByRole('button', { name: 'Feedback Insights' }));
+      await screen.findByRole('region', { name: 'Submitted feedback' });
+      await user.click(screen.getByRole('button', { name: 'Forms', pressed: false }));
+      await screen.findByRole('table', { name: 'Feedback forms' });
+      vi.mocked(feedbackApi.listForms).mockResolvedValue({ forms: [{ ...form, status: 'draft' }], summary: { totalForms: 1, publishedForms: 0, draftForms: 1, totalResponses: 3 } });
+      await user.click(screen.getByRole('button', { name: 'Unpublish' }));
+      await waitFor(() => expect(within(screen.getByRole('table', { name: 'Feedback forms' })).getByText('Draft')).toBeVisible());
+      expect(update).toHaveBeenCalledWith(20, 'draft');
+      expect(feedbackApi.listForms).toHaveBeenCalledTimes(2);
+      let finish!: (value: { analytics: FeedbackDashboardReport }) => void;
+      vi.mocked(feedbackApi.insightsDashboard).mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+      await user.click(screen.getByRole('button', { name: 'Feedback Insights' }));
+      expect(screen.queryByRole('region', { name: 'Submitted feedback' })).not.toBeInTheDocument();
+      expect(screen.getByText('Loading feedback insights…')).toBeVisible();
+      await act(async () => finish({ analytics: emptyInsights() }));
+    } finally { update.mockRestore(); }
   });
 
   it('keeps active and inactive tab colours readable when switching from Responses to Analytics', async () => {
@@ -152,8 +230,33 @@ describe('feedback form version history', () => {
     expect(within(dialog).queryByRole('button', { name: 'Close' })).not.toBeInTheDocument();
     await user.click(within(dialog).getByRole('button', { name: 'Export PDF' }));
     await waitFor(() => expect(downloadFeedbackResponsePdf).toHaveBeenCalledWith(expect.objectContaining({ id: 91 })));
+    vi.mocked(feedbackApi.responseEmails).mockResolvedValue({
+      recipient: { name: 'Example Learner', email: 'learner@example.test' },
+      sender: 'Quality.Support@kentbusinesscollege.com', replyTo: 'Quality.Support@kentbusinesscollege.com',
+      canSend: true, reason: '', emails: [],
+    });
+    await user.click(within(dialog).getByRole('button', { name: 'Email respondent' }));
+    await screen.findByLabelText('Message');
+    await user.click(within(dialog).getByRole('button', { name: 'Close email panel' }));
+    expect(within(dialog).queryByRole('textbox', { name: 'Message' })).not.toBeInTheDocument();
+    expect(within(dialog).getByRole('button', { name: 'Email respondent' })).toHaveFocus();
+    expect(within(dialog).getByText('Original Tutor')).toBeVisible();
+    await user.click(within(dialog).getByRole('button', { name: 'Email respondent' }));
+    await user.type(await screen.findByLabelText('Message'), 'Unsent follow-up draft');
+    await user.click(within(dialog).getByRole('button', { name: /^Close email$/ }));
+    const reopenEmail = within(dialog).getByRole('button', { name: 'Email respondent' });
+    expect(reopenEmail).toHaveAttribute('aria-expanded', 'false');
+    expect(reopenEmail).toHaveFocus();
+    await user.keyboard('{Enter}');
+    expect(within(dialog).getByRole('textbox', { name: 'Message' })).toHaveValue('Unsent follow-up draft');
+    expect(feedbackApi.responseEmails).toHaveBeenCalledExactlyOnceWith(91);
+    expect(feedbackApi.sendResponseEmail).not.toHaveBeenCalled();
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValueOnce(false).mockReturnValueOnce(true);
+    await user.click(within(dialog).getByRole('button', { name: 'Back' }));
+    expect(within(dialog).getByLabelText('Message')).toHaveValue('Unsent follow-up draft');
     await user.click(within(dialog).getByRole('button', { name: 'Back' }));
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    confirm.mockRestore();
   });
 
   it('shows every feedback type in one related-activity column without empty lecture columns', async () => {

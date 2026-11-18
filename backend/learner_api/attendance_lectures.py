@@ -440,9 +440,20 @@ def lecture_register(source, *, module_ids=None, records=None, learner_profile_i
                 if row.get('source') == 'live-register':
                     # Keep Teams/report metadata from the scheduled row while
                     # replacing only the learner outcome saved by Bulk.
+                    saved_report = str(row.get('attendance_report_id') or '').strip()
+                    scheduled_report = str(schedule.get('attendance_report_id') or '').strip()
+                    verified_seconds = (max(0, int(row.get('attended_seconds') or 0))
+                                        if saved_report and (not scheduled_report or saved_report == scheduled_report)
+                                        else 0)
                     projected = {
                         **schedule,
                         'attendance_status': row['attendance_status'],
+                        'resolved_attendance_status': row['attendance_status'],
+                        # The register already resolved this learner's Teams
+                        # identity (including guests/aliases). Keep its evidence;
+                        # the schedule's raw-email lookup cannot replace it.
+                        'attended_seconds': verified_seconds,
+                        'attended': row['attendance_status'] == 'present' and verified_seconds > 180,
                         'source': 'microsoft-teams',
                         'updated_at': _aware(row.get('updated_at')) or schedule.get('updated_at'),
                     }
@@ -957,6 +968,8 @@ def build_lectures(register, legacy_meta, legacy_activities, components, kind, l
                 lecture['title'] = _text(component.get('week_title')) or component['title'] or lecture['title']
                 lecture['contentSummary'] = component['description'] or component['settings'].get('sessionPurpose') or ''
                 lecture['componentHref'] = f"/learner/component/{kind}/{learner_id}/{component['id']}"
+                if component.get('week_id') is not None:
+                    lecture['weekId'] = str(component['week_id'])
                 lecture['ksbs'] = _component_ksbs(component)
                 if lecture['ksbs']:
                     lecture['ksbScope'] = 'lecture'

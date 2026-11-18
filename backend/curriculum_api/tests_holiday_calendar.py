@@ -25,6 +25,7 @@ from unittest.mock import patch
 
 from django.db import connection
 from django.test import SimpleTestCase, TestCase
+from coach_api.tests_support.transaction_cases import CoachTransactionTestCase
 
 from . import england_holidays, views
 
@@ -164,8 +165,8 @@ class AMovedHolidayIsOneFact(SimpleTestCase):
 # The sync end to end, against a stubbed feed and real tables.
 # --------------------------------------------------------------------------
 
-class HolidayTableCase(TestCase):
-    """Both holiday tables and the sync ledger, in SQLite."""
+class HolidayTableCase(CoachTransactionTestCase):
+    """Both holiday tables and the sync ledger, in SQLite or PostgreSQL."""
 
     def setUp(self):
         views.reset_schema_ready_flags()
@@ -174,6 +175,7 @@ class HolidayTableCase(TestCase):
         views.invalidate_curriculum_cache()
 
     def create_tables(self):
+        primary_key = 'bigserial primary key' if connection.vendor == 'postgresql' else 'integer primary key autoincrement'
         with connection.cursor() as cursor:
             cursor.execute(f'''
                 create table if not exists {views.table_name(views.ENGLAND_HOLIDAYS_TABLE)} (
@@ -182,7 +184,7 @@ class HolidayTableCase(TestCase):
                     title varchar(255) not null,
                     holiday_date date not null,
                     notes varchar(255) not null default '',
-                    bunting boolean not null default 0,
+                    bunting boolean not null default false,
                     fetched_at timestamp,
                     created_at timestamp,
                     updated_at timestamp
@@ -190,14 +192,14 @@ class HolidayTableCase(TestCase):
             ''')
             cursor.execute(f'''
                 create table if not exists {views.table_name(views.AUTHORED_HOLIDAYS_TABLE)} (
-                    id integer primary key autoincrement,
+                    id {primary_key},
                     label varchar(255) not null default '',
                     start_date date,
                     end_date date,
                     type varchar(128) not null default '',
                     color varchar(32) not null default '',
                     notes text,
-                    is_archived boolean not null default 0,
+                    is_archived boolean not null default false,
                     created_at timestamp,
                     updated_at timestamp
                 )

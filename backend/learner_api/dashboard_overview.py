@@ -269,9 +269,7 @@ def read_overview(source, kind, owner, profile, request):
     metrics = canonical.metrics_bulk([source.pk], learner_workspace=True).get(source.pk)
     if metrics is None:
         raise LookupError('Learner identity is unavailable.')
-    if metrics['otjh'].get('actual') is not None:
-        metrics['otjh'] = {**metrics['otjh'], 'actual': metrics['otjh']['actual']
-                          + sum(canonical.number(row['actual_hours']) for row in attendance_hours)}
+    # The shared metrics reader already includes each register allocation.
     if metrics['otjh'].get('planned') is None:
         # The plan's module ids were resolved above; do not re-read them.
         metrics['otjh']['planned'] = schedule.plan_planned_hours(source, owner, ids=ids)

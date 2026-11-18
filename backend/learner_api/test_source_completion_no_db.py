@@ -22,7 +22,20 @@ class SourceCompletionTests(unittest.TestCase):
             {'payload': {'id': 4, 'accepted': False, 'actual_seconds': 9000},
              'sources': [{'source_system': 'aptem', 'completed': True}]},
         ]
-        self.query = Mock(side_effect=lambda *args: copy.deepcopy(self.rows))
+        def query(sql, params):
+            if 'WITH canonical AS' in sql:
+                return copy.deepcopy(self.rows)
+            # Attendance and protected-month reads have their own row shapes.
+            for table, expected in (
+                ('learner_monthly_signatures', [7]),
+                ('learner_monthly_locks', [7, 7, 7]),
+                ('live_session_learner_attendance', [7]),
+            ):
+                if table in sql:
+                    self.assertEqual(params, expected)
+                    return []
+            self.fail(f'Unexpected query: {sql}')
+        self.query = Mock(side_effect=query)
         self.scope = adapter(self.query)
         token = journal_sources._current.set(True)
         self.addCleanup(journal_sources._current.reset, token)
@@ -39,7 +52,10 @@ class SourceCompletionTests(unittest.TestCase):
         result = self.scope['metrics_from_records'](records, {})
         self.assertEqual(result['programme']['completed'], 2)
         self.assertEqual(result['otjh']['actual'], 2.5)
-        sql, args = self.query.call_args.args
+        ledger_calls = [call for call in self.query.call_args_list if 'WITH canonical AS' in call.args[0]]
+        self.assertEqual(len(ledger_calls), 1)
+        self.assertEqual(self.query.call_count, 4)  # Ledger plus three bounded attendance/protection reads.
+        sql, args = ledger_calls[0].args
         self.assertEqual(args, [7])
         self.assertIn('s.learner_id=p.learner_id', sql)
         self.assertIn('s.canonical_progress_id=p.id', sql)

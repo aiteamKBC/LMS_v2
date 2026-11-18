@@ -16,6 +16,7 @@ from .tools import content  # noqa: F401 - registers default-off KSB mapping and
 from .tools import quiz_edit  # noqa: F401 - registers default-off quiz edit/clone
 from .tools import files  # noqa: F401 - registers default-off component file uploads
 from .tools import structure  # noqa: F401 - registers default-off programme/cohort/group/module creation
+from .tools import structure_edit  # noqa: F401 - registers default-off programme/cohort/group/module/week updates
 from . import pii, ratelimit
 from . import schema as json_schema
 from .dispatch import DispatchError
@@ -41,6 +42,7 @@ How to work:
 - Every change is a preview first. Show the user the preview and wait for them to confirm it. Only then call apply_change with that preview_id. Never apply a change the user has not confirmed.
 - Never invent KSB codes. Use list_standard_ksbs to get the programme's applied standard and use only the codes it returns.
 - To add a non-Teams component to an existing draft module/week, use create_curriculum_component. It creates a draft container only. After applying a video creation, pass the returned component_id to save_curriculum_video for a separate upload preview. Reuse an existing component instead of creating a duplicate.
+- To change something that already exists, use its update tool (update_component after get_component; update_programme, update_cohort, update_group, update_module, update_week) instead of creating a new one. A link learners play (a podcast episode, a YouTube video) goes in media_url, never in a description.
 - Write all content (lesson text, explanations) in Markdown, not HTML.
 - You can create and edit drafts only. You cannot publish, delete or archive anything, and you cannot see learner records."""
 

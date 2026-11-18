@@ -90,6 +90,8 @@ class TransferPolicyTests(SimpleTestCase):
         with patch.object(canonical,'query',return_value=[{'payload':imported,'sources':snapshot['sources']}]), \
              patch.object(canonical,'_ksb_not_excluded',return_value='TRUE'), \
              patch.object(store,'read_state',return_value=state), \
+             patch('learner_api.attendance_otjh.read_bulk', return_value={9: {
+                 'lectures': [], 'protected': {}, 'frozen_rows': []}}), \
              patch.object(canonical,'current_records',return_value=[]) as current, \
              patch.object(canonical,'progress_records_with_completion',return_value=[imported,native_save]):
             result=canonical.entries_for({'id':9,'enrolment_id':7,'progress_transfer_active':True})

@@ -71,7 +71,12 @@ export function useTutorAvailability(
   const key = enabled && slot
     ? JSON.stringify([
       slot.startDate,
+      slot.endDate,
       slot.sessionsNumber,
+      slot.scheduleMode,
+      slot.weekStartsOn,
+      slot.weekBoundaryMode,
+      slot.weeksNumber,
       slot.weekDays,
       slot.weeklySchedule,
       slot.startTime,
@@ -82,6 +87,7 @@ export function useTutorAvailability(
       // session dates, so a changed cohort (or a changed tick) is a changed
       // question. Left out, the picker kept answering about the old dates.
       slot.cohortId,
+      slot.calendarPolicy,
       (slot.holidays || []).map(holiday => `${holiday.id}:${holiday.startDate}:${holiday.endDate}`),
     ])
     : '';

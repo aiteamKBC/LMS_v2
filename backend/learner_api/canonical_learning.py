@@ -37,6 +37,8 @@ def counts_as_actual(record):
 
 def is_time_estimated(record):
     """Return whether a reporting allocation is provisional and needs approval."""
+    if record.get('actual_basis') == 'live_attendance_credit' and record.get('attendance_occurrence_id'):
+        return False
     if record.get('reporting_estimated') is True or record.get('actual_estimated') is True:
         return True
     payload = source_payload_metadata(record.get('source_payload'))
@@ -311,6 +313,13 @@ def entries_for(owner, *, overview_only=False, entry_ids=None, lineage_only=Fals
                 record['completed'] = counts_as_completed(record)
     if transfer_state is not None:
         result = frozen_records(result, transfer_state, entry_ids=entry_ids)
+    if entry_ids is None:
+        from learner_api.attendance_otjh import apply
+        # A transfer freezes its historical records, not this learner's new
+        # attendance. Keep both in the shared ledger so every hours view agrees.
+        result = apply(owner, result, query, **({'preserved_record_ids': [
+            record['id'] for record in transfer_state.get('records', [])
+        ]} if transfer_state is not None else {}))
     return result
 
 
@@ -356,7 +365,8 @@ def weekly_hour_records(owner):
     projected = project_current(records, markings)
     projected = merge_attempts(projected, subject_attempt_rows(owner, timed_only=True))
     projected.extend(extra_activity_hour_records([owner])[owner['id']])
-    return progress_records_with_completion(records, projected)
+    from learner_api.attendance_otjh import apply
+    return apply(owner, progress_records_with_completion(records, projected), query)
 
 
 def progress_records_with_completion(records, current):
@@ -425,6 +435,8 @@ def allocations(entry):
     """
     if entry.get('completion_only'):
         return []
+    if entry.get('attendance_occurrence_id') or entry.get('attendance_row'):
+        return [entry]
     if entry.get('retake_timing_applied'):
         return [entry]
     submitted = completion_reporting_instant(entry.get('submitted_at'))
@@ -521,6 +533,9 @@ def rows_for(owner, records=None):
     # contribute no allocations/hours to metrics or the monthly charts.
     for entry in (part for record in records
                   for part in ([record] if record.get('completion_only') else allocations(record))):
+        if entry.get('attendance_row'):
+            result.append(dict(entry['attendance_row']))
+            continue
         source = source_payload_metadata(entry.get('source_payload'))
         at = local_instant(entry.get('reporting_started_at') or entry.get('reporting_ended_at'))
         ref = f"canonical:{entry['id']}"
@@ -554,10 +569,13 @@ def rows_for(owner, records=None):
                     actual_status_label='Estimated — approval required' if is_time_estimated(entry)
                     else ('Accepted' if entry.get('accepted') is True else 'Not accepted'),
                     progress_id=entry['id'])
+        if entry.get('attendance_occurrence_id'):
+            item['attendance_occurrence_id'] = entry['attendance_occurrence_id']
         result.append(item)
     by_id = {}
     for item in result:
-        by_id.setdefault(item['progress_id'], []).append(item)
+        if item.get('progress_id') is not None:
+            by_id.setdefault(item['progress_id'], []).append(item)
     documents = query('''SELECT id,progress_id,display_name,content_type
         FROM "Learner".learner_activity_documents
         WHERE learner_id=%s AND deleted_at IS NULL ORDER BY id''', [owner['id']])
@@ -656,7 +674,7 @@ def content_row(owner, month, row_id):
                  if r['id'] == row_id and str(r.get('reporting_month')) == month), None)
     if item is None:
         raise ServiceError('Activity not found.', 'not_found', 404)
-    record = next(r for r in records if r['id'] == item['progress_id'])
+    record = next(r for r in records if r['id'] == item.get('progress_id', item.get('source_ref')))
     return item, record
 
 
@@ -875,6 +893,10 @@ def source_quiz_parts(item, owner, record):
 def content(item, owner=None, record=None):
     if owner is not None and record is None:
         record = next((r for r in entries_for(owner) if str(r['id']) == str(item.get('progress_id'))), None)
+    if record is not None and record.get('attendance_row'):
+        return {'id': item['id'], 'parts': [{'id': item['id'], 'title': item['title'],
+            'category': item['category'], 'url': None, 'quiz': None,
+            'html': f"<p>{escape(item.get('completion_note') or 'Verified live attendance.')}</p>"}]}
     if record is not None and record.get('completion_only'):
         # These owned attempt projections have no numeric progress ID. Do not
         # send their synthetic IDs to the historical-progress SQL readers.
@@ -1319,7 +1341,7 @@ def metrics_from_records(records, monthly_targets, *, include_ksb_points=False):
     for item in counted:
         for code in set(item.get('ksbs') or []):
             counts = codes.setdefault(code, [0, 0])
-            counts[0] += item.get('accepted') is True
+            counts[0] += item.get('ksb_evidence_accepted', item.get('accepted')) is True
             counts[1] += 1
     actual = round(sum(recorded_seconds(item) for item in accepted) / 3600, 4)
     from learner_api import journal_sources
@@ -1340,29 +1362,31 @@ def metrics_from_records(records, monthly_targets, *, include_ksb_points=False):
         result['ksb']['points'] = [
             {'activityId': str(item['id']), 'code': code,
              **ksb_point_definition(item, code),
-             'completed': item.get('accepted') is True,
+             'completed': item.get('ksb_evidence_accepted', item.get('accepted')) is True,
              'title': item.get('component_title') or None,
              'type': item.get('component_type') or item.get('kind') or None,
              'module': item.get('module_title') or None,
              'status': item.get('activity_status') or None,
              'source': item.get('source_system') or None,
              'completedAt': (item.get('submitted_at') or item.get('reporting_ended_at'))
-                 if item.get('accepted') is True else None,
+                 if item.get('ksb_evidence_accepted', item.get('accepted')) is True else None,
              'componentId': item.get('component_ref') or None}
             for item in counted for code in sorted(set(item.get('ksbs') or []))
         ]
     return result
 
 
-def metrics(learner_id, *, owner=None):
+def metrics(learner_id, *, owner=None, records=None):
     """Return verified canonical dashboard metrics for one learner.
 
     ``owner`` is this learner's already-verified ``require_profile`` row.
+    ``records`` may reuse that owner's ledger in the same request/perspective.
     """
     owner = require_profile(learner_id) if owner is None else owner
     from learner_api import journal_sources
     # Only counts and hours leave here, so raw evidence bodies are not loaded.
-    result = metrics_from_records(entries_for(owner, lineage_only=True), targets_for(owner))
+    records = entries_for(owner, lineage_only=True) if records is None else records
+    result = metrics_from_records(records, targets_for(owner))
     if journal_sources.enabled():
         planned = programme_planned_hours(learner_id, owner=owner)
         result['otjh']['planned'] = planned
@@ -1416,8 +1440,19 @@ def otjh_summary_bulk(learner_ids):
         WHERE learner_id=ANY(%s) AND deleted_at IS NULL AND accepted IS TRUE
         GROUP BY learner_id''', [profile_ids]):
         records[int(item['learner_id'])].append({**item, 'accepted': True})
-    for profile_id, pending in pending_hour_records(owners.values()).items():
+    pending_by_owner = pending_hour_records(owners.values())
+    for profile_id, pending in pending_by_owner.items():
         records[profile_id].extend(pending)
+    from learner_api.attendance_otjh import read_bulk, aggregate_delta
+    attendance = read_bulk([owner for owner in owners.values() if int(owner['id']) not in projected_profiles], query)
+    for profile_id, facts in attendance.items():
+        if profile_id in projected_profiles:
+            continue
+        delta = aggregate_delta(facts, pending_by_owner.get(profile_id, []))
+        if delta:
+            # This total already contains the replaced saved/pending allocation.
+            total = sum(recorded_seconds(record) for record in records[profile_id] if counts_as_actual(record))
+            records[profile_id] = [{'actual_seconds': max(0, total + delta), 'accepted': True}]
     targets = {profile_id: {} for profile_id in profile_ids}
     for item in query('''SELECT DISTINCT ON (t.learner_id,t.report_month)
         t.learner_id,t.report_month,t.target_hours
@@ -1561,6 +1596,8 @@ def metrics_bulk(learner_ids, *, learner_workspace=False, include_ksb_points=Fal
                 record['historical_components'].append(decoded(item['payload'], {}))
 
     current_by_enrolment = current_records_bulk(valid_owners.values(), records_by_learner)
+    from learner_api.attendance_otjh import read_bulk, projection
+    attendance = read_bulk(valid_owners.values(), query, now=as_of)
     target_rows = query('''SELECT DISTINCT ON (t.learner_id,t.report_month)
         t.learner_id,t.report_month,t.target_hours
         FROM "Learner".learner_monthly_targets t
@@ -1591,6 +1628,8 @@ def metrics_bulk(learner_ids, *, learner_workspace=False, include_ksb_points=Fal
                     for source in record.get('sources') or [])
         if owner.get('progress_transfer_active'):
             records = entries_for(owner, lineage_only=True)
+        else:
+            records = projection(records, attendance[int(owner['id'])])
         if as_of is not None:
             from .progress_cutoff import records_as_of
             records = records_as_of(records, as_of)

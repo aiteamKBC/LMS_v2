@@ -1157,19 +1157,22 @@ const WEEKDAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Satur
 export const WEEKEND_HINT = 'Saturday and Sunday are weekend holidays in England — delivery on these days is unusual.';
 
 /** Delivery days as a comma-separated string, which is how the API stores them. */
-export function WeekdayControl({ value, onChange, maxSelections }: { value: string; onChange: (value: string) => void; maxSelections?: number }) {
+export function WeekdayControl({ value, onChange, maxSelections, restDays = WEEKEND_DAYS, restDayHint = WEEKEND_HINT }: {
+  value: string; onChange: (value: string) => void; maxSelections?: number;
+  restDays?: readonly string[]; restDayHint?: string;
+}) {
   const selected = value.split(',').map(day => day.trim()).filter(Boolean);
   const toggle = (day: string) => {
     const next = selected.includes(day) ? selected.filter(item => item !== day) : [...selected, day];
     onChange(WEEKDAYS.filter(item => next.includes(item)).join(', '));
   };
-  const weekendPicked = WEEKEND_DAYS.some(day => selected.includes(day));
+  const weekendPicked = restDays.some(day => selected.includes(day));
   return (
     <div>
       <div className="flex flex-wrap gap-1.5">
         {WEEKDAYS.map(day => {
           const active = selected.includes(day);
-          const weekend = WEEKEND_DAYS.includes(day);
+          const weekend = restDays.includes(day);
           return (
             <button
               key={day}
@@ -1177,7 +1180,7 @@ export function WeekdayControl({ value, onChange, maxSelections }: { value: stri
               onClick={() => toggle(day)}
               aria-pressed={active}
               disabled={!active && maxSelections !== undefined && selected.length >= maxSelections}
-              title={weekend ? WEEKEND_HINT : undefined}
+              title={weekend ? restDayHint : undefined}
               className={`h-9 rounded-lg border px-3 text-[11px] font-bold transition-smooth disabled:cursor-not-allowed disabled:opacity-40 ${
                 active
                   ? 'border-primary-600 bg-primary-600 text-white'
@@ -1194,7 +1197,7 @@ export function WeekdayControl({ value, onChange, maxSelections }: { value: stri
       {weekendPicked && (
         <p className="mt-2 flex items-start gap-1.5 text-[11px] font-semibold text-amber-600">
           <i className="ri-information-line mt-px" aria-hidden />
-          <span>{WEEKEND_HINT}</span>
+          <span>{restDayHint}</span>
         </p>
       )}
     </div>

@@ -53,6 +53,17 @@ class BunnyTransportTests(unittest.TestCase):
         self.assertFalse(kwargs['allow_redirects'])
         self.assertEqual(kwargs['headers']['Content-Type'], 'application/octet-stream')
 
+    def test_upload_400_is_distinguished_from_other_bunny_failures(self):
+        self.http.request.return_value = response({'message': 'private provider detail'}, status=400)
+        with self.assertRaises(VideoImportError) as caught:
+            self.client.upload(VIDEO_ID, io.BytesIO(MP4))
+        self.assertEqual(type(caught.exception).__name__, 'VideoUploadConflict')
+        self.assertNotIn('private provider detail', str(caught.exception))
+        self.http.request.return_value = response({}, status=400)
+        with self.assertRaises(VideoImportError) as metadata:
+            self.client.metadata(VIDEO_ID, {}, 'Synthetic video')
+        self.assertEqual(type(metadata.exception), VideoImportError)
+
     def test_free_courses_use_only_the_shared_collection_name(self):
         self.http.request.side_effect = [response({'items': []}), response({'guid': VIDEO_ID})]
         self.assertEqual(self.client.free_course_collection(), VIDEO_ID)

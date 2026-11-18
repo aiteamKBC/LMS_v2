@@ -29,6 +29,7 @@ from pathlib import PurePosixPath
 from urllib.parse import unquote, urlsplit
 
 from django.core.files import File
+from django.core.files.uploadedfile import UploadedFile
 from django.utils import timezone
 from django.utils.text import get_valid_filename
 
@@ -285,10 +286,13 @@ class SaveComponentFile(LiveModuleWarning, WriteTool):
                 with local.open("rb") as stream:
                     if _check_bytes(stream, PurePosixPath(relative).suffix) != (stage["size"], stage["sha256"]):
                         raise ToolError("The staged file changed after the preview. Send it again.")
+                    # The upload endpoint reads ``content_type``, which a plain File lacks.
+                    upload = UploadedFile(stream, name=stage["file_name"], content_type=stage["content_type"],
+                                          size=stage["size"])
                     _, data = call_api(
                         request, "POST", f"{CURRICULUM}/components/{payload['component_id']}/upload/",
                         json_body={"componentType": payload["component_type"], "moduleCatalogueId": payload["module_id"]},
-                        uploaded_file=File(stream, name=stage["file_name"]))
+                        uploaded_file=upload)
             finally:
                 cleanup()
             meta = (data or {}).get("file") if isinstance(data, dict) else None

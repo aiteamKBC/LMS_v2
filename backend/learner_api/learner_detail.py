@@ -1650,7 +1650,7 @@ def _resolve_from_master(modules, weeks, components, assigned_modules=None, *, c
                     # My Learning's aggregate read needs live-session action
                     # identities, not lesson bodies or KSB/assignment metadata.
                     keys = ('sessionDate', 'sessionTime', 'sessionDateTimeUtc', 'teamsLiveSessionId',
-                            'teamsSessionNumber', 'teamsOccurrenceId', 'extraTeamsMeetingUrl', 'extraTeamsLiveSessionId')
+                            'teamsSessionNumber', 'teamsOccurrenceId', 'teamsCalendarBinding', 'extraTeamsMeetingUrl', 'extraTeamsLiveSessionId')
                     settings_sql += " || CASE WHEN lower(replace(btrim(type),'-','_'))='live_session' THEN jsonb_build_object(" + ','.join(
                         f"'{key}',settings_json->'{key}'" for key in keys) + ") ELSE '{}'::jsonb END"
             if compact and not identities_only:
@@ -1672,7 +1672,7 @@ def _resolve_from_master(modules, weeks, components, assigned_modules=None, *, c
                     "'<[^>]*>','','g'),'" + noise + "','','g')<>'' THEN 'content' ELSE '' END")
                 keys = tuple(dict.fromkeys((*_RESOURCE_URL_KEYS, 'videoUrl', 'embedCode',
                     'podcastUrl', 'audioUrl', 'liveSessionUrl', 'teamsMeetingUrl', 'teamsLiveSessionId',
-                    'teamsSessionNumber', 'recordingSeriesId', 'recordingSessionNumber', 'recordingDate',
+                    'teamsSessionNumber', 'teamsOccurrenceId', 'teamsCalendarBinding', 'recordingSeriesId', 'recordingSessionNumber', 'recordingDate',
                     'sessionDate', 'sessionTime', 'sessionDateTimeUtc', 'durationMinutes',
                     'learnerTitle', 'isMonthlyAssignment', 'assignmentTopics', 'assignmentBrief',
                     'assignmentContent', 'submissionInstructions', 'assignmentFileUrl', 'assignmentFileName',
@@ -1919,6 +1919,10 @@ def _resolve_from_master(modules, weeks, components, assigned_modules=None, *, c
                                            'quizMeta': quiz, 'component': title, **point_projection(settings),
                                            **({'type': ctype, 'sessionDate': _s(settings.get('sessionDate')) or None,
                                                'sessionDateTimeUtc': _s(settings.get('sessionDateTimeUtc')) or None,
+                                               **({'_liveSessionOccurrenceId': None if _s(settings.get('extraTeamsMeetingUrl')) else settings.get('teamsOccurrenceId')}
+                                                  if _s(ctype).strip().lower().replace('-', '_') == 'live_session' else {}),
+                                               'teamsSessionNumber': 1 if _s(settings.get('extraTeamsMeetingUrl')) else settings.get('teamsSessionNumber'),
+                                               **({'_liveSessionBindingBlocked': True} if settings.get('teamsCalendarBinding') in {'unverified', 'missing', 'ambiguous'} else {}),
                                                'teamsLiveSessionId': (_s(settings.get('extraTeamsLiveSessionId'))
                                                    if _s(settings.get('extraTeamsMeetingUrl')) else '')
                                                    or _s(settings.get('teamsLiveSessionId')) or None,
@@ -2220,6 +2224,9 @@ def _resolve_from_master(modules, weeks, components, assigned_modules=None, *, c
             "resourceUrl": resource_url,
             "liveSessionUrl": live_session_url,
             "teamsLiveSessionId": teams_live_session_id,
+            **({'_liveSessionOccurrenceId': None if unconfirmed_calendar or extra_series_id else settings.get('teamsOccurrenceId')}
+               if normalised_type == 'live_session' else {}),
+            **({'_liveSessionBindingBlocked': True} if unconfirmed_calendar else {}),
             "additionalMeeting": normalised_type == "live_session" and bool(_s(settings.get("extraTeamsMeetingUrl"))),
             "teamsSessionNumber": teams_session_number,
             "recordingSeriesId": recording_series_id or None,
@@ -2312,6 +2319,8 @@ def _resolve_from_master(modules, weeks, components, assigned_modules=None, *, c
                     "resourceUrl": comp["resourceUrl"],
                     "liveSessionUrl": comp["liveSessionUrl"],
                     "teamsLiveSessionId": comp["teamsLiveSessionId"],
+                    **({'_liveSessionOccurrenceId': comp['_liveSessionOccurrenceId']} if '_liveSessionOccurrenceId' in comp else {}),
+                    **({'_liveSessionBindingBlocked': True} if comp.get('_liveSessionBindingBlocked') else {}),
                     **({"additionalMeeting": True} if comp.get("additionalMeeting") else {}),
                     "teamsSessionNumber": comp["teamsSessionNumber"],
                     "recordingSeriesId": comp["recordingSeriesId"],
@@ -2483,10 +2492,16 @@ def build_learner_detail(source, pk, *, compact=False, read_only=False, quiz_vie
         *approved_retained_components(progress_transfer_store.read_state(pk)['items'], current_module_ids)]
 
     from .live_session_progress import read_live_credits, supplement_component_progress
+    from .attendance_learning import annotate_learning, with_learning_requirements
+    lecture_credits = read_live_credits(source, components=(
+        _activity_module_components(detail['components'], activity_component_id)
+        if activity_component_id else detail['components']))
+    lecture_credits = with_learning_requirements(source, lecture_credits)
+    detail['components'] = annotate_learning(detail['components'], lecture_credits)
+    from .live_session_access import annotate_access
+    detail['components'] = annotate_access(source, detail['components'])
     detail['componentProgress'] = supplement_component_progress(
-        detail.get('componentProgress') or [], read_live_credits(source, components=(
-            _activity_module_components(detail['components'], activity_component_id)
-            if activity_component_id else detail['components'])))
+        detail.get('componentProgress') or [], lecture_credits)
 
     if compact:
         # Nullable optional fields dominate the JSON for large plans. Omission

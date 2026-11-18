@@ -34,6 +34,16 @@ class SQLiteAdapter:
     def __init__(self,connection): self.connection=connection
     def execute(self,sql,params=()):
         sql = sql.replace('lms_quality.','').replace(' FOR UPDATE','').replace(' ~* ', ' REGEXP ')
+        if 'LEFT JOIN LATERAL jsonb_each(' in sql:
+            # SQLite's equivalent table-valued JSON function also exposes an
+            # `id` column, unlike PostgreSQL's key/value-only jsonb_each.
+            sql = (sql.replace('LEFT JOIN LATERAL jsonb_each(', 'LEFT JOIN json_each(')
+                   .replace(' AS criterion(key,value)', ' AS criterion')
+                   .replace("'{}'::jsonb", "'{}'")
+                   .replace('jsonb_build_object(', 'json_object(')
+                   .replace('SELECT id,coach_email', 'SELECT review.id,coach_email')
+                   .replace('GROUP BY id,coach_email', 'GROUP BY review.id,coach_email')
+                   .replace('ORDER BY starts_at DESC,id LIMIT', 'ORDER BY starts_at DESC,review.id LIMIT'))
         params = list(params)
         if 'ANY(%s::uuid[])' in sql:
             values = params.pop()
@@ -291,6 +301,23 @@ class ReviewApiTests(SimpleTestCase):
         with patch.object(store,'list_reviews',return_value=([row],None)),patch.object(api,'_coaches',return_value=[]):
             response=api.reviews(self.factory.get('/quality?start=2026-10-20&end=2026-10-20'))
         self.assertEqual(json.loads(response.content)['reviews'][0]['reviewerName'],'Quality Reviewer')
+
+    def test_list_returns_rating_counts_from_native_and_text_json(self):
+        counts={'gold':1,'green':2,'amber':3,'red':4,'na':5}
+        row={'id':str(uuid4()),'status':'completed','version':1,'learner_id':'1','learner_name':'Synthetic Learner',
+          'updated_at':datetime(2026,10,20,tzinfo=timezone.utc),'reviewer_name':'Synthetic Reviewer',
+          'coach_email':'coach@example.invalid','coach_name':'Synthetic Coach',
+          'starts_at':datetime(2026,10,20,tzinfo=timezone.utc),'title':'Synthetic MCM','action_count':0}
+        for value in (counts,json.dumps(counts)):
+            with self.subTest(value_type=type(value).__name__),\
+                 patch.object(store,'list_reviews',return_value=([{**row,'rating_counts':value}],None)),\
+                 patch.object(api,'_coaches',return_value=[]):
+                response=api.reviews(self.factory.get('/quality',{'start':'2026-10-20','end':'2026-10-20'}))
+            self.assertEqual(response.status_code,200)
+            summary=json.loads(response.content)['reviews'][0]
+            self.assertEqual(summary['ratingCounts'],counts)
+            self.assertEqual(summary['id'],row['id'])
+            self.assertEqual(summary['reviewerName'],'Synthetic Reviewer')
 
     def test_context_uses_verified_occurrence_and_caseload_not_browser_identity(self):
         from .recordings_calendar_media import calendar_context,calendar_record

@@ -439,6 +439,7 @@ def fixture_responses(*, standalone=False, kind='commercial'):
     with ExitStack() as stack:
         stack.enter_context(patch.object(learning,'load_context',side_effect=lambda *args,**kwargs:deepcopy(context)))
         stack.enter_context(patch.object(learning,'connections',fake_connections()))
+        stack.enter_context(patch('learner_api.my_learning_ksbs.connections',fake_connections()))
         stack.enter_context(patch.object(canonical,'query',side_effect=query))
         stack.enter_context(patch.object(learning,'journal_enabled',return_value=True))
         stack.enter_context(patch.object(course_catalogue_display,'read_export_placements',return_value=[]))

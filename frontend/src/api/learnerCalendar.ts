@@ -540,6 +540,27 @@ export async function fetchCatchupSlots(kind: LearnerKind, id: string, date: str
   return Array.isArray(result.times) ? result.times as string[] : [];
 }
 
+/** Verified availability for direct coach sessions, in Europe/London wall time. */
+export async function fetchCoachSessionSlots(
+  kind: LearnerKind,
+  id: string,
+  date: string,
+  durationMinutes: number,
+  options: { sessionType: BookableSessionType; excludeEventKey?: string; signal?: AbortSignal },
+): Promise<string[]> {
+  const query = new URLSearchParams({
+    date, timezoneOffsetMinutes: String(ukOffsetForDate(date)), durationMinutes: String(durationMinutes),
+    purpose: options.sessionType === 'catch-up' ? 'catch-up' : 'coach-session',
+  });
+  if (options.excludeEventKey) query.set('excludeEventKey', options.excludeEventKey);
+  const response = await fetch(`${BASE}/${kind}/${id}/coach-availability/?${query}`, {
+    credentials: 'include', signal: options.signal,
+  });
+  const result = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(result.error || 'Could not check the coach calendar. Please retry.');
+  return Array.isArray(result.times) ? result.times as string[] : [];
+}
+
 /** Verified coach availability for a Review, in Europe/London wall time. */
 export async function fetchReviewSlots(
   kind: LearnerKind,

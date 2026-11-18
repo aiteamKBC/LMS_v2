@@ -54,6 +54,29 @@ def synthetic_size_report():
 
 
 class WeeklyLearningTests(SimpleTestCase):
+    def test_attendance_requirements_reach_both_weekly_views_without_losing_hours(self):
+        from learner_api.attendance_learning import learning_state
+        credit = {'componentId': 'C1', 'moduleId': 'M1', 'sessionDate': '2026-10-05',
+                  'hours': 2.5, 'verifiedSeconds': 7200, 'submittedAt': '2026-10-05T10:00:00Z'}
+        for kind in ('commercial', 'apprenticeship'):
+            for include_actions in (False, True):
+                for requirements, completed in (({'reflection_required': True}, 1), ({}, 1),
+                    ({'validation_required': True, 'marking': 'submitted_for_tutor_review'}, 1)):
+                    with self.subTest(kind=kind, actions=include_actions, requirements=requirements):
+                        state = learning_state(credit, requirements)
+                        response, _, _ = self.projection(kind=kind, records=[], duration='120',
+                            reader_options={'include_actions': include_actions},
+                            live_evidence=([], [{**credit, 'liveSessionLearning': state}]))
+                        selected = response['selectedWeek']
+                        self.assertEqual(selected['activities'][0]['liveSessionLearning'], state)
+                        self.assertEqual(selected['activities'][0]['status'],
+                                         'completed' if completed else 'in-progress')
+                        self.assertEqual(response['weeks'][0]['completedActivities'], completed)
+                        self.assertEqual(selected['summary']['otjhHours'], 2.5)
+                        other, _, _ = self.projection('M1:2', kind=kind, records=[],
+                            live_evidence=([], [{**credit, 'liveSessionLearning': state}]))
+                        self.assertNotIn('liveSessionLearning', other['selectedWeek']['activities'][0])
+
     def test_future_completed_report_is_upcoming_not_absent(self):
         now = datetime(2026, 10, 7, 12, tzinfo=timezone.utc)
         start = datetime(2026, 10, 9, 8, tzinfo=timezone.utc)
@@ -319,8 +342,10 @@ class WeeklyLearningTests(SimpleTestCase):
                                                    records=[], duration='120', live_evidence=([row], credits))
                     self.assertEqual(selected_navigation(first)['completedActivities'], 1)
                     self.assertEqual(selected_navigation(first)['progress'], 100)
-                    self.assertEqual(first['selectedWeek']['summary']['otjhHours'], 2)
-                    self.assertEqual(first['selectedWeek']['activities'][0]['actualHours'], 2)
+                    # The agreed live-attendance credit is 150m, independently
+                    # of this fixture's 120m meeting duration.
+                    self.assertEqual(first['selectedWeek']['summary']['otjhHours'], 2.5)
+                    self.assertEqual(first['selectedWeek']['activities'][0]['actualHours'], 2.5)
                     self.assertEqual(first['selectedWeek']['summary']['achievedKsbCount'], 1)
                     self.assertEqual(first['selectedWeek']['liveSession']['joinUrl'], row['join_url'])
                     self.assertEqual(first['selectedWeek']['liveSession']['sessionState'], 'attended')

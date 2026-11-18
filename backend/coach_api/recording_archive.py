@@ -743,7 +743,8 @@ def download_transcript_from_graph(base: str, artifact_id: str) -> tuple[str, st
             headers={"Authorization": f"Bearer {microsoft_graph_token()}", "Accept": "text/vtt"},
             method="GET",
         )
-        with urllib_request.urlopen(request, timeout=90) as response:
+        from curriculum_api.transcript_transport import open_transcript
+        with open_transcript(urllib_request.urlopen, request, timeout=90) as response:
             return response.read().decode("utf-8", errors="replace"), ""
     except urllib_error.HTTPError as exc:
         detail = exc.read().decode("utf-8", errors="ignore")[:300]

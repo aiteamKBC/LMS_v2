@@ -764,6 +764,7 @@ elif USE_SQLITE_FOR_TESTS:
 _assistant_conversations_database_url = (
     os.environ.get('ASSISTANT_CONVERSATIONS_DATABASE_URL')
     or os.environ.get('TICKETING_DATABASE_URL')
+    or os.environ.get('Database_ticket_system')
 )
 if _assistant_conversations_database_url and not USE_SQLITE_FOR_TESTS and 'test' not in sys.argv:
     DATABASES['assistant_conversations'] = database_from_url(_assistant_conversations_database_url)

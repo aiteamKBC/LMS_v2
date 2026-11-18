@@ -78,9 +78,10 @@ export const currentLearningWeek = resource<Pick<HomeSummary, 'weekStart' | 'wee
 /**
  * One of Student Home's nearest events. ``date`` is an ISO instant, or a UK
  * calendar date (YYYY-MM-DD) for an assignment due date or an unbooked review.
- * ``booked`` is sent for reviews only.
+ * ``booked`` is sent for reviews only; ``componentId`` identifies a session's
+ * assigned live activity when it can be matched unambiguously.
  */
-export type UpcomingEvent = { id: string; type: 'session' | 'assignment' | 'review'; title: string; date: string; booked?: boolean };
+export type UpcomingEvent = { id: string; type: 'session' | 'assignment' | 'review'; title: string; date: string; booked?: boolean; componentId?: string };
 /** Student Home's nearest three sessions, assignment deadlines and progress reviews, earliest first. */
 export type UpcomingSchedule = { events: UpcomingEvent[] };
 export const upcomingSchedule = resource<UpcomingSchedule>(

@@ -8,6 +8,7 @@ from zoneinfo import ZoneInfo
 from curriculum_api import views
 from curriculum_api.tests import CurriculumPersistenceTransactionHarness
 from curriculum_api.teams_weekly_calendar import calendar_groups, graph_event_utc
+from coach_api.tests_support.persisted_fixtures import curriculum_session
 
 
 SLOTS = [
@@ -76,6 +77,46 @@ class GraphCalendar:
 
 
 class ModuleWeeklyScheduleTests(CurriculumPersistenceTransactionHarness):
+    def setUp(self):
+        super().setUp()
+        curriculum_session(self, self.client)
+
+    def test_custom_delivery_creates_dated_components_and_survives_a_group_schedule_change(self):
+        tree = self.tree_payload()
+        tree['cohorts'][0]['groups'][0]['modules'] = []
+        self.assertEqual(self.post_json('/curriculum_api/curriculum/programmes/tree/', tree).status_code, 200)
+        response = self.post_json('/curriculum_api/curriculum/groups/GROUP-DATA-1/modules/', {
+            'moduleName': 'Custom weekly delivery', 'startDate': '2026-09-07',
+            'weeks': 4, 'sessionsNumber': 8, 'weeklySchedule': SLOTS,
+            'scheduleMode': 'custom', 'tutor': 'Tutor One',
+            'weekStartsOn': 'Monday',
+        })
+        self.assertEqual(response.status_code, 200, response.content)
+        module_id = response.json()['created'][0]['catalogueId']
+        structure = views.get_authoring_structure_payload(module_id)
+        self.assertEqual(structure['scheduleMode'], 'custom')
+        self.assertEqual(structure['weekStartsOn'], 'Monday')
+        self.assertEqual(structure['weeksNumber'], 4)
+        self.assertEqual(structure['sessionsNumber'], 8)
+        self.assertEqual([len(week['components']) for week in structure['weekStructure']], [2] * 4)
+        self.assertEqual([component['settings']['sessionDate'] for week in structure['weekStructure'] for component in week['components']],
+                         ['2026-09-07', '2026-09-10', '2026-09-14', '2026-09-17', '2026-09-21', '2026-09-24', '2026-09-28', '2026-10-01'])
+        before = copy.deepcopy(structure['weekStructure'])
+        response = self.patch_json('/curriculum_api/curriculum/groups/GROUP-DATA-1/', {
+            'weekDays': 'Friday', 'startTime': '13:00', 'endTime': '15:00',
+        })
+        self.assertEqual(response.status_code, 200, response.content)
+        after = views.get_authoring_structure_payload(module_id)
+        self.assertEqual(after['weeklySchedule'], SLOTS)
+        self.assertEqual(after['weekStartsOn'], 'Monday')
+        self.assertEqual(after['weekStructure'], before)
+        catalogue = views.authoring_summary_catalogue_item(views.authoring_catalogue_summaries()[module_id])
+        self.assertEqual(catalogue['scheduleMode'], 'custom')
+        self.assertEqual(catalogue['weekStartsOn'], 'Monday')
+        response = self.patch_json(f'/curriculum_api/curriculum/modules/{module_id}/', {'name': 'Renamed custom module'})
+        self.assertEqual(response.status_code, 200, response.content)
+        self.assertEqual(views.get_authoring_structure_payload(module_id)['weekStartsOn'], 'Monday')
+
     def create_module(self):
         response = self.post_json('/curriculum_api/curriculum/modules/', {
             'moduleType': 'authoring', 'title': 'Independent weekday times',
@@ -84,6 +125,36 @@ class ModuleWeeklyScheduleTests(CurriculumPersistenceTransactionHarness):
         })
         self.assertEqual(response.status_code, 201, response.content)
         return response.json()['moduleCatalogueId']
+
+    def test_new_custom_delivery_anchors_to_first_session_without_a_client_weekday(self):
+        tree = self.tree_payload()
+        tree['cohorts'][0]['groups'][0]['modules'] = []
+        self.assertEqual(self.post_json('/curriculum_api/curriculum/programmes/tree/', tree).status_code, 200)
+        response = self.post_json('/curriculum_api/curriculum/groups/GROUP-DATA-1/modules/', {
+            'moduleName': 'Thursday then Tuesday', 'startDate': '2026-09-10', 'endDate': '2026-10-07',
+            'scheduleMode': 'custom', 'weeks': 4, 'tutor': 'Tutor One',
+            'weeklySchedule': [{'day': day, 'startTime': '09:00', 'endTime': '11:00'} for day in ('Tuesday', 'Thursday')],
+        })
+        self.assertEqual(response.status_code, 200, response.content)
+        module_id = response.json()['created'][0]['catalogueId']
+        structure = views.get_authoring_structure_payload(module_id)
+        self.assertEqual(structure['weekStartsOn'], 'Thursday')
+        self.assertEqual([len(week['components']) for week in structure['weekStructure']], [2] * 4)
+        self.assertEqual([[component['settings']['sessionDate'] for component in week['components']]
+                          for week in structure['weekStructure']], [
+            ['2026-09-10', '2026-09-15'], ['2026-09-17', '2026-09-22'],
+            ['2026-09-24', '2026-09-29'], ['2026-10-01', '2026-10-06'],
+        ])
+        self.assertEqual(structure['startDate'], '2026-09-10')
+        self.assertEqual(structure['endDate'], '2026-10-07')
+
+    def test_invalid_week_boundary_is_rejected_without_saving(self):
+        response = self.post_json('/curriculum_api/curriculum/modules/', {
+            'moduleType': 'authoring', 'title': 'Invalid boundary', 'weekStartsOn': 'Funday',
+        })
+        self.assertEqual(response.status_code, 400, response.content)
+        self.assertEqual(response.json()['fields'], ['weekStartsOn'])
+        self.assertEqual(views.authoring_fetch_all(views.AUTHORING_MODULES_TABLE), [])
 
     def test_per_day_times_round_trip_and_reach_every_planned_session(self):
         module_id = self.create_module()
@@ -186,6 +257,7 @@ class TeamsWeekdaySeriesTests(CurriculumPersistenceTransactionHarness):
 
     def setUp(self):
         super().setUp()
+        curriculum_session(self, self.client)
         views.ensure_live_session_tracking_tables()
         self.graph = GraphCalendar()
         for target, kwargs in (
@@ -242,12 +314,57 @@ class TeamsWeekdaySeriesTests(CurriculumPersistenceTransactionHarness):
         structure = views.get_authoring_structure_payload(self.module_id)
         components = [c for week in structure['weekStructure'] for c in week['components'] if c['type'] == 'live-session']
         self.assertEqual([c['settings']['teamsMeetingUrl'] for c in components], [item['join_url'] for item in occurrences])
-        # An authoring save with stale shared links cannot replace the canonical day links.
-        for week in structure['weekStructure']:
+        # A stale editor uses the structure revision guard. A raw URL change
+        # without that guard is an intentional manual replacement, not a stale save.
+        url = f'/curriculum_api/curriculum/modules/{self.module_id}/structure/'
+        response = self.client.get(url, HTTP_CACHE_CONTROL='no-cache')
+        self.assertEqual(response.status_code, 200, response.content)
+        stale = response.json()
+        latest = copy.deepcopy(stale)
+        latest['title'] = 'Renamed weekday delivery'
+        views.save_module_authoring_structure(self.module_id, latest)
+        for week in stale['weekStructure']:
             for component in week['components']:
                 component['settings']['liveSessionUrl'] = 'https://teams.example/stale'
-        saved = views.save_module_authoring_structure(self.module_id, structure)
+        response = self.patch_json(url, {**stale, 'expectedRevision': stale['structureRevision']})
+        self.assertEqual(response.status_code, 409, response.content)
+        self.assertTrue(response.json()['conflict'])
+        saved = views.get_authoring_structure_payload(self.module_id)
         self.assertEqual([c['settings']['liveSessionUrl'] for week in saved['weekStructure'] for c in week['components'] if c['type'] == 'live-session'], [item['join_url'] for item in occurrences])
+        self.assertEqual(saved['title'], latest['title'])
+        self.assertEqual(len(self.graph.posts), 2)
+
+    def test_manual_link_replacement_is_unverified_and_isolated_from_other_sessions(self):
+        response = self.post_json('/curriculum_api/curriculum/teams-meetings/', self.payload)
+        self.assertEqual(response.status_code, 201, response.content)
+        meeting = response.json()['meeting']
+        response = self.post_json(f'/curriculum_api/curriculum/modules/{self.module_id}/teams-meetings/restore/', {'createMissingComponents': True})
+        self.assertEqual(response.status_code, 200, response.content)
+        structure = views.get_authoring_structure_payload(self.module_id)
+        components = [c for week in structure['weekStructure'] for c in week['components'] if c['type'] == 'live-session']
+        before = {component['id']: copy.deepcopy(component['settings']) for component in components}
+        occurrences = views.authoring_fetch_all(views.LIVE_SESSION_OCCURRENCES_TABLE, 'live_session_id = %s', [meeting['liveSessionId']], 'session_number')
+        target = components[0]
+        target['settings'].update(liveSessionUrl='https://teams.example/manual', recordingSeriesId=meeting['liveSessionId'])
+
+        saved = views.save_module_authoring_structure(self.module_id, structure)
+
+        after = {c['id']: c['settings'] for week in saved['weekStructure'] for c in week['components'] if c['type'] == 'live-session'}
+        changed = after[target['id']]
+        self.assertEqual(changed['liveSessionUrl'], 'https://teams.example/manual')
+        self.assertEqual(changed['teamsMeetingUrl'], 'https://teams.example/manual')
+        self.assertEqual(changed['teamsCalendarBinding'], 'unverified')
+        from curriculum_api.teams_external_calendar import UNVERIFIED_IDENTITY_KEYS
+        for key in UNVERIFIED_IDENTITY_KEYS:
+            self.assertFalse(changed.get(key), key)
+        for key in ('sessionDate', 'sessionTime', 'sessionDateTimeUtc', 'durationMinutes'):
+            self.assertEqual(changed.get(key), before[target['id']].get(key), key)
+        self.assertEqual(changed['recordingSeriesId'], meeting['liveSessionId'])
+        for component in components[1:]:
+            for key in ('liveSessionUrl', 'teamsMeetingUrl', 'teamsOccurrenceId', 'teamsLiveSessionId', 'teamsSessionNumber'):
+                self.assertEqual(after[component['id']].get(key), before[component['id']].get(key), key)
+        self.assertEqual(views.authoring_fetch_all(views.LIVE_SESSION_OCCURRENCES_TABLE, 'live_session_id = %s', [meeting['liveSessionId']], 'session_number'), occurrences)
+        self.assertEqual(len(self.graph.posts), 2)
 
     def test_same_clocks_can_share_one_series_or_explicitly_use_separate_links(self):
         uniform = copy.deepcopy(self.payload)

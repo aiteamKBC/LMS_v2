@@ -2,7 +2,8 @@
 import json
 import sqlite3
 from copy import deepcopy
-from datetime import date
+from datetime import date, datetime
+from zoneinfo import ZoneInfo
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -64,12 +65,18 @@ class ManualTimeCorrectionTests(SimpleTestCase):
         sql = sql.replace('actual_seconds::text', 'CAST(actual_seconds AS TEXT)')
         sql = sql.replace('s.id::text', 'CAST(s.id AS TEXT)')
         sql = sql.replace('jsonb_build_object', 'json_object')
+        sql = sql.replace('jsonb_agg(', 'json_group_array(').replace(' ORDER BY id)\n          FILTER', ')\n          FILTER')
+        sql = sql.replace("to_char(submitted_at AT TIME ZONE 'Europe/London','YYYY-MM')", 'uk_month(submitted_at)')
+        sql = sql.replace("to_char(coalesce(declared_completed_at,submitted_at)\n                 AT TIME ZONE 'Europe/London','YYYY-MM')",
+                          'uk_month(coalesce(declared_completed_at,submitted_at))')
         if '=ANY(%s)' in sql:
             sql = sql.replace('=ANY(%s)', ' IN (' + ','.join('?' for _ in params[-1]) + ')')
             params = [*params[:-1], *params[-1]]
         cursor = self.db.execute(sql.replace('%s', '?'), params)
         rows = [dict(row) for row in cursor.fetchall()] if cursor.description else []
         for row in rows:
+            if isinstance(row.get('unallocated_activities'), str):
+                row['unallocated_activities'] = json.loads(row['unallocated_activities'])
             for key in ('accepted', 'passed'):
                 if row.get(key) is not None:
                     row[key] = bool(row[key])
@@ -119,11 +126,15 @@ class ManualTimeCorrectionTests(SimpleTestCase):
 
         # Additional read-model columns only; every query stays in this private ledger.
         self.db.execute('ALTER TABLE Learner.learner_progress_entries ADD COLUMN quiz_ref')
+        self.db.execute('ALTER TABLE Learner.learner_progress_entries ADD COLUMN component_title')
         for column in ('component_ref', 'submitted_at', 'activity_title', 'module_title', 'ksb_codes'):
             self.db.execute(f'ALTER TABLE Learner.learning_reflection_submissions ADD COLUMN {column}')
         self.db.execute('ALTER TABLE Learner.learner_monthly_signatures ADD COLUMN signer_role')
         self.db.execute('CREATE TABLE Learner.learner_activity_documents(id,learner_id,progress_id,display_name,content_type,deleted_at)')
         self.db.create_function('GREATEST', 2, max)
+        self.db.create_function('uk_month', 1, lambda value:
+            datetime.fromisoformat(value.replace('Z', '+00:00')).astimezone(ZoneInfo('Europe/London')).strftime('%Y-%m')
+            if value else None)
 
         class BoolOr:
             value = False
@@ -157,6 +168,10 @@ class ManualTimeCorrectionTests(SimpleTestCase):
 
         with patch.object(canonical, 'query', side_effect=self.query), \
              patch.object(coach_logs, 'query', side_effect=self.query), \
+             patch('learner_api.canonical_hours.full_hour_projection_ids', return_value=set()), \
+             patch.object(otjh_ksb, 'full_hour_projection_ids', return_value=set()), \
+             patch('learner_api.attendance_otjh.read_bulk', side_effect=lambda owners, read:
+                   {int(owner['id']): {'lectures': [], 'protected': {}, 'frozen_rows': []} for owner in owners}), \
              patch.object(logs, 'attendance_rows', return_value=[]), \
              patch.object(canonical, 'targets_for', return_value={'2026-10': 100}), \
              patch.object(canonical, 'programme_planned_hours', return_value=100), \

@@ -69,6 +69,7 @@ class SessionDeliveryClockTests(unittest.TestCase):
             'calendar_zone': calendar_zone, 'local_clock_to_utc': local_clock_to_utc, 'datetime': datetime, 'date': date, 'timedelta': timedelta, 'timezone': timezone, 'ZoneInfo': ZoneInfo,
             're': re, 'defaultdict': defaultdict, 'logger': logging.getLogger('session-clock-test'),
             'module_weekly_schedule': self.weekly.module_weekly_schedule, 'override_clock': self.overrides.override_clock,
+            'module_week_boundary_mode': self.weekly.module_week_boundary_mode,
             'DEFAULT_SESSION_START_TIME': '09:00', 'DEFAULT_SESSION_END_TIME': '10:00',
             'graph_timezone_iana': lambda _: 'Europe/London',
             'module_session_plan_for_weeks': Mock(side_effect=lambda *args, **kwargs: copy.deepcopy(self.plan)),

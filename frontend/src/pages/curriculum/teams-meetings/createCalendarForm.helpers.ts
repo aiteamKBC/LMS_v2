@@ -1,6 +1,7 @@
 import { formatCalendarDateTime, getCalendarTimeZone, parseUtcInstant, zonedNaiveToUtcIso, type TeamsMeetingInput } from '../module-builder/moduleAuthoringData';
 import { emailList } from "../module-builder/EmailChipsInput.helpers";
 import { cleanText } from '../shared/entities/model';
+import type { CurriculumModule } from '@/lib/curriculumApi';
 import { calendarInputError, normalizedClock, clockLabel } from './calendarTime';
 
 
@@ -150,6 +151,8 @@ export function teamsGapNote(plannedUtc: string, teamsUtc: string, hasCalendar: 
  * copy of that page.
  */
 export interface TeamsSchedulePreviewRow {
+  scheduleMode?: 'group' | 'custom';
+  weeklySchedule?: CurriculumModule['weeklySchedule'];
   timeZone?: string;
   name: string;
   sessions: TeamsPlannedSession[];
@@ -247,6 +250,7 @@ export function emptyTeamsCalendarForm(): TeamsCalendarForm {
 /** The module a calendar is being created for: its identity and its dates. */
 export interface TeamsCalendarTarget extends TeamsSchedulePreviewRow {
   catalogueId: string;
+  module?: Pick<CurriculumModule, 'weekBoundaryMode' | 'weekStructure' | 'deliveryWeeks' | 'weeks'>;
 }
 
 
@@ -284,6 +288,8 @@ export function buildTeamsCalendarInput(row: TeamsCalendarTarget, form: TeamsCal
     presenters: emailList(form.presenters),
     coOrganizers: presenterCoOrganizers(form.presenters, form.coOrganizers, form.organizerEmail),
     moduleCatalogueId: row.catalogueId,
+    ...(row.module?.weekBoundaryMode === 'calendar' ? { reviewSessionLimit:
+      Math.max(52, Math.min(104, Number(row.module.weekStructure?.length || row.module.deliveryWeeks || row.module.weeks) || 0) * 7) } : {}),
     moduleTitle: meetingTitle,
     localStartDateTime: sessionNaiveLocal(row.sessions[0]),
     startDateTimeUtc: occurrences[0].startDateTimeUtc,

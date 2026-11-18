@@ -39,7 +39,8 @@ TEMPLATE = (
     ("recording-placeholder", "Session Recording", "", (0, 0, False, False)),
     ("reading", "Reading Material", "PDF, Word, or typed text", DEFAULTS["reading"]),
     ("video", "Video", "Upload or link a video", DEFAULTS["video"]),
-    ("reflection", "Reflection", "Learner written reflection", DEFAULTS["reflection"]),
+    ("podcast", "Podcast", "Upload audio or podcast link", DEFAULTS["podcast"]),
+    ("powerpoint", "PowerPoint", "Slide deck for the week", DEFAULTS["powerpoint"]),
 )
 #: Free courses hold self-study content only: the LMS refuses live sessions in them
 #: ("Free courses contain self-study content only"), so their week has no session/recording.
@@ -56,20 +57,28 @@ def _locked_new_week(target):
 
     The component API looks weeks up by number without excluding deleted rows, so
     reusing a deleted week's number would attach the components to that deleted week.
+    A free course owns its rows in native free-course storage, not the module/week tables.
     """
+    from curriculum_api import learning_storage
     from curriculum_api.views import AUTHORING_MODULES_TABLE, AUTHORING_WEEKS_TABLE, authoring_table_name
 
     if not connection.features.has_select_for_update:
         raise ToolError("Week creation requires a database supporting row locks.")
     with transaction.atomic(using="default"):
+        course = learning_storage.course(target["module_id"], lock=True)
         with connection.cursor() as cursor:
-            cursor.execute(f"SELECT 1 FROM {authoring_table_name(AUTHORING_MODULES_TABLE)} "
-                           "WHERE module_catalogue_id = %s FOR UPDATE", [target["module_id"]])
-            if cursor.fetchone() is None:
-                raise ToolError("The module no longer exists. Look it up again.")
-            cursor.execute(f"SELECT 1 FROM {authoring_table_name(AUTHORING_WEEKS_TABLE)} "
-                           "WHERE (module_catalogue_id = %s AND week_number = %s) OR id = %s",
-                           [target["module_id"], target["week_number"], target["week_id"]])
+            if course is None:
+                cursor.execute(f"SELECT 1 FROM {authoring_table_name(AUTHORING_MODULES_TABLE)} "
+                               "WHERE module_catalogue_id = %s FOR UPDATE", [target["module_id"]])
+                if cursor.fetchone() is None:
+                    raise ToolError("The module no longer exists. Look it up again.")
+                cursor.execute(f"SELECT 1 FROM {authoring_table_name(AUTHORING_WEEKS_TABLE)} "
+                               "WHERE (module_catalogue_id = %s AND week_number = %s) OR id = %s",
+                               [target["module_id"], target["week_number"], target["week_id"]])
+            else:
+                cursor.execute("SELECT 1 FROM curriculum.free_course_weeks "
+                               "WHERE (course_id = %s AND week_number = %s) OR content_ref = %s",
+                               [course["id"], target["week_number"], target["week_id"]])
             if cursor.fetchone() is not None:
                 raise ToolError(f"Week {target['week_number']} is already used in this module, possibly by a "
                                 "deleted week. Add or restore that week in the LMS instead.")
@@ -80,9 +89,10 @@ class CreateWeek(LiveModuleWarning, WriteTool):
     name = NAME
     description = (
         "Preview adding one new week at the end of an existing draft module, pre-filled with the standard week "
-        "template: Live Teams Session, Session Recording (linked to that session), Reading Material, Video and "
-        "Reflection, all as empty drafts. No Teams meeting is booked and nothing is published; staff fill in the "
-        "session date, Teams link and content in the LMS. Use list_module_weeks first. After confirmation use "
+        "template: Live Teams Session, Session Recording (linked to that session), Reading Material, Video, "
+        "Podcast and PowerPoint, all as empty drafts (a free course gets the last four only). No Teams meeting is "
+        "booked and nothing is published; staff fill in the session date, Teams link and content in the LMS. "
+        "Use list_module_weeks first. After confirmation use "
         "apply_change; it returns the new week_id and each component_id (pass the video's id to "
         "save_curriculum_video)."
     )

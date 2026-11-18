@@ -14,6 +14,19 @@ describe('tutor availability belongs to the current destination', () => {
   beforeEach(() => { vi.useFakeTimers(); vi.mocked(previewTutorAvailabilityRoster).mockReset(); });
   afterEach(() => vi.useRealTimers());
 
+  it('invalidates a verdict when Custom changes the authored week window', async () => {
+    vi.mocked(previewTutorAvailabilityRoster).mockResolvedValueOnce(busy).mockImplementationOnce(() => new Promise(() => {}));
+    const { result, rerender } = renderHook(({ weeksNumber }) => useTutorAvailability({
+      moduleCatalogueId: 'MOD-CUSTOM', scheduleMode: 'custom', sessionsNumber: 28, weeksNumber,
+    }), { initialProps: { weeksNumber: 4 } });
+    await act(async () => { await vi.advanceTimersByTimeAsync(300); });
+    expect(result.current.verdictFor('Tutor One')?.available).toBe(false);
+    rerender({ weeksNumber: 3 });
+    expect(result.current.verdictFor('Tutor One')).toBeNull();
+    await act(async () => { await vi.advanceTimersByTimeAsync(300); });
+    expect(previewTutorAvailabilityRoster).toHaveBeenLastCalledWith(expect.objectContaining({ scheduleMode: 'custom', weeksNumber: 3 }));
+  });
+
   it('never authorizes a busy-tutor override using the previous group preview', async () => {
     vi.mocked(previewTutorAvailabilityRoster).mockResolvedValueOnce(busy).mockImplementationOnce(() => new Promise(() => {}));
     const { result, rerender } = renderHook(({ groupId }) => useTutorAvailability({ moduleCatalogueId: 'FREE-1', groupId }), {
@@ -27,6 +40,20 @@ describe('tutor availability belongs to the current destination', () => {
     await act(async () => { await vi.advanceTimersByTimeAsync(300); });
     expect(previewTutorAvailabilityRoster).toHaveBeenLastCalledWith({ moduleCatalogueId: 'FREE-1', groupId: 'G2' });
     expect(result.current.verdictFor('Tutor One')).toBeNull();
+  });
+
+  it('discards the previous availability verdict when the week boundary changes', async () => {
+    vi.mocked(previewTutorAvailabilityRoster).mockResolvedValueOnce(busy).mockImplementationOnce(() => new Promise(() => {}));
+    const { result, rerender } = renderHook(({ weekStartsOn }) => useTutorAvailability({
+      moduleCatalogueId: 'MOD-CUSTOM', scheduleMode: 'custom', weeksNumber: 4, weekStartsOn,
+    }), { initialProps: { weekStartsOn: 'Monday' } });
+    await act(async () => { await vi.advanceTimersByTimeAsync(300); });
+    expect(result.current.verdictFor('Tutor One')?.available).toBe(false);
+    rerender({ weekStartsOn: 'Sunday' });
+    expect(result.current.verdictFor('Tutor One')).toBeNull();
+    expect(result.current.loading).toBe(true);
+    await act(async () => { await vi.advanceTimersByTimeAsync(300); });
+    expect(previewTutorAvailabilityRoster).toHaveBeenLastCalledWith(expect.objectContaining({ weekStartsOn: 'Sunday' }));
   });
 
   it('ignores a late answer from the previous destination and reports failed checks', async () => {

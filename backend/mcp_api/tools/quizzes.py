@@ -32,6 +32,7 @@ from ..dispatch import DispatchError, call_api
 from ..settings import public_base_url, quiz_creation_enabled
 from . import ToolError
 from .components import ID, LiveModuleWarning, draft_module, stored_duration
+from .fields import UNSAFE
 from .read import CURRICULUM, _archived, _resolve_source, _s
 
 NAME = "create_quiz_draft"
@@ -42,7 +43,7 @@ TYPE_LABELS = {"single_choice": "single", "multiple_choice": "multiple", "true_f
                "fill_gap": "fill-the-gap", "keywords": "keywords", "ordering": "ordering", "matching": "matching"}
 
 # A8 (stored XSS): content is Markdown. Refuse anything that looks like markup or script.
-_UNSAFE = re.compile(r"<\s*/?\s*[a-zA-Z!]|\bon[a-z]+\s*=|javascript\s*:", re.IGNORECASE)
+_UNSAFE = UNSAFE
 _ARABIC_MARKS = re.compile("[\u064B-\u0652\u0640]")  # harakat and tatweel
 _ALEF_FORMS = str.maketrans({"\u0622": "\u0627", "\u0623": "\u0627", "\u0625": "\u0627", "\u0671": "\u0627"})
 _LEGACY_CODE = re.compile(r"([KSB]\d+)\.\d+")

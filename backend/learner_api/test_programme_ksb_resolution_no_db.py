@@ -12,11 +12,13 @@ import unittest
 from contextlib import contextmanager, nullcontext
 from pathlib import Path
 from types import SimpleNamespace
+
 from curriculum_api.learning_storage import read_sql
 
 
 class LookupConnection:
     vendor = 'sqlite'
+
     def __init__(self, database):
         self.database = database
 

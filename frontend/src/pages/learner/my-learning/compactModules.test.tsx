@@ -57,6 +57,20 @@ beforeEach(() => {
 afterEach(() => { clearAllCachedResources(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
 describe('compact My Learning route', () => {
+  it.each(['commercial', 'apprenticeship'] as const)('shows each course KSB percentage from the catalogue (%s)', async kind => {
+    const catalogue = makeCatalogue(kind);
+    catalogue.modules[0].ksbProgress = { completed: 1, total: 4, percent: 25, status: 'ready' };
+    catalogue.modules[1].ksbProgress = { completed: 2, total: 3, percent: 66.67, status: 'ready' };
+    vi.mocked(fetch).mockImplementation(async input => String(input).includes('/certificates/')
+      ? reply({ template: null, csrfToken: '' }) : reply(catalogue));
+    route(`/learner/my-learning/${kind}/7`);
+    const first = within((await screen.findByRole('heading', { name: 'One' })).closest('article')!);
+    expect(first.getByRole('progressbar', { name: 'One KSBs achieved' })).toHaveAttribute('aria-valuenow', '25');
+    expect(first.queryByText('1 of 2 completed')).not.toBeInTheDocument();
+    expect(screen.getByRole('progressbar', { name: 'Old KSBs achieved' })).toHaveAttribute('aria-valuenow', '66.67');
+    expect(first.getByRole('progressbar', { name: 'One hours progress' })).toHaveAttribute('aria-valuenow', '10');
+  });
+
   it.each(['commercial', 'apprenticeship'] as const)('opens standalone content only from Free courses when absent from My courses (%s)', async kind => {
     const catalogue = makeCatalogue(kind);
     catalogue.modules = catalogue.modules.filter(card => card.id !== 'current:M1');
@@ -418,7 +432,9 @@ it('retains the frontend current/previous canonical summary fixture', () => {
     { componentId: 'C1', moduleId: 'M1', module: 'One', component: 'Lesson', type: 'reading' },
     { componentId: 'Q1', moduleId: 'M1', module: 'One', component: 'Quiz', isQuiz: true, quizMeta: { quizId: 1 } },
     { componentId: 'Q2', moduleId: 'M1', module: 'One', component: 'Quiz 2', isQuiz: true, quizMeta: { quizId: 1 } },
-    { componentId: 'L1', moduleId: 'M1', module: 'One', component: 'Live', type: 'live_session', attendanceCompleted: true }],
+    { componentId: 'L1', moduleId: 'M1', module: 'One', component: 'Live', type: 'live_session', attendanceCompleted: true,
+      reflectionRequired: true, liveSessionLearning: { attendance: 'present', status: 'completed',
+        requirementsStatus: 'reflection-required', attendedSeconds: 7200, attendedAt: '2026-11-11T10:00:00Z' } }],
     componentProgress: [{ componentId: 'C1', kind: 'component' }], quizAttempts: [
       { componentId: 'Q2', quizId: 1, passed: true }, { componentId: 'Q2', quizId: 1, passed: false }, { componentId: 'OLD', quizId: 99, passed: true }],
     retiredQuizComponents: [{ componentId: 'OLD', moduleId: 'M1', module: 'One', component: 'Old quiz', isQuiz: true, quizMeta: { quizId: 99 } }] } as unknown as LearnerDetail;
