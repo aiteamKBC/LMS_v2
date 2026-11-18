@@ -25,3 +25,207 @@
   background: #441f65 !important;
   color: #fff !important;
 }
+
+:global(#root) .learnerOverlay {
+  /* The page's space-y utilities must not offset this viewport backdrop. */
+  margin: 0 !important;
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: oklch(var(--foreground-950) / 0.45);
+  backdrop-filter: blur(5px);
+}
+
+:global(#root) .learnerDialog {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  max-width: 1040px;
+  max-height: calc(100dvh - 48px);
+  overflow: hidden;
+  border: 1px solid oklch(var(--background-200));
+  border-radius: 22px;
+  background: oklch(var(--background-50));
+  color: oklch(var(--foreground-900));
+  box-shadow: 0 24px 80px -20px rgb(0 0 0 / 0.35);
+}
+
+.dialogHeader {
+  display: flex;
+  flex-shrink: 0;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 24px 28px;
+  border-bottom: 1px solid oklch(var(--background-200));
+  background: linear-gradient(110deg, oklch(var(--primary-50) / 0.65), transparent 75%);
+}
+
+.learnerIdentity, .headerActions, .cardHeading, .cardHeading h4, .footerButtons {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+.learnerIdentity > div:last-child { min-width: 0; }
+
+.learnerAvatar {
+  display: grid;
+  flex: 0 0 52px;
+  height: 52px;
+  place-items: center;
+  border: 1px solid oklch(var(--primary-200));
+  border-radius: 16px;
+  background: oklch(var(--primary-100));
+  color: oklch(var(--primary-700));
+  font-size: 18px;
+  font-weight: 700;
+}
+
+.eyebrow {
+  color: oklch(var(--primary-700));
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.dialogHeader h2 {
+  margin-top: 3px;
+  color: oklch(var(--foreground-950));
+  font-size: 23px;
+  font-weight: 650;
+  line-height: 1.3;
+  overflow-wrap: anywhere;
+}
+
+.programmeName { margin-top: 5px; color: oklch(var(--foreground-600)); font-size: 12px; overflow-wrap: anywhere; }
+.headerActions { flex-shrink: 0; gap: 14px; }
+.reviewBadge, .statusBadge, .countBadge { display: inline-flex; align-items: center; gap: 5px; width: fit-content; border-radius: 6px; font-size: 10px; font-weight: 600; line-height: 1.5; }
+.reviewBadge { padding: 5px 9px; }
+.reviewBadge svg { font-size: 14px; }
+
+:global(#root) .learnerDialog button.closeButton {
+  display: grid;
+  flex-shrink: 0;
+  width: 34px;
+  height: 34px;
+  place-items: center;
+  border: 1px solid oklch(var(--background-300));
+  border-radius: 10px;
+  background: oklch(var(--background-50));
+  color: oklch(var(--foreground-600));
+  font-size: 20px;
+  box-shadow: none;
+}
+
+.dialogBody { display: flex; flex-direction: column; gap: 20px; min-height: 0; padding: 22px 28px 28px; overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable; }
+.dialogBody > * { flex-shrink: 0; }
+.learnerOverview { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 0; border: 1px solid oklch(var(--background-200)); border-radius: 12px; overflow: hidden; }
+:global(#root) .learnerOverview > div { min-width: 0; padding: 14px 18px; border-radius: 0; background: oklch(var(--background-100) / 0.55); box-shadow: none; }
+.learnerOverview > div + div { border-left: 1px solid oklch(var(--background-200)); }
+.learnerOverview p:last-child { font-size: 13px; overflow-wrap: anywhere; }
+
+:global(#root) .learnerDialog :is(section, article) { box-shadow: none; }
+.complianceCard { display: flex; align-items: center; gap: 28px; padding: 14px 18px; border: 1px solid oklch(var(--background-200)); border-radius: 12px; }
+.complianceCard h3 { flex-shrink: 0; font-size: 12px; }
+.complianceCard dl { flex: 1; margin: 0; column-gap: 22px; }
+.complianceCard dd { font-weight: 600; }
+.operationalSection { min-width: 0; }
+.operationalHeading { display: flex; align-items: center; justify-content: space-between; gap: 14px; margin-bottom: 14px; }
+:global(#root) .learnerDialog button.operationalToggle { display: flex; flex: 1; align-items: center; justify-content: flex-start; gap: 10px; min-width: 0; padding: 2px 0; border-radius: 6px; text-align: left; white-space: normal; box-shadow: none; }
+.sectionIcon { display: grid; flex: 0 0 36px; height: 36px; place-items: center; border-radius: 10px; background: oklch(var(--primary-100) / 0.65); color: oklch(var(--primary-700)); font-size: 18px; }
+.sectionTitle { display: block; font-size: 14px; font-weight: 650; color: oklch(var(--foreground-950)); }
+.sectionDescription { display: block; margin-top: 3px; color: oklch(var(--foreground-500)); font-size: 11px; }
+.operationalToggle > svg { margin-left: 3px; color: oklch(var(--primary-700)); font-size: 19px; }
+.snapshotGrid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; align-items: start; }
+:global(#root) .snapshotCard { min-width: 0; overflow: hidden; border: 1px solid oklch(var(--background-200)); border-radius: 12px; background: oklch(var(--background-50)); }
+.cardHeading { justify-content: space-between; padding: 15px 16px; border-bottom: 1px solid oklch(var(--background-200)); }
+.cardHeading h4 { gap: 8px; font-size: 12px; font-weight: 650; line-height: 1.5; }
+.cardHeading h4 svg { color: oklch(var(--primary-600)); font-size: 17px; }
+.countBadge { flex-shrink: 0; padding: 3px 7px; background: oklch(var(--primary-50)); color: oklch(var(--primary-700)); }
+.scheduleSummary { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); margin: 12px 16px; padding: 10px 0; border-radius: 8px; background: oklch(var(--background-100) / 0.65); }
+.snapshotMetric { min-width: 0; padding: 9px 14px; }
+.snapshotMetric dt { color: oklch(var(--foreground-500)); font-size: 11px; line-height: 1.5; }
+.snapshotMetric dd { margin: 5px 0 0; color: oklch(var(--foreground-900)); font-size: 13px; font-weight: 550; line-height: 1.5; overflow-wrap: anywhere; }
+.scheduleSummary .snapshotMetric { padding-top: 0; padding-bottom: 0; }
+.scheduleSummary .snapshotMetric + .snapshotMetric { border-left: 1px solid oklch(var(--background-200)); }
+.scheduleSummary dd { font-size: 12px; }
+.scheduleList { max-height: 190px; margin: 0 16px 14px; padding-right: 4px; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; scrollbar-color: oklch(var(--background-300)) transparent; }
+.scheduleRow { display: grid; grid-template-columns: 24px minmax(0, 1fr) auto; align-items: center; gap: 10px; min-height: 38px; border-bottom: 1px solid oklch(var(--background-200) / 0.7); }
+.scheduleRow:last-child { border-bottom: 0; }
+.scheduleNumber { color: oklch(var(--foreground-400)); font-size: 10px; font-variant-numeric: tabular-nums; }
+.scheduleDate { font-size: 11px; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
+.statusBadge { padding: 3px 7px; }
+.metricGrid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); padding: 4px 2px 8px; }
+.metricGrid .snapshotMetric { margin: 0 10px; padding: 10px 4px; border-bottom: 1px solid oklch(var(--background-200) / 0.7); }
+.metricGrid .snapshotMetric:nth-last-child(-n+2) { border-bottom: 0; }
+.metricGrid .snapshotMetric dd { font-size: 15px; }
+.emptyText { padding: 10px 0; font-size: 12px; color: oklch(var(--foreground-500)); }
+.notesCard { padding: 16px 18px; border: 1px solid oklch(var(--background-200)); border-left: 3px solid oklch(var(--primary-300)); border-radius: 12px; background: oklch(var(--primary-50) / 0.2); }
+.detailsGrid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+.detailsGrid > div { min-width: 0; padding: 16px 18px; border: 1px solid oklch(var(--background-200)); border-radius: 12px; }
+.detailsGrid > div:last-child { grid-column: 1 / -1; }
+.detailsGrid > div:last-child dl { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 22px; }
+.detailsGrid > div:last-child dl > div { margin-top: 0; }
+.detailsGrid dl > div { flex-wrap: wrap; gap: 4px 12px; padding: 8px 0; }
+.detailsGrid dt { flex-shrink: 0; }
+.detailsGrid dd { min-width: 0; margin-left: auto; overflow-wrap: anywhere; }
+.milestonesCard { padding: 16px 18px; border: 1px solid oklch(var(--background-200)); border-radius: 12px; }
+.dialogFooter { display: flex; flex-shrink: 0; align-items: center; justify-content: space-between; gap: 16px; padding: 16px 28px; border-top: 1px solid oklch(var(--background-200)); background: oklch(var(--background-50)); }
+.footerHint { display: flex; align-items: center; gap: 6px; color: oklch(var(--foreground-500)); font-size: 11px; }
+.footerHint svg { color: oklch(var(--primary-600)); font-size: 16px; }
+.footerButtons { gap: 8px; }
+
+:global(#root) .learnerDialog :is(.secondaryButton, .primaryButton) { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 36px; padding: 8px 12px; border-radius: 8px; font-size: 11px; font-weight: 600; line-height: 1.4; box-shadow: none; transition: background 150ms ease; }
+:global(#root) .learnerDialog .secondaryButton { border: 1px solid oklch(var(--background-300)); background: oklch(var(--background-50)); color: oklch(var(--foreground-700)); }
+:global(#root) .learnerDialog .secondaryButton:hover, :global(#root) .learnerDialog .closeButton:hover { background: oklch(var(--background-100)); }
+:global(#root) .learnerDialog :is(button, [tabindex]):focus-visible { outline: 2px solid oklch(var(--primary-500)); outline-offset: 3px; }
+:global(#root) .learnerDialog :is(button, input, textarea, select):disabled { cursor: default; }
+
+:global([data-theme="dark"]) .learnerDialog :is(.eyebrow, .sectionIcon, .cardHeading h4 svg) { color: #c4b5fd; }
+:global([data-theme="dark"]) .learnerDialog .countBadge { background: rgb(139 92 246 / 0.15); color: #ddd6fe; }
+
+@media (max-width: 700px) {
+  :global(#root) .learnerOverlay { padding: 12px; }
+  :global(#root) .learnerDialog { max-height: calc(100dvh - 24px); border-radius: 16px; }
+  .dialogHeader { gap: 12px; padding: 20px; }
+  .dialogHeader h2 { font-size: 20px; }
+  .learnerAvatar { display: none; }
+  .headerActions .reviewBadge { display: none; }
+  .dialogBody { gap: 18px; padding: 18px 20px 20px; }
+  .learnerOverview { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  :global(#root) .learnerOverview > div { padding: 12px; }
+  .learnerOverview > div:nth-child(3) { border-left: 0; }
+  .learnerOverview > div:nth-child(n+3) { border-top: 1px solid oklch(var(--background-200)); }
+  .complianceCard { display: block; padding: 14px; }
+  .complianceCard dl { margin-top: 10px; }
+  .operationalHeading { flex-wrap: wrap; gap: 10px; }
+  :global(#root) .learnerDialog button.operationalToggle { flex: 1 0 100%; }
+  .operationalHeading > .secondaryButton { margin-left: 46px; }
+  .snapshotGrid, .detailsGrid { grid-template-columns: minmax(0, 1fr); }
+  .snapshotGrid { gap: 12px; }
+  .detailsGrid > div:last-child dl { grid-template-columns: minmax(0, 1fr); gap: 0; }
+  .dialogFooter { padding: 14px 20px; }
+  .footerHint { display: none; }
+  .footerButtons { width: 100%; }
+  .footerButtons > button { flex: 1; }
+}
+
+@media (max-width: 360px) {
+  :global(#root) .learnerOverlay { padding: 6px; }
+  :global(#root) .learnerDialog { max-height: calc(100dvh - 12px); }
+  .dialogHeader, .dialogBody, .dialogFooter { padding-left: 14px; padding-right: 14px; }
+  .cardHeading { gap: 6px; padding: 12px; }
+  .cardHeading h4 { gap: 6px; font-size: 11px; }
+  .cardHeading h4 svg { display: none; }
+  .scheduleSummary { margin-left: 10px; margin-right: 10px; }
+  .scheduleList { margin-left: 12px; margin-right: 12px; }
+  .scheduleRow { gap: 6px; grid-template-columns: 18px minmax(0, 1fr) auto; }
+  .statusBadge { padding: 3px 5px; font-size: 9px; }
+}
