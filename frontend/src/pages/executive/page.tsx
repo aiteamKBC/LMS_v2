@@ -1,5 +1,5 @@
 import { LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useDeferredValue, useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
 import { useNavigate } from "react-router-dom";
 import Panel from "@/components/base/Panel";
@@ -10,7 +10,6 @@ import OverviewKpis from "@/pages/executive/components/OverviewKpis";
 import HealthOverview from "@/pages/executive/components/HealthOverview";
 import CategoryRag from "@/pages/executive/components/CategoryRag";
 import RegistryTable from "@/pages/executive/components/RegistryTable";
-import ActionsList from "@/pages/executive/components/ActionsList";
 import ConcernList from "@/pages/executive/components/ConcernList";
 import QualityDonuts from "@/pages/executive/components/QualityDonuts";
 import MeetingTypesModal from "@/pages/executive/components/MeetingTypesModal";
@@ -43,6 +42,9 @@ const DEFAULT_FILTERS: DashboardFilters = {
   query: "",
 };
 
+const OVERVIEW_CACHE_FRESH_MS = 60_000;
+let overviewCache: { data: LiveQmsData; at: number } | null = null;
+
 export default function ExecutiveOverview({ attentionPanel }: { attentionPanel?: ReactNode }) {
   const navigate = useNavigate();
   const [filters, setFilters] = useState<DashboardFilters>(DEFAULT_FILTERS);
@@ -55,19 +57,37 @@ export default function ExecutiveOverview({ attentionPanel }: { attentionPanel?:
 
   useEffect(() => {
     const controller = new AbortController();
-    setLoading(true);
+    // Show the last loaded data at once and refresh it quietly in the background,
+    // so returning to the overview never repeats the full wait.
+    const cached = retry === 0 ? overviewCache : null;
+    if (cached) {
+      setData(cached.data);
+      setLoading(false);
+      if (Date.now() - cached.at < OVERVIEW_CACHE_FRESH_MS) return () => controller.abort();
+    } else {
+      setLoading(true);
+    }
     setError("");
     void loadLiveQmsData(controller.signal)
-      .then(value => { if (!controller.signal.aborted) setData(value); })
-      .catch(reason => { if (!controller.signal.aborted) setError(reason instanceof Error ? reason.message : "Quality data could not be loaded."); })
+      .then(value => {
+        overviewCache = { data: value, at: Date.now() };
+        if (!controller.signal.aborted) setData(value);
+      })
+      .catch(reason => { if (!controller.signal.aborted && !cached) setError(reason instanceof Error ? reason.message : "Quality data could not be loaded."); })
       .finally(() => { if (!controller.signal.aborted) setLoading(false); });
     return () => controller.abort();
   }, [retry]);
 
-  const onChange = (patch: Partial<DashboardFilters>) =>
-    setFilters((current) => ({ ...current, ...patch }));
+  const onChange = useCallback((patch: Partial<DashboardFilters>) =>
+    setFilters((current) => ({ ...current, ...patch })), []);
+  const resetFilters = useCallback(() => setFilters(DEFAULT_FILTERS), []);
+  const openAuditTypes = useCallback(() => setAuditTypesOpen(true), []);
 
-  const records = useMemo(() => data ? applyFilters(data.records, filters) : [], [data, filters]);
+  // The filter controls update immediately; the charts and panels re-render from a
+  // deferred copy so a filter change never blocks the dropdown or the page.
+  const appliedFilters = useDeferredValue(filters);
+  const updating = appliedFilters !== filters;
+  const records = useMemo(() => data ? applyFilters(data.records, appliedFilters) : [], [data, appliedFilters]);
 
   const scopedIds = useMemo(() => new Set(records.map((record) => record.id)), [records]);
   const actions = useMemo(
@@ -76,32 +96,32 @@ export default function ExecutiveOverview({ attentionPanel }: { attentionPanel?:
         (action) =>
           scopedIds.has(action.recordId) ||
           (isOpenAction(action) &&
-            filters.category === "All form categories" &&
-            filters.formType === "All form types" &&
-            filters.respondentType === "All feedback types" &&
-            filters.feedbackType === "All feedback types" &&
-            filters.coach === "All coaches" &&
-            filters.tutor === "All tutors" &&
-            filters.department === "All departments" &&
-            filters.programme === "All programmes"),
+            appliedFilters.category === "All form categories" &&
+            appliedFilters.formType === "All form types" &&
+            appliedFilters.respondentType === "All feedback types" &&
+            appliedFilters.feedbackType === "All feedback types" &&
+            appliedFilters.coach === "All coaches" &&
+            appliedFilters.tutor === "All tutors" &&
+            appliedFilters.department === "All departments" &&
+            appliedFilters.programme === "All programmes"),
       ),
     [
       data?.actions,
       scopedIds,
-      filters.category,
-      filters.formType,
-      filters.respondentType,
-      filters.feedbackType,
-      filters.coach,
-      filters.tutor,
-      filters.department,
-      filters.programme,
+      appliedFilters.category,
+      appliedFilters.formType,
+      appliedFilters.respondentType,
+      appliedFilters.feedbackType,
+      appliedFilters.coach,
+      appliedFilters.tutor,
+      appliedFilters.department,
+      appliedFilters.programme,
     ],
   );
 
   const trendRecords = useMemo(
-    () => data ? applyFilters(data.records, { ...filters, period: "All records" }) : [],
-    [data, filters],
+    () => data ? applyFilters(data.records, { ...appliedFilters, period: "All records" }) : [],
+    [data, appliedFilters],
   );
   const trend = useMemo(() => buildMonthlySeries(trendRecords), [trendRecords]);
 
@@ -109,14 +129,14 @@ export default function ExecutiveOverview({ attentionPanel }: { attentionPanel?:
     () =>
       (data?.forms ?? []).filter(
         (form) =>
-          (filters.category === "All form categories" || form.category === filters.category) &&
-          (filters.formType === "All form types" || form.id === filters.formType) &&
-          (filters.feedbackType === "All feedback types" || form.feedbackType === filters.feedbackType) &&
-          (filters.respondentType === "All feedback types" || form.respondentType === filters.respondentType) &&
-          (filters.coach === "All coaches" || records.some(record => record.formId === form.id)) &&
-          (filters.tutor === "All tutors" || records.some(record => record.formId === form.id)),
+          (appliedFilters.category === "All form categories" || form.category === appliedFilters.category) &&
+          (appliedFilters.formType === "All form types" || form.id === appliedFilters.formType) &&
+          (appliedFilters.feedbackType === "All feedback types" || form.feedbackType === appliedFilters.feedbackType) &&
+          (appliedFilters.respondentType === "All feedback types" || form.respondentType === appliedFilters.respondentType) &&
+          (appliedFilters.coach === "All coaches" || records.some(record => record.formId === form.id)) &&
+          (appliedFilters.tutor === "All tutors" || records.some(record => record.formId === form.id)),
       ),
-    [data?.forms, filters.category, filters.formType, filters.feedbackType, filters.respondentType, filters.coach, filters.tutor, records],
+    [data?.forms, appliedFilters.category, appliedFilters.formType, appliedFilters.feedbackType, appliedFilters.respondentType, appliedFilters.coach, appliedFilters.tutor, records],
   );
 
   const assessedInScope = records.filter((record) => !["unrated", "na"].includes(record.rag)).length;
@@ -167,7 +187,7 @@ export default function ExecutiveOverview({ attentionPanel }: { attentionPanel?:
   const tutors = Array.from(new Set(live.records.map(record => record.tutorName).filter((name): name is string => Boolean(name))));
 
   return (
-    <div className={styles.overview}>
+    <div className={styles.overview} aria-busy={updating || undefined} style={updating ? { opacity: 0.85, transition: "opacity 120ms" } : undefined}>
       <header className={styles.hero}>
         <div className="min-w-0">
           <p className={styles.eyebrow}>
@@ -221,7 +241,7 @@ export default function ExecutiveOverview({ attentionPanel }: { attentionPanel?:
         collapsible
         filters={filters}
         onChange={onChange}
-        onReset={() => setFilters(DEFAULT_FILTERS)}
+        onReset={resetFilters}
         resultCount={records.length}
         categories={categories}
         formTypes={formTypes}
@@ -236,7 +256,7 @@ export default function ExecutiveOverview({ attentionPanel }: { attentionPanel?:
       />
       </div>
 
-      <OverviewKpis records={records} actions={actions} forms={forms} availability={live.availability} onOpenAuditTypes={() => setAuditTypesOpen(true)} />
+      <OverviewKpis records={records} actions={actions} forms={forms} availability={live.availability} onOpenAuditTypes={openAuditTypes} />
 
       {showPolicy || attentionPanel ? (
         <div className={`${styles.policyAttentionRow} ${showPolicy && attentionPanel ? styles.withPolicy : ""}`}>
@@ -270,11 +290,11 @@ export default function ExecutiveOverview({ attentionPanel }: { attentionPanel?:
 
       {auditTypesOpen ? <MeetingTypesModal records={records} onClose={() => setAuditTypesOpen(false)} onOpenType={openAuditType} /> : null}
 
-      <QualityDonuts records={records} selectedCoach={filters.coach} selectedTutor={filters.tutor} feedbackAvailable={live.availability.feedbackScores} />
+      <QualityDonuts records={records} selectedCoach={appliedFilters.coach} selectedTutor={appliedFilters.tutor} feedbackAvailable={live.availability.feedbackScores} />
 
       <div className={styles.healthGrid}>
         <div>
-          <HealthOverview records={records} actions={actions} availability={live.availability} />
+          <HealthOverview records={records} availability={live.availability} />
         </div>
         <CategoryRag records={records} />
       </div>
@@ -282,7 +302,7 @@ export default function ExecutiveOverview({ attentionPanel }: { attentionPanel?:
       <div className={styles.trendRegistryGrid}>
       <Panel
         title="Quality trend by month"
-        description="Smoothed monthly record volume by status. Month labels reflect submission dates, not review dates."
+        description="Monthly records by band. Feedback: Positive = Green, Neutral = Amber, Negative = Red. Audits: the lowest criterion rating sets the band. Month labels reflect submission dates."
         headingId="trend-heading"
         className={styles.panel}
         action={
@@ -291,50 +311,17 @@ export default function ExecutiveOverview({ attentionPanel }: { attentionPanel?:
               Peak month: <span className="font-semibold text-foreground-900">{peakMonth.label}</span> (
               {formatNumber(peakMonth.total)} records)
             </span>
-            <span className="hidden sm:inline">
-              Assessed share:{" "}
-              <span className="font-semibold text-foreground-900">
-                {records.length ? formatPct((assessedInScope / records.length) * 100) : "0%"}
-              </span>
-            </span>
           </div>
         }
       >
         <RagTrendChart data={trend} />
       </Panel>
 
-      <RegistryTable forms={forms} />
+      <RegistryTable forms={forms} records={records} />
       </div>
 
-      <div className={styles.healthGrid}>
-        <div>
-          <ActionsList actions={actions} available={live.availability.actions} />
-        </div>
       <ConcernList themes={live.concerns} available={live.availability.concerns} />
-      </div>
 
-      <footer className={styles.notes}>
-        <div className="flex flex-col gap-2 lg:flex-row lg:items-start lg:justify-between">
-          <div className="space-y-1">
-            <p className="flex items-center gap-1.5 font-label text-[11px] font-semibold uppercase tracking-[0.08em] text-foreground-700">
-              <i className="ri-file-info-line text-[13px]" aria-hidden="true" />
-              KPI definitions & data notes
-            </p>
-            <p className="max-w-3xl text-[11.5px] leading-relaxed text-foreground-600">
-              Reporting period {live.periodLabel}. Counts are records with a session date inside the
-              selected period. “Assessed” excludes records with no approved policy. Critical feedback counts
-              Negative scored responses; compliance critical risk requires a separate flagged outcome. Actions count
-              open items linked to in-scope records.
-            </p>
-          </div>
-          <div className="shrink-0 space-y-1 lg:text-right">
-            <p className="text-[11px] text-foreground-600">
-              Last refresh <span className="font-medium text-foreground-900">{live.lastRefresh}</span>
-            </p>
-            <p className="max-w-sm text-[11px] text-foreground-500">Analysis is based on the saved Quality Forms and Reviews API.</p>
-          </div>
-        </div>
-      </footer>
     </div>
   );
 }

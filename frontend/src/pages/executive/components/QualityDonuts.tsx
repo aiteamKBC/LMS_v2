@@ -1,5 +1,6 @@
+import { memo } from "react";
 import DonutChart, { type DonutDatum } from "@/components/qms/DonutChart";
-import { formatNumber } from "@/lib/qms";
+import { countFeedbackClassifications, formatNumber } from "@/lib/qms";
 import type { QualityRecord } from "@/types/qms";
 import styles from "../ExecutiveOverview.module.css";
 
@@ -46,11 +47,7 @@ function qualityRagItems(records: QualityRecord[]): DonutDatum[] {
 }
 
 function feedbackItems(records: QualityRecord[]): DonutDatum[] {
-  const counts = { positive: 0, neutral: 0, negative: 0 };
-  records.forEach((record) => {
-    const classification = record.feedbackClassification;
-    if (classification && classification in counts) counts[classification as keyof typeof counts] += 1;
-  });
+  const counts = countFeedbackClassifications(records);
   return FEEDBACK_ITEMS.map((item) => ({ ...item, value: counts[item.key] }));
 }
 
@@ -113,7 +110,7 @@ function RatingCard({
   );
 }
 
-export default function QualityDonuts({
+function QualityDonuts({
   records,
   selectedCoach,
   selectedTutor,
@@ -126,8 +123,7 @@ export default function QualityDonuts({
 }) {
   const qualityRecords = records.filter((record) => record.category === "Quality Audit");
   const qualityItems = qualityRagItems(qualityRecords);
-  const feedbackRecords = records.filter((record) => ["Learner", "Employer"].includes(record.respondentType));
-  const feedbackStatusItems = feedbackItems(feedbackRecords);
+  const feedbackStatusItems = feedbackItems(records);
   const formRecordItems = formItems(records);
   const coachLabel = selectedCoach === "All coaches" ? "All coaches" : selectedCoach;
   const tutorLabel = selectedTutor === "All tutors" ? "All tutors" : selectedTutor;
@@ -170,3 +166,5 @@ export default function QualityDonuts({
     </section>
   );
 }
+
+export default memo(QualityDonuts);

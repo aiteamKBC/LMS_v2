@@ -21,7 +21,12 @@ const dateLabel = (value: string | null) => value
 export default function FeedbacksPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const requestedClassification = searchParams.get("classification");
-  const classification = requestedClassification && requestedClassification in classes ? requestedClassification as FeedbackScoreClass : null;
+  const classification = requestedClassification === "review"
+    ? "review"
+    : requestedClassification && requestedClassification in classes ? requestedClassification as FeedbackScoreClass : null;
+  // "Feedback to review" mode: only Neutral and Negative responses and cards are shown.
+  const reviewMode = classification === "review"
+    || (searchParams.get("scope") === "review" && (classification === "neutral" || classification === "negative"));
   const [formType, setFormType] = useState<string>("all");
   const [formId, setFormId] = useState("");
   const [availableForms, setAvailableForms] = useState<NonNullable<FeedbackDashboardReport["forms"]>>([]);
@@ -69,17 +74,34 @@ export default function FeedbacksPage() {
   const counts = report?.insights?.classification;
   const visibleForms = availableForms.filter(form => !isQualityDashboardHiddenFormName(form.title));
   const rows = (counts?.responses ?? [])
-    .filter(row => !classification || row.classification === classification)
+    .filter(row => !classification || (classification === "review"
+      ? row.classification === "neutral" || row.classification === "negative"
+      : row.classification === classification))
     .sort((a, b) => (b.submittedAt ?? "").localeCompare(a.submittedAt ?? ""));
-  const selectClassification = (next: FeedbackScoreClass | null) => {
+  const selectClassification = (next: FeedbackScoreClass | "review" | null) => {
     setSelectedId(null);
     setSearchParams(current => {
       const params = new URLSearchParams(current);
-      if (next && next !== classification) params.set("classification", next);
+      params.delete("scope");
+      if (reviewMode && next !== null) {
+        // Inside review mode, clicking a card narrows to it; clicking it again returns to Neutral + Negative.
+        if (next === classification || next === "review") params.set("classification", "review");
+        else { params.set("classification", next); params.set("scope", "review"); }
+      } else if (next && next !== classification) params.set("classification", next);
       else params.delete("classification");
       return params;
     }, { replace: true });
   };
+  const cards = counts ? (reviewMode ? [
+    { label: "Feedback to review", value: counts.neutral + counts.negative, kind: "review", tone: "border-violet-100 bg-white text-violet-900" },
+    { label: "Neutral responses", value: counts.neutral, kind: "neutral", tone: "border-amber-50 bg-amber-50 text-amber-800" },
+    { label: "Negative responses", value: counts.negative, kind: "negative", tone: "border-rose-50 bg-rose-50 text-rose-800" },
+  ] : [
+    { label: "Completed responses in report", value: counts.total, kind: null, tone: "border-violet-100 bg-white text-violet-900" },
+    { label: "Positive responses", value: counts.positive, kind: "positive", tone: "border-emerald-50 bg-emerald-50 text-emerald-800" },
+    { label: "Neutral responses", value: counts.neutral, kind: "neutral", tone: "border-amber-50 bg-amber-50 text-amber-800" },
+    { label: "Negative responses", value: counts.negative, kind: "negative", tone: "border-rose-50 bg-rose-50 text-rose-800" },
+  ]) : [];
 
   return <section aria-label="Quality feedback" className="space-y-4">
     <header>
@@ -104,19 +126,14 @@ export default function FeedbacksPage() {
       </label>
     </div>
 
-    {classification ? <p className="text-[11px] text-foreground-600">Showing {classification} responses. <button type="button" className="font-semibold underline" onClick={() => selectClassification(null)}>Show all responses</button></p> : null}
+    {classification ? <p className="text-[11px] text-foreground-600">Showing {classification === "review" ? "neutral and negative" : classification} responses{reviewMode ? " that need a quality review" : ""}. <button type="button" className="font-semibold underline" onClick={() => selectClassification(null)}>Show all responses</button></p> : null}
     {error ? <div role="alert" className="rounded-lg border border-red-200 bg-red-50 p-4 text-[12px] text-red-800">{error} <button type="button" className="font-semibold underline" onClick={() => setRetry(value => value + 1)}>Retry</button></div> : null}
     {!report && !error ? <div role="status" className="rounded-lg border border-background-200 bg-background-50 p-6 text-[12px] text-foreground-600">Loading feedback…</div> : null}
     {counts ? <>
-      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        {[
-          { label: "Completed responses in report", value: counts.total, kind: null, tone: "border-violet-100 bg-white text-violet-900" },
-          { label: "Positive responses", value: counts.positive, kind: "positive", tone: "border-emerald-50 bg-emerald-50 text-emerald-800" },
-          { label: "Neutral responses", value: counts.neutral, kind: "neutral", tone: "border-amber-50 bg-amber-50 text-amber-800" },
-          { label: "Negative responses", value: counts.negative, kind: "negative", tone: "border-rose-50 bg-rose-50 text-rose-800" },
-        ].map(card => <button type="button" key={card.label} aria-pressed={classification === card.kind} onClick={() => selectClassification(card.kind as FeedbackScoreClass | null)} className={`rounded-2xl border p-4 text-left transition-shadow hover:shadow-md focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-500 sm:p-5 ${card.tone} ${classification === card.kind ? "ring-2 ring-current" : ""}`}><span className="block text-xs font-semibold">{card.label}</span><strong className="mt-2 block text-2xl">{card.value}</strong></button>)}
+      <div className={`grid gap-3 sm:grid-cols-2 ${reviewMode ? "xl:grid-cols-3" : "xl:grid-cols-4"}`}>
+        {cards.map(card => <button type="button" key={card.label} aria-pressed={classification === card.kind} onClick={() => selectClassification(card.kind as FeedbackScoreClass | "review" | null)} className={`rounded-2xl border p-4 text-left transition-shadow hover:shadow-md focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-500 sm:p-5 ${card.tone} ${classification === card.kind ? "ring-2 ring-current" : ""}`}><span className="block text-xs font-semibold">{card.label}</span><strong className="mt-2 block text-2xl">{card.value}</strong></button>)}
       </div>
-      <p className="text-[11px] text-foreground-600">{rows.length} of {counts.total} responses shown{counts.unscored ? ` · ${counts.unscored} unscored` : ""}. Positive feedback needs no follow-up.</p>
+      <p className="text-[11px] text-foreground-600">{rows.length} of {reviewMode ? counts.neutral + counts.negative : counts.total} responses shown{!reviewMode && counts.unscored ? ` · ${counts.unscored} unscored` : ""}. Positive feedback needs no follow-up.</p>
       <ul className="divide-y divide-background-200 rounded-lg border border-background-200 bg-background-50">
         {rows.map(row => {
           const triage = classes[row.classification];

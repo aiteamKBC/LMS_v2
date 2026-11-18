@@ -1,12 +1,10 @@
+import { memo } from "react";
 import KpiCard from "@/components/base/KpiCard";
 import criticalStyles from "./CriticalCard.module.css";
-import { TIME_ZONE_LABEL, todayIso } from "@/pages/curriculum/recordings/utils";
 import {
-  assessedTotal,
-  countByRag,
+  countFeedbackClassifications,
   formatNumber,
   formatPct,
-  isOpenAction,
 } from "@/lib/qms";
 import type { FormDefinition, QualityAction, QualityRecord } from "@/types/qms";
 import styles from "../ExecutiveOverview.module.css";
@@ -19,27 +17,16 @@ interface OverviewKpisProps {
   onOpenAuditTypes?: () => void;
 }
 
-export default function OverviewKpis({ records, actions, forms, availability, onOpenAuditTypes }: OverviewKpisProps) {
-  const today = todayIso(TIME_ZONE_LABEL);
+function OverviewKpis({ records, forms, availability, onOpenAuditTypes }: OverviewKpisProps) {
   const audits = records.filter(
     (record) => record.category === "Quality Audit" && record.reviewStatus === "completed",
   );
   const feedback = records.filter(
-    (record) => record.respondentType === "Learner" || record.respondentType === "Employer",
+    (record) => record.category === "Learner Feedback" || record.category === "Employer Feedback",
   );
-  const feedbackToReview = feedback.filter(
-    (record) => record.feedbackClassification === "neutral" || record.feedbackClassification === "negative",
-  ).length;
-  const criticalFeedback = feedback.filter((record) => record.feedbackClassification === "negative").length;
-  const counts = countByRag(records);
-  const assessed = assessedTotal(counts);
-  const completedNotAssessed = records.filter(
-    (record) => record.reviewStatus === "completed" && ["unrated", "na"].includes(record.rag),
-  ).length;
-  const openActions = actions.filter(isOpenAction);
-  const overdueActions = openActions.filter(
-    (action) => action.status === "Overdue" || action.dueOn < today,
-  );
+  const feedbackClasses = countFeedbackClassifications(feedback);
+  const feedbackToReview = feedbackClasses.neutral + feedbackClasses.negative;
+  const criticalFeedback = feedbackClasses.negative;
 
   const auditForms = forms.filter((form) => form.category === "Quality Audit" && form.completionRate);
   const scheduledTotal = auditForms.reduce((sum, form) => sum + form.scheduled, 0);
@@ -69,17 +56,6 @@ export default function OverviewKpis({ records, actions, forms, availability, on
         />
 
         <KpiCard
-          label="Assessed records"
-          value={formatNumber(assessed)}
-          definition="Records with an approved policy outcome: Green, Amber or Red."
-          hint={records.length ? `${formatPct((assessed / records.length) * 100)} of in-scope records` : "No records in scope"}
-          icon="ri-shield-check-line"
-          accent="primary"
-          to="/curriculum/quality-demo?view=checks"
-          linkLabel="View quality checks"
-        />
-
-        <KpiCard
           label="Feedback responses"
           value={availability.feedback ? formatNumber(feedback.length) : '—'}
           definition="Learner and employer form submissions received in the period."
@@ -99,7 +75,7 @@ export default function OverviewKpis({ records, actions, forms, availability, on
             : "Feedback classification data is unavailable"}
           icon="ri-alert-line"
           accent={feedbackToReview ? "accent" : "secondary"}
-          to="/curriculum/quality-demo?view=feedbacks"
+          to="/curriculum/quality-demo?view=feedbacks&classification=review"
           linkLabel="Review feedback"
         />
 
@@ -115,32 +91,9 @@ export default function OverviewKpis({ records, actions, forms, availability, on
           linkLabel="Review critical feedback"
         />
 
-        <KpiCard
-          label="Open actions"
-          value={availability.actions ? formatNumber(openActions.length) : '—'}
-          definition="Improvement actions not yet resolved or closed."
-          hint={availability.actions ? `${overdueActions.length} past target date` : 'Action status data is unavailable'}
-          icon="ri-task-line"
-          accent={overdueActions.length ? "accent" : "secondary"}
-          to="/qa/findings"
-          linkLabel="Open action tracker"
-        />
-
-        <KpiCard
-          label="Not assessed"
-          value={formatNumber(counts.unrated + counts.na)}
-          definition="Records without a Green, Amber or Red policy outcome."
-          hint={completedNotAssessed
-            ? `${formatNumber(completedNotAssessed)} completed record${completedNotAssessed === 1 ? "" : "s"} still has no policy outcome`
-            : "Includes drafts and records without an approved policy"}
-          icon="ri-question-line"
-          accent="secondary"
-          to="/curriculum/quality-demo?view=checks"
-          linkLabel="See quality checks"
-        />
-
       </div>
     </section>
   );
 }
 
+export default memo(OverviewKpis);

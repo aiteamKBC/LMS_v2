@@ -66,3 +66,20 @@ class DeepDiveSyncRun(models.Model):
         db_table = "qms_deep_dive_sync_runs"
         ordering = ("-month_key",)
 
+
+class FeedbackFindingState(models.Model):
+    """QA follow-up for one completed feedback response; answers stay untouched."""
+
+    response_id = models.PositiveBigIntegerField(unique=True)
+    status = models.CharField(max_length=20, default="Open")
+    action_plan = models.TextField(blank=True, default="")
+    owner = models.CharField(max_length=255, blank=True, default="")
+    due_date = models.DateField(null=True, blank=True)
+    version = models.PositiveIntegerField(default=0)
+    updated_by = models.CharField(max_length=255, blank=True, default="")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "qms_feedback_finding_states"
+

@@ -1,3 +1,4 @@
+import { memo } from "react";
 import {
   CartesianGrid,
   Line,
@@ -15,10 +16,9 @@ interface RagTrendChartProps {
 }
 
 const SERIES = [
-  { key: "green", label: "Green — meets standard", color: "#2f8f57" },
-  { key: "amber", label: "Amber — improvement required", color: "#d98a2b" },
-  { key: "red", label: "Red — critical concern", color: "#c65353" },
-  { key: "unrated", label: "Not assessed", color: "#8c86b8" },
+  { key: "green", label: "Green — Positive feedback / meets standard", color: "#2f8f57" },
+  { key: "amber", label: "Amber — Neutral feedback / improvement required", color: "#d98a2b" },
+  { key: "red", label: "Red — Negative feedback / critical concern", color: "#c65353" },
 ] as const;
 
 function TrendTooltip({ active, payload, label }: any) {
@@ -44,13 +44,13 @@ function TrendTooltip({ active, payload, label }: any) {
         ))}
       </ul>
       <p className="mt-1.5 border-t border-background-200 pt-1.5 text-foreground-600">
-        Total records: <span className="font-semibold text-foreground-900">{total}</span>
+        Banded records: <span className="font-semibold text-foreground-900">{total}</span>
       </p>
     </div>
   );
 }
 
-export default function RagTrendChart({ data }: RagTrendChartProps) {
+function RagTrendChart({ data }: RagTrendChartProps) {
   return (
     <div className={styles.chart}>
       <ul className="mb-4 flex flex-wrap items-center gap-x-4 gap-y-2">
@@ -72,8 +72,8 @@ export default function RagTrendChart({ data }: RagTrendChartProps) {
       <div
         className="w-full"
         role="img"
-        aria-label={`Monthly quality record volume by status, ${data.length} months. ${data
-          .map((point) => `${point.label}: ${point.total} records`)
+        aria-label={`Monthly Red, Amber and Green record volume, ${data.length} months. ${data
+          .map((point) => `${point.label}: ${point.green} green, ${point.amber} amber, ${point.red} red`)
           .join(", ")}.`}
       >
         <div className="h-[300px] w-full">
@@ -109,6 +109,7 @@ export default function RagTrendChart({ data }: RagTrendChartProps) {
                 dot={false}
                 activeDot={{ r: 4, strokeWidth: 2, stroke: "oklch(var(--background-50))" }}
                 connectNulls
+                isAnimationActive={false}
               />
             ))}
             </LineChart>
@@ -119,3 +120,4 @@ export default function RagTrendChart({ data }: RagTrendChartProps) {
   );
 }
 
+export default memo(RagTrendChart);

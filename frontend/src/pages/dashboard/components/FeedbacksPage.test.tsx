@@ -153,4 +153,30 @@ describe('Quality Feedbacks', () => {
     await userEvent.setup().click(screen.getByRole('button', { name: 'Show all responses' }));
     expect(await screen.findByText('Session two')).toBeInTheDocument();
   });
+
+  it('opens Feedback to review with neutral and negative responses together', async () => {
+    render(<MemoryRouter initialEntries={['/curriculum/quality-demo?view=feedbacks&classification=review']}><FeedbacksPage /></MemoryRouter>);
+    expect(await screen.findByText('Session one')).toBeInTheDocument();
+    expect(screen.getByText('Showing neutral and negative responses that need a quality review.', { exact: false })).toBeInTheDocument();
+    expect(screen.getByText('Session two')).toBeInTheDocument();
+    expect(screen.getByText('PR response')).toBeInTheDocument();
+    expect(screen.queryByText('Pulse response')).not.toBeInTheDocument();
+    expect(screen.queryByText('Session four')).not.toBeInTheDocument();
+    expect(screen.getByText(/^3 of \d+ responses shown/)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Positive responses/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Completed responses in report/ })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Neutral responses/ })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Negative responses/ })).toBeInTheDocument();
+    const user = userEvent.setup();
+    await user.click(screen.getByRole('button', { name: /Negative responses/ }));
+    expect(screen.queryByRole('button', { name: /Positive responses/ })).not.toBeInTheDocument();
+    expect(screen.queryByText('Session two')).not.toBeInTheDocument();
+    expect(screen.getByText('PR response')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: /Negative responses/ }));
+    expect(screen.getByText('Session two')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Show all responses' }));
+    expect(screen.getByRole('button', { name: /Positive responses/ })).toBeInTheDocument();
+    expect(screen.getByText('Pulse response')).toBeInTheDocument();
+    expect(mocks.insightsDashboard).toHaveBeenCalledTimes(1);
+  });
 });

@@ -1,9 +1,10 @@
+import { memo } from "react";
 import Panel from "@/components/base/Panel";
 import RagStackBar from "@/components/qms/RagStackBar";
 import { assessedTotal, formatNumber, formatPct, groupRagByCategory } from "@/lib/qms";
 import type { QualityRecord } from "@/types/qms";
 
-export default function CategoryRag({ records }: { records: QualityRecord[] }) {
+function CategoryRag({ records }: { records: QualityRecord[] }) {
   const groups = groupRagByCategory(records);
   const max = groups.reduce((top, group) => Math.max(top, group.counts.total), 1);
 
@@ -65,3 +66,4 @@ export default function CategoryRag({ records }: { records: QualityRecord[] }) {
   );
 }
 
+export default memo(CategoryRag);
