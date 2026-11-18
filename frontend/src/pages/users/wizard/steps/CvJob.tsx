@@ -1,3 +1,4 @@
+import { LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
 import { useEffect, useState, type ReactNode } from 'react';
 import { AppIcon } from '@/components/feature/AppIcon';
 import { useWizard } from "../WizardContext";
@@ -111,7 +112,7 @@ function DocumentField({ label, docKind, store }: { label: string; docKind: CvDo
     <FieldRow label={label}>
       <div className="space-y-2">
         {store.loading ? (
-          <EmptyState text="Loading…" />
+          <LoadingSkeleton label={"Loading…"} />
         ) : files.length > 0 && (
           <div className="divide-y divide-foreground-100 border border-foreground-100 rounded-lg">
             {files.map((f) => (

@@ -1,3 +1,4 @@
+import { LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
 import { useEffect, useMemo, useRef, useState, type ComponentProps } from 'react';
 import { loadAssignmentTopicStates, selectAssignmentTopic, type AssignmentTopicState } from '@/api/assignmentTopics';
 import { MONTHLY_STEPS } from '@/api/monthlyAssignment';
@@ -81,7 +82,7 @@ export function TopicAssignment({ topics, ...props }: FormProps & { topics: Assi
     const only = topics.length === 1 ? presentTopic(topics[0]) : null;
     return <AssignmentSubmissionForm {...props} instructionsHtml={only?.instructions} resourceLinks={only?.links} />;
   }
-  if (loading) return <p role="status" className="rounded-xl border bg-white p-6">Loading assignment topics...</p>;
+  if (loading) return <p  className="rounded-xl border bg-white p-6"><LoadingSkeleton label={"Loading assignment topics..."} /></p>;
   if (draftLoadFailed.current) return <div className="rounded-xl border bg-white p-6"><p role="alert">{error}</p><button type="button" onClick={() => setRetry(value => value + 1)}>Retry</button></div>;
   const clock = [Math.floor(timer.elapsed / 3600), Math.floor(timer.elapsed / 60) % 60, timer.elapsed % 60].map(value => String(value).padStart(2, '0')).join(':');
   return <section className="space-y-3">

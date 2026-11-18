@@ -32,7 +32,7 @@ function transcriptTurns(content: string) {
   });
 }
 
-export function TranscriptPanel({ detail, fallback }: { detail: AdvancedAdminCoachingSessionDetail | null; fallback: string }) {
+export function TranscriptPanel({ detail, fallback }: { detail: AdvancedAdminCoachingSessionDetail | null; fallback: React.ReactNode }) {
   const content = detail?.transcript?.content;
   if (!content?.trim()) return <EmptyPanel text={fallback} />;
   const turns = transcriptTurns(content);
@@ -52,7 +52,7 @@ export function TranscriptPanel({ detail, fallback }: { detail: AdvancedAdminCoa
   </section>;
 }
 
-export function EmptyPanel({ text }: { text: string }) {
+export function EmptyPanel({ text }: { text: React.ReactNode }) {
   return <p className="rounded-2xl border border-foreground-200 bg-white p-5 text-sm text-foreground-600">{text}</p>;
 }
 
@@ -85,7 +85,7 @@ function QualityCheck({ item }: { item: CheckItem }) {
   </article>;
 }
 
-export function AiReportPanel({ report, review, detail, fallback }: { report: Report | null; review: AdvancedAdminReview; detail: AdvancedAdminCoachingSessionDetail | null; fallback: string }) {
+export function AiReportPanel({ report, review, detail, fallback }: { report: Report | null; review: AdvancedAdminReview; detail: AdvancedAdminCoachingSessionDetail | null; fallback: React.ReactNode }) {
   if (!report) return <EmptyPanel text={fallback} />;
   const overall = asRecord(report.overall_rating);
   const checks: CheckItem[] = Array.isArray(report.qa) ? report.qa.filter(item => asRecord(item)) as CheckItem[] : [];
@@ -113,7 +113,7 @@ export function AiReportPanel({ report, review, detail, fallback }: { report: Re
   </div>;
 }
 
-export function AttendancePanel({ detail, fallback, transcriptUnavailable }: { detail: AdvancedAdminCoachingSessionDetail | null; fallback: string; transcriptUnavailable: string }) {
+export function AttendancePanel({ detail, fallback, transcriptUnavailable }: { detail: AdvancedAdminCoachingSessionDetail | null; fallback: React.ReactNode; transcriptUnavailable: React.ReactNode }) {
   if (!detail?.attendance) return <EmptyPanel text={fallback} />;
   const { attendance } = detail;
   const learner = Boolean(attendance.learner || detail.learnerAttended === true);

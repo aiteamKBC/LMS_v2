@@ -1,13 +1,7 @@
+import { LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
 import { useEffect, useState, type ComponentType } from 'react';
 import { useParams } from 'react-router-dom';
-import {
-  CheckCircle2,
-  Clock3,
-  FileText,
-  LoaderCircle,
-  Paperclip,
-  Search,
-} from 'lucide-react';
+import { CheckCircle2, Clock3, FileText, Paperclip, Search } from 'lucide-react';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { PageContainer } from '@/components/ui/PageContainer';
 import { fetchEmployerDocuments, type EmployerDocuments } from '@/api/employerPortal';
@@ -106,15 +100,7 @@ export default function EmployerDocumentsPage() {
           </section>
 
           {loading && !data && (
-            <div role="status" aria-label="Loading documents" aria-live="polite" className={styles.loadingState}>
-              <span className={styles.loadingIcon}>
-                <LoaderCircle data-testid="documents-loading-spinner" aria-hidden className={`${styles.spinningIcon} animate-spin`} />
-              </span>
-              <div>
-                <p>Loading documents...</p>
-                <span>Preparing learner documents</span>
-              </div>
-            </div>
+            <div className={styles.loadingState}><LoadingSkeleton label={"Loading documents"} className="w-64" /></div>
           )}
 
           {!loading && error && (

@@ -1,3 +1,4 @@
+import { LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
 import { useEffect, useState } from 'react';
 import { AppIcon } from '@/components/feature/AppIcon';
 import { useWizard } from "../WizardContext";
@@ -97,7 +98,7 @@ export default function IlrEligibilityEvidence() {
   return (
     <div className="space-y-2">
       {loading ? (
-        <EmptyState text="Loading evidence…" />
+        <LoadingSkeleton label={"Loading evidence…"} />
       ) : files.length === 0 ? (
         <EmptyState text="No evidence uploaded" />
       ) : (

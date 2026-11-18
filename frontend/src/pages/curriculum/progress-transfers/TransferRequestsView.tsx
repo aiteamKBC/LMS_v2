@@ -1,3 +1,4 @@
+import { LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
 import { useEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react';
 import { ArrowLeftRight, ArrowRight, CheckCheck, Download, Info, Layers, RefreshCw, ShieldCheck } from 'lucide-react';
 import type { AdminTransfer, TransferDecisions, TransferMapping, TransferModule, TransferReview } from '@/api/progressTransfer';
@@ -243,11 +244,11 @@ export function TransferRequests() {
     <EnrolmentHero title="Transfer progress" breadcrumbLabel="Transfer progress" image="transfers" className={`${styles.hero} ${motion.cardEnter}`}
       icon="ri-arrow-left-right-line" eyebrow="Enrolment operations"
       description="Find a request, check what can be carried across, and review the decision without leaving the list."
-      metadata={<p className={styles.heroSummary}>{complete ? <><span className={styles.waitingBadge}><span aria-hidden="true" />{pendingCount} requests waiting</span><span>{approvedRequests.length} approved · {hoursLabel(recognisedHours)} recognised{needsRefresh ? ' · Refresh required' : ''}</span></> : data ? 'Loading the complete request summary…' : reading ? 'Loading transfer requests…' : 'Request summary unavailable'}</p>}
+      metadata={<p className={styles.heroSummary}>{complete ? <><span className={styles.waitingBadge}><span aria-hidden="true" />{pendingCount} requests waiting</span><span>{approvedRequests.length} approved · {hoursLabel(recognisedHours)} recognised{needsRefresh ? ' · Refresh required' : ''}</span></> : data ? <LoadingSkeleton label={'Loading the complete request summary…'} /> : reading ? <LoadingSkeleton label={'Loading transfer requests…'} /> : 'Request summary unavailable'}</p>}
       actions={<><button type="button" className={styles.button} disabled={!complete || busy || needsRefresh} onClick={exportLog}><Download size={15} aria-hidden="true" />Export log</button><button type="button" className={styles.button} disabled={busy} onClick={refresh}><RefreshCw size={15} aria-hidden="true" />Refresh</button></>} />
     {notice && <p role="status" className={styles.success}>{notice}</p>}
     {error && <div role="alert" className={styles.error}>{error}{data && <span> Showing the last retrieved requests.</span>}<button type="button" className={styles.button} disabled={busy} onClick={refresh}>Retry refresh</button></div>}
-    {reading && <p role="status" className={styles.scopeNote}>{reading === 'more' ? 'Loading remaining request pages…' : data ? 'Refreshing the complete request list…' : 'Loading the complete request list…'}</p>}
+    {reading && <p role="status" className={styles.scopeNote}>{reading === 'more' ? <LoadingSkeleton label={'Loading remaining request pages…'} /> : data ? 'Refreshing the complete request list…' : <LoadingSkeleton label={'Loading the complete request list…'} />}</p>}
     <TransferRequestList data={data} reading={!!reading} saving={saving} error={error} onReview={review} onContinue={more} />
     <details className={styles.guidance}>
       <summary><Info size={17} aria-hidden="true" /><span><strong>How transfers work</strong><small>Eligibility, duplicate counting and what happens after approval</small></span></summary>

@@ -1,3 +1,4 @@
+import { LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
 import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { ArrowRight, CalendarDays, CheckCircle2, Clock3, ExternalLink, FileText, MessageCircle } from 'lucide-react';
@@ -29,7 +30,7 @@ export function AssignmentDetailsCard({ assignment, group, kind, learnerId }: {
   const selectedHistory = history?.kind === kind && history.learnerId === learnerId && history.activityId === assignment.id ? history : null;
   const latestAttempt = selectedHistory?.attempts[selectedHistory.attempts.length - 1];
   const actualHours = assignment.submissionCount === 0 || assignment.status === 'todo' ? 'Not submitted yet'
-    : !selectedHistory || selectedHistory.loading ? 'Loading…'
+    : !selectedHistory || selectedHistory.loading ? <LoadingSkeleton label={'Loading…'} />
     : selectedHistory.error ? 'Unavailable' : formatSubmissionHours(latestAttempt?.actualTimeHours);
   const topics = assignment.assignmentTopics || [];
   // One topic is the assignment itself; two or more are options to choose from.

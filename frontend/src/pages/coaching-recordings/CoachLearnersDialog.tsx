@@ -1,3 +1,4 @@
+import { LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
 import { useEffect, useId, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { loadCoachLearners, type CoachLearners, type CoachingMeeting } from '@/api/coachingRecordings';
@@ -111,7 +112,7 @@ export default function CoachLearnersDialog({ coachEmail, coachName, start, end,
       <div className="min-h-0 space-y-3 overflow-y-auto p-4 sm:p-5">
         {calendarPartial && <p role="alert" className="rounded-lg bg-amber-50 p-3 text-sm text-amber-900">Some calendar meetings could not be loaded. The saved LMS bookings below are a separate source.</p>}
         {error && <p role="alert" className="rounded-lg bg-rose-50 p-3 text-sm text-rose-900">{error} <button type="button" className="font-semibold underline" onClick={() => setRevision(value => value + 1)}>Retry learners</button></p>}
-        {loading && <p role="status" className="text-sm">Loading coach learners…</p>}
+        {loading && <p  className="text-sm"><LoadingSkeleton label={"Loading coach learners…"} /></p>}
         {data && <>
           <p role="status" className="text-xs text-foreground-600">Showing {data.learners.length} of {data.coverage.totalLearners} learners{search ? ` matching “${search}”` : ''}.</p>
           {!data.learners.length && <p className="py-4 text-sm text-foreground-600">No current learners match this search.</p>}

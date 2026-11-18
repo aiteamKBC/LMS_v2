@@ -1,3 +1,4 @@
+import { LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import {
@@ -559,7 +560,7 @@ export default function AbsenceReportForm({
         <Panel>
           <SectionHeader title="Previous reports" description="Last 90 days" icon="ri-history-line" />
           <div className="mt-3 space-y-2.5">
-            {reportsLoading && <div className="py-6 text-center text-[12px] text-foreground-400"><AppIcon className="ri-loader-4-line mr-1.5 animate-spin" />Loading reports...</div>}
+            {reportsLoading && <div className="py-6 text-center text-[12px] text-foreground-400"><LoadingSkeleton label={"Loading reports..."} /></div>}
             {!reportsLoading && reports.length === 0 && <EmptyState size="sm" icon="ri-file-list-3-line" title="No absence reports yet" />}
             {reports.map((report) => (
               <article key={report.id} className="rounded-xl border border-foreground-200/70 bg-background-50 p-3.5">
@@ -611,7 +612,7 @@ export default function AbsenceReportForm({
               </button>
             </header>
             <div className="relative flex min-h-0 flex-1 items-center justify-center bg-background-200/60 p-2 sm:p-4">
-              {previewLoading && <div className="text-sm font-medium text-foreground-500"><AppIcon className="ri-loader-4-line mr-2 animate-spin text-primary-600" />Loading evidence...</div>}
+              {previewLoading && <div className="text-sm font-medium text-foreground-500"><LoadingSkeleton label={"Loading evidence..."} /></div>}
               {!previewLoading && previewError && <div className="rounded-xl border border-red-200 bg-red-50 p-5 text-center"><AppIcon className="ri-error-warning-line mb-2 block text-2xl text-red-500" /><p className="text-sm font-semibold text-red-700">{previewError}</p></div>}
               {!previewLoading && !previewError && evidencePreview.objectUrl && evidencePreview.isPdf && (
                 <iframe

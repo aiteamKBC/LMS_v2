@@ -1,3 +1,4 @@
+import { LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { AppIcon } from '@/components/feature/AppIcon';
 import { DetailRow, InlineError } from '../shared/entities/ui';
@@ -75,7 +76,7 @@ export function CalendarHealthPanel({ liveSessionId, disabled, refreshKey = 0, p
         </button>
       </div>
       {error && <InlineError message={error} onRetry={() => void load(filter, page)} />}
-      {!health && loading && <p className="text-[12px] text-foreground-500">Loading calendar health…</p>}
+      {!health && loading && <p className="text-[12px] text-foreground-500"><LoadingSkeleton label={"Loading calendar health…"} /></p>}
       {health && summary && (
         <>
           <div className="flex flex-wrap items-center gap-2">
@@ -264,7 +265,7 @@ function SessionDrawer({ liveSessionId, session, lastVerifiedAt, disabled, onClo
         </div>
         {error && <div className="mt-3"><InlineError message={error} onRetry={() => void load()} /></div>}
         {notice && <p role="status" className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50 p-2 text-[12px] text-emerald-900">{notice}</p>}
-        {!detail && !error && <p className="mt-3 text-[12px] text-foreground-500">Loading session…</p>}
+        {!detail && !error && <p className="mt-3 text-[12px] text-foreground-500"><LoadingSkeleton label={"Loading session…"} /></p>}
         {detail && (
           <div className="mt-3 space-y-3">
             {detail.separateFromMain && detail.meetingType === 'standalone' && (

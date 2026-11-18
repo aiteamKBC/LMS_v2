@@ -8,6 +8,7 @@ import {
   isOpenAction,
 } from "@/lib/qms";
 import type { FormDefinition, QualityAction, QualityRecord } from "@/types/qms";
+import styles from "../ExecutiveOverview.module.css";
 
 interface OverviewKpisProps {
   records: QualityRecord[];
@@ -54,7 +55,7 @@ export default function OverviewKpis({ records, actions, forms, availability, on
 
   return (
     <section aria-label="Key quality indicators">
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-6">
+      <div className={styles.kpiGrid}>
         <KpiCard
           label="Completed audits"
           value={formatNumber(audits.length)}
@@ -135,6 +136,7 @@ export default function OverviewKpis({ records, actions, forms, availability, on
           to="/curriculum/quality-demo?view=checks"
           linkLabel="See quality checks"
         />
+
       </div>
     </section>
   );

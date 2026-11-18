@@ -1,3 +1,4 @@
+import { LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
 import { useEffect, useId, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { adoptMigratedReviewBooking, bookMigratedReview, fetchCoachReviewSlots, rescheduleMigratedReview, type ReviewInstanceFormDefinition } from '@/api/reviewInstances';
@@ -204,7 +205,7 @@ export default function ImportedReviewBookingDialog({ event, viewingAsCoach, onC
         </div>
         <div className="space-y-4 p-5">
           <div className="rounded-lg bg-primary-50 px-3 py-2 text-sm text-primary-900"><strong>Learner:</strong> {event.learner || 'Unknown learner'}{event.programme ? ` · ${event.programme}` : ''}</div>
-          {loading ? <p role="status">Loading review booking…</p> : null}
+          {loading ? <p ><LoadingSkeleton label={"Loading review booking…"} /></p> : null}
           {(booking?.reserved || booking?.booked || rescheduling) && booking?.scheduledDate && booking.scheduledTime
             ? <p role="note" className="text-sm text-foreground-700">Current booking: {booking.scheduledDate} at {booking.scheduledTime} UK time · {booking.durationMinutes} minutes. Select an available replacement below.</p> : null}
           {error ? <p role="alert" className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</p> : null}

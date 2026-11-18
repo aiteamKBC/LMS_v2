@@ -122,7 +122,7 @@ describe('compact Training Plan', () => {
     vi.mocked(fetch).mockImplementationOnce(() => new Promise<Response>(resolve => { finish = resolve; }));
     fireEvent.click(screen.getByRole('button', { name: 'Show Module M2 overview' }));
     await waitFor(() => expect(requests()).toHaveLength(2));
-    expect(screen.getByRole('status')).toHaveTextContent('Loading module details');
+    expect(screen.getByRole('status')).toHaveAccessibleName(expect.stringContaining('Loading module details'));
     fireEvent.click(screen.getByRole('button', { name: 'Show Module M3 overview' }));
     await screen.findByText('Description M3');
     await act(async () => { finish(new Response(JSON.stringify(module('M2')), { status: 200 })); });

@@ -77,7 +77,7 @@ describe('Delivery recording transcript', () => {
     let finish!: (value: { sessions: SessionResult[] }) => void;
     vi.mocked(loadSessionResult).mockReturnValue(new Promise(resolve => { finish = resolve; }));
     render(item());
-    expect(await screen.findByText('Loading saved transcript…')).toBeInTheDocument();
+    expect(await screen.findByRole('status', { name: 'Loading saved transcript…' })).toBeInTheDocument();
     expect(screen.queryByText(/No matching transcript/)).not.toBeInTheDocument();
     await act(async () => finish({ sessions: [session] }));
     await screen.findByRole('link', { name: 'Download transcript' });

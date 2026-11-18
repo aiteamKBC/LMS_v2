@@ -194,7 +194,7 @@ function resolveSidebarIcon(id = '', label = '', sourceIcon = ''): LucideIcon {
   // Same collision for the Quality row: 'curriculum-quality' also starts with
   // 'curriculum-', so without this it fell into the book branch below and sat
   // right next to Programmes wearing the identical icon.
-  if (id === 'curriculum-quality') return ShieldCheck;
+  if (id === 'curriculum-quality' || id === 'curriculum-quality-assurance') return ShieldCheck;
   if (/^reports?$|\breports?\b/.test(key)) return FileText;
   if (/message|communication|feedback/.test(key)) return MessageSquare;
   if (/support|ticket|knowledge-base|help/.test(key)) return LifeBuoy;

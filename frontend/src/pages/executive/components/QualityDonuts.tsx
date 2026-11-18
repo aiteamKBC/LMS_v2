@@ -1,6 +1,7 @@
 import DonutChart, { type DonutDatum } from "@/components/qms/DonutChart";
 import { formatNumber } from "@/lib/qms";
 import type { QualityRecord } from "@/types/qms";
+import styles from "../ExecutiveOverview.module.css";
 
 const FORM_COLORS = [
   "oklch(var(--primary-600))",
@@ -91,7 +92,7 @@ function RatingCard({
 }) {
   const total = items.reduce((sum, item) => sum + item.value, 0);
   return (
-    <section className="rounded-xl border border-background-200 bg-background-50 p-4" aria-label={title}>
+    <section className={styles.ratingCard} aria-label={title}>
       <h2 className="font-heading text-[15px] font-semibold text-foreground-950">{title}</h2>
       <p className="mt-0.5 text-[12px] leading-relaxed text-foreground-600">{description}</p>
       {!available ? <p className="mt-4 border-t border-background-200 pt-4 text-[12px] text-foreground-600">Feedback rating data is unavailable.</p> : <>
@@ -132,8 +133,7 @@ export default function QualityDonuts({
   const tutorLabel = selectedTutor === "All tutors" ? "All tutors" : selectedTutor;
 
   return (
-    <div className="space-y-4">
-      <section aria-label="Quality rating dashboard" className="grid grid-cols-1 gap-4 xl:grid-cols-3">
+    <section aria-label="Quality rating dashboard" className={styles.analyticsGrid}>
         <RatingCard
           title="Criterion ratings"
           description={`Stored criteria · ${coachLabel} · ${tutorLabel}`}
@@ -152,9 +152,7 @@ export default function QualityDonuts({
           ariaLabel="Feedback positive neutral negative distribution"
           available={feedbackAvailable}
         />
-      </section>
-
-      <section className="rounded-xl border border-background-200 bg-background-50 p-4 sm:p-5" aria-label="Quality form records by type">
+      <section className={`${styles.ratingCard} ${styles.formDistribution}`} aria-label="Quality form records by type">
         <h2 className="font-heading text-[15px] font-semibold text-foreground-950">Quality records by form type</h2>
         <p className="mt-0.5 text-[12px] leading-relaxed text-foreground-600">
           Actual saved records by form, including Monthly Coaching, Progress Review and every registered Quality Form in scope.
@@ -169,6 +167,6 @@ export default function QualityDonuts({
           />
         </div>
       </section>
-    </div>
+    </section>
   );
 }

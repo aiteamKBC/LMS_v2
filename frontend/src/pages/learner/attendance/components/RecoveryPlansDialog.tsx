@@ -1,3 +1,4 @@
+import { LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { AppIcon } from '@/components/feature/AppIcon';
@@ -51,7 +52,7 @@ export default function RecoveryPlansDialog() {
 
   const eventsByKey = useMemo(() => new Map(events.map(event => [event.eventKey, event])), [events]);
 
-  if (loading) return <div className={styles.recoveryPlansLoading} role="status"><AppIcon className="ri-loader-4-line animate-spin" />Loading recovery plans…</div>;
+  if (loading) return <div className={styles.recoveryPlansLoading} ><LoadingSkeleton label={"Loading recovery plans…"} /></div>;
   if (error) return <div className={styles.recoveryPlansError} role="alert"><p>{error}</p><button type="button" onClick={() => void load()}>Try again</button></div>;
   if (!reports.length) return <EmptyState size="sm" icon="ri-calendar-todo-line" title="No recovery plans yet" description="The recovery method you choose when reporting an absence will appear here." />;
 

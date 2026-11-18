@@ -16,9 +16,9 @@ import { LEARNER_HEADER_PATTERN_URL } from './learnerShellAssets';
 
 interface HeaderProps {
   accountButtonRef?: RefObject<HTMLButtonElement | null>;
-  pageTitle: string;
+  pageTitle: ReactNode;
   pageIcon?: ReactNode;
-  pageSubtitle?: string;
+  pageSubtitle?: ReactNode;
   headerExtras?: ReactNode;
   onOpenSearch: () => void;
   userName?: string;

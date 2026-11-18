@@ -1,5 +1,6 @@
+import { LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
 import { useCallback, useEffect, useRef } from 'react';
-import { AppIcon } from '@/components/feature/AppIcon';
+
 import { Modal } from '@/pages/users/components/Modal';
 import { cleanText } from '../shared/entities/model';
 import { TeamsMeetingDialogs } from '../teams-meetings/TeamsMeetingDialogs';
@@ -89,10 +90,7 @@ export function TeamsMeetingModal({
     return (
       <Modal title={cleanText(module.title) || 'Teams meeting'} size="max-w-3xl" onClose={onClose}>
         {loadingRow ? (
-          <p className="flex items-center gap-1.5 rounded-xl border border-background-200 bg-background-100/60 p-3 text-[11px] font-semibold text-foreground-500">
-            <AppIcon className="ri-loader-4-line animate-spin"></AppIcon>
-            Loading this module&rsquo;s calendar and session dates…
-          </p>
+          <p className="flex items-center gap-1.5 rounded-xl border border-background-200 bg-background-100/60 p-3 text-[11px] font-semibold text-foreground-500"><LoadingSkeleton label={"Loading this module’s calendar and session dates…"} /></p>
         ) : workspace.teamsError || workspace.error ? (
           <p role="alert" className="text-sm text-red-700">{workspace.teamsError || workspace.error}</p>
         ) : (

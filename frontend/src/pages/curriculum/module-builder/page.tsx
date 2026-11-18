@@ -1,3 +1,4 @@
+import { LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
 import { AssignedLearners, LearnerDirectoryProvider } from '../shared/entities/AssignedLearners';
 import { useWeekPointDrafts, type WeekPointDrafts } from './useWeekPointDrafts';
 import { WebWeekPointsEditor } from './WebWeekPointsEditor';
@@ -4115,7 +4116,7 @@ function ModuleBuilderContent() {
               <div className="min-w-0">
                 <h2 className="text-lg font-heading font-bold text-foreground-950">Module Builder</h2>
                 <p className="mt-1 max-w-2xl text-[12px] leading-5 text-foreground-500">
-                  {loading ? 'Loading live LMS modules...' : 'Manage module structures, delivery scope and KSB mapping in one workspace.'}
+                  {loading ? <LoadingSkeleton label={'Loading live LMS modules...'} /> : 'Manage module structures, delivery scope and KSB mapping in one workspace.'}
                 </p>
               </div>
             </div>
@@ -5738,20 +5739,8 @@ function OpeningModuleAlert({ title, mode, complete }: { title: string; mode: 'b
     <div className="fixed inset-0 z-[90] flex items-center justify-center bg-black/40 p-4 backdrop-blur-sm" aria-live="polite" aria-busy="true">
       <div className="w-full max-w-md overflow-hidden rounded-2xl border border-white/10 bg-background-50 text-center shadow-2xl">
         <div className="p-6">
-          <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-full border-4 border-primary-100 bg-primary-50 text-primary-600">
-            <AppIcon className="ri-loader-4-line animate-spin text-3xl"></AppIcon>
-          </div>
-          <h3 className="mt-4 text-lg font-heading font-bold text-foreground-950">
-            {isSettings ? 'Opening module settings...' : 'Opening module builder...'}
-          </h3>
-          <p className="mx-auto mt-2 max-w-xs text-[13px] leading-relaxed text-foreground-500">
-            Loading <span className="font-semibold text-foreground-900">{title}</span> and preparing the authoring workspace.
-          </p>
-          <div className="mt-5 rounded-xl border border-background-200 bg-background-100/70 p-3 text-left">
-            <div className="flex items-center gap-2 text-[12px] font-semibold text-foreground-700">
-              <AppIcon className={`${isSettings ? 'ri-settings-3-line' : 'ri-layout-4-line'} text-primary-600`}></AppIcon>
-              {isSettings ? 'Preparing settings panel...' : 'Loading module structure...'}
-            </div>
+          <LoadingSkeleton label={`Opening ${title} ${isSettings ? 'settings' : 'builder'}`} className="w-full" />
+          <div aria-hidden="true" className="mt-5 rounded-xl border border-background-200 bg-background-100/70 p-3 text-left">
             <LoadingProgressBar complete={complete} />
           </div>
         </div>
@@ -6756,7 +6745,7 @@ function LinkedQuizSelector({
         </div>
       ) : (
         <div className="rounded-xl border border-dashed border-background-300 bg-background-50 px-3 py-4 text-center text-[12px] font-semibold text-foreground-500">
-          {loading ? 'Loading LMS quizzes...' : 'No quiz selected. Choose any available LMS quiz from the list above.'}
+          {loading ? <LoadingSkeleton label={'Loading LMS quizzes...'} /> : 'No quiz selected. Choose any available LMS quiz from the list above.'}
         </div>
       )}
       <div className="rounded-xl border border-background-200 bg-background-50">
@@ -7813,7 +7802,9 @@ function KsbSelectorModal({ standards, standardsLoading, ksbSets, ksbSetsLoading
               );
             })}
             {!sourceLocked && !resolvedSelectedSource && <EmptyState text="Choose a KSB Source from the module-level dropdown first." />}
-            {sourceLocked && !resolvedSelectedSource && <EmptyState text="Loading the selected KSB Source, or it is no longer available." />}
+            {sourceLocked && !resolvedSelectedSource && (ksbSetsLoading || standardsLoading
+              ? <LoadingSkeleton label="Loading the selected KSB Source" />
+              : <EmptyState text="The selected KSB Source is no longer available." />)}
             {resolvedSelectedSource && !sourceKsbOptions.length && <EmptyState text="No KSBs are available for this selection." />}
             {resolvedSelectedSource && Boolean(sourceKsbOptions.length) && !filteredKsbOptions.length && <EmptyState text="No KSBs match your search or filter." />}
           </div>
@@ -7940,7 +7931,7 @@ function CreateModuleModal({ programmeOptions, onClose, onCreate }: { programmeO
           <div className="absolute inset-x-0 bottom-0 border-t border-primary-100 bg-primary-50 px-5 py-3">
             <div className="flex items-center gap-3">
               <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary-500 text-white">
-                <span className="h-4 w-4 rounded-full border-2 border-white/40 border-t-white animate-spin"></span>
+                <LoadingSkeleton />
               </span>
               <div>
                 <p className="text-[12px] font-bold text-primary-900">Creating draft module</p>

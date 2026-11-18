@@ -1,3 +1,4 @@
+import { LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
 // Reusable quiz editor — the full authoring surface (questions, settings, Q&A,
 // archive) with NO page chrome or routing of its own. `edit/page.tsx` wraps it
 // in the curriculum WorkspaceShell for the /curriculum/quiz-xml/:id/edit route;
@@ -924,7 +925,7 @@ export function QuizEditorPanel({ quizId, onClose, onSaved }: { quizId: string |
   };
 
   if (loading) {
-    return <div className="p-4 sm:p-5 text-sm text-foreground-500">Loading quiz editor...</div>;
+    return <div className="p-4 sm:p-5 text-sm text-foreground-500"><LoadingSkeleton label={"Loading quiz editor..."} /></div>;
   }
 
   if (pageError || !data || !settings) {

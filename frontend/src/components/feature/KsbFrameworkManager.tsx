@@ -1,3 +1,4 @@
+import { LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
 import { useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react';
 import * as XLSX from 'xlsx';
 import {
@@ -374,7 +375,7 @@ export function KsbFrameworkManager({
   // reads as an answer rather than as a wait. While a search is narrowing the
   // list, the total on its own contradicts what is on screen.
   const frameworkCountLabel = loading
-    ? 'Loading frameworks...'
+    ? <LoadingSkeleton label={'Loading frameworks...'} />
     : searchNeedle
       ? `${filteredFrameworks.length} of ${frameworks.length} frameworks`
       : `${frameworks.length} ${frameworks.length === 1 ? 'framework' : 'frameworks'}`;

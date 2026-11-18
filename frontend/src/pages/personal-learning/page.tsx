@@ -1,3 +1,4 @@
+import { LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
@@ -33,7 +34,7 @@ export default function PersonalCoursesPage() {
     <div className={`${motion.page} mx-auto max-w-6xl space-y-5 p-5`}>
       <p className="text-sm text-foreground-600">Study using the learner's course pages. Your personal progress and certificates stay separate from official study reports and Teams invitations.</p>
       {!allowed ? <p role="alert">Sign in as an administrator to view personal courses.</p> : error ? <div role="alert"><p>{error}</p><button onClick={() => setReload(value => value + 1)} className="mt-3 rounded-lg border px-4 py-2">Try again</button></div>
-        : !courses ? <p role="status">Loading your courses…</p>
+        : !courses ? <p ><LoadingSkeleton label={"Loading your courses…"} /></p>
           : !courses.length ? <div className="rounded-xl border bg-white p-6"><h2 className="font-semibold">No personal courses yet</h2><p className="mt-2 text-sm">Courses you have joined as a learner appear here. Module Builder's “Preview as learner” is a read-only preview and does not add a course.</p></div>
             : <div className={`${motion.staggerCards} grid gap-4 md:grid-cols-2 lg:grid-cols-3`}>{courses.map(course => <article key={course.id} className="rounded-2xl border bg-white p-5 shadow-sm">
               <span className="text-xs font-bold uppercase text-primary-700">Personal learning</span><h2 className="mt-2 text-lg font-bold">{course.title}</h2>

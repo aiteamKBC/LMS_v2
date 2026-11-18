@@ -1,3 +1,5 @@
+import { LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
+import { SelectMenu } from '@/components/feature/SelectField';
 import { useEffect, useMemo, useRef, useState } from "react";
 import { fetchEnrolmentBoard, fetchEnrolmentUsers } from "@/api/enrolmentUsers";
 import { fetchDeepDiveIlrContact, fetchDeepDiveRecord, fetchDeepDiveSummaries, importDeepDiveWorkbook, markDeepDiveRecordReviewed, sha256File, syncDeepDiveFromCreatedUsers, updateDeepDiveRecord, workbookToDeepDiveRows, type DeepDiveOperationalDetails, type DeepDiveRecord, type DeepDiveReviewItem } from "@/api/deepDive";
@@ -398,7 +400,7 @@ export default function DeepDivePage() {
   };
 
   if (loading) {
-    return <div role="status" className="rounded-xl border border-background-200 bg-background-50 p-8 text-sm text-foreground-600">Loading Deep Dive learner journey…</div>;
+    return <div  className="rounded-xl border border-background-200 bg-background-50 p-8 text-sm text-foreground-600"><LoadingSkeleton label={"Loading Deep Dive learner journey…"} /></div>;
   }
 
   return (
@@ -435,11 +437,20 @@ export default function DeepDivePage() {
       </div> : null}
 
       <section className="rounded-xl border border-background-200 bg-background-50 p-4" aria-label="Deep Dive filters">
-        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-          <label className="text-[11px] font-medium text-foreground-600">Search learner, email, reference or coach<input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search…" className="mt-1.5 h-10 w-full rounded-md border border-background-300 bg-background-50 px-3 text-[12px] text-foreground-900 outline-none transition focus:border-primary-400 focus:ring-2 focus:ring-primary-100" /></label>
-          <label className="text-[11px] font-medium text-foreground-600">Programme<select value={programme} onChange={(event) => setProgramme(event.target.value)} className="mt-1.5 h-10 w-full rounded-md border border-background-300 bg-background-50 px-3 text-[12px] text-foreground-900 outline-none focus:border-primary-400 focus:ring-2 focus:ring-primary-100"><option>All programmes</option>{programmes.map((item) => <option key={item}>{item}</option>)}</select></label>
-          <label className="text-[11px] font-medium text-foreground-600">Programme status<select value={status} onChange={(event) => setStatus(event.target.value)} className="mt-1.5 h-10 w-full rounded-md border border-background-300 bg-background-50 px-3 text-[12px] text-foreground-900 outline-none focus:border-primary-400 focus:ring-2 focus:ring-primary-100"><option>All statuses</option>{statuses.map((item) => <option key={item}>{item}</option>)}</select></label>
-          <label className="text-[11px] font-medium text-foreground-600">Review status<select value={reviewStatus} onChange={(event) => setReviewStatus(event.target.value as ReviewStatusFilter)} className="mt-1.5 h-10 w-full rounded-md border border-background-300 bg-background-50 px-3 text-[12px] text-foreground-900 outline-none focus:border-primary-400 focus:ring-2 focus:ring-primary-100"><option value="all">All learners</option><option value="reviewed">Reviewed</option><option value="awaiting">Awaiting review</option></select></label>
+        <div className="grid items-end gap-3 md:grid-cols-2 xl:grid-cols-4">
+          <label className="min-w-0 text-[11px] font-medium text-foreground-600">Search learner, email, reference or coach<input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search…" className="mt-1.5 h-11 w-full rounded-[10px] border border-background-200 bg-background-50 px-3.5 text-[14px] text-foreground-900 outline-none transition hover:border-primary-200 focus:border-primary-400 focus:ring-2 focus:ring-primary-100" /></label>
+          <div className="min-w-0">
+            <label htmlFor="deep-dive-programme" className="mb-1.5 block text-[11px] font-medium text-foreground-600">Programme</label>
+            <SelectMenu id="deep-dive-programme" value={programme} onChange={setProgramme} size="sm" searchable searchPlaceholder="Search programmes…" options={[{ value: "All programmes", label: "All programmes" }, ...programmes.map((item) => ({ value: item, label: item }))]} />
+          </div>
+          <div className="min-w-0">
+            <label htmlFor="deep-dive-programme-status" className="mb-1.5 block text-[11px] font-medium text-foreground-600">Programme status</label>
+            <SelectMenu id="deep-dive-programme-status" value={status} onChange={setStatus} size="sm" options={[{ value: "All statuses", label: "All statuses" }, ...statuses.map((item) => ({ value: item, label: item }))]} />
+          </div>
+          <div className="min-w-0">
+            <label htmlFor="deep-dive-review-status" className="mb-1.5 block text-[11px] font-medium text-foreground-600">Review status</label>
+            <SelectMenu id="deep-dive-review-status" value={reviewStatus} onChange={(value) => setReviewStatus(value as ReviewStatusFilter)} size="sm" options={[{ value: "all", label: "All learners" }, { value: "reviewed", label: "Reviewed" }, { value: "awaiting", label: "Awaiting review" }]} />
+          </div>
         </div>
       </section>
 
@@ -476,7 +487,7 @@ export default function DeepDivePage() {
             {selectedRecord ? <EditableOperationalSnapshot operational={operational} open={operationalOpen} onToggle={() => setOperationalOpen((value) => !value)} onSave={saveOperational} /> : null}
             {selectedRecord && !editing ? <section className="rounded-xl border border-background-200 p-4"><div className="flex items-center justify-between gap-3"><h3 className="font-heading text-[14px] font-semibold text-foreground-900">Notes</h3>{!notesEditing ? <button type="button" className="rounded-md border border-primary-200 bg-background-50 px-2.5 py-1.5 text-[11px] font-semibold text-primary-700 hover:bg-primary-50" onClick={() => setNotesEditing(true)}>Edit notes</button> : null}</div>{notesEditing ? <div className="mt-3"><textarea value={notesDraft} onChange={(event) => setNotesDraft(event.target.value)} rows={6} placeholder="Write notes for this learner…" className="w-full resize-y rounded-lg border border-background-300 bg-background-50 px-3 py-2.5 text-[12px] leading-relaxed text-foreground-900 outline-none focus:border-primary-400 focus:ring-2 focus:ring-primary-100" />{editError ? <p role="alert" className="mt-2 text-[11px] text-red-700">{editError}</p> : null}<div className="mt-3 flex justify-end gap-2"><button type="button" className="rounded-md border border-background-300 px-3 py-1.5 text-[11px] font-semibold text-foreground-700 hover:bg-background-100" onClick={() => { setNotesDraft(selectedRecord.notes); setNotesEditing(false); setEditError(""); }}>Cancel</button><button type="button" disabled={savingNotes} className="rounded-md bg-primary-600 px-3 py-1.5 text-[11px] font-semibold text-background-50 hover:bg-primary-700 disabled:opacity-60" onClick={() => void saveNotes()}>{savingNotes ? "Saving…" : "Save notes"}</button></div></div> : <p className="mt-2 whitespace-pre-wrap text-[12px] leading-relaxed text-foreground-700">{selectedRecord.notes || "No notes recorded."}</p>}</section> : null}
             {editing && selectedRecord ? <section className="rounded-xl border border-primary-100 bg-primary-50/40 p-4"><label className="text-[11px] font-medium text-foreground-700">Notes<textarea value={editValues.notes} onChange={(event) => setEditValues((current) => ({ ...current, notes: event.target.value }))} rows={5} placeholder="Add operational notes for this learner…" className="mt-1.5 w-full resize-y rounded-md border border-background-300 bg-background-50 px-3 py-2 text-[12px] text-foreground-900 outline-none focus:border-primary-400 focus:ring-2 focus:ring-primary-100" /></label></section> : null}
-            {detailLoading ? <div role="status" className="rounded-lg bg-background-100 px-4 py-5 text-[12px] text-foreground-600">Loading learner details…</div> : null}
+            {detailLoading ? <div  className="rounded-lg bg-background-100 px-4 py-5 text-[12px] text-foreground-600"><LoadingSkeleton label={"Loading learner details…"} /></div> : null}
             {detailError ? <div role="alert" className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-[12px] text-amber-950">{detailError}</div> : null}
             {recordDetailLoading ? <div role="status" className="rounded-lg bg-background-100 px-4 py-5 text-[12px] text-foreground-600">Loading Deep Dive details…</div> : null}
             {recordDetailError ? <div role="alert" className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-[12px] text-amber-950">{recordDetailError}<button type="button" className="ml-3 font-semibold underline" onClick={() => setRecordRetry((value) => value + 1)}>Retry</button></div> : null}

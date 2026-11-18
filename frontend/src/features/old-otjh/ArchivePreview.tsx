@@ -1,3 +1,4 @@
+import { LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
 import { useEffect, useState } from 'react';
 import JSZip, { type JSZipObject } from 'jszip';
 import { HtmlPreview } from './ContentPreview';
@@ -46,10 +47,10 @@ export function ArchivePreview({ buffer, title }: { buffer: ArrayBuffer; title: 
     return () => { active = false; if (blobUrl) URL.revokeObjectURL(blobUrl); };
   }, [entries, selected]);
   if (error) return <p role="alert">{error}</p>;
-  if (!entries.length) return <p role="status">Loading archive…</p>;
+  if (!entries.length) return <p ><LoadingSkeleton label={"Loading archive…"} /></p>;
   return <div className="space-y-4"><label className="block text-sm font-medium">Files in {title}
     <select aria-label="Archive file" className="mt-2 w-full rounded-xl border border-foreground-200 p-3" value={selected} onChange={event => setSelected(event.target.value)}>{entries.map(entry => <option key={entry.name} value={entry.name}>{entry.name}</option>)}</select></label>
-    {!preview ? <p role="status">Loading file…</p> : preview.kind === 'error' ? <p role="alert">{preview.message}</p> : preview.kind === 'html' ? <HtmlPreview html={preview.html} title={selected} /> : <>
+    {!preview ? <p ><LoadingSkeleton label={"Loading file…"} /></p> : preview.kind === 'error' ? <p role="alert">{preview.message}</p> : preview.kind === 'html' ? <HtmlPreview html={preview.html} title={selected} /> : <>
       <a href={preview.url} download={selected.split('/').pop()} className="text-sm text-primary-700 underline">Download selected file</a>
       {preview.mime === 'application/pdf' ? <iframe src={preview.url} title={selected} className="h-[65vh] w-full rounded-xl border" />
         : preview.mime.startsWith('image/') ? <img src={preview.url} alt={selected} className="mx-auto max-h-[65vh] max-w-full" />

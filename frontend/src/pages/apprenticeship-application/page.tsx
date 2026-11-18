@@ -1,3 +1,4 @@
+import { LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import { ArrowLeft, ArrowRight, CheckCircle2, ClipboardCheck, ClipboardList, Loader2, MapPin, RotateCcw, XCircle } from 'lucide-react';
 import { Link } from 'react-router-dom';
@@ -202,7 +203,7 @@ export default function ApprenticeshipApplicationPage() {
               </button>
             </div>
           ) : (
-            <p className={styles.loading}><Loader2 className={styles.spin} aria-hidden="true" /> Loading the application form…</p>
+            <p className={styles.loading}><LoadingSkeleton label={"Loading the application form…"} /></p>
           )}
         </section>
       </Frame>

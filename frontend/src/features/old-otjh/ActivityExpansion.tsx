@@ -1,3 +1,4 @@
+import { LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useAuth } from "@/hooks/useAuth";
@@ -27,7 +28,7 @@ export function ActivityExpansion({ row, month, aptemId, initialDocumentId, onCl
   return <section aria-label={`Content for ${row.title}`} className={styles.preview}>
     <div className="flex flex-wrap items-start justify-between gap-3"><div className="min-w-0 flex-1"><h4 className="font-semibold text-foreground-900">{row.title}</h4><p className="mt-1 text-[12px] text-foreground-500">Activity content and documents</p></div>
       <button className={btnSecondary} onClick={onClose} aria-label={`Close ${row.title}`}>Close</button></div>
-    {query.isPending && !documents.length && <p role="status" className="text-sm">Loading activity content…</p>}
+    {query.isPending && !documents.length && <p  className="text-sm"><LoadingSkeleton label={"Loading activity content…"} /></p>}
     {query.error && <div role="alert" className="flex flex-wrap items-center gap-3 text-sm"><span>{query.error.message}</span><button className={btnSecondary} onClick={() => void query.refetch()}>Try again</button></div>}
     {options.length > 1 && <label className="block space-y-2 text-xs font-medium text-foreground-600">Reading, media or document
       <select className={inputClass} value={selected} onChange={event => setSelection(event.target.value)}>{options.map(option => <option value={option.id} key={option.id}>{option.title}</option>)}</select></label>}

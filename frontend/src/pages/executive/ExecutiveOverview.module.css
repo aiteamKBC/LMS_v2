@@ -1,0 +1,217 @@
+.overview {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 24px;
+  container-type: inline-size;
+  padding: 8px 0 12px;
+}
+
+.hero {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  padding: 8px 0 0;
+}
+
+.eyebrow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  color: oklch(var(--primary-700));
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+
+.liveDot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #2f8f57;
+  box-shadow: 0 0 0 4px rgb(47 143 87 / 9%);
+}
+
+.liveLabel {
+  margin-left: 4px;
+  border-left: 1px solid oklch(var(--background-300));
+  padding-left: 12px;
+  color: oklch(var(--foreground-500));
+  font-weight: 500;
+  letter-spacing: .02em;
+}
+
+.title {
+  margin-top: 12px;
+  color: oklch(var(--foreground-950));
+  font-family: var(--font-heading, 'Manrope', sans-serif);
+  font-size: clamp(26px, 3cqi, 36px);
+  font-weight: 700;
+  line-height: 1.2;
+  letter-spacing: -.035em;
+}
+
+.subtitle {
+  max-width: 550px;
+  margin-top: 10px;
+  color: oklch(var(--foreground-600));
+  font-size: 13px;
+  line-height: 1.7;
+}
+
+.heroActions { display: flex; flex-wrap: wrap; gap: 8px; flex-shrink: 0; }
+
+.secondaryButton, .exportButton {
+  display: inline-flex;
+  min-height: 42px;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border: 1px solid oklch(var(--background-300));
+  border-radius: 10px;
+  padding: 10px 14px;
+  background: oklch(var(--background-50));
+  color: oklch(var(--foreground-800));
+  font-size: 12px;
+  font-weight: 600;
+  transition: background .15s, border-color .15s;
+}
+
+.secondaryButton:hover { background: oklch(var(--background-100)); }
+.exportButton { border-color: transparent; background: oklch(var(--primary-600)); color: #fff; }
+.exportButton:hover { background: oklch(var(--primary-700)); }
+
+.overview :is(button, a, summary, input, select, [tabindex]):focus-visible {
+  outline: 2px solid oklch(var(--primary-400));
+  outline-offset: 3px;
+}
+
+.dataNotice {
+  margin-top: -8px;
+  border-bottom: 1px solid oklch(var(--background-200));
+  padding-bottom: 12px;
+  color: oklch(var(--foreground-600));
+  font-size: 12px;
+}
+
+.dataNotice summary { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px; cursor: pointer; }
+.dataNotice summary::-webkit-details-marker { display: none; }
+.dataNotice summary > span:first-child { display: inline-flex; align-items: center; gap: 7px; }
+.dataNotice summary > span:first-child::after { content: '+'; color: oklch(var(--primary-600)); }
+.dataNotice[open] summary > span:first-child::after { content: '−'; }
+.dataNotice p { max-width: 1000px; margin-top: 12px; line-height: 1.8; }
+.refresh { color: oklch(var(--foreground-500)); font-size: 11px; }
+
+.filters > section, .panel, .registry, .ratingCard,
+.healthGrid > section, .healthGrid > div > section {
+  min-width: 0;
+  border: 1px solid oklch(var(--background-200));
+  border-radius: 16px;
+  background: oklch(var(--background-50));
+  box-shadow: 0 2px 4px rgb(30 15 50 / 2%) !important;
+}
+
+.filters > section { padding: 20px; }
+.filters > section > [data-filter-fields] { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
+.filters label { margin-bottom: 7px; font-size: 10px; letter-spacing: .06em; }
+.filters :is(select, input) { min-height: 40px; border-radius: 9px; }
+
+.kpiGrid { display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); gap: 16px; }
+.kpiGrid > div { grid-column: span 3; min-width: 0; border-radius: 14px; padding: 20px; box-shadow: none !important; }
+/* Keep the four headline cards outlined over the shared dashboard card theme. */
+.kpiGrid > div:nth-child(-n + 4) { border: 1px solid oklch(var(--primary-200)) !important; }
+.kpiGrid > div > div:first-child > p { font-size: 10px; line-height: 1.6; letter-spacing: .065em; }
+.kpiGrid > div > div:first-child > span { width: 34px; height: 34px; border-radius: 11px; }
+.kpiGrid > div > div:nth-child(2) > span:first-child { font-size: 36px; font-variant-numeric: tabular-nums; }
+.kpiGrid > div > p { font-size: 12px; line-height: 1.65; }
+.kpiGrid > div:first-child { border-color: oklch(var(--primary-200)); background: oklch(var(--primary-50) / .5); }
+/* Three follow-up indicators share the second row without an orphan card. */
+.kpiGrid > div:nth-child(n + 5) { grid-column: span 4; }
+.kpiGrid > div:nth-child(5) { border-left: 3px solid oklch(var(--accent-500)); }
+
+.analyticsGrid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: stretch; gap: 20px; }
+.ratingCard { display: flex; flex-direction: column; padding: 22px; }
+.ratingCard > h2 { font-size: 15px; letter-spacing: -.02em; }
+.ratingCard > p:last-child { margin-top: auto; padding-top: 14px; }
+.ratingCard > div { margin-bottom: 18px; border-top: 0; padding-top: 8px; }
+.ratingCard :global([role='img']) { width: 156px; height: 156px; }
+.ratingCard > div > div { grid-template-columns: 156px minmax(0, 1fr); gap: 20px; }
+.ratingCard li { gap: 8px; }
+.ratingCard li > span:first-child > span:last-child { white-space: normal; overflow-wrap: anywhere; }
+.formDistribution { grid-column: 1 / -1; }
+
+.healthGrid { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); gap: 20px; }
+.healthGrid > div { min-width: 0; }
+.healthGrid h2, .panel h2, .registry h2 { font-size: 15px; }
+.healthGrid :global([class~='bg-secondary-100/70']) p { color: oklch(var(--foreground-700)); }
+.healthGrid > section > div:first-child,
+.healthGrid > div > section > div:first-child,
+.panel > div:first-child, .registry > div:first-child { padding: 20px 22px 16px; }
+.panel > div:nth-child(2) { padding: 20px 22px; }
+
+.registry { overflow: hidden; }
+.countBadge { display: inline-flex; border: 1px solid oklch(var(--primary-100)); border-radius: 8px; padding: 5px 9px; background: oklch(var(--primary-50)); color: oklch(var(--foreground-800)); font-size: 11px; font-weight: 600; }
+.registryScroll { max-height: 580px; overflow: auto; overscroll-behavior: contain; scrollbar-gutter: stable; }
+.tableHead { position: sticky; top: 0; z-index: 1; }
+/* Scoped specificity keeps the shared dashboard table theme out of this table. */
+.overview .registry .tableHead th { height: 44px; border-bottom: 1px solid oklch(var(--background-200)) !important; background: oklch(var(--background-100)) !important; color: oklch(var(--foreground-600)) !important; }
+.registry tbody td { padding-top: 16px; padding-bottom: 16px; }
+.registry tbody tr:nth-child(4n + 3) { background: oklch(var(--background-100) / .4); }
+.tableNote { border-top: 1px solid oklch(var(--background-200)); padding: 12px 22px; color: oklch(var(--foreground-500)); font-size: 11px; }
+.notes { border-top: 1px solid oklch(var(--background-200)); padding: 18px 0 0; }
+:global([data-theme='dark']) .eyebrow { color: oklch(var(--foreground-700)); }
+
+@container (min-width: 1200px) {
+  .filters > section > [data-filter-fields] { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+  .filters > section > [data-filter-fields] > div:last-child { grid-column: span 2; }
+}
+
+@container (min-width: 1000px) {
+  .analyticsGrid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .formDistribution { grid-column: auto; }
+  .ratingCard > div > div { grid-template-columns: 1fr; justify-items: center; gap: 24px; }
+  .ratingCard > div > div > div:last-child { width: 100%; }
+  .formDistribution ul { max-height: 170px; overflow-y: auto; padding-right: 6px; }
+}
+
+@container (max-width: 850px) {
+  .hero { align-items: flex-start; flex-direction: column; gap: 18px; }
+  .kpiGrid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .kpiGrid > div:nth-child(n) { grid-column: auto; grid-row: auto; }
+  .kpiGrid > div:last-child { grid-column: 1 / -1; }
+  .healthGrid { grid-template-columns: 1fr; }
+  .ratingCard > div > div { grid-template-columns: 1fr; justify-items: center; }
+  .ratingCard > div > div > div:last-child { width: 100%; }
+  .formDistribution > div > div { grid-template-columns: 156px minmax(0, 1fr); }
+}
+
+@container (max-width: 540px) {
+  .filters > section { padding: 16px; }
+  .filters > section > [data-filter-fields] { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px 10px; }
+  .filters > section > [data-filter-fields] > div:last-child { grid-column: 1 / -1; }
+  .heroActions { width: 100%; }
+  .heroActions > button { flex: 1; padding-inline: 10px; font-size: 11px; }
+  .kpiGrid { gap: 10px; }
+  .kpiGrid > div { padding: 15px; }
+  .kpiGrid > div > div:first-child { flex-direction: column-reverse; gap: 10px; }
+  .kpiGrid > div > div:nth-child(2) > span:first-child { font-size: 30px; }
+  .analyticsGrid { grid-template-columns: 1fr; }
+  .ratingCard > div > div { grid-template-columns: 128px minmax(0, 1fr); gap: 14px; }
+  .ratingCard :global([role='img']) { width: 128px; height: 128px; }
+  .formDistribution > div > div { grid-template-columns: 1fr; gap: 20px; }
+  .ratingCard { padding: 18px; }
+  .overview { gap: 18px; }
+}
+
+@container (max-width: 340px) {
+  .heroActions { flex-direction: column; }
+  .ratingCard > div > div { grid-template-columns: 1fr; gap: 20px; }
+}
+
+@media print {
+  .registryScroll, .formDistribution ul { max-height: none; overflow: visible; }
+  .tableHead { position: static; }
+}

@@ -467,7 +467,7 @@ describe('subjects shared with Module Builder', () => {
     vi.spyOn(api, 'subjectRequest').mockImplementation(() => new Promise(resolve => { finish = resolve; }));
     render(<StudentActivityPanel data={source === 'legacy' ? data : null} real={source === 'native' ? linkedReal : null}
       kind="commercial" learnerId="132" loading={false} error={null} onRetry={vi.fn()} />);
-    expect(screen.getByRole('status')).toHaveTextContent('Loading subjects');
+    expect(screen.getByRole('status')).toHaveAccessibleName(expect.stringContaining('Loading subjects'));
     expect(screen.queryByRole('button', { name: /New LMS.*Leadership/ })).not.toBeInTheDocument();
     await act(async () => finish(linkedMetadata));
     expect(screen.getByRole('region', { name: 'Your subjects' })).toBeInTheDocument();
@@ -489,7 +489,7 @@ describe('subjects shared with Module Builder', () => {
     const { rerender } = render(<StudentActivityPanel {...props} learnerId="132" loading={false} />);
     await screen.findByRole('button', { name: /New LMS.*Leadership/ });
     rerender(<StudentActivityPanel {...props} learnerId="133" loading />);
-    expect(screen.getByRole('status')).toHaveTextContent('Loading subjects');
+    expect(screen.getByRole('status')).toHaveAccessibleName(expect.stringContaining('Loading subjects'));
     expect(screen.queryByText('Anna Rundell')).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /New LMS.*Leadership/ })).not.toBeInTheDocument();
   });
@@ -582,7 +582,7 @@ describe('subjects shared with Module Builder', () => {
     let resolve!: (value: typeof linkedMetadata) => void;
     const request = vi.spyOn(api, 'subjectRequest').mockImplementation(() => new Promise((done) => { resolve = done; }));
     render(<StudentActivityPanel data={data} real={linkedReal} kind="commercial" learnerId="132" loading={false} error={null} onRetry={vi.fn()} />);
-    expect(screen.getByRole('status')).toHaveTextContent('Loading subjects');
+    expect(screen.getByRole('status')).toHaveAccessibleName(expect.stringContaining('Loading subjects'));
     expect(screen.queryByRole('button', { name: /New LMS.*Leadership/ })).not.toBeInTheDocument();
     await act(async () => resolve({ ...linkedMetadata, builder_subjects: { 'legacy:1': { id: 'MOD-1', title: 'Renamed Leadership' } } }));
     expect(screen.getAllByRole('button', { name: /Renamed Leadership/ })).toHaveLength(1);

@@ -1,3 +1,4 @@
+import { LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
 // Programme "Reviews ID" tab: the Review Templates configured for one Programme.
 //
 // Loaded lazily -- only while this tab is actually selected (see page.tsx) -- so
@@ -106,10 +107,7 @@ export function ReviewsTab({ programmeId, programmeName, defaultStartDate }: {
         {error && <InlineError message={error} onRetry={() => void load()} />}
 
         {loading && (
-          <div className="flex items-center justify-center gap-2 py-12 text-[12px] font-semibold text-foreground-400">
-            <AppIcon className="ri-loader-4-line animate-spin"></AppIcon>
-            Loading reviews...
-          </div>
+          <div className="flex items-center justify-center gap-2 py-12 text-[12px] font-semibold text-foreground-400"><LoadingSkeleton label={"Loading reviews..."} /></div>
         )}
 
         {!loading && !error && reviews && reviews.length === 0 && (

@@ -1,3 +1,4 @@
+import { LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
 import { useId } from 'react';
 import { cohortSegments, deliveryDateLabel, type deliveryWeek } from './deliveryDashboard';
 import styles from './DeliveryWorkspace.module.css';
@@ -53,7 +54,7 @@ export function ActivityChart({ activeGroups, totalGroups, activeModules, totalM
       const proportion = metric.total > 0 && metric.count !== null ? Math.min(1, metric.count / metric.total) : 0;
       return <div className={styles.activityMetric} key={metric.label}>
         <div className={styles.activityMetricHeading}><span title={metric.definition}>{metric.label}</span>
-          <strong aria-label={`${metric.label} count`} style={{ color: metric.color }}>{pending ? 'Loading' : unavailable ? 'Unavailable' : number.format(metric.count!)}</strong>
+          <strong aria-label={`${metric.label} count`} style={{ color: metric.color }}>{pending ? <LoadingSkeleton label={'Loading'} /> : unavailable ? 'Unavailable' : number.format(metric.count!)}</strong>
         </div>
         {pending ? <div className={styles.metricSkeleton} role="status">Checking module activity…</div> : unavailable ? (
           <p className={styles.activityNote}>Activity could not be verified.</p>

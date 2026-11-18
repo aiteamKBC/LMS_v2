@@ -1,3 +1,4 @@
+import { LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
@@ -185,7 +186,7 @@ export default function GroupWorkspacePage() {
       navItems={curriculumNavItems}
       workspaceLabel="Curriculum Studio"
       pageTitle={groupDisplayName}
-      pageSubtitle={context ? `${context.cohortName} · ${context.programmeName}` : 'Loading group'}
+      pageSubtitle={context ? `${context.cohortName} · ${context.programmeName}` : <LoadingSkeleton label={'Loading group'} />}
       breadcrumbCurrentLabel={`Groups — ${groupDisplayName}`}
       userName="Rachel Myers"
       userRole="Curriculum Designer"

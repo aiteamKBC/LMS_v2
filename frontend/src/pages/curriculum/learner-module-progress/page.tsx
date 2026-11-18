@@ -1,3 +1,4 @@
+import { LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Link, useLocation, useNavigate, useSearchParams } from 'react-router-dom';
@@ -159,7 +160,7 @@ function ActivityDrawer({ row, onClose, moduleId, learnerId }: { row: ProgressRo
         {row.history?.reflection?.text && <section><h3>Learning reflection</h3><p className="lmp-reflection">{row.history.reflection.text}</p></section>}
         {Boolean(row.history?.evidence.length) && <section><h3>Recorded evidence</h3><ul>{row.history?.evidence.map(item => <li key={item.evidenceId}>{item.fileName} <span className="lmp-muted">{item.status}</span></li>)}</ul></section>}
         {'canChangeStatus' in row.activity && row.activity.canChangeStatus && <section><h3>Status history</h3>
-          {historyError ? <p role="alert">{historyError}</p> : history === null ? <p>Loading history…</p>
+          {historyError ? <p role="alert">{historyError}</p> : history === null ? <p><LoadingSkeleton label={"Loading history…"} /></p>
             : history.length ? <ol>{history.map(change => <li key={change.revision}><strong>{change.displayStatus === 'completed' ? 'Completed' : 'Not Started'}</strong>
               <p>{change.reason}</p><small>{submittedLabel(change.created_at)} · Actor {change.actor_id} · Revision {change.revision}</small></li>)}</ol> : <p>No status changes.</p>}</section>}
         <p className="lmp-drawer-note">Viewing details preserves the learner’s activity records, answers, submissions and attendance.</p>
@@ -307,7 +308,7 @@ export default function LearnerModuleProgressPage() {
           navigate(-1);
         }}><AppIcon name="ri-arrow-left-line" size={19} />Back to Students</Link></header>
       {!moduleId || (!learnerId && !enrolmentId) ? <EntityEmptyState icon="ri-user-search-line" title="Choose a learner to view progress" message="Open View progress from an assigned learner in the module roster." />
-        : loading ? <div className="lmp-loading" role="status">Loading learner progress…</div>
+        : loading ? <div className="lmp-loading" ><LoadingSkeleton label={"Loading learner progress…"} /></div>
         : error ? <InlineError message={error} onRetry={() => setRetry(value => value + 1)} />
         : !learner ? <EntityEmptyState icon="ri-user-search-line" title="Learner not found in this module" message="The learner assignment or identity link is unavailable. Return to the assigned learners and reload." /> : <>
           <section className="lmp-learner-card" aria-label="Learner details">

@@ -1,3 +1,4 @@
+import { LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
 import { useEffect, useRef, useState } from 'react';
 import { Bot, CalendarDays, ClipboardList, FileDown, FileText, LayoutGrid, ShieldCheck, UserRound, Users, X } from 'lucide-react';
 import {
@@ -95,7 +96,7 @@ export default function ReviewDetailModal({ learnerId, learner, review, family, 
       : coachingError ? 'Coaching meetings could not be loaded, so evidence availability cannot be checked.'
         : 'No coaching meeting could be uniquely matched to this review.'
     : error ? `Meeting details could not be loaded: ${error}`
-      : !detail ? 'Loading meeting details…' : '';
+      : !detail ? <LoadingSkeleton label="Loading meeting details" /> : '';
   const hasTranscript = Boolean(detail?.transcript?.content?.trim());
   const transcriptUnavailable = meetingUnavailable || (!detail?.meetingId
     ? 'This session has no linked meeting ID, so a transcript cannot be shown.'
@@ -175,7 +176,7 @@ export default function ReviewDetailModal({ learnerId, learner, review, family, 
                 <Field label="AI report" value={<><Status value={report ? 'Ready' : 'Not available'} positive={Boolean(report)} />{!report && <p className="mt-1 text-xs font-normal text-foreground-500">{reportUnavailable}</p>}</>} />
               </Card>
             </div>
-            {session && !detail && !error && <p role="status" className="rounded-xl border border-primary-100 bg-white p-3 text-sm text-foreground-600">Loading meeting details…</p>}
+            {session && !detail && !error && <p  className="rounded-xl border border-primary-100 bg-white p-3 text-sm text-foreground-600"><LoadingSkeleton label={"Loading meeting details…"} /></p>}
             {review.sections?.length > 0 && <details className="rounded-xl border border-foreground-200 bg-white p-4">
               <summary className="cursor-pointer font-semibold text-primary-950">Aptem review details</summary>
               <div className="mt-3 space-y-3">{review.sections.map(section => <section key={section.id} className="rounded-lg border p-3">

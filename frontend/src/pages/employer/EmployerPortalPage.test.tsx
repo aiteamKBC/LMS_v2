@@ -89,7 +89,7 @@ describe('employer home dashboard', () => {
     showPage();
 
     expect(await screen.findByRole('button', { name: /Reviews due this month: 2/ })).toBeInTheDocument();
-    expect(screen.getAllByText('Loading progress reviews…')).toHaveLength(2);
+    expect(screen.getAllByRole('status', { name: 'Loading progress reviews…' })).toHaveLength(2);
   });
 
   it.each([
@@ -161,7 +161,8 @@ describe('employer home dashboard', () => {
     api.portal.mockReturnValueOnce(new Promise(() => undefined));
     showPage();
     expect(screen.getByRole('status', { name: 'Loading learners' })).toBeVisible();
-    expect(screen.getByTestId('learners-loading-spinner')).toHaveClass('animate-spin');
+    expect(screen.getByRole('status', { name: 'Loading learners' }).textContent).toBe('');
+    expect(screen.queryByTestId('learners-loading-spinner')).not.toBeInTheDocument();
     expect(api.metrics).not.toHaveBeenCalled();
   });
 
@@ -266,7 +267,8 @@ describe('employer home dashboard', () => {
     await screen.findByRole('heading', { name: 'Your learners (2)' });
     const cells = within(table().getByRole('link', { name: 'View Alex Learner' }).closest('tr')!).getAllByRole('cell');
     expect(cells[3]).toHaveTextContent('45%');
-    expect(cells[4]).toHaveTextContent('Loading…');
+    expect(within(cells[4]).getByRole('status', { name: 'Loading…' })).toBeInTheDocument();
+    expect(cells[4].textContent).toBe('');
     expect(table().getByRole('progressbar', { name: 'Alex Learner OTJ progress' })).toHaveAttribute('aria-valuenow', '45');
     expect(api.metrics.mock.calls.some(call => call[2] === 'summary')).toBe(false);
   });
@@ -289,7 +291,7 @@ describe('employer home dashboard', () => {
     showPage();
 
     expect(await screen.findByRole('progressbar', { name: 'Alex Learner OTJ progress' })).toHaveAttribute('aria-valuenow', '45');
-    expect(within(screen.getByRole('region', { name: 'Progress by programme' })).getAllByText('Loading…')).toHaveLength(2);
+    expect(within(screen.getByRole('region', { name: 'Progress by programme' })).getAllByRole('status', { name: 'Loading…' })).toHaveLength(2);
   });
 
   it('shows Needs attention as soon as the saved status returns, without waiting for progress', async () => {
@@ -299,7 +301,7 @@ describe('employer home dashboard', () => {
     showPage();
     expect(await screen.findByText('Saved learner OTJ status')).toBeVisible();
     expect(screen.getByRole('button', { name: /Needs attention: 1\. Saved learner OTJ status/ })).toBeVisible();
-    expect(screen.getAllByText('Loading…').length).toBeGreaterThan(0);
+    expect(screen.getAllByRole('status', { name: 'Loading…' }).length).toBeGreaterThan(0);
   });
 
   it('isolates attendance failures and retries without hiding saved progress or the other learner', async () => {
@@ -507,7 +509,7 @@ describe('employer home dashboard', () => {
     api.reviews.mockImplementation(() => new Promise(() => undefined));
     showPage('/employers/8/reviews');
     const loading = within(await screen.findByRole('article', { name: 'Alex Learner reviews' }));
-    expect(loading.getByRole('status')).toHaveTextContent('Loading progress reviews');
+    expect(loading.getByRole('status')).toHaveAccessibleName(expect.stringContaining('Loading progress reviews'));
     expect(loading.queryByText('No progress reviews planned yet.')).not.toBeInTheDocument();
   });
 

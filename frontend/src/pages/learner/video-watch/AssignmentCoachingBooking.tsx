@@ -1,3 +1,4 @@
+import { LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
 import { meetingCalendarHref, occupiesBookingSlot } from '@/pages/learner/reviews/meetingBooking';
 import { Link } from 'react-router-dom';
 import { loadAssignmentTopicStates, type AssignmentTopicState } from '@/api/assignmentTopics';
@@ -145,7 +146,7 @@ export function AssignmentCoachingBooking({ kind, learnerId, month, title, meeti
   const input = 'mt-2 w-full rounded-xl border border-slate-200 bg-white px-3 py-3 text-sm disabled:bg-slate-50';
   return <section className="space-y-5 rounded-2xl border border-slate-200 bg-white p-4 sm:p-6">
     <div><h4 className="text-base font-semibold">Arrange your Monthly Coaching Meeting</h4><p className="mt-2 text-sm leading-6 text-slate-600">Use a booked MCM or book a monthly session with your assigned coach below. The same booking appears in your calendar and your coach's calendar.</p></div>
-    {loading && <p role="status" className="flex items-center gap-2 text-sm"><Loader2 aria-hidden="true" className="h-4 w-4 animate-spin" />Loading coaching meetings...</p>}
+    {loading && <p  className="flex items-center gap-2 text-sm"><LoadingSkeleton label={"Loading coaching meetings..."} /></p>}
     {!loading && <>
       {(!topicBooked || changingMeeting) && <label className="block">Use an existing coaching booking<select className={input} value={selected?.eventKey || ''} disabled={disabled || busy} onChange={e => { setBookedHere(e.target.value); onSelect(e.target.value); setChangingMeeting(false); }}><option value="">Select a booked meeting</option>{booked.map(e => <option key={e.eventKey} value={e.eventKey}>{e.scheduledDate} {e.scheduledTime} ? {e.coachName}</option>)}</select></label>}
       {!disabled && !error && selectedKey && !selected && <p role="alert" className="rounded-xl bg-amber-50 p-4 text-sm text-amber-900">The meeting linked to this draft is no longer available. Choose an existing coaching booking or arrange a new MCM, then run the quality checks again.</p>}

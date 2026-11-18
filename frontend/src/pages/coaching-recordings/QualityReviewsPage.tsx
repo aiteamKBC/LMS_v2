@@ -1,3 +1,4 @@
+import { LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ArrowLeft, ClipboardCheck, RefreshCw } from 'lucide-react';
 import { Link, useSearchParams } from 'react-router-dom';
@@ -95,7 +96,7 @@ export default function QualityReviewsPage({ embedded = false }: { embedded?: bo
         <div className="grid items-end gap-3 sm:grid-cols-2 lg:grid-cols-[minmax(0,1fr)_minmax(0,2fr)_auto_auto]">
         <label className="grid gap-1 text-xs font-semibold">Coach<RecordingSelect ariaLabel="Coach" value={filters.coachEmail} onChange={value => setFilters({ ...filters, coachEmail: value })}
           options={[{ value: '', label: 'All coaches' }, ...coaches.map(coach => ({ value: coach.email, label: coach.name }))]} /></label>
-        <label className="grid gap-1 text-xs font-semibold">Learner or meeting<input type="search" placeholder="Search a learner or meeting title" maxLength={200} className={control} value={filters.search} onChange={event => setFilters({ ...filters, search: event.target.value })} /></label>
+        <label className="grid gap-1 text-xs font-semibold">Learner or meeting<input type="search" placeholder="Search a learner or meeting title" maxLength={200} className={`${control} focus-visible:!outline-none`} value={filters.search} onChange={event => setFilters({ ...filters, search: event.target.value })} /></label>
         <button type="submit" className={`${button} bg-primary-600 text-white`} disabled={loading}>Apply filters</button>
         <button type="button" className={button} disabled={loading} onClick={reset}>Reset filters</button>
         </div>
@@ -113,7 +114,7 @@ export default function QualityReviewsPage({ embedded = false }: { embedded?: bo
       </form>
       {error && <div role="alert" className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm">{error} <button className={`${button} ml-2`} onClick={() => setEpoch(value => value + 1)}>Retry reviews</button></div>}
       <section aria-label="Saved quality reviews" className="space-y-3">
-        <p role="status" className="text-xs text-foreground-500">{loading ? 'Loading saved reviews…' : `${rows.length} reviews loaded · Meeting dates in ${applied.timeZone}`}</p>
+        <p role="status" className="text-xs text-foreground-500">{loading ? <LoadingSkeleton label={'Loading saved reviews…'} /> : `${rows.length} reviews loaded · Meeting dates in ${applied.timeZone}`}</p>
         {!loading && !error && !rows.length && <div className="rounded-xl border border-background-200 bg-white p-8 text-center"><ClipboardCheck className="mx-auto text-primary-500" /><h2 className="mt-3 font-bold">No saved reviews match these filters</h2><p className="mt-2 text-sm text-foreground-600">Start a portfolio sampling review from a meeting in the coach calendar, or choose another period and status.</p></div>}
         {rows.map(row => <article key={row.id} className="flex flex-wrap items-center justify-between gap-4 rounded-xl border border-background-200 bg-white p-4 shadow-sm">
           <div className="min-w-0 flex-1 basis-64"><div className="flex flex-wrap items-center gap-2"><h2 className="break-words text-sm font-bold">{row.learnerName}</h2><span className={`rounded-full px-2 py-1 text-xs font-semibold ${row.status === 'completed' ? 'bg-emerald-50 text-emerald-800' : 'bg-amber-50 text-amber-800'}`}>{row.status === 'completed' ? 'Completed' : 'Draft'}</span></div>

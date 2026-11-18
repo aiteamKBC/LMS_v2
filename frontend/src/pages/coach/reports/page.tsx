@@ -1,3 +1,4 @@
+import { LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
 import { useEffect, useMemo, useState } from 'react';
 import { jsPDF } from 'jspdf';
 import * as XLSX from 'xlsx';
@@ -2696,7 +2697,7 @@ export default function CoachReports() {
             'rounded-xl border px-4 py-3 text-[12px]',
             loading ? cn(loadingTone.bg, loadingTone.border, loadingTone.text) : cn(liveSourcesTone.bg, liveSourcesTone.border, liveSourcesTone.text),
           )}>
-            {loading ? 'Loading OTJH sources...' : `Some OTJH sources are unavailable right now: ${warnings.join(', ')}. Preview values will show ${EMPTY_VALUE} where needed.`}
+            {loading ? <LoadingSkeleton label={'Loading OTJH sources...'} /> : `Some OTJH sources are unavailable right now: ${warnings.join(', ')}. Preview values will show ${EMPTY_VALUE} where needed.`}
           </div>
         ) : null}
 

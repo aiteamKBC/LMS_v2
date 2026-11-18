@@ -1,7 +1,8 @@
+import { LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
 import { useCallback, useEffect, useState } from 'react';
 import { useAuth } from "@/hooks/useAuth";
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
-import { LoaderCircle } from 'lucide-react';
+
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { PageContainer } from '@/components/ui/PageContainer';
 import {
@@ -141,22 +142,7 @@ function EmployerLearnerContent() {
     <WorkspaceShell {...shell} pageTitle="Learner" pageSubtitle={learner?.name ?? 'Learner'}>
       <PageContainer>
         {loading && (
-          <div
-            role="status"
-            aria-label="Loading learner"
-            aria-live="polite"
-            className="flex min-h-[18rem] items-center justify-center py-16"
-          >
-            <div className="flex flex-col items-center gap-3 text-center">
-              <span className="grid h-12 w-12 place-items-center rounded-full bg-primary-50 text-primary-700 shadow-sm">
-                <LoaderCircle data-testid="learner-loading-spinner" aria-hidden="true" className="h-7 w-7 animate-spin" />
-              </span>
-              <div>
-                <p className="text-[13px] font-semibold text-foreground-700">Loading learner...</p>
-                <p className="mt-1 text-[11px] text-foreground-400">Preparing the learner workspace</p>
-              </div>
-            </div>
-          </div>
+          <div className="flex min-h-[18rem] items-center justify-center py-16"><LoadingSkeleton label={"Loading learner"} className="w-64" /></div>
         )}
 
         {!loading && error && (

@@ -1,3 +1,4 @@
+import { LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
 import { CollaborativeField } from '../module-builder/CollaborativeField';
 import { componentSessionTitle, type SessionTitleWeek } from '../shared/sessionDisplayTitle';
 import { AssignmentTopicsEditor } from '../shared/AssignmentTopicsEditor';
@@ -865,7 +866,7 @@ export function TemplateEditor({ initial, isNew, onClose, returnToPrevious = fal
         <div className="flex flex-col items-center justify-center gap-3 rounded-2xl border border-background-200 bg-background-50 py-24 text-center">
           <span className="h-8 w-8 animate-spin rounded-full border-2 border-background-300 border-t-primary-500" aria-hidden="true" />
           <p className="text-[13px] font-bold text-foreground-700">Preparing the week builder…</p>
-          <p className="text-[11px] text-foreground-400">Loading programme, module and group data.</p>
+          <p className="text-[11px] text-foreground-400"><LoadingSkeleton label={"Loading programme, module and group data."} /></p>
         </div>
       </div>
     );
@@ -3161,7 +3162,7 @@ function QuizBody({ component, onChange, setSetting, rulePoints, weekScope }: Co
           <div className="mx-auto my-6 w-full max-w-[1140px] overflow-hidden rounded-2xl bg-background-50 shadow-2xl" onClick={e => e.stopPropagation()}>
             {/* Local boundary: the route-level one would blank the whole page while
                 this chunk downloads. */}
-            <Suspense fallback={<div className="p-10 text-center text-[13px] text-foreground-400">Loading quiz editor…</div>}>
+            <Suspense fallback={<div className="p-10 text-center text-[13px] text-foreground-400"><LoadingSkeleton label={"Loading quiz editor…"} /></div>}>
               <QuizEditorPanel quizId={linkedQuizId} onClose={closeEditor} onSaved={() => void loadQuizzes()} />
             </Suspense>
           </div>
@@ -3754,7 +3755,7 @@ function UploadedComponentFilePreview({ url, fileName, contentType, componentTyp
   if (isAudio) {
     content = <audio controls preload="metadata" src={url} className="w-full" />;
   } else if (loaded?.status === 'loading') {
-    content = <div className="grid min-h-40 place-items-center text-[12px] font-semibold text-foreground-500"><span className="inline-flex items-center gap-2"><AppIcon className="ri-loader-4-line animate-spin" />Loading preview...</span></div>;
+    content = <div className="grid min-h-40 place-items-center text-[12px] font-semibold text-foreground-500"><span className="inline-flex items-center gap-2"><LoadingSkeleton label={"Loading preview..."} /></span></div>;
   } else if (loaded?.status === 'html') {
     content = <div className="max-h-[420px] overflow-auto bg-white p-5"><div className="max-w-none text-sm leading-relaxed text-foreground-800 [&_h1]:mb-3 [&_h1]:text-2xl [&_h1]:font-bold [&_h2]:mb-2 [&_h2]:mt-4 [&_h2]:text-xl [&_h2]:font-bold [&_p]:mb-3 [&_ul]:mb-3 [&_ul]:list-disc [&_ul]:pl-5 [&_ol]:mb-3 [&_ol]:list-decimal [&_ol]:pl-5" dangerouslySetInnerHTML={{ __html: loaded.value }} /></div>;
   } else if (loaded?.status === 'text') {

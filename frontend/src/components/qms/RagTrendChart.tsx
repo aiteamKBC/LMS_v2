@@ -8,6 +8,7 @@ import {
   YAxis,
 } from "recharts";
 import type { MonthlyPoint } from "@/lib/qms";
+import styles from "./RagTrendChart.module.css";
 
 interface RagTrendChartProps {
   data: MonthlyPoint[];
@@ -51,7 +52,7 @@ function TrendTooltip({ active, payload, label }: any) {
 
 export default function RagTrendChart({ data }: RagTrendChartProps) {
   return (
-    <div>
+    <div className={styles.chart}>
       <ul className="mb-4 flex flex-wrap items-center gap-x-4 gap-y-2">
         {SERIES.map((series) => (
           <li

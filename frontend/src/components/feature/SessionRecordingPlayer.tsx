@@ -1,3 +1,4 @@
+import { LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
 import { useEffect, useMemo, useRef, useState, type RefObject } from 'react';
 import { loadRecordingWatch, loadTranscriptCues, recordRecordingWatch, sessionFileUrl, type SessionFile, type SessionLearner, type TranscriptCue, type TranscriptLink } from '@/api/sessionResults';
 import { BunnyRecordingVideo } from './BunnyRecordingVideo';
@@ -199,7 +200,7 @@ export function SessionRecordingPlayer({ seriesId, file, transcripts, learner, l
         </button>}
         </div>
       </header>
-      {pendingTranscript && <p role="status" className="p-3 text-sm">Loading saved transcript…</p>}
+      {pendingTranscript && <p  className="p-3 text-sm"><LoadingSkeleton label={"Loading saved transcript…"} /></p>}
       {transcriptError && <div role="alert" className="p-3 text-sm text-red-800">{transcriptError} <button type="button" onClick={() => transcriptLoadError ? onTranscriptRetry?.() : setRetry(value => value + 1)} className="underline">Retry transcript</button></div>}
       {!pendingTranscript && !transcriptError && visibleCues.length > 0 && <div ref={panel} className="relative max-h-72 overflow-y-auto p-2">
         <ol className="space-y-1">{visibleCues.map((cue, index) => <li key={`${cue.start}-${index}`}>

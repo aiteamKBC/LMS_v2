@@ -1,3 +1,4 @@
+import { LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
 import { useEffect, useId, useRef, useState, type KeyboardEvent } from 'react';
 import { Link } from 'react-router-dom';
 import { ArrowRight, Bell, ChevronDown, CircleHelp, Compass, LogOut, MessageSquare, Settings, UserRound } from 'lucide-react';
@@ -151,7 +152,7 @@ export function StudentHomeHeader({ name, homeHref, identity, events, loading, e
             <time dateTime={event.date!}>{new Intl.DateTimeFormat('en-GB', { day: 'numeric', month: 'short', timeZone: 'Europe/London' }).format(new Date(event.date!))}</time>
           </Link>
         </li>)}</ul>}
-        {loading && <p role="status">Loading notifications…</p>}
+        {loading && <p ><LoadingSkeleton label={"Loading notifications…"} /></p>}
         {error ? <div role="alert"><p>Some reminders could not be loaded.</p><button className={styles.headerDialogLink} onClick={onRetry}>Try again</button></div>
           : !loading && !notifications.length && <p>You’re all caught up. No upcoming reminders.</p>}
       </div> : panel === 'settings' ? <AccountSettings/> : <div className={styles.headerDialogBody}>

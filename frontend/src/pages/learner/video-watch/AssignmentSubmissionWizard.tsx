@@ -1,3 +1,4 @@
+import { LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
 import type { ComponentProps } from 'react';
 import { presentTopic, type AssignmentResourceLink, type AssignmentTopic } from '@/lib/assignmentTopics';
 import { TopicAssignment } from './TopicAssignment';
@@ -511,9 +512,7 @@ export function AssignmentSubmissionForm({
 
   if (loading) {
     return (
-      <div className="rounded-2xl border border-background-200 bg-white p-8 text-center text-sm text-foreground-500">
-        <AppIcon className="ri-loader-4-line mr-2 animate-spin" />Loading your saved assignment…
-      </div>
+      <div className="rounded-2xl border border-background-200 bg-white p-8 text-center text-sm text-foreground-500"><LoadingSkeleton label={"Loading your saved assignment…"} /></div>
     );
   }
 

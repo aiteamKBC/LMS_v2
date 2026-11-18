@@ -1,18 +1,19 @@
 import { Link } from 'react-router-dom';
+import type { ReactNode } from 'react';
 import { ArrowRight, type LucideIcon } from 'lucide-react';
 import { cn } from '@/lib/cn';
 import styles from './seasonal-hover-cards.module.css';
 
 export interface SeasonCardProps {
   title: string;
-  subtitle: string;
-  description: string;
+  subtitle: ReactNode;
+  description: ReactNode;
   imageSrc?: string;
   imageAlt?: string;
   href?: string;
   onClick?: () => void;
   cta?: string;
-  status?: string;
+  status?: ReactNode;
   meta?: string;
   icon?: LucideIcon;
   variant?: 'action' | 'session' | 'due';
@@ -53,7 +54,7 @@ function SeasonCard({
     </div>
   </>;
 
-  return <div className={classes} role="group" aria-label={`${title}: ${subtitle}`}>{content}</div>;
+  return <div className={classes} role="group" aria-label={typeof subtitle === 'string' ? `${title}: ${subtitle}` : title}>{content}</div>;
 }
 
 export function SeasonalHoverCards({ cards, className, theme = 'default', layout = 'row' }: SeasonalHoverCardsProps) {

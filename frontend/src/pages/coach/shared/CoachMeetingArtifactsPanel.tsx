@@ -1,3 +1,4 @@
+import { LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { ReviewAttendanceEditor } from './ReviewAttendanceEditor';
 import { AppIcon } from '@/components/feature/AppIcon';
@@ -610,10 +611,7 @@ function AttendanceTracker({ attendance, controls }: { attendance: CoachMeetingA
 function TranscriptPreview({ preview }: { preview: TranscriptPreviewState }) {
   if (preview.status === 'loading') {
     return (
-      <div className="flex min-h-32 items-center justify-center gap-2 rounded-lg bg-white text-[12px] font-semibold text-primary-700">
-        <AppIcon className="ri-loader-4-line animate-spin"></AppIcon>
-        Loading transcript preview
-      </div>
+      <div className="flex min-h-32 items-center justify-center gap-2 rounded-lg bg-white text-[12px] font-semibold text-primary-700"><LoadingSkeleton label={"Loading transcript preview"} /></div>
     );
   }
   if (preview.status === 'error') {

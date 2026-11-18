@@ -25,7 +25,7 @@ export interface EntityStat {
   icon: string;
   label: string;
   value: string | number;
-  detail?: string;
+  detail?: ReactNode;
 }
 
 /**
@@ -1596,7 +1596,7 @@ export function WorkspaceHeader({
 }: {
   breadcrumbs: Array<{ label: string; href?: string }>;
   eyebrow: string;
-  title: string;
+  title: ReactNode;
   subtitle: ReactNode;
   accentColor?: string;
   stats: EntityStat[];

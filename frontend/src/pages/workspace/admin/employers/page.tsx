@@ -1,3 +1,4 @@
+import { LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
 import { useEffect, useMemo, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
@@ -138,9 +139,7 @@ export default function EmployerWorkspacePage() {
         </div>
 
         {loading && (
-          <p className="py-16 text-center text-[13px] text-foreground-400">
-            <AppIcon className="ri-loader-4-line animate-spin mr-2" />Loading employers…
-          </p>
+          <p className="py-16 text-center text-[13px] text-foreground-400"><LoadingSkeleton label={"Loading employers…"} /></p>
         )}
 
         {!loading && error && (

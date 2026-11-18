@@ -203,7 +203,7 @@ describe('Aptem booking from a coach list', () => {
       ...(kind === 'templateConflict' ? { templateSync: { status: 'conflict' } } : {}),
     });
     mount({ viewingAsCoach: kind === 'preview' });
-    await waitFor(() => expect(screen.queryByText('Loading review booking…')).toBeNull());
+    await waitFor(() => expect(screen.queryByRole('status', { name: 'Loading review booking…' })).toBeNull());
     expect(screen.queryByRole('button', { name: 'Confirm booking' })).toBeNull();
     expect(initializeForm).not.toHaveBeenCalled();
     expect(book).not.toHaveBeenCalled();

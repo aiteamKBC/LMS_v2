@@ -1,3 +1,4 @@
+import { LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
 import { useCallback, useEffect, useState, type ReactNode } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
@@ -511,9 +512,7 @@ export default function ReviewFormPage() {
         </div>
 
         {loading && (
-          <p className="py-16 text-center text-[13px] text-foreground-400">
-            <i className="ri-loader-4-line animate-spin mr-2" />Loading the review…
-          </p>
+          <p className="py-16 text-center text-[13px] text-foreground-400"><LoadingSkeleton label={"Loading the review…"} /></p>
         )}
 
         {!loading && error && !data && (

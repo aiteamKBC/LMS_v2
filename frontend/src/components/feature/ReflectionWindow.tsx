@@ -1,3 +1,4 @@
+import { LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
 import { formatClock, parseClockSeconds, formatRecordedClock } from './ReflectionWindow.helpers';
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import type { ComponentKsbMapping, LearnerKind, LearnerKsbItem } from '@/api/learnerDetail';
@@ -959,10 +960,7 @@ function ReflectionWindowForm({
       </div>
 
       {loadingExisting && (
-        <div className="border-t border-[#d7e0e8] bg-white px-5 py-3 text-sm text-[#607086] md:px-8">
-          <AppIcon className="ri-loader-4-line mr-2 animate-spin" />
-          Loading your saved reflection...
-        </div>
+        <div className="border-t border-[#d7e0e8] bg-white px-5 py-3 text-sm text-[#607086] md:px-8"><LoadingSkeleton label={"Loading your saved reflection..."} /></div>
       )}
 
       {submissionLocked && (

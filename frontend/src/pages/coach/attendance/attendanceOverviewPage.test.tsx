@@ -204,7 +204,7 @@ describe('coach attendance overview', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Mark selected Absent' }));
     fireEvent.click(screen.getByRole('button', { name: 'Apply bulk update' }));
     await screen.findByText('Attendance saved.');
-    await waitFor(() => expect(screen.queryByText('Loading attendance modules…')).not.toBeInTheDocument());
+    await waitFor(() => expect(screen.queryByRole('status', { name: 'Loading attendance modules…' })).not.toBeInTheDocument());
     const writes = vi.mocked(coachFetch).mock.calls.filter(([, init]) => init?.method === 'POST');
     expect(writes).toHaveLength(1);
     expect(JSON.parse(String(writes[0][1]?.body))).toMatchObject({
@@ -443,7 +443,7 @@ describe('coach attendance overview', () => {
     await waitFor(() => expect(programme).toBeEnabled());
     expect(vi.mocked(coachFetch).mock.calls.map(([url]) => url)).toEqual(['/coach_api/coach/attendance/options']);
     fireEvent.change(programme, { target: { value: 'programme-1' } });
-    await waitFor(() => expect(screen.queryByText('Loading attendance modules…')).not.toBeInTheDocument());
+    await waitFor(() => expect(screen.queryByRole('status', { name: 'Loading attendance modules…' })).not.toBeInTheDocument());
     expect(vi.mocked(coachFetch).mock.calls).toHaveLength(2);
     expect(vi.mocked(coachFetch).mock.calls[1][0]).toContain('/options?programmeId=programme-1&includeModules=1');
     expect(within(screen.getByLabelText('Group / module')).getAllByRole('option').map(row => (row as HTMLOptionElement).value)).toEqual(['', 'group-1', 'group-2']);

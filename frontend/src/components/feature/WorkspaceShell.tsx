@@ -24,8 +24,8 @@ interface WorkspaceShellProps {
   role: string;
   roleLabel: string;
   navItems: SidebarNavItem[];
-  pageTitle: string;
-  pageSubtitle?: string;
+  pageTitle: ReactNode;
+  pageSubtitle?: ReactNode;
   /** Optional page-specific actions rendered inside the shared header. */
   headerExtras?: ReactNode;
   userName?: string;

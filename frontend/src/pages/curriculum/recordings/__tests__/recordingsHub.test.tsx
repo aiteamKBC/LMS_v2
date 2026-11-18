@@ -21,6 +21,15 @@ describe('Coach and tutor recordings entry points', () => {
     expect(screen.getByRole('link', { name: /Tutor Session Recordings/ })).toHaveAttribute('href', '/curriculum/recordings');
     expect(screen.getByRole('link', { name: /Quality Assurance/ })).toHaveAttribute('href', '/curriculum/quality-demo');
   });
+  it('uses the same quality destination from its card and the curriculum sidebar', () => {
+    render(<MemoryRouter><RecordingsHub /></MemoryRouter>);
+    const card = screen.getByRole('link', { name: 'Quality Assurance' });
+    const recordings = curriculumNavItems.find(item => item.id === 'curriculum-coaching-recordings');
+    const entry = recordings?.children?.find(item => item.id === 'curriculum-quality-assurance');
+    expect(entry?.href).toBe(card.getAttribute('href'));
+    expect(entry?.matchPaths).toContain('/curriculum/coaching-recordings/reviews');
+    expect(card.querySelector('img')).toHaveAttribute('src', '/recordings-hub/quality.svg');
+  });
   it('keeps all recording destinations in the existing permissioned sidebar group', () => {
     const entry = curriculumNavItems.find(item => item.id === 'curriculum-coaching-recordings');
     expect(entry?.label).toBe('Recordings');
@@ -28,6 +37,7 @@ describe('Coach and tutor recordings entry points', () => {
       { id: 'curriculum-recordings-hub', label: 'Recordings hub', href: '/curriculum/recordings-hub' },
       { id: 'curriculum-tutor-recordings', label: 'Tutor session recordings', href: '/curriculum/recordings' },
       { id: 'curriculum-coach-meetings', label: 'Coach meetings', href: '/curriculum/coaching-recordings' },
+      { id: 'curriculum-quality-assurance', label: 'Quality Assurance', href: '/curriculum/quality-demo' },
     ]);
     expect(curriculumNavItems.find(item => item.href === '/curriculum/delivery')?.matchPaths).not.toContain('/curriculum/recordings');
   });
