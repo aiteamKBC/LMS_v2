@@ -215,13 +215,13 @@ export default function FilterBar({
 
         {fields.includes("respondentType") ? (
           <div className="min-w-0">
-            <Label htmlFor="filter-respondent-type">Feedback type</Label>
+            <Label htmlFor="filter-respondent-type">Respondent</Label>
             <FilterSelect
               id="filter-respondent-type"
-              ariaLabel="Feedback type"
+              ariaLabel="Respondent"
               value={filters.respondentType}
               onChange={(respondentType) => onChange({ respondentType })}
-              options={["All feedback types", ...respondentTypes].map((type) => ({ value: type, label: type }))}
+              options={[{ value: "All feedback types", label: "All respondents" }, ...respondentTypes.map((type) => ({ value: type, label: type }))]}
             />
           </div>
         ) : null}

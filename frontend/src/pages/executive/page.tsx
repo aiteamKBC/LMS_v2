@@ -23,6 +23,7 @@ import {
   isOpenAction,
 } from "@/lib/qms";
 import type { DashboardFilters } from "@/types/qms";
+import { filterOptions, keepConsistent } from "./filterOptions";
 import { loadLiveQmsData, type LiveQmsData } from "./qualityData";
 import { OVERVIEW_CACHE_FRESH_MS, readOverviewCache, writeOverviewCache } from "./overviewCache";
 import styles from "./ExecutiveOverview.module.css";
@@ -75,7 +76,7 @@ export default function ExecutiveOverview({ attentionPanel }: { attentionPanel?:
   }, [retry]);
 
   const onChange = useCallback((patch: Partial<DashboardFilters>) =>
-    setFilters((current) => ({ ...current, ...patch })), []);
+    setFilters((current) => keepConsistent(data, { ...current, ...patch })), [data]);
   const resetFilters = useCallback(() => setFilters(DEFAULT_FILTERS), []);
   const openAuditTypes = useCallback(() => setAuditTypesOpen(true), []);
 
@@ -135,8 +136,6 @@ export default function ExecutiveOverview({ attentionPanel }: { attentionPanel?:
     [data?.forms, appliedFilters.category, appliedFilters.formType, appliedFilters.feedbackType, appliedFilters.respondentType, appliedFilters.coach, appliedFilters.tutor, records],
   );
 
-  const assessedInScope = records.filter((record) => !["unrated", "na"].includes(record.rag)).length;
-  const openInScope = actions.filter(isOpenAction).length;
   const peakMonth = trend.reduce(
     (top, point) => (point.total > top.total ? point : top),
     trend[0] ?? { label: "—", total: 0 },
@@ -177,8 +176,7 @@ export default function ExecutiveOverview({ attentionPanel }: { attentionPanel?:
   ]));
   const departments = Array.from(new Set(live.records.map(record => record.department)));
   const programmes = Array.from(new Set(live.records.map(record => record.programme)));
-  const formTypes = live.forms.map(form => ({ id: form.id, name: form.shortName }));
-  const respondentTypes = Array.from(new Set(live.records.map(record => record.respondentType)));
+  const { formTypes, feedbackTypes, respondentTypes } = filterOptions(live, filters);
   const coaches = Array.from(new Set(live.records.map(record => record.coachName).filter((name): name is string => Boolean(name))));
   const tutors = Array.from(new Set(live.records.map(record => record.tutorName).filter((name): name is string => Boolean(name))));
 
@@ -267,14 +265,14 @@ export default function ExecutiveOverview({ attentionPanel }: { attentionPanel?:
         resultCount={records.length}
         categories={categories}
         formTypes={formTypes}
-        feedbackTypes={live.feedbackTypes}
+        feedbackTypes={feedbackTypes}
         departments={departments}
         programmes={programmes}
         respondentTypes={respondentTypes}
         coaches={coaches}
         tutors={tutors}
         fields={["period", "category", "formType", "feedbackType", "respondentType", "coach", "tutor", "rag", "query"]}
-        resultLabel={`records · ${formatNumber(assessedInScope)} assessed · ${live.availability.actions ? `${formatNumber(openInScope)} open actions in scope` : 'action status unavailable'}`}
+        resultLabel="records in scope"
       />
       </div>
 
