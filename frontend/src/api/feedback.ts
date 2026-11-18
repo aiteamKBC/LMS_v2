@@ -197,13 +197,13 @@ export interface FeedbackClassificationReport extends FeedbackClassCounts {
 }
 
 export interface FeedbackDashboardReport extends FeedbackQuestionReport {
-  forms?: { id: number; title: string; formType: FeedbackFormType }[];
+  forms?: { id: number; title: string; formType: string }[];
   groups: { id: string; name: string }[];
   modules?: { id: string; name: string }[];
   coverage: { assigned: number | null; submitted: number; rate: number | null };
 }
 export interface FeedbackDashboardFilters {
-  formId?: number; includeForms?: boolean; formType?: FeedbackFormType; groupId?: string; moduleId?: string; classification?: FeedbackScoreClass;
+  formId?: number; includeForms?: boolean; formType?: string; groupId?: string; moduleId?: string; classification?: FeedbackScoreClass;
   submittedFrom?: string; submittedTo?: string;
 }
 

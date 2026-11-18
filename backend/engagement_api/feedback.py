@@ -1162,7 +1162,10 @@ def insights_dashboard(request):
     group = request.GET.get('groupId')
     module = request.GET.get('moduleId')
     if kind and kind not in FORM_TYPES:
-        return json_error('Unknown feedback form type.', status=400)
+        if (not re.fullmatch(r'[A-Za-z0-9_]{1,40}', kind)
+                or not FeedbackForm.objects.filter(form_type=kind).exclude(
+                    title__iregex=QUALITY_DASHBOARD_HIDDEN_FORM_TITLE_PATTERN).exists()):
+            return json_error('Unknown feedback form type.', status=400)
     if form_id and (not form_id.isdecimal() or int(form_id) < 1):
         return json_error('Invalid feedback form.', status=400)
     if classification and classification not in {'positive', 'neutral', 'negative', 'unscored'}:

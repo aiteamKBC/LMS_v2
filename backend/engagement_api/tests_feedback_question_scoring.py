@@ -632,10 +632,25 @@ class FeedbackDashboardReadTests(SimpleTestCase):
 
     def test_dashboard_rejects_bad_filters_before_queries(self):
         for query in ['formType=wrong', 'formId=nope', 'formId=-1', 'classification=high', 'groupId=' + 'x' * 256, 'groupId=bad%00group', 'moduleId=' + 'x' * 256, 'moduleId=bad%00module', 'submittedFrom=2026-02-30', 'submittedFrom=2026-10-26&submittedTo=2026-10-01']:
-            with self.subTest(query=query), mock.patch.object(feedback, 'question_analytics') as report, mock.patch.object(reporting, 'dashboard_groups') as groups:
+            with self.subTest(query=query), mock.patch.object(feedback, 'question_analytics') as report, mock.patch.object(reporting, 'dashboard_groups') as groups, mock.patch.object(feedback.FeedbackForm.objects, 'filter', return_value=queryset()):
+                feedback.FeedbackForm.objects.filter.return_value.exists.return_value = False
                 self.assertEqual(feedback.insights_dashboard.__wrapped__(RequestFactory().get('/?' + query)).status_code, 400)
                 report.assert_not_called()
                 groups.assert_not_called()
+
+    def test_dashboard_accepts_new_type_when_a_visible_form_exists(self):
+        forms = queryset([71])
+        forms.exists.return_value = True
+        with (
+            mock.patch.object(feedback.FeedbackForm.objects, 'filter', return_value=forms),
+            mock.patch.object(feedback, 'question_analytics', return_value={}) as report,
+            mock.patch.object(reporting, 'dashboard_groups', return_value=[]),
+            mock.patch.object(reporting, 'dashboard_modules', return_value=[]),
+        ):
+            response = feedback.insights_dashboard.__wrapped__(RequestFactory().get('/?formType=custom_pulse'))
+        self.assertEqual(response.status_code, 200)
+        forms.exclude.assert_called_with(title__iregex=feedback.QUALITY_DASHBOARD_HIDDEN_FORM_TITLE_PATTERN)
+        self.assertEqual(report.call_args.args[0], [71])
 
     def test_dashboard_filters_selected_form_across_versions_and_rejects_hidden_form(self):
         selected = Row(id=49, title='Progress Review Feedback Form', template_key='template-1', form_type='post_progress_review')

@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useSearchParams } from "react-router-dom";
-import { feedbackApi, type FeedbackDashboardReport, type FeedbackFormType, type FeedbackResponse, type FeedbackScoreClass } from "@/api/feedback";
+import { feedbackApi, type FeedbackDashboardReport, type FeedbackResponse, type FeedbackScoreClass } from "@/api/feedback";
 import { FormRenderer } from "@/features/feedback/FormRenderer";
 import { qualityDashboardFeedbackTypeEntries } from "@/features/feedback/feedbackDashboardData";
 import { TIME_ZONE_LABEL } from "@/pages/curriculum/recordings/utils";
@@ -22,7 +22,7 @@ export default function FeedbacksPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const requestedClassification = searchParams.get("classification");
   const classification = requestedClassification && requestedClassification in classes ? requestedClassification as FeedbackScoreClass : null;
-  const [formType, setFormType] = useState<FeedbackFormType | "all">("all");
+  const [formType, setFormType] = useState<string>("all");
   const [formId, setFormId] = useState("");
   const [availableForms, setAvailableForms] = useState<NonNullable<FeedbackDashboardReport["forms"]>>([]);
   const [retry, setRetry] = useState(0);
@@ -68,6 +68,7 @@ export default function FeedbacksPage() {
   }, [selectedId, detailRetry]);
 
   const counts = report?.insights?.classification;
+  const visibleForms = availableForms.filter(form => !isQualityDashboardHiddenFormName(form.title));
   const rows = [...(counts?.responses ?? [])].sort((a, b) => (b.submittedAt ?? "").localeCompare(a.submittedAt ?? ""));
 
   return <section aria-label="Quality feedback" className="space-y-4">
@@ -79,15 +80,15 @@ export default function FeedbacksPage() {
 
     <div className="grid gap-3 rounded-lg border border-background-200 bg-background-50 p-4 sm:grid-cols-2">
       <label className="text-[11px] font-semibold text-foreground-600">Feedback type
-        <select aria-label="Quality feedback type" className={`mt-1 ${selectClass}`} value={formType} onChange={event => { setFormType(event.target.value as typeof formType); setFormId(""); }}>
+        <select aria-label="Quality feedback type" className={`mt-1 ${selectClass}`} value={formType} onChange={event => { setFormType(event.target.value); setFormId(""); }}>
           <option value="all">All feedback types</option>
-          {qualityDashboardFeedbackTypeEntries().map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+          {qualityDashboardFeedbackTypeEntries(visibleForms).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
         </select>
       </label>
       <label className="text-[11px] font-semibold text-foreground-600">Feedback form
         <select aria-label="Quality feedback form" className={`mt-1 ${selectClass}`} value={formId} onChange={event => setFormId(event.target.value)}>
           <option value="">All forms</option>
-          {availableForms.filter(form => !isQualityDashboardHiddenFormName(form.title) && (formType === "all" || form.formType === formType)).map(form =>
+          {visibleForms.filter(form => formType === "all" || form.formType === formType).map(form =>
             <option key={form.id} value={form.id}>{form.title}</option>)}
         </select>
       </label>

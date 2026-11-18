@@ -144,6 +144,21 @@ describe('executive overview live data', () => {
     expect(data.records.map(record => record.id)).not.toContain('feedback-response-3');
   });
 
+  it('adds a new feedback form and type to the executive registry from live data', async () => {
+    const form = { id: 71, title: 'Learner Pulse', formType: 'custom_pulse', version: 1, assignedCount: 1,
+      sections: [{ questions: [{ id: 1, type: 'rating' }] }] } as unknown as FeedbackForm;
+    const response = { id: 7, formId: 71, formTitle: form.title, formType: form.formType, templateKey: 'pulse',
+      learnerId: null, deliveryId: null, sessionTitle: '', sessionStartsAt: null, tutorName: '', learnerName: 'Synthetic respondent',
+      programme: '', status: 'completed', startedAt: '2026-10-20T09:00:00Z', updatedAt: '2026-10-20T10:00:00Z',
+      submittedAt: '2026-10-20T10:00:00Z' } as FeedbackResponse;
+    mocks.feedbackForms.mockResolvedValue({ forms: [form] });
+    mocks.feedbackResponses.mockResolvedValue({ responses: [response] });
+    const data = await loadLiveQmsData(new AbortController().signal);
+    expect(data.forms.map(item => item.id)).toContain('feedback-71');
+    expect(data.feedbackTypes).toContainEqual({ id: 'custom_pulse', name: 'custom_pulse' });
+    expect(data.records.map(item => item.id)).toContain('feedback-response-7');
+  });
+
   it('includes completed historical form responses and excludes unfinished responses', async () => {
     const current = { id: 49, title: 'Synthetic lecture feedback', templateKey: 'lecture-family', formType: 'post_lecture', version: 2,
       assignedCount: 5, sections: [{ questions: [{ id: 2, type: 'rating' }] }] } as FeedbackForm;
