@@ -38,7 +38,6 @@ afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 describe('Quality dashboard live notification wiring', () => {
   it('shares fetched alerts between the card and bell and opens original answers from either', async () => {
     render(<MemoryRouter><QualityAssurancePage /></MemoryRouter>);
-    await userEvent.click(screen.getByRole('button', { name: 'Needs Attention' }));
     const card = within(screen.getByRole('region', { name: 'Needs Attention' }));
     await card.findByText('1 alert');
     const bell = within(screen.getByRole('navigation', { name: 'Notification bell' }));
@@ -51,16 +50,9 @@ describe('Quality dashboard live notification wiring', () => {
     expect(await screen.findByRole('textbox', { name: 'What needs improvement?' })).toHaveValue('Synthetic answer from the server.');
     expect(feedbackApi.response).toHaveBeenCalledTimes(2);
     await userEvent.click(screen.getByRole('button', { name: 'Close Feedback response' }));
-    const readsBeforeReopen = vi.mocked(feedbackApi.insightsDashboard).mock.calls.length;
-    await userEvent.click(screen.getByRole('button', { name: 'Needs Attention' }));
-    expect(screen.queryByRole('region', { name: 'Needs Attention' })).not.toBeInTheDocument();
-    await userEvent.click(screen.getByRole('button', { name: 'Needs Attention' }));
-    await waitFor(() => expect(feedbackApi.insightsDashboard).toHaveBeenCalledTimes(readsBeforeReopen + 1));
-    const reopenedCard = within(screen.getByRole('region', { name: 'Needs Attention' }));
-    await reopenedCard.findByText('1 alert');
     vi.mocked(feedbackApi.insightsDashboard).mockResolvedValue({ analytics: { insights: { classification: { responses: [] } } } as FeedbackDashboardReport });
-    await userEvent.click(reopenedCard.getByRole('button', { name: 'Refresh alerts' }));
-    await reopenedCard.findByText('No quality alerts need your attention.');
+    await userEvent.click(card.getByRole('button', { name: 'Refresh alerts' }));
+    await card.findByText('No quality alerts need your attention.');
     expect(bell.queryByRole('button')).not.toBeInTheDocument();
     expect(feedbackApi.insightsDashboard).toHaveBeenLastCalledWith({ classification: 'negative' });
   });
@@ -68,7 +60,6 @@ describe('Quality dashboard live notification wiring', () => {
   it('does not show demo notifications when the server rejects a read', async () => {
     vi.mocked(feedbackApi.insightsDashboard).mockRejectedValue(new Error('Not authorised to read feedback'));
     render(<MemoryRouter><QualityAssurancePage /></MemoryRouter>);
-    await userEvent.click(screen.getByRole('button', { name: 'Needs Attention' }));
     await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('Not authorised to read feedback'));
     expect(screen.getByText('Unavailable')).toBeInTheDocument();
     expect(within(screen.getByRole('navigation', { name: 'Notification bell' })).queryByRole('button')).not.toBeInTheDocument();
@@ -78,7 +69,6 @@ describe('Quality dashboard live notification wiring', () => {
 
   it('closes the previous account response and clears alerts when signing out', async () => {
     const { rerender } = render(<MemoryRouter><QualityAssurancePage /></MemoryRouter>);
-    await userEvent.click(screen.getByRole('button', { name: 'Needs Attention' }));
     const card = within(screen.getByRole('region', { name: 'Needs Attention' }));
     await card.findByText('1 alert');
     await userEvent.click(card.getByRole('button', { name: /Anonymous learner/ }));

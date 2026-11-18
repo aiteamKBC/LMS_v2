@@ -39,9 +39,14 @@
   min-height: 0;
   flex: 1;
   overflow-y: auto;
+  padding-inline-end: 16px;
 }
 
 @media (max-width: 639px) {
+  .body {
+    padding-inline-end: 12px;
+  }
+
   .shell > :global(.workspace-content) {
     padding-inline: 8px;
   }

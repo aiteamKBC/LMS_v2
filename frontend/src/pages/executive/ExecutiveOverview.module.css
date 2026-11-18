@@ -8,16 +8,6 @@
 }
 
 .policyControl { position: relative; }
-.headerAttention > div { width: auto; }
-.headerAttention > div > button { min-height: 42px; white-space: nowrap; }
-.headerAttention > div > div {
-  position: absolute;
-  top: calc(100% + 8px);
-  right: 0;
-  z-index: 30;
-  width: min(480px, 100cqi);
-  box-shadow: 0 12px 32px rgb(30 15 50 / 14%);
-}
 .attentionPanel { min-width: 0; grid-column: 1 / -1; }
 
 .policyPanel {
@@ -266,7 +256,6 @@
 @container (max-width: 850px) {
   .hero { align-items: flex-start; flex-direction: column; gap: 18px; }
   .policyPanel { right: auto; left: 0; }
-  .headerAttention > div > div { right: auto; left: 0; }
   .kpiGrid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .kpiGrid > div:nth-child(n), .kpiGrid.withAttention > div:nth-child(n) { grid-column: auto; grid-row: auto; }
   .kpiGrid:not(.withAttention) > div:last-child { grid-column: 1 / -1; }
@@ -280,9 +269,9 @@
   .filters > section > [data-filter-fields] { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px 10px; }
   .filters > section > [data-filter-fields] > div:last-child { grid-column: 1 / -1; }
   .heroActions { width: 100%; }
-  .heroActions > button, .policyControl, .headerAttention { flex: 1; }
-  .heroActions > button, .policyControl > button, .headerAttention > div > button { padding-inline: 10px; font-size: 11px; }
-  .policyControl > button, .headerAttention > div > button { width: 100%; }
+  .heroActions > button, .policyControl { flex: 1; }
+  .heroActions > button, .policyControl > button { padding-inline: 10px; font-size: 11px; }
+  .policyControl > button { width: 100%; }
   .kpiGrid { gap: 10px; }
   .kpiGrid > div { padding: 15px; }
   .kpiGrid > div > div:first-child { flex-direction: column-reverse; gap: 10px; }

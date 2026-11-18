@@ -8,7 +8,6 @@ import FilterBar from "@/components/qms/FilterBar";
 import RagTrendChart from "@/components/qms/RagTrendChart";
 import OverviewKpis from "@/pages/executive/components/OverviewKpis";
 import HealthOverview from "@/pages/executive/components/HealthOverview";
-import CategoryRag from "@/pages/executive/components/CategoryRag";
 import RegistryTable from "@/pages/executive/components/RegistryTable";
 import QualityDonuts from "@/pages/executive/components/QualityDonuts";
 import MeetingTypesModal from "@/pages/executive/components/MeetingTypesModal";
@@ -200,7 +199,6 @@ export default function ExecutiveOverview({ attentionPanel }: { attentionPanel?:
         </div>
 
         <div className={styles.heroActions}>
-          {attentionPanel ? <div className={styles.headerAttention}>{attentionPanel}</div> : null}
           <div className={styles.policyControl}>
             <button
               type="button"
@@ -290,7 +288,7 @@ export default function ExecutiveOverview({ attentionPanel }: { attentionPanel?:
         <div>
           <HealthOverview records={records} availability={live.availability} />
         </div>
-        <CategoryRag records={records} />
+        {attentionPanel}
       </div>
 
       <div className={styles.trendRegistryGrid}>

@@ -25,7 +25,11 @@ describe('Quality notifications in the overview', () => {
     }));
     expect(screen.queryByRole('status', { name: /Loading live quality/ })).not.toBeInTheDocument();
     expect(screen.getByRole('heading', { name: 'Executive Overview' })).toBeInTheDocument();
-    expect(screen.getByRole('region', { name: 'Needs Attention' })).toHaveTextContent('Synthetic quality alert');
+    const attention = screen.getByRole('region', { name: 'Needs Attention' });
+    expect(attention).toHaveTextContent('Synthetic quality alert');
+    expect(attention.previousElementSibling).toContainElement(screen.getByRole('heading', { name: 'Quality health overview' }));
+    expect(screen.queryByRole('heading', { name: 'Status by form category' })).not.toBeInTheDocument();
+    expect(screen.getAllByRole('region', { name: 'Needs Attention' })).toHaveLength(1);
   });
 
   it('shows notifications on failure and hides them again while retrying', async () => {
