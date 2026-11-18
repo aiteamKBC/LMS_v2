@@ -1265,8 +1265,21 @@ export interface CurriculumLearnerActivity {
   evidenceCount: number;
 }
 
+/** Resolved lecture register; stored Activity Log hours and completion remain separate. */
+export interface CurriculumRegisterAttendance {
+  status: 'present' | 'absent' | 'unmarked' | 'unlinked' | 'cancelled' | 'upcoming' | 'in_progress';
+  occurrenceId: string | null;
+  sessionDate: string | null;
+  attendedSeconds: number | null;
+  firstJoinAt: string | null;
+  lastLeaveAt: string | null;
+  /** Fixed live credit, once per learner/occurrence. Omitted unless present. */
+  creditedOtjh?: number;
+}
+
 /** Authored activity for one assigned learner, including not-started rows. */
 export interface CurriculumLearnerActivityPlanItem {
+  registerAttendance?: CurriculumRegisterAttendance;
   lectureDate?: string | null;
   logState?: CurriculumActivityLogState;
   canChangeStatus?: boolean;
@@ -1370,6 +1383,8 @@ export type CurriculumProgrammeLearnerRosterResponse = CurriculumScopeLearnerRos
 
 export interface CurriculumScopeLearnerKsbImpactResponse {
   moduleProgressBasis?: 'current_activities';
+  /** Attendance-aware view of hours; does not rewrite the Activity Log ledger. */
+  moduleProgressOtjh?: CurriculumScopeLearnerKsbImpactResponse['activityLogOtjh'];
   activityLogProgress?: {
     learners: Array<{ learnerId: number | string; totalActivities: number; completedActivities: number;
       inProgressActivities: number; earlierRecords: number; earlierCompleted: number; earlierOtjh?: number }>;

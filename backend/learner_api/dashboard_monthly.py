@@ -198,10 +198,11 @@ def read_monthly(source, kind, owner, profile, request, *, canonical_contract=Fa
     now = timezone.now().astimezone(UK)
     requested = validate_month(request.GET.get('month'))
     from .monthly_log_attendance import read_rows as saved_attendance_hours
-    recorded_attendance = saved_attendance_hours(owner, now=now)
+    from .attendance_otjh import additional_rows
     current = timezone.localdate(timezone=UK).strftime('%Y-%m')
     # Retain lineage context for direct-save replacement and manual corrections.
     records = canonical.entries_for(owner, lineage_only=True, dashboard_metadata=True, monthly_summary=True)
+    recorded_attendance = additional_rows(records, saved_attendance_hours(owner, now=now))
     targets = canonical.targets_for(owner)
     learning = learning_projection(source, owner, records, compact_content=True,
                                    **({'monthly_assignments': True} if v2 else {}))

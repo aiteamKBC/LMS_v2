@@ -47,3 +47,23 @@ it('keeps a genuinely empty filter separate from a failed or incomplete read', (
   expect(totals.expectedKsb).toBe(0);
   expect(totals.unavailable).toBe(0);
 });
+
+it('uses the same attendance-inclusive total as module details, without adding the Activity Log again', () => {
+  const enriched = { ...impact, moduleProgressOtjh: { ...impact.activityLogOtjh!, learners: [
+    { ...impact.activityLogOtjh!.learners[0], achievedOtjh: 3.5 },
+    { ...impact.activityLogOtjh!.learners[1], achievedOtjh: 4.5, unallocatedAcceptedRecords: 0 },
+  ] } };
+  expect(moduleProgressTotals(enriched, ['1', '2'])).toMatchObject({
+    hours: 8, plannedHours: 8, historicalHours: 30, unallocatedHours: 0,
+  });
+  expect(moduleProgressTotals(enriched, ['2'])).toMatchObject({
+    hours: 4.5, plannedHours: 5, historicalHours: 20, unallocatedHours: 0,
+  });
+});
+
+it('preserves unavailable attendance-inclusive hours instead of substituting stale activity hours', () => {
+  const enriched = { ...impact, moduleProgressOtjh: { ...impact.activityLogOtjh!, learners: [
+    { ...impact.activityLogOtjh!.learners[0], achievedOtjh: null },
+  ] } };
+  expect(moduleProgressTotals(enriched, ['1'])).toMatchObject({ hours: null, hoursKnown: false, plannedHours: 3 });
+});

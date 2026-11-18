@@ -1,5 +1,6 @@
 import { LearnerReadError } from './learnerRead';
 import type { PlanSlotHoliday } from './trainingPlanDashboard';
+import type { LiveSessionAccess, LiveSessionLearning } from './learnerDetail';
 
 export type WeeklySessionState = 'attended' | 'missed' | 'upcoming' | 'live' | 'unscheduled' | 'unmarked' | 'cancelled';
 export type WeeklyAttendance = 'present' | 'absent' | 'upcoming' | 'unmarked';
@@ -18,6 +19,8 @@ export type CanonicalSelectedWeek = {
   liveSession: { id: string; title: string; date: string; startTime: string; start: string; durationMinutes: number | null;
     endTime: string | null; status: string; sessionState: WeeklySessionState; attendance: WeeklyAttendance; joinUrl: string | null } | null;
   activities: { id: string; title: string; type: string; isQuiz: boolean;
+    liveSessionLearning?: LiveSessionLearning;
+    liveSessionAccess?: LiveSessionAccess;
     status: 'completed' | 'in-progress' | 'not-started'; expectedHours: number | null; actualHours: number | null;
     durationMinutes: number | null; quizDuration: number | null; quizTimeUnit: string | null;
     ksbCodes: string[]; reflectionKsbs?: ReflectionKsbSelection[]; recordedKsbCodes?: string[];

@@ -115,6 +115,8 @@ def read_dashboard_weekly(source, pk, *, week_id=None, module_id=None):
             live_session_ids=False, week_ids=[str(navigation['weekId'])],
             resolved_metadata=getattr(source, '_weekly_resolved_metadata', None), routing_only=True)
         components = _apply_programme_assignment_template(components, source.programme)
+        from .live_session_access import annotate_access
+        components = annotate_access(source, components)
         routing = {str(row['componentId']): _weekly_component(row) for row in components}
         activity_ids = [str(activity['id']) for activity in selected['activities']]
         selections = reflection_ksbs(owner, activity_ids)
@@ -124,7 +126,7 @@ def read_dashboard_weekly(source, pk, *, week_id=None, module_id=None):
             if row is None:
                 raise ServiceError('Activity routing could not be resolved.', 'invalid_week', 503)
             activity.update({key: row.get(key) for key in (
-                'contentAvailable', 'videoUrl', 'sessionDate', 'sessionDateTimeUtc', 'teamsLiveSessionId') if key in row})
+                'contentAvailable', 'videoUrl', 'sessionDate', 'sessionDateTimeUtc', 'teamsLiveSessionId', 'liveSessionAccess') if key in row})
             activity['reflectionKsbs'] = selections.get(str(activity['id']), [])
             activity['recordedKsbCodes'] = recorded.get(str(activity['id']), [])
     return payload

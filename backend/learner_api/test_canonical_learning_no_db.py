@@ -443,6 +443,10 @@ class CanonicalLearningTests(unittest.TestCase):
         self.assertEqual(self.scope['source_quiz_parts'](item, self.owner, {'id': 20}), [])
 
     def setUp(self):
+        # These ledger fixtures contain no live register evidence. The register's
+        # real SQL, ownership and protected months have a separate SQLite suite.
+        self.enterContext(patch('learner_api.attendance_otjh.read_bulk', side_effect=lambda owners, read, **kwargs:
+            {int(o['id']): {'lectures': [], 'protected': {}, 'frozen_rows': []} for o in owners}))
         self.query = Mock()
         self.scope = adapter(self.query)
         self.owner = {'id': 510, 'enrolment_id': 271, 'aptem_id': 3582, 'programme_id': 'PROG-ME-L4', 'name': 'Synthetic learner',
@@ -939,12 +943,12 @@ class CanonicalLearningTests(unittest.TestCase):
 
     def test_monthly_projection_includes_history_without_legacy_union(self):
         canonical = SimpleNamespace(enabled=lambda _: True,
-            activity_rows=lambda _: [{'reporting_month': '2025-07'}, {'reporting_month': '2026-09'}, {'reporting_month': '2026-12'}],
+            activity_rows=lambda _: [{'reporting_month': '2025-07', 'source_ref': 'a'}, {'reporting_month': '2026-09', 'source_ref': 'b'}, {'reporting_month': '2026-12', 'source_ref': 'c'}],
             targets=lambda _: {'2026-08': 2})
         scope = dict(canonical=canonical, defaultdict=defaultdict,
-                     attendance_rows=lambda _: [{'reporting_month': '2026-09'}, {'reporting_month': '2026-12'}],
+                     attendance_rows=lambda _: [{'reporting_month': '2026-09', 'source_ref': 'd'}, {'reporting_month': '2026-12', 'source_ref': 'e'}],
                      timezone=SimpleNamespace(localdate=lambda: date(2026, 9, 24)))
-        functions('monthly_logs.py', scope, {'current_months'})
+        functions('monthly_logs.py', scope, {'current_months', 'additional_attendance'})
         grouped = scope['current_months']({'id': 271}, include_open=True)
         self.assertEqual(set(grouped), {'2025-07', '2026-08', '2026-09'})
         self.assertEqual(len(grouped['2025-07']), 1)
