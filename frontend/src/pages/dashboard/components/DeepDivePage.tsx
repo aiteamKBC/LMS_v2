@@ -426,7 +426,7 @@ export default function DeepDivePage() {
       <section className="grid gap-3 sm:grid-cols-3" aria-label="Deep Dive summary">
         {summaryCards.map((card) => {
           const content = <><p className="font-label text-[10.5px] font-semibold uppercase tracking-[0.1em] text-foreground-500">{card.label}</p><p className="mt-2 font-heading text-[28px] font-semibold text-foreground-950">{card.value}</p><p className="mt-1 text-[11px] text-foreground-500">{card.caption}</p></>;
-          return card.kind ? <button key={card.label} type="button" className="rounded-xl border border-background-200 bg-background-50 p-4 text-left transition hover:border-primary-300 hover:bg-primary-50/30 focus:outline-none focus:ring-2 focus:ring-primary-200" onClick={() => setReviewListKind(card.kind)}>{content}</button> : <article key={card.label} className="rounded-xl border border-background-200 bg-background-50 p-4">{content}</article>;
+          return card.kind ? <button key={card.label} type="button" className={`${styles.summaryCard} rounded-xl border border-background-200 bg-background-50 p-4 text-left transition hover:border-primary-300 hover:bg-primary-50/30 focus:outline-none focus:ring-2 focus:ring-primary-200`} onClick={() => setReviewListKind(card.kind)}>{content}</button> : <article key={card.label} className={`${styles.summaryCard} rounded-xl border border-background-200 bg-background-50 p-4`}>{content}</article>;
         })}
       </section>
 

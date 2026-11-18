@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import KpiCard from "@/components/base/KpiCard";
 import criticalStyles from "./CriticalCard.module.css";
+import followUpStyles from "./FollowUpCards.module.css";
 import { TIME_ZONE_LABEL, todayIso } from "@/pages/curriculum/recordings/utils";
 import {
   assessedTotal,
@@ -107,7 +108,7 @@ export default function OverviewKpis({ records, actions, forms, availability, on
 
         <KpiCard
           label="Critical feedback"
-          className={criticalStyles.card}
+          className={`${criticalStyles.card} ${followUpStyles.card} ${followUpStyles.critical}`}
           value={availability.feedbackScores ? formatNumber(criticalFeedback) : '—'}
           definition="Negative scored feedback needing immediate review. This is a feedback classification, not an Assessed policy outcome."
           hint={!availability.feedbackScores ? 'Feedback classification data is unavailable' : criticalFeedback ? "Open the original responses to review" : "No Negative feedback in scope"}
@@ -119,6 +120,7 @@ export default function OverviewKpis({ records, actions, forms, availability, on
 
         <KpiCard
           label="Open actions"
+          className={followUpStyles.card}
           value={availability.actions ? formatNumber(openActions.length) : '—'}
           definition="Improvement actions not yet resolved or closed."
           hint={availability.actions ? `${overdueActions.length} past target date` : 'Action status data is unavailable'}
@@ -130,6 +132,7 @@ export default function OverviewKpis({ records, actions, forms, availability, on
 
         <KpiCard
           label="Not assessed"
+          className={followUpStyles.card}
           value={formatNumber(counts.unrated + counts.na)}
           definition="Records without a Green, Amber or Red policy outcome."
           hint={completedNotAssessed
@@ -140,7 +143,7 @@ export default function OverviewKpis({ records, actions, forms, availability, on
           to="/curriculum/quality-demo?view=checks"
           linkLabel="See quality checks"
         />
-        {attentionPanel ? <aside className={styles.attentionPanel}>{attentionPanel}</aside> : null}
+        {attentionPanel ? <aside className={`${styles.attentionPanel} ${followUpStyles.attention}`}>{attentionPanel}</aside> : null}
       </div>
     </section>
   );

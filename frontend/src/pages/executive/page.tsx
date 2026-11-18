@@ -147,7 +147,7 @@ export default function ExecutiveOverview({ attentionPanel }: { attentionPanel?:
   };
 
   if (loading) {
-    return <>{attentionPanel}<div className="rounded-xl border border-background-200 bg-background-50 p-8 text-sm text-foreground-600"><LoadingSkeleton label={"Loading live quality forms and saved reviews…"} /></div></>;
+    return <div className="rounded-xl border border-background-200 bg-background-50 p-8 text-sm text-foreground-600"><LoadingSkeleton label={"Loading live quality forms and saved reviews…"} /></div>;
   }
 
   if (error) {
@@ -183,20 +183,46 @@ export default function ExecutiveOverview({ attentionPanel }: { attentionPanel?:
         </div>
 
         <div className={styles.heroActions}>
-          <button
-            type="button"
-            onClick={() => setShowPolicy((value) => !value)}
-            aria-expanded={showPolicy}
-            aria-controls="rag-policy-panel"
-            className={styles.secondaryButton}
-          >
-            <i className="ri-information-line text-[14px]" aria-hidden="true" />
-            How RAG is calculated
-            <i
-              className={`text-[13px] ${showPolicy ? "ri-arrow-up-s-line" : "ri-arrow-down-s-line"}`}
-              aria-hidden="true"
-            />
-          </button>
+          <div className={styles.policyControl}>
+            <button
+              type="button"
+              onClick={() => setShowPolicy((value) => !value)}
+              aria-expanded={showPolicy}
+              aria-controls="rag-policy-panel"
+              className={styles.secondaryButton}
+            >
+              <i className="ri-information-line text-[14px]" aria-hidden="true" />
+              How RAG is calculated
+              <i
+                className={`text-[13px] ${showPolicy ? "ri-arrow-up-s-line" : "ri-arrow-down-s-line"}`}
+                aria-hidden="true"
+              />
+            </button>
+            {showPolicy ? (
+              <section
+                id="rag-policy-panel"
+                className={`${styles.policyPanel} animate-fade-in rounded-xl border border-primary-100`}
+                aria-label="RAG evaluation definitions"
+              >
+                <h2 className="font-heading text-[13px] font-semibold text-foreground-950">
+                  Status definitions used in this dashboard
+                </h2>
+                <p className="mt-1 font-label text-[11px] leading-relaxed text-foreground-600">
+                  Thresholds are set per form policy — never shared across unrelated forms.
+                </p>
+                <ul className={styles.statusList}>
+                  {RAG_ORDER.map((status) => (
+                    <li key={status} data-status={status} className={`${styles.statusCard} rounded-lg border`}>
+                      <RagBadge status={status} size="sm" />
+                      <p className="text-[11px] leading-relaxed text-foreground-700">
+                        {RAG_META[status].meaning}
+                      </p>
+                    </li>
+                  ))}
+                </ul>
+              </section>
+            ) : null}
+          </div>
           <button
             type="button"
             onClick={() => exportRecordsCsv(records)}
@@ -237,35 +263,6 @@ export default function ExecutiveOverview({ attentionPanel }: { attentionPanel?:
       </div>
 
       <OverviewKpis records={records} actions={actions} forms={forms} availability={live.availability} onOpenAuditTypes={() => setAuditTypesOpen(true)} attentionPanel={attentionPanel} />
-
-      {showPolicy ? (
-        <div className={styles.policyAttentionRow}>
-          {showPolicy ? (
-            <section
-              id="rag-policy-panel"
-              className={`${styles.policyPanel} animate-fade-in rounded-xl border border-primary-100 bg-primary-50/60`}
-              aria-label="RAG evaluation definitions"
-            >
-              <h2 className="font-heading text-[13px] font-semibold text-foreground-950">
-                Status definitions used in this dashboard
-              </h2>
-              <p className="mt-1 font-label text-[11px] leading-relaxed text-foreground-600">
-                Thresholds are set per form policy — never shared across unrelated forms.
-              </p>
-              <ul className={styles.statusList}>
-                {RAG_ORDER.map((status) => (
-                  <li key={status} data-status={status} className={`${styles.statusCard} rounded-lg border`}>
-                    <RagBadge status={status} size="sm" />
-                    <p className="text-[11px] leading-relaxed text-foreground-700">
-                      {RAG_META[status].meaning}
-                    </p>
-                  </li>
-                ))}
-              </ul>
-            </section>
-          ) : null}
-        </div>
-      ) : null}
 
       {auditTypesOpen ? <MeetingTypesModal records={records} onClose={() => setAuditTypesOpen(false)} onOpenType={openAuditType} /> : null}
 

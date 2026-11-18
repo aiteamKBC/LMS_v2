@@ -7,8 +7,7 @@
   padding: 8px 0 12px;
 }
 
-.policyAttentionRow { display: grid; grid-template-columns: minmax(0, 1fr); gap: 20px; }
-.policyAttentionRow > * { min-width: 0; }
+.policyControl { position: relative; }
 .attentionPanel { display: flex; min-width: 0; min-height: 240px; max-height: 280px; grid-column: span 3; }
 .attentionPanel > section { display: flex; flex-direction: column; min-width: 0; width: 100%; max-width: none; margin: 0; overflow: hidden; }
 .attentionPanel > section > div:first-child { flex-wrap: wrap; }
@@ -28,7 +27,16 @@
   --rag-grey-bg: #e2e8f0;
   --rag-grey-fg: #475569;
   --rag-grey-ink: #64748b;
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: 30;
+  width: min(480px, 100cqi);
+  max-height: min(420px, 60vh);
+  overflow-y: auto;
   padding: 14px;
+  background: oklch(var(--background-50));
+  box-shadow: 0 12px 32px rgb(30 15 50 / 14%);
 }
 
 .statusList { display: grid; gap: 6px; margin-top: 12px; }
@@ -242,6 +250,7 @@
 
 @container (max-width: 850px) {
   .hero { align-items: flex-start; flex-direction: column; gap: 18px; }
+  .policyPanel { right: auto; left: 0; }
   .kpiGrid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .kpiGrid > div:nth-child(n), .kpiGrid.withAttention > div:nth-child(n), .kpiGrid > .attentionPanel { grid-column: auto; grid-row: auto; }
   .kpiGrid:not(.withAttention) > div:last-child { grid-column: 1 / -1; }
@@ -256,7 +265,9 @@
   .filters > section > [data-filter-fields] { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px 10px; }
   .filters > section > [data-filter-fields] > div:last-child { grid-column: 1 / -1; }
   .heroActions { width: 100%; }
-  .heroActions > button { flex: 1; padding-inline: 10px; font-size: 11px; }
+  .heroActions > button, .policyControl { flex: 1; }
+  .heroActions > button, .policyControl > button { padding-inline: 10px; font-size: 11px; }
+  .policyControl > button { width: 100%; }
   .kpiGrid { gap: 10px; }
   .kpiGrid > div { padding: 15px; }
   .kpiGrid > div > div:first-child { flex-direction: column-reverse; gap: 10px; }

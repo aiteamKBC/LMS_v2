@@ -1,3 +1,25 @@
+:global(#root) .summaryCard {
+  --summary-highlight: rgb(255 255 255 / 0.7);
+  border: 1px solid oklch(var(--primary-300)) !important;
+  background:
+    radial-gradient(ellipse at top right, oklch(var(--primary-200) / 0.25), transparent 65%),
+    linear-gradient(135deg, var(--summary-highlight), transparent 55%),
+    linear-gradient(135deg, oklch(var(--background-50)) 25%, oklch(var(--primary-50))) !important;
+  box-shadow:
+    var(--tw-ring-offset-shadow, 0 0 #0000),
+    var(--tw-ring-shadow, 0 0 #0000),
+    inset 0 1px 0 var(--summary-highlight),
+    0 5px 16px -12px oklch(var(--primary-400) / 0.35) !important;
+}
+
+:global([data-theme="dark"]) :global(#root) .summaryCard {
+  --summary-highlight: rgb(255 255 255 / 0.06);
+}
+
+:global(#root) button.summaryCard:is(:hover, :focus-visible) {
+  border-color: oklch(var(--primary-400)) !important;
+}
+
 /* Keep this table's header colour above the shared light and dark palettes. */
 :global(#root) .journeyTable thead th {
   background: #441f65 !important;
