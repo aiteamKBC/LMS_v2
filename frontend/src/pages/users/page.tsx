@@ -19,7 +19,7 @@ import { fetchProgrammes, fetchCohorts, fetchGroups } from '@/api/curriculum';
 import { listEmployers, type EmployerRow } from '@/api/employers';
 import { fetchAttendanceModes, type SavedAttendanceMode } from '@/api/attendanceLectures';
 import type { UserListRow, UsersFilter } from './types';
-import { StatusBadge, Pagination, inputClass, btnPrimary, btnSecondary } from './components/ui';
+import { Pagination, inputClass, btnPrimary, btnSecondary } from './components/ui';
 import { SendInvitationButton } from './components/SendInvitationButton';
 import { CopyInvitationLinkButton } from './components/CopyInvitationLinkButton';
 import { CreateUserModal } from './components/CreateUserModal';
@@ -736,7 +736,7 @@ export default function UsersListPage() {
                         )}
                       </>}</FloatingMenu>
                     </td>
-                    <td role="cell" data-label="Programme status" className="py-2.5 px-3">{isLearner && row.programmeStatus ? <span className={design.programmeStatus} data-status={row.programmeStatus} title={`Programme status: ${row.programmeStatus}`}><span className={design.rowDot} aria-hidden="true" /><span className="sr-only"><StatusBadge status={row.programmeStatus} /></span></span> : null}</td>
+                    <td role="cell" data-label="Programme status" className="py-2.5 px-3">{isLearner && row.programmeStatus ? <span className={design.programmeStatus} data-status={row.programmeStatus} title={`Programme status: ${row.programmeStatus}`}><span className={design.rowDot} aria-hidden="true" /><span>{row.programmeStatus}</span></span> : null}</td>
                     <td role="cell" data-label="Attendance mode" className="py-2.5 px-3 whitespace-nowrap">
                       {!isLearner || attendanceModes === 'failed'
                         ? <span className="text-foreground-300">—</span>
