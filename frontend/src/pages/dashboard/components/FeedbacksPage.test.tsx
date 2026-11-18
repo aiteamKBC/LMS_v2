@@ -108,6 +108,33 @@ describe('Quality Feedbacks', () => {
     await waitFor(() => expect(mocks.insightsDashboard).toHaveBeenLastCalledWith({ includeForms: true, formType: 'custom_pulse', formId: 71 }));
   });
 
+  it('filters the response list by clickable classification cards without changing the totals', async () => {
+    const user = userEvent.setup();
+    render(<MemoryRouter><FeedbacksPage /></MemoryRouter>);
+    expect(await screen.findByText('Pulse response')).toBeInTheDocument();
+    const positive = screen.getByRole('button', { name: /Positive responses/ });
+    const neutral = screen.getByRole('button', { name: /Neutral responses/ });
+    const negative = screen.getByRole('button', { name: /Negative responses/ });
+    const all = screen.getByRole('button', { name: /Completed responses in report/ });
+    expect(all).toHaveAttribute('aria-pressed', 'true');
+    await user.click(positive);
+    expect(positive).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getByText('Pulse response')).toBeInTheDocument();
+    expect(screen.queryByText('PR response')).not.toBeInTheDocument();
+    expect(screen.getByText('3 of 7 responses shown', { exact: false })).toBeInTheDocument();
+    await user.click(neutral);
+    expect(screen.getByText('Session two')).toBeInTheDocument();
+    expect(screen.queryByText('Pulse response')).not.toBeInTheDocument();
+    negative.focus();
+    await user.keyboard('{Enter}');
+    expect(negative).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getByText('PR response')).toBeInTheDocument();
+    await user.click(negative);
+    expect(all).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getByText('Pulse response')).toBeInTheDocument();
+    expect(mocks.insightsDashboard).toHaveBeenCalledTimes(1);
+  });
+
   it('shows a recoverable error instead of sample feedback', async () => {
     mocks.insightsDashboard.mockRejectedValueOnce(new Error('Feedback service unavailable'));
     render(<MemoryRouter><FeedbacksPage /></MemoryRouter>);
@@ -120,9 +147,9 @@ describe('Quality Feedbacks', () => {
   it('opens the Critical feedback link with Negative selected', async () => {
     render(<MemoryRouter initialEntries={['/curriculum/quality-demo?view=feedbacks&classification=negative']}><FeedbacksPage /></MemoryRouter>);
     expect(await screen.findByText('Session one')).toBeInTheDocument();
-    expect(screen.getByText('Showing negative responses from the overview.', { exact: false })).toBeInTheDocument();
+    expect(screen.getByText('Showing negative responses.', { exact: false })).toBeInTheDocument();
     expect(screen.queryByText('Session two')).not.toBeInTheDocument();
-    expect(mocks.insightsDashboard).toHaveBeenCalledWith({ includeForms: true, classification: 'negative' });
+    expect(mocks.insightsDashboard).toHaveBeenCalledWith({ includeForms: true });
     await userEvent.setup().click(screen.getByRole('button', { name: 'Show all responses' }));
     expect(await screen.findByText('Session two')).toBeInTheDocument();
   });
