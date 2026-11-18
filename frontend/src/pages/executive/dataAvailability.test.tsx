@@ -12,13 +12,15 @@ afterEach(cleanup);
 
 describe('executive overview source availability', () => {
   it('distinguishes unavailable indicators from a confirmed empty result', () => {
-    const { rerender } = render(<MemoryRouter><OverviewKpis records={[]} actions={[]} forms={[]}
+    const { rerender } = render(<MemoryRouter><OverviewKpis records={[]} forms={[]}
       availability={{ actions: false, criticalIssues: false, feedback: false, feedbackScores: false }} /></MemoryRouter>);
     expect(screen.getAllByText('—')).toHaveLength(3);
     expect(screen.getAllByText('Feedback classification data is unavailable')).toHaveLength(2);
     expect(screen.getByText('Feedback response data is unavailable')).toBeInTheDocument();
+    expect(screen.queryByText('Open actions')).not.toBeInTheDocument();
+    expect(screen.queryByText('Not assessed')).not.toBeInTheDocument();
     expect(screen.queryByText('No Negative feedback in scope')).not.toBeInTheDocument();
-    rerender(<MemoryRouter><OverviewKpis records={[]} actions={[]} forms={[]}
+    rerender(<MemoryRouter><OverviewKpis records={[]} forms={[]}
       availability={{ actions: true, criticalIssues: true, feedback: true, feedbackScores: true }} /></MemoryRouter>);
     expect(screen.queryByText('Feedback classification data is unavailable')).not.toBeInTheDocument();
     expect(screen.getByText('No Negative feedback in scope')).toBeInTheDocument();
@@ -33,7 +35,7 @@ describe('executive overview source availability', () => {
       answeredQuestions: 1, totalQuestions: 1, reviewStatus: 'completed',
     };
     render(<MemoryRouter><OverviewKpis records={[base, { ...base, id: 'assessed-review', rag: 'green', policyVersion: 'qms-v1' }]}
-      actions={[]} forms={[]} availability={{ actions: true, criticalIssues: true, feedback: true, feedbackScores: true }} /></MemoryRouter>);
+      forms={[]} availability={{ actions: true, criticalIssues: true, feedback: true, feedbackScores: true }} /></MemoryRouter>);
     expect(screen.queryByText('Assessed records')).not.toBeInTheDocument();
   });
 
@@ -46,7 +48,7 @@ describe('executive overview source availability', () => {
       answeredQuestions: 1, totalQuestions: 1, reviewStatus: 'completed', feedbackClassification: 'neutral',
     };
     render(<MemoryRouter><OverviewKpis records={[feedback, { ...feedback, id: 'negative-feedback', feedbackClassification: 'negative' }, { ...feedback, id: 'positive-feedback', feedbackClassification: 'positive' }]}
-      actions={[]} forms={[]} availability={{ actions: false, criticalIssues: false, feedback: true, feedbackScores: true }} /></MemoryRouter>);
+      forms={[]} availability={{ actions: false, criticalIssues: false, feedback: true, feedbackScores: true }} /></MemoryRouter>);
     expect(screen.getByText('Feedback to review')).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'Review feedback' })).toHaveAttribute('href', '/curriculum/quality-demo?view=feedbacks&classification=review');
     expect(within(screen.getByText('Feedback to review').closest('.group') as HTMLElement).getByText('2')).toBeInTheDocument();
@@ -75,6 +77,7 @@ describe('executive overview source availability', () => {
       expect(within(feedback.getByText(label).closest('div') as HTMLElement).getByText('1')).toBeInTheDocument();
     }
     expect(feedback.getByText('3 scored responses in scope', { exact: false })).toHaveTextContent('1 unscored');
+    expect(screen.queryByText('Formal QA policy outcomes')).not.toBeInTheDocument();
   });
 
   it('reports unavailable feedback health without showing false zeroes', () => {

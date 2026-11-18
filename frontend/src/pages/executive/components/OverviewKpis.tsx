@@ -7,12 +7,11 @@ import {
   formatNumber,
   formatPct,
 } from "@/lib/qms";
-import type { FormDefinition, QualityAction, QualityRecord } from "@/types/qms";
+import type { FormDefinition, QualityRecord } from "@/types/qms";
 import styles from "../ExecutiveOverview.module.css";
 
 interface OverviewKpisProps {
   records: QualityRecord[];
-  actions: QualityAction[];
   forms: FormDefinition[];
   availability: { actions: boolean; criticalIssues: boolean; feedback: boolean; feedbackScores: boolean };
   onOpenAuditTypes?: () => void;
