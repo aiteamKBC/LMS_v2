@@ -102,8 +102,13 @@ class CataloguePerformanceTests(SimpleTestCase):
     def test_catalogue_ledger_skips_ksb_registry_and_wide_history_but_keeps_source_gates(self):
         with patch.object(canonical,'query',return_value=[]) as query,patch.object(canonical,'current_records',return_value=[]),patch.object(canonical,'_ksb_not_excluded',side_effect=AssertionError('Unused KSB lookup')):
             self.assertEqual(canonical.entries_for({'id':9},lineage_only=True,monthly_summary=True,catalogue_summary=True),[])
-        self.assertEqual(query.call_count,1)
-        sql,params=query.call_args.args
+        self.assertEqual(query.call_count,4)  # Narrow ledger plus three bounded attendance reads.
+        sql,params=query.call_args_list[0].args
+        for call, table, params_expected in zip(query.call_args_list[1:],
+                ('learner_monthly_signatures', 'learner_monthly_locks', 'live_session_learner_attendance'),
+                ([9], [9, 9, 9], [9])):
+            self.assertIn(table, call.args[0])
+            self.assertEqual(call.args[1], params_expected)
         self.assertEqual(params,[9])
         self.assertNotIn('learner_progress_ksbs',sql)
         self.assertNotIn('to_jsonb(s)',sql);self.assertNotIn('to_jsonb(h)',sql)

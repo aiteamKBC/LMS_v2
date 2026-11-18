@@ -48,7 +48,9 @@ class KsbPointDisplayTests(unittest.TestCase):
                        account_email=f'learner-{i}@example.test', account_aptem_id=4000+i)
                   for i, kind in enumerate(['apprenticeship', 'commercial'])]
         def query(sql, params):
-            if 'FROM "Learner".learners l' in sql:
+            # The attendance lock query also joins learners; it must not get
+            # owner-shaped rows in place of learner_id/report_month evidence.
+            if 'u.id AS account_record_id' in sql:
                 return owners
             if 'FROM "Learner".learner_progress_entries p' in sql:
                 self.assertEqual(params, [[700, 701]])

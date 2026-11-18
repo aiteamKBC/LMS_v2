@@ -22,7 +22,10 @@ class SourceCompletionTests(unittest.TestCase):
             {'payload': {'id': 4, 'accepted': False, 'actual_seconds': 9000},
              'sources': [{'source_system': 'aptem', 'completed': True}]},
         ]
-        self.query = Mock(side_effect=lambda *args: copy.deepcopy(self.rows))
+        # Only the ledger contains these sources. This fixture has no live
+        # attendance or protected months, whose readers require different rows.
+        self.query = Mock(side_effect=lambda sql, params:
+                          copy.deepcopy(self.rows) if 'WITH canonical AS' in sql else [])
         self.scope = adapter(self.query)
         token = journal_sources._current.set(True)
         self.addCleanup(journal_sources._current.reset, token)
@@ -39,7 +42,7 @@ class SourceCompletionTests(unittest.TestCase):
         result = self.scope['metrics_from_records'](records, {})
         self.assertEqual(result['programme']['completed'], 2)
         self.assertEqual(result['otjh']['actual'], 2.5)
-        sql, args = self.query.call_args.args
+        sql, args = self.query.call_args_list[0].args
         self.assertEqual(args, [7])
         self.assertIn('s.learner_id=p.learner_id', sql)
         self.assertIn('s.canonical_progress_id=p.id', sql)
