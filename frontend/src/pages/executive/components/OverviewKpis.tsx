@@ -1,6 +1,7 @@
-import { memo } from "react";
+import { memo, type ReactNode } from "react";
 import KpiCard from "@/components/base/KpiCard";
 import criticalStyles from "./CriticalCard.module.css";
+import followUpStyles from "./FollowUpCards.module.css";
 import {
   countFeedbackClassifications,
   formatNumber,
@@ -15,9 +16,10 @@ interface OverviewKpisProps {
   forms: FormDefinition[];
   availability: { actions: boolean; criticalIssues: boolean; feedback: boolean; feedbackScores: boolean };
   onOpenAuditTypes?: () => void;
+  attentionPanel?: ReactNode;
 }
 
-function OverviewKpis({ records, forms, availability, onOpenAuditTypes }: OverviewKpisProps) {
+function OverviewKpis({ records, forms, availability, onOpenAuditTypes, attentionPanel }: OverviewKpisProps) {
   const audits = records.filter(
     (record) => record.category === "Quality Audit" && record.reviewStatus === "completed",
   );
@@ -43,7 +45,7 @@ function OverviewKpis({ records, forms, availability, onOpenAuditTypes }: Overvi
 
   return (
     <section aria-label="Key quality indicators">
-      <div className={styles.kpiGrid}>
+      <div className={`${styles.kpiGrid} ${attentionPanel ? styles.withAttention : ""}`}>
         <KpiCard
           label="Completed audits"
           value={formatNumber(audits.length)}
@@ -81,7 +83,7 @@ function OverviewKpis({ records, forms, availability, onOpenAuditTypes }: Overvi
 
         <KpiCard
           label="Critical feedback"
-          className={criticalStyles.card}
+          className={`${criticalStyles.card} ${followUpStyles.card} ${followUpStyles.critical}`}
           value={availability.feedbackScores ? formatNumber(criticalFeedback) : '—'}
           definition="Negative scored feedback needing immediate review. This is a feedback classification, not an Assessed policy outcome."
           hint={!availability.feedbackScores ? 'Feedback classification data is unavailable' : criticalFeedback ? "Open the original responses to review" : "No Negative feedback in scope"}
@@ -91,6 +93,7 @@ function OverviewKpis({ records, forms, availability, onOpenAuditTypes }: Overvi
           linkLabel="Review critical feedback"
         />
 
+        {attentionPanel ? <aside className={`${styles.attentionPanel} ${followUpStyles.attention}`}>{attentionPanel}</aside> : null}
       </div>
     </section>
   );

@@ -1,0 +1,61 @@
+.filters {
+  display: grid;
+  min-width: 0;
+  gap: 16px;
+  padding: 20px;
+  container-type: inline-size;
+}
+
+.quickFilters {
+  display: grid;
+  grid-template-columns: minmax(200px, 320px) minmax(0, 1fr);
+  align-items: end;
+  gap: 16px;
+}
+
+.field, .completion {
+  display: grid;
+  min-width: 0;
+  gap: 8px;
+}
+
+.field, .fieldLabel {
+  color: oklch(var(--foreground-700));
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.completionButtons, .actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.filters .completionButtons > button, .filters .actions > button { height: 44px; min-height: 44px; white-space: nowrap; }
+.filters button[role='combobox'] { height: 44px; min-height: 44px; }
+.filters .completionButtons > button[aria-pressed='true'] {
+  border-color: oklch(var(--primary-400));
+  background: oklch(var(--primary-50));
+  color: oklch(var(--primary-800));
+  box-shadow: inset 0 0 0 1px oklch(var(--primary-300));
+}
+
+.filterForm { display: grid; gap: 14px; border-top: 1px solid oklch(var(--background-200)); padding-top: 16px; }
+.fields { display: grid; grid-template-columns: minmax(160px, 1fr) minmax(220px, 2fr) auto; align-items: end; gap: 16px; }
+.filters .field > input, .filters .extraFilters input { min-width: 0; height: 44px; font-size: 13px; }
+.footer { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 16px; color: oklch(var(--foreground-500)); font-size: 12px; }
+.footer p { overflow-wrap: anywhere; }
+.footer > button { flex-shrink: 0; }
+.extraFilters { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); align-items: end; gap: 16px; border-top: 1px solid oklch(var(--background-200)); padding-top: 16px; }
+
+@container (max-width: 900px) {
+  .fields { grid-template-columns: minmax(0, 1fr) minmax(0, 2fr); }
+  .actions { grid-column: 1 / -1; justify-content: flex-end; }
+  .extraFilters { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+
+@container (max-width: 650px) {
+  .quickFilters, .fields { grid-template-columns: minmax(0, 1fr); }
+  .completionButtons { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .extraFilters { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+@container (max-width: 360px) {
+  .extraFilters { grid-template-columns: minmax(0, 1fr); }
+}

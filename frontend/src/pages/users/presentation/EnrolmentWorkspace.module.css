@@ -235,7 +235,7 @@
 .subscription[data-verified="false"] .rowDot { background: #ef4444; }
 .attendance[data-mode="live"] { color: #5d2e88; }
 .attendance[data-mode="live"] .rowDot { background: #5d2e88; }
-.programmeStatus { display: flex; padding: .25rem; border-radius: 50%; background: #958d8420; }
+.programmeStatus { display: inline-flex; align-items: center; gap: .375rem; padding: .125rem .5rem; border-radius: .5rem; background: #958d8420; font-size: .75rem; font-weight: 600; line-height: 1.25; }
 .programmeStatus[data-status="Active"], .programmeStatus[data-status="Delivery"] { background: #13bd8826; }
 .programmeStatus:is([data-status="Active"],[data-status="Delivery"]) .rowDot { background: #10b981; }
 .programmeStatus[data-status="Withdrawn"] { background: #ef444426; }
