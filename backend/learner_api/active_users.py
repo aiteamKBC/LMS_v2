@@ -14,7 +14,7 @@ from datetime import timedelta
 from decimal import Decimal, InvalidOperation
 
 from django.db import DatabaseError, IntegrityError, connections, transaction
-from django.db.models import Max
+from django.db.models import Count, Max
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 
@@ -1217,6 +1217,14 @@ def save_progress_record(learner, record, activity=None, *, monthly_assignment=F
                 lock = ' FOR UPDATE' if connections['enrolment'].vendor == 'postgresql' else ''
                 cursor.execute('SELECT id FROM enrolment."Created_users" WHERE id=%s' + lock, [learner.enrolment_id])
         learner = LearnerProfile.objects.select_for_update().get(pk=learner.pk)
+        if record.get("kind") == "quiz" and record.get("quizId") is not None:
+            # Read persisted rows only after taking the learner lock. Keep the
+            # count-based ordinal, but never reuse a higher historical number
+            # (including retained/deleted attempts). No history is rewritten.
+            prior = LearnerProgressEntry.objects.filter(
+                learner=learner, kind="quiz", quiz_ref=str(record["quizId"]),
+            ).aggregate(total=Count("id"), highest=Max("attempt"))
+            record["attempt"] = max(prior["total"], prior["highest"] or 0) + 1
         from .retake_timing import validate_activity_time
         from .activity_time_history import attendance_baseline
         authoritative_record = {**record, 'componentType': component_context.get('componentType') or record.get('componentType')}

@@ -33,6 +33,7 @@ from django.views.decorators.csrf import csrf_exempt
 from .identity import learner_profile_for_source
 
 from .active_users import ComponentReferenceError, save_progress_record
+from quiz_api.history import is_question_reference_violation
 from .models import CommercialUser, EnrolmentUser
 from .time_tracking import TrackingSessionError, tracking_session_already_used, verify_tracking_session
 from .working_rules import (
@@ -635,16 +636,6 @@ def submit_quiz_attempt(request, quiz_id):
         return _error("Could not read the learner profile. Please try again.", 503)
 
     history = (active.training_plan_progress if active and isinstance(active.training_plan_progress, list) else [])
-    # 1-based attempt number for THIS quiz — count prior quiz-kind records for it.
-    # Normalised progress rows expose the CharField quiz_ref as text, whereas
-    # curriculum quiz ids are integers. Canonicalise both sides so retakes are
-    # numbered correctly after progress was moved out of the legacy JSON field.
-    prior = sum(
-        1
-        for a in history
-        if a.get("kind") == "quiz" and str(a.get("quizId")) == str(quiz["id"])
-    )
-    attempt_number = prior + 1
 
     try:
         tracking = verify_tracking_session(
@@ -673,7 +664,7 @@ def submit_quiz_attempt(request, quiz_id):
         "kind": "quiz",
         "quizId": quiz["id"],
         "componentId": component_id,
-        "attempt": attempt_number,
+        "attempt": 1,  # Replaced under the learner lock by save_progress_record.
         "passed": passed,
         "grade": grade_decimal,                # 0-1 decimal, e.g. 0.9
         "achievedScore": correct_count,        # questions correct
@@ -734,12 +725,14 @@ def submit_quiz_attempt(request, quiz_id):
         except IntegrityError as exc:
             if "learner_progress_tracking_session_uq" in str(exc):
                 return _error("This activity timing session has already been submitted.", 409)
+            if is_question_reference_violation(exc, using="enrolment"):
+                return _error("The quiz questions changed before this attempt could be saved. Reload the quiz and try again.", 409)
             return _error("Could not save this quiz attempt. Please try again.", 503)
         except DatabaseError:
             return _error("Could not save this quiz attempt. Please try again.", 503)
         record_quiz_attempt(
             kind=kind, learner_id=learner_id, source=source, quiz=quiz,
-            attempt_number=attempt_number, passed=passed, grade_pct=grade_pct,
+            attempt_number=attempt["attempt"], passed=passed, grade_pct=grade_pct,
             correct_count=correct_count, question_count=question_count, time_taken=time_taken,
             submitted_at=submitted_at_dt, module_title=module_title, week_title=week_title,
         )
