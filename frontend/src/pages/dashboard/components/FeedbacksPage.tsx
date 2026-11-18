@@ -1,9 +1,10 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { feedbackApi, type FeedbackDashboardReport, type FeedbackFormType, type FeedbackResponse, type FeedbackScoreClass } from "@/api/feedback";
 import { FormRenderer } from "@/features/feedback/FormRenderer";
-import { dashboardPeriod, FEEDBACK_TYPE_LABELS } from "@/features/feedback/feedbackDashboardData";
-import { TIME_ZONE_LABEL, todayIso } from "@/pages/curriculum/recordings/utils";
+import { qualityDashboardFeedbackTypeEntries } from "@/features/feedback/feedbackDashboardData";
+import { TIME_ZONE_LABEL } from "@/pages/curriculum/recordings/utils";
+import { isQualityDashboardHiddenFormName } from "@/lib/qualityDashboardFeedback";
 
 const classes: Record<FeedbackScoreClass, { label: string; action: string; tone: string }> = {
   negative: { label: "Critical", action: "Review required", tone: "bg-red-50 text-red-700 ring-red-200" },
@@ -19,15 +20,11 @@ const dateLabel = (value: string | null) => value
 
 export default function FeedbacksPage() {
   const [searchParams, setSearchParams] = useSearchParams();
+  const requestedClassification = searchParams.get("classification");
+  const classification = requestedClassification && requestedClassification in classes ? requestedClassification as FeedbackScoreClass : null;
   const [formType, setFormType] = useState<FeedbackFormType | "all">("all");
-  const [weeks, setWeeks] = useState(0);
-  const [classification, setClassification] = useState<FeedbackScoreClass | "all">(() => {
-    const requested = searchParams.get("classification");
-    return requested && requested in classes ? requested as FeedbackScoreClass : "all";
-  });
-  const [group, setGroup] = useState("");
-  const [moduleId, setModuleId] = useState("");
-  const [query, setQuery] = useState("");
+  const [formId, setFormId] = useState("");
+  const [availableForms, setAvailableForms] = useState<NonNullable<FeedbackDashboardReport["forms"]>>([]);
   const [retry, setRetry] = useState(0);
   const [result, setResult] = useState<{ key: string; report?: FeedbackDashboardReport; error?: string } | null>(null);
   const [selectedId, setSelectedId] = useState<number | null>(null);
@@ -36,11 +33,10 @@ export default function FeedbacksPage() {
   const [detailRetry, setDetailRetry] = useState(0);
 
   const filters = {
+    includeForms: true,
     ...(formType !== "all" ? { formType } : {}),
-    ...(classification !== "all" ? { classification } : {}),
-    ...(group ? { groupId: group } : {}),
-    ...(moduleId ? { moduleId } : {}),
-    ...dashboardPeriod(todayIso(TIME_ZONE_LABEL), weeks),
+    ...(formId ? { formId: Number(formId) } : {}),
+    ...(classification ? { classification } : {}),
   };
   const key = JSON.stringify([filters, retry]);
   const report = result?.key === key ? result.report : undefined;
@@ -52,7 +48,7 @@ export default function FeedbacksPage() {
     void feedbackApi.insightsDashboard(request)
       .then(({ analytics }) => {
         if (!analytics.insights?.classification) throw new Error("Feedback classifications are unavailable.");
-        if (active) setResult({ key, report: analytics });
+        if (active) { setAvailableForms(analytics.forms ?? []); setResult({ key, report: analytics }); }
       })
       .catch(reason => {
         if (active) setResult({ key, error: reason instanceof Error ? reason.message : "Feedback could not be loaded." });
@@ -72,12 +68,7 @@ export default function FeedbacksPage() {
   }, [selectedId, detailRetry]);
 
   const counts = report?.insights?.classification;
-  const rows = useMemo(() => {
-    const text = query.trim().toLowerCase();
-    return [...(counts?.responses ?? [])]
-      .filter(row => !text || [row.formTitle, row.contextTitle, row.respondent, row.groupName].some(value => value?.toLowerCase().includes(text)))
-      .sort((a, b) => (b.submittedAt ?? "").localeCompare(a.submittedAt ?? ""));
-  }, [counts, query]);
+  const rows = [...(counts?.responses ?? [])].sort((a, b) => (b.submittedAt ?? "").localeCompare(a.submittedAt ?? ""));
 
   return <section aria-label="Quality feedback" className="space-y-4">
     <header>
@@ -86,61 +77,33 @@ export default function FeedbacksPage() {
       <p className="mt-1 text-[12px] text-foreground-600">Submitted feedback from Engagement. Critical and Needs review are score based follow-up labels, not approved QMS assessments.</p>
     </header>
 
-    <div className="grid gap-3 rounded-lg border border-background-200 bg-background-50 p-4 sm:grid-cols-2 xl:grid-cols-3">
+    <div className="grid gap-3 rounded-lg border border-background-200 bg-background-50 p-4 sm:grid-cols-2">
       <label className="text-[11px] font-semibold text-foreground-600">Feedback type
-        <select aria-label="Quality feedback type" className={`mt-1 ${selectClass}`} value={formType} onChange={event => { setFormType(event.target.value as typeof formType); setGroup(""); setModuleId(""); }}>
+        <select aria-label="Quality feedback type" className={`mt-1 ${selectClass}`} value={formType} onChange={event => { setFormType(event.target.value as typeof formType); setFormId(""); }}>
           <option value="all">All feedback types</option>
-          {Object.entries(FEEDBACK_TYPE_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+          {qualityDashboardFeedbackTypeEntries().map(([value, label]) => <option key={value} value={value}>{label}</option>)}
         </select>
       </label>
-      <label className="text-[11px] font-semibold text-foreground-600">Date range
-        <select aria-label="Quality feedback date range" className={`mt-1 ${selectClass}`} value={weeks} onChange={event => setWeeks(Number(event.target.value))}>
-          <option value={0}>All time</option><option value={4}>Last 4 weeks</option><option value={8}>Last 8 weeks</option><option value={12}>Last 12 weeks</option>
+      <label className="text-[11px] font-semibold text-foreground-600">Feedback form
+        <select aria-label="Quality feedback form" className={`mt-1 ${selectClass}`} value={formId} onChange={event => setFormId(event.target.value)}>
+          <option value="">All forms</option>
+          {availableForms.filter(form => !isQualityDashboardHiddenFormName(form.title) && (formType === "all" || form.formType === formType)).map(form =>
+            <option key={form.id} value={form.id}>{form.title}</option>)}
         </select>
-      </label>
-      <label className="text-[11px] font-semibold text-foreground-600">Classification
-        <select aria-label="Quality feedback classification" className={`mt-1 ${selectClass}`} value={classification} onChange={event => {
-          const selected = event.target.value as typeof classification;
-          setClassification(selected);
-          setSearchParams(current => {
-            const next = new URLSearchParams(current);
-            if (selected === "all") next.delete("classification");
-            else next.set("classification", selected);
-            return next;
-          }, { replace: true });
-        }}>
-          <option value="all">All classifications</option>
-          <option value="negative">Critical (Negative)</option><option value="neutral">Needs review (Neutral)</option>
-          <option value="positive">Positive</option><option value="unscored">Unscored</option>
-        </select>
-      </label>
-      <label className="text-[11px] font-semibold text-foreground-600">Learner group
-        <select aria-label="Quality feedback group" className={`mt-1 ${selectClass}`} value={group} disabled={!report} onChange={event => { setGroup(event.target.value); setModuleId(""); }}>
-          <option value="">All groups</option>
-          {report?.groups.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}
-        </select>
-      </label>
-      <label className="text-[11px] font-semibold text-foreground-600">Module
-        <select aria-label="Quality feedback module" className={`mt-1 ${selectClass}`} value={moduleId} disabled={!report || !report.modules?.length} onChange={event => setModuleId(event.target.value)}>
-          <option value="">All modules</option>
-          {report?.modules?.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}
-        </select>
-      </label>
-      <label className="text-[11px] font-semibold text-foreground-600">Search responses
-        <input type="search" aria-label="Search quality feedback" className={`mt-1 ${selectClass}`} value={query} onChange={event => setQuery(event.target.value)} placeholder="Form, activity or respondent" />
       </label>
     </div>
 
+    {classification ? <p className="text-[11px] text-foreground-600">Showing {classification} responses from the overview. <button type="button" className="font-semibold underline" onClick={() => setSearchParams(current => { const next = new URLSearchParams(current); next.delete("classification"); return next; }, { replace: true })}>Show all responses</button></p> : null}
     {error ? <div role="alert" className="rounded-lg border border-red-200 bg-red-50 p-4 text-[12px] text-red-800">{error} <button type="button" className="font-semibold underline" onClick={() => setRetry(value => value + 1)}>Retry</button></div> : null}
     {!report && !error ? <div role="status" className="rounded-lg border border-background-200 bg-background-50 p-6 text-[12px] text-foreground-600">Loading feedback…</div> : null}
     {counts ? <>
-      <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
+      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         {[
-          { label: "Responses", value: counts.total, tone: "text-foreground-950" },
-          { label: "Critical", value: counts.negative, tone: "text-red-700" },
-          { label: "Needs review", value: counts.neutral, tone: "text-amber-800" },
-          { label: "Positive", value: counts.positive, tone: "text-emerald-700" },
-        ].map(card => <article key={card.label} className="rounded-lg border border-background-200 bg-background-50 p-4"><p className="text-[11px] text-foreground-600">{card.label}</p><strong className={`mt-1 block text-[24px] ${card.tone}`}>{card.value}</strong></article>)}
+          { label: "Completed responses in report", value: counts.total, tone: "border-violet-100 bg-white text-violet-900" },
+          { label: "Positive responses", value: counts.positive, tone: "border-emerald-50 bg-emerald-50 text-emerald-800" },
+          { label: "Neutral responses", value: counts.neutral, tone: "border-amber-50 bg-amber-50 text-amber-800" },
+          { label: "Negative responses", value: counts.negative, tone: "border-rose-50 bg-rose-50 text-rose-800" },
+        ].map(card => <article key={card.label} className={`rounded-2xl border p-4 sm:p-5 ${card.tone}`}><p className="text-xs font-semibold">{card.label}</p><strong className="mt-2 block text-2xl">{card.value}</strong></article>)}
       </div>
       <p className="text-[11px] text-foreground-600">{rows.length} of {counts.total} responses shown{counts.unscored ? ` · ${counts.unscored} unscored` : ""}. Positive feedback needs no follow-up.</p>
       <ul className="divide-y divide-background-200 rounded-lg border border-background-200 bg-background-50">

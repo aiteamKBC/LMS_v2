@@ -21,6 +21,10 @@ export function dashboardPeriod(today: string, weeks: number) {
   return { submittedFrom: first.toISOString().slice(0, 10), submittedTo: today };
 }
 
+export function qualityDashboardFeedbackTypeEntries() {
+  return Object.entries(FEEDBACK_TYPE_LABELS);
+}
+
 export function weeklyClassifications(report: FeedbackClassificationReport) {
   const weeks = new Map<string, { week: string; positive: number; negative: number }>();
   for (const response of report.responses) {

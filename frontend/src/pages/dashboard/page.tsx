@@ -24,6 +24,7 @@ import { useQualityNotifications } from "@/pages/dashboard/useQualityNotificatio
 import { useAuth } from "@/hooks/useAuth";
 import type { HeaderNotification } from "@/components/feature/Header";
 import styles from "./QualityShell.module.css";
+import { isQualityDashboardHiddenFormName } from "@/lib/qualityDashboardFeedback";
 
 const STATUS_RANK: Record<string, number> = { Pending: 0, "In Review": 1, "Needs Correction": 2, Approved: 3, Rejected: 4 };
 
@@ -82,7 +83,7 @@ export default function QualityAssurancePage() {
   const qualityNotifications = useQualityNotifications(accountId);
   const headerNotifications = qualityNotifications.notifications;
   const [searchParams, setSearchParams] = useSearchParams();
-  const [reviews, setReviews] = useState<Review[]>(REVIEWS);
+  const [reviews, setReviews] = useState<Review[]>(() => REVIEWS.filter(review => !isQualityDashboardHiddenFormName(review.formType)));
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
