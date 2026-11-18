@@ -430,7 +430,9 @@ describe('map and My Learning navigation', () => {
 
   it('does not use automatic attendance as the last learner interaction', () => {
     const real = { modules: ['Leadership'], components: [{ moduleId: 'M1', module: 'Leadership',
-      componentId: 'LIVE', component: 'Live lecture', type: 'live_session', attendanceCompleted: true }],
+      componentId: 'LIVE', component: 'Live lecture', type: 'live_session', attendanceCompleted: true,
+      reflectionRequired: true, liveSessionLearning: { attendance: 'present', status: 'completed',
+        requirementsStatus: 'reflection-required', attendedSeconds: 7200, attendedAt: '2026-11-11T10:00:00Z' } }],
       componentProgress: [{ componentId: 'LIVE', kind: 'component', submittedAt: '2026-11-11T10:00:00Z',
         timeTrackingSource: 'verified_teams_attendance', startedAt: null }], videoProgress: [], quizAttempts: [] } as unknown as LearnerDetail;
     const subjects = subjectsFrom(null, real, { covers: {}, current_subjects: [{ id: 'M1', title: 'Leadership' }] });
@@ -480,7 +482,7 @@ describe('map and My Learning navigation', () => {
     ['reading', { contentHtml: '<p>Current lesson</p>' }, '/learner/component/commercial/132/CURRENT'],
     ['video', { videoUrl: 'https://example.org/lesson.mp4' }, '/learner/video/commercial/132/CURRENT'],
     ['quiz', { isQuiz: true, quizMeta: { quizId: 25, questions: 2, duration: null, timeUnit: null } }, '/learner/quiz/commercial/132/25'],
-    ['live_session', { sessionDate: '2026-09-13' }, '/learner/component/commercial/132/CURRENT'],
+    ['live_session', { sessionDate: '2026-09-13', liveSessionAccess: { open: true, status: 'ready', message: '' } }, '/learner/component/commercial/132/CURRENT'],
   ])('opens the current %s player directly from Open subject and Back returns to the catalogue', async (type, content, path) => {
     vi.useFakeTimers({ toFake: ['Date'] });
     vi.setSystemTime(new Date('2026-09-13T12:00:00Z'));

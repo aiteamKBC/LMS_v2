@@ -39,6 +39,37 @@ On the overview page, copy:
 | **Application (client) ID**   | `AZURE_MAIL_CLIENT_ID`    |
 | **Directory (tenant) ID**     | `AZURE_MAIL_TENANT_ID`    |
 
+### Dedicated Quality Support application
+
+Feedback follow-up can use a separate application for
+`Quality.Support@kentbusinesscollege.com`. Add or update these keys in the private
+`backend/.env`, then restart the backend:
+
+```dotenv
+QUALITY_MAIL_TENANT_ID=<Directory (tenant) ID>
+QUALITY_MAIL_CLIENT_ID=<Application (client) ID>
+QUALITY_MAIL_CLIENT_SECRET=<Client Secret Value>
+QUALITY_MAIL_ENABLED=true
+```
+
+Use the secret **Value**, not its Secret ID. Never commit or share these values.
+Keep the existing `AZURE_MAIL_*`, `AZURE_LOGIN_APP_*` and `AZURE_EMAIL` settings
+for invitations and password resets. Quality uses the approved sender and
+Reply-To address above, with a separate token cache for its application.
+
+If none of the `QUALITY_MAIL_*` keys is declared, the existing mail application
+continues to handle feedback. Declaring any Quality application key selects the
+dedicated configuration; an incomplete configuration fails rather than mixing
+credentials with the login application. `AZURE_MAIL_ENABLED=false` still disables
+Quality mail along with other mail.
+
+The dedicated application needs permission to send from the Quality shared
+mailbox, through the organization's approved Microsoft Graph/Exchange permission
+configuration. With the Entra application-permission approach, grant Microsoft
+Graph **Application `Mail.Send`** and admin consent, and check any mailbox access
+restrictions. Creating an app registration alone does not grant mailbox access.
+No live email is sent by configuring these values.
+
 ### 2. Grant the Mail.Send application permission
 
 1. In the app registration → **API permissions** → **Add a permission**.

@@ -1,9 +1,11 @@
 from django.urls import path
 from . import employer_feedback
+from . import response_emails
 
 from . import event_checkin, event_emails, event_feedback_views, event_rsvp_views, feedback, lecture_public_feedback, shared_reward_views, views, learning_policy_views
 
 urlpatterns = [
+    path('feedback/responses/<int:pk>/emails/<uuid:email_id>/close-quality-ticket/', response_emails.retry_ticket_close, name='feedback-email-close-ticket'),
     # Reusable feedback-form engine. Staff management and learner-owned routes
     # are separate so each view can enforce the narrowest role/ownership rule.
     path('feedback/csrf/', feedback.csrf_token, name='feedback-csrf'),
@@ -22,6 +24,8 @@ urlpatterns = [
     path('feedback/learners/', feedback.learner_options, name='feedback-learners'),
     path('feedback/responses/', feedback.responses_collection, name='feedback-responses'),
     path('feedback/responses/<int:pk>/', feedback.response_detail, name='feedback-response-detail'),
+    path('feedback/responses/<int:pk>/emails/', response_emails.response_emails, name='feedback-response-emails'),
+    path('feedback/responses/<int:pk>/quality-ticket/', feedback.response_quality_ticket, name='feedback-response-quality-ticket'),
     path('feedback/analytics/', feedback.analytics, name='feedback-analytics'),
     path('feedback/analytics/questions/', feedback.question_analytics_detail, name='feedback-question-analytics'),
     path('feedback/analytics/insights/', feedback.insights_dashboard, name='feedback-insights-dashboard'),

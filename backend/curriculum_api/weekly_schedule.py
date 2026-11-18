@@ -28,6 +28,28 @@ def merged_week_starts_on(payload, current):
     return module_week_starts_on(current)
 
 
+def module_week_boundary_mode(module):
+    """An explicit opt-in: old modules, including first-session weeks, stay legacy."""
+    module = module or {}
+    value = module.get('weekBoundaryMode') if 'weekBoundaryMode' in module else module.get('week_boundary_mode')
+    if value in (None, ''):
+        return None
+    if value != 'calendar':
+        raise ValueError('Choose a valid study week layout.')
+    return value
+
+
+def merged_week_boundary_mode(payload, current):
+    current = current or {}
+    if 'weekBoundaryMode' not in payload and 'week_boundary_mode' not in payload:
+        return module_week_boundary_mode(current)
+    requested = module_week_boundary_mode(payload)
+    stored = module_week_boundary_mode(current)
+    if current and requested != stored:
+        raise ValueError('The study week layout is fixed when a module is created. Existing modules keep their layout.')
+    return requested
+
+
 def first_weekly_session_day(start, weekly):
     """The first live slot on/after the module start, independent of locale."""
     if isinstance(start, datetime):

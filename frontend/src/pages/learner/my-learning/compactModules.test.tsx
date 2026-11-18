@@ -432,7 +432,9 @@ it('retains the frontend current/previous canonical summary fixture', () => {
     { componentId: 'C1', moduleId: 'M1', module: 'One', component: 'Lesson', type: 'reading' },
     { componentId: 'Q1', moduleId: 'M1', module: 'One', component: 'Quiz', isQuiz: true, quizMeta: { quizId: 1 } },
     { componentId: 'Q2', moduleId: 'M1', module: 'One', component: 'Quiz 2', isQuiz: true, quizMeta: { quizId: 1 } },
-    { componentId: 'L1', moduleId: 'M1', module: 'One', component: 'Live', type: 'live_session', attendanceCompleted: true }],
+    { componentId: 'L1', moduleId: 'M1', module: 'One', component: 'Live', type: 'live_session', attendanceCompleted: true,
+      reflectionRequired: true, liveSessionLearning: { attendance: 'present', status: 'completed',
+        requirementsStatus: 'reflection-required', attendedSeconds: 7200, attendedAt: '2026-11-11T10:00:00Z' } }],
     componentProgress: [{ componentId: 'C1', kind: 'component' }], quizAttempts: [
       { componentId: 'Q2', quizId: 1, passed: true }, { componentId: 'Q2', quizId: 1, passed: false }, { componentId: 'OLD', quizId: 99, passed: true }],
     retiredQuizComponents: [{ componentId: 'OLD', moduleId: 'M1', module: 'One', component: 'Old quiz', isQuiz: true, quizMeta: { quizId: 99 } }] } as unknown as LearnerDetail;
