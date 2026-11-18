@@ -11,6 +11,7 @@
 // zero would read as "nothing happened" when the truth is "nobody asked".
 // ============================================================================
 import type { Announcement } from './announcements';
+import type { LearnerCertificate } from './learnerCertificates';
 
 const BASE = '/login_api/admin';
 
@@ -127,6 +128,38 @@ export function saveCertificateTemplate(template: CertificateTemplate, publish =
   return request<{ template: CertificateTemplate | null }>(`${BASE}/certificate-template/`, {
     method: 'POST', body: JSON.stringify({ ...template, publish }),
   });
+}
+
+export type CertificateCorrections = {
+  learnerName: string; courseTitle: string; title: string; bodyText: string;
+  instructorName: string; instructorLabel: string;
+};
+export type IssuedCertificateRow = {
+  id: number; certificateNumber: string; learnerName: string; courseTitle: string;
+  learnerKind: string; status: 'issued' | 'revoked' | 'superseded'; progressPercent: number;
+  issuedAt: string | null; verificationUrl: string; revision: number; correctedAt: string | null;
+};
+export interface AdminIssuedCertificate extends LearnerCertificate {
+  status: IssuedCertificateRow['status']; learnerKind: string; revision: number;
+  correctedAt: string | null;
+  revokedAt: string | null; revokeReason: string; editable: CertificateCorrections;
+  layoutConfig: CertificateTemplate['layoutConfig'];
+}
+export type CertificateHistoryEntry = {
+  id: number; action: string; actor: string; at: string;
+  details: { reason?: string; before?: AdminIssuedCertificate; after?: AdminIssuedCertificate; changedFields?: string[] };
+};
+export type IssuedCertificateDetail = { certificate: AdminIssuedCertificate; history: CertificateHistoryEntry[] };
+export function listIssuedCertificates(params: { q?: string; status?: string; page?: number }) {
+  return request<Paged<IssuedCertificateRow>>(`${BASE}/issued-certificates/${qs(params)}`, { cache: 'no-store' });
+}
+export function readIssuedCertificate(id: number) {
+  return request<IssuedCertificateDetail>(`${BASE}/issued-certificates/${id}/`, { cache: 'no-store' });
+}
+export function updateIssuedCertificate(id: number, body: {
+  action: 'correct' | 'revoke'; revision: number; reason: string; changes?: Partial<CertificateCorrections>;
+}) {
+  return request<IssuedCertificateDetail>(`${BASE}/issued-certificates/${id}/`, { method: 'POST', body: JSON.stringify(body) });
 }
 
 /* -------------------------------------------------------------------------- */

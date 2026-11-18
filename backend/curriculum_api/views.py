@@ -28550,7 +28550,9 @@ def curriculum_module_session_plan(request, module_catalogue_id):
     return JsonResponse({
         **plan,
         'moduleCatalogueId': catalogue_id,
-        'weeks': requested_weeks or module_stored_week_count(module_row),
+        # Calendar plans carry the study-week windows the builder reads. Keep
+        # the numeric count only for legacy plans that do not contain them.
+        'weeks': plan.get('weeks', requested_weeks or module_stored_week_count(module_row)),
         'startDate': format_date(module_row.get('start_date')),
         'weekDays': clean_str(module_row.get('session_week_day')),
     })
@@ -33291,6 +33293,20 @@ def curriculum_module_detail(request, identifier):
         # tutor the module already carries, and one that only changes the tutor
         # against the schedule it already has.
         candidate = {**module_schedule_view(structure_payload), 'module_catalogue_id': module_catalogue_id}
+        # The clash planner dates this candidate before the structure-save
+        # validator runs. Refuse an inconsistent study-week window here so an
+        # old drawer's end date cannot raise an uncaught ValueError (HTTP 500).
+        if not rename_only and module_week_boundary_mode(candidate) == 'calendar':
+            study_start = parse_date(candidate.get('start_date'))
+            if study_start and resolved_weeks_number:
+                from .study_weeks import build_study_week_plan
+                try:
+                    build_study_week_plan(study_start, resolved_weeks_number, set(), {},
+                                          module_week_starts_on(candidate), parse_date(candidate.get('end_date')))
+                except ValueError as exc:
+                    field = 'weeksNumber' if resolved_weeks_number > 104 else 'endDate'
+                    return json_error(str(exc), fields=[field], status=400,
+                                      validationErrors=[{'path': field, 'message': str(exc)}])
         delivery_day_error = None if rename_only else tutor_assignment_delivery_day_error(
             candidate, before=module_schedule_view(existing_authoring),
         )

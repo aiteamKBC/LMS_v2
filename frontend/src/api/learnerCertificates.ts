@@ -49,6 +49,8 @@ export interface LearnerCertificate {
   verificationUrl: string;
   moduleRef?: string;
   moduleTitle?: string;
+  revision?: number;
+  correctedAt?: string | null;
 }
 
 export interface LearnerCertificateStatus {
