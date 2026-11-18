@@ -122,6 +122,20 @@ export function countByRag(records: QualityRecord[]): RagCounts {
   return counts;
 }
 
+export function countFeedbackClassifications(records: QualityRecord[]) {
+  const counts = { positive: 0, neutral: 0, negative: 0, unscored: 0, unclassified: 0 };
+  records.forEach((record) => {
+    if (record.category !== "Learner Feedback" && record.category !== "Employer Feedback") return;
+    const classification = record.feedbackClassification;
+    if (classification === "positive" || classification === "neutral" || classification === "negative" || classification === "unscored") {
+      counts[classification] += 1;
+    } else {
+      counts.unclassified += 1;
+    }
+  });
+  return counts;
+}
+
 export function assessedTotal(counts: RagCounts) {
   return counts.green + counts.amber + counts.red;
 }
@@ -181,6 +195,26 @@ export interface MonthlyPoint {
   total: number;
 }
 
+/**
+ * Trend band for a record: an approved policy outcome wins; otherwise feedback uses its
+ * score classification (Positive/Neutral/Negative) and audits use their lowest criterion
+ * rating (any Red → Red, any Amber → Amber, otherwise Gold/Green → Green).
+ */
+export function trendBand(record: QualityRecord): "green" | "amber" | "red" | null {
+  if (record.rag === "green" || record.rag === "amber" || record.rag === "red") return record.rag;
+  const feedback = record.feedbackClassification;
+  if (feedback === "positive") return "green";
+  if (feedback === "neutral") return "amber";
+  if (feedback === "negative") return "red";
+  const ratings = record.ratingCounts;
+  if (ratings) {
+    if (ratings.red > 0) return "red";
+    if (ratings.amber > 0) return "amber";
+    if (ratings.green + ratings.gold > 0) return "green";
+  }
+  return null;
+}
+
 export function buildMonthlySeries(records: QualityRecord[], months?: number): MonthlyPoint[] {
   const points: MonthlyPoint[] = [];
   const actualMonthKeys = records
@@ -203,15 +237,13 @@ export function buildMonthlySeries(records: QualityRecord[], months?: number): M
     const month = date.getUTCMonth();
     const key = `${year}-${String(month + 1).padStart(2, "0")}`;
     const scoped = records.filter((record) => record.assessedOn.startsWith(key));
-    const counts = countByRag(scoped);
+    const counts = { green: 0, amber: 0, red: 0, unrated: 0 };
+    scoped.forEach((record) => { counts[trendBand(record) ?? "unrated"] += 1; });
     points.push({
       key,
       label: `${MONTH_LABELS[month]} ${String(year).slice(2)}`,
-      green: counts.green,
-      amber: counts.amber,
-      red: counts.red,
-      unrated: counts.unrated + counts.na,
-      total: counts.total,
+      ...counts,
+      total: counts.green + counts.amber + counts.red,
     });
   }
   return points;

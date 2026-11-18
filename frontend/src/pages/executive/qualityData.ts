@@ -1,3 +1,4 @@
+import { SCORE_CLASSIFICATION_TEXT } from '@/features/feedback/scoreClassification';
 import { qualityDefinition, qualityForms, qualityReviews, type QualityFormCard, type QualitySummary, type QualityTemplateState } from '@/api/coachingQualityReviews';
 import { feedbackApi, type FeedbackForm, type FeedbackResponse, type FeedbackScoreClass } from '@/api/feedback';
 import { addDays, TIME_ZONE_LABEL, todayIso } from '@/pages/curriculum/recordings/utils';
@@ -131,10 +132,10 @@ function feedbackFormDefinition(form: FeedbackForm, rows: FeedbackResponse[], cl
     subjectType: rows.some(row => row.activity?.tutorName && !row.activity.coachName) ? 'Tutor' : 'Coach',
     questionCount: questionTotal,
     answerTypes: feedbackAnswerTypes(form),
-    scoringMethod: 'Feedback analytics classification; no QMS RAG policy configured',
-    policyId: null,
-    policyVersion: null,
-    policySummary: 'Feedback scores are available in the Feedback Insights workspace. No approved QMS RAG policy is returned for this form, so this view keeps the status Not assessed.',
+    scoringMethod: 'Response score classification',
+    policyId: 'Feedback score bands',
+    policyVersion: '1',
+    policySummary: `Each completed response is scored and classified: ${SCORE_CLASSIFICATION_TEXT}`,
     requiresAction: false,
     access: 'Feedback analytics access',
     scheduled: form.assignedCount,
@@ -229,10 +230,12 @@ function formDefinition(card: QualityFormCard, state: QualityTemplateState | nul
     subjectType: 'Coach',
     questionCount: questionTotal,
     answerTypes: answerTypes(state),
-    scoringMethod: questionTotal ? 'Criteria captured; RAG policy not configured' : 'Definition unavailable',
-    policyId: null,
-    policyVersion: null,
-    policySummary: 'No approved RAG policy is returned for this form. Records remain Not assessed until a policy is configured and published.',
+    scoringMethod: questionTotal ? 'Reviewer rates each criterion' : 'Definition unavailable',
+    policyId: questionTotal ? 'Criterion ratings' : null,
+    policyVersion: questionTotal ? String(state?.published.version ?? '1') : null,
+    policySummary: questionTotal
+      ? 'The reviewer rates each criterion Gold, Green, Amber, Red or Not applicable. Ratings are reported per criterion; no overall form score is calculated.'
+      : 'The form definition is unavailable, so no evaluation rule can be shown.',
     requiresAction: rows.some(row => row.actionCount > 0),
     access: 'Curriculum quality access',
     scheduled: 0,

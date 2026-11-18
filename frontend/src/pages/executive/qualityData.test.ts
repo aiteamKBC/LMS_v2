@@ -117,10 +117,15 @@ describe('executive overview live data', () => {
       startedAt: '2026-10-20T09:00:00Z', updatedAt: '2026-10-20T10:00:00Z', submittedAt: '2026-10-20T10:00:00Z' };
     mocks.feedbackForms.mockResolvedValue({ forms: [form] });
     mocks.feedbackResponses.mockResolvedValue({ responses: [response, { ...response, id: 2, submittedAt: '2024-10-20T10:00:00Z' }] });
+    mocks.insights.mockResolvedValue({ analytics: { insights: { classification: { responses: [
+      { responseId: 1, classification: 'negative' },
+    ] } } } });
     const data = await loadLiveQmsData(new AbortController().signal);
     expect(mocks.feedbackResponses).toHaveBeenCalledWith({ status: 'completed', submittedFrom: '2025-11-15', submittedTo: '2026-11-15' });
     expect(mocks.insights).toHaveBeenCalledWith({ submittedFrom: '2025-11-15', submittedTo: '2026-11-15' });
     expect(data.records.map(record => record.id)).toEqual([summary.id, 'feedback-response-1']);
+    expect(data.records[1].feedbackClassification).toBe('negative');
+    expect(data.availability.feedbackScores).toBe(true);
     expect(data.forms.find(item => item.id === 'feedback-42')).toMatchObject({ submissions: 1, ragSupported: false });
   });
 

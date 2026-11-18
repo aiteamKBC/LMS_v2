@@ -1,3 +1,4 @@
+import { memo } from "react";
 import DonutChart from "@/components/qms/DonutChart";
 import { formatNumber, formatPct } from "@/lib/qms";
 import type { QualityRecord } from "@/types/qms";
@@ -170,7 +171,7 @@ function RatingCard({
   );
 }
 
-export default function QualityDonuts({
+function QualityDonuts({
   records,
   selectedCoach,
   selectedTutor,
@@ -183,8 +184,7 @@ export default function QualityDonuts({
 }) {
   const qualityRecords = records.filter((record) => record.category === "Quality Audit");
   const qualityItems = qualityRagItems(qualityRecords);
-  const feedbackRecords = records.filter((record) => ["Learner", "Employer"].includes(record.respondentType));
-  const feedbackStatusItems = feedbackItems(feedbackRecords);
+  const feedbackStatusItems = feedbackItems(records);
   const formRecordItems = formItems(records);
   const coachLabel = selectedCoach === "All coaches" ? "All coaches" : selectedCoach;
   const tutorLabel = selectedTutor === "All tutors" ? "All tutors" : selectedTutor;
@@ -227,3 +227,5 @@ export default function QualityDonuts({
     </section>
   );
 }
+
+export default memo(QualityDonuts);

@@ -3,10 +3,11 @@ import { MemoryRouter } from 'react-router-dom';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import ExecutiveOverview from './page';
 import { loadLiveQmsData, type LiveQmsData } from './qualityData';
+import { clearOverviewCache } from './overviewCache';
 
 vi.mock('./qualityData', () => ({ loadLiveQmsData: vi.fn() }));
 
-afterEach(cleanup);
+afterEach(() => { cleanup(); clearOverviewCache(); });
 
 describe('Quality notifications in the overview', () => {
   it('shows only the skeleton until dashboard data loads, then displays notifications', async () => {

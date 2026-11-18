@@ -1,17 +1,64 @@
-import { Fragment, useMemo, useState } from "react";
+import { memo, Fragment, useMemo, useState } from "react";
 import Panel from "@/components/base/Panel";
-import RagStackBar from "@/components/qms/RagStackBar";
 import { formatDate, formatNumber, formatPct } from "@/lib/qms";
-import type { FormDefinition } from "@/types/qms";
+import type { FormDefinition, QualityRecord } from "@/types/qms";
 import styles from "../ExecutiveOverview.module.css";
 
 interface RegistryTableProps {
   forms: FormDefinition[];
+  records?: QualityRecord[];
+}
+
+type Outcome = { label: string; value: number; tone: string };
+
+const TONES = {
+  gold: "border-amber-200 bg-amber-50 text-amber-900",
+  green: "border-emerald-100 bg-emerald-50 text-emerald-800",
+  amber: "border-amber-100 bg-amber-50 text-amber-800",
+  red: "border-rose-100 bg-rose-50 text-rose-800",
+  grey: "border-background-200 bg-background-50 text-foreground-700",
+};
+
+function outcomesFor(form: FormDefinition, records: QualityRecord[]): { title: string; items: Outcome[]; note: string } {
+  const rows = records.filter((record) => record.formId === form.id);
+  if (form.category === "Quality Audit") {
+    const totals = { gold: 0, green: 0, amber: 0, red: 0, na: 0 };
+    let rated = 0;
+    rows.forEach((record) => {
+      if (!record.ratingCounts) return;
+      rated += 1;
+      (Object.keys(totals) as (keyof typeof totals)[]).forEach((key) => { totals[key] += record.ratingCounts?.[key] ?? 0; });
+    });
+    const drafts = rows.filter((record) => record.reviewStatus !== "completed").length;
+    return {
+      title: "Criterion ratings in scope",
+      items: [
+        { label: "Gold", value: totals.gold, tone: TONES.gold },
+        { label: "Green", value: totals.green, tone: TONES.green },
+        { label: "Amber", value: totals.amber, tone: TONES.amber },
+        { label: "Red", value: totals.red, tone: TONES.red },
+        { label: "Not applicable", value: totals.na, tone: TONES.grey },
+      ],
+      note: `${formatNumber(rated)} completed review${rated === 1 ? "" : "s"} with stored ratings${drafts ? ` · ${formatNumber(drafts)} draft${drafts === 1 ? "" : "s"}` : ""}`,
+    };
+  }
+  const count = (value: string) => rows.filter((record) => record.feedbackClassification === value).length;
+  const unclassified = rows.filter((record) => !record.feedbackClassification).length;
+  return {
+    title: "Response classifications in scope",
+    items: [
+      { label: "Positive", value: count("positive"), tone: TONES.green },
+      { label: "Neutral", value: count("neutral"), tone: TONES.amber },
+      { label: "Negative", value: count("negative"), tone: TONES.red },
+      { label: "Unscored", value: count("unscored"), tone: TONES.grey },
+    ],
+    note: `${formatNumber(rows.length)} completed response${rows.length === 1 ? "" : "s"}${unclassified ? ` · ${formatNumber(unclassified)} without a classification` : ""}`,
+  };
 }
 
 type SortKey = "submissions" | "latest" | "name";
 
-export default function RegistryTable({ forms }: RegistryTableProps) {
+function RegistryTable({ forms, records = [] }: RegistryTableProps) {
   const [sortKey, setSortKey] = useState<SortKey>("submissions");
   const [expanded, setExpanded] = useState<string | null>(null);
 
@@ -45,7 +92,7 @@ export default function RegistryTable({ forms }: RegistryTableProps) {
   return (
     <Panel
       title="Form registry"
-      description="Every registered form type with its evaluation policy coverage. Expand a row for scoring detail."
+      description="Every registered form type. Expand a row for its outcome breakdown and evaluation rule."
       headingId="registry-heading"
       className={styles.registry}
       bodyClassName="px-0 pb-1 pt-0"
@@ -54,7 +101,7 @@ export default function RegistryTable({ forms }: RegistryTableProps) {
       <div className={`kbc-scroll ${styles.registryScroll}`} tabIndex={0} role="region" aria-label="Registered quality forms">
         <table className="w-full min-w-[980px] border-collapse text-left">
           <caption className="sr-only">
-            Registered quality forms, their respondent and subject, evaluation policy and status mix
+            Registered quality forms, their respondent and subject, and record counts
           </caption>
           <thead className={styles.tableHead}>
             <tr className="border-b border-background-200">
@@ -62,14 +109,8 @@ export default function RegistryTable({ forms }: RegistryTableProps) {
               <th scope="col" className="px-3 py-2.5 font-label text-[10.5px] font-semibold uppercase tracking-[0.08em] text-foreground-600">
                 Respondent → subject
               </th>
-              <th scope="col" className="px-3 py-2.5 font-label text-[10.5px] font-semibold uppercase tracking-[0.08em] text-foreground-600">
-                Evaluation policy
-              </th>
               <th scope="col" className="px-3 py-2.5 text-right">{headerButton("submissions", "Records")}</th>
               <th scope="col" className="px-3 py-2.5">{headerButton("latest", "Latest")}</th>
-              <th scope="col" className="w-[190px] px-3 py-2.5 font-label text-[10.5px] font-semibold uppercase tracking-[0.08em] text-foreground-600">
-                Status mix
-              </th>
               <th scope="col" className="px-4 py-2.5 text-right font-label text-[10.5px] font-semibold uppercase tracking-[0.08em] text-foreground-600 sm:px-5">
                 Detail
               </th>
@@ -97,22 +138,6 @@ export default function RegistryTable({ forms }: RegistryTableProps) {
                       <p className="text-[12px] text-foreground-800">{form.respondentType}</p>
                       <p className="text-[11px] text-foreground-500">Subject: {form.subjectType}</p>
                     </td>
-                    <td className="px-3 py-3">
-                      {form.policyId ? (
-                        <>
-                          <span className="inline-flex items-center gap-1 rounded bg-primary-50 px-1.5 py-0.5 font-label text-[10.5px] font-semibold text-primary-700">
-                            <i className="ri-shield-check-line text-[11px]" aria-hidden="true" />
-                            {form.policyId}
-                          </span>
-                          <p className="mt-1 text-[11px] text-foreground-500">Policy v{form.policyVersion}</p>
-                        </>
-                      ) : (
-                        <span className="inline-flex items-center gap-1 rounded bg-[var(--rag-grey-bg)] px-1.5 py-0.5 font-label text-[10.5px] font-semibold text-[var(--rag-grey-fg)]">
-                          <i className="ri-question-line text-[11px]" aria-hidden="true" />
-                          No approved policy
-                        </span>
-                      )}
-                    </td>
                     <td className="px-3 py-3 text-right">
                       <p className="font-label text-[12.5px] font-semibold text-foreground-950">
                         {formatNumber(form.submissions)}
@@ -125,22 +150,6 @@ export default function RegistryTable({ forms }: RegistryTableProps) {
                     </td>
                     <td className="px-3 py-3 whitespace-nowrap text-[11.5px] text-foreground-700">
                       {formatDate(form.latest)}
-                    </td>
-                    <td className="px-3 py-3">
-                      {form.ragSupported ? (
-                        <RagStackBar
-                          counts={form.rag}
-                          showLegend={false}
-                          compact
-                          label={`${form.shortName} status mix`}
-                        />
-                      ) : (
-                        <p className="text-[11px] text-foreground-500">Not banded</p>
-                      )}
-                      <p className="mt-1 font-label text-[10.5px] text-foreground-500">
-                        {form.rag.green}G · {form.rag.amber}A · {form.rag.red}R
-                        {form.rag.unrated ? ` · ${form.rag.unrated} unrated` : ""}
-                      </p>
                     </td>
                     <td className="px-4 py-3 text-right sm:px-5">
                       <button
@@ -160,46 +169,35 @@ export default function RegistryTable({ forms }: RegistryTableProps) {
                   </tr>
                   {isOpen ? (
                     <tr className="border-b border-background-200 bg-background-100/60">
-                      <td colSpan={7} id={`form-detail-${form.id}`} className="px-4 py-3 sm:px-5">
-                        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
-                          <div>
-                            <p className="font-label text-[10px] font-semibold uppercase tracking-[0.09em] text-foreground-600">
-                              Scoring method
-                            </p>
-                            <p className="mt-1 text-[12px] text-foreground-800">{form.scoringMethod}</p>
-                          </div>
-                          <div>
-                            <p className="font-label text-[10px] font-semibold uppercase tracking-[0.09em] text-foreground-600">
-                              Questions / answer types
-                            </p>
-                            <p className="mt-1 text-[12px] text-foreground-800">
-                              {form.questionCount} questions · {form.answerTypes.join(", ")}
-                            </p>
-                          </div>
-                          <div>
-                            <p className="font-label text-[10px] font-semibold uppercase tracking-[0.09em] text-foreground-600">
-                              Owner
-                            </p>
-                            <p className="mt-1 text-[12px] text-foreground-800">{form.owner}</p>
-                          </div>
-                          <div>
-                            <p className="font-label text-[10px] font-semibold uppercase tracking-[0.09em] text-foreground-600">
-                              Access
-                            </p>
-                            <p className="mt-1 text-[12px] text-foreground-800">{form.access}</p>
-                          </div>
-                        </div>
+                      <td colSpan={5} id={`form-detail-${form.id}`} className="px-4 py-3 sm:px-5">
+                        {(() => {
+                          const outcome = outcomesFor(form, records);
+                          return (
+                            <div>
+                              <p className="font-label text-[10px] font-semibold uppercase tracking-[0.09em] text-foreground-600">
+                                {outcome.title}
+                              </p>
+                              <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-5">
+                                {outcome.items.map((item) => (
+                                  <div key={item.label} className={`rounded-lg border px-3 py-2 ${item.tone}`}>
+                                    <p className="text-[11px] font-semibold">{item.label}</p>
+                                    <p className="mt-0.5 text-lg font-semibold">{formatNumber(item.value)}</p>
+                                  </div>
+                                ))}
+                              </div>
+                              <p className="mt-1.5 text-[11px] text-foreground-600">{outcome.note}</p>
+                            </div>
+                          );
+                        })()}
                         <div className="mt-3 rounded-lg bg-background-50 px-3 py-2">
                           <p className="font-label text-[10px] font-semibold uppercase tracking-[0.09em] text-foreground-600">
-                            Approved RAG rule
+                            Evaluation rule
                           </p>
-                          <p className="mt-1 text-[12px] leading-relaxed text-foreground-800">
-                            {form.policySummary}
-                          </p>
+                          <p className="mt-1 text-[12px] leading-relaxed text-foreground-800">{form.policySummary}</p>
                         </div>
                         <p className="mt-2 font-label text-[11px] text-foreground-500">
-                          Source: {form.sourceTable} · Action may be required:{" "}
-                          {form.requiresAction ? "Yes" : "No"}
+                          {form.questionCount} questions{form.answerTypes.length ? ` · ${form.answerTypes.join(", ")}` : ""} · Owner: {form.owner}
+                          {form.category === "Quality Audit" ? ` · Follow-up actions recorded: ${form.requiresAction ? "Yes" : "No"}` : ""}
                         </p>
                       </td>
                     </tr>
@@ -210,8 +208,9 @@ export default function RegistryTable({ forms }: RegistryTableProps) {
           </tbody>
         </table>
       </div>
-      <p className={styles.tableNote}>Expand a form to explore its scoring method, policy and access details.</p>
+      <p className={styles.tableNote}>Expand a form to see its outcome breakdown and evaluation rule.</p>
     </Panel>
   );
 }
 
+export default memo(RegistryTable);
