@@ -1,6 +1,6 @@
 import { LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowLeft, ClipboardCheck, RefreshCw } from 'lucide-react';
+import { ArrowLeft, ChevronDown, ClipboardCheck, RefreshCw, SlidersHorizontal } from 'lucide-react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { qualityReviews, qualityForms, invalidateQualityReviews, type QualitySummary, type ReviewList, type QualityFormCard } from '@/api/coachingQualityReviews';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
@@ -79,36 +79,33 @@ export default function QualityReviewsPage({ embedded = false }: { embedded?: bo
   const content = <main id={embedded ? 'main-content' : undefined} className="mx-auto w-full max-w-[1600px] space-y-5 p-3 sm:p-6">
       <div className="flex flex-wrap items-center justify-between gap-3"><Link className="inline-flex items-center gap-2 text-sm font-semibold text-primary-700" to="/curriculum/coaching-recordings"><ArrowLeft size={16} />Coach meetings calendar</Link><Link className={button} to={`/curriculum/quality/forms${reviewType ? `?type=${reviewType}` : ''}`}>Edit quality forms</Link></div>
       {invalidReview && <div role="alert" className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm">This saved review link is invalid. <button type="button" className={`${button} ml-2`} onClick={() => setParams(writeLocation(applied))}>Close invalid review link</button></div>}
-      <header className="flex flex-wrap items-start justify-between gap-3"><div><p className="text-xs font-bold uppercase tracking-wider text-primary-600">Quality workspace</p>
-        <h1 className="mt-2 text-2xl font-bold text-foreground-950">Quality Checks</h1><p className="mt-2 text-sm text-foreground-600">Open a saved review to see its observations, screenshots and action plan. Completed reviews include a PDF.</p></div>
+      <header className="flex flex-wrap items-start justify-between gap-3"><div>
+        <h1 className="text-2xl font-bold text-foreground-950">Quality Checks</h1><p className="mt-1 text-sm text-foreground-600">Saved reviews, evidence and action plans.</p></div>
         <button className={button} disabled={loading} onClick={refresh}><RefreshCw size={15} />Refresh reviews</button></header>
       <section aria-label="Quick review filters" className={`${styles.filters} rounded-xl border border-background-200 bg-background-50`}>
-        <div className={styles.quickFilters}>
+        <div role="group" aria-label="Review completion" className={styles.completionButtons}>
+          {[['','All saved reviews'],['completed','Completed'],['draft','Drafts']].map(([value,label]) => <button key={value} className={styles.completionButton} aria-pressed={status === value && !pdf} disabled={loading} onClick={() => quick({ status: value, pdf: '' })}>{label}</button>)}<button className={styles.completionButton} aria-pressed={pdf === 'available'} disabled={loading} onClick={() => quick({ pdf: 'available', status: '' })}>With PDF</button>
+        </div>
+        {catalogError && <p role="alert" className="text-xs text-amber-900">{catalogError} Saved reviews remain available.</p>}
+      <form noValidate onSubmit={apply} className={styles.filterForm}>
+        {filterError && <p role="alert" className="text-sm text-rose-800">{filterError}</p>}
+        <div className={styles.fields}>
         <label className={styles.field}>Quality form<RecordingSelect ariaLabel="Quality form filter" value={reviewType} disabled={loading} onChange={value => quick({ reviewType: value })}
           options={[{ value: '', label: 'All forms' }, ...formCards.map(card => ({ value: card.reviewType, label: card.title })),
             ...(reviewType && !formCards.some(card => card.reviewType === reviewType) && !['MCM','PR'].includes(reviewType) ? [{ value: reviewType, label: 'Selected saved form' }] : []),
             { value: 'MCM', label: 'MCM · Previous form', group: 'Previous portfolio reviews' },
             { value: 'PR', label: 'PR · Previous form', group: 'Previous portfolio reviews' },
           ].filter((option, index, options) => options.findIndex(row => row.value === option.value) === index)} /></label>
-        <div role="group" aria-label="Review completion" className={styles.completion}>
-          <span className={styles.fieldLabel}>Show</span>
-          <div className={styles.completionButtons}>{[['','All saved reviews'],['completed','Completed'],['draft','Drafts']].map(([value,label]) => <button key={value} className={`${button} ${status === value && !pdf ? 'border-primary-500 bg-primary-50 text-primary-900' : ''}`} aria-pressed={status === value && !pdf} disabled={loading} onClick={() => quick({ status: value, pdf: '' })}>{label}</button>)}<button className={`${button} ${pdf === 'available' ? 'border-primary-500 bg-primary-50 text-primary-900' : ''}`} aria-pressed={pdf === 'available'} disabled={loading} onClick={() => quick({ pdf: 'available', status: '' })}>With PDF</button></div>
-        </div>
-        </div>
-        {catalogError && <p role="alert" className="text-xs text-amber-900">{catalogError} Saved reviews remain available.</p>}
-      <form noValidate onSubmit={apply} className={styles.filterForm}>
-        {filterError && <p role="alert" className="text-sm text-rose-800">{filterError}</p>}
-        <div className={styles.fields}>
-        <label className={styles.field}>Coach<RecordingSelect ariaLabel="Coach" value={filters.coachEmail} onChange={value => setFilters({ ...filters, coachEmail: value })}
-          options={[{ value: '', label: 'All coaches' }, ...coaches.map(coach => ({ value: coach.email, label: coach.name }))]} /></label>
         <label className={styles.field}>Learner or meeting<input type="search" placeholder="Search a learner or meeting title" maxLength={200} className={`${control} focus-visible:!outline-none`} value={filters.search} onChange={event => setFilters({ ...filters, search: event.target.value })} /></label>
         <div className={styles.actions}>
         <button type="submit" className={`${button} bg-primary-600 text-white`} disabled={loading}>Apply filters</button>
-        <button type="button" className={button} disabled={loading} onClick={reset}>Reset filters</button>
+        <button type="button" className={`${button} ${styles.moreButton}`} aria-expanded={moreFilters} aria-controls="quality-extra-filters" onClick={() => setMoreFilters(value => !value)}><SlidersHorizontal size={15} aria-hidden="true" />{moreFilters ? 'Fewer filters' : 'More filters'}<ChevronDown size={14} aria-hidden="true" className={moreFilters ? styles.chevronOpen : ''} /></button>
         </div>
         </div>
-        <div className={styles.footer}><p>Meetings from {applied.start} to {applied.end} · {applied.timeZone}</p><button type="button" className="font-semibold text-primary-700 underline" aria-expanded={moreFilters} aria-controls="quality-extra-filters" onClick={() => setMoreFilters(value => !value)}>{moreFilters ? 'Fewer filters' : 'More filters'}</button></div>
+        <div className={styles.footer}><p>Meetings from {applied.start} to {applied.end} · {applied.timeZone}{applied.coachEmail ? ` · ${coaches.find(coach => coach.email === applied.coachEmail)?.name || applied.coachEmail}` : ''}</p><button type="button" className={styles.resetButton} disabled={loading} onClick={reset}>Reset filters</button></div>
         <div id="quality-extra-filters" hidden={!moreFilters} className={moreFilters ? styles.extraFilters : ''}>
+        <label className={styles.field}>Coach<RecordingSelect ariaLabel="Coach" value={filters.coachEmail} onChange={value => setFilters({ ...filters, coachEmail: value })}
+          options={[{ value: '', label: 'All coaches' }, ...coaches.map(coach => ({ value: coach.email, label: coach.name }))]} /></label>
         <label className="grid gap-1 text-xs font-semibold">From<input required type="date" className={control} value={filters.start} onChange={event => setFilters({ ...filters, start: event.target.value })} /></label>
         <label className="grid gap-1 text-xs font-semibold">To<input required type="date" min={filters.start} className={control} value={filters.end} onChange={event => setFilters({ ...filters, end: event.target.value })} /></label>
         <label className="grid gap-1 text-xs font-semibold">Review status<RecordingSelect ariaLabel="Review status" value={filters.status} onChange={value => setFilters({ ...filters, status: value })}
