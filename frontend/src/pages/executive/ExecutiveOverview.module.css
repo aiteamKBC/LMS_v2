@@ -203,11 +203,16 @@
 .ratingCard > h2 { font-size: 15px; letter-spacing: -.02em; }
 .ratingCard > p:last-child { margin-top: auto; padding-top: 14px; }
 .ratingCard > div { margin-bottom: 18px; border-top: 0; padding-top: 8px; }
-.ratingCard :global([role='img']) { width: 156px; height: 156px; }
-.ratingCard > div > div { grid-template-columns: 156px minmax(0, 1fr); gap: 20px; }
-.ratingCard li { gap: 8px; }
-.ratingCard li > span:first-child > span:last-child { white-space: normal; overflow-wrap: anywhere; }
+.horizontalChart { display: flex; min-width: 0; flex-direction: column; gap: 20px; }
+.chartSummary { display: flex; flex-wrap: wrap; align-items: baseline; gap: 7px; }
+.barList { display: grid; gap: 16px; }
+.barHeading { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 7px; font-size: 12px; }
+.barLabel { min-width: 0; color: oklch(var(--foreground-700)); overflow-wrap: anywhere; }
+.barValue { flex-shrink: 0; color: oklch(var(--foreground-900)); font-weight: 600; font-variant-numeric: tabular-nums; }
+.barTrack { height: 9px; overflow: hidden; border-radius: 999px; background: oklch(var(--background-200)); }
+.barFill { height: 100%; border-radius: inherit; }
 .formDistribution { grid-column: 1 / -1; }
+.formDistribution .barList { max-height: 280px; overflow-y: auto; overscroll-behavior: contain; padding-right: 6px; }
 
 .healthGrid { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); gap: 20px; }
 .trendRegistryGrid { display: grid; grid-template-columns: minmax(0, 1fr); gap: 20px; }
@@ -243,9 +248,6 @@
   .trendRegistryGrid .registryScroll { max-height: 360px; }
   .analyticsGrid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .formDistribution { grid-column: auto; }
-  .ratingCard > div > div { grid-template-columns: 1fr; justify-items: center; gap: 24px; }
-  .ratingCard > div > div > div:last-child { width: 100%; }
-  .formDistribution ul { max-height: 170px; overflow-y: auto; padding-right: 6px; }
 }
 
 @container (max-width: 850px) {
@@ -255,9 +257,6 @@
   .kpiGrid > div:nth-child(n), .kpiGrid.withAttention > div:nth-child(n), .kpiGrid > .attentionPanel { grid-column: auto; grid-row: auto; }
   .kpiGrid:not(.withAttention) > div:last-child { grid-column: 1 / -1; }
   .healthGrid { grid-template-columns: 1fr; }
-  .ratingCard > div > div { grid-template-columns: 1fr; justify-items: center; }
-  .ratingCard > div > div > div:last-child { width: 100%; }
-  .formDistribution > div > div { grid-template-columns: 156px minmax(0, 1fr); }
 }
 
 @container (max-width: 540px) {
@@ -273,16 +272,12 @@
   .kpiGrid > div > div:first-child { flex-direction: column-reverse; gap: 10px; }
   .kpiGrid > div > div:nth-child(2) > span:first-child { font-size: 30px; }
   .analyticsGrid { grid-template-columns: 1fr; }
-  .ratingCard > div > div { grid-template-columns: 128px minmax(0, 1fr); gap: 14px; }
-  .ratingCard :global([role='img']) { width: 128px; height: 128px; }
-  .formDistribution > div > div { grid-template-columns: 1fr; gap: 20px; }
   .ratingCard { padding: 18px; }
   .overview { gap: 18px; }
 }
 
 @container (max-width: 340px) {
   .heroActions { flex-direction: column; }
-  .ratingCard > div > div { grid-template-columns: 1fr; gap: 20px; }
 }
 
 @media print {
