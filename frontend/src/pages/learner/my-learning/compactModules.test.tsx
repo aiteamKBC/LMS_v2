@@ -57,6 +57,26 @@ beforeEach(() => {
 afterEach(() => { clearAllCachedResources(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
 describe('compact My Learning route', () => {
+  it.each(['commercial', 'apprenticeship'] as const)('shows certificates for an old course and inside an assigned builder free course (%s)', async kind => {
+    const catalogue = makeCatalogue(kind);
+    catalogue.modules = [{ ...catalogue.modules[1], completedActivityCount: 3, progress: 100, status: 'Completed' }];
+    const module = makeModule();
+    const completedModule = { ...module, detail: { ...module.detail, componentProgress: [{ componentId: 'C1', passed: true }] } };
+    vi.mocked(fetch).mockImplementation(async input => {
+      const url = String(input);
+      if (url.includes('/certificates/')) return reply({ template: { id: 1, version: 2, title: 'Achievement', minimumProgress: 80, requireFinalTest: true }, csrfToken: 'csrf' });
+      if (url.includes('/free-courses/')) return reply({ freeCourses: [{ freeCourseId: 'FC-1', moduleId: 'M1', courseName: 'One', weeks: [], weekCount: 1, activityCount: 1 }] });
+      if (url.includes('/modules/')) return reply(completedModule);
+      return reply(catalogue);
+    });
+    route(`/learner/my-learning/${kind}/7`);
+    expect(await screen.findByRole('button', { name: 'Get certificate' })).toBeVisible();
+    fireEvent.click(screen.getByRole('radio', { name: 'Free courses' }));
+    fireEvent.click(await screen.findByRole('button', { name: /Open course/ }));
+    await screen.findByRole('region', { name: 'Module progress' });
+    expect(await screen.findByRole('button', { name: 'Get certificate' })).toBeVisible();
+  });
+
   it.each(['commercial', 'apprenticeship'] as const)('shows each course KSB percentage from the catalogue (%s)', async kind => {
     const catalogue = makeCatalogue(kind);
     catalogue.modules[0].ksbProgress = { completed: 1, total: 4, percent: 25, status: 'ready' };
