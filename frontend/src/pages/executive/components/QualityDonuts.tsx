@@ -1,3 +1,4 @@
+import DonutChart from "@/components/qms/DonutChart";
 import { formatNumber, formatPct } from "@/lib/qms";
 import type { QualityRecord } from "@/types/qms";
 import styles from "../ExecutiveOverview.module.css";
@@ -152,11 +153,11 @@ function RatingCard({
       <h2 className="font-heading text-[15px] font-semibold text-foreground-950">{title}</h2>
       <p className="mt-0.5 text-[12px] leading-relaxed text-foreground-600">{description}</p>
       {!available ? <p className="mt-4 border-t border-background-200 pt-4 text-[12px] text-foreground-600">Feedback rating data is unavailable.</p> : <>
-      <div className="mt-4 border-t border-background-200 pt-4">
-        <HorizontalBarChart
+      <div className={`${styles.circularChart} mt-4 border-t border-background-200 pt-4`}>
+        <DonutChart
           data={items}
-          summaryValue={centerValue ?? leadPercentage(items)}
-          summaryLabel={centerLabel}
+          centerValue={centerValue ?? leadPercentage(items)}
+          centerLabel={centerLabel}
           ariaLabel={ariaLabel}
           showAllItems
         />
