@@ -162,9 +162,9 @@ def _record_approved_evidence(cur, blob_name, original_filename, approved_path):
     )
 
 
-def _learner_profile_ids_for_source(cur, learner_id):
+def _learner_profile_ids_for_source(cur, learner_id, learner_kind=None):
     from .reflection_submissions import _learner_profile_ids_for_source as resolve
-    return resolve(cur, learner_id)
+    return resolve(cur, learner_id, learner_kind)
 
 
 def _training_plan_details(value):
@@ -188,7 +188,7 @@ def _evidence_lineage(kind, learner_id, section_ref):
             cur.execute(read_sql("select id from curriculum.components where id = %s limit 1", cur.db), [section_ref])
             if cur.fetchone():
                 lineage["component_ref"] = section_ref
-            learner_ids = _learner_profile_ids_for_source(cur, learner_id)
+            learner_ids = _learner_profile_ids_for_source(cur, learner_id, kind)
             if not learner_ids:
                 return lineage
             cur.execute(
@@ -449,19 +449,21 @@ def _marking_status(kind, learner_id, section_ref):
     try:
         with _conn().cursor() as cur:
             learner_ids = _learner_profile_ids_for_source(cur, learner_id)
-            candidates = sorted({str(learner_id), *(learner_ids or [])})
+            if not learner_ids:
+                return ""
+            learner_ids = [int(value) for value in learner_ids]
             cur.execute(
                 """
                 select status
                   from "Learner"."learning_reflection_submissions"
                  where activity_id = %s
                    and learner_kind = %s
-                   and learner_id::text = any(%s)
+                   and learner_id = any(%s::bigint[])
                  order by case status when 'accepted' then 0 when 'submitted_for_tutor_review' then 1 else 2 end,
                      submitted_at desc nulls last
                  limit 1
                 """,
-                [section_ref, kind, candidates],
+                [section_ref, kind, learner_ids],
             )
             row = cur.fetchone()
             return str(row[0] or "") if row else ""
@@ -491,13 +493,15 @@ def _evidence_submissions(kind, learner_id):
     """Read only this owner's submissions; library files can be reused elsewhere."""
     try:
         with _conn().cursor() as cur:
-            profile_ids = _learner_profile_ids_for_source(cur, learner_id)
-            candidates = sorted({str(learner_id), *(profile_ids or [])})
+            profile_ids = _learner_profile_ids_for_source(cur, learner_id, kind)
+            if not profile_ids:
+                return []
+            profile_ids = [int(value) for value in profile_ids]
             cur.execute(
                 '''select activity_id, status, full_submission, evidence_files
                      from "Learner"."learning_reflection_submissions"
-                    where learner_kind = %s and learner_id::text = any(%s)''',
-                [kind, candidates],
+                    where learner_kind = %s and learner_id = any(%s::bigint[])''',
+                [kind, profile_ids],
             )
             return cur.fetchall()
     except DatabaseError:

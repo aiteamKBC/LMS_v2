@@ -49,7 +49,7 @@ class CoachPresentationTests(SimpleTestCase):
             CREATE TABLE Learner.learners(id,enrolment_id,learner_type,coach_email,email);
             INSERT INTO Learner.learners VALUES(70,7,'apprenticeship','coach@example.test','learner@example.test'),
                 (80,8,'commercial','coach@example.test','commercial@example.test');
-            CREATE TABLE Learner.learning_reflection_submissions(id,learner_kind,learner_id,activity_id,activity_type,status,full_submission,submitted_at);
+            CREATE TABLE Learner.learning_reflection_submissions(id,learner_kind,learner_id INTEGER,activity_id,activity_type,status,full_submission,submitted_at);
             CREATE TABLE Learner.evidence_files(id,learner_kind,learner_id,section_ref,original_filename,container,blob_name,size_bytes,status);
         ''')
         self.document = {'activityId': 'COMP-1', 'signedDeclaration': True, 'actualTimeHours': '2',
@@ -58,9 +58,10 @@ class CoachPresentationTests(SimpleTestCase):
                 {'title': 'Saved application', 'body': 'Original workplace application. No new content or AI generation.'}]},
             'assignmentAttemptHistory': [{'status': 'rejected', 'content': {'monthlyAssignment': {'slides': [{'title': 'History', 'body': 'Prior attempt unchanged.'}]}}}]}
         self.db.execute('INSERT INTO Learner.learning_reflection_submissions VALUES(?,?,?,?,?,?,?,?)',
-            [IDENTIFIER, 'apprenticeship', '7', 'COMP-1', 'assignment', 'submitted_for_tutor_review', json.dumps(self.document), SUBMITTED])
+            [IDENTIFIER, 'apprenticeship', 70, 'COMP-1', 'assignment', 'submitted_for_tutor_review', json.dumps(self.document), SUBMITTED])
         self.statements = []
         self.enterContext(patch.object(decks, 'query', side_effect=self.query))
+        self.enterContext(patch.object(decks, 'learner_coach_sql', return_value='l.coach_email'))
         self.storage = self.enterContext(patch('learner_api.evidence_storage.download_blob_bytes', return_value=reference_file()))
         self.factory = RequestFactory()
 

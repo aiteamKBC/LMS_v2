@@ -471,11 +471,10 @@ def _progress_by_component(profile, component_ids):
 REFLECTION_TABLE = '"Learner"."learning_reflection_submissions"'
 
 
-def _reviews_by_component(learner, component_ids):
+def _reviews_by_component(profile, component_ids):
     """The review state attached to each of these components, if any.
 
-    Matched on the learner's enrolment id, which the reflection rows carry as
-    text in `learner_id` and (for newer rows) as `enrolment_id`, and on either
+    Matched on the canonical learner profile id and learner kind, and on either
     reference to the component — `activity_id` is what the reflection form
     writes, `component_ref` what the curriculum link resolved to.
     """
@@ -488,10 +487,10 @@ def _reviews_by_component(learner, component_ids):
                 SELECT coalesce(nullif(component_ref, ''), activity_id) AS component,
                        status, coach_feedback, reviewed_by, reviewed_at
                 FROM {REFLECTION_TABLE}
-                WHERE (learner_id = %s OR enrolment_id = %s)
+                WHERE learner_id = %s AND learner_kind = %s
                   AND (activity_id = ANY(%s::text[]) OR component_ref = ANY(%s::text[]))
                 """,
-                [str(learner.pk), learner.pk, list(component_ids), list(component_ids)],
+                [profile.pk, profile.learner_type, list(component_ids), list(component_ids)],
             )
             rows = cursor.fetchall()
     except DatabaseError:
@@ -602,7 +601,7 @@ def _progress_pairing(learner, from_id, to_id):
         return [], [], "This learner has no recorded progress on this module."
     # Shown against each component so it is plain that a pending or marked
     # review moves with the work rather than being left behind.
-    reviews = _reviews_by_component(learner, component_ids)
+    reviews = _reviews_by_component(profile, component_ids)
 
     pairs, suggested, claimed_targets = [], [], set()
     for index, week in enumerate(source_weeks):

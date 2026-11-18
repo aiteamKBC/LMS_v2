@@ -249,9 +249,9 @@ def reconcile_progress(progress_id):
         if session["review_required"]:
             _ensure_review_link(session,row)
             cursor.execute('''SELECT status FROM "Learner".learning_reflection_submissions
-               WHERE learner_id::text=%s AND activity_id=%s AND progress_entry_id=%s
+               WHERE learner_id=%s AND learner_kind=%s AND activity_id=%s AND progress_entry_id=%s
                ORDER BY submitted_at DESC LIMIT 1''',
-               [session["learner_id"],session["component_id"],row["id"]])
+               [session["profile_id"],session["learner_kind"],session["component_id"],row["id"]])
             review = cursor.fetchone()
             if not review or review[0]!="accepted":
                 cursor.execute('''UPDATE "Engagement".shared_reward_outbox SET state='waiting_review',

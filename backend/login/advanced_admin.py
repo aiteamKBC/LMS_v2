@@ -2041,10 +2041,10 @@ def learner_submissions(request, profile_id, submission_id=None):
         if request.method == 'GET':
             with connections['enrolment'].cursor() as cursor:
                 clause = ' and id = %s' if submission_id else ''
-                args = [str(profile.enrolment_id), *([str(submission_id)] if submission_id else [])]
+                args = [profile.pk, profile.learner_type, *([str(submission_id)] if submission_id else [])]
                 cursor.execute(f'''select {MARKING_QUEUE_COLUMNS}
                     from "Learner".learning_reflection_submissions
-                    where learner_id = %s and {MARKING_QUEUE_EXCLUDE_DRAFTS_SQL}{clause}
+                    where learner_id = %s and learner_kind = %s and {MARKING_QUEUE_EXCLUDE_DRAFTS_SQL}{clause}
                     order by submitted_at desc nulls last, id desc''', args)
                 columns = [column[0] for column in cursor.description]
                 rows = [dict(zip(columns, row)) for row in cursor.fetchall()]
@@ -2074,9 +2074,9 @@ def learner_submissions(request, profile_id, submission_id=None):
         with connections['enrolment'].cursor() as cursor:
             cursor.execute(f'''update "Learner".learning_reflection_submissions
                 set status=%s, coach_feedback=%s, reviewed_by=%s, reviewed_at=%s
-                where id=%s and learner_id=%s and {MARKING_QUEUE_EXCLUDE_DRAFTS_SQL}
+                where id=%s and learner_id=%s and learner_kind=%s and {MARKING_QUEUE_EXCLUDE_DRAFTS_SQL}
                 returning {SUBMISSION_AUDIT_SQL}''',
-                [decision, feedback, reviewed_by, timezone.now(), str(submission_id), str(profile.enrolment_id)])
+                [decision, feedback, reviewed_by, timezone.now(), str(submission_id), profile.pk, profile.learner_type])
             updated = cursor.fetchone()
         if not updated:
             return JsonResponse({'error': 'Submission not found.'}, status=404)

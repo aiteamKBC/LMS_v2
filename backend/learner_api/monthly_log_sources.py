@@ -150,8 +150,12 @@ def _attempts(learner):
 
 
 def _reflections(learner, progress):
+    owner = learner.get('_profile') or profile(learner['id'])
+    if not owner:
+        return
     records = query('''SELECT to_jsonb(s) AS payload FROM "Learner".learning_reflection_submissions s
-        WHERE s.learner_id=%s AND s.status <> 'draft' ORDER BY s.submitted_at,s.id''', [str(learner['id'])])
+        WHERE s.learner_id=%s AND s.learner_kind=%s AND s.status <> 'draft'
+        ORDER BY s.submitted_at,s.id''', [owner['id'], owner['learner_type']])
     by_progress = {p['source_ref']: p for p in progress}
     for record in records:
         s = decoded(record['payload'], {})

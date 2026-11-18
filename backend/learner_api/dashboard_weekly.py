@@ -59,7 +59,7 @@ def reflection_ksbs(owner, component_ids):
         WHERE learner_id=%s AND learner_kind=%s AND activity_id=ANY(%s)
           AND {VISIBLE_SUBMISSION_SQL}
         ORDER BY activity_id, status, submitted_at, id''',
-        [str(owner['enrolment_id']), owner['learner_type'], component_ids])
+        [owner['id'], owner['learner_type'], component_ids])
     grouped = {}
     for row in records:
         # Keep topic drafts/pending reviews distinct from accepted work.

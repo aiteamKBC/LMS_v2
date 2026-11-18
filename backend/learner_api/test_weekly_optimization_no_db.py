@@ -7,6 +7,7 @@ from django.db import DatabaseError
 from django.test import SimpleTestCase
 
 from . import canonical_learning, weekly_hours
+from .canonical_hours import extra_activity_hour_records
 from .current_learning import current_records
 
 
@@ -127,7 +128,21 @@ class WeeklyHoursProjectionTests(SimpleTestCase):
                 {'id': 17, 'enrolment_id': 201, 'learner_type': 'commercial'}), [])
         self.assertEqual(query.call_count, 2)
         self.assertIn("s.activity_type='extra_activity'", query.call_args_list[1].args[0])
-        self.assertEqual(query.call_args_list[1].args[1], [17, '201', 'commercial'])
+        self.assertEqual(query.call_args_list[1].args[1], [17, 'commercial'])
+
+    def test_extra_hours_cte_types_normalized_owner_ids_without_weakening_ownership(self):
+        owners = [
+            {'id': 17, 'enrolment_id': 201, 'learner_type': 'commercial'},
+            {'id': 18, 'enrolment_id': 202, 'learner_type': 'apprenticeship'},
+        ]
+        with patch.object(canonical_learning, 'query', return_value=[]) as query:
+            self.assertEqual(extra_activity_hour_records(owners), {17: [], 18: []})
+        sql, params = query.call_args.args
+        self.assertEqual(sql.count('CAST(%s AS bigint)'), 2)
+        self.assertIn('s.learner_id=owners.profile_id', sql)
+        self.assertIn('s.learner_kind=owners.learner_kind', sql)
+        self.assertEqual(params, [17, 'commercial', 18, 'apprenticeship'])
+        self.assertTrue(all(isinstance(params[index], int) for index in (0, 2)))
 
     def test_standalone_reviewed_extra_matches_full_hour_projection(self):
         owner = {'id': 17, 'enrolment_id': 201, 'learner_type': 'commercial'}

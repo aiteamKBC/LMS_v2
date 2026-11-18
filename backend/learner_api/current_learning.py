@@ -296,7 +296,7 @@ def current_records(owner, records):
         full_submission->>'submissionOrigin' = 'imported_legacy' AS imported
         FROM "Learner".learning_reflection_submissions
         WHERE learner_id=%s AND learner_kind=%s AND activity_type IN ('assignment','extra_activity')
-        ORDER BY submitted_at NULLS FIRST,id''', [str(owner['enrolment_id']), owner.get('learner_type')])
+        ORDER BY submitted_at NULLS FIRST,id''', [owner['id'], owner.get('learner_type')])
     markings = {str(s['component_ref']): s for s in submissions if s.get('component_ref')}
     projected = merge_submissions(project_current(records, markings), submissions)
     return merge_attempts(projected, subject_attempt_rows(owner))
@@ -334,10 +334,8 @@ def current_records_bulk(owners, records_by_learner_id):
     if not owners_by_enrolment:
         return {}
 
-    identity_pairs = [
-        (str(enrolment_id), str(owner.get('learner_type') or ''))
-        for enrolment_id, owner in owners_by_enrolment.items()
-    ]
+    identity_pairs = [(int(owner['id']), str(owner.get('learner_type') or ''))
+                      for owner in owners_by_enrolment.values()]
     placeholders = ','.join(['(%s,%s)'] * len(identity_pairs))
     params = [value for pair in identity_pairs for value in pair]
     submissions = query(f'''SELECT learner_id,learner_kind,id,component_ref,progress_entry_id,
@@ -350,12 +348,12 @@ def current_records_bulk(owners, records_by_learner_id):
         ORDER BY submitted_at NULLS FIRST,id''', params)
     submissions_by_identity = {pair: [] for pair in identity_pairs}
     for submission in submissions:
-        key = (str(submission.get('learner_id')), str(submission.get('learner_kind') or ''))
+        key = (int(submission['learner_id']), str(submission.get('learner_kind') or ''))
         submissions_by_identity.setdefault(key, []).append(submission)
 
     projected = {}
     for enrolment_id, owner in owners_by_enrolment.items():
-        key = (str(enrolment_id), str(owner.get('learner_type') or ''))
+        key = (int(owner['id']), str(owner.get('learner_type') or ''))
         learner_submissions = submissions_by_identity.get(key, [])
         markings = {
             str(submission['component_ref']): submission

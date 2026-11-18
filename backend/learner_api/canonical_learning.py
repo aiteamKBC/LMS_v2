@@ -401,7 +401,7 @@ def weekly_hour_records(owner):
             FROM "Learner".learning_reflection_submissions
             WHERE learner_id=%s AND learner_kind=%s AND activity_type IN ('assignment','extra_activity')
               AND component_ref=ANY(%s) ORDER BY submitted_at NULLS FIRST,id''',
-            [str(owner['enrolment_id']), owner.get('learner_type'), pending])
+            [owner['id'], owner.get('learner_type'), pending])
         markings = {str(row['component_ref']): row for row in submissions}
     projected = project_current(records, markings)
     projected = merge_attempts(projected, subject_attempt_rows(owner, timed_only=True))

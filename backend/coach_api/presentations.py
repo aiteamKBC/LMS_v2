@@ -58,9 +58,9 @@ def _current(request, submitted_at, version=None):
 
 def _official(request, submission_id):
     coach_email = learner_coach_sql('l', 'email', repository._query_alias.get() or repository.DB)
-    rows = query(f'''SELECT s.learner_kind,s.learner_id,s.activity_id,s.full_submission,s.submitted_at
+    rows = query(f'''SELECT s.learner_kind,l.enrolment_id AS learner_id,s.activity_id,s.full_submission,s.submitted_at
         FROM "Learner".learning_reflection_submissions s
-        JOIN "Learner".learners l ON l.enrolment_id::text=s.learner_id AND l.learner_type=s.learner_kind
+        JOIN "Learner".learners l ON l.id=s.learner_id AND l.learner_type=s.learner_kind
         JOIN enrolment."Created_users" u ON u.id=l.enrolment_id AND lower(btrim(u."Email"))=lower(btrim(l.email))
         WHERE s.id=%s AND s.activity_type='assignment' AND s.status<>'draft'
           AND lower(btrim({coach_email}))=%s

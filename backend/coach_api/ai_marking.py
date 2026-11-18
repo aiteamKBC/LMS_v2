@@ -876,9 +876,7 @@ def _load_scoped_submission(request, submission_id):
 
     Scoped exactly as the read endpoint is: the submission text is the
     learner's personal writing, and generating a draft -- or reading the prompt
-    that would mark it -- is still a read of it. Matching on ``enrolment_id``
-    rather than the profile pk for the reason given in ``coach_marking_queue``:
-    the two are disjoint.
+    that would mark it -- is still a read of it.
 
     Shared by the prompt and draft endpoints so they cannot drift apart on who
     is allowed to see whose work.
@@ -888,6 +886,7 @@ def _load_scoped_submission(request, submission_id):
     from learner_api.models import LearnerProfile
 
     from .views import (
+        MARKING_QUEUE_CANONICAL_OWNER_SQL,
         MARKING_QUEUE_COLUMNS,
         normalize_email,
         serialize_marking_submission,
@@ -895,11 +894,11 @@ def _load_scoped_submission(request, submission_id):
 
     owner_email = authenticated_coach_email(request)
     allowed_learner_ids = [
-        str(learner_id)
+        learner_id
         for learner_id in (
             LearnerProfile.objects.annotate(coach_email_key=Lower(Trim("coach_email")))
             .filter(coach_email_key=normalize_email(owner_email))
-            .values_list("enrolment_id", flat=True)
+            .values_list("id", flat=True)
         )
         if learner_id is not None
     ]
@@ -913,6 +912,7 @@ def _load_scoped_submission(request, submission_id):
                 select {MARKING_QUEUE_COLUMNS}
                   from "Learner".learning_reflection_submissions
                  where id = %s and learner_id = any(%s)
+                   and {MARKING_QUEUE_CANONICAL_OWNER_SQL}
                 """,
                 [str(submission_id), allowed_learner_ids],
             )

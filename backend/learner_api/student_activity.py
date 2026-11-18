@@ -72,7 +72,7 @@ def _direct_progress_records(enrolment_id, *, profile=None):
     profile = profile or (
         LearnerProfile.objects.using('enrolment')
         .filter(enrolment_id=enrolment_id)
-        .only('id')
+        .only('id', 'learner_type')
         .first()
     )
     if profile is None:
@@ -112,13 +112,13 @@ def _direct_progress_records(enrolment_id, *, profile=None):
     # Assignment marking is stored separately from the progress row. Keep the
     # coach decision beside the record so OTJH reporting can distinguish a
     # hand-in from an accepted assignment without changing quiz semantics.
-    candidates = {str(enrolment_id), str(profile.id), str(profile.enrolment_id)}
     try:
         with connections['enrolment'].cursor() as cursor:
             cursor.execute('''SELECT DISTINCT ON (activity_id) activity_id,status
                 FROM "Learner"."learning_reflection_submissions"
-                WHERE learner_id::text=ANY(%s) AND activity_id=ANY(%s)
-                ORDER BY activity_id,submitted_at DESC NULLS LAST''', [sorted(candidates), component_ids])
+                WHERE learner_id=%s AND learner_kind=%s AND activity_id=ANY(%s)
+                ORDER BY activity_id,submitted_at DESC NULLS LAST''',
+                [profile.id, profile.learner_type, component_ids])
             statuses = {str(activity_id): str(status or '') for activity_id, status in cursor.fetchall()}
     except DatabaseError:
         # Older installations may not have the marking table yet. Preserve the
@@ -138,7 +138,7 @@ def load_direct_progress_records_bulk(enrolment_ids):
     profiles = list(
         LearnerProfile.objects.using('enrolment')
         .filter(enrolment_id__in=ids)
-        .only('id', 'enrolment_id')
+        .only('id', 'enrolment_id', 'learner_type')
     )
     result = {enrolment_id: [] for enrolment_id in ids}
     component_pairs = []
@@ -172,19 +172,23 @@ def load_direct_progress_records_bulk(enrolment_ids):
     component_ids = sorted({str(record['componentId']) for _, records in component_pairs for record in records if record.get('componentId')})
     if not component_ids:
         return result
-    candidates = sorted({str(value) for profile, _ in component_pairs for value in (profile.enrolment_id, profile.id)})
+    ownership_pairs = [(int(profile.id), str(profile.learner_type or '')) for profile, _ in component_pairs]
+    placeholders = ','.join(['(%s,%s)'] * len(ownership_pairs))
     try:
         with connections['enrolment'].cursor() as cursor:
-            cursor.execute('''SELECT DISTINCT ON (learner_id::text, activity_id) learner_id::text, activity_id, status
+            cursor.execute(f'''SELECT DISTINCT ON (learner_id, learner_kind, activity_id)
+                    learner_id, learner_kind, activity_id, status
                 FROM "Learner"."learning_reflection_submissions"
-                WHERE learner_id::text=ANY(%s) AND activity_id=ANY(%s)
-                ORDER BY learner_id::text, activity_id, submitted_at DESC NULLS LAST''', [candidates, component_ids])
-            statuses = {(learner, str(activity)): str(status or '') for learner, activity, status in cursor.fetchall()}
+                WHERE (learner_id,learner_kind) IN ({placeholders}) AND activity_id=ANY(%s)
+                ORDER BY learner_id, learner_kind, activity_id, submitted_at DESC NULLS LAST''',
+                [*[value for pair in ownership_pairs for value in pair], component_ids])
+            statuses = {(int(learner), str(kind or ''), str(activity)): str(status or '')
+                        for learner, kind, activity, status in cursor.fetchall()}
     except DatabaseError:
         statuses = {}
     for profile, records in component_pairs:
         for record in records:
-            status = statuses.get((str(profile.enrolment_id), str(record.get('componentId')))) or statuses.get((str(profile.id), str(record.get('componentId'))))
+            status = statuses.get((int(profile.id), str(profile.learner_type or ''), str(record.get('componentId'))))
             if status is not None:
                 record['markingStatus'] = status
     return result

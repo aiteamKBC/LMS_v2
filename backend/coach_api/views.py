@@ -3005,7 +3005,7 @@ def caseload_canonical_metrics(rows, *, learner_workspace=False) -> dict[int, di
     attempt_keys = list(aptem_by_enrolment.items())
     subject_attempts = load_subject_attempts_bulk(attempt_keys)
     manual_hours = load_manual_hours_bulk([aptem for _, aptem in attempt_keys])
-    reflection_keys = [(kind, int(source.pk)) for _, source, kind in work]
+    reflection_keys = [(kind, profile_id) for profile_id, _source, kind in work]
     reflection_submissions = load_reflection_submissions_bulk(reflection_keys)
     audit_inputs = load_audit_inputs_bulk([aptem for _, aptem in attempt_keys])
     native_progress = load_native_progress_bulk(enrolment_ids)
@@ -3055,7 +3055,7 @@ def caseload_canonical_metrics(rows, *, learner_workspace=False) -> dict[int, di
                         'direct_progress': direct_progress.get(enrolment_id, []),
                         'subject_attempts': subject_attempts.get((enrolment_id, aptem_id), set()) if aptem_id is not None else set(),
                         'manual_hours': manual_hours.get(aptem_id) if aptem_id is not None else None,
-                        'reflection_submissions': reflection_submissions.get((kind, str(source.pk)), []),
+                        'reflection_submissions': reflection_submissions.get((kind, str(profile_id)), []),
                         'audit_inputs': audit_input,
                         'historical_metadata_loaded': True,
                         'native_progress': native_progress.get(enrolment_id, []),
@@ -13369,13 +13369,14 @@ def coach_performance_metrics_by_coach(
             SELECT lower(trim(coach_email)) AS email,
                    id AS profile_id,
                    enrolment_id,
+                   learner_type,
                    full_name,
                    programme_status
               FROM "Learner".learners
              WHERE lower(trim(coach_email)) = ANY(%s)
                AND nullif(trim(full_name), '') IS NOT NULL
         ), learner_profiles AS (
-            SELECT email, profile_id, enrolment_id
+            SELECT email, profile_id, enrolment_id, learner_type
               FROM coach_profiles
              WHERE enrolment_id IS NOT NULL
                AND regexp_replace(
@@ -13434,7 +13435,8 @@ def coach_performance_metrics_by_coach(
             SELECT profiles.email, count(*)::int AS pending_assignments
               FROM coach_profiles AS profiles
               JOIN "Learner".learning_reflection_submissions AS assignments
-                ON assignments.learner_id = profiles.enrolment_id::text
+                ON assignments.learner_id = profiles.profile_id
+               AND assignments.learner_kind = profiles.learner_type
              WHERE assignments.status IN ('submitted_for_tutor_review', 'escalated')
                AND lower(trim(assignments.activity_type)) = ANY(%s)
              GROUP BY profiles.email
@@ -14709,7 +14711,11 @@ def coach_absence_reports(request):
 
 
 MARKING_QUEUE_COLUMNS = """
-    id, learner_kind, learner_id, learner_name, programme_name,
+    id, learner_kind,
+    (SELECT owner.enrolment_id FROM "Learner".learners owner
+      WHERE owner.id=learning_reflection_submissions.learner_id
+        AND owner.learner_type=learning_reflection_submissions.learner_kind) AS learner_id,
+    learner_name, programme_name,
     activity_type, activity_id, activity_title, module_title,
     week_title, planned_otjh, status, learning_reflection,
     ksb_codes, ksb_weights, ksb_explanations, confidence_before, confidence_after,
@@ -14719,6 +14725,16 @@ MARKING_QUEUE_COLUMNS = """
     completed_during_paid_hours, date_completed, otjh_confirmed,
     signed_declaration, quality_score, coach_feedback, reviewed_by,
     reviewed_at, submitted_at, full_submission
+"""
+
+# A reflection row is owned by both the canonical learner profile and its
+# learner kind. Keep this predicate beside every coach-side ownership filter.
+MARKING_QUEUE_CANONICAL_OWNER_SQL = """
+    exists (
+        select 1 from "Learner".learners reflection_owner
+         where reflection_owner.id = learning_reflection_submissions.learner_id
+           and reflection_owner.learner_type = learning_reflection_submissions.learner_kind
+    )
 """
 
 
@@ -14812,19 +14828,18 @@ def coach_marking_queue(request, submission_id=None):
     from learner_api.reflection_ksbs import PENDING_KSB_REVIEW_SQL, KsbReviewError
     owner_email = authenticated_coach_email(request)
     requested_owner = normalize_email(owner_email)
-    # learning_reflection_submissions.learner_id is populated from
-    # enrolment."Created_users".id (see LearnerProfile.enrolment_id), not from
-    # LearnerProfile.id -- the two are disjoint pk spaces, so this must filter
-    # on enrolment_id or it never matches a real submission.
-    allowed_learner_ids = [
-        str(learner_id)
-        for learner_id in (
+    # Reflection ownership is the canonical learner profile id. Enrolment ids
+    # remain route/source identities and must not be compared with this FK.
+    allowed_owner_rows = list(
             LearnerProfile.objects.annotate(coach_email_key=Lower(Trim("coach_email")))
             .filter(coach_email_key=requested_owner)
-            .values_list("enrolment_id", flat=True)
-        )
-        if learner_id is not None
-    ]
+            .values_list("id", "enrolment_id", "learner_type")
+    )
+    # Normalize both tuple projections and flat-id adapters before applying the
+    # canonical owner filter; real queryset rows carry all three fields.
+    allowed_owners = [owner if isinstance(owner, (tuple, list)) else (owner, None, None)
+                      for owner in allowed_owner_rows]
+    allowed_learner_ids = [owner[0] for owner in allowed_owners if owner[0] is not None]
 
     if submission_id is not None:
         if request.method == "GET":
@@ -14837,6 +14852,7 @@ def coach_marking_queue(request, submission_id=None):
                         select {MARKING_QUEUE_COLUMNS}
                           from "Learner".learning_reflection_submissions
                          where id = %s and learner_id = any(%s)
+                           and {MARKING_QUEUE_CANONICAL_OWNER_SQL}
                            and {MARKING_QUEUE_EXCLUDE_DRAFTS_SQL}
                         """,
                         [str(submission_id), allowed_learner_ids],
@@ -14910,6 +14926,7 @@ def coach_marking_queue(request, submission_id=None):
                     update "Learner"."learning_reflection_submissions"
                     set status = %s, coach_feedback = %s, reviewed_by = %s, reviewed_at = %s
                     where id = %s and learner_id = any(%s)
+                      and """ + MARKING_QUEUE_CANONICAL_OWNER_SQL + """
                       and not (""" + PENDING_KSB_REVIEW_SQL + """)
                       and """ + MARKING_QUEUE_EXCLUDE_DRAFTS_SQL + """
                     returning """ + SUBMISSION_AUDIT_SQL + """
@@ -14992,11 +15009,16 @@ def coach_marking_queue(request, submission_id=None):
     if not allowed_learner_ids:
         return empty_marking_queue_response(owner_email, page=page, page_size=page_size)
 
-    base_clauses = ["learner_id = any(%s)", MARKING_QUEUE_EXCLUDE_DRAFTS_SQL]
+    base_clauses = ["learner_id = any(%s)", MARKING_QUEUE_CANONICAL_OWNER_SQL,
+                    MARKING_QUEUE_EXCLUDE_DRAFTS_SQL]
     base_params = [allowed_learner_ids]
     if learner_filter:
-        base_clauses.append("learner_id = %s")
-        base_params.append(learner_filter)
+        selected = [owner for owner in allowed_owners if str(owner[1]) == learner_filter]
+        if len(selected) != 1:
+            base_clauses.append("false")
+        else:
+            base_clauses.extend(["learner_id = %s", "learner_kind = %s"])
+            base_params.extend([selected[0][0], selected[0][2]])
     if date_from:
         base_clauses.append("submitted_at >= %s")
         base_params.append(date_from)

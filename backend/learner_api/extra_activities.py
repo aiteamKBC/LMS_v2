@@ -8,6 +8,7 @@ from django.http import JsonResponse
 from login.permissions import learner_self_or_staff
 from .monthly_assignment import assignment_checks, mapping, text
 from .extra_activity_month import valid_activity_month
+from . import canonical_learning
 
 EXTRA_CHECK_KEYS = {'answer', 'learning', 'evidence', 'ksbs', 'planned', 'declarations', 'hours'}
 
@@ -42,11 +43,12 @@ def list_extra_activities(request):
     if kind not in ('commercial', 'apprenticeship') or not str(learner_id or '').isdigit():
         return JsonResponse({'error': 'A valid learner is required.'}, status=400)
     try:
+        owner = canonical_learning.require_profile(int(learner_id))
         with connections['enrolment'].cursor() as cur:
             cur.execute('''SELECT activity_id, activity_title, status, submitted_at, full_submission,
                 coach_feedback, reviewed_by, reviewed_at FROM "Learner".learning_reflection_submissions
                 WHERE learner_kind=%s AND learner_id=%s AND activity_type='extra_activity'
-                ORDER BY submitted_at DESC, id''', [kind, learner_id])
+                ORDER BY submitted_at DESC, id''', [kind, owner['id']])
             rows = cur.fetchall()
     except DatabaseError:
         return JsonResponse({'error': 'Could not load extra activities. Please retry.'}, status=503)

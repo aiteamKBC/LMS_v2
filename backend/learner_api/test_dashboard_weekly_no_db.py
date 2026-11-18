@@ -72,9 +72,9 @@ class DashboardWeeklyTests(SimpleTestCase):
             {'activity_id': 'C2', 'status': 'draft', 'ksb_codes': []},
             {'activity_id': 'C2', 'status': 'draft', 'ksb_codes': 'null'},
         ]
-        for kind, enrolment in [('commercial', 265), ('apprenticeship', 266)]:
+        for kind, profile, enrolment in [('commercial', 17, 265), ('apprenticeship', 18, 266)]:
             with self.subTest(kind=kind), patch.object(weekly.canonical_learning, 'query', return_value=records) as query:
-                result = weekly.reflection_ksbs({'enrolment_id': enrolment, 'learner_type': kind}, ['C1', 'C2'])
+                result = weekly.reflection_ksbs({'id': profile, 'enrolment_id': enrolment, 'learner_type': kind}, ['C1', 'C2'])
             self.assertEqual(result['C1'], [
                 {'status': 'draft', 'codes': ['K1', 'S2']},
                 {'status': 'submitted_for_tutor_review', 'codes': ['B1']},
@@ -84,14 +84,14 @@ class DashboardWeeklyTests(SimpleTestCase):
             sql, params = query.call_args.args
             self.assertIn('learner_id=%s AND learner_kind=%s AND activity_id=ANY(%s)', sql)
             self.assertIn(weekly.VISIBLE_SUBMISSION_SQL, sql)
-            self.assertEqual(params, [str(enrolment), kind, ['C1', 'C2']])
+            self.assertEqual(params, [profile, kind, ['C1', 'C2']])
 
     def test_empty_week_does_not_read_reflections_and_failures_remain_visible(self):
         with patch.object(weekly.canonical_learning, 'query', side_effect=DatabaseError('offline')) as query:
             self.assertEqual(weekly.reflection_ksbs({}, []), {})
             query.assert_not_called()
             with self.assertRaises(DatabaseError):
-                weekly.reflection_ksbs({'enrolment_id': 265, 'learner_type': 'commercial'}, ['C1'])
+                weekly.reflection_ksbs({'id': 17, 'enrolment_id': 265, 'learner_type': 'commercial'}, ['C1'])
 
     def test_selected_quiz_metadata_and_question_availability_are_reused(self):
         component = ('Q1', 'W1', 'M1', 'quiz', 'Quiz', '', {}, None, 0, None, False, None, False)

@@ -30724,13 +30724,10 @@ def reflection_submission_ksb_consumption(learners, programme_ksb_codes, compone
     lineage this reader walks is Learner -> Progress -> Component -> Reflection,
     in that direction.
 
-    Why reflections used to be missing from this payload:
-    ``learning_reflection_submissions.learner_id`` holds the *enrolment source*
-    id (``enrolment."Created_users".id``) while these learners are
-    ``"Learner"."learners"`` profile ids — a different id space — and the table
-    has no email column at all. Comparing the two silently matched nothing, so
-    no reflection ever reached Curriculum impact. The fix is not a better
-    identity guess; it is to stop guessing and go through ``progress_entry_id``.
+    ``learning_reflection_submissions.learner_id`` is the canonical
+    ``"Learner"."learners".id`` owner. This reader still resolves attribution
+    through ``progress_entry_id`` because that immutable link also supplies the
+    component lineage and completion outcome used by Curriculum impact.
 
     Returns ``(declared_totals, rows, excluded_rows, unlinked_rows)``.
 
