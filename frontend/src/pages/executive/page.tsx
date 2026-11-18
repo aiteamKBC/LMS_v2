@@ -10,7 +10,6 @@ import OverviewKpis from "@/pages/executive/components/OverviewKpis";
 import HealthOverview from "@/pages/executive/components/HealthOverview";
 import CategoryRag from "@/pages/executive/components/CategoryRag";
 import RegistryTable from "@/pages/executive/components/RegistryTable";
-import ConcernList from "@/pages/executive/components/ConcernList";
 import QualityDonuts from "@/pages/executive/components/QualityDonuts";
 import MeetingTypesModal from "@/pages/executive/components/MeetingTypesModal";
 import { addDays, TIME_ZONE_LABEL, todayIso } from "@/pages/curriculum/recordings/utils";
@@ -201,6 +200,7 @@ export default function ExecutiveOverview({ attentionPanel }: { attentionPanel?:
         </div>
 
         <div className={styles.heroActions}>
+          {attentionPanel ? <div className={styles.headerAttention}>{attentionPanel}</div> : null}
           <div className={styles.policyControl}>
             <button
               type="button"
@@ -280,7 +280,7 @@ export default function ExecutiveOverview({ attentionPanel }: { attentionPanel?:
       />
       </div>
 
-      <OverviewKpis records={records} actions={actions} forms={forms} availability={live.availability} onOpenAuditTypes={openAuditTypes} attentionPanel={attentionPanel} />
+      <OverviewKpis records={records} actions={actions} forms={forms} availability={live.availability} onOpenAuditTypes={openAuditTypes} />
 
       {auditTypesOpen ? <MeetingTypesModal records={records} onClose={() => setAuditTypesOpen(false)} onOpenType={openAuditType} /> : null}
 
@@ -314,7 +314,6 @@ export default function ExecutiveOverview({ attentionPanel }: { attentionPanel?:
       <RegistryTable forms={forms} records={records} />
       </div>
 
-      <ConcernList themes={live.concerns} available={live.availability.concerns} />
 
     </div>
   );

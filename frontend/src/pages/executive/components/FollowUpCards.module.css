@@ -1,4 +1,4 @@
-:global(#root) :is(.card, .attention > section) {
+:global(#root) :is(.card, .attention section) {
   --card-highlight: rgb(255 255 255 / 0.7);
   --card-tint: oklch(var(--primary-200) / 0.25);
   --card-wash: oklch(var(--primary-50));
@@ -23,7 +23,7 @@
   --card-glow: rgb(220 38 38 / 0.25);
 }
 
-:global([data-theme='dark']) :global(#root) :is(.card, .attention > section) {
+:global([data-theme='dark']) :global(#root) :is(.card, .attention section) {
   --card-highlight: rgb(255 255 255 / 0.06);
 }
 
