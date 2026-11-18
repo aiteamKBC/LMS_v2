@@ -1,0 +1,5 @@
+/* Keep this table's header colour above the shared light and dark palettes. */
+:global(#root) .journeyTable thead th {
+  background: #441f65 !important;
+  color: #fff !important;
+}

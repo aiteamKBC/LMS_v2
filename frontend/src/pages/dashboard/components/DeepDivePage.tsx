@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { fetchEnrolmentBoard, fetchEnrolmentUsers } from "@/api/enrolmentUsers";
 import { fetchDeepDiveIlrContact, fetchDeepDiveRecord, fetchDeepDiveSummaries, importDeepDiveWorkbook, markDeepDiveRecordReviewed, sha256File, syncDeepDiveFromCreatedUsers, updateDeepDiveRecord, workbookToDeepDiveRows, type DeepDiveOperationalDetails, type DeepDiveRecord, type DeepDiveReviewItem } from "@/api/deepDive";
 import type { EnrolmentBoard, UserListRow } from "@/pages/users/types";
+import styles from "./DeepDivePage.module.css";
 
 type ReviewStatusFilter = "all" | "reviewed" | "awaiting";
 type ReviewListKind = "reviewed" | "awaiting";
@@ -454,23 +455,28 @@ export default function DeepDivePage() {
         </div>
       </section>
 
-      <section className="overflow-hidden rounded-xl border border-background-200 bg-background-50" aria-label="Learner Deep Dive table">
-        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-background-200 px-4 py-3"><div><h2 className="font-heading text-[15px] font-semibold text-foreground-950">Learner journey</h2><p className="mt-0.5 text-[11px] text-foreground-500">{filteredRows.length} of {mergedRows.length} learners shown</p></div><span className="text-[11px] text-foreground-500">Click a row for details</span></div>
-        <div className="overflow-x-auto">
-          <table className="min-w-[980px] w-full text-left text-[12px]">
-            <thead className="bg-background-100 text-[10.5px] uppercase tracking-[0.08em] text-foreground-500"><tr><th className="px-4 py-3 font-semibold">Learner</th><th className="px-4 py-3 font-semibold">Programme / cohort</th><th className="px-4 py-3 font-semibold">Status</th><th className="px-4 py-3 font-semibold">Planned dates</th><th className="px-4 py-3 font-semibold">Reviewed date</th><th className="px-4 py-3 font-semibold">Review status</th><th className="px-4 py-3 font-semibold">Details</th></tr></thead>
+      <section className="min-w-0 overflow-hidden rounded-xl border border-background-200 bg-background-50 shadow-sm" aria-label="Learner Deep Dive table">
+        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-background-200 px-4 py-3"><div><h2 id="deep-dive-journey-title" className="font-heading text-[15px] font-semibold text-foreground-950">Learner journey</h2><p className="mt-0.5 text-[11px] text-foreground-500">{filteredRows.length} of {mergedRows.length} learners shown</p></div><span className="text-[11px] text-foreground-500">Click a row for details</span></div>
+        <div
+          role="region"
+          aria-labelledby="deep-dive-journey-title"
+          tabIndex={0}
+          className="max-h-[min(65dvh,640px)] overflow-auto overscroll-contain [scrollbar-gutter:stable] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary-400"
+        >
+          <table aria-labelledby="deep-dive-journey-title" className={`${styles.journeyTable} w-full min-w-[1100px] !overflow-visible text-left text-[12px] [&_th]:sticky [&_th]:top-0 [&_th]:z-10 [&_th]:whitespace-nowrap [&_th]:shadow-[inset_0_-1px_0_var(--kbc-border)]`}>
+            <thead className="bg-background-100 text-[10.5px] uppercase tracking-[0.08em] text-foreground-500"><tr><th scope="col" className="w-[23%] px-4 py-3 font-semibold">Learner</th><th scope="col" className="w-[25%] px-4 py-3 font-semibold">Programme / cohort</th><th scope="col" className="px-4 py-3 font-semibold">Status</th><th scope="col" className="px-4 py-3 font-semibold">Planned dates</th><th scope="col" className="px-4 py-3 font-semibold">Reviewed date</th><th scope="col" className="px-4 py-3 font-semibold">Review status</th><th scope="col" className="px-4 py-3 font-semibold">Details</th></tr></thead>
             <tbody className="divide-y divide-background-100">
               {filteredRows.map((row) => {
                 const { learner, record } = row;
                 const isSelected = selectedId === row.key;
                 return <tr key={row.key} className={`cursor-pointer align-top transition-colors hover:bg-primary-50/40 ${isSelected ? "bg-primary-50/60" : ""}`} onClick={() => setSelectedId(isSelected ? null : row.key)}>
-                  <td className="px-4 py-3"><button type="button" className="text-left" onClick={() => setSelectedId(isSelected ? null : row.key)}><p className="font-semibold text-primary-700 hover:text-primary-900">{learner.name || "Unnamed learner"}</p><p className="mt-0.5 text-[11px] text-foreground-500">{learner.email || learner.referenceNumber || "No reference recorded"}</p></button></td>
-                  <td className="px-4 py-3 text-foreground-700">{programmeLabel(learner)}</td>
-                  <td className="px-4 py-3"><span className={`inline-flex rounded-full px-2 py-1 text-[10.5px] font-semibold ${statusClass(learner.programmeStatus)}`}>{learner.programmeStatus || "Not recorded"}</span></td>
-                  <td className="px-4 py-3 text-foreground-700"><p>{displayDate(record?.startDate || learner.learnerStartDate || learner.startDate)}</p><p className="mt-0.5 text-[11px] text-foreground-500">to {displayDate(record?.practicalEndDate || learner.learnerEndDate || learner.endDate)}</p></td>
-                  <td className="px-4 py-3 text-foreground-700">{record?.reviewedAt ? displayDate(record.reviewedAt.slice(0, 10)) : "Not reviewed"}</td>
-                  <td className="px-4 py-3"><span className={record?.reviewedBy ? "font-semibold text-emerald-700" : "font-semibold text-foreground-800"}>{record?.reviewedBy ? "Reviewed" : "Awaiting review"}</span></td>
-                  <td className="px-4 py-3"><button type="button" className="font-semibold text-primary-700 hover:text-primary-900" onClick={(event) => { event.stopPropagation(); setSelectedId(row.key); }}>View details →</button></td>
+                  <td className="break-words px-4 py-3"><button type="button" className="text-left" onClick={() => setSelectedId(isSelected ? null : row.key)}><p className="font-semibold text-primary-700 hover:text-primary-900">{learner.name || "Unnamed learner"}</p><p className="mt-0.5 break-all text-[11px] text-foreground-500">{learner.email || learner.referenceNumber || "No reference recorded"}</p></button></td>
+                  <td className="break-words px-4 py-3 text-foreground-700">{programmeLabel(learner)}</td>
+                  <td className="whitespace-nowrap px-4 py-3"><span className={`inline-flex rounded-full px-2 py-1 text-[10.5px] font-semibold ${statusClass(learner.programmeStatus)}`}>{learner.programmeStatus || "Not recorded"}</span></td>
+                  <td className="whitespace-nowrap px-4 py-3 text-foreground-700"><p>{displayDate(record?.startDate || learner.learnerStartDate || learner.startDate)}</p><p className="mt-0.5 text-[11px] text-foreground-500">to {displayDate(record?.practicalEndDate || learner.learnerEndDate || learner.endDate)}</p></td>
+                  <td className="whitespace-nowrap px-4 py-3 text-foreground-700">{record?.reviewedAt ? displayDate(record.reviewedAt.slice(0, 10)) : "Not reviewed"}</td>
+                  <td className="whitespace-nowrap px-4 py-3"><span className={record?.reviewedBy ? "font-semibold text-emerald-700" : "font-semibold text-foreground-800"}>{record?.reviewedBy ? "Reviewed" : "Awaiting review"}</span></td>
+                  <td className="whitespace-nowrap px-4 py-3"><button type="button" className="font-semibold text-primary-700 hover:text-primary-900" onClick={(event) => { event.stopPropagation(); setSelectedId(row.key); }}>View details →</button></td>
                 </tr>;
               })}
             </tbody>

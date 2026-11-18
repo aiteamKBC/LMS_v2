@@ -236,10 +236,10 @@ export default function ExecutiveOverview({ attentionPanel }: { attentionPanel?:
       />
       </div>
 
-      <OverviewKpis records={records} actions={actions} forms={forms} availability={live.availability} onOpenAuditTypes={() => setAuditTypesOpen(true)} />
+      <OverviewKpis records={records} actions={actions} forms={forms} availability={live.availability} onOpenAuditTypes={() => setAuditTypesOpen(true)} attentionPanel={attentionPanel} />
 
-      {showPolicy || attentionPanel ? (
-        <div className={`${styles.policyAttentionRow} ${showPolicy && attentionPanel ? styles.withPolicy : ""}`}>
+      {showPolicy ? (
+        <div className={styles.policyAttentionRow}>
           {showPolicy ? (
             <section
               id="rag-policy-panel"
@@ -264,7 +264,6 @@ export default function ExecutiveOverview({ attentionPanel }: { attentionPanel?:
               </ul>
             </section>
           ) : null}
-          {attentionPanel ? <div className={styles.attentionPanel}>{attentionPanel}</div> : null}
         </div>
       ) : null}
 

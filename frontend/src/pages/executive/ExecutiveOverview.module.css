@@ -9,9 +9,11 @@
 
 .policyAttentionRow { display: grid; grid-template-columns: minmax(0, 1fr); gap: 20px; }
 .policyAttentionRow > * { min-width: 0; }
-.attentionPanel > section { height: 100%; }
+.attentionPanel { display: flex; min-width: 0; min-height: 240px; max-height: 280px; grid-column: span 3; }
+.attentionPanel > section { display: flex; flex-direction: column; min-width: 0; width: 100%; max-width: none; margin: 0; overflow: hidden; }
 .attentionPanel > section > div:first-child { flex-wrap: wrap; }
-.withPolicy .attentionPanel ul { max-height: 260px; }
+.attentionPanel > section > div:last-child { min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
+.attentionPanel ul { max-height: none; }
 
 .policyPanel {
   --rag-green-bg: #dcfce7;
@@ -183,8 +185,9 @@
 .kpiGrid > div > div:nth-child(2) > span:first-child { font-size: 36px; font-variant-numeric: tabular-nums; }
 .kpiGrid > div > p { font-size: 12px; line-height: 1.65; }
 .kpiGrid > div:first-child { border-color: oklch(var(--primary-200)); background: oklch(var(--primary-50) / .5); }
-/* Three follow-up indicators share the second row without an orphan card. */
+/* Follow-up indicators share the second row with the optional alerts panel. */
 .kpiGrid > div:nth-child(n + 5) { grid-column: span 4; }
+.kpiGrid.withAttention > div:nth-child(n + 5) { grid-column: span 3; }
 .kpiGrid > div:nth-child(5) { border-left: 3px solid oklch(var(--accent-500)); }
 
 .analyticsGrid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: stretch; gap: 20px; }
@@ -227,7 +230,6 @@
 }
 
 @container (min-width: 1000px) {
-  .policyAttentionRow.withPolicy { grid-template-columns: minmax(300px, 1fr) minmax(0, 2fr); }
   .trendRegistryGrid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .trendRegistryGrid > section > div:first-child { flex-direction: column; }
   .trendRegistryGrid .registryScroll { max-height: 360px; }
@@ -241,8 +243,8 @@
 @container (max-width: 850px) {
   .hero { align-items: flex-start; flex-direction: column; gap: 18px; }
   .kpiGrid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .kpiGrid > div:nth-child(n) { grid-column: auto; grid-row: auto; }
-  .kpiGrid > div:last-child { grid-column: 1 / -1; }
+  .kpiGrid > div:nth-child(n), .kpiGrid.withAttention > div:nth-child(n), .kpiGrid > .attentionPanel { grid-column: auto; grid-row: auto; }
+  .kpiGrid:not(.withAttention) > div:last-child { grid-column: 1 / -1; }
   .healthGrid { grid-template-columns: 1fr; }
   .ratingCard > div > div { grid-template-columns: 1fr; justify-items: center; }
   .ratingCard > div > div > div:last-child { width: 100%; }

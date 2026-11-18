@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import KpiCard from "@/components/base/KpiCard";
 import criticalStyles from "./CriticalCard.module.css";
 import { TIME_ZONE_LABEL, todayIso } from "@/pages/curriculum/recordings/utils";
@@ -17,9 +18,10 @@ interface OverviewKpisProps {
   forms: FormDefinition[];
   availability: { actions: boolean; criticalIssues: boolean; feedback: boolean; feedbackScores: boolean };
   onOpenAuditTypes?: () => void;
+  attentionPanel?: ReactNode;
 }
 
-export default function OverviewKpis({ records, actions, forms, availability, onOpenAuditTypes }: OverviewKpisProps) {
+export default function OverviewKpis({ records, actions, forms, availability, onOpenAuditTypes, attentionPanel }: OverviewKpisProps) {
   const today = todayIso(TIME_ZONE_LABEL);
   const audits = records.filter(
     (record) => record.category === "Quality Audit" && record.reviewStatus === "completed",
@@ -56,7 +58,7 @@ export default function OverviewKpis({ records, actions, forms, availability, on
 
   return (
     <section aria-label="Key quality indicators">
-      <div className={styles.kpiGrid}>
+      <div className={`${styles.kpiGrid} ${attentionPanel ? styles.withAttention : ""}`}>
         <KpiCard
           label="Completed audits"
           value={formatNumber(audits.length)}
@@ -138,7 +140,7 @@ export default function OverviewKpis({ records, actions, forms, availability, on
           to="/curriculum/quality-demo?view=checks"
           linkLabel="See quality checks"
         />
-
+        {attentionPanel ? <aside className={styles.attentionPanel}>{attentionPanel}</aside> : null}
       </div>
     </section>
   );
