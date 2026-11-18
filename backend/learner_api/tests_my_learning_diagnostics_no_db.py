@@ -216,3 +216,28 @@ class SafeCatalogueReductionTests(SimpleTestCase):
         self.assertEqual(live.supplement_module_hours(metrics,records,[]),saved)
         self.assertEqual(records.visits,0)
         self.assertEqual(live.supplement_module_hours(metrics,records,iter(credits))['M1']['hours']['actual'],4)
+
+    def test_projected_attendance_index_is_scoped_to_occurrence_and_module_in_one_pass(self):
+        class CountedList(list):
+            visits=0
+            def __iter__(self):
+                for row in super().__iter__():self.visits+=1;yield row
+        # A ledger credit may belong to another linked card, outside the requested component IDs.
+        records=CountedList([
+            {'component_ref':'LINKED','module_ref':'M1','attendance_occurrence_id':'O1',
+             'accepted':True,'actual_seconds':9000},
+            {'component_ref':'OTHER','module_ref':'M99','attendance_occurrence_id':'O2',
+             'accepted':True,'actual_seconds':9000},
+        ])
+        metrics={'M1':{'hours':{'actual':2.5}},'M2':{'hours':{'actual':0}}}
+        credits=[{'componentId':cid,'moduleId':mid,'occurrenceId':oid,'hours':2.5,'verifiedSeconds':600}
+                 for cid,mid,oid in [('C1','M1','O1'),('C2','M2','O1'),('C3','M1','O2')]]
+        credits.append({**credits[0],'componentId':'FROZEN','occurrenceId':'O3','otjhFrozen':True})
+        saved_metrics,saved_records=deepcopy(metrics),[dict(row) for row in records]
+        for source in (credits,iter(credits)):
+            records.visits=0
+            result=live.supplement_module_hours(metrics,records,source)
+            self.assertEqual(result,{'M1':{'hours':{'actual':5.0}},'M2':{'hours':{'actual':2.5}}})
+            self.assertEqual(records.visits,len(records))
+            self.assertEqual(records,saved_records)
+            self.assertEqual(metrics,saved_metrics)
