@@ -24,6 +24,7 @@ import { EmptyState } from '@/pages/users/components/ui';
 import { fetchLearnerDetail, type LearnerDetail, type LearnerKind, type LearnerKsbItem } from '@/api/learnerDetail';
 import { subscribeLearnerReadInvalidation } from '@/api/learnerRead';
 import { markingVerdict } from '@/lib/markingVerdict';
+import { LiveSessionLearningStatus } from '@/components/feature/LiveSessionLearningStatus';
 import { submitVideoProgress } from '@/api/videos';
 import { submitComponentProgress } from '@/api/components';
 import { startTimeTracking, resumeTimeTracking, checkpointTimeTracking, type TimeTrackingSession, type TrackingCountingMode } from '@/api/timeTracking';
@@ -161,7 +162,6 @@ export default function ComponentViewPage() {
   // Scoped to this component's cohort, so the dialog only ever refuses this
   // learner's own college closures.
   const componentAccess = useComponentAccessWindow(componentId);
-  const canUseComponent = canProgress && componentAccess.open;
 
   const [detail, setDetail] = useState<LearnerDetail | null>(null);
   const [loading, setLoading] = useState(true);
@@ -263,7 +263,7 @@ export default function ComponentViewPage() {
     let cancelled = false;
     setLoading(true);
     setLoadError(null);
-    fetchLearnerDetail(kind as LearnerKind, id, { componentId })
+    fetchLearnerDetail(kind as LearnerKind, id, { componentId, ...(loadRevision ? { revalidate: true } : {}) })
       .then((d) => { if (!cancelled) setDetail(d); })
       .catch((e) => { if (!cancelled) setLoadError(e instanceof Error ? e.message : 'Could not load component'); })
       .finally(() => { if (!cancelled) setLoading(false); });
@@ -313,12 +313,16 @@ export default function ComponentViewPage() {
   // Live sessions and assignments use learner-entered time instead of exposing
   // a page timer. The signed session still runs invisibly so the server can cap
   // and verify the submitted duration.
-  const isLiveSession = (component?.type || '').trim().toLowerCase().replace(/-/g, '_') === 'live_session';
+  const isLiveSession = (component?.type || '').trim().toLowerCase().replace(/[\s-]+/g, '_') === 'live_session';
+  const liveSessionTimeLocked = isLiveSession && component?.liveSessionAccess?.open !== true;
+  const canUseComponent = canProgress && componentAccess.open;
+  const canRecordTime = canUseComponent && !liveSessionTimeLocked;
+  const timeLockMessage = component?.liveSessionAccess?.message || 'Time entry opens after the session ends and its recording is ready to watch.';
   useEffect(() => {
     if ((!recordedEvent && !isLiveSession) || (kind !== 'commercial' && kind !== 'apprenticeship') || !id || !componentId) return;
     let disposed = false;
     let sequence = 0;
-    const unsubscribe = subscribeLearnerReadInvalidation(() => {
+    const refresh = () => {
       const current = ++sequence;
       // A saved watch report can complete this activity. Keep the player and
       // its position mounted while refreshing the server-owned completion.
@@ -332,16 +336,20 @@ export default function ComponentViewPage() {
       }).catch(() => {
         if (!disposed && current === sequence) setRefreshError('Lecture completion could not refresh. Refresh the page to reload it.');
       });
-    });
-    return () => { disposed = true; unsubscribe(); };
-  }, [kind, id, componentId, recordedEvent, isLiveSession]);
+    };
+    const unsubscribe = subscribeLearnerReadInvalidation(refresh);
+    const interval = liveSessionTimeLocked ? window.setInterval(refresh, 30_000) : undefined;
+    if (liveSessionTimeLocked) window.addEventListener('focus', refresh);
+    return () => { disposed = true; unsubscribe(); window.clearInterval(interval); window.removeEventListener('focus', refresh); };
+  }, [kind, id, componentId, recordedEvent, isLiveSession, liveSessionTimeLocked]);
   const hasActivityPanel = isVideo || isLiveSession;
   // Every assignment uses the eight-step monthly submission, regardless of
   // legacy author flags elsewhere in the learner's plan.
   const isAssignment = isMonthlyAssignment(component, detail?.components);
   const isPlainAssignment = !isAssignment && componentRequiresEvidence(component?.type);
   const completed = !!component && isComponentComplete(component, completedIds);
-  const recordingAttempt = isAssignment || !completed || repeating;
+  const attendedLecture = isLiveSession && component?.liveSessionLearning?.attendance === 'present';
+  const recordingAttempt = isAssignment || (!attendedLecture && (!completed || repeating));
   const nextActivity = useMemo(() => nextActivityRoute(detail, componentId, kind, id), [detail, componentId, kind, id]);
   const hasFixedLiveCredit = isLiveSession && detail?.componentProgress?.some(
     entry => entry.componentId === componentId && entry.timeTrackingSource === 'completed_live_session' && entry.passed !== false,
@@ -352,7 +360,7 @@ export default function ComponentViewPage() {
     ? formatRecordedClock(record.timeTaken)
     : component ? completionTimeFor(component, detail) : null;
   const liveSessionRetakeLocked = isLiveSession && (
-    component?.attendanceCompleted === true || (parseClockSeconds(completedTime) ?? 0) >= 150 * 60
+    liveSessionTimeLocked || attendedLecture || component?.attendanceCompleted === true || (parseClockSeconds(completedTime) ?? 0) >= 150 * 60
   );
   const noun = componentNoun(component?.type);
   const contentOpenable = component ? isOpenableComponent(component) || (isAssignment && !!component.componentId) : false;
@@ -386,7 +394,7 @@ export default function ComponentViewPage() {
   }, [needsEvidence, kind, id, componentId, evidenceVersion]);
 
   const criteria = component ? componentCriteria(component, evidenceCount) : null;
-  const finishDisabled = (!!criteria && !criteria.met) || (!isLiveSession && manualTimeMissing);
+  const finishDisabled = !canRecordTime || (!!criteria && !criteria.met) || (!isLiveSession && manualTimeMissing);
 
   const moduleTitle = ctx?.moduleTitle ?? searchParams.get('module') ?? '';
   const weekTitle = ctx?.weekTitle ?? searchParams.get('week') ?? '';
@@ -510,7 +518,7 @@ export default function ComponentViewPage() {
   // The server signs this learner/activity start for verification evidence,
   // separately from the Timer/Input duration chosen at completion.
   useEffect(() => {
-    if (phase !== 'consume' || !recordingAttempt || !openable || !componentId || !kind || !id || !canUseComponent) return;
+    if (phase !== 'consume' || !recordingAttempt || !openable || !componentId || !kind || !id || !canRecordTime) return;
     const learnerKind = kind as LearnerKind;
     const activityKind = isVideo ? 'video' : 'component';
     let cancelled = false;
@@ -573,10 +581,10 @@ export default function ComponentViewPage() {
         if (!cancelled) setSubmitError(error instanceof Error ? error.message : 'Could not start activity timing');
       });
     return () => { cancelled = true; };
-  }, [phase, recordingAttempt, openable, componentId, kind, id, canUseComponent, isVideo, isAudio, trackingMode, timerStorageKey, trackingGeneration]);
+  }, [phase, recordingAttempt, openable, componentId, kind, id, canRecordTime, isVideo, isAudio, trackingMode, timerStorageKey, trackingGeneration]);
 
   const restartTiming = async () => {
-    if (recoveryInFlight.current || !componentId || !kind || !id || !canUseComponent) return;
+    if (recoveryInFlight.current || !componentId || !kind || !id || !canRecordTime) return;
     recoveryInFlight.current = true; setRecoveringTiming(true);
     try {
       const saved = readActivityTimer(timerStorageKey);
@@ -599,7 +607,7 @@ export default function ComponentViewPage() {
   };
 
   useEffect(() => {
-    if (!recordingAttempt || !componentId || !kind || !id || !canUseComponent) return;
+    if (!recordingAttempt || !componentId || !kind || !id || !canRecordTime) return;
     let cancelled = false;
     let busy = false;
     const sync = async () => {
@@ -623,7 +631,7 @@ export default function ComponentViewPage() {
     const interval = setInterval(() => void sync(), 60000);
     window.addEventListener('online', sync);
     return () => { cancelled = true; clearInterval(interval); window.removeEventListener('online', sync); };
-  }, [recordingAttempt, componentId, kind, id, canUseComponent, isVideo, timerStorageKey]);
+  }, [recordingAttempt, componentId, kind, id, canRecordTime, isVideo, timerStorageKey]);
 
   // Ordinary page content counts only while visible. Media counts while it is
   // genuinely playing, even when the learner switches tab or opens another
@@ -631,7 +639,7 @@ export default function ComponentViewPage() {
   // wall-clock deltas rather than assuming each callback is exactly one second.
   useEffect(() => {
     const activeMedia = isVideo || isAudio;
-    if (phase !== 'consume' || retakeOpen || !recordingAttempt || !canUseComponent || expiredTiming) return;
+    if (phase !== 'consume' || retakeOpen || !recordingAttempt || !canRecordTime || expiredTiming) return;
     // Downloading/parsing a document is not study time; wait for its first page.
     if (waitsForPreview && (loading || loadError || !openable || readyContent !== previewInstance)) return;
     if (activeMedia ? !playerPlaying : (!unsupported && !playerPlaying)) return;
@@ -653,10 +661,10 @@ export default function ComponentViewPage() {
     });
     timerRef.current = clock;
     return () => clock.stop();
-  }, [phase, retakeOpen, recordingAttempt, canUseComponent, unsupported, playerPlaying, isVideo, isAudio, timerStorageKey, contentKind, loading, loadError, openable, waitsForPreview, readyContent, previewInstance, expiredTiming]);
+  }, [phase, retakeOpen, recordingAttempt, canRecordTime, unsupported, playerPlaying, isVideo, isAudio, timerStorageKey, contentKind, loading, loadError, openable, waitsForPreview, readyContent, previewInstance, expiredTiming]);
 
   const finishConsuming = () => {
-    if (!recordingAttempt) return;
+    if (!recordingAttempt || !canRecordTime) return;
     timerRef.current?.stop();
     if (isLiveSession && manualTimeMissing) {
       setPhase('time-entry');
@@ -670,7 +678,7 @@ export default function ComponentViewPage() {
   };
 
   const confirmCompletion = () => {
-    if (!component) return;
+    if (!component || !canRecordTime) return;
     if (manualTimeMissing) return;
     if (timeSource === 'input') confirmedManualTime.current = submittedTimeSeconds;
     if (phase === 'time-entry' && component.reflectionRequired !== false) {
@@ -705,7 +713,7 @@ export default function ComponentViewPage() {
     reflection: { ksbs: string[]; feedback: string; reportedTime: string; assignmentTopicId?: string; timeTakenSeconds?: number; timeEntrySource?: 'timer' | 'input' },
     options: { rethrow?: boolean; skipReflection?: boolean; declaredCompletedAt?: string; manualTimeConfirmed?: boolean } = {},
   ) => {
-    if (!component || !componentId || !kind || !id || completionInFlightRef.current || !canUseComponent) return;
+    if (!component || !componentId || !kind || !id || completionInFlightRef.current || !canRecordTime) return;
     // Working-time rules stay on the server. The learner can press Finish anytime;
     // the server judges the instant and refuses with a 409 that has written
     // nothing, which opens the correction dialog below.
@@ -731,6 +739,10 @@ export default function ComponentViewPage() {
       if (finalTimeSource === 'input') confirmedManualTime.current = finalTimeSeconds;
       let tracking = trackingSessionRef.current || await trackingPromiseRef.current;
       if (!tracking) throw new Error('Activity timing did not start. Reopen the activity and try again.');
+      if (currentTimingKeyRef.current !== timerStorageKey) return;
+      // A start that resolves after leaving consume must survive a failed checkpoint.
+      trackingSessionRef.current = tracking;
+      saveActivityTimerSession(timerStorageKey, tracking);
       if (tracking.persistent || !canResumeActivityTimer({ session: tracking, elapsedSeconds: elapsedRef.current }, tracking.countingMode)) {
         tracking = await checkpointTimeTracking(tracking, isVideo ? 'video' : 'component', componentId, kind, id, elapsedRef.current)
           .catch(error => { setExpiredTiming(true); throw error; });
@@ -892,12 +904,12 @@ export default function ComponentViewPage() {
               learnerKsbs={learnerKsbs}
               autoKsbs={component.ksbMappings ?? []}
               elapsedSeconds={elapsedSeconds}
-              selectedTimeSeconds={phase === 'lecture-reflect' ? completedTime == null ? undefined : activityTimeSeconds({ timeTaken: completedTime }) : submittedTimeSeconds}
+              selectedTimeSeconds={phase === 'lecture-reflect' ? completedTime == null ? liveSessionTimeLocked ? 0 : undefined : activityTimeSeconds({ timeTaken: completedTime }) : submittedTimeSeconds}
               selectedTimeSource={phase === 'lecture-reflect' ? undefined : timeSource}
-              readOnlyTime={phase === 'lecture-reflect'}
-              allowAdditionalTime={phase === 'lecture-reflect'}
+              readOnlyTime={phase === 'lecture-reflect' || liveSessionTimeLocked}
+              allowAdditionalTime={phase === 'lecture-reflect' && !liveSessionTimeLocked}
               initialTab={phase === 'lecture-reflect' ? reflectionInitialTab : 'learning'}
-              additionalTimeAvailable={completed}
+              additionalTimeAvailable={!liveSessionTimeLocked && (completed || attendedLecture)}
               workingHoursHolidays={componentAccess.holidays ?? []}
               submitting={submitting}
               submitError={submitError}
@@ -918,6 +930,11 @@ export default function ComponentViewPage() {
           /* ── consume phase: content + details + sidebar ── */
           <div className="grid grid-cols-1 lg:grid-cols-[1fr_320px] gap-6 items-start">
             <div className="min-w-0">
+              {liveSessionTimeLocked && <div role="status" className="mb-4 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm">
+                <p className="font-semibold">Time entry is locked</p>
+                <p className="mt-1">{timeLockMessage}</p>
+                <button type="button" onClick={() => setLoadRevision(value => value + 1)} className="mt-2 underline">Refresh availability</button>
+              </div>}
               <PreviousLearningNotice learning={component.previousLearning} kind={kind} learnerId={id} />
               {timeDecision && <div className="mb-3 rounded-xl border border-primary-200 bg-primary-50 p-3 text-sm">
                 <p>{timeDecision.choice === 'correct' ? 'Correcting the recorded duration.' : timeDecision.choice === 'add' ? 'Adding time to the recorded duration.' : 'Recording another attempt; the larger duration will count.'} Maximum activity total: 8 hours.</p>
@@ -980,6 +997,8 @@ export default function ComponentViewPage() {
                   <div className={hasActivityPanel ? layoutStyles.videoTools : 'contents'}>
                   <ActivityTimeSpentInput
                     key={timerStorageKey}
+                    disabled={!canRecordTime}
+                    disabledReason={timeLockMessage}
                     initialSeconds={manualTimeSeconds}
                     onChange={(seconds) => {
                       setManualTimeSeconds(seconds);
@@ -1094,13 +1113,18 @@ export default function ComponentViewPage() {
                 </div>}
               </div>
 
+              {component.liveSessionLearning && <section className="mt-4 rounded-xl border border-emerald-200 bg-emerald-50 p-4">
+                <LiveSessionLearningStatus learning={component.liveSessionLearning} />
+              </section>}
               {(isLiveSession || recordedEvent) && marking?.status !== 'accepted' && <section className="mt-4 rounded-xl border border-background-300 bg-white p-4" aria-label="Lecture reflection">
-                <p className="text-sm text-foreground-700">You can add an optional reflection for this lecture. Your attendance and recorded study time stay unchanged.</p>
+                <p className="text-sm text-foreground-700">{attendedLecture && !completed
+                  ? 'Your attendance is recorded. Complete the outstanding requirements below to finish this activity.'
+                  : 'You can add an optional reflection for this lecture. Your attendance and recorded study time stay unchanged.'}</p>
                 <button type="button" disabled={!canUseComponent || submitting} onClick={() => { setReflectionInitialTab('learning'); setPhase('lecture-reflect'); }}
                   className="mt-3 rounded-lg border border-primary-300 px-3 py-2 text-sm font-semibold text-primary-700 disabled:opacity-50">
                   {verdict || lectureReflectionSaved?.activityKey === timerStorageKey ? 'Open lecture reflection' : 'Add lecture reflection'}
                 </button>
-                {completed && <button type="button" disabled={!canUseComponent || submitting}
+                {(completed || attendedLecture) && <button type="button" disabled={!canRecordTime || submitting}
                   onClick={() => { setReflectionInitialTab('otjh'); setPhase('lecture-reflect'); }}
                   className="ml-3 mt-3 rounded-lg border border-primary-300 px-3 py-2 text-sm font-semibold text-primary-700">Manage reflection time</button>}
               </section>}
@@ -1276,7 +1300,7 @@ export default function ComponentViewPage() {
           </div>
         )}
         {timeConfirmation}
-        {retakeOpen && <ActivityRetakeTimeDialog previousSeconds={activityTimeSeconds({ timeTaken: completedTime })} onClose={() => setRetakeOpen(false)} onChoose={(choice, reason) => {
+        {retakeOpen && canRecordTime && <ActivityRetakeTimeDialog previousSeconds={activityTimeSeconds({ timeTaken: completedTime })} onClose={() => setRetakeOpen(false)} onChoose={(choice, reason) => {
           const previousSeconds = activityTimeSeconds({ timeTaken: completedTime });
           setTimeDecision({ choice, reason, previousSeconds }); setRetakeOpen(false); setRepeating(true);
           setManualTimeSeconds(current => current ?? (choice === 'correct' ? previousSeconds : null));
@@ -1286,7 +1310,7 @@ export default function ComponentViewPage() {
           setTimeLimitIssue(''); if (phase === 'reflection-choice') setPhase('consume');
           requestAnimationFrame(() => document.querySelector<HTMLInputElement>('[aria-label="Hours spent"]')?.focus());
         }} />}
-        {(phase === 'confirm' || phase === 'time-entry') && (
+        {canRecordTime && (phase === 'confirm' || phase === 'time-entry') && (
           <CompletionConfirmPopup
             title={pageTitle}
             noun={noun}

@@ -133,6 +133,9 @@ COLUMNS = {
         ('currency', 'character varying(3)'),
         ('module_overview', 'jsonb'),
         ('schedule_mode', 'character varying(16)'),
+        ('week_starts_on', 'character varying(9)'),
+        ('calendar_policy', 'jsonb'),
+        ('week_boundary_mode', 'character varying(16)'),
     ),
     'weeks': (
         ('id', 'character varying(128)'),

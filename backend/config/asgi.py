@@ -19,6 +19,7 @@ from channels.auth import AuthMiddlewareStack
 from channels.routing import ProtocolTypeRouter, URLRouter
 
 from chat.routing import websocket_urlpatterns
+from curriculum_api.country_calendar_scheduler import CountryCalendarASGI
 from coach_api.dashboard_snapshot_scheduler import CoachDashboardSnapshotASGI
 from config.health import with_health_check
 from config.load_metric import with_load_metric
@@ -33,7 +34,7 @@ from curriculum_api.module_collaboration_consumer import ModuleCollaborationASGI
 # validation or the scheduler wrappers run (see config/health.py).
 application = with_load_metric(with_health_check(ProtocolTypeRouter(
     {
-        'http': CoachDashboardSnapshotASGI(CatchupReminderASGI(SessionSyncASGI(django_application))),
+        'http': CountryCalendarASGI(CoachDashboardSnapshotASGI(CatchupReminderASGI(SessionSyncASGI(django_application)))),
         'websocket': ModuleCollaborationASGI(AuthMiddlewareStack(URLRouter(websocket_urlpatterns))),
     }
 )))

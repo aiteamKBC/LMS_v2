@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { BarChart3, CalendarDays, ChevronRight, ClipboardList, GraduationCap, Info, Lightbulb, SlidersHorizontal, ThumbsUp, TrendingUp, TriangleAlert, Users } from 'lucide-react';
 import { Bar, BarChart, CartesianGrid, Cell, Line, LineChart, Pie, PieChart, Tooltip, XAxis, YAxis } from 'recharts';
 import { feedbackApi, type FeedbackDashboardFilters, type FeedbackDashboardReport, type FeedbackFormType, type FeedbackScoreClass } from '@/api/feedback';
@@ -6,6 +6,7 @@ import { Plot } from './FeedbackInsightCharts';
 import { dashboardPeriod, FEEDBACK_TYPE_LABELS, negativeCategories, rankedQuestions, ukCalendarDate, weeklyClassifications } from './feedbackDashboardData';
 import styles from './FeedbackDashboard.module.css';
 import { NEUTRAL_SCORE_MIN, POSITIVE_SCORE_MIN, SCORE_CLASSIFICATION_TEXT } from './scoreClassification';
+import { QUALITY_TICKET_CHANGED } from './qualityTicketEvents';
 
 const kinds = [
   { key: 'positive', label: 'Positive', color: '#179b59' },
@@ -16,6 +17,15 @@ const kinds = [
 const dateLabel = (value: string) => new Intl.DateTimeFormat('en-GB', { day: '2-digit', month: 'short', year: 'numeric', timeZone: 'Europe/London' }).format(new Date(value));
 const weekLabel = (value: string) => new Intl.DateTimeFormat('en-GB', { day: '2-digit', month: 'short', timeZone: 'UTC' }).format(new Date(`${value}T12:00:00Z`));
 const tick = { fill: '#8f86a4', fontSize: 10 };
+
+function SplitTooltip({ active, payload }: { active?: boolean; payload?: ReadonlyArray<{ payload?: { label?: string; value?: number; color?: string } }> }) {
+  const item = payload?.[0]?.payload;
+  if (!active || !item) return null;
+  return <div className={styles.splitTooltip}>
+    <span className={styles.splitTooltipDot} style={{ background: item.color }} />
+    <div><strong>{item.label} responses</strong><span>{item.value ?? 0} selected responses</span></div>
+  </div>;
+}
 
 function Panel({ title, subtitle, icon, right, children, className = '' }: { title: string; subtitle?: string; icon?: ReactNode; right?: ReactNode; children: ReactNode; className?: string }) {
   return <section aria-label={title} className={`${styles.card} ${className}`}><header className={styles.cardHeader}><div><div className={styles.title}>{icon}<h3>{title}</h3></div>{subtitle && <p className={styles.subtitle}>{subtitle}</p>}</div>{right}</header>{children}</section>;
@@ -32,20 +42,71 @@ function QuestionRanking({ report, kind }: { report: FeedbackDashboardReport; ki
   </Panel>;
 }
 
-function ReviewList({ report, onViewResponse }: { report: FeedbackDashboardReport; onViewResponse: (id: number) => void }) {
+function ReviewList({ report, onViewResponse, active: enabled }: { report: FeedbackDashboardReport; onViewResponse: (id: number) => void; active: boolean }) {
   const [expanded, setExpanded] = useState(false);
   const [page, setPage] = useState(1);
-  const negatives = report.insights!.classification!.responses.filter(item => item.classification === 'negative');
+  const negatives = useMemo(() => report.insights!.classification!.responses.filter(item => item.classification === 'negative'), [report]);
   const pages = Math.max(1, Math.ceil(negatives.length / 5));
   const current = Math.min(page, pages);
   const visible = expanded ? negatives.slice((current - 1) * 5, current * 5) : negatives.slice(0, 3);
+  const [qualityTickets, setQualityTickets] = useState<Record<number, 'pending' | 'error' | string>>({});
+  const [qualityErrors, setQualityErrors] = useState<Record<number, string>>({});
+  const formatQualityStatus = (status: string) => status
+    .replace(/[-_]+/g, ' ')
+    .replace(/\b\w/g, character => character.toUpperCase());
+  useEffect(() => {
+    if (!enabled) return;
+    let active = true;
+    const revisions: Record<number, number> = {};
+    negatives.forEach(item => {
+      const revision = revisions[item.responseId] || 0;
+      setQualityTickets(value => ({ ...value, [item.responseId]: 'pending' }));
+      setQualityErrors(value => ({ ...value, [item.responseId]: '' }));
+      feedbackApi.createQualityTicket(item.responseId).then(({ ticket }) => {
+        if (active && (revisions[item.responseId] || 0) === revision) setQualityTickets(value => ({ ...value, [item.responseId]: ticket.status || 'Open' }));
+      }).catch(error => {
+        if (active && (revisions[item.responseId] || 0) === revision) {
+          setQualityTickets(value => ({ ...value, [item.responseId]: 'error' }));
+          setQualityErrors(value => ({ ...value, [item.responseId]: error instanceof Error ? error.message : 'Quality ticket creation failed.' }));
+        }
+      });
+    });
+    const refreshStatuses = () => {
+      negatives.forEach(item => {
+        const revision = revisions[item.responseId] || 0;
+        feedbackApi.qualityTicketStatus(item.responseId).then(({ ticket }) => {
+          if (active && (revisions[item.responseId] || 0) === revision) setQualityTickets(value => ({ ...value, [item.responseId]: ticket.status || 'Open' }));
+        }).catch(() => {
+          // Keep the last known state visible when a transient refresh fails.
+        });
+      });
+    };
+    const refreshOnFocus = () => refreshStatuses();
+    const ticketChanged = (event: Event) => {
+      const detail = (event as CustomEvent<{ responseId: number; status: string }>).detail;
+      if (negatives.some(item => item.responseId === detail.responseId)) {
+        revisions[detail.responseId] = (revisions[detail.responseId] || 0) + 1;
+        setQualityTickets(value => ({ ...value, [detail.responseId]: detail.status }));
+        setQualityErrors(value => ({ ...value, [detail.responseId]: '' }));
+      }
+    };
+    window.addEventListener(QUALITY_TICKET_CHANGED, ticketChanged);
+    window.addEventListener('focus', refreshOnFocus);
+    const interval = window.setInterval(refreshStatuses, 30000);
+    return () => {
+      active = false;
+      window.removeEventListener('focus', refreshOnFocus);
+      window.removeEventListener(QUALITY_TICKET_CHANGED, ticketChanged);
+      window.clearInterval(interval);
+    };
+  }, [negatives, enabled]);
   return <Panel title="Action Needed — Feedback to Review" subtitle={`Negative scores below ${NEUTRAL_SCORE_MIN}% · review the original answers`} icon={<TriangleAlert size={25} />} className={styles.action} right={<button type="button" className={styles.link} disabled={!negatives.length} onClick={() => { setExpanded(value => !value); setPage(1); }}>{expanded ? 'Show latest' : `View all ${negatives.length}`} →</button>}>
-    {visible.length ? <div className={styles.reviewRows}>{visible.map(item => <article key={item.responseId} className={styles.reviewRow}><span className={styles.negativePill}><TriangleAlert size={12} />Needs review</span><div><strong>{item.contextTitle || item.formTitle}</strong><small>{item.formTitle} · v{item.version}{item.groupName ? ` · ${item.groupName}` : ''}</small><small>{item.scoredQuestions} scored questions · {item.respondent}</small></div><time dateTime={item.submittedAt || undefined}>{item.submittedAt ? dateLabel(item.submittedAt) : 'Date unavailable'}</time><span className={styles.score}>{item.score == null ? '—' : `${Math.round(item.score)}%`}</span><button type="button" className={styles.reviewButton} aria-label={`Review response ${item.responseId}`} onClick={() => onViewResponse(item.responseId)}>Review<ChevronRight size={12} /></button></article>)}</div> : <div className={styles.empty}>No negative responses in this selection.</div>}
+    {visible.length ? <div className={styles.reviewRows}>{visible.map(item => { const ticket = qualityTickets[item.responseId]; const normalizedStatus = ticket && !['pending', 'error'].includes(ticket) ? ticket.toLowerCase().replace(/[-_\s]+/g, '-') : ''; return <article key={item.responseId} className={styles.reviewRow}><span className={styles.negativePill}><TriangleAlert size={12} />Needs review</span><div><strong>{item.contextTitle || item.formTitle}</strong><small>{item.formTitle} · v{item.version}{item.groupName ? ` · ${item.groupName}` : ''}</small><small>{item.scoredQuestions} scored questions · {item.respondent}</small></div><time dateTime={item.submittedAt || undefined}>{item.submittedAt ? dateLabel(item.submittedAt) : 'Date unavailable'}</time><span className={styles.score}>{item.score == null ? '—' : `${Math.round(item.score)}%`}</span><span className={styles.reviewActions}><button type="button" className={styles.reviewButton} aria-label={`Review response ${item.responseId}`} onClick={() => onViewResponse(item.responseId)}>Review<ChevronRight size={12} /></button>{ticket && <span className={`${styles.qualityStatus} ${ticket === 'pending' ? '' : ticket === 'error' ? styles.qualityFailed : normalizedStatus === 'open' ? styles.qualityOpen : normalizedStatus === 'closed' ? styles.qualityClosed : normalizedStatus === 'resolved' ? styles.qualityResolved : normalizedStatus === 'in-progress' ? styles.qualityInProgress : ''}`}>{ticket === 'pending' ? 'Opening Quality ticket…' : ticket === 'error' ? 'Quality ticket failed' : `Quality ticket: ${formatQualityStatus(ticket)}`}</span>}{qualityErrors[item.responseId] && <small className={styles.qualityError}>{qualityErrors[item.responseId]}</small>}</span></article>; })}</div> : <div className={styles.empty}>No negative responses in this selection.</div>}
     {expanded && pages > 1 && <div className={styles.pager}><button type="button" className={styles.link} disabled={current === 1} onClick={() => setPage(current - 1)}>Previous</button><span>{current} / {pages}</span><button type="button" className={styles.link} disabled={current === pages} onClick={() => setPage(current + 1)}>Next</button></div>}
   </Panel>;
 }
 
-function DashboardContent({ report, onViewResponse }: { report: FeedbackDashboardReport; onViewResponse: (id: number) => void }) {
+function DashboardContent({ report, onViewResponse, active }: { report: FeedbackDashboardReport; onViewResponse: (id: number) => void; active: boolean }) {
   const counts = report.insights!.classification!;
   const scored = counts.positive + counts.neutral + counts.negative;
   const pie = kinds.map(item => ({ ...item, value: counts[item.key] }));
@@ -64,9 +125,9 @@ function DashboardContent({ report, onViewResponse }: { report: FeedbackDashboar
   return <>
     <div className={styles.kpis}>{kpis.map(item => <section aria-label={item.label} key={item.label} className={styles.kpi}><span className={`${styles.kpiIcon} ${item.tone}`}>{item.icon}</span><div><h3>{item.label}</h3><strong>{item.value}</strong><p>{item.note}</p></div></section>)}</div>
     <div className={styles.mainGrid}>
-      <ReviewList report={report} onViewResponse={onViewResponse} />
+      <ReviewList report={report} active={active} onViewResponse={onViewResponse} />
       <Panel title="Feedback Response Split" right={<span className={styles.badge}>Selected feedback</span>}>
-        {counts.total ? <div className={styles.split}><div className={styles.donut}><Plot label="Insights response split" height={206}><PieChart><Pie data={pie} dataKey="value" nameKey="label" innerRadius={61} outerRadius={83} paddingAngle={1} isAnimationActive={false}>{pie.map(item => <Cell key={item.key} fill={item.color} />)}</Pie><Tooltip isAnimationActive={false} /></PieChart></Plot><div className={styles.donutCenter}><strong>{counts.total}</strong><span>Submitted feedback</span></div></div><ul className={`${styles.legend} ${styles.splitLegend}`}>{pie.map(item => <li key={item.key}><i aria-hidden="true" style={{ background: item.color }} /><div><span>{item.label} responses</span><strong>{item.value} ({Math.round(item.value / counts.total * 100)}%)</strong></div></li>)}</ul></div> : <p className={styles.empty}>No submitted feedback in this selection.</p>}
+        {counts.total ? <div className={styles.split}><div className={styles.donut}><Plot label="Insights response split" height={206}><PieChart><Pie data={pie} dataKey="value" nameKey="label" innerRadius={61} outerRadius={83} paddingAngle={1} isAnimationActive={false}>{pie.map(item => <Cell key={item.key} fill={item.color} />)}</Pie><Tooltip content={<SplitTooltip />} position={{ x: 6, y: 6 }} wrapperStyle={{ pointerEvents: 'none' }} isAnimationActive={false} /></PieChart></Plot><div className={styles.donutCenter}><strong>{counts.total}</strong><span>Submitted feedback</span></div></div><ul className={`${styles.legend} ${styles.splitLegend}`}>{pie.map(item => <li key={item.key}><i aria-hidden="true" style={{ background: item.color }} /><div><span>{item.label} responses</span><strong>{item.value} ({Math.round(item.value / counts.total * 100)}%)</strong></div></li>)}</ul></div> : <p className={styles.empty}>No submitted feedback in this selection.</p>}
       </Panel>
     </div>
     <div className={styles.charts}>
@@ -92,7 +153,7 @@ function DashboardContent({ report, onViewResponse }: { report: FeedbackDashboar
   </>;
 }
 
-export function FeedbackDashboard({ onViewResponse }: { onViewResponse: (id: number) => void }) {
+export function FeedbackDashboard({ onViewResponse, active: enabled = true, revision = 0 }: { onViewResponse: (id: number) => void; active?: boolean; revision?: number }) {
   const [formType, setFormType] = useState<FeedbackFormType | 'all'>('post_lecture');
   const [weeks, setWeeks] = useState(8);
   const [classification, setClassification] = useState<FeedbackScoreClass | 'all'>('all');
@@ -100,25 +161,48 @@ export function FeedbackDashboard({ onViewResponse }: { onViewResponse: (id: num
   const [moduleId, setModuleId] = useState('');
   const [today] = useState(() => ukCalendarDate(new Date()));
   const [retry, setRetry] = useState(0);
+  const cache = useRef(new Map<string, FeedbackDashboardReport>());
+  const requests = useRef(new Map<string, number>());
+  const [updating, setUpdating] = useState(false);
   const [result, setResult] = useState<{ key: string; report?: FeedbackDashboardReport; error?: string } | null>(null);
   const filters: FeedbackDashboardFilters = { ...(formType !== 'all' ? { formType } : {}), ...(group ? { groupId: group } : {}), ...(moduleId ? { moduleId } : {}), ...(classification !== 'all' ? { classification } : {}), ...dashboardPeriod(today, weeks) };
-  const key = JSON.stringify([filters, retry]);
-  const report = result?.key === key ? result.report : undefined;
+  const cacheKey = JSON.stringify([filters, revision]);
+  const key = JSON.stringify([cacheKey, retry]);
+  const report = (result?.key === key ? result.report : undefined) || cache.current.get(cacheKey);
   const error = result?.key === key ? result.error : undefined;
-  const groups = result?.report?.groups || [];
-  const modules = result?.report?.modules || [];
+  const groups = report?.groups || result?.report?.groups || [];
+  const modules = report?.modules || result?.report?.modules || [];
   const label = formType === 'all' ? 'All Feedback Types' : FEEDBACK_TYPE_LABELS[formType];
   useEffect(() => {
+    if (!enabled) return;
     let active = true;
-    const [request] = JSON.parse(key) as [FeedbackDashboardFilters, number];
+    setUpdating(true);
+    const [cacheKey] = JSON.parse(key) as [string, number];
+    const requestNumber = (requests.current.get(cacheKey) || 0) + 1;
+    requests.current.set(cacheKey, requestNumber);
+    const [request] = JSON.parse(cacheKey) as [FeedbackDashboardFilters, number];
     feedbackApi.insightsDashboard(request).then(({ analytics }) => {
       if (!analytics.insights?.classification) throw new Error('Score classifications are not available in this report.');
-      if (active) setResult({ key, report: analytics });
+      if (requests.current.get(cacheKey) !== requestNumber) return;
+      cache.current.set(cacheKey, analytics);
+      if (cache.current.size > 10) cache.current.delete(cache.current.keys().next().value!);
+      if (active) { setResult({ key, report: analytics }); setUpdating(false); }
     }).catch(error => {
-      if (active) setResult({ key, error: error instanceof Error ? error.message : 'Could not load feedback insights.' });
+      if (active) {
+        const status = error && typeof error === 'object' && 'status' in error ? Number(error.status) : 0;
+        if (status === 401 || status === 403) { cache.current.clear(); requests.current.clear(); }
+        setResult({ key, report: cache.current.get(cacheKey), error: error instanceof Error ? error.message : 'Could not load feedback insights.' });
+        setUpdating(false);
+      }
     });
     return () => { active = false; };
-  }, [key]);
+  }, [key, enabled]);
+  useEffect(() => {
+    if (!enabled) return;
+    const refresh = () => setRetry(value => value + 1);
+    window.addEventListener('focus', refresh);
+    return () => window.removeEventListener('focus', refresh);
+  }, [enabled]);
   return <section aria-label="Feedback Insights dashboard" className={styles.root}>
     <header className={styles.hero}><span className={styles.heroIcon}><BarChart3 size={28} /></span><div><h2>Feedback Insights</h2><p>Monitor positive and negative feedback, response trends and questions that need your attention.</p></div></header>
     <div className={styles.filters}><div className={styles.filterFields}>
@@ -128,6 +212,8 @@ export function FeedbackDashboard({ onViewResponse }: { onViewResponse: (id: num
       <div className={styles.filter}><Users className={styles.filterIcon} size={34} /><label>Learner group<select aria-label="Insights learner group" value={group} disabled={!report} onChange={event => { setGroup(event.target.value); setModuleId(''); }}><option value="">All groups</option>{groups.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label></div>
       <div className={styles.filter}><GraduationCap className={styles.filterIcon} size={34} /><label>Module<select aria-label="Insights module" value={moduleId} disabled={!report || (!modules.length && !moduleId)} onChange={event => setModuleId(event.target.value)}><option value="">All modules</option>{modules.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}{moduleId && !modules.some(item => item.id === moduleId) && <option value={moduleId}>Selected module (not in current list)</option>}</select></label></div>
     </div><aside className={styles.scope}><Info size={21} /><div><strong>Showing data for {label}</strong>All panels follow this selection. Group and module use the values saved with the lecture or form.</div></aside></div>
-    {error ? <div role="alert" className={styles.error}>{error} <button type="button" className={styles.link} onClick={() => setRetry(value => value + 1)}>Retry insights</button></div> : report ? <DashboardContent report={report} onViewResponse={onViewResponse} /> : <div role="status" className={styles.loading}>Loading feedback insights…</div>}
+    <div><button type="button" className={styles.link} disabled={updating} onClick={() => setRetry(value => value + 1)}>Refresh insights</button>{report && updating && <span role="status" className={styles.subtitle}> Updating insights…</span>}</div>
+    {error && <div role="alert" className={styles.error}>{report && 'Could not refresh insights. Showing the previous report. '}{error} <button type="button" className={styles.link} onClick={() => setRetry(value => value + 1)}>Retry insights</button></div>}
+    {report ? <DashboardContent report={report} active={enabled} onViewResponse={onViewResponse} /> : !error && <div role="status" className={styles.loading}>Loading feedback insights…</div>}
   </section>;
 }

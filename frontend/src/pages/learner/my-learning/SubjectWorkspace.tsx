@@ -4,7 +4,7 @@ import { Notice } from '@/components/ui/Notice';
 import { Link, Navigate, useLocation, useNavigate } from 'react-router-dom';
 import { ArrowRight, Award, BookOpen, CalendarDays, CheckCircle2, ChevronLeft, ChevronRight, GraduationCap, Layers3, Loader2, Map as MapIcon, Search, UserRound, Video } from 'lucide-react';
 import type { LearnerDetail } from '@/api/learnerDetail';
-import type { LearnerMetrics } from '@/api/learnerMetrics';
+import type { LearnerMetrics, ProgressMetric } from '@/api/learnerMetrics';
 import { type StudentActivityItem, type StudentActivityResponse, type SubjectAttemptResult } from '@/api/studentActivity';
 import { fetchLearnerCertificateTemplate, issueLearnerModuleCertificate, type CertificateTemplateSummary } from '@/api/learnerCertificates';
 import { formatHoursMinutes, type JourneyComponent } from '@/utils/learnerJourney';
@@ -47,6 +47,21 @@ function Progress({ done, total, label = 'Subject progress', showFormula = false
     <div role="progressbar" aria-label={label} aria-valuemin={0} aria-valuemax={100} aria-valuenow={percent} className={`h-1.5 overflow-hidden rounded-full ${compact ? 'bg-slate-100' : 'bg-foreground-100'}`}><div className={`h-full rounded-full motion-safe:transition-[width] ${compact ? percent === 100 ? 'bg-emerald-500' : 'bg-gradient-to-r from-primary-500 to-violet-400' : 'bg-primary-500'}`} style={{ width: `${percent}%` }} /></div>
     {transferred != null ? <div role="status" className="rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-xs text-emerald-900"><strong>Progress merged.</strong> Completed components from both systems count once. Old LMS progress before transfer: {transferred}% (historical).{!compact && <> The current percentage uses this module's component total, so it may differ. Your recorded hours are preserved.</>}</div>
       : showFormula && <p className="text-xs text-foreground-500">Progress = completed activities ÷ total activities × 100{total > 0 ? ` = ${done} ÷ ${total} × 100 = ${percent}%` : '. No activities yet'}. Quizzes count as complete after passing.</p>}
+  </div>;
+}
+
+function KsbProgress({ metric, label }: { metric: ProgressMetric | null; label: string }) {
+  const percent = metric?.status === 'ready' && metric.percent != null && Number.isFinite(metric.percent)
+    && metric.percent >= 0 && metric.percent <= 100 ? metric.percent : null;
+  const caption = metric?.status === 'empty' ? 'No KSBs mapped' : 'KSB progress unavailable';
+  return <div className="space-y-2">
+    <div className="flex items-center justify-between gap-2 text-xs"><span className="text-slate-500">KSBs achieved</span><strong className={`shrink-0 tabular-nums ${percent === 100 ? 'text-emerald-700' : 'text-primary-700'}`}>{percent == null ? '—' : `${percent}%`}</strong></div>
+    <div role="progressbar" aria-label={label} aria-valuemin={0} aria-valuemax={100}
+      aria-valuenow={percent ?? undefined} aria-valuetext={percent == null ? caption : `${percent}% of this subject's KSB points achieved`}
+      className="h-1.5 overflow-hidden rounded-full bg-slate-100">
+      <div className={`h-full rounded-full motion-safe:transition-[width] ${percent === 100 ? 'bg-emerald-500' : 'bg-gradient-to-r from-primary-500 to-violet-400'}`} style={{ width: `${percent ?? 0}%` }} />
+    </div>
+    {percent == null && <p className="text-xs text-slate-500">{caption}</p>}
   </div>;
 }
 
@@ -173,7 +188,7 @@ export function SubjectCertificateAction({
   </div>;
 }
 
-export function SubjectCard({ subject, cover, tone = 'purple', onOpen, template, csrfToken, kind, learnerId, planModule, moduleProgress, teachingActive = false }: {
+export function SubjectCard({ subject, cover, tone = 'purple', onOpen, template, csrfToken, kind, learnerId, planModule, moduleProgress, teachingActive = false, ksbProgress }: {
   subject: Subject;
   cover?: string;
   tone?: SubjectCardTone;
@@ -185,6 +200,7 @@ export function SubjectCard({ subject, cover, tone = 'purple', onOpen, template,
   planModule?: Omit<PlanModule, 'description' | 'coach_name'> & Partial<Pick<PlanModule, 'description' | 'coach_name'>>;
   moduleProgress?: Pick<PlanModuleProgress, 'hours'> & Partial<Omit<PlanModuleProgress, 'hours'>>;
   teachingActive?: boolean;
+  ksbProgress?: ProgressMetric | null;
 }) {
   const total = subject.card?.activityCount ?? subject.activities.length;
   const completed = subject.card?.completedActivityCount ?? subject.activities.filter((activity) => activity.completed).length;
@@ -232,7 +248,9 @@ export function SubjectCard({ subject, cover, tone = 'purple', onOpen, template,
           <div><dt><Video size={14} aria-hidden="true" />Sessions</dt><dd>{sessionCount == null ? 'Not set' : `${sessionCount} ${sessionCount === 1 ? 'session' : 'sessions'}`}</dd></div>
         </dl>
         <p className={styles.cardDescription}>Explore your learning materials and activities.</p>
-        <div className={styles.cardProgress}><Progress done={completed} total={total} compact aggregate={subject.aggregateProgress ?? subject.card?.progress} label={`${subject.title} ${subject.source === 'legacy' ? 'previous learning' : 'current plan'} activities progress`} />
+        <div className={styles.cardProgress}>{ksbProgress !== undefined
+          ? <KsbProgress metric={ksbProgress} label={`${subject.title} KSBs achieved`} />
+          : <Progress done={completed} total={total} compact aggregate={subject.aggregateProgress ?? subject.card?.progress} label={`${subject.title} ${subject.source === 'legacy' ? 'previous learning' : 'current plan'} activities progress`} />}
           <HoursProgress completed={completedHours} planned={plannedHours} label={`${subject.title} hours progress`} />
           {subject.recordedHistory && <p className="mt-2 text-xs text-foreground-500">Recorded activities only · Full catalogue: {subject.catalogueCount ?? 0}</p>}
         </div>

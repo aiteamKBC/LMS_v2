@@ -15,6 +15,9 @@ from . import monthly_logs as logs
 
 class MonthlyLogsProjectionTests(SimpleTestCase):
     def setUp(self):
+        self.enterContext(patch('learner_api.canonical_hours.full_hour_projection_ids', return_value=set()))
+        self.enterContext(patch('learner_api.attendance_otjh.read_bulk', side_effect=lambda owners, read:
+            {int(o['id']): {'lectures': [], 'protected': {}, 'frozen_rows': []} for o in owners}))
         self.learner = {'id': 7, 'name': 'Synthetic learner', 'programme': 'Programme',
                         '_canonical_profile': {'id': 70, 'enrolment_id': 7, 'programme_id': 'P'}}
         self.pending_read = self.enterContext(patch.object(logs, 'pending_hour_records', return_value={70: []}))
@@ -58,6 +61,46 @@ class MonthlyLogsProjectionTests(SimpleTestCase):
         self.assertEqual(set(result['months'][0]), {'month', 'activities', 'acceptedOtjhHours', 'targetHours',
                                                   'isOpen', 'learnerSigned', 'coachSigned'})
 
+    def test_corrected_retakes_and_frozen_history_match_learner_months_and_coach_totals(self):
+        from coach_api.otjh_ksb import read_hour_totals
+        from learner_api.dashboard_tabs import monthly_hours
+
+        # The canonical read has already reconciled the retake and preserved
+        # the closed month's allocation. SQL alone still sees the old hour.
+        records = [
+            {'id': 1, 'reporting_month': '2026-09', 'accepted': True, 'actual_seconds': 7200},
+            {'id': 2, 'reporting_month': '2026-10', 'accepted': True, 'actual_seconds': 6300},
+            {'id': 'attendance:O1', 'reporting_month': '2026-10', 'accepted': True, 'actual_seconds': 9000},
+            {'id': 3, 'reporting_month': '2026-10', 'accepted': False, 'actual_seconds': 3600},
+            {'id': 4, 'reporting_month': None, 'accepted': True, 'actual_seconds': 900,
+             'component_title': 'Undated activity'},
+        ]
+        targets = {'2026-09': 10, '2026-10': 10}
+        def read(sql, params):
+            self.assertEqual(params, [70])
+            if 'learner_monthly_signatures' in sql:
+                return [{'month': '2026-09', 'learner_signed': True, 'coach_signed': True}]
+            return [{'month': '2026-10', 'activities': 1, 'accepted_hours': 1}]
+
+        with patch('learner_api.canonical_hours.full_hour_projection_ids', return_value={70}), \
+             patch('coach_api.otjh_ksb.full_hour_projection_ids', return_value={70}), \
+             patch.object(canonical, 'entries_for', return_value=records), \
+             patch.object(canonical, 'targets_for', return_value=targets), \
+             patch.object(logs, 'query', side_effect=read), \
+             patch.object(logs.timezone, 'localdate', return_value=date(2026, 10, 28)):
+            result = logs.project_year(self.learner, 2026)
+            coach_totals = read_hour_totals(self.learner['_canonical_profile'])
+            learner_months = monthly_hours(self.learner['_canonical_profile'], records, targets,
+                                          current_month='2026-10')
+        self.assertEqual(result['summary']['acceptedOtjhHours'], 6.5)
+        self.assertEqual(result['summary']['acceptedOtjhHours'], sum(row['completed'] for row in coach_totals))
+        self.assertEqual(result['summary']['acceptedOtjhHours'], learner_months['training_plan_totals']['accepted_hours'])
+        self.assertEqual({row['month']: row['acceptedOtjhHours'] for row in result['months']},
+                         {'2026-09': 2, '2026-10': 4.25})
+        self.assertEqual(result['unallocatedActivities'], [
+            {'id': 4, 'title': 'Undated activity', 'actual_hours': .25, 'actual_hours_recorded': True}])
+        self.pending_read.assert_not_called()
+
     def test_year_filter_preserves_programme_totals_and_hides_future_months(self):
         activities = [{'month': '2025-12', 'activities': 2, 'accepted_hours': 5},
                       {'month': '2026-01', 'activities': 1, 'accepted_hours': 2},
@@ -93,10 +136,10 @@ class MonthlyLogsProjectionTests(SimpleTestCase):
 
     def test_supplement_keeps_native_counts_and_excludes_hours_waiting_for_review(self):
         records = [
-            {'reporting_month': '2026-10', 'actual_seconds': 1800, 'accepted': True},
-            {'reporting_month': '2026-10', 'actual_seconds': 7200, 'accepted': False},
-            {'reporting_month': '2026-10', 'actual_seconds': 900, 'accepted': True, 'actual_basis': 'extra_activity_input'},
-            {'reporting_month': '2026-10', 'actual_seconds': 3600, 'accepted': False, 'actual_basis': 'extra_activity_input'},
+            {'id': 1, 'reporting_month': '2026-10', 'actual_seconds': 1800, 'accepted': True},
+            {'id': 2, 'reporting_month': '2026-10', 'actual_seconds': 7200, 'accepted': False},
+            {'id': 'reflection:1', 'reporting_month': '2026-10', 'actual_seconds': 900, 'accepted': True, 'actual_basis': 'extra_activity_input'},
+            {'id': 'reflection:2', 'reporting_month': '2026-10', 'actual_seconds': 3600, 'accepted': False, 'actual_basis': 'extra_activity_input'},
         ]
         with patch.object(logs, 'query', side_effect=[[{'month': '2026-10', 'activities': 3, 'accepted_hours': 1}], []]), \
              patch.object(logs, 'pending_hour_records', return_value={70: records}), \

@@ -26,7 +26,7 @@ class LectureTranscriptPdfTests(SimpleTestCase):
             CREATE TABLE curriculum.live_sessions(id TEXT,module_catalogue_id TEXT);
             CREATE TABLE curriculum.live_session_occurrences(id TEXT,live_session_id TEXT,scheduled_start TEXT,scheduled_end TEXT);
             CREATE TABLE curriculum.live_session_artifacts(id TEXT,occurrence_id TEXT,artifact_type TEXT,metadata TEXT,created_datetime TEXT);
-            CREATE TABLE curriculum.session_result_archive(artifact_id TEXT,occurrence_id TEXT,status TEXT,transcript_text TEXT);
+            CREATE TABLE curriculum.session_result_archive(artifact_id TEXT,occurrence_id TEXT,status TEXT,transcript_text TEXT,last_error TEXT);
             INSERT INTO curriculum.modules VALUES('M1','Synthetic lecture','Synthetic Tutor','Synthetic programme','Cohort A','Group A');
             INSERT INTO curriculum.modules VALUES('M2','Other lecture','Other Tutor','Other programme','Cohort B','Group B');
             INSERT INTO curriculum.live_sessions VALUES('S1','M1'),('S2','M2');
@@ -46,8 +46,8 @@ class LectureTranscriptPdfTests(SimpleTestCase):
     def part(self, artifact_id, occurrence, text, status='ready', metadata=None):
         self.db.execute('INSERT INTO curriculum.live_session_artifacts VALUES(?,?,?,?,?)',
                         [artifact_id, occurrence, 'transcript', json.dumps(metadata or {}), artifact_id])
-        self.db.execute('INSERT INTO curriculum.session_result_archive VALUES(?,?,?,?)',
-                        [artifact_id, occurrence, status, text])
+        self.db.execute('INSERT INTO curriculum.session_result_archive VALUES(?,?,?,?,?)',
+                        [artifact_id, occurrence, status, text, ''])
 
     def get(self, scope=None):
         return api.lecture_transcript(RequestFactory().get('/', scope or SCOPE))
@@ -109,6 +109,43 @@ class LectureTranscriptPdfTests(SimpleTestCase):
         self.read.assert_not_called()
         self.access.return_value = frozenset({'super-admin'})
         self.assertEqual(self.get().status_code, 200)
+
+    def test_failed_download_is_not_reported_as_still_saving_and_recovers_after_sync(self):
+        self.db.execute("""UPDATE curriculum.session_result_archive SET status='failed',transcript_text=NULL,
+            last_error='Could not archive transcript T2 during downloading (HTTPStatusError, HTTP 400). Check worker logs and access.'
+            WHERE artifact_id='T2'""")
+        response = self.get()
+        self.assertEqual(response.status_code, 409)
+        message = json.loads(response.content)['error']
+        self.assertIn('Microsoft', message)
+        self.assertIn('HTTP 400', message)
+        self.assertIn('Sync attendance & files', message)
+        self.assertNotIn('still being saved', message)
+        # A later worker save restores the complete PDF, retaining its other parts.
+        self.db.execute("UPDATE curriculum.session_result_archive SET status='ready',transcript_text='Recovered speech',last_error='' WHERE artifact_id='T2'")
+        response = self.get()
+        self.assertEqual(response.status_code, 200)
+        text = '\n'.join(page.extract_text() for page in PdfReader(BytesIO(response.content)).pages)
+        self.assertIn('Opening saved speech', text)
+        self.assertIn('Recovered speech', text)
+
+    def test_storage_failure_does_not_expose_private_diagnostics_or_blame_microsoft(self):
+        self.db.execute("""UPDATE curriculum.session_result_archive SET status='failed',
+            last_error='private https://example.invalid/?token=secret learner@example.invalid'
+            WHERE artifact_id='T2'""")
+        response = self.get()
+        self.assertEqual(response.status_code, 409)
+        message = json.loads(response.content)['error']
+        self.assertIn('could not be saved', message)
+        self.assertIn('Sync attendance & files', message)
+        for private in ('secret', 'example.invalid', 'Microsoft', 'still being saved'):
+            self.assertNotIn(private, message)
+
+    def test_failed_part_without_a_saved_diagnostic_is_still_a_retryable_failure(self):
+        self.db.execute("UPDATE curriculum.session_result_archive SET status='failed',last_error=NULL WHERE artifact_id='T2'")
+        response = self.get()
+        self.assertEqual(response.status_code, 409)
+        self.assertIn('could not be saved', json.loads(response.content)['error'])
 
     def test_invalid_scope_and_database_or_render_failures_remain_recoverable(self):
         for value in ('', 'x' * 129):

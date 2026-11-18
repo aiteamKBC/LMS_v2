@@ -5298,7 +5298,13 @@ function CourseStructure({ pointDrafts, readOnly = false, module, selection, dra
                 <button type="button" onClick={() => onSelectWeek(week.id)} className="min-w-0 text-left">
                   <span className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
                     <span className="min-w-0 break-words text-[12px] font-bold text-foreground-900 [overflow-wrap:anywhere]">{week.title || `Week ${week.weekNumber}`}</span>
-                    {moduleWeekDeliveryDate(week) && (
+                    {week.studyWeekStartDate ? (
+                      <span className="inline-flex flex-wrap items-center gap-x-1 text-[10px] font-medium text-foreground-500">
+                        <AppIcon className="ri-calendar-line shrink-0" />
+                        Study week: <time dateTime={week.studyWeekStartDate}>{formatDateLabel(week.studyWeekStartDate)}</time>
+                        – <time dateTime={week.studyWeekEndDate}>{formatDateLabel(week.studyWeekEndDate || '')}</time>
+                      </span>
+                    ) : moduleWeekDeliveryDate(week) && (
                       <span className="inline-flex flex-wrap items-center gap-x-1 text-[10px] font-medium text-foreground-400">
                         <AppIcon className="ri-calendar-line shrink-0" />
                         Delivery:
@@ -5425,7 +5431,7 @@ function CourseStructure({ pointDrafts, readOnly = false, module, selection, dra
                     pointsByType={pointsByType}
                     variant="nested"
                     weekSessionDate={week.sessionDate}
-                    holidayDates={weekHolidayNotices.map(slot => slot.date)}
+                    holidayDates={module.weekBoundaryMode === 'calendar' ? [] : weekHolidayNotices.map(slot => slot.date)}
                     dateDriftByComponentId={dateDriftByComponentId}
                     onReuseComponents={() => onReuseComponents(week.id)}
                     otherWeeks={module.weekStructure
@@ -9871,9 +9877,12 @@ function moduleFormTargetFromCatalogue(module: ModuleCatalogueItem, usage?: Modu
     groupId: usage?.groupId || module.groupId,
     sessionsNumber: module.sessionsNumber || usage?.sessions,
     sessionHolidays: module.sessionHolidays || module.sourceModule?.sessionHolidays,
+    calendarPolicy: module.calendarPolicy !== undefined ? module.calendarPolicy : module.sourceModule?.calendarPolicy,
     deliveryWeeks: module.deliveryWeeks || module.sourceModule?.deliveryWeeks,
     weeklySchedule: module.weeklySchedule || module.sourceModule?.weeklySchedule || [],
     scheduleMode: module.scheduleMode || module.sourceModule?.scheduleMode,
+    weekStartsOn: module.weekStartsOn ?? module.sourceModule?.weekStartsOn,
+    weekBoundaryMode: module.weekBoundaryMode ?? module.sourceModule?.weekBoundaryMode,
     weekDays: usage?.weekDays || String(module.deliveryMetadata?.weekDays || module.sourceModule?.weekDays || ''),
     startTime: usage?.startTime || String(module.deliveryMetadata?.startTime || module.sourceModule?.startTime || ''),
     endTime: usage?.endTime || String(module.deliveryMetadata?.endTime || module.sourceModule?.endTime || ''),

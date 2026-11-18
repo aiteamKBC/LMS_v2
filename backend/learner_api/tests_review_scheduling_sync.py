@@ -114,6 +114,7 @@ class ReviewSchedulingSyncTestCase(LearnerReviewPageTestCase):
             identity.start()
             self.addCleanup(identity.stop)
         self.graph_calls = []
+        self.graph_reads = []
 
     # ------------------------------------------------------------- fixtures
 
@@ -139,7 +140,16 @@ class ReviewSchedulingSyncTestCase(LearnerReviewPageTestCase):
     # -------------------------------------------------------------- patches
 
     def _graph_request(self, method, path, payload=None, **_kwargs):
-        self.graph_calls.append({'method': method, 'path': path, 'payload': payload})
+        # Availability is read before booking. Keep its response distinct
+        # from the meeting-write payloads asserted by the sync tests.
+        if method == 'POST' and path.endswith('/calendar/getSchedule'):
+            self.graph_reads.append({'method': method, 'path': path, 'payload': payload})
+            return {'value': [{'scheduleId': payload['schedules'][0], 'availabilityView': '0' * 96}]}
+        if method == 'GET' and '/calendarView?' in path:
+            self.graph_reads.append({'method': method, 'path': path, 'payload': payload})
+            return {'value': []}
+        calls = self.graph_reads if method == 'GET' else self.graph_calls
+        calls.append({'method': method, 'path': path, 'payload': payload})
         if method == 'DELETE':
             return {}
         return {
@@ -155,6 +165,8 @@ class ReviewSchedulingSyncTestCase(LearnerReviewPageTestCase):
         payload each side sends is a genuine observation."""
         return [
             patch.object(coach_views, 'fetch_owner_active_learner_profiles',
+                         side_effect=lambda email: [self.mirror] if email == COACH_EMAIL else []),
+            patch.object(coach_views, 'fetch_caseload_timetable_profiles',
                          side_effect=lambda email: [self.mirror] if email == COACH_EMAIL else []),
             patch.object(coach_views, 'fetch_source_schedule_rows',
                          return_value=({MIRROR_ID: self.learner}, {})),
@@ -569,13 +581,19 @@ class GraphParityTests(ReviewSchedulingSyncTestCase):
         day = bookable_day(20)
 
         self.coach_schedules(occurrence['eventKey'], day, '10:00')
-        coach_payload = self.graph_payloads()[-1]
-        coach_organizer = self.graph_calls[-1]['path']
+        coach_write = next(call for call in self.graph_calls
+                           if call['method'] == 'POST' and call['path'].endswith('/events'))
+        coach_payload = coach_write['payload']
+        coach_organizer = coach_write['path'].removesuffix('/events')
 
         self.graph_calls = []
         self.learner_reschedules(occurrence['eventKey'], bookable_day(35), '10:00')
-        learner_payload = self.graph_payloads()[-1]
-        learner_organizer = self.graph_calls[-1]['path']
+        learner_write = next(call for call in self.graph_calls
+                             if call['method'] == 'PATCH' and call['path'].endswith('/events/' + GRAPH_EVENT_ID))
+        learner_payload = learner_write['payload']
+        learner_organizer = learner_write['path'].removesuffix('/events/' + GRAPH_EVENT_ID)
+        self.assertFalse(any(call['method'] == 'POST' and call['path'].endswith('/events')
+                             for call in self.graph_calls))
 
         def attendees(payload):
             return sorted(a['emailAddress']['address'] for a in payload.get('attendees', []))

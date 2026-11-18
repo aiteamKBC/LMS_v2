@@ -7,6 +7,7 @@ Neither path imports dates, changes meeting identities, or sends invitations.
 from contextlib import contextmanager
 from datetime import datetime, timezone
 import logging
+import re
 import time
 from types import SimpleNamespace
 from urllib.parse import quote
@@ -30,6 +31,58 @@ from .teams_weekly_calendar import stored_calendar_series
 CHECK_SECONDS = 300
 log = logging.getLogger(__name__)
 
+REASONS = {
+    'lock_busy': 'lock',
+    'saved_identity_incomplete': 'read_roster',
+    'organizer_event_unverified': 'read_roster',
+    'meeting_roles_incomplete': 'read_roster',
+    'weekday_roster_mismatch': 'read_roster',
+    'inactive_series': 'load_state',
+    'saved_state_changed': 'verify_saved_state',
+}
+BLOCKED_REASONS = {'invitation_list_unavailable', 'invitation_list_incomplete', 'meeting_identity_mismatch'}
+PHASES = {'lock', 'cache_read', 'cache_write', 'load_state', 'read_roster',
+          'verify_saved_state', 'save_people', 'invalidate_cache'}
+
+
+def _state_error(reason, message):
+    # Preserve the original exception type and UI message; only logs consume
+    # this metadata. Never derive a reason from provider exception text.
+    error = CalendarStateError(message)
+    error.people_sync_reason = reason
+    error.people_sync_phase = REASONS[reason]
+    return error
+
+
+@contextmanager
+def _diagnostic_phase(phase):
+    try:
+        yield
+    except Exception as error:
+        current = getattr(error, 'people_sync_phase', None)
+        if not isinstance(current, str) or current not in PHASES:
+            error.people_sync_phase = phase
+        raise
+
+
+def _failure_details(error):
+    reason = getattr(error, 'people_sync_reason', None)
+    if not isinstance(reason, str) or reason not in REASONS:
+        reason = error.code if isinstance(error, Blocked) and error.code in BLOCKED_REASONS else None
+    if reason is None:
+        if isinstance(error, (CalendarStateError, httpx.HTTPStatusError)):
+            status = (error.response.status_code if isinstance(error, httpx.HTTPStatusError)
+                      else getattr(error, 'status_code', None))
+            reason = f'graph_http_{status}' if type(status) is int and 100 <= status <= 599 else 'calendar_state_invalid'
+        elif isinstance(error, httpx.HTTPError):
+            reason = 'graph_transport_error'
+        elif isinstance(error, DatabaseError):
+            reason = 'database_error'
+        else:
+            reason = 'unexpected_error'
+    phase = getattr(error, 'people_sync_phase', None)
+    return reason, phase if isinstance(phase, str) and phase in PHASES else 'unknown'
+
 
 def sync_info(live_id):
     return cache.get(f'teams-people-sync:{live_id}') or {'status': 'never', 'checkedAt': None}
@@ -37,18 +90,27 @@ def sync_info(live_id):
 
 @contextmanager
 def people_sync_lock(live_id):
-    """One manual/automatic reader per series, across serving processes."""
+    """Keep one reader per series on the transaction pinned by the pooler.
+
+    Session advisory locks cannot be paired with an unlock through transaction
+    pooling. Commit/rollback owns this lock's release. Retain the existing
+    key instead of bypassing legacy owners during a rolling deployment.
+    """
     key = 'curriculum:teams-people:' + str(live_id)
-    with connection.cursor() as cursor:
-        cursor.execute('SELECT pg_try_advisory_lock(hashtextextended(%s, 0))', [key])
-        acquired = cursor.fetchone()[0]
-    if not acquired:
-        raise CalendarStateError('People sync is already running for this meeting. Wait, then retry.')
-    try:
-        yield
-    finally:
+    with _diagnostic_phase('lock'), transaction.atomic():
         with connection.cursor() as cursor:
-            cursor.execute('SELECT pg_advisory_unlock(hashtextextended(%s, 0))', [key])
+            cursor.execute('SELECT pg_try_advisory_xact_lock(hashtextextended(%s, 0))', [key])
+            acquired = cursor.fetchone()[0]
+        if not acquired:
+            raise _state_error('lock_busy', 'People sync is already running for this meeting. Wait, then retry.')
+        yield
+
+
+def _after_commit(phase, callback):
+    def publish():
+        with _diagnostic_phase(phase):
+            callback()
+    transaction.on_commit(publish)
 
 
 def read_people(series, read):
@@ -63,19 +125,19 @@ def read_people(series, read):
         event_id, link, meeting_id = (root.get(key) for key in ('eventId', 'joinUrl', 'onlineMeetingId'))
         imported = series.get('meeting_type') == 'linked-external'
         if not owner or (not imported and not event_id) or not link or not meeting_id or not join_context_oid(link):
-            raise CalendarStateError('The saved meeting identities are incomplete. No people or roles were imported.')
+            raise _state_error('saved_identity_incomplete', 'The saved meeting identities are incomplete. No people or roles were imported.')
         event = None if imported else read(f'users/{quote(owner, safe="")}/events/{quote(event_id, safe="")}'
                      '?$select=id,type,isOrganizer,isCancelled,organizer,onlineMeeting,attendees')
         if not imported and (not isinstance(event, dict) or event.get('id') != event_id or event.get('isOrganizer') is not True
                 or event.get('type') not in {'seriesMaster', 'singleInstance'} or event.get('isCancelled')
                 or (event.get('onlineMeeting') or {}).get('joinUrl') != link
                 or str(((event.get('organizer') or {}).get('emailAddress') or {}).get('address') or '').casefold() != owner.casefold()):
-            raise CalendarStateError('Microsoft did not verify the saved organiser event. No people or roles were imported.')
+            raise _state_error('organizer_event_unverified', 'Microsoft did not verify the saved organiser event. No people or roles were imported.')
         meeting = read_online(SimpleNamespace(read=read), {'online_meeting_id': meeting_id, 'join_url': link},
                               f'users/{quote(join_context_oid(link), safe="")}/onlineMeetings/{quote(meeting_id, safe="")}')
         roles = confirmed_roles(meeting)
         if roles is None:
-            raise CalendarStateError('Microsoft did not return complete meeting roles. Saved values were preserved.')
+            raise _state_error('meeting_roles_incomplete', 'Microsoft did not return complete meeting roles. Saved values were preserved.')
         current = {
             # Imported group calendars can require an interactive delegated
             # calendar sign-in. The worker reads explicit online-meeting roles
@@ -86,7 +148,7 @@ def read_people(series, read):
             'coOrganizers': sorted({item['upn'].strip().lower() for item in roles if item['role'] == 'coorganizer'}),
         }
         if result is not None and current != result:
-            raise CalendarStateError('The weekday meetings have different people or roles in Teams. Review them separately; nothing was imported.')
+            raise _state_error('weekday_roster_mismatch', 'The weekday meetings have different people or roles in Teams. Review them separately; nothing was imported.')
         result = current
     return result
 
@@ -94,25 +156,28 @@ def read_people(series, read):
 def _refresh_people(live_id):
     from . import views as v
 
-    series, rows, _snapshot = load_calendar_state(live_id)
+    with _diagnostic_phase('load_state'):
+        series, rows, _snapshot = load_calendar_state(live_id)
     if series.get('status') != 'active':
-        raise CalendarStateError('Only active Teams meetings can be refreshed.')
+        raise _state_error('inactive_series', 'Only active Teams meetings can be refreshed.')
     before = digest([series, rows])
-    with calendar_reader() as read:
+    with _diagnostic_phase('read_roster'), calendar_reader() as read:
         values = read_people(series, read)
-    with transaction.atomic():
+    with _diagnostic_phase('verify_saved_state'), transaction.atomic():
         current, current_rows, _snapshot = load_calendar_state(live_id, lock=True)
         if digest([current, current_rows]) != before:
-            raise CalendarStateError('The saved meeting changed during the Teams read. Retry; nothing was imported.')
+            raise _state_error('saved_state_changed', 'The saved meeting changed during the Teams read. Retry; nothing was imported.')
         updates = {}
         for column, key in (('attendees', 'attendees'), ('presenters', 'presenters'), ('co_organizers', 'coOrganizers')):
             if sorted(v.teams_series_email_list(current.get(column))) != values[key]:
                 updates[column] = v.json_db_value(values[key])
         if updates:
-            v.update_authoring_rows(v.LIVE_SESSIONS_TABLE, 'id = %s', [live_id],
-                                    {**updates, 'updated_at': datetime.now(timezone.utc)})
+            with _diagnostic_phase('save_people'):
+                v.update_authoring_rows(v.LIVE_SESSIONS_TABLE, 'id = %s', [live_id],
+                                        {**updates, 'updated_at': datetime.now(timezone.utc)})
     if updates:
-        v.invalidate_curriculum_cache(content_scope=series.get('module_catalogue_id'))
+        _after_commit('invalidate_cache',
+                      lambda: v.invalidate_curriculum_cache(content_scope=series.get('module_catalogue_id')))
     elevated = set(values['presenters'] + values['coOrganizers'])
     return {'form': {'organizerEmail': series['organizer_email'], **values,
                      'attendees': [email for email in values['attendees'] if email not in elevated]},
@@ -121,22 +186,29 @@ def _refresh_people(live_id):
 
 def refresh_people(live_id, *, automatic=False):
     """The button and existing session worker enter this same service."""
-    with people_sync_lock(live_id):
-        info = sync_info(live_id)
-        if automatic and time.time() - info.get('attemptEpoch', 0) < CHECK_SECONDS:
-            return {'skipped': True}
-        checked = datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z')
-        state = {'attemptEpoch': time.time(), 'checkedAt': checked, 'status': 'failed',
-                 'message': 'The latest Teams role check failed. Saved roles were kept; retry Sync.',
-                 'lastSuccessAt': info.get('lastSuccessAt')}
-        try:
+    state = None
+    try:
+        with people_sync_lock(live_id):
+            with _diagnostic_phase('cache_read'):
+                info = sync_info(live_id)
+            if automatic and time.time() - info.get('attemptEpoch', 0) < CHECK_SECONDS:
+                return {'skipped': True}
+            checked = datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z')
+            state = {'attemptEpoch': time.time(), 'checkedAt': checked, 'status': 'failed',
+                     'message': 'The latest Teams role check failed. Saved roles were kept; retry Sync.',
+                     'lastSuccessAt': info.get('lastSuccessAt')}
             result = _refresh_people(live_id)
-        except Exception:
-            cache.set(f'teams-people-sync:{live_id}', state, 86400)
-            raise
-        cache.set(f'teams-people-sync:{live_id}', {**state, 'status': 'synced',
-                  'lastSuccessAt': checked, 'message': 'People and roles are synced with Teams.'}, 86400)
+            _after_commit('cache_write', lambda: cache.set(f'teams-people-sync:{live_id}',
+                          {**state, 'status': 'synced', 'lastSuccessAt': checked,
+                           'message': 'People and roles are synced with Teams.'}, 86400))
         return result
+    except Exception:
+        # Includes commit/publication failures after the reader returns. A
+        # refused lock or cooldown skip never creates a failed check receipt.
+        if state is not None:
+            with _diagnostic_phase('cache_write'):
+                cache.set(f'teams-people-sync:{live_id}', state, 86400)
+        raise
 
 
 def saved_people(live_id):
@@ -172,7 +244,10 @@ def sync_due_people(*, limit=10, series_ids=()):
             checked += not result.get('skipped', False)
         except Exception as error:
             failed += 1
-            log.warning('Teams people sync needs retry (%s); saved people and session jobs are preserved.', type(error).__name__)
+            reason, phase = _failure_details(error)
+            safe_id = identity if isinstance(identity, str) and re.fullmatch(r'[A-Za-z0-9_-]{1,96}', identity) else 'invalid_series_id'
+            log.warning('Teams people sync needs retry (series_id=%s reason=%s phase=%s error_type=%s); saved people and session jobs are preserved.',
+                        safe_id, reason, phase, type(error).__name__)
     return {'checked': checked, 'failed': failed}
 
 

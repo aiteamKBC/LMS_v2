@@ -201,7 +201,8 @@ def _stage_link(url, request):
                         "download the video, then attach the MP4 here, or upload it to Google Drive, share it as "
                         "'Anyone with the link' and paste that link.")
     if host in YOUTUBE_HOSTS:
-        raise ToolError("YouTube links are not imported by the assistant. Attach the MP4 or paste a file link.")
+        raise ToolError("A YouTube link is saved as the component's video link, not uploaded: use update_component "
+                        "with media_url set to the YouTube link.")
     name = get_valid_filename(parts.path.rsplit("/", 1)[-1] or "") if parts.path.lower().endswith(".mp4") else ""
     try:
         with download_video(url) as stream:
@@ -219,8 +220,9 @@ class SaveVideo(LiveModuleWarning, WriteTool):
     description = ("Prepare an MP4 save into an existing video component of a draft module. Look up its programme, "
                    "module and component first. Supply the video EITHER as an attached file (file) OR as a pasted "
                    "public link to the video file (video_url: a direct MP4 link, or a Google Drive / SharePoint file "
-                   "shared with anyone who has the link). NotebookLM and YouTube links cannot be used: download the "
-                   "video from NotebookLM and attach it instead. The LMS saves the MP4 and queues the Bunny copy. "
+                   "shared with anyone who has the link). For a YouTube link use update_component with media_url "
+                   "instead. NotebookLM links cannot be used: download the video from NotebookLM and attach it "
+                   "instead. The LMS saves the MP4 and queues the Bunny copy. "
                    "Show the preview and apply only after confirmation. Does not publish content.")
     input_schema = {"type": "object", "properties": {
         **DESTINATION, "title": {"type": "string", "minLength": 1, "maxLength": 500},

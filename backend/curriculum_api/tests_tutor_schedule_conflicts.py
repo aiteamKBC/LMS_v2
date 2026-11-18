@@ -14,6 +14,7 @@ from datetime import date
 from unittest.mock import patch
 
 from curriculum_api import views
+from coach_api.tests_support.persisted_fixtures import curriculum_session
 from curriculum_api.tests import (
     CurriculumPersistenceHarness, CurriculumPersistenceTransactionHarness, staff_directory, staff_user_row,
 )
@@ -82,6 +83,7 @@ class TutorConflictHarness(CurriculumPersistenceTransactionHarness):
 
     def setUp(self):
         super().setUp()
+        curriculum_session(self, self.client)
         directory = staff_directory(*[
             staff_user_row(name, access='tutor', row_id=index + 1)
             for index, name in enumerate(self.TUTORS)

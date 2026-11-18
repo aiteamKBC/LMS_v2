@@ -131,7 +131,8 @@ def _content(base, artifact_id):
     target = f"{graph}/{base}/transcripts/{quote(artifact_id, safe='')}/content"
     request = http.Request(target, headers={'Authorization': f'Bearer {microsoft_graph_token()}',
         'Accept': 'text/vtt'}, method='GET')
-    with http.build_opener(RecordingRedirect()).open(request, timeout=15) as response:
+    from curriculum_api.transcript_transport import open_transcript
+    with open_transcript(http.build_opener(RecordingRedirect()).open, request, timeout=15) as response:
         content = response.read(MAX_BYTES + 1)
     if len(content) > MAX_BYTES:
         raise ValueError('Transcript exceeds the limit.')

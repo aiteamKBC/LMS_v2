@@ -27,6 +27,9 @@ ROOT = Path(__file__).parent
 spec = importlib.util.spec_from_file_location('personal_policy', ROOT / 'personal_learning_policy.py')
 policy = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(policy)
+feedback_spec = importlib.util.spec_from_file_location('review_feedback_format', ROOT.parent / 'coach_api' / 'feedback_format.py')
+feedback_format = importlib.util.module_from_spec(feedback_spec)
+feedback_spec.loader.exec_module(feedback_format)
 
 
 def functions(filename, namespace, names=None):
@@ -402,7 +405,11 @@ class PersonalLearningTests(unittest.TestCase):
                 ns['reading_request'](self.request, self.context, self.detail, '1', {'attempt': '2'}, {})
 
     def review_namespace(self):
-        ns = {**self.ns, 'copy': copy, 'datetime': datetime}
+        # The AST loader deliberately omits imports. Use the real pure formatter
+        # imported by the production view, retaining sanitization in these tests.
+        ns = {**self.ns, 'copy': copy, 'datetime': datetime,
+              'sanitize_feedback': feedback_format.sanitize_feedback,
+              'feedback_plain_text': feedback_format.feedback_plain_text}
         functions('personal_learning_review.py', ns)
         return ns
 

@@ -95,6 +95,7 @@ const MigratedReviewTemplates = lazyRoute(() => import("../pages/curriculum/revi
 const CurriculumDeliveryHub = lazyRoute(() => import("../pages/curriculum/hubs/page").then(module => ({ default: module.CurriculumDeliveryHub })));
 const CurriculumBulkAttendance = lazyRoute(() => import("../pages/curriculum/bulk-attendance/page"));
 const CurriculumQualityHub = lazyRoute(() => import("../pages/curriculum/hubs/page").then(module => ({ default: module.CurriculumQualityHub })));
+const CurriculumQualityDemo = lazyRoute(() => import("../pages/dashboard/page"));
 const CoachingQualityReviewsPage = lazyRoute(() => import("../pages/coaching-recordings/QualityReviewsPage"));
 const CoachingQualityFormsPage = lazyRoute(() => import("../pages/coaching-recordings/QualityFormsPage"));
 const CurriculumFreeCourses = lazyRoute(() => import("../pages/curriculum/free-courses/page"));
@@ -1197,6 +1198,10 @@ const routes: RouteObject[] = [
     element: <CurriculumQualityHub />,
   },
   {
+    path: "/curriculum/quality-demo",
+    element: <CurriculumQualityDemo />,
+  },
+  {
     path: "/curriculum/free-courses",
     element: <CurriculumFreeCourses />,
   },
@@ -1320,6 +1325,12 @@ const routes: RouteObject[] = [
     // The bank holiday calendar: GOV.UK holidays stay synced here, and extra
     // manual holidays are added here without touching the GOV.UK mirror.
     path: "/curriculum/england-holidays",
+    element: <CurriculumEnglandHolidays />,
+  },
+  {
+    // The bank holiday calendar: GOV.UK holidays stay synced here, and extra
+    // manual holidays are added here without touching the GOV.UK mirror.
+    path: "/curriculum/holiday-calendars",
     element: <CurriculumEnglandHolidays />,
   },
   {

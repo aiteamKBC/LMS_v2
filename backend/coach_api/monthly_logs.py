@@ -36,8 +36,29 @@ def initials(name):
     return ''.join(part[0] for part in str(name or '').split()[:2]).upper() or 'L'
 
 
-def project_year(learner, year):
-    owner = learner['_canonical_profile']
+def year_activities(owner):
+    from learner_api.canonical_hours import full_hour_projection_ids
+
+    # Retakes, local legacy timers and transfers need the same reconciliation
+    # as the learner ledger and the coach's OTJH chart. Attendance is already
+    # included in that projection, so do not supplement it again.
+    if int(owner['id']) in full_hour_projection_ids([owner]):
+        months = {}
+        for entry in canonical.entries_for(owner, lineage_only=True):
+            for record in canonical.allocations(entry):
+                month = record.get('reporting_month')
+                row = months.setdefault(month, {'month': month, 'activities': 0, 'accepted_hours': 0,
+                                                 'unallocated_activities': []})
+                row['activities'] += 1
+                hours = canonical.recorded_seconds(record) / 3600
+                if record.get('accepted') is True:
+                    row['accepted_hours'] += hours
+                if not month:
+                    row['unallocated_activities'].append({'id': record['id'],
+                        'title': record.get('component_title'), 'actual_hours': hours,
+                        'actual_hours_recorded': record.get('actual_seconds') is not None})
+        return list(months.values())
+
     # Stored allocations remain authoritative. Supplement empty direct saves
     # with the same read projection as the learner and Case File totals.
     # Group all months once: the two summary cards remain programme-wide.
@@ -56,8 +77,9 @@ def project_year(learner, year):
     by_month = {row['month']: dict(row) for row in activities}
     unallocated = {str(item['id']): item for row in activities
                    for item in row.get('unallocated_activities') or []}
-    for record in (allocation for pending in pending_hour_records([owner])[owner['id']]
-                   for allocation in canonical.allocations(pending)):
+    pending = pending_hour_records([owner])[owner['id']]
+    for record in (allocation for entry in pending
+                   for allocation in canonical.allocations(entry)):
         month = record.get('reporting_month')
         if month:
             unallocated.pop(str(record.get('id')), None)
@@ -68,12 +90,23 @@ def project_year(learner, year):
             row['activities'] += 1
         if record.get('accepted') is True:
             row['accepted_hours'] = float(row['accepted_hours']) + canonical.recorded_seconds(record) / 3600
-    for item in logs.attendance_rows(learner):
-        month = item['reporting_month']
+    from learner_api.attendance_otjh import read_bulk, monthly_deltas
+    facts = read_bulk([owner], query)[int(owner['id'])]
+    for month, delta in monthly_deltas(facts, pending).items():
         row = by_month.setdefault(month, {'month': month, 'activities': 0, 'accepted_hours': 0})
-        row['activities'] += 1
-        row['accepted_hours'] = float(row['accepted_hours']) + item['actual_hours']
-    activities = list(by_month.values())
+        row['activities'] += delta['activities']
+        row['accepted_hours'] = float(row['accepted_hours']) + delta['hours']
+    for row in by_month.values():
+        if not row['month']:
+            row['unallocated_activities'] = list(unallocated.values())
+    return list(by_month.values())
+
+
+def project_year(learner, year):
+    owner = learner['_canonical_profile']
+    activities = year_activities(owner)
+    unallocated = {str(item['id']): item for row in activities
+                   for item in row.get('unallocated_activities') or []}
     targets = canonical.targets_for(owner)
     signs = query('''SELECT report_month AS month,
         bool_or(signer_role='learner') AS learner_signed,

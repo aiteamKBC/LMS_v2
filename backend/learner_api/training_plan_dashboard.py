@@ -187,9 +187,10 @@ def attach_curriculum_slots(module_rows, by_id, week_counts, weeks_by_number=Non
             plan = {}
         module['curriculumSlots'] = plan.get('slots') or []
         for slot in module['curriculumSlots']:
-            if slot.get('type') != 'live-session' or not slot.get('sessionNumber'):
+            study_weeks = row.get('week_boundary_mode') == 'calendar'
+            if not study_weeks and (slot.get('type') != 'live-session' or not slot.get('sessionNumber')):
                 continue
-            week = weeks_by_number.get((row['id'], slot['sessionNumber']))
+            week = weeks_by_number.get((row['id'], slot.get('weekNumber') if study_weeks else slot['sessionNumber']))
             if week:
                 slot['weekId'] = week['id']
                 slot['weekTitle'] = week['title']
@@ -648,6 +649,13 @@ def read_dashboard(source, section=None, *, records=None, targets=None, dashboar
                 coalesce(nullif(btrim(g.coach_name),''),m.coach_name) AS coach_name,
                 m.programme_name,m.cohort_name,m.group_name,m.total_otjh,m.weeks_number,m.sessions_number,
                 m.cohort_id,
+                to_jsonb(m)->>'schedule_mode' AS schedule_mode,
+                to_jsonb(m)->>'week_starts_on' AS week_starts_on,
+                to_jsonb(m)->>'week_boundary_mode' AS week_boundary_mode,
+                to_jsonb(m)->'weekly_schedule' AS weekly_schedule,
+                to_jsonb(m)->'session_holidays' AS session_holidays,
+                to_jsonb(m)->'session_overrides' AS session_overrides,
+                to_jsonb(m)->'calendar_policy' AS calendar_policy,
                 coalesce(nullif(m.session_week_day,''),g.session_week_day) AS session_week_day,
                 coalesce(nullif(m.session_start_time,''),g.session_start_time) AS session_start_time,
                 coalesce(nullif(m.session_end_time,''),g.session_end_time) AS session_end_time
