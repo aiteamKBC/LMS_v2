@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { FileCheck2, Paintbrush } from 'lucide-react';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { PageContainer } from '@/components/ui/PageContainer';
+import { AppIcon } from '@/components/feature/AppIcon';
 import { AdminPageHeader } from '../_shared/AdminPage';
 import { CertificateDocument, type CertificateElementId } from '@/components/feature/CertificateDocument';
 import { roleNavMap } from '@/mocks/navigation';
@@ -114,6 +115,28 @@ function Field({
   onChange: (value: string) => void;
   type?: string;
 }) {
+  if (type === 'color') {
+    return (
+      <label className="block min-w-0 space-y-1.5" title={`Change ${label.toLowerCase()}`}>
+        <span className="text-xs font-bold text-foreground-600">{label}</span>
+        <span className="relative flex min-h-11 cursor-pointer items-center gap-2 rounded-xl border border-foreground-200 bg-background-50 px-2.5 py-2 shadow-sm transition-smooth hover:border-primary-400 focus-within:ring-2 focus-within:ring-primary-500 focus-within:ring-offset-2 focus-within:ring-offset-background-50">
+          <span className="pointer-events-none inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-black/10" style={{ backgroundColor: String(value) }}>
+            <AppIcon className="ri-check-line rounded-full bg-black/65 text-xs text-white" aria-hidden="true" />
+          </span>
+          <span className="pointer-events-none min-w-0 font-mono text-[11px] font-semibold tracking-wide text-foreground-700">{String(value).toUpperCase()}</span>
+          <AppIcon className="ri-palette-line pointer-events-none ml-auto shrink-0 text-sm text-foreground-500" aria-hidden="true" />
+          <input
+            type="color"
+            value={value}
+            onChange={(event) => onChange(event.target.value)}
+            aria-label={label}
+            className="absolute inset-0 h-full w-full cursor-pointer opacity-0"
+          />
+        </span>
+      </label>
+    );
+  }
+
   return (
     <label className="space-y-1.5">
       <span className="text-xs font-bold text-foreground-600">{label}</span>
@@ -573,24 +596,44 @@ export default function CertificateBuilderPage() {
                 { value: 'none', label: 'No decoration' },
               ]}
             />
-            <div className="rounded-2xl border border-foreground-100 bg-[var(--kbc-surface)] p-3">
-              <p className="mb-3 text-xs font-black uppercase tracking-[0.18em] text-foreground-500">Background image</p>
-              <input
-                type="file"
-                accept="image/*"
-                onChange={(event) => uploadBackgroundImage(event.target.files?.[0] || null)}
-                className="w-full rounded-xl border border-foreground-200 bg-white p-2 text-xs font-semibold"
-              />
+            <section aria-labelledby="certificate-background-heading" className="min-w-0 space-y-4 rounded-2xl border border-foreground-200/60 bg-[var(--kbc-surface)] p-4">
+              <div className="flex items-center gap-3">
+                <span className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-foreground-200/60 bg-background-100 text-primary-600"><AppIcon name="ri-image-line" className="text-lg" /></span>
+                <div className="min-w-0">
+                  <h3 id="certificate-background-heading" className="text-sm font-bold text-foreground-900">Background image</h3>
+                  <p className="mt-0.5 text-[11px] leading-4 text-foreground-500">Add your own certificate artwork.</p>
+                </div>
+              </div>
+              <label className="group flex min-h-24 cursor-pointer items-center gap-3 rounded-xl border border-dashed border-foreground-300 bg-background-50 p-3 transition-smooth hover:border-primary-400 hover:bg-background-100 focus-within:ring-2 focus-within:ring-primary-500 focus-within:ring-offset-2 focus-within:ring-offset-background-50">
+                {form.layoutConfig.backgroundImageUrl ? (
+                  <img src={form.layoutConfig.backgroundImageUrl} alt="Selected certificate background" className="h-14 w-20 shrink-0 rounded-lg border border-foreground-200/60 bg-background-100 object-contain" />
+                ) : (
+                  <span className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-foreground-200/60 bg-background-100 text-primary-600"><AppIcon name="ri-upload-cloud-line" className="text-xl" /></span>
+                )}
+                <span className="min-w-0 flex-1">
+                  <span className="block text-xs font-bold text-foreground-800">{form.layoutConfig.backgroundImageUrl ? 'Replace background image' : 'Choose background image'}</span>
+                  <span className="mt-1 block text-[11px] leading-4 text-foreground-500">Choose an image from your device</span>
+                </span>
+                <AppIcon name="ri-arrow-right-line" className="shrink-0 text-base text-foreground-400 transition-smooth group-hover:text-primary-600" />
+                <input
+                  type="file"
+                  accept="image/*"
+                  aria-label="Upload certificate background"
+                  onChange={(event) => uploadBackgroundImage(event.target.files?.[0] || null)}
+                  className="sr-only"
+                />
+              </label>
               {form.layoutConfig.backgroundImageUrl ? (
                 <button
                   type="button"
                   onClick={() => updateLayout({ backgroundImageUrl: '' })}
-                  className="mt-2 rounded-lg border border-red-100 bg-red-50 px-3 py-2 text-xs font-bold text-red-600"
+                  className="inline-flex min-h-9 items-center gap-2 rounded-lg px-2 py-1.5 text-[11px] font-semibold text-red-600 transition-smooth hover:bg-red-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-400"
                 >
+                  <AppIcon name="ri-delete-bin-line" className="text-sm" />
                   Remove background
                 </button>
               ) : null}
-              <div className="mt-3 grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-2 gap-x-3 gap-y-4 border-t border-foreground-200/60 pt-4">
                 <Field label="Opacity (%)" value={form.layoutConfig.backgroundOpacity ?? 100} onChange={(value) => updateLayout({ backgroundOpacity: Number(value) })} type="number" />
                 <SelectField
                   label="Fit"
@@ -606,14 +649,16 @@ export default function CertificateBuilderPage() {
                 <Field label="Position X (%)" value={form.layoutConfig.backgroundPositionX ?? 50} onChange={(value) => updateLayout({ backgroundPositionX: Number(value) })} type="number" />
                 <Field label="Position Y (%)" value={form.layoutConfig.backgroundPositionY ?? 50} onChange={(value) => updateLayout({ backgroundPositionY: Number(value) })} type="number" />
               </div>
-              <label className="mt-3 flex items-center gap-2 text-sm font-semibold">
-                <input type="checkbox" checked={form.layoutConfig.showFrame !== false} onChange={(event) => updateLayout({ showFrame: event.target.checked })} />
-                Show default frame
+              <label className="flex cursor-pointer items-center gap-3 rounded-xl border border-foreground-200/60 bg-background-50 p-3">
+                <input type="checkbox" aria-label="Show default frame" checked={form.layoutConfig.showFrame !== false} onChange={(event) => updateLayout({ showFrame: event.target.checked })} className="peer sr-only" />
+                <span className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-md border border-foreground-300 bg-background-50 text-transparent transition-smooth peer-checked:border-[var(--kbc-primary)] peer-checked:bg-[var(--kbc-primary)] peer-checked:text-white peer-focus-visible:ring-2 peer-focus-visible:ring-primary-500 peer-focus-visible:ring-offset-2 peer-focus-visible:ring-offset-background-50"><AppIcon name="ri-check-line" className="text-sm" /></span>
+                <span className="min-w-0"><span className="block text-xs font-bold text-foreground-800">Show default frame</span><span className="mt-0.5 block text-[11px] leading-4 text-foreground-500">Keep the built-in certificate border.</span></span>
               </label>
-              <p className="mt-2 text-[11px] font-semibold text-foreground-500">
-                Tip: if the Canva image already includes border/decorations, set Decoration style to No decoration and turn off Show default frame.
-              </p>
-            </div>
+              <div className="flex items-start gap-2 rounded-xl bg-background-100 p-3 text-foreground-500">
+                <AppIcon name="ri-information-line" className="mt-0.5 shrink-0 text-sm" />
+                <p className="text-[11px] leading-5">Artwork already has a border? Choose <span className="font-semibold text-foreground-700">No decoration</span> above and turn off <span className="font-semibold text-foreground-700">Show default frame</span>.</p>
+              </div>
+            </section>
             <div className="rounded-2xl border border-foreground-100 bg-[var(--kbc-surface)] p-3">
               <p className="mb-3 text-xs font-black uppercase tracking-[0.18em] text-foreground-500">Element sizes (%)</p>
               <div className="grid grid-cols-2 gap-3">

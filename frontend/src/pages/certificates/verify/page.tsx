@@ -204,7 +204,7 @@ export default function CertificateVerificationPage({ personal = false }: { pers
             }
 
             .certificate-verify-panel {
-              border-radius: 1.25rem !important;
+              border-radius: var(--lms-radius, 16px) !important;
             }
 
             .certificate-verify-hero,
@@ -214,7 +214,7 @@ export default function CertificateVerificationPage({ personal = false }: { pers
 
             .certificate-preview-card {
               padding: 0.75rem !important;
-              border-radius: 1.25rem !important;
+              border-radius: var(--lms-radius, 16px) !important;
             }
 
             .certificate-preview-shell {
@@ -235,7 +235,7 @@ export default function CertificateVerificationPage({ personal = false }: { pers
           </span>
         </div>
 
-        <section className="certificate-verify-panel overflow-hidden rounded-[2rem] border border-slate-200 bg-white shadow-2xl">
+        <section className="certificate-verify-panel overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl">
           <div className="certificate-verify-hero bg-gradient-to-r from-primary-900 via-primary-700 to-primary-300 p-8 text-white">
             <p className="text-xs font-black uppercase tracking-[0.24em] text-white/70">Verification result</p>
             <h1 className="mt-3 text-3xl font-black text-white sm:text-4xl">{loading ? 'Checking certificate...' : error ? 'Certificate not verified' : 'Certificate verified'}</h1>

@@ -59,7 +59,7 @@ describe('module hours comparison and target editing', () => {
     vi.mocked(fetchModuleHoursTarget).mockImplementation(() => new Promise(() => {}));
     view.rerender(<ModuleFixedHoursCard moduleId="M2" totalHours={10} />);
     expect(screen.queryByRole('button', { name: /490 h remaining/ })).not.toBeInTheDocument();
-    expect(screen.getByText('Loading…')).toBeInTheDocument();
+    expect(screen.getByRole('status', { name: 'Loading…' })).toBeInTheDocument();
   });
 
   it('keeps failures visible and retries without fabricating an unset target', async () => {

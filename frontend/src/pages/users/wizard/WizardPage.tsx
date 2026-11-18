@@ -1,3 +1,4 @@
+import { LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
 import { useEffect, useState } from 'react';
 import { Navigate, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useToast } from "@/hooks/useToast";
@@ -131,7 +132,7 @@ function WizardPageContent() {
     return (
       <div className="min-h-full bg-background-200 flex items-center justify-center p-6">
         <div className="text-center">
-          {loading && <p className="text-[13px] text-foreground-400"><AppIcon className="ri-loader-4-line animate-spin mr-2" />Loading enrolment…</p>}
+          {loading && <p className="text-[13px] text-foreground-400"><LoadingSkeleton label="Loading enrolment…" variant="rows" /></p>}
           {!loading && loadError && (
             <>
               <p className="text-red-600 text-[13px] mb-3"><AppIcon className="ri-error-warning-line mr-1.5" />{loadError}</p>

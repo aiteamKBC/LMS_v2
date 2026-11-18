@@ -10,6 +10,7 @@ import { countByProgramme, filterByProgramme, type Recognition, type ProgrammeFi
 import { fetchRecognitions, createRecognition, updateRecognition } from '@/api/engagement';
 import { RecognitionCardSkeletonGrid } from '@/pages/engagement/EngagementSkeletons';
 import { LearnerPickerModal, type PickedLearner } from '@/pages/engagement/LearnerPickerModal';
+import styles from './recognition.module.css';
 
 const engagementNav = roleNavMap.engagement;
 
@@ -257,7 +258,7 @@ export default function RecognitionPage() {
             <input type="text" placeholder="Search by learner, title, or reason..." value={search} onChange={e => setSearch(e.target.value)} className="w-full pl-9 pr-3 py-2 bg-background-50 border border-foreground-200/60 rounded-lg text-[12px] text-foreground-700 focus:outline-none focus:ring-2 focus:ring-primary-300" />
           </div>
           <label className="flex items-center gap-2 text-[12px] text-foreground-600 cursor-pointer">
-            <input type="checkbox" checked={publicOnly} onChange={e => setPublicOnly(e.target.checked)} className="w-4 h-4 rounded border-background-300 accent-primary-500 cursor-pointer" />
+            <input type="checkbox" checked={publicOnly} onChange={e => setPublicOnly(e.target.checked)} className={`${styles.publicOnly} w-4 h-4 rounded border-background-300 accent-primary-500 cursor-pointer`} />
             Public only
           </label>
           <div className="flex-1"></div>

@@ -284,6 +284,20 @@ class ModuleDeliveryTests(SimpleTestCase):
         self.recipient_manager.filter.return_value.filter.assert_called_with(learner_id='7')
         self.recipient_manager.filter.return_value.filter.return_value.exclude.assert_called_with(learner_id__in=['7'])
 
+    def test_existing_deliveries_revoke_unassigned_learners_in_one_update(self):
+        self.sync_at('2026-10-12T00:00:00+00:00')
+        delivery = self.deliveries['module:mid_module:M1']
+        self.recipients[(delivery.id, '8')] = SimpleNamespace(pk=81, delivery_id=delivery.id, learner_id='8',
+                                                              revoked_at=None, available_at=None, save=mock.Mock())
+        self.recipients[(delivery.id, '9')] = SimpleNamespace(pk=91, delivery_id=delivery.id, learner_id='9',
+                                                              revoked_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+                                                              available_at=None, save=mock.Mock())
+        self.recipient_manager.filter.reset_mock()
+        self.sync_at('2026-10-12T00:00:00+00:00')
+        calls = [call.kwargs for call in self.recipient_manager.filter.call_args_list]
+        self.assertNotIn({'delivery': delivery}, calls)
+        self.assertIn({'pk__in': [81], 'revoked_at__isnull': True}, calls)
+
 
 @override_settings(DEBUG=True)
 class ModuleFeedbackAccessTests(SimpleTestCase):

@@ -197,12 +197,13 @@ export interface FeedbackClassificationReport extends FeedbackClassCounts {
 }
 
 export interface FeedbackDashboardReport extends FeedbackQuestionReport {
+  forms?: { id: number; title: string; formType: string }[];
   groups: { id: string; name: string }[];
   modules?: { id: string; name: string }[];
   coverage: { assigned: number | null; submitted: number; rate: number | null };
 }
 export interface FeedbackDashboardFilters {
-  formType?: FeedbackFormType; groupId?: string; moduleId?: string; classification?: FeedbackScoreClass;
+  formId?: number; includeForms?: boolean; formType?: string; groupId?: string; moduleId?: string; classification?: FeedbackScoreClass;
   submittedFrom?: string; submittedTo?: string;
 }
 
@@ -331,11 +332,13 @@ export const feedbackApi = {
     if (sourceKey) params.set('source', sourceKey);
     return request<{ recipients: FeedbackRecipient[]; sources: FeedbackAssignmentSource[]; lectures: FeedbackLectureOption[]; total: number; page: number; pageSize: number }>(`/forms/${id}/recipients/?${params}`);
   },
-  responses: (filters?: { formId?: number; status?: string; learner?: string }) => {
+  responses: (filters?: { formId?: number; status?: string; learner?: string; submittedFrom?: string; submittedTo?: string }) => {
     const params = new URLSearchParams();
     if (filters?.formId) params.set('formId', String(filters.formId));
     if (filters?.status) params.set('status', filters.status);
     if (filters?.learner) params.set('learner', filters.learner);
+    if (filters?.submittedFrom) params.set('submittedFrom', filters.submittedFrom);
+    if (filters?.submittedTo) params.set('submittedTo', filters.submittedTo);
     return request<{ responses: FeedbackResponse[] }>(`/responses/?${params}`);
   },
   response: (id: number) => request<{ response: FeedbackResponse }>(`/responses/${id}/`),
@@ -363,6 +366,8 @@ export const feedbackApi = {
   },
   insightsDashboard: (filters: FeedbackDashboardFilters) => {
     const params = new URLSearchParams();
+    if (filters.formId) params.set('formId', String(filters.formId));
+    if (filters.includeForms) params.set('includeForms', '1');
     for (const key of ['formType', 'groupId', 'moduleId', 'classification', 'submittedFrom', 'submittedTo'] as const) {
       if (filters[key]) params.set(key, filters[key]);
     }

@@ -18,7 +18,7 @@
 import { beforeEach, describe, it, expect } from 'vitest';
 import { render } from '@testing-library/react';
 import { PageSkeleton } from '../Skeletons';
-import { SIDEBAR_RAIL_WIDTH, SIDEBAR_EXPANDED_WIDTH } from '../Sidebar';
+import { SIDEBAR_EXPANDED_WIDTH } from '../Sidebar';
 import { LEARNER_SIDEBAR_WIDTH } from '../learnerShellAssets';
 
 beforeEach(() => localStorage.clear());
@@ -35,16 +35,19 @@ describe('PageSkeleton', () => {
   it('reserves the real shell chrome so the swap to the page moves nothing', () => {
     const { container } = render(<PageSkeleton />);
 
+    expect(container.firstElementChild).toHaveClass('dashboard-theme', 'workspace-shell');
     // The rail comes from the same constant the real sidebar uses, so it cannot drift.
     const rail = container.querySelector<HTMLElement>(`[style*="width"]`);
-    expect(rail?.style.width).toBe(`${SIDEBAR_RAIL_WIDTH}px`);
+    expect(rail?.style.width).toBe(`${SIDEBAR_EXPANDED_WIDTH}px`);
     expect(rail).toHaveClass('hidden', 'lg:block');
-    expect(rail?.style.marginInline).toBe('12px');
+    expect(rail).toHaveClass('kbc-workspace-sidebar');
+    expect(rail?.style.marginInline).toBe('8px');
 
     // Header.tsx is h-16 and the shell's breadcrumb strip is h-8. Both used to
     // be missing or wrong here, which shifted the page vertically on every
     // navigation and then shifted it back.
     expect(container.querySelector('.h-16')).toHaveClass('mt-2', 'mb-2', 'lg:mt-3');
+    expect(container.querySelector('.h-16')).toHaveClass('kbc-workspace-topbar');
     expect(container.querySelector('.h-8')).not.toBeNull();
   });
 
@@ -55,8 +58,8 @@ describe('PageSkeleton', () => {
     expect(root?.getAttribute('aria-label')).toBe('Loading page');
   });
 
-  it('keeps room for an open sidebar while the next page loads', () => {
-    localStorage.setItem('kbc_sidebar_pinned', 'true');
+  it.each(['true', 'false'])('keeps the shared width while loading with pinned preference %s', preference => {
+    localStorage.setItem('kbc_sidebar_pinned', preference);
     const { container } = render(<PageSkeleton />);
     expect(container.querySelector<HTMLElement>('[style*="width"]')?.style.width).toBe(`${SIDEBAR_EXPANDED_WIDTH}px`);
   });
@@ -71,10 +74,11 @@ describe('PageSkeleton', () => {
   it('keeps learner loading chrome aligned with the expanded learner shell', () => {
     const { container } = render(<PageSkeleton workspaceRole="learner" />);
     const root = container.firstElementChild;
-    const rail = container.querySelector<HTMLElement>('.kbc-learner-route-skeleton-sidebar');
-    expect(root).toHaveClass('kbc-learner-route-skeleton');
+    const rail = container.querySelector<HTMLElement>('.kbc-workspace-sidebar');
+    expect(root).toHaveClass('dashboard-theme', 'workspace-shell');
+    expect(root).toHaveAttribute('data-workspace-role', 'learner');
     expect(rail?.style.width).toBe(`${LEARNER_SIDEBAR_WIDTH}px`);
     expect(rail).toHaveClass('hidden', 'lg:block');
-    expect(container.querySelector('.kbc-learner-route-skeleton-header')).not.toBeNull();
+    expect(container.querySelector('.kbc-workspace-topbar')).not.toBeNull();
   });
 });

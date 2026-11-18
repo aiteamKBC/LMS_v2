@@ -49,7 +49,7 @@ describe('Course structure Week Points navigation', () => {
   it('keeps loaded activities selectable while Points are loading', () => {
     vi.mocked(authoredWeekPoints).mockReturnValue(new Promise(() => {}));
     render(<Workspace />);
-    expect(screen.getByRole('status')).toHaveTextContent('Loading Points');
+    expect(screen.getByRole('status')).toHaveAccessibleName(expect.stringContaining('Loading Points'));
     expect(screen.getByRole('button', { name: /Updated reading title/ })).toBeVisible();
     fireEvent.click(screen.getByRole('button', { name: /Check understanding/ }));
     expect(onSelect).toHaveBeenCalledExactlyOnceWith('QUIZ');
@@ -136,7 +136,7 @@ describe('Course structure Week Points navigation', () => {
           renderActivity={id => items.find(item => item.component.id === id)?.node} />} />;
     }
     render(<SessionWeek />);
-    await waitFor(() => expect(screen.queryByText('Loading Points…')).not.toBeInTheDocument());
+    await waitFor(() => expect(screen.queryByRole('status', { name: 'Loading Points…' })).not.toBeInTheDocument());
     expect(screen.queryByText('Other components')).not.toBeInTheDocument();
     for (const point of points) {
       const header = screen.getByRole('button', { name: new RegExp(`^${point.title},`) });
@@ -160,7 +160,7 @@ describe('Course structure Week Points navigation', () => {
     vi.mocked(authoredWeekPoints).mockImplementationOnce(() => new Promise((_resolve, fail) => { reject = fail; }));
     render(<Workspace editable />);
     expect(screen.getByRole('button', { name: 'Ungrouped video' })).toBeVisible();
-    expect(screen.getByRole('status')).toHaveTextContent('Loading Points');
+    expect(screen.getByRole('status')).toHaveAccessibleName(expect.stringContaining('Loading Points'));
     reject(new Error('Points unavailable'));
     expect(await screen.findByRole('alert')).toHaveTextContent('Points unavailable');
     expect(screen.getByRole('button', { name: 'Ungrouped video' })).toBeVisible();
@@ -394,7 +394,7 @@ describe('Course structure component dragging', () => {
         <button type="button" onClick={() => { void drafts.save('M1', ['W1']); }}>Save Point drafts</button></>;
     }
     const { container } = render(<EditableWeek />);
-    if (grouped) await waitFor(() => expect(screen.queryByText('Loading Points…')).not.toBeInTheDocument());
+    if (grouped) await waitFor(() => expect(screen.queryByRole('status', { name: 'Loading Points…' })).not.toBeInTheDocument());
     for (const point of points) {
       const header = screen.getByRole('button', { name: new RegExp(`^${point.title},`) });
       if (header.getAttribute('aria-expanded') === 'false') fireEvent.click(header);

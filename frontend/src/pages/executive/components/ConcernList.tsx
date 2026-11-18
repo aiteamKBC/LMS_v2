@@ -1,3 +1,4 @@
+import { memo } from "react";
 import Panel from "@/components/base/Panel";
 import type { ConcernTheme } from "@/types/qms";
 
@@ -7,7 +8,7 @@ const TREND_META = {
   flat: { icon: "ri-arrow-right-line", label: "Stable", cls: "text-foreground-500" },
 };
 
-export default function ConcernList({ themes, available }: { themes: ConcernTheme[]; available: boolean }) {
+function ConcernList({ themes, available }: { themes: ConcernTheme[]; available: boolean }) {
   return (
     <Panel
       title="Recurring concerns"
@@ -50,3 +51,4 @@ export default function ConcernList({ themes, available }: { themes: ConcernThem
   );
 }
 
+export default memo(ConcernList);

@@ -59,6 +59,7 @@ urlpatterns = [
     # Django (see the comment above) -- keeping this under /api/ would silently
     # fall through to the SPA index instead of reaching this view.
     path('progress_reviews_api/', include('progress_reviews_api.urls')),
+    path('qms_api/', include('qms_api.urls')),
     # MCP server for AI connectors. 404 unless MCP_ENABLED; outside the *_api
     # prefixes, so production LiteSpeed must be told to forward these paths.
     path('mcp/', include('mcp_api.urls')),

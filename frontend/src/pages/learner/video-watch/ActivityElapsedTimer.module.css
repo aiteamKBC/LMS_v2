@@ -10,7 +10,7 @@
   overflow: hidden;
   padding: 0.5rem 0.65rem 0.55rem;
   border: 1px solid rgb(223 210 240 / 0.52);
-  border-radius: 0.9rem;
+  border-radius: var(--lms-radius, 16px);
   color: #fff;
   background:
     radial-gradient(circle at 88% -30%, rgb(245 201 79 / 0.35), transparent 47%),

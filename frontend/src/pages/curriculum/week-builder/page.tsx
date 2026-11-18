@@ -1,3 +1,4 @@
+import { LoadingControl, LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
 import { CollaborativeField } from '../module-builder/CollaborativeField';
 import { componentSessionTitle, type SessionTitleWeek } from '../shared/sessionDisplayTitle';
 import { AssignmentTopicsEditor } from '../shared/AssignmentTopicsEditor';
@@ -865,7 +866,7 @@ export function TemplateEditor({ initial, isNew, onClose, returnToPrevious = fal
         <div className="flex flex-col items-center justify-center gap-3 rounded-2xl border border-background-200 bg-background-50 py-24 text-center">
           <span className="h-8 w-8 animate-spin rounded-full border-2 border-background-300 border-t-primary-500" aria-hidden="true" />
           <p className="text-[13px] font-bold text-foreground-700">Preparing the week builder…</p>
-          <p className="text-[11px] text-foreground-400">Loading programme, module and group data.</p>
+          <p className="text-[11px] text-foreground-400"><LoadingSkeleton label="Loading programme, module and group data." variant="rows" /></p>
         </div>
       </div>
     );
@@ -2360,7 +2361,7 @@ function SessionRecordingBody({ component, onChange, setSetting, rulePoints, wee
                   </select>
                 </Field>
                 <Field label="Live session in that module">
-                  <select
+                  {<LoadingControl loading={(otherWeeks?.status === 'loading')}><select
                     value={target?.moduleId && target.moduleId === pickedModuleId ? target.componentId : ''}
                     disabled={!pickedModuleId || otherWeeks?.status !== 'ready'}
                     onChange={e => recordingLinks.setLink(component.id, e.target.value, e.target.value ? pickedModuleId : '')}
@@ -2368,7 +2369,7 @@ function SessionRecordingBody({ component, onChange, setSetting, rulePoints, wee
                   >
                     <option value="">{otherWeeks?.status === 'loading' ? 'Loading sessions…' : 'Not linked'}</option>
                     {otherSessions.map(sessionOption)}
-                  </select>
+                  </select></LoadingControl>}
                 </Field>
               </div>
               </>
@@ -3161,7 +3162,7 @@ function QuizBody({ component, onChange, setSetting, rulePoints, weekScope }: Co
           <div className="mx-auto my-6 w-full max-w-[1140px] overflow-hidden rounded-2xl bg-background-50 shadow-2xl" onClick={e => e.stopPropagation()}>
             {/* Local boundary: the route-level one would blank the whole page while
                 this chunk downloads. */}
-            <Suspense fallback={<div className="p-10 text-center text-[13px] text-foreground-400">Loading quiz editor…</div>}>
+            <Suspense fallback={<div className="p-10 text-center text-[13px] text-foreground-400"><LoadingSkeleton label="Loading quiz editor…" variant="rows" /></div>}>
               <QuizEditorPanel quizId={linkedQuizId} onClose={closeEditor} onSaved={() => void loadQuizzes()} />
             </Suspense>
           </div>
@@ -3212,7 +3213,7 @@ function QuizBody({ component, onChange, setSetting, rulePoints, weekScope }: Co
             </div>
             <div className="mt-3 flex flex-wrap items-center gap-2">
               <button type="button" onClick={() => void openStudentPreview()} disabled={previewLoading} className="inline-flex items-center gap-1.5 rounded-full border border-primary-200 bg-background-50 px-4 py-1.5 text-[12px] font-bold text-primary-700 hover:bg-primary-100 disabled:cursor-wait disabled:opacity-60 transition-smooth">
-                <AppIcon className={previewLoading ? 'ri-loader-4-line animate-spin' : 'ri-eye-line'}></AppIcon>{previewLoading ? 'Loading preview...' : 'Preview quiz'}
+                <AppIcon className={previewLoading ? 'ri-loader-4-line animate-spin' : 'ri-eye-line'}></AppIcon>{previewLoading ? <LoadingSkeleton label="Loading preview..." variant="text" /> : 'Preview quiz'}
               </button>
               <button type="button" onClick={() => setEditorOpen(true)} className="primary-action inline-flex items-center gap-1.5 rounded-full bg-primary-600 px-4 py-1.5 text-[12px] font-bold text-background-50 hover:bg-primary-700 transition-smooth">
                 <AppIcon className="ri-edit-2-line"></AppIcon>Edit questions
@@ -3233,10 +3234,10 @@ function QuizBody({ component, onChange, setSetting, rulePoints, weekScope }: Co
             <div>
               <span className="block text-[11px] font-semibold text-foreground-500 mb-1.5">Import an existing quiz</span>
               <div className="flex items-center gap-2">
-                <select value="" onChange={e => { const quiz = quizzes.find(item => String(item.id) === e.target.value); if (quiz) link(quiz); }} className={inputClass} disabled={loading || !matchingQuizzes.length}>
+                {<LoadingControl loading={(loading)}><select value="" onChange={e => { const quiz = quizzes.find(item => String(item.id) === e.target.value); if (quiz) link(quiz); }} className={inputClass} disabled={loading || !matchingQuizzes.length}>
                   <option value="">{loading ? 'Loading quizzes…' : matchingQuizzes.length ? 'Choose a quiz to import' : 'No matching quizzes'}</option>
                   {matchingQuizzes.map(quiz => <option key={quiz.id} value={quiz.id}>{quiz.title} · {Number(quiz.questions || 0)} q</option>)}
-                </select>
+                </select></LoadingControl>}
                 <button type="button" onClick={() => loadQuizzes()} title="Refresh" className="grid place-items-center w-9 h-9 shrink-0 rounded-lg border border-background-200 bg-background-50 text-foreground-500 hover:bg-background-100 transition-smooth"><AppIcon className={loading ? 'ri-loader-4-line animate-spin' : 'ri-refresh-line'}></AppIcon></button>
               </div>
               {!loading && !matchingQuizzes.length && <p className="mt-2 text-[11px] text-foreground-400">No workspace quizzes match this programme{weekScope.moduleName ? ' + module' : ''} yet — upload one below, or build it in the Quiz Workspace.</p>}
@@ -3754,7 +3755,7 @@ function UploadedComponentFilePreview({ url, fileName, contentType, componentTyp
   if (isAudio) {
     content = <audio controls preload="metadata" src={url} className="w-full" />;
   } else if (loaded?.status === 'loading') {
-    content = <div className="grid min-h-40 place-items-center text-[12px] font-semibold text-foreground-500"><span className="inline-flex items-center gap-2"><AppIcon className="ri-loader-4-line animate-spin" />Loading preview...</span></div>;
+    content = <div className="grid min-h-40 place-items-center text-[12px] font-semibold text-foreground-500"><span className="inline-flex items-center gap-2"><LoadingSkeleton label="Loading preview..." variant="text" /></span></div>;
   } else if (loaded?.status === 'html') {
     content = <div className="max-h-[420px] overflow-auto bg-white p-5"><div className="max-w-none text-sm leading-relaxed text-foreground-800 [&_h1]:mb-3 [&_h1]:text-2xl [&_h1]:font-bold [&_h2]:mb-2 [&_h2]:mt-4 [&_h2]:text-xl [&_h2]:font-bold [&_p]:mb-3 [&_ul]:mb-3 [&_ul]:list-disc [&_ul]:pl-5 [&_ol]:mb-3 [&_ol]:list-decimal [&_ol]:pl-5" dangerouslySetInnerHTML={{ __html: loaded.value }} /></div>;
   } else if (loaded?.status === 'text') {

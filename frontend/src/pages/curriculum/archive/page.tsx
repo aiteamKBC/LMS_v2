@@ -1,3 +1,4 @@
+import { LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
 // ============================================================================
 // The Curriculum archive — one page for everything archived anywhere in it.
 //
@@ -1287,7 +1288,7 @@ export default function CurriculumArchivePage() {
                     label="KSBs mapped"
                     value={programmeKsb.stats
                       ? (programmeKsb.stats.ksbTotal ? `${programmeKsb.stats.ksbMapped} of ${programmeKsb.stats.ksbTotal}` : 'No KSB standard linked')
-                      : 'Loading…'}
+                      : <LoadingSkeleton label={'Loading…'} />}
                   />
                 )}
               </section>

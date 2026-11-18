@@ -100,7 +100,7 @@ describe('lecture-only question reporting filters', () => {
     render(<LectureQuestionAnalytics data={data} scope={{}} />);
     await openQuestions();
     await user.selectOptions(screen.getByRole('combobox', { name: 'Question report lecture' }), '30');
-    expect(screen.getByRole('status')).toHaveTextContent('Loading lecture question results');
+    expect(screen.getByRole('status')).toHaveAccessibleName(expect.stringContaining('Loading lecture question results'));
     expect(screen.queryByText('All lecture answers?')).not.toBeInTheDocument();
     await user.selectOptions(screen.getByRole('combobox', { name: 'Question report lecture' }), '31');
     second.resolve({ analytics: report('Lecture 31 only') });

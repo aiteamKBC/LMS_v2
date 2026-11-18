@@ -123,7 +123,7 @@ describe('Review attendance identity link', () => {
   it('shows loading and storage errors without claiming a correction succeeded', async () => {
     let reject!: (reason: Error) => void;
     request.mockReturnValueOnce(new Promise((_, fail) => { reject = fail; }));
-    mount(); await screen.findByText('Loading attendance corrections…');
+    mount(); await screen.findByRole('status', { name: 'Loading attendance corrections…' });
     reject(new Error('Attendance correction storage is unavailable.'));
     expect(await screen.findByRole('alert')).toHaveTextContent('storage is unavailable');
     expect(screen.queryByText('Present · Coach verified')).not.toBeInTheDocument();

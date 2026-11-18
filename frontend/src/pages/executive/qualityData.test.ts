@@ -5,13 +5,13 @@ import { loadLiveQmsData } from './qualityData';
 
 const mocks = vi.hoisted(() => ({
   forms: vi.fn(), reviews: vi.fn(), definition: vi.fn(),
-  feedbackForms: vi.fn(), feedbackResponses: vi.fn(), insights: vi.fn(),
+  feedbackForms: vi.fn(), feedbackResponses: vi.fn(), getForm: vi.fn(), insights: vi.fn(),
 }));
 vi.mock('@/api/coachingQualityReviews', () => ({
   qualityForms: mocks.forms, qualityReviews: mocks.reviews, qualityDefinition: mocks.definition,
 }));
 vi.mock('@/api/feedback', () => ({
-  feedbackApi: { listForms: mocks.feedbackForms, responses: mocks.feedbackResponses, insightsDashboard: mocks.insights },
+  feedbackApi: { listForms: mocks.feedbackForms, responses: mocks.feedbackResponses, getForm: mocks.getForm, insightsDashboard: mocks.insights },
 }));
 
 const card: QualityFormCard = { reviewType: 'MCM', title: 'Synthetic MCM', group: 'Coaching', published: true, revision: 1, legacy: false };
@@ -51,6 +51,26 @@ describe('executive overview live data', () => {
     expect(data.actions).toEqual([]);
     expect(data.availability).toEqual({ actions: false, criticalIssues: false, concerns: false, feedback: true, feedbackScores: false });
     expect(data.notice).toContain('No blended review-level RAG is inferred');
+  });
+
+  it('uses bundled form definitions without making one request per form', async () => {
+    mocks.forms.mockResolvedValue({ forms: [card], templates: { MCM: state } });
+    const data = await loadLiveQmsData(new AbortController().signal);
+    expect(mocks.definition).not.toHaveBeenCalled();
+    expect(data.forms[0]).toMatchObject({ questionCount: 1, answerTypes: ['Criteria rating'] });
+  });
+
+  it('keeps MCM and progress review forms but omits forms marked (T)', async () => {
+    const visible = [
+      { ...card, reviewType: 'FORM_PROGRESS_REVIEW', title: '1-1 Progress Review Feedback Form' },
+      { ...card, reviewType: 'FORM_MONTHLY_COACHING', title: 'Monthly Coaching Meeting Feedback Form' },
+    ];
+    const hidden = { ...card, reviewType: 'FORM_WELLBEING', title: 'Well being (T)' };
+    mocks.forms.mockResolvedValue({ forms: [...visible, hidden, card] });
+    const data = await loadLiveQmsData(new AbortController().signal);
+    expect(data.forms.map(form => form.name)).toEqual(expect.arrayContaining(visible.map(form => form.title)));
+    expect(data.forms.map(form => form.name)).not.toContain(hidden.title);
+    expect(data.records.map(record => record.formName)).not.toContain(hidden.title);
   });
 
   it('loads subsequent review pages before reporting the registry totals', async () => {
@@ -97,9 +117,77 @@ describe('executive overview live data', () => {
       startedAt: '2026-10-20T09:00:00Z', updatedAt: '2026-10-20T10:00:00Z', submittedAt: '2026-10-20T10:00:00Z' };
     mocks.feedbackForms.mockResolvedValue({ forms: [form] });
     mocks.feedbackResponses.mockResolvedValue({ responses: [response, { ...response, id: 2, submittedAt: '2024-10-20T10:00:00Z' }] });
+    mocks.insights.mockResolvedValue({ analytics: { insights: { classification: { responses: [
+      { responseId: 1, classification: 'negative' },
+    ] } } } });
     const data = await loadLiveQmsData(new AbortController().signal);
+    expect(mocks.feedbackResponses).toHaveBeenCalledWith({ status: 'completed', submittedFrom: '2025-11-15', submittedTo: '2026-11-15' });
+    expect(mocks.insights).toHaveBeenCalledWith({ submittedFrom: '2025-11-15', submittedTo: '2026-11-15' });
     expect(data.records.map(record => record.id)).toEqual([summary.id, 'feedback-response-1']);
+    expect(data.records[1].feedbackClassification).toBe('negative');
+    expect(data.availability.feedbackScores).toBe(true);
     expect(data.forms.find(item => item.id === 'feedback-42')).toMatchObject({ submissions: 1, ragSupported: false });
+  });
+
+  it('keeps MCM and PR feedback responses and removes only forms marked (T)', async () => {
+    const baseForm = { id: 60, title: 'Monthly Coaching Meeting Feedback Form', formType: 'post_mcm_review', version: 1,
+      assignedCount: 1, sections: [{ questions: [{ id: 1, type: 'rating' }] }] } as FeedbackForm;
+    const forms = [baseForm,
+      { ...baseForm, id: 61, title: 'Progress Review Feedback Form', formType: 'post_progress_review' },
+      { ...baseForm, id: 62, title: 'Progress Review Feedback Form (T)', formType: 'post_progress_review' }] as FeedbackForm[];
+    const baseResponse = { id: 1, formId: 60, formTitle: baseForm.title, formType: baseForm.formType, templateKey: 'mcm',
+      learnerId: null, deliveryId: null, sessionTitle: '', sessionStartsAt: null, tutorName: '', learnerName: 'Synthetic respondent',
+      programme: '', status: 'completed', startedAt: '2026-10-20T09:00:00Z', updatedAt: '2026-10-20T10:00:00Z',
+      submittedAt: '2026-10-20T10:00:00Z' } as FeedbackResponse;
+    mocks.feedbackForms.mockResolvedValue({ forms });
+    mocks.feedbackResponses.mockResolvedValue({ responses: forms.map((form, index) =>
+      ({ ...baseResponse, id: index + 1, formId: form.id, formTitle: form.title, formType: form.formType })) });
+    const data = await loadLiveQmsData(new AbortController().signal);
+    expect(data.forms.map(form => form.id)).toEqual(expect.arrayContaining(['feedback-60', 'feedback-61']));
+    expect(data.forms.map(form => form.id)).not.toContain('feedback-62');
+    expect(data.records.map(record => record.id)).toEqual(expect.arrayContaining(['feedback-response-1', 'feedback-response-2']));
+    expect(data.records.map(record => record.id)).not.toContain('feedback-response-3');
+  });
+
+  it('adds a new feedback form and type to the executive registry from live data', async () => {
+    const form = { id: 71, title: 'Learner Pulse', formType: 'custom_pulse', version: 1, assignedCount: 1,
+      sections: [{ questions: [{ id: 1, type: 'rating' }] }] } as unknown as FeedbackForm;
+    const response = { id: 7, formId: 71, formTitle: form.title, formType: form.formType, templateKey: 'pulse',
+      learnerId: null, deliveryId: null, sessionTitle: '', sessionStartsAt: null, tutorName: '', learnerName: 'Synthetic respondent',
+      programme: '', status: 'completed', startedAt: '2026-10-20T09:00:00Z', updatedAt: '2026-10-20T10:00:00Z',
+      submittedAt: '2026-10-20T10:00:00Z' } as FeedbackResponse;
+    mocks.feedbackForms.mockResolvedValue({ forms: [form] });
+    mocks.feedbackResponses.mockResolvedValue({ responses: [response] });
+    const data = await loadLiveQmsData(new AbortController().signal);
+    expect(data.forms.map(item => item.id)).toContain('feedback-71');
+    expect(data.feedbackTypes).toContainEqual({ id: 'custom_pulse', name: 'custom_pulse' });
+    expect(data.records.map(item => item.id)).toContain('feedback-response-7');
+  });
+
+  it('includes completed historical form responses and excludes unfinished responses', async () => {
+    const current = { id: 49, title: 'Synthetic lecture feedback', templateKey: 'lecture-family', formType: 'post_lecture', version: 2,
+      assignedCount: 5, sections: [{ questions: [{ id: 2, type: 'rating' }] }] } as FeedbackForm;
+    const historical = { ...current, id: 47, version: 1, isCurrent: false,
+      sections: [{ questions: [{ id: 1, type: 'rating' }, { id: 3, type: 'text' }] }] } as FeedbackForm;
+    const response = { id: 10, formId: 47, formTitle: historical.title, templateKey: 'lecture-family', learnerId: null,
+      formType: 'post_lecture', deliveryId: null, sessionTitle: '', sessionStartsAt: null, tutorName: '',
+      learnerName: 'Synthetic respondent', programme: '', status: 'completed',
+      startedAt: '2026-10-20T09:00:00Z', updatedAt: '2026-10-20T10:00:00Z', submittedAt: '2026-10-20T10:00:00Z' } as FeedbackResponse;
+    mocks.feedbackForms.mockResolvedValue({ forms: [current] });
+    mocks.feedbackResponses.mockResolvedValue({ responses: [
+      response, { ...response, id: 11 },
+      { ...response, id: 12, formId: 49 },
+      { ...response, id: 13, status: 'in_progress', submittedAt: null },
+    ] });
+    mocks.getForm.mockResolvedValue({ form: historical });
+
+    const data = await loadLiveQmsData(new AbortController().signal);
+    expect(mocks.getForm).toHaveBeenCalledOnce();
+    expect(mocks.getForm).toHaveBeenCalledWith(47);
+    expect(data.records.map(record => record.id)).toEqual([summary.id, 'feedback-response-12', 'feedback-response-10', 'feedback-response-11']);
+    expect(data.records.find(record => record.id === 'feedback-response-10')).toMatchObject({ formId: 'feedback-47', totalQuestions: 2, reviewStatus: 'completed' });
+    expect(data.forms.find(form => form.id === 'feedback-47')).toMatchObject({ version: '1', submissions: 2 });
+    expect(data.forms.find(form => form.id === 'feedback-49')).toMatchObject({ version: '2', submissions: 1 });
   });
 
   it('keeps draft ratings separate from completed review evidence', async () => {

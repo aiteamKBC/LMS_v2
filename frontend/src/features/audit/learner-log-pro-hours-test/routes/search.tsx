@@ -1,3 +1,4 @@
+import { LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
 import { useEffect, useRef, useState } from "react";
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { createFileRoute, useRouter } from '@tanstack/react-router';
@@ -370,7 +371,7 @@ function SearchPage() {
                       isLoading is false and the table used to render as an empty
                       "0 learners" cohort, which reads as broken rather than slow. */}
                   {learnersPending && (
-                    <TableRow><TableCell colSpan={10} className="py-10 text-center text-sm text-muted-foreground">Loading learners…</TableCell></TableRow>
+                    <TableRow><TableCell colSpan={10} className="py-10 text-center text-sm text-muted-foreground"><LoadingSkeleton label="Loading learners…" variant="rows" /></TableCell></TableRow>
                   )}
                   {!learnersPending && !pagedLearners.length && (
                     <TableRow><TableCell colSpan={10} className="py-10 text-center text-sm text-muted-foreground">No learner matches these filters.</TableCell></TableRow>
@@ -442,7 +443,7 @@ function SearchPage() {
           <footer className="flex items-center justify-between border-t border-border px-7 py-4 text-xs text-muted-foreground">
             <span>
               {learnersPending
-                ? "Loading learners…"
+                ? <LoadingSkeleton label="Loading learners…" variant="text" />
                 : summaryLearners.length === 0
                   ? "0 learners"
                   : `${learnerPage * learnerPageSize + 1}–${Math.min((learnerPage + 1) * learnerPageSize, summaryLearners.length)} of ${summaryLearners.length} learners`}
@@ -532,7 +533,7 @@ function SearchPage() {
                     <TableRow><TableCell colSpan={10} className="py-10 text-center text-sm text-muted-foreground">Pick a learner or an activity month above to load the evidence log.</TableCell></TableRow>
                   )}
                   {activitiesEnabled && activities.isLoading && (
-                    <TableRow><TableCell colSpan={10} className="py-10 text-center text-sm text-muted-foreground">Loading activity records…</TableCell></TableRow>
+                    <TableRow><TableCell colSpan={10} className="py-10 text-center text-sm text-muted-foreground"><LoadingSkeleton label="Loading activity records…" variant="rows" /></TableCell></TableRow>
                   )}
                   {activities.data?.items.map((row) => (
                     <InlineActivityRow key={row.id} row={row} />

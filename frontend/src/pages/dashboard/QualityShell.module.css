@@ -1,0 +1,59 @@
+/* Keep the QA workspace chrome local to its existing navigation and views. */
+.shell {
+  display: flex;
+  height: 100dvh;
+  overflow: hidden;
+}
+
+.shell > :global(.workspace-content) {
+  margin: 0;
+  margin-left: var(--kbc-sidebar-offset, 0px);
+  padding: 8px 12px 0 8px;
+}
+
+@media (min-width: 1024px) {
+  .shell > :global(.workspace-content) {
+    padding-left: 24px;
+  }
+}
+
+/* Keep the header inside the same gutters as the breadcrumb row. The shared
+   chrome layer owns its colors and controls, so override only its spacing. */
+@layer workspace-chrome {
+  .shell:global(.dashboard-theme) > :global(.workspace-content) > :global(.kbc-workspace-topbar) {
+    width: auto;
+    margin: 0 0 12px !important;
+  }
+}
+
+@layer workspace-breadcrumbs-ui {
+  .shell:global(.dashboard-theme[data-workspace-role="curriculum"]) :global(.workspace-breadcrumbs) {
+    border: 1px solid var(--crumb-line) !important;
+    border-radius: 16px !important;
+    background: var(--crumb-surface) !important;
+  }
+}
+
+.body {
+  min-width: 0;
+  min-height: 0;
+  flex: 1;
+  overflow-y: auto;
+  padding-inline-end: 16px;
+}
+
+@media (max-width: 639px) {
+  .body {
+    padding-inline-end: 12px;
+  }
+
+  .shell > :global(.workspace-content) {
+    padding-inline: 8px;
+  }
+
+  @layer workspace-chrome {
+    .shell:global(.dashboard-theme) > :global(.workspace-content) > :global(.kbc-workspace-topbar) {
+      margin-bottom: 8px !important;
+    }
+  }
+}

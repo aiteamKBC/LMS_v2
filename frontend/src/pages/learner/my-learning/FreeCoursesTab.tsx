@@ -1,3 +1,4 @@
+import { LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
 import { lazy, Suspense, useEffect, useMemo, useState } from 'react';
 import { Navigate, useLocation, useNavigate } from 'react-router-dom';
 import { ArrowRight, BookOpen, CheckCircle2, ChevronLeft, ChevronRight, FileText, Headphones, HelpCircle, Layers3, Loader2, PenLine, Presentation, Sparkles, Video } from 'lucide-react';
@@ -213,7 +214,7 @@ function FreeCourseDetail({ course, tone, kind, learnerId, activeId, isDone, onS
                     {currentDone ? (
                       <p className="text-sm text-emerald-700">You have passed this quiz.</p>
                     ) : (
-                      <Suspense fallback={<p role="status" className="p-3 text-sm text-foreground-500">Loading quiz…</p>}>
+                      <Suspense fallback={<p  className="p-3 text-sm text-foreground-500"><LoadingSkeleton label="Loading quiz…" variant="rows" /></p>}>
                         <FreeCourseQuiz kind={kind} learnerId={learnerId} componentId={current.componentId} quizId={Number(current.quizId)} onPassed={() => onQuizPassed(current.componentId)} />
                       </Suspense>
                     )}
@@ -221,7 +222,7 @@ function FreeCourseDetail({ course, tone, kind, learnerId, activeId, isDone, onS
                 ) : (
                   <>
                     <div className="mt-4">
-                      <Suspense fallback={<p role="status" className="p-3 text-sm text-foreground-500">Loading activity…</p>}>
+                      <Suspense fallback={<p  className="p-3 text-sm text-foreground-500"><LoadingSkeleton label="Loading activity…" variant="rows" /></p>}>
                         <FreeCourseMaterial activity={current} />
                       </Suspense>
                     </div>

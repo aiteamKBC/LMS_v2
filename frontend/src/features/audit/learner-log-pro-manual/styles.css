@@ -21,13 +21,13 @@
   --font-sans: "IBM Plex Sans", ui-sans-serif, system-ui, sans-serif;
   --font-serif: "Libre Baskerville", ui-serif, Georgia, serif;
   --font-mono: "IBM Plex Mono", ui-monospace, monospace;
-  --radius-sm: calc(var(--radius) - 4px);
-  --radius-md: calc(var(--radius) - 2px);
-  --radius-lg: var(--radius);
-  --radius-xl: calc(var(--radius) + 4px);
-  --radius-2xl: calc(var(--radius) + 8px);
-  --radius-3xl: calc(var(--radius) + 12px);
-  --radius-4xl: calc(var(--radius) + 16px);
+  --radius-sm: var(--lms-radius, 16px);
+  --radius-md: var(--lms-radius, 16px);
+  --radius-lg: var(--lms-radius, 16px);
+  --radius-xl: var(--lms-radius, 16px);
+  --radius-2xl: var(--lms-radius, 16px);
+  --radius-3xl: var(--lms-radius, 16px);
+  --radius-4xl: var(--lms-radius, 16px);
   --color-background: var(--background);
   --color-foreground: var(--foreground);
   --color-surface: var(--surface);
@@ -76,7 +76,7 @@
 
 
 :root {
-  --radius: 0.5rem;
+  --radius: var(--lms-radius, 16px);
   --background: oklch(0.975 0.008 100);
   --foreground: oklch(0.24 0.03 235);
   --surface: oklch(0.955 0.012 95);

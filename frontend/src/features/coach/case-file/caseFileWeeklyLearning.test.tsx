@@ -82,7 +82,7 @@ it.each(['commercial', 'apprenticeship'] as const)('prefetches only adjacent wee
   const nextRequests = () => transport.mock.calls.filter(call => String(call[0]).includes('week=M1%3A2'));
   fireEvent.click(screen.getByRole('button', { name: /Week 2/ }));
   expect(screen.getByText('Reading M1:2')).toBeInTheDocument();
-  expect(screen.queryByText(/Loading this week/)).not.toBeInTheDocument();
+  expect(screen.queryByRole('status', { name: /Loading this week/ })).not.toBeInTheDocument();
   expect(nextRequests()).toHaveLength(1);
   await waitFor(() => expect(transport).toHaveBeenCalledTimes(3));
   expect(transport.mock.calls[2][0]).toBe('/coach_api/coach/case-file/101/weekly-learning?week=M1%3A3');
@@ -166,7 +166,7 @@ it('refetches an expired prefetched week on navigation', async () => {
   await act(async () => {});
   now += 60_000;
   fireEvent.click(screen.getByRole('button', { name: /Week 2/ }));
-  expect(screen.getByText(/Loading this week/)).toBeInTheDocument();
+  expect(screen.getByRole('status', { name: /Loading this week/ })).toBeInTheDocument();
   await screen.findByText('Reading M1:2');
   expect(transport.mock.calls.filter(call => String(call[0]).includes('week=M1%3A2'))).toHaveLength(2);
 });

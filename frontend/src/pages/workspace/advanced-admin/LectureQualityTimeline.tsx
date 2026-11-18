@@ -1,3 +1,4 @@
+import { LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
 import { Fragment, useEffect, useId, useRef, useState, type CSSProperties } from 'react';
 import { createPortal } from 'react-dom';
 import { Link } from 'react-router-dom';
@@ -147,7 +148,7 @@ export default function LectureQualityTimeline({ learnerId, active, attendance, 
     {attendanceError && !workspace && <p role="alert" className="rounded-xl bg-red-50 p-3 text-sm text-red-700">Attendance: {attendanceError}</p>}
     {qualityError && <p role="alert" className="rounded-xl bg-red-50 p-3 text-sm text-red-700">Quality: {qualityError}</p>}
     {workspaceError && <p role="status" className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">Live lecture schedule is unavailable. Showing the recorded attendance register. {workspaceError}</p>}
-    {workspaceLoading && <p role="status" className="rounded-xl border bg-white p-4 text-sm">Loading lecture schedule…</p>}
+    {workspaceLoading && <p  className="rounded-xl border bg-white p-4 text-sm"><LoadingSkeleton label="Loading lecture schedule…" variant="rows" /></p>}
 
     <div className="min-w-0 rounded-2xl border border-foreground-200 bg-white p-4 shadow-sm sm:p-5">
       {featured ? <>
@@ -167,7 +168,7 @@ export default function LectureQualityTimeline({ learnerId, active, attendance, 
           <button type="button" onClick={() => openQuality(featured.title, qualityFor(rows.find(row => row.lecture === featured)!))}
             className="rounded-lg border border-primary-200 px-4 py-2 font-semibold text-primary-700 hover:bg-primary-50">Quality</button></div>
       </> : <div className="flex items-center gap-3"><span className="rounded-xl bg-primary-50 p-3 text-primary-700"><Presentation size={22} /></span>
-        <div><h3 className="font-semibold text-primary-900">{loading || workspaceLoading ? 'Loading lectures…' : 'No upcoming lectures'}</h3>
+        <div><h3 className="font-semibold text-primary-900">{loading || workspaceLoading ? <LoadingSkeleton label="Loading lectures…" variant="text" /> : 'No upcoming lectures'}</h3>
           {!(loading || workspaceLoading) && <p className="text-sm text-foreground-500">The next scheduled lecture will appear here when available.</p>}</div></div>}
     </div>
 

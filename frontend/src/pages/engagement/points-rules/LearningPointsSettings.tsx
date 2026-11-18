@@ -1,3 +1,4 @@
+import { LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
 import { useEffect, useState } from 'react';
 type Formula = {pointsPerHour:number;quizThreshold:number;quizPointPerCorrect:number;perfectQuizPointPerCorrect:number;hourActivities:string[];bonusPoints:Record<string,number>};
 type Policy = {id:number;effectiveAt:string;settings:Formula};
@@ -25,7 +26,7 @@ export default function LearningPointsSettings(){
  <h2 id="learning-points-title" className="text-lg font-semibold">Learning points · all courses</h2>
  <p>One policy for the LMS and mobile app. Map activity types to measured study hours and set the first-submission quiz formula.</p>
  {error&&<p role="alert" className="text-red-700">{error}</p>}{notice&&<p role="status">{notice}</p>}
- {!loaded?<button type="button" disabled={busy} onClick={()=>void load()}>{busy?'Loading settings…':'Retry loading settings'}</button>:form&&<>
+ {!loaded?<button type="button" disabled={busy} onClick={()=>void load()}>{busy?<LoadingSkeleton label="Loading settings…" variant="text" />:'Retry loading settings'}</button>:form&&<>
  <p>{policy?'Active since '+new Date(policy.effectiveAt).toLocaleString('en-GB'):'The all-course policy has not been activated.'}</p>
  <fieldset disabled={busy} className="space-y-3"><legend className="font-semibold">Activity → hour points</legend>
  <p className="text-sm">Select which activities contribute to the same hour total. Visits must contain at least four minutes of accepted study. Partial hours carry forward; simultaneous activity is counted once.</p>

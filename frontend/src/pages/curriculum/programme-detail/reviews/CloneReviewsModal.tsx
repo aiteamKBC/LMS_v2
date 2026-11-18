@@ -1,3 +1,4 @@
+import { LoadingControl, LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
 // Clone Review From Another Programme -- pick a source programme, pick one or
 // more of its reviews, deep-copy them into the current programme with fresh
 // REV- ids. Source reviews are fetched only after a source programme is picked,
@@ -115,23 +116,20 @@ export function CloneReviewsModal({ destinationProgrammeId, destinationProgramme
           {programmesError ? (
             <p className="text-[11px] font-semibold text-red-600">{programmesError}</p>
           ) : (
-            <SelectControl
+            <LoadingControl loading={(programmes === null)}><SelectControl
               value={sourceProgrammeId}
               onChange={setSourceProgrammeId}
               options={sourceOptions}
               placeholder={programmes === null ? 'Loading programmes...' : 'Choose a programme'}
               disabled={programmes === null}
-            />
+            /></LoadingControl>
           )}
         </FormField>
 
         {sourceProgrammeId && (
           <FormField label="Reviews to copy" as="group" error={selectionError}>
             {loadingReviews && (
-              <div className="flex items-center gap-2 py-4 text-[12px] font-semibold text-foreground-400">
-                <AppIcon className="ri-loader-4-line animate-spin"></AppIcon>
-                Loading reviews...
-              </div>
+              <div className="flex items-center gap-2 py-4 text-[12px] font-semibold text-foreground-400"><LoadingSkeleton label="Loading reviews..." variant="rows" /></div>
             )}
             {sourceReviewsError && <p className="text-[11px] font-semibold text-red-600">{sourceReviewsError}</p>}
             {!loadingReviews && !sourceReviewsError && sourceReviews && sourceReviews.length === 0 && (

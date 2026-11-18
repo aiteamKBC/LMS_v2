@@ -1,3 +1,4 @@
+import { LoadingLabel, LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { AppIcon } from '@/components/feature/AppIcon';
@@ -5,7 +6,7 @@ import { ActivityChart, CohortChart, WeeklySessionChart } from './DeliveryCharts
 import { cohortSegments, deliveryDateLabel, deliverySessionTime, deliveryWeek, type DeliveryLiveSession } from './deliveryDashboard';
 import styles from './DeliveryWorkspace.module.css';
 
-type Destination = { title: string; description: string; href: string; icon: string; meta?: string };
+type Destination = { title: string; description: string; href: string; icon: string; meta?: React.ReactNode };
 type AttentionItem = { label: string; value: number; href: string; icon: string };
 
 export interface DeliveryWorkspaceProps {
@@ -99,7 +100,7 @@ export default function DeliveryWorkspace({
       {slow && pending && <p className={styles.loadingFeedback} role="status">{loading ? 'Delivery figures' : modulesLoading ? 'Module activity' : 'Live session dates'} are taking longer than usual. Available figures stay visible while this finishes.</p>}
 
       <section className={styles.stats} aria-label="Delivery numbers" aria-busy={loading || sessionsLoading || modulesLoading}>
-        {loading && <span className={styles.srOnly} role="status">Loading delivery figures.</span>}
+        {loading && <span className={styles.srOnly} ><LoadingSkeleton label="Loading delivery figures." variant="text" /></span>}
         <article className={styles.stat} aria-label="Cohort overview" data-accent="violet">
           <div className={styles.statHeading}><div><h2>Cohort overview</h2>
             <p className={styles.value}><span aria-label="Active cohorts count">{loading ? <LoadingValue /> : unavailable ? 'Unavailable' : number.format(activeCohorts)}</span><span className={styles.valueHint}>active cohorts</span></p>
@@ -137,7 +138,7 @@ export default function DeliveryWorkspace({
             <select aria-label="Session week" value={weekOffset} onChange={event => setWeekOffset(Number(event.target.value))}><option value={0}>This week</option><option value={1}>Next week</option></select>
           </div>
           {chartSessions && <p className={styles.statNote}>Live sessions from active modules</p>}
-          {chartLoading ? <><span className={styles.srOnly} role="status">Loading live sessions.</span><ChartSkeleton /></> : chartUnavailable ? <p className={styles.statNote}>Session dates or active modules could not be verified.</p> : <>
+          {chartLoading ? <><span className={styles.srOnly} ><LoadingSkeleton label="Loading live sessions." variant="text" /></span><ChartSkeleton /></> : chartUnavailable ? <p className={styles.statNote}>Session dates or active modules could not be verified.</p> : <>
             <WeeklySessionChart week={week} />
             <p className={styles.nextSession}>{week.next ? <><span>Next live</span> <strong title={week.next.title}>{nextLabel}</strong></> : 'No upcoming live sessions scheduled.'}</p>
             {!week.count && <span className={styles.srOnly}>No live sessions in the selected week.</span>}
@@ -155,7 +156,7 @@ export default function DeliveryWorkspace({
           const pending = calendar ? sessionsLoading : loading;
           const missing = calendar ? sessionsUnavailable : unavailable;
           return <Link to={card.href} key={card.href} className={styles.card} data-accent={accents[index]}>
-            <div className={styles.cardTop}><span className={styles.icon}><AppIcon className={card.icon} size={23} /></span>{card.meta && (pending ? <LoadingValue /> : <span className={styles.badge}>{missing ? 'Unavailable' : card.meta}</span>)}</div>
+            <div className={styles.cardTop}><span className={styles.icon}><AppIcon className={card.icon} size={23} /></span>{card.meta && (pending ? <LoadingValue /> : <span className={styles.badge}><LoadingLabel>{missing ? 'Unavailable' : card.meta}</LoadingLabel></span>)}</div>
             <h3>{card.title}</h3><p>{card.description}</p>
             {calendar && calendarWeek.next && !pending && !missing && <span className={styles.nextCardSession}>Next live · {deliveryDateLabel(calendarWeek.next.date, true)} · {deliverySessionTime(calendarWeek.next.startTime)} UK</span>}
             <span className={styles.cardAction}>Open workspace <AppIcon className="ri-arrow-right-line" size={16} /></span>

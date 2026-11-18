@@ -1,3 +1,4 @@
+import { LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { ReviewAttendanceEditor } from './ReviewAttendanceEditor';
 import { AppIcon } from '@/components/feature/AppIcon';
@@ -610,10 +611,7 @@ function AttendanceTracker({ attendance, controls }: { attendance: CoachMeetingA
 function TranscriptPreview({ preview }: { preview: TranscriptPreviewState }) {
   if (preview.status === 'loading') {
     return (
-      <div className="flex min-h-32 items-center justify-center gap-2 rounded-lg bg-white text-[12px] font-semibold text-primary-700">
-        <AppIcon className="ri-loader-4-line animate-spin"></AppIcon>
-        Loading transcript preview
-      </div>
+      <div className="flex min-h-32 items-center justify-center gap-2 rounded-lg bg-white text-[12px] font-semibold text-primary-700"><LoadingSkeleton label="Loading transcript preview" variant="rows" /></div>
     );
   }
   if (preview.status === 'error') {
@@ -812,7 +810,7 @@ export function CoachMeetingArtifactsPanel({
           className="inline-flex items-center gap-1.5 rounded-md border border-primary-200 bg-primary-50 px-3 py-1.5 text-[12px] font-semibold text-primary-700 transition hover:border-primary-300 hover:bg-primary-100 disabled:cursor-not-allowed disabled:opacity-60"
         >
           <AppIcon className={isLoading ? 'ri-loader-4-line animate-spin' : 'ri-refresh-line'}></AppIcon>
-          {isLoading ? 'Loading' : checkLabel}
+          {isLoading ? <LoadingSkeleton label="Loading" variant="text" /> : checkLabel}
         </button> : null}
       </div>
 

@@ -1,6 +1,7 @@
-﻿import { useEffect, useState } from 'react';
+import { LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
+import { useEffect, useState } from 'react';
 import { Link, useLocation, useParams } from 'react-router-dom';
-import { ArrowLeft, LoaderCircle } from 'lucide-react';
+import { ArrowLeft } from 'lucide-react';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { fetchEmployerPortal, type EmployerPortal } from '@/api/employerPortal';
 import { EmployerDashboard, type EmployerPortalView } from './EmployerDashboard';
@@ -40,7 +41,7 @@ export default function EmployerPortalPage() {
   const { isEmployerViewer, shell } = useEmployerPortalChrome(employerId, data?.employer.name);
 
   return <WorkspaceShell {...shell} pageTitle="Employer" pageSubtitle={data?.employer.name || 'Employer portal'} hideBreadcrumbs>
-    {!data && !error && <div role="status" aria-label="Loading learners" aria-live="polite" className={styles.loading}><LoaderCircle data-testid="learners-loading-spinner" aria-hidden="true" className="animate-spin" size={30} /><strong>Loading learners...</strong><p>Preparing your learner dashboard</p></div>}
+    {!data && !error && <div   className="p-5"><LoadingSkeleton label="Loading learners" variant="cards" /></div>}
     {error && <div className={styles.errorState} role="alert"><p>{error}</p><button type="button" className={styles.clearButton} onClick={() => setRefresh(value => value + 1)}>Retry</button></div>}
     {data && <EmployerDashboard key={employerId} view={view} data={data} metrics={metrics} programmeMetrics={programmeMetrics} attendance={attendance} reviews={reviews} reviewSummaries={reviewSummaries} onRetry={() => setDetailsRefresh(value => value + 1)}
       backAction={!isEmployerViewer ? <Link to={returnTo} className={styles.backButton}><ArrowLeft size={14} />{returnLabel}</Link> : undefined} />}

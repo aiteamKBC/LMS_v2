@@ -1,3 +1,4 @@
+import { LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
 import { useEffect, useMemo, useState } from 'react';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { WorkspaceHeroBanner } from '@/components/feature/WorkspaceHeroBanner';
@@ -569,7 +570,7 @@ export default function TutorDashboard() {
       roleLabel={tutorNav.label}
       navItems={tutorNav.items}
       workspaceLabel={tutorNav.workspaceLabel}
-      pageTitle={loading ? 'Loading your modules…' : `Good morning, ${heading}`}
+      pageTitle={loading ? <LoadingSkeleton label={'Loading your modules…'} /> : `Good morning, ${heading}`}
       pageSubtitle={
         modules.length
           ? `${modules.length} module${modules.length === 1 ? '' : 's'} assigned to you`

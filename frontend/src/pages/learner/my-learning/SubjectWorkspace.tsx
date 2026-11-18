@@ -1,3 +1,4 @@
+import { LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
 import { useEffect, useId, useMemo, useState, type MouseEvent } from 'react';
 import { LearnerLoadError } from '@/components/feature/LearnerLoadError';
 import { Notice } from '@/components/ui/Notice';
@@ -268,7 +269,7 @@ export function SubjectCard({ subject, cover, tone = 'purple', onOpen, template,
 
 export function SubjectCardsSkeleton() {
   return <div role="status" className={styles.workspace} aria-label="Loading subjects">
-    <div className={styles.loadingHeader}><div><span className={styles.loadingLabel}>Loading subjects</span><p className={styles.loadingHint}>Getting your activities and progress ready…</p></div><BookOpen size={22} aria-hidden="true" /></div>
+    <div className={styles.loadingHeader} aria-hidden="true"><span className={`${styles.skeletonLine} ${styles.mediumLine}`} /></div>
     <div className={`${styles.stats} ${styles.skeletonStats}`} aria-hidden="true">{[0, 1, 2, 3].map(key => <div key={key} className={styles.stat}><span className={`${styles.skeletonLine} ${styles.mediumLine}`} /><span className={`${styles.skeletonLine} ${styles.shortLine}`} /></div>)}</div>
     <div className={styles.catalogueLayout} aria-hidden="true"><div className={styles.catalogueMain}><div className={styles.skeletonToolbar}><span className={`${styles.skeletonLine} ${styles.mediumLine}`} /></div><div className={styles.grid}>{[0, 1, 2, 3].map(key => <div key={key} className={`${styles.card} ${styles.skeleton}`}>
       <div className={styles.cover}><span className={styles.skeletonIcon} /><span className={styles.skeletonBadge} /></div>
@@ -469,7 +470,7 @@ export function StudentActivityPanel({ data: incomingData, loading, error, onRet
     {view === 'map' && <LearningMapHero subject={active} weeks={weeks} kind={kind} learnerId={learnerId} planModule={activePlan} planLabel={activePlan ? planLabel : 'Selected module'} />}
     {view === 'catalogue' && data?.learner_name && <p className="text-sm text-foreground-500">{data.learner_name}</p>}
     {active && view === 'catalogue' && <header className="flex flex-wrap items-end justify-between gap-4"><div><p className="text-xs font-semibold uppercase tracking-widest text-primary-600">My learning</p><h2 className="mt-1 text-2xl font-bold text-foreground-900">{active.title}</h2></div>
-      <label className={`${styles.search} w-full min-w-0 sm:max-w-xs`}><Search size={17} aria-hidden="true" /><input aria-label="Search modules or activities" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search subjects or activities" /></label>
+      <label data-search-field className={`${styles.search} w-full min-w-0 sm:max-w-xs`}><Search size={17} aria-hidden="true" /><input aria-label="Search modules or activities" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search subjects or activities" /></label>
     </header>}
     {imageError && <LearnerLoadError title="Some subject details could not be refreshed" error={imageError} onRetry={retryMetadata} />}
     {error && <LearnerLoadError title="Your learning information could not be refreshed" error={error} onRetry={onRetry} />}
@@ -478,7 +479,7 @@ export function StudentActivityPanel({ data: incomingData, loading, error, onRet
     {selected && !active && <p role="alert" className={styles.empty}>This module is not available in your learning plan. <button onClick={() => select()}>Show your modules</button></p>}
     {view === 'map' && <div className={styles.mapToolbar}>
       <label className={styles.selectLabel}>Module<select aria-label="Filter by module" value={active?.id || ''} onChange={event => { setSearch(''); select(event.target.value); }}><option value="" disabled>{scheduleLoading ? 'Finding your current module…' : 'Choose a module'}</option>{subjects.map(subject => <option key={subject.id} value={subject.id}>{subject.title}{planSelection.entries.some(entry => entry.subject.id === subject.id) ? ` · ${planLabel}` : ''}</option>)}</select></label>
-      <label className={styles.search}><Search size={18} aria-hidden="true" /><input aria-label="Search modules or activities" value={search} onChange={event => setSearch(event.target.value)} placeholder="Search weeks or activities…" /></label>
+      <label data-search-field className={styles.search}><Search size={18} aria-hidden="true" /><input aria-label="Search modules or activities" value={search} onChange={event => setSearch(event.target.value)} placeholder="Search weeks or activities…" /></label>
       <Link to={learningHref('catalogue', kind, learnerId)} className={styles.textLink}>My Learning<ArrowRight size={17} aria-hidden="true" /></Link>
     </div>}
     {view === 'catalogue' && active && (!selectedWeek || activeWeek || activityTarget) ? <>

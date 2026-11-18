@@ -1,3 +1,4 @@
+import { LoadingLabel } from '@/components/feature/LoadingSkeleton';
 // ============================================================================
 // Search and filter toolbar.
 //
@@ -202,7 +203,7 @@ export function FilterSelect({
       >
         {icon ? <AppIcon className={cn(icon, 'shrink-0 text-[14px] text-foreground-400')}></AppIcon> : null}
         {label ? <span className="shrink-0 text-foreground-400">{label}</span> : null}
-        <span className="min-w-0 flex-1 truncate">{selected?.label}</span>
+        <span className="min-w-0 flex-1 truncate"><LoadingLabel>{selected?.label}</LoadingLabel></span>
         <AppIcon
           className={cn(
             'ri-arrow-down-s-line shrink-0 text-[15px] text-foreground-400 transition-transform',
@@ -241,7 +242,7 @@ export function FilterSelect({
                     : 'text-foreground-700 hover:bg-background-100',
                 )}
               >
-                <span className="max-w-[280px] flex-1 truncate">{option.label}</span>
+                <span className="max-w-[280px] flex-1 truncate"><LoadingLabel>{option.label}</LoadingLabel></span>
                 {active ? <AppIcon className="ri-check-line text-[14px]"></AppIcon> : null}
               </button>
             );

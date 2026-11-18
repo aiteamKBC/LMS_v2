@@ -1,3 +1,4 @@
+import { LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
 import { AppIcon } from '@/components/feature/AppIcon';
 import { StatusBadge } from '@/components/ui/StatusBadge';
 import { statusTone } from '@/lib/statusTone';
@@ -26,7 +27,7 @@ export function LearnerCaseFileHeader({ data, pageTitle, pageSubtitle }: Props) 
         <div className={styles.identityCopy}>
           <div className={styles.nameRow}>
             <h1>{pageTitle}</h1>
-            <StatusBadge tone={statusTone(data?.programStatus)} label={data ? data.programStatus || '--' : 'Loading'} size="sm" />
+            <StatusBadge tone={statusTone(data?.programStatus)} label={data ? data.programStatus || '--' : <LoadingSkeleton label={'Loading'} />} size="sm" />
           </div>
           <div className={styles.programmeLine}>
             <span><AppIcon className="ri-graduation-cap-line" />{data?.programme || pageSubtitle}</span>
