@@ -65,7 +65,7 @@ export default function HighlightsTab({ rows, loading, highlights, onHighlightCh
 
       <div className="overflow-hidden rounded-lg border border-background-300 bg-background-50">
         {loading ? (
-          <p  className="p-6 text-sm text-foreground-600"><LoadingSkeleton label={"Loading learners…"} /></p>
+          <p  className="p-6 text-sm text-foreground-600"><LoadingSkeleton label="Loading learners…" variant="rows" /></p>
         ) : visibleRows.length === 0 ? (
           <p className="p-6 text-center text-sm text-foreground-500">
             {filter === "all" ? "No learners match these filters." : "No highlighted learners match these filters."}

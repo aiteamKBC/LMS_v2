@@ -98,7 +98,7 @@ export default function IlrEligibilityEvidence() {
   return (
     <div className="space-y-2">
       {loading ? (
-        <LoadingSkeleton label={"Loading evidence…"} />
+        <LoadingSkeleton label="Loading evidence…" variant="rows" />
       ) : files.length === 0 ? (
         <EmptyState text="No evidence uploaded" />
       ) : (

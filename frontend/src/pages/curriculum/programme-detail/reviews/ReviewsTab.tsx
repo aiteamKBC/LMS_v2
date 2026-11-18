@@ -107,7 +107,7 @@ export function ReviewsTab({ programmeId, programmeName, defaultStartDate }: {
         {error && <InlineError message={error} onRetry={() => void load()} />}
 
         {loading && (
-          <div className="flex items-center justify-center gap-2 py-12 text-[12px] font-semibold text-foreground-400"><LoadingSkeleton label={"Loading reviews..."} /></div>
+          <div className="flex items-center justify-center gap-2 py-12 text-[12px] font-semibold text-foreground-400"><LoadingSkeleton label="Loading reviews..." variant="rows" /></div>
         )}
 
         {!loading && !error && reviews && reviews.length === 0 && (

@@ -115,7 +115,7 @@ export function AssignedLearnerList({ target, learners, onChanged, onBusyChange 
             <div title={`As of ${row.asOfDate} · UK learning plan`}><Metric label="Plan to date" metric={row.due} due />
               {row.undatedActivities > 0 && <p className="mt-1 text-[10px] text-amber-700">{row.undatedActivities} activities need plan dates</p>}</div>
             <Metric label="Available content" metric={row.available} />
-          </> : <div className="text-xs text-foreground-500 md:col-span-2" role="status">{row && 'error' in row ? row.error : <LoadingSkeleton label={'Loading activity progress…'} />}</div>}
+          </> : <div className="text-xs text-foreground-500 md:col-span-2" >{row && 'error' in row ? row.error : <LoadingSkeleton label="Loading activity progress…" variant="text" />}</div>}
           <div className="flex flex-col items-start gap-1.5 md:col-span-3 md:items-end xl:col-span-1">
             {action && <button type="button" disabled={!canChange || busyId !== null} onClick={() => void change(learner, action)}
               aria-label={`${action === 'remove' ? 'Remove' : 'Restore'} ${learner.name || 'learner'} ${action === 'remove' ? 'from' : 'to'} programme`}

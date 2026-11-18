@@ -171,7 +171,7 @@ function EmployerGroupPicker({
           </thead>
           <tbody>
             {loading && !selectedOnly && (
-              <tr><td colSpan={4} className="py-6 text-center text-foreground-400"><LoadingSkeleton label={"Loading organisations…"} /></td></tr>
+              <tr><td colSpan={4} className="py-6 text-center text-foreground-400"><LoadingSkeleton label="Loading organisations…" variant="rows" /></td></tr>
             )}
             {!loading && err && (
               <tr><td colSpan={4} className="py-6 text-center">

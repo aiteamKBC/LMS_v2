@@ -87,7 +87,7 @@ export default function EmployerDocumentsPage() {
               <Paperclip />
             </div>
 
-            <label className={styles.searchBox}>
+            <label data-search-field className={styles.searchBox}>
               <span className="sr-only">Search documents</span>
               <Search aria-hidden />
               <input
@@ -100,7 +100,9 @@ export default function EmployerDocumentsPage() {
           </section>
 
           {loading && !data && (
-            <div className={styles.loadingState}><LoadingSkeleton label={"Loading documents"} className="w-64" /></div>
+            <div   className="p-5">
+              <LoadingSkeleton label="Loading documents" variant="cards" />
+            </div>
           )}
 
           {!loading && error && (

@@ -4,7 +4,7 @@
   overflow: hidden;
   padding: 1.125rem 1.5rem;
   border: 1px solid rgb(189 148 255 / 0.28);
-  border-radius: 1.5rem;
+  border-radius: var(--lms-radius, 16px);
   background: var(--kbc-learner-primary, #4f2d7f);
   color: #fff;
   box-shadow: 0 8px 22px -12px rgb(79 45 127 / 0.45);
@@ -51,13 +51,13 @@
 .headerFactLabel { color: #cdb3ed; font-size: 0.7rem; white-space: nowrap; }
 .headerFact strong { color: #fff; font-size: 0.8rem; font-weight: 650; overflow-wrap: anywhere; }
 .hero .quote { display: flex; align-items: center; gap: 0.8rem; margin: 0.875rem 0 0; color: #c7afea; font-size: clamp(0.8rem, 1.1cqi, 1.0625rem); font-style: italic; line-height: 1.5; }
-.quote::before { content: ''; width: 2.5rem; height: 3px; background: #b18ce7; border-radius: 5px; flex-shrink: 0; }
+.quote::before { content: ''; width: 2.5rem; height: 3px; background: #b18ce7; border-radius: var(--lms-radius, 16px); flex-shrink: 0; }
 .handwriting { position: absolute; left: 45%; top: 0.25rem; transform: rotate(-12deg); color: rgb(193 134 255 / 0.55); font-family: 'Segoe Script', 'Brush Script MT', cursive; font-size: 1.5rem; font-style: italic; line-height: 1.05; pointer-events: none; }
 .handwriting span { margin-left: 1rem; }
 .handwriting::after { content: ''; display: block; width: 115%; height: 1rem; margin-top: 0.25rem; border-top: 2px solid currentColor; border-radius: 50%; }
 .actionArea { justify-self: end; width: max-content; max-width: 100%; position: relative; z-index: 1; }
 .actions { display: flex; gap: 0.625rem; }
-.action { display: inline-flex; align-items: center; justify-content: center; gap: 0.75rem; min-width: 0; min-height: 2.75rem; padding: 0.625rem 1rem; border: 1px solid #eee5ff; border-radius: 0.8rem; background: #fff; color: var(--kbc-learner-primary, #4f2d7f); font-size: 0.8125rem; font-weight: 700; line-height: 1.4; transition: transform 160ms ease, box-shadow 160ms ease; }
+.action { display: inline-flex; align-items: center; justify-content: center; gap: 0.75rem; min-width: 0; min-height: 2.75rem; padding: 0.625rem 1rem; border: 1px solid #eee5ff; border-radius: var(--lms-radius, 16px); background: #fff; color: var(--kbc-learner-primary, #4f2d7f); font-size: 0.8125rem; font-weight: 700; line-height: 1.4; transition: transform 160ms ease, box-shadow 160ms ease; }
 .action > svg { width: 1.25rem; height: 1.25rem; flex-shrink: 0; }
 .action > .actionArrow { width: 1.25rem; height: 1.25rem; }
 .primaryAction { background: linear-gradient(120deg, #8054b2, #5c348d); border-color: #a872f2; color: #fff; box-shadow: inset 0 0 16px rgb(199 156 255 / 0.15); }
@@ -69,16 +69,16 @@
 .cardsWithActions .modulesCard { grid-column: 3; }
 .cardsWithActions .card { min-height: 6rem; }
 .actionCards { grid-column: 4; margin: 0; min-width: 0; }
-.card { position: relative; isolation: isolate; overflow: hidden; min-width: 0; border: 1px solid rgb(204 174 255 / 0.25); border-radius: 1.125rem; background: linear-gradient(125deg, rgb(184 139 243 / 0.17), rgb(183 153 228 / 0.07)); box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.06); padding: 0.6rem; }
+.card { position: relative; isolation: isolate; overflow: hidden; min-width: 0; border: 1px solid rgb(204 174 255 / 0.25); border-radius: var(--lms-radius, 16px); background: linear-gradient(125deg, rgb(184 139 243 / 0.17), rgb(183 153 228 / 0.07)); box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.06); padding: 0.6rem; }
 .cohortCard, .datesCard, .modulesCard { min-height: 6.5rem; }
 .factRow { display: flex; align-items: center; gap: 0.625rem; position: relative; z-index: 1; min-width: 0; }
 .card dl { margin: 0; min-width: 0; }
 .hero .card dt, .hero .moduleHeading h2 { color: #f5eeff; font-size: 0.7rem !important; line-height: 1.3; font-weight: 400; margin: 0; }
 .hero .card dd { color: #fff; font-size: 0.8rem; line-height: 1.3; font-weight: 650; margin: 0.15rem 0 0; overflow-wrap: anywhere; }
-.icon { width: 2rem; height: 2rem; display: grid; place-items: center; flex-shrink: 0; border-radius: 1.15rem; background: linear-gradient(145deg, rgb(184 142 247 / 0.36), rgb(162 123 228 / 0.22)); color: #fff; }
+.icon { width: 2rem; height: 2rem; display: grid; place-items: center; flex-shrink: 0; border-radius: var(--lms-radius, 16px); background: linear-gradient(145deg, rgb(184 142 247 / 0.36), rgb(162 123 228 / 0.22)); color: #fff; }
 .icon > svg { width: 1.2rem; height: 1.2rem; stroke-width: 2; }
 .hero .cardMotto { position: relative; z-index: 1; display: flex; align-items: center; gap: 0.75rem; margin: auto 0 0; color: #c1a4fa; font-size: 0.625rem; font-weight: 600; letter-spacing: 0.2em; text-transform: uppercase; line-height: 1.9; }
-.cardMotto::before { content: ''; display: block; width: 2.5rem; height: 4px; border-radius: 5px; background: linear-gradient(90deg, #c073ff, #8e44e8); flex-shrink: 0; }
+.cardMotto::before { content: ''; display: block; width: 2.5rem; height: 4px; border-radius: var(--lms-radius, 16px); background: linear-gradient(90deg, #c073ff, #8e44e8); flex-shrink: 0; }
 .cohortCard, .datesCard, .modulesCard { display: flex; flex-direction: column; }
 .cohortCard > .cardMotto::before, .datesCard > .cardMotto::before { width: 4px; height: 1.75rem; }
 .peopleArtwork { position: absolute; bottom: 0; right: 0.5rem; width: 38%; height: auto; color: #9363df; opacity: 0.32; z-index: -1; }
@@ -92,7 +92,7 @@
 .moduleList { list-style: none; padding: 0; margin: 0; max-height: 3.2rem; overflow-y: auto; scrollbar-width: thin; scrollbar-color: var(--scrollbar-thumb) transparent; }
 .moduleList li + li { margin-top: 0.2rem; }
 .hero .moduleList li a,
-.hero .moduleList li .moduleItem { display: flex; width: 100%; align-items: center; justify-content: flex-start; gap: 0.55rem; min-height: 1.3rem; padding: 0.15rem 0.4rem; border-radius: 0.6rem; border: 1px solid rgb(213 188 255 / 0.14); background: rgb(29 16 64 / 0.24); color: #fff; font-size: 0.7rem; line-height: 1.25; transition: background 160ms ease; }
+.hero .moduleList li .moduleItem { display: flex; width: 100%; align-items: center; justify-content: flex-start; gap: 0.55rem; min-height: 1.3rem; padding: 0.15rem 0.4rem; border-radius: var(--lms-radius, 16px); border: 1px solid rgb(213 188 255 / 0.14); background: rgb(29 16 64 / 0.24); color: #fff; font-size: 0.7rem; line-height: 1.25; transition: background 160ms ease; }
 .moduleList a:hover { background: rgb(128 74 212 / 0.4); }
 .moduleTitle { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; flex: 1; }
 .moduleList a > svg { flex-shrink: 0; width: 1rem; height: 1rem; color: #b196d7; }
@@ -102,7 +102,7 @@
 .moduleList li:nth-child(4n + 4) .moduleDot { background: linear-gradient(#fff394, #f5c94f); }
 .hero .modulePlaceholder { color: #ddccef; font-size: 0.875rem; }
 .learningArtwork { position: relative; height: 3rem; transform: scale(0.4); transform-origin: left center; }
-.learningArtwork span { position: absolute; width: 6.25rem; height: 6.25rem; left: 0.55rem; border-radius: 1rem; transform: rotateX(55deg) rotateZ(-45deg); border: 2px solid #a064ed; box-shadow: -4px 5px 0 #6433aa, -6px 9px 15px rgb(30 13 70 / 0.25); }
+.learningArtwork span { position: absolute; width: 6.25rem; height: 6.25rem; left: 0.55rem; border-radius: var(--lms-radius, 16px); transform: rotateX(55deg) rotateZ(-45deg); border: 2px solid #a064ed; box-shadow: -4px 5px 0 #6433aa, -6px 9px 15px rgb(30 13 70 / 0.25); }
 .learningArtwork span:nth-child(1) { top: 2.5rem; background: linear-gradient(140deg, #a466e8, #432c98); }
 .learningArtwork span:nth-child(2) { top: 1rem; background: linear-gradient(140deg, #b776ff, #6a34b9); }
 .learningArtwork span:nth-child(3) { top: -0.5rem; background: linear-gradient(140deg, #d7a4ff, #9761ec); border-color: #d9b0ff; }
@@ -148,7 +148,7 @@
   .artwork { background-size: auto, auto 132%; background-position: center, 90% center; }
 }
 @container learnerOverview (max-width: 38rem) {
-  .hero { padding: 1rem; border-radius: 1rem; }
+  .hero { padding: 1rem; border-radius: var(--lms-radius, 16px); }
   .observerHero .top { grid-template-columns: 1fr; }
   .observerHero .actionArea { grid-column: 1; grid-row: 2; justify-self: stretch; width: 100%; }
   .cards { grid-template-columns: 1fr; gap: 0.625rem; margin-top: 0.875rem; }
@@ -180,7 +180,7 @@
 @container learnerOverview (min-width: 65rem) {
   .hero {
     padding: .8rem 1rem;
-    border-radius: 1.1rem;
+    border-radius: var(--lms-radius, 16px);
   }
 
   .top {
@@ -258,7 +258,7 @@
 
   .card {
     padding: .45rem;
-    border-radius: .85rem;
+    border-radius: var(--lms-radius, 16px);
   }
 
   .modulesCard {

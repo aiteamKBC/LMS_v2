@@ -366,7 +366,7 @@ export default function TrainingPlanPage() {
         {hydrating ? (
           <div className="bg-background-50 rounded-2xl border border-foreground-200/60 p-10 text-center card-premium">
             <AppIcon className="ri-loader-4-line animate-spin text-2xl text-primary-500" />
-            <p className="text-[13px] text-foreground-500 mt-2"><LoadingSkeleton label={"Loading…"} /></p>
+            <p className="text-[13px] text-foreground-500 mt-2"><LoadingSkeleton label="Loading…" variant="rows" /></p>
           </div>
         ) : (
           <>

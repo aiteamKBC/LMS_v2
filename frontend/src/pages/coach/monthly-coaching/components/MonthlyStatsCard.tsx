@@ -34,7 +34,7 @@ export function MonthlyStatsCard({ counts, monthLabel, title = 'This month', tot
     .map(({ key, label }) => ({ key, label, value: counts[key], colors: MEETING_STATUS_COLORS[key] }));
 
   return (
-    <section data-coach-monthly-stats aria-label={title} className="rounded-[20px] border border-primary-100 bg-white p-4 shadow-[0_10px_30px_-18px_rgb(76_29_149/0.35)]">
+    <section data-coach-monthly-stats aria-label={title} className="rounded-2xl border border-primary-100 bg-white p-4 shadow-[0_10px_30px_-18px_rgb(76_29_149/0.35)]">
       <h3 className="mb-4 flex items-center gap-2 text-[14px] font-bold text-primary-900"><AppIcon className="ri-bar-chart-2-fill text-primary-600" />{title}</h3>
       <div className="mb-4 flex items-center gap-3">
         <span className="flex h-11 w-11 items-center justify-center rounded-full bg-primary-50 text-[18px] font-bold text-primary-800">{counts.total}</span>

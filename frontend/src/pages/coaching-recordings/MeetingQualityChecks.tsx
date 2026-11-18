@@ -18,7 +18,7 @@ export default function MeetingQualityChecks({ meetingId, refresh, onOpen, onPre
   }, [meetingId, key, offset]);
   return <section aria-label="Meeting quality checks" className="mt-5 space-y-3 border-t border-background-200 pt-5">
     <h3 className="text-sm font-bold">Quality checks &amp; saved PDFs</h3>
-    {busy && <p  className="text-xs text-foreground-500"><LoadingSkeleton label={"Loading saved checks…"} /></p>}
+    {busy && <p  className="text-xs text-foreground-500"><LoadingSkeleton label="Loading saved checks…" variant="rows" /></p>}
     {error && <div role="alert" className="text-xs text-amber-800">{error}<button className="ml-2 underline" onClick={() => { invalidateQualityReviews(); setRetry(value => value + 1); }}>Retry checks</button></div>}
     {!busy && !error && rows.length === 0 && <p className="text-xs text-foreground-500">No quality check has been saved for this meeting yet.</p>}
     {rows.map(row => <article key={row.id} className="space-y-3 rounded-xl border border-background-200 bg-background-50 p-3"><div className="flex flex-wrap items-center justify-between gap-2"><p className="break-words text-sm font-semibold">{row.learnerName}</p><span className="text-xs text-foreground-500">{row.status === 'completed' ? 'Completed' : 'Draft'} · v{row.version}</span></div><p className="break-words text-xs font-semibold text-primary-800">{row.formTitle || row.reviewType || 'Previous form'}</p><p className="text-xs text-foreground-600">Saved by: {row.reviewerName || 'Not recorded'}</p><button className="text-xs font-semibold text-primary-700 underline" onClick={() => onOpen(row.id)}>Open saved form</button>

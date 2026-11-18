@@ -112,7 +112,7 @@ function DocumentField({ label, docKind, store }: { label: string; docKind: CvDo
     <FieldRow label={label}>
       <div className="space-y-2">
         {store.loading ? (
-          <LoadingSkeleton label={"Loading…"} />
+          <LoadingSkeleton label="Loading…" variant="rows" />
         ) : files.length > 0 && (
           <div className="divide-y divide-foreground-100 border border-foreground-100 rounded-lg">
             {files.map((f) => (

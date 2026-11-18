@@ -245,7 +245,7 @@ export function GroupPlacementPanel({ component, groupId, groupName, programmeId
           {loading ? (
             <div className="flex items-center justify-center gap-2 py-8 text-[12px] text-foreground-500">
               <span className="h-4 w-4 animate-spin rounded-full border-2 border-background-300 border-t-primary-500" />
-              <LoadingSkeleton label={"Loading…"} /></div>
+              <LoadingSkeleton label="Loading…" variant="text" /></div>
           ) : step === 'module' ? (
             groupModules.length ? (
               <div className="space-y-1.5">

@@ -79,7 +79,7 @@ function HistoricalCoachAssessments() {
     return () => controller.abort();
   }, [session, attempt]);
   if (!session) return null;
-  if (loading) return <p ><LoadingSkeleton label={"Loading historical assessments…"} /></p>;
+  if (loading) return <p ><LoadingSkeleton label="Loading historical assessments…" variant="rows" /></p>;
   if (error) return <div role="alert">{error}<button type="button" className="ml-2 underline" onClick={() => setAttempt(value => value + 1)}>Retry</button></div>;
   if (!items.length) return null;
   return <section className="rounded-xl border border-foreground-200 bg-white p-4" aria-label="Historical assessments and LMS reviews">

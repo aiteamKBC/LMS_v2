@@ -512,7 +512,7 @@ export default function ReviewFormPage() {
         </div>
 
         {loading && (
-          <p className="py-16 text-center text-[13px] text-foreground-400"><LoadingSkeleton label={"Loading the review…"} /></p>
+          <p className="py-16 text-center text-[13px] text-foreground-400"><LoadingSkeleton label="Loading the review…" variant="rows" /></p>
         )}
 
         {!loading && error && !data && (

@@ -15,7 +15,7 @@
   min-height: 158px;
   overflow: hidden;
   border: 1px solid #e4daf5;
-  border-radius: 22px;
+  border-radius: var(--lms-radius, 16px);
   background:
     radial-gradient(circle at 88% 0%, rgba(132, 82, 214, 0.13), transparent 31%),
     linear-gradient(116deg, #ffffff 0%, #fbf9ff 58%, #f2ebff 100%);
@@ -79,7 +79,7 @@
   align-items: center;
   gap: 10px;
   border: 1px solid #e1d8ef;
-  border-radius: 13px;
+  border-radius: var(--lms-radius, 16px);
   background: rgba(255, 255, 255, 0.96);
   padding: 0 14px;
   box-shadow: 0 7px 20px rgba(64, 35, 103, 0.08);
@@ -130,7 +130,7 @@
 .paperFront {
   position: absolute;
   display: block;
-  border-radius: 12px;
+  border-radius: var(--lms-radius, 16px);
   background: rgba(255, 255, 255, 0.74);
   box-shadow: 0 9px 25px rgba(82, 47, 131, 0.08);
 }
@@ -195,7 +195,7 @@
   gap: 14px;
   overflow: hidden;
   border: 1px solid rgba(79, 45, 127, 0.08);
-  border-radius: 17px;
+  border-radius: var(--lms-radius, 16px);
   padding: 18px;
   transition: transform 160ms ease, border-color 160ms ease, box-shadow 160ms ease;
 }
@@ -280,7 +280,7 @@
 .filters button {
   min-height: 38px;
   border: 1px solid #e5dfed;
-  border-radius: 10px;
+  border-radius: var(--lms-radius, 16px);
   background: #fff;
   box-shadow: 0 3px 10px rgba(50, 28, 82, 0.035);
 }
@@ -333,7 +333,7 @@
 .documentList {
   overflow: visible;
   border: 1px solid var(--documents-border);
-  border-radius: 17px;
+  border-radius: var(--lms-radius, 16px);
   background: #fff;
   box-shadow: 0 7px 24px rgba(55, 31, 89, 0.045);
 }
@@ -374,7 +374,7 @@
   bottom: 10px;
   left: 0;
   width: 3px;
-  border-radius: 0 3px 3px 0;
+  border-radius: 0 var(--lms-radius, 16px) var(--lms-radius, 16px) 0;
   background: #d18a20;
   content: '';
 }
@@ -392,7 +392,7 @@
   height: 37px;
   flex: 0 0 auto;
   place-items: center;
-  border-radius: 10px;
+  border-radius: var(--lms-radius, 16px);
   background: #f0e8fb;
   color: #6940a5;
 }
@@ -508,7 +508,7 @@
   align-items: center;
   gap: 4px;
   border: 1px solid #e6e4ec;
-  border-radius: 7px;
+  border-radius: var(--lms-radius, 16px);
   background: #f7f7fa;
   padding: 4px 6px;
   color: #756d80;
@@ -553,7 +553,7 @@
   align-items: center;
   justify-content: center;
   gap: 7px;
-  border-radius: 9px;
+  border-radius: var(--lms-radius, 16px);
   padding: 7px 12px;
   font-size: 0.71rem;
   font-weight: 750;
@@ -599,7 +599,7 @@
   width: 31px;
   height: 31px;
   place-items: center;
-  border-radius: 8px;
+  border-radius: var(--lms-radius, 16px);
   color: #765d91;
   cursor: pointer;
   list-style: none;
@@ -616,7 +616,7 @@
   right: 0;
   width: 180px;
   border: 1px solid var(--documents-border);
-  border-radius: 10px;
+  border-radius: var(--lms-radius, 16px);
   background: #fff;
   padding: 5px;
   box-shadow: 0 12px 28px rgba(43, 24, 68, 0.14);
@@ -626,7 +626,7 @@
   display: flex;
   align-items: center;
   gap: 8px;
-  border-radius: 7px;
+  border-radius: var(--lms-radius, 16px);
   padding: 8px;
   color: #4c3e59;
   font-size: 0.72rem;
@@ -651,7 +651,7 @@
   justify-content: center;
   gap: 13px;
   border: 1px dashed #dfd3ef;
-  border-radius: 20px;
+  border-radius: var(--lms-radius, 16px);
   background: rgba(255, 255, 255, 0.62);
   color: var(--documents-purple);
 }
@@ -683,7 +683,7 @@
   justify-content: center;
   gap: 12px;
   border: 1px dashed #dfd3ef;
-  border-radius: 17px;
+  border-radius: var(--lms-radius, 16px);
   background: #fff;
   color: #766b81;
   text-align: center;
@@ -768,7 +768,7 @@
     gap: 12px;
     margin-bottom: 11px;
     border: 1px solid var(--documents-border);
-    border-radius: 15px;
+    border-radius: var(--lms-radius, 16px);
     background: #fff;
     padding: 15px;
     box-shadow: 0 5px 18px rgba(55, 31, 89, 0.045);

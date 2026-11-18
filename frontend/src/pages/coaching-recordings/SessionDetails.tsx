@@ -99,7 +99,7 @@ export default function SessionDetails({ eventKey, analysisContext, analysisEven
   return <section aria-label="Recordings and attendance" className={section ? '' : 'mt-4 border-t border-background-200 pt-4'}>
     <div className="flex flex-wrap items-center justify-between gap-2"><h3 className="text-sm font-bold">{section === 'attendance' ? 'Attendance' : section === 'transcript' || section === 'analysis' ? 'Transcript & AI analysis' : 'Recordings'}</h3>
       <button onClick={refresh} className="inline-flex items-center gap-1 text-xs font-semibold text-primary-700"><RefreshCw size={12} />Refresh details</button></div>
-    {!data && !error && <p  className="mt-3 text-sm"><LoadingSkeleton label={"Loading saved recordings and attendance…"} /></p>}
+    {!data && !error && <p  className="mt-3 text-sm"><LoadingSkeleton label="Loading saved recordings and attendance…" variant="rows" /></p>}
     {error && <p role="alert" className="mt-3 text-sm text-rose-800">{error} <button onClick={refresh} className="font-semibold underline">Retry details</button></p>}
     {data && <>
       {evidencePending && attendancePaused && <p className="mt-2 text-xs text-foreground-500">Automatic checks have stopped. Use Refresh details to check again.</p>}

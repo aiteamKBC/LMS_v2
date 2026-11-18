@@ -1,4 +1,4 @@
-import { LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
+import { LoadingControl, LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
 import { ukOffsetForDate } from '@/lib/timeZones';
 import { canRescheduleReconciledReview, isImportedPersonalSupportPlan } from '../shared/resolvedReviewRows';
 import ImportedReviewBookingDialog from '../shared/ImportedReviewBookingDialog';
@@ -2143,7 +2143,7 @@ export default function CoachTimetablePage() {
                       ? 'Opening the scheduling queue'
                       : navigationSkeletonMode === 'focus'
                         ? 'Opening the selected event'
-                        : <LoadingSkeleton label={'Loading your coaching calendar'} />}
+                        : <LoadingSkeleton label="Loading your coaching calendar" variant="text" />}
                   </p>
                   <p className="mt-1 text-[12px] leading-5 text-foreground-500">
                     {navigationSkeletonMode === 'schedule'
@@ -3298,7 +3298,7 @@ export default function CoachTimetablePage() {
                 <section className="grid gap-3 md:grid-cols-2">
                   <label className="block">
                     <span className="mb-2 block text-[12px] font-semibold uppercase tracking-[0.16em] text-foreground-400">Review</span>
-                    <select
+                    {<LoadingControl loading={(createSessionReviewTemplatesLoading)}><select
                       value={createSessionReviewTemplateId}
                       onChange={event => setCreateSessionReviewTemplateId(event.target.value)}
                       disabled={createSessionReviewTemplatesLoading || !createSessionReviewTemplates.length}
@@ -3314,7 +3314,7 @@ export default function CoachTimetablePage() {
                       {createSessionReviewTemplates.map(template => (
                         <option key={template.id} value={template.id}>{template.name}</option>
                       ))}
-                    </select>
+                    </select></LoadingControl>}
                   </label>
 
                   <label className="block">

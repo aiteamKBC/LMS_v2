@@ -136,7 +136,7 @@ export function TransferRequestList({ data, reading, saving, error, onReview, on
       </div>
       <button type="button" className={`${styles.button} ${styles.clearFilters}`} disabled={controlsDisabled || !hasFilters} onClick={clear}><X size={14} aria-hidden="true" />Clear filters</button>
     </div>
-    <p className={styles.resultSummary} aria-live="polite">{!data ? reading ? <LoadingSkeleton label={'Loading requests…'} /> : 'Requests unavailable.' : complete
+    <p className={styles.resultSummary} aria-live="polite">{!data ? reading ? <LoadingSkeleton label="Loading requests…" variant="text" /> : 'Requests unavailable.' : complete
       ? `${filtered.length} ${status} ${filtered.length === 1 ? 'request' : 'requests'}${hasFilters ? ` matching filters · ${counts[status]} before filters` : ''} · All request pages retrieved.`
       : `${requests.length} requests retrieved so far. Search, programme filtering and sorting require the complete list.`}</p>
     {data && !complete && !reading && <div className={styles.incomplete}><span>The list is incomplete. Counts are for retrieved records only.</span><button className={styles.button} type="button" disabled={saving} onClick={onContinue}>Continue loading requests</button></div>}
@@ -150,8 +150,8 @@ export function TransferRequestList({ data, reading, saving, error, onReview, on
           {status === 'approved' && <td role="cell" data-label="Approved"><RequestDate value={row.approvedAt} /></td>}
           <td role="cell" className={styles.rowAction}><button type="button" className={`${styles.button} ${status === 'pending' ? styles.reviewAction : ''}`} disabled={reading || saving} onClick={event => onReview(row.requestId, event.currentTarget)} title={status === 'pending' ? 'Review before approving' : 'View transfer details'} aria-label={status === 'pending' ? `Review transfer request ${row.requestId}` : `Details for request ${row.requestId}`}>{status === 'pending' ? 'Review transfer' : <><Eye size={16} aria-hidden="true" /><span className="sr-only">View details</span></>}</button></td>
         </tr>)}</tbody>
-      </table> : <div className={styles.empty}>{!data ? reading ? <LoadingSkeleton label={'Loading transfer requests…'} /> : 'Transfer requests could not be loaded.'
-        : !complete ? reading ? <LoadingSkeleton label={'Loading all request pages…'} /> : `No ${status} requests in the retrieved records. Complete the list to check the rest.`
+      </table> : <div className={styles.empty}>{!data ? reading ? <LoadingSkeleton label="Loading transfer requests…" variant="text" /> : 'Transfer requests could not be loaded.'
+        : !complete ? reading ? <LoadingSkeleton label="Loading all request pages…" variant="text" /> : `No ${status} requests in the retrieved records. Complete the list to check the rest.`
           : hasFilters ? <><strong>No requests match your filters.</strong><button className={styles.button} type="button" onClick={clear}>Clear filters</button></>
             : status === 'pending' ? 'No requests waiting for approval.' : 'No approved transfers yet.'}</div>}
     </div>

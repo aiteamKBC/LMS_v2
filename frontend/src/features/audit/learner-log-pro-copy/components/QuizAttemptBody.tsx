@@ -25,7 +25,7 @@ export function QuizBody({ aptemId, learnerName, component }: {
     queryFn: () => getQuizAttempt({ aptemId: aptemId!, component: String(component) }),
     enabled: Boolean(aptemId && component),
   });
-  if (query.isLoading) return <p className="px-4 py-3 text-xs text-muted-foreground"><LoadingSkeleton label={"Loading quiz…"} /></p>;
+  if (query.isLoading) return <p className="px-4 py-3 text-xs text-muted-foreground"><LoadingSkeleton label="Loading quiz…" variant="rows" /></p>;
   if (query.isError) return <p className="px-4 py-3 text-xs text-destructive">Could not load the quiz body.</p>;
   if (query.data?.state === "not_quiz") return null;
   if (query.data?.state === "not_attempted") {

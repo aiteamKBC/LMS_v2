@@ -35,7 +35,7 @@ export function AssignmentAttachment({ url, fileName, title, defaultExpanded = f
       </div>
     </div>
     <div id={previewId} hidden={!expanded} className={styles.attachmentPreview}>
-      {expanded && <Suspense fallback={<p ><LoadingSkeleton label={"Loading file preview…"} /></p>}>
+      {expanded && <Suspense fallback={<p ><LoadingSkeleton label="Loading file preview…" variant="rows" /></p>}>
         <AttachmentPreview url={url} fileName={name} title={title} pdfTools={pdfTools} allowAnnotatedDownload />
       </Suspense>}
     </div>

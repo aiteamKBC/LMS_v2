@@ -161,8 +161,8 @@ describe('employer home dashboard', () => {
     api.portal.mockReturnValueOnce(new Promise(() => undefined));
     showPage();
     expect(screen.getByRole('status', { name: 'Loading learners' })).toBeVisible();
-    expect(screen.getByRole('status', { name: 'Loading learners' }).textContent).toBe('');
-    expect(screen.queryByTestId('learners-loading-spinner')).not.toBeInTheDocument();
+    expect(screen.getByRole('status', { name: 'Loading learners' })).toHaveAttribute('aria-busy', 'true');
+    expect(screen.getByRole('status', { name: 'Loading learners' }).querySelector('.animate-spin')).toBeNull();
     expect(api.metrics).not.toHaveBeenCalled();
   });
 

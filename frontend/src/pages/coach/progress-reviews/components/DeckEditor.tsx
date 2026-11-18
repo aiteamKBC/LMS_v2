@@ -204,7 +204,7 @@ export default function DeckEditor({
         {loadError ? (
           <div className="m-6 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">{loadError}</div>
         ) : !fields ? (
-          <div className="flex h-full items-center justify-center gap-2 text-sm text-foreground-600"><LoadingSkeleton label={"Loading slides…"} /></div>
+          <div className="flex h-full items-center justify-center gap-2 text-sm text-foreground-600"><LoadingSkeleton label="Loading slides…" variant="rows" /></div>
         ) : (
           <div className="mx-auto grid max-w-4xl gap-4 p-4">
             {fields.revisionSource === 'uploaded' && (

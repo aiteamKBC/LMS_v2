@@ -1,3 +1,4 @@
+import { LoadingLabel } from '@/components/feature/LoadingSkeleton';
 import { WEEKEND_DAYS } from './ui.helpers';
 // ============================================================================
 // Shared chrome for the entity-based Curriculum pages.
@@ -114,7 +115,7 @@ export function EntityHero({
         <div className="relative flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
           <div className="max-w-3xl">
             <p className="text-[10px] font-bold uppercase tracking-[0.22em] text-white/60">{eyebrow}</p>
-            <h2 className="mt-2 text-2xl font-heading font-bold text-white sm:text-3xl">{title}</h2>
+            <h2 className="mt-2 text-2xl font-heading font-bold text-white sm:text-3xl"><LoadingLabel>{title}</LoadingLabel></h2>
             <p className="mt-2 max-w-2xl text-[13px] leading-6 text-white/75">{description}</p>
           </div>
           {/* Wraps, because this section is `overflow-hidden` and the row used to
@@ -612,7 +613,7 @@ export function EntityEmptyState({
       <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-xl bg-background-100 text-foreground-400">
         <AppIcon className={`${icon} text-xl`}></AppIcon>
       </div>
-      <p className="mt-3 text-sm font-bold text-foreground-900">{title}</p>
+      <p className="mt-3 text-sm font-bold text-foreground-900"><LoadingLabel>{title}</LoadingLabel></p>
       <p className="mt-1 text-[12px] text-foreground-400">{message}</p>
       {action && (
         <button
@@ -1629,7 +1630,7 @@ export function WorkspaceHeader({
             {actions && <div className="ml-auto flex flex-wrap items-center gap-2">{actions}</div>}
           </div>
           <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
-            <h1 className="text-lg font-heading font-black leading-tight tracking-tight text-foreground-950">{title}</h1>
+            <h1 className="text-lg font-heading font-black leading-tight tracking-tight text-foreground-950"><LoadingLabel>{title}</LoadingLabel></h1>
             <p className="text-[11px] font-semibold uppercase tracking-wider text-primary-600">{eyebrow}</p>
             {subtitle && <p className="text-[12px] text-foreground-500">{subtitle}</p>}
           </div>
@@ -1672,7 +1673,7 @@ export function WorkspaceHeader({
         <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
           <div className="min-w-0">
             <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-primary-600">{eyebrow}</p>
-            <h1 className="mt-1 text-2xl font-heading font-black leading-tight tracking-tight text-foreground-950">{title}</h1>
+            <h1 className="mt-1 text-2xl font-heading font-black leading-tight tracking-tight text-foreground-950"><LoadingLabel>{title}</LoadingLabel></h1>
             <p className="mt-1 text-[13px] leading-6 text-foreground-500">{subtitle}</p>
           </div>
           {actions && <div className="flex flex-wrap gap-2 xl:justify-end">{actions}</div>}
@@ -1753,7 +1754,7 @@ export function WorkspacePanel({ title, description, actions, children }: {
     <section className="rounded-2xl border border-foreground-200/60 bg-background-50">
       <div className="flex flex-col gap-2 border-b border-background-200 px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
         <div className="min-w-0">
-          <h3 className="text-[13px] font-heading font-bold text-foreground-950">{title}</h3>
+          <h3 className="text-[13px] font-heading font-bold text-foreground-950"><LoadingLabel>{title}</LoadingLabel></h3>
           {description && <p className="mt-0.5 text-[12px] text-foreground-500">{description}</p>}
         </div>
         {actions && <div className="flex shrink-0 flex-wrap gap-2">{actions}</div>}
@@ -1767,7 +1768,7 @@ export function DetailRow({ label, value }: { label: string; value: ReactNode })
   return (
     <div className="flex items-start justify-between gap-4 border-b border-background-200/70 py-2.5 last:border-b-0">
       <span className="text-[11px] font-bold uppercase tracking-wider text-foreground-400">{label}</span>
-      <span className="min-w-0 text-right text-[13px] font-semibold text-foreground-900">{value}</span>
+      <span className="min-w-0 text-right text-[13px] font-semibold text-foreground-900"><LoadingLabel>{value}</LoadingLabel></span>
     </div>
   );
 }

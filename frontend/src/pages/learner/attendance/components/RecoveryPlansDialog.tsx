@@ -52,7 +52,7 @@ export default function RecoveryPlansDialog() {
 
   const eventsByKey = useMemo(() => new Map(events.map(event => [event.eventKey, event])), [events]);
 
-  if (loading) return <div className={styles.recoveryPlansLoading} ><LoadingSkeleton label={"Loading recovery plans…"} /></div>;
+  if (loading) return <div className={styles.recoveryPlansLoading} ><LoadingSkeleton label="Loading recovery plans…" variant="rows" /></div>;
   if (error) return <div className={styles.recoveryPlansError} role="alert"><p>{error}</p><button type="button" onClick={() => void load()}>Try again</button></div>;
   if (!reports.length) return <EmptyState size="sm" icon="ri-calendar-todo-line" title="No recovery plans yet" description="The recovery method you choose when reporting an absence will appear here." />;
 

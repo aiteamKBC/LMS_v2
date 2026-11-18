@@ -145,7 +145,7 @@ export function CompactModules({ kind, id, catalogue: incomingCatalogue, loading
     {activitySearch.error && <LearnerLoadError error={activitySearch.error} onRetry={activitySearch.retry} title="The activity search could not be completed" />}
     {activitySearch.loading && search.trim() && <p role="status">Searching activities…</p>}
     {upcomingError && <LearnerLoadError error={upcomingError} onRetry={loadUpcoming} title="Upcoming learning could not be loaded" />}
-    {upcomingLoading && <p ><LoadingSkeleton label={"Loading upcoming learning…"} /></p>}
+    {upcomingLoading && <p ><LoadingSkeleton label="Loading upcoming learning…" variant="rows" /></p>}
     <p className="text-sm text-foreground-500">{catalogue.learner.name}</p>
     <LearningCatalogue summary={summary} search={search} onSearch={setSearch} current={current}
       moduleActivity={catalogue.moduleActivity}

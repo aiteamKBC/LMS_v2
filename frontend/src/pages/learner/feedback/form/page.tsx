@@ -166,7 +166,7 @@ export default function LearnerFeedbackFormPage() {
           onBack={() => { setStep(step - 1); setInvalidQuestionIds(new Set()); }} onNext={nextStep}
           onSubmit={() => void save(true)} submitting={saving}
           footerStatus={!viewerReadOnly && form.allowSaveContinue ? <span aria-live="polite" className={`text-[11px] font-medium ${autoSaveStatus === 'error' ? 'text-red-600' : 'text-foreground-400'}`}>{autoSaveStatus === 'pending' || autoSaveStatus === 'saving' ? 'Saving…' : autoSaveStatus === 'saved' ? 'All changes saved' : autoSaveStatus === 'error' ? 'Automatic save failed' : ''}</span> : null} />
-      </div> : loading ? <p className="text-sm text-foreground-400"><LoadingSkeleton label="Loading form…" /></p>
+      </div> : loading ? <p className="text-sm text-foreground-400"><LoadingSkeleton label="Loading form…" variant="rows" /></p>
         : <p role="alert" className="text-sm text-red-600">{loadError || 'This feedback form is unavailable.'}</p>}
     </div>
   </WorkspaceShell>;

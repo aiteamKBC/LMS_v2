@@ -72,11 +72,11 @@ export function CalendarHealthPanel({ liveSessionId, disabled, refreshKey = 0, p
         <button type="button" onClick={() => void load(filter, page)} disabled={loading || disabled}
           className="inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-[12px] font-semibold disabled:opacity-50">
           <AppIcon className={loading ? 'ri-loader-4-line animate-spin' : 'ri-refresh-line'} />
-          {loading ? 'Loading…' : 'Refresh'}
+          {loading ? <LoadingSkeleton label="Loading…" variant="text" /> : 'Refresh'}
         </button>
       </div>
       {error && <InlineError message={error} onRetry={() => void load(filter, page)} />}
-      {!health && loading && <p className="text-[12px] text-foreground-500"><LoadingSkeleton label={"Loading calendar health…"} /></p>}
+      {!health && loading && <p className="text-[12px] text-foreground-500"><LoadingSkeleton label="Loading calendar health…" variant="rows" /></p>}
       {health && summary && (
         <>
           <div className="flex flex-wrap items-center gap-2">
@@ -265,7 +265,7 @@ function SessionDrawer({ liveSessionId, session, lastVerifiedAt, disabled, onClo
         </div>
         {error && <div className="mt-3"><InlineError message={error} onRetry={() => void load()} /></div>}
         {notice && <p role="status" className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50 p-2 text-[12px] text-emerald-900">{notice}</p>}
-        {!detail && !error && <p className="mt-3 text-[12px] text-foreground-500"><LoadingSkeleton label={"Loading session…"} /></p>}
+        {!detail && !error && <p className="mt-3 text-[12px] text-foreground-500"><LoadingSkeleton label="Loading session…" variant="rows" /></p>}
         {detail && (
           <div className="mt-3 space-y-3">
             {detail.separateFromMain && detail.meetingType === 'standalone' && (

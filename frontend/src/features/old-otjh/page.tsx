@@ -157,7 +157,7 @@ function Portal() {
     {dialogOpen && (query.data || query.error) && <TransitionDialog returnFocusRef={lmsButton} summary={query.data}
       error={query.error?.message} checking={query.isFetching} onClose={() => setDialogOpen(false)} onRetry={() => void query.refetch()}
       onReview={() => { const next = nextOutstanding(query.data!); setDialogOpen(false); navigate(next ? `/old-otjh/months/${next}` : '/old-otjh/months'); }} />}
-    {query.isPending ? <Panel><p  className="text-sm text-foreground-500"><LoadingSkeleton label={"Loading your previous record…"} /></p></Panel>
+    {query.isPending ? <Panel><p  className="text-sm text-foreground-500"><LoadingSkeleton label="Loading your previous record…" variant="rows" /></p></Panel>
       : query.error ? <ErrorState error={query.error} retry={query.retryStart} />
       : query.data && <ProgrammeOverview summary={query.data} />}
   </>;

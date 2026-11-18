@@ -522,7 +522,7 @@ export default function CheckpointsPage() {
           </div>
           <div className="min-w-0 divide-y divide-foreground-200/40 md:min-w-[980px]">
             {loading && (
-              <div className="px-5 py-12 text-center text-sm text-foreground-400"><LoadingSkeleton label={"Loading checkpoint quizzes..."} /></div>
+              <div className="px-5 py-12 text-center text-sm text-foreground-400"><LoadingSkeleton label="Loading checkpoint quizzes..." variant="rows" /></div>
             )}
             {!loading && error && (
               <div className="mx-5 my-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div>

@@ -592,7 +592,7 @@ export function EvidenceBody({
         </div>}
         <section>
           {loadingAny && (
-            <div className="mb-3 flex items-center gap-2 text-xs text-foreground-400"><LoadingSkeleton label={"Loading evidence…"} /></div>
+            <div className="mb-3 flex items-center gap-2 text-xs text-foreground-400"><LoadingSkeleton label="Loading evidence…" variant="rows" /></div>
           )}
           <div className={styles.summary} aria-label="Evidence summary">
             <div className={styles.summaryTotal}>
@@ -618,7 +618,7 @@ export function EvidenceBody({
             ═══════════════════════════════════ */}
         <section ref={filterRef} className={styles.toolbar} aria-label="Evidence filters">
           <div className={styles.toolbarRow}>
-            <label className={styles.search}>
+            <label data-search-field className={styles.search}>
               <AppIcon className="ri-search-line" />
               <input aria-label="Search evidence" type="search" placeholder="Search evidence, component or KSB..." value={searchQuery} onChange={event => setSearchQuery(event.target.value)} />
             </label>

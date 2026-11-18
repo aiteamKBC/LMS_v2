@@ -196,7 +196,7 @@ export default function TutorLearnersPage() {
     <WorkspaceShell role="tutor" roleLabel={tutorNav.label} navItems={tutorNav.items} workspaceLabel={tutorNav.workspaceLabel} pageTitle="My Learners" pageSubtitle="Your assigned modules and learner performance" userName={tutor.name || 'Tutor'} userRole="Tutor">
       <div className="space-y-6 p-4 md:p-6">
         {isLoading ? (
-          <div className="rounded-2xl border border-foreground-200/60 bg-background-50 p-10 text-center"><AppIcon className="ri-loader-4-line animate-spin text-3xl text-primary-500" /><p className="mt-3 text-sm font-semibold text-foreground-700"><LoadingSkeleton label={"Loading learners..."} /></p></div>
+          <LoadingSkeleton label="Loading learners" variant="cards" />
         ) : loadError ? (
           <div className="rounded-2xl border border-red-200 bg-red-50 p-10 text-center"><AppIcon className="ri-error-warning-line text-3xl text-red-500" /><p className="mt-3 text-sm font-semibold text-red-800">Unable to load learners</p><p className="mt-1 text-[12px] text-red-700">{loadError}</p></div>
         ) : moduleGroups.length > 0 ? (

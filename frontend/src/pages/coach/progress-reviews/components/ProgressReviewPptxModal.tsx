@@ -271,7 +271,7 @@ export default function ProgressReviewPptxModal({
 
         <div className="flex-1 space-y-4 overflow-y-auto px-6 py-5">
           {phase === 'loading' ? (
-            <div className="flex items-center gap-2 py-8 text-sm text-foreground-500"><LoadingSkeleton label={"Loading…"} /></div>
+            <div className="flex items-center gap-2 py-8 text-sm text-foreground-500"><LoadingSkeleton label="Loading…" variant="rows" /></div>
           ) : packError ? (
             <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">{packError}</div>
           ) : (

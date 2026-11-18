@@ -268,7 +268,7 @@ export default function AdminDashboard() {
                 <div id="super-admin-recent-events-content">
                   {audit.length === 0 ? (
                     <p className="text-[12px] text-foreground-400 py-6 text-center">
-                      {loading ? <LoadingSkeleton label={'Loading audit trail…'} /> : 'No access events recorded yet.'}
+                      {loading ? <LoadingSkeleton label="Loading audit trail…" variant="text" /> : 'No access events recorded yet.'}
                     </p>
                   ) : (
                     <div className="max-h-96 space-y-1 overflow-y-auto rounded-xl bg-primary-50/60 p-2 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden" tabIndex={0} role="region" aria-label="Recent access events">
@@ -566,7 +566,7 @@ export default function AdminDashboard() {
                   );
                 }) : (
                   <div className="col-span-2 text-[12px] text-foreground-400 py-6 text-center">
-                    {loading ? <LoadingSkeleton label={'Loading accounts…'} /> : 'No account data available.'}
+                    {loading ? <LoadingSkeleton label="Loading accounts…" variant="text" /> : 'No account data available.'}
                   </div>
                 )}
               </div>

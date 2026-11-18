@@ -139,7 +139,7 @@ export default function EmployerWorkspacePage() {
         </div>
 
         {loading && (
-          <p className="py-16 text-center text-[13px] text-foreground-400"><LoadingSkeleton label={"Loading employers…"} /></p>
+          <p className="py-16 text-center text-[13px] text-foreground-400"><LoadingSkeleton label="Loading employers…" variant="rows" /></p>
         )}
 
         {!loading && error && (

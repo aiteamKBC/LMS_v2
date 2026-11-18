@@ -142,7 +142,14 @@ function EmployerLearnerContent() {
     <WorkspaceShell {...shell} pageTitle="Learner" pageSubtitle={learner?.name ?? 'Learner'}>
       <PageContainer>
         {loading && (
-          <div className="flex min-h-[18rem] items-center justify-center py-16"><LoadingSkeleton label={"Loading learner"} className="w-64" /></div>
+          <div
+
+
+
+            className="min-h-[18rem] py-6"
+          >
+            <LoadingSkeleton label="Loading learner" variant="cards" />
+          </div>
         )}
 
         {!loading && error && (

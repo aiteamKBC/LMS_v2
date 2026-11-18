@@ -36,8 +36,8 @@ describe('Employer assignments tab', () => {
     render(<EmployerAssignmentsTab employerId="9" kind="commercial" learnerId="101" learnerName="Aya" />);
 
     expect(screen.getByRole('status', { name: 'Loading assignments' })).toBeVisible();
-    expect(screen.getByRole('status', { name: 'Loading assignments' }).textContent).toBe('');
-    expect(screen.queryByTestId('assignments-loading-spinner')).not.toBeInTheDocument();
+    expect(screen.getByRole('status', { name: 'Loading assignments' })).toHaveAttribute('aria-busy', 'true');
+    expect(screen.getByRole('status', { name: 'Loading assignments' }).querySelector('.animate-spin')).toBeNull();
   });
 
   it('lists every handed-in assignment with its status and files', async () => {

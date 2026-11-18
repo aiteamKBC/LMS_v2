@@ -925,7 +925,7 @@ export function QuizEditorPanel({ quizId, onClose, onSaved }: { quizId: string |
   };
 
   if (loading) {
-    return <div className="p-4 sm:p-5 text-sm text-foreground-500"><LoadingSkeleton label={"Loading quiz editor..."} /></div>;
+    return <div className="p-4 sm:p-5 text-sm text-foreground-500"><LoadingSkeleton label="Loading quiz editor..." variant="rows" /></div>;
   }
 
   if (pageError || !data || !settings) {

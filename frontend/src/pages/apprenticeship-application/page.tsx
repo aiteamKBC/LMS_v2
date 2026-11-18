@@ -203,7 +203,7 @@ export default function ApprenticeshipApplicationPage() {
               </button>
             </div>
           ) : (
-            <p className={styles.loading}><LoadingSkeleton label={"Loading the application form…"} /></p>
+            <p className={styles.loading}><LoadingSkeleton label="Loading the application form…" variant="rows" /></p>
           )}
         </section>
       </Frame>

@@ -42,7 +42,7 @@ function ChartPanel({ title, subtitle, children }: { title: string; subtitle: st
   return <section className={styles.chartPanel}><div><h3>{title}</h3><p>{subtitle}</p></div><div className={styles.chart}>{children}</div></section>;
 }
 
-const tooltipStyle = { border: '1px solid #e6e0f1', borderRadius: 10, boxShadow: '0 8px 22px rgba(35, 22, 70, .09)', fontSize: 12 };
+const tooltipStyle = { border: '1px solid #e6e0f1', borderRadius: 'var(--lms-radius, 16px)', boxShadow: '0 8px 22px rgba(35, 22, 70, .09)', fontSize: 12 };
 
 /** Cross-coach performance view. Each card still opens that coach's read-only workspace. */
 export function CoachDirectoryPicker({ onSelect, onDirectoryLoaded }: {
@@ -107,7 +107,7 @@ export function CoachDirectoryPicker({ onSelect, onDirectoryLoaded }: {
     <section className={styles.dashboard} aria-label="Coaches performance dashboard">
       <div className={styles.toolbar}>
         <div className={styles.titleBlock}><h2>Coaches Performance</h2><p>Coaching caseload, engagement, review delivery and learner risk signals</p></div>
-        <label className={styles.search}>
+        <label data-search-field className={styles.search}>
           <AppIcon className="ri-search-line" /><span className="sr-only">Search associate or coach</span>
           <input value={search} onChange={event => setSearch(event.target.value)} placeholder="Search associate or coach" />
         </label>

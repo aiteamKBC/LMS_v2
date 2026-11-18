@@ -108,7 +108,7 @@ export function AssignmentTimeEntries({ month, entries, onChange, disabled, kind
     {dailyLimit && Object.entries(dailyTotals).filter(([, hours]) => hours > 8 + 1e-10).map(([date, hours]) =>
       <p key={date} role="alert" className="text-sm text-red-700">{date}: {Number(hours.toFixed(2))} hours entered. Maximum 8 hours per day across all assignments, including saved drafts.</p>)}
     {dailyLimit && <p className="text-sm text-slate-600">Maximum 8 hours per day across all your assignments, including saved drafts. Hours entered on different dates have separate daily limits.</p>}
-    {!rules && !error && <p ><LoadingSkeleton label={"Loading bank holidays…"} /></p>}
+    {!rules && !error && <p ><LoadingSkeleton label="Loading bank holidays…" variant="rows" /></p>}
     {error && <p role="alert">{error} <button type="button" onClick={() => setRetry(value => value + 1)}>Retry calendar</button></p>}
     {rows.length === 0 && <p className="text-sm text-slate-600">No learning time added. Add a topic and record its hours before submitting.</p>}
     <button type="button" className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold" onClick={() => { setEmptyRowDismissed(false); onChange([...entries, { topic: '', hours: '', date: '' }]); }}>Add topic</button>

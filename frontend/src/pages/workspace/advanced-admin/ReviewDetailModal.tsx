@@ -1,4 +1,4 @@
-import { LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
+import { LoadingLabel, LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
 import { useEffect, useRef, useState } from 'react';
 import { Bot, CalendarDays, ClipboardList, FileDown, FileText, LayoutGrid, ShieldCheck, UserRound, Users, X } from 'lucide-react';
 import {
@@ -172,11 +172,11 @@ export default function ReviewDetailModal({ learnerId, learner, review, family, 
               <Card title="Attendance & Evidence" tone="teal" icon={<ShieldCheck size={18} />}>
                 <Field label="Learner attendance" value={<Status value={learnerAttended ? 'Attended' : 'Not confirmed'} positive={learnerAttended} />} />
                 <Field label="Manager attendance" value={<Status value={managerAttended ? 'Attended' : 'Not confirmed'} positive={managerAttended} />} />
-                <Field label="Transcript" value={<><Status value={hasTranscript ? 'Available' : !detail && session && !error ? 'Checking' : 'Not available'} positive={hasTranscript} />{!hasTranscript && <p className="mt-1 text-xs font-normal text-foreground-500">{transcriptUnavailable}</p>}</>} />
-                <Field label="AI report" value={<><Status value={report ? 'Ready' : 'Not available'} positive={Boolean(report)} />{!report && <p className="mt-1 text-xs font-normal text-foreground-500">{reportUnavailable}</p>}</>} />
+                <Field label="Transcript" value={<><Status value={hasTranscript ? 'Available' : !detail && session && !error ? 'Checking' : 'Not available'} positive={hasTranscript} />{!hasTranscript && <p className="mt-1 text-xs font-normal text-foreground-500"><LoadingLabel>{transcriptUnavailable}</LoadingLabel></p>}</>} />
+                <Field label="AI report" value={<><Status value={report ? 'Ready' : 'Not available'} positive={Boolean(report)} />{!report && <p className="mt-1 text-xs font-normal text-foreground-500"><LoadingLabel>{reportUnavailable}</LoadingLabel></p>}</>} />
               </Card>
             </div>
-            {session && !detail && !error && <p  className="rounded-xl border border-primary-100 bg-white p-3 text-sm text-foreground-600"><LoadingSkeleton label={"Loading meeting details…"} /></p>}
+            {session && !detail && !error && <p  className="rounded-xl border border-primary-100 bg-white p-3 text-sm text-foreground-600"><LoadingSkeleton label="Loading meeting details…" variant="rows" /></p>}
             {review.sections?.length > 0 && <details className="rounded-xl border border-foreground-200 bg-white p-4">
               <summary className="cursor-pointer font-semibold text-primary-950">Aptem review details</summary>
               <div className="mt-3 space-y-3">{review.sections.map(section => <section key={section.id} className="rounded-lg border p-3">

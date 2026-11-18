@@ -135,8 +135,8 @@ describe('EmployerLearnerPage workspace identity', () => {
     expect(shell).toHaveAttribute('data-user-name', 'Test Employer');
     expect(shell).toHaveAttribute('data-learners-href', '/employers/7/learners');
     expect(screen.getByRole('status', { name: 'Loading learner' })).toBeVisible();
-    expect(screen.getByRole('status', { name: 'Loading learner' }).textContent).toBe('');
-    expect(screen.queryByTestId('learner-loading-spinner')).not.toBeInTheDocument();
+    expect(screen.getByRole('status', { name: 'Loading learner' })).toHaveAttribute('aria-busy', 'true');
+    expect(screen.getByRole('status', { name: 'Loading learner' }).querySelector('.animate-spin')).toBeNull();
   });
 
   it('gives staff the same employer menu under their own name', () => {

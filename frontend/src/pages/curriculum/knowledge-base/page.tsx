@@ -178,7 +178,7 @@ function BookDetails({ bookId }: { bookId: string }) {
     return () => { cancelled = true; };
   }, [bookId]);
   if (error) return <p className="text-sm text-rose-700">{error}</p>;
-  if (!detail) return <p className="text-sm text-slate-500"><LoadingSkeleton label={"Loading…"} /></p>;
+  if (!detail) return <p className="text-sm text-slate-500"><LoadingSkeleton label="Loading…" variant="rows" /></p>;
   const c = detail.build.completeness as Record<string, number | Record<string, number>>;
   return (
     <div className="grid gap-4 lg:grid-cols-[1fr_1.4fr]">
@@ -331,7 +331,7 @@ export default function KnowledgeBasePage() {
           </div>
 
           {loadError ? <p className="rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-700" role="alert">{loadError}</p> : null}
-          {loading && !books.length ? <p className="py-10 text-center text-sm text-slate-500"><LoadingSkeleton label={"Loading books…"} /></p> : null}
+          {loading && !books.length ? <p className="py-10 text-center text-sm text-slate-500"><LoadingSkeleton label="Loading books…" variant="rows" /></p> : null}
           {!loading && !books.length && !loadError ? (
             <div className="py-12 text-center">
               <AppIcon className="ri-book-2-line text-3xl text-slate-300" />

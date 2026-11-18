@@ -10,7 +10,7 @@ export default function SearchBar({
   onChange,
 }: SearchBarProps) {
   return (
-    <div className="flex h-11 w-full items-center gap-2 rounded-lg border border-background-300 bg-background-50 px-3 focus-within:border-primary-400 md:w-96">
+    <div data-search-field className="flex h-11 w-full items-center gap-2 rounded-lg border border-background-300 bg-background-50 px-3 focus-within:border-primary-400 md:w-96">
       <i className="ri-search-line text-base text-foreground-500" />
       <input
         type="text"

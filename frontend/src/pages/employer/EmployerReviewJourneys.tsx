@@ -118,7 +118,7 @@ export function EmployerReviewJourneys({ employerId, learners, totalLearners, re
               </>
             ) : <p className={styles.notice}><CalendarDays size={19} aria-hidden />No progress reviews planned yet.</p>
               : resource?.status === 'error' ? <div className={styles.error} role="alert"><CircleAlert size={20} aria-hidden /><p>Reviews could not be loaded for this learner.</p><button type="button" className={styles.retry} onClick={onRetry}>Retry reviews</button></div>
-                : <p className={styles.notice} ><LoadingSkeleton label={"Loading progress reviews…"} /></p>}
+                : <p className={styles.notice} ><LoadingSkeleton label="Loading progress reviews…" variant="rows" /></p>}
           </article>
         );
       })}

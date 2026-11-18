@@ -25,7 +25,7 @@
    still reads as one sequence. */
 .readingWeek { background:transparent; border-color:var(--kbc-border); }
 .readingWeek > svg { color:var(--learner-purple); }
-.readingHeader { grid-column:1 / -1; display:flex; align-items:center; min-height:36px; margin:-9px 0 0; padding:8px 10px; border-radius:7px 7px 0 0; background:var(--learner-purple-soft, #f4f0fa); color:var(--kbc-learner-primary, #4f2d7f); font-size:13px; font-weight:700; }
+.readingHeader { grid-column:1 / -1; display:flex; align-items:center; min-height:36px; margin:-9px 0 0; padding:8px 10px; border-radius:var(--lms-radius, 16px) var(--lms-radius, 16px) 0 0; background:var(--learner-purple-soft, #f4f0fa); color:var(--kbc-learner-primary, #4f2d7f); font-size:13px; font-weight:700; }
 .readingBadge { font-size:10px; font-weight:700; letter-spacing:.5px; text-transform:uppercase;
   border-radius:999px; padding:2px 8px; background:var(--learner-warning); color:var(--kbc-surface); }
 .holiday { font-size:13px; color:var(--kbc-text); margin-top:6px !important; line-height:1.6; overflow-wrap:anywhere; }

@@ -52,7 +52,7 @@ export default function LearnerDirectoryModal({
               Learner directory
             </h3>
             <p className="mt-1 text-sm text-foreground-500">
-              {loading ? <LoadingSkeleton label={"Loading learner names…"} /> : `${learners.length} learners from the KBC directory`}
+              {loading ? <LoadingSkeleton label="Loading learner names…" variant="text" /> : `${learners.length} learners from the KBC directory`}
             </p>
           </div>
           <button
@@ -66,7 +66,7 @@ export default function LearnerDirectoryModal({
         </header>
 
         <div className="border-b border-background-200 p-4">
-          <label className="flex h-11 items-center gap-2 rounded-md border border-background-300 bg-background-50 px-3 focus-within:border-primary-400">
+          <label data-search-field className="flex h-11 items-center gap-2 rounded-md border border-background-300 bg-background-50 px-3 focus-within:border-primary-400">
             <i className="ri-search-line text-base text-foreground-500" />
             <span className="sr-only">Search learner names</span>
             <input
@@ -82,7 +82,7 @@ export default function LearnerDirectoryModal({
 
         <div className="flex-1 overflow-y-auto p-4">
           {loading ? (
-            <p className="py-8 text-center text-sm text-foreground-500"><LoadingSkeleton label={"Loading learner names…"} /></p>
+            <p className="py-8 text-center text-sm text-foreground-500"><LoadingSkeleton label="Loading learner names…" variant="rows" /></p>
           ) : visibleLearners.length === 0 ? (
             <p className="py-8 text-center text-sm text-foreground-500">No learner names match that search.</p>
           ) : (

@@ -52,7 +52,7 @@ function SavedReflectionContent({ learnerKind, learnerId, activityType, activity
     return () => { active = false; };
   }, [learnerKind, learnerId, activityType, activityId, revision]);
 
-  if (state.loading) return <p  className="mt-3 text-sm text-foreground-500"><LoadingSkeleton label={"Loading your saved reflection..."} /></p>;
+  if (state.loading) return <p  className="mt-3 text-sm text-foreground-500"><LoadingSkeleton label="Loading your saved reflection..." variant="rows" /></p>;
   if (state.error) return <div className="mt-3">
     <p role="alert" className="text-sm text-red-700">{state.error}</p>
     <button type="button" className="mt-2 text-sm font-semibold text-primary-700 underline"

@@ -713,7 +713,7 @@ export function CreateUserModal({ onClose, onCreated, editing, onSaved }: {
         </div>
       )}
       {hydrating && !hydrateError && (
-        <p className="mb-4 text-[12px] text-foreground-500"><LoadingSkeleton label={`Loading ${editing?.name || 'this learner'}'s details…`} /></p>
+        <p className="mb-4 text-[12px] text-foreground-500"><LoadingSkeleton label={`Loading ${editing?.name || 'this learner'}'s details…`} variant="rows" /></p>
       )}
       <form onSubmit={handleSubmit} className="space-y-5">
         {SECTIONS.map((section) => {

@@ -1,4 +1,4 @@
-import { LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
+import { LoadingControl, LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
 import { useEffect, useState } from 'react';
 import { SelectMenu } from '@/components/feature/SelectField';
 import { TutorClashNotice } from '@/components/feature/TutorClashNotice';
@@ -100,7 +100,7 @@ export function FreeCourseMoveDrawer({ module, programmes, onClose, onMoved }: {
       assigned learners and their progress stay intact. Learners in the selected group receive
       it through their normal learning plan. Live sessions and Teams become available from the usual module tools.
     </p>
-    {loading && <p  className="text-[12px] text-foreground-500"><LoadingSkeleton label={"Loading destinations..."} /></p>}
+    {loading && <p  className="text-[12px] text-foreground-500"><LoadingSkeleton label="Loading destinations..." variant="rows" /></p>}
     {loadError && <button type="button" onClick={() => setRetry(value => value + 1)} className="text-[12px] font-bold text-primary-700 underline">Retry destinations</button>}
     <FormField label="Programme" required>
       <SelectMenu ariaLabel="Destination programme" value={programmeId} disabled={locked || loading}
@@ -120,9 +120,9 @@ export function FreeCourseMoveDrawer({ module, programmes, onClose, onMoved }: {
         options={groups.map(item => ({ value: item.id, label: item.name }))} onChange={setGroupId} />
     </FormField>
     <FormField label="Tutor" required>
-      <SelectMenu ariaLabel="Destination tutor" value={tutor} disabled={locked || loading}
+      {<LoadingControl loading={(loading)}><SelectMenu ariaLabel="Destination tutor" value={tutor} disabled={locked || loading}
         placeholder={loading ? 'Loading tutors...' : tutorOptions.length ? 'Choose tutor' : 'No active tutors available'}
-        options={tutorOptions} searchable searchPlaceholder="Search tutors..." onChange={setTutor} />
+        options={tutorOptions} searchable searchPlaceholder="Search tutors..." onChange={setTutor} /></LoadingControl>}
     </FormField>
     {availability.loading && <p role="status" className="text-[12px] text-foreground-500">Checking tutor availability...</p>}
     {availability.failed && <p role="status" className="text-[12px] text-amber-800">Tutor availability could not be checked. It will be checked when you move the course.</p>}

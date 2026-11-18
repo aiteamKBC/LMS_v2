@@ -343,7 +343,7 @@ export function RetrieveActivitiesPanel({ aptemId, month, monthLabel, existingRe
       </div>
 
       {candidatesQuery.isLoading ? (
-        <p className="py-8 text-center text-sm text-muted-foreground"><LoadingSkeleton label={"Loading the learner's LMS records…"} /></p>
+        <p className="py-8 text-center text-sm text-muted-foreground"><LoadingSkeleton label="Loading the learner's LMS records…" variant="rows" /></p>
       ) : candidatesQuery.isError ? (
         <p className="py-8 text-center text-sm text-destructive">{candidatesQuery.error instanceof Error ? candidatesQuery.error.message : "Could not load the LMS records."}</p>
       ) : (

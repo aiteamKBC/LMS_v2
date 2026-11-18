@@ -291,7 +291,7 @@ export function WizardShell({
                 <p className="mt-2 text-[11px] text-foreground-400">
                   {statusKnown
                     ? `${doneCount} of ${steps.length} steps complete`
-                    : <LoadingSkeleton label={'Loading your answers…'} />}
+                    : <LoadingSkeleton label="Loading your answers…" variant="text" />}
                 </p>
               </div>
               <div role="tablist" aria-label="Enrolment steps" aria-orientation="vertical" className="p-2">

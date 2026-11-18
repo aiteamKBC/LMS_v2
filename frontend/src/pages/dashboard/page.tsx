@@ -5,6 +5,7 @@ import { EMPTY_FILTERS, REVIEWER_NAME } from "@/pages/dashboard/constants";
 import type { AuditEntry, CheckStatus, Filters, Review, SortKey, SortState } from "@/pages/dashboard/types";
 import { nowLabel, reviewRag } from "@/pages/dashboard/utils";
 import { Sidebar as LmsSidebar } from "@/components/feature/Sidebar";
+import { WORKSPACE_SIDEBAR_WIDTH } from "@/components/feature/learnerShellAssets";
 import { curriculumNavItems } from "@/mocks/navigation";
 import Topbar from "@/pages/dashboard/components/Topbar";
 import KpiCards from "@/pages/dashboard/components/KpiCards";
@@ -319,7 +320,7 @@ export default function QualityAssurancePage() {
   }
 
   return (
-    <div className={`quality-demo dashboard-theme workspace-shell bg-background-100 ${styles.shell}`} data-workspace-role="curriculum" style={{ '--kbc-sidebar-width': sidebarCollapsed ? '64px' : '240px' } as CSSProperties}>
+    <div className={`quality-demo dashboard-theme workspace-shell bg-background-100 ${styles.shell}`} data-workspace-role="curriculum" style={{ '--kbc-sidebar-width': `${WORKSPACE_SIDEBAR_WIDTH}px` } as CSSProperties}>
       <a
         href="#main-content"
         className="sr-only focus:not-sr-only focus:absolute focus:left-4 focus:top-4 focus:z-[80] focus:rounded-md focus:bg-primary-500 focus:px-3 focus:py-2 focus:text-[12px] focus:font-semibold focus:text-background-50"

@@ -6,7 +6,7 @@ import { formatModuleHours, useModuleHours, useModuleHoursDraft } from './module
 export function ModuleHoursTargetField({ state, disabled }: { state: ReturnType<typeof useModuleHoursDraft>; disabled: boolean }) {
   const [expanded, setExpanded] = useState(false);
   useEffect(() => { setExpanded(false); }, [state.data?.moduleId]);
-  if (state.loading) return <p className="text-[12px] text-foreground-500" ><LoadingSkeleton label={"Loading module hours settings…"} /></p>;
+  if (state.loading) return <p className="text-[12px] text-foreground-500" ><LoadingSkeleton label="Loading module hours settings…" variant="rows" /></p>;
   if (state.error) return <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-[12px] text-amber-900" role="status">Hours settings unavailable. <button type="button" onClick={state.reload} className="underline">Retry</button></div>;
   if (!state.data?.canMatch || !state.draft) return null;
   return <section className="rounded-xl border border-primary-200 bg-primary-50/40 p-3">
@@ -29,7 +29,7 @@ export function ModuleFixedHoursCard({ moduleId, totalHours, unsaved = false }: 
   useEffect(() => { setDetails(false); }, [moduleId]);
   const baseClass = 'min-w-[90px] rounded-lg border px-2.5 py-1.5 text-left';
   const label = <span className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wide"><AppIcon className="ri-time-line text-[12px]" />Fixed hours</span>;
-  if (loading) return <div className={`${baseClass} border-background-200 bg-background-100/50 text-foreground-400`} role="status">{label}<span className="mt-0.5 block text-[12px]"><LoadingSkeleton label={"Loading…"} /></span></div>;
+  if (loading) return <div className={`${baseClass} border-background-200 bg-background-100/50 text-foreground-400`} >{label}<span className="mt-0.5 block text-[12px]"><LoadingSkeleton label="Loading…" variant="text" /></span></div>;
   if (error || !data) return <button type="button" onClick={reload} title="Module hours target unavailable. Retry loading fixed hours." aria-label="Module hours target unavailable. Retry loading fixed hours." className={`${baseClass} border-amber-200 bg-amber-50 text-amber-800`}>{label}<span className="mt-0.5 block text-[12px]">Retry</span></button>;
   const total = Math.max(0, Math.round(totalHours * 60));
   const target = data.targetMinutes;

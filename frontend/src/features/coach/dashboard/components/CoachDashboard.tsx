@@ -1434,7 +1434,7 @@ function KpiDetailModal({ type, loading, error, onRetry, learners, popupLearners
             <button type="button" onClick={onClose} className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-foreground-200/80 bg-background-50/90 text-foreground-500 shadow-sm transition-all hover:-translate-y-0.5 hover:border-foreground-300 hover:text-foreground-800 focus:outline-none focus:ring-2 focus:ring-primary-300 focus:ring-offset-2" aria-label="Close"><AppIcon className="ri-close-line text-xl"></AppIcon></button>
           </div>
           {isCaseload && <div className={modalStyles.controls}>
-            <label className={modalStyles.search}>
+            <label data-search-field className={modalStyles.search}>
               <AppIcon className="ri-search-line" aria-hidden="true" />
               <span className="sr-only">Search learners</span>
               <input ref={searchInput} type="search" value={search} onChange={event => setSearch(event.target.value)} placeholder="Search name, programme or group" />
@@ -1446,7 +1446,7 @@ function KpiDetailModal({ type, loading, error, onRetry, learners, popupLearners
             </div>
           </div>}
           {isPendingMarking && <div className={markingStyles.toolbar}>
-            <label className={markingStyles.search}>
+            <label data-search-field className={markingStyles.search}>
               <AppIcon className="ri-search-line" aria-hidden="true" />
               <span className="sr-only">Search learner</span>
               <input ref={searchInput} type="search" value={search} onChange={event => setSearch(event.target.value)} placeholder="Search learner, programme or group" />

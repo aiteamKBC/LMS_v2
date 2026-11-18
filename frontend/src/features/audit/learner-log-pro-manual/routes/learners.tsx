@@ -174,7 +174,7 @@ function LearnersPage() {
               One plan per learner — the months are their own training plan; you add what happens inside.
             </p>
           </header>
-          {plans.isLoading && <p className="py-10 text-center text-sm text-muted-foreground"><LoadingSkeleton label={"Loading learners…"} /></p>}
+          {plans.isLoading && <p className="py-10 text-center text-sm text-muted-foreground"><LoadingSkeleton label="Loading learners…" variant="rows" /></p>}
           {plans.isError && (
             <p className="py-10 text-center text-sm text-destructive">
               {plans.error instanceof Error ? plans.error.message : "Could not list the learners."}

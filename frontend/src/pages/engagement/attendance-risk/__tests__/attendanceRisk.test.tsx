@@ -56,6 +56,20 @@ function renderPage() {
 }
 
 describe('attendance risk page', () => {
+  it('shows skeleton cards until attendance analytics arrives, then replaces them with learners', async () => {
+    let resolveAnalytics!: (value: typeof RISK_LEARNER[]) => void;
+    fetchLearnerAnalytics.mockReturnValue(new Promise(resolve => { resolveAnalytics = resolve; }));
+    renderPage();
+    const placeholder = screen.getByLabelText('Loading attendance analytics');
+    expect(placeholder).toHaveAttribute('aria-busy', 'true');
+    expect(placeholder).toHaveClass('kbc-loading-skeleton--cards');
+    expect(screen.queryByText('No learners match this view')).not.toBeInTheDocument();
+    expect(screen.queryByText('Daniel Walsh')).not.toBeInTheDocument();
+    resolveAnalytics([RISK_LEARNER]);
+    expect(await screen.findByText('Daniel Walsh')).toBeInTheDocument();
+    expect(screen.queryByLabelText('Loading attendance analytics')).not.toBeInTheDocument();
+  });
+
   it('renders real attendance/KSB/OTJH/quiz fields from the analytics endpoint', async () => {
     fetchLearnerAnalytics.mockResolvedValue([RISK_LEARNER, ON_TRACK_LEARNER]);
     renderPage();

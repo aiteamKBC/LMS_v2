@@ -116,7 +116,7 @@ export default function LectureDetailsPanel({
         </p>
       </div>
     </aside>
-    {qualityOpen && teachingLecture && <Suspense fallback={<p  className="fixed inset-0 z-[90] flex items-center justify-center bg-white/95"><LoadingSkeleton label={"Loading teaching quality check…"} /></p>}>
+    {qualityOpen && teachingLecture && <Suspense fallback={<p  className="fixed inset-0 z-[90] flex items-center justify-center bg-white/95"><LoadingSkeleton label="Loading teaching quality check…" variant="rows" /></p>}>
       <QualityReviewDialog key={`${teachingLecture.moduleId}:${teachingLecture.occurrenceId}`} teachingLecture={teachingLecture} timeZone={timeZone} onClose={() => setQualityOpen(false)} />
     </Suspense>}</>
   );

@@ -28,7 +28,7 @@ function usePreviewData<T>(learnerId: number, read: (id: number, signal: AbortSi
 
 function State({ error, ready }: { error: string; ready: boolean }) {
   if (error) return <p role="alert" className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">{error}</p>;
-  if (!ready) return <p  className="rounded-xl border bg-white p-4 text-sm"><LoadingSkeleton label={"Loading records…"} /></p>;
+  if (!ready) return <p  className="rounded-xl border bg-white p-4 text-sm"><LoadingSkeleton label="Loading records…" variant="rows" /></p>;
   return null;
 }
 
