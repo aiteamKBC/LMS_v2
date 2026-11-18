@@ -14,12 +14,14 @@ import ReviewDrawer from "@/pages/dashboard/components/ReviewDrawer";
 import PdfPreviewModal from "@/pages/dashboard/components/PdfPreviewModal";
 import AnalyticsPanel from "@/pages/dashboard/components/AnalyticsPanel";
 import ExecutiveOverview from "@/pages/executive/page";
+import NeedsAttentionCard from "@/pages/dashboard/components/NeedsAttentionCard";
 import QualityTeamPage from "@/pages/dashboard/components/QualityTeamPage";
 import FeedbacksPage from "@/pages/dashboard/components/FeedbacksPage";
 import DeepDivePage from "@/pages/dashboard/components/DeepDivePage";
 import QualityReviewsPage from "@/pages/coaching-recordings/QualityReviewsPage";
-import { FEEDBACKS } from "@/mocks/feedbacks";
-import FeedbackDetailModal from "@/pages/executive/components/FeedbackDetailModal";
+import FeedbackResponseDialog from "@/pages/dashboard/components/FeedbackResponseDialog";
+import { useQualityNotifications } from "@/pages/dashboard/useQualityNotifications";
+import { useAuth } from "@/hooks/useAuth";
 import type { HeaderNotification } from "@/components/feature/Header";
 import styles from "./QualityShell.module.css";
 
@@ -75,6 +77,10 @@ const QUALITY_SIDEBAR_NAV = [
 ];
 
 export default function QualityAssurancePage() {
+  const { auth } = useAuth();
+  const accountId = auth.account?.id ?? null;
+  const qualityNotifications = useQualityNotifications(accountId);
+  const headerNotifications = qualityNotifications.notifications;
   const [searchParams, setSearchParams] = useSearchParams();
   const [reviews, setReviews] = useState<Review[]>(REVIEWS);
   const [loading, setLoading] = useState(true);
@@ -94,15 +100,12 @@ export default function QualityAssurancePage() {
   const [focusId, setFocusId] = useState<string | null>(null);
   const [pdfId, setPdfId] = useState<string | null>(null);
   const [toast, setToast] = useState<{ text: string; tone: "success" | "info" } | null>(null);
-  const [selectedNotification, setSelectedNotification] = useState<HeaderNotification | null>(null);
-  const redFeedbacks = FEEDBACKS.filter((item) => item.rag === "Red");
-  const headerNotifications: HeaderNotification[] = redFeedbacks.map((item) => ({
-    id: item.id,
-    title: `${item.author} · Red feedback`,
-    description: item.comment,
-    meta: `${item.source} · ${item.coach} · ${item.topic}`,
-    tone: "red",
-  }));
+  const [selectedNotification, setSelectedNotification] = useState<{ accountId: number; notification: HeaderNotification } | null>(null);
+  const selectNotification = (notification: HeaderNotification) => {
+    if (accountId !== null) setSelectedNotification({ accountId, notification });
+  };
+
+  useEffect(() => { setSelectedNotification(null); }, [accountId]);
 
   const runLoad = () => {
     setLoading(true);
@@ -342,11 +345,11 @@ export default function QualityAssurancePage() {
       />
 
       <div className="workspace-content flex min-w-0 flex-1 flex-col">
-        <Topbar onMenu={() => setSidebarOpen(true)} title={topMeta.title} section={topMeta.section} notifications={headerNotifications} onNotificationClick={setSelectedNotification} />
+        <Topbar onMenu={() => setSidebarOpen(true)} title={topMeta.title} section={topMeta.section} notifications={headerNotifications} onNotificationClick={selectNotification} />
 
         <div className={styles.body}>
         {isCalendarView ? <QualityReviewsPage embedded /> : <main id="main-content" tabIndex={-1} className="mx-auto flex w-full max-w-[1560px] flex-col gap-4 px-4 py-4 md:px-6 md:py-5">
-          {isOverview ? <ExecutiveOverview /> : null}
+          {isOverview ? <ExecutiveOverview attentionPanel={<NeedsAttentionCard notifications={headerNotifications} onNotificationClick={selectNotification} loading={qualityNotifications.loading} error={qualityNotifications.error} onRefresh={qualityNotifications.refresh} />} /> : null}
           {isTeamView ? <QualityTeamPage onToast={notify} /> : null}
           {isFeedbacksView ? <FeedbacksPage onToast={notify} /> : null}
           {isDeepDiveView ? <DeepDivePage /> : null}
@@ -428,10 +431,7 @@ export default function QualityAssurancePage() {
 
       {pdfReview ? <PdfPreviewModal review={pdfReview} onClose={() => setPdfId(null)} /> : null}
 
-      {selectedNotification ? (() => {
-        const feedback = redFeedbacks.find((item) => item.id === selectedNotification.id);
-        return feedback ? <FeedbackDetailModal feedback={feedback} onClose={() => setSelectedNotification(null)} onOpenWorkspace={() => { setSelectedNotification(null); setSearchParams({ view: "feedbacks" }, { replace: true }); }} /> : null;
-      })() : null}
+      {selectedNotification && selectedNotification.accountId === accountId ? <FeedbackResponseDialog key={`${accountId}:${selectedNotification.notification.id}`} responseId={Number(selectedNotification.notification.id)} onClose={() => setSelectedNotification(null)} /> : null}
 
       {toast ? (
         <div className="pointer-events-none fixed bottom-5 right-5 z-[70] no-print">

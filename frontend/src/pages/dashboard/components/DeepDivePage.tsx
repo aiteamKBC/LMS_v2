@@ -1,4 +1,5 @@
 import { LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
+import { SelectMenu } from '@/components/feature/SelectField';
 import { useEffect, useMemo, useRef, useState } from "react";
 import { fetchEnrolmentBoard, fetchEnrolmentUsers } from "@/api/enrolmentUsers";
 import { fetchDeepDiveRecords, importDeepDiveWorkbook, markDeepDiveRecordReviewed, sha256File, syncDeepDiveFromCreatedUsers, updateDeepDiveRecord, workbookToDeepDiveRows, type DeepDiveOperationalDetails, type DeepDiveRecord, type DeepDiveReviewItem } from "@/api/deepDive";
@@ -401,11 +402,20 @@ export default function DeepDivePage() {
       </div> : null}
 
       <section className="rounded-xl border border-background-200 bg-background-50 p-4" aria-label="Deep Dive filters">
-        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-          <label className="text-[11px] font-medium text-foreground-600">Search learner, email, reference or coach<input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search…" className="mt-1.5 h-10 w-full rounded-md border border-background-300 bg-background-50 px-3 text-[12px] text-foreground-900 outline-none transition focus:border-primary-400 focus:ring-2 focus:ring-primary-100" /></label>
-          <label className="text-[11px] font-medium text-foreground-600">Programme<select value={programme} onChange={(event) => setProgramme(event.target.value)} className="mt-1.5 h-10 w-full rounded-md border border-background-300 bg-background-50 px-3 text-[12px] text-foreground-900 outline-none focus:border-primary-400 focus:ring-2 focus:ring-primary-100"><option>All programmes</option>{programmes.map((item) => <option key={item}>{item}</option>)}</select></label>
-          <label className="text-[11px] font-medium text-foreground-600">Programme status<select value={status} onChange={(event) => setStatus(event.target.value)} className="mt-1.5 h-10 w-full rounded-md border border-background-300 bg-background-50 px-3 text-[12px] text-foreground-900 outline-none focus:border-primary-400 focus:ring-2 focus:ring-primary-100"><option>All statuses</option>{statuses.map((item) => <option key={item}>{item}</option>)}</select></label>
-          <label className="text-[11px] font-medium text-foreground-600">Review status<select value={reviewStatus} onChange={(event) => setReviewStatus(event.target.value as ReviewStatusFilter)} className="mt-1.5 h-10 w-full rounded-md border border-background-300 bg-background-50 px-3 text-[12px] text-foreground-900 outline-none focus:border-primary-400 focus:ring-2 focus:ring-primary-100"><option value="all">All learners</option><option value="reviewed">Reviewed</option><option value="awaiting">Awaiting review</option></select></label>
+        <div className="grid items-end gap-3 md:grid-cols-2 xl:grid-cols-4">
+          <label className="min-w-0 text-[11px] font-medium text-foreground-600">Search learner, email, reference or coach<input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search…" className="mt-1.5 h-11 w-full rounded-[10px] border border-background-200 bg-background-50 px-3.5 text-[14px] text-foreground-900 outline-none transition hover:border-primary-200 focus:border-primary-400 focus:ring-2 focus:ring-primary-100" /></label>
+          <div className="min-w-0">
+            <label htmlFor="deep-dive-programme" className="mb-1.5 block text-[11px] font-medium text-foreground-600">Programme</label>
+            <SelectMenu id="deep-dive-programme" value={programme} onChange={setProgramme} size="sm" searchable searchPlaceholder="Search programmes…" options={[{ value: "All programmes", label: "All programmes" }, ...programmes.map((item) => ({ value: item, label: item }))]} />
+          </div>
+          <div className="min-w-0">
+            <label htmlFor="deep-dive-programme-status" className="mb-1.5 block text-[11px] font-medium text-foreground-600">Programme status</label>
+            <SelectMenu id="deep-dive-programme-status" value={status} onChange={setStatus} size="sm" options={[{ value: "All statuses", label: "All statuses" }, ...statuses.map((item) => ({ value: item, label: item }))]} />
+          </div>
+          <div className="min-w-0">
+            <label htmlFor="deep-dive-review-status" className="mb-1.5 block text-[11px] font-medium text-foreground-600">Review status</label>
+            <SelectMenu id="deep-dive-review-status" value={reviewStatus} onChange={(value) => setReviewStatus(value as ReviewStatusFilter)} size="sm" options={[{ value: "all", label: "All learners" }, { value: "reviewed", label: "Reviewed" }, { value: "awaiting", label: "Awaiting review" }]} />
+          </div>
         </div>
       </section>
 

@@ -1,5 +1,6 @@
 import { LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
 import { useEffect, useMemo, useState } from "react";
+import type { ReactNode } from "react";
 import { useNavigate } from "react-router-dom";
 import Panel from "@/components/base/Panel";
 import RagBadge from "@/components/base/RagBadge";
@@ -42,7 +43,7 @@ const DEFAULT_FILTERS: DashboardFilters = {
   query: "",
 };
 
-export default function ExecutiveOverview() {
+export default function ExecutiveOverview({ attentionPanel }: { attentionPanel?: ReactNode }) {
   const navigate = useNavigate();
   const [filters, setFilters] = useState<DashboardFilters>(DEFAULT_FILTERS);
   const [showPolicy, setShowPolicy] = useState(false);
@@ -146,11 +147,11 @@ export default function ExecutiveOverview() {
   };
 
   if (loading) {
-    return <div  className="rounded-xl border border-background-200 bg-background-50 p-8 text-sm text-foreground-600"><LoadingSkeleton label={"Loading live quality forms and saved reviews…"} /></div>;
+    return <>{attentionPanel}<div className="rounded-xl border border-background-200 bg-background-50 p-8 text-sm text-foreground-600"><LoadingSkeleton label={"Loading live quality forms and saved reviews…"} /></div></>;
   }
 
   if (error) {
-    return <div role="alert" className="rounded-xl border border-amber-200 bg-amber-50 p-5 text-sm text-amber-950"><p>{error}</p><button type="button" className="mt-3 rounded-md bg-primary-600 px-3 py-2 font-semibold text-background-50" onClick={() => setRetry(value => value + 1)}>Retry quality data</button></div>;
+    return <>{attentionPanel}<div role="alert" className="rounded-xl border border-amber-200 bg-amber-50 p-5 text-sm text-amber-950"><p>{error}</p><button type="button" className="mt-3 rounded-md bg-primary-600 px-3 py-2 font-semibold text-background-50" onClick={() => setRetry(value => value + 1)}>Retry quality data</button></div></>;
   }
 
   const live = data!;
@@ -263,6 +264,8 @@ export default function ExecutiveOverview() {
       </div>
 
       <OverviewKpis records={records} actions={actions} forms={forms} availability={live.availability} onOpenAuditTypes={() => setAuditTypesOpen(true)} />
+
+      {attentionPanel}
 
       {auditTypesOpen ? <MeetingTypesModal records={records} onClose={() => setAuditTypesOpen(false)} onOpenType={openAuditType} /> : null}
 
