@@ -1,10 +1,13 @@
 import { useEffect, useState } from 'react';
+import { FileCheck2, Paintbrush } from 'lucide-react';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { PageContainer } from '@/components/ui/PageContainer';
 import { AdminPageHeader } from '../_shared/AdminPage';
 import { CertificateDocument, type CertificateElementId } from '@/components/feature/CertificateDocument';
 import { roleNavMap } from '@/mocks/navigation';
 import { fetchCertificateTemplate, saveCertificateTemplate, type CertificateTemplate } from '@/api/platformAdmin';
+import IssuedCertificates from './IssuedCertificates';
+import styles from './certificateTabs.module.css';
 
 const initial: CertificateTemplate = {
   name: 'Progress certificate',
@@ -152,6 +155,7 @@ function SelectField({
 }
 
 export default function CertificateBuilderPage() {
+  const [tab, setTab] = useState<'builder' | 'issued'>('builder');
   const [form, setForm] = useState<CertificateTemplate>(initial);
   const [templates, setTemplates] = useState<CertificateTemplate[]>([]);
   const [busy, setBusy] = useState(false);
@@ -460,12 +464,33 @@ export default function CertificateBuilderPage() {
       roleLabel="Super Admin"
       navItems={roleNavMap.admin.items}
       workspaceLabel="Super Admin Workspace"
-      pageTitle="Certificate Builder"
-      pageSubtitle="Design and publish learner certificates"
+      pageTitle="Certificates"
+      pageSubtitle="Design templates and manage learner certificates"
       userName="Super Admin"
       userRole="Super Admin"
     >
-      <PageContainer className="min-w-0">
+      <PageContainer className={`min-w-0 ${styles.page}`}>
+        <div role="tablist" aria-label="Certificate sections" className={styles.tabs}>
+          {(['builder', 'issued'] as const).map(value => <button key={value} type="button" role="tab" id={`certificate-tab-${value}`}
+            aria-controls={`certificate-panel-${value}`} aria-selected={tab === value} tabIndex={tab === value ? 0 : -1}
+            aria-labelledby={`certificate-tab-${value}-label`}
+            onClick={() => setTab(value)} onKeyDown={event => {
+              if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+              event.preventDefault();
+              const next = event.key === 'Home' ? 'builder' : event.key === 'End' ? 'issued' : value === 'builder' ? 'issued' : 'builder';
+              setTab(next); document.getElementById(`certificate-tab-${next}`)?.focus();
+            }} className={styles.tab}>
+            {value === 'builder'
+              ? <Paintbrush size={16} strokeWidth={1.75} className={styles.icon} aria-hidden="true" />
+              : <FileCheck2 size={16} strokeWidth={1.75} className={styles.icon} aria-hidden="true" />}
+            <span id={`certificate-tab-${value}-label`}>{value === 'builder' ? 'Certificate Builder' : 'Manage Certificates'}</span>
+          </button>)}
+        </div>
+        <div role="tabpanel" id="certificate-panel-issued" aria-labelledby="certificate-tab-issued" hidden={tab !== 'issued'} className="space-y-5">
+          <AdminPageHeader title="Manage Certificates" description="View, correct and review individual learner certificates." icon="ri-award-line" />
+          <IssuedCertificates active={tab === 'issued'} />
+        </div>
+        <div role="tabpanel" id="certificate-panel-builder" aria-labelledby="certificate-tab-builder" hidden={tab !== 'builder'} className="space-y-5">
         <AdminPageHeader
           title="Certificate Builder"
           description="Configure the certificate unlocked when a learner reaches the eligibility threshold."
@@ -631,10 +656,7 @@ export default function CertificateBuilderPage() {
                 className="min-h-20 w-full rounded-xl border border-foreground-200 p-3 text-sm font-semibold outline-none focus:ring-2 focus:ring-primary-200"
               />
             </label>
-            <label className="flex items-center gap-2 text-sm font-semibold">
-              <input type="checkbox" checked={form.requireFinalTest} onChange={(event) => setForm({ ...form, requireFinalTest: event.target.checked })} />
-              Require final test pass
-            </label>
+            <p className="text-sm text-foreground-600">Certificates unlock when completed activities ÷ total course activities reaches the percentage above. OTJ hours do not affect eligibility, and no separate final exam is required.</p>
             <div className="rounded-2xl border border-foreground-100 bg-[var(--kbc-surface)] p-3">
               <div className="mb-3 flex items-center justify-between gap-2">
                 <div>
@@ -738,6 +760,7 @@ export default function CertificateBuilderPage() {
               Click any element on the certificate to edit it from the selected-element panel.
             </p>
           </section>
+        </div>
         </div>
       </PageContainer>
     </WorkspaceShell>

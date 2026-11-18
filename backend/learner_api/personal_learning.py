@@ -321,7 +321,7 @@ def certificate(context, account, detail, request, issue=False):
             detail, _ = course_detail(context, account, state)
             ensure_open(detail, context)
             eligibility = progress(detail, context['module_id'])
-            if not eligibility['trackableTotal'] or eligibility['progressPercent'] < template['minimumProgress'] or (template['requireFinalTest'] and not eligibility['finalTestPassed']):
+            if not eligibility['trackableTotal'] or eligibility['trackableDone'] * 100 < template['minimumProgress'] * eligibility['trackableTotal']:
                 raise PermissionError('Complete the required activities, tutor reviews and assessments before requesting this certificate.')
             token = str(uuid.uuid4())
             snapshot = {**eligibility, 'certificateTitle': template['title'], 'bodyText': template['bodyText'], 'layoutConfig': template['layoutConfig'],

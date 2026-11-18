@@ -7,6 +7,8 @@ interface VerificationCertificate {
   certificateNumber: string;
   templateVersion: number;
   progressPercent: number;
+  revision?: number;
+  correctedAt?: string | null;
   snapshot?: {
     certificateTitle?: string;
     bodyText?: string;
@@ -60,7 +62,8 @@ export default function CertificateVerificationPage({ personal = false }: { pers
     let cancelled = false;
     setLoading(true);
     setError('');
-    fetch(`/learner_api/${personal ? 'personal-learning' : 'certificates'}/verify/${encodeURIComponent(token)}/`, { credentials: 'omit' })
+    setData(null);
+    fetch(`/learner_api/${personal ? 'personal-learning' : 'certificates'}/verify/${encodeURIComponent(token)}/`, { credentials: 'omit', cache: 'no-store' })
       .then(async (response) => {
         const text = await response.text();
         const payload = text ? JSON.parse(text) : null;
@@ -83,7 +86,9 @@ export default function CertificateVerificationPage({ personal = false }: { pers
     };
   }, [token, personal]);
 
-  const certificate = data?.certificate;
+  const certificate = !loading && !error ? data?.certificate : undefined;
+  const revisionLabel = certificate && (certificate.revision || 1) > 1
+    ? `Corrected copy · Revision ${certificate.revision} · Corrected ${formatDate(certificate.correctedAt)}` : undefined;
   const learner = certificate?.snapshot?.learner;
   const title = certificate?.snapshot?.certificateTitle || 'Certificate of Achievement';
   const bodyText = certificate?.snapshot?.bodyText || 'has successfully completed the requirements and passed the LMS final examination for';
@@ -267,6 +272,7 @@ export default function CertificateVerificationPage({ personal = false }: { pers
                   </div>
                 </div>
 
+                {revisionLabel && <p role="status" className="rounded-xl bg-blue-50 p-4 text-sm font-semibold text-blue-900">{revisionLabel}. The original award date is retained. Download this copy to replace an earlier PDF.</p>}
                 <div className="grid gap-4 md:grid-cols-2">
                   <FieldCard label={awardTargetLabel} value={awardTarget} />
                   <FieldCard label="Certificate number" value={certificate.certificateNumber} />
@@ -298,6 +304,7 @@ export default function CertificateVerificationPage({ personal = false }: { pers
                       programmeName={awardTarget}
                       progressLabel={`${certificate.progressPercent}%`}
                       certificateNumber={certificate.certificateNumber}
+                      revisionLabel={revisionLabel}
                       awardedOn={formatDate(certificate.issuedAt)}
                       verificationUrl={verificationUrl}
                       layoutConfig={layoutConfig}
@@ -320,6 +327,7 @@ export default function CertificateVerificationPage({ personal = false }: { pers
             programmeName={awardTarget}
             progressLabel={`${certificate.progressPercent}%`}
             certificateNumber={certificate.certificateNumber}
+            revisionLabel={revisionLabel}
             awardedOn={formatDate(certificate.issuedAt)}
             verificationUrl={verificationUrl}
             layoutConfig={layoutConfig}

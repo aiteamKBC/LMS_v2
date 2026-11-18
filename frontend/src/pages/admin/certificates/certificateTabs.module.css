@@ -1,0 +1,66 @@
+/* Keep certificate navigation independent of the workspace's pill tab styles. */
+.page .tabs[role='tablist'][aria-label] {
+  display: flex;
+  align-items: stretch;
+  justify-content: center;
+  gap: 1.25rem;
+  padding: 0;
+  border: 0;
+  border-bottom: 1px solid var(--kbc-border, #e5e1ec);
+  border-radius: 0;
+  background: transparent;
+}
+
+.page .tabs .tab[role='tab'] {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  gap: 0.5rem;
+  width: auto;
+  min-width: 0;
+  min-height: 2.75rem;
+  margin-bottom: -1px;
+  padding: 0.625rem 0.5rem;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+  background: transparent;
+  color: oklch(var(--foreground-600));
+  box-shadow: none;
+  font-size: 0.875rem;
+  font-weight: 600;
+  line-height: 1.4;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: color 150ms, border-color 150ms;
+}
+
+.page .tabs .tab[role='tab']:hover {
+  color: oklch(var(--foreground-600));
+  border-bottom-color: oklch(var(--primary-200));
+}
+
+.page .tabs .tab[role='tab'][aria-selected='true'] {
+  border-bottom-color: var(--kbc-primary, #6d28d9);
+  background: transparent;
+  color: oklch(var(--foreground-600));
+  box-shadow: none;
+}
+
+.page .tabs .tab[role='tab']:focus-visible {
+  outline: 2px solid oklch(var(--primary-400));
+  outline-offset: -2px;
+  border-radius: 0.25rem 0.25rem 0 0;
+}
+
+.icon { flex-shrink: 0; }
+
+@media (max-width: 479px) {
+  .page .tabs[role='tablist'][aria-label] { gap: 0.5rem; }
+  .page .tabs .tab[role='tab'] { gap: 0.375rem; padding-inline: 0.25rem; font-size: 0.8125rem; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .page .tabs .tab[role='tab'] { transition: none; }
+}
