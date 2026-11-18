@@ -112,7 +112,7 @@ function EmployerFeedbackContent({ employerId, deliveryId }: { employerId: strin
         onClick={event => { if (['Changes waiting to save', 'Automatic save failed', 'Saving…'].includes(saveStatus) && !window.confirm('Leave with unsaved feedback changes?')) event.preventDefault(); }}>← {deliveryId ? 'Back to feedback' : 'Back to dashboard'}</Link>
       {!isEmployerViewer && <p className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm">Read-only preview. Only the assigned employer can submit feedback.</p>}
       {error && <div role="alert" className="rounded-lg border border-red-200 bg-red-50 p-4 text-sm">{error}{!form && <button className="ml-3 underline" onClick={() => setRefresh(value => value + 1)}>Retry</button>}</div>}
-      {loading && <p ><LoadingSkeleton label={"Loading feedback…"} /></p>}
+      {loading && <p ><LoadingSkeleton label="Loading feedback…" variant="rows" /></p>}
       {!loading && !deliveryId && items && <section className="rounded-xl border bg-white p-5">
         <div className="mb-5 flex items-center justify-between"><h1 className="text-xl font-bold">Your feedback requests</h1><button onClick={() => setRefresh(value => value + 1)} className="rounded-lg border px-3 py-2 text-sm">Refresh</button></div>
         {!items.length ? <p>No feedback assigned.</p> : <ul className="divide-y">{items.map(item => <li key={item.id} className="flex flex-wrap items-center justify-between gap-4 py-4">

@@ -279,7 +279,7 @@ export function ModuleTimeline<T extends DisplayTimelineModule>({ data, modules,
           </div></div>}
         </div>
       </div>
-      {inspected && detailLoading ? <aside className={layout.inspector} ><LoadingSkeleton label={"Loading module details…"} /></aside> : inspected && detailError ? <aside className={layout.inspector}><LearnerLoadError title="Could not load the latest module details" error={detailError} onRetry={onRetryDetail} retryLabel="Retry module details" /></aside> : inspected && <TimelineInspector module={inspected} coach={data.coach.name} href={canOpenActivities ? subjectHref(inspected.id) : undefined} onClose={closeInspector} />}
+      {inspected && detailLoading ? <aside className={layout.inspector} ><LoadingSkeleton label="Loading module details…" variant="rows" /></aside> : inspected && detailError ? <aside className={layout.inspector}><LearnerLoadError title="Could not load the latest module details" error={detailError} onRetry={onRetryDetail} retryLabel="Retry module details" /></aside> : inspected && <TimelineInspector module={inspected} coach={data.coach.name} href={canOpenActivities ? subjectHref(inspected.id) : undefined} onClose={closeInspector} />}
     </div>
   </section>;
   return fullscreen ? <><div aria-hidden="true" style={{ height: placeholderHeight.current }} /><Modal title="Programme timeline" size="max-w-none" className={layout.fullscreen} onClose={() => { saveScroll(); setFullscreen(false); }} returnFocusRef={fullButton}>

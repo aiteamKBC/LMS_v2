@@ -274,7 +274,7 @@ function LmsSourceLibrary({ real }: { real: LearnerDetail | null }) {
       </div>
 
       {loading ? (
-        <div className="p-6"><LoadingSkeleton label={"Loading LMS components..."} /></div>
+        <div className="p-6"><LoadingSkeleton label="Loading LMS components..." variant="rows" /></div>
       ) : error ? (
         <div className="p-6"><EmptyState text={error} /></div>
       ) : !student ? (

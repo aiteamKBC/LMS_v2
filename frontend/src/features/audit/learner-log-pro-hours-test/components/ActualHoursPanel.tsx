@@ -310,7 +310,7 @@ export function ActualHoursPanel({ aptemId, month, learnerName }: {
           changes an active value.
         </p>
       ) : summary.isLoading ? (
-        <p className="px-6 py-5 text-xs text-muted-foreground"><LoadingSkeleton label={"Loading the review…"} /></p>
+        <p className="px-6 py-5 text-xs text-muted-foreground"><LoadingSkeleton label="Loading the review…" variant="rows" /></p>
       ) : summary.error ? (
         <p className="px-6 py-5 text-xs text-red-600">
           {summary.error instanceof Error ? summary.error.message : "Could not load the review."}

@@ -46,7 +46,7 @@
     place-items: center !important;
     margin: 0 !important;
     border: 1px solid var(--crumb-line) !important;
-    border-radius: 9px !important;
+    border-radius: var(--lms-radius, 16px) !important;
     background: transparent !important;
     color: var(--crumb-text) !important;
   }
@@ -70,7 +70,7 @@
   .workspace-breadcrumbs .workspace-breadcrumb-step > :is(a, span) {
     display: block;
     padding: 7px 10px !important;
-    border-radius: 9px !important;
+    border-radius: var(--lms-radius, 16px) !important;
     color: var(--crumb-text) !important;
     text-decoration: none !important;
     font-size: 12px !important;

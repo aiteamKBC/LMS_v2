@@ -989,7 +989,7 @@ function ReviewInstanceContent({
             <div className="min-w-0">
               <p className="text-[12px] font-bold uppercase tracking-[0.16em] text-secondary-200">Complete review</p>
               <h1 className="mt-1 max-w-4xl text-xl font-bold leading-tight text-white sm:text-2xl lg:text-[28px]">
-                {definition ? (definition.source === 'aptem' && definition.instance.occurrenceNumber == null ? reviewName : `${headingLabel} #${definition.instance.occurrenceNumber}`) : <LoadingSkeleton label={'Loading review...'} />}
+                {definition ? (definition.source === 'aptem' && definition.instance.occurrenceNumber == null ? reviewName : `${headingLabel} #${definition.instance.occurrenceNumber}`) : <LoadingSkeleton label="Loading review..." variant="text" />}
               </h1>
               <p className="mt-1 text-[13px] text-white/60">{isViewingAsCoach
                 ? 'Admin view-as mode is read-only.'
@@ -1038,7 +1038,7 @@ function ReviewInstanceContent({
 
       <div className={pageMode ? 'space-y-5 bg-[#f8f7fc] p-4 sm:p-6 lg:p-8' : 'flex-1 space-y-3 overflow-y-auto bg-background-100 p-4 sm:p-6'}>
         {loading ? (
-          <div className="flex items-center justify-center gap-2 py-16 text-sm text-foreground-400"><LoadingSkeleton label={"Loading review..."} /></div>
+          <div className="flex items-center justify-center gap-2 py-16 text-sm text-foreground-400"><LoadingSkeleton label="Loading review..." variant="rows" /></div>
         ) : null}
 
         {!loading && definition ? (
@@ -1303,7 +1303,7 @@ function ReviewInstanceContent({
                     className="inline-flex h-9 shrink-0 items-center justify-center gap-2 rounded-lg border border-primary-300 bg-primary-50 px-3 text-[12px] font-bold text-primary-700 shadow-sm transition hover:bg-primary-100 disabled:cursor-wait disabled:opacity-60"
                   >
                     <AppIcon className={previousSessionLoading ? 'ri-loader-4-line animate-spin' : 'ri-history-line'} />
-                    {previousSessionLoading ? 'Loading previous session...' : previousSessionOpen ? 'Refresh previous session' : 'View previous session'}
+                    {previousSessionLoading ? <LoadingSkeleton label="Loading previous session..." variant="text" /> : previousSessionOpen ? 'Refresh previous session' : 'View previous session'}
                   </button>
                 </div>
 

@@ -55,7 +55,7 @@ export default function LearnerLearningPlanPage() {
             Back to Overview
           </Link>
           {loading ? (
-            <span className="text-xs font-medium text-foreground-400"><LoadingSkeleton label={"Loading your plan…"} /></span>
+            <span className="text-xs font-medium text-foreground-400"><LoadingSkeleton label="Loading your plan…" variant="text" /></span>
           ) : (
             <span className="text-xs font-medium text-foreground-500">
               {journey.length} {journey.length === 1 ? 'module' : 'modules'} in your plan

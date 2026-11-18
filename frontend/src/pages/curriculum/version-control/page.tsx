@@ -417,7 +417,7 @@ function RevisionCard({ revision, versionLabel, snapshotOpen, snapshot, onToggle
               {JSON.stringify(snapshot.content, null, 2)}
             </pre>
           ) : (
-            <p className="text-[11px] text-foreground-400"><LoadingSkeleton label={"Loading the stored content…"} /></p>
+            <p className="text-[11px] text-foreground-400"><LoadingSkeleton label="Loading the stored content…" variant="rows" /></p>
           )}
         </div>
       )}

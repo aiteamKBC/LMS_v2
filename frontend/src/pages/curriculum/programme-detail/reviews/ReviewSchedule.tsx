@@ -89,7 +89,7 @@ export function ReviewSchedulePanel({ programmeId }: { programmeId: string }) {
       {error && <InlineError message={error} onRetry={() => void load()} />}
 
       {loading && (
-        <div className="flex items-center justify-center gap-2 py-10 text-[12px] font-semibold text-foreground-400"><LoadingSkeleton label={"Loading schedule..."} /></div>
+        <div className="flex items-center justify-center gap-2 py-10 text-[12px] font-semibold text-foreground-400"><LoadingSkeleton label="Loading schedule..." variant="rows" /></div>
       )}
 
       {!loading && !error && months && months.length === 0 && (

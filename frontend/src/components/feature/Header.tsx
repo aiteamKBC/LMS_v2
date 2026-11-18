@@ -1,3 +1,4 @@
+import { LoadingLabel } from '@/components/feature/LoadingSkeleton';
 import { useState, useRef, useEffect, useLayoutEffect, useCallback, type ReactNode, type RefObject } from 'react';
 import { Link } from 'react-router-dom';
 import { createPortal } from 'react-dom';
@@ -290,7 +291,7 @@ export function Header({ accountButtonRef, pageTitle, pageIcon, pageSubtitle, he
   return (
     <>
     {/* Every workspace shares the same frame as its icon rail. */}
-    <header data-enrolment-header={usesEnrolmentHeader || undefined} className={`kbc-workspace-topbar workspace-topbar relative mx-2 mb-2 mt-2 flex h-16 shrink-0 items-center gap-2 overflow-visible rounded-[20px] border-b border-foreground-100 bg-background-50 px-2 sm:px-3 md:gap-3 md:px-4 lg:ml-0 lg:mr-3 lg:mt-3 lg:gap-4 lg:px-5 [&_.kbc-workspace-switcher-button]:h-10 [&_.kbc-workspace-switcher-button]:gap-2.5 [&_.kbc-workspace-switcher-button]:px-3 [&_.kbc-workspace-switcher-button]:focus-visible:outline-none [&_.kbc-workspace-switcher-button]:focus-visible:ring-2 [&_.kbc-workspace-switcher-button]:focus-visible:ring-white/80 ${role === 'coach' ? 'z-40' : ''} ${usesLearnerHeader ? 'kbc-learner-header' : ''}`}>
+    <header data-enrolment-header={usesEnrolmentHeader || undefined} className={`kbc-workspace-topbar workspace-topbar relative mx-2 mb-2 mt-2 flex h-16 shrink-0 items-center gap-2 overflow-visible rounded-2xl border-b border-foreground-100 bg-background-50 px-2 sm:px-3 md:gap-3 md:px-4 lg:ml-0 lg:mr-3 lg:mt-3 lg:gap-4 lg:px-5 [&_.kbc-workspace-switcher-button]:h-10 [&_.kbc-workspace-switcher-button]:gap-2.5 [&_.kbc-workspace-switcher-button]:px-3 [&_.kbc-workspace-switcher-button]:focus-visible:outline-none [&_.kbc-workspace-switcher-button]:focus-visible:ring-2 [&_.kbc-workspace-switcher-button]:focus-visible:ring-white/80 ${role === 'coach' ? 'z-40' : ''} ${usesLearnerHeader ? 'kbc-learner-header' : ''}`}>
       {usesLearnerHeader && (
         <div
           aria-hidden="true"
@@ -329,9 +330,9 @@ export function Header({ accountButtonRef, pageTitle, pageIcon, pageSubtitle, he
             {pageIcon ?? <AppIcon className="ri-dashboard-line h-5 w-5" />}
           </span>
           <div className="min-w-0">
-            <p className="kbc-topbar-title truncate font-heading text-[15px] font-bold leading-tight tracking-tight text-foreground-900">{pageTitle}</p>
+            <p className="kbc-topbar-title truncate font-heading text-[15px] font-bold leading-tight tracking-tight text-foreground-900"><LoadingLabel>{pageTitle}</LoadingLabel></p>
             {pageSubtitle && (
-              <p className={`${usesLearnerHeader ? 'hidden sm:block' : ''} kbc-topbar-subtitle mt-1 truncate text-[11.5px] leading-tight text-foreground-400`}>{pageSubtitle}</p>
+              <p className={`${usesLearnerHeader ? 'hidden sm:block' : ''} kbc-topbar-subtitle mt-1 truncate text-[11.5px] leading-tight text-foreground-400`}><LoadingLabel>{pageSubtitle}</LoadingLabel></p>
             )}
           </div>
         </div>

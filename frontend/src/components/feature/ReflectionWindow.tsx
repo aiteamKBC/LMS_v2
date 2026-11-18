@@ -960,7 +960,7 @@ function ReflectionWindowForm({
       </div>
 
       {loadingExisting && (
-        <div className="border-t border-[#d7e0e8] bg-white px-5 py-3 text-sm text-[#607086] md:px-8"><LoadingSkeleton label={"Loading your saved reflection..."} /></div>
+        <div className="border-t border-[#d7e0e8] bg-white px-5 py-3 text-sm text-[#607086] md:px-8"><LoadingSkeleton label="Loading your saved reflection..." variant="rows" /></div>
       )}
 
       {submissionLocked && (

@@ -574,7 +574,7 @@ export default function EventsPage() {
                 <button onClick={() => setAttendanceEventId(null)} className="w-8 h-8 rounded-lg flex items-center justify-center text-foreground-400 hover:bg-background-100 transition-smooth cursor-pointer"><AppIcon className="ri-close-line"></AppIcon></button>
               </div>
 
-              {attendanceLoading && <p className="text-[11px] text-foreground-400 text-center py-8"><LoadingSkeleton label={"Loading roster…"} /></p>}
+              {attendanceLoading && <p className="text-[11px] text-foreground-400 text-center py-8"><LoadingSkeleton label="Loading roster…" variant="rows" /></p>}
 
               {!attendanceLoading && (
                 <>

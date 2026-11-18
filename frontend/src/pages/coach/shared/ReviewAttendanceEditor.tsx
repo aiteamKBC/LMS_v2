@@ -80,7 +80,7 @@ export function ReviewAttendanceEditor({ eventKey, attendance, onLinkChange, chi
   };
   return <>
     {children(context?.attendance || attendance, controls)}
-    {loading && <p  className="mt-2 text-xs text-foreground-500"><LoadingSkeleton label={"Loading attendance corrections…"} /></p>}
+    {loading && <p  className="mt-2 text-xs text-foreground-500"><LoadingSkeleton label="Loading attendance corrections…" variant="rows" /></p>}
     {error && <div role="alert" className="mt-2 rounded-md bg-amber-50 p-3 text-xs text-amber-900">{error} <button type="button" className={button} disabled={busy} onClick={() => setRevision(n => n + 1)}>Reload attendance</button></div>}
     {context?.activeLinks.map(link => <div key={link.id} className="mt-2 rounded-lg border border-primary-100 p-3 text-xs">
       <p className="font-semibold">{link.targetRole === 'employer' ? 'Employer' : 'Learner'}{link.targetName ? ` — ${link.targetName}` : ''}</p>

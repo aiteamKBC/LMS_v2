@@ -1,7 +1,7 @@
 import { useState, useRef, useCallback, type CSSProperties, type ReactNode, useEffect } from 'react';
 import { useLocation, useNavigate, Link } from 'react-router-dom';
-import { Sidebar, SidebarIcon, SIDEBAR_RAIL_WIDTH, SIDEBAR_EXPANDED_WIDTH, SIDEBAR_CONTENT_GAP, type SidebarNavItem } from './Sidebar';
-import { LEARNER_SIDEBAR_COLLAPSED_WIDTH, LEARNER_SIDEBAR_WIDTH } from './learnerShellAssets';
+import { Sidebar, SidebarIcon, type SidebarNavItem } from './Sidebar';
+import { WORKSPACE_SIDEBAR_WIDTH } from './learnerShellAssets';
 import { CoachViewAsBar } from './CoachViewAsBar';
 import { CoachSidebar } from './CoachSidebar';
 import { Header } from './Header';
@@ -56,59 +56,6 @@ interface BreadcrumbItem {
 }
 
 const ROUTE_HISTORY_KEY = 'lmsRouteHistory';
-const SIDEBAR_PINNED_KEY = 'kbc_sidebar_pinned';
-const COACH_SIDEBAR_COLLAPSED_KEY = 'kbc_coach_sidebar_collapsed';
-const LEARNER_SIDEBAR_COLLAPSED_KEY = 'kbc_learner_sidebar_collapsed';
-const CURRICULUM_SIDEBAR_COLLAPSED_KEY = 'kbc_curriculum_sidebar_collapsed';
-const ADVANCED_ADMIN_SIDEBAR_COLLAPSED_KEY = 'kbc_advanced_admin_sidebar_collapsed';
-const COACH_SIDEBAR_WIDTH = 240;
-const COACH_SIDEBAR_COLLAPSED_WIDTH = LEARNER_SIDEBAR_COLLAPSED_WIDTH;
-
-/**
- * Whether the sidebar's secondary navigation is open.
- *
- * Held here rather than inside the sidebar because the shell has to reserve the
- * matching width, including the outer inset and content gap.
- */
-function readPinnedPreference() {
-  try {
-    return localStorage.getItem(SIDEBAR_PINNED_KEY) === 'true';
-  } catch {
-    return false;
-  }
-}
-
-function readCoachSidebarCollapsed() {
-  try {
-    return localStorage.getItem(COACH_SIDEBAR_COLLAPSED_KEY) === 'true';
-  } catch {
-    return false;
-  }
-}
-
-function readLearnerSidebarCollapsed() {
-  try {
-    return localStorage.getItem(LEARNER_SIDEBAR_COLLAPSED_KEY) === 'true';
-  } catch {
-    return false;
-  }
-}
-
-function readCurriculumSidebarCollapsed() {
-  try {
-    return localStorage.getItem(CURRICULUM_SIDEBAR_COLLAPSED_KEY) === 'true';
-  } catch {
-    return false;
-  }
-}
-
-function readAdvancedAdminSidebarCollapsed() {
-  try {
-    return localStorage.getItem(ADVANCED_ADMIN_SIDEBAR_COLLAPSED_KEY) === 'true';
-  } catch {
-    return false;
-  }
-}
 
 function readRouteHistory() {
   try {
@@ -223,8 +170,7 @@ export function WorkspaceShell({
   const { auth, isAdmin } = useAuth();
   const location = useLocation();
   // `appearance="learner"` is a complete shell mode, not just a colour skin.
-  // Employer portal pages borrow that chrome, so their reserved content width
-  // must follow the same 240px/64px sidebar state as a learner workspace.
+  // Employer portal pages borrow that chrome and reserve the same expanded width.
   const usesLearnerSidebar = role !== 'coach' && (appearance ?? role) === 'learner';
   const fullHeightNavigation = usesLearnerSidebar || role === 'advanced-admin' || role === 'curriculum';
   const personalContext = activePersonalLearning(location.pathname);
@@ -289,47 +235,6 @@ export function WorkspaceShell({
   const mobileBodyOverflowRef = useRef<string | null>(null);
   const mobileFocusTimerRef = useRef<number | null>(null);
   const accountButtonRef = useRef<HTMLButtonElement>(null);
-  const [sidebarPinned, setSidebarPinned] = useState(readPinnedPreference);
-  const [coachSidebarCollapsed, setCoachSidebarCollapsed] = useState(readCoachSidebarCollapsed);
-  const [learnerSidebarCollapsed, setLearnerSidebarCollapsed] = useState(readLearnerSidebarCollapsed);
-  const [curriculumSidebarCollapsed, setCurriculumSidebarCollapsed] = useState(readCurriculumSidebarCollapsed);
-  const [advancedAdminSidebarCollapsed, setAdvancedAdminSidebarCollapsed] = useState(readAdvancedAdminSidebarCollapsed);
-
-  const handlePinChange = (pinned: boolean) => {
-    setSidebarPinned(pinned);
-    try {
-      localStorage.setItem(SIDEBAR_PINNED_KEY, String(pinned));
-    } catch { /* Ignore unavailable browser storage. */ }
-  };
-
-  const handleCoachSidebarCollapsedChange = (collapsed: boolean) => {
-    setCoachSidebarCollapsed(collapsed);
-    try {
-      localStorage.setItem(COACH_SIDEBAR_COLLAPSED_KEY, String(collapsed));
-    } catch { /* Ignore unavailable browser storage. */ }
-  };
-
-  const handleLearnerSidebarCollapsedChange = (collapsed: boolean) => {
-    setLearnerSidebarCollapsed(collapsed);
-    try {
-      localStorage.setItem(LEARNER_SIDEBAR_COLLAPSED_KEY, String(collapsed));
-    } catch { /* Ignore unavailable browser storage. */ }
-  };
-
-  const handleCurriculumSidebarCollapsedChange = (collapsed: boolean) => {
-    setCurriculumSidebarCollapsed(collapsed);
-    try {
-      localStorage.setItem(CURRICULUM_SIDEBAR_COLLAPSED_KEY, String(collapsed));
-    } catch { /* Ignore unavailable browser storage. */ }
-  };
-
-  const handleAdvancedAdminSidebarCollapsedChange = (collapsed: boolean) => {
-    setAdvancedAdminSidebarCollapsed(collapsed);
-    try {
-      localStorage.setItem(ADVANCED_ADMIN_SIDEBAR_COLLAPSED_KEY, String(collapsed));
-    } catch { /* Ignore unavailable browser storage. */ }
-  };
-
   const displayName = (isAdminDirectory ? auth.account?.displayName || auth.user?.fullName : userName) || auth.user?.fullName || 'User';
   const displayRole = personal ? 'Admin · Learner' : userRole || auth.roles?.[0]?.name || roleLabel;
   const defaultWorkspaceLabel = workspaceLabel || roleLabel + ' Workspace';
@@ -479,19 +384,10 @@ export function WorkspaceShell({
       // The offset itself is applied under a `lg` media query in index.css —
       // below that breakpoint the sidebar is an off-canvas drawer and must
       // reserve nothing.
-      style={{ '--kbc-sidebar-width': fullHeightNavigation
-        ? `${(role === 'advanced-admin'
-          ? advancedAdminSidebarCollapsed
-          : role === 'curriculum'
-            ? curriculumSidebarCollapsed
-            : learnerSidebarCollapsed) ? LEARNER_SIDEBAR_COLLAPSED_WIDTH : LEARNER_SIDEBAR_WIDTH}px`
-        : role === 'coach'
-        ? `${coachSidebarCollapsed ? COACH_SIDEBAR_COLLAPSED_WIDTH : COACH_SIDEBAR_WIDTH}px`
-        : `${(sidebarPinned ? SIDEBAR_EXPANDED_WIDTH : SIDEBAR_RAIL_WIDTH) + SIDEBAR_CONTENT_GAP}px` } as CSSProperties}
+      style={{ '--kbc-sidebar-width': `${WORKSPACE_SIDEBAR_WIDTH}px` } as CSSProperties}
     >
       {role === 'coach' ? <CoachSidebar navItems={navItems} userName={displayName} userRole={displayRole}
         mobileOpen={mobileSidebarOpen} onCloseMobile={closeMobileSidebar}
-        collapsed={coachSidebarCollapsed} onCollapsedChange={handleCoachSidebarCollapsedChange}
         onOpenAccount={() => { accountButtonRef.current?.focus(); accountButtonRef.current?.click(); }} /> : <Sidebar
         role={role}
         appearance={appearance}
@@ -499,18 +395,6 @@ export function WorkspaceShell({
         navItems={workspaceNavItems}
         userName={displayName}
         userRole={displayRole}
-        pinned={sidebarPinned}
-        onPinChange={handlePinChange}
-        learnerCollapsed={role === 'advanced-admin'
-          ? advancedAdminSidebarCollapsed
-          : role === 'curriculum'
-            ? curriculumSidebarCollapsed
-            : learnerSidebarCollapsed}
-        onLearnerCollapsedChange={role === 'advanced-admin'
-          ? handleAdvancedAdminSidebarCollapsedChange
-          : role === 'curriculum'
-            ? handleCurriculumSidebarCollapsedChange
-            : handleLearnerSidebarCollapsedChange}
         mobileOpen={mobileSidebarOpen}
         onCloseMobile={() => setMobileSidebarOpen(false)}
       />}
@@ -538,7 +422,7 @@ export function WorkspaceShell({
             appearance={appearance}
             workspaceLabel={personal ? 'Learner' : roleLabel}
             personalLearning={Boolean(personal)}
-            sidebarSignOut={appearance === 'learner' || role === 'curriculum'}
+            sidebarSignOut
           />
         )}
 

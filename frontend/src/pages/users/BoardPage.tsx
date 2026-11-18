@@ -821,7 +821,7 @@ function ComplianceDocuments({ kind, learnerId, programme }: { kind: LearnerKind
     <>
       <p className="text-[11px] font-semibold text-foreground-500 uppercase tracking-wider mb-2">{programme || 'Programme Name'}</p>
       {err && <p className="text-[12px] text-red-600 mb-2"><i className="ri-error-warning-line mr-1" />{err}</p>}
-      {!loaded && !err && <p className="text-[12px] text-foreground-400 py-2"><LoadingSkeleton label={"Loading documents…"} /></p>}
+      {!loaded && !err && <p className="text-[12px] text-foreground-400 py-2"><LoadingSkeleton label="Loading documents…" variant="rows" /></p>}
       {loaded && docs !== null && docs.length === 0 && !agreement && !ilr && !plan && !written && <EmptyState text="No documents" />}
       {/* Until the agreement is issued neither party can sign it, and it does
           not appear in the employer's portal — so offer it here. */}
@@ -1188,7 +1188,7 @@ function ReviewDocuments({ kind, learnerId, programme }: { kind: LearnerKind; le
     <>
       <p className="text-[11px] font-semibold text-foreground-500 uppercase tracking-wider mb-2">{programme || 'Programme Name'}</p>
       {err && <p role="alert" className="text-[12px] text-red-600 mb-2"><i className="ri-error-warning-line mr-1" />{err}</p>}
-      {reviews === null && !err && <p className="text-[12px] text-foreground-400 py-2"><LoadingSkeleton label={"Loading reviews…"} /></p>}
+      {reviews === null && !err && <p className="text-[12px] text-foreground-400 py-2"><LoadingSkeleton label="Loading reviews…" variant="rows" /></p>}
       {reviews !== null && reviews.length === 0 && <EmptyState text="No enrolment reviews for this learner" />}
       {reviews !== null && reviews.length > 0 && (
         <div className="space-y-2">
@@ -1304,7 +1304,7 @@ export default function BoardPage() {
     return (
       <WorkspaceShell role="compliance" roleLabel={enrolmentNav.label} navItems={enrolmentNav.items} workspaceLabel={enrolmentNav.workspaceLabel} pageTitle="Enrolment Details" pageSubtitle="" userName="Enrolment Officer" userRole="Enrolment Officer" directoryLayout>
         <div className="p-6 max-w-6xl mx-auto">
-          {loading && <div className="py-20 text-center text-[13px] text-foreground-400"><LoadingSkeleton label={"Loading profile…"} /></div>}
+          {loading && <div className="py-20 text-center text-[13px] text-foreground-400"><LoadingSkeleton label="Loading profile…" variant="rows" /></div>}
           {!loading && error && (
             <div className="py-20 text-center text-[13px]">
               <p className="text-red-600 mb-3"><i className="ri-error-warning-line mr-1.5" />{error}</p>

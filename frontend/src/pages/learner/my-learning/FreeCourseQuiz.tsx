@@ -50,7 +50,7 @@ export function FreeCourseQuiz({ kind, learnerId, componentId, quizId, onPassed 
       </div>
     );
   }
-  if (!quiz) return <p  className="p-3 text-sm text-foreground-500"><LoadingSkeleton label={"Loading quiz…"} /></p>;
+  if (!quiz) return <p  className="p-3 text-sm text-foreground-500"><LoadingSkeleton label="Loading quiz…" variant="rows" /></p>;
   if (quiz.unavailableReason) return <p role="alert" className="p-3 text-sm text-red-700">{quiz.unavailableReason}</p>;
 
   if (result) {

@@ -1,4 +1,4 @@
-import { LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
+import { LoadingControl, LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
 import { AssignedLearners, LearnerDirectoryProvider } from '../shared/entities/AssignedLearners';
 import { useWeekPointDrafts, type WeekPointDrafts } from './useWeekPointDrafts';
 import { WebWeekPointsEditor } from './WebWeekPointsEditor';
@@ -4116,7 +4116,7 @@ function ModuleBuilderContent() {
               <div className="min-w-0">
                 <h2 className="text-lg font-heading font-bold text-foreground-950">Module Builder</h2>
                 <p className="mt-1 max-w-2xl text-[12px] leading-5 text-foreground-500">
-                  {loading ? <LoadingSkeleton label={'Loading live LMS modules...'} /> : 'Manage module structures, delivery scope and KSB mapping in one workspace.'}
+                  {loading ? <LoadingSkeleton label="Loading live LMS modules..." variant="text" /> : 'Manage module structures, delivery scope and KSB mapping in one workspace.'}
                 </p>
               </div>
             </div>
@@ -4671,7 +4671,7 @@ function WorkspaceHeader({ module, programmeOptions, hierarchy, ksbProfileOption
           </div>
           <div className="block min-w-0">
             <span className="mb-1 block text-[9px] font-bold uppercase tracking-wide text-foreground-400">KSB source</span>
-            <SelectMenu
+            {<LoadingControl loading={(standardsLoading)}><SelectMenu
               ariaLabel="KSB source"
               value={ksbProfileValue}
               disabled={programmeLocked}
@@ -4683,7 +4683,7 @@ function WorkspaceHeader({ module, programmeOptions, hierarchy, ksbProfileOption
               placeholder={standardsLoading ? 'Loading standards...' : 'No source selected'}
               clearable
               size="sm"
-            />
+            /></LoadingControl>}
             {programmeLocked && <span className="mt-0.5 block text-[9px] font-semibold text-foreground-400">Locked to programme KSB source</span>}
           </div>
           <div className="block min-w-0">
@@ -5739,7 +5739,7 @@ function OpeningModuleAlert({ title, mode, complete }: { title: string; mode: 'b
     <div className="fixed inset-0 z-[90] flex items-center justify-center bg-black/40 p-4 backdrop-blur-sm" aria-live="polite" aria-busy="true">
       <div className="w-full max-w-md overflow-hidden rounded-2xl border border-white/10 bg-background-50 text-center shadow-2xl">
         <div className="p-6">
-          <LoadingSkeleton label={`Opening ${title} ${isSettings ? 'settings' : 'builder'}`} className="w-full" />
+          <LoadingSkeleton label={`Opening ${title} ${isSettings ? 'settings' : 'builder'}`} className="w-full" variant="rows" />
           <div aria-hidden="true" className="mt-5 rounded-xl border border-background-200 bg-background-100/70 p-3 text-left">
             <LoadingProgressBar complete={complete} />
           </div>
@@ -6745,7 +6745,7 @@ function LinkedQuizSelector({
         </div>
       ) : (
         <div className="rounded-xl border border-dashed border-background-300 bg-background-50 px-3 py-4 text-center text-[12px] font-semibold text-foreground-500">
-          {loading ? <LoadingSkeleton label={'Loading LMS quizzes...'} /> : 'No quiz selected. Choose any available LMS quiz from the list above.'}
+          {loading ? <LoadingSkeleton label="Loading LMS quizzes..." variant="text" /> : 'No quiz selected. Choose any available LMS quiz from the list above.'}
         </div>
       )}
       <div className="rounded-xl border border-background-200 bg-background-50">
@@ -7803,7 +7803,7 @@ function KsbSelectorModal({ standards, standardsLoading, ksbSets, ksbSetsLoading
             })}
             {!sourceLocked && !resolvedSelectedSource && <EmptyState text="Choose a KSB Source from the module-level dropdown first." />}
             {sourceLocked && !resolvedSelectedSource && (ksbSetsLoading || standardsLoading
-              ? <LoadingSkeleton label="Loading the selected KSB Source" />
+              ? <LoadingSkeleton label="Loading the selected KSB Source" variant="rows" />
               : <EmptyState text="The selected KSB Source is no longer available." />)}
             {resolvedSelectedSource && !sourceKsbOptions.length && <EmptyState text="No KSBs are available for this selection." />}
             {resolvedSelectedSource && Boolean(sourceKsbOptions.length) && !filteredKsbOptions.length && <EmptyState text="No KSBs match your search or filter." />}
@@ -8756,7 +8756,7 @@ function ModuleCatalogueCard({
             className="inline-flex h-9 min-w-[126px] items-center justify-center gap-1.5 rounded-lg border border-background-200 bg-background-50 px-3 text-[11px] font-bold text-foreground-700 transition-all duration-150 hover:border-primary-200 hover:bg-primary-50 hover:text-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-100 focus:ring-offset-1 active:translate-y-px disabled:cursor-wait disabled:border-primary-200 disabled:bg-primary-50 disabled:text-primary-700 disabled:shadow-inner"
           >
             <AppIcon name={ksbMapLoading ? 'ri-loader-4-line' : 'ri-node-tree'} className={ksbMapLoading ? 'animate-spin' : ''} size={15}></AppIcon>
-            {ksbMapLoading ? 'Loading module KSBs...' : 'Review module KSBs'}
+            {ksbMapLoading ? <LoadingSkeleton label="Loading module KSBs..." variant="text" /> : 'Review module KSBs'}
           </button>
         </div>
         <div className={catalogueStyles.secondaryActions}>

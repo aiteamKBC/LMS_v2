@@ -485,7 +485,7 @@ export default function PointsRulesPage() {
               {logsLoading ? (
                 <div className="p-8 flex flex-col items-center justify-center text-center gap-2">
                   <AppIcon className="ri-loader-4-line text-2xl text-foreground-300 animate-spin"></AppIcon>
-                  <p className="text-[12px] font-semibold text-foreground-700"><LoadingSkeleton label={"Loading grant history…"} /></p>
+                  <p className="text-[12px] font-semibold text-foreground-700"><LoadingSkeleton label="Loading grant history…" variant="rows" /></p>
                 </div>
               ) : logsEntries.length === 0 ? (
                 <div className="p-8 flex flex-col items-center justify-center text-center gap-2">

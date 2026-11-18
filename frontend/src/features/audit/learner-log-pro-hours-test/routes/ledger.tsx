@@ -105,7 +105,7 @@ function LedgerPage() {
         {!ref ? (
           <p className="py-10 text-center text-sm text-muted-foreground">No activity reference was provided.</p>
         ) : ledger.isLoading ? (
-          <p className="py-10 text-center text-sm text-muted-foreground"><LoadingSkeleton label={"Loading activity ledger…"} /></p>
+          <p className="py-10 text-center text-sm text-muted-foreground"><LoadingSkeleton label="Loading activity ledger…" variant="rows" /></p>
         ) : ledger.isError ? (
           <p className="py-10 text-center text-sm text-destructive">{ledger.error instanceof Error ? ledger.error.message : "Could not load the activity ledger."}</p>
         ) : activity ? (

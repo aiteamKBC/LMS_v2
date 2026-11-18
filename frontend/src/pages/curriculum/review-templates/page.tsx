@@ -115,7 +115,7 @@ export default function ReviewTemplatesPage() {
         </div>
         {error && <div role="alert" className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">{error} <button className={buttonClass} disabled={disabled} onClick={() => void load()}>Reload</button></div>}
         {notice && <p role="status" className="rounded-xl bg-emerald-50 p-3 text-sm text-emerald-800">{notice}</p>}
-        {loading && <p ><LoadingSkeleton label={"Loading templates…"} /></p>}
+        {loading && <p ><LoadingSkeleton label="Loading templates…" variant="rows" /></p>}
         {library && <>
           {!editable && <p className="text-sm text-foreground-500">Read-only access. Template changes require Curriculum or administrator access.</p>}
           <section aria-labelledby="standard-templates-heading" className="space-y-4">

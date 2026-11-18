@@ -125,7 +125,7 @@ export default function FirstSessionBookingsPage() {
       directoryLayout
       heroBlurb="Every first-session booking — when the learner booked it, when the session is, and its Teams link. Cancelled and past bookings are included."
       heroMetadata={<p className={styles.summary}>
-        {loading ? <LoadingSkeleton label={'Loading first sessions…'} /> : error ? 'Session summary unavailable' : <>
+        {loading ? <LoadingSkeleton label="Loading first sessions…" variant="text" /> : error ? 'Session summary unavailable' : <>
           <span className={styles.summaryBadge}><span aria-hidden="true" />{bookings.filter(booking => booking.state === 'scheduled').length} scheduled</span>
           <span>{bookings.length} bookings · {bookings.filter(booking => booking.state === 'requested').length} awaiting approval · {bookings.filter(booking => booking.state === 'completed').length} completed</span>
         </>}
@@ -166,7 +166,7 @@ export default function FirstSessionBookingsPage() {
         </fieldset>
         </div>
         <div className={styles.filterFooter}>
-        <p aria-live="polite">{loading ? <LoadingSkeleton label={'Loading first sessions…'} /> : error ? 'First sessions could not be loaded.' : <>Showing <strong>{shown.length}</strong> of <strong>{bookings.length}</strong> sessions</>}</p>
+        <p aria-live="polite">{loading ? <LoadingSkeleton label="Loading first sessions…" variant="text" /> : error ? 'First sessions could not be loaded.' : <>Showing <strong>{shown.length}</strong> of <strong>{bookings.length}</strong> sessions</>}</p>
         <button
           type="button"
           onClick={clearFilters}

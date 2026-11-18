@@ -133,7 +133,14 @@ export function EmployerAssignmentsTab({ employerId, kind, learnerId, learnerNam
 
   if (!assignments) {
     return (
-      <div className="flex min-h-[18rem] items-center justify-center py-16"><LoadingSkeleton label={"Loading assignments"} className="w-64" /></div>
+      <div
+
+
+
+        className="min-h-[18rem] py-6"
+      >
+        <LoadingSkeleton label="Loading assignments" variant="cards" />
+      </div>
     );
   }
 

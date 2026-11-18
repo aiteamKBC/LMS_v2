@@ -31,7 +31,7 @@ function NativeActivity({ learnerId, entry }: { learnerId: number; entry: Subjec
   }, [learnerId, componentId]);
   if (!componentId) return <p className="p-5 text-sm text-foreground-500">This activity has no linked player.</p>;
   if (error) return <p role="alert" className="p-5 text-sm text-red-700">{error}</p>;
-  if (!component) return <p  className="p-5 text-sm"><LoadingSkeleton label={"Loading activity…"} /></p>;
+  if (!component) return <p  className="p-5 text-sm"><LoadingSkeleton label="Loading activity…" variant="rows" /></p>;
   const fileUrl = (slot: string, original: string | null | undefined) => original?.startsWith('/curriculum_api/curriculum/uploads/')
     ? advancedAdminComponentFileUrl(learnerId, componentId, slot) : /^https?:\/\//i.test(original || '') ? original! : '';
   const files = component.files || [];

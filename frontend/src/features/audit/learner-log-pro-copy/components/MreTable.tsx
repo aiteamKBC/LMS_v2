@@ -112,7 +112,7 @@ export function MreTable({
             <TableBody>
               {addingActivity && addLearner ? <InlineActivityCreateRow learnerId={Number(addLearner.learner_id)} learnerName={addLearner.learner} onCancel={() => setAddingActivity(false)} /> : null}
               {query.isLoading && (
-                <TableRow><TableCell colSpan={10} className="py-10 text-center text-sm text-muted-foreground"><LoadingSkeleton label={"Loading learner data from Neon…"} /></TableCell></TableRow>
+                <TableRow><TableCell colSpan={10} className="py-10 text-center text-sm text-muted-foreground"><LoadingSkeleton label="Loading learner data from Neon…" variant="rows" /></TableCell></TableRow>
               )}
               {items.map((activity) => (
                 <InlineActivityRow key={activity.id} row={activity} />

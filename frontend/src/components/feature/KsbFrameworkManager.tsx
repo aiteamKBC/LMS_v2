@@ -1,4 +1,4 @@
-import { LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
+import { LoadingLabel, LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
 import { useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react';
 import * as XLSX from 'xlsx';
 import {
@@ -581,7 +581,7 @@ export function KsbFrameworkManager({
           <div className="flex items-center gap-2">
             <div className="flex-1">
               <h2 className="text-sm font-heading font-bold text-foreground-900">KSB Frameworks</h2>
-              <p className="text-xs text-foreground-400">{frameworkCountLabel}</p>
+              <p className="text-xs text-foreground-400"><LoadingLabel>{frameworkCountLabel}</LoadingLabel></p>
             </div>
             <button onClick={() => { setCreating(true); setSelectedId(''); }} className="primary-action inline-flex h-9 w-9 items-center justify-center rounded-lg bg-primary-700 text-white transition-smooth hover:bg-primary-600">
               <AppIcon className="ri-add-line" size={16}></AppIcon>

@@ -512,7 +512,7 @@ export function AssignmentSubmissionForm({
 
   if (loading) {
     return (
-      <div className="rounded-2xl border border-background-200 bg-white p-8 text-center text-sm text-foreground-500"><LoadingSkeleton label={"Loading your saved assignment…"} /></div>
+      <div className="rounded-2xl border border-background-200 bg-white p-8 text-center text-sm text-foreground-500"><LoadingSkeleton label="Loading your saved assignment…" variant="rows" /></div>
     );
   }
 

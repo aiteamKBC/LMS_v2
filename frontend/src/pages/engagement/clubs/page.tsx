@@ -17,6 +17,12 @@ import { useOperatorIdentity } from '@/hooks/useOperatorIdentity';
 import { LearnerPickerModal } from '@/pages/engagement/LearnerPickerModal';
 
 const engagementNav = roleNavMap.engagement;
+const CLUB_ACTION_FOCUS = 'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-300 focus-visible:ring-offset-1';
+const CLUB_ACTION_LAYOUT = 'inline-flex min-h-9 items-center justify-center gap-1.5 rounded-lg px-3 py-2 text-xs font-semibold transition-smooth cursor-pointer whitespace-nowrap';
+const CLUB_GRID_LAYOUT = 'grid grid-cols-[repeat(auto-fit,minmax(min(100%,30rem),1fr))] items-stretch gap-4';
+const CLUB_PRIMARY_ACTION = `border border-[#E6DDCD] bg-[#F7F2E9] text-[#73552F] shadow-none hover:bg-[#EEE5D5] active:bg-[#E7DCC8] [html[data-theme=dark]_&]:border-[#5C5140] [html[data-theme=dark]_&]:bg-[#373128] [html[data-theme=dark]_&]:text-[#DDC9A7] [html[data-theme=dark]_&]:hover:bg-[#453C2F] [html[data-theme=dark]_&]:active:bg-[#504535] ${CLUB_ACTION_FOCUS}`;
+const CLUB_SECONDARY_ACTION = `border border-[#E5DEED] bg-[#F5F2F8] text-[#655575] shadow-none hover:bg-[#ECE6F2] active:bg-[#E3DAEC] [html[data-theme=dark]_&]:border-[#55485F] [html[data-theme=dark]_&]:bg-[#302836] [html[data-theme=dark]_&]:text-[#D8CBE4] [html[data-theme=dark]_&]:hover:bg-[#3C3145] [html[data-theme=dark]_&]:active:bg-[#473A52] ${CLUB_ACTION_FOCUS}`;
+const CLUB_FILTER_ACTIVE = 'border-[#D5C6E2] bg-[#ECE5F2] text-[#5D4671] shadow-none [html[data-theme=dark]_&]:border-[#62536D] [html[data-theme=dark]_&]:bg-[#393040] [html[data-theme=dark]_&]:text-[#E1D4EA]';
 
 // Clubs are organised by location (city/region). KBC does not provide
 // transport, so each club groups the learners who live near each other and
@@ -354,8 +360,9 @@ export default function EngagementClubsPage() {
       pageTitle="Learner Clubs" pageSubtitle="Local community clubs that bring nearby learners together to meet, network, and connect"
       userName={operator.name} userRole={operator.role}
     >
-      <div className="p-6 space-y-6">
+      <div className="ml-0 mr-auto w-full !max-w-7xl p-4 sm:p-6 space-y-5">
         <WorkspaceHeroBanner
+          className="[&_.workspace-hero-description]:max-w-[70ch] [&_.workspace-hero-banner__stats]:gap-2 [&_.workspace-hero-metric]:flex-1"
           title="Learner Clubs"
           description={`${clubs.length} location-based clubs. ${totalMembers} learners joined. ${scheduledCount} meetings scheduled, ${unscheduledCount} awaiting a date. Clubs are grouped by where learners live so meeting up locally is easy — no travel required.`}
           icon="ri-team-line"
@@ -366,26 +373,26 @@ export default function EngagementClubsPage() {
 
         {/* Quick access */}
         <div className="flex items-center gap-2 flex-wrap">
-          <span className="text-[11px] font-semibold text-foreground-500 mr-1">Quick access:</span>
-          <button onClick={() => navigate('/engagement/events')} className="flex items-center gap-1.5 px-3 py-1.5 bg-background-50 border border-foreground-200/60 rounded-lg text-[11px] font-medium text-foreground-600 hover:bg-primary-50 hover:text-primary-600 hover:border-primary-200/50 transition-smooth cursor-pointer whitespace-nowrap">
+          <span className="w-full sm:w-auto text-xs font-semibold text-foreground-500 mr-1">Quick access:</span>
+          <button onClick={() => navigate('/engagement/events')} className={`${CLUB_ACTION_LAYOUT} ${CLUB_ACTION_FOCUS} bg-background-50 border border-foreground-200/60 text-foreground-600 hover:bg-primary-50 hover:text-primary-600 hover:border-primary-200/50`}>
             <AppIcon className="ri-calendar-event-line text-sm"></AppIcon> Events
           </button>
-          <button onClick={() => navigate('/engagement/recognition')} className="flex items-center gap-1.5 px-3 py-1.5 bg-background-50 border border-foreground-200/60 rounded-lg text-[11px] font-medium text-foreground-600 hover:bg-accent-50 hover:text-accent-600 hover:border-accent-200/50 transition-smooth cursor-pointer whitespace-nowrap">
+          <button onClick={() => navigate('/engagement/recognition')} className={`${CLUB_ACTION_LAYOUT} ${CLUB_ACTION_FOCUS} bg-background-50 border border-foreground-200/60 text-foreground-600 hover:bg-accent-50 hover:text-accent-600 hover:border-accent-200/50`}>
             <AppIcon className="ri-thumb-up-line text-sm"></AppIcon> Recognition
           </button>
-          <button onClick={() => navigate('/engagement/points-rules')} className="flex items-center gap-1.5 px-3 py-1.5 bg-background-50 border border-foreground-200/60 rounded-lg text-[11px] font-medium text-foreground-600 hover:bg-secondary-50 hover:text-secondary-600 hover:border-secondary-200/50 transition-smooth cursor-pointer whitespace-nowrap">
+          <button onClick={() => navigate('/engagement/points-rules')} className={`${CLUB_ACTION_LAYOUT} ${CLUB_ACTION_FOCUS} bg-background-50 border border-foreground-200/60 text-foreground-600 hover:bg-secondary-50 hover:text-secondary-600 hover:border-secondary-200/50`}>
             <AppIcon className="ri-gift-2-line text-sm"></AppIcon> Points Rules
           </button>
-          <button onClick={() => navigate('/engagement/learner-engagement')} className="flex items-center gap-1.5 px-3 py-1.5 bg-background-50 border border-foreground-200/60 rounded-lg text-[11px] font-medium text-foreground-600 hover:bg-amber-50 hover:text-amber-600 hover:border-amber-200/50 transition-smooth cursor-pointer whitespace-nowrap">
+          <button onClick={() => navigate('/engagement/learner-engagement')} className={`${CLUB_ACTION_LAYOUT} ${CLUB_ACTION_FOCUS} bg-background-50 border border-foreground-200/60 text-foreground-600 hover:bg-amber-50 hover:text-amber-600 hover:border-amber-200/50`}>
             <AppIcon className="ri-heart-line text-sm"></AppIcon> Learner Engagement
           </button>
         </div>
 
         {/* Location filter + create actions */}
-        <div className="flex items-center gap-3 flex-wrap">
-          <div className="flex items-center gap-1 bg-background-100 rounded-lg p-1 overflow-x-auto">
+        <div className="flex items-center gap-3 flex-wrap rounded-xl border border-foreground-200/60 bg-background-50 p-3 sm:p-4">
+          <div className="flex max-w-full items-center gap-1 bg-background-100 rounded-lg p-1 overflow-x-auto">
             {locations.map(loc => (
-              <button key={loc} onClick={() => setLocationFilter(loc)} className={`px-3 py-1.5 rounded-md text-[11px] font-semibold transition-smooth whitespace-nowrap cursor-pointer ${locationFilter === loc ? 'bg-[#541EA0] text-white shadow-sm' : 'text-foreground-500 hover:text-foreground-700'}`}>
+              <button key={loc} onClick={() => setLocationFilter(loc)} aria-pressed={locationFilter === loc} className={`min-h-9 px-3 py-2 rounded-md border text-xs font-semibold transition-smooth whitespace-nowrap cursor-pointer ${CLUB_ACTION_FOCUS} ${locationFilter === loc ? CLUB_FILTER_ACTIVE : 'border-transparent text-foreground-500 hover:text-foreground-700'}`}>
                 {loc === 'all' ? 'All locations' : loc}
               </button>
             ))}
@@ -393,7 +400,7 @@ export default function EngagementClubsPage() {
 
           {/* Add a new location/city to the filter */}
           {addingLocation ? (
-            <div className="flex items-center gap-2">
+            <div className="flex min-w-0 max-w-full flex-wrap items-center gap-2">
               <input
                 type="text"
                 value={draftLocation}
@@ -402,28 +409,28 @@ export default function EngagementClubsPage() {
                 maxLength={40}
                 autoFocus
                 onKeyDown={e => { if (e.key === 'Enter') addLocation(); if (e.key === 'Escape') { setAddingLocation(false); setDraftLocation(''); } }}
-                className="px-2.5 py-1.5 rounded-lg border border-foreground-200/60 bg-background-50 text-[11px] text-foreground-700 placeholder:text-foreground-400 focus:outline-none focus:ring-1 focus:ring-primary-400/40"
+                className="min-w-0 max-w-full min-h-9 px-3 py-2 rounded-lg border border-foreground-200/60 bg-background-50 text-xs text-foreground-700 placeholder:text-foreground-400 focus:outline-none focus:ring-1 focus:ring-primary-400/40"
               />
-              <button onClick={addLocation} disabled={!draftLocation.trim()} className="px-2.5 py-1.5 bg-primary-500 text-white rounded-lg text-[11px] font-semibold hover:bg-primary-600 transition-smooth cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed">Add</button>
-              <button onClick={() => { setAddingLocation(false); setDraftLocation(''); }} className="px-2 py-1.5 text-[11px] font-semibold text-foreground-500 hover:text-foreground-700 cursor-pointer">Cancel</button>
+              <button onClick={addLocation} disabled={!draftLocation.trim()} className={`${CLUB_ACTION_LAYOUT} ${CLUB_ACTION_FOCUS} bg-primary-500 text-white hover:bg-primary-600 disabled:opacity-50 disabled:cursor-not-allowed`}>Add</button>
+              <button onClick={() => { setAddingLocation(false); setDraftLocation(''); }} className={`${CLUB_ACTION_LAYOUT} ${CLUB_ACTION_FOCUS} text-foreground-500 hover:text-foreground-700`}>Cancel</button>
             </div>
           ) : (
-            <button onClick={() => setAddingLocation(true)} className="flex items-center gap-1.5 px-3 py-1.5 bg-background-50 border border-dashed border-foreground-300/60 rounded-lg text-[11px] font-medium text-foreground-600 hover:bg-primary-50 hover:text-primary-600 hover:border-primary-300/60 transition-smooth cursor-pointer whitespace-nowrap">
+            <button onClick={() => setAddingLocation(true)} className={`${CLUB_ACTION_LAYOUT} ${CLUB_ACTION_FOCUS} bg-background-50 border border-dashed border-foreground-300/60 text-foreground-600 hover:bg-primary-50 hover:text-primary-600 hover:border-primary-300/60`}>
               <AppIcon className="ri-map-pin-line text-sm"></AppIcon> Add location
             </button>
           )}
 
-          <label className="flex items-center gap-2 text-[12px] text-foreground-600 cursor-pointer">
+          <label className="flex min-h-9 items-center gap-2 text-xs font-medium text-foreground-600 cursor-pointer">
             <input type="checkbox" checked={activeOnly} onChange={e => setActiveOnly(e.target.checked)} className="w-4 h-4 rounded border-background-300 accent-primary-500 cursor-pointer" />
             Active only
           </label>
 
-          <button onClick={() => { setClubForm(emptyClubForm); setCreatingClub(true); }} className="ml-auto flex items-center gap-1.5 px-3.5 py-1.5 bg-primary-500 text-white rounded-lg text-[11px] font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap shadow-sm">
+          <button onClick={() => { setClubForm(emptyClubForm); setCreatingClub(true); }} className={`ml-auto ${CLUB_ACTION_LAYOUT} ${CLUB_PRIMARY_ACTION}`}>
             <AppIcon className="ri-add-line text-sm"></AppIcon> Create club
           </button>
         </div>
 
-        {loading && <ClubCardSkeletonGrid />}
+        {loading && <div className="[&>div]:grid-cols-[repeat(auto-fit,minmax(min(100%,30rem),1fr))] [&>div]:gap-4"><ClubCardSkeletonGrid /></div>}
 
         {!loading && filtered.length === 0 && (
           <div className="bg-background-50 rounded-xl border border-foreground-200/60 p-10 flex flex-col items-center justify-center text-center gap-2">
@@ -433,48 +440,40 @@ export default function EngagementClubsPage() {
           </div>
         )}
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 stagger-children">
+        <div className={`${CLUB_GRID_LAYOUT} stagger-children`}>
           {filtered.map(club => (
-            <div key={club.id} className={`rounded-xl border p-4 card-premium transition-smooth flex flex-col ${club.active ? 'bg-background-50 border-foreground-200/60 hover:border-primary-200/50' : 'bg-background-100/70 border-foreground-200/50 grayscale opacity-70'}`}>
-              <div className="flex items-start gap-3 mb-3">
+            <div key={club.id} className={`min-w-0 rounded-xl border p-4 card-premium transition-smooth flex flex-col gap-3 ${club.active ? 'bg-background-50 border-foreground-200/60 hover:border-primary-200/50' : 'bg-background-100/70 border-foreground-200/50 grayscale opacity-70'}`}>
+              <div className="flex items-start gap-3">
                 <div className="w-10 h-10 rounded-xl bg-primary-100 text-primary-600 flex items-center justify-center shrink-0">
-                  <AppIcon className="ri-map-pin-2-line text-sm"></AppIcon>
+                  <AppIcon className="ri-map-pin-2-line text-lg"></AppIcon>
                 </div>
                 <div className="flex-1 min-w-0">
-                  <h4 className="text-sm font-semibold text-foreground-900">{club.name}</h4>
-                  <span className="inline-flex items-center gap-1 text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-primary-100 text-primary-700">
-                    <AppIcon className="ri-map-pin-line"></AppIcon> {club.location}
-                  </span>
+                  <h4 className="text-base font-semibold leading-snug break-words text-foreground-900">{club.name}</h4>
+                  <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1">
+                    <span className="inline-flex max-w-full items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded-full bg-primary-100 text-primary-700 break-words">
+                      <AppIcon className="ri-map-pin-line shrink-0"></AppIcon> <span className="min-w-0 break-words">{club.location}</span>
+                    </span>
+                    <span className="inline-flex items-center gap-1 text-xs font-medium text-foreground-500">
+                      <AppIcon className="ri-group-line"></AppIcon> {club.members} joined
+                    </span>
+                  </div>
                 </div>
                 {!club.active && <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-background-200 text-foreground-500">Inactive</span>}
               </div>
 
-              <p className="text-xs text-foreground-500 mb-3">{club.description}</p>
-
-              <div className="text-[11px] text-foreground-400 mb-3">
-                <p><AppIcon className="ri-shield-star-line mr-1 text-secondary-500"></AppIcon>Ambassador: {club.ambassador} ({club.ambassadorRole})</p>
-              </div>
-
-              {/* Joined members indicator — no capacity limit */}
-              <div className="flex items-center justify-between mb-3 p-2 rounded-lg bg-background-100/60">
-                <div className="flex items-center">
-                  <div className="flex -space-x-2">
-                    {club.sampleMembers.slice(0, 4).map((initials, i) => (
-                      <span key={i} className="w-6 h-6 rounded-full bg-secondary-100 text-secondary-700 border-2 border-background-50 flex items-center justify-center text-[9px] font-bold">{initials}</span>
-                    ))}
-                  </div>
-                  {club.members > 4 && <span className="ml-1 text-[11px] font-semibold text-foreground-500">+{club.members - 4}</span>}
+              <div className="space-y-1.5">
+                <p className="text-sm leading-relaxed text-foreground-600 break-words">{club.description}</p>
+                <div className="flex items-start gap-2 text-xs leading-relaxed text-foreground-500">
+                  <AppIcon className="ri-shield-star-line shrink-0 mt-0.5 text-secondary-500"></AppIcon>
+                  <p className="min-w-0 break-words"><span className="font-medium text-foreground-600">Ambassador:</span> {club.ambassador} ({club.ambassadorRole})</p>
                 </div>
-                <span className="flex items-center gap-1 text-xs font-semibold text-primary-600">
-                  <AppIcon className="ri-group-line"></AppIcon> {club.members} joined
-                </span>
               </div>
 
               {/* Meetings — scheduled or awaiting a date */}
-              <div className="space-y-2 mb-1">
-                <div className="flex items-center justify-between">
-                  <p className="text-[11px] font-semibold text-foreground-500 uppercase tracking-wide">Meetings</p>
-                  <button onClick={() => { setAddingClubId(addingClubId === club.id ? null : club.id); setDraftTitle(''); }} className="flex items-center gap-1 px-2 py-1 rounded-md text-[10px] font-semibold text-primary-600 hover:bg-primary-50 transition-smooth cursor-pointer whitespace-nowrap">
+              <div className="space-y-2 rounded-lg border border-foreground-200/50 bg-background-100/40 p-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <p className="flex items-center gap-2 text-xs font-semibold text-foreground-700 uppercase tracking-wide">Meetings <span className="inline-flex h-5 min-w-5 items-center justify-center rounded-md bg-background-200/70 px-1 text-[11px] tabular-nums text-foreground-600">{club.meetings.length}</span></p>
+                  <button onClick={() => { setAddingClubId(addingClubId === club.id ? null : club.id); setDraftTitle(''); }} className={`${CLUB_ACTION_LAYOUT} ${CLUB_SECONDARY_ACTION}`}>
                     <AppIcon className="ri-add-line"></AppIcon> Add meeting
                   </button>
                 </div>
@@ -489,37 +488,39 @@ export default function EngagementClubsPage() {
                       placeholder="Meeting name (e.g. Coffee & connect)"
                       maxLength={80}
                       onKeyDown={e => { if (e.key === 'Enter') addMeeting(club.id); }}
-                      className="flex-1 min-w-[140px] px-2 py-1 rounded-md border border-foreground-200/60 bg-background-50 text-[11px] text-foreground-700 placeholder:text-foreground-400 focus:outline-none focus:ring-1 focus:ring-primary-400/40"
+                      className="flex-1 min-w-0 basis-48 min-h-9 px-3 py-2 rounded-md border border-foreground-200/60 bg-background-50 text-xs text-foreground-700 placeholder:text-foreground-400 focus:outline-none focus:ring-1 focus:ring-primary-400/40"
                     />
-                    <button onClick={() => addMeeting(club.id)} disabled={!draftTitle.trim()} className="px-2.5 py-1 bg-primary-500 text-white rounded-md text-[11px] font-semibold hover:bg-primary-600 transition-smooth cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed">Add</button>
-                    <button onClick={() => { setAddingClubId(null); setDraftTitle(''); }} className="px-2 py-1 text-[11px] font-semibold text-foreground-500 hover:text-foreground-700 cursor-pointer">Cancel</button>
+                    <button onClick={() => addMeeting(club.id)} disabled={!draftTitle.trim()} className={`${CLUB_ACTION_LAYOUT} ${CLUB_ACTION_FOCUS} bg-primary-500 text-white hover:bg-primary-600 disabled:opacity-50 disabled:cursor-not-allowed`}>Add</button>
+                    <button onClick={() => { setAddingClubId(null); setDraftTitle(''); }} className={`${CLUB_ACTION_LAYOUT} ${CLUB_ACTION_FOCUS} text-foreground-500 hover:text-foreground-700`}>Cancel</button>
                   </div>
                 )}
 
                 {club.meetings.length === 0 && (
-                  <p className="text-[11px] text-foreground-400 italic">No meetings yet — add one to get started.</p>
+                  <p className="rounded-lg border border-dashed border-foreground-200/60 p-4 text-xs leading-relaxed text-foreground-500">No meetings yet — add one to get started.</p>
                 )}
                 {club.meetings.map(m => (
-                  <div key={m.id} className="rounded-lg border border-foreground-200/50 p-2.5">
-                    <div className="flex items-start gap-2">
-                      <AppIcon className={`${m.scheduled ? 'ri-calendar-check-line text-primary-500' : 'ri-calendar-todo-line text-foreground-400'} text-sm mt-0.5`}></AppIcon>
-                      <div className="flex-1 min-w-0">
-                        <p className="text-xs font-semibold text-foreground-800">{m.title}</p>
-                        {m.scheduled ? (
-                          <p className="text-[11px] text-foreground-500">
-                            {formatMeetingDate(m.date)}{m.time ? ` · ${m.time}` : ''}{m.venue ? ` · ${m.venue}` : ''}
-                          </p>
-                        ) : (
-                          <span className="inline-flex items-center gap-1 text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700 mt-0.5">
-                            <AppIcon className="ri-time-line"></AppIcon> Not scheduled
-                          </span>
-                        )}
+                  <div key={m.id} className="rounded-lg border border-foreground-200/50 bg-background-50 p-2.5">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <div className="flex flex-[1_1_12rem] min-w-0 items-start gap-2">
+                        <AppIcon className={`${m.scheduled ? 'ri-calendar-check-line text-primary-500' : 'ri-calendar-todo-line text-foreground-400'} shrink-0 text-base mt-0.5`}></AppIcon>
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-semibold leading-snug break-words text-foreground-800">{m.title}</p>
+                          {m.scheduled ? (
+                            <p className="mt-1 text-xs leading-relaxed break-words text-foreground-500">
+                              {formatMeetingDate(m.date)}{m.time ? ` · ${m.time}` : ''}{m.venue ? ` · ${m.venue}` : ''}
+                            </p>
+                          ) : (
+                            <span className="inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 mt-1">
+                              <AppIcon className="ri-time-line"></AppIcon> Not scheduled
+                            </span>
+                          )}
+                        </div>
                       </div>
-                      <div className="shrink-0 flex items-center gap-1">
-                        <button onClick={() => openAttendance(club, m)} className="flex items-center gap-1 px-2 py-1 rounded-md text-[10px] font-semibold text-secondary-600 hover:bg-secondary-50 transition-smooth cursor-pointer whitespace-nowrap">
+                      <div className="ml-auto flex max-w-full flex-wrap items-center gap-2 [&>button]:px-2.5">
+                        <button onClick={() => openAttendance(club, m)} className={`${CLUB_ACTION_LAYOUT} ${CLUB_SECONDARY_ACTION}`}>
                           <AppIcon className="ri-checkbox-circle-line"></AppIcon> Attendance
                         </button>
-                        <button onClick={() => openMeeting(club, m)} className="flex items-center gap-1 px-2 py-1 rounded-md text-[10px] font-semibold text-primary-600 hover:bg-primary-50 transition-smooth cursor-pointer whitespace-nowrap">
+                        <button onClick={() => openMeeting(club, m)} className={`${CLUB_ACTION_LAYOUT} ${CLUB_PRIMARY_ACTION}`}>
                           <AppIcon className="ri-edit-line"></AppIcon> Manage
                         </button>
                       </div>
@@ -528,12 +529,21 @@ export default function EngagementClubsPage() {
                 ))}
               </div>
 
-              <div className="mt-auto flex items-center gap-2 pt-3 border-t border-foreground-200/40">
-                <button onClick={() => setMembersClubId(club.id)} className="flex items-center gap-1.5 px-3 py-1.5 bg-secondary-50 border border-secondary-200/50 text-secondary-700 rounded-lg text-[11px] font-medium hover:bg-secondary-100 transition-smooth cursor-pointer whitespace-nowrap">
+              <div className="mt-auto flex flex-wrap items-center gap-2 pt-3 border-t border-foreground-200/40">
+                <button onClick={() => setMembersClubId(club.id)} className={`${CLUB_ACTION_LAYOUT} ${CLUB_SECONDARY_ACTION}`}>
                   <AppIcon className="ri-group-line"></AppIcon> Members
                 </button>
-                <div className="flex-1"></div>
-                <button onClick={() => openManage(club)} className="flex items-center gap-1.5 px-3 py-1.5 bg-primary-500 text-white rounded-lg text-[11px] font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap">
+                {club.sampleMembers.length > 0 && (
+                  <div className="flex items-center" aria-label="Member initials">
+                    <div className="flex -space-x-2">
+                      {club.sampleMembers.slice(0, 4).map((initials, i) => (
+                        <span key={i} className="w-7 h-7 rounded-full bg-secondary-100 text-secondary-700 border-2 border-background-50 flex items-center justify-center text-[10px] font-bold [html[data-theme=dark]_&]:bg-[#393040] [html[data-theme=dark]_&]:text-[#E1D4EA] [html[data-theme=dark]_&]:border-[#241D30]">{initials}</span>
+                      ))}
+                    </div>
+                    {club.members > 4 && <span className="ml-1 text-[11px] font-semibold text-foreground-500">+{club.members - 4}</span>}
+                  </div>
+                )}
+                <button onClick={() => openManage(club)} className={`ml-auto ${CLUB_ACTION_LAYOUT} ${CLUB_PRIMARY_ACTION}`}>
                   <AppIcon className="ri-edit-line"></AppIcon> Manage
                 </button>
               </div>
@@ -734,7 +744,7 @@ export default function EngagementClubsPage() {
                 <button onClick={() => setShowLearnerPicker(true)} className="w-full flex items-center justify-center gap-1.5 px-3 py-2 bg-primary-500 text-white rounded-lg text-[12px] font-semibold hover:bg-primary-600 transition-smooth cursor-pointer mb-2">
                   <AppIcon className="ri-add-line"></AppIcon> Assign a learner
                 </button>
-                {membersLoading && <p className="text-[11px] text-foreground-400 text-center py-4"><LoadingSkeleton label={"Loading members…"} /></p>}
+                {membersLoading && <p className="text-[11px] text-foreground-400 text-center py-4"><LoadingSkeleton label="Loading members…" variant="rows" /></p>}
                 {!membersLoading && members.length === 0 && (
                   <p className="text-[11px] text-foreground-400 text-center py-4">No learners assigned yet.</p>
                 )}
@@ -774,7 +784,7 @@ export default function EngagementClubsPage() {
                 <button onClick={() => setAttendanceCtx(null)} className="w-8 h-8 rounded-lg flex items-center justify-center text-foreground-400 hover:bg-background-100 transition-smooth cursor-pointer"><AppIcon className="ri-close-line"></AppIcon></button>
               </div>
 
-              {attendanceLoading && <p className="text-[11px] text-foreground-400 text-center py-8"><LoadingSkeleton label={"Loading roster…"} /></p>}
+              {attendanceLoading && <p className="text-[11px] text-foreground-400 text-center py-8"><LoadingSkeleton label="Loading roster…" variant="rows" /></p>}
 
               {!attendanceLoading && (
                 <>

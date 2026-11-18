@@ -1,3 +1,4 @@
+import { LoadingLabel } from '@/components/feature/LoadingSkeleton';
 // ============================================================================
 // Status badge.
 //
@@ -65,7 +66,7 @@ export const StatusBadge = memo(function StatusBadge({
       ) : dot ? (
         <span className={cn('h-1.5 w-1.5 shrink-0 rounded-full', style.dot)}></span>
       ) : null}
-      {text}
+      <LoadingLabel>{text}</LoadingLabel>
     </span>
   );
 });

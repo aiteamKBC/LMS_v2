@@ -232,7 +232,7 @@ export default function AttendanceRiskPage() {
         </div>
 
         <div className="space-y-3">
-          {loading && <p className="text-[11px] text-foreground-400 py-8 text-center"><LoadingSkeleton label={"Loading attendance analytics…"} /></p>}
+          {loading && <LoadingSkeleton label="Loading attendance analytics" variant="cards" />}
           {!loading && filtered.length === 0 && (
             <EmptyState icon="ri-search-line" title="No learners match this view" subtitle="Try clearing the search or switching the risk filter." />
           )}

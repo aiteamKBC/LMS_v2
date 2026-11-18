@@ -194,7 +194,7 @@ function FreeCourseDetail({ course, tone, kind, learnerId, activeId, isDone, onS
                     {currentDone ? (
                       <p className="text-sm text-emerald-700">You have passed this quiz.</p>
                     ) : (
-                      <Suspense fallback={<p  className="p-3 text-sm text-foreground-500"><LoadingSkeleton label={"Loading quiz…"} /></p>}>
+                      <Suspense fallback={<p  className="p-3 text-sm text-foreground-500"><LoadingSkeleton label="Loading quiz…" variant="rows" /></p>}>
                         <FreeCourseQuiz kind={kind} learnerId={learnerId} componentId={current.componentId} quizId={Number(current.quizId)} onPassed={() => onQuizPassed(current.componentId)} />
                       </Suspense>
                     )}
@@ -202,7 +202,7 @@ function FreeCourseDetail({ course, tone, kind, learnerId, activeId, isDone, onS
                 ) : (
                   <>
                     <div className="mt-4">
-                      <Suspense fallback={<p  className="p-3 text-sm text-foreground-500"><LoadingSkeleton label={"Loading activity…"} /></p>}>
+                      <Suspense fallback={<p  className="p-3 text-sm text-foreground-500"><LoadingSkeleton label="Loading activity…" variant="rows" /></p>}>
                         <FreeCourseMaterial activity={current} />
                       </Suspense>
                     </div>

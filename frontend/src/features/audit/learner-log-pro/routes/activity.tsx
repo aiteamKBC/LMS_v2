@@ -65,7 +65,7 @@ function ActivityLogPage() {
 
       <main className="mx-auto max-w-[88rem] space-y-6 px-6 py-8">
         {overview.isLoading && (
-          <div className="rounded-lg border border-border bg-card px-7 py-16 text-center text-sm text-muted-foreground"><LoadingSkeleton label={"Loading activity from Neon…"} /></div>
+          <div className="rounded-lg border border-border bg-card px-7 py-16 text-center text-sm text-muted-foreground"><LoadingSkeleton label="Loading activity from Neon…" variant="rows" /></div>
         )}
         {overview.isError && (
           <div className="rounded-lg border border-border bg-card px-7 py-16 text-center text-sm text-destructive">

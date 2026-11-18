@@ -83,7 +83,7 @@ export function CaseFileWeeklyLearningTab({ kind, learnerId }: { kind: LearnerKi
     </aside>
     <div className={`${styles.weekDetail} min-w-0 rounded-2xl border border-foreground-100 bg-background-50 p-4 shadow-sm`}>
       {response.error ? <div role="alert">{response.error} <button type="button" onClick={response.refresh}>Retry weekly learning</button></div>
-        : !response.data ? <div ><LoadingSkeleton label={"Loading this week…"} /></div>
+        : !response.data ? <div ><LoadingSkeleton label="Loading this week…" variant="rows" /></div>
           : !selected ? <EmptyState title="Your weekly plan will appear here" description="Once a module is assigned, its weeks and activities will show up in this space." /> : <>
             <div className="flex flex-col gap-4 border-b border-foreground-100 pb-5 xl:flex-row xl:justify-between">
               <div><p className="text-xs font-bold">{current!.kind === 'reading-week' ? 'Reading week' : `Week ${current!.weekNumber}`}</p>

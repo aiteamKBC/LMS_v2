@@ -152,7 +152,7 @@ export default function InclusionDashboard({ learnerId, learner }: { learnerId: 
   const selectedCaseReport = selectedCase?.reportId && data.reports.find(report => report.id === selectedCase.reportId);
 
   return <div className="space-y-5" aria-label="Inclusion dashboard for selected learner">
-    <header className="flex flex-wrap items-center gap-4 rounded-[24px] border border-primary-100 bg-white p-5 shadow-sm">
+    <header className="flex flex-wrap items-center gap-4 rounded-2xl border border-primary-100 bg-white p-5 shadow-sm">
       <div className="mr-2">
         <h2 className="text-lg font-bold text-primary-950">Student Support</h2>
         <p className="mt-1 text-sm text-primary-600">Review this learner's support and inclusion needs.</p>
@@ -161,14 +161,14 @@ export default function InclusionDashboard({ learnerId, learner }: { learnerId: 
       <Link to="/workspace/advanced-admin" className="inline-flex items-center gap-2 rounded-xl bg-primary-950 px-4 py-2 text-sm font-semibold text-white hover:bg-primary-800"><ArrowLeft size={16} />Back to Cards</Link>
     </header>
 
-    <section className="space-y-5 rounded-[24px] border border-primary-100 bg-white p-5 shadow-sm">
+    <section className="space-y-5 rounded-2xl border border-primary-100 bg-white p-5 shadow-sm">
       <div><h2 className="text-lg font-bold text-primary-950">Inclusion Dashboard</h2><p className="mt-1 text-sm text-primary-600">Saved screening reports and support tickets for {learner.name}.</p></div>
       {error && <p role="alert" className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-800">{error}</p>}
-      {loading && <p  className="rounded-xl bg-primary-50 p-4 text-sm text-primary-800"><LoadingSkeleton label={"Loading Inclusion records…"} /></p>}
+      {loading && <p  className="rounded-xl bg-primary-50 p-4 text-sm text-primary-800"><LoadingSkeleton label="Loading Inclusion records…" variant="rows" /></p>}
       {!loading && !error && <>
         <div className="rounded-2xl border border-primary-100 p-3">
           <div className="flex flex-wrap items-center justify-between gap-3 border-b border-primary-100 pb-3">
-            <label className="flex min-w-[220px] flex-1 items-center gap-2 rounded-xl bg-slate-50 px-3 py-2 text-sm text-foreground-700 sm:max-w-lg"><Search size={16} aria-hidden="true" /><span className="sr-only">Search this learner's reports</span><input value={search} onChange={event => setSearch(event.target.value)} placeholder="Search this learner's reports" className="w-full bg-transparent outline-none" /></label>
+            <label data-search-field className="flex min-w-[220px] flex-1 items-center gap-2 rounded-xl bg-slate-50 px-3 py-2 text-sm text-foreground-700 sm:max-w-lg"><Search size={16} aria-hidden="true" /><span className="sr-only">Search this learner's reports</span><input value={search} onChange={event => setSearch(event.target.value)} placeholder="Search this learner's reports" className="w-full bg-transparent outline-none" /></label>
             <button type="button" aria-pressed={showArchived} onClick={() => { setShowArchived(value => !value); setSelectedReportId(null); setSelectedCaseId(null); }} className={`inline-flex items-center gap-2 rounded-xl border px-3 py-2 text-sm font-semibold ${showArchived ? 'border-primary-600 bg-primary-50 text-primary-900' : 'border-primary-200 text-primary-800'}`}><Archive size={15} />Archived</button>
           </div>
           <div className="mt-3 grid gap-2 md:grid-cols-3" aria-label="Report status">

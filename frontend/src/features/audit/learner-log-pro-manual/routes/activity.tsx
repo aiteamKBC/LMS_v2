@@ -81,7 +81,7 @@ function QuizBody({ aptemId, learnerName, component }: {
     queryFn: () => getQuizAttempt({ aptemId: aptemId!, component: String(component) }),
     enabled: Boolean(aptemId && component),
   });
-  if (query.isLoading) return <p className="px-4 py-3 text-xs text-muted-foreground"><LoadingSkeleton label={"Loading quiz…"} /></p>;
+  if (query.isLoading) return <p className="px-4 py-3 text-xs text-muted-foreground"><LoadingSkeleton label="Loading quiz…" variant="rows" /></p>;
   if (query.isError) return <p className="px-4 py-3 text-xs text-destructive">Could not load the quiz body.</p>;
   if (query.data?.state === "not_quiz") return null;
   if (query.data?.state === "not_attempted") {
@@ -518,7 +518,7 @@ function ActivityLogPage() {
 
       <main className="mx-auto w-full max-w-[1700px] space-y-6 px-6 py-8">
         {detail.isLoading && (
-          <div className="rounded-lg border border-border bg-card px-7 py-16 text-center text-sm text-muted-foreground"><LoadingSkeleton label={"Loading activity…"} /></div>
+          <div className="rounded-lg border border-border bg-card px-7 py-16 text-center text-sm text-muted-foreground"><LoadingSkeleton label="Loading activity…" variant="rows" /></div>
         )}
         {detail.isError && (
           <div className="rounded-lg border border-border bg-card px-7 py-16 text-center text-sm text-destructive">

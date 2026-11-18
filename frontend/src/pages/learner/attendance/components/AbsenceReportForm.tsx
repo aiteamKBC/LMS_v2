@@ -1,4 +1,4 @@
-import { LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
+import { LoadingControl, LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import {
@@ -384,10 +384,10 @@ export default function AbsenceReportForm({
 
             <div>
               <label htmlFor="missed-session" className="mb-2 block text-[13px] font-semibold text-foreground-700">{scope === 'meetings' ? 'Meeting *' : 'Lecture *'}</label>
-              <select id="missed-session" value={sessionId} onChange={(event) => { setSessionId(event.target.value); setRecoveryMethod(''); setTargetOccurrenceId(''); setRecordingDate(''); setRecordingTime(''); setCatchupBooking(null); setConfirmed(false); }} required disabled={reportsLoading || availableSessions.length === 0 || bookingBusy || submitting} className="w-full rounded-xl border border-foreground-200 bg-background-50 px-3.5 py-3 text-[13px] text-foreground-800 outline-none transition focus:border-primary-400 focus:ring-2 focus:ring-primary-100 disabled:cursor-not-allowed disabled:bg-background-100 disabled:text-foreground-400">
+              {<LoadingControl loading={(reportsLoading)}><select id="missed-session" value={sessionId} onChange={(event) => { setSessionId(event.target.value); setRecoveryMethod(''); setTargetOccurrenceId(''); setRecordingDate(''); setRecordingTime(''); setCatchupBooking(null); setConfirmed(false); }} required disabled={reportsLoading || availableSessions.length === 0 || bookingBusy || submitting} className="w-full rounded-xl border border-foreground-200 bg-background-50 px-3.5 py-3 text-[13px] text-foreground-800 outline-none transition focus:border-primary-400 focus:ring-2 focus:ring-primary-100 disabled:cursor-not-allowed disabled:bg-background-100 disabled:text-foreground-400">
                 <option value="">{scope === 'meetings' ? reportsLoading ? 'Loading meeting...' : availableSessions.length ? 'Choose a meeting' : 'No unreported meetings available' : reportsLoading ? 'Loading lectures...' : availableSessions.length === 0 ? 'No unreported absent or upcoming lectures' : 'Choose an absent or upcoming lecture'}</option>
                 {availableSessions.map((session) => <option key={session.id} value={session.id}>{displayDate(session.dateIso)} - {session.title}{session.status === 'upcoming' ? ' (Upcoming)' : ''}</option>)}
-              </select>
+              </select></LoadingControl>}
               {selectedSession && (compact ? <p className={styles.absenceDate}>Date: {displayDate(selectedSession.dateIso)}{selectedSession.startTime && `, ${selectedSession.startTime}`}{selectedSession.endTime && ` – ${selectedSession.endTime}`}</p> : (
                 <div className="mt-3 grid gap-2 rounded-xl border border-primary-100 bg-primary-50/60 p-3 sm:grid-cols-3">
                   <div className="flex items-center gap-2 text-[12px] text-foreground-600"><AppIcon className="ri-time-line text-primary-500" />{selectedSession.startTime}{selectedSession.endTime ? ` - ${selectedSession.endTime}` : ''}</div>
@@ -560,7 +560,7 @@ export default function AbsenceReportForm({
         <Panel>
           <SectionHeader title="Previous reports" description="Last 90 days" icon="ri-history-line" />
           <div className="mt-3 space-y-2.5">
-            {reportsLoading && <div className="py-6 text-center text-[12px] text-foreground-400"><LoadingSkeleton label={"Loading reports..."} /></div>}
+            {reportsLoading && <div className="py-6 text-center text-[12px] text-foreground-400"><LoadingSkeleton label="Loading reports..." variant="rows" /></div>}
             {!reportsLoading && reports.length === 0 && <EmptyState size="sm" icon="ri-file-list-3-line" title="No absence reports yet" />}
             {reports.map((report) => (
               <article key={report.id} className="rounded-xl border border-foreground-200/70 bg-background-50 p-3.5">
@@ -612,7 +612,7 @@ export default function AbsenceReportForm({
               </button>
             </header>
             <div className="relative flex min-h-0 flex-1 items-center justify-center bg-background-200/60 p-2 sm:p-4">
-              {previewLoading && <div className="text-sm font-medium text-foreground-500"><LoadingSkeleton label={"Loading evidence..."} /></div>}
+              {previewLoading && <div className="text-sm font-medium text-foreground-500"><LoadingSkeleton label="Loading evidence..." variant="rows" /></div>}
               {!previewLoading && previewError && <div className="rounded-xl border border-red-200 bg-red-50 p-5 text-center"><AppIcon className="ri-error-warning-line mb-2 block text-2xl text-red-500" /><p className="text-sm font-semibold text-red-700">{previewError}</p></div>}
               {!previewLoading && !previewError && evidencePreview.objectUrl && evidencePreview.isPdf && (
                 <iframe

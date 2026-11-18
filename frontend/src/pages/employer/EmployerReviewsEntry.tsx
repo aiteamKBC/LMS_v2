@@ -6,7 +6,7 @@ import { homeRouteFor } from '@/lib/routeAccess';
 /** Old review links lead to the same owned portal as employer sign-in. */
 export function EmployerReviewsEntry() {
   const { auth, isInitialized } = useAuth();
-  if (isInitialized === false) return <p ><LoadingSkeleton label={"Loading your account..."} /></p>;
+  if (isInitialized === false) return <p ><LoadingSkeleton label="Loading your account..." variant="rows" /></p>;
   const account = auth.account;
   if (!account) return <Navigate to="/login" replace />;
   if (account.role === 'employer') {

@@ -103,7 +103,7 @@ export function LeaderboardTab() {
         ))}
       </div>
 
-      {loading && <p className="text-xs text-foreground-400 py-6 text-center"><LoadingSkeleton label={"Loading rankings…"} /></p>}
+      {loading && <p className="text-xs text-foreground-400 py-6 text-center"><LoadingSkeleton label="Loading rankings…" variant="rows" /></p>}
 
       {!loading && error && <p className="text-xs text-red-500 py-6 text-center">{error}</p>}
 

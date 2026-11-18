@@ -1,3 +1,4 @@
+import { LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
 import { useState } from 'react';
 import { AppIcon } from '@/components/feature/AppIcon';
 
@@ -49,7 +50,7 @@ export function KsbExcelPanel({ prompt, profileCount, loading = false, onExport,
       </div>
       <button disabled={loading} onClick={() => void copyPrompt()} className={`mt-1.5 inline-flex h-8 w-full items-center justify-center gap-1 rounded-md px-2 text-[10px] font-bold text-white transition-smooth disabled:cursor-wait disabled:opacity-60 ${copied ? 'bg-emerald-500' : 'bg-primary-500 hover:bg-primary-600'}`}>
         <AppIcon className={loading ? 'ri-loader-4-line animate-spin text-[12px]' : copied ? 'ri-check-line text-[12px]' : 'ri-clipboard-line text-[12px]'}></AppIcon>
-        {loading ? 'Loading KSB source...' : copied ? 'Prompt copied' : 'Copy ChatGPT prompt'}
+        {loading ? <LoadingSkeleton label="Loading KSB source..." variant="text" /> : copied ? 'Prompt copied' : 'Copy ChatGPT prompt'}
       </button>
       {!loading && profileCount === 0 && (
         <p className="mt-1.5 flex items-start gap-1 text-[9px] font-semibold leading-3 text-amber-600">

@@ -2697,7 +2697,7 @@ export default function CoachReports() {
             'rounded-xl border px-4 py-3 text-[12px]',
             loading ? cn(loadingTone.bg, loadingTone.border, loadingTone.text) : cn(liveSourcesTone.bg, liveSourcesTone.border, liveSourcesTone.text),
           )}>
-            {loading ? <LoadingSkeleton label={'Loading OTJH sources...'} /> : `Some OTJH sources are unavailable right now: ${warnings.join(', ')}. Preview values will show ${EMPTY_VALUE} where needed.`}
+            {loading ? <LoadingSkeleton label="Loading OTJH sources..." variant="text" /> : `Some OTJH sources are unavailable right now: ${warnings.join(', ')}. Preview values will show ${EMPTY_VALUE} where needed.`}
           </div>
         ) : null}
 
@@ -2835,7 +2835,7 @@ export default function CoachReports() {
                   className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-primary-600 px-4 py-3.5 text-sm font-semibold text-white shadow-sm transition hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-60"
                 >
                   <AppIcon className={loading || buildingReport ? 'ri-loader-4-line animate-spin' : 'ri-file-chart-line'}></AppIcon>
-                  {loading ? 'Loading OTJH sources' : buildingReport ? 'Generating OTJH report' : 'Generate OTJH evidence report'}
+                  {loading ? <LoadingSkeleton label="Loading OTJH sources" variant="text" /> : buildingReport ? 'Generating OTJH report' : 'Generate OTJH evidence report'}
                 </button>
             </Panel>
 

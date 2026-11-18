@@ -3,6 +3,7 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-li
 import { Link, MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import type { SidebarNavItem } from '@/components/feature/Sidebar';
+import { WORKSPACE_SIDEBAR_WIDTH } from '@/components/feature/learnerShellAssets';
 import QualityAssurancePage from './page';
 
 vi.mock('@/hooks/useAuth', () => ({ useAuth: () => ({ auth: { account: { id: 1 } } }) }));
@@ -28,6 +29,17 @@ function open(path: string) {
     <Route path="/curriculum/coaching-recordings/reviews" element={<ReviewDestination />} />
   </Routes></MemoryRouter>);
 }
+
+it.each(['true', 'false'])('reserves the expanded sidebar width with legacy collapsed preference %s', (collapsed) => {
+  localStorage.setItem('kbc_curriculum_sidebar_collapsed', collapsed);
+  try {
+    const { container } = open('/curriculum/quality-demo?view=deep-dive');
+    const shell = container.querySelector<HTMLElement>('.workspace-shell')!;
+    expect(shell.style.getPropertyValue('--kbc-sidebar-width')).toBe(`${WORKSPACE_SIDEBAR_WIDTH}px`);
+  } finally {
+    localStorage.removeItem('kbc_curriculum_sidebar_collapsed');
+  }
+});
 
 it('keeps the Curriculum menu while opening Deep Dive and returning directly to the quality overview', async () => {
   open('/curriculum/quality-demo?view=deep-dive&programme=example');

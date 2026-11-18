@@ -50,7 +50,7 @@ export function AssignmentSubmissions({ kind, learnerId, activityId, status, sub
   return <>
     {!attempts.length && <AssignmentFeedback marking={marking} status={status} />}
     {!loading && !error && !attempts.length && ['accepted', 'partial', 'referred', 'returned', 'rejected', 'completed'].includes(status) && <AssignmentDownload kind={kind} learnerId={learnerId} activityId={activityId} month={month} />}
-    {loading && <p  className={styles.feedbackReviewer}><LoadingSkeleton label={"Loading submission history…"} /></p>}
+    {loading && <p  className={styles.feedbackReviewer}><LoadingSkeleton label="Loading submission history…" variant="rows" /></p>}
     {error && <div role="alert" className={styles.error}>{error}<br /><button type="button" onClick={() => setRefresh(value => value + 1)}>Retry submissions</button></div>}
     {attempts.length > 0 && <section className={styles.submissions} aria-label="Assignment submissions">
       <div className={styles.sectionHeading}><h3>Submission history</h3>

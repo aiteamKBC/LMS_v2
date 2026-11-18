@@ -118,7 +118,7 @@ function LearnerHome({ kind, id, preview = false }: { kind?: LearnerKind; id?: s
 
   if (!kind || !id) return <LearnerLoadError error="We could not verify your learner profile. Please try again." onRetry={retryInitialization}/>;
   if (profile.loadError) return <LearnerLoadError error={profile.loadError} onRetry={profile.refresh}/>;
-  if (!profile.real || checkingFirstLogin) return <div className={styles.loading} ><LoadingSkeleton label={"Loading your student home…"} /></div>;
+  if (!profile.real || checkingFirstLogin) return <div className={styles.loading} ><LoadingSkeleton label="Loading your student home…" variant="rows" /></div>;
   // Student Home opens once an apprentice's programme has started; until then
   // each enrolment stage has its own page. Their own sign-in only — a staff
   // preview still shows the page, and commercial learners keep it throughout.

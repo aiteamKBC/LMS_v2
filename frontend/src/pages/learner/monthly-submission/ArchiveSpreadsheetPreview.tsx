@@ -21,7 +21,7 @@ export function ArchiveSpreadsheetPreview({ url }: { url: string }) {
     return () => controller.abort();
   }, [url]);
   if (error) return <p role="alert" className="rounded-lg bg-white p-5 text-slate-900">{error}</p>;
-  if (!preview) return <p  className="rounded-lg bg-white p-5 text-slate-900"><LoadingSkeleton label={"Loading preview…"} /></p>;
+  if (!preview) return <p  className="rounded-lg bg-white p-5 text-slate-900"><LoadingSkeleton label="Loading preview…" variant="rows" /></p>;
   const name = preview.files[selected];
   const document = preview.documents.find(item => item.name === name);
   return <div className="space-y-4 rounded-lg bg-white p-5 text-slate-900">

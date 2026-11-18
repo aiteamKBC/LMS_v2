@@ -74,7 +74,7 @@ export default function LmsIntroductionPage() {
         <div className={styles.heroCopy}><p className={styles.eyebrow}>WELCOME TO THE PLATFORM</p><h1>{state ? `Book your LMS introduction with ${owner}` : 'Book your LMS introduction'}</h1><p>A short one-to-one meeting on Microsoft Teams where your case owner shows you around the learning platform. Choose a time when they are free and the Teams invitation is sent to your email straight away.</p><span className={styles.accessNote}><CheckCircle2 size={16} aria-hidden="true" />No password needed to book</span></div>
         <div className={styles.heroIcon} aria-hidden="true"><CalendarCheck2 strokeWidth={1.3} /></div>
       </header>
-      {loading && <p  className={styles.message}><LoadingSkeleton label={"Loading your booking..."} /></p>}
+      {loading && <p  className={styles.message}><LoadingSkeleton label="Loading your booking..." variant="rows" /></p>}
       {loadError && <div role="alert" className={styles.message}>{loadError}<button type="button" className={styles.retry} onClick={() => setReload(value => value + 1)}>Retry</button></div>}
       {state && <section className={styles.booking} aria-label="LMS introduction booking">
         {request && booked ? <div className={styles.empty}>

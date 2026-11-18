@@ -218,7 +218,7 @@ export default function LearnerHistoryModal({
             <p key={warning} className="mb-3 rounded-md border border-warning-200 bg-warning-50 px-3 py-2 text-sm text-warning-700" role="status">{warning}</p>
           ))}
           {loading && history.length === 0 ? (
-            <p className="py-8 text-center text-sm text-foreground-500"><LoadingSkeleton label={"Loading attendance history…"} /></p>
+            <p className="py-8 text-center text-sm text-foreground-500"><LoadingSkeleton label="Loading attendance history…" variant="rows" /></p>
           ) : history.length === 0 ? (
             <p className="py-8 text-center text-sm text-foreground-500">No attendance records are stored for this learner.</p>
           ) : (

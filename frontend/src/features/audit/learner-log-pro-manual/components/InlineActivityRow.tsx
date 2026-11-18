@@ -1,4 +1,4 @@
-import { LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
+import { LoadingControl, LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
 import { useEffect, useRef, useState } from "react";
 import type { InputHTMLAttributes } from "react";
 import { createPortal } from "react-dom";
@@ -365,7 +365,7 @@ function ActivityNamePicker({ category, value, onPick, onGroupPick, disabled }: 
 
   return (
     <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
-      <SearchCombobox
+      <LoadingControl loading={level1Query.isLoading}><SearchCombobox
         options={level1}
         value={parent}
         onSelect={(value) => {
@@ -376,8 +376,8 @@ function ActivityNamePicker({ category, value, onPick, onGroupPick, disabled }: 
         disabled={disabled || !level1.length}
         ariaLabel={isAttendance ? "Module" : "LMS group"}
         className="w-44"
-      />
-      <SearchCombobox
+      /></LoadingControl>
+      <LoadingControl loading={Boolean(parent) && level2Query.isLoading}><SearchCombobox
         options={level2}
         value={selected}
         onSelect={onPick}
@@ -385,7 +385,7 @@ function ActivityNamePicker({ category, value, onPick, onGroupPick, disabled }: 
         disabled={disabled || !parent || !level2.length}
         ariaLabel={isAttendance ? "Lecture" : "Activity title"}
         className="w-56"
-      />
+      /></LoadingControl>
       {error ? (
         <p className="w-full text-[10px] text-destructive">
           {error instanceof Error ? error.message : "Could not load options."}
@@ -684,7 +684,7 @@ export function InlineActivityCreateRow({ learnerId, learnerName, onCancel, defa
                 ))}
               </select>
             ) : (
-              <span className="text-destructive">{learnerGroups.isLoading ? <LoadingSkeleton label={"Loading groups…"} /> : "No LMS group found for this learner"}</span>
+              <span className="text-destructive">{learnerGroups.isLoading ? <LoadingSkeleton label="Loading groups…" variant="text" /> : "No LMS group found for this learner"}</span>
             )
           ) : null}
         </div>

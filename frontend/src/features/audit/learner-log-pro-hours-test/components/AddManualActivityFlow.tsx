@@ -1,3 +1,4 @@
+import { LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
 // The add-activity flow for the employee-arranged journal.
 //
 // Category first. Attendance options come from the learner's own register rows
@@ -95,7 +96,7 @@ function SearchableSelect({ options, value, onSelect, placeholder, disabled, loa
         className="flex h-9 w-full items-center justify-between gap-2 rounded-md border border-border bg-card px-3 text-left text-sm disabled:cursor-not-allowed disabled:opacity-60"
       >
         <span className={`truncate ${selected ? "text-foreground" : "text-muted-foreground"}`}>
-          {loading ? "Loading…" : selected?.label ?? placeholder}
+          {loading ? <LoadingSkeleton label="Loading…" variant="text" /> : selected?.label ?? placeholder}
         </span>
         {loading ? <LoaderCircle className="h-4 w-4 shrink-0 animate-spin text-muted-foreground" /> : <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground" />}
       </button>

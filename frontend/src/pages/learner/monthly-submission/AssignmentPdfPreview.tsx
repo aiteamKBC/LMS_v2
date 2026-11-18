@@ -63,7 +63,7 @@ export function AssignmentPdfPreview({ url, filename, label = 'Assignment report
         <button type="button" onClick={() => setZoom(100)}>Reset zoom</button>
       </div>
     </div>}
-    {busy && <p ><LoadingSkeleton label={"Loading PDF preview…"} /></p>}
+    {busy && <p ><LoadingSkeleton label="Loading PDF preview…" variant="rows" /></p>}
     {error && <div role="alert"><p>{error}</p><button type="button" className="mt-2 text-sm font-semibold text-blue-700" onClick={() => setRetry(value => value + 1)}>Retry preview</button></div>}
     <div className={`${styles.pdfStage}${scrollableZoom ? ` ${styles.pdfScrollable}` : ''}`}><canvas ref={canvas} aria-label={`Report page ${page}`} style={{ display: busy || error ? 'none' : 'block', width: `${zoom}%`, maxWidth: `${794 * zoom / 100}px`, height: 'auto' }} /></div>
   </section>;

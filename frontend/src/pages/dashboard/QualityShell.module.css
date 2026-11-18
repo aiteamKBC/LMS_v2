@@ -5,24 +5,19 @@
   overflow: hidden;
 }
 
-.shell :global(.workspace-content) {
+.shell > :global(.workspace-content) {
   margin: 0;
   margin-left: var(--kbc-sidebar-offset, 0px);
+  padding: 8px 12px 0 8px;
 }
 
-.shell:global(.dashboard-theme[data-workspace-role="curriculum"]) :global(.kbc-workspace-topbar) {
-  width: 100%;
-  min-height: 72px;
-  flex-shrink: 0;
-  margin: 0 0 12px !important;
-  border-radius: 20px !important;
-  background: #4f2d7f !important;
-}
-
-.shell :global(.kbc-learner-header-pattern) { border-radius: inherit; }
-
-:global([data-theme="dark"]) .shell:global(.dashboard-theme[data-workspace-role="curriculum"]) :global(.kbc-workspace-topbar) {
-  background: #162740 !important;
+/* Keep the header inside the same gutters as the breadcrumb row. The shared
+   chrome layer owns its colors and controls, so override only its spacing. */
+@layer workspace-chrome {
+  .shell:global(.dashboard-theme) > :global(.workspace-content) > :global(.kbc-workspace-topbar) {
+    width: auto;
+    margin: 0 0 12px !important;
+  }
 }
 
 @layer workspace-breadcrumbs-ui {
@@ -41,8 +36,13 @@
 }
 
 @media (max-width: 639px) {
-  .shell:global(.dashboard-theme[data-workspace-role="curriculum"]) :global(.kbc-workspace-topbar) {
-    border-radius: 16px !important;
-    margin-bottom: 8px !important;
+  .shell > :global(.workspace-content) {
+    padding-inline: 8px;
+  }
+
+  @layer workspace-chrome {
+    .shell:global(.dashboard-theme) > :global(.workspace-content) > :global(.kbc-workspace-topbar) {
+      margin-bottom: 8px !important;
+    }
   }
 }

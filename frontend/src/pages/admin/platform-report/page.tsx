@@ -204,7 +204,7 @@ function DrillPanel({ metric, label, onClose }: {
 
         <div className="max-h-[70vh] overflow-y-auto px-5 py-4">
           {error && <p className="text-[13px] font-medium text-red-600">{error}</p>}
-          {!drill && !error && <p className="text-[13px] text-foreground-400"><LoadingSkeleton label={"Loading…"} /></p>}
+          {!drill && !error && <p className="text-[13px] text-foreground-400"><LoadingSkeleton label="Loading…" variant="rows" /></p>}
 
           {drill && !drill.available && (
             <div className="rounded-xl border border-amber-200 bg-amber-50/60 p-4">

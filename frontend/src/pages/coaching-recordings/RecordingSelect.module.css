@@ -1,6 +1,6 @@
-.trigger { height: 40px; border-radius: 10px; }
+.trigger { height: 40px; border-radius: var(--lms-radius, 16px); }
 .trigger > span { font-size: 13px; font-weight: 500; }
-.menu { border-radius: 10px; box-shadow: 0 8px 24px -6px rgb(35 20 55 / 16%); }
+.menu { border-radius: var(--lms-radius, 16px); box-shadow: 0 8px 24px -6px rgb(35 20 55 / 16%); }
 .trigger:where(:not(:global([data-theme='dark']) *)) {
   border-color: oklch(.84 .028 305);
   background-color: oklch(.998 .002 305 / .62);

@@ -6,7 +6,7 @@ const Material = lazy(() => import('./StudentMaterial').then(module => ({ defaul
 
 /** Download the media players only when a learner opens an activity. */
 export function DeferredStudentMaterial(props: ComponentProps<typeof MaterialComponent>) {
-  return <Suspense fallback={<p  className="p-5 text-sm text-foreground-500"><LoadingSkeleton label={"Loading activity…"} /></p>}>
+  return <Suspense fallback={<p  className="p-5 text-sm text-foreground-500"><LoadingSkeleton label="Loading activity…" variant="rows" /></p>}>
     <Material {...props} />
   </Suspense>;
 }

@@ -1859,7 +1859,7 @@ export function ScopeAchievementPanel({
       </div>
 
       <div className="space-y-4 p-5">
-        {loading && !data && <p className="text-[12px] text-foreground-500"><LoadingSkeleton label={"Loading learner achievement…"} /></p>}
+        {loading && !data && <p className="text-[12px] text-foreground-500"><LoadingSkeleton label="Loading learner achievement…" variant="rows" /></p>}
 
         {error && <InlineError message={error} onRetry={() => load()} />}
 
@@ -2373,7 +2373,7 @@ export function ScopeLearnerAchievementDetail({
       </header>
 
       <div className="space-y-4 p-4">
-        {loading && !data && <p className="text-[12px] text-foreground-500"><LoadingSkeleton label={"Loading this learner’s achievement…"} /></p>}
+        {loading && !data && <p className="text-[12px] text-foreground-500"><LoadingSkeleton label="Loading this learner’s achievement…" variant="rows" /></p>}
 
         {error && <InlineError message={error} onRetry={() => load()} />}
 

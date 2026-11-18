@@ -44,7 +44,7 @@ function CourseCard({ course, onContinue }: { course: Course; onContinue: (cours
         <details className={styles.outline} onToggle={event => setExpanded(event.currentTarget.open)}>
           <summary><ListTree size={14} aria-hidden="true" />Course outline</summary>
           {expanded && <div className={styles.outlineBody}>
-            {outline.loading ? <p ><LoadingSkeleton label={"Loading course outline…"} /></p> : outline.error ? <div role="alert"><p>{outline.error}</p><button type="button" className={styles.button} onClick={outline.refresh}>Try again</button></div> : outline.data ? <>
+            {outline.loading ? <p ><LoadingSkeleton label="Loading course outline…" variant="rows" /></p> : outline.error ? <div role="alert"><p>{outline.error}</p><button type="button" className={styles.button} onClick={outline.refresh}>Try again</button></div> : outline.data ? <>
               <p>Nothing here counts towards official study reports.</p>
               {weeks.map(week => <section key={week}><h3>{week}</h3><ul>{activities.filter(activity => (activity.week || 'Course activities') === week).map((activity, index) => <li key={`${activity.componentId ?? activity.component}:${index}`}><BookOpen size={13} aria-hidden="true" /><span>{activity.component}</span></li>)}</ul></section>)}
               {!activities.length && <p>No activities are available in this course yet.</p>}
@@ -103,7 +103,7 @@ export default function EnrolmentCoursesPage() {
           {allowed && <div className={frame.heroActions}><a href="#personal-courses"><BookOpen size={14} aria-hidden="true" />View your courses</a>{next && <button type="button" onClick={() => open(next)}><CirclePlay size={14} aria-hidden="true" />Continue learning</button>}<button type="button" aria-label="Refresh personal courses" onClick={() => setVersion(value => value + 1)}><RefreshCw size={14} aria-hidden="true" />Refresh</button></div>}
         </div>
       </header>
-      {!allowed ? <div className={styles.state} role="alert">Sign in as an administrator to view personal courses.</div> : error ? <div className={styles.state} role="alert"><h2>Your courses could not be loaded</h2><p>{error}</p><button type="button" className={styles.button} onClick={() => setVersion(value => value + 1)}>Try again</button></div> : !courses ? <div className={styles.state} ><LoadingSkeleton label={"Loading your courses…"} /></div> : <>
+      {!allowed ? <div className={styles.state} role="alert">Sign in as an administrator to view personal courses.</div> : error ? <div className={styles.state} role="alert"><h2>Your courses could not be loaded</h2><p>{error}</p><button type="button" className={styles.button} onClick={() => setVersion(value => value + 1)}>Try again</button></div> : !courses ? <div className={styles.state} ><LoadingSkeleton label="Loading your courses…" variant="rows" /></div> : <>
         <dl className={`${styles.stats} ${motion.staggerCards}`}>
           {[['Personal courses', courses.length, 'Assigned to you, not to a cohort'], ['Activities completed', done !== null ? `${done} / ${total}` : '—', done === null ? 'Activity totals unavailable' : done ? 'Saved to your personal record' : 'Nothing completed yet'], ['Overall completion', percent !== null ? `${percent}%` : '—', total === 0 ? 'No activities available yet' : 'Across your personal course activities'], ['Courses completed', completed ?? '—', 'Your personal learning progress']].map(([label, value, hint]) => <div key={label}><dt>{label}</dt><dd>{value}</dd><p>{hint}</p></div>)}
         </dl>

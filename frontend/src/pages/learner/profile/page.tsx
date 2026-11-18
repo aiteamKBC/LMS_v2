@@ -1,4 +1,4 @@
-import { LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
+import { LoadingLabel, LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
@@ -186,7 +186,7 @@ function DetailGroup({ title, children }: { title: string; children: React.React
 }
 
 function DetailRow({ label, value }: { label: string; value?: React.ReactNode }) {
-  return <div className="grid gap-1 py-2.5 sm:grid-cols-[145px_minmax(0,1fr)] sm:gap-4"><p className="text-xs text-foreground-500">{label}</p><p className="break-words text-[13px] font-semibold text-foreground-800">{value || 'Not set'}</p></div>;
+  return <div className="grid gap-1 py-2.5 sm:grid-cols-[145px_minmax(0,1fr)] sm:gap-4"><p className="text-xs text-foreground-500">{label}</p><p className="break-words text-[13px] font-semibold text-foreground-800"><LoadingLabel>{value || 'Not set'}</LoadingLabel></p></div>;
 }
 
 function Loading() {

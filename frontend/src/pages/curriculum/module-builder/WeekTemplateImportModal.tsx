@@ -92,7 +92,7 @@ export function WeekTemplateImportModal({ scope, onClose, onImport }: {
           </div>
         </div>
         <div className="max-h-[50vh] overflow-y-auto p-4">
-          {loading ? <div className="flex items-center justify-center gap-2 py-10 text-[12px] text-foreground-500"><span className="h-4 w-4 animate-spin rounded-full border-2 border-background-300 border-t-primary-500"/><LoadingSkeleton label={"Loading templates..."} /></div>
+          {loading ? <div className="flex items-center justify-center gap-2 py-10 text-[12px] text-foreground-500"><span className="h-4 w-4 animate-spin rounded-full border-2 border-background-300 border-t-primary-500"/><LoadingSkeleton label="Loading templates..." variant="text" /></div>
             : filteredTemplates.length ? <div className="space-y-2">{filteredTemplates.map(template => (
               <button key={template.id} type="button" disabled={Boolean(importingId) || !validCount} onClick={() => void pick(template)} className="flex w-full items-center gap-3 rounded-xl border border-background-200 bg-background-50 p-3 text-left transition-smooth hover:border-primary-300 hover:bg-primary-50 disabled:opacity-60">
                 <span className="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-primary-500 text-white"><AppIcon className="ri-calendar-todo-line"/></span>

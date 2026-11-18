@@ -67,7 +67,7 @@ export function DashboardTabs(props: DashboardTabsProps) {
         onClick={() => activate(tab.id)} onKeyDown={onKeyDown}>{tab.label}</button>)}
     </div>
     {tabs.filter(tab => visited.has(tab.id)).map(tab => <div key={tab.id} id={`learner-dashboard-panel-${tab.id}`} role="tabpanel" aria-labelledby={`learner-dashboard-tab-${tab.id}`} hidden={active !== tab.id} className={styles.panel}>
-      <Suspense fallback={<div  className={styles.loading}><LoadingSkeleton label={("Loading " + String(tab.label.toLowerCase()) + "…").trim()} /></div>}>
+      <Suspense fallback={<div  className={styles.loading}><LoadingSkeleton label={("Loading " + String(tab.label.toLowerCase()) + "…").trim()} variant="rows" /></div>}>
         {tab.id === 'overview' && <OverviewTab {...propsFor(tab.id)} />}
         {tab.id === 'weekly' && <WeeklyTab {...propsFor(tab.id)} />}
         {tab.id === 'monthly' && <MonthlyTab {...propsFor(tab.id)} />}
