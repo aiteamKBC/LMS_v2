@@ -47,6 +47,6 @@ describe('Recordings page guides', () => {
     expect(screen.getByText('Need help on this page? Click here')).toBeVisible();
     fireEvent.click(screen.getByRole('button', { name: 'Hide help message' }));
     expect(sessionStorage.getItem('recordings-help-hint-hidden')).toBe('1');
-    expect(screen.getByRole('button', { name: 'Watch Recordings hub page guide' })).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Watch Recording Quality page guide' })).toBeVisible();
   });
 });

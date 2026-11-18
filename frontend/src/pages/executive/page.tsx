@@ -208,33 +208,6 @@ export default function ExecutiveOverview({ attentionPanel }: { attentionPanel?:
         </div>
       </header>
 
-      {showPolicy ? (
-        <section
-          id="rag-policy-panel"
-          className="animate-fade-in rounded-xl border border-primary-100 bg-primary-50/60 p-4"
-          aria-label="RAG evaluation definitions"
-        >
-          <div className="flex flex-wrap items-start justify-between gap-2">
-            <h2 className="font-heading text-[14px] font-semibold text-foreground-950">
-              Status definitions used in this dashboard
-            </h2>
-            <p className="font-label text-[11px] text-foreground-600">
-              Thresholds are set per form policy — never shared across unrelated forms.
-            </p>
-          </div>
-          <ul className="mt-3 grid grid-cols-1 gap-2.5 sm:grid-cols-2 xl:grid-cols-5">
-            {RAG_ORDER.map((status) => (
-              <li key={status} className="rounded-lg border border-background-200 bg-background-50 p-3">
-                <RagBadge status={status} />
-                <p className="mt-1.5 text-[11.5px] leading-relaxed text-foreground-700">
-                  {RAG_META[status].meaning}
-                </p>
-              </li>
-            ))}
-          </ul>
-        </section>
-      ) : null}
-
       <details className={styles.dataNotice}>
         <summary>
           <span><i className="ri-information-line" aria-hidden="true" /> About this data</span>
@@ -265,7 +238,35 @@ export default function ExecutiveOverview({ attentionPanel }: { attentionPanel?:
 
       <OverviewKpis records={records} actions={actions} forms={forms} availability={live.availability} onOpenAuditTypes={() => setAuditTypesOpen(true)} />
 
-      {attentionPanel}
+      {showPolicy || attentionPanel ? (
+        <div className={`${styles.policyAttentionRow} ${showPolicy && attentionPanel ? styles.withPolicy : ""}`}>
+          {showPolicy ? (
+            <section
+              id="rag-policy-panel"
+              className={`${styles.policyPanel} animate-fade-in rounded-xl border border-primary-100 bg-primary-50/60`}
+              aria-label="RAG evaluation definitions"
+            >
+              <h2 className="font-heading text-[13px] font-semibold text-foreground-950">
+                Status definitions used in this dashboard
+              </h2>
+              <p className="mt-1 font-label text-[11px] leading-relaxed text-foreground-600">
+                Thresholds are set per form policy — never shared across unrelated forms.
+              </p>
+              <ul className={styles.statusList}>
+                {RAG_ORDER.map((status) => (
+                  <li key={status} data-status={status} className={`${styles.statusCard} rounded-lg border`}>
+                    <RagBadge status={status} size="sm" />
+                    <p className="text-[11px] leading-relaxed text-foreground-700">
+                      {RAG_META[status].meaning}
+                    </p>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          ) : null}
+          {attentionPanel ? <div className={styles.attentionPanel}>{attentionPanel}</div> : null}
+        </div>
+      ) : null}
 
       {auditTypesOpen ? <MeetingTypesModal records={records} onClose={() => setAuditTypesOpen(false)} onOpenType={openAuditType} /> : null}
 
@@ -278,6 +279,7 @@ export default function ExecutiveOverview({ attentionPanel }: { attentionPanel?:
         <CategoryRag records={records} />
       </div>
 
+      <div className={styles.trendRegistryGrid}>
       <Panel
         title="Quality trend by month"
         description="Smoothed monthly record volume by status. Month labels reflect submission dates, not review dates."
@@ -302,6 +304,7 @@ export default function ExecutiveOverview({ attentionPanel }: { attentionPanel?:
       </Panel>
 
       <RegistryTable forms={forms} />
+      </div>
 
       <div className={styles.healthGrid}>
         <div>

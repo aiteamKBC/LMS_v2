@@ -1,8 +1,8 @@
 [
   {
-    "id": "recordings-hub", "title": "Recordings hub", "path": "/curriculum/recordings-hub",
+    "id": "recordings-hub", "title": "Recording Quality", "path": "/curriculum/recordings-hub",
     "chapters": [
-      { "id": "overview", "title": "Start at the recordings hub", "text": "This is the starting point for teaching session recordings and coaching meetings. Choose the workspace you want to review." },
+      { "id": "overview", "title": "Start at Recording Quality", "text": "This is the starting point for teaching session recordings and coaching meetings. Choose the workspace you want to review." },
       { "id": "tutor", "title": "Tutor session recordings", "text": "Choose Tutor session recordings to find lectures, recordings and attendance. Browse by calendar date or LMS module." },
       { "id": "open-tutor", "title": "Open the tutor workspace", "text": "Select the tutor card to open the lecture calendar. Search for a lecture, then open its details to review the available evidence." },
       { "id": "coach", "title": "Coach meetings and recordings", "text": "Choose Coach meetings and recordings to review meetings by coach, including available recordings, attendance and quality checks." },

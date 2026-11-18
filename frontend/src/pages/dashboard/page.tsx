@@ -1,10 +1,11 @@
-import { useEffect, useMemo, useState } from "react";
-import { useSearchParams } from "react-router-dom";
+import { useEffect, useMemo, useState, type CSSProperties } from "react";
+import { Navigate, useSearchParams } from "react-router-dom";
 import { REVIEWS } from "@/mocks/reviews";
 import { EMPTY_FILTERS, REVIEWER_NAME } from "@/pages/dashboard/constants";
 import type { AuditEntry, CheckStatus, Filters, Review, SortKey, SortState } from "@/pages/dashboard/types";
 import { nowLabel, reviewRag } from "@/pages/dashboard/utils";
 import { Sidebar as LmsSidebar } from "@/components/feature/Sidebar";
+import { curriculumNavItems } from "@/mocks/navigation";
 import Topbar from "@/pages/dashboard/components/Topbar";
 import KpiCards from "@/pages/dashboard/components/KpiCards";
 import CheckTabs from "@/pages/dashboard/components/CheckTabs";
@@ -18,7 +19,6 @@ import NeedsAttentionCard from "@/pages/dashboard/components/NeedsAttentionCard"
 import QualityTeamPage from "@/pages/dashboard/components/QualityTeamPage";
 import FeedbacksPage from "@/pages/dashboard/components/FeedbacksPage";
 import DeepDivePage from "@/pages/dashboard/components/DeepDivePage";
-import QualityReviewsPage from "@/pages/coaching-recordings/QualityReviewsPage";
 import FeedbackResponseDialog from "@/pages/dashboard/components/FeedbackResponseDialog";
 import { useQualityNotifications } from "@/pages/dashboard/useQualityNotifications";
 import { useAuth } from "@/hooks/useAuth";
@@ -28,7 +28,7 @@ import styles from "./QualityShell.module.css";
 const STATUS_RANK: Record<string, number> = { Pending: 0, "In Review": 1, "Needs Correction": 2, Approved: 3, Rejected: 4 };
 
 const VIEW_META: Record<string, { title: string; section: string }> = {
-  overview: { title: "Dashboard", section: "Analytics" },
+  overview: { title: "Quality Assurance", section: "Curriculum Studio" },
   checks: { title: "Quality Checks", section: "Quality Assurance" },
   "checks-feedback": { title: "Feedback Check", section: "Quality Assurance" },
   reviews: { title: "Reviews", section: "Quality Assurance" },
@@ -49,33 +49,6 @@ const QUALITY_VIEW_NAV = [
   { id: "deep-dive", label: "Deep Dive", icon: "ri-file-chart-line" },
 ] as const;
 
-const QUALITY_SIDEBAR_NAV = [
-  {
-    id: "quality-demo-overview",
-    label: "Dashboard",
-    icon: "ri-dashboard-3-line",
-    href: "/curriculum/quality-demo?view=overview",
-  },
-  {
-    id: "quality-demo-checks",
-    label: "Quality Checks",
-    icon: "ri-checkbox-circle-line",
-    href: "/curriculum/quality-demo?view=checks",
-  },
-  {
-    id: "quality-demo-calendar",
-    label: "Weekly Calendar",
-    icon: "ri-calendar-schedule-line",
-    href: "/curriculum/coaching-recordings?view=week",
-  },
-  {
-    id: "quality-demo-deep-dive",
-    label: "Deep Dive",
-    icon: "ri-file-chart-line",
-    href: "/curriculum/quality-demo?view=deep-dive",
-  },
-];
-
 export default function QualityAssurancePage() {
   const { auth } = useAuth();
   const accountId = auth.account?.id ?? null;
@@ -86,6 +59,10 @@ export default function QualityAssurancePage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
+    try { return localStorage.getItem('kbc_curriculum_sidebar_collapsed') === 'true'; }
+    catch { return false; }
+  });
   const [active, setActive] = useState(() => {
     const initialView = searchParams.get("view");
     return QUALITY_VIEW_NAV.some((item) => item.id === initialView) ? initialView || "overview" : "overview";
@@ -131,10 +108,11 @@ export default function QualityAssurancePage() {
   const requestedView = searchParams.get("view");
 
   useEffect(() => {
-    if (!requestedView || !QUALITY_VIEW_NAV.some((item) => item.id === requestedView) || requestedView === active) return;
-    setActive(requestedView);
-    if (requestedView === "checks") setTab("forms");
-    if (requestedView === "checks-feedback") setTab("feedback");
+    const nextView = QUALITY_VIEW_NAV.some((item) => item.id === requestedView) ? requestedView! : "overview";
+    if (nextView === active) return;
+    setActive(nextView);
+    if (nextView === "checks") setTab("forms");
+    if (nextView === "checks-feedback") setTab("feedback");
     window.scrollTo({ top: 0, behavior: "smooth" });
   }, [active, requestedView]);
 
@@ -323,9 +301,24 @@ export default function QualityAssurancePage() {
   const isDeepDiveView = active === "deep-dive";
   const showWorkspace = !isOverview && !isTeamView && !isFeedbacksView && !isCalendarView && !isDeepDiveView;
   const topMeta = VIEW_META[active] ?? VIEW_META.overview;
+  const qualitySelection: Record<string, boolean> = {
+    'curriculum-quality-assurance': !isDeepDiveView && !isCalendarView,
+    'curriculum-quality-checks': isCalendarView,
+    'curriculum-quality-deep-dive': isDeepDiveView,
+  };
+  const navItems = curriculumNavItems.map(item => item.id === 'curriculum-coaching-recordings' ? {
+    ...item,
+    children: item.children?.map(child => child.id in qualitySelection ? { ...child, active: qualitySelection[child.id] } : child),
+  } : item);
+
+  if (isCalendarView) {
+    const params = new URLSearchParams(searchParams);
+    params.delete('view');
+    return <Navigate to={{ pathname: '/curriculum/coaching-recordings/reviews', search: params.toString() }} replace />;
+  }
 
   return (
-    <div className={`quality-demo dashboard-theme workspace-shell bg-background-100 ${styles.shell}`} data-workspace-role="curriculum">
+    <div className={`quality-demo dashboard-theme workspace-shell bg-background-100 ${styles.shell}`} data-workspace-role="curriculum" style={{ '--kbc-sidebar-width': sidebarCollapsed ? '64px' : '240px' } as CSSProperties}>
       <a
         href="#main-content"
         className="sr-only focus:not-sr-only focus:absolute focus:left-4 focus:top-4 focus:z-[80] focus:rounded-md focus:bg-primary-500 focus:px-3 focus:py-2 focus:text-[12px] focus:font-semibold focus:text-background-50"
@@ -337,7 +330,12 @@ export default function QualityAssurancePage() {
         role="curriculum"
         appearance="curriculum"
         roleLabel="Curriculum Designer"
-        navItems={QUALITY_SIDEBAR_NAV}
+        navItems={navItems}
+        learnerCollapsed={sidebarCollapsed}
+        onLearnerCollapsedChange={collapsed => {
+          setSidebarCollapsed(collapsed);
+          try { localStorage.setItem('kbc_curriculum_sidebar_collapsed', String(collapsed)); } catch { /* Storage may be unavailable. */ }
+        }}
         userName={REVIEWER_NAME}
         userRole={"Quality Assurance"}
         mobileOpen={sidebarOpen}
@@ -348,7 +346,7 @@ export default function QualityAssurancePage() {
         <Topbar onMenu={() => setSidebarOpen(true)} title={topMeta.title} section={topMeta.section} notifications={headerNotifications} onNotificationClick={selectNotification} />
 
         <div className={styles.body}>
-        {isCalendarView ? <QualityReviewsPage embedded /> : <main id="main-content" tabIndex={-1} className="mx-auto flex w-full max-w-[1560px] flex-col gap-4 px-4 py-4 md:px-6 md:py-5">
+        <main id="main-content" tabIndex={-1} className="mx-auto flex w-full max-w-[1560px] flex-col gap-4 px-4 py-4 md:px-6 md:py-5">
           {isOverview ? <ExecutiveOverview attentionPanel={<NeedsAttentionCard notifications={headerNotifications} onNotificationClick={selectNotification} loading={qualityNotifications.loading} error={qualityNotifications.error} onRefresh={qualityNotifications.refresh} />} /> : null}
           {isTeamView ? <QualityTeamPage onToast={notify} /> : null}
           {isFeedbacksView ? <FeedbacksPage /> : null}
@@ -413,7 +411,7 @@ export default function QualityAssurancePage() {
               Form submission and quality approval are tracked separately
             </p>
           </footer>
-        </main>}
+        </main>
         </div>
       </div>
 

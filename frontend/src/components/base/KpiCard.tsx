@@ -13,6 +13,7 @@ interface KpiCardProps {
   onLinkClick?: () => void;
   accent?: "primary" | "accent" | "secondary" | "critical";
   children?: ReactNode;
+  className?: string;
 }
 
 const ACCENT_STYLES: Record<string, string> = {
@@ -34,9 +35,10 @@ export default function KpiCard({
   onLinkClick,
   accent = "secondary",
   children,
+  className = "",
 }: KpiCardProps) {
   return (
-    <div className="group flex h-full flex-col rounded-xl border border-background-200 bg-background-50 p-4 transition-colors hover:border-background-300 sm:p-5">
+    <div className={`group flex h-full flex-col rounded-xl border border-background-200 bg-background-50 p-4 transition-colors hover:border-background-300 sm:p-5 ${className}`}>
       <div className="flex items-start justify-between gap-3">
         <p className="font-label text-[11px] font-semibold uppercase tracking-[0.09em] text-foreground-600">
           {label}

@@ -6,19 +6,8 @@
 }
 
 .shell :global(.workspace-content) {
-  margin: 12px;
-}
-
-.shell :global(.kbc-learner-sidebar) {
-  top: 12px;
-  bottom: 12px;
-  left: 12px;
-  border-radius: 24px;
-}
-
-.shell :global(.kbc-learner-sidebar-panel) nav a,
-.shell :global(.kbc-learner-signout) {
-  border-radius: 12px !important;
+  margin: 0;
+  margin-left: var(--kbc-sidebar-offset, 0px);
 }
 
 .shell:global(.dashboard-theme[data-workspace-role="curriculum"]) :global(.kbc-workspace-topbar) {
@@ -51,15 +40,7 @@
   overflow-y: auto;
 }
 
-@media (min-width: 1024px) {
-  .shell :global(.workspace-content) {
-    /* 12px sidebar inset + 240px panel + 12px content gap. */
-    margin-left: 264px;
-  }
-}
-
 @media (max-width: 639px) {
-  .shell :global(.workspace-content) { margin: 8px; }
   .shell:global(.dashboard-theme[data-workspace-role="curriculum"]) :global(.kbc-workspace-topbar) {
     border-radius: 16px !important;
     margin-bottom: 8px !important;
