@@ -42,7 +42,8 @@ def monthly_hours(owner, records, targets, *, signed_months=(), current_month=No
         if month <= current:
             months[month]
     attendance_hours = 0
-    for entry in attendance:
+    from learner_api.attendance_otjh import additional_rows
+    for entry in additional_rows(records, attendance):
         month = entry.get('reporting_month')
         if entry.get('accepted') is True and month and month <= current:
             value = number(entry.get('actual_hours'))

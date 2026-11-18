@@ -80,6 +80,9 @@ class HomeSummarySectionTests(SimpleTestCase):
     def test_home_source_loads_the_programme_period_fields(self):
         self.assertTrue({'programme', 'cohort', 'start_date', 'end_date'} <= set(HOME_SOURCE_FIELDS))
 
+    def test_home_source_does_not_defer_the_shared_plan_and_attendance_fields(self):
+        self.assertTrue({'training_plan', 'learning_plan', 'group', 'learner_type'} <= set(HOME_SOURCE_FIELDS))
+
     def test_unknown_sections_are_still_rejected(self):
         response = overview_week.__wrapped__.__wrapped__(
             RequestFactory().get('/?section=home-compact'), 'commercial', 265)
@@ -104,6 +107,7 @@ class HomeSummarySectionTests(SimpleTestCase):
         cursor = MagicMock()
         cursor.fetchall.return_value = []
         with patch.object(week_module.canonical_learning, 'require_profile', return_value=owner) as identity, \
+             patch.object(week_module.canonical_learning, 'entries_for', return_value=[]) as ledger, \
              patch.object(week_module.canonical_learning, 'metrics', return_value={'otjh': {}}) as metrics, \
              patch.object(week_module, 'connections', cursor_connections(cursor)), \
              patch.object(week_module, '_direct_progress_records', return_value=[]) as progress, \
@@ -113,7 +117,8 @@ class HomeSummarySectionTests(SimpleTestCase):
             week_module.read_week(source, home_kind='commercial', home_summary=True)
 
         identity.assert_called_once_with(265)
-        metrics.assert_called_once_with(265, owner=owner)
+        ledger.assert_called_once_with(owner, lineage_only=True)
+        metrics.assert_called_once_with(265, owner=owner, records=ledger.return_value)
         self.assertIs(source._canonical_profile, owner)
         # The verified owner row is the profile; no second "Learner".learners lookup.
         profile = progress.call_args.kwargs['profile']
@@ -136,6 +141,7 @@ class HomeSummarySectionTests(SimpleTestCase):
                  for key in ('c1', 'c2')}
         metrics = {'otjh': {'actual': 1, 'planned': 10}}
         with patch.object(week_module.canonical_learning, 'require_profile', return_value={'id': 9}), \
+             patch.object(week_module.canonical_learning, 'entries_for', return_value=[]), \
              patch.object(week_module.canonical_learning, 'metrics', return_value=metrics), \
              patch.object(week_module, 'connections', cursor_connections(cursor)), \
              patch.object(week_module, '_direct_progress_records', return_value=[]), \
@@ -162,7 +168,8 @@ class HomeSummarySectionTests(SimpleTestCase):
         # The home card receives the same merged activities, attendance scope and SSOT metrics.
         args, kwargs = home.call_args
         self.assertEqual(len(list(args[2])), 2)
-        self.assertEqual(kwargs, {'attendance_module_ids': ['MOD-1', 'MOD-2'], 'canonical_metrics': metrics})
+        self.assertEqual(kwargs, {'attendance_module_ids': ['MOD-1', 'MOD-2'], 'canonical_metrics': metrics,
+                                  'canonical_records': []})
 
 
 def session_row(occurrence_id, start, status='scheduled'):

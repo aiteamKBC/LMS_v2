@@ -11,6 +11,7 @@ import {
   saveCurriculumActivityStatus,
   fetchCurriculumActivityStatusHistory, type CurriculumActivityStatusHistory,
   type CurriculumActivityCompletionTime,
+  type CurriculumRegisterAttendance,
   type CurriculumProgrammeAssignedLearner, type CurriculumScopeLearnerKsbImpactResponse,
 } from '@/lib/curriculumApi';
 import { formatSystemTimestamp } from '@/lib/format';
@@ -18,6 +19,7 @@ import { formatHoursClock } from '@/lib/hoursClock';
 import { EntityEmptyState, InlineError } from '../shared/entities/ui';
 import {
   buildProgressRows, plannedPoints, ratioPercent, recordedHours, resolveProgressLearner, overallPercent,
+  activityHours, attendanceCredit,
   type ActivityStatus, type ActivityType, type ProgressRow,
 } from './progressView';
 import './progress.css';
@@ -36,6 +38,15 @@ const TYPES: ActivityType[] = ['Attendance', 'Quiz', 'Reading', 'Assignment', 'A
 const TYPE_ICON: Record<ActivityType, string> = {
   Attendance: 'ri-group-fill', Quiz: 'ri-question-line', Reading: 'ri-book-open-line',
   Assignment: 'ri-file-text-line', Audio: 'ri-headphone-line', Video: 'ri-video-line', Activity: 'ri-list-check-2',
+};
+const ATTENDANCE_STATUS: Record<CurriculumRegisterAttendance['status'], { label: string; tone: ActivityStatus }> = {
+  present: { label: 'Attended', tone: 'completed' },
+  absent: { label: 'Absent', tone: 'needs-attention' },
+  unmarked: { label: 'Attendance not recorded', tone: 'not-started' },
+  unlinked: { label: 'Session not linked', tone: 'not-started' },
+  cancelled: { label: 'Session cancelled', tone: 'not-started' },
+  upcoming: { label: 'Scheduled', tone: 'not-started' },
+  in_progress: { label: 'Session in progress', tone: 'in-progress' },
 };
 
 function text(value: unknown, fallback = 'Not available') { return String(value ?? '').trim() || fallback; }
@@ -57,6 +68,20 @@ function StatusBadge({ row }: { row: ProgressRow }) {
   const submissionStatus = row.type === 'Assignment' ? row.history?.reflection?.status : '';
   const manual = 'statusSource' in row.activity && row.activity.statusSource === 'manual';
   const attendanceMode = 'logState' in row.activity ? row.activity.logState?.attendanceMode : null;
+  const registered = row.type === 'Attendance' && 'registerAttendance' in row.activity ? row.activity.registerAttendance : null;
+  if (registered) {
+    if (registered.status === 'present') {
+      return <span className="lmp-status lmp-status-completed" aria-label="Registered attendance">
+        <AppIcon name={STATUS.completed.icon} size={17} /><span>Completed<small>Attended</small></span>
+      </span>;
+    }
+    const attendance = ATTENDANCE_STATUS[registered.status];
+    return <span className={`lmp-status lmp-status-${attendance.tone}`} aria-label="Registered attendance">
+      <AppIcon name={STATUS[attendance.tone].icon} size={17} />
+      <span>{attendance.label}<small>Activity: {row.status === 'completed' && attendanceMode === 'recording'
+        ? 'Watched recording' : STATUS[row.status].label}</small></span>
+    </span>;
+  }
   const label = row.type === 'Attendance' && row.status === 'completed' && attendanceMode
     ? attendanceMode === 'attended' ? 'Attended' : 'Watched recording' : STATUS[row.status].label;
   return <span className={`lmp-status lmp-status-${row.status}`}><AppIcon name={STATUS[row.status].icon} size={17} />
@@ -89,14 +114,18 @@ function ActivityTable({ rows, onOpen, onStatus, busy }: { rows: ProgressRow[]; 
     <tbody>{rows.map(row => {
       const submittedAt = row.history?.submittedAt || row.activity.submittedAt;
       const log = 'logState' in row.activity ? row.activity.logState : undefined;
-      const hours = log ? log.actualOtjh : row.history?.actualOtjh;
-      const writable = 'canChangeStatus' in row.activity && row.activity.canChangeStatus;
+      const hours = activityHours(row);
+      const liveCredit = attendanceCredit(row);
+      const writable = 'canChangeStatus' in row.activity && row.activity.canChangeStatus
+        && row.activity.registerAttendance?.status !== 'present';
       return <tr key={row.id}>
         <td><div className="lmp-activity-name"><TypeIcon type={row.type} /><div><strong>{text(row.activity.componentTitle, row.type)}</strong><span>{row.type}</span></div></div></td>
-        <td title={log?.hoursSource || 'Recorded activity hours'}>{hours == null ? '—' : formatHoursClock(hours)}</td>
+        <td title={liveCredit == null ? log?.hoursSource || 'Recorded activity hours'
+          : liveCredit === 0 ? 'Lecture hours already counted on another activity' : 'Live attendance: 2h 30m lecture credit'}>{hours == null ? '—' : formatHoursClock(hours)}</td>
         <td><span className="lmp-ksb-codes">{row.ksbs.length ? row.ksbs.join(', ') : '—'}</span></td>
         <td title="Planned activity points">{row.plannedPoints == null ? '—' : numberLabel(row.plannedPoints)}</td>
-        <td>{log?.timeEntryMode === 'input' && log.activityDate ? <span className="lmp-recorded-time">Input<small>{log.activityDate}</small></span> : log?.startedAt && log.endedAt ? <span className="lmp-recorded-time" title={submittedLabel(log.startedAt)}>
+        <td>{liveCredit != null && 'registerAttendance' in row.activity ? <span className="lmp-recorded-time">Attended<small>{row.activity.registerAttendance?.sessionDate}</small></span>
+          : log?.timeEntryMode === 'input' && log.activityDate ? <span className="lmp-recorded-time">Input<small>{log.activityDate}</small></span> : log?.startedAt && log.endedAt ? <span className="lmp-recorded-time" title={submittedLabel(log.startedAt)}>
           {formatSystemTimestamp(log.startedAt, { hour: '2-digit', minute: '2-digit', second: '2-digit' })} → {formatSystemTimestamp(log.endedAt, { hour: '2-digit', minute: '2-digit', second: '2-digit' })}<small>Activity Log · UK time</small>
         </span> : submittedAt ? <span className="lmp-recorded-time" title={`${submittedLabel(submittedAt)} (UK time)`}>
           {formatSystemTimestamp(submittedAt, { hour: '2-digit', minute: '2-digit', second: '2-digit' }) || '—'}<small>Submitted · UK time</small>
@@ -145,7 +174,16 @@ function ActivityDrawer({ row, onClose, moduleId, learnerId }: { row: ProgressRo
       <header><div><p>Activity details</p><h2>{text(row.activity.componentTitle, row.type)}</h2></div>
         <button type="button" ref={close} onClick={onClose} aria-label="Close activity details"><AppIcon name="ri-close-line" size={22} /></button></header>
       <div className="lmp-drawer-content"><div className="lmp-drawer-status"><TypeIcon type={row.type} /><StatusBadge row={row} /></div>
-        <dl><div><dt>Recorded OTH</dt><dd>{hours == null ? 'Not recorded' : formatHoursClock(hours)}</dd></div>
+        <dl>{attendanceCredit(row) != null && <div><dt>Credited OTH</dt><dd>{formatHoursClock(attendanceCredit(row)!)} · Live attendance</dd></div>}
+          <div><dt>Recorded OTH</dt><dd>{hours == null ? 'Not recorded' : formatHoursClock(hours)}</dd></div>
+          {'registerAttendance' in row.activity && row.activity.registerAttendance && <>
+            <div><dt>Attendance source</dt><dd>Lecture attendance register</dd></div>
+            <div><dt>Lecture date</dt><dd>{row.activity.registerAttendance.sessionDate || 'Not linked'}</dd></div>
+            <div><dt>Recorded attendance time</dt><dd>{row.activity.registerAttendance.attendedSeconds == null
+              ? 'Not recorded' : formatHoursClock(row.activity.registerAttendance.attendedSeconds / 3600)}</dd></div>
+            {row.activity.registerAttendance.firstJoinAt && <div><dt>First joined (UK time)</dt><dd>{submittedLabel(row.activity.registerAttendance.firstJoinAt)}</dd></div>}
+            {row.activity.registerAttendance.lastLeaveAt && <div><dt>Last left (UK time)</dt><dd>{submittedLabel(row.activity.registerAttendance.lastLeaveAt)}</dd></div>}
+          </>}
           {log && <div><dt>Calculated status</dt><dd>{log.calculatedStatus.replace(/_/g, ' ')}</dd></div>}
           {log && <div><dt>Accepted OTH</dt><dd>{log.acceptedOtjh == null ? 'Not available' : formatHoursClock(log.acceptedOtjh)}</dd></div>}
           {Boolean(log?.unallocatedAcceptedRecords) && <div><dt>Time allocation</dt><dd>{log!.unallocatedAcceptedRecords} accepted record(s) without allocated time. Recorded accepted hours are included in progress.</dd></div>}
@@ -227,8 +265,9 @@ export default function LearnerModuleProgressPage() {
   const logHours = activities.every(row => 'logState' in row.activity && row.activity.logState)
     ? recordedHours(activities)
     : undefined;
-  const logSummary = data?.activityLogOtjh?.learners.find(row => String(row.learnerId) === profileId);
-  const unallocatedRecords = logSummary?.unallocatedAcceptedRecords ?? activities.reduce((sum, row) => sum + ('logState' in row.activity ? row.activity.logState?.unallocatedAcceptedRecords || 0 : 0), 0);
+  const logSummary = (data?.moduleProgressOtjh || data?.activityLogOtjh)?.learners.find(row => String(row.learnerId) === profileId);
+  const unallocatedRecords = logSummary?.unallocatedAcceptedRecords ?? activities.reduce((sum, row) => sum + (attendanceCredit(row) != null ? 0
+    : 'logState' in row.activity ? row.activity.logState?.unallocatedAcceptedRecords || 0 : 0), 0);
   const actualHours = logSummary ? logSummary.achievedOtjh : logHours === undefined ? otjh?.achievedOtjh : logHours;
   const othPercent = otjh && actualHours != null && unallocatedRecords === 0 ? ratioPercent(actualHours, otjh.plannedOtjh) : null;
   const ksbPercent = consumption ? ratioPercent(consumption.cappedConsumedWeightTotal, consumption.expectedWeightTotal) : null;
@@ -265,20 +304,22 @@ export default function LearnerModuleProgressPage() {
       if (activeScope.current !== scopeKey) return;
       setData(current => {
         if (!current) return current;
-        const summary = current.activityLogOtjh;
         const hoursDelta = (result.state.acceptedOtjh || 0) - (log.acceptedOtjh || 0);
         const missingDelta = (result.state.unallocatedAcceptedRecords || 0) - (log.unallocatedAcceptedRecords || 0);
-        const hasSummary = summary?.learners.some(item => String(item.learnerId) === profileId);
+        const updateSummary = (summary: CurriculumScopeLearnerKsbImpactResponse['activityLogOtjh'], delta: number, missing: number) =>
+          summary?.learners.some(item => String(item.learnerId) === profileId) ? { ...summary,
+            achievedTotal: summary.achievedTotal == null ? null : summary.achievedTotal + delta,
+            unallocatedAcceptedRecords: (summary.unallocatedAcceptedRecords || 0) + missing,
+            learners: summary.learners.map(item => String(item.learnerId) === profileId ? { ...item,
+              achievedOtjh: item.achievedOtjh == null ? null : item.achievedOtjh + delta,
+              unallocatedAcceptedRecords: (item.unallocatedAcceptedRecords || 0) + missing,
+            } : item),
+          } : summary;
+        const fixedAttendance = attendanceCredit(row) != null;
         return { ...current, learnerActivityPlan: current.learnerActivityPlan?.map(item => item.activityPlanId === row.id
           ? { ...item, logState: result.state, displayStatus, statusSource: 'manual' } : item),
-          activityLogOtjh: summary && hasSummary ? { ...summary,
-            achievedTotal: summary.achievedTotal == null ? null : summary.achievedTotal + hoursDelta,
-            unallocatedAcceptedRecords: (summary.unallocatedAcceptedRecords || 0) + missingDelta,
-            learners: summary.learners.map(item => String(item.learnerId) === profileId ? { ...item,
-              achievedOtjh: item.achievedOtjh == null ? null : item.achievedOtjh + hoursDelta,
-              unallocatedAcceptedRecords: (item.unallocatedAcceptedRecords || 0) + missingDelta,
-            } : item),
-          } : summary };
+          activityLogOtjh: updateSummary(current.activityLogOtjh, hoursDelta, missingDelta),
+          moduleProgressOtjh: updateSummary(current.moduleProgressOtjh, fixedAttendance ? 0 : hoursDelta, fixedAttendance ? 0 : missingDelta) };
       });
       try {
         const refreshed = await fetchCurriculumScopeLearnerKsbImpact('module', moduleId, { learnerStatus: 'all', moduleProgress: true });
@@ -323,7 +364,7 @@ export default function LearnerModuleProgressPage() {
           <div className="lmp-summary-grid">
             <section className="lmp-panel" aria-labelledby="lmp-overview"><h2 id="lmp-overview">Progress Overview</h2><div className="lmp-overview-grid">
               <OverviewCard label="OTH Progress" tone="green" percent={othPercent}
-                value={otjh && actualHours != null ? `${formatHoursClock(actualHours)} / ${formatHoursClock(otjh.plannedOtjh)}` : 'Not available'} detail={`${logHours === undefined ? 'Credited / planned hours' : 'Activity Log accepted / planned hours'}${unallocatedRecords ? ` · ${unallocatedRecords} accepted record(s) without allocated time` : ''}`} />
+                value={otjh && actualHours != null ? `${formatHoursClock(actualHours)} / ${formatHoursClock(otjh.plannedOtjh)}` : 'Not available'} detail={`${data?.moduleProgressOtjh ? 'Live attendance + accepted Activity Log / planned hours' : logHours === undefined ? 'Credited / planned hours' : 'Activity Log accepted / planned hours'}${unallocatedRecords ? ` · ${unallocatedRecords} accepted record(s) without allocated time` : ''}`} />
               <OverviewCard label="KSB Progress" tone="purple" percent={ksbPercent}
                 value={consumption ? `${numberLabel(consumption.cappedConsumedWeightTotal)} / ${numberLabel(consumption.expectedWeightTotal)}` : 'Not available'} detail="Achieved / current activity target, capped per KSB" />
               <OverviewCard label="Activities Progress" tone="blue" percent={activityPercent} value={`${completed} / ${activities.length} completed`} detail="All assigned activities" />
@@ -363,7 +404,7 @@ export default function LearnerModuleProgressPage() {
               return <section className="lmp-week" key={week.id} aria-label={week.title}>
                 <button type="button" className="lmp-week-heading" aria-expanded={open} aria-controls={`lmp-week-${index}`} onClick={() => toggleWeek(week.id)}>
                   <AppIcon name={open ? 'ri-arrow-down-s-line' : 'ri-arrow-right-s-line'} size={21} /><strong>{week.title}</strong><span className="lmp-week-count">{done} / {week.rows.length} activities</span>
-                  <span className="lmp-week-metrics"><span className="lmp-pill lmp-pill-green" title="Recorded accepted hours">OTH: {hours == null ? 'N/A' : formatHoursClock(hours)}</span>
+                  <span className="lmp-week-metrics"><span className="lmp-pill lmp-pill-green" title="Live attendance credit and accepted activity hours">OTH: {hours == null ? 'N/A' : formatHoursClock(hours)}</span>
                     <span className="lmp-pill lmp-pill-blue" title="Distinct mapped or evidenced KSBs">KSBs: {codes.size}</span><span className="lmp-pill lmp-pill-orange" title="Planned points">Points: {weekPoints == null ? 'N/A' : numberLabel(weekPoints)}</span>
                     <ProgressBar percent={percent} label={`${week.title} completion`} tone={percent === 100 ? 'green' : 'purple'} /><b>{percent == null ? 'N/A' : `${percent}%`}</b></span>
                 </button>

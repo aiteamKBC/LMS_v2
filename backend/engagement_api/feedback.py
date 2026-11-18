@@ -18,7 +18,7 @@ from azure.storage.blob import ContentSettings
 from django.conf import settings
 from django.core.validators import validate_email
 from django.core.exceptions import ValidationError
-from django.db import DatabaseError, IntegrityError, connection, transaction
+from django.db import DatabaseError, IntegrityError, connection, connections, transaction
 from django.db.models import Prefetch, Q
 from django.http import HttpResponse, JsonResponse
 from django.utils import timezone
@@ -26,16 +26,20 @@ from django.utils.dateparse import parse_date, parse_datetime
 from django.middleware.csrf import get_token
 
 from learner_api.models import EnrolmentUser
+from learner_api import support_tickets
+from login.identity import account_for_subject
 from learner_api import evidence_storage
 from learner_api.profile_photo import normalize_photo
 
 from .helpers import json_body, json_error
 from .feedback_delivery import QR_SCHEDULE_SOURCE, ensure_delivery_questions, lecture_after_form_creation
 from .feedback_analytics import lecture_analytics_options, question_analytics
-from .feedback_scoring import validate_analytics_settings
+from .feedback_scoring import IMPORTANCE_WEIGHTS, analytics_settings, answer_score, score_classification, validate_analytics_settings
 from .feedback_question_overrides import effective_question_ids
 from .module_feedback import MODULE_FORM_TYPES, assigned_active_module_ids, module_delivery_accessible, sync_module_feedback
 from .review_feedback import ALL_REVIEW_FORM_TYPES, EMPLOYER_REVIEW_FORM_TYPE, sync_review_feedback
+from .quality_tickets import quality_ticket_id as _quality_ticket_id
+from .form_reporting import form_report_counts
 from .models import (
     FeedbackAnswer, FeedbackAssignment, FeedbackDelivery, FeedbackDeliveryRecipient,
     FeedbackDeliveryQuestionOverride,
@@ -155,12 +159,15 @@ def _assigned_count(form):
     return manual_count + delivery_count + review_count
 
 
-def form_dict(form, *, include_structure=False):
-    response_query = FeedbackResponse.objects.filter(form=form)
-    if form.form_type in VERSIONED_FORM_TYPES:
-        response_query = FeedbackResponse.objects.filter(form__template_key=form.template_key)
-    responses = list(response_query)
-    completed = sum(r.status == 'completed' for r in responses)
+def form_dict(form, *, include_structure=False, reporting=None):
+    if reporting is None:
+        response_query = FeedbackResponse.objects.filter(form=form)
+        if form.form_type in VERSIONED_FORM_TYPES:
+            response_query = FeedbackResponse.objects.filter(form__template_key=form.template_key)
+        responses = list(response_query)
+        reporting = {'assigned': _assigned_count(form), 'started': len(responses),
+                     'completed': sum(r.status == 'completed' for r in responses),
+                     'history': form.form_type in VERSIONED_FORM_TYPES and _form_has_history(form)}
     data = {
         'id': form.id, 'title': form.title, 'formType': form.form_type,
         'deliveryScope': form.delivery_scope,
@@ -180,10 +187,10 @@ def form_dict(form, *, include_structure=False):
         'allowEditAfterSubmission': form.allow_edit_after_submission,
         'createdBy': form.created_by, 'createdAt': _iso(form.created_at),
         'updatedAt': _iso(form.updated_at), 'publishedAt': _iso(form.published_at),
-        'assignedCount': _assigned_count(form), 'responseCount': completed,
-        'startedCount': len(responses),
-        'structureLocked': form.form_type not in VERSIONED_FORM_TYPES and bool(responses),
-        'willCreateVersion': form.form_type in VERSIONED_FORM_TYPES and _form_has_history(form),
+        'assignedCount': reporting['assigned'], 'responseCount': reporting['completed'],
+        'startedCount': reporting['started'],
+        'structureLocked': form.form_type not in VERSIONED_FORM_TYPES and bool(reporting['started']),
+        'willCreateVersion': form.form_type in VERSIONED_FORM_TYPES and reporting['history'],
     }
     if include_structure:
         data['sections'] = [_section_dict(s) for s in form.sections.all()]
@@ -215,10 +222,10 @@ def _form_version_dict(form):
     }
 
 
-def _forms_queryset(*, current_only=False):
-    queryset = FeedbackForm.objects.prefetch_related(
-        'assignments', 'responses', 'sections__questions',
-    )
+def _forms_queryset(*, current_only=False, prefetch=True):
+    queryset = FeedbackForm.objects.all()
+    if prefetch:
+        queryset = queryset.prefetch_related('assignments', 'responses', 'sections__questions')
     if current_only:
         queryset = queryset.filter(is_current=True)
     return queryset.order_by('-updated_at')
@@ -521,9 +528,10 @@ def _apply_metadata(form, payload):
 def forms_collection(request):
     if request.method == 'GET':
         sync_module_feedback()
-        forms = list(_forms_queryset(current_only=True))
+        forms = list(_forms_queryset(current_only=True, prefetch=False))
+        reporting = form_report_counts(forms, versioned_types=VERSIONED_FORM_TYPES, employer_type=EMPLOYER_REVIEW_FORM_TYPE)
         return JsonResponse({
-            'forms': [form_dict(f) for f in forms],
+            'forms': [form_dict(f, reporting=reporting[f.id]) for f in forms],
             'summary': {
                 'totalForms': len(forms),
                 'publishedForms': sum(f.status == 'published' for f in forms),
@@ -977,6 +985,106 @@ def response_detail(request, pk):
     return JsonResponse({'response': _response_dict(response, include_answers=True)})
 
 
+def _feedback_response_score(response):
+    selected_ids = None
+    delivery_id = getattr(response, 'delivery_id', None)
+    delivery = getattr(response, 'delivery', None) if delivery_id is not None else None
+    if delivery is not None:
+        recipient = FeedbackDeliveryRecipient.objects.filter(
+            delivery_id=delivery_id, learner_id=response.learner_id,
+        ).first()
+        selected_ids = _selected_delivery_question_ids(delivery, recipient, response)
+    weighted = []
+    for answer in FeedbackAnswer.objects.filter(response=response).select_related('question'):
+        question = answer.question
+        if selected_ids is not None and question.id not in selected_ids:
+            continue
+        settings = analytics_settings(question.question_type, question.config or {})
+        if not settings['includeInOverall']:
+            continue
+        score = answer_score(question.question_type, question.config or {}, answer.answer)
+        if score is not None:
+            weighted.append((score, IMPORTANCE_WEIGHTS.get(settings['importance'], 2)))
+    weight = sum(item[1] for item in weighted)
+    return sum(score * importance for score, importance in weighted) / weight if weight else None
+
+
+def ensure_quality_ticket_for_response(response, *, actor='Feedback automation'):
+    """Open one idempotent Quality Team ticket when a response is negative."""
+    if not isinstance(response, FeedbackResponse):
+        return None
+    if response.status != 'completed' or score_classification(_feedback_response_score(response)) != 'negative':
+        return None
+    if 'assistant_conversations' not in connections.databases:
+        raise support_tickets.TicketError('The technicalsupport database connection is not configured.', 503)
+    try:
+        learner_id = int(str(response.learner_id))
+    except (TypeError, ValueError):
+        raise support_tickets.TicketError('This response is not linked to a learner account.', 409) from None
+    learner_account = account_for_subject('learner', learner_id)
+    context = getattr(response.delivery, 'session_title', '') or getattr(response.delivery, 'module_name', '') or response.form.title
+    ticket_id = _quality_ticket_id(response.id)
+    ticket = {
+        'title': f'Quality review: {context}'[:200],
+        'description': (
+            f'Negative feedback response #{response.id} requires Quality Team review.\n\n'
+            f'Feedback form: {response.form.title}\n'
+            f'Learner: {response.learner_name or "Learner"}\n'
+            f'Context: {context}\n'
+            f'Response submitted: {response.submitted_at.isoformat() if response.submitted_at else "Unknown"}'
+        ),
+        'category': 'Learning Support',
+        'priority': 'high',
+    }
+    return support_tickets.create_staff_ticket(
+        learner_account=learner_account,
+        ticket={'id': str(ticket_id), **ticket},
+        actor_name=actor,
+    )
+
+
+@require_staff
+def response_quality_ticket(request, pk):
+    """Create or retrieve the Quality Team ticket for a negative response."""
+    if request.method not in {'GET', 'POST'}:
+        return json_error('Method not allowed.', status=405)
+    try:
+        response = FeedbackResponse.objects.select_related('form', 'delivery').get(pk=pk)
+    except FeedbackResponse.DoesNotExist:
+        return json_error('Feedback response not found.', status=404)
+    if request.method == 'GET':
+        try:
+            current_status = support_tickets.assistant_conversations.ticket_status(
+                ticket_id=str(_quality_ticket_id(response.id)),
+            )
+        except support_tickets.assistant_conversations.AssistantConversationSyncError as exc:
+            return json_error(str(exc), status=503)
+        if not current_status:
+            return json_error('Quality ticket not found.', status=404)
+        return JsonResponse({'ticket': {
+            'id': str(_quality_ticket_id(response.id)),
+            'assignedTeam': 'Quality Team',
+            'status': current_status,
+        }})
+    try:
+        saved = ensure_quality_ticket_for_response(response, actor=actor_name(request) or 'Quality reviewer')
+    except support_tickets.TicketError as exc:
+        return json_error(str(exc), status=exc.status)
+    if saved is None:
+        return json_error('Only negative completed feedback can be escalated.', status=409)
+    current_status = None
+    try:
+        current_status = support_tickets.assistant_conversations.ticket_status(ticket_id=saved['id'])
+    except support_tickets.assistant_conversations.AssistantConversationSyncError as exc:
+        # Ticket creation already succeeded. Keep the local result visible and
+        # let the next dashboard refresh retry the status read.
+        logger.warning('Could not read Quality Team ticket status for feedback response %s: %s', response.id, exc)
+    public = support_tickets.public_ticket(saved)
+    if current_status:
+        public['status'] = current_status
+    return JsonResponse({'ticket': public}, status=201)
+
+
 @require_staff
 def analytics(request):
     if request.method != 'GET':
@@ -986,7 +1094,7 @@ def analytics(request):
     form_type = request.GET.get('formType')
     if form_type and form_type not in FORM_TYPES:
         return json_error('Unknown feedback form type.', status=400)
-    forms = _forms_queryset(current_only=True)
+    forms = _forms_queryset(current_only=True, prefetch=False)
     if form_type:
         forms = forms.filter(form_type=form_type)
     family_ids = None
@@ -1000,7 +1108,9 @@ def analytics(request):
     elif form_type:
         template_keys = forms.values_list('template_key', flat=True)
         family_ids = FeedbackForm.objects.filter(template_key__in=template_keys).values_list('id', flat=True)
-    assigned = sum(_assigned_count(f) for f in forms)
+    forms = list(forms)
+    reporting = form_report_counts(forms, versioned_types=VERSIONED_FORM_TYPES, employer_type=EMPLOYER_REVIEW_FORM_TYPE)
+    assigned = sum(row['assigned'] for row in reporting.values())
     responses = FeedbackResponse.objects.all()
     if family_ids is not None:
         responses = responses.filter(form_id__in=family_ids)
@@ -1009,9 +1119,15 @@ def analytics(request):
     rating_questions = FeedbackQuestion.objects.filter(question_type='rating')
     if family_ids is not None:
         rating_questions = rating_questions.filter(section__form_id__in=family_ids)
+    rating_questions = list(rating_questions)
+    rating_answers = {}
+    for question_id, value in FeedbackAnswer.objects.filter(
+        question_id__in=[question.id for question in rating_questions], response__status='completed',
+    ).values_list('question_id', 'answer'):
+        rating_answers.setdefault(question_id, []).append(value)
     ratings = []
     for question in rating_questions:
-        values = [a.answer for a in question.answers.filter(response__status='completed')]
+        values = rating_answers.get(question.id, [])
         numeric = [float(v) for v in values if isinstance(v, (int, float))]
         if numeric:
             config = question.config or {}
@@ -1865,6 +1981,11 @@ def save_owned_response(request, *, learner_id, learner_name, form, delivery, re
             response.save(update_fields=['status', 'submitted_at', 'updated_at'])
         else:
             response.save(update_fields=['updated_at'])
+    if submit:
+        try:
+            ensure_quality_ticket_for_response(response)
+        except support_tickets.TicketError as exc:
+            logger.warning('Could not open Quality Team ticket for feedback response %s: %s', response.id, exc)
     return JsonResponse({'response': {
         'id': response.id, 'status': response.status,
         'submittedAt': _iso(response.submitted_at), 'updatedAt': _iso(response.updated_at),
