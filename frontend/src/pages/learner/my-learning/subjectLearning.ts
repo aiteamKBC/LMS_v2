@@ -36,17 +36,12 @@ export function subjectLearningStatus(subject: Subject): 'Completed' | 'In progr
 export function certificateEligible(subject: Subject, template: CertificateTemplateSummary | null) {
   const total = subject.card?.activityCount ?? subject.activities.length;
   const completed = subject.card?.completedActivityCount ?? subject.activities.filter(activity => activity.completed).length;
-  const percent = total ? Math.round(completed / total * 10000) / 100 : 0;
-  const finalTestPassed = subject.card?.finalTestPassed ?? subject.activities.some(activity => {
-    const component = activity.native;
-    return component?.isQuiz
-      && (component.title || '').toLowerCase().includes('final')
-      && component.quizAttempts?.some(attempt => attempt.passed === true);
-  });
-  return !!template && total > 0
-    && (subject.id.startsWith('current:') || subject.id.startsWith('unlinked:'))
-    && percent >= Number(template.minimumProgress || 0)
-    && (!template.requireFinalTest || finalTestPassed);
+  // Eligibility uses activity counts, never a saved aggregate, OTJ hours, or
+  // a rounded display percentage that could unlock a certificate too early.
+  return !!template && total > 0 && Number.isFinite(total) && Number.isFinite(completed)
+    && !subject.demoProgress
+    && /^(current|unlinked|legacy|free):/.test(subject.id)
+    && completed * 100 >= Number(template.minimumProgress || 0) * total;
 }
 
 /** Only authored end-of-week rules create deadlines; ordinary dated content does not. */

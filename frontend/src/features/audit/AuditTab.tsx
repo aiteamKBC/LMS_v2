@@ -1,3 +1,4 @@
+import { LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
 import { useEffect, useMemo, useState } from 'react';
 import { jsPDF } from 'jspdf';
 import { EmptyState } from '@/pages/users/components/ui';
@@ -85,7 +86,7 @@ export default function AuditTab({ data }: CaseFileTabProps) {
 
         <div className="p-5 md:p-6">
           {loading ? (
-            <EmptyState text="Loading learner audit..." />
+            <LoadingSkeleton label="Loading learner audit..." variant="rows" />
           ) : error ? (
             <EmptyState text={error} />
           ) : !audit ? (
@@ -120,7 +121,7 @@ export default function AuditTab({ data }: CaseFileTabProps) {
         </div>
         <div className="p-5 md:p-6">
           {loading ? (
-            <EmptyState text="Loading monthly audit timeline..." />
+            <LoadingSkeleton label="Loading monthly audit timeline..." variant="rows" />
           ) : !audit || audit.months.length === 0 ? (
             <EmptyState text="No Aptem or LMS activity was returned for this learner." />
           ) : (

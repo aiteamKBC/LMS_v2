@@ -1,3 +1,4 @@
+import { LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
 import { useEffect, useState } from 'react';
 import { LoaderCircle } from 'lucide-react';
 import {
@@ -133,20 +134,12 @@ export function EmployerAssignmentsTab({ employerId, kind, learnerId, learnerNam
   if (!assignments) {
     return (
       <div
-        role="status"
-        aria-label="Loading assignments"
-        aria-live="polite"
-        className="flex min-h-[18rem] items-center justify-center py-16"
+
+
+
+        className="min-h-[18rem] py-6"
       >
-        <div className="flex flex-col items-center gap-3 text-center">
-          <span className="grid h-12 w-12 place-items-center rounded-full bg-primary-50 text-primary-700 shadow-sm">
-            <LoaderCircle data-testid="assignments-loading-spinner" aria-hidden="true" className="h-7 w-7 animate-spin" />
-          </span>
-          <div>
-            <p className="text-[13px] font-semibold text-foreground-700">Loading assignments...</p>
-            <p className="mt-1 text-[11px] text-foreground-400">Preparing submitted work</p>
-          </div>
-        </div>
+        <LoadingSkeleton label="Loading assignments" variant="cards" />
       </div>
     );
   }

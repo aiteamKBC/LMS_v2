@@ -139,13 +139,13 @@ it('bounds a stalled progress-review read and shows loading again during retry',
     ? new Promise(resolve => { finish = resolve; }) : normalFetch(input, init));
   vi.useFakeTimers();
   mount(cases[0], '?kind=apprenticeship&learner=125', 'current');
-  expect(screen.getByText('Loading your reviews…')).toBeVisible();
+  expect(screen.getByRole('status', { name: 'Loading your reviews…' })).toBeVisible();
   expect(screen.queryByRole('link', { name: 'View all reviews (0)' })).not.toBeInTheDocument();
   await act(async () => { await vi.advanceTimersByTimeAsync(45_000); });
   expect(screen.getByText('Loading is taking longer than expected. Please try again.')).toBeVisible();
   expect(screen.queryByText('No current review')).not.toBeInTheDocument();
   fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
-  expect(screen.getByText('Loading your reviews…')).toBeVisible();
+  expect(screen.getByRole('status', { name: 'Loading your reviews…' })).toBeVisible();
   expect(screen.queryByRole('link', { name: 'View all reviews (0)' })).not.toBeInTheDocument();
   await act(async () => { finish(new Response(JSON.stringify({ events: [session('progress-review')] }))); });
   expect(screen.getByRole('link', { name: 'View all reviews (1)' })).toBeVisible();

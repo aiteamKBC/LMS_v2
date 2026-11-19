@@ -1,3 +1,4 @@
+import { LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { AppIcon } from '@/components/feature/AppIcon';
 import { COMPONENT_UPLOAD_MAX_LABEL } from '@/pages/curriculum/shared/componentUploadPolicy';
@@ -127,7 +128,7 @@ export function AiMaterialModal({ moduleCatalogueId, moduleTitle, onClose }: {
           />
 
           {loading ? (
-            <p role="status" className="rounded-xl border bg-white p-6 text-sm">Loading the AI material…</p>
+            <p  className="rounded-xl border bg-white p-6 text-sm"><LoadingSkeleton label="Loading the AI material…" variant="rows" /></p>
           ) : !material ? (
             <div className="rounded-xl border border-dashed bg-white p-8 text-center">
               <AppIcon name="ri-book-2-line" size={28} className="text-primary-600" />

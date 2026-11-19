@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { createPortal } from 'react-dom';
 import { CirclePlay, X } from 'lucide-react';
 import styles from './EnrolmentTutorial.module.css';
 
@@ -14,7 +15,8 @@ export function EnrolmentHelpLauncher({ title, onOpen, hintStorageKey = HINT_KEY
     setHidden(true);
     try { sessionStorage.setItem(hintStorageKey, '1'); } catch { /* storage unavailable: hidden until reload */ }
   };
-  return <div className={styles.launcher}>
+  // Keep the fixed launcher outside page-width rules and transformed layouts.
+  return createPortal(<div className={styles.launcher}>
     {!hidden && <div className={styles.hint}>
       <button type="button" className={styles.hintText} onClick={onOpen}>Need help on this page? Click here</button>
       <button type="button" className={`${styles.hintClose} rounded-full`} onClick={hide} aria-label="Hide help message" title="Hide help message"><X size={14} aria-hidden="true" /></button>
@@ -24,5 +26,5 @@ export function EnrolmentHelpLauncher({ title, onOpen, hintStorageKey = HINT_KEY
       <span className={styles.pulse} aria-hidden="true" />
       <CirclePlay size={26} aria-hidden="true" />
     </button>
-  </div>;
+  </div>, document.body);
 }

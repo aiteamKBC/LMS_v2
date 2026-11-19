@@ -1,3 +1,4 @@
+import { LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
 // Learner-first plan builder (the group system was retired): the auditor adds
 // ONE learner at a time, picked from Aptem. The learner arrives with their own
 // Aptem training-plan months — labels and dates exactly as Aptem shows them —
@@ -173,7 +174,7 @@ function LearnersPage() {
               One plan per learner — the months are their own training plan; you add what happens inside.
             </p>
           </header>
-          {plans.isLoading && <p className="py-10 text-center text-sm text-muted-foreground">Loading learners…</p>}
+          {plans.isLoading && <p className="py-10 text-center text-sm text-muted-foreground"><LoadingSkeleton label="Loading learners…" variant="rows" /></p>}
           {plans.isError && (
             <p className="py-10 text-center text-sm text-destructive">
               {plans.error instanceof Error ? plans.error.message : "Could not list the learners."}

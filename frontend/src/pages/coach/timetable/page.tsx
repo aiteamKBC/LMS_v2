@@ -1,3 +1,4 @@
+import { LoadingControl, LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
 import { ukOffsetForDate } from '@/lib/timeZones';
 import { canRescheduleReconciledReview, isImportedPersonalSupportPlan } from '../shared/resolvedReviewRows';
 import ImportedReviewBookingDialog from '../shared/ImportedReviewBookingDialog';
@@ -2133,7 +2134,7 @@ export default function CoachTimetablePage() {
             <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
               <div className="flex items-start gap-3">
                 <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-primary-500 text-white">
-                  <AppIcon className="ri-loader-4-line animate-spin text-lg"></AppIcon>
+                  <LoadingSkeleton />
                 </span>
                 <div>
                   <p className="text-[12px] font-semibold uppercase tracking-[0.18em] text-primary-500">Syncing timetable</p>
@@ -2142,7 +2143,7 @@ export default function CoachTimetablePage() {
                       ? 'Opening the scheduling queue'
                       : navigationSkeletonMode === 'focus'
                         ? 'Opening the selected event'
-                        : 'Loading your coaching calendar'}
+                        : <LoadingSkeleton label="Loading your coaching calendar" variant="text" />}
                   </p>
                   <p className="mt-1 text-[12px] leading-5 text-foreground-500">
                     {navigationSkeletonMode === 'schedule'
@@ -3297,7 +3298,7 @@ export default function CoachTimetablePage() {
                 <section className="grid gap-3 md:grid-cols-2">
                   <label className="block">
                     <span className="mb-2 block text-[12px] font-semibold uppercase tracking-[0.16em] text-foreground-400">Review</span>
-                    <select
+                    {<LoadingControl loading={(createSessionReviewTemplatesLoading)}><select
                       value={createSessionReviewTemplateId}
                       onChange={event => setCreateSessionReviewTemplateId(event.target.value)}
                       disabled={createSessionReviewTemplatesLoading || !createSessionReviewTemplates.length}
@@ -3313,7 +3314,7 @@ export default function CoachTimetablePage() {
                       {createSessionReviewTemplates.map(template => (
                         <option key={template.id} value={template.id}>{template.name}</option>
                       ))}
-                    </select>
+                    </select></LoadingControl>}
                   </label>
 
                   <label className="block">

@@ -1,3 +1,4 @@
+import { LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { ArrowRight, BookOpen, CalendarDays, Clock3, Info, RefreshCw, Target, Video } from 'lucide-react';
@@ -44,7 +45,7 @@ export function OverviewLearningPanels({ kind, learnerId, week: sharedWeek, sche
       <div className={styles.heading}><div><span className={styles.eyebrow}>Your learning focus</span><h2 id="overview-this-week">This week</h2><p>{weekLabel}</p></div><span className={styles.headingIcon}><BookOpen size={22} aria-hidden="true" /></span></div>
       {week.error && <ReadError label="This week could not refresh." retry={week.refresh} />}
       {schedule.error && <ReadError label="Your live sessions could not refresh." retry={schedule.refresh} />}
-      {week.loading ? <Loading label="Loading this week's activities…" /> : <>
+      {week.loading ? <LoadingSkeleton label={"Loading this week's activities…"} /> : <>
         {!!weeklyModules.length && <div className={styles.moduleHeading}>
           {weeklyModules.length > 1 ? <label className={styles.moduleSelect}>Module<select value={module?.id} onChange={event => setSelection({ weekKey, subjectId: event.target.value })}>{weeklyModules.map(item => <option key={item.id} value={item.id}>{item.title}</option>)}</select></label>
             : <h3>{module?.title}</h3>}
@@ -53,7 +54,7 @@ export function OverviewLearningPanels({ kind, learnerId, week: sharedWeek, sche
         {module && module.total > 0 ? <div className={styles.progressSection}><div className={styles.progressLabel}><span>{module.completed} of {module.total} activities complete</span><strong>{module.percent}%</strong></div><div className={styles.meter} role="progressbar" aria-label="This week's activity progress" aria-valuemin={0} aria-valuemax={100} aria-valuenow={module.percent ?? undefined}><span style={{ width: `${Math.min(100, Math.max(0, module.percent ?? 0))}%` }} /></div></div>
           : !week.error && <div className={styles.empty}><CalendarDays size={26} aria-hidden="true" /><div><h3>No activities scheduled this week</h3><p>You can still explore your modules and continue learning.</p></div></div>}
         <div className={styles.facts}>
-          <div className={styles.fact}><span><Video size={16} aria-hidden="true" />Live session</span><strong>{schedule.loading ? 'Loading…' : schedule.error && !schedule.data ? 'Unavailable' : live ? `${dateLabel(ukDate(live.start))} · ${ukTime(live.start)}` : 'Not scheduled'}</strong>{live && <small>UK time</small>}</div>
+          <div className={styles.fact}><span><Video size={16} aria-hidden="true" />Live session</span><strong>{schedule.loading ? <LoadingSkeleton label="Loading…" variant="text" /> : schedule.error && !schedule.data ? 'Unavailable' : live ? `${dateLabel(ukDate(live.start))} · ${ukTime(live.start)}` : 'Not scheduled'}</strong>{live && <small>UK time</small>}</div>
           <div className={styles.fact}><span><Target size={16} aria-hidden="true" />KSBs covered</span><strong title={displayedKsbCodes.join(', ') || undefined}>{displayedKsbCodes.length ? displayedKsbCodes.join(', ') : module?.total ? 'Not mapped yet' : '—'}</strong>
             {moduleKsbFallback ? <small>Module-level mapping · this week's activities have no direct KSB mapping</small>
               : module?.ksbMappingMissing && <small>Some activity mappings are missing</small>}</div>
@@ -67,9 +68,6 @@ export function OverviewLearningPanels({ kind, learnerId, week: sharedWeek, sche
   </div>;
 }
 
-function Loading({ label }: { label: string }) {
-  return <div className={styles.loading} role="status"><span /><span /><span /><p>{label}</p></div>;
-}
 function ReadError({ label, retry }: { label: string; retry: () => void }) {
   return <div className={styles.error} role="alert"><span>{label}</span><button onClick={retry}><RefreshCw size={14} aria-hidden="true" />Retry</button></div>;
 }

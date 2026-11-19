@@ -7,7 +7,7 @@ from . import support_sso
 from . import coach_directory
 from . import lms_introduction
 
-from . import admin_evidence, advanced_admin, announcements, advanced_admin_assignment_uploads, access_requests, microsoft_sso, platform_admin, saved_signature, views
+from . import admin_certificates, admin_evidence, advanced_admin, announcements, advanced_admin_assignment_uploads, access_requests, microsoft_sso, platform_admin, saved_signature, views
 from old_otjh.entry import entry_status
 from curriculum_api.module_hours import own_access as module_hours_own_access, account_access as module_hours_account_access
 
@@ -169,4 +169,6 @@ urlpatterns = [
         name="admin-evidence-report-form-save",
     ),
     path("admin/certificate-template/", platform_admin.certificate_template, name="admin-certificate-template"),
+    path("admin/issued-certificates/", admin_certificates.issued_certificates, name="admin-issued-certificates"),
+    path("admin/issued-certificates/<int:certificate_id>/", admin_certificates.issued_certificate, name="admin-issued-certificate"),
 ]

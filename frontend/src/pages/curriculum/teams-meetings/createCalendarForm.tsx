@@ -1,3 +1,4 @@
+import { LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
 import { DEFAULT_START_TIME, DEFAULT_DURATION_MINUTES, minuteKey, sessionNaiveLocal, minutesBetween, naiveLocalFromUtc, calendarLabel, teamsGapNote, overrideDurationMinutes, emptyTeamsCalendarForm, buildTeamsCalendarInput, teamsUpdateChanges, TEAMS_LOBBY_OPTIONS, TEAMS_RECORDING_OPTIONS, TEAMS_LANGUAGE_OPTIONS, type TeamsPlannedSession, type TeamsSchedulePreviewRow, type GroupDeliveryPattern, type TeamsCalendarForm, type TeamsCalendarTarget, type TeamsUpdateFields } from './createCalendarForm.helpers';
 export type { TeamsPlannedSession, TeamsSchedulePreviewRow, GroupDeliveryPattern, TeamsCalendarForm, TeamsCalendarTarget } from './createCalendarForm.helpers';
 import { sessionDisplayTitle } from '../shared/sessionDisplayTitle';
@@ -405,7 +406,7 @@ export function TeamsPeopleFields({ form, patch, prefilling, prefillNotice, onPr
             className="inline-flex items-center gap-1 text-[11px] font-bold text-primary-700 hover:underline disabled:opacity-50"
           >
             <AppIcon className="ri-refresh-line text-sm"></AppIcon>
-            {prefilling ? 'Loading…' : 'Prefill from the learners who have this module on their plan'}
+            {prefilling ? <LoadingSkeleton label="Loading…" variant="text" /> : 'Prefill from the learners who have this module on their plan'}
           </button>
           {/* What the prefill actually did. Without it, a request that failed
               and one that found nobody were both a button that did nothing. */}

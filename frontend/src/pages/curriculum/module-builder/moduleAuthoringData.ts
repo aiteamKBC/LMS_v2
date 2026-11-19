@@ -978,8 +978,10 @@ export function weeksTouchedByHoliday(
 ): Map<string, ModuleSessionSlot[]> {
   const byWeekId = new Map<string, ModuleSessionSlot[]>();
   if (module?.weekBoundaryMode === 'calendar') {
+    // Older session-plan responses carry a numeric week count here.
+    const studyWeeks = Array.isArray(plan?.weeks) ? plan.weeks : [];
     module.weekStructure.forEach((week, index) => {
-      const window = plan?.weeks?.find(item => item.weekNumber === index + 1);
+      const window = studyWeeks.find(item => item.weekNumber === index + 1);
       const holidays = window?.holidays || week.studyWeekHolidays || [];
       if (holidays.length) byWeekId.set(week.id, [{ slotNumber: index + 1, weekNumber: index + 1,
         date: window?.startDate || week.studyWeekStartDate || '', day: '', type: 'reading-week',
@@ -1097,7 +1099,8 @@ export function applyModuleWeekSessionPlan(
   options: { followEndDate?: boolean } = {},
 ): ModuleCatalogueItem {
   const sessions = plan?.sessions || [];
-  if (!sessions.length && !(module.weekBoundaryMode === 'calendar' && plan.weeks?.length)) return module;
+  const studyWeeks = Array.isArray(plan?.weeks) ? plan.weeks : [];
+  if (!sessions.length && !(module.weekBoundaryMode === 'calendar' && studyWeeks.length)) return module;
   // How many planned dates one authored week owns. A Mon+Fri module runs two
   // sessions for every week it authors, so a ten-week module spends twenty
   // planned dates -- and it spends them whether or not the live-session
@@ -1109,7 +1112,7 @@ export function applyModuleWeekSessionPlan(
   let weeksMoved = false;
   let sessionIndex = 0;
   const weekStructure = module.weekStructure.map((week, weekIndex) => {
-    const window = module.weekBoundaryMode === 'calendar' ? plan.weeks?.find(item => item.weekNumber === weekIndex + 1) : undefined;
+    const window = module.weekBoundaryMode === 'calendar' ? studyWeeks.find(item => item.weekNumber === weekIndex + 1) : undefined;
     const liveComponents = week.components.filter(component => component.type === 'live-session');
     const slotCount = slotCounts[weekIndex] ?? 1;
     const slots = sessions.slice(sessionIndex, sessionIndex + slotCount);

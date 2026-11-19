@@ -106,7 +106,7 @@ describe('module drawer co-editing', () => {
 
   it('shows the session count and module dates while inherited delivery days stay read-only', async () => {
     renderDrawer(storedModule({ startDate: '2026-09-09', endDate: '2026-10-06' }));
-    await waitFor(() => expect(screen.queryByText(/Loading module hours settings/)).not.toBeInTheDocument());
+    await waitFor(() => expect(screen.queryByRole('status', { name: /Loading module hours settings/ })).not.toBeInTheDocument());
 
     expect(screen.getByRole('combobox', { name: /Sessions per week/i })).toHaveTextContent('1');
     expect(screen.queryByRole('group', { name: /Delivery days/i })).not.toBeInTheDocument();

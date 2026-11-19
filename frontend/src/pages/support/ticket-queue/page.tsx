@@ -1,3 +1,4 @@
+import { LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
 import { useState, useEffect, useRef } from 'react';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { roleNavMap } from '@/mocks/navigation';
@@ -75,7 +76,7 @@ export default function SupportTicketQueue() {
       workspaceLabel={supportConfig.workspaceLabel}
     >
       <div className="p-3 md:p-6 space-y-4 md:space-y-6">
-        {loading && <p role="status">Loading tickets...</p>}
+        {loading && <p ><LoadingSkeleton label="Loading tickets..." variant="rows" /></p>}
         {error && <p role="alert">{error}</p>}
         <button disabled={saving} onClick={() => setReload(value => value + 1)}>Refresh tickets</button>
         {!loading && !error && tickets.length === 0 && <p>No support tickets yet.</p>}

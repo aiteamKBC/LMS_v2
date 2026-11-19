@@ -1263,7 +1263,8 @@ describe('Teams Meetings page', () => {
     await screen.findByText('Data Foundations');
     await userEvent.click(within(rowFor('Data Foundations')).getByRole('button', { name: 'Detail' }));
     const dialog = within(await screen.findByRole('dialog'));
-    expect(dialog.getByRole('status')).toHaveTextContent(/checking its existing Teams links/);
+    expect(dialog.getByRole('status')).toHaveAccessibleName(/checking its existing Teams links/);
+    expect(dialog.getByRole('status').textContent).toBe('');
     expect(dialog.queryByRole('button', { name: 'Update Teams calendar' })).not.toBeInTheDocument();
     expect(dialog.queryByText('Series linked from Teams')).not.toBeInTheDocument();
     await act(async () => { release({ ...artifacts, series: { ...artifacts.series, meeting_type: 'linked-external' } } as never); });
@@ -1383,7 +1384,8 @@ describe('Teams Meetings page', () => {
     await screen.findByText('Reporting Basics');
     await userEvent.click(within(rowFor('Reporting Basics')).getByRole('button', { name: 'Create Teams meetings calendar' }));
     const dialog = within(await screen.findByRole('dialog'));
-    expect(dialog.getByRole('status')).toHaveTextContent(/checking its existing Teams links/);
+    expect(dialog.getByRole('status')).toHaveAccessibleName(/checking its existing Teams links/);
+    expect(dialog.getByRole('status').textContent).toBe('');
     expect(dialog.queryByRole('button', { name: 'Create' })).not.toBeInTheDocument();
     expect(dialog.queryByRole('combobox', { name: 'Organizer' })).not.toBeInTheDocument();
     await act(async () => { release(savedModule('MOD-3', [linkedComponent(summaries[0].joinUrl)])); });

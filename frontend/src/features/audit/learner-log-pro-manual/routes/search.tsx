@@ -1,3 +1,4 @@
+import { LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
 import { useEffect, useRef, useState } from "react";
 import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute, useRouter } from '@tanstack/react-router';
@@ -490,7 +491,7 @@ function SearchPage() {
                 </TableHeader>
                 <TableBody>
                   {summaries.isLoading && (
-                    <TableRow><TableCell colSpan={10} className="py-10 text-center text-sm text-muted-foreground">Loading learners…</TableCell></TableRow>
+                    <TableRow><TableCell colSpan={10} className="py-10 text-center text-sm text-muted-foreground"><LoadingSkeleton label="Loading learners…" variant="rows" /></TableCell></TableRow>
                   )}
                   {pagedLearners.map((learner, index) => (
                     <TableRow key={learner.id} className={learner.has_break_in_learning ? "bg-warning/5 hover:bg-warning/10" : undefined}>
@@ -678,7 +679,7 @@ function SearchPage() {
                     <TableRow><TableCell colSpan={10} className="py-10 text-center text-sm text-muted-foreground">Pick a learner or an activity month above to load the evidence log.</TableCell></TableRow>
                   )}
                   {activitiesEnabled && activities.isLoading && (
-                    <TableRow><TableCell colSpan={10} className="py-10 text-center text-sm text-muted-foreground">Loading activity records…</TableCell></TableRow>
+                    <TableRow><TableCell colSpan={10} className="py-10 text-center text-sm text-muted-foreground"><LoadingSkeleton label="Loading activity records…" variant="rows" /></TableCell></TableRow>
                   )}
                   {activities.data?.items.map((row) => (
                     <InlineActivityRow key={row.id} row={row} />

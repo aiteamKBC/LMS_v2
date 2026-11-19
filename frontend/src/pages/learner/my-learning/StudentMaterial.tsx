@@ -1,3 +1,4 @@
+import { LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
 import { lazy, Suspense, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { LearnerLoadError } from '@/components/feature/LearnerLoadError';
 import DOMPurify from 'dompurify';
@@ -98,7 +99,7 @@ export function Media({ value, kind, title, fileName, canEmbed = true, onEnded, 
   // Preserve private Vimeo access parameters already handled by previewUrl.
   if (providerVideo && parsedVideo.kind === 'vimeo') parsedVideo.src = providerUrl;
   if (!spotify && (kind === 'video' || providerVideo)) return <section className="space-y-2"><div className="relative aspect-video overflow-hidden rounded-xl bg-black"><VideoPlayer parsed={storedFile ? { kind: 'file', src: fileUrl } : parsedVideo} title={title} onEnded={onEnded} onPlayingChange={onPlayingChange} onUnsupported={onUnsupported} /></div>{original}</section>;
-  if (kind === 'pdf') return <section className="space-y-2"><Suspense fallback={<p role="status">Loading file preview…</p>}><AttachmentPreview url={fileUrl} title={title} fileName={fileName || 'document.pdf'} /></Suspense>{original}</section>;
+  if (kind === 'pdf') return <section className="space-y-2"><Suspense fallback={<p ><LoadingSkeleton label="Loading file preview…" variant="rows" /></p>}><AttachmentPreview url={fileUrl} title={title} fileName={fileName || 'document.pdf'} /></Suspense>{original}</section>;
   if (kind === 'audio' && !spotify) {
     const drive = url.href.match(/drive\.google\.com\/(?:file\/d\/|(?:open|uc)\?[^#]*id=)([\w-]{10,})/);
     return <section className="space-y-2"><audio controls src={drive ? `/learner_api/media/google-drive/${drive[1]}/` : fileUrl}
@@ -114,9 +115,9 @@ export function Media({ value, kind, title, fileName, canEmbed = true, onEnded, 
       preview.searchParams.set('preview', '1');
       return <section className="space-y-2"><iframe title={title} src={preview.href} className="h-[65vh] min-h-[320px] w-full rounded-xl border bg-white" allowFullScreen />{original}</section>;
     }
-    return <section className="space-y-2"><Suspense fallback={<p role="status">Loading file preview…</p>}><AttachmentPreview url={fileUrl} title={title} fileName={fileName} /></Suspense>{original}</section>;
+    return <section className="space-y-2"><Suspense fallback={<p ><LoadingSkeleton label="Loading file preview…" variant="rows" /></p>}><AttachmentPreview url={fileUrl} title={title} fileName={fileName} /></Suspense>{original}</section>;
   }
-  if (url.origin === window.location.origin && /\.(docx|xlsx?|csv|txt|md|rtf|pdf|pptx|ppsx|pptm|ppsm)$/i.test(url.pathname)) return <section className="space-y-2"><Suspense fallback={<p role="status">Loading file preview…</p>}><AttachmentPreview url={url.href} title={title} /></Suspense>{original}</section>;
+  if (url.origin === window.location.origin && /\.(docx|xlsx?|csv|txt|md|rtf|pdf|pptx|ppsx|pptm|ppsm)$/i.test(url.pathname)) return <section className="space-y-2"><Suspense fallback={<p ><LoadingSkeleton label="Loading file preview…" variant="rows" /></p>}><AttachmentPreview url={url.href} title={title} /></Suspense>{original}</section>;
   let src = providerUrl;
   if (url.hostname === 'drive.google.com') src = src.replace(/\/view(?:\?.*)?$/, '/preview');
   else if (/\.(pdf|pptx|ppsx|pptm|docx?|xlsx?)$/i.test(url.pathname) || /docs\.google\.com/.test(url.hostname)) {
@@ -280,7 +281,7 @@ function StudentMaterialContent({ kind, learnerId, groupId, activityId, complete
     finally { requestPending.current = false; if (mounted.current && currentIdentity.current === timerKey) setBusy(false); }
   };
   if (!data && error) return <LearnerLoadError title="Could not load this learning activity" error={error} onRetry={() => setRetry((v) => v + 1)} />;
-  if (!data) return <p role="status" className="p-5">Loading activity…</p>;
+  if (!data) return <p  className="p-5"><LoadingSkeleton label="Loading activity…" variant="rows" /></p>;
   const quiz = data.quiz;
   const displayedAnswers = attemptId ? answers : previousSelections(data);
   const reviewing = !attemptId && (data.history.length > 0 || data.historical.answers.length > 0);

@@ -1,3 +1,4 @@
+import { LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
@@ -161,9 +162,7 @@ export function LearnerProfilePanel({ learnerId, learnerName, programme, cohort,
           </div>
 
           {loading && (
-            <div className="flex items-center justify-center gap-2 py-8 text-foreground-400 text-[11px]">
-              <AppIcon className="ri-loader-4-line animate-spin"></AppIcon> Loading profile…
-            </div>
+            <div className="flex items-center justify-center gap-2 py-8 text-foreground-400 text-[11px]"><LoadingSkeleton label="Loading profile…" variant="rows" /></div>
           )}
 
           {!loading && (
@@ -201,7 +200,7 @@ export function LearnerProfilePanel({ learnerId, learnerName, programme, cohort,
                           <CartesianGrid strokeDasharray="3 3" stroke="var(--background-200)" vertical={false} />
                           <XAxis dataKey="month" tick={{ fontSize: 10, fill: 'var(--foreground-400)' }} axisLine={{ stroke: 'var(--background-200)' }} tickLine={false} />
                           <YAxis tick={{ fontSize: 10, fill: 'var(--foreground-400)' }} axisLine={false} tickLine={false} width={34} />
-                          <Tooltip contentStyle={{ borderRadius: '8px', border: '1px solid var(--background-200)', fontSize: '11px', background: 'var(--background-50)' }} />
+                          <Tooltip contentStyle={{ borderRadius: 'var(--lms-radius, 16px)', border: '1px solid var(--background-200)', fontSize: '11px', background: 'var(--background-50)' }} />
                           <Area type="monotone" dataKey="points" stroke="oklch(var(--primary-500))" strokeWidth={2.5} fill="url(#pointsFill)" name="Points" />
                         </AreaChart>
                       </ResponsiveContainer>

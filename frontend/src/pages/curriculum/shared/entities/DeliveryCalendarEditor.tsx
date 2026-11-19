@@ -1,3 +1,4 @@
+import { LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { importCountryCalendar, type CurriculumHoliday, type DeliveryCalendarPolicy } from '@/lib/curriculumApi';
 import { CALENDAR_COUNTRIES, CALENDAR_DAYS, calendarPreset, effectiveCalendarHolidays } from './deliveryCalendar';
@@ -96,7 +97,7 @@ export function DeliveryCalendarEditor(props: Props) {
         <p className="text-xs text-foreground-500">Apply official holiday dates for {label}, separately from weekly rest days and extra holidays.</p>
       </>}
     {foreign && !requestKey && <p className="text-xs text-amber-700">Set the start and end dates to load the required holiday years.</p>}
-    {requestKey && !ready && !error && <p role="status" className="text-xs">Loading the saved country calendar…</p>}
+    {requestKey && !ready && !error && <p  className="text-xs"><LoadingSkeleton label={"Loading the saved country calendar…"} /></p>}
     {error && <p role="alert" className="text-xs text-red-700">{error} Change the country/dates or retry from Holiday Calendars.</p>}
     {!inherited && value !== null && <>
       <fieldset className="max-h-48 space-y-2 overflow-y-auto">

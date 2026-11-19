@@ -20,6 +20,7 @@ import {
 import { createNewModule } from '@/pages/curriculum/module-builder/moduleAuthoringData';
 import { ModuleFormDrawer } from '../moduleForm';
 import { fetchModuleHoursTarget, saveModuleHoursTarget } from '@/api/moduleHours';
+import { fetchCurriculumRecordSnapshot } from '../recordSnapshot';
 
 vi.mock('@/api/moduleHours', async original => ({ ...(await original<typeof import('@/api/moduleHours')>()), fetchModuleHoursTarget: vi.fn(), saveModuleHoursTarget: vi.fn() }));
 beforeEach(() => {
@@ -175,6 +176,30 @@ async function choose(field: string, option: string) {
 }
 
 describe('ModuleFormDrawer', () => {
+  it('uses the saved calendar-week model when increasing weeks from a stale catalogue row', async () => {
+    const stale = { id: 'MOD-STUDY-EDIT', name: 'Synthetic study module', weeks: 2,
+      sessionsNumber: 4, startDate: '2026-11-01', endDate: '2026-11-08',
+      programmeId: 'PROG-DATA', cohortId: 'COHORT-1', groupId: 'GROUP-1', tutor: 'Tutor One',
+      scheduleMode: 'custom' as const,
+      weeklySchedule: [{ day: 'Monday', startTime: '10:00', endTime: '12:00' },
+        { day: 'Wednesday', startTime: '10:00', endTime: '12:00' }] };
+    vi.mocked(fetchCurriculumRecordSnapshot).mockResolvedValueOnce({ revision: '', record: {
+      ...stale, weekBoundaryMode: 'calendar', weekStartsOn: 'Monday',
+    } });
+    renderDrawer({ module: stale });
+
+    const weekStart = await screen.findByRole('combobox', { name: /Study week starts on/i });
+    expect(weekStart).toHaveTextContent('Monday');
+    expect(weekStart).toBeDisabled();
+    const weeks = screen.getByRole('spinbutton', { name: /weeks/i });
+    await userEvent.clear(weeks);
+    await userEvent.type(weeks, '3');
+    expect(screen.getByRole('combobox', { name: 'End date' })).toHaveValue('15/11/2026');
+    await userEvent.click(screen.getByRole('button', { name: 'Save module' }));
+    await waitFor(() => expect(updateCurriculumModule).toHaveBeenCalledWith('MOD-STUDY-EDIT',
+      expect.objectContaining({ weeks: 3, endDate: '2026-11-15', weekBoundaryMode: 'calendar', weekStartsOn: 'Monday' })));
+  });
+
   it.each([0, 1])('shows the verified count of%i live sessions when partial/holiday weeks reduce it', async count => {
     const previous = previewModuleSessionPlanMock.getMockImplementation();
     previewModuleSessionPlanMock.mockResolvedValue({

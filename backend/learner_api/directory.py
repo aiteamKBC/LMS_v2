@@ -11,6 +11,10 @@ from .aptem_status import with_aptem_status
 DIRECTORY_FIELDS = (
     "id", "uuid", "username", "type", "email", "group", "status",
     "programme_status", "programme", "cohort", "organization", "learner_type",
+    # Progression fields used by the staff Deep Dive. Keep them in the same
+    # projection so the dashboard does not trigger a query per learner.
+    "learner_start_date", "learner_end_date", "start_date", "end_date",
+    "apprenticeship_end_date", "coach_name", "coach_email", "reference_number",
     # The directory's Case owner filter offers the owners actually present in
     # these rows, so the column has to come back with them.
     "case_owner",

@@ -9,7 +9,7 @@
 
 .page :global(.learner-super-admin-hero) {
   border: 1px solid #e3e9f1 !important;
-  border-radius: 1rem !important;
+  border-radius: var(--lms-radius, 16px) !important;
   background: #f6f8fb !important;
   background-image: none !important;
   box-shadow: 0 1px 2px rgb(24 45 72 / 0.04), 0 8px 22px -18px rgb(24 45 72 / 0.2) !important;
@@ -37,7 +37,7 @@
   min-width: 0 !important;
   min-height: 5.4rem !important;
   border: 1px solid #e0e6ee !important;
-  border-radius: 0.8rem !important;
+  border-radius: var(--lms-radius, 16px) !important;
   background: #fff !important;
   box-shadow: 0 2px 5px rgb(24 45 72 / 0.07) !important;
 }
@@ -54,7 +54,7 @@
 
 .tableWrap {
   overflow-x: auto;
-  border-radius: 0.85rem;
+  border-radius: var(--lms-radius, 16px);
   scrollbar-width: thin;
 }
 
@@ -105,13 +105,13 @@
   gap: 0.2rem;
   padding: 0.2rem;
   border: 1px solid #e0e6ee;
-  border-radius: 0.85rem;
+  border-radius: var(--lms-radius, 16px);
   background: #f6f8fb;
 }
 
 .page :global([role="tab"]) {
   border: 1px solid transparent;
-  border-radius: 0.7rem;
+  border-radius: var(--lms-radius, 16px);
   background: transparent;
   color: #637388;
 }

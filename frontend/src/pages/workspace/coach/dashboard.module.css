@@ -26,7 +26,7 @@
   gap: 14px;
 }
 /* Loading skeleton: sits on the loaded layout classes and only sizes the placeholders. */
-.metricSkeletonIcon { grid-area: icon; width: 44px; height: 44px; border-radius: 11px; }
+.metricSkeletonIcon { grid-area: icon; width: 44px; height: 44px; border-radius: var(--lms-radius, 16px); }
 .metricSkeletonLabel { grid-area: label; width: 78%; height: 15px; }
 .metricSkeletonValue { grid-area: value; width: 58%; height: 38px; }
 .metricSkeletonNote { grid-area: note; width: 88%; height: 13px; }
@@ -48,7 +48,7 @@
   min-height: 184px;
   padding: 18px;
   border: 1px solid var(--kbc-border);
-  border-radius: 14px;
+  border-radius: var(--lms-radius, 16px);
   background: var(--kbc-surface);
   box-shadow: 0 6px 22px rgb(55 28 107 / 6%);
   text-align: left;
@@ -56,7 +56,7 @@
 
 button.metric:hover { border-color: var(--dashboard-accent); box-shadow: 0 10px 26px rgb(55 28 107 / 10%); }
 .dashboard :is(button, a, summary):focus-visible { outline: 2px solid var(--dashboard-accent); outline-offset: 3px; }
-.metricIcon { grid-area: icon; display: grid; place-items: center; width: 44px; height: 44px; border-radius: 11px; background: #eee7ff; color: #7137ca; }
+.metricIcon { grid-area: icon; display: grid; place-items: center; width: 44px; height: 44px; border-radius: var(--lms-radius, 16px); background: #eee7ff; color: #7137ca; }
 .metricIcon svg { width: 24px; height: 24px; }
 .metricLabel { grid-area: label; align-self: end; font-size: 14px; line-height: 1.3; font-weight: 700; color: var(--dashboard-heading); }
 .metricValue { grid-area: value; align-self: center; color: var(--dashboard-heading); font-size: 40px; line-height: 1.1; font-weight: 750; font-variant-numeric: tabular-nums; }
@@ -75,7 +75,7 @@ button.metric:hover { border-color: var(--dashboard-accent); box-shadow: 0 10px 
 :global([data-theme="dark"]) .metric[data-kind="marking"] { background: var(--kbc-surface); }
 .fullWidthCaseload { width: 100%; min-width: 0; scroll-margin-top: 1rem; }
 .dashboardTabs { display: grid; gap: 14px; min-width: 0; }
-.dashboardTabList { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); overflow: hidden; border: 1px solid #e6e0f1; border-radius: 14px; background: var(--kbc-surface); box-shadow: 0 2px 8px rgb(79 45 127 / 6%); }
+.dashboardTabList { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); overflow: hidden; border: 1px solid #e6e0f1; border-radius: var(--lms-radius, 16px); background: var(--kbc-surface); box-shadow: 0 2px 8px rgb(79 45 127 / 6%); }
 .dashboardTab { position: relative; min-height: 46px; margin: 0; padding: 10px 12px; border: 0; border-right: 1px solid #ece7f5; border-radius: 0; background: transparent; box-shadow: none; color: #4b4468; font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; transition: color 150ms, background-color 150ms; }
 .dashboardTab:last-child { border-right: 0; }
 .dashboardTab:hover { background: #faf8ff; color: var(--dashboard-accent); }
@@ -90,20 +90,20 @@ button.metric:hover { border-color: var(--dashboard-accent); box-shadow: 0 10px 
 :global([data-theme="dark"]) .dashboardTab:hover { background: var(--coach-dark-hover); color: var(--coach-dark-text); }
 :global([data-theme="dark"]) .dashboardTab[aria-selected='true'] { background: var(--coach-dark-active); box-shadow: inset 0 -3px 0 var(--coach-dark-accent); color: var(--coach-dark-text); }
 :global([data-theme="dark"] .dashboard-theme .workspace-main) .dashboardTab[aria-selected='true'] { background: var(--coach-dark-active) !important; box-shadow: inset 0 -3px 0 var(--coach-dark-accent) !important; color: var(--coach-dark-text) !important; }
-.dueActivitiesHero { position: relative; display: grid; grid-template-columns: minmax(0, 1fr) minmax(120px, .36fr) auto; align-items: center; gap: 24px; min-height: 152px; overflow: hidden; padding: 24px; border: 1px solid #e8e0f5; border-radius: 18px; background: linear-gradient(120deg, #fff 0%, #faf7ff 54%, #f2eafe 100%); box-shadow: 0 8px 24px rgb(79 45 127 / 8%); }
+.dueActivitiesHero { position: relative; display: grid; grid-template-columns: minmax(0, 1fr) minmax(120px, .36fr) auto; align-items: center; gap: 24px; min-height: 152px; overflow: hidden; padding: 24px; border: 1px solid #e8e0f5; border-radius: var(--lms-radius, 16px); background: linear-gradient(120deg, #fff 0%, #faf7ff 54%, #f2eafe 100%); box-shadow: 0 8px 24px rgb(79 45 127 / 8%); }
 .dueActivitiesHero::before { position: absolute; inset: 0; z-index: 0; background: repeating-linear-gradient(135deg, transparent 0 72px, rgb(122 76 193 / 4%) 72px 73px); content: ''; pointer-events: none; }
 .dueActivitiesHeroContent,
 .dueActivitiesArtwork,
 .dueActivitiesActions { position: relative; z-index: 1; }
 .dueActivitiesHeroContent { display: flex; align-items: flex-start; gap: 18px; min-width: 0; }
-.dueActivitiesHeroIcon { display: grid; place-items: center; flex: 0 0 70px; width: 70px; height: 70px; border: 1px solid #e8dcfb; border-radius: 16px; background: #f8f3ff; color: var(--dashboard-accent); box-shadow: 0 5px 14px rgb(79 45 127 / 8%); }
+.dueActivitiesHeroIcon { display: grid; place-items: center; flex: 0 0 70px; width: 70px; height: 70px; border: 1px solid #e8dcfb; border-radius: var(--lms-radius, 16px); background: #f8f3ff; color: var(--dashboard-accent); box-shadow: 0 5px 14px rgb(79 45 127 / 8%); }
 .dueActivitiesHeroIcon svg { width: 33px; height: 33px; }
 .dueActivitiesHero h2 { color: var(--dashboard-heading); font-size: clamp(24px, 2vw, 32px) !important; font-weight: 750; letter-spacing: -.6px; line-height: 1.1; }
 .dueActivitiesHero p { margin-top: 6px; color: var(--kbc-muted); font-size: 15px; line-height: 1.45; }
 .dueActivitiesRange { display: inline-flex; align-items: center; gap: 8px; margin-top: 12px; padding: 8px 13px; border-radius: 999px; background: #f0e9ff; color: var(--dashboard-accent); font-size: 13px; font-weight: 750; }
 .dueActivitiesRange svg { width: 16px; height: 16px; }
 .dueActivitiesArtwork { justify-self: center; width: 126px; height: 104px; color: #9b72df; opacity: .76; transform: rotate(8deg); }
-.dueActivitiesArtwork svg:first-child { position: absolute; top: 2px; right: 4px; width: 88px; height: 88px; padding: 14px; border-radius: 15px; background: rgb(255 255 255 / 55%); box-shadow: 0 9px 20px rgb(79 45 127 / 10%); }
+.dueActivitiesArtwork svg:first-child { position: absolute; top: 2px; right: 4px; width: 88px; height: 88px; padding: 14px; border-radius: var(--lms-radius, 16px); background: rgb(255 255 255 / 55%); box-shadow: 0 9px 20px rgb(79 45 127 / 10%); }
 .dueActivitiesArtwork svg:last-child { position: absolute; bottom: 1px; left: 8px; width: 45px; height: 45px; padding: 10px; border-radius: 50%; background: var(--dashboard-accent); color: white; box-shadow: 0 7px 16px rgb(79 45 127 / 24%); }
 .dueActivitiesActions { display: flex; align-items: center; justify-content: flex-end; gap: 10px; }
 .dueActivitiesActions .textButton { min-height: 46px; padding-inline: 17px; }
@@ -122,7 +122,7 @@ button.metric:hover { border-color: var(--dashboard-accent); box-shadow: 0 10px 
 :global([data-theme="dark"]) .dueActivitySectionActions .iconButton { background: rgb(30 52 77 / 92%); }
 .charts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; min-width: 0; }
 .riskInsights { display: grid; gap: 14px; min-width: 0; }
-.riskInsightToggle { display: grid; width: 48px; height: 48px; place-items: center; padding: 0; border: 1px solid var(--kbc-border); border-radius: 14px; background: var(--kbc-surface); color: var(--kbc-muted); cursor: pointer; transition: border-color 150ms, color 150ms, background-color 150ms; }
+.riskInsightToggle { display: grid; width: 48px; height: 48px; place-items: center; padding: 0; border: 1px solid var(--kbc-border); border-radius: var(--lms-radius, 16px); background: var(--kbc-surface); color: var(--kbc-muted); cursor: pointer; transition: border-color 150ms, color 150ms, background-color 150ms; }
 .riskInsightToggle:hover { border-color: var(--dashboard-accent); background: var(--kbc-purple-wash); color: var(--dashboard-accent); }
 .riskInsightToggle svg { width: 21px; height: 21px; transition: transform 180ms ease; }
 .riskInsightToggle[aria-expanded="true"] svg { transform: rotate(180deg); }
@@ -148,7 +148,7 @@ button.metric:hover { border-color: var(--dashboard-accent); box-shadow: 0 10px 
 :global([data-theme="dark"]) .riskInsightTable tbody tr[data-tone="warning"] > td > strong { color: #ffd66b; }
 :global([data-theme="dark"]) .reviewAge[data-tone="critical"] small,
 :global([data-theme="dark"]) .riskInsightTable tbody tr[data-tone="critical"] > td > strong { color: #ff9caf; }
-:global(.workspace-shell[data-workspace-role="coach"]) :global(.workspace-main) .dashboard .panel { min-width: 0; padding: 22px; border-radius: 12px !important; }
+:global(.workspace-shell[data-workspace-role="coach"]) :global(.workspace-main) .dashboard .panel { min-width: 0; padding: 22px; border-radius: var(--lms-radius, 16px) !important; }
 .dashboard .panel :global(.section-header) { gap: 10px; }
 .dashboard .panel :global(.section-header) h2 { color: var(--dashboard-heading); font-size: 19px !important; font-weight: 700; letter-spacing: -.3px; }
 .dashboard .panel :global(.section-header) h2 > svg { flex-shrink: 0; color: var(--dashboard-accent); width: 21px; height: 21px; margin-right: 4px; }
@@ -184,26 +184,26 @@ button.metric:hover { border-color: var(--dashboard-accent); box-shadow: 0 10px 
 .groupName { display: block; min-width: 65px; max-width: 140px; color: var(--kbc-muted); overflow-wrap: anywhere; }
 .lastContact { color: var(--kbc-muted); }
 .detailMetrics { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 9px; margin-top: 12px; }
-.textButton { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 44px; padding: 10px 14px; border: 1px solid var(--kbc-border); border-radius: 6px; background: var(--kbc-surface); color: var(--dashboard-accent); font-size: 14px; font-weight: 700; white-space: nowrap; }
+.textButton { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 44px; padding: 10px 14px; border: 1px solid var(--kbc-border); border-radius: var(--lms-radius, 16px); background: var(--kbc-surface); color: var(--dashboard-accent); font-size: 14px; font-weight: 700; white-space: nowrap; }
 .textButton:hover { background: var(--kbc-purple-soft); }
 .textButton svg { flex-shrink: 0; width: 15px; height: 15px; }
 .primaryButton { background: var(--dashboard-accent); border-color: var(--dashboard-accent); color: white; }
 .primaryButton:hover { background: var(--kbc-primary-secondary); }
-:global(body) :global(.workspace-shell[data-workspace-role="coach"]) .dashboard .metric { border-radius: 14px !important; }
-:global(body) :global(.workspace-shell[data-workspace-role="coach"]) .dashboard .panel { border-radius: 12px !important; }
-:global(body) :global(.workspace-shell[data-workspace-role="coach"]) .dashboard .textButton { border-radius: 6px !important; }
+:global(body) :global(.workspace-shell[data-workspace-role="coach"]) .dashboard .metric { border-radius: var(--lms-radius, 16px) !important; }
+:global(body) :global(.workspace-shell[data-workspace-role="coach"]) .dashboard .panel { border-radius: var(--lms-radius, 16px) !important; }
+:global(body) :global(.workspace-shell[data-workspace-role="coach"]) .dashboard .textButton { border-radius: var(--lms-radius, 16px) !important; }
 :global(body) :global(.workspace-shell[data-workspace-role="coach"]) .dashboard .identity > :first-child { border-radius: 50% !important; }
-.iconButton { display: grid; place-items: center; width: 44px; height: 44px; color: var(--kbc-muted); border-radius: 8px; }
+.iconButton { display: grid; place-items: center; width: 44px; height: 44px; color: var(--kbc-muted); border-radius: var(--lms-radius, 16px); }
 .iconButton:hover { background: var(--kbc-purple-soft); }
 .iconButton svg { width: 17px; height: 17px; }
 .dateCell { white-space: nowrap; font-variant-numeric: tabular-nums; }
 .meetingDateCell { vertical-align: middle; }
-.meetingDate { display: grid; place-items: center; min-width: 108px; gap: 2px; padding: 9px 10px; border-radius: 8px; background: var(--kbc-purple-wash); color: var(--dashboard-heading); font-size: 13px; font-weight: 700; }
+.meetingDate { display: grid; place-items: center; min-width: 108px; gap: 2px; padding: 9px 10px; border-radius: var(--lms-radius, 16px); background: var(--kbc-purple-wash); color: var(--dashboard-heading); font-size: 13px; font-weight: 700; }
 .meetingDate strong { font-size: 14px; }
 .meetingTime { display: inline-flex; align-items: center; gap: 7px; color: var(--kbc-muted); }
 .meetingTime svg { width: 14px; height: 14px; color: var(--dashboard-accent); }
 .meetingType { display: flex; align-items: center; gap: 10px; min-width: 170px; max-width: 260px; color: var(--kbc-muted); font-size: 14px; line-height: 1.5; }
-.meetingTypeIcon { display: grid; place-items: center; flex: 0 0 30px; height: 30px; border-radius: 10px; background: var(--kbc-purple-wash); color: var(--dashboard-accent); }
+.meetingTypeIcon { display: grid; place-items: center; flex: 0 0 30px; height: 30px; border-radius: var(--lms-radius, 16px); background: var(--kbc-purple-wash); color: var(--dashboard-accent); }
 .meetingTypeIcon svg { width: 16px; height: 16px; }
 .meetingsTable .identity { gap: 8px; min-width: 180px; }
 .meetingsTable .identity > :first-child { width: 32px; height: 32px; font-size: 11px; }
@@ -214,20 +214,20 @@ button.metric:hover { border-color: var(--dashboard-accent); box-shadow: 0 10px 
 .meetingsTable .meetingDate strong { font-size: 13px; }
 .meetingsTable .meetingTime { gap: 5px; font-size: 13px; }
 .meetingsTable .meetingType { gap: 7px; min-width: 138px; max-width: 190px; font-size: 13px; line-height: 1.35; white-space: nowrap; }
-.meetingsTable .meetingTypeIcon { flex-basis: 26px; height: 26px; border-radius: 8px; }
+.meetingsTable .meetingTypeIcon { flex-basis: 26px; height: 26px; border-radius: var(--lms-radius, 16px); }
 .meetingsTable .meetingTypeIcon svg { width: 14px; height: 14px; }
 .dashboard .tableScroll .meetingsTable tbody td { padding: 4px 6px; border-top: 1px solid var(--meeting-card-border); border-bottom-color: var(--meeting-card-border) !important; }
 .meetingsTable .textButton { gap: 6px; min-height: 34px; padding: 7px 9px; font-size: 12px; }
 .meetingsTable .textButton svg { width: 14px; height: 14px; }
 :global(body) :global(.workspace-shell[data-workspace-role="coach"]) .dashboard .meetingsTable tbody tr.meetingRow td { border-radius: 0 !important; }
 :global(body) :global(.workspace-shell[data-workspace-role="coach"]) .dashboard .meetingsTable tbody tr.meetingRow td:last-child { border-right: 1px solid var(--meeting-card-border); }
-:global(body) :global(.workspace-shell[data-workspace-role="coach"]) .dashboard .meetingsTable tbody tr.meetingRow td.meetingDateCell { padding-left: 4px; border-left: 1px solid var(--meeting-card-border); border-top-left-radius: 8px !important; border-bottom-left-radius: 8px !important; }
-:global(body) :global(.workspace-shell[data-workspace-role="coach"]) .dashboard .meetingsTable tbody tr.meetingDayFirstRow td:last-child { border-top-right-radius: 8px !important; }
-:global(body) :global(.workspace-shell[data-workspace-role="coach"]) .dashboard .meetingsTable tbody tr.meetingDayLastRow td:last-child { border-bottom-right-radius: 8px !important; }
+:global(body) :global(.workspace-shell[data-workspace-role="coach"]) .dashboard .meetingsTable tbody tr.meetingRow td.meetingDateCell { padding-left: 4px; border-left: 1px solid var(--meeting-card-border); border-top-left-radius: var(--lms-radius, 16px) !important; border-bottom-left-radius: var(--lms-radius, 16px) !important; }
+:global(body) :global(.workspace-shell[data-workspace-role="coach"]) .dashboard .meetingsTable tbody tr.meetingDayFirstRow td:last-child { border-top-right-radius: var(--lms-radius, 16px) !important; }
+:global(body) :global(.workspace-shell[data-workspace-role="coach"]) .dashboard .meetingsTable tbody tr.meetingDayLastRow td:last-child { border-bottom-right-radius: var(--lms-radius, 16px) !important; }
 .textButton:disabled { opacity: .5; cursor: not-allowed; }
 .actionMessage { margin-top: 7px; max-width: 280px; font-size: 13px; line-height: 1.5; white-space: normal; color: var(--kbc-muted); }
 .actionMessage[role="alert"] { color: #b4233e; }
-.scheduleDialog { width: min(620px, calc(100vw - 32px)); max-height: calc(100vh - 48px); margin: auto; overflow: auto; padding: 24px; border: 1px solid var(--kbc-border); border-radius: 12px; background: var(--kbc-surface, white); color: var(--kbc-text); }
+.scheduleDialog { width: min(620px, calc(100vw - 32px)); max-height: calc(100vh - 48px); margin: auto; overflow: auto; padding: 24px; border: 1px solid var(--kbc-border); border-radius: var(--lms-radius, 16px); background: var(--kbc-surface, white); color: var(--kbc-text); }
 .scheduleDialog::backdrop { background: rgb(29 15 48 / 45%); }
 .scheduleDialog h2 { font-size: 20px !important; font-weight: 700; }
 .scheduleDialog form > p { margin-top: 6px; font-size: 13px; }
@@ -242,7 +242,7 @@ button.metric:hover { border-color: var(--dashboard-accent); box-shadow: 0 10px 
 .legend strong { font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .monthlyRisk { display: grid; grid-template-columns: minmax(0, 1fr) 116px; gap: 12px; margin-top: 16px; }
 
-.notice { border: 1px solid var(--kbc-border); border-radius: 8px; padding: 12px; background: var(--kbc-surface); font-size: 12px; color: var(--kbc-muted); }
+.notice { border: 1px solid var(--kbc-border); border-radius: var(--lms-radius, 16px); padding: 12px; background: var(--kbc-surface); font-size: 12px; color: var(--kbc-muted); }
 .notice[role="alert"] { background: #fff7e5; border-color: #e8ca87; color: #835517; }
 
 @media (max-width: 1100px) {
@@ -271,7 +271,7 @@ button.metric:hover { border-color: var(--dashboard-accent); box-shadow: 0 10px 
 
 @media (max-width: 650px) {
   .dueActivitiesHero { display: flex; align-items: flex-start; flex-direction: column; gap: 18px; min-height: 0; padding: 18px; }
-  .dueActivitiesHeroIcon { flex-basis: 56px; width: 56px; height: 56px; border-radius: 14px; }
+  .dueActivitiesHeroIcon { flex-basis: 56px; width: 56px; height: 56px; border-radius: var(--lms-radius, 16px); }
   .dueActivitiesHeroIcon svg { width: 27px; height: 27px; }
   .dueActivitiesActions { width: 100%; justify-content: stretch; }
   .dueActivitiesActions .textButton { flex: 1; padding-inline: 10px; }

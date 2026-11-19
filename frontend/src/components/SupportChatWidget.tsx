@@ -506,7 +506,7 @@ export function SupportChatWidget() {
     width: 'min(380px, calc(100vw - 32px))',
     height: 'min(560px, calc(100vh - 140px))',
     background: '#fff',
-    borderRadius: '18px',
+    borderRadius: 'var(--lms-radius, 16px)',
     boxShadow: '0 20px 60px rgba(44,20,70,.28)',
     display: 'flex',
     flexDirection: 'column' as const,
@@ -541,7 +541,7 @@ export function SupportChatWidget() {
                 title="Clear this conversation"
                 style={{
                   background: 'rgba(255,255,255,.14)', border: 0, color: '#fff',
-                  height: 26, borderRadius: 13, padding: '0 10px',
+                  height: 26, borderRadius: 'var(--lms-radius, 16px)', padding: '0 10px',
                   cursor: busy ? 'default' : 'pointer', opacity: busy ? .4 : 1,
                   fontSize: 11, fontWeight: 600, fontFamily: 'inherit',
                   display: 'flex', alignItems: 'center', gap: 4,
@@ -598,7 +598,7 @@ export function SupportChatWidget() {
                   background: m.sender === 'user'
                     ? 'linear-gradient(135deg,#5A2A7D,#3C1361)' : '#fff',
                   color: m.sender === 'user' ? '#fff' : '#2A2A33',
-                  padding: '9px 13px', borderRadius: 14,
+                  padding: '9px 13px', borderRadius: 'var(--lms-radius, 16px)',
                   borderTopRightRadius: m.sender === 'user' ? 4 : 14,
                   borderTopLeftRadius: m.sender === 'user' ? 14 : 4,
                   fontSize: 13.5, lineHeight: 1.5, whiteSpace: 'pre-wrap',
@@ -614,7 +614,7 @@ export function SupportChatWidget() {
             {busy && (
               <div style={{
                 alignSelf: 'flex-start', background: '#fff', padding: '11px 15px',
-                borderRadius: 14, borderTopLeftRadius: 4, border: '1px solid rgba(0,0,0,.06)',
+                borderRadius: 'var(--lms-radius, 16px)', borderTopLeftRadius: 'var(--lms-radius, 16px)', border: '1px solid rgba(0,0,0,.06)',
                 display: 'flex', gap: 4,
               }}>
                 {[0, .15, .3].map((d) => (
@@ -635,7 +635,7 @@ export function SupportChatWidget() {
                 style={{
                   alignSelf: 'flex-start',
                   background: 'linear-gradient(135deg,#5A2A7D,#3C1361)', color: '#fff',
-                  borderRadius: 18, padding: '8px 16px', fontSize: 12.5, fontWeight: 600,
+                  borderRadius: 'var(--lms-radius, 16px)', padding: '8px 16px', fontSize: 12.5, fontWeight: 600,
                   textDecoration: 'none', boxShadow: '0 4px 12px rgba(60,19,97,.3)',
                 }}
               >{action.label} →</a>
@@ -650,7 +650,7 @@ export function SupportChatWidget() {
                     onClick={() => chooseEscalation(choice)}
                     style={{
                       background: '#fff', color: '#3C1361',
-                      border: '1.5px solid rgba(90,42,125,.35)', borderRadius: 18,
+                      border: '1.5px solid rgba(90,42,125,.35)', borderRadius: 'var(--lms-radius, 16px)',
                       padding: '7px 14px', fontSize: 12.5, fontWeight: 600,
                       cursor: 'pointer', fontFamily: 'inherit',
                     }}
@@ -684,7 +684,7 @@ export function SupportChatWidget() {
               disabled={busy}
               rows={1}
               style={{
-                flex: 1, border: '1px solid rgba(0,0,0,.13)', borderRadius: 10,
+                flex: 1, border: '1px solid rgba(0,0,0,.13)', borderRadius: 'var(--lms-radius, 16px)',
                 padding: '9px 12px', fontSize: 13.5, outline: 'none', minWidth: 0,
                 font: 'inherit', fontFamily: 'inherit', lineHeight: 1.45,
                 resize: 'none', maxHeight: 120, overflowY: 'auto',
@@ -696,7 +696,7 @@ export function SupportChatWidget() {
               aria-label="Send"
               style={{
                 background: 'linear-gradient(135deg,#5A2A7D,#3C1361)', color: '#fff',
-                border: 0, borderRadius: 10, width: 40, height: 38, cursor: 'pointer',
+                border: 0, borderRadius: 'var(--lms-radius, 16px)', width: 40, height: 38, cursor: 'pointer',
                 opacity: busy || !input.trim() ? .45 : 1, fontSize: 15, flexShrink: 0,
                 display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 0,
               }}

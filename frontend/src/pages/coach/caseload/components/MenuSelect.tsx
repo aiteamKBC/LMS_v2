@@ -77,7 +77,7 @@ export function MenuSelect({
       {open ? (
         <div
           role="listbox"
-          className={`absolute top-[calc(100%+4px)] z-50 max-h-72 w-max min-w-full overflow-y-auto rounded-md border border-foreground-200 bg-white p-1 shadow-panel ${
+          className={`lms-select-panel absolute top-[calc(100%+4px)] z-50 max-h-72 w-max min-w-full overflow-y-auto rounded-md border border-foreground-200 bg-white p-1 shadow-panel ${
             align === 'right' ? 'right-0' : 'left-0'
           }`}
         >

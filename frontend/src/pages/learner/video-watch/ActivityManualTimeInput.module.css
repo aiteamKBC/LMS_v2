@@ -7,7 +7,7 @@
   min-height: 5.25rem;
   padding: 0.5rem 0.65rem 0.55rem;
   border: 1px solid oklch(var(--primary-200));
-  border-radius: 0.9rem;
+  border-radius: var(--lms-radius, 16px);
   background: linear-gradient(135deg, #fff 22%, oklch(var(--primary-50)) 100%);
   box-shadow: 0 14px 26px -22px rgb(49 25 85 / 0.45), inset 0 1px #fff;
   transition: border-color 160ms ease, box-shadow 160ms ease;
@@ -89,7 +89,7 @@
 
 .card .field .input {
   min-height: 2.5rem !important;
-  border-radius: 0.6rem;
+  border-radius: var(--lms-radius, 16px);
 }
 
 .input::placeholder {

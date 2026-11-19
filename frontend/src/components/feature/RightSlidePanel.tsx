@@ -1,3 +1,4 @@
+import { LoadingLabel } from '@/components/feature/LoadingSkeleton';
 import { useEffect, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 // Imported explicitly rather than relying on the auto-import plugin, which only
@@ -64,7 +65,7 @@ export function RightSlidePanel({ isOpen, onClose, children, title, width = 'w-[
               ? 'bg-gradient-to-r from-primary-950 via-primary-900 to-primary-800 border-b border-white/10'
               : 'border-b border-foreground-200'
           }`}>
-            <h3 className={`text-sm font-heading font-semibold ${coloredHeader ? 'text-white' : 'text-foreground-900'}`}>{title}</h3>
+            <h3 className={`text-sm font-heading font-semibold ${coloredHeader ? 'text-white' : 'text-foreground-900'}`}><LoadingLabel>{title}</LoadingLabel></h3>
             <button
               onClick={onClose}
               className={`w-8 h-8 rounded-lg flex items-center justify-center transition-smooth cursor-pointer ${

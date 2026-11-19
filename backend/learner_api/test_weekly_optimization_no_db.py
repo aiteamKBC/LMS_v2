@@ -77,6 +77,12 @@ class WeeklyHoursProjectionTests(SimpleTestCase):
                 if table in sql:
                     self.assertEqual(params, [owner['id']] * copies)
                     return attendance(sql, params)
+            if not any(fragment in sql for fragment in (
+                'FROM "Learner".learner_progress_entries progress',
+                'WITH owners(profile_id,enrolment_id,learner_kind)',
+                'FROM "Learner".learning_reflection_submissions',
+            )):
+                self.fail('Unexpected weekly hours query')
             return ledger(sql, params)
         return query, ledger, attendance
 
@@ -145,13 +151,19 @@ class WeeklyHoursProjectionTests(SimpleTestCase):
     def test_hours_without_pending_assignments_read_only_standalone_extras(self):
         owner = {'id': 17, 'enrolment_id': 201, 'learner_type': 'commercial'}
         read, ledger, attendance = self.query_with_attendance(owner, [[], []])
-        with patch.object(canonical_learning, 'query', side_effect=read):
+        with patch.object(canonical_learning, 'query', side_effect=read) as query:
             self.assertEqual(canonical_learning.weekly_hour_records(owner), [])
         # Preserve the two-query ledger budget; attendance adds three scoped reads.
         self.assertEqual(ledger.call_count, 2)
         self.assertEqual(attendance.call_count, 3)
         self.assertIn("s.activity_type='extra_activity'", ledger.call_args_list[1].args[0])
         self.assertEqual(ledger.call_args_list[1].args[1], [17, '201', 'commercial'])
+        self.assertEqual(query.call_count, 5)
+        for call, table, expected in zip(attendance.call_args_list,
+                ('learner_monthly_signatures', 'learner_monthly_locks', 'live_session_learner_attendance'),
+                ([17], [17, 17, 17], [17])):
+            self.assertIn(table, call.args[0])
+            self.assertEqual(call.args[1], expected)
 
     def test_standalone_reviewed_extra_matches_full_hour_projection(self):
         owner = {'id': 17, 'enrolment_id': 201, 'learner_type': 'commercial'}

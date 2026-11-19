@@ -632,7 +632,7 @@ function Marked({ n, children }: { n: number; children: ReactNode }) {
     <span
       onMouseEnter={() => setHover(n)}
       onMouseLeave={() => setHover(null)}
-      className="relative inline cursor-help rounded-[3px] px-0.5 transition-colors"
+      className="relative inline cursor-help rounded-2xl px-0.5 transition-colors"
       style={active ? { backgroundColor: `${accent}26`, boxShadow: `inset 0 0 0 1px ${accent}` } : undefined}
     >
       {children}

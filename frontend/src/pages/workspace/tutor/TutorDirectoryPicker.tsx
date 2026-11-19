@@ -163,7 +163,7 @@ export function TutorDirectoryPicker({ onSelect }: { onSelect: (tutor: Directory
   const filtered = useMemo(() => tutors.filter(tutor => matches(tutor, search)), [tutors, search]);
 
   return (
-    <section className="rounded-[24px] border border-foreground-200/70 bg-background-50/95 p-4 md:p-6 shadow-[0_24px_60px_-36px_rgba(15,23,42,0.28)]">
+    <section className="rounded-2xl border border-foreground-200/70 bg-background-50/95 p-4 md:p-6 shadow-[0_24px_60px_-36px_rgba(15,23,42,0.28)]">
       <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div>
           <h2 className="text-lg font-heading font-semibold text-foreground-900">Open a tutor workspace</h2>

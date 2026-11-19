@@ -9,7 +9,7 @@
   gap: 10px;
   padding: 14px;
   border: 1px solid #bbefd2;
-  border-radius: 13px;
+  border-radius: var(--lms-radius, 16px);
   background: #f1fcf6;
   color: #18794e;
   font-size: 13px;
@@ -36,7 +36,7 @@
 .returnFooter button {
   padding: 0;
   border: 0;
-  border-radius: 5px;
+  border-radius: var(--lms-radius, 16px);
   background: transparent;
   color: #5b24e8;
   cursor: pointer;
@@ -76,7 +76,7 @@
   justify-self: center;
   padding: 2px 6px;
   border: 0;
-  border-radius: 6px;
+  border-radius: var(--lms-radius, 16px);
   background: transparent;
   color: #5b24e8;
   cursor: pointer;

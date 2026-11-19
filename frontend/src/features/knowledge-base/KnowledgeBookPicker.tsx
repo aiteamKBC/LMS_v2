@@ -1,3 +1,4 @@
+import { LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { AppIcon } from '@/components/feature/AppIcon';
 import { fetchBooks, type KbBook } from './api';
@@ -51,7 +52,7 @@ export function KnowledgeBookPicker({ programme, selected, onChange }: {
           <AppIcon className="ri-add-line" /> Add book
         </a>
       </div>
-      {state === 'loading' ? <p className="text-xs text-foreground-400">Loading books…</p> : null}
+      {state === 'loading' ? <p className="text-xs text-foreground-400"><LoadingSkeleton label="Loading books…" variant="rows" /></p> : null}
       {state === 'error' ? <p className="text-xs text-foreground-400">Books are unavailable right now. You can still use files or pasted text.</p> : null}
       {state === 'ready' && !books.length ? <p className="text-xs text-foreground-400">No ready books yet.</p> : null}
       <div className="flex flex-col gap-1.5">
