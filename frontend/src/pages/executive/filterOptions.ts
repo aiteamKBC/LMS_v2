@@ -38,7 +38,7 @@ export function keepConsistent(data: LiveQmsData | null, filters: DashboardFilte
     const options = filterOptions(data, next);
     const patch: Partial<DashboardFilters> = {};
     if (next.feedbackType !== ALL.feedbackType && !options.feedbackTypes.some(type => type.id === next.feedbackType)) patch.feedbackType = ALL.feedbackType;
-    if (next.respondentType !== ALL.respondentType && !options.respondentTypes.includes(next.respondentType)) patch.respondentType = ALL.respondentType;
+    if (next.respondentType !== ALL.respondentType && !options.respondentTypes.some(type => type === next.respondentType)) patch.respondentType = ALL.respondentType;
     if (next.formType !== ALL.formType && !options.formTypes.some(form => form.id === next.formType)) patch.formType = ALL.formType;
     if (!Object.keys(patch).length) break;
     next = { ...next, ...patch };
