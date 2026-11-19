@@ -12,12 +12,12 @@ def courses_for(owner):
         JOIN curriculum.source_courses c ON c.id=m.source_course_id AND c.deleted_at IS NULL
         JOIN login."Login_accounts" a ON a.id::text=m.source_payload #>> '{demo_progress,created_by}'
           AND a."Role"='admin' AND a."Is_active"=true
-        WHERE m.learner_id=%s AND m.enrolment_id=%s AND m.deleted_at IS NULL
+        WHERE m.learner_id=%s AND m.deleted_at IS NULL
           AND c.source_system='old_lms' AND c.mapping_status='matched'
           AND c.mapping_method='verified_source_replacement'
           AND c.source_payload #>> '{verified_replacement,module_id}'=c.curriculum_module_ref
           AND m.source_payload #>> '{demo_progress,kind}'='owner_requested_simulation'
-          AND m.source_payload #>> '{demo_progress,enrolment_id}'=m.enrolment_id::text
+          AND m.source_payload #>> '{demo_progress,enrolment_id}'=%s::text
           AND m.source_payload #>> '{demo_progress,course_ref}'=c.source_course_ref
           AND m.source_payload #>> '{demo_progress,module_id}'=c.curriculum_module_ref
         ORDER BY c.id''', [owner['id'], owner['enrolment_id']])

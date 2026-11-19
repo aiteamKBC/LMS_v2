@@ -6,6 +6,7 @@ from django.test import SimpleTestCase
 from pptx import Presentation
 
 from learner_api.standard_mcm_presentation import FORMAT
+
 from . import edits, mcm
 from .tests_pptx_generator import _sample_pack
 
@@ -95,10 +96,16 @@ class StandardMcmPipelineTests(SimpleTestCase):
     def test_fresh_generate_selects_standard_but_uploaded_decks_keep_their_existing_contract(self):
         from datetime import date
         from types import SimpleNamespace
+
+        from .identity import LearnerIdentity
         from .views import _generate_for_learner
+        identity = LearnerIdentity(
+            501, 42, 'apprenticeship', SimpleNamespace(), SimpleNamespace(),
+        )
         for uploaded in (None, b'own presentation'):
             pack = _sample_pack()
-            with patch('progress_reviews_api.views._programme_window', return_value=(date(2025, 1, 1), None, 'apprenticeship', SimpleNamespace())), \
+            with patch('progress_reviews_api.views.identity_from_enrolment_id', return_value=identity), \
+                 patch('progress_reviews_api.views._programme_window', return_value=(date(2025, 1, 1), None, 'apprenticeship', SimpleNamespace())), \
                  patch('progress_reviews_api.views._curriculum_programme_id', return_value=None), \
                  patch('progress_reviews_api.views.build_review_pack', return_value=pack), \
                  patch('progress_reviews_api.views._store_deck', return_value={'reviewId': 'new'}) as store:

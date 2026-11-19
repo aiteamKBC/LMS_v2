@@ -19,13 +19,17 @@ def evidence_context(kind, learner_id, evidence):
     rows = []
     if ids:
         with connections['enrolment'].cursor() as cur:
-            cur.execute('SELECT id::text, original_filename, container, blob_name FROM "Learner"."evidence_files" '
-                        'WHERE learner_kind = %s AND learner_id = %s AND status = %s AND id::text = ANY(%s)',
-                        [kind, str(learner_id), 'approved', ids])
-            rows = cur.fetchall()
-    for file_id, name, container, blob in rows:
+            from .evidence_ownership import profile_id_for_source
+            learner_profile_id = profile_id_for_source(cur, kind, learner_id)
+            if learner_profile_id is not None:
+                cur.execute('SELECT id::text, original_filename, blob_name FROM "Learner"."evidence_files" '
+                            'WHERE learner_kind = %s AND learner_profile_id = %s '
+                            'AND status = %s AND id::text = ANY(%s)',
+                            [kind, learner_profile_id, 'approved', ids])
+                rows = cur.fetchall()
+    for file_id, name, blob in rows:
         try:
-            data = download_blob_bytes(container, blob, max_bytes=10 * 1024 * 1024)
+            data = download_blob_bytes(settings.AZURE_APPROVED_CONTAINER, blob, max_bytes=10 * 1024 * 1024)
             extraction = extract_documents(data, name)
             text = '\n'.join(d['text'] for d in extraction['documents'])[:8000]
             if text:

@@ -209,7 +209,8 @@ class CanonicalLearningTests(unittest.TestCase):
         self.assertEqual(loaded[0]['journal_routes'], [route])
         sql, params = self.query.call_args_list[0].args
         self.assertIn("'activity_date',j.activity_date", sql)
-        self.assertIn('j.canonical_learner_id=p.learner_id', sql)
+        self.assertIn('j.learner_id=p.learner_id', sql)
+        self.assertNotIn('canonical_learner_id', sql)
         self.assertIn('s.learner_id=p.learner_id AND s.canonical_progress_id=p.id', sql)
         self.assertEqual(params, [self.owner['id']])
 

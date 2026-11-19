@@ -6,6 +6,7 @@ from unittest.mock import MagicMock, patch
 
 from django.test import Client, SimpleTestCase, override_settings
 
+from .identity import LearnerIdentity, LearnerIdentityError
 from .views import GenerationError, _generate_for_learner, _programme_window, _slugify
 
 SUCCESS_PACK = {
@@ -22,6 +23,21 @@ def _disable_auth():
     return patch.dict(os.environ, {"LEARNER_API_REQUIRE_AUTH": "0"})
 
 
+def _identity(profile_id=501, enrolment_id=42, *, learner_type="apprenticeship"):
+    profile = MagicMock(start_date=date(2025, 1, 1), end_date=date(2026, 6, 30))
+    profile.pk = profile_id
+    profile.enrolment_id = enrolment_id
+    source = MagicMock(
+        id=enrolment_id,
+        pk=enrolment_id,
+        start_date="2020-01-01",
+        end_date="2020-12-31",
+        learner_type=learner_type,
+    )
+    kind = "commercial" if learner_type == "commercial" else "apprenticeship"
+    return LearnerIdentity(profile_id, enrolment_id, kind, profile, source)
+
+
 class SlugifyTests(SimpleTestCase):
     def test_collapses_punctuation_to_single_hyphens(self):
         self.assertEqual(_slugify("Bethanie Taylor-Grenfell!!"), "bethanie-taylor-grenfell")
@@ -32,58 +48,50 @@ class SlugifyTests(SimpleTestCase):
 
 
 class ProgrammeWindowTests(SimpleTestCase):
-    @patch("learner_api.identity.learner_profile_for_source")
-    @patch("learner_api.models.EnrolmentUser")
-    def test_missing_learner_returns_all_none(self, mock_model, mock_profile_lookup):
-        mock_model.DoesNotExist = Exception
-        mock_model.all_learners.get.side_effect = mock_model.DoesNotExist
-        start, end, kind, source = _programme_window(999)
-        self.assertEqual((start, end, kind, source), (None, None, None, None))
-
-    @patch("learner_api.identity.learner_profile_for_source")
-    @patch("learner_api.models.EnrolmentUser")
-    def test_the_learners_own_start_date_beats_the_cohort_stamped_profile(self, mock_model, mock_profile_lookup):
+    def test_the_learners_own_start_date_beats_the_cohort_stamped_profile(self):
         """enrolment."Created_users"."Start_date" is the learner's OWN date;
         LearnerProfile.start_date is the profile mirror, which
         active_users.mirror_learner_placement stamps with the COHORT window on
         every placement edit. Review periods must anchor on the same date the
         coach calendar anchors its Progress Review occurrences on, or the pack
         covers a window the review it belongs to never had."""
-        source = MagicMock(start_date="2020-01-01", end_date="2020-12-31", learner_type="apprenticeship")
-        mock_model.DoesNotExist = Exception
-        mock_model.all_learners.get.return_value = source
-        mock_profile_lookup.return_value = MagicMock(start_date=date(2025, 1, 1), end_date=date(2026, 6, 30))
+        identity = _identity()
 
-        start, end, kind, resolved_source = _programme_window(1)
+        start, end, kind, resolved_source = _programme_window(identity)
 
         self.assertEqual(start, date(2020, 1, 1))
         # End date keeps its existing preference: the profile's real DateField
         # first, since that is the delivery window the learner is measured to.
         self.assertEqual(end, date(2026, 6, 30))
         self.assertEqual(kind, "apprenticeship")
-        self.assertIs(resolved_source, source)
+        self.assertIs(resolved_source, identity.source)
 
-    @patch("learner_api.identity.learner_profile_for_source")
-    @patch("learner_api.models.EnrolmentUser")
-    def test_the_profile_still_fills_in_when_the_learner_has_no_date(self, mock_model, mock_profile_lookup):
-        source = MagicMock(start_date="", end_date="", learner_type="commercial")
-        mock_model.DoesNotExist = Exception
-        mock_model.all_learners.get.return_value = source
-        mock_profile_lookup.return_value = MagicMock(start_date=date(2025, 1, 1), end_date=date(2026, 6, 30))
+    def test_the_profile_still_fills_in_when_the_learner_has_no_date(self):
+        identity = _identity(learner_type="commercial")
+        identity.source.start_date = ""
+        identity.source.end_date = ""
 
-        start, _end, _kind, _source = _programme_window(1)
+        start, _end, _kind, _source = _programme_window(identity)
 
         self.assertEqual(start, date(2025, 1, 1))
 
 
 class GenerateForLearnerTests(SimpleTestCase):
     def setUp(self):
+        self.identity = _identity()
+        patcher = patch(
+            "progress_reviews_api.views.identity_from_enrolment_id",
+            return_value=self.identity,
+        )
+        self.mock_identity = patcher.start()
+        self.addCleanup(patcher.stop)
+
         patcher = patch("progress_reviews_api.views._programme_window")
         self.mock_window = patcher.start()
         self.addCleanup(patcher.stop)
         self.mock_window.return_value = (date(2025, 1, 1), date(2026, 6, 30), "apprenticeship", MagicMock())
 
-        for name in ("create_run", "insert_snapshot", "save_warnings", "mark_run_completed", "mark_run_draft", "mark_run_failed", "insert_pptx_file"):
+        for name in ("create_run", "insert_snapshot", "save_warnings", "mark_run_failed", "finalize_run_with_pptx"):
             patcher = patch(f"progress_reviews_api.views.runs.{name}")
             setattr(self, f"mock_{name}", patcher.start())
             self.addCleanup(patcher.stop)
@@ -99,8 +107,16 @@ class GenerateForLearnerTests(SimpleTestCase):
         self.assertEqual(result["generationStatus"], "completed")
         self.assertEqual(result["learnerId"], 42)
         self.assertIn("downloadUrl", result)
-        self.mock_insert_pptx_file.assert_called_once()
-        self.mock_mark_run_completed.assert_called_once()
+        self.mock_create_run.assert_called_once()
+        create_kwargs = self.mock_create_run.call_args.kwargs
+        self.assertEqual(create_kwargs["learner_id"], 501)
+        self.assertNotIn("learner_profile_id", create_kwargs)
+        self.assertNotIn("legacy_learner_id", create_kwargs)
+        self.mock_finalize_run_with_pptx.assert_called_once()
+        self.assertEqual(
+            self.mock_finalize_run_with_pptx.call_args.kwargs["generation_status"],
+            "completed",
+        )
         self.mock_mark_run_failed.assert_not_called()
 
     def test_no_programme_start_date_raises_422(self):
@@ -118,11 +134,29 @@ class GenerateForLearnerTests(SimpleTestCase):
         result = _generate_for_learner(42, generated_by="coach@kbc.example", save_as_draft=True)
 
         self.assertEqual(result["generationStatus"], "draft")
-        self.mock_mark_run_draft.assert_called_once()
-        self.mock_mark_run_completed.assert_not_called()
+        self.assertEqual(
+            self.mock_finalize_run_with_pptx.call_args.kwargs["generation_status"],
+            "draft",
+        )
+
+    @patch("progress_reviews_api.views.storage")
+    @patch("progress_reviews_api.views.generate_progress_review_pptx", return_value=b"PPTX-BYTES")
+    @patch("progress_reviews_api.views.build_review_pack", return_value=SUCCESS_PACK)
+    def test_metadata_finalization_failure_marks_the_run_failed(
+        self, mock_build_pack, mock_generate_pptx, mock_storage,
+    ):
+        mock_storage.storage_configured.return_value = True
+        self.mock_finalize_run_with_pptx.side_effect = RuntimeError("metadata insert failed")
+
+        with self.assertRaises(GenerationError) as ctx:
+            _generate_for_learner(42, generated_by="coach@kbc.example")
+
+        self.assertEqual(ctx.exception.status, 500)
+        self.assertEqual(ctx.exception.message, "PPTX metadata could not be saved.")
+        self.mock_mark_run_failed.assert_called_once()
 
     def test_unresolvable_learner_raises_404(self):
-        self.mock_window.return_value = (None, None, None, None)
+        self.mock_identity.side_effect = LearnerIdentityError("missing")
         with self.assertRaises(GenerationError) as ctx:
             _generate_for_learner(999)
         self.assertEqual(ctx.exception.status, 404)
@@ -168,6 +202,17 @@ class GenerateForLearnerTests(SimpleTestCase):
 class EndpointTests(SimpleTestCase):
     def setUp(self):
         self.client = Client()
+        self.identity = _identity()
+        for target in (
+            "progress_reviews_api.permissions.identity_from_enrolment_id",
+            "progress_reviews_api.views.identity_from_enrolment_id",
+        ):
+            patcher = patch(target, return_value=self.identity)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+        patcher = patch("progress_reviews_api.views.identity_for_run", return_value=self.identity)
+        patcher.start()
+        self.addCleanup(patcher.stop)
         self.env_patcher = _disable_auth()
         self.env_patcher.start()
         self.addCleanup(self.env_patcher.stop)
@@ -192,7 +237,9 @@ class EndpointTests(SimpleTestCase):
     @patch("progress_reviews_api.views.storage")
     @patch("progress_reviews_api.views.runs")
     def test_download_endpoint_returns_a_url_for_a_completed_run(self, mock_runs, mock_storage):
-        mock_runs.get_run.return_value = {"id": "run-1", "generation_status": "completed"}
+        mock_runs.get_run.return_value = {
+            "id": "run-1", "learner_id": 501, "generation_status": "completed",
+        }
         mock_runs.get_pptx_file_for_run.return_value = {
             "container": "progress-review-decks", "blob_name": "a/b/c.pptx", "original_filename": "deck.pptx",
         }
@@ -205,7 +252,9 @@ class EndpointTests(SimpleTestCase):
         self.assertIn("url", json.loads(response.content))
 
     def _preview_run(self, mock_runs, mock_storage):
-        mock_runs.get_run.return_value = {"id": "run-1", "generation_status": "completed"}
+        mock_runs.get_run.return_value = {
+            "id": "run-1", "learner_id": 501, "generation_status": "completed",
+        }
         mock_runs.get_pptx_file_for_run.return_value = {
             "container": "progress-review-decks", "blob_name": "a/b/c.pptx", "original_filename": "deck.pptx",
         }
@@ -276,7 +325,7 @@ class EndpointTests(SimpleTestCase):
         response = self.client.get("/progress_reviews_api/42/runs/latest/?review_date=2026-10-26")
         self.assertEqual(response.status_code, 200)
         self.assertEqual(json.loads(response.content), {"exists": False})
-        mock_runs.get_latest_completed_run_for_period.assert_called_once_with(42, date(2026, 10, 26))
+        mock_runs.get_latest_completed_run_for_period.assert_called_once_with(501, date(2026, 10, 26))
 
     @patch("progress_reviews_api.views.runs")
     def test_latest_run_endpoint_reports_an_existing_deck(self, mock_runs):
@@ -293,7 +342,7 @@ class EndpointTests(SimpleTestCase):
     @patch("progress_reviews_api.views.runs")
     def test_publish_endpoint_promotes_a_draft(self, mock_runs):
         draft = {
-            "id": "draft-1", "learner_id": 42, "generation_status": "draft",
+            "id": "draft-1", "learner_id": 501, "generation_status": "draft",
             "review_number": 1, "review_date": date(2026, 10, 26),
             "review_period_start": date(2026, 8, 4), "review_period_end": date(2026, 10, 26),
             "revision_source": "generated", "source_warnings": [],
@@ -315,7 +364,7 @@ class EndpointTests(SimpleTestCase):
         already generated just because their first review's deck exists."""
         mock_runs.get_latest_completed_run_for_period.return_value = None
         self.client.get("/progress_reviews_api/42/runs/latest/?review_date=2027-01-18")
-        mock_runs.get_latest_completed_run_for_period.assert_called_once_with(42, date(2027, 1, 18))
+        mock_runs.get_latest_completed_run_for_period.assert_called_once_with(501, date(2027, 1, 18))
 
     @patch("progress_reviews_api.views.authenticate_request", return_value=SimpleNamespace(role="coach", is_staff=True))
     @patch("progress_reviews_api.views.runs")
@@ -329,7 +378,7 @@ class EndpointTests(SimpleTestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(json.loads(response.content)["generationStatus"], "draft")
-        mock_runs.get_latest_run_for_period.assert_called_once_with(42, date(2026, 10, 26))
+        mock_runs.get_latest_run_for_period.assert_called_once_with(501, date(2026, 10, 26))
 
     @patch("progress_reviews_api.views.authenticate_request", return_value=SimpleNamespace(role="learner", subject_id=42))
     @patch("progress_reviews_api.views.runs")
@@ -340,19 +389,39 @@ class EndpointTests(SimpleTestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(json.loads(response.content), {"exists": False})
-        mock_runs.get_latest_completed_run_for_period.assert_called_once_with(42, date(2026, 10, 26))
+        mock_runs.get_latest_completed_run_for_period.assert_called_once_with(501, date(2026, 10, 26))
 
     @patch("progress_reviews_api.views.storage")
     @patch("progress_reviews_api.views.runs")
     @patch("progress_reviews_api.views.authenticate_request", return_value=SimpleNamespace(role="learner", subject_id=42))
     def test_progress_review_draft_cannot_be_downloaded_by_its_learner(self, mock_auth, mock_runs, mock_storage):
         mock_runs.get_run.return_value = {
-            "id": "draft-1", "learner_id": 42, "review_kind": "progress_review", "generation_status": "draft",
+            "id": "draft-1", "learner_id": 501,
+            "review_kind": "progress_review", "generation_status": "draft",
         }
         with patch.dict(os.environ, {"LEARNER_API_REQUIRE_AUTH": "1"}):
             response = self.client.get("/progress_reviews_api/draft-1/download/")
 
         self.assertEqual(response.status_code, 404)
+        mock_runs.get_pptx_file_for_run.assert_not_called()
+        mock_storage.download_sas_for.assert_not_called()
+
+    @patch("progress_reviews_api.views.storage")
+    @patch("progress_reviews_api.views.runs")
+    @patch("progress_reviews_api.views.authenticate_request", return_value=SimpleNamespace(role="learner", subject_id=42))
+    def test_run_id_cannot_leak_another_canonical_learners_pptx(
+        self, mock_auth, mock_runs, mock_storage,
+    ):
+        mock_runs.get_run.return_value = {
+            "id": "other-run",
+            "learner_id": 777,
+            "review_kind": "mcm",
+            "generation_status": "completed",
+        }
+        with patch.dict(os.environ, {"LEARNER_API_REQUIRE_AUTH": "1"}):
+            response = self.client.get("/progress_reviews_api/other-run/download/")
+
+        self.assertEqual(response.status_code, 403)
         mock_runs.get_pptx_file_for_run.assert_not_called()
         mock_storage.download_sas_for.assert_not_called()
 

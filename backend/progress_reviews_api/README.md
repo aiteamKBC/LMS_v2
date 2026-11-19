@@ -120,8 +120,15 @@ works the same way). Three ways to create them, in order of preference:
    the recommended path (see `enrolment_api/document_tables.py` for why relying
    on it alone is risky once a later release adds a column).
 
-All three are exactly equivalent DDL; running more than one is harmless
-(`CREATE TABLE IF NOT EXISTS`).
+For a fresh database all three use the same DDL; running more than one is
+harmless (`CREATE TABLE IF NOT EXISTS`).
+
+`progress_review_runs.learner_id` is the canonical `"Learner".learners.id`
+and has a NOT NULL foreign key to that table. Existing dual-column databases
+must use the reviewed cutover migration (drop the legacy column, then rename
+`learner_profile_id`); the runtime setup helper deliberately does not rewrite
+an existing table. It validates the final shape and fails explicitly if the
+old dual-column schema is still present.
 
 ## Azure Blob container
 
@@ -201,6 +208,19 @@ in that learner's row and never stops the rest of the batch:
 Bulk generation also creates owner-only drafts; each draft must be reviewed and
 published before it replaces the learner-visible saved deck.
 
+## Post-restore integrity check
+
+Run the read-only checker after restoring a database:
+
+```
+python manage.py check_progress_review_integrity --json
+```
+
+It reports completed and draft runs without PPTX metadata, orphan or duplicate
+PPTX rows, invalid canonical learner references, and missing/invalid required
+file metadata. It exits non-zero when any check fails. The command performs
+only `SELECT` statements and never invokes the schema bootstrap helper.
+
 ## Previewing before generating
 
 Two read-only endpoints exist for the frontend's preview panel, and admit the
@@ -221,6 +241,15 @@ learner themselves as well as staff (not just staff — see `views.py`):
 ```
 DJANGO_USE_SQLITE=true DJANGO_SETTINGS_MODULE=config.settings_sqlite_test python manage.py test progress_reviews_api
 ```
+
+The final raw-SQL schema is also covered against real PostgreSQL. Point only at
+a disposable local database whose name starts with `test_`:
+
+```
+PROGRESS_REVIEW_TEST_DATABASE_URL=postgresql://.../test_progress_reviews python -m unittest progress_reviews_api.tests_postgres -v
+```
+
+That suite refuses remote hosts and non-test database names.
 
 - `tests_period.py` — the 12-week period math, in isolation.
 - `tests_review_pack.py` — the KSB-coverage port of

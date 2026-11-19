@@ -127,7 +127,7 @@ class OtjhParityTests(SimpleTestCase):
         self.assertIn("s.learner_id=p.learner_id", sql[5])
         self.assertIn("DISTINCT ON (t.learner_id,t.report_month)", sql[6])
         self.assertIn("coalesce(t.programme_profile_id,'')=''", sql[6])
-        self.assertIn("t.enrolment_id IS NOT DISTINCT FROM l.enrolment_id", sql[6])
+        self.assertNotIn("t.enrolment_id", sql[6])
         self.assertIn("t.programme_id IS NOT DISTINCT FROM l.programme_id", sql[6])
 
     def test_dashboard_totals_include_unsynchronised_learner_time(self):

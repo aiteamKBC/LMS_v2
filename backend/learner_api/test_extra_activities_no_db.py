@@ -40,6 +40,7 @@ class ExtraActivityTests(unittest.TestCase):
             date=date, timedelta=timedelta, ZoneInfo=ZoneInfo, timezone=SimpleNamespace(now=lambda: self.now),
             valid_activity_month=valid_activity_month,
             JsonResponse=JsonResponse, connections={'enrolment': self.connection}, DatabaseError=RuntimeError,
+            canonical_learning=SimpleNamespace(require_profile=lambda _: {'id': 272}),
             booking_date_restriction=lambda day, **_: day.weekday() >= 5,
             available_ksb_codes=lambda _: {'K1'}, approved_evidence_ids=lambda _: {'file-1'},
             valid_presentation=lambda _: False, EXTRA_CHECK_KEYS={'answer', 'learning', 'evidence', 'ksbs', 'planned', 'declarations', 'hours'})
@@ -108,7 +109,7 @@ class ExtraActivityTests(unittest.TestCase):
             activities = json.loads(response.content)['activities']
             self.assertEqual([a['title'] for a in activities], ['Workshop'])
             self.assertEqual(activities[0]['status'], 'submitted_for_tutor_review')
-            self.assertEqual(self.cur.execute.call_args.args[1], [kind, '101'])
+            self.assertEqual(self.cur.execute.call_args.args[1], [kind, 272])
 
     def test_selected_month_filters_history_without_changing_submission_timestamp(self):
         self.payload['monthlyAssignment']['month'] = '2026-09'

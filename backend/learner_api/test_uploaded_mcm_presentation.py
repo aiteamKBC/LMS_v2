@@ -25,7 +25,13 @@ class UploadedMcmTests(unittest.TestCase):
     def setUp(self):
         self.connection = MagicMock()
         self.cursor = self.connection.cursor.return_value.__enter__.return_value
-        self.scope = dict(hashlib=hashlib, json=json, signing=signing, connections={'enrolment': self.connection})
+        self.scope = dict(
+            hashlib=hashlib,
+            json=json,
+            signing=signing,
+            connections={'enrolment': self.connection},
+            profile_id_for_source=lambda cursor, kind, learner_id: 248,
+        )
         exec(compile(ast.Module(body=functions, type_ignores=[]), str(source), 'exec'), self.scope)
         self.payload = {'learnerKind': 'commercial', 'learnerId': '12', 'activityId': 'COMP-1', 'monthlyAssignment': {'presentationReviewed': True, 'uploadedPresentation': {'id': 'file-1', 'name': 'untrusted.pptx'}}}
 
@@ -39,8 +45,8 @@ class UploadedMcmTests(unittest.TestCase):
                 self.cursor.fetchone.return_value = (name,)
                 self.assertTrue(self.check())
                 sql, params = self.cursor.execute.call_args.args
-                self.assertEqual(params, ['file-1', kind, '12', 'COMP-1', 50 * 1024 * 1024])
-                for clause in ("status = 'approved'", 'learner_id = %s', 'learner_kind = %s', 'section_ref = %s', 'size_bytes > 0'):
+                self.assertEqual(params, ['file-1', kind, 248, 'COMP-1', 50 * 1024 * 1024])
+                for clause in ("status = 'approved'", 'learner_profile_id = %s', 'learner_kind = %s', 'section_ref = %s', 'size_bytes > 0'):
                     self.assertIn(clause, sql)
 
     def test_missing_foreign_or_unapproved_file_cannot_pass(self):

@@ -866,8 +866,8 @@ def learner_evidence(request, profile_id):
             cursor.execute('''select id, original_filename, content_type, size_bytes,
                 status, scan_result, section_ref, uploaded_at
                 from "Learner".evidence_files
-                where learner_kind=%s and learner_id=%s
-                order by uploaded_at desc''', ['commercial', str(profile.enrolment_id)])
+                where learner_kind=%s and learner_profile_id=%s
+                order by uploaded_at desc''', [profile.learner_type, profile.pk])
             rows = cursor.fetchall()
     except DatabaseError:
         return JsonResponse({'error': 'Evidence records are unavailable.'}, status=503)
@@ -1360,8 +1360,8 @@ def learner_evidence_download(request, profile_id, file_id):
     try:
         with connections['enrolment'].cursor() as cursor:
             cursor.execute('''select blob_name from "Learner".evidence_files
-                where id=%s and learner_kind=%s and learner_id=%s and status='approved' ''',
-                [str(file_id), 'commercial', str(profile.enrolment_id)])
+                where id=%s and learner_kind=%s and learner_profile_id=%s and status='approved' ''',
+                [str(file_id), profile.learner_type, profile.pk])
             row = cursor.fetchone()
     except DatabaseError:
         return JsonResponse({'error': 'Evidence record is unavailable.'}, status=503)
@@ -2041,10 +2041,10 @@ def learner_submissions(request, profile_id, submission_id=None):
         if request.method == 'GET':
             with connections['enrolment'].cursor() as cursor:
                 clause = ' and id = %s' if submission_id else ''
-                args = [str(profile.enrolment_id), *([str(submission_id)] if submission_id else [])]
+                args = [profile.pk, profile.learner_type, *([str(submission_id)] if submission_id else [])]
                 cursor.execute(f'''select {MARKING_QUEUE_COLUMNS}
                     from "Learner".learning_reflection_submissions
-                    where learner_id = %s and {MARKING_QUEUE_EXCLUDE_DRAFTS_SQL}{clause}
+                    where learner_id = %s and learner_kind = %s and {MARKING_QUEUE_EXCLUDE_DRAFTS_SQL}{clause}
                     order by submitted_at desc nulls last, id desc''', args)
                 columns = [column[0] for column in cursor.description]
                 rows = [dict(zip(columns, row)) for row in cursor.fetchall()]
@@ -2074,9 +2074,9 @@ def learner_submissions(request, profile_id, submission_id=None):
         with connections['enrolment'].cursor() as cursor:
             cursor.execute(f'''update "Learner".learning_reflection_submissions
                 set status=%s, coach_feedback=%s, reviewed_by=%s, reviewed_at=%s
-                where id=%s and learner_id=%s and {MARKING_QUEUE_EXCLUDE_DRAFTS_SQL}
+                where id=%s and learner_id=%s and learner_kind=%s and {MARKING_QUEUE_EXCLUDE_DRAFTS_SQL}
                 returning {SUBMISSION_AUDIT_SQL}''',
-                [decision, feedback, reviewed_by, timezone.now(), str(submission_id), str(profile.enrolment_id)])
+                [decision, feedback, reviewed_by, timezone.now(), str(submission_id), profile.pk, profile.learner_type])
             updated = cursor.fetchone()
         if not updated:
             return JsonResponse({'error': 'Submission not found.'}, status=404)

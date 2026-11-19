@@ -27,7 +27,7 @@ class CoachExtraActivitiesTests(SimpleTestCase):
             ATTACH DATABASE ':memory:' AS enrolment;
             CREATE TABLE enrolment.Created_users(id INTEGER PRIMARY KEY,Email);
             CREATE TABLE Learner.learners(id INTEGER PRIMARY KEY,enrolment_id,learner_type,full_name,programme,coach_email,email);
-            CREATE TABLE Learner.learning_reflection_submissions(id,learner_id,learner_kind,learner_name,activity_title,
+            CREATE TABLE Learner.learning_reflection_submissions(id,learner_id INTEGER,learner_kind,learner_name,activity_title,
                 activity_type,status,actual_time_hours,reviewed_by,submitted_at,full_submission);
         """)
         self.owner = dict(id=70, enrolment_id=7, learner_type='apprenticeship', coach_email='coach@example.test')
@@ -39,18 +39,19 @@ class CoachExtraActivitiesTests(SimpleTestCase):
             self.db.execute('INSERT INTO Learner.learners VALUES(?,?,?,?,?,?,?)',
                             [pk * 10, pk, kind, 'Synthetic learner', 'Programme', coach, email])
             origin = {'submissionOrigin': 'coach', 'coachCreation': {'name': 'Original Coach', 'actorId': '3'}} if pk == 7 else {}
-            self.seed(f'activity-{pk}', pk, kind, 'accepted', origin)
-        self.seed('draft', 7, 'apprenticeship', 'draft')
-        self.seed('assignment', 7, 'apprenticeship', 'accepted', activity_type='assignment')
-        self.seed('pending', 7, 'apprenticeship', 'submitted_for_tutor_review')
+            self.seed(f'activity-{pk}', pk * 10, kind, 'accepted', origin)
+        self.seed('draft', 70, 'apprenticeship', 'draft')
+        self.seed('assignment', 70, 'apprenticeship', 'accepted', activity_type='assignment')
+        self.seed('pending', 70, 'apprenticeship', 'submitted_for_tutor_review')
         self.enterContext(patch.object(extras, 'query', side_effect=self.query))
+        self.enterContext(patch.object(extras, 'learner_coach_sql', return_value='l.coach_email'))
         self.request = RequestFactory().get('/coach/extra-activities')
         self.request.coach_email = 'coach@example.test'
 
     def seed(self, sid, learner_id, kind, status, origin=None, activity_type='extra_activity'):
         document = {'monthlyAssignment': {'month': '2026-10'}, **(origin or {})}
         self.db.execute('INSERT INTO Learner.learning_reflection_submissions VALUES(?,?,?,?,?,?,?,?,?,?,?)',
-                        [sid, str(learner_id), kind, 'Synthetic learner', 'External training', activity_type,
+                        [sid, learner_id, kind, 'Synthetic learner', 'External training', activity_type,
                          status, '2', 'Original Coach' if origin else None, '2026-10-14T12:00:00Z', json.dumps(document)])
 
     def query(self, sql, params=()):
@@ -85,7 +86,7 @@ class CoachExtraActivitiesTests(SimpleTestCase):
 
     def test_pagination_preserves_other_learners(self):
         for index in range(26):
-            self.seed(f'more-{index}', 8, 'commercial', 'accepted')
+            self.seed(f'more-{index}', 80, 'commercial', 'accepted')
         first = self.list(learner='8')
         second = self.list(learner='8', page='2')
         self.assertEqual((first['total'], len(first['items']), first['hasNext']), (27, 25, True))

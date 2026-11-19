@@ -174,13 +174,15 @@ class AssignmentTopicTests(SimpleTestCase):
         cursor = MagicMock()
         cursor.fetchone.return_value = None
         for kind in ("commercial", "apprenticeship"):
+            cursor.reset_mock()
+            cursor.fetchall.return_value = [(902,)]
             with patch("learner_api.reflection_submissions.connections") as connection:
                 connection.__getitem__.return_value.cursor.return_value.__enter__.return_value = cursor
                 response = unwrap(get_reflection_submission)(RequestFactory().get("/", {
-                    "learnerKind": kind, "learnerId": "synthetic-2", "activityType": "assignment",
+                    "learnerKind": kind, "learnerId": "202", "activityType": "assignment",
                     "activityId": "OTHER-COMPONENT", "assignmentTopicId": "3"}))
             self.assertEqual(response.status_code, 200)
-            self.assertEqual(cursor.execute.call_args.args[1], [kind, "synthetic-2", "assignment", "OTHER-COMPONENT", "3", "3"])
+            self.assertEqual(cursor.execute.call_args.args[1], [kind, 902, "assignment", "OTHER-COMPONENT", "3", "3"])
             self.assertIn("%s::text IS NULL", cursor.execute.call_args.args[0])
 
     def test_topic_parameter_cannot_bypass_another_component_marking_flow(self):
@@ -332,8 +334,8 @@ class SharedTopicCoachingTests(SimpleTestCase):
     def test_topic_summary_exposes_saved_meeting_only_for_requested_learner_and_component(self):
         from .reflection_submissions import get_reflection_submission
         cursor = MagicMock()
-        cursor.fetchall.return_value = [("1", "submitted_for_tutor_review", {
-            "monthlyAssignment": {"month": "2026-09", "meetingKey": "shared-mcm"}}, None)]
+        cursor.fetchall.side_effect = [[(901,)], [("1", "submitted_for_tutor_review", {
+            "monthlyAssignment": {"month": "2026-09", "meetingKey": "shared-mcm"}}, None)]]
         with patch("learner_api.reflection_submissions.connections") as connections:
             connections.__getitem__.return_value.cursor.return_value.__enter__.return_value = cursor
             response = unwrap(get_reflection_submission)(RequestFactory().get("/", {
@@ -341,7 +343,7 @@ class SharedTopicCoachingTests(SimpleTestCase):
                 "activityId": "COMP-TOPICS", "view": "topics"}))
         self.assertEqual(response.status_code, 200)
         self.assertEqual(json.loads(response.content)["topics"][0]["meetingKey"], "shared-mcm")
-        self.assertEqual(cursor.execute.call_args.args[1], ["commercial", "101", "COMP-TOPICS"])
+        self.assertEqual(cursor.execute.call_args.args[1], ["commercial", 901, "COMP-TOPICS"])
 
     def test_new_topic_selection_persists_inherited_booking_in_its_draft(self):
         from .reflection_submissions import _submit_reflection
