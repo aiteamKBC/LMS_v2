@@ -18,7 +18,7 @@ class JournalSourceTests(unittest.TestCase):
         self.db.execute("ATTACH DATABASE ':memory:' AS Learner")
         self.db.executescript('''
             CREATE TABLE Learner.learner_journal_rows (
-              id INTEGER, canonical_learner_id INTEGER, source_id INTEGER,
+              id INTEGER, learner_id INTEGER, source_id INTEGER,
               progress_id INTEGER, month TEXT, planned_hours REAL, deleted_at TEXT);
             CREATE TABLE Learner.learner_activity_sources (
               id INTEGER, learner_id INTEGER, canonical_progress_id INTEGER, deleted_at TEXT);

@@ -299,7 +299,7 @@ def entries_for(owner, *, overview_only=False, entry_ids=None, lineage_only=Fals
                 'source_system',s.source_system,'month',j.month,'activity_date',j.activity_date) ORDER BY j.id) AS payload,
                 sum(j.planned_hours) AS planned
             FROM "Learner".learner_journal_rows j
-            JOIN canonical p ON j.progress_id=p.id AND j.canonical_learner_id=p.learner_id
+            JOIN canonical p ON j.progress_id=p.id AND j.learner_id=p.learner_id
             JOIN "Learner".learner_activity_sources s ON s.id=j.source_id
               AND s.learner_id=p.learner_id AND s.canonical_progress_id=p.id AND s.deleted_at IS NULL
             WHERE j.deleted_at IS NULL
@@ -401,7 +401,7 @@ def weekly_hour_records(owner):
             FROM "Learner".learning_reflection_submissions
             WHERE learner_id=%s AND learner_kind=%s AND activity_type IN ('assignment','extra_activity')
               AND component_ref=ANY(%s) ORDER BY submitted_at NULLS FIRST,id''',
-            [str(owner['enrolment_id']), owner.get('learner_type'), pending])
+            [owner['id'], owner.get('learner_type'), pending])
         markings = {str(row['component_ref']): row for row in submissions}
     projected = project_current(records, markings)
     projected = merge_attempts(projected, subject_attempt_rows(owner, timed_only=True))
@@ -643,21 +643,19 @@ def targets(learner_id):
 
 
 def targets_for(owner, *, month=None):
-    """Return one exact Training Plan target per month for this enrolment."""
+    """Return one exact Training Plan target per month for this learner profile."""
     month_filter = ' AND report_month=%s' if month else ''
     return {record['report_month']: float(record['target_hours']) for record in query(f'''
         SELECT DISTINCT ON (report_month) report_month,target_hours
         FROM "Learner".learner_monthly_targets
         WHERE learner_id=%s
           AND coalesce(programme_profile_id,'')=''
-          AND (enrolment_id IS NULL OR enrolment_id IS NOT DISTINCT FROM %s)
           AND (programme_id IS NULL OR programme_id IS NOT DISTINCT FROM %s) {month_filter}
         ORDER BY report_month,
-          (enrolment_id IS NOT DISTINCT FROM %s) DESC,
           (programme_id IS NOT DISTINCT FROM %s) DESC,
           updated_at DESC,id DESC''', [
-            owner['id'], owner.get('enrolment_id'), owner.get('programme_id'),
-            *([month] if month else []), owner.get('enrolment_id'), owner.get('programme_id'),
+            owner['id'], owner.get('programme_id'),
+            *([month] if month else []), owner.get('programme_id'),
         ]) if record['target_hours'] is not None}
 
 
@@ -914,13 +912,13 @@ def source_quiz_parts(item, owner, record):
         SELECT c.id,a.source_activity_id
         FROM "Learner".learner_journal_rows j
         JOIN "Learner".learner_activity_sources s ON s.id=j.source_id
-          AND s.canonical_progress_id=j.progress_id AND s.learner_id=j.canonical_learner_id AND s.deleted_at IS NULL
+          AND s.canonical_progress_id=j.progress_id AND s.learner_id=j.learner_id AND s.deleted_at IS NULL
         JOIN curriculum.source_courses c ON c.source_course_ref=j.group_id::text
           AND c.source_system='old_lms' AND c.deleted_at IS NULL
         JOIN curriculum.source_activities a ON a.source_course_id=c.id
           AND a.source_activity_id='quiz:'||j.activity_id::text AND a.source_activity_kind='quiz'
           AND a.source_system=c.source_system AND a.deleted_at IS NULL
-        WHERE j.progress_id=%s AND j.canonical_learner_id=%s AND j.deleted_at IS NULL
+        WHERE j.progress_id=%s AND j.learner_id=%s AND j.deleted_at IS NULL
           AND j.source_ref='la:'||j.group_id::text||':'||j.activity_id::text)
         SELECT DISTINCT m.id,m.payload
         FROM routes r
@@ -1513,10 +1511,8 @@ def otjh_summary_bulk(learner_ids):
         FROM "Learner".learner_monthly_targets t
         JOIN "Learner".learners l ON l.id=t.learner_id
         WHERE t.learner_id=ANY(%s) AND coalesce(t.programme_profile_id,'')=''
-          AND (t.enrolment_id IS NULL OR t.enrolment_id IS NOT DISTINCT FROM l.enrolment_id)
           AND (t.programme_id IS NULL OR t.programme_id IS NOT DISTINCT FROM l.programme_id)
         ORDER BY t.learner_id,t.report_month,
-          (t.enrolment_id IS NOT DISTINCT FROM l.enrolment_id) DESC,
           (t.programme_id IS NOT DISTINCT FROM l.programme_id) DESC,
           t.updated_at DESC,t.id DESC''', [profile_ids]):
         if item['target_hours'] is not None:
@@ -1656,10 +1652,8 @@ def metrics_bulk(learner_ids, *, learner_workspace=False, include_ksb_points=Fal
         FROM "Learner".learner_monthly_targets t
         JOIN "Learner".learners l ON l.id=t.learner_id
         WHERE t.learner_id=ANY(%s) AND coalesce(t.programme_profile_id,'')=''
-          AND (t.enrolment_id IS NULL OR t.enrolment_id IS NOT DISTINCT FROM l.enrolment_id)
           AND (t.programme_id IS NULL OR t.programme_id IS NOT DISTINCT FROM l.programme_id)
         ORDER BY t.learner_id,t.report_month,
-          (t.enrolment_id IS NOT DISTINCT FROM l.enrolment_id) DESC,
           (t.programme_id IS NOT DISTINCT FROM l.programme_id) DESC,
           t.updated_at DESC,t.id DESC''', [learner_profile_ids])
     targets_by_learner = {profile_id: {} for profile_id in learner_profile_ids}

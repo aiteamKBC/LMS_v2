@@ -79,8 +79,9 @@ def _reconcile_saved_progress(progress_id,expected_learner=None):
         # Quiz points still use the exact persisted first submission and score.
         if component.get("tutorValidationRequired"):
             cursor.execute('''SELECT 1 FROM "Learner".learning_reflection_submissions
-              WHERE learner_id::text=%s AND activity_id=%s AND progress_entry_id=%s AND status='accepted' ''',
-              [str(row["enrolment_id"]),component["componentId"],progress_id])
+              WHERE learner_id=%s AND learner_kind=%s AND activity_id=%s
+                AND progress_entry_id=%s AND status='accepted' ''',
+              [row["learner_id"],component["learnerKind"],component["componentId"],progress_id])
             if not cursor.fetchone():
                 cursor.execute('''UPDATE "Engagement".shared_reward_saved_progress SET state='waiting_review',
                     checked_at=now(),attempts=attempts+1,reason='awaiting_canonical_review' WHERE progress_id=%s''',[progress_id])

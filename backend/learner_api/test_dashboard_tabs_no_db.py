@@ -204,11 +204,11 @@ class DashboardTabModuleReadTests(SimpleTestCase):
             result = plan.read_dashboard(source, section='overview', targets={}, dashboard_tab=tab, **flags)
         return result['modules'][0], [args[0] for args, _kwargs in cursor.execute.call_args_list]
 
-    def test_compact_monthly_skips_only_the_live_session_count_it_never_returns(self):
+    def test_compact_monthly_skips_live_counts_and_unused_curriculum_slot_spine(self):
         module, statements = self.projection('monthly', compact_monthly=True)
         self.assertIn('0 AS live_session_count', statements[1])
         self.assertNotIn('curriculum.components', statements[1])
-        self.assertEqual(module['curriculumSlots'], [{'date': '2026-10-20'}])
+        self.assertNotIn('curriculumSlots', module)
         for tab in ('monthly', 'overview', 'training', None):
             with self.subTest(tab=tab):
                 _module, statements = self.projection(tab)

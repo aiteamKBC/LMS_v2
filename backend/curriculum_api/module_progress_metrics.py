@@ -24,9 +24,9 @@ def completion_records(records, owners, read, table):
     """
     native_assignments = [row for row in records if is_unsynchronised_direct_save(row)
                           and row.get('component_type') == 'assignment']
-    identities = {(str(owner['enrolment_id']), str(owner.get('learner_type') or ''))
+    identities = {(int(owner['id']), str(owner.get('learner_type') or ''))
                   for row in native_assignments
-                  if (owner := owners.get(str(row['learner_id']), {})).get('enrolment_id') is not None}
+                  if (owner := owners.get(str(row['learner_id']), {})).get('id') is not None}
     markings = {}
     if identities:
         pairs = sorted(identities)
@@ -39,7 +39,7 @@ def completion_records(records, owners, read, table):
               AND component_ref IN ({component_slots})
             ORDER BY submitted_at NULLS FIRST,id''', [*[part for pair in pairs for part in pair], *components])
         for row in rows:
-            markings[(str(row['learner_id']), str(row.get('learner_kind') or ''), str(row.get('component_ref') or ''))] = row
+            markings[(int(row['learner_id']), str(row.get('learner_kind') or ''), str(row.get('component_ref') or ''))] = row
     result = []
     for row in records:
         if row.get('deleted_at') or row.get('kind') == 'activity_event':
@@ -48,7 +48,7 @@ def completion_records(records, owners, read, table):
             result.append(row)
             continue
         owner = owners.get(str(row['learner_id']), {})
-        identity = (str(owner.get('enrolment_id')), str(owner.get('learner_type') or ''))
+        identity = (int(owner['id']), str(owner.get('learner_type') or ''))
         # The native reader keys marks by the original component reference.
         mark = markings.get((*identity, str(row.get('component_ref') or '')))
         projected = project_current([row], {str(row.get('component_ref')): mark} if mark else {})

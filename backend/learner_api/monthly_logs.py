@@ -727,7 +727,9 @@ def document(request, learner_id, file_id):
 
 def document_response(learner_id, file_id):
     rows = old_repo.query('''SELECT blob_name,original_filename,content_type FROM "Learner".evidence_files
-        WHERE id=%s AND learner_id=%s AND status='approved' ''', [str(file_id), str(learner_id)])
+        WHERE id=%s AND learner_profile_id=(
+            SELECT min(id) FROM "Learner".learners WHERE enrolment_id=%s HAVING count(*)=1
+        ) AND status='approved' ''', [str(file_id), learner_id])
     if not rows:
         raise old.ServiceError('Document not found.', 'not_found', 404)
     from .evidence_storage import download_blob_bytes, azure_configured

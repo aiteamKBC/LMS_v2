@@ -60,6 +60,8 @@ class EvidenceRetentionTests(SimpleTestCase):
                     submissions = [('COMP-1', 'draft', {'assignmentAttemptHistory': [{'status': 'rejected', 'content': {'evidenceFiles': ['wrong.pdf']}}]} if retained else {}, [])]
                     with patch.object(evidence, '_conn', return_value=connection), \
                          patch.object(evidence, 'ensure_evidence_tables'), \
+                         patch.object(evidence, 'ensure_evidence_write_tables'), \
+                         patch.object(evidence, 'profile_id_for_source', return_value=248), \
                          patch.object(evidence, '_marking_status', return_value='draft'), \
                          patch.object(evidence, '_evidence_submissions', return_value=submissions), \
                          patch.object(evidence, 'azure_configured', return_value=True), \
@@ -77,5 +79,5 @@ class EvidenceRetentionTests(SimpleTestCase):
              patch.object(evidence, '_learner_profile_ids_for_source', return_value=['248']):
             evidence._evidence_submissions('apprenticeship', '101')
         sql, params = connection.cursor.return_value.__enter__.return_value.execute.call_args.args
-        self.assertIn('learner_kind = %s and learner_id::text = any(%s)', sql)
-        self.assertEqual(params, ['apprenticeship', ['101', '248']])
+        self.assertIn('learner_kind = %s and learner_id = any(%s::bigint[])', sql)
+        self.assertEqual(params, ['apprenticeship', [248]])

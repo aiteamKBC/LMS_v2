@@ -81,11 +81,15 @@ def _evidence_filenames(kind, learner_id, component_id):
     """Names of the approved files the learner submitted for this activity."""
     try:
         with connections["enrolment"].cursor() as cur:
+            from .evidence_ownership import profile_id_for_source
+            learner_profile_id = profile_id_for_source(cur, kind, learner_id)
+            if learner_profile_id is None:
+                return []
             cur.execute(
                 'select original_filename from "Learner"."evidence_files" '
-                "where section_ref = %s and learner_kind = %s and learner_id = %s "
+                "where section_ref = %s and learner_kind = %s and learner_profile_id = %s "
                 "and status = 'approved' order by uploaded_at",
-                [component_id, kind, str(learner_id)],
+                [component_id, kind, learner_profile_id],
             )
             return [str(row[0]) for row in cur.fetchall() if row and row[0]]
     except DatabaseError as exc:

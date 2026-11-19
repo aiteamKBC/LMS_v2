@@ -3,6 +3,7 @@ import json
 from copy import deepcopy
 from pathlib import PurePosixPath
 
+from django.conf import settings
 from django.db import DatabaseError
 from django.http import HttpResponse, JsonResponse
 from django.utils.dateparse import parse_datetime
@@ -58,9 +59,10 @@ def _current(request, submitted_at, version=None):
 
 def _official(request, submission_id):
     coach_email = learner_coach_sql('l', 'email', repository._query_alias.get() or repository.DB)
-    rows = query(f'''SELECT s.learner_kind,s.learner_id,s.activity_id,s.full_submission,s.submitted_at
+    rows = query(f'''SELECT s.learner_kind,l.enrolment_id AS learner_id,s.learner_id AS learner_profile_id,
+        s.activity_id,s.full_submission,s.submitted_at
         FROM "Learner".learning_reflection_submissions s
-        JOIN "Learner".learners l ON l.enrolment_id::text=s.learner_id AND l.learner_type=s.learner_kind
+        JOIN "Learner".learners l ON l.id=s.learner_id AND l.learner_type=s.learner_kind
         JOIN enrolment."Created_users" u ON u.id=l.enrolment_id AND lower(btrim(u."Email"))=lower(btrim(l.email))
         WHERE s.id=%s AND s.activity_type='assignment' AND s.status<>'draft'
           AND lower(btrim({coach_email}))=%s
@@ -76,15 +78,16 @@ def _official(request, submission_id):
         # A selected upload belongs to this activity. Design references may be
         # reused across that learner's assignments, as in the existing exporter.
         clause = '' if reference else ' AND section_ref=%s'
-        params = [str(identifier), row['learner_kind'], row['learner_id']]
+        params = [str(identifier), row['learner_kind'], row['learner_profile_id']]
         if not reference:
             params.append(row['activity_id'])
-        files = query('''SELECT original_filename AS filename,container,blob_name AS "blobName",
+        files = query('''SELECT original_filename AS filename,blob_name AS "blobName",
             size_bytes AS "sizeBytes",status FROM "Learner".evidence_files
-            WHERE id::text=%s AND learner_kind=%s AND learner_id=%s
+            WHERE id::text=%s AND learner_kind=%s AND learner_profile_id=%s
               AND status='approved' ''' + clause, params)
         if len(files) != 1:
             raise PresentationProblem('The saved presentation file is unavailable or has not passed its file checks.')
+        files[0]['container'] = settings.AZURE_APPROVED_CONTAINER
         return files[0]
 
     return _document(row['full_submission']), file_for

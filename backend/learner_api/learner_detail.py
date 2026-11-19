@@ -1597,14 +1597,54 @@ from .linked_recordings import (LINK_KEY, LINK_MODULE_KEY, LINKED_RECORDING_SETT
                                 read_remote_sessions, remote_links, resolve_linked_recordings)
 
 
+def _plan_owned_placements(assigned_modules):
+    """Return unique component ownership and the learner's saved week order.
+
+    Curriculum supplies current content, but its current parent columns cannot
+    move an activity out of (or into) a learner plan. Duplicate component
+    ownership is omitted because the Activity Viewer rejects that ambiguity.
+    """
+    placements = {}
+    plan_weeks = []
+    for module_position, module in enumerate(assigned_modules or [], 1):
+        if not isinstance(module, dict):
+            continue
+        module_id = _s(module.get('moduleId'))
+        if not module_id:
+            continue
+        for week_position, week in enumerate(module.get('weeks') or [], 1):
+            if not isinstance(week, dict):
+                continue
+            week_id = _s(week.get('weekId'))
+            if not week_id:
+                continue
+            plan_weeks.append((
+                week_id, module_id, _s(week.get('weekTitle')),
+                week_position, module_position,
+            ))
+            for component in week.get('components') or []:
+                if not isinstance(component, dict):
+                    continue
+                component_id = _s(component.get('componentId'))
+                if component_id:
+                    placements.setdefault(component_id, []).append((module_id, week_id))
+    return ({component_id: rows[0] for component_id, rows in placements.items() if len(rows) == 1},
+            plan_weeks)
+
+
 def _resolve_from_master(modules, weeks, components, assigned_modules=None, *, compact=False,
                          live_session_ids=True, expected_otjh=False, strict=False, week_ids=None, identities_only=False,
-                         resolved_metadata=None, routing_only=False, compact_content=False, catalogue_facts=False):
+                         resolved_metadata=None, routing_only=False, compact_content=False, catalogue_facts=False,
+                         schedule_metadata=False, monthly_content=False,
+                         selected_component_ids=None, plan_owned_only=False):
     """Rebuild the module -> week -> component tree LIVE from the master
     authoring tables (curriculum.modules/weeks/components) so coach edits in the
     Module Builder show up immediately for already-enrolled learners.
 
-    Membership at the MODULE level comes from the learner's source assignments
+    With ``plan_owned_only``, normalized Training Plan rows determine exact
+    module/week/component membership and each component's saved placement;
+    Curriculum supplies current content and metadata only. Otherwise,
+    membership at the MODULE level comes from the learner's source assignments
     (including modules with no children yet). Within each of those modules, the
     weeks + components — their titles, order, and set — come live from master,
     keyed by the assigned module ids. So renames propagate, and
@@ -1635,6 +1675,16 @@ def _resolve_from_master(modules, weeks, components, assigned_modules=None, *, c
 
     if not module_ids:
         return modules, weeks, components  # fully legacy plan — nothing to resolve
+
+    owned_placements, owned_plan_weeks = (
+        _plan_owned_placements(assigned_modules) if plan_owned_only else ({}, [])
+    )
+    if plan_owned_only:
+        requested = set(map(_s, selected_component_ids)) if selected_component_ids is not None else None
+        selected_component_ids = [
+            component_id for component_id in owned_placements
+            if requested is None or component_id in requested
+        ]
 
     live_session_fallbacks = {}
     shared_live_delivery = {}
@@ -1669,6 +1719,16 @@ def _resolve_from_master(modules, weeks, components, assigned_modules=None, *, c
                 else:
                     cur.execute(week_sql, [module_ids])
                     master_weeks = cur.fetchall()  # [(week_id, module_id, title, week_number, display_order)]
+
+            if plan_owned_only:
+                current_week_titles = {str(row[0]): row[2] for row in master_weeks}
+                master_weeks = [
+                    (week_id, module_id, saved_title or _s(current_week_titles.get(week_id)),
+                     week_position, module_position)
+                    for week_id, module_id, saved_title, week_position, module_position
+                    in owned_plan_weeks
+                    if module_id in master_module_title
+                ]
 
             # Transcript text is authoring-only here: no field in this response
             # consumes it. Large plans otherwise transfer every podcast's full
@@ -1785,6 +1845,44 @@ def _resolve_from_master(modules, weeks, components, assigned_modules=None, *, c
                     "'readingReflectionPrompts','learnerGuidance','legacySettings'] "
                     f"ELSE ({settings_sql}) END")
 
+            if monthly_content:
+                # Monthly cards consume only identity, timing, assignment
+                # title, quiz identity and KSB facts. Avoid decoding and
+                # transferring every authored content/resource field for the
+                # complete plan merely to render the selected month.
+                playable_keys = tuple(dict.fromkeys((*_RESOURCE_URL_KEYS, 'videoUrl',
+                    'podcastUrl', 'audioUrl', 'uploadedFileUrl',
+                    'liveSessionUrl', 'teamsMeetingUrl')))
+                playable = ' OR '.join(
+                    f"coalesce(btrim(settings_json->>'{key}','{strip_chars}'),'')<>''"
+                    for key in playable_keys)
+                playable += (
+                    " OR coalesce(settings_json->>'embedCode','') ~* "
+                    "$$<iframe[^>]+src=[\"'][^\"']+[\"']$$"
+                    f" OR coalesce(btrim(settings_json->>'readingContent','{strip_chars}'),'')<>''"
+                    " OR (coalesce(btrim(settings_json->>'recordingSeriesId'),'')<>''"
+                    " AND settings_json->'recordingSessionNumber' IS NOT NULL"
+                    " AND coalesce(btrim(settings_json->>'recordingDate'),'')<>'')")
+                live_monthly_keys = (
+                    'sessionDate', 'sessionTime', 'sessionDateTimeUtc',
+                    'teamsStartDateTimeUtc', 'teamsLiveSessionId',
+                    'teamsSessionNumber', 'extraTeamsMeetingUrl',
+                    'extraTeamsLiveSessionId', 'recordingSeriesId',
+                    'recordingSessionNumber', 'recordingDate',
+                )
+                normalised_type = "lower(replace(btrim(type),'-','_'))"
+                settings_sql = quiz_settings_sql + " || CASE " + (
+                    f"WHEN {normalised_type}='live_session' THEN jsonb_build_object(" + ','.join(
+                        f"'{key}',settings_json->'{key}'" for key in live_monthly_keys) + ") "
+                    f"WHEN {normalised_type}='assignment' THEN jsonb_build_object("
+                        "'learnerTitle',settings_json->'learnerTitle',"
+                        "'isMonthlyAssignment',settings_json->'isMonthlyAssignment') "
+                    f"WHEN {normalised_type}='recording_placeholder' THEN jsonb_build_object("
+                        f"'{LINK_KEY}',settings_json->'{LINK_KEY}',"
+                        f"'{LINK_MODULE_KEY}',settings_json->'{LINK_MODULE_KEY}') "
+                    f"WHEN {normalised_type}='video' THEN jsonb_build_object('_monthlyPlayable',({playable})) "
+                    "ELSE '{}'::jsonb END")
+
             # Point labels, playable audio alternatives and recording links are
             # activity-detail facts.  The initial My Learning catalogue never
             # returns component rows, and only uses this projection to count
@@ -1792,30 +1890,35 @@ def _resolve_from_master(modules, weeks, components, assigned_modules=None, *, c
             # legacy fallbacks below may carry the component's entire imported
             # settings document; projecting them for thousands of catalogue
             # rows made a four-card response transfer megabytes internally.
-            if not (identities_only and catalogue_facts):
+            if not (identities_only and catalogue_facts) and not monthly_content:
                 settings_sql = (f"({settings_sql}) || {POINT_SETTINGS_SQL} || "
                                 f"{AUDIO_ALTERNATIVE_SETTINGS_SQL} || {LINKED_RECORDING_SETTINGS_SQL}")
 
             detail_columns = (f"CASE WHEN coalesce(btrim(live_sessions_link,'{strip_chars}'),'')<>'' THEN 'content' END AS live_sessions_link, display_order, NULL AS ksb_mappings, "
                               "false AS reflection_required, NULL AS \"Reflection_Question\", false AS tutor_validation_required") if identities_only else (
+                              "live_sessions_link, display_order, NULL AS ksb_mappings, "
+                              "reflection_required, \"Reflection_Question\", tutor_validation_required") if monthly_content else (
                               f"live_sessions_link, display_order, {component_ksb_mappings_sql('components')} AS ksb_mappings, "
                               "reflection_required, \"Reflection_Question\", tutor_validation_required")
             schedule_column = ''
-            if catalogue_facts and resolved_metadata is not None and 'schedule_components' in resolved_metadata:
+            if (catalogue_facts or schedule_metadata) and resolved_metadata is not None and 'schedule_components' in resolved_metadata:
                 from .builder_activity_dates import COMPONENT_SCHEDULE_SETTINGS
                 # Keep ->> text semantics for dates independent of the native
                 # identity projection's JSON types and display overrides.
                 schedule_column = ', ' + COMPONENT_SCHEDULE_SETTINGS.replace('c.settings_json', 'settings_json')
-            def component_sql(week_filter):
+            def component_sql(week_filter, component_filter):
+                exact_plan_scope = plan_owned_only and component_filter
                 return read_sql(
                     "SELECT id, week_id, module_catalogue_id, type, title, "
                     f"{description_sql} AS description, "
                     f"{settings_sql} AS settings_json, "
                     f"{detail_columns}"
                     f"{', expected_otjh' if expected_otjh else ''}{schedule_column} "
-                    "FROM curriculum.components WHERE module_catalogue_id = ANY(%s) "
-                    f"{'AND week_id = ANY(%s) ' if week_filter else ''}"
-                    f"AND {visible_child_sql('components')} "
+                    "FROM curriculum.components WHERE "
+                    + ("id = ANY(%s) " if exact_plan_scope else "module_catalogue_id = ANY(%s) ")
+                    + (f"AND week_id = ANY(%s) " if week_filter and not exact_plan_scope else "")
+                    + (f"AND id = ANY(%s) " if component_filter and not exact_plan_scope else "")
+                    + f"AND {visible_child_sql('components')} "
                     + (f"AND (week_id IS NULL OR EXISTS (SELECT 1 FROM curriculum.weeks visible_parent "
                        f"WHERE visible_parent.id=components.week_id "
                        f"AND visible_parent.module_catalogue_id=components.module_catalogue_id "
@@ -1827,8 +1930,9 @@ def _resolve_from_master(modules, weeks, components, assigned_modules=None, *, c
             # then applied here, which only drops rows. Not with caller-supplied
             # metadata: that path reads its own rows and fills the dict.
             cached_components = None
-            if resolved_metadata is None and (week_ids is None or all(isinstance(w, str) for w in week_ids)):
-                cached_components = content_cache.module_rows(cur, 'comp', component_sql(False), module_ids, 2)
+            if (not plan_owned_only and selected_component_ids is None and resolved_metadata is None
+                    and (week_ids is None or all(isinstance(w, str) for w in week_ids))):
+                cached_components = content_cache.module_rows(cur, 'comp', component_sql(False, False), module_ids, 2)
             if cached_components is not None:
                 wanted_weeks = set(week_ids) if week_ids is not None else None
                 master_components = sorted(
@@ -1839,17 +1943,39 @@ def _resolve_from_master(modules, weeks, components, assigned_modules=None, *, c
             else:
                 # Bound detailed viewer reads per module when the cache misses;
                 # lightweight catalogue/week projections keep their batched read.
-                module_batches = (
-                    [[mid] for mid in module_ids]
-                    if compact and not (identities_only or week_ids is not None or compact_content)
-                    else [module_ids]
-                )
                 master_components = []
-                statement = component_sql(week_ids is not None)
-                for module_batch in module_batches:
-                    cur.execute(statement, [module_batch, *([week_ids] if week_ids is not None else [])])
-                    master_components.extend(cur.fetchall())
-            if catalogue_facts and resolved_metadata is not None and 'schedule_components' in resolved_metadata:
+                if plan_owned_only:
+                    if selected_component_ids:
+                        cur.execute(component_sql(False, True), [selected_component_ids])
+                        master_components = cur.fetchall()
+                else:
+                    module_batches = (
+                        [[mid] for mid in module_ids]
+                        if compact and not (identities_only or week_ids is not None or compact_content)
+                        else [module_ids]
+                    )
+                    statement = component_sql(week_ids is not None, selected_component_ids is not None)
+                    if selected_component_ids:
+                        for module_batch in module_batches:
+                            cur.execute(statement, [module_batch,
+                                *([week_ids] if week_ids is not None else []),
+                                selected_component_ids])
+                            master_components.extend(cur.fetchall())
+                    elif selected_component_ids is None:
+                        for module_batch in module_batches:
+                            cur.execute(statement, [module_batch, *([week_ids] if week_ids is not None else [])])
+                            master_components.extend(cur.fetchall())
+            if plan_owned_only:
+                rebound = []
+                for row in master_components:
+                    placement = owned_placements.get(_s(row[0]))
+                    if placement is None:
+                        continue
+                    saved = list(row)
+                    saved[1], saved[2] = placement[1], placement[0]
+                    rebound.append(tuple(saved))
+                master_components = rebound
+            if (catalogue_facts or schedule_metadata) and resolved_metadata is not None and 'schedule_components' in resolved_metadata:
                 # Preserve the date reader's ordering and module-level
                 # components; empty weeks are still supplied independently.
                 resolved_metadata['schedule_components'] = [
@@ -1946,15 +2072,23 @@ def _resolve_from_master(modules, weeks, components, assigned_modules=None, *, c
                         if component_id not in authored_quiz_component_ids:
                             quiz_id_by_component[component_id] = quiz_id
             elif component_ids and (not catalogue_facts or any(row[3] == 'quiz' for row in master_components)):
-                cur.execute(
-                    read_sql("SELECT link.component_id, link.quiz_id "
-                    "FROM curriculum.quiz_component_links link "
-                    "JOIN curriculum.components component ON component.id = link.component_id "
-                    "WHERE component.module_catalogue_id = ANY(%s) "
-                    "AND component.id = ANY(%s) AND component.type = 'quiz' "
-                    f"AND {visible_child_sql('component')}", connections['enrolment']),
-                    [module_ids, component_ids],
-                )
+                if plan_owned_only:
+                    cur.execute(
+                        "SELECT link.component_id, link.quiz_id "
+                        "FROM curriculum.quiz_component_links link "
+                        "WHERE link.component_id = ANY(%s)",
+                        [component_ids],
+                    )
+                else:
+                    cur.execute(
+                        read_sql("SELECT link.component_id, link.quiz_id "
+                        "FROM curriculum.quiz_component_links link "
+                        "JOIN curriculum.components component ON component.id = link.component_id "
+                        "WHERE component.module_catalogue_id = ANY(%s) "
+                        "AND component.id = ANY(%s) AND component.type = 'quiz' "
+                        f"AND {visible_child_sql('component')}", connections['enrolment']),
+                        [module_ids, component_ids],
+                    )
                 for component_id, quiz_id in cur.fetchall():
                     if component_id not in authored_quiz_component_ids:
                         quiz_id_by_component[component_id] = quiz_id
@@ -2094,7 +2228,7 @@ def _resolve_from_master(modules, weeks, components, assigned_modules=None, *, c
                     ksb_description = ('NULL AS ksb_description' if compact_content
                                        else 'standard_ksb.ksb_description AS ksb_description')
                     component_scope = ('WHERE mapping.component_id=ANY(%s) '
-                        if compact_content else
+                        if compact_content or plan_owned_only else
                         'JOIN curriculum.components component ON component.id = mapping.component_id '
                         'WHERE component.module_catalogue_id = ANY(%s) AND component.id = ANY(%s) '
                         f"AND {visible_child_sql('component')} ")
@@ -2107,7 +2241,7 @@ def _resolve_from_master(modules, weeks, components, assigned_modules=None, *, c
                         f"AND {visible_child_sql('mapping')} "
                         "AND nullif(btrim(standard_ksb.ksb_code),'') IS NOT NULL "
                         "ORDER BY mapping.component_id, standard_ksb.ksb_code",
-                        [component_ids] if compact_content else [module_ids, component_ids],
+                        [component_ids] if compact_content or plan_owned_only else [module_ids, component_ids],
                     )
                     mapping_rows = cur.fetchall()
                 for comp_id, code, description, classification, weight, weight_class in mapping_rows:
@@ -2294,7 +2428,7 @@ def _resolve_from_master(modules, weeks, components, assigned_modules=None, *, c
         has_recording_source = bool(recording_series_id and recording_session_number and recording_date)
         if normalised_type == "video" and not video_url and not (
             linked_quiz or content_html or resource_url or audio_url or live_session_url or has_recording_source
-        ):
+            or settings.get('_monthlyPlayable') is True):
             continue
         from .assignment_topics import topics_from_settings
         from .assignment_settings import flagged_monthly, learner_title

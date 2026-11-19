@@ -70,7 +70,10 @@ class MonthlyProjectionTests(SimpleTestCase):
             {'id': 81, 'moduleId': 'M1', 'start': '2026-10-10T09:00:00Z'}])
         self.assertEqual(len(result['lectures']), 1)
         attendance.assert_called_once()
-        self.assertEqual(attendance.call_args.kwargs, {'monthly': '2026-10'})
+        self.assertEqual(attendance.call_args.kwargs, {
+            'monthly': '2026-10', 'module_ids': ['M1'],
+            'learner_profile_id': 17,
+        })
 
     def test_indexed_attendance_preserves_first_match_and_occurrence_date(self):
         session = {'id': 81, 'moduleId': 'M1', 'start': '2026-10-10T09:00:00Z'}
@@ -174,6 +177,87 @@ class MonthlyProjectionTests(SimpleTestCase):
 
 
 class MonthlySourceReadTests(SimpleTestCase):
+    def test_monthly_plan_installs_ordered_canonical_ownership_tree(self):
+        from .learning_plan import install_canonical_training_plan_modules
+        cursor = MagicMock()
+        cursor.fetchall.return_value = [
+            (20, 'M2', 'Two', 201, 'W2', 'Week 2', 2001, 'C2'),
+            (20, 'M2', 'Two', 201, 'W2', 'Week 2', 2002, 'C3'),
+            (10, 'M1', 'One', 101, 'W1', 'Week 1', 1001, 'C1'),
+        ]
+        connection = MagicMock()
+        connection.cursor.return_value.__enter__.return_value = cursor
+        profile = SimpleNamespace(pk=17, enrolment_id=265)
+        source = SimpleNamespace(pk=265)
+
+        with patch('learner_api.learning_plan.connections', {'enrolment': connection}):
+            result = install_canonical_training_plan_modules(source, profile)
+
+        self.assertEqual(result, [
+            {'moduleId': 'M2', 'moduleTitle': 'Two', 'weeks': [
+                {'weekId': 'W2', 'weekTitle': 'Week 2', 'components': [
+                    {'componentId': 'C2'}, {'componentId': 'C3'},
+                ]},
+            ]},
+            {'moduleId': 'M1', 'moduleTitle': 'One', 'weeks': [
+                {'weekId': 'W1', 'weekTitle': 'Week 1', 'components': [
+                    {'componentId': 'C1'},
+                ]},
+            ]},
+        ])
+        self.assertIs(source._canonical_training_plan, result)
+        self.assertIn('learner_training_plan_components', cursor.execute.call_args.args[0])
+        self.assertEqual(cursor.execute.call_args.args[1], [17])
+
+    def test_monthly_learning_reuses_schedule_metadata_and_component_dates(self):
+        from . import dashboard_tabs, weekly_learning, student_activity_access, \
+            builder_activity_dates, student_activity
+        metadata = {
+            'module_titles': {'M1': 'Module'},
+            'weeks': [('W1', 'M1', 'Week 1', 1, 0)],
+            'quiz_modules': {'M1': {'module': 'Module', 'programmeId': '', 'programme': ''}},
+            'schedule_modules': {'M1': {'module_catalogue_id': 'M1'}},
+            'schedule_components': [],
+        }
+        source = SimpleNamespace(
+            pk=265, aptem_id=None,
+            _monthly_learning_context={'ids': ['M1'], 'links': {}, 'metadata': metadata},
+            _canonical_training_plan=[{'moduleId': 'M1', 'weeks': [
+                {'weekId': 'W1', 'components': [{'componentId': 'C1'}]},
+            ]}],
+            _builder_link_cache={},
+        )
+        cursor = MagicMock()
+        cursor.__enter__.return_value = cursor
+        dates = {'C1': {'date': '2026-10-01'}}
+        schedule_components = [('C1', 'M1', 'W1', 'Assignment', 'assignment', {})]
+        def learning_summary(*args, **kwargs):
+            kwargs['resolved_metadata']['schedule_components'] = schedule_components
+            return {'components': [{'componentId': 'C1'}]}
+
+        with patch.object(weekly_learning, 'build_learning_content_summary',
+                          side_effect=learning_summary) as learning, \
+             patch.object(student_activity_access, 'student_activity_available', return_value=False), \
+             patch.object(student_activity, 'builder_subject_links', return_value={}), \
+             patch.object(builder_activity_dates, 'read_schedule_components',
+                          return_value=schedule_components), \
+             patch.object(builder_activity_dates, 'read_builder_activity_dates', return_value=dates) as activity_dates, \
+             patch.object(dashboard_tabs, 'connections', {'enrolment': SimpleNamespace(cursor=lambda: cursor)}):
+            result = dashboard_tabs.learning_projection(
+                source, {'id': 17}, [], monthly_month='2026-10', active_module_ids=['M1'],
+            )
+
+        self.assertIs(learning.call_args.kwargs['resolved_metadata'], metadata)
+        self.assertTrue(learning.call_args.kwargs['monthly_content'])
+        self.assertTrue(learning.call_args.kwargs['schedule_metadata'])
+        self.assertEqual(learning.call_args.kwargs['assigned_modules'], source._canonical_training_plan)
+        activity_dates.assert_called_once_with(
+            cursor, ['M1'], components=schedule_components,
+            resolved_metadata=metadata,
+        )
+        self.assertIs(result['metadata']['activity_dates'], dates)
+        self.assertEqual(result['metadata']['module_activity_dates'], {'M1': ['2026-10-01']})
+
     def test_compact_ksb_mapping_preserves_codes_weights_and_hours(self):
         from . import learner_detail
         metadata = {'module_titles': {'M1': 'Module'},
@@ -248,6 +332,31 @@ class MonthlySourceReadTests(SimpleTestCase):
         self.assertNotIn("regexp_replace(regexp_replace(coalesce(description", sql)
         self.assertIn("'assignmentTopics'", sql)
 
+    def test_monthly_content_selects_only_monthly_display_settings(self):
+        from . import learner_detail
+        metadata = {'module_titles': {'M1': 'Module'},
+                    'weeks': [('W1', 'M1', 'Week 1', 1, 0)],
+                    'quiz_modules': {'M1': {'module': 'Module'}},
+                    'schedule_components': []}
+        cursor = MagicMock()
+        cursor.fetchall.side_effect = [[], []]
+        connection = MagicMock()
+        connection.cursor.return_value.__enter__.return_value = cursor
+        with patch.object(learner_detail, 'connections', {'enrolment': connection}):
+            learner_detail._resolve_from_master([], [], [],
+                assigned_modules=[{'moduleId': 'M1'}], resolved_metadata=metadata,
+                compact=True, compact_content=True, monthly_content=True,
+                schedule_metadata=True, expected_otjh=True,
+                live_session_ids=False, strict=True)
+        sql = cursor.execute.call_args_list[0].args[0]
+        self.assertIn("'_monthlyPlayable'", sql)
+        self.assertIn("'learnerTitle'", sql)
+        self.assertIn("'sessionDateTimeUtc'", sql)
+        self.assertIn('NULL AS ksb_mappings', sql)
+        self.assertNotIn('FROM curriculum.ksb_mappings', sql)
+        self.assertNotIn("'assignmentTopics'", sql)
+        self.assertNotIn("'lessonContent'", sql)
+
     def test_compact_schedule_keeps_review_action_contract_and_skips_unused_metrics(self):
         plan = monthly.schedule
         source = SimpleNamespace(pk=265, email='synthetic@example.invalid', _canonical_profile={'id': 17}, _case_file_profile=object())
@@ -266,6 +375,43 @@ class MonthlySourceReadTests(SimpleTestCase):
         self.assertEqual(reviews.call_args.args[2], ('mcr', 'progress-review', 'student-support'))
         for unused in (entries, sessions, phone, progress):
             unused.assert_not_called()
+
+    def test_compact_schedule_exposes_request_local_learning_metadata(self):
+        plan = monthly.schedule
+        source = SimpleNamespace(pk=265, email='synthetic@example.invalid',
+                                 _canonical_profile={'id': 17}, _case_file_profile=object())
+        cursor = MagicMock()
+        connection = MagicMock()
+        connection.cursor.return_value.__enter__.return_value = cursor
+        module = {'id': 'M1', 'title': 'Module', 'description': '', 'start_date': None,
+                  'end_date': None, 'tutor_name': 'Tutor', 'coach_name': '',
+                  'programme_id': 'P1', 'programme_name': 'Programme',
+                  'total_otjh': 8, 'weeks_number': 1, 'sessions_number': 1,
+                  'cohort_id': 'C1'}
+        week = {'id': 'W1', 'module_catalogue_id': 'M1', 'week_number': 1,
+                'title': 'Week 1', 'learning_outcomes': [],
+                'holiday_note_enabled': False, 'holiday_note': '',
+                'live_session_count': 0, 'display_order': 4}
+        with patch.object(plan, 'connections', {'enrolment': connection}), \
+             patch.object(plan, 'plan_module_ids', return_value=(['M1'], {'current:M1': {'id': 'M1'}})), \
+             patch.object(plan, 'rows', side_effect=[[module], [week]]), \
+             patch.object(plan, 'attach_curriculum_slots') as slots, \
+             patch.object(plan, 'current_coach', return_value={'coach_name': 'Coach', 'coach_email': ''}), \
+             patch.object(plan, 'plan_reviews', return_value=[]):
+            plan.read_dashboard(source, section='overview', targets={},
+                                dashboard_tab='monthly', compact_monthly=True)
+
+        slots.assert_not_called()
+        context = source._monthly_learning_context
+        self.assertEqual(context['ids'], ['M1'])
+        self.assertEqual(context['metadata']['weeks'], [('W1', 'M1', 'Week 1', 1, 4)])
+        self.assertEqual(context['metadata']['module_titles'], {'M1': 'Module'})
+        self.assertEqual(context['metadata']['schedule_components'], [])
+        self.assertEqual(set(context['metadata']['schedule_modules']['M1']), {
+            'module_catalogue_id', 'start_date', 'sessions_number',
+            'session_week_day', 'session_start_time', 'session_end_time',
+            'cohort_id', 'session_overrides',
+        })
 
     def test_compact_attendance_normalizes_first_and_skips_history_sources(self):
         from . import attendance_lectures as attendance, attendance_mode
@@ -287,7 +433,7 @@ class MonthlySourceReadTests(SimpleTestCase):
         self.assertEqual(result, {'lectures': []})
         self.assertEqual(build.call_args.args[0], [register[0]])
         native.assert_called_once_with(source, {'M1'}, monthly=True)
-        normalized.assert_called_once_with(source)
+        normalized.assert_called_once_with(source, teams_only=True)
         for unused in (legacy, assigned, mode, recordings):
             unused.assert_not_called()
         recovery.assert_called_once()

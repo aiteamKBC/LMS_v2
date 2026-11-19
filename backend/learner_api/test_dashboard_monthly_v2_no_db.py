@@ -29,6 +29,7 @@ class MonthlyV2ProjectionTests(SimpleTestCase):
         self.assertEqual([r['id'] for r in result['lectures']], ['1', '2', '3'])
         self.assertEqual(attendance.call_args.kwargs['monthly_occurrences'], {
             ('teams:1', '2026-10-01'), ('teams:2', '2026-10-02'), ('teams:3', '2026-10-03')})
+        self.assertEqual(attendance.call_args.kwargs['occurrence_ids'], [1, 2, 3])
         for row in result['lectures']:
             self.assertNotIn('session', row)
             self.assertNotIn('attendance', row)
@@ -93,7 +94,7 @@ class MonthlyV2ProjectionTests(SimpleTestCase):
              patch.object(attendance, '_attach_recovery'), patch.object(attendance, '_mark_missed_catchups'):
             attendance.read_workspace(SimpleNamespace(id=1), 'commercial', monthly='2026-10',
                 monthly_occurrences={('teams:1', '2026-10-10')})
-        normalize.assert_called_once()
+        normalize.assert_called_once_with(SimpleNamespace(id=1), teams_only=True)
         native.assert_called_once_with(SimpleNamespace(id=1), {'M1'}, monthly=True)
         self.assertEqual(build.call_args.args[0], register[:1])
 

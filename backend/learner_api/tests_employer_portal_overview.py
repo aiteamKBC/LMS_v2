@@ -644,6 +644,7 @@ class EmployerPortalAssignmentsTests(SimpleTestCase):
             mock.patch("login.permissions.authenticate_request", side_effect=lambda request: self.account),
             mock.patch.object(employer_portal, "_employer_or_404", return_value=(SimpleNamespace(pk=9), None)),
             mock.patch.object(employer_portal, "SOURCE_MODELS", {"commercial": _model(self.learner)}),
+            mock.patch("learner_api.identity.learner_profile_for_source", return_value=SimpleNamespace(pk=407)),
             mock.patch("django.db.connections", {"enrolment": connection}),
             mock.patch("learner_api.evidence_storage.azure_configured", return_value=True),
             mock.patch.dict("os.environ", {"LEARNER_API_REQUIRE_AUTH": "1"}),
@@ -682,7 +683,7 @@ class EmployerPortalAssignmentsTests(SimpleTestCase):
         # Drafts are excluded and the learner is the one in the URL, checked above.
         submissions_sql, params = self.calls[0]
         self.assertIn("status <> 'draft'", submissions_sql)
-        self.assertEqual(params, ["commercial", "101"])
+        self.assertEqual(params, ["commercial", 407])
         self.assertNotIn("coach_feedback", submissions_sql)
         self.assertNotIn("quality_score", submissions_sql)
 
@@ -697,7 +698,9 @@ class EmployerPortalAssignmentsTests(SimpleTestCase):
         sql, params = self.calls[0]
         self.assertIn("f.status = 'approved'", sql)
         self.assertIn("s.status <> 'draft'", sql)
-        self.assertEqual(params, ["f0000000-0000-0000-0000-000000000001", "commercial", "101"])
+        self.assertEqual(params, [
+            "f0000000-0000-0000-0000-000000000001", "commercial", 407, 407,
+        ])
         sas.assert_called_once()
 
     def test_unknown_file_is_not_found(self):

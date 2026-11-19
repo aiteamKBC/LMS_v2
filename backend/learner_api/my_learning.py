@@ -711,7 +711,7 @@ def load_context(source, owner, subject_id=None, *, purpose='catalogue', records
     source._case_file_profile = profile
     install_canonical_training_plan(source, profile)
     with projection_stage('assignments'):
-        assigned = effective_training_plan(source, request_preset_cache(source))
+        assigned = list(source._canonical_training_plan or [])
     from .student_activity_access import student_activity_available
     with projection_stage('memberships'):
         if student_activity_available(source.aptem_id):

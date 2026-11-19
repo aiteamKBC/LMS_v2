@@ -184,7 +184,7 @@ def correct(learner, role, actor, month, progress_id, payload, *, authorize=None
         raise ServiceError('This entry has several time allocations and needs a staff review.', 'allocation_review_required', 409)
     submissions = query('''SELECT * FROM "Learner".learning_reflection_submissions
         WHERE progress_entry_id=%s AND learner_id=%s AND learner_kind=%s''' + lock,
-        [progress_id, str(owner['enrolment_id']), owner['learner_type']])
+        [progress_id, owner['id'], owner['learner_type']])
     if len(submissions) > 1:
         raise ServiceError('The linked submissions need a staff review.', 'submission_review_required', 409)
     if before.get('component_type') == 'assignment' and not submissions:
@@ -264,7 +264,7 @@ def correct(learner, role, actor, month, progress_id, payload, *, authorize=None
             SET actual_time_hours=%s,full_submission=%s WHERE id=%s AND progress_entry_id=%s
               AND learner_id=%s AND learner_kind=%s RETURNING actual_time_hours,status''',
             [hours, encode({**content, 'actualTimeHours': hours, 'reflectionTimeEdited': True}),
-             submission['id'], progress_id, str(owner['enrolment_id']), owner['learner_type']])
+             submission['id'], progress_id, owner['id'], owner['learner_type']])
         if len(updated) != 1 or str(updated[0]['actual_time_hours']) != hours or updated[0]['status'] != submission['status']:
             raise ServiceError('Could not verify the linked submission. No time was changed.', 'verification_failed', 503)
     queue_refresh(owner)

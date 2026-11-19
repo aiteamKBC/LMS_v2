@@ -76,42 +76,28 @@ def _component_ksb_weights(component_ref):
     return weights
 
 
-def _learner_profile_ids_for_source(cur, learner_id):
+def _learner_profile_ids_for_source(cur, learner_id, learner_kind=None):
+    """Resolve an enrolment route id to its exact canonical profile owner."""
     learner_id = _text(learner_id)
     if not learner_id:
         return []
-
-    cur.execute('select id::text from "Learner".learners where enrolment_id::text = %s', [learner_id])
-    linked = [_text(row[0]) for row in cur.fetchall() if row and _text(row[0])]
-    if linked:
-        return sorted(set(linked))
-    email = ""
-    cur.execute('select "Email" from enrolment."Created_users" where id::text = %s limit 1', [learner_id])
-    row = cur.fetchone()
-    if row:
-        email = _text(row[0])
-
-    if email:
-        cur.execute(
-            """
-            select id::text
-              from "Learner".learners
-             where enrolment_id is null
-               and lower(email) = lower(%s)
-               and not exists (
-                   select 1 from enrolment."Created_users" other
-                    where other.id::text <> %s and lower(other."Email") = lower(%s)
-               )
-            """,
-            [email, learner_id, email],
-        )
-    else:
-        cur.execute('select id::text from "Learner".learners where id::text = %s and enrolment_id is null', [learner_id])
-    ids = {_text(row[0]) for row in cur.fetchall() if row and _text(row[0])}
+    try:
+        params = [int(learner_id)]
+    except (TypeError, ValueError):
+        return []
+    kind_sql = ""
+    if learner_kind is not None:
+        kind_sql = " and learner_type = %s"
+        params.append(_text(learner_kind))
+    cur.execute(
+        'select id from "Learner".learners where enrolment_id = %s' + kind_sql,
+        params,
+    )
+    ids = {int(row[0]) for row in cur.fetchall() if row and row[0] is not None}
     return sorted(ids) if len(ids) == 1 else []
 
 
-def _reflection_lineage(learner_id, activity_id):
+def _reflection_lineage(learner_id, activity_id, learner_kind=None):
     component_ref = _text(activity_id)
     lineage = {
         "progress_entry_id": None,
@@ -130,7 +116,7 @@ def _reflection_lineage(learner_id, activity_id):
             cur.execute(f"select id from {read_table('components', cur.db)} where id = %s limit 1", [component_ref])
             if cur.fetchone():
                 lineage["component_ref"] = component_ref
-            learner_ids = _learner_profile_ids_for_source(cur, learner_id)
+            learner_ids = _learner_profile_ids_for_source(cur, learner_id, learner_kind)
             if not learner_ids:
                 return lineage
             cur.execute(
@@ -285,7 +271,7 @@ def _submit_reflection(request):
     # The receipt for credited lecture time is server-owned, including on drafts.
     full_submission.pop('lectureReflectionTime', None)
     full_submission.pop("selectAssignmentTopic", None)
-    lineage = _reflection_lineage(learner_id, activity_id)
+    lineage = _reflection_lineage(learner_id, activity_id, learner_kind)
     if assignment_topic and submission_mode == "draft":
         # An optional draft must never claim the previous topic\'s progress entry.
         lineage["progress_entry_id"] = None
@@ -588,12 +574,16 @@ def get_reflection_submission(request):
             from .legacy_assignments import classified_response
             return classified_response(learner_kind, learner_id, activity_id)
         with connections["enrolment"].cursor() as cur:
+            owner_ids = _learner_profile_ids_for_source(cur, learner_id, learner_kind)
+            if len(owner_ids) != 1:
+                return _error("The canonical learner identity could not be verified.", 409)
+            owner_id = owner_ids[0]
             if activity_type == "assignment" and request.GET.get("view") == "topics":
                 cur.execute(f'''SELECT assignment_topic_id, status, full_submission, submitted_at
                     FROM "Learner".learning_reflection_submissions AS submission
                     WHERE learner_kind=%s AND learner_id=%s AND activity_type=\'assignment\' AND activity_id=%s
                       AND {VISIBLE_SUBMISSION_SQL}
-                    ORDER BY assignment_topic_id''', [learner_kind, learner_id, activity_id])
+                    ORDER BY assignment_topic_id''', [learner_kind, owner_id, activity_id])
                 states = []
                 for identity, status, content, submitted_at in cur.fetchall():
                     content = json.loads(content) if isinstance(content, str) else content or {}
@@ -611,7 +601,7 @@ def get_reflection_submission(request):
                     where learner_kind = %s and learner_id = %s
                       and {VISIBLE_SUBMISSION_SQL}
                     """,
-                    [learner_kind, learner_id],
+                    [learner_kind, owner_id],
                 )
                 return JsonResponse(
                     {
@@ -633,7 +623,7 @@ def get_reflection_submission(request):
                 order by case status when \'accepted\' then 0 when \'submitted_for_tutor_review\' then 1 else 2 end, submitted_at desc
                 limit 1
                 """,
-                [learner_kind, learner_id, activity_type, activity_id,
+                [learner_kind, owner_id, activity_type, activity_id,
                  selected_topic if "assignmentTopicId" in request.GET else None, selected_topic],
             )
             row = cur.fetchone()
