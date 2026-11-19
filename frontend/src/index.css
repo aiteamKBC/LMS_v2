@@ -6584,6 +6584,70 @@ html[data-theme="light"][data-accessibility="monochrome"] {
   }
 }
 
+/* The Library landing card responds to its available width, including the
+   sidebar, without changing the banners used by its destination pages. */
+.curriculum-library-overview .curriculum-library-hero {
+  container: library-overview / inline-size;
+}
+
+.dashboard-theme .workspace-main .curriculum-library-overview .workspace-hero-banner__content {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 1rem;
+}
+
+.dashboard-theme .workspace-main .curriculum-library-overview .workspace-hero-banner__stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 11rem), 1fr));
+  align-items: stretch;
+}
+
+.dashboard-theme .workspace-main .curriculum-library-overview .workspace-hero-metric--leading-icon {
+  height: auto;
+  min-height: 4.5rem;
+}
+
+.dashboard-theme .workspace-main .curriculum-library-overview .workspace-hero-metric__label {
+  overflow: visible;
+  white-space: normal;
+}
+
+.dashboard-theme .workspace-main .curriculum-library-overview .workspace-hero-banner__actions {
+  width: auto;
+  justify-self: start;
+}
+
+.dashboard-theme .workspace-main .curriculum-library-overview .workspace-hero-banner__actions > a {
+  max-width: 100%;
+  height: auto;
+  min-height: 2.75rem;
+  padding-block: 0.65rem;
+}
+
+@container library-overview (min-width: 54rem) {
+  .dashboard-theme .workspace-main .curriculum-library-overview .workspace-hero-banner__content {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .dashboard-theme .workspace-main .curriculum-library-overview .workspace-hero-banner__identity {
+    grid-column: 1 / -1;
+  }
+
+  .dashboard-theme .workspace-main .curriculum-library-overview .workspace-hero-banner__actions {
+    justify-self: end;
+  }
+}
+
+@container library-overview (min-width: 76rem) {
+  .dashboard-theme .workspace-main .curriculum-library-overview .workspace-hero-banner__content {
+    grid-template-columns: minmax(16rem, 1fr) minmax(33rem, 1.5fr) auto;
+  }
+
+  .dashboard-theme .workspace-main .curriculum-library-overview .workspace-hero-banner__identity {
+    grid-column: auto;
+  }
+}
+
 /* Question Bank matches the compact reference banner: the page identity keeps
    its own flex space while the KPIs and action remain a tight right rail. */
 .dashboard-theme .workspace-main .question-bank-hero {

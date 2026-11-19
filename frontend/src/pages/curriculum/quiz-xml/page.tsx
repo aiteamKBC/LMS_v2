@@ -19,6 +19,7 @@ import { convertAnswerTextForQuestionType, isPairAnswerComplete, parseQuizPairAn
 import { showCurriculumConfirm } from '@/components/feature/CurriculumSweetAlert';
 
 import { createQuizWithQuestions } from './createQuizWithQuestions';
+import './page.css';
 
 const curriculumNav = roleNavMap.curriculum;
 
@@ -383,7 +384,7 @@ function QuizRowActions({
   onManageStudents: () => void;
 }) {
   return (
-    <div className="flex items-center gap-2">
+    <div className="quiz-workspace-row-actions flex flex-wrap items-center gap-2">
       {quiz.status === 'trash' && (
         <button
           type="button"
@@ -1820,10 +1821,12 @@ export default function QuizXmlWorkspacePage() {
           }}
         />
 
-        <div className="bg-background-100 rounded-xl border border-foreground-200/50 p-3 flex items-center gap-3 flex-wrap">
+        <div className="quiz-workspace-toolbar relative bg-background-100 rounded-xl border border-foreground-200/50 p-3 flex items-center gap-3 flex-wrap">
+          <div className="quiz-workspace-bulk flex min-w-0 items-center gap-3">
           <label className="flex items-center gap-2 px-2">
             <input
               type="checkbox"
+              aria-label="Select quizzes on this page"
               checked={allVisibleSelected}
               onChange={() => {
                 const pageIds = paginatedQuizzes.map(q => q.id);
@@ -1838,7 +1841,7 @@ export default function QuizXmlWorkspacePage() {
             options={bulkActionOptions}
             disabled={!selectedCount}
             onChange={setBulkAction}
-            className="w-full sm:w-44"
+            className="min-w-0 flex-1"
             buttonClassName="quiz-workspace-action-font !border-[#d8dde6] !bg-white !text-[#5b2dbb] !text-[11px] disabled:!border-[#d8dde6] disabled:!bg-white disabled:!text-[#b8afc9]"
           />
           <button
@@ -1849,16 +1852,17 @@ export default function QuizXmlWorkspacePage() {
           >
             Apply
           </button>
+          </div>
 
           <ThemedSelect
             value={filterStatus}
             options={statusOptions}
             onChange={handleStatusFilterChange}
-            className="w-full sm:w-44 lg:ml-auto"
+            className="quiz-workspace-status min-w-0"
             buttonClassName="text-xs"
           />
 
-          <div className="relative w-full sm:w-52">
+          <div className="quiz-workspace-date-filter min-w-0">
             <button
               type="button"
               onClick={() => setDateFilterOpen(open => !open)}
@@ -1877,9 +1881,9 @@ export default function QuizXmlWorkspacePage() {
             </button>
 
             {dateFilterOpen && (
-              <div className="absolute left-0 top-[calc(100%+8px)] z-50 w-[min(92vw,410px)] rounded-xl border border-[#d8dde6] bg-white shadow-2xl overflow-hidden">
-                <div className="grid grid-cols-[130px_1fr]">
-                  <aside className="bg-[#f8fafc] border-r border-[#e2e8f0] p-2">
+              <div className="quiz-workspace-date-popover absolute z-50 rounded-xl border border-[#d8dde6] bg-white shadow-2xl">
+                <div className="quiz-workspace-date-layout grid">
+                  <aside className="quiz-workspace-date-presets bg-[#f8fafc] border-[#e2e8f0] p-2">
                     {dateFilterPresets.map(option => (
                       <button
                         key={option.value}
@@ -1953,8 +1957,8 @@ export default function QuizXmlWorkspacePage() {
             )}
           </div>
 
-          <div className="relative w-full sm:w-72 lg:flex-1 lg:max-w-md">
-            <input value={search} onChange={event => setSearch(event.target.value)} placeholder="Search by title" className="h-10 w-full rounded-lg bg-background-50 border border-foreground-200/60 pl-4 pr-10 text-sm outline-none focus:border-primary-400" />
+          <div className="quiz-workspace-search relative min-w-0">
+            <input aria-label="Search by title" value={search} onChange={event => setSearch(event.target.value)} placeholder="Search by title" className="h-10 w-full rounded-lg bg-background-50 border border-foreground-200/60 pl-4 pr-10 text-sm outline-none focus:border-primary-400" />
             <AppIcon className="ri-search-line absolute right-3 top-1/2 -translate-y-1/2 text-foreground-400"></AppIcon>
           </div>
 
@@ -2032,7 +2036,7 @@ export default function QuizXmlWorkspacePage() {
         {error && <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div>}
 
         <div className="bg-background-50 rounded-xl border border-foreground-200/60 overflow-hidden">
-          <div className="xl:hidden divide-y divide-foreground-200/50">
+          <div className="quiz-workspace-cards divide-y divide-foreground-200/50">
             {loading && (
               <div className="px-4 py-10 text-center text-sm text-foreground-400">Loading quizzes...</div>
             )}
@@ -2047,8 +2051,8 @@ export default function QuizXmlWorkspacePage() {
                     className="mt-1 w-4 h-4 rounded border-foreground-300 shrink-0"
                   />
                   <div className="min-w-0 flex-1">
-                    <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
-                      <div className="min-w-0">
+                    <div className="quiz-workspace-card-heading flex flex-wrap items-start justify-between gap-3">
+                      <div className="min-w-0 flex-[1_1_20rem]">
                         <h3 className="text-sm sm:text-base font-heading font-bold text-foreground-900 leading-6 break-words [overflow-wrap:anywhere]">{quiz.title}</h3>
                         <p className="mt-1 text-xs text-foreground-500 break-words [overflow-wrap:anywhere]">{quiz.module || 'No module'} - {quiz.questions} questions</p>
                       </div>
@@ -2059,7 +2063,7 @@ export default function QuizXmlWorkspacePage() {
                       </div>
                     </div>
 
-                    <div className="mt-4 grid grid-cols-1 sm:grid-cols-3 gap-3 text-sm">
+                    <div className="quiz-workspace-card-details mt-4 grid gap-3 text-sm">
                       <div className="rounded-lg bg-background-100/80 px-3 py-2">
                         <p className="text-[10px] font-bold uppercase tracking-wide text-foreground-400">Linked</p>
                         <button
@@ -2091,7 +2095,7 @@ export default function QuizXmlWorkspacePage() {
                       </div>
                     </div>
 
-                    <div className="mt-4 flex items-center justify-between gap-3" onClick={event => event.stopPropagation()}>
+                    <div className="mt-4 flex flex-wrap items-center justify-between gap-3" onClick={event => event.stopPropagation()}>
                       <p className="text-xs text-foreground-400">Package is {quiz.schemaValid ? 'valid' : 'missing validation'}</p>
                       <QuizRowActions
                         quiz={quiz}
@@ -2113,7 +2117,7 @@ export default function QuizXmlWorkspacePage() {
             )}
           </div>
 
-          <div className="hidden xl:block overflow-x-auto">
+          <div className="quiz-workspace-table-view overflow-x-auto">
             <table className="quiz-workspace-table w-full min-w-0 table-fixed text-left">
               <thead>
                 <tr className="border-b border-foreground-300/50 bg-background-100/60">

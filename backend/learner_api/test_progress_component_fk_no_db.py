@@ -72,7 +72,7 @@ class SaveProgressRecordKeyTests(SimpleTestCase):
             stack.enter_context(patch.object(active_users.LearnerProfile.objects, "select_for_update",
                                              return_value=SimpleNamespace(get=lambda **kwargs: learner)))
             stack.enter_context(patch.object(active_users.LearnerProgressEntry.objects, "filter",
-                                             return_value=SimpleNamespace(aggregate=lambda **kwargs: {"value": 4})))
+                                             return_value=SimpleNamespace(aggregate=lambda **kwargs: {"value": 4, "total": 1, "highest": 1})))
             stack.enter_context(patch.object(active_users, "_create_progress_entry", create))
             ksb = stack.enter_context(patch.object(active_users, "LearnerProgressKsb"))
             stack.enter_context(patch("learner_api.retake_timing.validate_activity_time"))

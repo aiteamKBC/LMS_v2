@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import json
 
-from django.db import DatabaseError, connection, transaction
+from django.db import DatabaseError, IntegrityError, connection, transaction
 from django.http import Http404, JsonResponse
 from django.utils import timezone
 from django.views.decorators.csrf import csrf_protect
@@ -13,6 +13,7 @@ from learner_api.constants import ACCESS_CURRICULUM, ACCESS_FREE_COURSE_AUTHORIN
 from login.permissions import require_all_access
 from quiz_api.answer_keys import quiz_publication_error
 from quiz_api.models import QuizPackage, QuizQuestion
+from quiz_api.history import is_question_reference_violation
 from quiz_api.views import _question_key_payload, _quiz_preview_payload, _quiz_questions_locked
 
 from . import free_course_authoring
@@ -293,5 +294,7 @@ def detail(request, course_id, quiz_id):
         return JsonResponse({"error": str(exc), "code": "free_course_writer_disabled"}, status=503)
     except Http404:
         return JsonResponse({"error": "Quiz not found.", "code": "quiz_not_found"}, status=404)
-    except DatabaseError:
+    except DatabaseError as exc:
+        if isinstance(exc, IntegrityError) and is_question_reference_violation(exc):
+            return JsonResponse({"error": "A question now has learner answers. Reload the editor and try again.", "code": "quiz_has_history"}, status=409)
         return JsonResponse({"error": "Free Course quiz authoring is temporarily unavailable.", "code": "free_course_quiz_unavailable"}, status=503)

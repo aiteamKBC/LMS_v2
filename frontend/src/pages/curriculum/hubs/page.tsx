@@ -170,7 +170,7 @@ function CurriculumHubView({ kind, programmes, programmesLoading = false, progra
 
   return (
     <HubShell kind={kind}>
-      <main className={`min-h-full bg-background-100 p-4 sm:p-5 lg:p-6 ${kind === 'library' ? 'curriculum-library-page' : ''}`}>
+      <main className={`min-h-full bg-background-100 p-4 sm:p-5 lg:p-6 ${kind === 'library' ? 'curriculum-library-page curriculum-library-overview' : ''}`}>
         <div className="mx-auto max-w-[1560px] space-y-4">
           <WorkspaceHeroBanner
             className={kind === 'library' ? 'curriculum-library-hero' : undefined}

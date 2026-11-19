@@ -15,7 +15,7 @@ from urllib.parse import quote, urlsplit
 from xml.etree import ElementTree
 
 from django.conf import settings
-from django.db import DatabaseError, connection, transaction
+from django.db import DatabaseError, IntegrityError, connection, transaction
 
 from curriculum_api import schema_gate as curriculum_schema_gate
 from django.db.models import Max
@@ -30,6 +30,7 @@ from .question_images import store_question_image, stored_answer_text
 from .answer_keys import choice_key_error, choice_label, quiz_publication_error
 from .key_readiness import quiz_requires_valid_key
 from .intake import InvalidQuizIntake, intake_error, key_indexes
+from .history import is_question_reference_violation, referenced_question_ids
 from learner_api.models import LearnerProfile
 
 logger = logging.getLogger(__name__)
@@ -3690,8 +3691,13 @@ def quiz_students(request, pk):
 @csrf_exempt
 @require_http_methods(["PATCH", "DELETE"])
 def quiz_detail(request, pk):
-    with transaction.atomic():
-        return _quiz_detail_locked(request, pk)
+    try:
+        with transaction.atomic():
+            return _quiz_detail_locked(request, pk)
+    except IntegrityError as exc:
+        if not is_question_reference_violation(exc):
+            raise
+        return JsonResponse({"error": "This quiz has learner answers and cannot be deleted."}, status=409)
 
 
 def _quiz_detail_locked(request, pk):
@@ -3708,6 +3714,8 @@ def _quiz_detail_locked(request, pk):
         }, status=409)
 
     if request.method == "DELETE":
+        if referenced_question_ids(QuizQuestion.objects.filter(quiz_id=quiz.id), lock=True):
+            return JsonResponse({"error": "This quiz has learner answers and cannot be deleted."}, status=409)
         quiz.delete()
         return JsonResponse({"deleted": True})
 
@@ -4314,6 +4322,9 @@ def quiz_preview(request, pk):
 @require_http_methods(["GET"])
 def question_bank(request):
     _ensure_quiz_assessment_type_column()
+    if 'page' in request.GET:
+        from .question_bank import question_bank_page
+        return question_bank_page(request, _training_plan_programmes())
     selected_programme = request.GET.get("programme", "all").strip()
     query = request.GET.get("search", "").strip()
     base_queryset = (
@@ -4528,8 +4539,13 @@ def add_question_to_quiz(request, question_id):
 def quiz_questions(request, pk):
     if request.method == "GET":
         return _quiz_questions_locked(request, pk)
-    with transaction.atomic():
-        return _quiz_questions_locked(request, pk)
+    try:
+        with transaction.atomic():
+            return _quiz_questions_locked(request, pk)
+    except IntegrityError as exc:
+        if not is_question_reference_violation(exc):
+            raise
+        return JsonResponse({"error": "A question now has learner answers. Reload the editor and try again."}, status=409)
 
 
 def _quiz_questions_locked(request, pk):
@@ -4674,7 +4690,10 @@ def _quiz_questions_locked(request, pk):
                 _update_question_answers(question_record, question.get("answers", []), existing_answers if question_id in existing_questions else [])
 
         if remove_missing:
-            QuizQuestion.objects.filter(quiz_id=quiz.id).exclude(id__in=seen_question_ids).delete()
+            missing = QuizQuestion.objects.filter(quiz_id=quiz.id).exclude(id__in=seen_question_ids)
+            referenced = referenced_question_ids(missing, lock=True)
+            missing.filter(id__in=referenced).update(is_archived=True, updated_at=timezone.now())
+            missing.exclude(id__in=referenced).delete()
         else:
             next_order = len(questions)
             for existing_id, existing_question in existing_questions.items():
