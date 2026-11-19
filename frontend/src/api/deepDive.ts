@@ -1,5 +1,7 @@
 import { readLearnerJson } from './learnerRead';
 
+const QMS_BASE = '/coach_api/qms';
+
 export interface DeepDiveReviewItem {
   number: number;
   date: string;
@@ -109,36 +111,36 @@ async function write<T>(url: string, body: unknown, method: 'POST' | 'PATCH' = '
 }
 
 export function fetchDeepDiveRecords() {
-  return readLearnerJson<{ count: number; records: DeepDiveRecord[] }>('/qms_api/deep-dive/records/');
+  return readLearnerJson<{ count: number; records: DeepDiveRecord[] }>(`${QMS_BASE}/deep-dive/records/`);
 }
 
 export function fetchDeepDiveSummaries() {
-  return readLearnerJson<{ count: number; records: DeepDiveRecord[] }>('/qms_api/deep-dive/records/summary/');
+  return readLearnerJson<{ count: number; records: DeepDiveRecord[] }>(`${QMS_BASE}/deep-dive/records/summary/`);
 }
 
 export function fetchDeepDiveRecord(id: string) {
-  return readLearnerJson<{ record: DeepDiveRecord }>(`/qms_api/deep-dive/records/${encodeURIComponent(id)}/`)
+  return readLearnerJson<{ record: DeepDiveRecord }>(`${QMS_BASE}/deep-dive/records/${encodeURIComponent(id)}/`)
     .then((result) => result.record);
 }
 
 export function fetchDeepDiveIlrContact(id: string) {
-  return readLearnerJson<{ uln: string | null; postcode: string | null }>(`/qms_api/deep-dive/records/${encodeURIComponent(id)}/ilr/`);
+  return readLearnerJson<{ uln: string | null; postcode: string | null }>(`${QMS_BASE}/deep-dive/records/${encodeURIComponent(id)}/ilr/`);
 }
 
 export function importDeepDiveWorkbook(sourceFileName: string, sourceFileHash: string, records: DeepDiveImportRow[]) {
-  return write<{ count: number; matched: number; records: DeepDiveRecord[] }>('/qms_api/deep-dive/import/', { sourceFileName, sourceFileHash, records });
+  return write<{ count: number; matched: number; records: DeepDiveRecord[] }>(`${QMS_BASE}/deep-dive/import/`, { sourceFileName, sourceFileHash, records });
 }
 
 export function syncDeepDiveFromCreatedUsers() {
-  return write<{ month: string; added: number; remaining: number; records: DeepDiveRecord[]; runId: number }>('/qms_api/deep-dive/sync/', {});
+  return write<{ month: string; added: number; remaining: number; records: DeepDiveRecord[]; runId: number }>(`${QMS_BASE}/deep-dive/sync/`, {});
 }
 
 export function updateDeepDiveRecord(id: string, expectedVersion: number, patch: Partial<Pick<DeepDiveRecord, 'firstName' | 'surname' | 'fullName' | 'dateOfBirth' | 'uln' | 'qualification' | 'level' | 'startDate' | 'practicalEndDate' | 'apprenticeshipEndDate' | 'plannedGatewayDate' | 'plannedEpaDate' | 'observer' | 'reviewedBy' | 'notes' | 'operational'>>) {
-  return write<{ record: DeepDiveRecord }>(`/qms_api/deep-dive/records/${encodeURIComponent(id)}/`, { expectedVersion, ...patch }, 'PATCH').then((result) => result.record);
+  return write<{ record: DeepDiveRecord }>(`${QMS_BASE}/deep-dive/records/${encodeURIComponent(id)}/`, { expectedVersion, ...patch }, 'PATCH').then((result) => result.record);
 }
 
 export function markDeepDiveRecordReviewed(id: string, expectedVersion: number) {
-  return write<{ record: DeepDiveRecord }>(`/qms_api/deep-dive/records/${encodeURIComponent(id)}/`, { expectedVersion, markReviewed: true }, 'PATCH').then((result) => result.record);
+  return write<{ record: DeepDiveRecord }>(`${QMS_BASE}/deep-dive/records/${encodeURIComponent(id)}/`, { expectedVersion, markReviewed: true }, 'PATCH').then((result) => result.record);
 }
 
 export async function workbookToDeepDiveRows(file: File): Promise<DeepDiveImportRow[]> {

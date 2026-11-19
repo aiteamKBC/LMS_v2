@@ -39,6 +39,10 @@ urlpatterns = [
     path('curriculum_api/', include('curriculum_api.integrity_urls')),
     path('curriculum_api/qr-attendance/', include('curriculum_api.qr_attendance_urls')),
     path('curriculum_api/', include('curriculum_api.urls')),
+    # The public edge forwards coach_api to Django; qms_api falls through to the SPA.
+    # Keep the canonical QMS URLs for existing clients and expose the same views
+    # under a forwarded, staff-gated prefix for the deployed dashboard.
+    path('coach_api/qms/', include('qms_api.urls')),
     path('coach_api/', include('coach_api.urls')),
     path('quiz_api/', include('quiz_api.urls')),
     path('learner_api/communications/', include('mobile_comms.urls')),
@@ -55,9 +59,9 @@ urlpatterns = [
     path('login_api/', include('login.urls')),
     path('api/chat/', include('chat.urls')),
     path('api/calendar/', include('learner_api.calendar_urls')),
-    # Matches the *_api prefix pattern production LiteSpeed already forwards to
-    # Django (see the comment above) -- keeping this under /api/ would silently
-    # fall through to the SPA index instead of reaching this view.
+    # Keep the original QMS paths for existing clients. The deployed dashboard
+    # uses the coach_api alias above because the public edge does not forward
+    # this standalone prefix to Django.
     path('progress_reviews_api/', include('progress_reviews_api.urls')),
     path('qms_api/', include('qms_api.urls')),
     # MCP server for AI connectors. 404 unless MCP_ENABLED; outside the *_api
