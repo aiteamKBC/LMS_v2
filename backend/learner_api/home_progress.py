@@ -170,6 +170,7 @@ def read_home_progress(
     source, kind, activities, native, progress, assigned, end, *,
     attendance_module_ids=None, canonical_metrics=None, reuse_attendance_register=False,
 ):
+    owner = getattr(source, '_canonical_profile', None) or canonical_learning.require_profile(source.pk)
     with projection_stage('programme_dates'):
         start, _, _ = _group_dates(source)
     with projection_stage('submissions'), connections['enrolment'].cursor() as cur:
@@ -177,10 +178,9 @@ def read_home_progress(
             full_submission->>'submissionOrigin' = 'imported_legacy' AS imported
             FROM "Learner".learning_reflection_submissions
             WHERE learner_kind=%s AND learner_id=%s AND activity_type IN ('assignment','extra_activity')
-            ORDER BY submitted_at NULLS FIRST,id''', [kind, str(source.pk)])
+            ORDER BY submitted_at NULLS FIRST,id''', [kind, owner['id']])
         submissions = rows(cur)
         historical_hours = 0
-    owner = getattr(source, '_canonical_profile', None)
     try:
         # A verified SSOT owner is the enrolment's single learner profile.
         with projection_stage('attendance_register'):

@@ -249,9 +249,9 @@ def reconcile_progress(progress_id):
         if session["review_required"]:
             _ensure_review_link(session,row)
             cursor.execute('''SELECT status FROM "Learner".learning_reflection_submissions
-               WHERE learner_id::text=%s AND activity_id=%s AND progress_entry_id=%s
+               WHERE learner_id=%s AND learner_kind=%s AND activity_id=%s AND progress_entry_id=%s
                ORDER BY submitted_at DESC LIMIT 1''',
-               [session["learner_id"],session["component_id"],row["id"]])
+               [session["profile_id"],session["learner_kind"],session["component_id"],row["id"]])
             review = cursor.fetchone()
             if not review or review[0]!="accepted":
                 cursor.execute('''UPDATE "Engagement".shared_reward_outbox SET state='waiting_review',
@@ -548,9 +548,13 @@ def verify_bonus(*,learner_id,learner_name,module_id,opportunity,verification_id
         # not upload/virus-scan success, attests that the opportunity was completed.
         if learner_kind not in ("apprenticeship","commercial"):
             raise RewardError("learner_kind_unresolved",400)
+        from learner_api.evidence_ownership import profile_id_for_source
+        learner_profile_id = profile_id_for_source(cursor, learner_kind, learner_id)
+        if learner_profile_id is None:
+            raise RewardError("verified_evidence_not_owned_or_approved",404)
         cursor.execute('''SELECT id FROM "Learner".evidence_files
-            WHERE id::text=%s AND learner_id::text=%s AND learner_kind=%s AND status='approved' ''',
-            [evidence_reference,learner_id,learner_kind])
+            WHERE id::text=%s AND learner_profile_id=%s AND learner_kind=%s AND status='approved' ''',
+            [evidence_reference,learner_profile_id,learner_kind])
         if not cursor.fetchone():
             raise RewardError("verified_evidence_not_owned_or_approved",404)
         booked=False

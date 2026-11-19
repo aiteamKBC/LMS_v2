@@ -365,10 +365,16 @@ def _canonical_module_progress(records, modules, *, record_index=None):
 
 def plan_module_ids(cur, source, owner):
     """Every module on the learner's plan, as the dashboard schedule lists them."""
-    # Effective current assignments are authoritative for the schedule.
+    # The normalized plan-module rows are authoritative for learner pages.
     # Builder metadata enriches those assignments (and supplies legacy
     # links), but a missing builder row must not hide an assigned module.
-    current_module_ids = list(dict.fromkeys(_effective_plan_ids(source, request_preset_cache(source))))
+    if hasattr(source, '_canonical_training_plan'):
+        current_module_ids = list(dict.fromkeys(
+            str(entry.get('moduleId')) for entry in source._canonical_training_plan or []
+            if isinstance(entry, dict) and entry.get('moduleId')
+        ))
+    else:
+        current_module_ids = list(dict.fromkeys(_effective_plan_ids(source, request_preset_cache(source))))
     # Imported/source-course memberships remain visible in My Courses, but are
     # not saved Training Plan assignments and must not extend this schedule.
     current_module_ids = list(dict.fromkeys(current_module_ids))
@@ -482,11 +488,14 @@ REVIEW_EVENT_FIELDS = ('id', 'eventKey', 'title', 'source', 'sequence', 'status'
                        'reviewTemplateId', 'reviewInstanceId')
 
 
-def plan_reviews(source, profile, sources, dates_only=False, *, header_only=False):
+def plan_reviews(source, profile, sources, dates_only=False, *, header_only=False,
+                 month=None):
     from .calendar import coaching_events_for_learner
     # Use the same active programme cycle as the calendar booking destination.
     active_profile = profile if profile and profile.lifecycle_status == 'active' else None
     options = {'header_only': True} if header_only else {}
+    if month is not None:
+        options['month'] = month
     events = coaching_events_for_learner(source, active_profile, only_sources=frozenset(sources),
                                          dates_only=dates_only, **options)
     return [{**{key: event.get(key) for key in REVIEW_EVENT_FIELDS},
@@ -598,7 +607,7 @@ def read_upcoming(source, now=None):
     return {'events': [event for _, event in events]}
 
 
-def read_dashboard(source, section=None, *, records=None, targets=None, dashboard_tab=None, weekly_spine=False, compact_monthly=False):
+def read_dashboard(source, section=None, *, records=None, targets=None, dashboard_tab=None, weekly_spine=False, compact_monthly=False, monthly_month=None):
     from .weekly_hours import module_activity_hours
 
     if section == 'upcoming':
@@ -694,11 +703,13 @@ def read_dashboard(source, section=None, *, records=None, targets=None, dashboar
                 live_params = [ids, ids]
             cur.execute(read_sql(f'''SELECT w.id,w.module_catalogue_id,w.week_number,w.title,{outcomes_column},
                 w.holiday_note_enabled,w.holiday_note,{live_sessions}
+                ,w.display_order
                 FROM curriculum.weeks w {live_join}
                 WHERE w.module_catalogue_id=ANY(%s)
                   AND ''' + visible_week_sql('w') + '''
                 ORDER BY w.display_order,w.week_number,w.id''', connections['enrolment']), live_params)
-            for row in rows(cur):
+            week_rows = rows(cur)
+            for row in week_rows:
                 week_counts[row['module_catalogue_id']] += 1
                 outcomes = [text for text in (clean_text(o) if isinstance(o, str) else '' for o in as_list(row['learning_outcomes'])) if text]
                 module = by_id.get(row['module_catalogue_id'])
@@ -720,7 +731,7 @@ def read_dashboard(source, section=None, *, records=None, targets=None, dashboar
                     }
             if section == 'weekly':
                 attach_curriculum_slots(module_rows, by_id, week_counts, weeks_by_number, strict=True)
-            else:
+            elif not compact_monthly:
                 attach_curriculum_slots(module_rows, by_id, week_counts, weeks_by_number)
             if not rich_modules:
                 for module in modules:
@@ -728,8 +739,54 @@ def read_dashboard(source, section=None, *, records=None, targets=None, dashboar
                     module.pop('learning_outcomes', None)
                     for slot in module.get('curriculumSlots', []):
                         slot.pop('learningOutcomes', None)
+            if compact_monthly:
+                # The Monthly learning projection reads the same module/week
+                # identities and scheduling facts. Keep them request-local so
+                # its component query can supply activity dates without
+                # repeating these broad catalogue reads.
+                source._monthly_learning_context = {
+                    'ids': list(ids),
+                    'links': links,
+                    'metadata': {
+                        'module_titles': {row['id']: row['title'] for row in module_rows},
+                        'weeks': [
+                            (row['id'], row['module_catalogue_id'], row['title'],
+                             row['week_number'], row.get('display_order'))
+                            for row in week_rows
+                        ],
+                        'quiz_modules': {
+                            row['id']: {
+                                'module': row['title'],
+                                'programmeId': row.get('programme_id') or '',
+                                'programme': row.get('programme_name') or '',
+                            }
+                            for row in module_rows
+                        },
+                        'schedule_modules': {
+                            row['id']: {
+                                'module_catalogue_id': row['id'],
+                                **{key: row.get(key) for key in (
+                                    'start_date', 'sessions_number',
+                                    'session_week_day', 'session_start_time',
+                                    'session_end_time', 'cohort_id',
+                                    'session_overrides',
+                                )},
+                            }
+                            for row in module_rows
+                        },
+                        'schedule_components': [],
+                    },
+                }
             if section != 'learning' and not weekly_spine and not compact_monthly:
                 sessions = plan_sessions(cur, email, ids)
+        elif compact_monthly:
+            source._monthly_learning_context = {
+                'ids': [], 'links': {},
+                'metadata': {
+                    'module_titles': {}, 'weeks': [], 'quiz_modules': {},
+                    'schedule_modules': {}, 'schedule_components': [],
+                },
+            }
     if section == 'weekly':
         return {'modules': modules, 'sessions': sessions,
                 'moduleActivityHours': module_activity_hours(progress_records, modules) if owner is not None else None}
@@ -754,7 +811,10 @@ def read_dashboard(source, section=None, *, records=None, targets=None, dashboar
     # still receive the complete response when no section was requested.
     contact = current_coach(source, profile, historical)
     coach_name, coach_email = contact['coach_name'], contact['coach_email']
-    reviews = plan_reviews(source, profile, ('mcr', 'progress-review', 'student-support'))
+    reviews = plan_reviews(
+        source, profile, ('mcr', 'progress-review', 'student-support'),
+        **({'month': monthly_month} if monthly_month is not None else {}),
+    )
     coach = {'name': coach_name, 'bookingUrl': booking_url(coach_email)}
     if coach_email:
         coach['email'] = coach_email

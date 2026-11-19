@@ -103,7 +103,8 @@ def events_for(principal):
     with connections["enrolment"].cursor() as cursor:
         dates = read_builder_activity_dates(cursor,module_ids)
         cursor.execute('''SELECT activity_id,assignment_topic_id,status FROM "Learner".learning_reflection_submissions
-            WHERE learner_kind=%s AND learner_id=%s AND activity_type='assignment' ''',[str(source.learner_type),str(source.pk)])
+            WHERE learner_kind=%s AND learner_id=%s AND activity_type='assignment' ''',
+            [str(source.learner_type),profile.pk])
         submissions = {}
         for cid,topic,status in cursor.fetchall():submissions.setdefault(str(cid),{})[str(topic or "")] = status
     result.extend(assignment_events(components,dates,submissions))

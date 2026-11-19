@@ -402,13 +402,17 @@ def monthly_report_attachment(request, kind, pk, file_id):
 
     try:
         with connections["enrolment"].cursor() as cur:
+            from .evidence_ownership import profile_id_for_source
+            learner_profile_id = profile_id_for_source(cur, kind, pk)
+            if learner_profile_id is None:
+                return _error("Attachment not found.", 404)
             cur.execute(
                 """
                 select blob_name, status, content_type, original_filename
                   from "Learner"."evidence_files"
-                 where id = %s and learner_kind = %s and learner_id = %s
+                 where id = %s and learner_kind = %s and learner_profile_id = %s
                 """,
-                [str(file_id), kind, str(pk)],
+                [str(file_id), kind, learner_profile_id],
             )
             row = cur.fetchone()
     except DatabaseError:

@@ -67,7 +67,11 @@ def activities(request):
     clauses = ["s.activity_type='extra_activity'", "s.status<>'draft'", f'lower(btrim({_coach_email_sql()}))=%s']
     params = [normalize(request.coach_email)]
     if request.GET.get('learner'):
-        clauses.append('s.learner_id=%s'); params.append(request.GET['learner'])
+        try:
+            learner_id = int(request.GET['learner'])
+        except ValueError:
+            raise ServiceError('Choose a valid learner.') from None
+        clauses.append('l.enrolment_id=%s'); params.append(learner_id)
     if request.GET.get('month'):
         from learner_api.extra_activity_month import valid_activity_month
         if not valid_activity_month(request.GET['month']):
@@ -76,9 +80,9 @@ def activities(request):
     if statuses[status]:
         clauses.append('s.status=ANY(%s)'); params.append(statuses[status])
     source = '''FROM "Learner".learning_reflection_submissions s JOIN "Learner".learners l
-        ON l.enrolment_id::text=s.learner_id AND l.learner_type=s.learner_kind WHERE ''' + ' AND '.join(clauses)
+        ON l.id=s.learner_id AND l.learner_type=s.learner_kind WHERE ''' + ' AND '.join(clauses)
     count = query('SELECT count(*) AS count ' + source, params)[0]['count']
-    rows = query('''SELECT s.id,s.learner_id AS "learnerId",s.learner_kind AS "learnerKind",
+    rows = query('''SELECT s.id,l.enrolment_id AS "learnerId",s.learner_kind AS "learnerKind",
         s.learner_name AS learner,s.activity_title AS title,s.status,s.actual_time_hours AS hours,
         s.reviewed_by AS "reviewedBy",s.submitted_at AS "submittedAt",
         s.full_submission->'monthlyAssignment'->>'month' AS month,

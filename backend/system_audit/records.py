@@ -1164,12 +1164,13 @@ def register_learner_records():
         title='original_filename',
         title_fallback='section_ref',
         context=('section_ref', 'status', 'uploaded_at'),
-        parent='learner_id',
+        parent='learner_profile_id',
         status='status',
         using='enrolment',
         columns=(
-            'id', 'learner_kind', 'learner_id', 'section_ref', 'component_ref',
-            'progress_entry_id', 'original_filename', 'content_type', 'size_bytes',
+            'id', 'learner_kind', 'learner_profile_id', 'created_user_id',
+            'section_ref', 'plan_component_id', 'component_ref', 'progress_entry_id',
+            'original_filename', 'content_type', 'size_bytes',
             'status', 'scan_result', 'uploaded_by', 'uploaded_at', 'reviewed_at',
         ),
     )

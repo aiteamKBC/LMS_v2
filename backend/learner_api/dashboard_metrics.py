@@ -118,9 +118,9 @@ def read_accepted_ksb_rows(cursor, source, kind):
         LEFT JOIN "Learner".learner_progress_entries p
           ON p.learner_id=l.id AND r.source_ref='progress:' || p.id::text
         LEFT JOIN "Learner".learning_reflection_submissions s
-          ON s.learner_id=%s AND s.learner_kind=%s AND r.source_ref='reflection:' || s.id::text
+          ON s.learner_id=l.id AND s.learner_kind=%s AND r.source_ref='reflection:' || s.id::text
         WHERE r.aptem_id=%s AND r.accepted=true AND r.deleted_at IS NULL''',
-        [source.pk, str(source.pk), kind, int(str(source.aptem_id).strip())])
+        [source.pk, kind, int(str(source.aptem_id).strip())])
     return rows(cursor)
 
 
@@ -255,6 +255,8 @@ def metrics_from_loaded(source, kind, *, migrated, native, progress,
     """
     if canonical_learning.enabled(source.pk):
         return canonical_learning.metrics(source.pk)
+    owner = getattr(source, '_canonical_profile', None) or canonical_learning.profile(source.pk)
+    owner_id = owner.get('id') if owner else None
     with connections['enrolment'].cursor() as cursor:
         planned_document = (preloaded or {}).get('planned_hours_document', _MISSING)
         planned_contract = (preloaded or {}).get('planned_hours_contract', _MISSING)
@@ -289,7 +291,7 @@ def metrics_from_loaded(source, kind, *, migrated, native, progress,
                         full_submission->>'submissionOrigin' = 'imported_legacy' AS imported
                     FROM "Learner".learning_reflection_submissions
                     WHERE learner_kind=%s AND learner_id=%s AND activity_type='assignment'
-                    ORDER BY submitted_at NULLS FIRST,id''', [kind, str(source.pk)])
+                    ORDER BY submitted_at NULLS FIRST,id''', [kind, owner_id])
                 submissions = rows(cursor)
     except (DatabaseError, psycopg.Error, StopIteration):
         # Preserve the existing response while exposing unknown completed time.
@@ -579,8 +581,8 @@ def load_manual_hours_bulk(aptem_ids):
 
 def load_reflection_submissions_bulk(keys):
     """Load assignment reflection submissions keyed by (learner kind, profile id)."""
-    pairs = list(dict.fromkeys((str(kind), str(profile_id)) for kind, profile_id in (keys or []) if profile_id is not None))
-    result = {pair: [] for pair in pairs}
+    pairs = list(dict.fromkeys((str(kind), int(profile_id)) for kind, profile_id in (keys or []) if profile_id is not None))
+    result = {(kind, str(profile_id)): [] for kind, profile_id in pairs}
     if not pairs:
         return result
     clauses = ' OR '.join(['(learner_kind=%s AND learner_id=%s)'] * len(pairs))
@@ -599,7 +601,7 @@ def load_reflection_submissions_bulk(keys):
                     'actual_time_hours': actual_time_hours, 'imported': imported,
                 })
     except (DatabaseError, psycopg.Error, StopIteration):
-        return {pair: None for pair in pairs}
+        return {(kind, str(profile_id)): None for kind, profile_id in pairs}
     return result
 
 
@@ -713,7 +715,7 @@ def load_accepted_ksb_rows_bulk(keys):
             LEFT JOIN "Learner".learner_progress_entries p
               ON p.learner_id=l.id AND r.source_ref='progress:' || p.id::text
             LEFT JOIN "Learner".learning_reflection_submissions s
-              ON s.learner_id=requested.enrolment_id::text
+              ON s.learner_id=l.id
              AND s.learner_kind=requested.learner_kind
              AND r.source_ref='reflection:' || s.id::text
             WHERE r.accepted=true AND r.deleted_at IS NULL''', params)

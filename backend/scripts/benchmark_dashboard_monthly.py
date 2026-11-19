@@ -18,6 +18,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--runs', type=int, default=2)
+    parser.add_argument('--statement-timeout-ms', type=int, default=90000)
+    parser.add_argument('--example', help='Optional kind:enrolment-id regression selection; never emitted.')
     parser.add_argument('--baseline', action='store_true', help='Read Monthly implementation from local HEAD without changing files.')
     parser.add_argument('--version', choices=('1', '2'), default='1', help='Opt-in Monthly wire contract.')
     parser.add_argument('--max-samples', type=int, default=0, help='Zero selects every available stratum.')
@@ -26,6 +28,8 @@ def main():
     args = parser.parse_args()
     if args.runs < 1:
         parser.error('--runs must be positive')
+    if args.statement_timeout_ms < 1:
+        parser.error('--statement-timeout-ms must be positive')
     if min(args.max_samples, args.sample_start) < 0:
         parser.error('Sample limits must be nonnegative')
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -37,11 +41,16 @@ def main():
             raise RuntimeError('PostgreSQL required')
         config['HOST'] = config.get('HOST', '').replace('-pooler.', '.')
         config.setdefault('OPTIONS', {}).pop('pool', None)
-        config['OPTIONS']['options'] = '-c default_transaction_read_only=on -c statement_timeout=20000'
+        config['OPTIONS']['options'] = (
+            f'-c default_transaction_read_only=on -c statement_timeout={args.statement_timeout_ms}'
+        )
         config['OPTIONS']['connect_timeout'] = 10
     settings.CACHES = {'default': {'BACKEND': 'django.core.cache.backends.locmem.LocMemCache'}}
     import django
-    django.setup()
+    # Read-only projection benchmarks do not exercise audit registration. Keep
+    # unrelated in-progress audit configuration from blocking this isolated run.
+    with patch('system_audit.writes.register_model'):
+        django.setup()
     logging.disable(logging.CRITICAL)
     from django.db import connections
     from django.http import JsonResponse
@@ -104,6 +113,16 @@ def main():
                     samples.append((candidate[0], kind, lineage))
                 else:
                     print(f'No matching learner for stratum: {kind}, {lineage}', flush=True)
+    if args.example:
+        example_kind, example_pk = args.example.split(':', 1)
+        if example_kind not in SOURCE_MODELS or not example_pk.isdigit():
+            parser.error('--example requires a supported kind and numeric enrolment ID')
+        with connections['enrolment'].cursor() as cursor:
+            cursor.execute('SELECT CASE WHEN EXISTS(SELECT 1 FROM "Learner".learner_progress_entries p '
+                'JOIN "Learner".learners l ON l.id=p.learner_id WHERE l.enrolment_id=%s '
+                "AND p.deleted_at IS NULL AND p.source_system='old_lms') THEN 'legacy' ELSE 'native' END", [int(example_pk)])
+            lineage = cursor.fetchone()[0]
+        samples = [(int(example_pk), example_kind, lineage)]
     samples = samples[args.sample_start:]
     if args.max_samples:
         samples = samples[:args.max_samples]
@@ -149,10 +168,16 @@ def main():
                     try:
                         source = SOURCE_MODELS[kind].all_learners.only(*dict.fromkeys([
                             *TRAINING_PLAN_SOURCE_FIELDS, 'username', 'employer_id', 'learning_plan', 'training_plan'])).get(pk=pk)
-                        payload = dashboard_tabs.read_tab(source, kind, 'monthly', RequestFactory().get('/monthly/', {'month': month, 'version': args.version}))
+                        from curriculum_api import curriculum_names
+                        curriculum_names.begin_request()
+                        try:
+                            payload = dashboard_tabs.read_tab(source, kind, 'monthly', RequestFactory().get('/monthly/', {'month': month, 'version': args.version}))
+                        finally:
+                            curriculum_names.end_request()
                         started = perf_counter()
                         raw = JsonResponse(payload).content
-                        record.update(serialization_ms=round((perf_counter() - started) * 1000, 3),
+                        record.update(http_status=200,
+                                      serialization_ms=round((perf_counter() - started) * 1000, 3),
                                       raw_bytes=len(raw), gzip_bytes=len(gzip.compress(raw, mtime=0)),
                                       payload_sha256=hashlib.sha256(raw).hexdigest())
                     except Exception as error:
@@ -167,5 +192,7 @@ if __name__ == '__main__':
     try:
         main()
     except Exception as error:
+        import traceback
+        traceback.print_exc()
         print('Benchmark failed: ' + type(error).__name__, file=sys.stderr)
         raise SystemExit(1)

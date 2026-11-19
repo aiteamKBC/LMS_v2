@@ -20,17 +20,17 @@ class ProgressIdentityTests(SimpleTestCase):
     def test_explicit_profile_link_never_uses_an_unrelated_source_primary_key(self):
         cursor = Mock()
         cursor.fetchall.return_value = [('647',)]
-        self.assertEqual(_learner_profile_ids_for_source(cursor, 501), ['647'])
+        self.assertEqual(_learner_profile_ids_for_source(cursor, 501, 'commercial'), [647])
         cursor.execute.assert_called_once()
+        self.assertEqual(cursor.execute.call_args.args[1], [501, 'commercial'])
 
-    def test_unmatched_or_ambiguous_legacy_profiles_do_not_invent_a_profile_id(self):
+    def test_unmatched_or_ambiguous_profiles_do_not_invent_a_profile_id(self):
         for candidates in ([], [('2',), ('3',)]):
             cursor = Mock()
-            cursor.fetchall.side_effect = [[], candidates]
-            cursor.fetchone.return_value = ('shared@example.test',)
-            self.assertEqual(_learner_profile_ids_for_source(cursor, 500), [])
-            self.assertIn('enrolment_id is null', cursor.execute.call_args.args[0])
-            self.assertIn('not exists', cursor.execute.call_args.args[0])
+            cursor.fetchall.return_value = candidates
+            self.assertEqual(_learner_profile_ids_for_source(cursor, 500, 'apprenticeship'), [])
+            self.assertEqual(cursor.execute.call_count, 1)
+            self.assertNotIn('email', cursor.execute.call_args.args[0].lower())
 
 
 class ComponentEditReadScopeTests(SimpleTestCase):

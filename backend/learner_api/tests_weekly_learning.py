@@ -268,11 +268,11 @@ class FakeCursor:
             self.rows = []  # This fixture is a native module, not a shared alias.
         elif 'JOIN curriculum.live_sessions s' in sql:
             self.rows = self.live_rows
-        elif 'FROM curriculum.quiz_component_links' in sql or 'FROM curriculum.ksb_mappings' in sql:
-            self.rows = []
         elif 'FROM curriculum.components WHERE' in sql:
             self.rows = [('L1', 'W1', 'M1', 'live_session', 'Lecture', '', '{"sessionDate": "2026-09-14"}',
                           None, 1, None, False, None, False, 1.5)]
+        elif 'FROM curriculum.quiz_component_links' in sql or 'FROM curriculum.ksb_mappings' in sql:
+            self.rows = []
         elif 'FROM curriculum.weeks' in sql:
             self.rows = [('W1', 'M1', 'Week 1', 1, 1)]
         elif 'JOIN curriculum.live_sessions' in sql:

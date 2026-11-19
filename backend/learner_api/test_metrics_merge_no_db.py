@@ -32,7 +32,8 @@ class MetricsMergeTests(unittest.TestCase):
         cursor = connections.__getitem__.return_value.cursor.return_value.__enter__.return_value
         cursor.fetchone.return_value = (12, ['progress:1'])
         sentinel = object()
-        ns = {'canonical_learning': SimpleNamespace(enabled=lambda _: False), '_MISSING': sentinel, 'connections': connections, 'number': float,
+        ns = {'canonical_learning': SimpleNamespace(enabled=lambda _: False, profile=lambda _: {'id': 70}), '_MISSING': sentinel, 'connections': connections, 'number': float,
+              'journal_sources': SimpleNamespace(table=lambda name: name),
               'read_planned_hours': Mock(return_value=99), 'read_aptem_planned_total': Mock(return_value=410),
               'rows': Mock(return_value=[]), 'DatabaseError': ReadError, 'psycopg': SimpleNamespace(Error=ReadError),
               'read_accepted_ksb_rows': Mock(return_value=[{'source_ref': 'progress:1'}]),
@@ -99,6 +100,7 @@ class MetricsMergeTests(unittest.TestCase):
         ns = {'connections': connections, 'DatabaseError': ReadError, 'psycopg': SimpleNamespace(Error=ReadError)}
         extract({'load_reflection_submissions_bulk'}, ns)
         result = ns['load_reflection_submissions_bulk']([('commercial', 7), ('commercial', 8)])
+        self.assertEqual(cursor.execute.call_args.args[1], ['commercial', 7, 'commercial', 8])
         row = result[('commercial', '7')][0]
         self.assertEqual((row['id'], row['progress_entry_id'], row['submitted_at']), (11, 22, '2026-09-21'))
         self.assertEqual(result[('commercial', '8')], [])

@@ -9,7 +9,7 @@ against the `enrolment` connection alias, not a Django migration.
   "Learner"."progress_review_runs"
       One row per generation attempt for one learner and one 12-week review
       period. `id` is an application-generated uuid4 hex string (not a Postgres
-      uuid column) so the same id works unchanged under the SQLite test backend.
+      uuid column). `learner_id` is the canonical `"Learner".learners.id`.
 
   "Learner"."progress_review_source_snapshots"
       The full JSON review pack (progress_review_pack shape) captured at
@@ -32,6 +32,50 @@ CONN = "enrolment"
 _READY = False
 
 
+def progress_review_run_schema_issues(cursor):
+    """Return final-schema contract violations without changing the database."""
+    cursor.execute(
+        '''
+        select column_name, is_nullable
+          from information_schema.columns
+         where table_schema = 'Learner'
+           and table_name = 'progress_review_runs'
+           and column_name in ('learner_id', 'learner_profile_id')
+        '''
+    )
+    identity_columns = dict(cursor.fetchall())
+    issues = []
+    if identity_columns.get("learner_id") != "NO":
+        issues.append("learner_id must exist and be NOT NULL")
+    if "learner_profile_id" in identity_columns:
+        issues.append("learner_profile_id must not exist after the final cutover")
+
+    cursor.execute(
+        '''
+        select exists (
+            select 1
+              from information_schema.table_constraints tc
+              join information_schema.key_column_usage kcu
+                on tc.constraint_name = kcu.constraint_name
+               and tc.constraint_schema = kcu.constraint_schema
+              join information_schema.constraint_column_usage ccu
+                on tc.constraint_name = ccu.constraint_name
+               and tc.constraint_schema = ccu.constraint_schema
+             where tc.constraint_type = 'FOREIGN KEY'
+               and tc.table_schema = 'Learner'
+               and tc.table_name = 'progress_review_runs'
+               and kcu.column_name = 'learner_id'
+               and ccu.table_schema = 'Learner'
+               and ccu.table_name = 'learners'
+               and ccu.column_name = 'id'
+        )
+        '''
+    )
+    if not cursor.fetchone()[0]:
+        issues.append('learner_id must reference "Learner".learners(id)')
+    return issues
+
+
 def ensure_progress_review_tables():
     global _READY
     if _READY:
@@ -44,7 +88,8 @@ def ensure_progress_review_tables():
             create table if not exists "Learner"."progress_review_runs" (
                 id                   text primary key,
                 learner_kind         varchar(32)  not null,
-                learner_id           bigint       not null,
+                learner_id           bigint       not null
+                                             references "Learner"."learners" (id),
                 review_number        integer,
                 review_date          date         not null,
                 review_period_start  date         not null,
@@ -123,4 +168,10 @@ def ensure_progress_review_tables():
             'create index if not exists idx_progress_review_pptx_run '
             'on "Learner"."progress_review_pptx_files" (run_id)'
         )
+        issues = progress_review_run_schema_issues(cur)
+        if issues:
+            raise RuntimeError(
+                "Progress Review run schema is not at the canonical learner cutover: "
+                + "; ".join(issues)
+            )
     _READY = True

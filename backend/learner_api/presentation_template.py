@@ -4,19 +4,27 @@ import textwrap
 from copy import deepcopy
 from pathlib import Path
 
+from django.conf import settings
 from django.db import connections
 
 
 def load_owned_template(kind, learner_id, evidence_id):
     from .evidence_storage import download_blob_bytes
     with connections['enrolment'].cursor() as cur:
-        cur.execute('SELECT original_filename, container, blob_name FROM "Learner"."evidence_files" '
-                    'WHERE id::text = %s AND learner_kind = %s AND learner_id = %s AND status = %s',
-                    [str(evidence_id), kind, str(learner_id), 'approved'])
+        from .evidence_ownership import profile_id_for_source
+        learner_profile_id = profile_id_for_source(cur, kind, learner_id)
+        if learner_profile_id is None:
+            raise ValueError('The PowerPoint reference is unavailable. Upload it again or choose the default KBC design.')
+        cur.execute('SELECT original_filename, blob_name FROM "Learner"."evidence_files" '
+                    'WHERE id::text = %s AND learner_kind = %s '
+                    'AND learner_profile_id = %s AND status = %s',
+                    [str(evidence_id), kind, learner_profile_id, 'approved'])
         row = cur.fetchone()
     if not row or not row[0].lower().endswith('.pptx'):
         raise ValueError('The PowerPoint reference is unavailable. Upload it again or choose the default KBC design.')
-    return row[0], download_blob_bytes(row[1], row[2], max_bytes=15 * 1024 * 1024)
+    return row[0], download_blob_bytes(
+        settings.AZURE_APPROVED_CONTAINER, row[1], max_bytes=15 * 1024 * 1024,
+    )
 
 
 def _all_shapes(shapes):

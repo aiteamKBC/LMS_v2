@@ -245,8 +245,8 @@ class CurrentLearningTests(unittest.TestCase):
         self.scope['query'] = query
         single = self.scope['current_records'](owners[0], [])
         self.assertIn("full_submission #>> '{monthlyAssignment,month}' AS activity_month", query.call_args.args[0])
-        self.assertEqual(query.call_args.args[1], ['123', 'commercial'])
-        query.return_value = [{**saved, 'learner_id': '123', 'learner_kind': 'commercial'}]
+        self.assertEqual(query.call_args.args[1], [1, 'commercial'])
+        query.return_value = [{**saved, 'learner_id': 1, 'learner_kind': 'commercial'}]
         bulk = self.scope['current_records_bulk'](owners, {1: [], 2: []})
         self.assertEqual(bulk[123], single)
         self.assertEqual(bulk[124], [])
@@ -257,9 +257,9 @@ class CurrentLearningTests(unittest.TestCase):
     def test_reads_are_scoped_to_both_account_and_aptem(self):
         query = Mock(side_effect=[[], [{'name': 'exists'}], [self.attempt()]])
         self.scope['query'] = query
-        rows = self.scope['current_records']({'enrolment_id': 123, 'aptem_id': 789,
+        rows = self.scope['current_records']({'id': 1, 'enrolment_id': 123, 'aptem_id': 789,
                                               'learner_type': 'commercial'}, [self.native])
-        self.assertEqual(query.call_args_list[0].args[1], ['123', 'commercial'])
+        self.assertEqual(query.call_args_list[0].args[1], [1, 'commercial'])
         self.assertEqual(query.call_args_list[2].args[1], [123, 789])
         self.assertEqual(len(rows), 2)
 

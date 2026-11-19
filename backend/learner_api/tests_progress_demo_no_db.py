@@ -29,9 +29,11 @@ class DemoIsolationTests(SimpleTestCase):
             self.assertEqual(demo.courses_for({'id':9, 'enrolment_id':7}), [demo_course()])
         sql, params = query.call_args.args
         self.assertEqual(params, [9, 7])
-        for gate in ('m.learner_id=%s', 'm.enrolment_id=%s', 'm.deleted_at IS NULL',
+        for gate in ('m.learner_id=%s', 'm.deleted_at IS NULL',
+                     "m.source_payload #>> '{demo_progress,enrolment_id}'=%s::text",
                      'owner_requested_simulation', 'verified_source_replacement', 'a."Role"=\'admin\''):
             self.assertIn(gate, sql)
+        self.assertNotIn('m.enrolment_id', sql)
         with patch.object(demo.canonical, 'query', return_value=[]):
             self.assertEqual(demo.courses_for({'id':10, 'enrolment_id':8}), [])
 

@@ -985,18 +985,14 @@ def _component_marking_statuses(source, learner_profile):
     """Coach decision per component id, for this learner's submissions.
 
     Read straight from ``learning_reflection_submissions`` because that is where
-    a coach's decision lands. Matched on both the enrolment id the learner page
-    uses and the profile id older rows carry, so earlier submissions are not
-    missed.
+    a coach's decision lands. The table is owned by the canonical learner
+    profile id and learner kind; the enrolment id is never a submission owner.
     """
     from django.db import DatabaseError, connections
 
-    candidates = {str(getattr(source, "id", "") or "")}
-    if learner_profile is not None:
-        candidates.add(str(getattr(learner_profile, "id", "") or ""))
-        candidates.add(str(getattr(learner_profile, "enrolment_id", "") or ""))
-    candidates.discard("")
-    if not candidates:
+    profile_id = getattr(learner_profile, "id", None)
+    learner_kind = getattr(learner_profile, "learner_type", None) or getattr(source, "learner_type", None)
+    if profile_id is None or not learner_kind:
         return {}
 
     try:
@@ -1006,12 +1002,12 @@ def _component_marking_statuses(source, learner_profile):
                 select distinct on (activity_id)
                        activity_id, status, coach_feedback, reviewed_by, reviewed_at
                   from "Learner"."learning_reflection_submissions"
-                 where learner_id::text = any(%s)
+                 where learner_id = %s and learner_kind = %s
                  order by activity_id, case when activity_type = 'assignment' then
                      case status when 'accepted' then 0 when 'partial' then 1 when 'submitted_for_tutor_review' then 2 when 'rejected' then 3 else 4 end else 0 end,
                      submitted_at desc nulls last
                 """,
-                [sorted(candidates)],
+                [profile_id, learner_kind],
             )
             return {
                 str(row[0]): {

@@ -12,6 +12,19 @@ from .weekly_calendar import normalise_projected_calendar
 
 
 class WeeklyJsonNullTests(SimpleTestCase):
+    def test_zero_module_normalized_plan_returns_the_empty_contract_without_hours(self):
+        from coach_api.weekly_learning import read_weekly_learning
+        source = SimpleNamespace(pk=101, email='synthetic@example.test', _canonical_profile={'id': 248})
+        with patch('coach_api.weekly_learning.connections'), \
+             patch('learner_api.learning_plan._effective_plan_ids', return_value=[]), \
+             patch('learner_api.canonical_learning.curriculum_module_ids_for', return_value=[]), \
+             patch('learner_api.canonical_learning.weekly_hour_records') as hours, \
+             patch('learner_api.training_plan_dashboard.rows', side_effect=[[], []]), \
+             patch('learner_api.training_plan_dashboard.attach_curriculum_slots'):
+            result = read_weekly_learning(SimpleNamespace(source=source, profile=MagicMock()))
+        self.assertEqual(result, {'modules': [], 'weeks': [], 'selectedWeek': None})
+        hours.assert_not_called()
+
     def test_initial_module_prefers_effective_plan_but_history_stays_selectable(self):
         from datetime import datetime, timezone
         from coach_api.weekly_learning import read_weekly_learning

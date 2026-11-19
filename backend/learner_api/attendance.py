@@ -404,7 +404,8 @@ def _summarize_attendance(rows, *, now=None, overview_only=False):
     }
 
 
-def combined_attendance_rows(source, *, credit_projection=False, register_schedule=None):
+def combined_attendance_rows(source, *, credit_projection=False, register_schedule=None,
+                             teams_only=False):
     """Refresh source attendance and apply the learner live-register outcome.
 
     ``curriculum.live_session_learner_attendance`` is the editable learner
@@ -412,13 +413,13 @@ def combined_attendance_rows(source, *, credit_projection=False, register_schedu
     join intervals, but an explicit register correction must be visible in the
     learner workspace immediately after it is saved.
     """
-    rows = kbc_attendance_rows(source)
+    rows = [] if teams_only else kbc_attendance_rows(source)
     live_register = _live_register_rows(source)
     # The shared Teams reader groups reconnects by occurrence and email and
     # excludes sessions without a finished attendance report. IDs here refer
     # to LearnerProfile, so use the verified email and check enrolment linkage.
     options = {}
-    if credit_projection:
+    if credit_projection or teams_only:
         profile = getattr(source, '_case_file_profile', None)
         owner = getattr(source, '_canonical_profile', None)
         if (profile is not None and owner is not None
