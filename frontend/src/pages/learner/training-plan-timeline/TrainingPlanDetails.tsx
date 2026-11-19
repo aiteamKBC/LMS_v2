@@ -1,3 +1,4 @@
+import { LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
 import type { CanonicalModuleProgress } from '@/api/moduleProgress';
 import { moduleMeasures } from './progress';
 import { useEffect, useMemo, useState, type CSSProperties, type ReactNode } from 'react';
@@ -262,7 +263,7 @@ export function TrainingPlanDetails({ data: baseData, subjects, kind, learnerId,
       </div>
     </div>
     {!!month?.topics.length && <p className={board.topics}>{month.topics.join(' · ')}</p>}
-    {data.contractStatus === 'loading' && <p role="status" className={board.hint}>Loading study hour targets…</p>}
+    {data.contractStatus === 'loading' && <p  className={board.hint}><LoadingSkeleton label="Loading study hour targets…" variant="rows" /></p>}
     {data.contractStatus === 'unavailable' && <p role="status" className={board.hint}>Study hour targets could not be loaded. <button type="button" className={board.retry} onClick={onRetryContract}>Retry study hours</button></p>}
     <section className={`${board.card} ${board.metrics}`} aria-label="Progress this month">
       {monthMetricCells.map(cell => <div key={cell.label} className={board.metric}>
@@ -391,7 +392,7 @@ export function TrainingPlanDetails({ data: baseData, subjects, kind, learnerId,
       {showMonthly && !monthlyOnly && (() => { const monthlyFocusPanel = <section className={layout.engagement} aria-label="Monthly study plan">
         <div className={styles.panelHeading}><div className={layout.focusHeading}><p className={styles.eyebrow}>Monthly focus</p><h2>{monthLabel(selectedMonth)}</h2></div><div className={styles.controls}><button className={styles.iconButton} onClick={() => shiftMonth(-1)} disabled={!canGoPrevious} aria-label="Previous month"><ChevronLeft size={16} /></button><button className={styles.iconButton} onClick={() => shiftMonth(1)} disabled={!canGoNext} aria-label="Next month"><ChevronRight size={16} /></button></div></div>
         {!!month?.topics.length && <p className={styles.focusTitle}>{month.topics.join(' · ')}</p>}
-        {data.contractStatus === 'loading' && <p role="status" className={styles.hint}>Loading study hour targets…</p>}
+        {data.contractStatus === 'loading' && <p  className={styles.hint}><LoadingSkeleton label="Loading study hour targets…" variant="rows" /></p>}
         {data.contractStatus === 'unavailable' && <p role="status" className={styles.hint}>Study hour targets could not be loaded. <button className={styles.secondary} onClick={onRetryContract}>Retry study hours</button></p>}
         <div className={layout.monthSections}>
           <section className={layout.monthBlock} aria-label="Progress this month">

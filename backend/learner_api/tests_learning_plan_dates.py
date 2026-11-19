@@ -50,12 +50,15 @@ def _learner(plan=None):
         # Not an imported learner unless a test says so.
         aptem_id="",
         learning_plan=plan,
+        free_courses=[],
         save=Mock(),
     )
 
 
 class ModuleWindowTests(SimpleTestCase):
     def setUp(self):
+        self.enterContext(patch('learner_api.free_course_catalogue.builder_free_courses', return_value=[]))
+        self.enterContext(patch('learner_api.learning_plan._meetings', return_value=([], '')))
         self.enterContext(patch('login.permissions.authenticate_request', return_value=SimpleNamespace(role='admin')))
 
     def _call(self, learner, method="GET", body=None, off_programme=None):

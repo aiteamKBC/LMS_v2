@@ -57,7 +57,13 @@ class StandaloneCourseTests(CurriculumPersistenceHarness):
 
     def test_public_create_and_detail_edit_keep_course_kind(self):
         import json
+        from django.db import connection
         from django.test import RequestFactory
+        from .tests_free_course_native_storage import prepare_native_authoring_fixture
+        from . import free_course_native_schema, learning_storage
+        prepare_native_authoring_fixture()
+        free_course_native_schema.detach(connection)
+        self.addCleanup(learning_storage.reset)
         factory = RequestFactory()
         request = factory.post('/', json.dumps({**self.payload(), 'moduleType': 'authoring', 'catalogueId': 'MOD-FREE'}), content_type='application/json')
         response = views.curriculum_module_collection(request)

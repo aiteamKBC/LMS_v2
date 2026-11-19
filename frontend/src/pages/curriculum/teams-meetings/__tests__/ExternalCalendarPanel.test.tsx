@@ -115,7 +115,7 @@ describe('an imported calendar with one separate component link', () => {
       message: 'Resolve the session calendar choice.', addedSessions: [], connectionKind: 'user' });
     vi.mocked(connectImportedCalendar).mockResolvedValue({ authorizationUrl: 'https://login.microsoftonline.com/test/authorize',
       callbackOrigin: 'https://lms.example.invalid' });
-    vi.mocked(fetchImportedCalendarConnection).mockResolvedValue({ connected: true });
+    vi.mocked(fetchImportedCalendarConnection).mockResolvedValue({ connected: true, calendarKind: 'group' });
     const popup = { location: { href: '' }, closed: false, close: vi.fn() } as unknown as Window;
     vi.spyOn(window, 'open').mockReturnValue(popup);
     open();

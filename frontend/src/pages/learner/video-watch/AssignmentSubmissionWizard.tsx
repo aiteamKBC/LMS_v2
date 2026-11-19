@@ -1,5 +1,5 @@
+import { LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
 import type { ComponentProps } from 'react';
-import { useManualTimeConfirmation } from '@/hooks/useManualTimeConfirmation';
 import { presentTopic, type AssignmentResourceLink, type AssignmentTopic } from '@/lib/assignmentTopics';
 import { TopicAssignment } from './TopicAssignment';
 import { AssignmentGuidance, briefLabelClass } from './AssignmentBriefSections';
@@ -182,7 +182,6 @@ export function AssignmentSubmissionForm({
   const loadedRef = useRef(false);
   const saveVersionRef = useRef(0);
   const submittingRef = useRef(false);
-  const { confirmTime, timeConfirmation } = useManualTimeConfirmation();
   const saveQueueRef = useRef<Promise<unknown>>(Promise.resolve());
   const latestDraftRef = useRef<LearningReflectionSubmissionInput | null>(null);
   const lockedRef = useRef(false);
@@ -456,11 +455,6 @@ export function AssignmentSubmissionForm({
       return;
     }
     submittingRef.current = true;
-    if ((detailedSeconds !== null || timeSource === 'input') && !await confirmTime(claimedSeconds)) {
-      submittingRef.current = false;
-      setStep(2);
-      return;
-    }
     // Invalidate any autosave already in flight so it cannot overwrite the
     // final submitted status with an older draft response.
     saveVersionRef.current += 1;
@@ -518,15 +512,12 @@ export function AssignmentSubmissionForm({
 
   if (loading) {
     return (
-      <div className="rounded-2xl border border-background-200 bg-white p-8 text-center text-sm text-foreground-500">
-        <AppIcon className="ri-loader-4-line mr-2 animate-spin" />Loading your saved assignment…
-      </div>
+      <div className="rounded-2xl border border-background-200 bg-white p-8 text-center text-sm text-foreground-500"><LoadingSkeleton label="Loading your saved assignment…" variant="rows" /></div>
     );
   }
 
   return (
     <AssignmentAiCheckContext.Provider value={{ learnerId, learnerKind: kind, enabled: !readOnly }}>
-      {timeConfirmation}
       <AssignmentAttemptHistory attempts={submissionAttempts} />
       <section ref={wizardRef} className={`${styles.assignmentWizard} overflow-hidden rounded-2xl border border-slate-200 bg-white font-sans shadow-sm`}>
         <div className="border-b border-slate-200 bg-sky-50/50 px-5 py-4">

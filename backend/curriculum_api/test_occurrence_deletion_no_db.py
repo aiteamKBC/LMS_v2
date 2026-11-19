@@ -15,6 +15,7 @@ makes no Microsoft call at all: only the explicit Cancel on that slot may send
 the cancellation Exchange emails to everyone invited.
 """
 import ast
+import sys
 import types
 import unittest
 import urllib.parse as urllib_parse
@@ -23,6 +24,9 @@ from pathlib import Path
 from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parent
+sys.path.insert(0, str(ROOT.parent))
+
+from curriculum_api.teams_calendar_checks import read_calendar_instances  # noqa: E402
 
 #: Real implementations under test, plus the small pure helpers they lean on.
 NAMES = {
@@ -42,6 +46,7 @@ def load():
         time=types.SimpleNamespace(sleep=lambda _seconds: None),
         # Identity: the fake transport already answers in Graph's own shape.
         graph_event_utc=lambda item: item,
+        read_calendar_instances=read_calendar_instances,
         # Only reached when a target has no instance at all; no test here does that.
         teams_single_occurrence_payload=lambda *a, **k: {},
         teams_standalone_occurrence_meeting=lambda *a, **k: {'warnings': []},

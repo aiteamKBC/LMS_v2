@@ -16,6 +16,10 @@ import { loadLearningReflectionSubmission, type StoredLearningReflectionSubmissi
 import { CoachPresentationDownload } from './CoachPresentationDownload';
 import { KsbReviewPanel, type KsbReview } from './KsbReviewPanel';
 import { SavedReflection } from '@/components/feature/SavedReflection';
+import { CoachFeedbackEditor } from '@/components/feature/CoachFeedbackEditor';
+import { FormattedFeedback } from '@/components/feature/FormattedFeedback';
+import { feedbackHtmlToPlainText } from '@/lib/feedbackHtml';
+import { MarkingInstructionsPanel } from './MarkingInstructionsPanel';
 
 const coachNav = roleNavMap.coach;
 async function personalEvidence(submissionId: string, fileId?: string) {
@@ -136,6 +140,7 @@ export default function CoachMarkingReviewPage() {
   const [promptKind, setPromptKind] = useState('');
   const [promptAvailable, setPromptAvailable] = useState(true);
   const [promptError, setPromptError] = useState('');
+  const [promptUpload, setPromptUpload] = useState<File | null>(null);
   const [search, setSearch] = useState('');
   const [queueKind, setQueueKind] = useState<QueueKind>('all');
   const [tab, setTab] = useState<WorkspaceTab>('submission');
@@ -159,6 +164,7 @@ export default function CoachMarkingReviewPage() {
       if (extraActivities && detailItem?.activityType !== 'extra_activity') throw new Error('Extra activity not found.');
       // Initialise together: a later effect could overwrite the coach's first edit.
       setFeedback(detailItem?.coachFeedback ?? '');
+      setPromptUpload(null);
       setSelected(detailItem);
 
       try {
@@ -278,17 +284,23 @@ export default function CoachMarkingReviewPage() {
     setError('');
     setAiNotice('');
     try {
-      const response = await coachFetch(`${apiEndpoint}/${selected.id}/ai-feedback`, {
-        method: 'POST',
-        ...(promptEdited ? { headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ prompt: prompt.trim() }) } : {}),
-      });
+      const request: RequestInit = { method: 'POST' };
+      if (promptEdited || promptUpload) {
+        const form = new FormData();
+        if (promptEdited && prompt.trim()) form.append('prompt', prompt.trim());
+        if (promptUpload) form.append('promptFile', promptUpload, promptUpload.name);
+        request.body = form;
+      }
+      const response = await coachFetch(`${apiEndpoint}/${selected.id}/ai-feedback`, request);
       const text = await response.text();
-      let data: { feedback?: string; error?: string; detail?: string; meta?: { ksbCount?: number; epaFile?: string; promptSource?: string; evidenceFiles?: { filename: string; readable: boolean }[] } } = {};
+      let data: { feedback?: string; error?: string; detail?: string; meta?: { ksbCount?: number; epaFile?: string; promptSource?: string; promptFile?: string; evidenceFiles?: { filename: string; readable: boolean }[] } } = {};
       try { data = text ? JSON.parse(text) : {}; } catch { throw new Error(`The draft could not be generated (server error ${response.status}).`); }
       if (!response.ok) throw new Error(data.error || data.detail || 'The draft could not be generated.');
       setFeedback(data.feedback || '');
       const ksbCount = data.meta?.ksbCount ?? 0;
-      const promptNote = data.meta?.promptSource === 'custom' ? ' from your edited prompt' : '';
+      const promptNote = data.meta?.promptSource === 'custom-file'
+        ? ` using ${data.meta?.promptFile || 'your uploaded guidance'}`
+        : data.meta?.promptSource === 'custom' ? ' from your edited prompt' : '';
       const files = data.meta?.evidenceFiles ?? [];
       const unreadable = files.filter(file => !file.readable);
       const fileNote = files.length ? ` Readable text extracted from ${files.length - unreadable.length} of ${files.length} uploaded files.` : '';
@@ -303,7 +315,7 @@ export default function CoachMarkingReviewPage() {
 
   const saveDecision = async (decision: ReviewDecision) => {
     if (!selected || saving || (selected.activityType === 'extra_activity' && (!extraDocument || extraDocumentError))) return;
-    if (!feedback.trim()) {
+    if (!feedbackHtmlToPlainText(feedback)) {
       setError('Write feedback for the learner before sending this decision.');
       return;
     }
@@ -364,7 +376,7 @@ export default function CoachMarkingReviewPage() {
                 <div><i className="ri-error-warning-line" aria-hidden="true" /><span>Overdue</span><strong>{queueSummary.overdueItems}</strong></div>
                 <div><i className="ri-checkbox-circle-line" aria-hidden="true" /><span>Marked today</span><strong>{markedToday}</strong></div>
               </div>}
-              <label className={styles.search}>
+              <label data-search-field className={styles.search}>
                 <i className="ri-search-line" aria-hidden="true" />
                 <span className="sr-only">Search marking queue</span>
                 <input value={search} onChange={event => setSearch(event.target.value)} placeholder="Search learner or activity" />
@@ -494,11 +506,11 @@ export default function CoachMarkingReviewPage() {
                     <i className={selected.reviewedAt ? 'ri-checkbox-circle-line' : 'ri-time-line'} aria-hidden="true" />
                     <div><h4>{selected.reviewedAt ? statusLabel(selected.status) : 'Awaiting coach review'}</h4><p>{selected.reviewedAt ? `${formatDate(selected.reviewedAt)} · ${selected.reviewedBy || 'Coach'}` : `Submitted ${selected.submittedDisplay}`}</p></div>
                   </div>
-                  {selected.coachFeedback && <div className={styles.previousFeedback}><strong>Recorded coach feedback</strong><p>{selected.coachFeedback}</p></div>}
+                  {selected.coachFeedback && <div className={styles.previousFeedback}><strong>Recorded coach feedback</strong><FormattedFeedback value={selected.coachFeedback} className={styles.previousFeedbackText} /></div>}
                   {personal && selected.reviewHistory?.map((entry, index) => (
                     <div className={styles.previousFeedback} key={`${entry.reviewedAt}-${index}`}>
                       <strong>{statusLabel(entry.decision)} · {entry.reviewedBy}</strong>
-                      <p>{formatDate(entry.reviewedAt)} · {entry.feedback}</p>
+                      <p>{formatDate(entry.reviewedAt)} · </p><FormattedFeedback value={entry.feedback} className={styles.previousFeedbackText} />
                     </div>
                   ))}
                 </section>
@@ -509,26 +521,37 @@ export default function CoachMarkingReviewPage() {
               {selected.ksbReview?.status !== 'pending' && <section className={styles.feedbackPanel}>
                 <div className={styles.feedbackHeading}>
                   <div><p>Coach feedback</p><h4>Review the AI draft and make the final decision</h4></div>
-                  {!personal && <button type="button" disabled={generating || saving} onClick={() => void generateAiFeedback()}>
-                    <i className={generating ? 'ri-loader-4-line' : 'ri-sparkling-line'} aria-hidden="true" />
-                    {generating ? 'Generating…' : 'Generate AI draft'}
-                  </button>}
+                  {!personal && <div className={styles.feedbackActions}>
+                    <button type="button" disabled={generating || saving} onClick={() => void generateAiFeedback()}>
+                      <i className={generating ? 'ri-loader-4-line' : 'ri-sparkling-line'} aria-hidden="true" />
+                      {generating ? 'Generating…' : 'Generate AI draft'}
+                    </button>
+                  </div>}
                 </div>
-                <textarea aria-label="Review feedback" value={feedback} onChange={event => setFeedback(event.target.value)} rows={7} placeholder="Write clear, actionable feedback for the learner…" />
+                <CoachFeedbackEditor value={feedback} onChange={setFeedback} disabled={saving} />
                 {aiNotice && <p className={styles.aiNotice}><i className="ri-sparkling-line" aria-hidden="true" /> {aiNotice}</p>}
                 {error && <p className={styles.inlineError}>{error}</p>}
 
-                {!personal && <details className={styles.promptEditor}>
-                  <summary>AI marking instructions {promptEdited ? <span>Edited</span> : null}</summary>
+                {!personal && <MarkingInstructionsPanel key={selected.id} edited={promptEdited} guidanceAttached={Boolean(promptUpload)}>
                   <p>{promptAvailable ? `These ${promptKind === 'assignment' ? 'assignment marking' : 'reflection validation'} instructions apply to the next draft only.` : 'No saved prompt is available. You can supply instructions for this draft.'}</p>
-                  <textarea value={prompt} onChange={event => setPrompt(event.target.value)} rows={8} spellCheck={false} placeholder="Write the instructions the AI should mark against…" />
+                  <textarea aria-label="AI marking instructions" value={prompt} onChange={event => setPrompt(event.target.value)} rows={8} spellCheck={false} placeholder="Write the instructions the AI should mark against…" />
+                  <label className={styles.promptUpload}>
+                    <span><i className="ri-attachment-2" aria-hidden="true" /> Upload marking guidance</span>
+                    <input aria-label="Upload marking guidance" type="file" accept=".pdf,.docx,.txt,.md,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain,text/markdown" onChange={event => {
+                      setPromptUpload(event.target.files?.[0] || null);
+                      setPromptError('');
+                      event.currentTarget.value = '';
+                    }} />
+                    <small>PDF or Word (.docx), up to 5 MB. Used for this draft only.</small>
+                  </label>
+                  {promptUpload && <div className={styles.promptFile}><i className="ri-file-text-line" aria-hidden="true" /><span>{promptUpload.name} · used for this draft</span><button type="button" onClick={() => setPromptUpload(null)}>Remove</button></div>}
                   <div className={styles.promptMeta}>
                     <span>{promptFile || 'No prompt file'} · {prompt.length.toLocaleString()} characters</span>
                     <button type="button" disabled={!defaultPrompt || prompt === defaultPrompt} onClick={() => setPrompt(defaultPrompt)}>Reset to default</button>
                   </div>
                   {promptCleared && <p>The saved prompt will be used because this field is empty.</p>}
                   {promptError && <p className={styles.inlineError}>{promptError}</p>}
-                </details>}
+                </MarkingInstructionsPanel>}
 
                 <div className={styles.decisionRow}>
                   <button type="button" className={styles.reject} disabled={saving || (selected.activityType === 'extra_activity' && !extraDocument)} onClick={() => void saveDecision(personal ? 'referred' : 'rejected')}><i className="ri-arrow-go-back-line" aria-hidden="true" /> {personal ? 'Return for improvement' : 'Refer back with feedback'}</button>

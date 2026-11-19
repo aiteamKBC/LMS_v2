@@ -166,6 +166,12 @@ def coach_dashboard_section(request, section):
             dashboard_cache.cache_dashboard_section(owner_email, section, payload)
         if snapshot_needs_refresh(payload):
             schedule_coach_dashboard_refresh(owner_email, reason=f"dashboard-{section}-read")
+        if section == 'learners':
+            from .activity_plan_snapshots import attach_snapshots
+            # Overlay fresh, learner-scoped summaries even when the rest of the
+            # dashboard came from its older hourly snapshot/response cache.
+            payload = deepcopy(payload)
+            attach_snapshots(owner_email, payload)
         with dashboard_stage("serialization"):
             response_payload = ((paginate_learners(payload, **options) if options else all_learners(payload)) if section == "learners" else
                                 summarize_meetings(deepcopy(payload)) if section == "summary" else

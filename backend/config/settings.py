@@ -413,6 +413,7 @@ INSTALLED_APPS = [
     # Platform authentication (auth schema on the Neon enrolment database).
     # Its tables are unmanaged and created by `manage.py apply_login_tables`.
     'login',
+    'qms_api',
 ]
 
 MIDDLEWARE = [
@@ -441,6 +442,7 @@ MIDDLEWARE = [
     # A successful write to a learner's /learner_api/.../<kind>/<pk>/ paths
     # invalidates their cached dashboard/My Learning reads (learner_api/response_cache.py).
     'learner_api.response_cache.LearnerReadCacheMiddleware',
+    'coach_api.activity_plan_events.ActivityPlanInvalidationMiddleware',
     # Rejects anonymous callers on the API prefixes before any view runs. Must
     # sit after LoginSessionMiddleware so the session is already resolved, and
     # before anything that would act on the request. Answers only "is there a
@@ -763,6 +765,7 @@ elif USE_SQLITE_FOR_TESTS:
 _assistant_conversations_database_url = (
     os.environ.get('ASSISTANT_CONVERSATIONS_DATABASE_URL')
     or os.environ.get('TICKETING_DATABASE_URL')
+    or os.environ.get('Database_ticket_system')
 )
 if _assistant_conversations_database_url and not USE_SQLITE_FOR_TESTS and 'test' not in sys.argv:
     DATABASES['assistant_conversations'] = database_from_url(_assistant_conversations_database_url)

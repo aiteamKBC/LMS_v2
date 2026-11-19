@@ -18,6 +18,35 @@ function Location() { return <output data-testid="location">{useLocation().pathn
 afterEach(() => vi.restoreAllMocks());
 
 describe('module activity sidebar', () => {
+  it('opens a future live session from the sidebar while its time entry is locked', () => {
+    render(<MemoryRouter><ActivitySidebar weekTitle="Week 8" moduleTitle="Module" weeks={[]} completedIds={new Set()}
+      weekComponents={[{ title: 'Upcoming lecture', componentId: 'LIVE', type: 'live_session', expectedOtjh: 2.5,
+        liveSessionAccess: { open: false, status: 'upcoming', message: 'Time entry is waiting for the recording.' } }]}
+      routeFor={component => `/activity/${component.componentId}`} /><Location /></MemoryRouter>);
+    const activity = screen.getByRole('button', { name: /Upcoming lecture/ });
+    expect(activity).toBeEnabled();
+    fireEvent.click(activity);
+    expect(screen.getByTestId('location')).toHaveTextContent('/activity/LIVE');
+  });
+  it.each(['component', 'quiz', 'catalogue'])('numbers named weeks in the current card and navigation without changing activity routes (%s)', mode => {
+    const namedWeeks = weeks.map((week, index) => {
+      const title = index === 0 ? 'London Master Class Event' : `L${index}: Topic`;
+      return { ...week, week: mode === 'catalogue' ? `Week ${index + 1} · ${title}` : title, active: index === 6 };
+    });
+    const routeFor = vi.fn((component, week) => `/activity/${component.componentId}?week=${encodeURIComponent(week)}`);
+    render(<MemoryRouter><ActivitySidebar weekComponents={namedWeeks[6].components} weekTitle={namedWeeks[6].week} moduleTitle="Module"
+      weeks={namedWeeks} completedIds={new Set()} currentComponentId={mode === 'component' ? 'C7' : undefined}
+      currentQuizId={mode === 'quiz' ? 7 : undefined} currentWeekKey={mode === 'catalogue' ? 'W7' : undefined}
+      routeFor={routeFor} /><Location /></MemoryRouter>);
+    expect(screen.getByRole('heading', { name: 'Week 7 · L6: Topic' })).toBeVisible();
+    expect(screen.getByRole('button', { name: /^Week 7 · L6: Topic,/ })).toBeVisible();
+    fireEvent.click(screen.getByRole('button', { name: /^Week 1 · London Master Class Event,/ }));
+    expect(screen.getByTestId('location')).toHaveTextContent('/');
+    fireEvent.click(screen.getByRole('button', { name: /Lesson 1/ }));
+    expect(routeFor).toHaveBeenCalledWith(namedWeeks[0].components[0], namedWeeks[0].week);
+    expect(screen.getByTestId('location')).toHaveTextContent('/activity/C1');
+  });
+
   it('expands catalogue weeks in place without replacing the current week or navigating', () => {
     const select = vi.fn();
     render(<MemoryRouter><ActivitySidebar weekComponents={weeks[5].components} weekTitle="Week 6" moduleTitle="Module"

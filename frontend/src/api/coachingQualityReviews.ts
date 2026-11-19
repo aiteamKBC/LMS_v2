@@ -44,6 +44,7 @@ export interface QualitySummary {
   id: string; coachEmail: string; coachName: string; learnerId: string; learnerName: string;
   startsAt: string; status: 'draft' | 'completed'; version: number; updatedAt: string; title: string; actionCount: number;
   pdfVersion?: number | null; reviewType?: QualityReviewType | ''; formTitle?: string | null;
+  ratingCounts?: { gold: number; green: number; amber: number; red: number; na: number } | null;
 }
 export interface ReviewList { reviews: QualitySummary[]; coaches: { email: string; name: string }[]; nextOffset: number | null }
 export interface MeetingQualityCheck { id: string; learnerId: string; learnerName: string; reviewerName?: string; reviewType?: QualityReviewType | ''; formTitle?: string | null; status: string; version: number; pdfVersion: number | null; updatedAt: string }
@@ -62,7 +63,7 @@ async function request<T>(url: string, init: RequestInit = {}): Promise<T> {
     if (!response.ok) throw new QualityReviewError(value.error || 'The quality review could not be loaded or saved.', response.status, value.code);
     return value as T;
   } catch (error) {
-    if (controller.signal.aborted) throw new QualityReviewError('This request took too long. Your edits are still here; retry the save.', 503);
+    if (controller.signal.aborted) throw new QualityReviewError('The quality data request took too long. Please retry.', 503, 'timeout');
     throw error;
   } finally { clearTimeout(timer); }
 }
@@ -71,8 +72,12 @@ export function invalidateQualityReviews() { reads.invalidate(); }
 async function read<T>(url: string, signal?: AbortSignal): Promise<T> {
   return await withCallerSignal(reads.read(url), signal) as T;
 }
-export function qualityForms(signal?: AbortSignal, editing = false) {
-  return read<{ forms: QualityFormCard[] }>(`${base}/forms${editing ? '?editing=1' : ''}`, signal);
+export function qualityForms(signal?: AbortSignal, editing = false, includeDefinitions = false) {
+  const params = new URLSearchParams();
+  if (editing) params.set('editing', '1');
+  if (includeDefinitions) params.set('includeDefinitions', '1');
+  const query = params.toString();
+  return read<{ forms: QualityFormCard[]; templates?: Record<string, QualityTemplateState> }>(`${base}/forms${query ? `?${query}` : ''}`, signal);
 }
 export async function createQualityForm(title: string, requestId: string) {
   const result = await request<{ template: QualityTemplateState }>(`${base}/forms`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title, requestId }) });

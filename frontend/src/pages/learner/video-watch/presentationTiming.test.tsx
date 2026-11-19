@@ -98,7 +98,7 @@ it.each(['commercial', 'apprenticeship'] as const)('excludes PDF download and re
   const renderPage = vi.fn(() => ({ promise: rendered.promise, cancel: vi.fn() }));
   pdf.getPage.mockResolvedValue({ getViewport: () => ({ width: 800, height: 600 }), render: renderPage });
   mount(kind);
-  await screen.findByText('Loading PDF preview...');
+  await screen.findByRole('status', { name: 'Loading PDF preview...' });
   advanceTo(30000);
   expectSeconds(0);
 

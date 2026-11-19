@@ -5,6 +5,13 @@ import { EnrolmentHelpLauncher } from './EnrolmentHelpLauncher';
 afterEach(() => { cleanup(); sessionStorage.clear(); });
 
 describe('floating Enrolment help launcher', () => {
+  it('stays outside page containers that stretch or transform fixed elements', () => {
+    const { container } = render(<main style={{ transform: 'translateX(0)' }}><EnrolmentHelpLauncher title="Recordings hub" onOpen={vi.fn()} /></main>);
+    const button = screen.getByRole('button', { name: 'Watch Recordings hub page guide' });
+    expect(container.querySelector('main')).not.toContainElement(button);
+    expect(button.closest('div')?.parentElement).toBe(document.body);
+  });
+
   it('offers the guide from both the button and the English message', () => {
     const onOpen = vi.fn();
     render(<EnrolmentHelpLauncher title="User Management" onOpen={onOpen} />);

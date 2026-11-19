@@ -1,3 +1,4 @@
+import { LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute, useRouter } from '@tanstack/react-router';
 import { AuditLink as Link, navigateAudit } from '@/features/audit/auditNavigation';
@@ -458,7 +459,7 @@ function LearnerProfilePage() {
   }
 
   if (profile.isLoading) {
-    return <div className="flex min-h-screen items-center justify-center bg-background text-sm text-muted-foreground">Loading learner profile…</div>;
+    return <div className="flex min-h-screen items-center justify-center bg-background text-sm text-muted-foreground"><LoadingSkeleton label="Loading learner profile…" variant="rows" /></div>;
   }
 
   if (profile.isError || !profile.data) {
@@ -1037,9 +1038,7 @@ function LearnerProfilePage() {
             </header>
             <div className="relative min-h-0 flex-1 bg-slate-800 p-2">
               {!contractPreviewUrl && !contractPreviewError && (
-                <div className="absolute inset-0 flex items-center justify-center gap-2 text-sm font-semibold text-white">
-                  <LoaderCircle className="h-5 w-5 animate-spin" /> Loading preview…
-                </div>
+                <div className="absolute inset-0 flex items-center justify-center gap-2 text-sm font-semibold text-white"><LoadingSkeleton label="Loading preview…" variant="rows" /></div>
               )}
               {contractPreviewError && (
                 <div className="absolute inset-0 flex items-center justify-center p-8 text-center text-sm font-semibold text-white">
@@ -1268,9 +1267,7 @@ function LearnerProfilePage() {
             </header>
             <div className="relative min-h-0 flex-1 bg-slate-800 p-2">
               {!evidencePreviewUrl && !evidencePreviewError && (
-                <div className="absolute inset-0 flex items-center justify-center gap-2 text-sm font-semibold text-white">
-                  <LoaderCircle className="h-5 w-5 animate-spin" /> Loading preview…
-                </div>
+                <div className="absolute inset-0 flex items-center justify-center gap-2 text-sm font-semibold text-white"><LoadingSkeleton label="Loading preview…" variant="rows" /></div>
               )}
               {evidencePreviewError && (
                 <div className="absolute inset-0 flex items-center justify-center p-8 text-center text-sm font-semibold text-white">

@@ -5,6 +5,7 @@ export const LEARNER_READ_TIMEOUT_MS = 45_000;
 export const LEARNER_SOURCE_READ_TIMEOUT_MS = 180_000;
 export const MY_LEARNING_READ_TIMEOUT_MS = 120_000;
 const DASHBOARD_OVERVIEW_READ_TIMEOUT_MS = 120_000;
+const ACTIVITY_DETAIL_READ_TIMEOUT_MS = 120_000;
 const TRANSIENT_READ_RETRY_DELAY_MS = 600;
 
 export class LearnerReadError extends Error {
@@ -69,12 +70,17 @@ async function fetchJson(key: string): Promise<unknown> {
   // Overview also aggregates the complete plan, progress and saved registers;
   // a successful large-plan read can exceed 45s. Keep its deadline bounded
   // without extending the deadlines of other dashboard or calendar requests.
+  // The activity viewer also resolves the assigned plan before returning its
+  // selected content. Allow connection checkout plus that read to finish.
+  const activityDetail = /^\/learner_api\/learner-detail\/(commercial|apprenticeship)\/[^/?]+\/\?/.test(url)
+    && new URLSearchParams(url.split('?')[1]).get('content') === 'activity';
   const timeoutMs = /^\/learner_api\/my-learning\//.test(url)
     ? MY_LEARNING_READ_TIMEOUT_MS
     : /^\/learner_api\/dashboard\/(commercial|apprenticeship)\/[^/?]+\/overview\/(?:\?|$)/.test(url)
       ? DASHBOARD_OVERVIEW_READ_TIMEOUT_MS
-      : /^\/learner_api\/(student-activity|metrics)\//.test(url)
-        ? LEARNER_SOURCE_READ_TIMEOUT_MS : LEARNER_READ_TIMEOUT_MS;
+      : activityDetail ? ACTIVITY_DETAIL_READ_TIMEOUT_MS
+        : /^\/learner_api\/(student-activity|metrics)\//.test(url)
+          ? LEARNER_SOURCE_READ_TIMEOUT_MS : LEARNER_READ_TIMEOUT_MS;
   const controller = new AbortController();
   let timer: ReturnType<typeof setTimeout>;
   const deadline = new Promise<never>((_resolve, reject) => {

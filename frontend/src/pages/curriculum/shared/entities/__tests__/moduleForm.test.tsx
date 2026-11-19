@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -20,6 +20,7 @@ import {
 import { createNewModule } from '@/pages/curriculum/module-builder/moduleAuthoringData';
 import { ModuleFormDrawer } from '../moduleForm';
 import { fetchModuleHoursTarget, saveModuleHoursTarget } from '@/api/moduleHours';
+import { fetchCurriculumRecordSnapshot } from '../recordSnapshot';
 
 vi.mock('@/api/moduleHours', async original => ({ ...(await original<typeof import('@/api/moduleHours')>()), fetchModuleHoursTarget: vi.fn(), saveModuleHoursTarget: vi.fn() }));
 beforeEach(() => {
@@ -158,6 +159,12 @@ function renderDrawer(props: Partial<Parameters<typeof ModuleFormDrawer>[0]> = {
       />
     </MemoryRouter>,
   );
+  // Unrelated cases explicitly answer the new required creation question.
+  // The study-week suite covers leaving this choice blank.
+  if (!props.module && !props.freeCourse) {
+    fireEvent.click(screen.getByRole('combobox', { name: /Study week starts on/i }));
+    fireEvent.click(screen.getByRole('option', { name: /^Tuesday$/ }));
+  }
   return { onSaved, onClose };
 }
 
@@ -169,6 +176,49 @@ async function choose(field: string, option: string) {
 }
 
 describe('ModuleFormDrawer', () => {
+  it('uses the saved calendar-week model when increasing weeks from a stale catalogue row', async () => {
+    const stale = { id: 'MOD-STUDY-EDIT', name: 'Synthetic study module', weeks: 2,
+      sessionsNumber: 4, startDate: '2026-11-01', endDate: '2026-11-08',
+      programmeId: 'PROG-DATA', cohortId: 'COHORT-1', groupId: 'GROUP-1', tutor: 'Tutor One',
+      scheduleMode: 'custom' as const,
+      weeklySchedule: [{ day: 'Monday', startTime: '10:00', endTime: '12:00' },
+        { day: 'Wednesday', startTime: '10:00', endTime: '12:00' }] };
+    vi.mocked(fetchCurriculumRecordSnapshot).mockResolvedValueOnce({ revision: '', record: {
+      ...stale, weekBoundaryMode: 'calendar', weekStartsOn: 'Monday',
+    } });
+    renderDrawer({ module: stale });
+
+    const weekStart = await screen.findByRole('combobox', { name: /Study week starts on/i });
+    expect(weekStart).toHaveTextContent('Monday');
+    expect(weekStart).toBeDisabled();
+    const weeks = screen.getByRole('spinbutton', { name: /weeks/i });
+    await userEvent.clear(weeks);
+    await userEvent.type(weeks, '3');
+    expect(screen.getByRole('combobox', { name: 'End date' })).toHaveValue('15/11/2026');
+    await userEvent.click(screen.getByRole('button', { name: 'Save module' }));
+    await waitFor(() => expect(updateCurriculumModule).toHaveBeenCalledWith('MOD-STUDY-EDIT',
+      expect.objectContaining({ weeks: 3, endDate: '2026-11-15', weekBoundaryMode: 'calendar', weekStartsOn: 'Monday' })));
+  });
+
+  it.each([0, 1])('shows the verified count of%i live sessions when partial/holiday weeks reduce it', async count => {
+    const previous = previewModuleSessionPlanMock.getMockImplementation();
+    previewModuleSessionPlanMock.mockResolvedValue({
+      sessions: Array.from({ length: count }, (_, index) => ({ sessionNumber: index + 1, date: '2026-09-02', day: 'Wednesday', skippedHolidays: [] })),
+      skippedHolidays: [], warnings: [], finalEndDate: count ? '2026-09-02' : '',
+    });
+    try {
+      renderDrawer({ lockGroup: true, defaults: { programmeId: 'PROG-DATA', cohortId: 'COHORT-1', groupId: 'GROUP-1' } });
+      const weeks = screen.getByRole('spinbutton', { name: /^Weeks/i });
+      await userEvent.clear(weeks);
+      await userEvent.type(weeks, '2');
+      await choose('Study week starts on', 'Monday');
+      expect(await screen.findByText(new RegExp(`${count} live session${count === 1 ? '' : 's'} planned across 2 study weeks`))).toBeInTheDocument();
+      expect(screen.queryByText(/weeks ×/)).not.toBeInTheDocument();
+    } finally {
+      previewModuleSessionPlanMock.mockImplementation(previous!);
+    }
+  });
+
   beforeEach(() => {
     createGroupModuleMock.mockClear();
     previewModuleSessionPlanMock.mockClear();
@@ -185,6 +235,8 @@ describe('ModuleFormDrawer', () => {
     } });
     expect(screen.getByRole('heading', { name: 'Free course' })).toBeInTheDocument();
     expect(screen.queryByRole('combobox', { name: /programme|cohort|tutor/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('combobox', { name: /start date|end date/i })).not.toBeInTheDocument();
+    expect(screen.queryByText('Planned finish')).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /Assign later|Group A/i })).not.toBeInTheDocument();
     await userEvent.type(screen.getByRole('textbox', { name: /Course name/i }), 'Independent study');
     await userEvent.click(screen.getByRole('button', { name: 'Create free course' }));
@@ -319,6 +371,9 @@ describe('ModuleFormDrawer', () => {
     await userEvent.click(screen.getByRole('button', { name: /Group A/ }));
     await userEvent.click(screen.getByRole('button', { name: /Group B/ }));
     await choose('Tutor', 'Tutor One');
+    if (screen.queryByRole('combobox', { name: /Study week starts on/i })?.textContent?.includes('Choose a weekday')) {
+      await choose('Study week starts on', 'Tuesday');
+    }
     await userEvent.click(screen.getByRole('button', { name: 'Create module' }));
 
     await waitFor(() => expect(createGroupModuleMock).toHaveBeenCalledTimes(2));
@@ -346,6 +401,9 @@ describe('ModuleFormDrawer', () => {
     await choose('Tutor', 'Tutor One');
     // Offered, and off.
     expect(screen.getByRole('checkbox', { name: /Email Tutor One about this module/ })).not.toBeChecked();
+    if (screen.queryByRole('combobox', { name: /Study week starts on/i })?.textContent?.includes('Choose a weekday')) {
+      await choose('Study week starts on', 'Tuesday');
+    }
     await userEvent.click(screen.getByRole('button', { name: 'Create module' }));
 
     await waitFor(() => expect(createGroupModuleMock).toHaveBeenCalledTimes(1));
@@ -371,6 +429,9 @@ describe('ModuleFormDrawer', () => {
     await userEvent.click(screen.getByRole('button', { name: /Group B/ }));
     await choose('Tutor', 'Tutor One');
     await userEvent.click(screen.getByRole('checkbox', { name: /Email Tutor One/ }));
+    if (screen.queryByRole('combobox', { name: /Study week starts on/i })?.textContent?.includes('Choose a weekday')) {
+      await choose('Study week starts on', 'Tuesday');
+    }
     await userEvent.click(screen.getByRole('button', { name: 'Create module' }));
 
     await waitFor(() => expect(sendTutorAssignmentEmailMock).toHaveBeenCalledTimes(1));
@@ -386,6 +447,9 @@ describe('ModuleFormDrawer', () => {
     await userEvent.click(screen.getByRole('button', { name: /Group A/ }));
     await choose('Tutor', 'Tutor One');
     await userEvent.click(screen.getByRole('checkbox', { name: /Email Tutor One/ }));
+    if (screen.queryByRole('combobox', { name: /Study week starts on/i })?.textContent?.includes('Choose a weekday')) {
+      await choose('Study week starts on', 'Tuesday');
+    }
     await userEvent.click(screen.getByRole('button', { name: 'Create module' }));
 
     // The module is written and the caller is told, even though the mail failed.
@@ -621,6 +685,9 @@ describe('ModuleFormDrawer', () => {
 
     await userEvent.type(screen.getByPlaceholderText('e.g. Data Modelling'), 'Data Modelling');
     await choose('Tutor', 'Tutor One');
+    if (screen.queryByRole('combobox', { name: /Study week starts on/i })?.textContent?.includes('Choose a weekday')) {
+      await choose('Study week starts on', 'Tuesday');
+    }
     await userEvent.click(screen.getByRole('button', { name: 'Create module' }));
 
     expect(createNewModuleMock).not.toHaveBeenCalled();
@@ -658,6 +725,9 @@ describe('ModuleFormDrawer', () => {
 
     await userEvent.type(screen.getByPlaceholderText('e.g. Data Modelling'), 'Data Modelling');
     await choose('Tutor', 'Tutor One');
+    if (screen.queryByRole('combobox', { name: /Study week starts on/i })?.textContent?.includes('Choose a weekday')) {
+      await choose('Study week starts on', 'Tuesday');
+    }
     await userEvent.click(screen.getByRole('button', { name: 'Create module' }));
 
     await waitFor(() => expect(onSavingChange).toHaveBeenLastCalledWith(true));
@@ -723,6 +793,9 @@ describe('ModuleFormDrawer', () => {
     await userEvent.type(endDate, '14/10/2026');
     await userEvent.type(screen.getByPlaceholderText('e.g. Data Modelling'), 'Manual End');
     await choose('Tutor', 'Tutor One');
+    if (screen.queryByRole('combobox', { name: /Study week starts on/i })?.textContent?.includes('Choose a weekday')) {
+      await choose('Study week starts on', 'Tuesday');
+    }
     await userEvent.click(screen.getByRole('button', { name: 'Create module' }));
 
     expect(createGroupModuleMock).toHaveBeenCalledWith('GROUP-1', expect.objectContaining({
@@ -779,6 +852,9 @@ describe('ModuleFormDrawer', () => {
 
     await userEvent.click(screen.getByRole('button', { name: 'Assign later' }));
     await userEvent.type(screen.getByPlaceholderText('e.g. Data Modelling'), 'Bare Draft');
+    if (screen.queryByRole('combobox', { name: /Study week starts on/i })?.textContent?.includes('Choose a weekday')) {
+      await choose('Study week starts on', 'Tuesday');
+    }
     await userEvent.click(screen.getByRole('button', { name: 'Create module' }));
 
     expect(createGroupModuleMock).not.toHaveBeenCalled();
@@ -799,6 +875,9 @@ describe('ModuleFormDrawer', () => {
     renderDrawer();
 
     await userEvent.type(screen.getByPlaceholderText('e.g. Data Modelling'), 'Needs a home');
+    if (screen.queryByRole('combobox', { name: /Study week starts on/i })?.textContent?.includes('Choose a weekday')) {
+      await choose('Study week starts on', 'Tuesday');
+    }
     await userEvent.click(screen.getByRole('button', { name: 'Create module' }));
 
     expect(await screen.findByText('Choose the cohort this module runs for.')).toBeInTheDocument();
@@ -888,6 +967,9 @@ describe('ModuleFormDrawer', () => {
 
   it('refuses a module with no name before it calls anything', async () => {
     renderDrawer({ lockGroup: true, defaults: { groupId: 'GROUP-1' } });
+    if (screen.queryByRole('combobox', { name: /Study week starts on/i })?.textContent?.includes('Choose a weekday')) {
+      await choose('Study week starts on', 'Tuesday');
+    }
     await userEvent.click(screen.getByRole('button', { name: 'Create module' }));
     expect(await screen.findByText('Give the module a name.')).toBeInTheDocument();
     expect(createGroupModuleMock).not.toHaveBeenCalled();
@@ -1060,6 +1142,9 @@ describe('ModuleFormDrawer', () => {
 
     await userEvent.type(screen.getByPlaceholderText('e.g. Data Modelling'), 'Data Modelling');
     await choose('Tutor', 'Tutor One');
+    if (screen.queryByRole('combobox', { name: /Study week starts on/i })?.textContent?.includes('Choose a weekday')) {
+      await choose('Study week starts on', 'Tuesday');
+    }
     await userEvent.click(screen.getByRole('button', { name: 'Create module' }));
 
     expect(await screen.findByText(`Module authoring payload is invalid. - ${message}`)).toBeInTheDocument();
@@ -1069,7 +1154,7 @@ describe('ModuleFormDrawer', () => {
     expect(screen.getByPlaceholderText('e.g. Data Modelling')).toHaveValue('Data Modelling');
   });
 
-  it('shows a tutor double-booking refusal verbatim', async () => {
+  it('offers a retry with the busy tutor when an edit discovers a clash on save', async () => {
     // A real CurriculumApiError: `tutorConflictMessage` only unwraps that shape,
     // which is what keeps a generic 409 from being shown as a booking clash.
     const conflict = new CurriculumApiError(
@@ -1089,9 +1174,13 @@ describe('ModuleFormDrawer', () => {
 
     const name = screen.getByPlaceholderText('e.g. Data Modelling');
     await userEvent.type(name, ' edited');
+    await userEvent.type(screen.getByPlaceholderText('Optional delivery notes'), 'Updated notes');
     await userEvent.click(screen.getByRole('button', { name: 'Save module' }));
 
-    expect(await screen.findByText('Tutor One is already teaching "Data Foundations" on Wednesday at 10:00.')).toBeInTheDocument();
+    expect(await screen.findByText(/You can keep this tutor for/)).toBeInTheDocument();
+    expect(updateCurriculumModuleMock.mock.calls.at(-1)?.[1].allowTutorConflict).not.toBe(true);
+    await userEvent.click(screen.getByRole('button', { name: 'Book anyway' }));
+    await waitFor(() => expect(updateCurriculumModuleMock.mock.calls.at(-1)?.[1]).toMatchObject({ allowTutorConflict: true }));
   });
 });
 
@@ -1179,16 +1268,36 @@ describe('ModuleFormDrawer tutor availability', () => {
     expect(screen.getByText(/2 of this module's 3 sessions/)).toBeInTheDocument();
   });
 
-  it('does not send a save it already knows will be refused', async () => {
+  it('warns about a busy tutor and allows creating the delivery with that tutor', async () => {
     renderPlacedDrawer();
     await waitFor(() => expect(previewTutorAvailabilityRosterMock).toHaveBeenCalled());
 
     await userEvent.type(screen.getByPlaceholderText('e.g. Data Modelling'), 'Test-Conflict');
     await choose('Tutor', 'Tutor One');
+    if (screen.queryByRole('combobox', { name: /Study week starts on/i })?.textContent?.includes('Choose a weekday')) {
+      await choose('Study week starts on', 'Tuesday');
+    }
     await userEvent.click(screen.getByRole('button', { name: 'Create module' }));
 
-    expect(await screen.findByText(/Tutor One is already teaching in this slot\./)).toBeInTheDocument();
-    expect(createGroupModuleMock).not.toHaveBeenCalled();
+    expect(screen.getByText(/You can keep this tutor and save anyway/)).toBeInTheDocument();
+    await waitFor(() => expect(createGroupModuleMock).toHaveBeenCalledWith('GROUP-1', expect.objectContaining({
+      tutor: 'Tutor One', allowTutorConflict: true,
+    })));
+  });
+
+  it('allows editing with a known clash and does not override after choosing a free tutor', async () => {
+    renderDrawer({ module: { id: 'MOD-1', name: 'Data Foundations', groupId: 'GROUP-1', tutor: 'Tutor One',
+      startDate: '2026-09-02' }, tutorNames: ['Tutor One', 'Tutor Two'] });
+    expect(await screen.findByText(/You can keep this tutor and save anyway/)).toBeInTheDocument();
+    await userEvent.type(screen.getByPlaceholderText('Optional delivery notes'), 'Updated notes');
+    await userEvent.click(screen.getByRole('button', { name: 'Save module' }));
+    await waitFor(() => expect(updateCurriculumModuleMock.mock.calls.at(-1)?.[1]).toMatchObject({
+      tutor: 'Tutor One', allowTutorConflict: true,
+    }));
+    await choose('Tutor', 'Tutor Two');
+    await userEvent.click(screen.getByRole('button', { name: 'Save module' }));
+    await waitFor(() => expect(updateCurriculumModuleMock.mock.calls.at(-1)?.[1]).toMatchObject({ tutor: 'Tutor Two' }));
+    expect(updateCurriculumModuleMock.mock.calls.at(-1)?.[1].allowTutorConflict).not.toBe(true);
   });
 
   it('offers the tutors the slot is free for as the fix', async () => {
@@ -1200,6 +1309,30 @@ describe('ModuleFormDrawer tutor availability', () => {
 
     expect(screen.getByRole('combobox', { name: /tutor/i })).toHaveTextContent('Tutor Two');
     expect(screen.queryByText(/is already teaching in this slot/)).not.toBeInTheDocument();
+  });
+
+  it('warns about a later group clash and retries only that delivery', async () => {
+    const twoGroups = [...groups, { ...groups[0], id: 'GROUP-2', name: 'Group B' }];
+    createGroupModuleMock.mockResolvedValueOnce({ created: [{ moduleCatalogueId: 'MOD-A' }] } as never)
+      .mockRejectedValueOnce(new CurriculumApiError('Conflict', 409, '/groups/GROUP-2/modules/', {
+        error: 'Tutor One is already teaching.', tutor: 'Tutor One', tutorConflicts: BUSY_ROSTER.results[0].conflicts,
+      }));
+    renderDrawer({ groups: twoGroups, defaults: { programmeId: 'PROG-DATA', cohortId: 'COHORT-1' } });
+    await userEvent.type(screen.getByPlaceholderText('e.g. Data Modelling'), 'Multi group');
+    await userEvent.click(screen.getByRole('button', { name: /Group A/ }));
+    await userEvent.click(screen.getByRole('button', { name: /Group B/ }));
+    await choose('Tutor', 'Tutor One');
+    expect(await screen.findByText(/You can keep this tutor and save anyway/)).toBeInTheDocument();
+    if (screen.queryByRole('combobox', { name: /Study week starts on/i })?.textContent?.includes('Choose a weekday')) {
+      await choose('Study week starts on', 'Tuesday');
+    }
+    await userEvent.click(screen.getByRole('button', { name: 'Create module' }));
+    expect(await screen.findByText(/You can keep this tutor for Group B/)).toBeInTheDocument();
+    expect(createGroupModuleMock.mock.calls[1][1].allowTutorConflict).not.toBe(true);
+    await userEvent.click(screen.getByRole('button', { name: 'Book anyway' }));
+    await waitFor(() => expect(createGroupModuleMock).toHaveBeenCalledTimes(3));
+    expect(createGroupModuleMock.mock.calls.filter(([id]) => id === 'GROUP-1')).toHaveLength(1);
+    expect(createGroupModuleMock).toHaveBeenLastCalledWith('GROUP-2', expect.objectContaining({ allowTutorConflict: true }));
   });
 
   it('marks the busy names in the picker, without blocking the choice', async () => {
@@ -1240,6 +1373,9 @@ describe('ModuleFormDrawer tutor availability', () => {
 
     await userEvent.type(screen.getByPlaceholderText('e.g. Data Modelling'), 'Test-Conflict');
     await choose('Tutor', 'Tutor One');
+    if (screen.queryByRole('combobox', { name: /Study week starts on/i })?.textContent?.includes('Choose a weekday')) {
+      await choose('Study week starts on', 'Tuesday');
+    }
     await userEvent.click(screen.getByRole('button', { name: 'Create module' }));
 
     await waitFor(() => expect(createGroupModuleMock).toHaveBeenCalledTimes(1));

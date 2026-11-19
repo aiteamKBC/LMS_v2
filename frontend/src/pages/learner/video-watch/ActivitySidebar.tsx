@@ -179,7 +179,9 @@ export function ActivitySidebar({
 
   const weekDoneCount = weekComponents.filter((c) => isComponentComplete(c, completedIds)).length;
   const activeWeekIndex = weeks.findIndex((w) => w.active);
-  const currentWeekLabel = currentWeekKey !== undefined || activeWeekIndex < 0 ? weekTitle : weekDisplayLabel(weeks, activeWeekIndex);
+  // Catalogue browsers already supply week labels, including month-only history.
+  const displayWeekLabel = (index: number) => weekDisplayLabel(weeks, index, currentWeekKey === undefined);
+  const currentWeekLabel = currentWeekKey !== undefined || activeWeekIndex < 0 ? weekTitle : displayWeekLabel(activeWeekIndex);
   const isCurrentWeek = (week: SidebarWeek) => currentWeekKey === undefined ? week.active : week.key === currentWeekKey;
   const weekHeading = currentWeekKey === null ? 'Week activities'
     : 'Current week';
@@ -256,7 +258,11 @@ export function ActivitySidebar({
             {requiredOnly && <p role="status" className="mt-2 text-xs leading-5 text-foreground-600">Showing required activities and related quizzes. Your open activity stays visible.</p>}
           </div>}
         </div>
-        <ul className="divide-y divide-emerald-100">
+        <ul
+          aria-label={`${currentWeekLabel || 'This week'} activities`}
+          tabIndex={0}
+          className="max-h-[min(60vh,32rem)] overflow-y-auto overscroll-y-contain divide-y divide-emerald-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary-500"
+        >
           {requiredOnly && !shownWeekComponents.length && <li className="px-4 py-3 text-xs text-foreground-600">No required activities in this week. <button type="button" onClick={() => setRequiredOnly(false)} className="min-h-11 font-semibold text-primary-800 underline">Show all activities</button></li>}
           <PointActivityRows components={shownWeekComponents} plan={webPoints.data} current={isCurrentRow} pointIdentityFor={pointIdentityFor} renderRow={(c, sessionPart) => {
             const cm = sidebarActivityMeta(c);
@@ -354,7 +360,7 @@ export function ActivitySidebar({
                   {monthHeadings[index] && <h3 className="border-b border-primary-100 bg-primary-50/80 px-4 py-2 text-[11px] font-bold uppercase tracking-wide text-primary-800">{monthHeadings[index]}</h3>}
                   <button
                     disabled={!viewable}
-                    aria-label={`${weekDisplayLabel(weeks, index)}, ${w.count} components${isCurrentWeek(w) ? ', Current' : weekComplete ? ', Done' : ''}`}
+                    aria-label={`${displayWeekLabel(index)}, ${w.count} components${isCurrentWeek(w) ? ', Current' : weekComplete ? ', Done' : ''}`}
                     aria-expanded={viewable ? expanded : undefined}
                     aria-current={onSelectWeek && w.active ? 'step' : undefined}
                     onClick={() => {
@@ -380,7 +386,7 @@ export function ActivitySidebar({
                       <span className={`block text-[13px] font-semibold leading-snug truncate ${
                         weekComplete ? 'text-emerald-900' : w.active ? 'text-primary-900' : 'text-primary-800'
                       }`}>
-                        {weekDisplayLabel(weeks, index)}
+                        {displayWeekLabel(index)}
                       </span>
                       <span className={`block text-[10px] ${weekComplete ? 'text-emerald-700' : 'text-foreground-400'}`}>
                         {dateLabel(w, index) && <span className="mb-1 block text-foreground-500">{dateLabel(w, index)}</span>}

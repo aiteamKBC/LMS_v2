@@ -1,14 +1,14 @@
-"""Learner-scoped read of the free courses assigned to a learner.
+"""Learner-scoped read of legacy and Module Builder free-course assignments.
 
-Free courses are authored in the curriculum editor (the synthetic
+Legacy free courses are authored in the curriculum editor (the synthetic
 ``FREE-COURSES`` programme) and assigned to a learner from the enrolment
 Learning-Plan modal, which stores a pure assignment record
 (``{freeCourseId, courseName, addedAt}``) on ``enrolment.Created_users``
 ``Free_courses`` — no hours, no KSBs, no progress, by design.
 
-This view is the learner-facing counterpart: it returns the assigned courses
-enriched with their authored week/activity tree so the "My Learning" page can
-render them like ordinary modules (minus the progress machinery).
+Module Builder courses are assigned through the normal training plan. Their
+cards link to the normal module workspace so hours and progress retain the
+same rules as other modules. Only legacy assignments use the tree below.
 
 Identity is resolved SERVER-SIDE and never trusted from the client (same gate as
 ``learner_detail``/``training_plan``): the caller supplies only the
@@ -46,7 +46,10 @@ from .learner_detail import (
     component_audio_url,
 )
 from .mappers import _normalize_free_courses, _s
-from .models import LearnerFreeCourseProgress
+from .free_course_progress import completed_component_refs, save_completion
+from .free_course_records import progress_owner
+from .free_course_catalogue import builder_free_courses
+from .learning_plan import _effective_plan_ids, request_preset_cache
 from .quizzes import _fetch_quiz, _grade_question
 from quiz_api.answer_keys import quiz_submission_error
 
@@ -113,9 +116,11 @@ def _resolve_source(kind, pk):
         return None, _error(f"Unknown kind: {kind!r}. Expected 'commercial' or 'apprenticeship'.", 404)
     try:
         # all_learners, not objects: the default manager is scoped to
-        # apprenticeship rows, so a commercial learner would 404 here. The
-        # enrolment `Free_courses` column is the source of truth for both kinds.
-        return model.all_learners.only("id", "free_courses").get(pk=pk), None
+        # apprenticeship rows, so a commercial learner would 404 here.
+        # Both the legacy list and the normal plan are learner-owned assignments.
+        return model.all_learners.only(
+            "id", "free_courses", "training_plan", "learning_plan", "programme", "group",
+        ).get(pk=pk), None
     except model.DoesNotExist:
         return None, _error("Learner not found.", 404)
     except DatabaseError:
@@ -156,7 +161,7 @@ def _scoped_rows(assigned_ids):
 @require_GET
 @learner_self_or_staff(kwarg="pk")
 def free_courses(request, kind, pk):
-    """Return the learner's assigned free courses, each with its week/activity tree."""
+    """Return assigned builder course links and any remaining legacy trees."""
     source, error = _resolve_source(kind, pk)
     if error is not None:
         return error
@@ -164,8 +169,14 @@ def free_courses(request, kind, pk):
     assigned = _normalize_free_courses(
         source.free_courses if isinstance(source.free_courses, list) else []
     )
+    try:
+        builder_courses = builder_free_courses(_effective_plan_ids(source, request_preset_cache(source)))
+    except DatabaseError:
+        return _error("Could not read the free course catalogue.", 503)
+    builder_ids = {course['freeCourseId'] for course in builder_courses}
+    assigned = [record for record in assigned if record['freeCourseId'] not in builder_ids]
     if not assigned:
-        response = JsonResponse({"freeCourses": []})
+        response = JsonResponse({"freeCourses": builder_courses})
         response["Cache-Control"] = "private, no-store"
         return response
 
@@ -181,11 +192,7 @@ def free_courses(request, kind, pk):
     # the progress table has not been provisioned yet, the course tree must still
     # render (just with nothing ticked) rather than failing the whole page.
     try:
-        completed_refs = set(
-            LearnerFreeCourseProgress.objects
-            .filter(learner_id=source.pk)
-            .values_list("component_ref", flat=True)
-        )
+        completed_refs = completed_component_refs(progress_owner(source))
     except DatabaseError:
         completed_refs = set()
 
@@ -231,7 +238,7 @@ def free_courses(request, kind, pk):
             }
         result.append(course)
 
-    response = JsonResponse({"freeCourses": result})
+    response = JsonResponse({"freeCourses": [*builder_courses, *result]})
     response["Cache-Control"] = "private, no-store"
     return response
 
@@ -287,11 +294,9 @@ def complete_free_course_activity(request, kind, pk):
         return _error("Activity not found.", 404)
 
     try:
-        LearnerFreeCourseProgress.objects.get_or_create(
-            learner_id=source.pk,
-            component_ref=component_id,
-            defaults={"free_course_ref": free_course_ref, "completed_at": timezone.now()},
-        )
+        saved = save_completion(progress_owner(source), component_id, free_course_ref, timezone.now())
+        if not saved:
+            return _error("This progress record is archived or belongs to another course.", 409)
     except DatabaseError:
         return _error("Could not save your progress. Please try again.", 503)
 
@@ -390,11 +395,9 @@ def submit_free_course_quiz(request, kind, pk, component_id):
 
     if passed:
         try:
-            LearnerFreeCourseProgress.objects.get_or_create(
-                learner_id=source.pk,
-                component_ref=component_id,
-                defaults={"free_course_ref": free_course_ref, "completed_at": timezone.now()},
-            )
+            saved = save_completion(progress_owner(source), component_id, free_course_ref, timezone.now())
+            if not saved:
+                return _error("This progress record is archived or belongs to another course.", 409)
         except DatabaseError:
             return _error("Your quiz was graded but could not be saved. Please try again.", 503)
 

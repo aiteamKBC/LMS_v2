@@ -15,11 +15,16 @@ percentage and variance arithmetic remains unchanged.
 for compatible readers, but they do not drive the versioned target formula.
 Snapshots are persisted by ``curriculum_api.review_instances`` and are never
 recalculated on read, completion, or PDF rendering.
+
+The coach form additionally receives a frozen Required-activity metric, using
+the same badge and delivery deadlines as the learner's activity list. Its
+older main-activity fields remain for existing snapshot consumers.
 """
 from __future__ import annotations
 
 from datetime import date, datetime, timezone as datetime_timezone
 
+from . import training_plan_targets
 from .dashboard_metrics import coach_otjh_target_to_date
 from .aptem_schedule import parse_aptem_date
 from .review_live_inputs import read_live_inputs, nonnegative_number, UnavailableReviewProgress
@@ -27,6 +32,7 @@ from .training_plan_targets import (
     TARGET_STATUS_RESOLVED,
     calculate_training_plan_targets,
     as_of_date,
+    WeekScheduleResolution,
 )
 
 #: Existing strategy selector retained for backward compatibility. Formula
@@ -121,6 +127,21 @@ def _ksb_points(ksb):
                       expected_percent=100 if total else None)}
 
 
+def _required_progress(activities, calculated_at):
+    cutoff = as_of_date(calculated_at).isoformat()
+    planned = len(activities)
+    completed = sum(item['completed'] for item in activities)
+    unresolved = sum(item['dueDate'] is None for item in activities)
+    expected = None if unresolved else sum(item['dueDate'] <= cutoff for item in activities)
+    return {
+        'formulaVersion': 'scheduled_required_activities_v1',
+        'unresolvedActivities': unresolved,
+        **_metric(actual=completed, expected=expected, planned=planned,
+                  actual_percent=_percent(completed, planned),
+                  expected_percent=_percent(expected, planned)),
+    }
+
+
 def _planned_hours_strategy(source, learner_profile, *, learner_start_date, calculated_at):
     live = read_live_inputs(source, learner_profile, as_of=calculated_at)
     components = live['nativeComponents']
@@ -131,11 +152,14 @@ def _planned_hours_strategy(source, learner_profile, *, learner_start_date, calc
     detail = {'components': components, 'week': [
         {'moduleId': module_id, 'weekId': week_id} for module_id, week_id in week_pairs
     ]}
+    schedule = (training_plan_targets.resolve_training_plan_week_starts(detail, as_of=calculated_at)
+                if components else WeekScheduleResolution({}, []))
     targets = calculate_training_plan_targets(
         detail,
         progress=[],
         as_of=calculated_at,
         identity_resolver=_catalogue_identity,
+        week_schedule=schedule,
     )
     if targets['status'] != TARGET_STATUS_RESOLVED:
         raise UnresolvedTrainingPlanTarget(targets)
@@ -153,6 +177,26 @@ def _planned_hours_strategy(source, learner_profile, *, learner_start_date, calc
     if planned_components != targets['totalComponents'] + historical + retained or completed_components > planned_components:
         raise UnavailableReviewProgress('The learner\'s live activity population needs review.')
     expected_components = targets['targetComponents'] + historical + retained
+    main = live['mainActivities']
+    main_targets = calculate_training_plan_targets(
+        {'components': main['nativeComponents'], 'week': detail['week']},
+        progress=[], as_of=calculated_at, identity_resolver=_catalogue_identity,
+        week_schedule=schedule,
+    )
+    if main_targets['status'] != TARGET_STATUS_RESOLVED:
+        raise UnresolvedTrainingPlanTarget(main_targets)
+    previous_main = (_count(main['historicalComponents'], 'previous main activities')
+                     + _count(main['retainedComponents'], 'retained main activities'))
+    main_planned = main_targets['totalComponents'] + previous_main
+    main_expected = main_targets['targetComponents'] + previous_main
+    main_expected_percent = _percent(main_expected, main_planned)
+    main_completed = (
+        _count(main.get('completedNativeComponents', 0), 'completed current main activities')
+        + _count(main.get('completedHistoricalComponents', 0), 'completed previous main activities')
+        + _count(main.get('completedRetainedComponents', 0), 'completed retained main activities')
+    )
+    main_actual_percent = _percent(main_completed, main_planned)
+    main_variance, main_direction = _variance(main_actual_percent, main_expected_percent)
     targets = {**targets, 'targetComponents': expected_components,
                'totalComponents': planned_components, 'completedComponents': completed_components,
                'currentPlanComponents': targets['totalComponents'],
@@ -167,6 +211,18 @@ def _planned_hours_strategy(source, learner_profile, *, learner_start_date, calc
         targets.pop(key, None)
 
     return {
+        'requiredProgrammeProgress': _required_progress(live['requiredActivities'], calculated_at),
+        'coachProgrammeTarget': {
+            'formulaVersion': 'scheduled_main_activities_v1',
+            'expected': main_expected, 'planned': main_planned,
+            'expectedPercent': main_expected_percent,
+            'variancePercent': main_variance, 'varianceDirection': main_direction,
+        },
+        'coachProgrammeProgress': {
+            'actual': main_completed, 'expected': main_expected, 'planned': main_planned,
+            'actualPercent': main_actual_percent, 'expectedPercent': main_expected_percent,
+            'variancePercent': main_variance, 'varianceDirection': main_direction,
+        },
         'offTheJobHours': _metric(
             actual=actual_hours,
             expected=expected_hours,

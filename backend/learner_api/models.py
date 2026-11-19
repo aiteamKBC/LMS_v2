@@ -1071,17 +1071,11 @@ class LearnerTrainingPlanComponent(models.Model):
 
 
 class LearnerFreeCourse(models.Model):
-    """Free courses assigned to a learner — the Learner-schema read mirror.
+    """Assignments to native curriculum.free_courses, including Builder courses.
 
-    The enrolment-side source of truth is EnrolmentUser.free_courses
-    (Created_users."Free_courses" jsonb). This flat table mirrors it exactly the
-    way learner_training_plan_modules mirrors the module plan: FK to
-    LearnerProfile, kept in step by learning_plan.sync_learning_plan_mirror and
-    rebuilt at activation. Deliberately carries NO hours, KSBs or component tree
-    — a free course is a pure assignment. free_course_ref is the
-    curriculum.free_courses id (a plain reference, like module_ref), not a
-    cross-schema FK.
-    """
+    Synced from enrolment selections and the effective plan at activation/save.
+    Database migration 0026 enforces the cross-schema course relationship.
+    Assignment records do not themselves award hours."""
     learner = models.ForeignKey(LearnerProfile, on_delete=models.CASCADE, related_name="free_courses")
     position = models.PositiveIntegerField()
     free_course_ref = models.TextField(null=True, blank=True)
@@ -1094,20 +1088,17 @@ class LearnerFreeCourse(models.Model):
 
 
 class LearnerFreeCourseProgress(models.Model):
-    """A learner's completion of a single free-course activity.
+    """Native free-course progress, keyed by LearnerProfile.id.
 
-    Deliberately its OWN store, separate from Training_plan_progress and the KSB
-    snapshot: free-course completion is shown on the free-courses page and must
-    NEVER enter OTJH totals, the KSB snapshot or the programme's overall
-    progress. Keyed by the enrolment learner id (Created_users.id — the same id
-    the learner-facing endpoints resolve from the session for both learner
-    kinds) and the curriculum component id (FREECOMP-…), so it needs no
-    LearnerProfile row (commercial learners may not have one).
-    """
+    Migration 0026 translates legacy enrolment IDs before adding the learner,
+    course and component relationships. Attempts and actual hours remain in
+    learner_progress_entries; this index never awards hours independently.
+    Migration 0027 also retains incomplete and archived imported rows; use
+    free_course_progress helpers to read completions and preserve their state."""
     learner_id = models.BigIntegerField()
     component_ref = models.TextField()
     free_course_ref = models.TextField(null=True, blank=True)
-    completed_at = models.DateTimeField()
+    completed_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         managed = False

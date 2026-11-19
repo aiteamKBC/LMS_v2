@@ -27,6 +27,9 @@ ROOT = Path(__file__).parent
 spec = importlib.util.spec_from_file_location('personal_policy', ROOT / 'personal_learning_policy.py')
 policy = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(policy)
+feedback_spec = importlib.util.spec_from_file_location('review_feedback_format', ROOT.parent / 'coach_api' / 'feedback_format.py')
+feedback_format = importlib.util.module_from_spec(feedback_spec)
+feedback_spec.loader.exec_module(feedback_format)
 
 
 def functions(filename, namespace, names=None):
@@ -239,13 +242,27 @@ class PersonalLearningTests(unittest.TestCase):
         for call in self.cursor.execute.call_args_list:
             self.assertIn('personal_course_certificates', call.args[0])
 
-    def test_final_assessment_still_required_at_full_activity_progress(self):
+    def test_certificate_uses_progress_even_for_an_old_template_requiring_an_exam(self):
         self.detail['componentProgress'] = [{'componentId': 'C1', 'passed': True}]
         self.template['requireFinalTest'] = True
+        self.cursor.fetchone.side_effect = [None, (12,)]
+        result = self.ns['certificate'](self.context, self.account, self.detail, self.request, issue=True)
+        self.assertTrue(result['issued'])
+        self.assertEqual(result['certificate']['progressPercent'], 100)
+
+    def test_certificate_threshold_uses_completed_components_not_hours_or_rounded_percent(self):
+        component = self.detail['components'][0]
+        self.detail['components'] = [{**component, 'componentId': f'C{i}', 'expectedOtjh': 10} for i in range(200)]
+        self.detail['componentProgress'] = [{'componentId': f'C{i}', 'passed': True, 'hours': 100} for i in range(159)]
+        self.template['minimumProgress'] = 80
         self.cursor.fetchone.return_value = None
         with self.assertRaises(PermissionError):
             self.ns['certificate'](self.context, self.account, self.detail, self.request, issue=True)
-        self.assertTrue(all(call.args[0].startswith('SELECT') for call in self.cursor.execute.call_args_list))
+        self.detail['componentProgress'].append({'componentId': 'C159', 'passed': True, 'hours': 0.01})
+        self.cursor.fetchone.side_effect = [None, (12,)]
+        result = self.ns['certificate'](self.context, self.account, self.detail, self.request, issue=True)
+        self.assertTrue(result['issued'])
+        self.assertEqual(result['certificate']['progressPercent'], 80)
 
     def test_gateway_does_not_dispatch_booking_or_sync(self):
         activity = types.ModuleType('learner_api.personal_learning_activities')
@@ -388,7 +405,11 @@ class PersonalLearningTests(unittest.TestCase):
                 ns['reading_request'](self.request, self.context, self.detail, '1', {'attempt': '2'}, {})
 
     def review_namespace(self):
-        ns = {**self.ns, 'copy': copy, 'datetime': datetime}
+        # The AST loader deliberately omits imports. Use the real pure formatter
+        # imported by the production view, retaining sanitization in these tests.
+        ns = {**self.ns, 'copy': copy, 'datetime': datetime,
+              'sanitize_feedback': feedback_format.sanitize_feedback,
+              'feedback_plain_text': feedback_format.feedback_plain_text}
         functions('personal_learning_review.py', ns)
         return ns
 

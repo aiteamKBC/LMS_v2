@@ -102,8 +102,19 @@ class CataloguePerformanceTests(SimpleTestCase):
     def test_catalogue_ledger_skips_ksb_registry_and_wide_history_but_keeps_source_gates(self):
         with patch.object(canonical,'query',return_value=[]) as query,patch.object(canonical,'current_records',return_value=[]),patch.object(canonical,'_ksb_not_excluded',side_effect=AssertionError('Unused KSB lookup')):
             self.assertEqual(canonical.entries_for({'id':9},lineage_only=True,monthly_summary=True,catalogue_summary=True),[])
-        self.assertEqual(query.call_count,1)
-        sql,params=query.call_args.args
+        ledger_calls=[call for call in query.call_args_list if 'WITH canonical AS' in call.args[0]]
+        self.assertEqual(len(ledger_calls),1)
+        # Keep the ledger's one-read budget and check the added attendance reads separately.
+        for table, expected in (
+            ('learner_monthly_signatures', [9]),
+            ('learner_monthly_locks', [9, 9, 9]),
+            ('live_session_learner_attendance', [9]),
+        ):
+            calls=[call for call in query.call_args_list if table in call.args[0]]
+            self.assertEqual(len(calls),1)
+            self.assertEqual(calls[0].args[1],expected)
+        self.assertEqual(query.call_count,4)
+        sql,params=ledger_calls[0].args
         self.assertEqual(params,[9])
         self.assertNotIn('learner_progress_ksbs',sql)
         self.assertNotIn('to_jsonb(s)',sql);self.assertNotIn('to_jsonb(h)',sql)
@@ -132,8 +143,18 @@ class CataloguePerformanceTests(SimpleTestCase):
         self.assertEqual(resolved['quiz_modules']['M1']['programmeId'],'P')
         self.assertEqual(resolved['live_credit_components'],[])
         self.assertEqual(resolved['imported_courses'],{'current:M1':'legacy:50'})
+        self.assertEqual(resolved['free_course_module_ids'], [])
         self.assertNotIn('curriculumSlots',modules['M1'])
         self.assertTrue(all('curriculum.groups' not in call.args[0] for call in cur.execute.call_args_list))
+
+    def test_standalone_identity_survives_card_metadata_projection_until_conversion(self):
+        for source_type, expected in [('free_course', ['M1']), ('module_authoring', [])]:
+            cursor = MagicMock()
+            cursor.description = [(key,) for key in ('id', 'title', 'source_type')]
+            cursor.fetchall.side_effect = [[('M1', 'Skills', source_type)], []]
+            resolved = {}
+            learning.catalogue_module_rows(cursor, ['M1'], identity_metadata=resolved)
+            self.assertEqual(resolved['free_course_module_ids'], expected)
 
     def test_native_identity_read_reuses_raw_live_credit_keys_and_skips_empty_quiz_lookup(self):
         from . import learner_detail

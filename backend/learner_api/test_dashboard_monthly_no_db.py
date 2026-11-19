@@ -41,6 +41,16 @@ class MonthlyProjectionTests(SimpleTestCase):
                     attendance_hours=[{'accepted': True, 'reporting_month': '2026-10', 'actual_hours': 7.5}])
                 self.assertEqual(result['summary']['achievedHours'], '10 hrs' if version else 10)
 
+    def test_global_attendance_credit_is_not_added_again_by_the_display_supplement(self):
+        for version in ('', '&version=2'):
+            with self.subTest(version=version):
+                result, *_ = self.fixture('?month=2026-10' + version,
+                    records=[{'id': 'attendance:O1', 'accepted': True, 'attendance_occurrence_id': 'O1',
+                              'reporting_month': '2026-10', 'actual_seconds': 9000}],
+                    attendance_hours=[{'source_ref': 'attendance:O1', 'accepted': True,
+                                       'reporting_month': '2026-10', 'actual_hours': 2.5}])
+                self.assertEqual(result['summary']['achievedHours'], '2.5 hrs' if version else 2.5)
+
     def test_exact_payload_and_selected_month_queries_without_week(self):
         result, entries, schedule, rows, attendance, week = self.fixture('?month=2026-10', records=[
             {'reporting_month': '2026-10', 'actual_seconds': 3600, 'accepted': True},
@@ -161,7 +171,8 @@ class MonthlyProjectionTests(SimpleTestCase):
 
     def test_navigation_sql_aggregates_without_returning_sessions(self):
         cursor = MagicMock()
-        with patch.object(monthly.schedule, 'rows', return_value=[]):
+        with patch.object(monthly.schedule, 'rows', return_value=[]), \
+             patch.object(monthly.schedule, 'connections', {'enrolment': SimpleNamespace(vendor='sqlite')}):
             monthly.schedule._plan_session_rows(cursor, 'synthetic@example.invalid', ['M1'], navigation_only=True, rail_only=True)
         sql, params = cursor.execute.call_args.args
         self.assertIn('min(coalesce(scheduled_start,start_datetime)) AS first_start', sql)

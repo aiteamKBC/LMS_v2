@@ -40,6 +40,7 @@ from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 
 from audit_api.last_audit_ledger_views import _connection as _audit_connection
+from curriculum_api.learning_storage import read_sql
 from login.permissions import learner_self_or_staff, staff_only
 
 from .constants import DELIVERY_PROGRAMME_STATUS
@@ -47,6 +48,7 @@ from .learner_progression import advance_learner
 from .mappers import _normalize_free_courses, _s, get_training_plan, stored_training_plan, training_plan_field
 from .models import EnrolmentUser
 from .placement_links import placement_ids
+from .planned_learning import learner_type, planned_modules
 from .projection_performance import projection_call, projection_operation
 
 logger = logging.getLogger(__name__)
@@ -61,7 +63,7 @@ def _rows(sql, params):
     # owned by curriculum_api and migrated on `default`. Not an oversight — see
     # the note in apprenticeship_agreement._group_dates.
     with projection_operation('assignment_query'), connection.cursor() as cursor:
-        cursor.execute(sql, params)
+        cursor.execute(read_sql(sql), params)
         columns = [c[0] for c in cursor.description]
         return [dict(zip(columns, row)) for row in cursor.fetchall()]
 
@@ -121,13 +123,14 @@ def _module_payload(row):
         "startDate": _iso_day(row.get("start_date")),
         "endDate": _iso_day(row.get("end_date")),
         "learnerRosterMode": _s(row.get("learner_roster_mode")) or "inherited",
+        "isFreeCourse": _s(row.get("source_type")) == 'free_course',
     }
 
 
 #: Modules of a deleted programme, and soft-deleted modules, are not offerable.
 _LIVE_MODULE_SQL = """
     SELECT module_catalogue_id, title, group_name, programme_id, programme_name,
-           total_otjh, start_date, end_date, learner_roster_mode
+           total_otjh, start_date, end_date, learner_roster_mode, source_type
     FROM curriculum.modules
     WHERE deleted_at IS NULL AND NOT is_programme_deleted
 """
@@ -475,6 +478,7 @@ def _orphan_module(entry):
         "startDate": _iso_day(entry.get("startDate")),
         "endDate": _iso_day(entry.get("endDate")),
         "orphaned": True,
+        "isFreeCourse": entry.get('isFreeCourse') is True,
     }
 
 
@@ -576,18 +580,25 @@ def _meetings(learner):
     return [], "not-eligible" if has_otjh_template else "no-otjh-reviews"
 
 
-def _totals(modules, meetings=None):
+def _totals(modules, meetings=None, *, kind='commercial'):
     """Plan totals. Module hours and meeting hours are reported separately as
     well as combined, so the modal can show each table its own subtotal and
     still print one figure for the whole commitment."""
-    module_hours = round(sum(float(m.get("hours") or 0) for m in modules), 2)
+    core_modules = [module for module in modules if not module.get('isFreeCourse')]
+    free_courses = [module for module in modules if module.get('isFreeCourse')]
+    module_hours = round(sum(float(m.get("hours") or 0) for m in core_modules), 2)
+    free_hours = round(sum(float(m.get('hours') or 0) for m in free_courses), 2)
+    planned_free_hours = round(sum(float(m.get('hours') or 0) for m in planned_modules(free_courses, kind)), 2)
     meeting_hours = round(sum(float(m.get("hours") or 0) for m in (meetings or [])), 2)
     return {
-        "moduleCount": len(modules),
+        "moduleCount": len(core_modules),
         "moduleHours": module_hours,
+        "freeCourseCount": len(free_courses),
+        "freeCourseHours": free_hours,
+        "plannedFreeCourseHours": planned_free_hours,
         "meetingCount": len(meetings or []),
         "meetingHours": meeting_hours,
-        "totalHours": round(module_hours + meeting_hours, 2),
+        "totalHours": round(module_hours + planned_free_hours + meeting_hours, 2),
     }
 
 
@@ -681,7 +692,7 @@ def sync_learning_plan_mirror(source, *, strict=False):
             # Free courses ride the same mirror: the enrolment source holds them
             # on Created_users."Free_courses", and the coach/learner side reads
             # the relational learner_free_courses table (no hours/KSBs).
-            replace_free_courses(profile, getattr(source, "free_courses", None) or [])
+            replace_free_courses(profile, getattr(source, "free_courses", None) or [], plan=plan)
         EnrolmentUser.all_learners.filter(pk=source.pk).update(
             modules=modules_csv,
             weeks=weeks_csv,
@@ -699,6 +710,7 @@ def sync_learning_plan_mirror(source, *, strict=False):
 
 
 def _serialize(learner):
+    from .free_course_catalogue import builder_free_courses
     programme = _s(learner.programme)
     group = _s(learner.group)
 
@@ -799,6 +811,7 @@ def _serialize(learner):
             "cohort": _s(learner.cohort),
             "group": group,
             "programmeStatus": _s(learner.programme_status),
+            "learnerType": learner_type(learner),
         },
         "plan": plan,
         # Free courses assigned to this learner. A pure list of assignment
@@ -806,6 +819,8 @@ def _serialize(learner):
         # deliberately outside `plan`/`preset`/`totals` so they never touch hours
         # or KSBs — see EnrolmentUser.free_courses.
         "freeCourses": learner.free_courses if isinstance(learner.free_courses, list) else [],
+        # Assignment remains in `plan`; apprenticeship targets exclude these hours.
+        "standaloneCourses": builder_free_courses(include_content=False),
         "preset": preset,
         # Anything in the catalogue not already on the plan, whichever programme
         # it belongs to. The picker defaults to the learner's own programme and
@@ -821,7 +836,7 @@ def _serialize(learner):
         "meetings": meetings,
         # Why `meetings` is empty, so the table can say so rather than vanish.
         "meetingsReason": meetings_reason,
-        "totals": _totals(plan, meetings),
+        "totals": _totals(plan, meetings, kind=learner_type(learner)),
     }
 
 

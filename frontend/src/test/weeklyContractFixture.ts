@@ -43,6 +43,7 @@ export function weeklyContractFixture(value: unknown): WeeklyLearningResponse {
       date: week.startDate, startTime: new Date(session.start).toLocaleTimeString('en-GB', { timeZone: 'Europe/London', hour: '2-digit', minute: '2-digit' }),
       durationMinutes: session.minutes, endTime: null, attendance: week.attendance, sessionState: week.sessionState } : null,
     activities: components.map(component => ({ id: component.componentId!, title: component.title, type: component.type ?? 'activity',
+      liveSessionAccess: component.liveSessionAccess,
       status: activityStatus(component, done), isQuiz: !!component.isQuiz,
       expectedHours: activityExpectedMinutes(component) == null ? null : activityExpectedMinutes(component)! / 60,
       actualHours: weekOtjhHours([component], detail.schedule?.moduleActivityHours?.[week.moduleId], detail.components).actualHours,

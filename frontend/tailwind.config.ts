@@ -27,6 +27,17 @@ export default {
     ],
     theme: {
       extend: {
+        // Keep legacy size utilities and their responsive/directional variants
+        // on the shared radius. `none` and `full` retain their geometry.
+        borderRadius: {
+          sm: 'var(--lms-radius, 16px)',
+          DEFAULT: 'var(--lms-radius, 16px)',
+          md: 'var(--lms-radius, 16px)',
+          lg: 'var(--lms-radius, 16px)',
+          xl: 'var(--lms-radius, 16px)',
+          '2xl': 'var(--lms-radius, 16px)',
+          '3xl': 'var(--lms-radius, 16px)',
+        },
         colors: {
           ...learnerUtilityColors,
           background: {

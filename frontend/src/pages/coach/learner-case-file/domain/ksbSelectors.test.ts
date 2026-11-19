@@ -33,7 +33,9 @@ describe('KSB selectors', () => {
 
   it('keeps evidenced and total counts and unavailable percentages unchanged', () => {
     const rows = selectCaseFileKsbRows(
-      caseFile({ touchedKsbCodes: ['S2.1'], mappedKsbCodes: ['S2', 'K1'] }),
+      caseFile({ touchedKsbCodes: ['S2.1'], mappedKsbCodes: ['S2', 'K1'], snapshot: {
+        ksbCompletedDetails: [{ code: 'S2', sources: [{ id: 'skill-evidence', title: 'Observed skill', kind: 'live_session' }] }],
+      } as CoachLearnerCaseFileData['snapshot'] }),
       [
         { code: 'S2', description: 'Skill', type: 'Skill', number: '2' },
         { code: 'K1', description: 'Knowledge', type: 'Knowledge', number: '1' },
@@ -90,7 +92,7 @@ describe('KSB selectors', () => {
 
     expect(rows[0].evidenceCount).toBe(1);
     expect(rows[0].evidenceActivities[0]).toMatchObject({ title: 'Resilience in practice', type: 'Video' });
-    expect(rows[0].evidenceActivities[0].componentId).toBeUndefined();
+    expect(rows[0].evidenceActivities[0].componentId).toBe('VIDEO-1');
   });
 
   it('shows the saved title of a historical video outside the current component list', () => {

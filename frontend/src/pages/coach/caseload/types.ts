@@ -45,6 +45,12 @@ export type SortDirection = 'asc' | 'desc';
 /** Tabs inside the quick-view drawer. */
 export type QuickViewTab = 'overview' | 'attendance' | 'otjh' | 'ksbs';
 
+export interface ActivityPlanProgress {
+  completed: number;
+  total: number;
+  percent: number | null;
+}
+
 export interface Learner {
   id: string;
   name: string;
@@ -78,6 +84,11 @@ export interface Learner {
   attendanceAvailable?: boolean;
   activityProgress?: number | null;
   activityProgressAvailable?: boolean;
+  /** Distinct plan activities; componentsCompleted remains the recorded count. */
+  activityPlan?: ActivityPlanProgress;
+  activityPlanState?: 'ready' | 'updating' | 'pending' | 'unavailable';
+  activityPlanCalculatedAt?: string | null;
+  completedRecords?: number;
   componentsCompleted?: number | null;
   componentsPlanned?: number | null;
 

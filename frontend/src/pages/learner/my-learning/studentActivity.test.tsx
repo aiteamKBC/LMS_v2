@@ -384,13 +384,13 @@ describe('subjects shared with Module Builder', () => {
   });
 
 
-  it('opens a native module directly in its activity player without month or week clicks', async () => {
+  it('opens a native module directly in its activity player without an intermediate activity list', async () => {
     vi.spyOn(api, 'subjectRequest').mockResolvedValue({ covers: {} });
     const real = { modules: ['Native module'], components: [
       { componentId: 'COMP-1', moduleId: 'MOD-1', module: 'Native module', week: 'Week 1',
         component: 'Native reading', type: 'reading', contentHtml: '<p>Read this lesson.</p>' },
     ] } as LearnerDetail;
-    function Location() { return <output data-testid="path">{useLocation().pathname}</output>; }
+    function Location() { const location = useLocation(); return <output data-testid="path">{location.pathname}{location.search}</output>; }
     render(<><Location /><StudentActivityPanel real={real} data={null} kind="commercial" learnerId="132" loading={false} error={null} onRetry={vi.fn()} /></>);
     fireEvent.click(await screen.findByRole('button', { name: /Native module/ }));
     expect(screen.getByTestId('path')).toHaveTextContent('/learner/component/commercial/132/COMP-1');
@@ -467,7 +467,7 @@ describe('subjects shared with Module Builder', () => {
     vi.spyOn(api, 'subjectRequest').mockImplementation(() => new Promise(resolve => { finish = resolve; }));
     render(<StudentActivityPanel data={source === 'legacy' ? data : null} real={source === 'native' ? linkedReal : null}
       kind="commercial" learnerId="132" loading={false} error={null} onRetry={vi.fn()} />);
-    expect(screen.getByRole('status')).toHaveTextContent('Loading subjects');
+    expect(screen.getByRole('status')).toHaveAccessibleName(expect.stringContaining('Loading subjects'));
     expect(screen.queryByRole('button', { name: /New LMS.*Leadership/ })).not.toBeInTheDocument();
     await act(async () => finish(linkedMetadata));
     expect(screen.getByRole('region', { name: 'Your subjects' })).toBeInTheDocument();
@@ -489,7 +489,7 @@ describe('subjects shared with Module Builder', () => {
     const { rerender } = render(<StudentActivityPanel {...props} learnerId="132" loading={false} />);
     await screen.findByRole('button', { name: /New LMS.*Leadership/ });
     rerender(<StudentActivityPanel {...props} learnerId="133" loading />);
-    expect(screen.getByRole('status')).toHaveTextContent('Loading subjects');
+    expect(screen.getByRole('status')).toHaveAccessibleName(expect.stringContaining('Loading subjects'));
     expect(screen.queryByText('Anna Rundell')).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /New LMS.*Leadership/ })).not.toBeInTheDocument();
   });
@@ -582,7 +582,7 @@ describe('subjects shared with Module Builder', () => {
     let resolve!: (value: typeof linkedMetadata) => void;
     const request = vi.spyOn(api, 'subjectRequest').mockImplementation(() => new Promise((done) => { resolve = done; }));
     render(<StudentActivityPanel data={data} real={linkedReal} kind="commercial" learnerId="132" loading={false} error={null} onRetry={vi.fn()} />);
-    expect(screen.getByRole('status')).toHaveTextContent('Loading subjects');
+    expect(screen.getByRole('status')).toHaveAccessibleName(expect.stringContaining('Loading subjects'));
     expect(screen.queryByRole('button', { name: /New LMS.*Leadership/ })).not.toBeInTheDocument();
     await act(async () => resolve({ ...linkedMetadata, builder_subjects: { 'legacy:1': { id: 'MOD-1', title: 'Renamed Leadership' } } }));
     expect(screen.getAllByRole('button', { name: /Renamed Leadership/ })).toHaveLength(1);
@@ -950,7 +950,9 @@ describe('subject months, weeks and completion', () => {
     expect(screen.queryByRole('button', { name: 'Finish' })).not.toBeInTheDocument();
     expect(requests.mock.calls.filter(([, options]) => options?.method === 'POST')).toHaveLength(2);
     fireEvent.click(screen.getByRole('button', { name: 'All subjects' }));
-    expect(screen.getByText('2 of 3 completed')).toBeInTheDocument();
+    expect(screen.getByRole('region', { name: 'Previous learning progress' })).toHaveTextContent('2 of 3 previous activities completed');
+    expect(screen.queryByText('2 of 3 completed')).not.toBeInTheDocument();
+    expect(screen.getByRole('progressbar', { name: 'Leadership KSBs achieved' })).not.toHaveAttribute('aria-valuenow');
   });
 
   it('keeps progress unchanged on a failed submit and retries the same attempt', async () => {

@@ -45,7 +45,14 @@ def quality_form(request):
 @guarded
 def quality_forms(request):
     if request.method=='GET':
-        return _response({'forms':store.form_catalog(editing=request.GET.get('editing')=='1')})
+        catalog = store.form_catalog(
+            editing=request.GET.get('editing')=='1',
+            include_definitions=request.GET.get('includeDefinitions')=='1',
+        )
+        if request.GET.get('includeDefinitions')=='1':
+            forms, templates = catalog
+            return _response({'forms': forms, 'templates': templates})
+        return _response({'forms':catalog})
     if len(request.body)>1000:
         raise InvalidReview('The form title is too long.')
     try: value=json.loads(request.body)

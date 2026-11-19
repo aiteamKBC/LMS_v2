@@ -572,9 +572,11 @@ describe('Learner Case File design', () => {
     expect(codes()).toEqual(['B1', 'K1', 'K2', 'S1']);
     fireEvent.click(screen.getByRole('button', { name: 'Behaviours (2)' }));
     expect(codes()).toEqual(['B1']);
-    fireEvent.change(screen.getByRole('textbox', { name: 'Search KSBs' }), { target: { value: 'Pending behaviour activity' } });
+    fireEvent.change(screen.getByRole('textbox', { name: 'Search KSBs' }), { target: { value: 'B1' } });
     expect(codes()).toEqual(['B1']);
-    expect(within(screen.getByRole('table')).getByText('1 completed components')).toBeInTheDocument();
+    const selectedRow = within(screen.getByRole('table')).getAllByRole('row')[1];
+    expect(within(selectedRow).getAllByRole('cell')[1]).toHaveTextContent('1');
+    expect(within(selectedRow).getAllByRole('cell')[2]).toHaveTextContent('2');
     fireEvent.click(within(screen.getByRole('table')).getByRole('button', { name: 'View' }));
     const dialog = screen.getByRole('dialog');
     expect(within(dialog).getByText('Completed behaviour activity')).toBeInTheDocument();
@@ -748,7 +750,7 @@ describe('Learner Case File design', () => {
     expect(within(dialog).queryByText(/evidence item linked/i)).not.toBeInTheDocument();
   });
 
-  it('opens evidence details directly with all grouped activities even when searching for one activity', async () => {
+  it('opens all grouped evidence after searching by KSB description or code', async () => {
     mocks.data = { ...caseFileData, ksbActivityPoints: [
       activityPoint('K1', 'assignment-1', true, 'Assignment 1'),
       activityPoint('K1', 'assignment-2', false, 'Assignment 2'),
@@ -768,7 +770,7 @@ describe('Learner Case File design', () => {
     expect(screen.queryByRole('button', { name: /Expand|Collapse/ })).not.toBeInTheDocument();
     fireEvent.change(screen.getByLabelText('Search KSBs'), { target: { value: 'Understand the organisation' } });
     expect(within(table).getAllByRole('row')).toHaveLength(2);
-    fireEvent.change(screen.getByLabelText('Search KSBs'), { target: { value: 'Assignment 2' } });
+    fireEvent.change(screen.getByLabelText('Search KSBs'), { target: { value: 'K1' } });
     expect(within(table).getAllByRole('row')).toHaveLength(2);
     expect(within(table).queryByText('Assignment 2')).not.toBeInTheDocument();
     fireEvent.click(within(table).getByRole('button', { name: 'View' }));
@@ -946,7 +948,7 @@ describe('Learner Case File design', () => {
     fireEvent.click(within(table).getAllByRole('button', { name: 'View' })[0]);
     expect(within(screen.getByRole('dialog')).getByText('Activity 10')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Close evidence' }));
-    fireEvent.change(screen.getByLabelText('Search KSBs'), { target: { value: 'Activity 31' } });
+    fireEvent.change(screen.getByLabelText('Search KSBs'), { target: { value: 'B1' } });
     expect(within(table).getAllByRole('row')).toHaveLength(2);
     expect(within(table).getByText('B1', { selector: 'span' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Next page' })).toBeDisabled();

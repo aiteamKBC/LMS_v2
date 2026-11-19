@@ -82,7 +82,8 @@ describe('All documents', () => {
     renderPage();
 
     expect(screen.getByRole('status', { name: 'Loading documents' })).toBeVisible();
-    expect(screen.getByTestId('documents-loading-spinner')).toHaveClass('animate-spin');
+    expect(screen.getByRole('status', { name: 'Loading documents' })).toHaveAttribute('aria-busy', 'true');
+    expect(screen.getByRole('status', { name: 'Loading documents' }).querySelector('.animate-spin')).toBeNull();
   });
 
   it('uses the employer workspace menu and the learner look', async () => {
@@ -91,7 +92,8 @@ describe('All documents', () => {
     expect(within(sidebar).getAllByRole('link').map(link => [link.textContent, link.getAttribute('href')])).toEqual([
       ['Home', '/employers/9'],
       ['My learners', '/employers/9/learners'],
-      ['Progress reviews', '/employers/9/reviews'],
+      ['Progress & Gateway reviews', '/employers/9/reviews'],
+      ['Feedback', '/employers/9/feedback'],
       ['Documents', '/employers/9/documents'],
     ]);
     expect(screen.getByTestId('workspace')).toHaveAttribute('data-appearance', 'learner');

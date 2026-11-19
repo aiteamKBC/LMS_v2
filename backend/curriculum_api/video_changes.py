@@ -24,7 +24,10 @@ def _enqueue_change(change):
         # Deleted/retyped/replaced while the worker was offline. A newer source
         # has its own event; never restore the earlier source or upload it now.
         return
-    if not (scope.get('programme_id') or scope.get('programme_name')):
+    if scope.get('free_course_module_id'):
+        if not str(scope.get('free_course_name') or '').strip():
+            raise VideoImportError('Save a name for this free course before automatic storage. The worker will retry.')
+    elif not (scope.get('programme_id') or scope.get('programme_name')):
         # External importers may create the component and assign its programme
         # in separate transactions. Retain detection until routing is possible.
         raise VideoImportError('Assign a programme to this video before automatic storage. The worker will retry.')

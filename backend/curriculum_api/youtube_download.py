@@ -118,7 +118,7 @@ def _stop_process(process):
     process.wait(timeout=15)
 
 
-def _run_download(url, directory, max_bytes, *, check_only=False):
+def _run_download(url, directory, *, check_only=False):
     if not all(importlib.util.find_spec(name) for name in ('yt_dlp', 'imageio_ffmpeg')):
         raise VideoImportError('YouTube import dependencies are missing. Install the backend requirements.')
     node = shutil.which('node')
@@ -131,7 +131,7 @@ def _run_download(url, directory, max_bytes, *, check_only=False):
         'SSL_CERT_FILE', 'SSL_CERT_DIR', 'REQUESTS_CA_BUNDLE',
     }}
     command = [sys.executable, '-m', 'curriculum_api.youtube_download',
-               url, str(directory), str(max_bytes), node]
+               url, str(directory), node]
     if cookie_file or check_only:
         command.append(str(cookie_file) if cookie_file else '')
     if check_only:
@@ -166,17 +166,17 @@ def _run_download(url, directory, max_bytes, *, check_only=False):
 
 
 @contextmanager
-def download_youtube(url, max_bytes):
+def download_youtube(url):
     with tempfile.TemporaryDirectory(prefix='lms-youtube-') as temporary:
         directory = Path(temporary)
-        media = _run_download(url, directory, max_bytes)
-        if not 0 < media.stat().st_size <= max_bytes:
-            raise VideoImportError('The source video exceeds the 300 MB upload limit or is empty.')
+        media = _run_download(url, directory)
+        if media.stat().st_size == 0:
+            raise VideoImportError('The source video is empty.')
         with media.open('rb') as stream:
             yield stream
 
 
-def _worker(url, directory, max_bytes, node, cookie_file=None, *, check_only=False):
+def _worker(url, directory, node, cookie_file=None, *, check_only=False):
     import imageio_ffmpeg
     import yt_dlp
     from .video_sources import youtube_url
@@ -191,11 +191,6 @@ def _worker(url, directory, max_bytes, node, cookie_file=None, *, check_only=Fal
     def guard(_):
         if time.monotonic() > deadline:
             raise VideoImportError('YouTube download timed out. Retry or upload the MP4.')
-        # Before merging, separate audio/video and partial downloads share the
-        # same limit. Merging itself may briefly need another copy on disk.
-        size = sum(p.stat().st_size for p in directory.glob('video.*') if p.is_file())
-        if size > max_bytes:
-            raise VideoImportError('The source video exceeds the 300 MB upload limit.')
 
     def allow_video(info, *, incomplete=False):
         if info.get('is_live') or info.get('live_status') in ('is_live', 'is_upcoming'):
@@ -207,7 +202,7 @@ def _worker(url, directory, max_bytes, node, cookie_file=None, *, check_only=Fal
         'merge_output_format': 'mp4', 'outtmpl': str(directory / 'video.%(ext)s'),
         'noplaylist': True, 'cachedir': False, 'quiet': True, 'no_warnings': True,
         'logger': QuietLog(), 'socket_timeout': 30, 'retries': 2, 'fragment_retries': 2,
-        'extractor_retries': 2, 'skip_unavailable_fragments': False, 'max_filesize': max_bytes,
+        'extractor_retries': 2, 'skip_unavailable_fragments': False,
         'progress_hooks': [guard], 'match_filter': allow_video,
         'js_runtimes': {'node': {'path': node}}, 'remote_components': [],
         'ffmpeg_location': imageio_ffmpeg.get_ffmpeg_exe(),
@@ -229,7 +224,7 @@ def _worker(url, directory, max_bytes, node, cookie_file=None, *, check_only=Fal
         else:
             files = [p for p in directory.glob('video.*') if p.suffix in ('.mp4', '.webm', '.mkv')]
             if len(files) != 1:
-                raise VideoImportError('YouTube did not return a complete video within the 300 MB limit.')
+                raise VideoImportError('YouTube did not return a complete video file.')
             result = {'file': files[0].name}
     except VideoImportError as exc:
         result = {'error': str(exc)}
@@ -246,8 +241,6 @@ def _worker(url, directory, max_bytes, node, cookie_file=None, *, check_only=Fal
             error = 'This YouTube video requires sign-in. Ask an administrator to check the YouTube session and video access.'
         elif any(word in message for word in ('private video', 'unavailable', 'removed', 'members-only')):
             error = 'This YouTube video is unavailable or requires access. Upload its MP4 instead.'
-        elif 'too large' in message or 'max-filesize' in message:
-            error = 'The source video exceeds the 300 MB upload limit.'
         else:
             error = 'YouTube could not provide the video. Retry later or upload its MP4.'
         result = {'error': error}
@@ -259,21 +252,21 @@ def main(args=None):
     if len(args) == 2 and args[0] == '--check':
         # Standalone: never load Django/.env, connect to a database or wake a
         # worker. Use the session already injected into this process environment.
-        from .video_sources import MAX_VIDEO_BYTES, youtube_url
+        from .video_sources import youtube_url
         try:
             canonical = youtube_url(args[1])
             if not canonical:
                 raise VideoImportError('Use a YouTube video link.')
             with tempfile.TemporaryDirectory(prefix='lms-youtube-check-') as temporary:
-                _run_download(canonical, Path(temporary), MAX_VIDEO_BYTES, check_only=True)
+                _run_download(canonical, Path(temporary), check_only=True)
         except VideoImportError as exc:
             print(str(exc))
             return 1
         print('YouTube metadata accessible. No video downloaded or uploaded; media transfer is not verified by this check.')
         return 0
-    if len(args) in (4, 5) or (len(args) == 6 and args[5] == '--check'):
-        _worker(args[0], Path(args[1]), int(args[2]), args[3],
-                args[4] if len(args) > 4 else None, check_only=len(args) == 6)
+    if len(args) in (3, 4) or (len(args) == 5 and args[4] == '--check'):
+        _worker(args[0], Path(args[1]), args[2],
+                args[3] if len(args) > 3 else None, check_only=len(args) == 5)
         return 0
     print('Usage: python -m curriculum_api.youtube_download --check YOUTUBE_URL')
     return 0 if args in (['--help'], ['-h']) else 2

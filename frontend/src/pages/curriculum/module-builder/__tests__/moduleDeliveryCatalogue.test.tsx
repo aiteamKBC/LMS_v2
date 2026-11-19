@@ -1,14 +1,15 @@
-import { act, render, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { createMemoryRouter, MemoryRouter, RouterProvider, useLocation } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ReactNode } from 'react';
 import type { CurriculumCohort, CurriculumGroup, CurriculumModule, CurriculumProgramme } from '@/lib/curriculumApi';
-import { fetchCurriculumDeliveryScope, fetchCurriculumOverview } from '@/lib/curriculumApi';
+import { fetchCurriculumDeliveryScope, fetchCurriculumOverview, fetchCurriculumTeamsMeetingSummaries } from '@/lib/curriculumApi';
 import { fetchAssignedLearners } from '@/api/assignedLearners';
 import { fetchModuleCatalogueActivity } from '@/api/moduleCatalogueActivity';
 import { clearAllCachedResources } from '@/api/cachedRequest';
 import Swal from 'sweetalert2';
+import catalogueStyles from '../ModuleCatalogue.module.css';
 vi.mock('@/api/moduleCatalogueActivity', () => ({ fetchModuleCatalogueActivity: vi.fn() }));
 vi.mock('@/api/assignedLearners', () => ({
   fetchLearnerStatusCounts: vi.fn(async (_scope: string, ids: string[]) => Object.fromEntries(ids.map(id => {
@@ -328,6 +329,85 @@ describe('Module Builder delivery catalogue', { timeout: 15000 }, () => {
     expect(screen.getByText('Data Foundations')).toBeInTheDocument();
   });
 
+  it('reveals and collapses a long description without changing its text or another module', async () => {
+    const description = 'Synthetic module description. '.repeat(35);
+    modules = modules.map(module => module.id === 'MOD-1' ? { ...module, notes: description } : module);
+    await renderCatalogue();
+    const card = cardFor('Data Foundations');
+    const toggle = card.getByRole('button', { name: 'Show full description' });
+    expect(toggle).toHaveAttribute('aria-expanded', 'false');
+    const fullText = document.getElementById(toggle.getAttribute('aria-controls')!);
+    expect(fullText?.textContent).toBe(description.trim());
+    await userEvent.click(toggle);
+    expect(card.getByRole('button', { name: 'Show less' })).toHaveAttribute('aria-expanded', 'true');
+    expect(cardFor('Network Basics').queryByRole('button', { name: 'Show less' })).not.toBeInTheDocument();
+    await userEvent.click(card.getByRole('button', { name: 'Show less' }));
+    expect(card.getByRole('button', { name: 'Show full description' })).toHaveAttribute('aria-expanded', 'false');
+    expect(fullText?.textContent).toBe(description.trim());
+  });
+
+  it('keeps the full-description control available even when the preview text fits', async () => {
+    modules = modules.map(module => module.id === 'MOD-1' ? { ...module, notes: 'Short synthetic description.' } : module);
+    await renderCatalogue();
+    expect(cardFor('Data Foundations').getByRole('button', { name: 'Show full description' })).toHaveAttribute('aria-expanded', 'false');
+    expect(cardFor('Network Basics').queryByRole('button', { name: 'Show full description' })).not.toBeInTheDocument();
+  });
+
+  it('shows the saved cover and opens the existing editor for the matching module image', async () => {
+    modules = modules.map(module => module.id === 'MOD-1' ? { ...module, coverImage: '/synthetic-module-cover.png' } : module);
+    await renderCatalogue();
+    expect(cardFor('Data Foundations').getByRole('img', { name: 'Cover for Data Foundations' })).toHaveAttribute('src', '/synthetic-module-cover.png');
+    expect(cardFor('Data Foundations').getByRole('img').closest('header')).toContainElement(cardFor('Data Foundations').getByRole('heading', { level: 3 }));
+    expect(cardFor('Network Basics').queryByRole('img')).not.toBeInTheDocument();
+    expect(cardFor('Network Basics').getByRole('button', { name: 'Upload image' })).toBeInTheDocument();
+    await userEvent.click(cardFor('Data Foundations').getByRole('button', { name: 'Change image' }));
+    expect(screen.getByTestId('module-form-defaults')).toHaveAttribute('data-editing-id', 'MOD-1');
+    expect(vi.mocked(fetch).mock.calls.every(([, init]) => !init?.method || init.method === 'GET')).toBe(true);
+  });
+
+  it('replaces a failed cover locally and recovers when that module gets a new image URL', async () => {
+    modules = modules.map(module => ({ ...module, coverImage: module.id === 'MOD-1' ? '/missing-cover.png' : '/other-cover.png' }));
+    const view = await renderCatalogue();
+    await cardFor('Data Foundations').findByRole('button', { name: 'Data Foundations: 3 learners' });
+    const reads = vi.mocked(fetch).mock.calls.length;
+    fireEvent.error(cardFor('Data Foundations').getByRole('img', { name: 'Cover for Data Foundations' }));
+    expect(cardFor('Data Foundations').getByRole('img', { name: 'Cover unavailable for Data Foundations' })).toHaveTextContent('Image unavailable');
+    expect(cardFor('Data Foundations').queryByRole('img', { name: 'Cover for Data Foundations' })).not.toBeInTheDocument();
+    expect(cardFor('Network Basics').getByRole('img', { name: 'Cover for Network Basics' })).toHaveAttribute('src', '/other-cover.png');
+    expect(cardFor('Data Foundations').getByRole('button', { name: 'Change image' })).toBeEnabled();
+    expect(vi.mocked(fetch).mock.calls).toHaveLength(reads);
+
+    modules = modules.map(module => module.id === 'MOD-1' ? { ...module, coverImage: '/replacement-cover.png' } : module);
+    const { default: ModuleBuilder } = await import('../page');
+    view.rerender(<MemoryRouter initialEntries={['/curriculum/module-builder']}><ModuleBuilder /></MemoryRouter>);
+    expect(cardFor('Data Foundations').getByRole('img', { name: 'Cover for Data Foundations' })).toHaveAttribute('src', '/replacement-cover.png');
+    expect(cardFor('Data Foundations').queryByRole('img', { name: 'Cover unavailable for Data Foundations' })).not.toBeInTheDocument();
+    await userEvent.click(cardFor('Data Foundations').getByRole('button', { name: 'Change image' }));
+    expect(screen.getByTestId('module-form-defaults')).toHaveAttribute('data-editing-id', 'MOD-1');
+  });
+
+  it('retains all delivery scopes and dates when one catalogue module runs in multiple groups', async () => {
+    modules = [...modules, { ...modules[0], id: 'MOD-1-SECOND', cohortId: 'COHORT-SECOND', cohort: 'Second cohort', groupId: 'GROUP-SECOND', group: 'Second group', startDate: '2027-02-01', endDate: '2027-03-08' }];
+    await renderCatalogue();
+    expect(screen.getAllByRole('heading', { name: 'Data Foundations', level: 3 })).toHaveLength(1);
+    expect(deliveryRowFor('Data Foundations', 'Sept 2026 / Group A').getByText('02 Sept 2026 – 07 Oct 2026')).toBeInTheDocument();
+    expect(deliveryRowFor('Data Foundations', 'Second cohort / Second group').getByText('01 Feb 2027 – 08 Mar 2027')).toBeInTheDocument();
+  });
+
+  it('keeps upcoming meeting totals on the correct module in the status badge', async () => {
+    vi.mocked(fetchCurriculumTeamsMeetingSummaries).mockResolvedValueOnce([{
+      moduleCatalogueId: 'MOD-1', liveSessionId: 'SYNTHETIC-SERIES', status: 'scheduled',
+      joinUrl: '', webLink: '', organizerEmail: 'organizer@example.com', repeatPattern: 'weekly',
+      startDateTime: '2027-01-01T09:00:00Z', durationMinutes: 60, occurrenceCount: 20,
+      upcomingCount: 12, syncedCount: 20, nextOccurrence: '2027-01-01T09:00:00Z', updatedAt: '',
+    }]);
+    await renderCatalogue();
+    expect(await cardFor('Data Foundations').findByText('12 upcoming')).toBeInTheDocument();
+    expect(cardFor('Data Foundations').getByTitle('Teams: 12 upcoming')).toBeInTheDocument();
+    expect(cardFor('Network Basics').queryByText('12 upcoming')).not.toBeInTheDocument();
+    expect(cardFor('Network Basics').getByText('Not created')).toBeInTheDocument();
+  });
+
   it('opens the free course form from the button next to New module', async () => {
     await renderCatalogue();
     expect(screen.getByRole('button', { name: 'New module' })).toBeInTheDocument();
@@ -448,9 +528,10 @@ describe('Module Builder delivery catalogue', { timeout: 15000 }, () => {
     await renderCatalogue();
     expect(screen.getByRole('button', { name: 'Active' })).toHaveAttribute('aria-pressed', 'true');
     expect(screen.getByRole('button', { name: 'All modules' })).toHaveAttribute('aria-pressed', 'false');
-    expect(cardFor('Data Foundations').getByText('New LMS')).toHaveClass('bg-gradient-to-r', 'from-indigo-600', 'to-violet-600', 'text-white');
+    // The requested visual refresh replaces the purple source badge with blue neon.
+    expect(cardFor('Data Foundations').getByText('New LMS')).toHaveClass(catalogueStyles.newLms);
     expect(cardFor('Network Basics').getByText('Old LMS')).toHaveClass('bg-blue-50', 'text-blue-800');
-    expect(cardFor('Data Foundations').getByText('Active', { exact: true })).toHaveClass('bg-emerald-50');
+    expect(cardFor('Data Foundations').getByText('Active', { exact: true })).toHaveClass(catalogueStyles.active);
     expect(screen.getByRole('button', { name: 'Active' })).toHaveTextContent('2');
     expect(screen.getByRole('button', { name: 'All modules' })).toHaveTextContent('6');
     for (const name of ['Future teaching', 'Finished teaching', 'Missing start', 'Resources only']) expect(screen.queryByRole('heading', { name })).not.toBeInTheDocument();
@@ -599,9 +680,10 @@ describe('Module Builder delivery catalogue', { timeout: 15000 }, () => {
     // only when it disagrees with the module's. Here they agree, so the delivery
     // stays quiet rather than repeating the same fact.
     expect(delivery.queryByText('6 sessions')).not.toBeInTheDocument();
-    expect(cardFor('Data Foundations').getByText('6 weeks')).toBeInTheDocument();
-    expect(cardFor('Data Foundations').getByText('3 components')).toBeInTheDocument();
-    expect(cardFor('Data Foundations').getByText('7h 30m OTJH')).toBeInTheDocument();
+    // The compact tiles separate values from units while retaining their full accessible labels.
+    expect(cardFor('Data Foundations').getByRole('group', { name: '6 weeks' })).toBeInTheDocument();
+    expect(cardFor('Data Foundations').getByRole('group', { name: '3 components' })).toBeInTheDocument();
+    expect(cardFor('Data Foundations').getByRole('group', { name: '7h 30m OTJH' })).toBeInTheDocument();
     expect(cardFor('Data Foundations').getByRole('button', { name: 'Review module KSBs' })).toBeInTheDocument();
   });
 

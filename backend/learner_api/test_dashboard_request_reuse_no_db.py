@@ -169,6 +169,27 @@ class BuilderDatesReuseTests(SimpleTestCase):
         self.assertEqual(source._dashboard_activity_dates, ({'M1'}, read))
         self.assertIs(first['metadata']['activity_dates'], second['metadata']['activity_dates'])
 
+    def test_counts_only_skip_dates_without_poisoning_a_later_required_read(self):
+        from . import dashboard_tabs, weekly_learning, student_activity_access, builder_activity_dates, learning_plan, student_activity
+        source = SimpleNamespace(pk=265, aptem_id=None, _plan_preset_cache={})
+        cursor = MagicMock()
+        cursor.__enter__.return_value = cursor
+        schedule = {'C1': {'date': '2026-11-02'}}
+        with patch.object(weekly_learning, 'build_learning_content_summary', return_value={'components': []}), \
+             patch.object(student_activity_access, 'student_activity_available', return_value=False), \
+             patch.object(learning_plan, '_effective_plan_ids', return_value=['M1']), \
+             patch.object(student_activity, '_builder_subject_metadata', return_value=({}, {})), \
+             patch.object(builder_activity_dates, 'read_builder_activity_dates', return_value=schedule) as dates, \
+             patch.object(dashboard_tabs, 'connections', {'enrolment': SimpleNamespace(cursor=lambda: cursor)}):
+            counts = dashboard_tabs.learning_projection(source, {'id': 17}, [], include_activity_dates=False)
+            dates.assert_not_called()
+            self.assertFalse(hasattr(source, '_dashboard_activity_dates'))
+            required = dashboard_tabs.learning_projection(source, {'id': 17}, [],
+                include_activity_dates=False, required_activities=True)
+        self.assertEqual(counts['metadata']['activity_dates'], {})
+        self.assertEqual(required['metadata']['activity_dates'], schedule)
+        dates.assert_called_once()
+
 
 class MonthlyFallbackModeTests(SimpleTestCase):
     """Monthly's no-target fallback reads only monthly OTJH, never plan subjects."""

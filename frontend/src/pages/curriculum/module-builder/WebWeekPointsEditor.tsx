@@ -1,15 +1,17 @@
+import { LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
 import { useEffect, useState } from 'react';
-import { authoredWeekPoints, type WebPoint } from '@/api/webWeekPoints';
+import { authoredWeekPoints, type AuthoredWeekPoints, type WebPoint } from '@/api/webWeekPoints';
 
 import type { WeekPointDrafts } from './useWeekPointDrafts';
 import { componentAuthoringDefinitions } from './componentAuthoringModel';
 
-export function WebWeekPointsEditor({ moduleId, weekId, drafts, busy = false }: {
-  moduleId: string; weekId: string; drafts: WeekPointDrafts; busy?: boolean;
+export function WebWeekPointsEditor({ moduleId, weekId, drafts, busy = false, activities }: {
+  moduleId: string; weekId: string; drafts: WeekPointDrafts; busy?: boolean; activities?: AuthoredWeekPoints['activities'];
 }) {
   const draft = drafts.get(moduleId, weekId);
   const data = draft?.data;
   const points = draft?.points || [];
+  const availableActivities = activities || data?.activities || [];
   const [error, setError] = useState('');
   const [reload, setReload] = useState(0);
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
@@ -37,7 +39,7 @@ export function WebWeekPointsEditor({ moduleId, weekId, drafts, busy = false }: 
       <p className="mt-1 text-sm text-foreground-500">Create a Point, give it a name and select activities from this week. Selected activities appear inside the Point for learners. Other activities stay visible in the week. Points do not restrict activity access.</p></div>
     {error && <div role="alert" className="text-sm text-red-700">{error}</div>}
     {draft?.notice && <p role="status" className="text-sm text-amber-700">{draft.notice}</p>}
-    {!data && !error && <p role="status">Loading Points…</p>}
+    {!data && !error && <p ><LoadingSkeleton label="Loading Points…" variant="rows" /></p>}
     <button type="button" disabled={busy} onClick={() => setReload(value => value + 1)} className="text-sm text-primary-700 underline">Reload saved activities and Points</button>
     {data && <fieldset disabled={busy} className="space-y-4">
       {points.map((point, index) => <fieldset key={point.id} aria-label={`Point ${index + 1}`} className="rounded-xl border border-background-300 p-4">
@@ -66,7 +68,7 @@ export function WebWeekPointsEditor({ moduleId, weekId, drafts, busy = false }: 
         </div>
         <p className="mb-2 text-xs text-foreground-500">{point.componentIds.length} activities selected</p>
         <div className="max-h-64 space-y-2 overflow-y-auto">
-          {data.activities.map(activity => {
+          {availableActivities.map(activity => {
             const elsewhere = points.some(other => other.id !== point.id && other.componentIds.includes(activity.id));
             const typeLabel = componentAuthoringDefinitions.find(item => item.type === activity.type)?.label || activity.type || 'Activity';
             const typeId = `point-${point.id}-activity-${activity.id}-type`;
@@ -81,9 +83,9 @@ export function WebWeekPointsEditor({ moduleId, weekId, drafts, busy = false }: 
               </span>
             </label>;
           })}
-          {point.componentIds.filter(id => !data.activities.some(activity => activity.id === id)).map(id =>
+          {point.componentIds.filter(id => !availableActivities.some(activity => activity.id === id)).map(id =>
             <label key={id} className="flex cursor-pointer items-start gap-2 py-1 text-sm text-amber-700"><input type="checkbox" className="mt-0.5 !h-4 !min-h-0 !w-4 shrink-0 !rounded !p-0 accent-primary-600" checked onChange={() => change(index, { componentIds: point.componentIds.filter(value => value !== id) })} />Activity removed from this week — uncheck to remove it from this Point.</label>)}
-          {!data.activities.length && <p className="text-sm text-foreground-500">Save activities in this week to select them here.</p>}
+          {!availableActivities.length && <p className="text-sm text-foreground-500">Add components to this week to select them here.</p>}
         </div>
         </div>
       </fieldset>)}

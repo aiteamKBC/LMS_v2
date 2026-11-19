@@ -167,7 +167,7 @@ def summarise_home(activities, native, progress, submissions, assigned, start, e
 
 def read_home_progress(
     source, kind, activities, native, progress, assigned, end, *,
-    attendance_module_ids=None, canonical_metrics=None,
+    attendance_module_ids=None, canonical_metrics=None, canonical_records=None,
 ):
     start, _, _ = _group_dates(source)
     with connections['enrolment'].cursor() as cur:
@@ -182,7 +182,8 @@ def read_home_progress(
     try:
         # A verified SSOT owner is the enrolment's single learner profile.
         lectures = lecture_register(source, module_ids=attendance_module_ids,
-                                    **({'learner_profile_id': owner['id']} if owner else {}))
+                                    **({'learner_profile_id': owner['id']} if owner else {}),
+                                    **({'credit_projection': True} if canonical_records is not None else {}))
     except (DatabaseError, psycopg.Error):
         log.warning('Home attendance unavailable for enrolment %s', source.pk, exc_info=True)
         lectures = None
@@ -198,10 +199,28 @@ def read_home_progress(
     # calculation (including retained quizzes and live attendance).
     if metrics and (metrics.get('programme') or {}).get('status') in {'ready', 'empty'}:
         from .models import LearnerProfile
-        from .module_progress import canonical_module_progress
+        from .module_progress import canonical_module_progress, read_native_progress
+        from .student_activity_access import student_activity_available
+        from .student_activity_data import summarize_activities
         owner = owner or canonical_learning.require_profile(source.pk)
         profile = LearnerProfile(id=owner['id'], enrolment_id=source.pk)
-        modules = canonical_module_progress(source, profile)
+        # The shared module counter needs catalogue identities/completion, not
+        # another programme hours/KSB/ledger response. Reuse this request's
+        # records only when they already have the Student journal perspective;
+        # a Coach view still keeps its independent hours perspective.
+        student_records = canonical_records if journal_sources.enabled() else None
+
+        def read_projection():
+            activity = canonical_learning.source_subjects(
+                source.pk, summarize_activities, owner=owner, records=student_records,
+                include_totals=False, include_ledger=False,
+            ) if student_activity_available(source.aptem_id) else None
+            detail, current, entries, titles = read_native_progress(source, profile, compact_content=True)
+            return activity, detail, current, entries, titles
+
+        modules = canonical_module_progress(source, profile, read_projection=read_projection,
+                                            attendance_register=lectures,
+                                            attendance_module_ids=attendance_module_ids)
         result['activities'] = {'completed': sum(module['completed'] for module in modules),
                                 'total': sum(module['total'] for module in modules)}
         result['modules'] = counts(modules, lambda module: module['total'] > 0
@@ -214,7 +233,8 @@ def read_home_progress(
                                register=lectures) if lectures is not None else []
     if credits and result['otjh']['actual'] is not None:
         owner = owner or canonical_learning.require_profile(source.pk)
-        records = canonical_learning.entries_for(owner, lineage_only=True)
+        records = (canonical_records if canonical_records is not None
+                   else canonical_learning.entries_for(owner, lineage_only=True))
         extra = supplement_module_hours(
             {credit['moduleId']: {'hours': {'actual': 0}} for credit in credits}, records, credits)
         actual = round(result['otjh']['actual'] + sum(item['hours']['actual'] for item in extra.values()), 4)

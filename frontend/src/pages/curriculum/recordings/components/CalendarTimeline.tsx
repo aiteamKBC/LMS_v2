@@ -1,19 +1,21 @@
 import { useEffect, useMemo, useRef } from 'react';
+import styles from '../Recordings.module.css';
 import type { Lecture } from '../types';
-import { addDays, formatCompactDate, formatHourLabel, formatTimeRange, HOUR_HEIGHT, layoutDayLectures, lectureOverallStatus, lectureStatusSummary, STATUS_META, timeToMinutes } from '../utils';
+import { addDays, formatCompactDate, formatFullDate, formatHourLabel, formatTimeRange, HOUR_HEIGHT, layoutDayLectures, lectureOverallStatus, lectureStatusSummary, STATUS_META, timeToMinutes } from '../utils';
 
 interface Props {
   startDate: string;
   endDate: string;
   lectures: Lecture[];
   selectedLectureId: string | null;
+  selectedDate?: string;
   onSelectLecture: (lecture: Lecture) => void;
   expanded: boolean;
   emptyMessage: string;
 }
 
 /** A local, read-only time grid; opening an event preserves its saved identity. */
-export default function CalendarTimeline({ startDate, endDate, lectures, selectedLectureId, onSelectLecture, expanded, emptyMessage }: Props) {
+export default function CalendarTimeline({ startDate, endDate, lectures, selectedLectureId, selectedDate, onSelectLecture, expanded, emptyMessage }: Props) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const days = useMemo(() => {
     const result: string[] = [];
@@ -34,12 +36,12 @@ export default function CalendarTimeline({ startDate, endDate, lectures, selecte
   }, [startDate, endDate, firstMinute]);
 
   return <div ref={scrollRef} role="region" aria-label="Hourly lecture calendar" tabIndex={0}
-    className={`relative overflow-auto rounded-lg border border-background-200 bg-background-50 scrollbar-slim ${expanded ? 'min-h-0 flex-1' : 'min-h-[420px]'}`}
+    className={`${days.length > 1 ? styles.weekCalendar : ''} relative overflow-auto rounded-lg border border-background-200 bg-background-50 scrollbar-slim ${expanded ? 'min-h-0 flex-1' : 'min-h-[420px]'}`}
     style={expanded ? undefined : { height: 'calc(100dvh - 24rem)' }}>
     <div style={{ minWidth: 56 + columns.reduce((total, day) => total + day.width, 0) }}>
       <div className="sticky top-0 z-20 flex border-b border-background-200 bg-background-50">
         <div className="sticky left-0 z-20 w-14 shrink-0 bg-background-50 p-2 text-xs text-foreground-500">Time</div>
-        {columns.map(day => <div key={day.date} style={{ minWidth: day.width }} className="flex-1 border-l border-background-200 px-3 py-2 text-sm font-bold text-primary-700">{formatCompactDate(day.date)}</div>)}
+        {columns.map(day => <div key={day.date} data-selected={day.date === selectedDate || undefined} style={{ minWidth: day.width }} className="flex-1 border-l border-background-200 px-3 py-2 text-sm font-bold text-primary-700"><span className={styles.weekDay} aria-hidden="true">{formatFullDate(day.date).slice(0, 3)}</span><time dateTime={day.date}><span className={styles.weekDate} aria-hidden="true">{Number(day.date.slice(-2))}</span><span className={styles.fullDate}>{formatCompactDate(day.date)}</span></time></div>)}
       </div>
       {!lectures.length && <div className="sticky left-14 top-12 z-10 h-0 w-64"><p role="status" className="absolute rounded-md bg-background-50 p-3 text-sm text-foreground-600">{emptyMessage}</p></div>}
       <div className="flex" style={{ height: 24 * HOUR_HEIGHT }}>
@@ -52,12 +54,13 @@ export default function CalendarTimeline({ startDate, endDate, lectures, selecte
           {day.positioned.map(event => {
             const lecture = lectures.find(item => item.id === event.lecture.id)!;
             const meta = STATUS_META[lectureOverallStatus(lecture)];
-            return <button key={lecture.id} type="button" aria-pressed={lecture.id === selectedLectureId}
+            return <button key={lecture.id} type="button" aria-pressed={lecture.id === selectedLectureId} data-recording-status={lectureOverallStatus(lecture)}
               aria-label={`${lecture.title}, ${formatTimeRange(lecture.startTime, lecture.endTime)}, ${lecture.module}, ${lecture.group}, ${lectureStatusSummary(lecture)}`}
               title={`${lecture.title}\n${formatTimeRange(lecture.startTime, lecture.endTime)}\n${lecture.module} / ${lecture.group}\n${lectureStatusSummary(lecture)}`}
               onClick={() => onSelectLecture(lecture)}
               style={{ top: event.top, height: Math.min(event.height, 24 * HOUR_HEIGHT - event.top), left: `calc(${event.col / event.cols * 100}% + 2px)`, width: `calc(${100 / event.cols}% - 4px)` }}
               className={`absolute overflow-hidden rounded-md border border-background-200 border-l-4 bg-primary-50 px-2 py-1 text-left text-xs text-foreground-900 shadow-sm hover:bg-primary-100 focus:z-10 focus:outline-none focus:ring-2 focus:ring-primary-500 ${meta.borderLeft} ${lecture.id === selectedLectureId ? 'ring-2 ring-primary-500' : ''}`}>
+              <span className={styles.compactTime} aria-hidden="true">{lecture.startTime}</span>
               <span className="block truncate font-bold">{lecture.title}</span>
               <span className="block truncate tabular-nums">{formatTimeRange(lecture.startTime, lecture.endTime)}</span>
               {event.height >= 64 && <><span className="mt-1 block truncate">{lecture.module} / {lecture.group}</span><span className={`block truncate ${meta.textClass}`}>{lectureStatusSummary(lecture)}</span></>}

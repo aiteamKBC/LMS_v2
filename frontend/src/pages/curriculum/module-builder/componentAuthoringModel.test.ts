@@ -259,7 +259,7 @@ describe('normaliseComponentSettings week-template compatibility', () => {
       legacySettings: JSON.stringify({ teamsOccurrenceId: 'OLD', teamsSessionNumber: 3 }) });
     expect(settings.teamsOccurrenceId).toBe('');
     expect(settings.teamsSessionNumber).toBe('');
-    expect(normaliseComponentSettings('live-session', {})).not.toHaveProperty('teamsSessionNumber');
+    expect(normaliseComponentSettings('live-session', {}).teamsSessionNumber).toBe('');
   });
 });
 

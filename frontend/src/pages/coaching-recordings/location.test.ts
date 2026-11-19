@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import { readLocation, writeLocation } from './location';
 describe('Coach meeting URL state', () => {
+  it.each(['overview', 'recordings', 'attendance', 'transcript', 'analysis', 'quality'])('preserves the %s tab in shared meeting links', tab => {
+    const query = new URLSearchParams(`date=2026-10-20&meeting=${'a'.repeat(32)}&tab=${tab}`);
+    expect(readLocation(writeLocation(readLocation(query))).tab).toBe(tab);
+  });
   it('roundtrips the filters, occurrence day and open evidence tab without a signed access token', () => {
     const query = new URLSearchParams('date=2026-10-20&view=week&zone=UTC&coach=coach%40example.invalid&learner=7&status=all&type=PR&match=review&lectures=1&meeting=' + 'a'.repeat(32) + '&on=2026-10-23&tab=analysis');
     expect(readLocation(writeLocation(readLocation(query)))).toEqual(readLocation(query));

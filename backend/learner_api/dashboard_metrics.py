@@ -1,4 +1,5 @@
 """Read-only programme totals using verified legacy results and local progress."""
+from curriculum_api.learning_storage import read_sql
 import json
 import logging
 from collections import defaultdict
@@ -365,7 +366,7 @@ def _read_legacy_metrics(source, kind, preloaded=None):
         if preloaded is not None and 'native_components' in preloaded:
             native = preloaded['native_components']
         else:
-            cursor.execute('''SELECT c.id,c.type,c.expected_otjh AS expected_hours,coalesce(nullif(c.ksb_mappings,'[]'::jsonb),
+            cursor.execute(read_sql('''SELECT c.id,c.type,c.expected_otjh AS expected_hours,coalesce(nullif(c.ksb_mappings,'[]'::jsonb),
                 (SELECT jsonb_agg(jsonb_build_object('code',k.ksb_code))
                  FROM curriculum.ksb_mappings k WHERE k.component_id=c.id
                    AND ''' + visible_child_sql('k') + '''), '[]'::jsonb) AS ksb_mappings,
@@ -374,7 +375,7 @@ def _read_legacy_metrics(source, kind, preloaded=None):
                          c.settings_json->>'linkedQuizId') AS quiz_id
                 FROM curriculum.components c
                 WHERE c.module_catalogue_id=ANY(%s)
-                  AND ''' + visible_child_sql('c'), [module_ids])
+                  AND ''' + visible_child_sql('c'), cursor.db), [module_ids])
             native = rows(cursor)
         if preloaded is not None and 'native_progress' in preloaded:
             progress = preloaded['native_progress']
@@ -745,7 +746,7 @@ def load_native_components_bulk(module_ids):
     if not ids:
         return result
     with connections['enrolment'].cursor() as cursor:
-        cursor.execute('''SELECT c.module_catalogue_id,c.id,c.type,c.expected_otjh AS expected_hours,
+        cursor.execute(read_sql('''SELECT c.module_catalogue_id,c.id,c.type,c.expected_otjh AS expected_hours,
                 coalesce(nullif(c.ksb_mappings,'[]'::jsonb),
                 (SELECT jsonb_agg(jsonb_build_object('code',k.ksb_code))
                  FROM curriculum.ksb_mappings k WHERE k.component_id=c.id
@@ -755,7 +756,7 @@ def load_native_components_bulk(module_ids):
                          c.settings_json->>'linkedQuizId') AS quiz_id
             FROM curriculum.components c
             WHERE c.module_catalogue_id=ANY(%s)
-              AND ''' + visible_child_sql('c'), [ids])
+              AND ''' + visible_child_sql('c'), cursor.db), [ids])
         for item in rows(cursor):
             result.setdefault(str(item.pop('module_catalogue_id')), []).append(item)
     return result

@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { resolveRecordingUrl } from '@/api/sessionResults';
+import { Download } from 'lucide-react';
 
 interface Props {
   seriesId: string;
@@ -33,7 +34,7 @@ export default function RecordingDownloadButton({ seriesId, artifactId, classNam
 
   return <span className="inline-flex flex-col items-start gap-1">
     <button type="button" disabled={busy} onClick={() => void download()} className={className}>
-      <i className="ri-download-2-line" aria-hidden="true" />
+      <Download size={14} aria-hidden="true" />
       {busy ? 'Preparing download…' : 'Download'}
     </button>
     {error && <span role="alert" className="text-xs text-rose-700">{error}</span>}

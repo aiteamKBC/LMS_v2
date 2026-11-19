@@ -40,54 +40,70 @@ class YouTubeDownloadTests(unittest.TestCase):
 
     def test_temporary_file_lives_until_upload_finishes_then_is_removed(self):
         paths = []
-        def downloaded(url, directory, limit):
+        def downloaded(url, directory):
             path = directory / 'video.mp4'
             path.write_bytes(MP4)
             paths.append(path)
             return path
         with patch.object(youtube, '_run_download', side_effect=downloaded):
-            with youtube.download_youtube(URL, 1000) as stream:
+            with youtube.download_youtube(URL) as stream:
                 self.assertEqual(stream.read(), MP4)
                 self.assertTrue(paths[0].exists())
             self.assertFalse(paths[0].parent.exists())
 
     def test_upload_failure_also_removes_temporary_source(self):
         paths = []
-        def downloaded(url, directory, limit):
+        def downloaded(url, directory):
             path = directory / 'video.mp4'
             path.write_bytes(MP4)
             paths.append(path)
             return path
         with patch.object(youtube, '_run_download', side_effect=downloaded):
             with self.assertRaisesRegex(VideoImportError, 'Bunny unavailable'):
-                with youtube.download_youtube(URL, 1000):
+                with youtube.download_youtube(URL):
                     raise VideoImportError('Bunny unavailable')
         self.assertFalse(paths[0].parent.exists())
 
     def test_partial_download_failure_removes_temporary_files(self):
         paths = []
-        def fail(url, directory, limit):
+        def fail(url, directory):
             paths.append(directory)
             (directory / 'video.mp4.part').write_bytes(MP4)
             raise VideoImportError('Download refused')
         with patch.object(youtube, '_run_download', side_effect=fail):
             with self.assertRaises(VideoImportError):
-                with youtube.download_youtube(URL, 1000):
+                with youtube.download_youtube(URL):
                     self.fail('A failed download must not reach Bunny')
         self.assertFalse(paths[0].exists())
 
-    def test_oversized_final_file_is_refused_and_removed(self):
+    def test_empty_final_file_is_refused_and_removed(self):
         paths = []
-        def downloaded(url, directory, limit):
+        def downloaded(url, directory):
             path = directory / 'video.mp4'
-            path.write_bytes(MP4)
+            path.write_bytes(b'')
             paths.append(path)
             return path
         with patch.object(youtube, '_run_download', side_effect=downloaded):
-            with self.assertRaisesRegex(VideoImportError, '300 MB'):
-                with youtube.download_youtube(URL, 4):
-                    self.fail('An oversized video must not reach Bunny')
+            with self.assertRaisesRegex(VideoImportError, 'empty'):
+                with youtube.download_youtube(URL):
+                    self.fail('An empty video must not reach Bunny')
         self.assertFalse(paths[0].exists())
+
+    def test_completed_video_over_old_limit_is_yielded_then_cleaned_up(self):
+        paths = []
+        def downloaded(url, directory):
+            path = directory / 'video.mp4'
+            path.write_bytes(MP4)
+            paths.append(path)
+            media = Mock(wraps=path)
+            media.stat.return_value.st_size = 300 * 1024 * 1024 + 1
+            return media
+
+        with patch.object(youtube, '_run_download', side_effect=downloaded):
+            with youtube.download_youtube(URL) as stream:
+                self.assertEqual(stream.read(), MP4)
+                self.assertTrue(paths[0].exists())
+        self.assertFalse(paths[0].parent.exists())
 
     def test_child_never_receives_storage_or_database_credentials(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -100,7 +116,7 @@ class YouTubeDownloadTests(unittest.TestCase):
                  patch.object(youtube.shutil, 'which', return_value='node'), \
                  patch.object(youtube.importlib.util, 'find_spec', return_value=True), \
                  patch.object(youtube.subprocess, 'Popen', return_value=child) as spawn:
-                self.assertEqual(youtube._run_download(URL, directory, 1000), directory / 'video.mp4')
+                self.assertEqual(youtube._run_download(URL, directory), directory / 'video.mp4')
             options = spawn.call_args.kwargs
             self.assertNotIn('BUNNY_STREAM_API_KEY', options['env'])
             self.assertNotIn('DATABASE_URL', options['env'])
@@ -116,7 +132,7 @@ class YouTubeDownloadTests(unittest.TestCase):
              patch.object(youtube.subprocess, 'Popen', return_value=child), \
              patch.object(youtube, '_stop_process') as stop:
             with self.assertRaisesRegex(VideoImportError, 'timed out'):
-                youtube._run_download(URL, Path(temporary), 1000)
+                youtube._run_download(URL, Path(temporary))
         stop.assert_called_with(child)
 
     def test_provider_errors_do_not_leak_signed_urls(self):
@@ -126,23 +142,29 @@ class YouTubeDownloadTests(unittest.TestCase):
              patch('imageio_ffmpeg.get_ffmpeg_exe', return_value='ffmpeg'), \
              patch('yt_dlp.YoutubeDL') as factory:
             factory.return_value.__enter__.return_value = extractor
-            youtube._worker(URL, Path(temporary), 1000, 'node')
+            youtube._worker(URL, Path(temporary), 'node')
             result = json.loads((Path(temporary) / 'result.json').read_text())
         self.assertIn('YouTube requires verification', result['error'])
         self.assertNotIn('private', result['error'])
         self.assertNotIn('https://', result['error'])
 
-    def test_extractor_rejects_live_streams_and_oversized_partial_media(self):
+    def test_extractor_has_no_byte_cap_but_still_rejects_live_streams_and_timeouts(self):
         with tempfile.TemporaryDirectory() as temporary, \
              patch('imageio_ffmpeg.get_ffmpeg_exe', return_value='ffmpeg'), \
              patch('yt_dlp.YoutubeDL') as factory:
             directory = Path(temporary)
-            youtube._worker(URL, directory, 10, 'node')
+            youtube._worker(URL, directory, 'node')
             options = factory.call_args.args[0]
             with self.assertRaisesRegex(VideoImportError, 'livestream'):
                 options['match_filter']({'is_live': True})
-            (directory / 'video.mp4.part').write_bytes(MP4)
-            with self.assertRaisesRegex(VideoImportError, '300 MB'):
+            self.assertIsNone(options.get('max_filesize'))
+            partial = Mock()
+            partial.stat.return_value.st_size = 300 * 1024 * 1024 + 1
+            partial.is_file.return_value = True
+            with patch.object(Path, 'glob', return_value=[partial]):
+                options['progress_hooks'][0]({'downloaded_bytes': partial.stat.return_value.st_size})
+            with patch.object(youtube.time, 'monotonic', return_value=time.monotonic() + youtube.DOWNLOAD_TIMEOUT), \
+                 self.assertRaisesRegex(VideoImportError, 'timed out'):
                 options['progress_hooks'][0]({})
             self.assertTrue(options['noplaylist'])
             self.assertFalse(options['skip_unavailable_fragments'])
@@ -153,7 +175,7 @@ class YouTubeDownloadTests(unittest.TestCase):
              patch('yt_dlp.YoutubeDL') as factory:
             directory = Path(temporary)
             self.assertIsNone(youtube._prepare_cookies(directory))
-            youtube._worker(URL, directory, 1000, 'node')
+            youtube._worker(URL, directory, 'node')
             options = factory.call_args.args[0]
             self.assertNotIn('cookiefile', options)
             self.assertNotIn('cookiesfrombrowser', options)
@@ -209,7 +231,7 @@ class YouTubeDownloadTests(unittest.TestCase):
             with patch('imageio_ffmpeg.get_ffmpeg_exe', return_value='ffmpeg'), \
                  patch('yt_dlp.YoutubeDL') as factory:
                 factory.return_value.__enter__.return_value = extractor
-                youtube._worker(URL, directory, 1000, 'node', copied)
+                self.assertEqual(youtube.main(command[3:]), 0)
                 self.assertEqual(factory.call_args.args[0]['cookiefile'], str(copied))
             return child
 
@@ -218,7 +240,7 @@ class YouTubeDownloadTests(unittest.TestCase):
              patch.object(youtube.importlib.util, 'find_spec', return_value=True), \
              patch.object(youtube.subprocess, 'Popen', side_effect=run_child):
             with self.assertRaisesRegex(VideoImportError, 'Bunny unavailable'):
-                with youtube.download_youtube(URL, 1000) as stream:
+                with youtube.download_youtube(URL) as stream:
                     self.assertEqual(stream.read(), MP4)
                     raise VideoImportError('Bunny unavailable')
         self.assertFalse(temporary_paths[0].parent.exists())
@@ -242,7 +264,7 @@ class YouTubeDownloadTests(unittest.TestCase):
                  patch.object(youtube.subprocess, 'Popen') as spawn:
                 source.write_text(content, encoding='utf-8')
                 with self.assertRaises(VideoImportError) as raised:
-                    youtube._run_download(URL, Path(temporary), 1000)
+                    youtube._run_download(URL, Path(temporary))
                 self.assertNotIn(COOKIE_VALUE, str(raised.exception))
                 self.assertNotIn(str(source), str(raised.exception))
                 self.assertEqual(list(Path(temporary).iterdir()), [])
@@ -298,7 +320,7 @@ class YouTubeDownloadTests(unittest.TestCase):
                 copied = youtube._prepare_cookies(directory)
                 extractor = factory.return_value.__enter__.return_value
                 extractor.extract_info.side_effect = Exception(upstream + ' ' + COOKIE_VALUE + ' https://example.invalid/?token=private')
-                youtube._worker(URL, directory, 1000, 'node', copied)
+                youtube._worker(URL, directory, 'node', copied)
                 result = json.loads((directory / 'result.json').read_text())
                 self.assertIn(expected, result['error'])
                 self.assertNotIn('file', result)
@@ -314,15 +336,15 @@ class YouTubeDownloadTests(unittest.TestCase):
         child.poll.return_value = 0
 
         def run_child(command, **kwargs):
-            directory, copied = Path(command[4]), Path(command[7])
+            directory, copied = Path(command[4]), Path(command[6])
             paths.append(directory)
-            self.assertEqual(command[8], '--check')
+            self.assertEqual(command[7], '--check')
             self.assertNotIn('YOUTUBE_COOKIES_FILE', kwargs['env'])
             with patch('imageio_ffmpeg.get_ffmpeg_exe', return_value='ffmpeg'), \
                  patch('yt_dlp.YoutubeDL') as factory:
                 extractor = factory.return_value.__enter__.return_value
                 extractor.extract_info.return_value = {'id': 'abcdefghijk'}
-                youtube._worker(URL, directory, 1000, 'node', copied, check_only=True)
+                self.assertEqual(youtube.main(command[3:]), 0)
                 extractor.extract_info.assert_called_once_with(URL, download=False, ie_key='Youtube')
                 self.assertTrue(factory.call_args.args[0]['simulate'])
                 self.assertFalse(factory.call_args.args[0]['check_formats'])
@@ -362,7 +384,7 @@ class YouTubeDownloadTests(unittest.TestCase):
              patch('yt_dlp.YoutubeDL') as factory:
             directory = Path(temporary)
             factory.return_value.__enter__.return_value.extract_info.return_value = None
-            youtube._worker(URL, directory, 1000, 'node', check_only=True)
+            youtube._worker(URL, directory, 'node', check_only=True)
             result = json.loads((directory / 'result.json').read_text())
             self.assertIn('did not return video metadata', result['error'])
             self.assertNotIn('checked', result)
@@ -408,7 +430,7 @@ class YouTubeDownloadTests(unittest.TestCase):
              patch.object(youtube.importlib.util, 'find_spec', return_value=True), \
              patch.object(youtube.subprocess, 'Popen') as spawn:
             with self.assertRaisesRegex(VideoImportError, 'only one YouTube session source') as raised:
-                youtube._run_download(URL, Path(temporary), 1000)
+                youtube._run_download(URL, Path(temporary))
             self.assertNotIn(COOKIE_VALUE, str(raised.exception))
             self.assertFalse(list(Path(temporary).iterdir()))
             spawn.assert_not_called()
@@ -426,7 +448,7 @@ class YouTubeDownloadTests(unittest.TestCase):
                  patch.object(youtube.importlib.util, 'find_spec', return_value=True), \
                  patch.object(youtube.subprocess, 'Popen') as spawn:
                 with self.assertRaises(VideoImportError) as raised:
-                    youtube._run_download(URL, Path(temporary), 1000)
+                    youtube._run_download(URL, Path(temporary))
                 self.assertNotIn(COOKIE_VALUE, str(raised.exception))
                 self.assertFalse(list(Path(temporary).iterdir()))
                 spawn.assert_not_called()
@@ -440,7 +462,7 @@ class YouTubeDownloadTests(unittest.TestCase):
         child.poll.return_value = 0
 
         def run_child(command, **kwargs):
-            directory, copied = Path(command[4]), Path(command[7])
+            directory, copied = Path(command[4]), Path(command[6])
             paths.append(directory)
             for key in ('YOUTUBE_COOKIES_TEXT', 'YOUTUBE_COOKIES_FILE', 'BUNNY_STREAM_API_KEY', 'DATABASE_URL'):
                 self.assertNotIn(key, kwargs['env'])
@@ -451,7 +473,7 @@ class YouTubeDownloadTests(unittest.TestCase):
                  patch('yt_dlp.YoutubeDL') as factory:
                 factory.return_value.__enter__.return_value.extract_info.side_effect = Exception(
                     'Sign in to confirm you are not a bot: ' + COOKIE_VALUE)
-                youtube._worker(URL, directory, 1000, 'node', copied, check_only=True)
+                self.assertEqual(youtube.main(command[3:]), 0)
                 self.assertEqual(factory.call_args.args[0]['cookiefile'], str(copied))
                 result = (directory / 'result.json').read_text()
                 self.assertNotIn(COOKIE_VALUE, result)
@@ -472,7 +494,7 @@ class YouTubeDownloadTests(unittest.TestCase):
              patch.object(youtube.importlib.util, 'find_spec', return_value=True), \
              patch.object(youtube.subprocess, 'Popen', side_effect=OSError('synthetic process failure')) as spawn:
             with self.assertRaises(OSError):
-                with youtube.download_youtube(URL, 1000):
+                with youtube.download_youtube(URL):
                     self.fail('No media should be returned')
         self.assertFalse(Path(spawn.call_args.args[0][4]).exists())
 

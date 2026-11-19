@@ -102,9 +102,11 @@ class ProgrammeKsbDesignCacheTests(SimpleTestCase):
             }
 
         with patch.object(views, 'build_programme_ksb_stats', side_effect=stats):
-            views.curriculum_programme_ksb_stats(RequestFactory().get('/ksb-stats/'), 'P1')
+            with patch.object(views.time, 'monotonic', return_value=100.0):
+                views.curriculum_programme_ksb_stats(RequestFactory().get('/ksb-stats/'), 'P1')
             self.assertEqual(len(self.scope_reads), 2)
-            views.curriculum_programme_ksb_stats(RequestFactory().get('/ksb-stats/', HTTP_CACHE_CONTROL='no-cache'), 'P1')
+            with patch.object(views.time, 'monotonic', return_value=200.0):
+                views.curriculum_programme_ksb_stats(RequestFactory().get('/ksb-stats/', HTTP_CACHE_CONTROL='no-cache'), 'P1')
             self.assertEqual(len(self.scope_reads), 4)
         # And the flag does not outlive the forced request.
         views.programme_component_ksb_mapping_count('P1', ['K1', 'K2'])

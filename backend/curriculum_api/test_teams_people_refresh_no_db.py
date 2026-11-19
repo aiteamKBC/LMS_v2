@@ -6,6 +6,8 @@ from types import SimpleNamespace
 from unittest.mock import Mock, patch
 from urllib.parse import quote
 
+import httpx
+from django.db import DatabaseError
 from django.middleware.csrf import get_token
 from django.test import Client, RequestFactory, SimpleTestCase, override_settings
 from django.urls import path
@@ -29,6 +31,9 @@ class PeopleRefreshTests(SimpleTestCase):
         self.cached.get.return_value = None
         self.cached.get_many.return_value = {}
         self.addCleanup(cached.stop)
+        committed = patch.object(refresh.transaction, 'on_commit', side_effect=lambda callback: callback())
+        committed.start()
+        self.addCleanup(committed.stop)
         self.series = {'id': 'LIVE', 'status': 'active', 'meeting_type': 'live-session', 'module_catalogue_id': 'MODULE',
                        'organizer_email': 'owner@example.invalid', 'graph_event_id': 'EVENT', 'join_url': JOIN,
                        'online_meeting_id': 'ONLINE', 'presenters': ['tutor@example.invalid'], 'co_organizers': [], 'attendees': []}
@@ -76,8 +81,9 @@ class PeopleRefreshTests(SimpleTestCase):
             if 'onlineMeetings' in path:
                 return self.meeting
             return {**self.event, 'id': 'SECOND', 'attendees': []} if '/SECOND?' in path else self.event
-        with self.assertRaisesRegex(refresh.CalendarStateError, 'weekday meetings have different'):
+        with self.assertRaisesRegex(refresh.CalendarStateError, 'weekday meetings have different') as failure:
             refresh.read_people(series, read)
+        self.assertEqual(refresh._failure_details(failure.exception), ('weekday_roster_mismatch', 'read_roster'))
 
     def test_import_is_scoped_to_people_and_roles_of_one_series(self):
         state = (self.series, [{'id': 'OCC', 'attendance_report_id': 'KEEP'}], {})
@@ -98,8 +104,9 @@ class PeopleRefreshTests(SimpleTestCase):
                 patch.object(refresh, 'calendar_reader', return_value=nullcontext(self.reader)), \
                 patch.object(refresh.transaction, 'atomic', return_value=nullcontext()), \
                 patch('curriculum_api.views.update_authoring_rows') as update:
-            with self.assertRaisesRegex(refresh.CalendarStateError, 'changed during'):
+            with self.assertRaisesRegex(refresh.CalendarStateError, 'changed during') as failure:
                 refresh.refresh_people('LIVE')
+        self.assertEqual(refresh._failure_details(failure.exception), ('saved_state_changed', 'verify_saved_state'))
         update.assert_not_called()
 
     def test_inactive_meetings_do_not_use_application_transport(self):
@@ -151,6 +158,107 @@ class PeopleRefreshTests(SimpleTestCase):
         self.assertIn("s.status='active'", cursor.execute.call_args.args[0])
         self.assertIn('m.deleted_at IS NULL', cursor.execute.call_args.args[0])
         self.assertEqual(cursor.execute.call_args.args[1], [False, ['OLD', 'DUE', 'RECENT']])
+
+    def _worker_failure_log(self, failure, identity='LIVE-SYNTHETIC'):
+        cursor = Mock()
+        cursor.__enter__ = Mock(return_value=cursor)
+        cursor.__exit__ = Mock(return_value=False)
+        cursor.fetchall.return_value = [(identity,)]
+        with patch.object(refresh, 'connection', SimpleNamespace(cursor=lambda: cursor)), \
+                patch.object(refresh, 'refresh_people', side_effect=failure):
+            with self.assertLogs(refresh.log, level='WARNING') as logs:
+                self.assertEqual(refresh.sync_due_people(), {'checked': 0, 'failed': 1})
+        return '\n'.join(logs.output)
+
+    def test_local_validation_reasons_are_stable_without_changing_exception_type_or_message(self):
+        cases = [
+            ({**self.series, 'online_meeting_id': ''}, self.event, self.meeting,
+             'saved_identity_incomplete', 'The saved meeting identities are incomplete. No people or roles were imported.'),
+            (self.series, {**self.event, 'isOrganizer': False}, self.meeting,
+             'organizer_event_unverified', 'Microsoft did not verify the saved organiser event. No people or roles were imported.'),
+            (self.series, self.event, {**self.meeting, 'participants': {**self.meeting['participants'], 'attendees': None}},
+             'meeting_roles_incomplete', 'Microsoft did not return complete meeting roles. Saved values were preserved.'),
+        ]
+        for series, event, meeting, reason, message in cases:
+            with self.subTest(reason=reason):
+                reader = Mock(side_effect=lambda path, **kwargs: meeting if 'onlineMeetings' in path else event)
+                with self.assertRaises(refresh.CalendarStateError) as failure:
+                    refresh.read_people(series, reader)
+                self.assertIs(type(failure.exception), refresh.CalendarStateError)
+                self.assertEqual(str(failure.exception), message)
+                output = self._worker_failure_log(failure.exception)
+                self.assertIn(f'series_id=LIVE-SYNTHETIC reason={reason} phase=read_roster', output)
+                self.assertNotIn(message, output)
+                self.assertNotIn('example.invalid', output)
+                self.assertNotIn(JOIN, output)
+
+    def test_state_load_failure_logs_phase_and_keeps_failed_cache_and_retry_outcome(self):
+        service = refresh.refresh_people
+        with patch.object(refresh, 'load_calendar_state', side_effect=refresh.CalendarStateError('private calendar details')):
+            output = self._worker_failure_log(service)
+        self.assertIn('reason=calendar_state_invalid phase=load_state', output)
+        self.assertNotIn('private calendar details', output)
+        self.assertEqual(self.cached.set.call_args.args[1]['status'], 'failed')
+
+    def test_graph_transport_failure_logs_only_category_and_phase(self):
+        service = refresh.refresh_people
+        with patch.object(refresh, 'load_calendar_state', return_value=(self.series, [], {})), \
+                patch.object(refresh, 'calendar_reader', side_effect=httpx.ConnectError('private URL and token')):
+            output = self._worker_failure_log(service)
+        self.assertIn('reason=graph_transport_error phase=read_roster', output)
+        self.assertNotIn('private URL and token', output)
+
+    def test_database_import_failure_is_distinguished_from_roster_read_without_leaking_sql(self):
+        service = refresh.refresh_people
+        with patch.object(refresh, 'load_calendar_state', return_value=(self.series, [], {})), \
+                patch.object(refresh, 'calendar_reader', return_value=nullcontext(self.reader)), \
+                patch.object(refresh.transaction, 'atomic', return_value=nullcontext()), \
+                patch('curriculum_api.views.update_authoring_rows', side_effect=DatabaseError('private SQL and names')):
+            output = self._worker_failure_log(service)
+        self.assertIn('reason=database_error phase=save_people', output)
+        self.assertNotIn('private SQL and names', output)
+
+    def test_busy_lock_logs_identity_and_reason_without_writing_failed_cache(self):
+        service = refresh.refresh_people
+        cursor = Mock()
+        cursor.__enter__ = Mock(return_value=cursor)
+        cursor.__exit__ = Mock(return_value=False)
+        cursor.fetchall.return_value = [('LIVE-SYNTHETIC',)]
+        cursor.fetchone.return_value = (False,)
+        with patch.object(refresh, 'people_sync_lock', REAL_SYNC_LOCK), \
+                patch.object(refresh.transaction, 'atomic', return_value=nullcontext()), \
+                patch.object(refresh, 'connection', SimpleNamespace(cursor=lambda: cursor)), \
+                patch.object(refresh, 'refresh_people', side_effect=service):
+            with self.assertLogs(refresh.log, level='WARNING') as logs:
+                self.assertEqual(refresh.sync_due_people(), {'checked': 0, 'failed': 1})
+        self.assertIn('series_id=LIVE-SYNTHETIC reason=lock_busy phase=lock', '\n'.join(logs.output))
+        self.cached.set.assert_not_called()
+
+    def test_http_failures_use_numeric_status_metadata_never_message_or_url(self):
+        for status in (400, 403, 404, 429, 503):
+            for error in (refresh.CalendarStateError('private provider body'),
+                          httpx.HTTPStatusError('private provider body', request=httpx.Request('GET', JOIN),
+                                                response=httpx.Response(status))):
+                with self.subTest(status=status, kind=type(error).__name__):
+                    error.status_code = status
+                    output = self._worker_failure_log(error)
+                    self.assertIn(f'reason=graph_http_{status}', output)
+                    self.assertNotIn('private provider body', output)
+                    self.assertNotIn(JOIN, output)
+
+    def test_blocked_reason_allowlist_preserves_known_codes_and_redacts_unknown_attributes_and_identity(self):
+        error = refresh.Blocked('meeting_identity_mismatch', 'private meeting details')
+        self.assertIn('reason=meeting_identity_mismatch', self._worker_failure_log(error))
+        for error in (RuntimeError('private\nhttps://example.invalid?token=secret'),
+                      refresh.Blocked('https://example.invalid?token=secret', 'private')):
+            for value in ('https://example.invalid?token=secret', []):
+                error.people_sync_reason = value
+                error.people_sync_phase = value
+                output = self._worker_failure_log(error, identity='LIVE\nhttps://example.invalid?token=secret')
+                self.assertIn('series_id=invalid_series_id reason=unexpected_error phase=unknown', output)
+                self.assertNotIn('private', output)
+                self.assertNotIn('example.invalid', output)
+                self.assertNotIn('secret', output)
 
     def test_saved_status_read_does_not_call_microsoft(self):
         with patch.object(refresh, 'load_calendar_state', return_value=(self.series, [], {})), \
@@ -215,7 +323,9 @@ class PeopleSyncCoordinationTests(SimpleTestCase):
         cursor = Mock()
         cursor.__enter__ = Mock(return_value=cursor)
         cursor.__exit__ = Mock(return_value=False)
-        with patch.object(refresh, 'connection', SimpleNamespace(cursor=lambda: cursor)):
+        atomic = Mock(return_value=nullcontext())
+        with patch.object(refresh.transaction, 'atomic', atomic), \
+                patch.object(refresh, 'connection', SimpleNamespace(cursor=lambda: cursor)):
             cursor.fetchone.return_value = (False,)
             with self.assertRaisesRegex(refresh.CalendarStateError, 'already running'):
                 with REAL_SYNC_LOCK('LIVE'):
@@ -226,9 +336,22 @@ class PeopleSyncCoordinationTests(SimpleTestCase):
             with self.assertRaises(ValueError):
                 with REAL_SYNC_LOCK('LIVE'):
                     raise ValueError('synthetic failure')
-        self.assertIn('pg_try_advisory_lock', cursor.execute.call_args_list[0].args[0])
-        self.assertIn('pg_advisory_unlock', cursor.execute.call_args_list[-1].args[0])
-        self.assertEqual(cursor.execute.call_args_list[0].args[1], cursor.execute.call_args_list[-1].args[1])
+        self.assertEqual(atomic.call_count, 2)
+        self.assertEqual(cursor.execute.call_count, 1)
+        self.assertIn('pg_try_advisory_xact_lock', cursor.execute.call_args.args[0])
+        self.assertEqual(cursor.execute.call_args.args[1], ['curriculum:teams-people:LIVE'])
+
+    def test_success_callbacks_wait_for_commit_and_preserve_error_phase(self):
+        publish = Mock()
+        with patch.object(refresh.transaction, 'on_commit') as committed:
+            refresh._after_commit('cache_write', publish)
+        publish.assert_not_called()
+        committed.call_args.args[0]()
+        publish.assert_called_once_with()
+        publish.side_effect = RuntimeError('private cache details')
+        with self.assertRaises(RuntimeError) as failure:
+            committed.call_args.args[0]()
+        self.assertEqual(refresh._failure_details(failure.exception), ('unexpected_error', 'cache_write'))
 
     def test_existing_scheduled_worker_calls_shared_service_and_keeps_session_outcome(self):
         from .management.commands import process_session_results as worker

@@ -58,7 +58,7 @@ def read_live_inputs(source, learner_profile, *, as_of):
             if otjh.get('planned') is None:
                 # Same explicit no-plan fallback used by Dashboard Overview.
                 otjh['planned'] = plan_planned_hours(source, owner)
-            facts = dashboard_activity_facts(source, learner_profile, as_of=as_of)
+            facts = dashboard_activity_facts(source, learner_profile, as_of=as_of, include_required=True)
     except ServiceError as error:
         # Both Native and Imported Calculate already return ValueError as a
         # visible conflict without replacing the previously frozen snapshot.

@@ -42,7 +42,8 @@ def monthly_hours(owner, records, targets, *, signed_months=(), current_month=No
         if month <= current:
             months[month]
     attendance_hours = 0
-    for entry in attendance:
+    from learner_api.attendance_otjh import additional_rows
+    for entry in additional_rows(records, attendance):
         month = entry.get('reporting_month')
         if entry.get('accepted') is True and month and month <= current:
             value = number(entry.get('actual_hours'))
@@ -61,7 +62,8 @@ def monthly_hours(owner, records, targets, *, signed_months=(), current_month=No
                 'planned_hours': totals['planned']}}
 
 
-def learning_projection(source, owner, records, *, compact_content=False, monthly_assignments=False, progress=None):
+def learning_projection(source, owner, records, *, compact_content=False, monthly_assignments=False, progress=None,
+                        required_activities=False, include_activity_dates=True):
     from .weekly_learning import build_learning_content_summary
     from .student_activity_access import student_activity_available
     from .student_activity_data import summarize_activities
@@ -87,7 +89,8 @@ def learning_projection(source, owner, records, *, compact_content=False, monthl
             'activity_id', 'group_id', 'group_name', 'activity', 'category', 'completed', 'position',
             'date', 'month', 'week_start', 'week_end', 'date_needs_review', 'date_source',
             'section_title', 'source_activity_id', 'catalogue_kind', 'best_score_percent',
-            'quiz_score', 'quiz_maximum_score', *(('planned',) if monthly_assignments else ())) if key in item}
+            'quiz_score', 'quiz_maximum_score', *(('planned',) if monthly_assignments else ()),
+            *(('planned', 'planned_hours_mapped') if required_activities else ())) if key in item}
             for item in activity['activities']]
     from .learning_plan import _effective_plan_ids, request_preset_cache
     ids = _effective_plan_ids(source, request_preset_cache(source))
@@ -96,7 +99,11 @@ def learning_projection(source, owner, records, *, compact_content=False, monthl
     with connections['enrolment'].cursor() as cur:
         builder = builder_subject_links(cur, source, refs)
         cached_dates = getattr(source, '_dashboard_activity_dates', None)
-        if cached_dates is not None and cached_dates[0] == set(ids):
+        if not include_activity_dates and not required_activities:
+            # Counts use catalogue identities and completion, never deadlines.
+            # Do not cache this empty map: a later scheduled read still needs dates.
+            dates = {}
+        elif cached_dates is not None and cached_dates[0] == set(ids):
             dates = cached_dates[1]
         else:
             dates = read_builder_activity_dates(cur, ids)

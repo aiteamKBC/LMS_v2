@@ -1,3 +1,4 @@
+import { LoadingLabel } from '@/components/feature/LoadingSkeleton';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 
@@ -40,7 +41,7 @@ export function ThemedSelect<T extends string = string>({
     const positionMenu = () => {
       const rect = rootRef.current?.getBoundingClientRect();
       if (!rect) return;
-      const estimatedHeight = options.length * 36 + 8;
+      const estimatedHeight = options.length * 44 + 12;
       const maxHeight = Math.max(80, Math.min(288, estimatedHeight, window.innerHeight - 24));
       const opensAbove = menuPlacement === 'above' || (menuPlacement === 'auto' && rect.bottom + maxHeight + 6 > window.innerHeight - 12);
       setMenuRect({
@@ -81,14 +82,14 @@ export function ThemedSelect<T extends string = string>({
         aria-expanded={open}
       >
         <span className="flex min-w-0 items-center justify-between gap-3">
-          <span className="truncate">{selected?.label || placeholder}</span>
+          <span className="truncate"><LoadingLabel>{selected?.label || placeholder}</LoadingLabel></span>
           <AppIcon className={`ri-arrow-down-s-line text-[#647083] transition-transform ${open ? 'rotate-180' : ''}`}></AppIcon>
         </span>
       </button>
       {open && !disabled && createPortal(
         <div
           ref={menuRef}
-          className={`fixed z-[120] max-h-72 overflow-y-auto rounded-xl border border-[#d8dde6] bg-white py-1 shadow-xl shadow-[#231942]/12 quiz-preview-scroll ${menuClassName}`}
+          className={`lms-select-panel fixed z-[120] max-h-72 overflow-y-auto rounded-xl border border-[#d8dde6] bg-white py-1 shadow-xl shadow-[#231942]/12 quiz-preview-scroll ${menuClassName}`}
           style={{ left: menuRect.left, top: menuRect.top, width: menuRect.width, maxHeight: menuRect.maxHeight }}
           role="listbox"
         >
@@ -106,7 +107,7 @@ export function ThemedSelect<T extends string = string>({
                 }}
                 className={`flex h-9 w-full items-center justify-between px-3 text-left text-sm transition-smooth ${active ? 'bg-[#f2f0ff] text-[#4c1d95] font-semibold' : 'text-[#1f2937] hover:bg-[#f8fafc]'}`}
               >
-                <span className="truncate">{option.label}</span>
+                <span className="truncate"><LoadingLabel>{option.label}</LoadingLabel></span>
                 {active && <AppIcon className="ri-check-line text-[#5b2dbb]"></AppIcon>}
               </button>
             );

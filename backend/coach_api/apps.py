@@ -10,6 +10,7 @@ class CoachApiConfig(AppConfig):
 
         # Register read-model refresh events once Django has loaded every model.
         from . import dashboard_signals  # noqa: F401
+        from . import activity_plan_events  # noqa: F401
 
         # Records coaching meetings and absence reports in the Audit Trail.
         # Here rather than in system_audit because the models have to be loaded

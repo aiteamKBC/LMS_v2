@@ -50,7 +50,8 @@ def _component_ksb_weights(component_ref):
         return {}
     try:
         with connections["enrolment"].cursor() as cur:
-            cur.execute("select ksb_mappings from curriculum.components where id = %s limit 1", [component_ref])
+            from curriculum_api.learning_storage import read_table
+            cur.execute(f"select ksb_mappings from {read_table('components', cur.db)} where id = %s limit 1", [component_ref])
             row = cur.fetchone()
     except DatabaseError:
         return {}
@@ -125,7 +126,8 @@ def _reflection_lineage(learner_id, activity_id):
         return lineage
     try:
         with connections["enrolment"].cursor() as cur:
-            cur.execute("select id from curriculum.components where id = %s limit 1", [component_ref])
+            from curriculum_api.learning_storage import read_table
+            cur.execute(f"select id from {read_table('components', cur.db)} where id = %s limit 1", [component_ref])
             if cur.fetchone():
                 lineage["component_ref"] = component_ref
             learner_ids = _learner_profile_ids_for_source(cur, learner_id)
@@ -283,6 +285,12 @@ def _submit_reflection(request):
     # The receipt for credited lecture time is server-owned, including on drafts.
     full_submission.pop('lectureReflectionTime', None)
     full_submission.pop("selectAssignmentTopic", None)
+    from .live_session_access import access_refusal
+    refused = access_refusal(learner_kind, learner_id, activity_id)
+    time_locked = refused is not None and refused.status_code == 409
+    requested_time = payload.get('additionalReflectionSeconds') not in (None, 0) or payload.get('reflectionTimeOperation') is not None
+    if refused is not None and (not time_locked or requested_time):
+        return refused
     lineage = _reflection_lineage(learner_id, activity_id)
     if assignment_topic and submission_mode == "draft":
         # An optional draft must never claim the previous topic\'s progress entry.
@@ -410,6 +418,14 @@ def _submit_reflection(request):
                     full_submission["qualityScore"] = quality_score
                     full_submission["qualityChecks"] = checks
 
+                if time_locked:
+                    # Text-only reflections may be saved before the recording.
+                    # Their read-only time snapshot cannot introduce or replace
+                    # hours, including from an old tab or a forged request.
+                    payload['actualTimeHours'] = _text(stored.get('actualTimeHours'))
+                    full_submission['actualTimeHours'] = payload['actualTimeHours']
+                    payload.pop('additionalReflectionSeconds', None)
+                    full_submission.pop('additionalReflectionSeconds', None)
                 from .lecture_reflection_time import add_reflection_time
                 time_receipt = add_reflection_time(payload, stored, submission_mode=submission_mode)
                 preserve_time_history(full_submission, stored, time_receipt,

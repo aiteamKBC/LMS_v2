@@ -1,7 +1,11 @@
 """Exercise the real planner with synthetic rows; no Django, database or network."""
 import ast
+import sys
 import unittest
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from curriculum_api.weekly_schedule import module_week_boundary_mode  # noqa: E402
 
 
 class NumberedSessionHeaderTests(unittest.TestCase):
@@ -14,6 +18,7 @@ class NumberedSessionHeaderTests(unittest.TestCase):
             {'sessionNumber': 2, 'date': '2026-10-10', 'day': 'Saturday'},
         ]
         context = {
+            'module_week_boundary_mode': module_week_boundary_mode,
             'module_week_delivery_slots': lambda *args, **kwargs: (
                 [[self.sessions[0]], [self.sessions[1]]], self.sessions),
             'module_session_clock': lambda *args: ('09:00', '11:00', 120),

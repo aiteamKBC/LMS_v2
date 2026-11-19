@@ -48,11 +48,15 @@ OWN_ONLY = [m for m in CATALOGUE if m["programmeId"] == OWN_PROGRAMME]
 def _learner(plan=None):
     return SimpleNamespace(
         id=19, pk=19, username="test learner", programme="MBA", cohort="C1",
-        group="G1", programme_status="Delivery", learning_plan=plan, save=Mock(),
+        group="G1", programme_status="Delivery", learning_plan=plan, free_courses=[], save=Mock(),
     )
 
 
 class LearningPlanProgrammeTests(SimpleTestCase):
+    def setUp(self):
+        self.enterContext(patch('learner_api.free_course_catalogue.builder_free_courses', return_value=[]))
+        self.enterContext(patch('learner_api.learning_plan._meetings', return_value=([], '')))
+
     def _call(self, learner, method="GET", body=None):
         factory = RequestFactory()
         url = "/learner_api/learning-plan/19/"

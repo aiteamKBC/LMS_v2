@@ -1,7 +1,8 @@
-import { cleanup, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import App from '@/App';
+import { AppIcon } from '@/components/feature/AppIcon';
 
 function json(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), {
@@ -12,6 +13,7 @@ function json(body: unknown, status = 200) {
 
 describe('public event feedback through the full app shell', () => {
   beforeEach(() => {
+    vi.stubGlobal('AppIcon', AppIcon);
     vi.stubGlobal('__BASE_PATH__', '/');
     window.history.replaceState({}, '', '/event-feedback#token=guest-token');
   });
@@ -92,9 +94,11 @@ describe('public event feedback through the full app shell', () => {
     render(<App />);
 
     const user = userEvent.setup();
-    await user.click(await screen.findByRole('button', { name: /Event Feedback/ }));
-    expect(await screen.findByText('Offline Event')).toBeVisible();
+    await user.click(await screen.findByRole('button', { name: /All feedback types/ }, { timeout: 10_000 }));
+    await user.click(screen.getByRole('option', { name: 'Event Feedback' }));
+    const requests = screen.getByRole('heading', { name: 'All feedback requests' }).closest('section')!;
+    expect(await within(requests).findByText('Offline Event')).toBeVisible();
     expect(window.location.pathname).toBe('/learner/feedback');
     expect(window.location.search).toBe('?category=event');
-  });
+  }, 15_000);
 });

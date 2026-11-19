@@ -78,12 +78,15 @@ export interface ActivityPlacement {
   weeks: SidebarWeek[];
 }
 
-/** Repeated week names need their plan position to distinguish occurrences. */
-export function weekDisplayLabel(weeks: { week: string }[], index: number): string {
+/** Add the teaching-week position without repeating an authored week number. */
+export function weekDisplayLabel(weeks: { week: string }[], index: number, numberNamedWeeks = false): string {
   const title = weeks[index].week;
-  return weeks.filter((week) => week.week === title).length > 1
-    ? `Week ${index + 1} · ${title}`
-    : title;
+  const repeated = weeks.filter((week) => week.week === title).length > 1;
+  if (!repeated && (!numberNamedWeeks || /^week\s*\d+\b/i.test(title.trim()))) return title;
+  if (numberNamedWeeks && separateWeek(title)) return title;
+  const number = numberNamedWeeks
+    ? weeks.slice(0, index + 1).filter((week) => !separateWeek(week.week)).length : index + 1;
+  return `Week ${number} · ${title}`;
 }
 
 type DatedWeek = { week: string; weekId?: string; components?: JourneyComponent[] };

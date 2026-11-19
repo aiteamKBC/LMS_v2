@@ -17,6 +17,8 @@ import {
   exportWeekKsbWorkbook,
   importModuleKsbWorkbook,
   importWeekKsbWorkbook,
+  ksbImportNotice,
+  type KsbImportPreview,
   type KsbProfileEntry,
 } from '../ksbExcel';
 import type { KsbMapping, ModuleCatalogueItem, ModuleComponent, ModuleWeek } from '../moduleAuthoringData';
@@ -453,6 +455,180 @@ describe('importWeekKsbWorkbook', () => {
 });
 
 // --- describeKsbImport ------------------------------------------------------
+
+describe('reviewing KSB sheets across copies', () => {
+  const row = (extra: Record<string, unknown> = {}) => ({
+    'Component ID': 'ORIGINAL', Week: 1, 'Week Title': 'Week 1',
+    'Component Title': 'Introduction', Type: 'reading', KSBs: 'K1:main:40', ...extra,
+  });
+  const destination = () => moduleWith([
+    week(1, [component('COPY', { title: 'Introduction', ksbMappings: [mapping('S2')] })]),
+    week(2, [component('OTHER', { title: 'Introduction', ksbMappings: [mapping('B1')] })]),
+  ]);
+
+  it('reviews a different-ID match before applying it, preserving other weeks and fields', async () => {
+    const module = destination();
+    const original = structuredClone(module);
+    let preview: KsbImportPreview | undefined;
+    let confirm: (accepted: boolean) => void = () => undefined;
+    const review = vi.fn((value: KsbImportPreview) => {
+      preview = value;
+      return new Promise<boolean>(resolve => { confirm = resolve; });
+    });
+    const result = importModuleKsbWorkbook(sheetFile([row()]), module, undefined, { review });
+    await vi.waitFor(() => expect(review).toHaveBeenCalledOnce());
+    expect(module).toEqual(original);
+    expect(preview?.rows[0]).toMatchObject({
+      rowNumber: 2, status: 'suggested', sourceId: 'ORIGINAL',
+      target: { componentId: 'COPY', currentKsbs: 'S2:main:40' },
+    });
+    confirm(true);
+    const { module: updated, summary } = await result;
+    expect(summary).toMatchObject({ componentsUpdated: 1, codesApplied: 1, suggestedMatches: 1, unmatchedIds: [] });
+    expect(updated.weekStructure[0].components[0]).toEqual({
+      ...original.weekStructure[0].components[0],
+      ksbMappings: [expect.objectContaining({ code: 'K1', weight: 40 })],
+    });
+    expect(updated.weekStructure[1]).toEqual(original.weekStructure[1]);
+    expect(module).toEqual(original);
+  });
+
+  it('does not apply a suggested match without a reviewer', async () => {
+    const module = destination();
+    const result = await importModuleKsbWorkbook(sheetFile([row()]), module);
+    expect(result.module).toBe(module);
+    expect(result.summary.componentsUpdated).toBe(0);
+  });
+
+  it('cancelling a mixed import applies neither exact IDs nor suggestions', async () => {
+    const module = destination();
+    const result = await importModuleKsbWorkbook(sheetFile([
+      row(), row({ 'Component ID': 'OTHER', KSBs: 'K2' }),
+    ]), module, undefined, { review: async () => false });
+    expect(result.cancelled).toBe(true);
+    expect(result.module).toBe(module);
+    expect(result.summary.componentsUpdated).toBe(0);
+  });
+
+  it('keeps exact IDs authoritative when titles or row order have changed', async () => {
+    const module = destination();
+    const review = vi.fn(async () => true);
+    const result = await importModuleKsbWorkbook(sheetFile([
+      row({ 'Component ID': 'OTHER', 'Component Title': 'Changed title', KSBs: 'K2' }),
+      row({ 'Component ID': 'COPY', Week: 99 }),
+    ]), module, undefined, { review });
+    expect(review).not.toHaveBeenCalled();
+    expect(result.module.weekStructure[1].components[0].ksbMappings[0].code).toBe('K2');
+    expect(result.module.weekStructure[0].components[0].ksbMappings[0].code).toBe('K1');
+  });
+
+  it('normalises case and whitespace without fuzzy matching', async () => {
+    const result = await importModuleKsbWorkbook(sheetFile([row({
+      'Component Title': '  INTRODUCTION  ', 'Week Title': '  week   1 ', Type: ' READING ',
+    })]), destination(), undefined, { review: async () => true });
+    expect(result.summary.suggestedMatches).toBe(1);
+  });
+
+  it.each([
+    { Week: 3, 'Week Title': 'Week 3' },
+    { 'Week Title': 'Different week' },
+    { Type: 'video' },
+    { 'Component Title': 'Introduction extended' },
+    { Week: '', 'Week Title': '' },
+    { 'Component Title': '' },
+  ])('leaves unmatched context untouched: %j', async extra => {
+    const module = destination();
+    const review = vi.fn(async () => true);
+    const result = await importModuleKsbWorkbook(sheetFile([row(extra)]), module, undefined, { review });
+    expect(result.module).toBe(module);
+    expect(result.summary.componentsUpdated).toBe(0);
+    expect(review.mock.calls[0]).toBeDefined();
+  });
+
+  it('skips duplicate destination titles instead of choosing the first', async () => {
+    const module = moduleWith([week(1, [component('A', { title: 'Introduction' }), component('B', { title: 'Introduction' })])]);
+    const result = await importModuleKsbWorkbook(sheetFile([row()]), module, undefined, { review: async () => true });
+    expect(result.module).toBe(module);
+    expect(result.summary.ambiguousIds).toEqual(['ORIGINAL']);
+  });
+
+  it('skips every repeated sheet ID, including conflicting exact-ID rows', async () => {
+    const module = destination();
+    const result = await importModuleKsbWorkbook(sheetFile([
+      row({ 'Component ID': 'COPY' }), row({ 'Component ID': 'COPY', KSBs: 'K2' }),
+    ]), module, undefined, { review: async () => true });
+    expect(result.module).toBe(module);
+    expect(result.summary.ambiguousIds).toEqual(['COPY', 'COPY']);
+  });
+
+  it('skips two different source rows competing for the same destination', async () => {
+    const module = destination();
+    const result = await importModuleKsbWorkbook(sheetFile([
+      row(), row({ 'Component ID': 'SECOND', KSBs: 'K2' }),
+    ]), module, undefined, { review: async () => true });
+    expect(result.module).toBe(module);
+    expect(result.summary.ambiguousIds).toEqual(['ORIGINAL', 'SECOND']);
+  });
+
+  it('reserves exact-ID destinations before considering suggestions', async () => {
+    const result = await importModuleKsbWorkbook(sheetFile([
+      row(), row({ 'Component ID': 'COPY', KSBs: 'K2' }),
+    ]), destination(), undefined, { review: async () => true });
+    expect(result.module.weekStructure[0].components[0].ksbMappings[0].code).toBe('K2');
+    expect(result.summary).toMatchObject({ componentsUpdated: 1, suggestedMatches: 0, ambiguousIds: ['ORIGINAL'] });
+  });
+
+  it('retains source validation and previews rejected codes for suggested matches', async () => {
+    const review = vi.fn(async (_preview: KsbImportPreview) => true);
+    const result = await importModuleKsbWorkbook(sheetFile([row({ KSBs: 'K1:secondary:20, K99' })]), destination(), {
+      sourceType: 'framework', sourceId: 'target', allowedCodes: ['K1'],
+    }, { review });
+    expect(review.mock.calls[0][0].skippedTokens).toEqual(['K99 (not in selected KSB source)']);
+    expect(result.module.weekStructure[0].components[0].ksbMappings).toEqual([
+      expect.objectContaining({ code: 'K1', type: 'secondary', weight: 20, sourceId: 'target' }),
+    ]);
+  });
+
+  it('aborts after confirmation if the destination changed during review', async () => {
+    const module = destination();
+    let current = true;
+    await expect(importModuleKsbWorkbook(sheetFile([row()]), module, undefined, {
+      review: async () => { current = false; return true; },
+      isCurrent: () => current,
+    })).rejects.toThrow('destination changed');
+    expect(module.weekStructure[0].components[0].ksbMappings[0].code).toBe('S2');
+  });
+
+  it('does not open a stale preview if the destination changed while reading', async () => {
+    const review = vi.fn(async () => true);
+    await expect(importModuleKsbWorkbook(sheetFile([row()]), destination(), undefined, {
+      review, isCurrent: () => false,
+    })).rejects.toThrow('destination changed');
+    expect(review).not.toHaveBeenCalled();
+  });
+
+  it('uses the standalone week title to review copied week components', async () => {
+    const components = [component('COPY', { title: 'Introduction' })];
+    const result = await importWeekKsbWorkbook(sheetFile([row({ Week: '' })]), components, undefined, {
+      weekTitle: 'Week 1', review: async () => true,
+    });
+    expect(result.summary.suggestedMatches).toBe(1);
+    expect(result.components[0].ksbMappings[0].code).toBe('K1');
+    const wrongWeek = await importWeekKsbWorkbook(sheetFile([row({ Week: '' })]), components, undefined, {
+      weekTitle: 'Week 2', review: async () => true,
+    });
+    expect(wrongWeek.components).toBe(components);
+  });
+
+  it('reports zero or partial application as a warning, and a clean import as success', () => {
+    const summary = { rowsWithKsbs: 2, componentsUpdated: 0, codesApplied: 0, unmatchedIds: ['A', 'B'], skippedTokens: [] };
+    expect(ksbImportNotice(summary)).toMatchObject({ icon: 'warning', title: 'No KSB codes applied' });
+    expect(ksbImportNotice(summary).text).toContain('No components were changed');
+    expect(ksbImportNotice({ ...summary, componentsUpdated: 1, codesApplied: 2, unmatchedIds: ['B'] }).icon).toBe('warning');
+    expect(ksbImportNotice({ ...summary, componentsUpdated: 2, codesApplied: 2, unmatchedIds: [] }).icon).toBe('success');
+    expect(ksbImportNotice({ ...summary, componentsUpdated: 2, codesApplied: 0, unmatchedIds: [] }).icon).toBe('warning');
+  });
+});
 
 describe('describeKsbImport', () => {
   it('summarises a clean import', () => {

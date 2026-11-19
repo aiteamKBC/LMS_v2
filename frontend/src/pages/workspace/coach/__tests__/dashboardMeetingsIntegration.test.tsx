@@ -497,6 +497,7 @@ it('renders only the table activity and attendance metrics without requesting KS
       otjhStatus: 'on-track', otjhCompleted: 20, otjhTarget: 40,
       ksbProgress: 85.3, ksbProgressAvailable: true, ksbCompleted: 498, ksbTarget: 584,
       activityProgress: 87.3, activityProgressAvailable: true, componentsCompleted: 137, componentsPlanned: 157,
+      activityPlan: { completed: 137, total: 157, percent: 87.26 }, activityPlanState: 'ready',
       attendanceRate: 80, attendanceAvailable: true, attendancePresent: 8, attendanceSessions: 10,
     }],
     monthlyRisk: [], marking: { items: [] }, meetings: { events: [] },
@@ -507,10 +508,10 @@ it('renders only the table activity and attendance metrics without requesting KS
   const row = (await within(region).findByText('Metric Learner')).closest('tr');
   expect(row).not.toBeNull();
   expect(within(row!).queryByText('85.3%')).not.toBeInTheDocument();
-  expect(within(row!).getByText('87.3%')).toBeVisible();
+  expect(within(row!).getByLabelText('Plan activities: 87%')).toBeVisible();
   expect(within(row!).getByText('80%')).toBeVisible();
   expect(within(row!).queryByText('498 / 584')).not.toBeInTheDocument();
-  expect(within(row!).getByText('137 / 157')).toBeVisible();
+  expect(within(row!).getByText('137 / 157 plan activities')).toBeVisible();
   expect(within(row!).getByLabelText('Attendance: 80%')).toBeVisible();
   expect(mocks.load).toHaveBeenCalledTimes(2);
   expect(mocks.coachFetch).not.toHaveBeenCalled();
@@ -526,6 +527,7 @@ it('preserves zero values while rendering unavailable dashboard metrics distinct
         otjhCompleted: 0, otjhTarget: 40, ksbProgress: 0, ksbProgressAvailable: true,
         ksbCompleted: 0, ksbTarget: 12, activityProgress: 0, activityProgressAvailable: true,
         componentsCompleted: 0, componentsPlanned: 20, attendanceRate: 0,
+        activityPlan: { completed: 0, total: 20, percent: 0 }, activityPlanState: 'ready',
         attendanceRateAvailable: true, attendanceAvailable: true, attendancePresent: 0, attendanceSessions: 10,
         lastActivity: '18 Sep 2026', lastActivityLabel: 'Quiz submitted', lastPr: '12 Sep 2026', lastMcm: '14 Sep 2026',
         lastProgressReview: '--', lastReview: '--',
@@ -534,6 +536,7 @@ it('preserves zero values while rendering unavailable dashboard metrics distinct
         id: 'missing', name: 'Unavailable Learner', rawProgramStatus: 'active', otjhStatus: 'unknown',
         otjhCompleted: 0, otjhTarget: 0, ksbProgress: null, ksbProgressAvailable: false,
         activityProgress: null, activityProgressAvailable: false, attendanceRate: null,
+        activityPlanState: 'unavailable',
         attendanceRateAvailable: false, attendanceAvailable: false,
       },
     ],
@@ -544,7 +547,7 @@ it('preserves zero values while rendering unavailable dashboard metrics distinct
   const zeroRow = (await within(region).findByText('Zero Learner')).closest('tr')!;
   expect(within(zeroRow).getByLabelText('OTJH: 0%')).toBeVisible();
   expect(within(zeroRow).queryByLabelText('KSBs: 0%')).not.toBeInTheDocument();
-  expect(within(zeroRow).getByLabelText('Activities: 0%')).toBeVisible();
+  expect(within(zeroRow).getByLabelText('Plan activities: 0%')).toBeVisible();
   expect(within(zeroRow).getByLabelText('Attendance: 0%')).toBeVisible();
   expect(within(zeroRow).getByText('18 Sep 2026')).toBeVisible();
   expect(within(zeroRow).getByText('12 Sep 2026')).toBeVisible();
@@ -553,7 +556,7 @@ it('preserves zero values while rendering unavailable dashboard metrics distinct
   const unavailableRow = (await within(region).findByText('Unavailable Learner')).closest('tr')!;
   expect(within(unavailableRow).getByLabelText('OTJH: not available')).toBeVisible();
   expect(within(unavailableRow).queryByLabelText('KSBs: not available')).not.toBeInTheDocument();
-  expect(within(unavailableRow).getByLabelText('Activities: not available')).toBeVisible();
+  expect(within(unavailableRow).getByRole('button', { name: 'Retry activity plan for Unavailable Learner' })).toBeVisible();
   expect(within(unavailableRow).getByLabelText('Attendance: not available')).toBeVisible();
   expect(within(unavailableRow).getByText('No activity yet')).toBeVisible();
   expect(within(unavailableRow).getByText('No PR yet')).toBeVisible();

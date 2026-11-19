@@ -5,7 +5,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ReactNode } from 'react';
 import {
   fetchEnglandHolidaySyncs,
-  fetchEnglandHolidays,
+  fetchCurriculumHolidays,
   refreshEnglandHolidays,
   type EnglandHoliday,
   type EnglandHolidaySync,
@@ -34,7 +34,7 @@ vi.mock('@/components/feature/CurriculumSweetAlert', () => ({
 }));
 
 vi.mock('@/lib/curriculumApi', () => ({
-  fetchEnglandHolidays: vi.fn(),
+  fetchCurriculumHolidays: vi.fn(),
   fetchEnglandHolidaySyncs: vi.fn(),
   refreshEnglandHolidays: vi.fn(),
 }));
@@ -85,13 +85,13 @@ async function choose(field: string, option: string) {
 
 /** One cell per row carries the division, so counting it counts the rows. */
 function renderedRowCount(): number {
-  return screen.queryAllByText('england-and-wales').length;
+  return screen.queryAllByText('England and Wales').length;
 }
 
 describe('England Holidays page', () => {
   beforeEach(() => {
-    vi.mocked(fetchEnglandHolidays).mockReset();
-    vi.mocked(fetchEnglandHolidays).mockResolvedValue(holidays);
+    vi.mocked(fetchCurriculumHolidays).mockReset();
+    vi.mocked(fetchCurriculumHolidays).mockResolvedValue(holidays.map(row => ({ id: row.id, label: row.title, startDate: row.date, endDate: row.date, source: 'gov.uk', notes: row.notes })));
     vi.mocked(fetchEnglandHolidaySyncs).mockReset();
     vi.mocked(fetchEnglandHolidaySyncs).mockResolvedValue({ status, results: [] });
     vi.mocked(refreshEnglandHolidays).mockReset();
@@ -103,15 +103,15 @@ describe('England Holidays page', () => {
     await waitFor(() => expect(renderedRowCount()).toBe(4));
     expect(screen.getByText('Good Friday')).toBeInTheDocument();
     expect(screen.getAllByText('New Year’s Day')).toHaveLength(2);
-    expect(screen.getByText('Showing 4 of 4 bank holidays', { exact: false })).toBeInTheDocument();
+    expect(screen.getByText('Showing 4 of 4 holidays', { exact: false })).toBeInTheDocument();
   });
 
-  it('shows the weekday and the substitute-day note', async () => {
+  it('keeps the stored start/end date and substitute-day note', async () => {
     renderPage();
 
     // 28 Dec 2026 is a Monday — the weekday is the whole reason the day moved.
     await waitFor(() => expect(screen.getByText('Substitute day')).toBeInTheDocument());
-    expect(screen.getByText('Monday')).toBeInTheDocument();
+    expect(screen.getAllByText('28 Dec 2026').length).toBeGreaterThanOrEqual(2);
   });
 
   it('filters to a single year', async () => {
@@ -122,7 +122,7 @@ describe('England Holidays page', () => {
 
     await waitFor(() => expect(renderedRowCount()).toBe(1));
     expect(screen.queryByText('Good Friday')).not.toBeInTheDocument();
-    expect(screen.getByText('Showing 1 of 4 bank holidays', { exact: false })).toBeInTheDocument();
+    expect(screen.getByText('Showing 1 of 4 holidays', { exact: false })).toBeInTheDocument();
   });
 
   it('searches by title', async () => {
@@ -133,18 +133,18 @@ describe('England Holidays page', () => {
 
     await waitFor(() => expect(renderedRowCount()).toBe(1));
     expect(screen.queryByText('Good Friday')).not.toBeInTheDocument();
-    expect(screen.getByText('Showing 1 of 4 bank holidays', { exact: false })).toBeInTheDocument();
+    expect(screen.getByText('Showing 1 of 4 holidays', { exact: false })).toBeInTheDocument();
   });
 
   it('explains an empty table rather than looking merely unpopulated', async () => {
-    vi.mocked(fetchEnglandHolidays).mockResolvedValue([]);
+    vi.mocked(fetchCurriculumHolidays).mockResolvedValue([]);
     renderPage();
 
     await waitFor(() => expect(screen.getByText('No bank holidays stored yet')).toBeInTheDocument());
   });
 
   it('surfaces a failed read', async () => {
-    vi.mocked(fetchEnglandHolidays).mockRejectedValue(new Error('curriculum.england_holidays is unreachable'));
+    vi.mocked(fetchCurriculumHolidays).mockRejectedValue(new Error('curriculum.england_holidays is unreachable'));
     renderPage();
 
     await waitFor(() => expect(
@@ -155,8 +155,8 @@ describe('England Holidays page', () => {
 
 describe('What GOV.UK has changed', () => {
   beforeEach(() => {
-    vi.mocked(fetchEnglandHolidays).mockReset();
-    vi.mocked(fetchEnglandHolidays).mockResolvedValue(holidays);
+    vi.mocked(fetchCurriculumHolidays).mockReset();
+    vi.mocked(fetchCurriculumHolidays).mockResolvedValue(holidays.map(row => ({ id: row.id, label: row.title, startDate: row.date, endDate: row.date, source: 'gov.uk', notes: row.notes })));
     vi.mocked(fetchEnglandHolidaySyncs).mockReset();
     vi.mocked(refreshEnglandHolidays).mockReset();
   });
@@ -168,7 +168,7 @@ describe('What GOV.UK has changed', () => {
     renderPage();
 
     await waitFor(() => expect(
-      screen.getByText('No changes recorded. Every bank holiday stored here matches what GOV.UK is publishing.'),
+      screen.getByText('No GOV.UK changes recorded. Stored bank holidays match the published feed.'),
     ).toBeInTheDocument());
   });
 
@@ -188,7 +188,7 @@ describe('What GOV.UK has changed', () => {
     renderPage();
 
     await waitFor(() => expect(screen.getByText('Moved')).toBeInTheDocument());
-    expect(screen.getByText('26 Dec 2026 → 28 Dec 2026')).toBeInTheDocument();
+    expect(screen.getByText('26 Dec 2026 to 28 Dec 2026')).toBeInTheDocument();
   });
 
   it('names a newly published holiday and a withdrawn one', async () => {
@@ -233,6 +233,6 @@ describe('What GOV.UK has changed', () => {
 
     await waitFor(() => expect(refreshEnglandHolidays).toHaveBeenCalledTimes(1));
     // Re-read afterwards: the point of the button is to see the new dates.
-    await waitFor(() => expect(fetchEnglandHolidays).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(fetchCurriculumHolidays).toHaveBeenCalledTimes(2));
   });
 });

@@ -72,6 +72,7 @@ vi.mock('@/components/feature/SessionResults', () => ({
 }));
 
 const component = (id: string, weekId: string, date: string) => ({
+  liveSessionAccess: { open: true, status: 'ready' as const, message: '' },
   componentId: id, component: 'Live Session · Live Teams Session 1', type: 'live_session',
   module: 'Marketing', moduleId: 'M1', week: 'Marketing Week', weekId,
   sessionDate: date, sessionTime: '12:00', durationMinutes: 60,
@@ -102,6 +103,7 @@ async function finish() {
 }
 
 beforeEach(() => {
+  clearAllCachedResources();
   vi.resetAllMocks();
   vi.mocked(readWebPointPlan).mockResolvedValue({ weeks: {} });
   programmeRead.loading = false;
@@ -121,7 +123,101 @@ beforeEach(() => {
   vi.mocked(fetchEvidence).mockResolvedValue([]);
   vi.mocked(loadLearningReflectionSubmission).mockResolvedValue(null);
 });
-afterEach(() => { cleanup(); vi.restoreAllMocks(); });
+afterEach(() => { cleanup(); clearAllCachedResources(); vi.restoreAllMocks(); });
+
+it.each(['commercial', 'apprenticeship'].flatMap(kind => ['upcoming', 'awaiting_recording'].map(status => ({ kind, status }))))(
+  'opens a $status $kind lecture but locks time until its recording is ready', async ({ kind, status }) => {
+    vi.mocked(fetchLearnerDetail).mockResolvedValue({ ...detail(), components: [{ ...first,
+      teamsLiveSessionId: 'SERIES', teamsSessionNumber: 1,
+      liveSessionAccess: { open: false, status, message: 'Waiting for this session recording.' },
+    }] } as LearnerDetail);
+    mount('C1', kind);
+    expect(await screen.findByText('Time entry is locked')).toBeVisible();
+    expect(screen.getByLabelText('Minutes spent')).toBeDisabled();
+    expect(screen.getByLabelText('Hours spent')).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Finish' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Add lecture reflection' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: 'Simulate recording watch' })).toBeVisible();
+    fireEvent.change(screen.getByLabelText('Minutes spent'), { target: { value: '20' } });
+    expect(screen.getByLabelText('Minutes spent')).toHaveValue('');
+    expect(startTimeTracking).not.toHaveBeenCalled();
+    expect(submitComponentProgress).not.toHaveBeenCalled();
+    vi.mocked(fetchLearnerDetail).mockResolvedValue(detail());
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh availability' }));
+    await waitFor(() => expect(screen.getByLabelText('Minutes spent')).toBeEnabled());
+    await finish();
+    await waitFor(() => expect(submitComponentProgress).toHaveBeenCalled());
+    expect(vi.mocked(submitComponentProgress).mock.calls[0][3].timeTakenSeconds).toBe(1200);
+  },
+);
+
+it('keeps saved lecture completion and reflection text viewable while additional time is locked', async () => {
+  vi.mocked(fetchLearnerDetail).mockResolvedValue({ ...detail(true), components: [{ ...first,
+    liveSessionAccess: { open: false, status: 'awaiting_recording', message: 'Waiting for this session recording.' },
+  }] } as LearnerDetail);
+  mount();
+  expect(await screen.findByText('Time entry is locked')).toBeVisible();
+  expect(screen.getByText(/Your completion for/)).toBeVisible();
+  expect(screen.getByRole('button', { name: 'Manage reflection time' })).toBeDisabled();
+  expect(screen.queryByRole('button', { name: 'Record another attempt' })).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', { name: 'Add lecture reflection' }));
+  expect(await screen.findByRole('heading', { name: 'What have you learnt from this activity?' })).toBeVisible();
+  expect(screen.queryByRole('checkbox', { name: /Add.*time/i })).not.toBeInTheDocument();
+  expect(startTimeTracking).not.toHaveBeenCalled();
+});
+
+it.each(['commercial', 'apprenticeship'])('completes an attended %s lecture and keeps reflection available without recording lecture time again', async kind => {
+  vi.mocked(fetchLearnerDetail).mockResolvedValue({ ...detail(true), components: [{ ...first,
+    reflectionRequired: true, liveSessionLearning: { attendance: 'present', attendedSeconds: 7200,
+      attendedAt: '2026-10-22T13:00:00Z', status: 'completed', requirementsStatus: 'reflection-required' } }],
+    componentProgress: [{ ...progress, completionEligible: true }],
+  } as LearnerDetail);
+  mount('C1', kind);
+  const status = await screen.findByLabelText('Lecture attendance and completion');
+  expect(status).toHaveTextContent('Attended');
+  expect(status).toHaveTextContent('Completed');
+  expect(status).toHaveTextContent('Reflection required');
+  expect(status).toHaveTextContent('Attendance time: 2h');
+  expect(screen.queryByLabelText('Minutes spent')).not.toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: 'Finish' })).not.toBeInTheDocument();
+  expect(startTimeTracking).not.toHaveBeenCalled();
+  expect(submitComponentProgress).not.toHaveBeenCalled();
+  expect(screen.getByRole('button', { name: 'Add lecture reflection' })).toBeEnabled();
+  fireEvent.click(screen.getByRole('button', { name: 'Add lecture reflection' }));
+  expect(await screen.findByRole('heading', { name: 'What have you learnt from this activity?' })).toBeVisible();
+});
+
+it.each(['commercial', 'apprenticeship'].flatMap(kind =>
+  ['reading', 'video', 'assignment', 'live_session'].map(type => ({ kind, type })),
+))('shows only the opened $type component mappings for a $kind learner', async ({ kind, type }) => {
+  const mapped = { ...first, type, contentHtml: '<p>Synthetic lesson</p>',
+    videoUrl: 'https://example.test/lesson.mp4', assignmentBrief: 'Synthetic assignment',
+    ksbMappings: [
+      { code: 'K1', description: 'Authored knowledge', classification: 'main', weight: 20 },
+      { code: 'S2', description: null, classification: 'main', weight: 30 },
+    ],
+  };
+  vi.mocked(fetchLearnerDetail).mockResolvedValue({ ...detail(), components: [mapped,
+    { ...second, ksbMappings: [{ code: 'K99', description: 'Other activity', weight: 10, classification: 'main' }] },
+  ], ksbs: [
+    { code: 'K1', description: 'Programme description', type: 'K', number: '1' },
+    { code: 'S2', description: 'Programme skill description', type: 'S', number: '2' },
+    { code: 'B99', description: 'Unmapped programme behaviour', type: 'B', number: '99' },
+  ] } as LearnerDetail);
+  mount('C1', kind);
+  const panel = await screen.findByRole('region', { name: 'Mapped KSBs' });
+  expect(within(panel).getAllByRole('listitem')).toHaveLength(2);
+  expect(panel).toHaveTextContent('K1Authored knowledge');
+  expect(panel).toHaveTextContent('S2Programme skill description');
+  expect(panel).not.toHaveTextContent(/K99|B99|Programme description/);
+  expect(submitComponentProgress).not.toHaveBeenCalled();
+});
+
+it('does not substitute programme KSBs when the activity has no mapping', async () => {
+  mount();
+  await screen.findByRole('heading', { name: 'Live Teams Session 1' });
+  expect(screen.queryByRole('region', { name: 'Mapped KSBs' })).not.toBeInTheDocument();
+});
 
 const lectureDraft = (kind = 'apprenticeship') => ({
   id: 'R-LECTURE', status: 'draft', activityId: 'C1', activityType: 'session', learnerKind: kind, learnerId: '1',
@@ -160,7 +256,7 @@ it.each(['commercial', 'apprenticeship'])('keeps a confirmed %s reflection submi
     fireEvent.click(await screen.findByRole('button', { name: 'Add lecture reflection' }));
     await waitFor(() => expect(screen.getByRole('button', { name: 'Review' })).toBeEnabled());
     fireEvent.click(screen.getByRole('button', { name: 'Review' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Submit for tutor review' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Submit' }));
     await screen.findByText('Your lecture reflection was submitted for tutor review. Your attendance and recorded study time are unchanged.');
     expect(status).toBe('submitted_for_tutor_review');
     expect(writes).toHaveLength(1);
@@ -254,7 +350,7 @@ it.each([
   expect(time).toHaveAttribute('readonly');
   expect(screen.getByRole('checkbox', { name: 'Add more learning time for this reflection' }).hasAttribute('disabled')).toBe(!done);
   fireEvent.click(screen.getByRole('button', { name: 'Review' }));
-  const submit = screen.getByRole('button', { name: 'Submit for tutor review' });
+  const submit = screen.getByRole('button', { name: 'Submit' });
   await waitFor(() => expect(submit).toBeEnabled());
   fireEvent.click(submit);
   await screen.findByText('Your lecture reflection was submitted for tutor review. Your attendance and recorded study time are unchanged.');
@@ -281,12 +377,12 @@ it('keeps the lecture reflection open on save failure and retries without a prog
   fireEvent.click(await screen.findByRole('button', { name: 'Add lecture reflection' }));
   await screen.findByDisplayValue('00:00:20');
   fireEvent.click(screen.getByRole('button', { name: 'Review' }));
-  fireEvent.click(screen.getByRole('button', { name: 'Submit for tutor review' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Submit' }));
   expect(await screen.findByText('Synthetic save failure')).toBeVisible();
   expect(screen.queryByText(/Your lecture reflection was submitted for tutor review/)).not.toBeInTheDocument();
   expect(submitComponentProgress).not.toHaveBeenCalled();
   vi.mocked(saveLearningReflectionSubmission).mockResolvedValue({ id: 'R-LECTURE', status: 'submitted_for_tutor_review' });
-  fireEvent.click(screen.getByRole('button', { name: 'Submit for tutor review' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Submit' }));
   await screen.findByText(/Your lecture reflection was submitted for tutor review/);
   expect(submitComponentProgress).not.toHaveBeenCalled();
 });
@@ -321,7 +417,7 @@ it.each(['commercial', 'apprenticeship'])('submits %s lecture reflection minutes
   fireEvent.click(screen.getByRole('checkbox', { name: 'Add more learning time for this reflection' }));
   fireEvent.change(screen.getByLabelText('Additional reflection time (minutes)'), { target: { value: '30' } });
   fireEvent.click(screen.getByRole('button', { name: 'Review' }));
-  fireEvent.click(screen.getByRole('button', { name: 'Submit for tutor review' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Submit' }));
   fireEvent.click(await screen.findByRole('button', { name: 'Confirm time' }));
   expect(await screen.findByText(/Its additional time is recorded/)).toBeVisible();
   expect(screen.getByText('· 02:30:00')).toBeVisible();
@@ -472,7 +568,7 @@ it.each(['commercial', 'apprenticeship'])('retries a failed %s activity read wit
   fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
   expect(await screen.findByRole('button', { name: 'Submit synthetic assignment' })).toBeEnabled();
   expect(fetchLearnerDetail).toHaveBeenCalledTimes(2);
-  expect(fetchLearnerDetail).toHaveBeenLastCalledWith(kind, '1', { componentId: 'C1' });
+  expect(fetchLearnerDetail).toHaveBeenLastCalledWith(kind, '1', { componentId: 'C1', revalidate: true });
 });
 
 it.each(['commercial', 'apprenticeship'])('counts reading time only after the PDF page renders for %s learners', async kind => {
@@ -508,11 +604,12 @@ it('does not count a failed reading preview as reading time', async () => {
   vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible');
   let now = 0;
   vi.spyOn(performance, 'now').mockImplementation(() => now);
-  vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('', { status: 404 }));
+  const request = vi.spyOn(globalThis, 'fetch').mockImplementation(async () => new Response('', { status: 404 }));
   const reading = { ...first, type: 'reading', component: 'Reading', resourceUrl: '/curriculum_api/curriculum/uploads/sample.pdf' };
   vi.mocked(fetchLearnerDetail).mockResolvedValue({ ...detail(), components: [reading] } as unknown as LearnerDetail);
   const { unmount } = mount();
   await screen.findByText('This file could not be found on the server. Please let your coach or the curriculum team know.');
+  expect(request).toHaveBeenCalledWith(expect.stringContaining('sample.pdf'), expect.anything());
   now = 60000;
   unmount();
   const saved = JSON.parse(localStorage.getItem('learner_activity_timer:v1:apprenticeship:1:C1')!);
@@ -748,7 +845,7 @@ it.each(['commercial', 'apprenticeship'])('limits Live Session retakes using cre
   }
 });
 
-it.each(['commercial', 'apprenticeship'])('uses the fixed Live Session credit after manual completion and reopening for %s', async kind => {
+it.each(['commercial', 'apprenticeship'])('preserves legacy fixed Live Session credit after reopening for %s', async kind => {
   vi.mocked(readLearnerAttendanceMode).mockResolvedValue('lazy');
   const credited = { ...detail(true), componentProgress: [{ ...progress,
     componentType: 'live_session', reportedTime: '150 minutes', timeTaken: null,
@@ -770,6 +867,33 @@ it.each(['commercial', 'apprenticeship'])('uses the fixed Live Session credit af
   expect(screen.queryByRole('button', { name: 'Record another attempt' })).not.toBeInTheDocument();
   expect(screen.getByRole('button', { name: 'Manage reflection time' })).toBeVisible();
   expect(screen.getByRole('button', { name: 'Add lecture reflection' })).toBeVisible();
+});
+
+it.each(['commercial', 'apprenticeship'])('keeps one input hour after finishing and reopening an absent %s Live Session', async kind => {
+  const saved = { ...progress, componentType: 'live_session', reportedTime: '60 minutes',
+    timeTaken: '60:00', claimedSeconds: 3600, countedSeconds: 3600,
+    timeTrackingSource: 'signed_session_capped_visible_page:input',
+  };
+  const absent = { ...detail(), components: [{ ...first, attendanceCompleted: false }, empty, second] };
+  vi.mocked(fetchLearnerDetail).mockResolvedValueOnce(absent).mockResolvedValue({
+    ...absent, componentProgress: [saved],
+  } as unknown as LearnerDetail);
+  vi.mocked(submitComponentProgress).mockResolvedValue({ record: saved } as unknown as ComponentProgressResponse);
+  const view = mount('C1', kind);
+  fireEvent.change(await screen.findByLabelText('Hours spent'), { target: { value: '1' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Finish' }));
+  fireEvent.click(await screen.findByRole('button', { name: 'Confirm' }));
+  fireEvent.click(await screen.findByRole('button', { name: 'Confirm time' }));
+  await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('01:00:00'));
+  expect(submitComponentProgress).toHaveBeenCalledExactlyOnceWith('C1', kind, '1', expect.objectContaining({
+    timeTakenSeconds: 3600, timeEntrySource: 'input', reportedTime: '60 minutes',
+  }));
+  view.unmount();
+  mount('C1', kind);
+  expect(await screen.findByText('Completed')).toBeVisible();
+  expect(screen.getByRole('status')).toHaveTextContent('01:00:00');
+  expect(screen.getByRole('button', { name: 'Record another attempt' })).toBeVisible();
+  expect(submitComponentProgress).toHaveBeenCalledTimes(1);
 });
 
 it('retains live-session time on cancelling the prompt and restores keyboard focus', async () => {
@@ -1311,24 +1435,35 @@ it.each(['commercial', 'apprenticeship'])('restores a multi-day %s reading draft
   expect(startTimeTracking).not.toHaveBeenCalled();
 });
 
-it('offers recovery inside the reflection popup and preserves the entered duration after an offline save', async () => {
+it.each(['commercial', 'apprenticeship'].flatMap(kind =>
+  [false, true].map(pendingStart => ({ kind, pendingStart })),
+))('offers recovery inside the reflection popup and preserves the entered duration after an offline save ($kind, pending start: $pendingStart)', async ({ kind, pendingStart }) => {
   session.outsideWorkingHours = false;
   const persistent = { sessionId: 'OFFLINE', trackingToken: 'original-token', startedAt: new Date().toISOString(),
     countingMode: 'visible_page' as const, persistent: true };
-  vi.mocked(startTimeTracking).mockResolvedValue(persistent);
+  let finishStart!: (value: typeof persistent) => void;
+  vi.mocked(startTimeTracking).mockReturnValue(pendingStart
+    ? new Promise(resolve => { finishStart = resolve; })
+    : Promise.resolve(persistent));
   vi.mocked(checkpointTimeTracking).mockRejectedValueOnce(new Error('Connection lost. Your draft is kept.'))
     .mockImplementation(async value => ({ ...value, persistent: true, savedSeconds: 300 }));
   vi.mocked(fetchLearnerDetail).mockResolvedValue({ ...detail(), components: [{ ...first, reflectionRequired: true }] } as unknown as LearnerDetail);
-  mount();
+  mount('C1', kind);
   fireEvent.change(await screen.findByLabelText('Minutes spent'), { target: { value: '20' } });
   fireEvent.click(screen.getByRole('button', { name: 'Finish' }));
   const dialog = await screen.findByRole('dialog', { name: 'Do you want to complete a reflection?' });
   fireEvent.click(within(dialog).getByRole('button', { name: 'No, finish without reflection' }));
   fireEvent.click(await screen.findByRole('button', { name: 'Confirm time' }));
-  fireEvent.click(await within(dialog).findByRole('button', { name: 'Restore saved time' }));
+  if (pendingStart) await act(async () => { finishStart(persistent); });
+  const restore = await within(dialog).findByRole('button', { name: 'Restore saved time' });
+  await waitFor(() => expect(restore).toBeEnabled());
+  expect(JSON.parse(localStorage.getItem(`learner_activity_timer:v1:${kind}:1:C1`)!)).toMatchObject({
+    session: { sessionId: 'OFFLINE', trackingToken: 'original-token' },
+  });
+  fireEvent.click(restore);
   await screen.findByText(/Your time has been restored/);
   fireEvent.click(within(dialog).getByRole('button', { name: 'No, finish without reflection' }));
-  await waitFor(() => expect(submitComponentProgress).toHaveBeenCalledWith('C1', 'apprenticeship', '1', expect.objectContaining({
+  await waitFor(() => expect(submitComponentProgress).toHaveBeenCalledWith('C1', kind, '1', expect.objectContaining({
     trackingToken: 'original-token', timeTakenSeconds: 1200, timeEntrySource: 'input', skipReflection: true,
   })));
   expect(startTimeTracking).toHaveBeenCalledTimes(1);
@@ -1429,7 +1564,7 @@ it.each(['commercial', 'apprenticeship'])('uses the final lower reflection time 
   await waitFor(() => expect(screen.getByLabelText('Selected activity time')).toBeEnabled());
   fireEvent.click(screen.getByRole('button', { name: 'Review' }));
   fireEvent.change(screen.getByLabelText('Selected activity time'), { target: { value: '00:15:00' } });
-  fireEvent.click(screen.getByRole('button', { name: 'Submit for tutor review' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Submit' }));
   expect(submitComponentProgress).not.toHaveBeenCalled();
   fireEvent.click(await screen.findByRole('button', { name: 'Confirm time' }));
   await waitFor(() => expect(submitComponentProgress).toHaveBeenCalledWith('C1', kind, '1', expect.objectContaining({

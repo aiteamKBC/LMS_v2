@@ -48,7 +48,7 @@ async function openForm() {
 const submit = () => screen.getByRole('button', { name: /Submit absence report|Book catch-up & submit/ });
 async function chooseCatchup() {
   fireEvent.click(screen.getByRole('radio', { name: /Coach catch-up/ }));
-  await waitFor(() => expect(screen.queryByText('Loading your bookings…')).not.toBeInTheDocument());
+  await waitFor(() => expect(screen.queryByRole('status', { name: 'Loading your bookings…' })).not.toBeInTheDocument());
 }
 async function fillBooking() {
   fireEvent.change(screen.getByLabelText('Catch-up date'), { target: { value: bookingDate } });

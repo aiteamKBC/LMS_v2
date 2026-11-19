@@ -4,10 +4,12 @@ from coach_api import migrated_template_views
 
 from system_audit import activity as system_activity
 
+from . import calendar_endpoints
 from . import activity, learner_assignments, programme_audit, quality, review_schedule, review_types, reviews, views
 from .archive_index import curriculum_archive_index
 from .record_snapshots import curriculum_record_snapshot
 from .free_course_conversion import convert_free_course
+from . import free_course_authoring
 from .module_live import curriculum_live, curriculum_module_changes
 from .module_collaboration import collaboration_configuration
 from .module_uploads import module_uploaded_files
@@ -54,9 +56,12 @@ from .teaching_quality import teaching_review
 from .recordings_transcript_pdf import lecture_transcript
 from .module_hours import module_target
 from .catalogue_activity import catalogue_activity
+from . import delivery_dashboard
 
 
 urlpatterns = [
+    path('curriculum/delivery-dashboard/', delivery_dashboard.overview, name='curriculum-delivery-dashboard'),
+    path('curriculum/delivery-dashboard/sessions/', delivery_dashboard.sessions, name='curriculum-delivery-dashboard-sessions'),
     path('curriculum/modules/<str:module_id>/weeks/<str:week_id>/web-points/', week_points, name='web-week-points'),
     path('curriculum/modules/catalogue-activity/', catalogue_activity, name='module-catalogue-activity'),
     path('curriculum/modules/<str:module_id>/hours-target/', module_target, name='module-hours-target'),
@@ -142,6 +147,13 @@ urlpatterns = [
     path('curriculum/programmes/tree/', views.curriculum_programme_tree_save, name='curriculum-programme-tree-save'),
     # Before the <identifier> detail route, or 'reorder' reads as a programme id.
     path('curriculum/programmes/reorder/', views.curriculum_programme_reorder, name='curriculum-programmes-reorder'),
+    path('curriculum/free-courses/', free_course_authoring.catalogue, name='free-course-authoring-catalogue'),
+    path('curriculum/free-courses/<str:course_id>/structure/', free_course_authoring.authoring, name='free-course-structure'),
+    path('curriculum/free-courses/<str:course_id>/collaboration/', free_course_authoring.authoring, {'kind': 'collaboration'}, name='free-course-collaboration'),
+    path('curriculum/free-courses/<str:course_id>/weeks/', free_course_authoring.authoring, {'kind': 'week'}, name='free-course-weeks'),
+    path('curriculum/free-courses/<str:course_id>/weeks/<str:item_id>/', free_course_authoring.authoring, {'kind': 'week'}, name='free-course-week'),
+    path('curriculum/free-courses/<str:course_id>/components/', free_course_authoring.authoring, {'kind': 'component'}, name='free-course-components'),
+    path('curriculum/free-courses/<str:course_id>/components/<str:item_id>/', free_course_authoring.authoring, {'kind': 'component'}, name='free-course-component'),
     path('curriculum/free-programmes/<str:programme_id>/modules/', views.curriculum_free_programme_modules, name='curriculum-free-programme-modules'),
     path('curriculum/free-programmes/<str:programme_id>/convert/', views.curriculum_free_programme_convert, name='curriculum-free-programme-convert'),
     path('curriculum/free-programmes/<str:programme_id>/import-module/', views.curriculum_free_programme_import_module, name='curriculum-free-programme-import-module'),
@@ -304,6 +316,8 @@ urlpatterns = [
     path('curriculum/sessions/<str:identifier>/', views.curriculum_session_detail, name='curriculum-session-detail'),
     path('curriculum/staffing/', views.curriculum_staffing_collection, name='curriculum-staffing'),
     path('curriculum/staffing/<str:identifier>/', views.curriculum_staffing_detail, name='curriculum-staffing-detail'),
+    path('curriculum/country-calendars/', calendar_endpoints.country_calendars, name='country-calendars'),
+    path('curriculum/country-calendars/sync/', calendar_endpoints.sync_country_calendars, name='country-calendars-sync'),
     path('curriculum/holidays/', views.curriculum_holiday_collection, name='curriculum-holidays'),
     path('curriculum/holidays/<str:identifier>/', views.curriculum_holiday_detail, name='curriculum-holiday-detail'),
     # The GOV.UK half of the calendar on its own, in the feed's own shape

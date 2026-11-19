@@ -138,13 +138,15 @@ def _drive_confirmation(page):
     return action + '?' + urlencode({html.unescape(k): html.unescape(v) for k, v in inputs}) if inputs else ''
 
 
-def validate_video(file_obj):
+def validate_video(file_obj, *, enforce_size_limit=True):
     file_obj.seek(0, 2)
     size = file_obj.tell()
     file_obj.seek(0)
     header = file_obj.read(32)
     file_obj.seek(0)
-    if not size or size > MAX_VIDEO_BYTES:
+    if not size:
+        raise VideoImportError('Video files must be non-empty.')
+    if enforce_size_limit and size > MAX_VIDEO_BYTES:
         raise VideoImportError('Video files must be non-empty and no larger than 300 MB.')
     # ISO-BMFF (MP4/MOV), WebM/Matroska, Ogg. A URL ending .mp4 is not evidence.
     if not (header[4:8] in (b'ftyp', b'moov', b'mdat') or header.startswith((b'\x1aE\xdf\xa3', b'OggS'))):
@@ -157,8 +159,8 @@ def download_video(value):
     url = download_url(value)
     if youtube_url(url):
         from .youtube_download import download_youtube
-        with download_youtube(url, MAX_VIDEO_BYTES) as downloaded:
-            validate_video(downloaded)
+        with download_youtube(url) as downloaded:
+            validate_video(downloaded, enforce_size_limit=False)
             yield downloaded
         return
     deadline = time.monotonic() + 1200

@@ -361,7 +361,7 @@ describe('learner step gating', () => {
 
     // Still in flight: no percentage, no step counted, nothing called unstarted.
     expect(screen.getByText('—')).toBeInTheDocument();
-    expect(screen.getByText(/Loading your answers/i)).toBeInTheDocument();
+    expect(screen.getByRole('status', { name: /Loading your answers/i })).toBeInTheDocument();
     expect(screen.queryByText(/steps complete/i)).not.toBeInTheDocument();
     expect(screen.queryByText('Not started')).not.toBeInTheDocument();
 
@@ -406,7 +406,7 @@ describe('learner step gating', () => {
     // its rows don't exist. Waited on the KSB request rather than hydration —
     // the seeding effect only runs once hydration has released it.
     await waitFor(() => expect(fetchKsbProfile).toHaveBeenCalled());
-    expect(screen.getByText(/Loading your answers/i)).toBeInTheDocument();
+    expect(screen.getByRole('status', { name: /Loading your answers/i })).toBeInTheDocument();
     expect(screen.queryByText(/steps complete/i)).not.toBeInTheDocument();
 
     releaseKsbs();

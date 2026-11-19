@@ -1,8 +1,67 @@
 """The weekly pattern for one module, independent of its group's defaults."""
 import json
 import re
+from datetime import date, datetime, timedelta
 
 WEEKDAYS = ('Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday')
+
+
+def normalise_week_starts_on(value):
+    """None keeps the historical week boundary; supplied days must be explicit."""
+    if value is None or value == '':
+        return None
+    for day in WEEKDAYS:
+        if isinstance(value, str) and value.strip().lower() == day.lower():
+            return day
+    raise ValueError('Choose a valid day for the start of the week.')
+
+
+def module_week_starts_on(module):
+    module = module or {}
+    value = module.get('weekStartsOn') if 'weekStartsOn' in module else module.get('week_starts_on')
+    return normalise_week_starts_on(value)
+
+
+def merged_week_starts_on(payload, current):
+    if 'weekStartsOn' in payload or 'week_starts_on' in payload:
+        return module_week_starts_on(payload)
+    return module_week_starts_on(current)
+
+
+def module_week_boundary_mode(module):
+    """An explicit opt-in: old modules, including first-session weeks, stay legacy."""
+    module = module or {}
+    value = module.get('weekBoundaryMode') if 'weekBoundaryMode' in module else module.get('week_boundary_mode')
+    if value in (None, ''):
+        return None
+    if value != 'calendar':
+        raise ValueError('Choose a valid study week layout.')
+    return value
+
+
+def merged_week_boundary_mode(payload, current):
+    current = current or {}
+    if 'weekBoundaryMode' not in payload and 'week_boundary_mode' not in payload:
+        return module_week_boundary_mode(current)
+    requested = module_week_boundary_mode(payload)
+    stored = module_week_boundary_mode(current)
+    if current and requested != stored:
+        raise ValueError('The study week layout is fixed when a module is created. Existing modules keep their layout.')
+    return requested
+
+
+def first_weekly_session_day(start, weekly):
+    """The first live slot on/after the module start, independent of locale."""
+    if isinstance(start, datetime):
+        start = start.date()
+    if not isinstance(start, date):
+        try:
+            start = date.fromisoformat(str(start or ''))
+        except ValueError:
+            return None
+    days = {slot['day'] for slot in weekly}
+    return next((WEEKDAYS[(start + timedelta(days=offset)).weekday()] for offset in range(7)
+                 if WEEKDAYS[(start + timedelta(days=offset)).weekday()] in days), None)
 
 
 def normalise_weekly_schedule(value):

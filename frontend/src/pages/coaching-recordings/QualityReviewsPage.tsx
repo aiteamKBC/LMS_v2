@@ -1,8 +1,10 @@
+import { LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowLeft, ClipboardCheck, RefreshCw } from 'lucide-react';
+import { ArrowLeft, ChevronDown, ClipboardCheck, RefreshCw, SlidersHorizontal } from 'lucide-react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { qualityReviews, qualityForms, invalidateQualityReviews, type QualitySummary, type ReviewList, type QualityFormCard } from '@/api/coachingQualityReviews';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
+import RecordingSelect from './RecordingSelect';
 import { curriculumNavItems } from '@/mocks/navigation';
 import { CALENDAR_TIME_ZONES } from '@/pages/curriculum/recordings/utils';
 import { meetingDate } from './model';
@@ -10,15 +12,21 @@ import { readQualityLocation, writeQualityLocation } from './qualityLocation';
 import QualityPdfActions from './QualityPdfActions';
 import { suggestQualityType } from './qualityReviewType';
 import { addDays, todayIso } from '@/pages/curriculum/recordings/utils';
+import styles from './QualityReviewsPage.module.css';
 const QualityReviewDialog = lazy(() => import('./QualityReviewDialog'));
 const control = 'min-w-0 w-full rounded-lg border border-background-200 bg-white px-3 py-2 text-sm focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary-500';
 const button = 'inline-flex items-center justify-center gap-2 rounded-lg border border-primary-200 bg-white px-3 py-2 text-sm font-semibold text-primary-700 disabled:opacity-50';
 
-export default function QualityReviewsPage() {
+export default function QualityReviewsPage({ embedded = false }: { embedded?: boolean } = {}) {
   const [params, setParams] = useSearchParams();
   const { filters: location, review: requestedReview, invalidReview } = readQualityLocation(params);
   const { start, end, coachEmail, status, search, timeZone, reviewType = '', pdf = '' } = location;
   const applied = useMemo(() => ({ start, end, coachEmail, status, search, timeZone, reviewType, pdf }), [start, end, coachEmail, status, search, timeZone, reviewType, pdf]);
+  const writeLocation = (filters: typeof applied, review = '') => {
+    const next = writeQualityLocation(filters, review);
+    if (embedded) next.set('view', 'checks');
+    return next;
+  };
   const [filters, setFilters] = useState(applied);
   const [formCards, setFormCards] = useState<QualityFormCard[]>([]), [catalogError, setCatalogError] = useState('');
   useEffect(() => {
@@ -63,54 +71,67 @@ export default function QualityReviewsPage() {
   const applyFilters = (next: typeof applied) => {
     const days = (Date.parse(`${next.end}T12:00:00Z`) - Date.parse(`${next.start}T12:00:00Z`)) / 86400000;
     if (!Number.isFinite(days) || days < 0 || days > 365) { setFilterError('Choose a valid period of up to 366 days, with To on or after From.'); setMoreFilters(true); return; }
-    setFilterError(''); setParams(writeQualityLocation(next));
+    setFilterError(''); setParams(writeLocation(next));
   };
   const apply = (event: React.FormEvent) => { event.preventDefault(); applyFilters(filters); };
   const quick = (patch: Partial<typeof applied>) => applyFilters({ ...filters, ...patch });
-  const reset = () => { const end = todayIso(applied.timeZone); setFilterError(''); setParams(writeQualityLocation({ start: addDays(end, -30), end, timeZone: applied.timeZone, coachEmail: '', search: '', status: '', reviewType: '', pdf: '' })); };
-  return <WorkspaceShell role="curriculum" roleLabel="Curriculum Designer" workspaceLabel="Curriculum Studio"
-    pageTitle="Quality reviews & evidence" pageSubtitle="Saved portfolio sampling reviews by coach, learner and meeting" navItems={curriculumNavItems}>
-    <main className="mx-auto w-full max-w-[1600px] space-y-5 p-3 sm:p-6">
+  const reset = () => { const end = todayIso(applied.timeZone); setFilterError(''); setParams(writeLocation({ start: addDays(end, -30), end, timeZone: applied.timeZone, coachEmail: '', search: '', status: '', reviewType: '', pdf: '' })); };
+  const content = <main id={embedded ? 'main-content' : undefined} className="mx-auto w-full max-w-[1600px] space-y-5 p-3 sm:p-6">
       <div className="flex flex-wrap items-center justify-between gap-3"><Link className="inline-flex items-center gap-2 text-sm font-semibold text-primary-700" to="/curriculum/coaching-recordings"><ArrowLeft size={16} />Coach meetings calendar</Link><Link className={button} to={`/curriculum/quality/forms${reviewType ? `?type=${reviewType}` : ''}`}>Edit quality forms</Link></div>
-      {invalidReview && <div role="alert" className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm">This saved review link is invalid. <button type="button" className={`${button} ml-2`} onClick={() => setParams(writeQualityLocation(applied))}>Close invalid review link</button></div>}
-      <header className="flex flex-wrap items-start justify-between gap-3"><div><p className="text-xs font-bold uppercase tracking-wider text-primary-600">Quality workspace</p>
-        <h1 className="mt-2 text-2xl font-bold text-foreground-950">Quality Checks</h1><p className="mt-2 text-sm text-foreground-600">Open a saved review to see its observations, screenshots and action plan. Completed reviews include a PDF.</p></div>
+      {invalidReview && <div role="alert" className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm">This saved review link is invalid. <button type="button" className={`${button} ml-2`} onClick={() => setParams(writeLocation(applied))}>Close invalid review link</button></div>}
+      <header className="flex flex-wrap items-start justify-between gap-3"><div>
+        <h1 className="text-2xl font-bold text-foreground-950">Quality Checks</h1><p className="mt-1 text-sm text-foreground-600">Saved reviews, evidence and action plans.</p></div>
         <button className={button} disabled={loading} onClick={refresh}><RefreshCw size={15} />Refresh reviews</button></header>
-      <section aria-label="Quick review filters" className="space-y-4 rounded-xl border border-background-200 bg-white p-4">
-        <label className="grid max-w-xl gap-2 text-xs font-semibold">Quality form<select aria-label="Quality form filter" className={control} value={reviewType} disabled={loading} onChange={event => quick({ reviewType: event.target.value })}><option value="">All forms</option>{formCards.map(card => <option key={card.reviewType} value={card.reviewType}>{card.title}</option>)}{reviewType && !formCards.some(card => card.reviewType === reviewType) && !['MCM','PR'].includes(reviewType) && <option value={reviewType}>Selected saved form</option>}<optgroup label="Previous portfolio reviews"><option value="MCM">MCM · Previous form</option><option value="PR">PR · Previous form</option></optgroup></select></label>
-        {catalogError && <p role="alert" className="text-xs text-amber-900">{catalogError} Saved reviews remain available.</p>}
-        <div role="group" aria-label="Review completion" className="flex flex-wrap items-center gap-2"><span className="mr-2 text-xs font-semibold text-foreground-500">Show</span>{[['','All saved reviews'],['completed','Completed'],['draft','Drafts']].map(([value,label]) => <button key={value} className={`${button} ${status === value && !pdf ? 'border-primary-500 bg-primary-50 text-primary-900' : ''}`} aria-pressed={status === value && !pdf} disabled={loading} onClick={() => quick({ status: value, pdf: '' })}>{label}</button>)}<button className={`${button} ${pdf === 'available' ? 'border-primary-500 bg-primary-50 text-primary-900' : ''}`} aria-pressed={pdf === 'available'} disabled={loading} onClick={() => quick({ pdf: 'available', status: '' })}>With PDF</button></div>
-      </section>
-      <form noValidate onSubmit={apply} className="space-y-4 rounded-xl border border-background-200 bg-white p-4">
-        {filterError && <p role="alert" className="text-sm text-rose-800">{filterError}</p>}
-        <div className="grid items-end gap-3 sm:grid-cols-2 lg:grid-cols-[minmax(0,1fr)_minmax(0,2fr)_auto_auto]">
-        <label className="grid gap-1 text-xs font-semibold">Coach<select className={control} value={filters.coachEmail} onChange={event => setFilters({ ...filters, coachEmail: event.target.value })}><option value="">All coaches</option>{coaches.map(coach => <option key={coach.email} value={coach.email}>{coach.name}</option>)}</select></label>
-        <label className="grid gap-1 text-xs font-semibold">Learner or meeting<input type="search" placeholder="Search a learner or meeting title" maxLength={200} className={control} value={filters.search} onChange={event => setFilters({ ...filters, search: event.target.value })} /></label>
-        <button type="submit" className={`${button} bg-primary-600 text-white`} disabled={loading}>Apply filters</button>
-        <button type="button" className={button} disabled={loading} onClick={reset}>Reset filters</button>
+      <section aria-label="Quick review filters" className={`${styles.filters} rounded-xl border border-background-200 bg-background-50`}>
+        <div role="group" aria-label="Review completion" className={styles.completionButtons}>
+          {[['','All saved reviews'],['completed','Completed'],['draft','Drafts']].map(([value,label]) => <button key={value} className={styles.completionButton} aria-pressed={status === value && !pdf} disabled={loading} onClick={() => quick({ status: value, pdf: '' })}>{label}</button>)}<button className={styles.completionButton} aria-pressed={pdf === 'available'} disabled={loading} onClick={() => quick({ pdf: 'available', status: '' })}>With PDF</button>
         </div>
-        <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-foreground-500"><p>Meetings from {applied.start} to {applied.end} · {applied.timeZone}</p><button type="button" className="font-semibold text-primary-700 underline" aria-expanded={moreFilters} aria-controls="quality-extra-filters" onClick={() => setMoreFilters(value => !value)}>{moreFilters ? 'Fewer filters' : 'More filters'}</button></div>
-        <div id="quality-extra-filters" hidden={!moreFilters} className={moreFilters ? 'grid items-end gap-3 border-t border-background-200 pt-4 sm:grid-cols-2 lg:grid-cols-5' : ''}>
+        {catalogError && <p role="alert" className="text-xs text-amber-900">{catalogError} Saved reviews remain available.</p>}
+      <form noValidate onSubmit={apply} className={styles.filterForm}>
+        {filterError && <p role="alert" className="text-sm text-rose-800">{filterError}</p>}
+        <div className={styles.fields}>
+        <label className={styles.field}>Quality form<RecordingSelect ariaLabel="Quality form filter" value={reviewType} disabled={loading} onChange={value => quick({ reviewType: value })}
+          options={[{ value: '', label: 'All forms' }, ...formCards.map(card => ({ value: card.reviewType, label: card.title })),
+            ...(reviewType && !formCards.some(card => card.reviewType === reviewType) && !['MCM','PR'].includes(reviewType) ? [{ value: reviewType, label: 'Selected saved form' }] : []),
+            { value: 'MCM', label: 'MCM · Previous form', group: 'Previous portfolio reviews' },
+            { value: 'PR', label: 'PR · Previous form', group: 'Previous portfolio reviews' },
+          ].filter((option, index, options) => options.findIndex(row => row.value === option.value) === index)} /></label>
+        <label className={styles.field}>Learner or meeting<input type="search" placeholder="Search a learner or meeting title" maxLength={200} className={`${control} focus-visible:!outline-none`} value={filters.search} onChange={event => setFilters({ ...filters, search: event.target.value })} /></label>
+        <div className={styles.actions}>
+        <button type="submit" className={`${button} bg-primary-600 text-white`} disabled={loading}>Apply filters</button>
+        <button type="button" className={`${button} ${styles.moreButton}`} aria-expanded={moreFilters} aria-controls="quality-extra-filters" onClick={() => setMoreFilters(value => !value)}><SlidersHorizontal size={15} aria-hidden="true" />{moreFilters ? 'Fewer filters' : 'More filters'}<ChevronDown size={14} aria-hidden="true" className={moreFilters ? styles.chevronOpen : ''} /></button>
+        </div>
+        </div>
+        <div className={styles.footer}><p>Meetings from {applied.start} to {applied.end} · {applied.timeZone}{applied.coachEmail ? ` · ${coaches.find(coach => coach.email === applied.coachEmail)?.name || applied.coachEmail}` : ''}</p><button type="button" className={styles.resetButton} disabled={loading} onClick={reset}>Reset filters</button></div>
+        <div id="quality-extra-filters" hidden={!moreFilters} className={moreFilters ? styles.extraFilters : ''}>
+        <label className={styles.field}>Coach<RecordingSelect ariaLabel="Coach" value={filters.coachEmail} onChange={value => setFilters({ ...filters, coachEmail: value })}
+          options={[{ value: '', label: 'All coaches' }, ...coaches.map(coach => ({ value: coach.email, label: coach.name }))]} /></label>
         <label className="grid gap-1 text-xs font-semibold">From<input required type="date" className={control} value={filters.start} onChange={event => setFilters({ ...filters, start: event.target.value })} /></label>
         <label className="grid gap-1 text-xs font-semibold">To<input required type="date" min={filters.start} className={control} value={filters.end} onChange={event => setFilters({ ...filters, end: event.target.value })} /></label>
-        <label className="grid gap-1 text-xs font-semibold">Review status<select className={control} value={filters.status} onChange={event => setFilters({ ...filters, status: event.target.value })}><option value="completed">Completed</option><option value="draft">Drafts</option><option value="">All saved reviews</option></select></label>
-        <label className="grid gap-1 text-xs font-semibold">Saved PDF<select className={control} value={filters.pdf} onChange={event => setFilters({ ...filters, pdf: event.target.value })}><option value="">All reviews</option><option value="available">Has saved PDF</option><option value="missing">No saved PDF yet</option></select></label>
-        <label className="grid gap-1 text-xs font-semibold">Time zone<select className={control} value={filters.timeZone} onChange={event => setFilters({ ...filters, timeZone: event.target.value })}>{[...new Set([...CALENDAR_TIME_ZONES, filters.timeZone])].map(zone => <option key={zone} value={zone}>{zone}</option>)}</select></label>
+        <label className="grid gap-1 text-xs font-semibold">Review status<RecordingSelect ariaLabel="Review status" value={filters.status} onChange={value => setFilters({ ...filters, status: value })}
+          options={[{ value: 'completed', label: 'Completed' }, { value: 'draft', label: 'Drafts' }, { value: '', label: 'All saved reviews' }]} /></label>
+        <label className="grid gap-1 text-xs font-semibold">Saved PDF<RecordingSelect ariaLabel="Saved PDF" value={filters.pdf} onChange={value => setFilters({ ...filters, pdf: value })}
+          options={[{ value: '', label: 'All reviews' }, { value: 'available', label: 'Has saved PDF' }, { value: 'missing', label: 'No saved PDF yet' }]} /></label>
+        <label className="grid gap-1 text-xs font-semibold">Time zone<RecordingSelect ariaLabel="Time zone" value={filters.timeZone} onChange={value => setFilters({ ...filters, timeZone: value })}
+          options={[...new Set([...CALENDAR_TIME_ZONES, filters.timeZone])].map(value => ({ value, label: value }))} /></label>
         </div>
       </form>
+      </section>
       {error && <div role="alert" className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm">{error} <button className={`${button} ml-2`} onClick={() => setEpoch(value => value + 1)}>Retry reviews</button></div>}
       <section aria-label="Saved quality reviews" className="space-y-3">
-        <p role="status" className="text-xs text-foreground-500">{loading ? 'Loading saved reviews…' : `${rows.length} reviews loaded · Meeting dates in ${applied.timeZone}`}</p>
+        <p  className="text-xs text-foreground-500">{loading ? <LoadingSkeleton label="Loading saved reviews…" variant="text" /> : `${rows.length} reviews loaded · Meeting dates in ${applied.timeZone}`}</p>
         {!loading && !error && !rows.length && <div className="rounded-xl border border-background-200 bg-white p-8 text-center"><ClipboardCheck className="mx-auto text-primary-500" /><h2 className="mt-3 font-bold">No saved reviews match these filters</h2><p className="mt-2 text-sm text-foreground-600">Start a portfolio sampling review from a meeting in the coach calendar, or choose another period and status.</p></div>}
         {rows.map(row => <article key={row.id} className="flex flex-wrap items-center justify-between gap-4 rounded-xl border border-background-200 bg-white p-4 shadow-sm">
           <div className="min-w-0 flex-1 basis-64"><div className="flex flex-wrap items-center gap-2"><h2 className="break-words text-sm font-bold">{row.learnerName}</h2><span className={`rounded-full px-2 py-1 text-xs font-semibold ${row.status === 'completed' ? 'bg-emerald-50 text-emerald-800' : 'bg-amber-50 text-amber-800'}`}>{row.status === 'completed' ? 'Completed' : 'Draft'}</span></div>
             <p className="mt-2 break-words text-sm">{row.title}</p><p className="mt-2 text-xs text-foreground-500">{row.coachName} · {meetingDate(row.startsAt, applied.timeZone)} · {row.formTitle || row.reviewType || suggestQualityType(row.title) || 'Previous form'} · Version {row.version} · {row.actionCount} follow-up actions</p><p className="mt-2 text-xs text-foreground-600">Saved by: {row.reviewerName || 'Not recorded'}</p><p className="mt-2 text-xs font-semibold text-foreground-600">{row.pdfVersion ? `PDF saved · v${row.pdfVersion}` : row.status === 'completed' ? 'Completed · PDF can be prepared' : 'Draft · Continue the review to complete it'}</p></div>
-          <div className="flex flex-wrap items-center gap-2">{(row.pdfVersion || row.status === 'completed') && <QualityPdfActions key={`${row.id}:${row.status === 'completed' ? row.version : row.pdfVersion}`} reviewId={row.id} version={row.status === 'completed' ? row.version : row.pdfVersion!} />}<Link className={button} aria-label={`Open review for ${row.learnerName}`} to={{ search: writeQualityLocation(applied, row.id).toString() }}><ClipboardCheck size={15} />Open review</Link></div>
+          <div className="flex flex-wrap items-center gap-2">{(row.pdfVersion || row.status === 'completed') && <QualityPdfActions key={`${row.id}:${row.status === 'completed' ? row.version : row.pdfVersion}`} reviewId={row.id} version={row.status === 'completed' ? row.version : row.pdfVersion!} />}<Link className={button} aria-label={`Open review for ${row.learnerName}`} to={{ search: writeLocation(applied, row.id).toString() }}><ClipboardCheck size={15} />Open review</Link></div>
         </article>)}
         {next !== null && <button className={button} disabled={loading} onClick={() => setPage({ key: listKey, offset: next })}>Load more reviews</button>}
       </section>
       {selected && <Suspense fallback={<p role="status">Opening saved review…</p>}><QualityReviewDialog key={selected} reviewId={selected} timeZone={applied.timeZone} onDirtyChange={reportDirty} onBusyChange={reportBusy}
-        onClose={() => { dirty.current = false; setParams(writeQualityLocation(applied)); }} onSaved={() => { dirty.current = false; refresh(); }} /></Suspense>}
-    </main>
-  </WorkspaceShell>;
+        onClose={() => { dirty.current = false; setParams(writeLocation(applied)); }} onSaved={() => { dirty.current = false; refresh(); }} /></Suspense>}
+    </main>;
+  if (embedded) return content;
+  return <WorkspaceShell role="curriculum" roleLabel="Curriculum Designer" workspaceLabel="Curriculum Studio"
+    pageTitle="Quality reviews & evidence" pageSubtitle="Saved portfolio sampling reviews by coach, learner and meeting" navItems={curriculumNavItems}>{content}</WorkspaceShell>;
 }

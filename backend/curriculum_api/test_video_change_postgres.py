@@ -6,6 +6,7 @@ from concurrent.futures import ThreadPoolExecutor
 from contextlib import nullcontext
 from types import SimpleNamespace
 from tempfile import TemporaryDirectory
+from threading import Event
 import unittest
 from unittest.mock import Mock, patch
 
@@ -66,6 +67,65 @@ class VideoPostgresFixture:
 
 
 class VideoChangePostgresTests(VideoPostgresFixture, unittest.TestCase):
+    def test_free_course_sql_write_uses_course_collection_without_placement(self):
+        sql("""UPDATE curriculum.modules SET source_type='free_course', title='Independent study',
+            programme_id='', programme_name='', cohort_id='', cohort_name='', group_id='', group_name=''
+            WHERE module_catalogue_id='MOD1'""")
+        self.insert()
+        client = Mock()
+        client.free_course_collection.return_value = 'shared-free-collection'
+        client.find_import.return_value = None
+        client.create.return_value = {'guid': '12345678-1234-1234-1234-123456789abc'}
+        client.video.return_value = {'status': 4}
+        with patch.object(imports, 'BunnyStream', return_value=client), patch.object(imports, 'download_video',
+                side_effect=lambda _: nullcontext(io.BytesIO(b'\x00\x00\x00\x20ftypisom' + b'\x00' * 64))):
+            self.assertEqual(imports.run_pending(), 1)
+        asset = CurriculumVideoImport.objects.get()
+        self.assertEqual(asset.status, 'ready')
+        self.assertEqual(asset.scope['free_course_name'], 'Independent study')
+        client.free_course_collection.assert_called_once_with()
+        self.assertEqual(asset.scope['course_type'], 'free_course')
+        self.assertEqual(asset.collection_id, 'shared-free-collection')
+        client.collection.assert_not_called()
+        client.upload.assert_called_once()
+        self.assertEqual(sql("SELECT settings_json->>'videoUrl' FROM curriculum.components WHERE id='NEW'")[0][0], SOURCE)
+
+    def test_concurrent_imports_from_different_courses_share_one_collection(self):
+        assets = [imports.enqueue('module', course, {'id': component, 'settings_json': {'videoUrl': SOURCE}},
+                  {'free_course_module_id': course, 'free_course_name': name,
+                   'course_type': 'free_course', 'collection_name': 'Free course'})
+                  for course, name, component in [('MOD1', 'Independent study', 'ONE'), ('MOD2', 'Other course', 'TWO')]]
+        creating, release, second_select = Event(), Event(), Event()
+        client = Mock()
+        def create():
+            creating.set()
+            if not release.wait(5):
+                raise AssertionError('Collection create was not released')
+            return 'one-collection'
+        client.free_course_collection.side_effect = create
+        def worker(asset, second=False):
+            def executing(execute, query, params, many, context):
+                if second and 'FOR UPDATE' in query:
+                    second_select.set()
+                return execute(query, params, many, context)
+            try:
+                with connection.execute_wrapper(executing):
+                    return imports._import_collection(asset, client)
+            finally:
+                connections.close_all()
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            first = pool.submit(worker, assets[0])
+            try:
+                self.assertTrue(creating.wait(5))
+                second = pool.submit(worker, assets[1], True)
+                self.assertTrue(second_select.wait(5))
+                self.assertFalse(second.done())
+            finally:
+                release.set()
+            self.assertEqual(first.result(timeout=10), 'one-collection')
+            self.assertEqual(second.result(timeout=10), 'one-collection')
+        client.free_course_collection.assert_called_once_with()
+
     def test_new_sql_video_reaches_bunny_without_an_api_request(self):
         self.insert()
         client = Mock()

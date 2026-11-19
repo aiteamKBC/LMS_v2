@@ -1,14 +1,16 @@
 import type { ReactNode } from 'react';
 import type { QualityAnswer, QualityForm, QualityTemplate, Rating } from '@/api/coachingQualityReviews';
+import RecordingSelect from './RecordingSelect';
 
 export const qualityControl = 'w-full min-w-0 rounded-lg border border-background-200 bg-white px-3 py-2 text-sm text-foreground-800 focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary-500';
 const ratingLabels: Record<string, string> = { gold: 'Gold', green: 'Green', amber: 'Amber', red: 'Red', na: 'N/A' };
 const tones: Record<string, string> = { gold: 'border-yellow-500 bg-yellow-100 text-yellow-950', green: 'border-emerald-500 bg-emerald-50 text-emerald-900', amber: 'border-amber-500 bg-amber-50 text-amber-900', red: 'border-rose-500 bg-rose-50 text-rose-900', na: 'border-slate-500 bg-slate-100 text-slate-800' };
 
-export default function QualityQuestions({ template, sectionId, form, onChange, renderImages, renderFiles }: {
+export default function QualityQuestions({ template, sectionId, form, onChange, renderImages, renderFiles, disabled = false }: {
   template: QualityTemplate; sectionId: string; form: QualityForm; onChange: (form: QualityForm) => void;
   renderImages?: (key: string, label: string) => ReactNode;
   renderFiles?: (key: string) => ReactNode;
+  disabled?: boolean;
 }) {
   const section = template.sections.find(item => item.id === sectionId);
   if (!section) return null;
@@ -32,7 +34,10 @@ export default function QualityQuestions({ template, sectionId, form, onChange, 
           <label className="mt-4 grid gap-1.5 text-xs font-semibold">Evidence observed and impact on the learner<textarea rows={4} maxLength={6000} className={qualityControl} value={answer.evidence} onChange={event => onChange({ ...form, criteria: { ...form.criteria, [item.id]: { ...answer, evidence: event.target.value } } })} placeholder="Describe what you observed. Include the video time, report page or evidence reference." /></label>
         </> : kind === 'file' ? <div className="mt-3">{renderFiles?.(item.id) ?? 'Evidence upload appears when completing the form.'}</div> : kind === 'image' ? <div className="mt-3">{images(item.id, item.text)}</div>
           : kind === 'checklist' ? <div className="mt-3 grid gap-2">{item.options?.map(option => <label key={option} className="flex items-start gap-2 text-sm"><input type="checkbox" className="mt-1" checked={Array.isArray(value) && value.includes(option)} onChange={event => setAnswer(item.id, event.target.checked ? [...(Array.isArray(value) ? value : []), option] : (Array.isArray(value) ? value : []).filter(entry => entry !== option))} />{option}</label>)}</div>
-            : kind === 'boolean' || kind === 'single_choice' ? <label className="mt-3 block"><span className="sr-only">{item.text}</span><select className={qualityControl} value={kind === 'boolean' ? value === true ? 'yes' : value === false ? 'no' : '' : String(value ?? '')} onChange={event => setAnswer(item.id, kind === 'boolean' ? event.target.value === '' ? null : event.target.value === 'yes' : event.target.value)}><option value="">Choose an answer</option>{kind === 'boolean' ? <><option value="yes">Yes</option><option value="no">No</option></> : item.options?.map(option => <option key={option}>{option}</option>)}</select></label>
+            : kind === 'boolean' || kind === 'single_choice' ? <label className="mt-3 block"><span className="sr-only">{item.text}</span><RecordingSelect ariaLabel={item.text} disabled={disabled}
+              value={kind === 'boolean' ? value === true ? 'yes' : value === false ? 'no' : '' : String(value ?? '')}
+              onChange={answer => setAnswer(item.id, kind === 'boolean' ? answer === '' ? null : answer === 'yes' : answer)}
+              options={[{ value: '', label: 'Choose an answer' }, ...(kind === 'boolean' ? [{ value: 'yes', label: 'Yes' }, { value: 'no', label: 'No' }] : item.options?.map(option => ({ value: option, label: option })) ?? [])]} /></label>
               : kind === 'textarea' ? <label className="mt-3 block"><span className="sr-only">{item.text}</span><textarea className={qualityControl} rows={4} maxLength={6000} value={String(value ?? '')} onChange={event => setAnswer(item.id, event.target.value)} /></label>
                 : <label className="mt-3 block"><span className="sr-only">{item.text}</span><input className={qualityControl} type={kind === 'number' ? 'number' : kind === 'date' ? 'date' : 'text'} step={kind === 'number' ? 'any' : undefined} maxLength={1000} value={typeof value === 'number' || typeof value === 'string' ? value : ''} onChange={event => setAnswer(item.id, kind === 'number' && event.target.value !== '' ? Number(event.target.value) : event.target.value)} /></label>}
       </fieldset>;

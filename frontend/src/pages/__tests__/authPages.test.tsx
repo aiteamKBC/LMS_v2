@@ -87,7 +87,7 @@ describe('LoginPage', () => {
 
     await user.type(screen.getByLabelText(/email address/i), 'admin@kbc.test');
     await user.type(screen.getByLabelText(/^password$/i), 'Vaulted-Harbour-92!');
-    await user.click(screen.getByRole('button', { name: /sign in/i }));
+    await user.click(screen.getByRole('button', { name: /^sign in to workspace$/i }));
 
     await waitFor(() =>
       expect(login).toHaveBeenCalledWith('admin@kbc.test', 'Vaulted-Harbour-92!', false),
@@ -102,7 +102,7 @@ describe('LoginPage', () => {
     await user.type(screen.getByLabelText(/email address/i), 'admin@kbc.test');
     await user.type(screen.getByLabelText(/^password$/i), 'pw');
     await user.click(screen.getByRole('button', { name: /remember me/i }));
-    await user.click(screen.getByRole('button', { name: /sign in/i }));
+    await user.click(screen.getByRole('button', { name: /^sign in to workspace$/i }));
 
     await waitFor(() => expect(login).toHaveBeenCalledWith('admin@kbc.test', 'pw', true));
   });
@@ -116,7 +116,7 @@ describe('LoginPage', () => {
 
     await user.type(screen.getByLabelText(/email address/i), 'admin@kbc.test');
     await user.type(screen.getByLabelText(/^password$/i), 'wrong');
-    await user.click(screen.getByRole('button', { name: /sign in/i }));
+    await user.click(screen.getByRole('button', { name: /^sign in to workspace$/i }));
 
     expect(await screen.findByText('Incorrect email or password.')).toBeInTheDocument();
   });
@@ -130,7 +130,7 @@ describe('LoginPage', () => {
 
     await user.type(screen.getByLabelText(/email address/i), 'a@b.test');
     await user.type(screen.getByLabelText(/^password$/i), 'pw');
-    await user.click(screen.getByRole('button', { name: /sign in/i }));
+    await user.click(screen.getByRole('button', { name: /^sign in to workspace$/i }));
 
     expect(await screen.findByText(/temporarily locked/i)).toBeInTheDocument();
   });
@@ -142,10 +142,10 @@ describe('LoginPage', () => {
 
     await user.type(screen.getByLabelText(/email address/i), 'a@b.test');
     await user.type(screen.getByLabelText(/^password$/i), 'pw');
-    await user.click(screen.getByRole('button', { name: /sign in/i }));
+    await user.click(screen.getByRole('button', { name: /^sign in to workspace$/i }));
 
     await screen.findByText('Incorrect email or password.');
-    expect(screen.getByRole('button', { name: /sign in/i })).toBeEnabled();
+    expect(screen.getByRole('button', { name: /^sign in to workspace$/i })).toBeEnabled();
   });
 
   it('no longer advertises a demo password', async () => {

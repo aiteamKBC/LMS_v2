@@ -14,9 +14,9 @@
 // not action feedback. A button that has been clicked keeps its spinner, because
 // what the reader is waiting for there is an outcome, not a layout.
 // ============================================================================
-import { useState } from 'react';
-import { SIDEBAR_RAIL_WIDTH, SIDEBAR_EXPANDED_WIDTH, SIDEBAR_CONTENT_GAP } from './Sidebar';
-import { LEARNER_SIDEBAR_WIDTH } from './learnerShellAssets';
+import './WorkspaceBreadcrumbs.css';
+import './Skeletons.css';
+import { WORKSPACE_SIDEBAR_WIDTH } from './learnerShellAssets';
 
 interface SkeletonProps {
   className?: string;
@@ -277,7 +277,7 @@ export function HeroSkeleton() {
  * pulse is what says "loading".
  *
  * The chrome mirrors WorkspaceShell exactly — rail width, the h-14 header, the
- * h-8 breadcrumb strip — so the swap to the real page moves nothing. The header
+ * shared breadcrumb strip — so the swap to the real page moves nothing. The header
  * used to be missing entirely here, which shifted the whole page up 56px and
  * back down again on every navigation.
  *
@@ -285,26 +285,18 @@ export function HeroSkeleton() {
  * away from the real sidebar's.
  */
 export function PageSkeleton({ workspaceRole, hideSidebar = false }: { workspaceRole?: string; hideSidebar?: boolean } = {}) {
-  const learnerShell = workspaceRole === 'learner';
-  const [sidebarExpanded] = useState(() => {
-    try {
-      return localStorage.getItem('kbc_sidebar_pinned') === 'true';
-    } catch {
-      return false;
-    }
-  });
   return (
     <div
-      className={`flex h-screen overflow-hidden bg-background-200 ${workspaceRole ? 'dashboard-theme' : ''} ${learnerShell ? 'kbc-learner-route-skeleton' : ''}`}
+      className="dashboard-theme workspace-shell kbc-route-skeleton flex h-screen overflow-hidden"
       data-workspace-role={workspaceRole}
       aria-busy="true"
       aria-label="Loading page"
     >
-      {/* Sidebar rail — hidden below md, matching the real off-canvas drawer. */}
+      {/* Reuse the workspace palette, including during session initialization. */}
       {!hideSidebar && (
         <div
-          className={`hidden lg:block shrink-0 p-4 space-y-4 ${learnerShell ? 'kbc-learner-route-skeleton-sidebar' : 'my-3 ml-3 mr-3 rounded-[24px] bg-brand-deep'}`}
-          style={{ width: learnerShell ? LEARNER_SIDEBAR_WIDTH : sidebarExpanded ? SIDEBAR_EXPANDED_WIDTH : SIDEBAR_RAIL_WIDTH, marginInline: learnerShell ? 0 : SIDEBAR_CONTENT_GAP / 2 }}
+          className="kbc-workspace-sidebar hidden lg:block shrink-0 my-2 rounded-2xl p-4 space-y-4"
+          style={{ width: WORKSPACE_SIDEBAR_WIDTH, marginInline: 8 }}
         >
           <SkeletonBlock className="h-9 w-9 rounded-xl mx-auto" />
           <div className="space-y-3 pt-2">
@@ -315,9 +307,9 @@ export function PageSkeleton({ workspaceRole, hideSidebar = false }: { workspace
         </div>
       )}
 
-      <div className="flex-1 min-w-0 flex flex-col overflow-hidden">
+      <div className="workspace-content flex-1 min-w-0 flex flex-col overflow-hidden">
         {/* Header — same height, border and surface as Header.tsx. */}
-        <div className={`flex h-16 shrink-0 items-center gap-3 px-2 sm:px-3 md:px-4 lg:px-5 ${learnerShell ? 'kbc-learner-route-skeleton-header' : 'mx-2 mb-2 mt-2 rounded-[20px] border-b border-foreground-100 bg-background-50 lg:ml-0 lg:mr-3 lg:mt-3'}`}>
+        <div className="kbc-workspace-topbar flex h-16 shrink-0 items-center gap-3 px-2 sm:px-3 md:px-4 lg:px-5 mx-2 mb-2 mt-2 rounded-2xl border-b border-foreground-100 bg-background-50 lg:ml-0 lg:mr-3 lg:mt-3">
           <div className="min-w-0 flex-1 space-y-2">
             <SkeletonBlock className="h-3 w-48 max-w-[45%]" />
             <SkeletonBlock className="h-2 w-64 max-w-[60%]" />
@@ -327,12 +319,12 @@ export function PageSkeleton({ workspaceRole, hideSidebar = false }: { workspace
         </div>
 
         {/* Breadcrumb strip — same height, border and surface as the shell's. */}
-        <div className="mx-2 flex h-8 shrink-0 items-center rounded-xl border-b border-background-300/40 bg-background-200 px-3 md:px-5 lg:ml-0 lg:mr-3">
+        <div className="workspace-breadcrumbs mx-2 flex h-8 shrink-0 items-center rounded-xl border-b border-background-300/40 bg-background-200 px-3 md:px-5 lg:ml-0 lg:mr-3">
           <SkeletonBlock className="h-2 w-40" />
         </div>
 
         {/* Content: intentionally empty — see the note above. */}
-        <div className="flex-1 bg-background-200" />
+        <div className="workspace-main flex-1" />
       </div>
     </div>
   );

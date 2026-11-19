@@ -164,14 +164,17 @@ describe('curriculum request layer', () => {
     const controller = new AbortController();
     const joiner = fetchCurriculumModules(controller.signal);
     controller.abort();
+    const rejectedJoiner = expect(joiner).rejects.toMatchObject({ name: 'AbortError' });
 
     // One network request, and the joiner's signal never reached it.
     expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(fetchSignal).toBeUndefined();
+    expect(fetchSignal).toBeInstanceOf(AbortSignal);
+    expect(fetchSignal).not.toBe(controller.signal);
+    expect(fetchSignal?.aborted).toBe(false);
 
     resolveShared(collection([{ id: 'm3' }]));
     await expect(first).resolves.toEqual([{ id: 'm3' }]);
     await expect(second).resolves.toEqual([{ id: 'm3' }]);
-    await expect(joiner).rejects.toMatchObject({ name: 'AbortError' });
+    await rejectedJoiner;
   });
 });

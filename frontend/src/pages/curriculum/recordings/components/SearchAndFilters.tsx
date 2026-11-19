@@ -1,6 +1,9 @@
-import { useState, type KeyboardEvent } from "react";
+import { Search, X, PlayCircle, Layers, Filter } from 'lucide-react';
+import { useState, type KeyboardEvent, type ReactNode } from "react";
 import type { Lecture, RecordingFilter } from "@/pages/curriculum/recordings/types";
 import { formatCompactDate, lectureStatusSummary } from "@/pages/curriculum/recordings/utils";
+import FilterSelect from './FilterSelect';
+import styles from '../Recordings.module.css';
 
 interface SearchAndFiltersProps {
   query: string;
@@ -13,6 +16,7 @@ interface SearchAndFiltersProps {
   results: Lecture[];
   searchScope?: string;
   onSelectResult: (lecture: Lecture) => void;
+  actions?: ReactNode;
 }
 
 export default function SearchAndFilters({
@@ -26,6 +30,7 @@ export default function SearchAndFilters({
   results,
   searchScope,
   onSelectResult,
+  actions,
 }: SearchAndFiltersProps) {
   const [focused, setFocused] = useState(false);
   const [activeIndex, setActiveIndex] = useState(0);
@@ -51,14 +56,14 @@ export default function SearchAndFilters({
 
   return (
     <div className="rounded-lg border border-background-200 bg-background-50 p-3">
-      <div className="flex flex-col gap-3 lg:flex-row lg:items-center">
+      <div className={styles.searchRow}>
         <div
-          className="relative flex-1"
+          className="relative min-w-0 flex-1"
           onFocus={() => setFocused(true)}
           onBlur={() => setFocused(false)}
         >
           <span className="pointer-events-none absolute left-3 top-1/2 flex h-5 w-5 -translate-y-1/2 items-center justify-center text-foreground-400">
-            <i className="ri-search-line text-base" aria-hidden="true"></i>
+            <Search size={14} className="text-base" aria-hidden="true" />
           </span>
           <input
             type="text"
@@ -79,7 +84,7 @@ export default function SearchAndFilters({
               aria-label="Clear search"
               className="absolute right-2.5 top-1/2 flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded-md text-foreground-500 transition-colors hover:bg-background-100 hover:text-foreground-800"
             >
-              <i className="ri-close-line" aria-hidden="true"></i>
+              <X size={14} className="" aria-hidden="true" />
             </button>
           ) : null}
 
@@ -103,7 +108,7 @@ export default function SearchAndFilters({
                     }`}
                   >
                     <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-primary-100 text-primary-700">
-                      <i className="ri-play-circle-line text-lg" aria-hidden="true"></i>
+                      <PlayCircle size={14} className="text-lg" aria-hidden="true" />
                     </span>
                     <span className="min-w-0 flex-1">
                       <span className="block truncate text-sm font-semibold text-foreground-950">
@@ -123,51 +128,12 @@ export default function SearchAndFilters({
           ) : null}
         </div>
 
-        <div className="flex flex-wrap items-center gap-2">
-          <label className="relative inline-flex items-center">
-            <span className="sr-only">Filter by programme</span>
-            <i
-              className="ri-graduation-cap-line pointer-events-none absolute left-3 text-base text-foreground-500"
-              aria-hidden="true"
-            ></i>
-            <select
-              value={programme}
-              onChange={(event) => onProgrammeChange(event.target.value)}
-              className="w-full appearance-none rounded-md border border-background-200 bg-background-50 py-2.5 pl-9 pr-8 text-sm text-foreground-800 focus:border-primary-400 focus:outline-none focus:ring-2 focus:ring-primary-200"
-            >
-              <option value="all">All programmes</option>
-              {programmes.map((item) => (
-                <option key={item} value={item}>
-                  {item}
-                </option>
-              ))}
-            </select>
-            <i
-              className="ri-arrow-down-s-line pointer-events-none absolute right-2.5 text-base text-foreground-500"
-              aria-hidden="true"
-            ></i>
-          </label>
-
-          <label className="relative inline-flex items-center">
-            <span className="sr-only">Filter by recording status</span>
-            <i
-              className="ri-filter-3-line pointer-events-none absolute left-3 text-base text-foreground-500"
-              aria-hidden="true"
-            ></i>
-            <select
-              value={statusFilter}
-              onChange={(event) => onStatusFilterChange(event.target.value as RecordingFilter)}
-              className="w-full appearance-none rounded-md border border-background-200 bg-background-50 py-2.5 pl-9 pr-8 text-sm text-foreground-800 focus:border-primary-400 focus:outline-none focus:ring-2 focus:ring-primary-200"
-            >
-              <option value="all">All recordings</option>
-              <option value="ready">Ready to download</option>
-              <option value="attention">Needs attention</option>
-            </select>
-            <i
-              className="ri-arrow-down-s-line pointer-events-none absolute right-2.5 text-base text-foreground-500"
-              aria-hidden="true"
-            ></i>
-          </label>
+        <div className={styles.searchControls}>
+          <FilterSelect ariaLabel="Filter by programme" value={programme} onChange={onProgrammeChange} icon={<Layers size={15} />}
+            searchPlaceholder="Search programmes..." options={[{ value: 'all', label: 'All programmes' }, ...programmes.map(value => ({ value, label: value }))]} />
+          <FilterSelect ariaLabel="Filter by recording status" value={statusFilter} onChange={value => onStatusFilterChange(value as RecordingFilter)} icon={<Filter size={15} />}
+            options={[{ value: 'all', label: 'All recordings' }, { value: 'ready', label: 'Ready to download' }, { value: 'attention', label: 'Needs attention' }]} />
+          {actions}
         </div>
       </div>
 

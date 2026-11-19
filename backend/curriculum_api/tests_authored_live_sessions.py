@@ -264,6 +264,11 @@ class AuthoredLiveSessionSourceTests(SimpleTestCase):
         self.assertEqual([key[:10] for key in keys], ['2026-09-17', '2026-09-18', '2026-09-24'])
 
     def test_the_expected_instants_keep_a_booked_components_own_clock(self):
+        # Once the series exists, unassigned components are pending rather than
+        # booked on it. Make every expected occurrence a confirmed series slot.
+        for number, row in enumerate(self.components, 1):
+            row['settings_json'] = {**row['settings_json'],
+                'teamsLiveSessionId': 'LIVE-1', 'teamsSessionNumber': number}
         self.components[1]['settings_json'] = {
             **self.components[1]['settings_json'], 'teamsLiveSessionId': 'LIVE-1', 'teamsSessionNumber': 2,
         }
@@ -393,6 +398,20 @@ class LiveSessionFollowsItsWeekTests(SimpleTestCase):
             'sessionDateTimeUtc': '2026-10-08T08:00:00Z',
         })
         self.assertEqual(settings['sessionDate'], '2026-09-17')
+
+    def test_pending_calendar_binding_keeps_the_plan_without_claiming_a_verified_instant(self):
+        for binding in ('missing', 'ambiguous', 'unverified'):
+            with self.subTest(binding=binding):
+                settings, _week = self._apply({
+                    'teamsCalendarBinding': binding,
+                    'liveSessionUrl': 'https://teams.example/manual',
+                    'teamsStartDateTimeUtc': '2026-10-08T08:00:00Z',
+                })
+                self.assertEqual(settings['sessionDate'], '2026-09-17')
+                self.assertTrue(settings['sessionDateTimeUtc'].startswith('2026-09-17'))
+                self.assertEqual(settings['teamsStartDateTimeUtc'], '')
+                self.assertEqual(settings['teamsCalendarBinding'], binding)
+                self.assertEqual(settings['liveSessionUrl'], 'https://teams.example/manual')
 
 
 #: A Mon+Fri group. Both delivery days are planned slots, so a week owns two.

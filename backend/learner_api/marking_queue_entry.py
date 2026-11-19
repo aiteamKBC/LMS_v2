@@ -22,6 +22,7 @@ re-completes an activity updates their submission rather than creating a second
 one -- and a coach who has already accepted it is not silently reset, since an
 accepted submission is left alone.
 """
+from curriculum_api.learning_storage import read_sql
 import json
 import logging
 import uuid
@@ -65,8 +66,8 @@ def requires_tutor_validation(component_id):
     try:
         with connections["enrolment"].cursor() as cur:
             cur.execute(
-                "select coalesce(tutor_validation_required, false) "
-                "from curriculum.components where id = %s",
+                read_sql("select coalesce(tutor_validation_required, false) "
+                "from curriculum.components where id = %s", cur.db),
                 [component_id],
             )
             row = cur.fetchone()

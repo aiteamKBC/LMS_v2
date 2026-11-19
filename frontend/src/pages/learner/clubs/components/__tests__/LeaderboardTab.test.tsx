@@ -8,6 +8,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { MemoryRouter } from 'react-router-dom';
 import { AppIcon } from '@/components/feature/AppIcon';
 
 (globalThis as unknown as { AppIcon: typeof AppIcon }).AppIcon = AppIcon;
@@ -24,10 +25,12 @@ vi.mock('@/api/learnerDetail', () => ({
 
 const { LeaderboardTab } = await import('../LeaderboardTab');
 
-// useMyLearner() falls back to this default ({kind:'commercial', id:'19'})
-// whenever localStorage has no override — jsdom's localStorage is empty by
-// default in each fresh test, so the session learner is always id '19'.
+// The learner route supplies the same identity as the API fixtures.
 const SESSION_LEARNER_ID = '19';
+
+function renderBoard() {
+  return render(<MemoryRouter initialEntries={['/workspace/learner/commercial/19']}><LeaderboardTab /></MemoryRouter>);
+}
 
 const ENTRIES = [
   { rank: 1, learnerId: '61', learner: 'Daniel Walsh', points: 500, cohort: 'Sept 2025 Kent' },
@@ -45,7 +48,7 @@ beforeEach(() => {
 describe('LeaderboardTab', () => {
   it('highlights the session learner by real learnerId, not by name', async () => {
     fetchLeaderboard.mockResolvedValue({ scope: 'monthly', cohort: null, entries: ENTRIES });
-    render(<LeaderboardTab />);
+    renderBoard();
     await waitFor(() => expect(screen.getByText('You are Rank #2')).toBeTruthy());
     expect(screen.getByText('420 points earned')).toBeTruthy();
     expect(screen.getByText('You')).toBeTruthy();
@@ -53,13 +56,13 @@ describe('LeaderboardTab', () => {
 
   it('renders an honest empty state when nobody has earned points yet', async () => {
     fetchLeaderboard.mockResolvedValue({ scope: 'monthly', cohort: null, entries: [] });
-    render(<LeaderboardTab />);
+    renderBoard();
     await waitFor(() => expect(screen.getByText('No points earned in this ranking yet.')).toBeTruthy());
   });
 
   it('surfaces a load failure rather than an empty board', async () => {
     fetchLeaderboard.mockRejectedValue(new Error('Could not reach the server.'));
-    render(<LeaderboardTab />);
+    renderBoard();
     await waitFor(() => expect(screen.getByText('Could not reach the server.')).toBeTruthy());
   });
 
@@ -67,7 +70,7 @@ describe('LeaderboardTab', () => {
     fetchLearnerSummary.mockResolvedValue({ id: SESSION_LEARNER_ID, name: 'Sophie Williams', cohort: '' });
     fetchLeaderboard.mockResolvedValue({ scope: 'monthly', cohort: null, entries: ENTRIES });
     const user = userEvent.setup();
-    render(<LeaderboardTab />);
+    renderBoard();
     await waitFor(() => expect(fetchLearnerSummary).toHaveBeenCalled());
     await waitFor(() => expect(fetchLeaderboard).toHaveBeenCalledTimes(1));
 

@@ -82,4 +82,16 @@ describe('Enrolment page guides', () => {
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
     expect(screen.getByLabelText(`${tutorial.title} screen recording`)).not.toBe(video);
   });
+
+  it('supports another guide library without changing enrolment assets or timings', () => {
+    const tutorial = enrolmentTutorials[0];
+    render(<EnrolmentTutorial tutorial={tutorial} initialChapter={1} onClose={vi.fn()}
+      assetBase="/help/recordings/v1" chapterTimes={[0, 12, 24, 36, 48]} />);
+    const video = screen.getByLabelText(`${tutorial.title} screen recording`) as HTMLVideoElement;
+    expect(video.querySelector('source')).toHaveAttribute('src', '/help/recordings/v1/users.webm');
+    fireEvent.loadedMetadata(video); expect(video.currentTime).toBe(12);
+    Object.defineProperty(video, 'readyState', { configurable: true, value: 1 });
+    fireEvent.click(screen.getByRole('button', { name: new RegExp(tutorial.chapters[2].title) }));
+    expect(video.currentTime).toBe(24);
+  });
 });

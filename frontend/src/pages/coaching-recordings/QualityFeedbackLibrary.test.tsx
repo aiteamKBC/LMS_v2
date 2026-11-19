@@ -130,7 +130,9 @@ describe('Feedback forms and original evidence', () => {
     const guidance = screen.getByRole('textbox', { name: 'Green reference criteria', hidden: true });
     fireEvent.change(guidance, { target: { value: 'Edited complete grading guidance.' } });
     expect(saveQualityDefinition).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('combobox', { name: 'Question type' }));
     expect(screen.getByRole('option', { name: 'Upload evidence file' })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('combobox', { name: 'Question type' }));
     fireEvent.click(screen.getByRole('button', { name: 'Publish form' }));
     await waitFor(() => expect(saveQualityDefinition).toHaveBeenCalledOnce());
     expect(vi.mocked(saveQualityDefinition).mock.calls[0][0]).toMatchObject({ publish: true, definition: { reviewType: 'FORM_CUSTOM_TEST', sections: [{ criteria: [{ descriptors: { green: 'Edited complete grading guidance.' } }] }] } });

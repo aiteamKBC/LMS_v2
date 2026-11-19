@@ -1,3 +1,4 @@
+import { LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
 import { formatSessionDate, formatSeconds, formatTranscriptTimestamp, parseTeamsTranscriptVtt, attendanceSheetRows, attendanceSheetGroups, ukDateKey, matchModuleSessionsByDate, matchArtifactOccurrence, type ReadableTranscriptCue, type AttendanceSheetGroup } from './liveSessionArtifacts.helpers';
 export type { ReadableTranscriptCue, AttendanceSheetGroup } from './liveSessionArtifacts.helpers';
 // The recording, transcript and attendance a live Teams session leaves behind.
@@ -94,7 +95,7 @@ export function CompletedSessionPanel({ session, state }: { session: LiveSession
   }, [session.liveSessionId, transcriptPreviewId]);
 
   if (!state || state.status === 'loading') {
-    return <p className="px-4 py-3 text-[12px] text-foreground-500">Loading attendance and recordings…</p>;
+    return <p className="px-4 py-3 text-[12px] text-foreground-500"><LoadingSkeleton label="Loading attendance and recordings…" variant="rows" /></p>;
   }
   if (state.status === 'error') {
     return <p className="px-4 py-3 text-[12px] text-red-600">{state.message}</p>;
@@ -212,7 +213,7 @@ export function CompletedSessionPanel({ session, state }: { session: LiveSession
                   Close preview
                 </button>
               </div>
-              {transcriptState.status === 'loading' && <p className="text-[12px] text-foreground-500">Loading transcript…</p>}
+              {transcriptState.status === 'loading' && <p className="text-[12px] text-foreground-500"><LoadingSkeleton label="Loading transcript…" variant="rows" /></p>}
               {transcriptState.status === 'error' && <p className="text-[12px] text-red-600">{transcriptState.message}</p>}
               {transcriptState.status === 'ready' && transcriptState.cues.length === 0 && (
                 <p className="text-[12px] text-foreground-500">The transcript file contains no readable speech.</p>
@@ -377,7 +378,7 @@ function OccurrenceSessionResults({ session, occurrenceId, moduleId }: {
 
   return (
     <div className="space-y-3 rounded-xl border border-background-200 bg-background-50/60 p-4 text-sm">
-      {state.status === 'loading' ? <p role="status">Loading saved session…</p>
+      {state.status === 'loading' ? <p ><LoadingSkeleton label="Loading saved session…" variant="rows" /></p>
         : state.status === 'error' ? <p role="alert" className="text-red-800">{state.message}</p>
           : <p>Link this component to a Teams session to view its saved recording, transcript and attendance.</p>}
       <button type="button" disabled={state.status === 'loading'} onClick={() => setRevision(value => value + 1)}
@@ -425,7 +426,7 @@ export function ModuleLiveSessionResults({ moduleId, date, unmatched }: {
 
   return (
     <div className="space-y-3 rounded-xl border border-background-200 bg-background-50/60 p-4 text-[12px] text-foreground-500">
-      {state.status === 'loading' ? <p role="status">Loading saved session…</p>
+      {state.status === 'loading' ? <p ><LoadingSkeleton label="Loading saved session…" variant="rows" /></p>
         : state.status === 'error' ? <p role="alert" className="text-red-800">{state.message}</p>
           : matches.length > 1 ? <p>{matches.length} saved Teams sessions are held on this date, so this session can’t tell which recording is its own. Open Sessions & Recordings to choose one.</p>
             : <p>{unmatched}</p>}

@@ -1,5 +1,5 @@
 import { parseDisplayDate } from '@/pages/coach/caseload/lib/format';
-import type { CaseloadApiLearner } from '@/pages/coach/caseload/types';
+import type { CaseloadApiLearner, Learner } from '@/pages/coach/caseload/types';
 
 /** Wire contract for the dashboard All Learners endpoint only. */
 export interface DashboardLearnerRow {
@@ -13,6 +13,10 @@ export interface DashboardLearnerRow {
   otjh: { completed: number | null; targetToDate: number | null; planned: number | null; progress: number | null;
     ragStatus: 'at-risk' | 'need-attention' | 'on-track' | 'unavailable' };
   activities: { completed: number | null; total: number | null; progress: number | null };
+  activityPlan?: Learner['activityPlan'];
+  activityPlanState?: Learner['activityPlanState'];
+  activityPlanCalculatedAt?: string | null;
+  completedRecords?: number;
   attendance: { rate: number | null };
   startDate: string | null;
   lastActivity: { date: string | null };
@@ -38,6 +42,9 @@ export function adaptDashboardLearnerRow(row: DashboardLearnerRow): CaseloadApiL
     otjhProgressAsOfToday: row.otjh.progress, otjhRagStatus: row.otjh.ragStatus,
     componentsCompleted: row.activities.completed, componentsPlanned: row.activities.total,
     activityProgress: row.activities.progress, activityProgressAvailable: row.activities.progress !== null,
+    activityPlan: row.activityPlan, activityPlanState: row.activityPlanState,
+    activityPlanCalculatedAt: row.activityPlanCalculatedAt,
+    completedRecords: row.completedRecords,
     attendanceRate: row.attendance.rate, attendanceAvailable: row.attendance.rate !== null,
     startDate: row.startDate, lastActivity: activityLabel,
     lastActivityDate: row.lastActivity.date, lastPr: row.lastPr, lastMcm: row.lastMcm,

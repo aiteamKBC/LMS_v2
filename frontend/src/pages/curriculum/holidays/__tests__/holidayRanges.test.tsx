@@ -2,8 +2,8 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { CurriculumCohort, CurriculumHoliday } from '@/lib/curriculumApi';
-import { archiveCurriculumHoliday, createCurriculumHoliday } from '@/lib/curriculumApi';
+import type { CurriculumHoliday } from '@/lib/curriculumApi';
+import { archiveCurriculumHoliday, createCurriculumHoliday, fetchCurriculumHolidays } from '@/lib/curriculumApi';
 import type { ReactNode } from 'react';
 import HolidaysPage from '../../england-holidays/page';
 
@@ -36,6 +36,8 @@ vi.mock('@/components/feature/CurriculumSweetAlert', () => ({
 }));
 
 vi.mock('@/lib/curriculumApi', () => ({
+  fetchCurriculumHolidays: vi.fn(async () => holidays),
+  fetchEnglandHolidaySyncs: vi.fn(async () => ({ status: null, results: [] })),
   createCurriculumHoliday: vi.fn(async () => ({ created: true })),
   updateCurriculumHoliday: vi.fn(async () => ({ updated: true })),
   archiveCurriculumHoliday: vi.fn(async () => ({ archived: true })),
@@ -50,41 +52,17 @@ const holidays = [
   { id: 'england-and-wales:2027-01-01', label: 'New Year’s Day', startDate: '2027-01-01', endDate: '2027-01-01', type: 'Bank holiday', color: '#91d64c', source: 'gov.uk' },
 ] as CurriculumHoliday[];
 
-const cohorts = [
-  { id: 'COHORT-1', name: 'Sept 2026', holidayIds: ['1', 'england-and-wales:2027-01-01'] },
-] as unknown as CurriculumCohort[];
-
-const reload = vi.fn(async () => null);
-
-vi.mock('@/hooks/useCurriculumEntities', () => ({
-  useCurriculumEntities: () => ({
-    programmes: [],
-    cohorts,
-    groups: [],
-    modules: [],
-    holidays,
-    tutors: [],
-    coaches: [],
-    teamsMeetings: [],
-    entities: {},
-    loading: false,
-    loaded: true,
-    error: null,
-    reload,
-  }),
-}));
-
 function renderPage() {
   return render(<MemoryRouter><HolidaysPage /></MemoryRouter>);
 }
 
 async function openDrawer() {
   renderPage();
-  await userEvent.click(screen.getByRole('button', { name: 'Add Holiday' }));
+  await userEvent.click(screen.getByRole('button', { name: 'Add manual holiday' }));
 }
 
 async function fillHoliday({ name, start, end }: { name: string; start: string; end?: string }) {
-  await userEvent.type(screen.getByPlaceholderText('e.g. Christmas closure'), name);
+  await userEvent.type(screen.getByPlaceholderText('e.g. College closure'), name);
   fireEvent.change(screen.getByLabelText(/^Start date$/), { target: { value: start } });
   if (end) fireEvent.change(screen.getByLabelText(/^End date$/), { target: { value: end } });
 }
@@ -93,7 +71,7 @@ describe('a holiday covers a range of dates', () => {
   beforeEach(() => {
     vi.mocked(createCurriculumHoliday).mockClear();
     vi.mocked(archiveCurriculumHoliday).mockClear();
-    reload.mockClear();
+    vi.mocked(fetchCurriculumHolidays).mockClear();
   });
 
   it('saves the whole range a closure runs across', async () => {
@@ -144,7 +122,7 @@ describe('a holiday covers a range of dates', () => {
     renderPage();
 
     // 21 Dec to 1 Jan inclusive is twelve days; a single day is one.
-    expect(await screen.findByText('Christmas closure')).toBeInTheDocument();
+    expect((await screen.findAllByText('Christmas closure'))[0]).toBeInTheDocument();
     expect(screen.getByText('12')).toBeInTheDocument();
     expect(screen.getAllByText('1').length).toBeGreaterThan(0);
   });
@@ -154,26 +132,25 @@ describe('the two sources of the calendar', () => {
   beforeEach(() => {
     vi.mocked(createCurriculumHoliday).mockClear();
     vi.mocked(archiveCurriculumHoliday).mockClear();
-    reload.mockClear();
+    vi.mocked(fetchCurriculumHolidays).mockClear();
   });
 
   it('lists both kinds and says which is which', async () => {
     renderPage();
 
-    expect(await screen.findByText('Christmas closure')).toBeInTheDocument();
+    expect((await screen.findAllByText('Christmas closure'))[0]).toBeInTheDocument();
     expect(screen.getByText('New Year’s Day')).toBeInTheDocument();
     expect(screen.getByText('GOV.UK')).toBeInTheDocument();
-    expect(screen.getAllByText('Added here')).toHaveLength(2);
+    expect(screen.getAllByText('Manual')).toHaveLength(2);
   });
 
   it('offers no edit or archive on a holiday GOV.UK owns', async () => {
     renderPage();
 
     await screen.findByText('New Year’s Day');
-    expect(screen.getByText('Read-only')).toBeInTheDocument();
     // Two authored rows, so two of each action and no more.
-    expect(screen.getAllByRole('button', { name: 'Edit holiday' })).toHaveLength(2);
-    expect(screen.getAllByRole('button', { name: 'Archive holiday' })).toHaveLength(2);
+    expect(screen.getAllByRole('button', { name: 'Edit' })).toHaveLength(2);
+    expect(screen.getAllByRole('button', { name: 'Delete' })).toHaveLength(2);
   });
 
   it('never offers a bank holiday type for rename or removal', async () => {
@@ -191,18 +168,18 @@ describe('the two sources of the calendar', () => {
     await screen.findByText('New Year’s Day');
 
     await userEvent.click(screen.getByRole('combobox', { name: /Source/i }));
-    await userEvent.click(screen.getByRole('option', { name: /^Added here/ }));
+    await userEvent.click(screen.getByRole('option', { name: /^Manual/ }));
 
     await waitFor(() => expect(screen.queryByText('New Year’s Day')).not.toBeInTheDocument());
-    expect(screen.getByText('Christmas closure')).toBeInTheDocument();
+    expect(screen.getAllByText('Christmas closure')[0]).toBeInTheDocument();
     expect(screen.getByText('Showing 2 of 3 holidays')).toBeInTheDocument();
   });
 
   it('archives a closure added here', async () => {
     renderPage();
-    await screen.findByText('Christmas closure');
+    await screen.findAllByText('Christmas closure');
 
-    await userEvent.click(screen.getAllByRole('button', { name: 'Archive holiday' })[0]);
+    await userEvent.click(screen.getAllByRole('button', { name: 'Delete' })[0]);
 
     await waitFor(() => expect(archiveCurriculumHoliday).toHaveBeenCalledWith('1'));
   });

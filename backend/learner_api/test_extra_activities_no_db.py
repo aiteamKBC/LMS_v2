@@ -134,7 +134,8 @@ class ExtraActivityTests(unittest.TestCase):
             SUBMISSION_AUDIT_SQL='id', record_submission_row=MagicMock())
         load('reflection_submissions.py', {'_submit_reflection', '_error', '_text', '_dict', '_list', '_activity_title'}, self.scope)
         with patch.dict('sys.modules', {'learner_api.extra_activities': extra, 'learner_api.monthly_assignment': monthly,
-                                      'learner_api.programme_access': access}):
+                                      'learner_api.programme_access': access}), \
+                patch('learner_api.live_session_access._read', return_value=[]):
             self.payload['monthlyAssignment']['month'] = '2026-09'
             self.payload['monthlyAssignment']['timeEntries'][0]['date'] = '2026-09-29'
             self.cur.fetchone.side_effect = [('rejected', self.payload, 'Add evidence', 'Coach', None, None), ('saved-1',)]

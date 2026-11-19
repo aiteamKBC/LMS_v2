@@ -111,6 +111,15 @@ export interface ReviewProgressSnapshot {
   weeksElapsed: number | null;
   programmeTimeline?: { startDate: string; asOfDate: string; gatewayDate: string | null; endDate: string | null } | null;
   programmeProgress: ReviewProgressMetric;
+  /** Frozen main-activity target for the coach form only. Historical snapshots
+   * without this field retain their original target in every view. */
+  coachProgrammeTarget?: Pick<ReviewProgressMetric,
+    'expected' | 'planned' | 'expectedPercent' | 'variancePercent' | 'varianceDirection'> & { formulaVersion: string };
+  /** Frozen Main-only actual/target population for the coach form. Older
+   * snapshots omit this additive field and retain their original display. */
+  coachProgrammeProgress?: ReviewProgressMetric;
+  /** Required-badge activities and their scheduled deadlines, frozen on Calculate. */
+  requiredProgrammeProgress?: ReviewProgressMetric & { formulaVersion: string; unresolvedActivities: number };
   offTheJobHours: ReviewProgressMetric;
   /** Additive and optional so signed snapshots from before this contract keep
    * rendering without being reinterpreted. */

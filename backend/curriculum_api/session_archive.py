@@ -228,7 +228,10 @@ def archive_series(series_id, *, lease_id=None, artifact_ids=None):
                                 progress = TransferProgress(series_id, artifact['id'], lease_id)
                             progress.update('downloading', offset, total, force=True)
                             try:
-                                with transport.stream('GET', f'{base}/{path}', headers=request_headers) as response:
+                                from .transcript_transport import transcript_stream
+                                source_response = (transcript_stream(transport, f'{base}/{path}', headers=request_headers)
+                                                   if kind == 'transcript' else transport.stream('GET', f'{base}/{path}', headers=request_headers))
+                                with source_response as response:
                                     response.raise_for_status()
                                     ranged = kind == 'recording' and response.status_code == 206
                                     expected = None

@@ -1,10 +1,11 @@
+import { LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
 import { useEffect, useId, useMemo, useState, type MouseEvent } from 'react';
 import { LearnerLoadError } from '@/components/feature/LearnerLoadError';
 import { Notice } from '@/components/ui/Notice';
 import { Link, Navigate, useLocation, useNavigate } from 'react-router-dom';
-import { ArrowRight, Award, BookOpen, CheckCircle2, ChevronLeft, ChevronRight, GraduationCap, Layers3, Loader2, Map as MapIcon, Search } from 'lucide-react';
+import { ArrowRight, Award, BookOpen, CalendarDays, CheckCircle2, ChevronLeft, ChevronRight, GraduationCap, Layers3, Loader2, Map as MapIcon, Search, UserRound, Video } from 'lucide-react';
 import type { LearnerDetail } from '@/api/learnerDetail';
-import type { LearnerMetrics } from '@/api/learnerMetrics';
+import type { LearnerMetrics, ProgressMetric } from '@/api/learnerMetrics';
 import { type StudentActivityItem, type StudentActivityResponse, type SubjectAttemptResult } from '@/api/studentActivity';
 import { fetchLearnerCertificateTemplate, issueLearnerModuleCertificate, type CertificateTemplateSummary } from '@/api/learnerCertificates';
 import { formatHoursMinutes, type JourneyComponent } from '@/utils/learnerJourney';
@@ -50,6 +51,21 @@ function Progress({ done, total, label = 'Subject progress', showFormula = false
   </div>;
 }
 
+function KsbProgress({ metric, label }: { metric: ProgressMetric | null; label: string }) {
+  const percent = metric?.status === 'ready' && metric.percent != null && Number.isFinite(metric.percent)
+    && metric.percent >= 0 && metric.percent <= 100 ? metric.percent : null;
+  const caption = metric?.status === 'empty' ? 'No KSBs mapped' : 'KSB progress unavailable';
+  return <div className="space-y-2">
+    <div className="flex items-center justify-between gap-2 text-xs"><span className="text-slate-500">KSBs achieved</span><strong className={`shrink-0 tabular-nums ${percent === 100 ? 'text-emerald-700' : 'text-primary-700'}`}>{percent == null ? '—' : `${percent}%`}</strong></div>
+    <div role="progressbar" aria-label={label} aria-valuemin={0} aria-valuemax={100}
+      aria-valuenow={percent ?? undefined} aria-valuetext={percent == null ? caption : `${percent}% of this subject's KSB points achieved`}
+      className="h-1.5 overflow-hidden rounded-full bg-slate-100">
+      <div className={`h-full rounded-full motion-safe:transition-[width] ${percent === 100 ? 'bg-emerald-500' : 'bg-gradient-to-r from-primary-500 to-violet-400'}`} style={{ width: `${percent ?? 0}%` }} />
+    </div>
+    {percent == null && <p className="text-xs text-slate-500">{caption}</p>}
+  </div>;
+}
+
 function HoursProgress({ completed, planned, label }: {
   completed: number | null; planned: number | null; label: string;
 }) {
@@ -77,14 +93,14 @@ export function Cover({ title, url, large = false, fallbackUrl }: { title: strin
   useEffect(() => setFailed(false), [url]);
   const imageUrl = url && !failed ? url : fallbackUrl;
   return <div className={`${styles.cover} ${large ? styles.coverLarge : ''}`}>
-    {imageUrl ? <img src={imageUrl} alt={`${title} cover`} loading="lazy" decoding="async" onError={() => setFailed(true)} className={`h-full w-full object-cover motion-safe:transition-transform motion-safe:duration-500 motion-safe:group-hover:scale-105 ${imageUrl === fallbackUrl ? styles.defaultCoverImage : ''}`} /> : <div className={`${styles.coverFallback} flex h-full ${large ? 'items-center justify-center' : 'items-end p-4'}`}>
+    {imageUrl ? <img src={imageUrl} alt={`${title} cover`} loading="lazy" decoding="async" onError={() => setFailed(true)} className={`${styles.courseCoverImage} h-full w-full object-contain motion-safe:transition-[filter] motion-safe:duration-500 motion-safe:group-hover:brightness-[1.03] ${imageUrl === fallbackUrl ? styles.defaultCoverImage : ''}`} /> : <div className={`${styles.coverFallback} flex h-full ${large ? 'items-center justify-center' : 'items-end p-4'}`}>
       <div aria-hidden="true" className={styles.coverOrbit} />
       <span className={`${styles.coverSymbol} relative flex items-center justify-center rounded-2xl border border-white/90 bg-white/85 text-primary-600 shadow-sm ${large ? 'h-16 w-16' : 'h-11 w-11'}`}><BookOpen className={large ? 'h-8 w-8' : 'h-5 w-5'} strokeWidth={1.7} aria-hidden="true" /></span>
     </div>}
   </div>;
 }
 
-function SubjectCertificateAction({
+export function SubjectCertificateAction({
   subject,
   template,
   csrfToken,
@@ -173,7 +189,7 @@ function SubjectCertificateAction({
   </div>;
 }
 
-export function SubjectCard({ subject, cover, tone = 'purple', onOpen, template, csrfToken, kind, learnerId, planModule, moduleProgress, teachingActive = false }: {
+export function SubjectCard({ subject, cover, tone = 'purple', onOpen, template, csrfToken, kind, learnerId, planModule, moduleProgress, teachingActive = false, ksbProgress }: {
   subject: Subject;
   cover?: string;
   tone?: SubjectCardTone;
@@ -185,6 +201,7 @@ export function SubjectCard({ subject, cover, tone = 'purple', onOpen, template,
   planModule?: Omit<PlanModule, 'description' | 'coach_name'> & Partial<Pick<PlanModule, 'description' | 'coach_name'>>;
   moduleProgress?: Pick<PlanModuleProgress, 'hours'> & Partial<Omit<PlanModuleProgress, 'hours'>>;
   teachingActive?: boolean;
+  ksbProgress?: ProgressMetric | null;
 }) {
   const total = subject.card?.activityCount ?? subject.activities.length;
   const completed = subject.card?.completedActivityCount ?? subject.activities.filter((activity) => activity.completed).length;
@@ -204,7 +221,7 @@ export function SubjectCard({ subject, cover, tone = 'purple', onOpen, template,
   const origin = subject.importedCourseRef || subject.replacementCourseRef ? 'legacy' : subject.source;
   return <article className={`group ${styles.card} ${styles.subjectTheme} ${styles.moduleCard}`} data-tone={tone} data-source={origin}>
     <button type="button" onClick={onOpen} className={styles.cardButton}>
-      <div className="relative w-full"><Cover title={subject.title} url={cover} fallbackUrl={DEFAULT_MODULE_COVER} /></div>
+      <div className={styles.moduleCover}><Cover title={subject.title} url={cover} fallbackUrl={DEFAULT_MODULE_COVER} /></div>
       <div className={styles.cardBody}>
         <div className={styles.cardMetaRow}>
           <span className={styles.sourceBadge} data-source={origin}>
@@ -226,13 +243,15 @@ export function SubjectCard({ subject, cover, tone = 'purple', onOpen, template,
         <h3 className={styles.cardTitle}>{subject.title}</h3>
         <p className={`${styles.cardCohort} mb-2 text-xs text-foreground-500 break-words`}>Cohort: <span className="font-semibold">{planModule?.cohort_name?.trim() || 'Not available'}</span></p>
         <dl className={styles.moduleDetails} aria-label={`${moduleName} module details`}>
-          <div><dt>Tutor</dt><dd>{tutorName}</dd></div>
-          <div><dt>Start date</dt><dd>{startDate}</dd></div>
-          <div><dt>End date</dt><dd>{endDate}</dd></div>
-          <div><dt>Sessions</dt><dd>{sessionCount == null ? 'Not set' : `${sessionCount} ${sessionCount === 1 ? 'session' : 'sessions'}`}</dd></div>
+          <div><dt><UserRound size={14} aria-hidden="true" />Tutor</dt><dd>{tutorName}</dd></div>
+          <div><dt><CalendarDays size={14} aria-hidden="true" />Start date</dt><dd>{startDate}</dd></div>
+          <div><dt><CalendarDays size={14} aria-hidden="true" />End date</dt><dd>{endDate}</dd></div>
+          <div><dt><Video size={14} aria-hidden="true" />Sessions</dt><dd>{sessionCount == null ? 'Not set' : `${sessionCount} ${sessionCount === 1 ? 'session' : 'sessions'}`}</dd></div>
         </dl>
         <p className={styles.cardDescription}>Explore your learning materials and activities.</p>
-        <div className={styles.cardProgress}><Progress done={completed} total={total} compact aggregate={subject.aggregateProgress ?? subject.card?.progress} label={`${subject.title} ${subject.source === 'legacy' ? 'previous learning' : 'current plan'} activities progress`} />
+        <div className={styles.cardProgress}>{ksbProgress !== undefined
+          ? <KsbProgress metric={ksbProgress} label={`${subject.title} KSBs achieved`} />
+          : <Progress done={completed} total={total} compact aggregate={subject.aggregateProgress ?? subject.card?.progress} label={`${subject.title} ${subject.source === 'legacy' ? 'previous learning' : 'current plan'} activities progress`} />}
           <HoursProgress completed={completedHours} planned={plannedHours} label={`${subject.title} hours progress`} />
           {subject.recordedHistory && <p className="mt-2 text-xs text-foreground-500">Recorded activities only · Full catalogue: {subject.catalogueCount ?? 0}</p>}
         </div>
@@ -250,7 +269,7 @@ export function SubjectCard({ subject, cover, tone = 'purple', onOpen, template,
 
 export function SubjectCardsSkeleton() {
   return <div role="status" className={styles.workspace} aria-label="Loading subjects">
-    <div className={styles.loadingHeader}><div><span className={styles.loadingLabel}>Loading subjects</span><p className={styles.loadingHint}>Getting your activities and progress ready…</p></div><BookOpen size={22} aria-hidden="true" /></div>
+    <div className={styles.loadingHeader} aria-hidden="true"><span className={`${styles.skeletonLine} ${styles.mediumLine}`} /></div>
     <div className={`${styles.stats} ${styles.skeletonStats}`} aria-hidden="true">{[0, 1, 2, 3].map(key => <div key={key} className={styles.stat}><span className={`${styles.skeletonLine} ${styles.mediumLine}`} /><span className={`${styles.skeletonLine} ${styles.shortLine}`} /></div>)}</div>
     <div className={styles.catalogueLayout} aria-hidden="true"><div className={styles.catalogueMain}><div className={styles.skeletonToolbar}><span className={`${styles.skeletonLine} ${styles.mediumLine}`} /></div><div className={styles.grid}>{[0, 1, 2, 3].map(key => <div key={key} className={`${styles.card} ${styles.skeleton}`}>
       <div className={styles.cover}><span className={styles.skeletonIcon} /><span className={styles.skeletonBadge} /></div>
@@ -345,13 +364,13 @@ export function StudentActivityPanel({ data: incomingData, loading, error, onRet
   const [savedProgress, setSavedProgress] = useState<{ identity: string; activities: Record<string, SubjectAttemptResult> }>({ identity, activities: {} });
   useEffect(() => {
     setCertificateConfig({ template: null, csrfToken: '' });
-    if (view !== 'catalogue' || selected || requestedActivity || !kind || !learnerId) return;
+    if (!kind || !learnerId) return;
     let cancelled = false;
     fetchLearnerCertificateTemplate(kind, learnerId)
       .then((result) => { if (!cancelled) setCertificateConfig({ template: result.template, csrfToken: result.csrfToken || '' }); })
       .catch(() => { if (!cancelled) setCertificateConfig({ template: null, csrfToken: '' }); });
     return () => { cancelled = true; };
-  }, [view, kind, learnerId, selected, requestedActivity]);
+  }, [kind, learnerId]);
   const updatedData = useMemo(() => {
     if (!data || savedProgress.identity !== identity) return data;
     return { ...data, activities: data.activities.map((item) => {
@@ -451,15 +470,16 @@ export function StudentActivityPanel({ data: incomingData, loading, error, onRet
     {view === 'map' && <LearningMapHero subject={active} weeks={weeks} kind={kind} learnerId={learnerId} planModule={activePlan} planLabel={activePlan ? planLabel : 'Selected module'} />}
     {view === 'catalogue' && data?.learner_name && <p className="text-sm text-foreground-500">{data.learner_name}</p>}
     {active && view === 'catalogue' && <header className="flex flex-wrap items-end justify-between gap-4"><div><p className="text-xs font-semibold uppercase tracking-widest text-primary-600">My learning</p><h2 className="mt-1 text-2xl font-bold text-foreground-900">{active.title}</h2></div>
-      <label className={`${styles.search} w-full min-w-0 sm:max-w-xs`}><Search size={17} aria-hidden="true" /><input aria-label="Search modules or activities" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search subjects or activities" /></label>
+      <label data-search-field className={`${styles.search} w-full min-w-0 sm:max-w-xs`}><Search size={17} aria-hidden="true" /><input aria-label="Search modules or activities" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search subjects or activities" /></label>
     </header>}
     {imageError && <LearnerLoadError title="Some subject details could not be refreshed" error={imageError} onRetry={retryMetadata} />}
     {error && <LearnerLoadError title="Your learning information could not be refreshed" error={error} onRetry={onRetry} />}
+    {active && <SubjectCertificateAction subject={active} template={certificateConfig.template} csrfToken={certificateConfig.csrfToken} kind={kind} learnerId={learnerId} />}
     {data?.source_status === 'historical' && data.verification_status !== 'verified' && <Notice tone="attention" role="status" title="Showing saved previous learning" actions={<button type="button" onClick={onRetry} className="min-h-11 rounded-lg border border-primary-200 px-4 py-2 text-sm font-semibold text-primary-700">Try again</button>}>The latest results could not be verified.</Notice>}
     {selected && !active && <p role="alert" className={styles.empty}>This module is not available in your learning plan. <button onClick={() => select()}>Show your modules</button></p>}
     {view === 'map' && <div className={styles.mapToolbar}>
       <label className={styles.selectLabel}>Module<select aria-label="Filter by module" value={active?.id || ''} onChange={event => { setSearch(''); select(event.target.value); }}><option value="" disabled>{scheduleLoading ? 'Finding your current module…' : 'Choose a module'}</option>{subjects.map(subject => <option key={subject.id} value={subject.id}>{subject.title}{planSelection.entries.some(entry => entry.subject.id === subject.id) ? ` · ${planLabel}` : ''}</option>)}</select></label>
-      <label className={styles.search}><Search size={18} aria-hidden="true" /><input aria-label="Search modules or activities" value={search} onChange={event => setSearch(event.target.value)} placeholder="Search weeks or activities…" /></label>
+      <label data-search-field className={styles.search}><Search size={18} aria-hidden="true" /><input aria-label="Search modules or activities" value={search} onChange={event => setSearch(event.target.value)} placeholder="Search weeks or activities…" /></label>
       <Link to={learningHref('catalogue', kind, learnerId)} className={styles.textLink}>My Learning<ArrowRight size={17} aria-hidden="true" /></Link>
     </div>}
     {view === 'catalogue' && active && (!selectedWeek || activeWeek || activityTarget) ? <>

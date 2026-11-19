@@ -1,3 +1,4 @@
+import { LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
 import { useCaseFileSession } from '@/features/coach/case-file/hooks/CaseFileSession';
 import type { CaseFileOtjhKsb } from '@/features/coach/case-file/api/contracts';
 import { useEffect, useRef, useState } from 'react';
@@ -296,7 +297,7 @@ export function ProgressTab({ data, onViewEvidence, plan, otjhSnapshot }: {
                       } catch (reason) {
                         if (!controller?.signal.aborted) setDetailError(reason instanceof Error ? reason.message : 'Could not load KSB detail.');
                       } finally { if (!controller?.signal.aborted) setLoadingCode(undefined); }
-                    }}>{loadingCode === item.code ? 'Loading...' : 'View'}</button></td>
+                    }}>{loadingCode === item.code ? <LoadingSkeleton label="Loading..." variant="text" /> : 'View'}</button></td>
                   </tr>
                 ))}
               </tbody>

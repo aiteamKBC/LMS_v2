@@ -46,6 +46,9 @@ def convert_free_course(request, module_catalogue_id):
     payload = v.json_body(request)
     if not isinstance(payload, dict):
         return v.json_error('Invalid JSON body.', status=400)
+    tutor_identifier = payload.get('tutor')
+    if not isinstance(tutor_identifier, str) or v.is_blank_staff_assignment(tutor_identifier):
+        return v.json_error('Choose a Tutor before moving this course.', fields=['tutor'], status=400)
     try:
         with transaction.atomic(), versioning.source('module-builder'):
             v.lock_module_structure_row(module_catalogue_id)
@@ -61,7 +64,11 @@ def convert_free_course(request, module_catalogue_id):
                                    'WHERE group_id = %s FOR UPDATE', [placement['group_id']])
                     cursor.fetchall()
                 placement, group = destination(payload)
-            result = {'moduleCatalogueId': module_catalogue_id,
+            tutor = v.find_staff_profile_row('tutor', tutor_identifier, include_archived=False)
+            if not tutor or v.staff_profile_is_archived(tutor) or not v.staff_profile_name(tutor):
+                return v.json_error('Choose an active Tutor from the staff directory.', fields=['tutor'], status=400)
+            tutor_name, tutor_email = v.staff_profile_name(tutor), v.staff_profile_email(tutor)
+            result = {'moduleCatalogueId': module_catalogue_id, 'tutor': tutor_name,
                       **{key: placement[column] for key, column in (
                           ('programmeId', 'programme_id'), ('programmeName', 'programme_name'),
                           ('cohortId', 'cohort_id'), ('cohortName', 'cohort_name'),
@@ -71,7 +78,8 @@ def convert_free_course(request, module_catalogue_id):
                 # again or creating another delivery, assignment or meeting.
                 if (stored.get('source_type') == 'module_authoring'
                         and all(v.clean_str(stored.get(key)) == placement[key]
-                                for key in ('programme_id', 'cohort_id', 'group_id'))):
+                                for key in ('programme_id', 'cohort_id', 'group_id'))
+                        and v.staff_assignment_key(stored.get('tutor_name')) == v.staff_assignment_key(tutor_name)):
                     return JsonResponse({**result, 'converted': False})
                 return v.json_error('This course has already been converted. Refresh the catalogue.', status=409)
             current = v.get_authoring_structure_payload(module_catalogue_id)
@@ -86,13 +94,24 @@ def convert_free_course(request, module_catalogue_id):
             )
             if date_error:
                 return v.json_error(date_error[0], fields=[date_error[1]], status=400)
-            # Only lineage and course kind change. Keep source_id for legacy
+            before = v.module_schedule_view(stored)
+            schedule = v.module_schedule_view({**stored, **placement, 'tutor_name': tutor_name})
+            day_error = v.tutor_assignment_delivery_day_error(schedule, before=before)
+            if day_error is not None:
+                return day_error
+            conflicts = v.tutor_schedule_conflicts_created(before, schedule)
+            if conflicts and not v.tutor_conflict_override_requested(payload):
+                return v.tutor_conflict_error(schedule, conflicts)
+            # Only lineage, course kind and selected tutor change. Keep source_id for legacy
             # adoption provenance. Never re-save weeks, hours, progress, plans,
             # submissions, KSBs or Teams settings as a side effect of placement.
-            v.update_authoring_rows(v.AUTHORING_MODULES_TABLE, 'module_catalogue_id = %s',
-                                    [module_catalogue_id], {**placement,
-                                        'source_type': 'module_authoring',
-                                        'learner_roster_mode': 'inherited', 'updated_at': timezone.now()})
+            fields = {**placement, 'tutor_name': tutor_name, 'tutor_email': tutor_email,
+                      'source_type': 'module_authoring', 'learner_roster_mode': 'inherited',
+                      'updated_at': timezone.now()}
+            from .learning_storage import convert_to_module
+            if not convert_to_module(module_catalogue_id, fields):
+                v.update_authoring_rows(v.AUTHORING_MODULES_TABLE, 'module_catalogue_id = %s',
+                                        [module_catalogue_id], fields)
             v.update_group_fields(placement['group_id'], {
                 'module_ids': v.json_db_value(v.unique([
                     *v.parse_json_value(group.get('module_ids'), []), module_catalogue_id])),

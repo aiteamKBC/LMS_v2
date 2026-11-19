@@ -70,7 +70,8 @@ def body(request):
 def module_row(module_id):
     # Direct SELECT: never invoke the authoring schema-repair helpers on a read.
     with connections['enrolment'].cursor() as cursor:
-        cursor.execute('SELECT row_to_json(m) FROM curriculum.modules m WHERE module_catalogue_id=%s AND deleted_at IS NULL', [module_id])
+        from curriculum_api.learning_storage import read_table
+        cursor.execute(f"SELECT row_to_json(m) FROM {read_table('modules', cursor.db)} m WHERE module_catalogue_id=%s AND deleted_at IS NULL", [module_id])
         row = cursor.fetchone()
     if not row:
         raise LookupError('This course is no longer available.')
@@ -320,7 +321,7 @@ def certificate(context, account, detail, request, issue=False):
             detail, _ = course_detail(context, account, state)
             ensure_open(detail, context)
             eligibility = progress(detail, context['module_id'])
-            if not eligibility['trackableTotal'] or eligibility['progressPercent'] < template['minimumProgress'] or (template['requireFinalTest'] and not eligibility['finalTestPassed']):
+            if not eligibility['trackableTotal'] or eligibility['trackableDone'] * 100 < template['minimumProgress'] * eligibility['trackableTotal']:
                 raise PermissionError('Complete the required activities, tutor reviews and assessments before requesting this certificate.')
             token = str(uuid.uuid4())
             snapshot = {**eligibility, 'certificateTitle': template['title'], 'bodyText': template['bodyText'], 'layoutConfig': template['layoutConfig'],

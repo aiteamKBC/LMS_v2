@@ -105,15 +105,15 @@ describe('ReflectionWindow KSB tab', () => {
     expect(screen.getByText('Selected KSBs explained and rated (any K, S or B)').closest('p')).toHaveClass('text-emerald-700');
   });
 
-  // The ticket changes this contract: authored mappings suggest choices rather
-  // than hiding the rest of the learner's programme.
-  it('offers the whole programme while keeping the authored KSB weight', () => {
+  it('preselects authored KSBs while offering the whole programme without inventing evidence', () => {
     renderWindow([{ code: 'S2', description: 'Campaign planning', weight: 40, classification: 'primary' }]);
 
     expect(screen.getByText('Select the programme KSBs this activity developed')).toBeInTheDocument();
     expect(screen.getByRole('checkbox', { name: /K1\s*Marketing principles/ })).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('checkbox', { name: /S2\s*Campaign planning/ }));
+    expect(screen.getByRole('checkbox', { name: /S2\s*Campaign planning/ })).toBeChecked();
     expect(screen.getByPlaceholderText(/Why is S2 relevant/)).toBeInTheDocument();
+    expect(screen.getByPlaceholderText(/Why is S2 relevant/)).toHaveValue('');
+    expect(screen.getAllByText('Not rated')).toHaveLength(2);
     expect(screen.queryByPlaceholderText(/Why is K1 relevant/)).not.toBeInTheDocument();
     expect(screen.getByText('40% weight')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('checkbox', { name: /K1\s*Marketing principles/ }));
@@ -127,8 +127,12 @@ describe('ReflectionWindow KSB tab', () => {
       { code: 'K1', description: 'Marketing principles', weight: 20, classification: 'primary' },
       { code: 'S2', description: 'Campaign planning', weight: 30, classification: 'primary' },
       { code: 'B1', description: 'Professional behaviour', weight: 10, classification: 'primary' },
-    ]);
-    fireEvent.click(screen.getByRole('checkbox', { name: /K1\s*Marketing principles/ }));
+    ], [...programmeKsbs, { code: 'B1', type: 'B', number: '1', description: 'Professional behaviour' }]);
+    // Authored K/S/B codes now start selected; the learner can narrow them.
+    fireEvent.click(screen.getByRole('tab', { name: /S\s*1\/1/ }));
+    fireEvent.click(screen.getByRole('checkbox', { name: /S2/ }));
+    fireEvent.click(screen.getByRole('tab', { name: /B\s*1\/1/ }));
+    fireEvent.click(screen.getByRole('checkbox', { name: /B1/ }));
     fireEvent.change(screen.getByPlaceholderText(/Why is K1 relevant/), { target: { value: 'The reading developed my knowledge.' } });
     for (const slider of screen.getAllByRole('slider')) fireEvent.change(slider, { target: { value: '4' } });
     expect(screen.queryByPlaceholderText(/Why is S2 relevant/)).not.toBeInTheDocument();
@@ -156,8 +160,8 @@ describe('ReflectionWindow KSB tab', () => {
       { code: 'B1', type: 'B', number: '1', description: 'Act professionally.' },
     ]);
     expect(screen.getAllByText('Suggested for this activity')).toHaveLength(2);
-    fireEvent.click(screen.getByRole('checkbox', { name: /K7\s*Understand legal/ }));
-    fireEvent.click(screen.getByRole('checkbox', { name: /S5\s*Collaborate/ }));
+    expect(screen.getByRole('checkbox', { name: /K7\s*Understand legal/ })).toBeChecked();
+    expect(screen.getByRole('checkbox', { name: /S5\s*Collaborate/ })).toBeChecked();
     expect(screen.getAllByText('Understand legal and regulatory frameworks.')).toHaveLength(2);
     expect(screen.getAllByText('Collaborate with clients and stakeholders.')).toHaveLength(2);
     expect(screen.getByText('60%')).toBeInTheDocument();
@@ -170,13 +174,15 @@ describe('ReflectionWindow KSB tab', () => {
   it('uses the current programme wording ahead of an outdated activity description', () => {
     renderWindow([{ code: 'K1', description: 'Outdated wording', weight: 20, classification: 'main' }]);
     expect(screen.queryByText('Outdated wording')).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole('checkbox', { name: /K1\s*Marketing principles/ }));
+    expect(screen.getByRole('checkbox', { name: /K1\s*Marketing principles/ })).toBeChecked();
     expect(screen.getAllByText('Marketing principles')).toHaveLength(2);
   });
 
   it('does not offer activity mappings from outside the learner programme', () => {
     renderWindow([{ code: 'K99', description: 'Another programme', weight: 50, classification: 'main' }]);
     expect(screen.queryByRole('checkbox', { name: /K99/ })).not.toBeInTheDocument();
+    expect(screen.queryByPlaceholderText(/Why is K99 relevant/)).not.toBeInTheDocument();
+    expect(screen.queryByText('50% weight')).not.toBeInTheDocument();
     expect(screen.getByRole('checkbox', { name: /K1/ })).toBeInTheDocument();
   });
 
@@ -211,7 +217,7 @@ describe('ReflectionWindow KSB tab', () => {
 
   it('preserves the mapped-only flow without a programme catalogue and explains a missing description', () => {
     renderWindow([{ code: 'K7', description: null, weight: 20, classification: 'main' }], []);
-    fireEvent.click(screen.getByRole('checkbox', { name: /K7\s*Description not available/ }));
+    expect(screen.getByRole('checkbox', { name: /K7\s*Description not available/ })).toBeChecked();
     expect(screen.getAllByText('Description not available for this KSB.')).toHaveLength(2);
     expect(screen.getByText('20% weight')).toBeInTheDocument();
   });

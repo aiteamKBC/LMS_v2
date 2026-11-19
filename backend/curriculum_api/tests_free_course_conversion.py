@@ -12,7 +12,7 @@ from learner_api.learning_plan import _effective_plan_ids
 from . import views as v, free_course_conversion as conversion
 from .legacy_free_course_adoption import adopted_courses, adopt_course
 from .legacy_free_course_migration import adopted_id
-from .tests import CurriculumPersistenceTransactionHarness
+from .tests import CurriculumPersistenceTransactionHarness, staff_directory, staff_user_row
 
 
 class FreeCourseConversionTests(CurriculumPersistenceTransactionHarness):
@@ -20,9 +20,17 @@ class FreeCourseConversionTests(CurriculumPersistenceTransactionHarness):
 
     def setUp(self):
         super().setUp()
+        self.enterContext(patch.object(v, 'fetch_staff_users_by_access', side_effect=staff_directory(
+            staff_user_row('Tutor One', row_id=10),
+            staff_user_row('Tutor Move', email='move@example.invalid', row_id=11),
+            staff_user_row('Tutor Other', row_id=12),
+            staff_user_row('Archived Tutor', row_id=13, status='archived'),
+            staff_user_row('Coach Only', row_id=14, access='coach'),
+        )))
         response = self.post_json('/curriculum_api/curriculum/programmes/tree/', self.tree_payload())
         self.assertEqual(response.status_code, 200, response.content)
-        self.target = {'programmeId': 'PROG-DATA', 'cohortId': 'COHORT-DATA-1', 'groupId': 'GROUP-DATA-1'}
+        self.target = {'programmeId': 'PROG-DATA', 'cohortId': 'COHORT-DATA-1', 'groupId': 'GROUP-DATA-1',
+                       'tutor': 'tutor-uuid-11'}
         self.module_id = 'MOD-FREE-MOVE'
         v.save_module_authoring_structure(self.module_id, {
             'isFreeCourse': True, 'title': 'Independent study', 'totalOtjh': 7,
@@ -69,6 +77,9 @@ class FreeCourseConversionTests(CurriculumPersistenceTransactionHarness):
         self.assertEqual(saved['source_type'], 'module_authoring')
         self.assertEqual(saved['learner_roster_mode'], 'inherited')
         self.assertEqual(saved['group_id'], self.target['groupId'])
+        self.assertEqual(saved['tutor_name'], 'Tutor Move')
+        self.assertEqual(saved['tutor_email'], 'move@example.invalid')
+        self.assertEqual(json.loads(response.content)['tutor'], 'Tutor Move')
         self.assertEqual(float(saved['total_otjh']), 7)
         after = v.module_structure_source_rows(self.module_id)
         for table, rows in before.items():
@@ -81,6 +92,87 @@ class FreeCourseConversionTests(CurriculumPersistenceTransactionHarness):
         self.assertEqual(v.parse_json_value(group['module_ids'], []).count(self.module_id), 1)
         self.assertFalse(json.loads(self.convert().content)['converted'])
         self.assertEqual(v.authoring_module_exists(self.module_id), saved)
+
+    def test_tutor_is_required_and_must_be_an_active_tutor(self):
+        before = v.authoring_module_exists(self.module_id)
+        group = v.resolve_group_row(self.target['groupId'])
+        cases = [{key: value for key, value in self.target.items() if key != 'tutor'}]
+        cases += [{**self.target, 'tutor': value} for value in (
+            '', '   ', 'Unassigned', None, [], 11, 'missing-tutor', 'tutor-uuid-13', 'coach-uuid-14')]
+        for payload in cases:
+            with self.subTest(tutor=payload.get('tutor')):
+                response = self.convert(payload)
+                self.assertEqual(response.status_code, 400, response.content)
+                self.assertEqual(json.loads(response.content)['fields'], ['tutor'])
+        self.assertEqual(v.authoring_module_exists(self.module_id), before)
+        self.assertEqual(v.resolve_group_row(self.target['groupId']), group)
+
+    def test_email_is_derived_from_directory_and_retries_cannot_reassign_tutor(self):
+        self.assertEqual(self.convert({**self.target, 'tutorEmail': 'untrusted@example.invalid'}).status_code, 200)
+        saved = v.authoring_module_exists(self.module_id)
+        self.assertEqual(saved['tutor_email'], 'move@example.invalid')
+        response = self.convert({**self.target, 'tutor': 'tutor-uuid-12'})
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(v.authoring_module_exists(self.module_id), saved)
+
+    def test_conversion_respects_tutor_edit_reservations(self):
+        with patch.object(conversion, 'check_structure_save', return_value=JsonResponse({'error': 'Reserved'}, status=409)) as guard:
+            self.assertEqual(self.convert().status_code, 409)
+        self.assertEqual(guard.call_args.args[3]['tutor'], 'Tutor Move')
+        self.assertEqual(v.authoring_module_exists(self.module_id)['source_type'], 'free_course')
+
+    def test_tutor_clash_rejects_the_whole_conversion(self):
+        v.update_authoring_rows(v.AUTHORING_MODULES_TABLE, 'module_catalogue_id = %s', [self.module_id], {
+            'start_date': '2026-09-02', 'sessions_number': 2, 'session_week_day': 'Wednesday',
+            'session_start_time': '10:00', 'session_end_time': '12:00',
+        })
+        before = v.authoring_module_exists(self.module_id)
+        group = v.resolve_group_row(self.target['groupId'])
+        response = self.convert({**self.target, 'tutor': 'tutor-uuid-10'})
+        self.assertEqual(response.status_code, 409, response.content)
+        self.assertEqual(json.loads(response.content)['tutorConflicts'][0]['moduleCatalogueId'], 'MOD-DATA-1')
+        self.assertEqual(v.authoring_module_exists(self.module_id), before)
+        self.assertEqual(v.resolve_group_row(self.target['groupId']), group)
+
+    def test_group_with_clock_but_no_delivery_day_rejects_tutor_assignment(self):
+        v.update_group_fields(self.target['groupId'], {'session_week_day': '', 'schedule': ''})
+        before = v.authoring_module_exists(self.module_id)
+        response = self.convert()
+        self.assertEqual(response.status_code, 409, response.content)
+        self.assertEqual(json.loads(response.content)['code'], 'missing_delivery_day')
+        self.assertEqual(v.authoring_module_exists(self.module_id), before)
+
+    def test_confirmed_tutor_clash_allows_conversion_without_changing_other_content(self):
+        v.update_authoring_rows(v.AUTHORING_MODULES_TABLE, 'module_catalogue_id = %s', [self.module_id], {
+            'start_date': '2026-09-02', 'sessions_number': 2, 'session_week_day': 'Wednesday',
+            'session_start_time': '10:00', 'session_end_time': '12:00',
+        })
+        before = v.module_structure_source_rows(self.module_id)
+        other = v.authoring_module_exists('MOD-DATA-1')
+        payload = {**self.target, 'tutor': 'tutor-uuid-10'}
+        preview = v.curriculum_preview_tutor_availability(RequestFactory().post('/', json.dumps({
+            'moduleCatalogueId': self.module_id, 'groupId': self.target['groupId'],
+            'cohortId': self.target['cohortId'], 'tutor': 'Tutor One',
+        }), content_type='application/json'))
+        self.assertEqual(preview.status_code, 200, preview.content)
+        self.assertFalse(json.loads(preview.content)['available'])
+        self.assertEqual(self.convert(payload).status_code, 409)
+        response = self.convert({**payload, 'allowTutorConflict': True})
+        self.assertEqual(response.status_code, 200, response.content)
+        self.assertEqual(v.authoring_module_exists(self.module_id)['tutor_name'], 'Tutor One')
+        after = v.module_structure_source_rows(self.module_id)
+        for table, rows in before.items():
+            if table != v.AUTHORING_MODULES_TABLE:
+                self.assertEqual(after[table], rows, table)
+        self.assertEqual(v.authoring_module_exists('MOD-DATA-1'), other)
+        self.assertFalse(json.loads(self.convert({**payload, 'allowTutorConflict': True}).content)['converted'])
+
+    def test_tutor_conflict_override_does_not_bypass_directory_or_role_checks(self):
+        before = v.authoring_module_exists(self.module_id)
+        self.assertEqual(self.convert({**self.target, 'tutor': 'tutor-uuid-13', 'allowTutorConflict': True}).status_code, 400)
+        self.auth.return_value = SimpleNamespace(role='learner', pk=101)
+        self.assertEqual(self.convert({**self.target, 'allowTutorConflict': True}).status_code, 403)
+        self.assertEqual(v.authoring_module_exists(self.module_id), before)
 
     def test_existing_commercial_and_apprenticeship_history_and_assignments_stay_unchanged(self):
         original = []

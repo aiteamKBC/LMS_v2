@@ -164,7 +164,7 @@ it('waits for the saved session dates instead of calling a scheduled module empt
   vi.mocked(fetchCurriculumSessions).mockImplementationOnce(() => new Promise(resolve => { release = resolve; }));
   open('MOD-3');
   const dialog = within(await screen.findByRole('dialog'));
-  expect(dialog.getByRole('status')).toHaveTextContent(/Loading this module.s session dates and Teams calendar/);
+  expect(dialog.getByRole('status')).toHaveAccessibleName(/Loading this module.s session dates and Teams calendar/);
   expect(dialog.queryByText(/no live-session components/)).not.toBeInTheDocument();
   expect(dialog.queryByText(/No sessions/i)).not.toBeInTheDocument();
   expect(dialog.queryByRole('button', { name: 'Create' })).not.toBeInTheDocument();

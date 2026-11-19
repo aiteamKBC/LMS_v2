@@ -52,8 +52,31 @@ function Progress({ label, value, detail, metric, tone }: { label: string; value
     <div className={styles.miniLabel}><b>{value === null ? EMPTY_VALUE : `${value}%`}</b></div>
     <div className={styles.track}><div className={styles.fill} style={{ width: `${value ?? 0}%` }} /></div>
     {detail !== null && detail !== undefined
-      ? <div className={styles.miniRatio} title={label === 'OTJH' ? 'Actual hours / target hours as of today' : undefined}>{detail}</div>
+      ? <div className={styles.miniRatio} title={label === 'OTJH' ? 'Actual hours / target hours as of today' : label === 'Activities' ? 'Completed activity records / total activity records (all types)' : undefined}>{detail}</div>
       : null}
+  </div>;
+}
+
+function ActivityPlan({ learner, retry }: { learner: Learner; retry?: () => void }) {
+  const plan = learner.activityPlan;
+  const completedRecords = compactNumber(learner.completedRecords ?? learner.componentsCompleted);
+  const updated = learner.activityPlanCalculatedAt ? `Calculated at ${new Date(learner.activityPlanCalculatedAt).toLocaleString('en-GB')}` : undefined;
+  return <div>
+    {plan ? <>
+      <Progress label="Plan activities" metric="activities" value={percent(plan.percent)} />
+      <div className={styles.miniRatio} title={updated || "Distinct completed activities / all activities in the learner's plan"}>
+        {plan.completed} / {plan.total} plan activities
+      </div>
+      {learner.activityPlanState === 'updating' ? <small role="status" title={updated}>Updating…</small> : null}
+      {learner.activityPlanState === 'unavailable' ? <small role="status" title={updated}>Update delayed</small> : null}
+    </> : learner.activityPlanState === 'unavailable' ? <button type="button" className="text-xs text-primary-700 underline"
+      aria-label={`Retry activity plan for ${learner.name}`} onClick={retry}>
+      Plan unavailable · Retry
+    </button> : <span role="status" className="text-xs" aria-label={`Preparing activity plan for ${learner.name}`}>Preparing plan…</span>}
+    {completedRecords !== null ? <div className={styles.miniRatio}
+      title="Completed progress records across all activity types; several records can refer to one plan activity">
+      {completedRecords} completed records
+    </div> : null}
   </div>;
 }
 
@@ -101,7 +124,7 @@ function bestActivity(learner: Learner) {
   return EMPTY_VALUE;
 }
 
-export function LearnerTable({ learners, insights, sortKey, sortDirection, onSort, selectionMode, selectedLearnerIds, onToggleSelect, onOpenProfile, onOpenLearnerPage, today = startOfToday() }: {
+export function LearnerTable({ learners, insights, sortKey, sortDirection, onSort, selectionMode, selectedLearnerIds, onToggleSelect, onOpenProfile, onOpenLearnerPage, showActivityPlan, retryActivityPlans, today = startOfToday() }: {
   learners: Learner[];
   insights: InsightMap;
   sortKey: SortKey;
@@ -112,6 +135,8 @@ export function LearnerTable({ learners, insights, sortKey, sortDirection, onSor
   onToggleSelect: (learnerId: string) => void;
   onOpenProfile: (learner: Learner) => void;
   onOpenLearnerPage: (learner: Learner) => void;
+  showActivityPlan?: boolean;
+  retryActivityPlans?: () => void;
   today?: Date;
 }) {
   const sortHeader = (label: string, key: SortKey) => {
@@ -163,7 +188,9 @@ export function LearnerTable({ learners, insights, sortKey, sortDirection, onSor
             ? <StatusPill value={otjhStatusOverride} />
             : <Progress label="OTJH" metric="otjh" tone={otjhTone(learner)} value={targetProgress} detail={otjhRatio(learner.otjhCompleted, targetHours)} />}
           </td>
-          <td className={styles.progressCell}><Progress label="Activities" metric="activities" value={componentPercent(learner)} detail={ratio(learner.componentsCompleted, learner.componentsPlanned)} /></td>
+          <td className={styles.progressCell}>{showActivityPlan
+            ? <ActivityPlan learner={learner} retry={retryActivityPlans} />
+            : <Progress label="Activities" metric="activities" value={componentPercent(learner)} detail={ratio(learner.componentsCompleted, learner.componentsPlanned)} />}</td>
           <td className={styles.progressCell}><Progress label="Attendance" metric="attendance" value={percent(learner.liveAttendanceRate, learner.liveAttendanceRateAvailable, true)} /></td>
           <td><DateMetric value={learner.startDate} emptyLabel="" /></td>
           <td><DateMetric value={activity} emptyLabel="No activity yet" detail={insight?.lastActivityDaysAgo !== null && insight?.lastActivityDaysAgo !== undefined ? `${insight.lastActivityDaysAgo} days ago` : displayValue(learner.lastActivityLabel) !== EMPTY_VALUE ? displayValue(learner.lastActivityLabel) : 'Latest activity'} metric="activity" tone={activityTone} /></td>

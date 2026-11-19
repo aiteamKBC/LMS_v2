@@ -41,6 +41,20 @@ describe('feedback API write protection', () => {
     );
   });
 
+  it('loads email history read-only and sends a CSRF-protected draft without client-owned addressing', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ emails: [], email: { id: 'request-1' } }) });
+    vi.stubGlobal('fetch', fetchMock);
+    await feedbackApi.responseEmails(7);
+    expect(fetchMock).toHaveBeenLastCalledWith('/engagement_api/feedback/responses/7/emails/', expect.objectContaining({ credentials: 'include' }));
+    expect(fetchMock.mock.calls.at(-1)?.[1].method).toBeUndefined();
+    const payload = { requestId: 'request-1', subject: 'Follow up', body: 'Hello', expectedRecipient: 'learner@example.test' };
+    await feedbackApi.sendResponseEmail(7, payload);
+    expect(fetchMock).toHaveBeenLastCalledWith('/engagement_api/feedback/responses/7/emails/', expect.objectContaining({
+      method: 'POST', body: JSON.stringify(payload), credentials: 'include',
+      headers: expect.objectContaining({ 'X-CSRFToken': 'verified-token' }),
+    }));
+  });
+
   it('loads the complete version history for a form', async () => {
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
@@ -95,6 +109,13 @@ describe('feedback API write protection', () => {
     await feedbackApi.questionAnalytics({ formId: 20, deliveryId: 31, submittedFrom: '2026-10-01', submittedTo: '2026-10-25' });
     expect(fetchMock).toHaveBeenCalledWith('/engagement_api/feedback/analytics/questions/?formId=20&deliveryId=31&submittedFrom=2026-10-01&submittedTo=2026-10-25', expect.objectContaining({ credentials: 'include' }));
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('retries ticket closure through a response-scoped POST without submitting another email', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ csrfToken: 'test-csrf', email: {} }) });
+    vi.stubGlobal('fetch', fetchMock);
+    await feedbackApi.retryEmailTicketClose(7, 'request-1');
+    expect(fetchMock).toHaveBeenLastCalledWith('/engagement_api/feedback/responses/7/emails/request-1/close-quality-ticket/', expect.objectContaining({ method: 'POST', body: '{}', credentials: 'include' }));
   });
 
   it('keeps the independent insights request read-only and encodes all selected scope filters', async () => {

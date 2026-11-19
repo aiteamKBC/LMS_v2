@@ -3,8 +3,7 @@ import { AppIcon } from '@/components/feature/AppIcon';
 import type { CurriculumTutorAvailabilityVerdict } from '@/lib/curriculumApi';
 
 /**
- * Why a tutor cannot take the slot being filled in, shown while they are still
- * being picked rather than after the save is refused.
+ * Explain overlapping sessions while keeping the tutor selectable.
  *
  * The sessions are named, not counted: "already teaching on 3 dates" leaves the
  * reader to go and find out which, and the fix is nearly always to move one of
@@ -40,32 +39,32 @@ export function TutorClashNotice({
   }, [verdict]);
 
   return (
-    <div className="overflow-hidden rounded-xl border border-red-200 bg-red-50">
+    <div role="status" className="overflow-hidden rounded-xl border border-amber-200 bg-amber-50">
       <div className="flex items-start gap-2.5 px-3.5 py-3">
-        <AppIcon className="ri-error-warning-fill mt-0.5 shrink-0 text-base text-red-600"></AppIcon>
+        <AppIcon className="ri-error-warning-fill mt-0.5 shrink-0 text-base text-amber-600"></AppIcon>
         <div className="min-w-0">
-          <p className="text-[13px] font-bold text-red-800">
+          <p className="text-[13px] font-bold text-amber-800">
             {verdict.tutor} is already teaching in this slot
           </p>
-          <p className="mt-0.5 text-[12px] leading-5 text-red-700">
+          <p className="mt-0.5 text-[12px] leading-5 text-amber-800">
             {sessionDates.length
               ? `${clashDates.length} of this module's ${sessionDates.length} sessions land on a session they already hold.`
               : `${clashDates.length} of this module's sessions land on a session they already hold.`}
-            {' '}Saving will be refused.
+            {' '}You can keep this tutor and save anyway, or choose another tutor.
           </p>
         </div>
       </div>
 
-      <div className="space-y-2 border-t border-red-100 bg-background-0/60 px-3.5 py-3">
+      <div className="space-y-2 border-t border-amber-100 bg-background-0/60 px-3.5 py-3">
         {verdict.conflicts.map(conflict => (
           <ClashedModule key={conflict.moduleCatalogueId} conflict={conflict} />
         ))}
       </div>
 
-      <div className="border-t border-red-100 px-3.5 py-2.5">
+      <div className="border-t border-amber-100 px-3.5 py-2.5">
         {freeTutors.length ? (
           <div className="flex flex-wrap items-center gap-1.5">
-            <span className="text-[11px] font-bold uppercase tracking-wider text-red-700">Free in this slot</span>
+            <span className="text-[11px] font-bold uppercase tracking-wider text-amber-800">Free in this slot</span>
             {freeTutors.map(name => (
               onPickTutor ? (
                 <button
@@ -88,8 +87,8 @@ export function TutorClashNotice({
             ))}
           </div>
         ) : (
-          <p className="text-[11px] leading-5 text-red-700">
-            No tutor is free in this slot. Change the delivery day, the time or the start date.
+          <p className="text-[11px] leading-5 text-amber-800">
+            You can also change the delivery day, time or start date to avoid the overlap.
           </p>
         )}
       </div>
@@ -120,7 +119,7 @@ function ClashedModule({ conflict }: { conflict: CurriculumTutorAvailabilityVerd
         {dates.map(date => (
           <span
             key={date}
-            className="inline-flex items-center rounded-md border border-red-200 bg-red-50 px-1.5 py-0.5 text-[11px] font-semibold text-red-700"
+            className="inline-flex items-center rounded-md border border-amber-200 bg-amber-50 px-1.5 py-0.5 text-[11px] font-semibold text-amber-800"
           >
             {clashDateLabel(date)}
           </span>

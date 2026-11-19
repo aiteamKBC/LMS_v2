@@ -74,6 +74,7 @@ from coach_api.validation import (
     validate_month,
     validation_error_response,
 )
+from coach_api.feedback_format import feedback_plain_text, sanitize_feedback
 from config.observability import metric_event
 from login.permissions import require_access
 from learner_api.evidence_storage import (
@@ -7789,7 +7790,8 @@ def fetch_coach_meeting_transcript_content(base: str, artifact_id: str, *, safe_
     }
     graph_request = urllib_request.Request(url, headers=request_headers, method="GET")
     try:
-        graph_response = urllib_request.urlopen(graph_request, timeout=45)
+        from curriculum_api.transcript_transport import open_transcript
+        graph_response = open_transcript(urllib_request.urlopen, graph_request, timeout=45)
         content_type = graph_response.headers.get("Content-Type") or "text/vtt"
         content = graph_response.read()
         graph_response.close()
@@ -8664,11 +8666,15 @@ def persist_coach_meeting_snapshots(
                     """
                     transcript_placeholders = "%s, %s, %s, %s, %s,"
                     transcript_update = """
-                        transcript_vtt = EXCLUDED.transcript_vtt,
-                        transcript_text = EXCLUDED.transcript_text,
-                        transcript_content_type = EXCLUDED.transcript_content_type,
-                        transcript_fetched_at = EXCLUDED.transcript_fetched_at,
-                        transcript_fetch_error = EXCLUDED.transcript_fetch_error,
+                        transcript_vtt = coalesce(nullif(EXCLUDED.transcript_vtt,''),coach_meeting_artifacts.transcript_vtt),
+                        transcript_text = coalesce(nullif(EXCLUDED.transcript_text,''),coach_meeting_artifacts.transcript_text),
+                        transcript_content_type = coalesce(nullif(EXCLUDED.transcript_content_type,''),coach_meeting_artifacts.transcript_content_type),
+                        transcript_fetched_at = coalesce(EXCLUDED.transcript_fetched_at,coach_meeting_artifacts.transcript_fetched_at),
+                        transcript_fetch_error = CASE
+                            WHEN coalesce(nullif(EXCLUDED.transcript_vtt,''),nullif(EXCLUDED.transcript_text,'')) IS NOT NULL
+                                THEN EXCLUDED.transcript_fetch_error
+                            ELSE coalesce(nullif(EXCLUDED.transcript_fetch_error,''),coach_meeting_artifacts.transcript_fetch_error)
+                            END,
                     """
                     transcript_values = [
                         clean_text(artifact.get("transcript_vtt")),
@@ -9384,7 +9390,8 @@ def coach_meeting_artifact_content_response(request, record, event_key, artifact
 
     graph_request = urllib_request.Request(url, headers=request_headers, method="GET")
     try:
-        graph_response = urllib_request.urlopen(graph_request, timeout=45)
+        from curriculum_api.transcript_transport import open_transcript
+        graph_response = open_transcript(urllib_request.urlopen, graph_request, timeout=45)
     except urllib_error.HTTPError as exc:
         if exc.code == 416 and artifact_type == "recording":
             response = HttpResponse(status=416)
@@ -14871,6 +14878,7 @@ def coach_marking_queue(request, submission_id=None):
             # text; this ceiling only exists to stop something absurd being
             # posted, so it is raised to clear a full draft with room to edit.
             feedback = validator.text("feedback", max_length=MARKING_FEEDBACK_MAX_LENGTH)
+            feedback = sanitize_feedback(feedback)
             reviewed_by = validator.text("reviewedBy", max_length=255, default="Progress Coach") or "Progress Coach"
             # A super-admin marking from inside a coach's workspace is recorded
             # as themselves, not as the coach: "Demo Admin (for Test Coach)".
@@ -14884,7 +14892,7 @@ def coach_marking_queue(request, submission_id=None):
                     getattr(admin, "username", "") or getattr(admin, "email", "")
                 ) or "Administrator"
                 reviewed_by = f"{admin_name} (for {reviewed_by})"[:255]
-            if decision and decision != "accepted" and not feedback:
+            if decision and decision != "accepted" and not feedback_plain_text(feedback):
                 validator.error("feedback", "Feedback is required for this decision.")
             validator.check()
         except ValidationError as exc:

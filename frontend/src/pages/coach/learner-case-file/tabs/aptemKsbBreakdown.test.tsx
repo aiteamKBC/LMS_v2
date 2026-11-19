@@ -185,7 +185,9 @@ describe('Progress KSB detailed breakdown', () => {
       expect(screen.getByText('Hours Remaining').parentElement).toHaveTextContent('35h 53m');
       expect(screen.getByText('OTJH Progress').parentElement).toHaveTextContent('74%');
       const chart = within(screen.getByRole('region', { name: 'Off-the-job hours by month' }));
-      expect(chart.getByRole('progressbar', { name: 'Overall off-the-job hours progress' })).toHaveAttribute('aria-valuenow', '74');
+      // Overall progress uses the full 850-hour plan; the card and variance
+      // still use the elapsed target of 140.6 hours.
+      expect(chart.getByRole('progressbar', { name: 'Overall off-the-job hours progress' })).toHaveAttribute('aria-valuenow', '12');
       expect(chart.getByText('-26% (-35.9h)')).toBeVisible();
     } finally {
       vi.useRealTimers();

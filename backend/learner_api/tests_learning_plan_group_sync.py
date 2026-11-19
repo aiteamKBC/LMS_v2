@@ -41,6 +41,7 @@ def _learner(plan=None):
 
 class GroupSyncTests(SimpleTestCase):
     def setUp(self):
+        self.enterContext(patch('learner_api.free_course_catalogue.builder_free_courses', return_value=[]))
         self.enterContext(
             patch("login.permissions.authenticate_request", return_value=SimpleNamespace(role="admin")),
         )
@@ -76,6 +77,9 @@ class GroupSyncTests(SimpleTestCase):
         self.assertEqual(body["totals"], {
             "moduleCount": 2,
             "moduleHours": 12.0,
+            "freeCourseCount": 0,
+            "freeCourseHours": 0,
+            "plannedFreeCourseHours": 0,
             "meetingCount": 0,
             "meetingHours": 0,
             "totalHours": 12.0,

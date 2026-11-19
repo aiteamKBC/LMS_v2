@@ -84,6 +84,9 @@ class CurriculumChangeLogMiddleware:
             return response
         after = shared_curriculum_epoch()
         if after > before:
+            # Downstream response middleware can invalidate derived summaries
+            # only for real catalogue changes, not telemetry/read-only POSTs.
+            request.curriculum_changed = True
             # Stored the way the client names it -- the browser talks to
             # `/curriculum_api` + path, and the same string is what a same-browser
             # write already broadcasts, so both routes invalidate identically.
@@ -99,6 +102,9 @@ class SchemaNotProvisionedMiddleware:
         return self.get_response(request)
 
     def process_exception(self, request, exception):
+        from .country_calendars import CalendarUnavailable
+        if isinstance(exception, CalendarUnavailable):
+            return JsonResponse({'error': str(exception), 'code': 'holiday_calendar_unavailable'}, status=503)
         if not isinstance(exception, SchemaNotProvisioned):
             return None
         logger.error(

@@ -1,3 +1,4 @@
+import { LoadingLabel, LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
 //
 // The monthly learner report, rebuilt around the employee-arranged ledger.
 // Original planned hours come from Last_audit.learners.planned_hours_monthly
@@ -171,7 +172,7 @@ function Stat({ label, value, tone = "navy", hint, title }: {
   );
 }
 
-function ProfileGroup({ label, value, secondaryLabel, secondaryValue }: { label: string; value: string; secondaryLabel: string; secondaryValue: string }) {
+function ProfileGroup({ label, value, secondaryLabel, secondaryValue }: { label: string; value: string; secondaryLabel: string; secondaryValue: React.ReactNode }) {
   return (
     <div className="space-y-4 px-5 py-4 first:pl-0 last:pr-0 lg:border-r lg:border-border lg:last:border-r-0">
       <div>
@@ -180,7 +181,7 @@ function ProfileGroup({ label, value, secondaryLabel, secondaryValue }: { label:
       </div>
       <div>
         <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">{secondaryLabel}</p>
-        <p className="mt-1.5 font-mono text-sm font-medium text-[#182d48]">{secondaryValue || "—"}</p>
+        <p className="mt-1.5 font-mono text-sm font-medium text-[#182d48]"><LoadingLabel>{secondaryValue || "—"}</LoadingLabel></p>
       </div>
     </div>
   );
@@ -933,7 +934,7 @@ function JournalPage() {
             <div className="flex items-center gap-3">
               <div className="rounded-xl bg-[#f6f8fb] px-6 py-3 text-center">
                 <p className="text-[9px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">Reporting month</p>
-                <p className="mt-1 text-sm font-semibold text-[#182d48]">{metadata.isLoading || summary.isLoading ? "Loading…" : monthLabel}</p>
+                <p className="mt-1 text-sm font-semibold text-[#182d48]">{metadata.isLoading || summary.isLoading ? <LoadingSkeleton label="Loading…" variant="text" /> : monthLabel}</p>
               </div>
               <Button
                 asChild
@@ -970,13 +971,13 @@ function JournalPage() {
           ) : selectedLearner && summary.data && !summaryMonths.length ? (
             <p className="py-10 text-center text-sm text-muted-foreground">No planned months or arranged activities exist for this learner yet.</p>
           ) : isLoading || !selectedLearner || !selectedPeriod ? (
-            <p className="py-10 text-center text-sm text-muted-foreground">Loading journal…</p>
+            <p className="py-10 text-center text-sm text-muted-foreground"><LoadingSkeleton label="Loading journal…" variant="rows" /></p>
           ) : summary.data ? (
             <div className="space-y-5 px-7 py-6">
               <div className="grid rounded-lg bg-[#f6f8fb] px-5 lg:grid-cols-3">
-                <ProfileGroup label="Learner" value={learnerName} secondaryLabel="Start date" secondaryValue={learnerProfile.data?.learning_delivery.start_date ?? (learnerProfile.isLoading ? "Loading…" : "—")} />
-                <ProfileGroup label="Programme" value={summary.data.programme_name ?? learnerProfile.data?.programme ?? "—"} secondaryLabel="First evidence" secondaryValue={learnerProfile.data?.learning_delivery.first_evidence_date ?? (learnerProfile.isLoading ? "Loading…" : "—")} />
-                <ProfileGroup label="Coach" value={summary.data.coach_name ?? learnerProfile.data?.coach.name ?? "—"} secondaryLabel="Planned end" secondaryValue={learnerProfile.data?.learning_delivery.planned_end_date ?? (learnerProfile.isLoading ? "Loading…" : "—")} />
+                <ProfileGroup label="Learner" value={learnerName} secondaryLabel="Start date" secondaryValue={learnerProfile.data?.learning_delivery.start_date ?? (learnerProfile.isLoading ? <LoadingSkeleton label={"Loading…"} /> : "—")} />
+                <ProfileGroup label="Programme" value={summary.data.programme_name ?? learnerProfile.data?.programme ?? "—"} secondaryLabel="First evidence" secondaryValue={learnerProfile.data?.learning_delivery.first_evidence_date ?? (learnerProfile.isLoading ? <LoadingSkeleton label={"Loading…"} /> : "—")} />
+                <ProfileGroup label="Coach" value={summary.data.coach_name ?? learnerProfile.data?.coach.name ?? "—"} secondaryLabel="Planned end" secondaryValue={learnerProfile.data?.learning_delivery.planned_end_date ?? (learnerProfile.isLoading ? <LoadingSkeleton label={"Loading…"} /> : "—")} />
               </div>
 
               <div className="flex items-center gap-1 rounded-lg bg-[#f6f8fb] p-1 text-xs font-semibold sm:w-fit">

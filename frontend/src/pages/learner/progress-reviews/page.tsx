@@ -1,3 +1,4 @@
+import { LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
 import { ImportedReviewSection, ImportedValue } from '../reviews/imported/ImportedReviewSection';
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
@@ -429,7 +430,7 @@ export default function ProgressReviewsPage() {
               <div>
                 <div className="mb-1.5 flex flex-wrap items-center gap-2">
                   <span className="text-[10px] font-bold uppercase tracking-[0.14em] text-primary-600">Formal review</span>
-                  <span className="rounded-full border border-primary-200/60 bg-primary-100/60 px-2.5 py-1 text-[10px] font-bold text-foreground-500">{loading ? 'Loading...' : learner?.programme || '-'}</span>
+                  <span className="rounded-full border border-primary-200/60 bg-primary-100/60 px-2.5 py-1 text-[10px] font-bold text-foreground-500">{loading ? <LoadingSkeleton label="Loading..." variant="text" /> : learner?.programme || '-'}</span>
                 </div>
                 <h1 className="font-heading text-xl font-bold text-primary-800 sm:text-2xl">Your review record</h1>
                 <p className="mt-1 max-w-2xl text-sm leading-6 text-foreground-500">Each review brings together you, your coach and line manager to discuss learning, progress and next actions.</p>
@@ -452,7 +453,7 @@ export default function ProgressReviewsPage() {
         </section>
 
         {loading ? (
-          <section className="rounded-2xl border border-background-200 bg-background-50 p-10 text-center text-sm text-foreground-400">Loading progress reviews...</section>
+          <section className="rounded-2xl border border-background-200 bg-background-50 p-10 text-center text-sm text-foreground-400"><LoadingSkeleton label="Loading progress reviews..." variant="rows" /></section>
         ) : !selected ? (
           <section className="rounded-2xl border border-background-200 bg-background-50 p-6"><Empty>{reviewId ? 'This progress review is no longer available. Return to Progress Review to choose a current session.' : 'No progress reviews have been created for this learner.'}</Empty></section>
         ) : (

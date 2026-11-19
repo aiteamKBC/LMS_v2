@@ -1,3 +1,4 @@
+import { LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
 import { useCaseFileSession } from '@/features/coach/case-file/hooks/CaseFileSession';
 import { useEffect, useState } from 'react';
 import type { ComponentMarking, LearnerKind } from '@/api/learnerDetail';
@@ -6,6 +7,7 @@ import { readLearnerJson } from '@/api/learnerRead';
 import { formatSystemTimestamp } from '@/lib/format';
 import { AssignmentDownload } from './AssignmentDownload';
 import { AssignmentFeedback } from './AssignmentFeedback';
+import { FormattedFeedback } from '@/components/feature/FormattedFeedback';
 import { statusLabels } from './model';
 import { formatSubmissionHours } from './submissionHours';
 import styles from './monthlySubmission.module.css';
@@ -48,7 +50,7 @@ export function AssignmentSubmissions({ kind, learnerId, activityId, status, sub
   return <>
     {!attempts.length && <AssignmentFeedback marking={marking} status={status} />}
     {!loading && !error && !attempts.length && ['accepted', 'partial', 'referred', 'returned', 'rejected', 'completed'].includes(status) && <AssignmentDownload kind={kind} learnerId={learnerId} activityId={activityId} month={month} />}
-    {loading && <p role="status" className={styles.feedbackReviewer}>Loading submission history…</p>}
+    {loading && <p  className={styles.feedbackReviewer}><LoadingSkeleton label="Loading submission history…" variant="rows" /></p>}
     {error && <div role="alert" className={styles.error}>{error}<br /><button type="button" onClick={() => setRefresh(value => value + 1)}>Retry submissions</button></div>}
     {attempts.length > 0 && <section className={styles.submissions} aria-label="Assignment submissions">
       <div className={styles.sectionHeading}><h3>Submission history</h3>
@@ -63,8 +65,9 @@ export function AssignmentSubmissions({ kind, learnerId, activityId, status, sub
         <p className={styles.feedbackReviewer}>Actual hours: <strong>{formatSubmissionHours(attempt.actualTimeHours)}</strong></p>
         <details className={styles.submittedAnswer}><summary>View submitted answer</summary><p>{attempt.answer || 'No written answer recorded.'}</p></details>
         <h5>Coach feedback</h5>
-        <p className={styles.attemptFeedback}>{attempt.coachFeedback || (['submitted_for_tutor_review', 'pending', 'escalated'].includes(attempt.status)
-          ? 'Awaiting coach review. Feedback will appear here once reviewed.' : 'No written feedback was added to this submission.')}</p>
+        {attempt.coachFeedback ? <FormattedFeedback value={attempt.coachFeedback} className={styles.attemptFeedback} />
+          : <p className={styles.attemptFeedback}>{['submitted_for_tutor_review', 'pending', 'escalated'].includes(attempt.status)
+            ? 'Awaiting coach review. Feedback will appear here once reviewed.' : 'No written feedback was added to this submission.'}</p>}
         {(attempt.reviewedBy || attempt.reviewedAt) && <p className={styles.feedbackReviewer}>
           {attempt.reviewedBy && `Reviewed by ${attempt.reviewedBy}`}
           {attempt.reviewedAt && ` · ${formatSystemTimestamp(attempt.reviewedAt, { dateStyle: 'medium', timeStyle: 'short' })} (UK time)`}

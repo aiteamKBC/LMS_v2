@@ -1,3 +1,4 @@
+import { LoadingLabel } from '@/components/feature/LoadingSkeleton';
 // ============================================================================
 // Modal header — the branded strip at the top of a full-screen completion form.
 //
@@ -54,7 +55,7 @@ export function ModalHeader({
           </span>
           <div>
             <p className="text-[12px] font-bold uppercase tracking-[0.16em] text-secondary-200">{eyebrow}</p>
-            <h2 className="mt-1 text-lg font-bold text-white">{title}</h2>
+            <h2 className="mt-1 text-lg font-bold text-white"><LoadingLabel>{title}</LoadingLabel></h2>
             {subtitle ? <p className="mt-1 text-[13px] text-white/60">{subtitle}</p> : null}
           </div>
         </div>

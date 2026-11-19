@@ -3,11 +3,12 @@ import { ChevronDown, FileText } from 'lucide-react';
 import { EvidencePdfActions } from '@/pages/coaching-recordings/SavedEvidencePdf';
 import { loadLectureTranscriptPdf } from '../lectureTranscript';
 import type { TeachingLectureScope } from '../teachingQuality';
+import detailsStyles from '@/components/feature/RecordingsDetails.module.css';
 
 export default function LectureTranscript({ scope }: { scope: TeachingLectureScope }) {
   const [open, setOpen] = useState(false);
   const panelId = useId();
-  return <section aria-label="Lecture transcript" className="mt-5 space-y-3 border-t border-background-200 pt-4">
+  return <section aria-label="Lecture transcript" className={`${detailsStyles.transcript} mt-5 space-y-3 border-t border-background-200 pt-4`}>
     <div className="rounded-xl border border-background-200 bg-white">
       <button type="button" aria-expanded={open} aria-controls={panelId} onClick={() => setOpen(value => !value)}
         className="flex w-full items-center justify-between gap-2 rounded-xl p-3 text-left text-sm font-semibold text-primary-800 hover:bg-primary-50">
