@@ -16,6 +16,8 @@ class CanonicalHoursTests(SimpleTestCase):
     owner = {'id': 101, 'enrolment_id': 201, 'learner_type': 'commercial'}
 
     def setUp(self):
+        self.enterContext(patch('learner_api.attendance_otjh.read_bulk', side_effect=lambda owners, read:
+            {int(o['id']): {'lectures': [], 'protected': {}, 'frozen_rows': []} for o in owners}))
         self.db = sqlite3.connect(':memory:')
         self.addCleanup(self.db.close)
         self.db.row_factory = sqlite3.Row
@@ -177,9 +179,9 @@ class CanonicalHoursTests(SimpleTestCase):
         self.db.executemany('''INSERT INTO Learner.learning_reflection_submissions
             (id,learner_id,learner_kind,component_ref,status,actual_time_hours,activity_type,submitted_at)
             VALUES(?,?,?,?,?,?,?,?)''', [
-            (1, '201', 'commercial', 'shared', 'accepted', '2.5', 'assignment', '2026-10-12'),
-            (2, '202', 'apprenticeship', 'shared', 'submitted', '1.5', 'assignment', '2026-10-12'),
-            (3, '201', 'apprenticeship', 'shared', 'accepted', '100', 'assignment', '2026-10-13'),
+            (1, 101, 'commercial', 'shared', 'accepted', '2.5', 'assignment', '2026-10-12'),
+            (2, 102, 'apprenticeship', 'shared', 'submitted', '1.5', 'assignment', '2026-10-12'),
+            (3, 101, 'apprenticeship', 'shared', 'accepted', '100', 'assignment', '2026-10-13'),
         ])
         owners = [self.owner, {'id': 102, 'enrolment_id': 202, 'learner_type': 'apprenticeship'}]
         with patch.object(canonical, 'query', side_effect=self.read):
@@ -197,7 +199,7 @@ class CanonicalHoursTests(SimpleTestCase):
         self.assertEqual(len(self.reads), 2)
 
     def extra(self, key, **values):
-        row = dict(id=key, learner_id='201', learner_kind='commercial', component_ref=None,
+        row = dict(id=key, learner_id=101, learner_kind='commercial', component_ref=None,
                    status='accepted', actual_time_hours='1', activity_type='extra_activity',
                    submitted_at='2026-10-23T13:00:00+00:00', progress_entry_id=None,
                    activity_title='Independent extra activity', module_title='', ksb_codes='[]',
@@ -258,9 +260,9 @@ class CanonicalHoursTests(SimpleTestCase):
 
     def test_extra_scopes_enrolment_and_kind_and_preserves_selected_or_uk_month(self):
         self.extra('one')
-        self.extra('two', learner_id='202', learner_kind='apprenticeship', actual_time_hours='1.25')
-        self.extra('wrong-kind', learner_id='201', learner_kind='apprenticeship', actual_time_hours='99')
-        self.extra('wrong-learner', learner_id='203', actual_time_hours='99')
+        self.extra('two', learner_id=102, learner_kind='apprenticeship', actual_time_hours='1.25')
+        self.extra('wrong-kind', learner_id=101, learner_kind='apprenticeship', actual_time_hours='99')
+        self.extra('wrong-learner', learner_id=103, actual_time_hours='99')
         self.extra('uk-fallback', submitted_at='2026-09-30T23:30:00Z', full_submission='{}')
         owners = [self.owner, {'id': 102, 'enrolment_id': 202, 'learner_type': 'apprenticeship'}]
         with patch.object(canonical, 'query', side_effect=self.read):

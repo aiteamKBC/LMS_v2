@@ -219,6 +219,10 @@ def start_time_tracking(request):
     except (ValueError, UnicodeDecodeError) as exc:
         return _error(f"Invalid JSON body: {exc}", 400)
 
+    from .live_session_access import access_refusal
+    refused = access_refusal(learner_kind, learner_id, payload.get('activityId'))
+    if refused is not None:
+        return refused
     try:
         session = issue_tracking_session(
             activity_kind=str(payload.get("activityKind") or "").strip(),
@@ -255,6 +259,10 @@ def checkpoint_time_tracking(request):
         payload = json.loads(request.body)
         if not isinstance(payload, dict):
             raise ValueError('Expected an object.')
+        from .live_session_access import access_refusal
+        refused = access_refusal(kind, learner_id, payload.get('activityId'))
+        if refused is not None:
+            return refused
         from .timing_drafts import checkpoint
         result = checkpoint(payload.get('trackingToken'), activity_kind=payload.get('activityKind'),
             activity_id=payload.get('activityId'), learner_kind=kind, learner_id=learner_id,

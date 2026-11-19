@@ -1,3 +1,4 @@
+import { LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
 import { useEffect, useRef, useState } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
@@ -26,7 +27,7 @@ const monthNow = () => new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Lond
 export default function ExtraActivityPage() {
   const { kind: routeKind, id: routeId } = useParams();
   const { kind, id } = useResolvedLearner(routeKind, routeId);
-  if (!id || (kind !== 'commercial' && kind !== 'apprenticeship')) return <p>Loading learner...</p>;
+  if (!id || (kind !== 'commercial' && kind !== 'apprenticeship')) return <p><LoadingSkeleton label="Loading learner..." variant="rows" /></p>;
   return <ExtraActivityRoute key={`${kind}:${id}`} kind={kind} learnerId={id} />;
 }
 function ExtraActivityRoute({ kind, learnerId }: { kind: LearnerKind; learnerId: string }) {
@@ -206,7 +207,7 @@ export function ExtraActivityForm({ kind, learnerId, savedId, initialActivityId,
       <div className={styles.extraSave}><span role="status" data-state={saveState}>{locked ? 'Submitted work' : savingDraft ? 'Saving draft...' : saveState === 'error' ? 'Draft not saved — please retry' : dirty ? 'Unsaved changes' : saveState === 'saved' ? 'Draft saved' : 'Changes save automatically'}</span>
         {onNewActivity && <button type="button" className={styles.secondary} disabled={!isInitialized || staffPreview || busy || savingDraft || loading} onClick={() => { if (!dirty || window.confirm('Start a new activity and discard your unsaved changes?')) onNewActivity(); }}>New activity</button>}
         <button type="button" className={styles.secondary} disabled={disabled || !validMonth || savingDraft} onClick={() => void save('draft')}>{saveState === 'error' ? 'Retry save' : 'Save draft'}</button></div></header>
-      {loading && <p role="status">Loading extra activity...</p>}
+      {loading && <p ><LoadingSkeleton label="Loading extra activity..." variant="rows" /></p>}
       {notice && <p role="status" className="rounded-xl bg-green-50 p-4 text-green-900">{notice}</p>}
       {error && <p role="alert" className="rounded-xl bg-red-50 p-4 text-red-800">{error}</p>}
       {locked && <p>{addedBy ? 'Your coach recorded this activity. It is read-only here.' : `This activity is ${status === 'accepted' ? 'accepted' : 'awaiting coach review'}. Your submitted work is read-only.`}</p>}

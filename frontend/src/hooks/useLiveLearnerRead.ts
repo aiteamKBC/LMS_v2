@@ -31,6 +31,13 @@ export function useLiveLearnerRead<T>(
 
   useEffect(() => {
     if (!enabled || !active || !kind || !id) return;
+    // Retain the cached response before invalidation clears the shared cache.
+    // The initial asynchronous read may not have published its result yet.
+    const cached = peek(kind, id);
+    if (cached !== undefined) {
+      setState(previous => previous?.key === key && previous.data !== undefined
+        ? previous : { key, data: cached, error: '' });
+    }
     const token = {};
     let disposed = false;
     let sequence = 0;

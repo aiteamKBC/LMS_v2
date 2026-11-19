@@ -1,3 +1,4 @@
+import { LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
 import { useEffect, useMemo, useState } from 'react';
 import { fetchEnrolmentUsers } from '@/api/enrolmentUsers';
 
@@ -117,7 +118,7 @@ export function LearnerPickerModal({ open, onClose, onSelect, selectedId, status
           {loading && (
             <div className="flex flex-col items-center justify-center text-center gap-2 py-10">
               <AppIcon className="ri-loader-4-line text-2xl text-foreground-300 animate-spin"></AppIcon>
-              <p className="text-[11px] text-foreground-400">Loading learners…</p>
+              <p className="text-[11px] text-foreground-400"><LoadingSkeleton label="Loading learners…" variant="rows" /></p>
             </div>
           )}
 

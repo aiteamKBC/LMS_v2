@@ -325,6 +325,31 @@ class AttendanceLectureTests(SimpleTestCase):
         self.assertEqual(result[0]['source'], 'microsoft-teams')
         self.assertEqual(result[0]['attendance_report_id'], 'report-1')
 
+    def test_resolved_guest_register_reaches_component_without_an_email_match(self):
+        from .live_session_progress import project_live_credits
+        now = timezone.now()
+        scheduled = register_row(source='microsoft-teams', session_id='O1', occurrence_id='O1',
+            module_catalogue_id='M1', live_session_id='S1', session_number=1,
+            scheduled_start=now-timedelta(hours=2), scheduled_end=now-timedelta(hours=1),
+            attendance_report_id='R1', attendance_status='absent', attended=False)
+        # The resolved register owns presence; a mismatched provider report
+        # supplies no invented participant seconds.
+        for seconds, status, report, expected in ((7200, 'present', 'R1', True),
+                (180, 'present', 'R1', True), (7200, 'absent', 'R1', False),
+                (7200, 'present', 'OTHER-REPORT', True), (7200, 'present', '', True)):
+            with self.subTest(seconds=seconds, status=status, report=report):
+                saved = {**scheduled, 'source': 'live-register', 'attendance_status': status,
+                         'attended_seconds': seconds, 'attendance_report_id': report}
+                register = lecture_register(SimpleNamespace(id=12), records=[saved],
+                    scheduled=[scheduled], apply_adjustments=False)
+                credit = project_live_credits([{'componentId': 'C1', 'moduleId': 'M1',
+                    'type': 'live_session', 'teamsLiveSessionId': 'S1', 'teamsSessionNumber': 1}],
+                    register, now=now)
+                self.assertEqual(bool(credit), expected)
+                self.assertEqual(register[0]['attended_seconds'], seconds if report == 'R1' else 0)
+                if credit:
+                    self.assertEqual(credit[0]['verifiedSeconds'], seconds if report == 'R1' else 0)
+
     def test_saved_shared_outcome_cannot_be_replaced_by_the_source_register(self):
         now = timezone.now()
         native = register_row(source='microsoft-teams', session_id='occ', occurrence_id='occ',
@@ -981,12 +1006,12 @@ class AttendanceAbsenceTests(SimpleTestCase):
         return response
 
     def test_duplicate_report_for_another_learner_is_rejected_before_writing(self):
-        response = self.submit_duplicate(SimpleNamespace(id=7, learner_id=99))
+        response = self.submit_duplicate(SimpleNamespace(id=7, enrolment_id=99))
         self.assertEqual(response.status_code, 409)
 
     def test_retried_report_returns_the_learners_saved_report(self):
         # The first attempt was saved after the proxy had timed out the request.
-        response = self.submit_duplicate(SimpleNamespace(id=7, learner_id=12))
+        response = self.submit_duplicate(SimpleNamespace(id=7, enrolment_id=12))
         self.assertEqual(response.status_code, 200)
         self.assertEqual(json.loads(response.content), {'id': 7})
 

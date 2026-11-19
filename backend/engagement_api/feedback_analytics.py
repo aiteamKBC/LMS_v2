@@ -20,10 +20,12 @@ from .feedback_classification import response_classifications
 from .feedback_question_overrides import effective_question_ids
 
 
-def completed_report_responses(family_ids=None, *, delivery_ids=None, submitted_from=None, submitted_until=None, group_id=None, module_id=None):
+def completed_report_responses(family_ids=None, *, delivery_ids=None, submitted_from=None, submitted_until=None, group_id=None, module_id=None, excluded_form_title_pattern=None):
     query = FeedbackResponse.objects.filter(status='completed')
     if family_ids is not None:
         query = query.filter(form_id__in=family_ids)
+    if excluded_form_title_pattern:
+        query = query.exclude(form__title__iregex=excluded_form_title_pattern)
     if delivery_ids is not None:
         query = query.filter(delivery_id__in=delivery_ids)
     if group_id:
@@ -38,13 +40,27 @@ def completed_report_responses(family_ids=None, *, delivery_ids=None, submitted_
     return list(query.select_related('form', 'delivery'))
 
 
-def dashboard_groups(family_ids=None):
+def dashboard_forms(*, excluded_form_title_pattern=None):
+    """Latest visible version per form family, including historical-only families."""
+    forms = FeedbackForm.objects.all()
+    if excluded_form_title_pattern:
+        forms = forms.exclude(title__iregex=excluded_form_title_pattern)
+    choices = {}
+    for form in forms.order_by('template_key', '-version', '-id'):
+        choices.setdefault(form.template_key, {'id': form.id, 'title': form.title, 'formType': form.form_type})
+    return sorted(choices.values(), key=lambda row: (row['title'].casefold(), row['id']))
+
+
+def dashboard_groups(family_ids=None, *, excluded_form_title_pattern=None):
     """Historical group snapshots, not current learner membership."""
     forms = FeedbackForm.objects.all()
     deliveries = FeedbackDelivery.objects.all()
     if family_ids is not None:
         forms = forms.filter(id__in=family_ids)
         deliveries = deliveries.filter(form_id__in=family_ids)
+    if excluded_form_title_pattern:
+        forms = forms.exclude(title__iregex=excluded_form_title_pattern)
+        deliveries = deliveries.exclude(form__title__iregex=excluded_form_title_pattern)
     groups = {}
     for query in (forms, deliveries):
         for identifier, name in query.exclude(group_id='').values_list('group_id', 'group_name'):
@@ -52,13 +68,16 @@ def dashboard_groups(family_ids=None):
     return [{'id': identifier, 'name': name} for identifier, name in sorted(groups.items(), key=lambda item: (item[1], item[0]))]
 
 
-def dashboard_modules(family_ids=None, *, group_id=None):
+def dashboard_modules(family_ids=None, *, group_id=None, excluded_form_title_pattern=None):
     """Module snapshots in this type/group, including historical form versions."""
     forms = FeedbackForm.objects.all()
     deliveries = FeedbackDelivery.objects.all()
     if family_ids is not None:
         forms = forms.filter(id__in=family_ids)
         deliveries = deliveries.filter(form_id__in=family_ids)
+    if excluded_form_title_pattern:
+        forms = forms.exclude(title__iregex=excluded_form_title_pattern)
+        deliveries = deliveries.exclude(form__title__iregex=excluded_form_title_pattern)
     if group_id:
         forms = forms.filter(group_id=group_id)
         deliveries = deliveries.filter(group_id=group_id)
@@ -84,12 +103,12 @@ def lecture_analytics_options(family_ids=None):
 
 
 def question_analytics(family_ids=None, *, delivery_ids=None, submitted_from=None, submitted_until=None,
-                       group_id=None, module_id=None, classification=None, dashboard=False):
+                       group_id=None, module_id=None, classification=None, dashboard=False, excluded_form_title_pattern=None):
     response_scope = {'group_id': group_id} if group_id else {}
     if module_id:
         response_scope['module_id'] = module_id
-    responses = completed_report_responses(family_ids, delivery_ids=delivery_ids, submitted_from=submitted_from, submitted_until=submitted_until, **response_scope)
-    all_responses = (completed_report_responses(family_ids, delivery_ids=delivery_ids, **response_scope)
+    responses = completed_report_responses(family_ids, delivery_ids=delivery_ids, submitted_from=submitted_from, submitted_until=submitted_until, excluded_form_title_pattern=excluded_form_title_pattern, **response_scope)
+    all_responses = (completed_report_responses(family_ids, delivery_ids=delivery_ids, excluded_form_title_pattern=excluded_form_title_pattern, **response_scope)
                      if dashboard and (submitted_from is not None or submitted_until is not None) else responses)
     submitted = FeedbackAnswer.objects.filter(response__status='completed')
     if delivery_ids is not None:
@@ -100,12 +119,16 @@ def question_analytics(family_ids=None, *, delivery_ids=None, submitted_from=Non
     if module_id:
         submitted = submitted.filter(Q(response__delivery__module_catalogue_id=module_id)
                                      | Q(response__delivery_id__isnull=True, response__form__module_catalogue_id=module_id))
+    if excluded_form_title_pattern:
+        submitted = submitted.exclude(response__form__title__iregex=excluded_form_title_pattern)
     query = FeedbackQuestion.objects.select_related('section__form').prefetch_related(Prefetch(
         'answers', queryset=submitted.select_related('response'),
         to_attr='submitted_answers',
     ))
     if family_ids is not None:
         query = query.filter(section__form_id__in=family_ids)
+    if excluded_form_title_pattern:
+        query = query.exclude(section__form__title__iregex=excluded_form_title_pattern)
     if delivery_ids is not None:
         query = query.filter(section__form__deliveries__id__in=delivery_ids).distinct()
     questions = list(query)

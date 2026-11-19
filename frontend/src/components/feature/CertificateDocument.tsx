@@ -53,6 +53,7 @@ export interface CertificateDocumentProps {
   certificateNumber?: string | null;
   awardedOn?: string | null;
   verificationUrl?: string | null;
+  revisionLabel?: string;
   layoutConfig?: CertificateLayout;
   className?: string;
   editable?: boolean;
@@ -367,6 +368,7 @@ export function CertificateDocument({
   certificateNumber,
   awardedOn,
   verificationUrl,
+  revisionLabel,
   layoutConfig,
   className = '',
   editable = false,
@@ -680,6 +682,7 @@ export function CertificateDocument({
           {website}
         </p>
       ) : null}
+      {revisionLabel && <p className="absolute bottom-[4%] left-[12%] right-[12%] text-[1cqw] leading-none font-semibold text-slate-600">{revisionLabel}</p>}
     </div>
     {qrPreviewOpen ? <QrPreview value={verificationUrl} color={primary} onClose={() => setQrPreviewOpen(false)} /> : null}
     </>

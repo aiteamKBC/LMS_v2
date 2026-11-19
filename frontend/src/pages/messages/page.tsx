@@ -1,3 +1,4 @@
+import { LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
@@ -609,7 +610,7 @@ export default function MessagesPage() {
                 <span className="text-[10px] font-medium text-primary-600 bg-primary-50 px-2 py-1 rounded-full">{activeFilter === 'all' ? 'All' : activeFilter.replace('-', ' ')}</span>
               </div>
               <div className="max-h-[420px] md:max-h-[520px] overflow-y-auto overscroll-contain md:flex-1 md:min-h-0 md:max-h-none">
-                {loadingConversations && <p className="p-5 text-sm text-foreground-400">Loading conversations...</p>}
+                {loadingConversations && <p className="p-5 text-sm text-foreground-400"><LoadingSkeleton label="Loading conversations..." variant="rows" /></p>}
                 {!loadingConversations && filteredConversations.length === 0 && (
                   <p className="p-5 text-sm text-foreground-400">{error || 'No conversations available.'}</p>
                 )}

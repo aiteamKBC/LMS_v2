@@ -95,7 +95,11 @@ class PersistSnapshotKeepsOfficialPlannedHoursTests(SimpleTestCase):
 
 def live_snapshot_inputs(stack, *, review_planned):
     """Mock the inputs of the real _live_otjh_snapshot, keeping its arithmetic."""
-    stack.enter_context(patch("learner_api.canonical_hours.profile_actual_hours", return_value=12.0))
+    stack.enter_context(patch('learner_api.canonical_hours.profile_actual_hours', return_value=12.0))
+    stack.enter_context(patch('learner_api.manual_attendance_completion.read_manual_context', return_value={}))
+    stack.enter_context(patch('learner_api.progress_transfer_store.read_state', return_value={'items': [], 'records': []}))
+    stack.enter_context(patch('learner_api.attendance_learning.with_learning_requirements', side_effect=lambda source, credits: credits))
+    stack.enter_context(patch('learner_api.live_session_access.annotate_access', side_effect=lambda source, components: components))
     for name, value in (
         ("_review_otjh_hours", (review_planned, 0)),
         ("_cumulative_week_target", 20.0),
@@ -167,8 +171,7 @@ class SummaryPageLoadTests(SimpleTestCase):
             stack.enter_context(patch("learner_api.teams_attendance.annotate_attendance_completion",
                                       side_effect=lambda rows, profile, *, manual_context: rows))
             stack.enter_context(patch("learner_api.replacement_learning.annotate_replacement_learning",
-                                      side_effect=lambda rows, pk: rows))
-            stack.enter_context(patch("learner_api.progress_transfer_store.read_state", return_value={"items": []}))
+                                      side_effect=lambda rows, pk, **kwargs: rows))
             stack.enter_context(patch("learner_api.live_session_progress.read_live_credits", return_value=[]))
             stack.enter_context(patch("learner_api.live_session_progress.supplement_component_progress",
                                       side_effect=lambda rows, credits: rows))

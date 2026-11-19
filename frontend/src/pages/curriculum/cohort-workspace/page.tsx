@@ -1,3 +1,4 @@
+import { LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
@@ -208,7 +209,7 @@ export default function CohortWorkspacePage() {
       navItems={curriculumNavItems}
       workspaceLabel="Curriculum Studio"
       pageTitle={cohort?.name || 'Cohort'}
-      pageSubtitle={cohort ? `${cohort.programme} · ${formatDateLabel(cohort.startDate)} – ${formatDateLabel(cohort.apprenticeshipEndDate || cohort.endDate)}` : 'Loading cohort'}
+      pageSubtitle={cohort ? `${cohort.programme} · ${formatDateLabel(cohort.startDate)} – ${formatDateLabel(cohort.apprenticeshipEndDate || cohort.endDate)}` : <LoadingSkeleton label={'Loading cohort'} />}
       userName="Rachel Myers"
       userRole="Curriculum Designer"
     >
@@ -222,7 +223,7 @@ export default function CohortWorkspacePage() {
             { label: cohort?.name || id },
           ]}
           eyebrow="Cohort"
-          title={cohort?.name || 'Loading…'}
+          title={cohort?.name || <LoadingSkeleton label={'Loading…'} />}
           subtitle={programme ? (
             <span className="flex flex-wrap items-center gap-1.5">
               <span className="text-foreground-400">Part of</span>

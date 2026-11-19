@@ -1,3 +1,4 @@
+import { LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
 import { useEffect, useState } from 'react';
 import { authoredWeekPoints, type AuthoredWeekPoints, type WebPoint } from '@/api/webWeekPoints';
 
@@ -38,7 +39,7 @@ export function WebWeekPointsEditor({ moduleId, weekId, drafts, busy = false, ac
       <p className="mt-1 text-sm text-foreground-500">Create a Point, give it a name and select activities from this week. Selected activities appear inside the Point for learners. Other activities stay visible in the week. Points do not restrict activity access.</p></div>
     {error && <div role="alert" className="text-sm text-red-700">{error}</div>}
     {draft?.notice && <p role="status" className="text-sm text-amber-700">{draft.notice}</p>}
-    {!data && !error && <p role="status">Loading Points…</p>}
+    {!data && !error && <p ><LoadingSkeleton label="Loading Points…" variant="rows" /></p>}
     <button type="button" disabled={busy} onClick={() => setReload(value => value + 1)} className="text-sm text-primary-700 underline">Reload saved activities and Points</button>
     {data && <fieldset disabled={busy} className="space-y-4">
       {points.map((point, index) => <fieldset key={point.id} aria-label={`Point ${index + 1}`} className="rounded-xl border border-background-300 p-4">

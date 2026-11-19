@@ -28,8 +28,9 @@ def directory_learner(pk=1, has_plan=False, learner_type="commercial"):
         if field.attname in DIRECTORY_FIELDS
     ]
     learner = EnrolmentUser.from_db(
-        "enrolment", loaded_fields, [data[key] for key in loaded_fields]
+        "enrolment", loaded_fields, [data.get(key) for key in loaded_fields]
     )
+    learner._educational_placement = SimpleNamespace(programme_id='P1', cohort_id='C1', group_id='G1', programme_record=SimpleNamespace(name='Marketing'), cohort_record=SimpleNamespace(cohort_name='September'), group_record=SimpleNamespace(group_name='Group A'))
     learner._directory_has_learning_plan = has_plan
     learner._directory_programme = 'Marketing'
     learner._directory_cohort = 'September'
@@ -49,16 +50,16 @@ class DirectoryRowTests(SimpleTestCase):
                 self.assertNotIn('"Learner"', sql)
                 self.assertNotIn('Aptem_users', sql)
                 for key in ('programme_id', 'cohort_id', 'group_id'):
-                    self.assertIn(f'"enrolment"."Created_users".{key}', sql)
+                    self.assertIn(f'"enrolment"."Created_users"."{key}"', sql)
                 for legacy in ('Programme', 'Cohort', 'Group'):
                     self.assertNotIn(f'."{legacy}"', sql)
                 self.assertEqual(query.query.order_by, ('id',))
                 self.assertFalse(query.query.distinct)
 
-    def test_directory_labels_never_call_the_shared_learner_relationship_reader(self):
+    def test_directory_labels_use_preloaded_canonical_placements_without_queries(self):
         learner = directory_learner(pk=42)
-        with patch('learner_api.models._learner_placement_names',
-                   side_effect=AssertionError('Directory must not read Learner placement')):
+        with patch.object(EnrolmentUser, 'refresh_from_db',
+                   side_effect=AssertionError('Directory must use its preloaded placement')):
             row = to_directory_row(learner)
         self.assertEqual((row['id'], row['programme'], row['cohort'], row['group']),
                          ('42', 'Marketing', 'September', 'Group A'))
@@ -67,7 +68,7 @@ class DirectoryRowTests(SimpleTestCase):
         for name, response_key in (('programme', 'programme'), ('cohort', 'cohort'), ('group', 'group')):
             with self.subTest(relationship=name):
                 learner = directory_learner(pk=42)
-                setattr(learner, f'_directory_{name}', None)
+                setattr(learner._educational_placement, f'{name}_record', None)
                 row = to_directory_row(learner)
                 self.assertEqual(row['id'], '42')
                 self.assertEqual(row[response_key], '')
@@ -154,6 +155,7 @@ class DirectoryRowTests(SimpleTestCase):
 
 class LearnerDirectoryTests(SimpleTestCase):
     def setUp(self):
+        self.enterContext(patch.object(views, 'with_placements', side_effect=lambda rows: rows))
         self.factory = RequestFactory()
 
     def test_get_preserves_rows_and_account_flags_without_advancing_statuses(self):

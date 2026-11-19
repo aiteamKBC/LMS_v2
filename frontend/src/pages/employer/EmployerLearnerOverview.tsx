@@ -1,3 +1,4 @@
+import { LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
 import { useEffect, useState } from 'react';
 import type { LearnerKind } from '@/api/learnerDetail';
 import { fetchEmployerLearnerPhoto, fetchEmployerLearnerSchedule, type EmployerLearnerDetail } from '@/api/employerPortal';
@@ -69,7 +70,7 @@ export function EmployerLearnerHeader({ employerId, kind, learner, onBack }: {
   const schedule = { data: query.data, loading: query.isPending, error: query.error };
   const today = new Date().toLocaleDateString('en-CA', { timeZone: 'Europe/London' });
   const current = learnerHeaderPlan(schedule.data?.modules || [], { programme: learner.programme, cohort: learner.cohort }, today);
-  const placeholder = schedule.loading ? 'Loading...' : schedule.error ? 'Unavailable' : EMPTY_VALUE;
+  const placeholder = schedule.loading ? <LoadingSkeleton label={'Loading...'} /> : schedule.error ? 'Unavailable' : EMPTY_VALUE;
   const coachName = schedule.data?.coach.name || (schedule.data ? 'Not yet assigned' : placeholder);
   const modulesLabel = current.modules.map((module) => module.title).join(' · ') || placeholder;
   // The same two dates the learner's own header shows: the dates recorded

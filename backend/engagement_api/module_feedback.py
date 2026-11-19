@@ -76,9 +76,9 @@ def module_memberships(wanted, learner_id=None):
         if learner is None:
             return {}
         return {str(learner.pk): set(plans._effective_plan_ids(learner, {})) & wanted}
-    from curriculum_api.learner_assignment_counts_sql import fetch_plan_facts, _effective_ids_from_fact
+    from curriculum_api.learner_assignment_counts_sql import fetch_plan_facts, _effective_ids_from_fact, seed_preset_cache
     facts = fetch_plan_facts(wanted)
-    cache = dict(plans.group_module_ids_bulk({(fact['programme'], fact['grp']) for fact in facts}))
+    cache = seed_preset_cache(facts)
     result = {}
     for fact in facts:
         learner_id = str(fact['learner_id'])
@@ -126,6 +126,11 @@ def sync_module_feedback(learner_id=None):
         # before starting a response, so rescheduling cannot race a first save.
         existing_recipients = {(row.delivery_id, str(row.enrolment_id)): row for row in
                                FeedbackDeliveryRecipient.objects.select_for_update().filter(**recipient_scope)}
+        preloaded_delivery_ids = {row.id for row in existing_deliveries.values()}
+        # Recipients of pre-existing deliveries are already loaded (and locked)
+        # above, so their revocations are decided here and written in one UPDATE
+        # instead of one round trip per delivery on every read of the forms list.
+        revoke_ids = []
         learners = {str(row.pk): row for row in EnrolmentUser.all_learners.filter(
             pk__in=[key for key, ids in memberships.items() if ids],
         ).only('id', 'username', 'email', 'programme_id')}
@@ -168,10 +173,17 @@ def sync_module_feedback(learner_id=None):
                 if delivery.status != 'open':
                     continue
                 assigned_ids = [key for key, ids in memberships.items() if module_id in ids]
-                recipients = FeedbackDeliveryRecipient.objects.filter(delivery=delivery)
-                if learner_id is not None:
-                    recipients = recipients.filter(enrolment_id=str(learner_id))
-                recipients.exclude(enrolment_id__in=assigned_ids).filter(revoked_at__isnull=True).update(revoked_at=now)
+                if delivery.id in preloaded_delivery_ids:
+                    assigned = set(assigned_ids)
+                    revoke_ids.extend(
+                        row.pk for (delivery_id, member), row in existing_recipients.items()
+                        if delivery_id == delivery.id and member not in assigned and row.revoked_at is None
+                    )
+                else:
+                    recipients = FeedbackDeliveryRecipient.objects.filter(delivery=delivery)
+                    if learner_id is not None:
+                        recipients = recipients.filter(enrolment_id=str(learner_id))
+                    recipients.exclude(enrolment_id__in=assigned_ids).filter(revoked_at__isnull=True).update(revoked_at=now)
                 for member_id in assigned_ids:
                     learner = learners[member_id]
                     recipient = existing_recipients.get((delivery.id, member_id))
@@ -193,3 +205,5 @@ def sync_module_feedback(learner_id=None):
                     ).exists():
                         recipient.available_at = available_at
                         recipient.save(update_fields=['available_at'])
+        if revoke_ids:
+            FeedbackDeliveryRecipient.objects.filter(pk__in=revoke_ids, revoked_at__isnull=True).update(revoked_at=now)

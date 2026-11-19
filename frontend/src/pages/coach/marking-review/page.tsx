@@ -376,7 +376,7 @@ export default function CoachMarkingReviewPage() {
                 <div><i className="ri-error-warning-line" aria-hidden="true" /><span>Overdue</span><strong>{queueSummary.overdueItems}</strong></div>
                 <div><i className="ri-checkbox-circle-line" aria-hidden="true" /><span>Marked today</span><strong>{markedToday}</strong></div>
               </div>}
-              <label className={styles.search}>
+              <label data-search-field className={styles.search}>
                 <i className="ri-search-line" aria-hidden="true" />
                 <span className="sr-only">Search marking queue</span>
                 <input value={search} onChange={event => setSearch(event.target.value)} placeholder="Search learner or activity" />

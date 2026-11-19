@@ -1,3 +1,4 @@
+import { LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { WorkspaceHeroBanner } from '@/components/feature/WorkspaceHeroBanner';
@@ -106,7 +107,7 @@ export default function BreatheIntegrationWorkspace() {
         <WorkspaceHeroBanner title="Breathe HR Integration" description="Review the connected account, approve safe identity matches and monitor HR availability signals without changing apprenticeship evidence." icon="ri-links-line" stats={[{ label: 'Pending matches', value: String(matches.length) }, { label: 'Conflicts', value: String(conflicts.length) }, { label: 'Records processed', value: String(totals) }]} />
 
         {error && <div role="alert" className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">{error}</div>}
-        {loading && <div className="rounded-xl border border-foreground-100 bg-white p-8 text-sm text-foreground-500">Loading integration health…</div>}
+        {loading && <div className="rounded-xl border border-foreground-100 bg-white p-8 text-sm text-foreground-500"><LoadingSkeleton label="Loading integration health…" variant="rows" /></div>}
 
         {!loading && connections.length > 1 && <section className="rounded-2xl border border-foreground-100 bg-white p-5"><h2 className="text-lg font-bold text-foreground-900">Connections</h2><div className="mt-3 flex flex-wrap gap-2">{connections.map(connection => <button key={connection.id} type="button" onClick={() => { setConnectionId(connection.id); void load(connection.id); }} className={`rounded-lg border px-3 py-2 text-sm font-semibold ${connection.id === connectionId ? 'border-primary-600 bg-primary-50 text-primary-800' : 'border-foreground-200 text-foreground-600'}`}>{connection.externalAccountId}</button>)}</div></section>}
 

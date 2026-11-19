@@ -4,7 +4,7 @@ from unittest.mock import patch
 
 from django.test import SimpleTestCase
 
-from .builder_activity_dates import read_builder_activity_dates
+from .builder_activity_dates import read_builder_activity_dates, STUDY_WEEK_SCHEDULE_SQL
 
 
 class BuilderActivitySchemaTests(SimpleTestCase):
@@ -27,6 +27,7 @@ class BuilderActivitySchemaTests(SimpleTestCase):
                         # Only the Postgres JSON accessor and array binding need
                         # translation; the actual selected columns remain intact.
                         sql = sql.replace("to_jsonb(m)->'session_overrides'", 'session_overrides')
+                        sql = sql.replace(STUDY_WEEK_SCHEDULE_SQL, "'{}'")
                         sql = sql.replace('=ANY(%s)', ' IN (' + ','.join('?' for _ in params[0]) + ')')
                         self.result = db.execute(sql, params[0]).fetchall()
                         module_rows.extend(self.result)

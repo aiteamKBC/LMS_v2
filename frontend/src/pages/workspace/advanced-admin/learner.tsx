@@ -1,3 +1,4 @@
+import { LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { ArrowLeft } from 'lucide-react';
@@ -163,7 +164,7 @@ export default function AdvancedAdminLearnerPage() {
     userName={auth.account?.displayName || undefined} userRole="Advanced Admin">
     <div className="mx-auto max-w-[1840px] space-y-5">
       {selectedSection !== 'learning' && selectedSection !== 'inclusion' && <Link to={selectedSection === 'reviews' || selectedSection === 'assessments' ? learnerSectionHref(id, 'learning') : '/workspace/advanced-admin'} className={`${selectedSection === 'assessments' ? 'ml-auto flex w-fit rounded-lg border border-[#cbd8ef] bg-white px-4 py-2' : 'inline-flex'} items-center gap-2 text-sm font-semibold text-primary-700 hover:underline`}><ArrowLeft size={16} />{selectedSection === 'reviews' || selectedSection === 'assessments' ? 'Back to Student Profile' : 'All learners'}</Link>}
-      {loading && <p className="rounded-xl border border-foreground-200 bg-white p-5">Loading learner…</p>}
+      {loading && <p className="rounded-xl border border-foreground-200 bg-white p-5"><LoadingSkeleton label="Loading learner…" variant="rows" /></p>}
       {error && <p role="alert" className="rounded-xl border border-red-200 bg-red-50 p-5 text-red-700">{error}</p>}
       {learner && <>
         {selectedSection !== 'learning' && selectedSection !== 'reviews' && selectedSection !== 'inclusion' && selectedSection !== 'assessments' && <div className="rounded-2xl border border-foreground-200 bg-white p-5 shadow-sm">
@@ -201,7 +202,7 @@ export default function AdvancedAdminLearnerPage() {
               {!achievedCourses && !wordpressError && learningView === 'progress' && moduleProgress &&
                 <p role="status" className="rounded-xl border border-foreground-200 bg-white p-5">Verifying course activities. Available records will appear first.</p>}
               {learningView === 'progress' && progressError && <p role="alert" className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-amber-800">{progressError}</p>}
-              {learningView === 'progress' && !moduleProgress && !progressError && <p role="status" className="rounded-xl border border-foreground-200 bg-white p-5">Loading module progress…</p>}
+              {learningView === 'progress' && !moduleProgress && !progressError && <p  className="rounded-xl border border-foreground-200 bg-white p-5"><LoadingSkeleton label="Loading module progress…" variant="rows" /></p>}
               {learningView === 'progress' && moduleProgress && (!learning || !achievedCourses) &&
                 <ModuleProgressPreview progress={moduleProgress} />}
               {learningView === 'progress' && learning && moduleProgress && achievedCourses && <LearnerModuleProgress key={id} learner={learner} learning={learning} progress={moduleProgress} wordpressCourses={achievedCourses}

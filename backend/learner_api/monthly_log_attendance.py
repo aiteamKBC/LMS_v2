@@ -5,6 +5,7 @@ from zoneinfo import ZoneInfo
 
 from old_otjh.repository import query
 from .monthly_log_sources import decoded, row
+from .live_session_policy import LIVE_SESSION_CREDIT_MINUTES
 
 UK = ZoneInfo('Europe/London')
 SOURCE = 'live_session_learner_attendance'
@@ -73,7 +74,7 @@ def represented(lecture, records):
 
 
 def read_rows(owner, *, now):
-    """Add full scheduled hours for Present, completed occurrences only.
+    """Add fixed live credit for Present, completed occurrences only.
 
     The first signature freezes this supplement. Older signed months have no
     register rows in their capture and remain unchanged; newly signed months
@@ -93,6 +94,9 @@ def read_rows(owner, *, now):
             if (isinstance(item, dict) and item.get('source_system') == SOURCE
                     and item.get('reporting_month') == month):
                 result.append(dict(item))
+
+    from .attendance_otjh import protected_months
+    signed.update(protected_months([owner['id']], query).get(int(owner['id']), {}))
 
     lectures = query('''SELECT r.occurrence_id,r.module_catalogue_id,
         (o.scheduled_start AT TIME ZONE 'Europe/London')::date AS session_date,
@@ -161,12 +165,13 @@ def read_rows(owner, *, now):
             continue
         lecture = matches[0]
         start, end = lecture['start'], lecture['end']
-        hours = (end.astimezone(timezone.utc) - start.astimezone(timezone.utc)).total_seconds() / 3600
+        planned = (end.astimezone(timezone.utc) - start.astimezone(timezone.utc)).total_seconds() / 3600
+        hours = LIVE_SESSION_CREDIT_MINUTES / 60
         local_start, local_end = start.astimezone(UK), end.astimezone(UK)
         title = f"{lecture['module_title'] or 'Live session'} — Session {lecture['session_number']}"
-        item = row(f'attendance:{occurrence}', local_start, title, 'Attendance', hours=hours, planned=hours,
+        item = row(f'attendance:{occurrence}', local_start, title, 'Attendance', hours=hours, planned=planned,
                    group=lecture['module_title'],
-                   note='Present in the learner attendance register. Full scheduled lecture hours credited.')
+                   note='Present in the learner attendance register. Fixed live lecture credit: 2h 30m.')
         item.update(source_system=SOURCE, reporting_month=lecture['session_date'][:7],
                     activity_date=lecture['session_date'], actual_hours_recorded=True,
                     actual_status_label='Accepted',

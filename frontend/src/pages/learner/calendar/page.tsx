@@ -1,3 +1,4 @@
+import { LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
 import { useState, useMemo, useCallback, useEffect, useRef } from 'react';
 import { useLocation } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
@@ -1490,7 +1491,7 @@ function LearnerCalendarBody() {
               </div>}
               {choosingProgrammeSession ? (
                 <section aria-label="Existing programme sessions" className="space-y-3">
-                  {calendarLoading ? <p role="status" className="text-sm text-foreground-500">Loading your sessions…</p>
+                  {calendarLoading ? <p  className="text-sm text-foreground-500"><LoadingSkeleton label={"Loading your sessions…"} /></p>
                     : calendarError ? <p role="alert" className="text-sm text-red-700">{calendarError}</p>
                     : programmeSessions.length ? programmeSessions.map(event => {
                       const status = LEARNER_STATUS_META[learnerEventStatus(event)];

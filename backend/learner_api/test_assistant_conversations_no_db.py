@@ -88,3 +88,13 @@ class AssistantConversationSinkTests(SimpleTestCase):
         with patch.object(sink, 'connections', missing):
             with self.assertRaises(sink.AssistantConversationSyncError):
                 sink.record_ticket(account=self.account, ticket=self.ticket)
+
+    def test_reads_current_ticket_status_from_the_ticketing_system(self):
+        self.cursor.fetchone.return_value = ('Closed',)
+
+        status = sink.ticket_status(ticket_id='ticket-1')
+
+        self.assertEqual(status, 'Closed')
+        sql, params = self.cursor.execute.call_args.args
+        self.assertIn("metadata->>'lms_ticket_id'", sql)
+        self.assertEqual(params, ['ticket-1'])

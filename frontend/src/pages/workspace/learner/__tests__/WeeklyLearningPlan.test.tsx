@@ -7,7 +7,8 @@ import type { TrainingPlanDashboard } from '@/api/trainingPlanDashboard';
 import { ActivityKsbs, KsbChips, WeeklyLearningPlan as CanonicalWeeklyLearningPlan } from '../WeeklyLearningPlan';
 
 const learnerDetail = vi.hoisted(() => ({ real: {
-  components: [] as { componentId: string; moduleId: string; weekId: string; component: string; type: string }[],
+  components: [] as { componentId: string; moduleId: string; weekId: string; component: string; type: string;
+    liveSessionAccess?: import('@/api/learnerDetail').LiveSessionAccess }[],
   videoProgress: [] as { componentId: string }[], componentProgress: [] as { componentId: string }[],
 } }));
 
@@ -58,6 +59,16 @@ const sessionSchedule = (attended: boolean | null): TrainingPlanDashboard => ({
 }) as unknown as TrainingPlanDashboard;
 
 describe('weekly live session attendance', () => {
+  it.each(['commercial', 'apprenticeship'] as const)('keeps Join and the %s live activity available before the recording', kind => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-09-07T09:30:00Z'));
+    learnerDetail.real.components = [{ componentId: 'LIVE', moduleId: 'M1', weekId: 'W1', component: 'Locked lecture',
+      type: 'live_session', liveSessionAccess: { open: false, status: 'in_progress', message: 'Recording is pending.' } }];
+    render(<MemoryRouter><WeeklyLearningPlan kind={kind} learnerId="125"
+      schedule={sessionSchedule(null)} scheduleLoading={false} /></MemoryRouter>);
+    expect(screen.getByRole('link', { name: 'Join session' })).toHaveAttribute('href', 'https://teams.microsoft.com/l/meetup-join/example');
+    expect(screen.getByRole('link', { name: 'Start' })).toHaveAttribute('href', expect.stringContaining(`/learner/component/${kind}/125/LIVE`));
+  });
   it.each(['commercial', 'apprenticeship'] as const)('defaults %s to the current module while keeping older modules selectable', kind => {
     vi.useFakeTimers({ toFake: ['Date'] });
     vi.setSystemTime(new Date('2026-09-09T12:00:00Z'));

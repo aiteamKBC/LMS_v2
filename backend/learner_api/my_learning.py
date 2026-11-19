@@ -236,6 +236,7 @@ def catalogue_module_rows(cur, ids, *, identity_metadata):
     from .training_plan_dashboard import rows, plan_module
     from .student_activity import _builder_cover_url
     from .subject_origins import imported_course_links
+    from .builder_activity_dates import STUDY_WEEK_SCHEDULE_SQL
     # curriculum.modules no longer stores placement names or a deletion
     # marker: names come through the ids, and every requested module resolves.
     cur.execute(f'''WITH requested AS (
@@ -279,7 +280,8 @@ def catalogue_module_rows(cur, ids, *, identity_metadata):
         coalesce(group_names.name,'') AS group_name,
         {module_expected_otjh_sql('m')} AS total_otjh,m.sessions_number,m.source_type,m.source_id,
         m.session_week_day,m.session_start_time,m.session_end_time,m.cohort_id,
-        to_jsonb(m)->'session_overrides' AS session_overrides
+        to_jsonb(m)->'session_overrides' AS session_overrides,
+        {STUDY_WEEK_SCHEDULE_SQL} AS study_schedule
         FROM requested m
         LEFT JOIN programme_names ON programme_names.programme_id=m.programme_id
         LEFT JOIN cohort_names ON cohort_names.cohort_id=m.cohort_id

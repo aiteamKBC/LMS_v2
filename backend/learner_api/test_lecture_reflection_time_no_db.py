@@ -256,8 +256,9 @@ class LectureReflectionTimeTests(SimpleTestCase):
 
 
 class ReflectionTimeSubmissionTests(SimpleTestCase):
-    def submit(self, *, existing=None, addition=None, forged=False, old_client=False, operation=None, mode='submit', manual_draft=False):
+    def submit(self, *, existing=None, addition=None, forged=False, old_client=False, operation=None, mode='submit', manual_draft=False, time_locked=False):
         from . import reflection_submissions as view
+        from django.http import JsonResponse
         body = dict(learnerKind='apprenticeship', learnerId='19', activityType='session', activityId='LECTURE',
                     learningReflection='Synthetic reflection', submissionMode=mode, actualTimeHours='2',
                     additionalReflectionSeconds=1800)
@@ -273,6 +274,7 @@ class ReflectionTimeSubmissionTests(SimpleTestCase):
         cursor.fetchone.side_effect = [existing, ('SAVED',)]
         connection = MagicMock(); connection.cursor.return_value.__enter__.return_value = cursor
         with patch.object(view, 'connections', {'enrolment': connection}), \
+             patch('learner_api.live_session_access.access_refusal', return_value=JsonResponse({'code': 'live_session_locked'}, status=409) if time_locked else None), \
              patch.object(view.transaction, 'atomic', return_value=nullcontext()), \
              patch('learner_api.programme_access.submission_refusal', return_value=None), \
              patch.object(view, '_reflection_lineage', return_value={}), \
@@ -281,6 +283,26 @@ class ReflectionTimeSubmissionTests(SimpleTestCase):
                    **({'side_effect': addition} if isinstance(addition, Exception) else {'return_value': addition})) as add:
             response = unwrap(view._submit_reflection)(RequestFactory().post('/reflection', data=json.dumps(body), content_type='application/json'))
         return response, cursor, add
+
+    def test_locked_time_allows_text_but_preserves_the_saved_hours_snapshot(self):
+        for mode in ('draft', 'submit'):
+            for existing, expected in ((None, ''), (('draft', {'actualTimeHours': '1.5'}, None, None, None, None), '1.5')):
+                with self.subTest(mode=mode, existing=bool(existing)):
+                    response, cursor, add = self.submit(existing=existing, time_locked=True, old_client=True, mode=mode)
+                    self.assertEqual(response.status_code, 201, response.content)
+                    write = next(call for call in cursor.execute.call_args_list if 'insert into' in call.args[0])
+                    full = next(json.loads(value) for value in write.args[1] if isinstance(value, str) and value.startswith('{') and 'learningReflection' in value)
+                    self.assertEqual(full['actualTimeHours'], expected)
+                    self.assertNotIn('additionalReflectionSeconds', full)
+                    self.assertNotIn('additionalReflectionSeconds', add.call_args.args[0])
+
+    def test_locked_time_refuses_reflection_time_before_any_write(self):
+        for mode in ('draft', 'submit'):
+            with self.subTest(mode=mode):
+                response, cursor, add = self.submit(time_locked=True, mode=mode)
+                self.assertEqual(response.status_code, 409)
+                cursor.execute.assert_not_called()
+                add.assert_not_called()
 
     def test_locks_before_first_upsert_and_stores_only_the_server_receipt(self):
         receipt = dict(seconds=1800, progressEntryId=101, addedAt='now', countedSeconds=9000)

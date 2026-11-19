@@ -76,7 +76,7 @@ class ModuleFeedbackSourceTests(SimpleTestCase):
 class ModuleMembershipTests(SimpleTestCase):
     def test_staff_sync_uses_explicit_cleared_inherited_and_legacy_assignment_facts(self):
         from curriculum_api import learner_assignment_counts_sql as directory
-        base = {'programme': 'Data', 'grp': 'Group', 'ambiguous': False, 'has_plan': True,
+        base = {'programme': 'Data', 'grp': 'Group', 'group_id': 'G1', 'ambiguous': False, 'has_plan': True,
                 'id_count': 1, 'has_explicit': True, 'matched': ['M1']}
         facts = [
             {**base, 'learner_id': 7},
@@ -87,7 +87,7 @@ class ModuleMembershipTests(SimpleTestCase):
         legacy = SimpleNamespace(learning_plan=[{'moduleId': 'M1', 'assignmentMode': 'explicit'}], training_plan=None)
         with (
             mock.patch.object(directory, 'fetch_plan_facts', return_value=facts),
-            mock.patch.object(modules.plans, 'group_module_ids_bulk', return_value={('Data', 'Group'): ['M2']}),
+            mock.patch.object(directory, 'seed_preset_cache', return_value={('group_id', 'G1'): ['M2']}),
             mock.patch.object(modules.EnrolmentUser.all_learners, 'get', return_value=legacy),
         ):
             self.assertEqual(modules.module_memberships({'M1', 'M2'}),
@@ -152,11 +152,11 @@ class ModuleDeliveryTests(SimpleTestCase):
                     id=len(self.deliveries) + 1, occurrence_key=occurrence_key, status='open', **defaults)
             return self.deliveries[occurrence_key], created
 
-        def create_recipient(*, delivery, learner_id, defaults):
-            key = (delivery.id, learner_id)
+        def create_recipient(*, delivery, enrolment_id, defaults):
+            key = (delivery.id, enrolment_id)
             created = key not in self.recipients
             if created:
-                self.recipients[key] = SimpleNamespace(delivery_id=delivery.id, learner_id=learner_id,
+                self.recipients[key] = SimpleNamespace(delivery_id=delivery.id, enrolment_id=enrolment_id,
                                                        revoked_at=None, save=mock.Mock(), **defaults)
             return self.recipients[key], created
 
@@ -228,7 +228,7 @@ class ModuleDeliveryTests(SimpleTestCase):
             self.sync_at('2026-10-12T00:00:00+00:00')
             self.module['end_date'] = '2026-12-31'
             with mock.patch.object(modules.FeedbackResponse.objects, 'filter', side_effect=lambda **kw: SimpleNamespace(
-                exists=lambda: kw['learner_id'] == '7',
+                exists=lambda: kw['enrolment_id'] == '7',
             )):
                 self.sync_at('2026-10-12T00:00:00+00:00')
         self.assertEqual(self.recipients[(1, '7')].available_at.isoformat(), '2026-10-11T00:00:00+01:00')
@@ -281,8 +281,22 @@ class ModuleDeliveryTests(SimpleTestCase):
 
     def test_learner_sync_revocation_is_limited_to_that_learner(self):
         self.sync_at('2026-10-12T00:00:00+00:00')
-        self.recipient_manager.filter.return_value.filter.assert_called_with(learner_id='7')
-        self.recipient_manager.filter.return_value.filter.return_value.exclude.assert_called_with(learner_id__in=['7'])
+        self.recipient_manager.filter.return_value.filter.assert_called_with(enrolment_id='7')
+        self.recipient_manager.filter.return_value.filter.return_value.exclude.assert_called_with(enrolment_id__in=['7'])
+
+    def test_existing_deliveries_revoke_unassigned_learners_in_one_update(self):
+        self.sync_at('2026-10-12T00:00:00+00:00')
+        delivery = self.deliveries['module:mid_module:M1']
+        self.recipients[(delivery.id, '8')] = SimpleNamespace(pk=81, delivery_id=delivery.id, enrolment_id='8',
+                                                              revoked_at=None, available_at=None, save=mock.Mock())
+        self.recipients[(delivery.id, '9')] = SimpleNamespace(pk=91, delivery_id=delivery.id, enrolment_id='9',
+                                                              revoked_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+                                                              available_at=None, save=mock.Mock())
+        self.recipient_manager.filter.reset_mock()
+        self.sync_at('2026-10-12T00:00:00+00:00')
+        calls = [call.kwargs for call in self.recipient_manager.filter.call_args_list]
+        self.assertNotIn({'delivery': delivery}, calls)
+        self.assertIn({'pk__in': [81], 'revoked_at__isnull': True}, calls)
 
 
 @override_settings(DEBUG=True)
@@ -363,7 +377,7 @@ class ModuleFeedbackAccessTests(SimpleTestCase):
                     content_type='application/json'), delivery_id=4)
                 self.assertEqual(result.status_code, 200)
                 locked.return_value.get.assert_called_once_with(pk=8)
-                self.assertEqual(responses.return_value.get_or_create.call_args.kwargs['learner_id'], '61')
+                self.assertEqual(responses.return_value.get_or_create.call_args.kwargs['enrolment_id'], '61')
                 self.assertIs(responses.return_value.get_or_create.call_args.kwargs['delivery'], delivery)
                 answers.assert_called_once_with(response=response, question_id=1, defaults={'answer': 'Helpful module'})
                 self.assertEqual(response.status, 'completed')
@@ -395,7 +409,7 @@ class ModuleFeedbackAccessTests(SimpleTestCase):
             self.assertEqual(feedback.learner_form_detail(RequestFactory().get('/'), delivery_id=4).status_code, 404)
             self.assertEqual(feedback.learner_response_save(RequestFactory().post(
                 '/', data=json.dumps({'answers': {}, 'submit': True}), content_type='application/json'), delivery_id=4).status_code, 404)
-            self.assertEqual(query.get.call_args.kwargs['learner_id'], '61')
+            self.assertEqual(query.get.call_args.kwargs['enrolment_id'], '61')
             lecture_draw.assert_not_called()
 
     def test_module_sources_are_not_reported_as_lecture_attendance(self):

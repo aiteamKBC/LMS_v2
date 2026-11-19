@@ -10,7 +10,7 @@
     min-width: 0;
     padding: 16px !important;
     border: 1px solid var(--calendar-line) !important;
-    border-radius: 16px !important;
+    border-radius: var(--lms-radius, 16px) !important;
     background: oklch(var(--background-50)) !important;
     box-shadow: 0 2px 8px -4px oklch(var(--primary-900) / .16) !important;
   }
@@ -40,7 +40,7 @@
     min-height: 34px !important;
     padding: 0 !important;
     border: 0 !important;
-    border-radius: 9px !important;
+    border-radius: var(--lms-radius, 16px) !important;
     background: transparent !important;
     color: oklch(var(--foreground-700)) !important;
     box-shadow: none !important;
@@ -84,7 +84,7 @@
     margin: 0 auto;
     padding: 0 !important;
     border: 0 !important;
-    border-radius: 10px !important;
+    border-radius: var(--lms-radius, 16px) !important;
     background: transparent !important;
     color: oklch(var(--foreground-800)) !important;
     font-size: 13px !important;
@@ -127,7 +127,7 @@
     left: 25%;
     width: 50%;
     height: 2px;
-    border-radius: 2px;
+    border-radius: var(--lms-radius, 16px);
     background: oklch(var(--primary-400));
   }
   .dayNavigation {
@@ -142,7 +142,7 @@
   .root .note {
     margin: 14px 0 0 !important;
     padding: 10px 12px;
-    border-radius: 10px;
+    border-radius: var(--lms-radius, 16px);
     background: oklch(var(--primary-100) / .28);
     color: oklch(var(--foreground-600));
     font-size: 12px !important;

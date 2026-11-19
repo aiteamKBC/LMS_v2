@@ -18,7 +18,7 @@
 .card, .summaryCard {
   min-width: 0;
   border: 1px solid var(--attendance-border);
-  border-radius: 14px;
+  border-radius: var(--lms-radius, 16px);
   background: var(--attendance-surface);
   box-shadow: 0 3px 14px rgb(55 38 103 / 4%);
 }
@@ -40,7 +40,7 @@
 .actions { flex-shrink: 0; }
 .actions button, .formActions button, .rowActions button, .pagination button {
   display: inline-flex; align-items: center; justify-content: center; min-height: 42px;
-  padding: 10px 16px; border: 1px solid var(--attendance-border); border-radius: 8px;
+  padding: 10px 16px; border: 1px solid var(--attendance-border); border-radius: var(--lms-radius, 16px);
   background: var(--attendance-surface); color: var(--attendance-accent); font-size: 14px; font-weight: 650; line-height: 1.35;
   cursor: pointer; transition: background-color .15s, border-color .15s;
 }
@@ -56,23 +56,23 @@
 .summaryCard .summaryLead { margin-top: 0; color: var(--attendance-ink); font-size: 20px; font-weight: 700; line-height: 1.35; }
 .summaryCard[data-accent="true"] { border-color: #d1bfe9; background: #fcfaff; }
 .summaryCard[data-accent="true"] .summaryLead { color: var(--attendance-accent); font-size: 36px; line-height: 1.15; font-variant-numeric: tabular-nums; }
-.summaryCard .summaryNote { margin-top: 14px; padding: 10px 12px; border-radius: 8px; background: #f2ecfa; color: #594371; font-size: 13px; }
+.summaryCard .summaryNote { margin-top: 14px; padding: 10px 12px; border-radius: var(--lms-radius, 16px); background: #f2ecfa; color: #594371; font-size: 13px; }
 .sectionHeader { display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 22px; }
 .sectionHeader h2 { margin: 0; color: var(--attendance-ink); font-size: 20px; font-weight: 700; line-height: 1.35; }
 .sectionHeader p { margin: 6px 0 0; color: var(--attendance-muted); font-size: 14px; }
-.recordCount { padding: 6px 11px; border: 1px solid var(--attendance-border); border-radius: 8px; background: var(--attendance-soft); color: var(--attendance-muted); font-size: 13px; font-weight: 600; white-space: nowrap; }
-.addRecord { display: block; min-inline-size: 0; width: 100%; margin: 0 0 24px; padding: 18px; border: 1px solid var(--attendance-border); border-radius: 10px; background: var(--attendance-soft); }
+.recordCount { padding: 6px 11px; border: 1px solid var(--attendance-border); border-radius: var(--lms-radius, 16px); background: var(--attendance-soft); color: var(--attendance-muted); font-size: 13px; font-weight: 600; white-space: nowrap; }
+.addRecord { display: block; min-inline-size: 0; width: 100%; margin: 0 0 24px; padding: 18px; border: 1px solid var(--attendance-border); border-radius: var(--lms-radius, 16px); background: var(--attendance-soft); }
 .addRecord legend { padding: 0 7px; color: var(--attendance-ink); font-size: 14px; font-weight: 650; }
 .formFields { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px; }
 .formFields label { display: grid; gap: 7px; min-width: 0; color: var(--attendance-ink); font-size: 13px; font-weight: 600; }
-.formFields :is(input, select) { width: 100%; min-width: 0; min-height: 44px; padding: 10px 12px; border: 1px solid #cec5dc; border-radius: 7px; background: var(--attendance-surface); color: var(--attendance-ink); font-family: inherit; font-size: 14px; }
+.formFields :is(input, select) { width: 100%; min-width: 0; min-height: 44px; padding: 10px 12px; border: 1px solid #cec5dc; border-radius: var(--lms-radius, 16px); background: var(--attendance-surface); color: var(--attendance-ink); font-family: inherit; font-size: 14px; }
 .formFields :is(input, select):disabled { opacity: .65; }
 .formFooter { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-top: 18px; }
 .formFooter small { max-width: 65ch; color: var(--attendance-muted); font-size: 13px; line-height: 1.5; }
 .formActions { flex-shrink: 0; justify-content: flex-end; }
 .formActions .secondaryButton { background: var(--attendance-surface); color: var(--attendance-accent); }
 .error { display: block; margin: 12px 0; color: #b42342; font-size: 14px; }
-.tableScroll { width: 100%; max-width: 100%; min-width: 0; overflow-x: auto; border-radius: 10px; }
+.tableScroll { width: 100%; max-width: 100%; min-width: 0; overflow-x: auto; border-radius: var(--lms-radius, 16px); }
 .tableScroll table { width: 100%; min-width: 860px; table-layout: fixed; border-collapse: separate; border-spacing: 0; }
 .tableScroll th { padding: 14px 16px; color: var(--attendance-muted); font-size: 12px; font-weight: 700; letter-spacing: .035em; text-align: left; text-transform: uppercase; }
 .tableScroll td { padding: 18px 16px; color: var(--attendance-ink); font-size: 14px; line-height: 1.5; text-align: left; vertical-align: middle; overflow-wrap: anywhere; }
@@ -84,7 +84,7 @@
 .tableScroll td:first-child { white-space: nowrap; font-variant-numeric: tabular-nums; }
 .tableScroll td strong { font-weight: 650; }
 .tableScroll td small { display: block; margin-top: 7px; color: var(--attendance-muted); font-size: 12px; line-height: 1.5; }
-.status { display: inline-flex; max-width: 100%; padding: 5px 10px; border-radius: 7px; font-size: 13px; font-weight: 650; line-height: 1.5; white-space: normal; }
+.status { display: inline-flex; max-width: 100%; padding: 5px 10px; border-radius: var(--lms-radius, 16px); font-size: 13px; font-weight: 650; line-height: 1.5; white-space: normal; }
 .status[data-status="present"] { background: #e7f5ee; color: #196346; }
 .status[data-status="absent"] { background: #fcebef; color: #a92847; }
 .status[data-status="awaiting_recording"], .status[data-status="recorded"] { background: #fce7f3; color: #9d174d; }

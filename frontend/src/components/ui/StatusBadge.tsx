@@ -1,3 +1,4 @@
+import { LoadingLabel } from '@/components/feature/LoadingSkeleton';
 // ============================================================================
 // Status badge.
 //
@@ -12,7 +13,7 @@
 // The dot is not decoration: it is what makes the badge readable to someone who
 // cannot separate the amber fill from the red one.
 // ============================================================================
-import { memo } from 'react';
+import { memo, type ReactNode } from 'react';
 import { AppIcon } from '@/components/feature/AppIcon';
 import { cn } from '@/lib/cn';
 import { EMPTY_VALUE, displayValue } from '@/lib/format';
@@ -38,7 +39,7 @@ export const StatusBadge = memo(function StatusBadge({
   /** Explicit tone, when the caller has already decided. */
   tone?: StatusTone;
   /** Overrides the label. Defaults to the tidied `status` string. */
-  label?: string;
+  label?: ReactNode;
   size?: 'sm' | 'md' | 'lg';
   dot?: boolean;
   showIcon?: boolean;
@@ -65,7 +66,7 @@ export const StatusBadge = memo(function StatusBadge({
       ) : dot ? (
         <span className={cn('h-1.5 w-1.5 shrink-0 rounded-full', style.dot)}></span>
       ) : null}
-      {text}
+      <LoadingLabel>{text}</LoadingLabel>
     </span>
   );
 });

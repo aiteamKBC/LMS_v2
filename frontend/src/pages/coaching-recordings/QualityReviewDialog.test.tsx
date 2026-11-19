@@ -102,6 +102,16 @@ describe('Quality review form', () => {
     expect(saveQualityReview).toHaveBeenCalledOnce();
     expect(vi.mocked(saveQualityReview).mock.calls[0][0]).toMatchObject({ learnerId: '1', expectedVersion: 0, status: 'draft', form: { criteria: { 'progress-1': { rating: 'green', evidence: 'Observed evidence at video 04:20.' } } } });
   });
+  it('runs automatic data checks in the Observer tab', async () => {
+    render(<QualityReviewDialog initialLearnerId="1" onClose={vi.fn()} />);
+    await choose();
+    fireEvent.click(screen.getByRole('button', { name: 'Observer' }));
+    expect(screen.getByRole('heading', { name: 'Automatic data verification' })).toBeInTheDocument();
+    expect(screen.getByText('Observer: Reviewer · reviewer@example.invalid')).toBeInTheDocument();
+    expect(screen.getAllByText('Learner One').length).toBeGreaterThanOrEqual(1);
+    expect(screen.queryByText('No signed-in observer returned')).not.toBeInTheDocument();
+    expect(screen.getAllByText('Needs attention').length).toBeGreaterThanOrEqual(1);
+  });
   it('blocks completion without ratings and evidence, then completes the saved record', async () => {
     render(<QualityReviewDialog initialLearnerId="1" onClose={vi.fn()} />);
     await choose();

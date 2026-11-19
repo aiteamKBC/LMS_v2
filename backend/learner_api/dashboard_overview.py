@@ -270,9 +270,7 @@ def read_overview(source, kind, owner, profile, request):
     metrics = canonical.metrics_bulk([source.pk], learner_workspace=True).get(source.pk)
     if metrics is None:
         raise LookupError('Learner identity is unavailable.')
-    if metrics['otjh'].get('actual') is not None:
-        metrics['otjh'] = {**metrics['otjh'], 'actual': metrics['otjh']['actual']
-                          + sum(canonical.number(row['actual_hours']) for row in attendance_hours)}
+    # Canonical metrics already include attendance exactly once.
     # Target-to-Date paces the official programme total only. When it is
     # unset or invalid the target is unavailable; no Training Plan total
     # replaces it. This reader is also the Employer learner Overview.

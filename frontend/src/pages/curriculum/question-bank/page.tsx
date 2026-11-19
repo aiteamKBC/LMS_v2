@@ -1,3 +1,4 @@
+import { LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useListQueryState } from '@/hooks/useListQueryState';
@@ -399,7 +400,7 @@ export default function QuestionBankPage() {
                 <p>{bankError}</p>
                 <button type="button" onClick={() => void loadQuestionBank()} className="mt-3 rounded-lg border border-red-300 px-3 py-2 font-semibold" disabled={bankLoading}>Try again</button>
               </div>}
-              {bankLoading && <div className="py-16 text-center text-sm text-[#647083]">Loading question bank...</div>}
+              {bankLoading && <div className="py-16 text-center text-sm text-[#647083]"><LoadingSkeleton label="Loading question bank..." variant="rows" /></div>}
               {!bankLoading && !bankError && questionBank && filteredQuestions.length === 0 && (
                 <div className="rounded-2xl border border-[#e2e8f0] bg-white p-10 text-center">
                   <span className="w-14 h-14 rounded-2xl bg-[#f2f0ff] text-[#5b2dbb] flex items-center justify-center mx-auto mb-3">

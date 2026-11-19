@@ -47,7 +47,12 @@ class Harness:
             return stack.enter_context(patch.object(reader, name, **kwargs))
 
         self.writes = [mock(name) for name in ("advance_learner", "hydrate_source_training_plan")]
-        mock("effective_training_plan", return_value=[])
+        mock("install_canonical_training_plan")
+        # This suite checks the official field, with ownership/plan readers mocked.
+        activity_owner = {'moduleId': 'M1'}
+        mock("_activity_plan_assignments", return_value=([activity_owner], activity_owner))
+        mock("_activity_plan_module", return_value=activity_owner)
+        mock("effective_training_plan", return_value=[activity_owner])
         self.lookup = mock("_linked_profile_ids", return_value=self.linked)
         if self.resolve is None:
             self.resolver = mock("_active_profile_for_source", return_value=self.profile)
@@ -65,9 +70,9 @@ class Harness:
         mock("retain_quiz_progress")
         live_snapshot_inputs(stack, review_planned=40.0)
         stack.enter_context(patch("learner_api.teams_attendance.annotate_attendance_completion",
-                                  side_effect=lambda rows, profile: rows))
+                                  side_effect=lambda rows, profile, **kwargs: rows))
         stack.enter_context(patch("learner_api.replacement_learning.annotate_replacement_learning",
-                                  side_effect=lambda rows, pk: rows))
+                                  side_effect=lambda rows, pk, **kwargs: rows))
         stack.enter_context(patch("learner_api.live_session_progress.read_live_credits", return_value=[]))
         stack.enter_context(patch("learner_api.live_session_progress.supplement_component_progress",
                                   side_effect=lambda rows, credits: rows))

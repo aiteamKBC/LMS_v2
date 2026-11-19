@@ -41,6 +41,9 @@ class SelectedActivityTimeTests(SimpleTestCase):
         model.objects.get.return_value = SimpleNamespace(id=19)
         profile = SimpleNamespace(training_plan_progress=history or [])
         with ExitStack() as stack:
+            # These arithmetic cases use available activities. The recording
+            # precondition and rejected writes have their own access regressions.
+            stack.enter_context(patch('learner_api.live_session_access.access_refusal', return_value=None))
             def mock(name, **kwargs):
                 return stack.enter_context(patch.object(endpoint, name, **kwargs))
             mock("SOURCE_MODELS", new={kind: model})

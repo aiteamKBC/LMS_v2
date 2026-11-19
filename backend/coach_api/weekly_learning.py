@@ -287,6 +287,9 @@ def read_weekly_learning(context, selection=None, *, module_id=None, include_wee
         def completion_for_week(component, week):
             credit = credits_by_component.get(str(component['id']))
             if credit is not None and credit_in_week(credit, week):
+                learning = credit.get('liveSessionLearning')
+                if learning and learning['status'] != 'completed':
+                    return False, 'in-progress'
                 return True, 'completed'
             return completion_by_id[component['id']]
         by_week = defaultdict(list)
@@ -409,6 +412,9 @@ def read_weekly_learning(context, selection=None, *, module_id=None, include_wee
                                'durationMinutes': duration, 'quizDuration': quiz_duration, 'quizTimeUnit': row['quiz_time_unit'],
                                'ksbCodes': sorted({str(item['code']).strip().upper() for item in mappings.get(row['id'], []) if item.get('code')})})
         for activity in activities:
+            credit = credits_by_component.get(activity['id'])
+            if credit and credit_in_week(credit, selected) and credit.get('liveSessionLearning'):
+                activity['liveSessionLearning'] = credit['liveSessionLearning']
             if activity['isQuiz']:
                 activity['quizId'] = selected_by_id[activity['id']]['quiz_id']
         live = None

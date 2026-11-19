@@ -1,3 +1,4 @@
+import { LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
 import { useRef, useEffect, useState, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 
@@ -557,7 +558,7 @@ export function VideoPlayerModal({
                     {/* Playing indicator */}
                     {buffering && (
                       <div className="absolute inset-0 flex items-center justify-center bg-foreground-950/50 z-20">
-                        <div className="w-10 h-10 border-3 border-white/20 border-t-accent-500 rounded-full animate-spin" />
+                        <LoadingSkeleton />
                       </div>
                     )}
                     <div className="grid grid-cols-3 gap-4 max-w-lg">

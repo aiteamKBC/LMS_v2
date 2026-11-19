@@ -12,6 +12,8 @@ from .mappers import to_list_row
 DIRECTORY_FIELDS = (
     "id", "uuid", "username", "type", "email", "status",
     "programme_status", "programme_id", "cohort_id", "group_id", "organization", "learner_type",
+    "learner_start_date", "learner_end_date", "start_date", "end_date",
+    "apprenticeship_end_date", "coach_name", "coach_email", "reference_number",
     # The directory's Case owner filter offers the owners actually present in
     # these rows, so the column has to come back with them.
     "case_owner",

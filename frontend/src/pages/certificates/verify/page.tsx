@@ -7,6 +7,8 @@ interface VerificationCertificate {
   certificateNumber: string;
   templateVersion: number;
   progressPercent: number;
+  revision?: number;
+  correctedAt?: string | null;
   snapshot?: {
     certificateTitle?: string;
     bodyText?: string;
@@ -60,7 +62,8 @@ export default function CertificateVerificationPage({ personal = false }: { pers
     let cancelled = false;
     setLoading(true);
     setError('');
-    fetch(`/learner_api/${personal ? 'personal-learning' : 'certificates'}/verify/${encodeURIComponent(token)}/`, { credentials: 'omit' })
+    setData(null);
+    fetch(`/learner_api/${personal ? 'personal-learning' : 'certificates'}/verify/${encodeURIComponent(token)}/`, { credentials: 'omit', cache: 'no-store' })
       .then(async (response) => {
         const text = await response.text();
         const payload = text ? JSON.parse(text) : null;
@@ -83,7 +86,9 @@ export default function CertificateVerificationPage({ personal = false }: { pers
     };
   }, [token, personal]);
 
-  const certificate = data?.certificate;
+  const certificate = !loading && !error ? data?.certificate : undefined;
+  const revisionLabel = certificate && (certificate.revision || 1) > 1
+    ? `Corrected copy · Revision ${certificate.revision} · Corrected ${formatDate(certificate.correctedAt)}` : undefined;
   const learner = certificate?.snapshot?.learner;
   const title = certificate?.snapshot?.certificateTitle || 'Certificate of Achievement';
   const bodyText = certificate?.snapshot?.bodyText || 'has successfully completed the requirements and passed the LMS final examination for';
@@ -199,7 +204,7 @@ export default function CertificateVerificationPage({ personal = false }: { pers
             }
 
             .certificate-verify-panel {
-              border-radius: 1.25rem !important;
+              border-radius: var(--lms-radius, 16px) !important;
             }
 
             .certificate-verify-hero,
@@ -209,7 +214,7 @@ export default function CertificateVerificationPage({ personal = false }: { pers
 
             .certificate-preview-card {
               padding: 0.75rem !important;
-              border-radius: 1.25rem !important;
+              border-radius: var(--lms-radius, 16px) !important;
             }
 
             .certificate-preview-shell {
@@ -230,7 +235,7 @@ export default function CertificateVerificationPage({ personal = false }: { pers
           </span>
         </div>
 
-        <section className="certificate-verify-panel overflow-hidden rounded-[2rem] border border-slate-200 bg-white shadow-2xl">
+        <section className="certificate-verify-panel overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl">
           <div className="certificate-verify-hero bg-gradient-to-r from-primary-900 via-primary-700 to-primary-300 p-8 text-white">
             <p className="text-xs font-black uppercase tracking-[0.24em] text-white/70">Verification result</p>
             <h1 className="mt-3 text-3xl font-black text-white sm:text-4xl">{loading ? 'Checking certificate...' : error ? 'Certificate not verified' : 'Certificate verified'}</h1>
@@ -267,6 +272,7 @@ export default function CertificateVerificationPage({ personal = false }: { pers
                   </div>
                 </div>
 
+                {revisionLabel && <p role="status" className="rounded-xl bg-blue-50 p-4 text-sm font-semibold text-blue-900">{revisionLabel}. The original award date is retained. Download this copy to replace an earlier PDF.</p>}
                 <div className="grid gap-4 md:grid-cols-2">
                   <FieldCard label={awardTargetLabel} value={awardTarget} />
                   <FieldCard label="Certificate number" value={certificate.certificateNumber} />
@@ -298,6 +304,7 @@ export default function CertificateVerificationPage({ personal = false }: { pers
                       programmeName={awardTarget}
                       progressLabel={`${certificate.progressPercent}%`}
                       certificateNumber={certificate.certificateNumber}
+                      revisionLabel={revisionLabel}
                       awardedOn={formatDate(certificate.issuedAt)}
                       verificationUrl={verificationUrl}
                       layoutConfig={layoutConfig}
@@ -320,6 +327,7 @@ export default function CertificateVerificationPage({ personal = false }: { pers
             programmeName={awardTarget}
             progressLabel={`${certificate.progressPercent}%`}
             certificateNumber={certificate.certificateNumber}
+            revisionLabel={revisionLabel}
             awardedOn={formatDate(certificate.issuedAt)}
             verificationUrl={verificationUrl}
             layoutConfig={layoutConfig}

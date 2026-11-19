@@ -26,6 +26,24 @@ beforeEach(() => {
 });
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 
+it.each(['commercial', 'apprenticeship'] as const)('shows verified attendance and outstanding requirements for %s in the shared activity table', async kind => {
+  const response = payload();
+  response.selectedWeek!.activities[0] = { ...response.selectedWeek!.activities[0],
+    type: 'live_session', status: 'completed', actualHours: 2.5,
+    liveSessionLearning: { attendance: 'present', attendedSeconds: 7200,
+      attendedAt: '2026-10-05T10:00:00Z', status: 'completed', requirementsStatus: 'reflection-required' } };
+  transport.mockImplementation(async () => new Response(JSON.stringify(response)));
+  render(<MemoryRouter><CaseFileSessionProvider learnerId="101" coach="coach@example.test">
+    <CaseFileWeeklyLearningTab kind={kind} learnerId="201" />
+  </CaseFileSessionProvider></MemoryRouter>);
+  const row = within((await screen.findByText('Reading M1:1')).closest('tr')!);
+  expect(row.getByText('Attended')).toBeVisible();
+  expect(row.getByText('Follow-up: Reflection required')).toBeVisible();
+  expect(row.getByText('Attendance time: 2h')).toBeVisible();
+  expect(row.getByRole('cell', { name: '2h 30m' })).toBeVisible();
+  expect(row.getByText('Completed')).toBeVisible();
+});
+
 it.each(['commercial', 'apprenticeship'] as const)('shows actual time beside expected time for each %s activity', async kind => {
   const response = payload();
   response.selectedWeek!.activities[0] = { ...response.selectedWeek!.activities[0], expectedHours: 2, durationMinutes: 120, actualHours: 1.25 };
@@ -64,7 +82,7 @@ it.each(['commercial', 'apprenticeship'] as const)('prefetches only adjacent wee
   const nextRequests = () => transport.mock.calls.filter(call => String(call[0]).includes('week=M1%3A2'));
   fireEvent.click(screen.getByRole('button', { name: /Week 2/ }));
   expect(screen.getByText('Reading M1:2')).toBeInTheDocument();
-  expect(screen.queryByText(/Loading this week/)).not.toBeInTheDocument();
+  expect(screen.queryByRole('status', { name: /Loading this week/ })).not.toBeInTheDocument();
   expect(nextRequests()).toHaveLength(1);
   await waitFor(() => expect(transport).toHaveBeenCalledTimes(3));
   expect(transport.mock.calls[2][0]).toBe('/coach_api/coach/case-file/101/weekly-learning?week=M1%3A3');
@@ -148,7 +166,7 @@ it('refetches an expired prefetched week on navigation', async () => {
   await act(async () => {});
   now += 60_000;
   fireEvent.click(screen.getByRole('button', { name: /Week 2/ }));
-  expect(screen.getByText(/Loading this week/)).toBeInTheDocument();
+  expect(screen.getByRole('status', { name: /Loading this week/ })).toBeInTheDocument();
   await screen.findByText('Reading M1:2');
   expect(transport.mock.calls.filter(call => String(call[0]).includes('week=M1%3A2'))).toHaveLength(2);
 });

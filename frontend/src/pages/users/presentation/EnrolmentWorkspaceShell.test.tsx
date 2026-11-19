@@ -77,7 +77,7 @@ describe('Enrollment navigation presentation', () => {
     localStorage.setItem('kbc_enrolment_sidebar_collapsed', 'true');
     const { container } = open(path, directoryLayout);
     expect(container.querySelector('[data-collapsed]')).toHaveAttribute('data-collapsed', 'false');
-    expect(container.querySelector('[data-collapsed]')).toHaveStyle({ '--enrolment-sidebar-width': '16.5rem' });
+    expect(container.querySelector('[data-collapsed]')).toHaveStyle({ '--enrolment-sidebar-width': '264px' });
     expect(screen.queryByRole('button', { name: /Collapse sidebar|Expand sidebar/ })).not.toBeInTheDocument();
     expect(localStorage.getItem('kbc_enrolment_sidebar_collapsed')).toBe('true');
     expect(localStorage.getItem('kbc_sidebar_pinned')).toBe('true');

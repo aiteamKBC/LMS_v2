@@ -2,7 +2,10 @@
 from contextlib import contextmanager
 from hashlib import sha256
 import json
+import logging
 import uuid
+
+logger = logging.getLogger(__name__)
 
 
 class ReviewConflict(Exception):
@@ -26,13 +29,18 @@ def connect(*, write=False):
     if not dsn:
         raise ReviewUnavailable('The quality review store is not configured.')
     try:
-        with psycopg.connect(dsn, row_factory=dict_row, connect_timeout=3,
+        # Opening the remote store can take longer than three seconds, even
+        # when the saved review and its tables are available. Keep query and
+        # lock deadlines separate from the connection handshake budget.
+        with psycopg.connect(dsn, row_factory=dict_row, connect_timeout=10,
              options='-c default_transaction_read_only=' + ('off' if write else 'on')) as connection:
             connection.execute("SET LOCAL statement_timeout='5000ms'")
             connection.execute("SET LOCAL lock_timeout='2000ms'")
             yield connection
-    except psycopg.Error:
+    except psycopg.Error as error:
         # Never return DSNs, SQL parameters or user evidence in an exception.
+        logger.warning('Quality review database operation failed (%s, SQLSTATE %s).',
+                       type(error).__name__, error.sqlstate or 'unavailable')
         raise ReviewUnavailable('Quality reviews could not be saved or loaded. Please retry.') from None
 
 
@@ -106,28 +114,35 @@ def save_review(snapshot, *, expected, request_id, actor):
 
 def list_reviews(start,end,coach='',status='',offset=0,search='',review_type='',pdf=''):
     from .quality_review_types import type_sql
-    where = "starts_at >= %s AND starts_at < %s AND coalesce(payload->>'scope','coaching')='coaching'"
+    where = "r.starts_at >= %s AND r.starts_at < %s AND coalesce(r.payload->>'scope','coaching')='coaching'"
     params = [start,end]
     if coach:
-        where += ' AND coach_email=%s'
+        where += ' AND r.coach_email=%s'
         params.append(coach)
     if status:
-        where += ' AND status=%s'
+        where += ' AND r.status=%s'
         params.append(status)
     if review_type:
-        where += ' AND (' + type_sql() + ')=%s'
+        where += ' AND (' + type_sql('r') + ')=%s'
         params.append(review_type)
     if pdf:
-        where += ' AND ' + ('NOT ' if pdf == 'missing' else '') + 'EXISTS (SELECT 1 FROM lms_quality.document d WHERE d.review_id=lms_quality.review.id)'
+        where += ' AND ' + ('NOT ' if pdf == 'missing' else '') + 'EXISTS (SELECT 1 FROM lms_quality.document d WHERE d.review_id=r.id)'
     if search:
-        where += " AND (learner_name ILIKE %s ESCAPE '!' OR payload->'meeting'->>'title' ILIKE %s ESCAPE '!')"
+        where += " AND (r.learner_name ILIKE %s ESCAPE '!' OR r.payload->'meeting'->>'title' ILIKE %s ESCAPE '!')"
         term='%'+search.replace('!','!!').replace('%','!%').replace('_','!_')+'%'
         params.extend([term,term])
     with connect() as connection:
-        rows = connection.execute('''SELECT id,coach_email,learner_id,learner_name,starts_at,status,version,updated_at,
-          payload->'meeting'->>'title' AS title,payload->'coach'->>'name' AS coach_name,payload->'definition'->>'title' AS form_title,
-          payload->'reviewer'->>'name' AS reviewer_name,
-          jsonb_array_length(payload->'form'->'actions') AS action_count,'''+type_sql()+''' AS review_type,
+        rows = connection.execute('''WITH paged AS (
+          SELECT r.id,r.coach_email,r.learner_id,r.learner_name,r.starts_at,r.status,r.version,r.updated_at,r.payload
+          FROM lms_quality.review r
+          WHERE ''' + where + '''
+          ORDER BY r.starts_at DESC,r.id
+          LIMIT 31 OFFSET %s
+        )
+        SELECT paged.id,paged.coach_email,paged.learner_id,paged.learner_name,paged.starts_at,paged.status,paged.version,paged.updated_at,
+          paged.payload->'meeting'->>'title' AS title,paged.payload->'coach'->>'name' AS coach_name,paged.payload->'definition'->>'title' AS form_title,
+          paged.payload->'reviewer'->>'name' AS reviewer_name,
+          jsonb_array_length(paged.payload->'form'->'actions') AS action_count,'''+type_sql('paged')+''' AS review_type,
           jsonb_build_object(
             'gold', count(*) FILTER (WHERE criterion.value->>'rating'='gold'),
             'green', count(*) FILTER (WHERE criterion.value->>'rating'='green'),
@@ -135,12 +150,11 @@ def list_reviews(start,end,coach='',status='',offset=0,search='',review_type='',
             'red', count(*) FILTER (WHERE criterion.value->>'rating'='red'),
             'na', count(*) FILTER (WHERE criterion.value->>'rating'='na')
           ) AS rating_counts,
-          (SELECT max(d.version) FROM lms_quality.document d WHERE d.review_id=lms_quality.review.id) AS pdf_version
-          FROM lms_quality.review
-          LEFT JOIN LATERAL jsonb_each(COALESCE(payload->'form'->'criteria','{}'::jsonb)) AS criterion(key,value) ON TRUE
-          WHERE ''' + where + '''
-          GROUP BY id,coach_email,learner_id,learner_name,starts_at,status,version,updated_at,payload
-          ORDER BY starts_at DESC,id LIMIT 31 OFFSET %s''', [*params,offset]).fetchall()
+          (SELECT max(d.version) FROM lms_quality.document d WHERE d.review_id=paged.id) AS pdf_version
+          FROM paged
+          LEFT JOIN LATERAL jsonb_each(COALESCE(paged.payload->'form'->'criteria','{}'::jsonb)) AS criterion(key,value) ON TRUE
+          GROUP BY paged.id,paged.coach_email,paged.learner_id,paged.learner_name,paged.starts_at,paged.status,paged.version,paged.updated_at,paged.payload
+          ORDER BY paged.starts_at DESC,paged.id''', [*params,offset]).fetchall()
     return rows[:30], offset+30 if len(rows)>30 else None
 
 
@@ -284,7 +298,7 @@ def reviews_for_meeting(identity, offset=0):
     return rows[:30],offset+30 if len(rows)>30 else None
 
 
-def form_catalog(*, editing=False):
+def form_catalog(*, editing=False, include_definitions=False):
     from .quality_feedback_catalog import default_summaries
     entries = {row['reviewType']:row for row in default_summaries()}
     if editing:
@@ -293,7 +307,9 @@ def form_catalog(*, editing=False):
     with connect() as connection:
         rows = connection.execute('''SELECT payload->>'reviewType' AS kind,
             payload->'draft'->>'title' AS draft_title,payload->'published'->>'title' AS title,
-            revision,payload->>'publishedAt' AS published_at FROM lms_quality.form_template
+            revision,payload->>'publishedAt' AS published_at'''
+            + (''',payload''' if include_definitions else '')
+            + ''' FROM lms_quality.form_template
             WHERE payload->>'reviewType' IS NOT NULL ORDER BY id LIMIT 501''').fetchall()
     if len(rows)>500:
         raise ReviewUnavailable('The form library is too large to load. Contact an administrator.')
@@ -307,7 +323,13 @@ def form_catalog(*, editing=False):
             continue
         entries[kind]={**(builtin or {'reviewType':kind,'group':'Custom forms','legacy':False}),
             'title':row['draft_title'] if editing else row['title'], 'published':published,'revision':row['revision']}
-    return list(entries.values())
+    catalog = list(entries.values())
+    if not include_definitions:
+        return catalog
+    from .quality_form_definition import initial_state
+    stored = {row['kind']: _payload(row) for row in rows if row['kind'] and row['payload']}
+    templates = {kind: stored.get(kind) or initial_state(kind) for kind in entries}
+    return catalog, templates
 
 
 def read_evidence_rows(connection, review_id, sections, *, preview=False):

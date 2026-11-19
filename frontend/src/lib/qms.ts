@@ -122,6 +122,20 @@ export function countByRag(records: QualityRecord[]): RagCounts {
   return counts;
 }
 
+export function countFeedbackClassifications(records: QualityRecord[]) {
+  const counts = { positive: 0, neutral: 0, negative: 0, unscored: 0, unclassified: 0 };
+  records.forEach((record) => {
+    if (record.category !== "Learner Feedback" && record.category !== "Employer Feedback") return;
+    const classification = record.feedbackClassification;
+    if (classification === "positive" || classification === "neutral" || classification === "negative" || classification === "unscored") {
+      counts[classification] += 1;
+    } else {
+      counts.unclassified += 1;
+    }
+  });
+  return counts;
+}
+
 export function assessedTotal(counts: RagCounts) {
   return counts.green + counts.amber + counts.red;
 }
@@ -181,25 +195,55 @@ export interface MonthlyPoint {
   total: number;
 }
 
-export function buildMonthlySeries(records: QualityRecord[], months = 12): MonthlyPoint[] {
-  const points: MonthlyPoint[] = [];
-  const end = new Date(`${todayIso(TIME_ZONE_LABEL)}T00:00:00Z`);
+/**
+ * Trend band for a record: an approved policy outcome wins; otherwise feedback uses its
+ * score classification (Positive/Neutral/Negative) and audits use their lowest criterion
+ * rating (any Red → Red, any Amber → Amber, otherwise Gold/Green → Green).
+ */
+export function trendBand(record: QualityRecord): "green" | "amber" | "red" | null {
+  if (record.rag === "green" || record.rag === "amber" || record.rag === "red") return record.rag;
+  const feedback = record.feedbackClassification;
+  if (feedback === "positive") return "green";
+  if (feedback === "neutral") return "amber";
+  if (feedback === "negative") return "red";
+  const ratings = record.ratingCounts;
+  if (ratings) {
+    if (ratings.red > 0) return "red";
+    if (ratings.amber > 0) return "amber";
+    if (ratings.green + ratings.gold > 0) return "green";
+  }
+  return null;
+}
 
-  for (let i = months - 1; i >= 0; i -= 1) {
-    const date = new Date(Date.UTC(end.getUTCFullYear(), end.getUTCMonth() - i, 1));
+export function buildMonthlySeries(records: QualityRecord[], months?: number): MonthlyPoint[] {
+  const points: MonthlyPoint[] = [];
+  const actualMonthKeys = records
+    .map((record) => record.assessedOn.slice(0, 7))
+    .filter((key) => /^\d{4}-\d{2}$/.test(key))
+    .sort();
+  if (!actualMonthKeys.length && months === undefined) return points;
+
+  const today = new Date(`${todayIso(TIME_ZONE_LABEL)}T00:00:00Z`);
+  const latest = actualMonthKeys.length
+    ? new Date(`${actualMonthKeys.at(-1)}-01T00:00:00Z`)
+    : today;
+  const end = months === undefined ? latest : today;
+  const first = months === undefined
+    ? new Date(`${actualMonthKeys[0]}-01T00:00:00Z`)
+    : new Date(Date.UTC(end.getUTCFullYear(), end.getUTCMonth() - months + 1, 1));
+
+  for (let date = first; date <= end; date = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth() + 1, 1))) {
     const year = date.getUTCFullYear();
     const month = date.getUTCMonth();
     const key = `${year}-${String(month + 1).padStart(2, "0")}`;
     const scoped = records.filter((record) => record.assessedOn.startsWith(key));
-    const counts = countByRag(scoped);
+    const counts = { green: 0, amber: 0, red: 0, unrated: 0 };
+    scoped.forEach((record) => { counts[trendBand(record) ?? "unrated"] += 1; });
     points.push({
       key,
       label: `${MONTH_LABELS[month]} ${String(year).slice(2)}`,
-      green: counts.green,
-      amber: counts.amber,
-      red: counts.red,
-      unrated: counts.unrated + counts.na,
-      total: counts.total,
+      ...counts,
+      total: counts.green + counts.amber + counts.red,
     });
   }
   return points;

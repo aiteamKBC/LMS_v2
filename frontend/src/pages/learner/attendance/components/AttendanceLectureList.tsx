@@ -122,7 +122,7 @@ export default function AttendanceLectureList({ lectures, moduleId, onModuleChan
         <summary><AppIcon className="ri-filter-3-line" />Search &amp; filters{hasFilters && <span className={styles.activeFilter}>Filters applied</span>}</summary>
       <div className={styles.controls}>
         <label className={styles.searchField}><span>Search lectures</span>
-          <span className={styles.searchInput}><AppIcon className="ri-search-line" />
+          <span data-search-field className={styles.searchInput}><AppIcon className="ri-search-line" />
             <input value={search} onChange={event => { setSearch(event.target.value); setMonthExpansion({}); }} placeholder="Lecture, content or KSB…" />
           </span>
         </label>

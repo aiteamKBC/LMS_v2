@@ -905,6 +905,29 @@ class FeedbackResponse(models.Model):
         db_table = 'Feedback"."feedback_responses'
 
 
+class FeedbackResponseEmail(models.Model):
+    """Durable outbound correspondence and its independent ticket-close result."""
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    response = models.ForeignKey(FeedbackResponse, on_delete=models.PROTECT, related_name='emails')
+    recipient_email = models.EmailField(max_length=320)
+    sender_email = models.EmailField(max_length=320)
+    subject = models.CharField(max_length=255)
+    body = models.TextField()
+    actor_account_id = models.BigIntegerField()
+    actor_name = models.CharField(max_length=255)
+    status = models.CharField(max_length=20, default='sending')
+    error = models.TextField(blank=True, default='')
+    created_at = models.DateTimeField(auto_now_add=True)
+    sent_at = models.DateTimeField(null=True, blank=True)
+    ticket_close_status = models.CharField(max_length=20, default='not_required')
+    ticket_close_error = models.TextField(blank=True, default='')
+
+    class Meta:
+        managed = False
+        db_table = 'Feedback"."feedback_response_emails'
+
+
 class FeedbackAnswer(models.Model):
     response = models.ForeignKey(FeedbackResponse, on_delete=models.CASCADE, related_name='answers', db_column='response_id')
     question = models.ForeignKey(FeedbackQuestion, on_delete=models.PROTECT, related_name='answers', db_column='question_id')

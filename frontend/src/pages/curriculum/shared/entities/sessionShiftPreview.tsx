@@ -20,6 +20,7 @@ export interface ReadingWeekHoliday {
 
 /** A closed delivery slot: a curriculum position with no live session in it. */
 export interface HolidayReadingWeekSlot {
+  cause?: string;
   slotNumber: number;
   date: string;
   day?: string;
@@ -83,11 +84,12 @@ export function WeekHolidayNotice({
       <details className="group">
         <summary className="flex min-h-9 cursor-pointer list-none items-center gap-2 rounded text-[13px] leading-5 text-foreground-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-300 [&::-webkit-details-marker]:hidden">
           <AppIcon className="ri-calendar-event-line shrink-0 text-base text-primary-600" />
-          <span className="min-w-0 flex-1"><span className="block font-semibold">{holidays.map(holiday => cleanText(holiday.label) || 'Holiday').join(', ') || 'Holiday'}</span><span className="text-[12px] text-foreground-500">Holiday in week plan</span></span>
+          <span className="min-w-0 flex-1"><span className="block font-semibold">{holidays.map(holiday => cleanText(holiday.label) || 'Holiday').join(', ') || 'Holiday'}</span><span className="text-[12px] text-foreground-500">{slot.cause === 'holiday-week' ? 'Holiday week · materials remain available' : 'Holiday in week plan'}</span></span>
           <span className="text-[12px] text-primary-700">Details</span>
           <AppIcon className="ri-arrow-down-s-line shrink-0 transition-transform group-open:rotate-180" />
         </summary>
       <div className="mt-2 space-y-1 border-t border-background-200 pt-2 text-[13px] leading-6">
+      {slot.cause === 'holiday-week' && <p>No live sessions are added automatically this week. You can add materials, other components or a live session manually.</p>}
       <p className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5 font-semibold text-foreground-700">
         <span>Heads up: this week falls on a holiday</span>
         {!shownAbove && slotDate && (

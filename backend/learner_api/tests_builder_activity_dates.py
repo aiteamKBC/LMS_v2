@@ -36,7 +36,8 @@ class BuilderActivityDatesTests(SimpleTestCase):
         self.assertNotRegex(query, r'(?i)\bc\s*\.\s*coalesce\s*\(')
         # The shared rule qualifies the column by the caller's alias; the
         # canonical schema has no module deletion marker to consult.
-        self.assertIn('(c.deleted_at IS NULL)', query)
+        self.assertIn("(lower(btrim(coalesce(c.status, ''))) <> 'inactive')", query)
+        self.assertNotIn('c.deleted_at', query)
         self.assertNotIn('deleted_via_parent', query)
 
     def test_all_345_components_follow_the_full_future_plan(self):

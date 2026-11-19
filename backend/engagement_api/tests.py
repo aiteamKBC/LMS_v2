@@ -347,13 +347,14 @@ class FeedbackValidationTests(SimpleTestCase):
         self.assertTrue(json.loads(response.content)['csrfToken'])
 
     def test_forms_summary_counts_completed_responses_across_historical_versions(self):
-        current_form = SimpleNamespace(status='published')
+        current_form = SimpleNamespace(id=20, status='published')
         completed_responses = mock.MagicMock()
         completed_responses.count.return_value = 11
         with (
             mock.patch.object(feedback, 'sync_module_feedback'),
             mock.patch.object(feedback, '_forms_queryset', return_value=[current_form]),
             mock.patch.object(feedback, 'form_dict', return_value={'id': 20}),
+            mock.patch.object(feedback, 'form_report_counts', return_value={20: {}}),
             mock.patch.object(feedback.FeedbackResponse.objects, 'filter', return_value=completed_responses) as response_filter,
         ):
             response = feedback.forms_collection.__wrapped__(RequestFactory().get('/'))

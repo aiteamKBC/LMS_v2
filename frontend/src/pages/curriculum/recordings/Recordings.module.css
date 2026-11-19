@@ -26,7 +26,7 @@
     gap: 16px !important;
     padding: 16px 20px !important;
     border: 1px solid oklch(var(--background-200)) !important;
-    border-radius: 16px !important;
+    border-radius: var(--lms-radius, 16px) !important;
     background: oklch(var(--background-50)) !important;
   }
   .page .calendarField {
@@ -49,7 +49,7 @@
     margin: 0 !important;
     padding: 0 12px !important;
     border: 1px solid oklch(var(--background-300)) !important;
-    border-radius: 10px !important;
+    border-radius: var(--lms-radius, 16px) !important;
     background: oklch(var(--background-50)) !important;
     color: oklch(var(--foreground-700)) !important;
     font-family: inherit !important;
@@ -80,7 +80,7 @@
     gap: 2px;
     padding: 3px;
     border: 1px solid oklch(var(--background-200));
-    border-radius: 11px;
+    border-radius: var(--lms-radius, 16px);
     background: oklch(var(--background-100));
   }
   .page .calendarViews button {
@@ -88,7 +88,7 @@
     min-height: 32px !important;
     padding: 0 12px !important;
     border: 0 !important;
-    border-radius: 8px !important;
+    border-radius: var(--lms-radius, 16px) !important;
     background: transparent !important;
   }
   .page .calendarViews button[aria-pressed='true'] {
@@ -100,7 +100,7 @@
     align-items: center;
     height: 40px;
     border: 1px solid oklch(var(--background-300));
-    border-radius: 10px;
+    border-radius: var(--lms-radius, 16px);
     background: oklch(var(--background-50));
   }
   .page .periodNavigation button {
@@ -110,7 +110,7 @@
     min-height: 38px !important;
     padding: 0 !important;
     border: 0 !important;
-    border-radius: 8px !important;
+    border-radius: var(--lms-radius, 16px) !important;
     background: transparent !important;
   }
   .page .periodNavigation button:nth-child(2) {
@@ -215,7 +215,7 @@
     overflow: hidden !important;
     padding: 20px 24px !important;
     border: 1px solid oklch(0.235 0.089 305) !important;
-    border-radius: 26px !important;
+    border-radius: var(--lms-radius, 16px) !important;
     background: radial-gradient(circle at 95% 5%, oklch(0.968 0.005 305 / 0.1) 0 140px, transparent 143px),
     radial-gradient(circle at 65% 110%, oklch(0.795 0.145 85 / 0.1) 0 130px, transparent 134px),
     linear-gradient(135deg, oklch(0.345 0.131 305), oklch(0.288 0.111 305), oklch(0.182 0.07 305)) !important;
@@ -249,7 +249,7 @@
     min-width: 0 !important;
     padding: 12px 16px !important;
     border: 1px solid oklch(0.968 0.005 305 / 0.15) !important;
-    border-radius: 20px !important;
+    border-radius: var(--lms-radius, 16px) !important;
     background: oklch(0.968 0.005 305 / 0.09) !important;
   }
   .page:where(:not(:global([data-theme='dark']) *)) .hero > div:last-child > span > i {
@@ -259,7 +259,7 @@
     justify-content: center !important;
     width: 36px !important;
     height: 36px !important;
-    border-radius: 10px !important;
+    border-radius: var(--lms-radius, 16px) !important;
     background: oklch(0.968 0.005 305 / 0.15) !important;
     color: oklch(0.968 0.005 305) !important;
     font-size: 18px !important;
@@ -280,7 +280,7 @@
     flex-wrap: wrap !important;
   }
   .page:where(:not(:global([data-theme='dark']) *)) [aria-label='Recording libraries'] > * {
-    border-radius: 12px !important;
+    border-radius: var(--lms-radius, 16px) !important;
     font-size: 13px !important;
   }
   .page:where(:not(:global([data-theme='dark']) *)) [aria-label='Recording libraries'] > [aria-current='page'] {
@@ -291,14 +291,14 @@
     padding: 4px !important;
     gap: 2px !important;
     border: 1px solid var(--recording-control-line) !important;
-    border-radius: 12px !important;
+    border-radius: var(--lms-radius, 16px) !important;
     background: oklch(0.94 0.014 305) !important;
   }
   .page:where(:not(:global([data-theme='dark']) *)) [aria-label='Recordings view'] > button {
     min-height: 32px !important;
     padding: 6px 10px !important;
     border: 0 !important;
-    border-radius: 10px !important;
+    border-radius: var(--lms-radius, 16px) !important;
     font-size: 12px !important;
     font-weight: 500 !important;
   }
@@ -309,7 +309,7 @@
   .page:where(:not(:global([data-theme='dark']) *)) .search > div:first-child,
 .page:where(:not(:global([data-theme='dark']) *)) .filters {
     border-color: var(--recording-line) !important;
-    border-radius: 16px !important;
+    border-radius: var(--lms-radius, 16px) !important;
     background: var(--recording-surface) !important;
     box-shadow: none !important;
   }
@@ -317,7 +317,7 @@
     max-width: 100% !important;
     min-height: 36px !important;
     border-color: var(--recording-control-line) !important;
-    border-radius: 12px !important;
+    border-radius: var(--lms-radius, 16px) !important;
     background-color: var(--recording-surface) !important;
     color: oklch(0.15 0.015 52) !important;
     font-size: 13px !important;
@@ -333,18 +333,18 @@
   }
   .page:where(:not(:global([data-theme='dark']) *)) [aria-label='Hourly lecture calendar'] {
     border-color: var(--recording-line) !important;
-    border-radius: 16px !important;
+    border-radius: var(--lms-radius, 16px) !important;
     background: var(--recording-surface) !important;
     box-shadow: none !important;
   }
   .page:where(:not(:global([data-theme='dark']) *)) [aria-label='Hourly lecture calendar'] button {
-    border-radius: 8px !important;
+    border-radius: var(--lms-radius, 16px) !important;
     box-shadow: none !important;
     font-size: 11px !important;
   }
   .page:where(:not(:global([data-theme='dark']) *)) [aria-label='All LMS modules'] {
     border-color: var(--recording-line) !important;
-    border-radius: 16px !important;
+    border-radius: var(--lms-radius, 16px) !important;
     background: var(--recording-surface) !important;
   }
   .page:where(:not(:global([data-theme='dark']) *)) [aria-label='All LMS modules'] h2 {
@@ -354,7 +354,7 @@
   .page:where(:not(:global([data-theme='dark']) *)) .recordingCard {
     padding: 12px !important;
     border-color: var(--recording-control-line) !important;
-    border-radius: 12px !important;
+    border-radius: var(--lms-radius, 16px) !important;
     background: var(--recording-surface) !important;
     box-shadow: none !important;
   }
@@ -441,7 +441,7 @@
     min-height: 36px !important;
     padding: 6px 12px !important;
     border: 1px solid oklch(.968 .005 305 / .3) !important;
-    border-radius: 16px !important;
+    border-radius: var(--lms-radius, 16px) !important;
     background: oklch(.968 .005 305 / .1) !important;
     color: oklch(.968 .005 305) !important;
     font-size: 12px !important;
@@ -504,7 +504,7 @@
   .page:where(:not(:global([data-theme='dark']) *)) [aria-label='Recordings calendar'] {
     overflow: hidden !important;
     border: 1px solid var(--recording-line) !important;
-    border-radius: 16px !important;
+    border-radius: var(--lms-radius, 16px) !important;
     background: var(--recording-surface) !important;
   }
   .page:where(:not(:global([data-theme='dark']) *)) [aria-label='Recordings calendar'] > div:last-child {
@@ -545,7 +545,7 @@
     padding: 8px 10px !important;
     border-color: var(--recording-control-line) !important;
     border-bottom: 1px solid var(--recording-control-line) !important;
-    border-radius: 0 0 12px 12px !important;
+    border-radius: 0 0 var(--lms-radius, 16px) var(--lms-radius, 16px) !important;
     font-size: 10px !important;
     color: oklch(.415 .018 60) !important;
   }
@@ -663,7 +663,7 @@
   }
   .page:where(:not(:global([data-theme='dark']) *)) .recordingCard :is(button,a) {
     box-shadow: none !important;
-    border-radius: 10px !important;
+    border-radius: var(--lms-radius, 16px) !important;
   }
   .page:where(:not(:global([data-theme='dark']) *)) .legend li:first-child > span {
     background: #10b981 !important;
@@ -684,7 +684,7 @@
     border-color: var(--recording-line) !important;
   }
   .page:where(:not(:global([data-theme='dark']) *)) [aria-label='All LMS modules'] details button {
-    border-radius: 10px !important;
+    border-radius: var(--lms-radius, 16px) !important;
     background: oklch(.94 .014 305 / .6) !important;
   }
   .page :is(button, a, select, input, summary):focus-visible {
@@ -720,7 +720,7 @@
       align-items: flex-start !important;
       gap: 8px !important;
       padding: 10px !important;
-      border-radius: 14px !important;
+      border-radius: var(--lms-radius, 16px) !important;
     }
     .page:where(:not(:global([data-theme='dark']) *)) .hero > div:last-child > span > span:last-child {
       font-size: 10.5px !important;
@@ -756,7 +756,7 @@
     gap: 16px !important;
     padding: 20px 24px !important;
     border: 1px solid var(--theme-border) !important;
-    border-radius: 26px !important;
+    border-radius: var(--lms-radius, 16px) !important;
     background: var(--theme-surface) !important;
   }
   :global([data-theme='dark']) .page .heroHeading {
@@ -788,7 +788,7 @@
     gap: 6px !important;
     padding: 8px 12px !important;
     border: 1px solid var(--theme-border) !important;
-    border-radius: 16px !important;
+    border-radius: var(--lms-radius, 16px) !important;
     background: var(--theme-bg) !important;
     font-size: 12px !important;
     color: var(--theme-text-primary) !important;
@@ -807,7 +807,7 @@
     row-gap: 4px !important;
     padding: 12px 16px !important;
     border: 1px solid var(--theme-border) !important;
-    border-radius: 20px !important;
+    border-radius: var(--lms-radius, 16px) !important;
     background: var(--theme-bg) !important;
   }
   :global([data-theme='dark']) .page .hero > div:last-child > span > i {
@@ -817,7 +817,7 @@
     justify-content: center !important;
     width: 36px !important;
     height: 36px !important;
-    border-radius: 10px !important;
+    border-radius: var(--lms-radius, 16px) !important;
     background: var(--theme-surface) !important;
     color: var(--theme-text-primary) !important;
   }
@@ -914,8 +914,8 @@
 @layer recordings-ui {
   .page .search .searchRow { display: grid !important; grid-template-columns: minmax(220px, 1fr) minmax(0, auto); align-items: center; gap: 12px; }
   .page .search .searchControls { display: grid; grid-template-columns: minmax(170px, 240px) minmax(170px, 190px) auto auto; align-items: center; gap: 10px; min-width: 0; }
-  .page .search input[type='text'] { height: 42px !important; border-radius: 12px !important; }
-  .page .search .moreFilters { display: inline-flex; align-items: center; gap: 6px; min-height: 42px !important; padding: 6px 12px; border: 1px solid var(--recording-control-line, var(--theme-border)); border-radius: 12px !important; justify-content: center; white-space: nowrap; font-size: 12px; }
+  .page .search input[type='text'] { height: 42px !important; border-radius: var(--lms-radius, 16px) !important; }
+  .page .search .moreFilters { display: inline-flex; align-items: center; gap: 6px; min-height: 42px !important; padding: 6px 12px; border: 1px solid var(--recording-control-line, var(--theme-border)); border-radius: var(--lms-radius, 16px) !important; justify-content: center; white-space: nowrap; font-size: 12px; }
   .page .search .moreFilters[aria-expanded='true'] { border-color: var(--recording-purple, oklch(.44 .145 305)) !important; color: var(--recording-purple, oklch(.44 .145 305)) !important; }
   .page .filters { padding: 16px !important; }
   .page .inactiveFilter { min-height: 24px; }
@@ -923,7 +923,7 @@
   .page .filterGrid { display: grid; grid-template-columns: minmax(140px, .7fr) repeat(3, minmax(0, 1fr)) auto; align-items: end; gap: 12px; }
   .filterField { display: grid; min-width: 0; gap: 6px; }
   .filterField > span { font-size: 12px; font-weight: 500; color: var(--theme-text-secondary, oklch(.43 .03 305)); }
-  .page .clearFilters { min-height: 42px; padding: 0 10px; border-radius: 10px; font-size: 12px !important; color: var(--recording-purple, oklch(.44 .145 305)) !important; white-space: nowrap; }
+  .page .clearFilters { min-height: 42px; padding: 0 10px; border-radius: var(--lms-radius, 16px); font-size: 12px !important; color: var(--recording-purple, oklch(.44 .145 305)) !important; white-space: nowrap; }
   .page .clearFilters:hover { background: oklch(.94 .025 305 / .5); }
   @media (max-width: 1279px) {
     .page .search .searchRow { grid-template-columns: minmax(0, 1fr); }
@@ -961,7 +961,7 @@
     min-height: 72px;
     padding: 14px 12px;
     list-style: none;
-    border-radius: 6px;
+    border-radius: var(--lms-radius, 16px);
     box-shadow: none !important;
   }
   .page .moduleSummary::-webkit-details-marker { display: none; }
