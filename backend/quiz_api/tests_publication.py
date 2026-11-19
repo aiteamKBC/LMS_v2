@@ -16,9 +16,21 @@ def question(correct=True, archived=False, kind="single_choice"):
     return SimpleNamespace(id=21, question_type=kind, is_archived=archived, answers=SimpleNamespace(all=lambda:answers), save=Mock())
 
 
+class StaffRequestFactory(RequestFactory):
+    """Publication fixtures represent a signed-in author, as production requires."""
+    def request(self, **request):
+        result = super().request(**request)
+        result.login_account = SimpleNamespace(role="staff", display_name="Synthetic author", email="staff@example.invalid")
+        return result
+
+
 class PublicationTests(SimpleTestCase):
     def setUp(self):
-        self.factory = RequestFactory()
+        from .policy import default_settings
+        defaults = patch('quiz_api.policy.load_defaults', return_value=default_settings())
+        defaults.start()
+        self.addCleanup(defaults.stop)
+        self.factory = StaffRequestFactory()
         self.quiz = QuizPackage(id=7, title="Synthetic quiz", status="published")
         self.packages = Mock();self.packages.get.return_value = self.quiz
         self.packages.select_for_update.return_value = self.packages

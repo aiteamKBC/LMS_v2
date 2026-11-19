@@ -43,9 +43,10 @@ export function useProgrammeKsbStats(
 
   useEffect(() => {
     if (!enabled) return undefined;
-    const wanted = idKey.split('|').filter(id => id && !requestedRef.current.has(id));
+    const requested = requestedRef.current;
+    const wanted = idKey.split('|').filter(id => id && !requested.has(id));
     if (!wanted.length) return undefined;
-    wanted.forEach(id => requestedRef.current.add(id));
+    wanted.forEach(id => requested.add(id));
 
     const controller = new AbortController();
     // A cold build against the remote database can be slow; keep a finite limit.
@@ -62,7 +63,7 @@ export function useProgrammeKsbStats(
           const value = result[id];
           if (value) found[id] = value;
           // Not found: keep the placeholder, and allow a retry on the next mount.
-          else requestedRef.current.delete(id);
+          else requested.delete(id);
         });
         Object.keys(found).forEach(id => delivered.add(id));
         setStats(prev => ({ ...prev, ...found }));
@@ -72,7 +73,7 @@ export function useProgrammeKsbStats(
         if (cancelled) return;
         // The cards that cannot get their numbers keep the placeholder they
         // already show. Allowed to be retried on the next mount.
-        batch.forEach(id => requestedRef.current.delete(id));
+        batch.forEach(id => requested.delete(id));
       }
     };
 
@@ -88,7 +89,7 @@ export function useProgrammeKsbStats(
       // Released now, not when the aborted request settles: the next run of
       // this effect (StrictMode's remount, or one more programme in the list)
       // happens first, and must ask again for what never arrived.
-      wanted.forEach(id => { if (!delivered.has(id)) requestedRef.current.delete(id); });
+      wanted.forEach(id => { if (!delivered.has(id)) requested.delete(id); });
     };
   }, [idKey, visibility, enabled]);
 

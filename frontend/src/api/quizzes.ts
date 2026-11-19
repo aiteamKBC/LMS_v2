@@ -8,6 +8,7 @@ import { readLearnerJson } from './learnerRead';
 import { invalidateLearnerDetailCache } from '@/api/learnerDetail';
 import { CompletionValidationError, type WorkingRuleReason } from '@/lib/completionValidation';
 import { ActivityTimeConflictError } from '@/lib/activityTimeConflict';
+import type { QuizGradeSettings } from '@/lib/quizGradeSettings';
 
 const BASE = '/learner_api/quizzes';
 
@@ -37,7 +38,23 @@ export interface QuizQuestion {
   answerCount?: number;
 }
 
+export interface QuizPolicy {
+  enabled: boolean;
+  attemptsUsed: number;
+  attemptLimit: number | null;
+  bestGrade: number | null;
+  passed: boolean;
+  canAttempt: boolean;
+  unavailableReason: string | null;
+}
+
 export interface Quiz {
+  policyEnabled?: boolean;
+  quizPolicy?: QuizPolicy;
+  attemptHistory?: boolean;
+  showCorrectAnswer?: boolean;
+  quizStyle?: 'default' | 'pagination' | 'global';
+  gradeSettings?: QuizGradeSettings | null;
   id: number;
   unavailableReason?: string | null;
   title: string;
@@ -122,6 +139,7 @@ export interface QuizAttempt {
 }
 
 export interface QuizAttemptResult {
+  quizPolicy?: QuizPolicy;
   attempt: QuizAttempt;
   breakdown: QuizQuestionResult[];   // full-text, for the results screen
   earned: number;

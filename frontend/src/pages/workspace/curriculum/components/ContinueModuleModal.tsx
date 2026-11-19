@@ -3,7 +3,7 @@ import { AppIcon } from '@/components/feature/AppIcon';
 import type { HomeModule } from '../useCurriculumHome';
 import { HomeModal } from './HomeModal';
 import { clean } from './attentionMeta';
-import { lastEditedLabel } from './HomeParts';
+import { lastEditedLabel } from './attentionMeta';
 
 export function ContinueModuleModal({ module, onClose }: { module: HomeModule; onClose: () => void }) {
   const weeks = Number(module.weeks || 0);

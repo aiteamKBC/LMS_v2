@@ -57,7 +57,7 @@ class QuizPickerTests(SimpleTestCase):
             response = views.quizzes(RequestFactory().get('/quizzes/', {'status': 'all', 'assessmentType': 'quiz'}))
         self.assertEqual(json.loads(response.content)['results'][0]['lessonContent'], 'Full editor content')
         self.queryset.values.assert_not_called()
-        sync.assert_called_once_with(self.queryset)
+        sync.assert_called_once_with(self.queryset, persist=False)
 
     def test_picker_query_selects_only_summary_columns(self):
         sql, _ = views.QuizPackage.objects.values(*views.QUIZ_PICKER_FIELDS.values()).query.sql_with_params()

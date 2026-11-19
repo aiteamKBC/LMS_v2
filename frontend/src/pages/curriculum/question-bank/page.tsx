@@ -314,11 +314,6 @@ export default function QuestionBankPage() {
             { label: 'Questions', value: questionBank ? String(totalQuestionCount) : '—', icon: 'ri-file-line' },
             { label: 'KSB Tagged', value: questionBank ? `${ksbTaggedPercent}%` : '—', icon: 'ri-price-tag-3-line' },
           ]}
-          actions={(
-            <button type="button" className="inline-flex h-[4.5rem] min-w-[7.5rem] items-center justify-center whitespace-nowrap rounded-2xl bg-[#b27715] px-3 text-xs font-semibold text-white transition-smooth hover:bg-[#986511]">
-              <AppIcon className="mr-1" name="ri-add-line" size={13} /> Create Bank
-            </button>
-          )}
         />
 
         <section className="rounded-2xl border border-[#ded8e8] bg-white shadow-sm overflow-hidden">

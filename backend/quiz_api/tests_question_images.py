@@ -195,7 +195,8 @@ class QuestionImageTests(SimpleTestCase):
     def test_learner_fetch_includes_diagram_without_exposing_correct_choices(self):
         image = image_data()
         cursor = MagicMock()
-        cursor.fetchone.return_value = (7, "Quiz", "Module", "Programme", "W1", 10, "minutes", 65, False, False, "single_choice")
+        cursor.fetchone.return_value = (7, "Quiz", "Module", "Programme", "W1", 10, "minutes", 65, False, False, "single_choice",
+                                       False, 'published', False, 3, True, True, True, 'pagination', None)
         cursor.fetchall.side_effect = [[(21, "Diagram?", "single_choice", 1, 0, "", image)], [(22, 21, "Yes", True, 0)]]
         with patch.object(quizzes, "_conn") as connection:
             connection.return_value.cursor.return_value.__enter__.return_value = cursor

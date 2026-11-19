@@ -43,6 +43,7 @@ from .working_rules import (
 )
 from login.permissions import learner_self_or_admin, learner_self_or_staff
 from quiz_api.answer_keys import choice_label, quiz_submission_error
+from quiz_api.policy import QuizPolicyConflict, attempt_stats, learner_policy
 
 logger = logging.getLogger(__name__)
 
@@ -124,7 +125,9 @@ def _fetch_quiz(quiz_id):
     with _conn().cursor() as cur:
         cur.execute(
             "SELECT id, title, module, programme, week_id, duration, time_unit, "
-            "passing_grade, randomize_questions, randomize_answers, default_question_type "
+            "passing_grade, randomize_questions, randomize_answers, default_question_type, "
+            "policy_enabled, status, limit_attempts, attempt_limit, retake_after_pass, "
+            "attempt_history, show_correct_answer, quiz_style, grade_settings "
             "FROM curriculum.quizzes WHERE id = %s",
             [quiz_id],
         )
@@ -135,6 +138,10 @@ def _fetch_quiz(quiz_id):
             "id": row[0], "title": row[1], "module": row[2], "programme": row[3],
             "weekId": row[4], "duration": row[5], "timeUnit": row[6],
             "passingGrade": row[7], "randomizeQuestions": row[8], "randomizeAnswers": row[9],
+            "policyEnabled": row[11], "status": row[12], "limitAttempts": row[13],
+            "attemptLimit": row[14], "retakeAfterPass": row[15], "attemptHistory": row[16],
+            "showCorrectAnswer": row[17], "quizStyle": row[18],
+            "gradeSettings": json.loads(row[19]) if isinstance(row[19], str) else row[19],
         }
 
         cur.execute(
@@ -192,7 +199,10 @@ def _scrub_answer_key(quiz):
             # Legacy imports can contain indistinguishable options. Show one
             # per label; the grader accepts any ID belonging to that label.
             shuffled = list({choice_label(a["text"]): a for a in reversed(answers)}.values())
-            random.shuffle(shuffled)
+            if quiz.get('randomizeAnswers', True) or not quiz.get('policyEnabled'):
+                random.shuffle(shuffled)
+            else:
+                shuffled.reverse()
             safe_q["answers"] = [{"id": a["id"], "text": a["text"]} for a in shuffled]
 
         elif qtype == "fill_gap":
@@ -242,6 +252,8 @@ def _scrub_answer_key(quiz):
 
         safe_questions.append(safe_q)
 
+    if quiz.get('policyEnabled') and quiz.get('randomizeQuestions'):
+        random.shuffle(safe_questions)
     return {
         **{k: v for k, v in quiz.items() if k != "questions"},
         "questions": safe_questions,
@@ -305,7 +317,7 @@ def quiz_detail(request, quiz_id):
     learner_id = (request.GET.get("learnerId") or "").strip()
     component_id = (request.GET.get("componentId") or "").strip()
     try:
-        _source, _component, error = _programme_quiz_context(
+        source, _component, error = _programme_quiz_context(
             kind, learner_id, quiz_id, component_id or None, include_retired=True,
         )
     except DatabaseError:
@@ -318,7 +330,15 @@ def quiz_detail(request, quiz_id):
         return _error("Could not read this quiz. Please try again.", 503)
     if quiz is None:
         return _error("Quiz not found.", 404)
-    response = JsonResponse(_scrub_answer_key(quiz))
+    try:
+        learner = learner_profile_for_source(source, learner_id, active_only=True)
+        state = learner_policy(quiz, attempt_stats(learner, quiz_id))
+    except DatabaseError:
+        return _error('Could not read your quiz attempts. Please retry.', 503)
+    safe = _scrub_answer_key(quiz)
+    safe['quizPolicy'] = state
+    safe['unavailableReason'] = state['unavailableReason'] or safe.get('unavailableReason')
+    response = JsonResponse(safe)
     response["Cache-Control"] = "private, no-store"
     return response
 
@@ -635,6 +655,9 @@ def submit_quiz_attempt(request, quiz_id):
     except DatabaseError:
         return _error("Could not read the learner profile. Please try again.", 503)
 
+    if active is None:
+        return _error('An active learner profile is required to save this quiz attempt.', 409)
+
     history = (active.training_plan_progress if active and isinstance(active.training_plan_progress, list) else [])
 
     try:
@@ -715,11 +738,13 @@ def submit_quiz_attempt(request, quiz_id):
             "at": submitted_at,
         }
         try:
-            save_progress_record(active, attempt, activity)
+            save_progress_record(active, attempt, activity, enforce_quiz_policy=True)
         except ComponentReferenceError as exc:
             return _error(str(exc), 400)
         except ActivityTimeConflict as exc:
             return _activity_time_conflict(exc, 409)
+        except QuizPolicyConflict as exc:
+            return JsonResponse({'error': str(exc), 'code': exc.state['code'], 'quizPolicy': exc.state}, status=409)
         except ValueError as exc:
             return _error(str(exc), 409)
         except IntegrityError as exc:
@@ -742,8 +767,15 @@ def submit_quiz_attempt(request, quiz_id):
 
     # The response carries the FULL-text breakdown + summary so the results
     # screen can render immediately without a second lookup.
+    public_attempt = attempt
+    if quiz.get('policyEnabled') and not quiz.get('showCorrectAnswer', True):
+        breakdown = [{**row, 'correctAnswer': None} for row in breakdown]
+        public_attempt = {**attempt, 'questions': [
+            {key: value for key, value in row.items() if key not in ('correctText', 'correctAnswerId')}
+            for row in attempt['questions']]}
     return JsonResponse({
-        "attempt": attempt,
+        "attempt": public_attempt,
+        "quizPolicy": attempt.get('quizPolicy'),
         "breakdown": breakdown,
         "earned": earned,
         "possible": possible,

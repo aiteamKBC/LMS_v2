@@ -14,7 +14,8 @@ import { ImageMatchingPairFields } from '@/components/feature/ImageMatchingPairF
 import { ThemedSelect } from '@/components/feature/ThemedSelect';
 import { QuestionAnswersView } from '@/components/feature/QuestionTypeRenderer';
 import { useToast } from "@/hooks/useToast";
-import { formatQuizGradeRange, useQuizGradeSettings } from '@/lib/quizGradeSettings';
+import { GradeSettingsModal } from '../GradeSettingsModal';
+import { formatQuizGradeRange, defaultQuizGradeSettings, type QuizGradeSettings } from '@/lib/quizGradeSettings';
 import { convertAnswerTextForQuestionType, isPairAnswerComplete, parseQuizPairAnswer, serializeQuizPairAnswer } from '@/lib/quizPairAnswers';
 import { showCurriculumConfirm } from '@/components/feature/CurriculumSweetAlert';
 
@@ -80,7 +81,9 @@ interface QuizPackage {
   retakeAfterPass: boolean;
   limitAttempts: boolean;
   passingGrade: number;
-  retakePointsCut: number;
+  policyEnabled: boolean;
+  attemptLimit: number;
+  gradeSettings?: QuizGradeSettings | null;
 }
 
 interface QuizQuestion {
@@ -149,7 +152,9 @@ interface QuizSettingsState {
   retakeAfterPass: boolean;
   limitAttempts: boolean;
   passingGrade: number;
-  retakePointsCut: number;
+  policyEnabled: boolean;
+  attemptLimit: number;
+  gradeSettings?: QuizGradeSettings | null;
 }
 
 function questionLabel(type: QuestionType) {
@@ -249,8 +254,10 @@ function settingsFromQuiz(quiz: QuizPackage): QuizSettingsState {
     attemptHistory: Boolean(quiz.attemptHistory),
     retakeAfterPass: Boolean(quiz.retakeAfterPass),
     limitAttempts: Boolean(quiz.limitAttempts),
-    passingGrade: quiz.passingGrade || 65,
-    retakePointsCut: quiz.retakePointsCut || 5,
+    passingGrade: quiz.passingGrade ?? 65,
+    policyEnabled: quiz.policyEnabled ?? false,
+    attemptLimit: quiz.attemptLimit ?? 3,
+    gradeSettings: quiz.gradeSettings,
   };
 }
 
@@ -416,7 +423,8 @@ export function QuizEditorPanel({ quizId, onClose, onSaved, freeCourseContext }:
   const [draggedAnswerId, setDraggedAnswerId] = useState<number | null>(null);
   const [dragOverAnswerId, setDragOverAnswerId] = useState<number | null>(null);
   const [pageError, setPageError] = useState('');
-  const [gradeSettings] = useQuizGradeSettings();
+  const [customiseGrades, setCustomiseGrades] = useState(false);
+  const gradeSettings = settings?.gradeSettings ?? defaultQuizGradeSettings;
 
   const activeQuestions = useMemo(() => data?.questions.filter(question => !question.isArchived) ?? [], [data?.questions]);
   const archivedQuestions = useMemo(() => data?.questions.filter(question => question.isArchived) ?? [], [data?.questions]);
@@ -773,11 +781,15 @@ export function QuizEditorPanel({ quizId, onClose, onSaved, freeCourseContext }:
     if (!data || !settings) return;
     setSavingSettings(true);
     try {
+      const freeCourseSettings = { ...settings } as Partial<QuizSettingsState>;
+      delete freeCourseSettings.policyEnabled;
+      delete freeCourseSettings.attemptLimit;
+      delete freeCourseSettings.gradeSettings;
       const response = await fetch(freeCourseQuizUrl || `/quiz_api/quizzes/${data.quiz.id}/`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json', ...csrfHeader() },
         body: JSON.stringify(freeCourseContext
-          ? { ...settings, expectedRevision: freeCourseRevision, componentId: freeCourseContext.componentId }
+          ? { ...freeCourseSettings, expectedRevision: freeCourseRevision, componentId: freeCourseContext.componentId }
           : settings),
       });
       if (!response.ok) {
@@ -1410,6 +1422,8 @@ export function QuizEditorPanel({ quizId, onClose, onSaved, freeCourseContext }:
                 <Toggle label="Randomize answers" checked={settings.randomizeAnswers} onChange={checked => setSettings({ ...settings, randomizeAnswers: checked })} />
                 <Toggle label="Show correct answer" checked={settings.showCorrectAnswer} onChange={checked => setSettings({ ...settings, showCorrectAnswer: checked })} />
                 <Toggle label="Quiz Attempt History" checked={settings.attemptHistory} onChange={checked => setSettings({ ...settings, attemptHistory: checked })} />
+                {!freeCourseContext && <Toggle label="Apply learner rules to this quiz" checked={settings.policyEnabled} onChange={checked => setSettings({ ...settings, policyEnabled: checked })} />}
+                {!freeCourseContext && !settings.policyEnabled && <p className="text-sm text-amber-800">Existing learner behaviour is retained until these rules are enabled and saved.</p>}
                 <Toggle label="Retake After Pass" checked={settings.retakeAfterPass} onChange={checked => setSettings({ ...settings, retakeAfterPass: checked })} />
                 <Toggle label="Limited attempts to retake quizzes" checked={settings.limitAttempts} onChange={checked => setSettings({ ...settings, limitAttempts: checked })} />
               </div>
@@ -1418,15 +1432,17 @@ export function QuizEditorPanel({ quizId, onClose, onSaved, freeCourseContext }:
                 <Field label="Passing grade (%)">
                   <input type="number" min="0" max="100" value={settings.passingGrade} onChange={event => setSettings({ ...settings, passingGrade: Number(event.target.value || 0) })} className="h-11 w-full rounded-lg border border-[#d8dde6] bg-white px-3 text-sm outline-none focus:border-[#8b5cf6] focus:ring-2 focus:ring-[#ede9fe]" />
                 </Field>
-                <Field label="Points cut after retake (%)">
-                  <input type="number" min="0" max="100" value={settings.retakePointsCut} onChange={event => setSettings({ ...settings, retakePointsCut: Number(event.target.value || 0) })} className="h-11 w-full rounded-lg border border-[#d8dde6] bg-white px-3 text-sm outline-none focus:border-[#8b5cf6] focus:ring-2 focus:ring-[#ede9fe]" />
-                </Field>
+                {!freeCourseContext && settings.limitAttempts && <Field label="Maximum attempts (including the first)">
+                  <input aria-label="Maximum attempts" type="number" min="1" max="20" value={settings.attemptLimit} onChange={event => setSettings({ ...settings, attemptLimit: Number(event.target.value) })} className="h-11 w-full rounded-lg border px-3" />
+                </Field>}
+                {!freeCourseContext && <p className="text-sm text-foreground-600">The highest score is kept. Retakes do not deduct marks.</p>}
               </div>
 
-              <div className="rounded-xl bg-[#f3f6fb] border border-[#e2e8f0] p-4 flex items-center justify-between gap-4">
+              <div className="rounded-xl bg-[#f3f6fb] border border-[#e2e8f0] p-4 flex flex-wrap items-center justify-between gap-4">
                 <p className="text-sm text-foreground-700">
                   <strong>Hint:</strong> {hintGradeRow ? `${hintGradeRow.point} Points = ${formatQuizGradeRange(gradeSettings.rows, hintGradeIndex)} or "${hintGradeRow.grade}" grade` : 'Configure default grades from Grade Settings'}
                 </p>
+                {!freeCourseContext && <button onClick={() => setCustomiseGrades(true)} className="text-sm text-primary-700">Customise grades</button>}
                 <button onClick={() => setShowGradesTable(true)} className="h-9 px-4 rounded-lg bg-[#5b2dbb] text-white text-sm font-semibold hover:bg-[#4c1d95]">See table</button>
               </div>
 
@@ -1601,7 +1617,10 @@ export function QuizEditorPanel({ quizId, onClose, onSaved, freeCourseContext }:
           )}
         </div>
 
-        {showGradesTable && (
+        {customiseGrades && settings && <GradeSettingsModal settings={gradeSettings}
+        onChange={gradeSettings => setSettings({ ...settings, gradeSettings })}
+        onClose={() => setCustomiseGrades(false)} onSaved={() => setCustomiseGrades(false)} />}
+      {showGradesTable && (
           <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/45 p-4" onClick={() => setShowGradesTable(false)}>
             <div className="w-full max-w-md rounded-2xl bg-background-50 shadow-2xl border border-foreground-200/60 p-5" onClick={event => event.stopPropagation()}>
               <div className="flex items-center justify-between gap-4 mb-5">
@@ -1680,6 +1699,7 @@ function Toggle({ label, checked, onChange }: { label: string; checked: boolean;
       <button
         type="button"
         onClick={() => onChange(!checked)}
+        aria-pressed={checked}
         className={`w-9 h-5 rounded-full p-0.5 transition-smooth ${checked ? 'bg-[#5b2dbb]' : 'bg-[#cbd5e1]'}`}
       >
         <span className={`block w-4 h-4 rounded-full bg-white transition-transform ${checked ? 'translate-x-4' : 'translate-x-0'}`}></span>

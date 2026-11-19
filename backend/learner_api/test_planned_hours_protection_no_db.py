@@ -149,8 +149,8 @@ class SummaryPageLoadTests(SimpleTestCase):
             def mock(name, **kwargs):
                 return stack.enter_context(patch.object(reader, name, **kwargs))
 
-            # Other GET-side writers are a separate approved slice; mocked here.
-            others = [mock(name) for name in ("advance_learner", "install_canonical_training_plan")]
+            # Plan/identity reads are outside the snapshot persistence under test.
+            others = [mock("advance_learner"), mock("install_canonical_training_plan", return_value=[])]
             legacy_hydration = mock("hydrate_source_training_plan")
             mock("effective_training_plan", return_value=[])
             mock("_active_profile_for_source", return_value=profile)
@@ -169,7 +169,7 @@ class SummaryPageLoadTests(SimpleTestCase):
             build = stack.enter_context(patch.object(reader, "build_learner_detail",
                                                      wraps=reader.build_learner_detail))
             stack.enter_context(patch("learner_api.teams_attendance.annotate_attendance_completion",
-                                      side_effect=lambda rows, profile, **kwargs: rows))
+                                      side_effect=lambda rows, profile, *, manual_context: rows))
             stack.enter_context(patch("learner_api.replacement_learning.annotate_replacement_learning",
                                       side_effect=lambda rows, pk, **kwargs: rows))
             stack.enter_context(patch("learner_api.live_session_progress.read_live_credits", return_value=[]))
@@ -179,9 +179,9 @@ class SummaryPageLoadTests(SimpleTestCase):
             request = RequestFactory().get("/learner_api/learner-detail/commercial/7/", {"content": "summary"})
             for _ in range(times):
                 responses.append(reader.learner_detail.__wrapped__(request, "commercial", 7))
-        legacy_hydration.assert_not_called()
         for other in others:
             self.assertEqual(other.call_count, times)
+        legacy_hydration.assert_not_called()
         # The summary path still persists the other snapshot columns.
         self.assertEqual(build.call_args.kwargs, {"compact": True})
         return responses
