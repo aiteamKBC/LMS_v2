@@ -1,10 +1,10 @@
 .card {
-  --response-surface: #fff;
-  --response-header: #faf8ff;
-  --response-border: #eae4f5;
-  --response-text: #37264e;
-  --response-muted: #7c6a94;
-  --response-hover: #f5f0fc;
+  --response-surface: var(--kbc-surface, oklch(var(--background-50)));
+  --response-header: var(--kbc-purple-soft, oklch(var(--primary-50)));
+  --response-border: var(--kbc-border, oklch(var(--foreground-200)));
+  --response-text: var(--kbc-text, oklch(var(--foreground-800)));
+  --response-muted: var(--kbc-muted, oklch(var(--foreground-500)));
+  --response-hover: var(--enrolment-ui-hover, oklch(var(--primary-50)));
   overflow: hidden;
   border: 1px solid var(--response-border);
   border-radius: 20px;
@@ -151,15 +151,6 @@
   border-color: #efd5a2;
   background: #fffaef;
   color: #93621b;
-}
-
-:global([data-theme='dark']) .card {
-  --response-surface: #1c1729;
-  --response-header: #241d34;
-  --response-border: #3b304d;
-  --response-text: #eee8f8;
-  --response-muted: #bdb0ce;
-  --response-hover: #30253f;
 }
 
 :global([data-theme='dark']) .card .scrollArea .table thead th {

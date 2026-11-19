@@ -4,6 +4,8 @@ import assert from 'node:assert/strict';
 import { existsSync, readFileSync, mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { extname, resolve, sep, join } from 'node:path';
+import console from 'node:console';
+import { URL } from 'node:url';
 import { chromium } from '@playwright/test';
 
 const output = resolve('out');
@@ -72,9 +74,10 @@ try {
       throw error;
     });
     await page.getByRole('progressbar', { name: 'OTJ progress' }).waitFor();
-    await page.evaluate(() => document.fonts.ready);
+    await page.evaluate(() => globalThis.document.fonts.ready);
     await page.screenshot({ path: join(screenshots, `${width}.png`), fullPage: true });
     const bounds = await page.evaluate(() => {
+      const { document, innerWidth, getComputedStyle } = globalThis;
       const box = element => { const r = element.getBoundingClientRect(); return { x: r.x, y: r.y, width: r.width, right: r.right }; };
       const shield = document.querySelector('[aria-label="Learning actions"]');
       const scene = document.getElementById('student-main');
@@ -101,19 +104,29 @@ try {
     }
     console.log(`PASS ${width}x${height}: bounds, alignment and action hit targets`);
   }
-  // The exception must leave the existing alignment of other pages intact.
+  // Workspace containers still fill their shell. Nested cards and public pages
+  // retain their own dimensions and alignment after scoping the shared rule.
   const normalLayout = await page.evaluate(() => {
+    const { document, getComputedStyle } = globalThis;
     const main = document.createElement('main');
+    main.className = 'workspace-main';
     main.style.width = '200px';
-    main.innerHTML = '<section style="width:100px"><p style="text-align:right">Other page</p></section>';
+    main.innerHTML = '<section class="page-container" style="width:100px;padding:0"><article style="width:80px"><p style="text-align:right">Workspace card</p></article></section>';
     document.getElementById('root').append(main);
     const result = { main: main.getBoundingClientRect().width, child: main.firstElementChild.getBoundingClientRect().width,
+      card: main.querySelector('article').getBoundingClientRect().width,
       align: getComputedStyle(main.querySelector('p')).textAlign };
+    main.className = '';
+    result.publicMain = main.getBoundingClientRect().width;
+    result.publicChild = main.firstElementChild.getBoundingClientRect().width;
     main.remove();
     return result;
   });
   assert.equal(normalLayout.child, normalLayout.main);
-  assert.equal(normalLayout.align, 'left');
+  assert.equal(normalLayout.card, 80);
+  assert.equal(normalLayout.align, 'right');
+  assert.equal(normalLayout.publicMain, 200);
+  assert.equal(normalLayout.publicChild, 100);
   assert.deepEqual(errors, [], 'No page JavaScript errors');
   console.log(`PASS other-page alignment and runtime errors. Screenshots: ${screenshots}`);
 } finally {

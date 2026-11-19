@@ -2,20 +2,19 @@ import { LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import Swal from 'sweetalert2';
-import { feedbackApi, type FeedbackAnalyticsData, type FeedbackAssignmentSource, type FeedbackForm, type FeedbackFormType, type FeedbackFormVersion, type FeedbackLearnerOption, type FeedbackRecipient, type FeedbackResponse, type FeedbackResponseActivity } from '@/api/feedback';
-import { LectureQuestionAnalytics } from '@/features/feedback/LectureQuestionAnalytics';
+import { feedbackApi, type FeedbackAnalyticsData, type FeedbackAssignmentSource, type FeedbackForm, type FeedbackFormVersion, type FeedbackLearnerOption, type FeedbackRecipient, type FeedbackResponse, type FeedbackResponseActivity } from '@/api/feedback';
 import { FeedbackDashboard } from '@/features/feedback/FeedbackDashboard';
 import { ResponseEmailPanel } from '@/features/feedback/ResponseEmailPanel';
 import { FEEDBACK_TYPE_LABELS } from '@/features/feedback/feedbackDashboardData';
-import { ThemedSelect, type ThemedSelectOption } from '@/components/feature/ThemedSelect';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
+import { WorkspaceHeroBanner } from '@/components/feature/WorkspaceHeroBanner';
 import { FormRenderer } from '@/features/feedback/FormRenderer';
 import { useOperatorIdentity } from '@/hooks/useOperatorIdentity';
 import { roleNavMap } from '@/mocks/navigation';
 import responseTableStyles from './ResponsesTable.module.css';
 import { useFeedbackTabResource } from '@/features/feedback/useFeedbackTabResource';
 
-type Tab = 'overview' | 'forms' | 'responses' | 'analytics' | 'insights';
+type Tab = 'overview' | 'forms' | 'responses' | 'insights';
 const nav = roleNavMap.engagement;
 const button = 'rounded-lg px-3 py-2 text-xs font-semibold transition-colors';
 
@@ -26,8 +25,8 @@ export default function FeedbackPage() {
   const [revision, setRevision] = useState(0);
   const [insightsOpened, setInsightsOpened] = useState(false);
   const formData = useFeedbackTabResource(feedbackApi.listForms, tab !== 'insights', revision);
-  const responseData = useFeedbackTabResource(feedbackApi.responses, tab === 'responses' || tab === 'analytics', revision);
-  const analyticsData = useFeedbackTabResource(feedbackApi.analytics, tab === 'overview' || tab === 'analytics', revision);
+  const responseData = useFeedbackTabResource(feedbackApi.responses, tab === 'responses', revision);
+  const analyticsData = useFeedbackTabResource(feedbackApi.analytics, tab === 'overview', revision);
   const forms = useMemo(() => formData.data?.forms || [], [formData.data]);
   const responses = responseData.data?.responses || [];
   const analytics = analyticsData.data?.analytics || null;
@@ -39,7 +38,7 @@ export default function FeedbackPage() {
   const [versionForm, setVersionForm] = useState<FeedbackForm | null>(null);
   const [viewing, setViewing] = useState<FeedbackResponse | null>(null);
   const refresh = useCallback(() => setRevision(value => value + 1), []);
-  const required = tab === 'insights' ? [] : tab === 'responses' ? [formData, responseData] : tab === 'analytics' ? [formData, responseData, analyticsData] : [formData];
+  const required = tab === 'insights' ? [] : tab === 'responses' ? [formData, responseData] : [formData];
   const loading = required.some(resource => resource.loading);
   const unavailable = required.some(resource => !resource.data);
 
@@ -65,20 +64,24 @@ export default function FeedbackPage() {
   return <WorkspaceShell role="engagement" roleLabel={nav.label} navItems={nav.items} workspaceLabel={nav.workspaceLabel} pageTitle="Feedback" pageSubtitle="Create, assign, and analyse learner feedback forms" userName={operator.name} userRole={operator.role}>
     <div className="space-y-5 p-6">
       {tab !== 'insights' && <>
-      <div className="rounded-2xl bg-gradient-to-r from-[#541EA0] to-[#7C3AED] p-6 text-white shadow-sm">
-        <div className="flex flex-wrap items-center justify-between gap-4"><div><p className="text-xs font-semibold uppercase tracking-widest text-purple-200">Reports / Feedback</p><h1 className="mt-1 font-heading text-2xl font-bold !text-white">Feedback Forms</h1><p className="mt-1 max-w-2xl text-sm text-purple-100">Build flexible forms, assign them to learners, monitor completion, and review responses.</p></div><button onClick={() => navigate('/engagement/reports/feedback/create')} className="rounded-lg bg-white px-4 py-2.5 text-xs font-bold text-[#541EA0] shadow-sm">+ Create Feedback Form</button></div>
-      </div>
+      <WorkspaceHeroBanner
+        heading="h1"
+        title="Feedback Forms"
+        eyebrow="Reports / Feedback"
+        description="Build flexible forms, assign them to learners, monitor completion, and review responses."
+        icon="ri-chat-3-line"
+        actions={<button onClick={() => navigate('/engagement/reports/feedback/create')} className="rounded-lg border border-foreground-200 bg-background-50 px-4 py-2.5 text-xs font-bold text-primary-700">+ Create Feedback Form</button>}
+      />
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">{[
         ['Total Forms', summary?.totalForms ?? '—', 'ri-file-list-3-line'], ['Published', summary?.publishedForms ?? '—', 'ri-send-plane-line'], ['Draft', summary?.draftForms ?? '—', 'ri-draft-line'], ['Responses', summary?.totalResponses ?? '—', 'ri-chat-check-line'],
       ].map(([label, value, icon]) => <div key={String(label)} className="rounded-xl border border-foreground-200/60 bg-background-50 p-4"><div className="flex items-center justify-between"><div><p className="text-xs text-foreground-500">{label}</p><p className="mt-1 text-2xl font-bold text-foreground-900">{value}</p></div><span className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary-50 text-primary-600"><i className={`${icon} text-lg`} /></span></div></div>)}</div>
       </>}
-      <div className="flex gap-1 overflow-x-auto rounded-lg bg-background-100 p-1">{(['overview', 'forms', 'responses', 'analytics', 'insights'] as Tab[]).map(value => <button key={value} aria-pressed={tab === value} onClick={() => { if (value === 'insights') setInsightsOpened(true); setTab(value); }} className={`${button} !transition-none whitespace-nowrap ${tab === value ? '!bg-[#541EA0] !text-white shadow-sm' : '!bg-transparent !text-foreground-600 hover:!bg-white'}`}>{value === 'insights' ? 'Feedback Insights' : value[0].toUpperCase() + value.slice(1)}</button>)}</div>
+      <div className="ui-page-tabs flex gap-1 overflow-x-auto rounded-lg bg-background-100 p-1">{(['overview', 'forms', 'responses', 'insights'] as Tab[]).map(value => <button key={value} aria-pressed={tab === value} onClick={() => { if (value === 'insights') setInsightsOpened(true); setTab(value); }} className={`${button} !transition-none whitespace-nowrap ${tab === value ? 'primary-action text-white shadow-sm' : 'bg-transparent text-foreground-600 hover:bg-background-50'}`}>{value === 'insights' ? 'Analytics' : value[0].toUpperCase() + value.slice(1)}</button>)}</div>
       {required.map((resource, index) => resource.error && <div key={index} role="alert" className="rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800">{resource.error} <button type="button" className="font-semibold underline" onClick={resource.reload}>Retry feedback</button></div>)}
        {loading ? <div  className="rounded-xl border bg-white p-10 text-center text-sm text-foreground-400"><LoadingSkeleton label={"Loading feedback…"} variant="rows" /></div> : !unavailable && <>
         {tab === 'overview' && <><Overview analytics={analytics} forms={forms} analyticsLoading={analyticsData.loading} onViewForms={() => setTab('forms')} />{analyticsData.error && <div role="alert" className="text-sm text-rose-700">{analyticsData.error} <button type="button" onClick={analyticsData.reload}>Retry overview analytics</button></div>}</>}
         {tab === 'forms' && <FormsTable forms={filtered} search={search} status={status} onSearch={setSearch} onStatus={setStatusFilter} onEdit={form => navigate(`/engagement/reports/feedback/forms/${form.id}/edit`)} onPreview={form => navigate(`/engagement/reports/feedback/forms/${form.id}/preview`)} onAssign={setAssigning} onViewRecipients={setRecipientForm} onViewVersions={setVersionForm} onResponses={() => setTab('responses')} onAction={action} />}
         {tab === 'responses' && <ResponsesTable responses={responses} forms={forms} onOpen={response => void openResponse(response)} />}
-        {tab === 'analytics' && analytics && <AnalyticsView data={analytics} forms={forms} responses={responses} onViewResponse={id => void openResponse({ id })} />}
       </>}
       {insightsOpened && <div hidden={tab !== 'insights'}><FeedbackDashboard active={tab === 'insights'} revision={revision} onViewResponse={id => void openResponse({ id })} /></div>}
     </div>
@@ -90,7 +93,7 @@ export default function FeedbackPage() {
 }
 
 function Overview({ analytics, forms, onViewForms, analyticsLoading = false }: { analytics: FeedbackAnalyticsData | null; forms: FeedbackForm[]; onViewForms: () => void; analyticsLoading?: boolean }) {
-  return <div className="grid gap-5 xl:grid-cols-[1.4fr_1fr]"><div className="rounded-xl border border-foreground-200/60 bg-background-50 p-5"><div className="mb-4 flex items-center justify-between"><h2 className="font-heading text-sm font-semibold text-foreground-900">Recently updated forms</h2><button onClick={onViewForms} className="text-xs font-semibold text-primary-600">View all</button></div><div className="divide-y divide-background-200">{forms.slice(0, 5).map(form => <div key={form.id} className="flex items-center justify-between py-3"><div><p className="text-sm font-medium text-foreground-800">{form.title}</p><p className="text-[11px] text-foreground-400">Updated {formatDate(form.updatedAt)}</p></div><Status status={form.status} /></div>)}{!forms.length && <p className="py-8 text-center text-sm text-foreground-400">Create your first feedback form to get started.</p>}</div></div>{analytics ? <AnalyticsView data={analytics} compact /> : analyticsLoading && <p role="status" className="p-5 text-sm text-foreground-500">Loading overview analytics…</p>}</div>;
+  return <div className="grid gap-5 xl:grid-cols-[1.4fr_1fr]"><div className="rounded-xl border border-foreground-200/60 bg-background-50 p-5"><div className="mb-4 flex items-center justify-between"><h2 className="font-heading text-sm font-semibold text-foreground-900">Recently updated forms</h2><button onClick={onViewForms} className="text-xs font-semibold text-primary-600">View all</button></div><div className="divide-y divide-background-200">{forms.slice(0, 5).map(form => <div key={form.id} className="flex items-center justify-between py-3"><div><p className="text-sm font-medium text-foreground-800">{form.title}</p><p className="text-[11px] text-foreground-400">Updated {formatDate(form.updatedAt)}</p></div><Status status={form.status} /></div>)}{!forms.length && <p className="py-8 text-center text-sm text-foreground-400">Create your first feedback form to get started.</p>}</div></div>{analytics ? <AnalyticsKpis data={analytics} compact /> : analyticsLoading && <p role="status" className="p-5 text-sm text-foreground-500">Loading overview analytics…</p>}</div>;
 }
 
 function FormsTable({ forms, search, status, onSearch, onStatus, onEdit, onPreview, onAssign, onViewRecipients, onViewVersions, onResponses, onAction }: { forms: FeedbackForm[]; search: string; status: string; onSearch: (v: string) => void; onStatus: (v: string) => void; onEdit: (f: FeedbackForm) => void; onPreview: (f: FeedbackForm) => void; onAssign: (f: FeedbackForm) => void; onViewRecipients: (f: FeedbackForm) => void; onViewVersions: (f: FeedbackForm) => void; onResponses: () => void; onAction: (f: FeedbackForm, a: 'publish' | 'draft' | 'close' | 'duplicate' | 'delete') => void }) {
@@ -166,85 +169,6 @@ function ResponseActivity({ response }: { response: FeedbackResponse }) {
   </div>;
 }
 
-type AnalyticsFormType = 'all' | FeedbackFormType;
-
-const ANALYTICS_FORM_TYPES: ThemedSelectOption<AnalyticsFormType>[] = [
-  { value: 'all', label: 'All feedback types' },
-  { value: 'post_lecture', label: 'Live Sessions Feedback' },
-  { value: 'mid_module', label: 'Wellbeing' },
-  { value: 'end_module', label: 'End-module Feedback' },
-  { value: 'post_mcm_review', label: 'MCM Feedback' },
-  { value: 'post_progress_review', label: 'Progress Review Feedback' },
-  { value: 'post_epa_review', label: 'EPA Feedback' },
-  { value: 'post_progress_review_employer', label: 'Progress Review – Employer Feedback' },
-  { value: 'post_event', label: 'Event Feedback' },
-  { value: 'event_rsvp', label: 'Event RSVP' },
-  { value: 'general', label: 'General Feedback' },
-];
-
-function AnalyticsView({ data, forms = [], responses = [], compact = false, onViewResponse }: { data: FeedbackAnalyticsData; forms?: FeedbackForm[]; responses?: FeedbackResponse[]; compact?: boolean; onViewResponse?: (id: number) => void }) {
-  const [formType, setFormType] = useState<AnalyticsFormType>('all');
-  const [formId, setFormId] = useState('all');
-  const [scopedData, setScopedData] = useState(data);
-  const [analyticsLoading, setAnalyticsLoading] = useState(false);
-  const [analyticsError, setAnalyticsError] = useState('');
-
-  const availableForms = useMemo(() => forms.filter(form => formType === 'all' || form.formType === formType), [formType, forms]);
-  const formOptions = useMemo<ThemedSelectOption<string>[]>(() => [
-    { value: 'all', label: 'All forms' },
-    ...availableForms.map(form => ({ value: String(form.id), label: form.title })),
-  ], [availableForms]);
-
-  useEffect(() => {
-    if (compact || (formType === 'all' && formId === 'all')) {
-      setScopedData(data);
-      setAnalyticsError('');
-      return undefined;
-    }
-    let active = true;
-    setAnalyticsLoading(true);
-    setAnalyticsError('');
-    const filters = formId !== 'all' ? { formId: Number(formId) } : { formType: formType as FeedbackFormType };
-    feedbackApi.analytics(filters).then(result => {
-      if (active) setScopedData(result.analytics);
-    }).catch(error => {
-      if (active) setAnalyticsError(error instanceof Error ? error.message : 'Could not load filtered analytics.');
-    }).finally(() => {
-      if (active) setAnalyticsLoading(false);
-    });
-    return () => { active = false; };
-  }, [compact, data, formId, formType]);
-
-  if (compact) return <AnalyticsKpis data={data} compact />;
-
-  const scopeForms = forms.filter(form => (formType === 'all' || form.formType === formType) && (formId === 'all' || form.id === Number(formId)));
-  const isLectureReport = formType === 'post_lecture' || (formId !== 'all' && scopeForms[0]?.formType === 'post_lecture');
-  const scopeFormIds = new Set(scopeForms.map(form => form.id));
-  const scopeResponses = responses.filter(response => scopeFormIds.has(response.formId));
-  const scopeLabel = formId !== 'all' ? scopeForms[0]?.title || 'Selected form' : formType !== 'all' ? ANALYTICS_FORM_TYPES.find(option => option.value === formType)?.label || 'Selected type' : 'All feedback';
-
-  return <div className="space-y-5">
-    <section className="overflow-hidden rounded-2xl border border-primary-100 bg-white shadow-sm">
-      <div className="bg-gradient-to-r from-[#4B197D] via-[#6024A8] to-[#7C3AED] px-5 py-5 text-white"><div className="flex items-center gap-3"><span className="flex h-11 w-11 items-center justify-center rounded-xl border border-white/20 bg-white/10 text-xl"><i className="ri-line-chart-line" /></span><div><h2 className="font-heading text-lg font-bold !text-white">Feedback Analytics</h2><p className="mt-0.5 text-xs text-purple-100">Monitor completion, response coverage and rating trends using submitted feedback.</p></div></div></div>
-      <div className="grid gap-3 border-t border-primary-100 bg-primary-50/40 p-4 md:grid-cols-2">
-        <div><p className="mb-1.5 text-[10px] font-bold uppercase tracking-wide text-foreground-500">Feedback type</p><ThemedSelect<AnalyticsFormType> value={formType} options={ANALYTICS_FORM_TYPES} onChange={value => { setFormType(value); setFormId('all'); }} /></div>
-        <div><p className="mb-1.5 text-[10px] font-bold uppercase tracking-wide text-foreground-500">Feedback form</p><ThemedSelect value={formId} options={formOptions} onChange={setFormId} /></div>
-      </div>
-    </section>
-
-    {analyticsError && <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-xs font-medium text-rose-700">{analyticsError}</div>}
-    <div className={analyticsLoading ? 'pointer-events-none opacity-55' : ''} aria-busy={analyticsLoading}>
-      <AnalyticsKpis data={scopedData} />
-      {scopedData.questionMetrics && <LectureQuestionAnalytics key={`${formType}:${formId}`} data={scopedData} showLectures={isLectureReport} onViewResponse={onViewResponse} scope={{ ...(formId !== 'all' ? { formId: Number(formId) } : {}), ...(formType !== 'all' ? { formType } : {}) }} />}
-
-      <div className="mt-5">
-        <CompletionSplit data={scopedData} scopeLabel={scopeLabel} />
-      </div>
-
-      <RecentFeedback responses={scopeResponses} />
-    </div>
-  </div>;
-}
 
 function AnalyticsKpis({ data, compact = false }: { data: FeedbackAnalyticsData; compact?: boolean }) {
   const cards = [
@@ -257,22 +181,6 @@ function AnalyticsKpis({ data, compact = false }: { data: FeedbackAnalyticsData;
   return <section aria-label="Feedback completion metrics" className={compact ? 'rounded-xl border border-foreground-200/60 bg-background-50 p-5' : ''}>{compact && <h2 className="mb-4 font-heading text-sm font-semibold text-foreground-900">Completion analytics</h2>}<div className="grid grid-cols-2 gap-3 lg:grid-cols-5">{cards.map(([label, value, icon, tone]) => <div key={label} className={`rounded-xl border border-foreground-200/60 p-4 ${compact ? 'bg-white' : 'bg-white shadow-sm'}`}><div className={`flex h-9 w-9 items-center justify-center rounded-lg text-lg ${tone}`}><i className={icon} /></div><p className="mt-3 text-2xl font-bold text-foreground-900">{value}</p><p className="mt-0.5 text-xs font-semibold text-foreground-500">{label}</p></div>)}</div></section>;
 }
 
-function CompletionSplit({ data, scopeLabel }: { data: FeedbackAnalyticsData; scopeLabel: string }) {
-  const total = Math.max(data.totalAssigned, 1);
-  const completed = data.completed / total * 100;
-  const progress = data.inProgress / total * 100;
-  const chart = { background: `conic-gradient(#16a34a 0 ${completed}%, #f59e0b ${completed}% ${completed + progress}%, #e2e8f0 ${completed + progress}% 100%)` };
-  return <section className="rounded-2xl border border-foreground-200/70 bg-white p-5 shadow-sm"><div><h3 className="font-heading text-sm font-bold text-foreground-900">Completion split</h3><p className="mt-0.5 text-[11px] text-foreground-500">{scopeLabel}</p></div><div className="mt-5 flex flex-col items-center gap-5 sm:flex-row sm:justify-center"><div className="relative h-36 w-36 shrink-0 rounded-full" style={chart}><div className="absolute inset-5 flex flex-col items-center justify-center rounded-full bg-white"><span className="text-2xl font-bold text-foreground-900">{data.totalAssigned}</span><span className="text-[10px] text-foreground-500">Assigned</span></div></div><div className="space-y-2 text-xs"><LegendDot color="bg-emerald-600" label="Submitted" value={data.completed} /><LegendDot color="bg-amber-500" label="In progress" value={data.inProgress} /><LegendDot color="bg-slate-300" label="Not started" value={data.notStarted} /></div></div></section>;
-}
-
-function LegendDot({ color, label, value }: { color: string; label: string; value: number }) { return <div className="grid grid-cols-[10px_90px_auto] items-center gap-2"><span className={`h-2.5 w-2.5 rounded-full ${color}`} /><span className="text-foreground-600">{label}</span><strong className="text-foreground-900">{value}</strong></div>; }
-
-function RecentFeedback({ responses }: { responses: FeedbackResponse[] }) {
-  const recent = [...responses].sort((left, right) => new Date(right.updatedAt).getTime() - new Date(left.updatedAt).getTime()).slice(0, 6);
-  return <section className="mt-5 overflow-hidden rounded-2xl border border-foreground-200/70 bg-white shadow-sm"><div className="border-b border-foreground-100 px-5 py-4"><h3 className="font-heading text-sm font-bold text-foreground-900">Recent responses</h3><p className="mt-0.5 text-[11px] text-foreground-500">Latest activity in the selected analytics scope.</p></div>{recent.length ? <div className="overflow-x-auto"><table className="w-full min-w-[620px] text-left text-xs"><thead className="bg-background-100 text-[10px] uppercase tracking-wide text-foreground-500"><tr><th className="px-5 py-3">Form</th><th className="px-5 py-3">Learner</th><th className="px-5 py-3">Programme</th><th className="px-5 py-3">Status</th><th className="px-5 py-3">Updated</th></tr></thead><tbody className="divide-y divide-foreground-100">{recent.map(response => <tr key={response.id}><td className="px-5 py-3 font-semibold text-foreground-800">{response.formTitle}</td><td className="px-5 py-3 text-foreground-600">{response.learnerName}</td><td className="px-5 py-3 text-foreground-600">{response.programme || '—'}</td><td className="px-5 py-3"><Status status={response.status} /></td><td className="px-5 py-3 text-foreground-500">{formatDate(response.updatedAt)}</td></tr>)}</tbody></table></div> : <EmptyAnalytics message="No responses in this selection yet." />}</section>;
-}
-
-function EmptyAnalytics({ message }: { message: string }) { return <div className="py-8 text-center text-xs text-foreground-400"><i className="ri-bar-chart-line mb-2 block text-2xl text-foreground-300" />{message}</div>; }
 
 function AssignmentDialog({ form, onClose, onAssigned }: { form: FeedbackForm; onClose: () => void; onAssigned: () => void }) {
   const [mode, setMode] = useState<'all_learners' | 'learner'>('learner'); const [learners, setLearners] = useState<FeedbackLearnerOption[]>([]); const [selected, setSelected] = useState<string[]>([]); const [search, setSearch] = useState('');
