@@ -91,7 +91,7 @@ class GenerateForLearnerTests(SimpleTestCase):
         self.addCleanup(patcher.stop)
         self.mock_window.return_value = (date(2025, 1, 1), date(2026, 6, 30), "apprenticeship", MagicMock())
 
-        for name in ("create_run", "insert_snapshot", "save_warnings", "mark_run_completed", "mark_run_draft", "mark_run_failed", "insert_pptx_file"):
+        for name in ("create_run", "insert_snapshot", "save_warnings", "mark_run_failed", "finalize_run_with_pptx"):
             patcher = patch(f"progress_reviews_api.views.runs.{name}")
             setattr(self, f"mock_{name}", patcher.start())
             self.addCleanup(patcher.stop)
@@ -112,8 +112,11 @@ class GenerateForLearnerTests(SimpleTestCase):
         self.assertEqual(create_kwargs["learner_id"], 501)
         self.assertNotIn("learner_profile_id", create_kwargs)
         self.assertNotIn("legacy_learner_id", create_kwargs)
-        self.mock_insert_pptx_file.assert_called_once()
-        self.mock_mark_run_completed.assert_called_once()
+        self.mock_finalize_run_with_pptx.assert_called_once()
+        self.assertEqual(
+            self.mock_finalize_run_with_pptx.call_args.kwargs["generation_status"],
+            "completed",
+        )
         self.mock_mark_run_failed.assert_not_called()
 
     def test_no_programme_start_date_raises_422(self):
@@ -131,8 +134,26 @@ class GenerateForLearnerTests(SimpleTestCase):
         result = _generate_for_learner(42, generated_by="coach@kbc.example", save_as_draft=True)
 
         self.assertEqual(result["generationStatus"], "draft")
-        self.mock_mark_run_draft.assert_called_once()
-        self.mock_mark_run_completed.assert_not_called()
+        self.assertEqual(
+            self.mock_finalize_run_with_pptx.call_args.kwargs["generation_status"],
+            "draft",
+        )
+
+    @patch("progress_reviews_api.views.storage")
+    @patch("progress_reviews_api.views.generate_progress_review_pptx", return_value=b"PPTX-BYTES")
+    @patch("progress_reviews_api.views.build_review_pack", return_value=SUCCESS_PACK)
+    def test_metadata_finalization_failure_marks_the_run_failed(
+        self, mock_build_pack, mock_generate_pptx, mock_storage,
+    ):
+        mock_storage.storage_configured.return_value = True
+        self.mock_finalize_run_with_pptx.side_effect = RuntimeError("metadata insert failed")
+
+        with self.assertRaises(GenerationError) as ctx:
+            _generate_for_learner(42, generated_by="coach@kbc.example")
+
+        self.assertEqual(ctx.exception.status, 500)
+        self.assertEqual(ctx.exception.message, "PPTX metadata could not be saved.")
+        self.mock_mark_run_failed.assert_called_once()
 
     def test_unresolvable_learner_raises_404(self):
         self.mock_identity.side_effect = LearnerIdentityError("missing")

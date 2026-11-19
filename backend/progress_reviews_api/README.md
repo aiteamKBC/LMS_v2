@@ -208,6 +208,19 @@ in that learner's row and never stops the rest of the batch:
 Bulk generation also creates owner-only drafts; each draft must be reviewed and
 published before it replaces the learner-visible saved deck.
 
+## Post-restore integrity check
+
+Run the read-only checker after restoring a database:
+
+```
+python manage.py check_progress_review_integrity --json
+```
+
+It reports completed and draft runs without PPTX metadata, orphan or duplicate
+PPTX rows, invalid canonical learner references, and missing/invalid required
+file metadata. It exits non-zero when any check fails. The command performs
+only `SELECT` statements and never invokes the schema bootstrap helper.
+
 ## Previewing before generating
 
 Two read-only endpoints exist for the frontend's preview panel, and admit the

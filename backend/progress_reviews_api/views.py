@@ -200,20 +200,21 @@ def _store_deck(
         runs.mark_run_failed(run_id, [f"Upload failed: {exc}"])
         raise GenerationError("PPTX was generated but could not be stored.", 502) from exc
 
-    runs.insert_pptx_file(
-        run_id,
-        container=settings.AZURE_PROGRESS_REVIEW_CONTAINER,
-        blob_name=blob_name,
-        original_filename=filename,
-        size_bytes=len(pptx_bytes),
-        generated_by=generated_by,
-    )
-    if save_as_draft:
-        runs.mark_run_draft(run_id)
-        generation_status = "draft"
-    else:
-        runs.mark_run_completed(run_id)
-        generation_status = "completed"
+    generation_status = "draft" if save_as_draft else "completed"
+    try:
+        runs.finalize_run_with_pptx(
+            run_id,
+            container=settings.AZURE_PROGRESS_REVIEW_CONTAINER,
+            blob_name=blob_name,
+            original_filename=filename,
+            size_bytes=len(pptx_bytes),
+            generated_by=generated_by,
+            generation_status=generation_status,
+        )
+    except Exception as exc:
+        logger.exception("Progress review PPTX metadata finalization failed for run %s", run_id)
+        runs.mark_run_failed(run_id, ["PPTX metadata finalization failed."])
+        raise GenerationError("PPTX metadata could not be saved.", 500) from exc
 
     return {
         "reviewId": run_id,

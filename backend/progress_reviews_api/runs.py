@@ -8,7 +8,7 @@ sequence of named steps rather than a page of inline SQL.
 import json
 import uuid
 
-from django.db import connections
+from django.db import connections, transaction
 
 from .tables import ensure_progress_review_tables
 
@@ -58,10 +58,23 @@ def _record_run(run_id):
 
 
 CONN = "enrolment"
+PPTX_CONTENT_TYPE = "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+
+
+class RunFinalizationError(RuntimeError):
+    """A generated run could not be moved to a file-backed final state."""
 
 
 def _conn():
     return connections[CONN]
+
+
+def _atomic():
+    """Transaction boundary kept as a helper so real-PostgreSQL tests can
+    substitute their guarded disposable connection without touching Django's
+    configured application database.
+    """
+    return transaction.atomic(using=CONN)
 
 
 def new_run_id() -> str:
@@ -94,12 +107,28 @@ def create_run(
 
 
 def mark_run_completed(run_id):
+    """Complete a running run only when its PPTX metadata already exists.
+
+    New generation uses ``finalize_run_with_pptx`` so the file row and this
+    transition commit together. This guarded helper remains for callers that
+    intentionally created the metadata first (for example a repair tool).
+    """
     with _conn().cursor() as cur:
         cur.execute(
             '''update "Learner"."progress_review_runs"
                set generation_status = 'completed', generated_at = now(), updated_at = now()
-               where id = %s''',
+               where id = %s
+                 and generation_status = 'running'
+                 and exists (
+                     select 1 from "Learner"."progress_review_pptx_files" f
+                      where f.run_id = "Learner"."progress_review_runs".id
+                 )''',
             [run_id],
+        )
+        changed = cur.rowcount
+    if not changed:
+        raise RunFinalizationError(
+            f"Run {run_id} cannot be completed without PPTX metadata or from its current state."
         )
     _record_run(run_id)
 
@@ -114,8 +143,18 @@ def mark_run_draft(run_id):
         cur.execute(
             '''update "Learner"."progress_review_runs"
                set generation_status = 'draft', generated_at = now(), updated_at = now()
-               where id = %s''',
+               where id = %s
+                 and generation_status = 'running'
+                 and exists (
+                     select 1 from "Learner"."progress_review_pptx_files" f
+                      where f.run_id = "Learner"."progress_review_runs".id
+                 )''',
             [run_id],
+        )
+        changed = cur.rowcount
+    if not changed:
+        raise RunFinalizationError(
+            f"Run {run_id} cannot become a draft without PPTX metadata or from its current state."
         )
     _record_run(run_id)
 
@@ -126,7 +165,11 @@ def publish_run(run_id):
         cur.execute(
             '''update "Learner"."progress_review_runs"
                set generation_status = 'completed', updated_at = now()
-               where id = %s and generation_status = 'draft' ''',
+               where id = %s and generation_status = 'draft'
+                 and exists (
+                     select 1 from "Learner"."progress_review_pptx_files" f
+                      where f.run_id = "Learner"."progress_review_runs".id
+                 )''',
             [run_id],
         )
         changed = cur.rowcount
@@ -174,6 +217,57 @@ def insert_pptx_file(run_id, *, container, blob_name, original_filename, size_by
             ''',
             [run_id, container, blob_name, original_filename, size_bytes, generated_by],
         )
+
+
+def finalize_run_with_pptx(
+    run_id, *, container, blob_name, original_filename, size_bytes, generated_by,
+    generation_status="completed",
+):
+    """Insert PPTX metadata and finalize one running run atomically.
+
+    A failed insert, an invalid transition, or any commit failure rolls both
+    statements back. Blob upload is necessarily outside this database
+    transaction; callers mark the run failed when this operation raises.
+    """
+    if generation_status not in {"completed", "draft"}:
+        raise ValueError("generation_status must be 'completed' or 'draft'.")
+    if not str(container or "").strip():
+        raise RunFinalizationError("PPTX container is required.")
+    if not str(blob_name or "").strip():
+        raise RunFinalizationError("PPTX blob name is required.")
+    if not str(original_filename or "").strip().lower().endswith(".pptx"):
+        raise RunFinalizationError("PPTX original filename must end in .pptx.")
+    if isinstance(size_bytes, bool) or not isinstance(size_bytes, int) or size_bytes <= 0:
+        raise RunFinalizationError("PPTX size must be a positive integer.")
+
+    with _atomic():
+        insert_pptx_file(
+            run_id,
+            container=container,
+            blob_name=blob_name,
+            original_filename=original_filename,
+            size_bytes=size_bytes,
+            generated_by=generated_by,
+        )
+        with _conn().cursor() as cur:
+            cur.execute(
+                '''update "Learner"."progress_review_runs"
+                   set generation_status = %s, generated_at = now(), updated_at = now()
+                   where id = %s
+                     and generation_status = 'running'
+                     and exists (
+                         select 1 from "Learner"."progress_review_pptx_files" f
+                          where f.run_id = "Learner"."progress_review_runs".id
+                     )''',
+                [generation_status, run_id],
+            )
+            changed = cur.rowcount
+        if changed != 1:
+            raise RunFinalizationError(
+                f"Run {run_id} could not be finalized from its current state."
+            )
+
+    _record_run(run_id)
 
 
 def get_run(run_id):
