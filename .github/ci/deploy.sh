@@ -132,6 +132,7 @@ case "${1:?sub-command}" in
     check "/learner/home" '^200$'             # React route (CloudFront function)
     check "/login_api/me/" '^(200|401|403)$'  # Django answers, not a 5xx
     check "/learner_api/" '^(200|401|403|404)$'
+    check "/coach_api/qms/deep-dive/records/summary/" '^(401|403)$' # Staff-only QMS must reach Django, not SPA HTML
     exit $fail
     ;;
 

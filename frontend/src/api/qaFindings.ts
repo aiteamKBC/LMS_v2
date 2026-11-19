@@ -1,5 +1,7 @@
 import { readLearnerJson } from './learnerRead';
 
+const FINDINGS_BASE = '/coach_api/qms/feedback-findings';
+
 export interface FeedbackFinding {
   id: number;
   formId: number;
@@ -32,12 +34,12 @@ export type FeedbackFindingPatch = {
 };
 
 export const qaFindingsApi = {
-  list: () => readLearnerJson<{ findings: FeedbackFinding[] }>('/qms_api/feedback-findings/', { force: true }),
+  list: () => readLearnerJson<{ findings: FeedbackFinding[] }>(`${FINDINGS_BASE}/`, { force: true }),
   update: async (id: number, patch: FeedbackFindingPatch): Promise<FeedbackFinding> => {
     const tokenResponse = await fetch('/engagement_api/feedback/csrf/', { credentials: 'include' });
     const tokenBody = await tokenResponse.json().catch(() => ({})) as { csrfToken?: string; error?: string };
     if (!tokenResponse.ok || !tokenBody.csrfToken) throw new Error(tokenBody.error || 'Unable to verify the request.');
-    const response = await fetch(`/qms_api/feedback-findings/${id}/`, {
+    const response = await fetch(`${FINDINGS_BASE}/${id}/`, {
       method: 'PATCH', credentials: 'include',
       headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest', 'X-CSRFToken': tokenBody.csrfToken },
       body: JSON.stringify(patch),
