@@ -35,6 +35,7 @@ const initial: CertificateTemplate = {
     certifyText: 'This is to certify that',
     recognitionText: 'in recognition of their dedication, knowledge, and commitment to professional excellence.',
     progressPrefix: 'with progress',
+    otjHoursLabel: 'OTJ hours completed',
     instructorLabel: 'Instructor',
     awardedLabel: 'Awarded on',
     certificateNumberLabel: 'Certificate Number',
@@ -46,6 +47,7 @@ const initial: CertificateTemplate = {
     showFooter: true,
     showWebsite: true,
     showProgress: true,
+    showOtjHours: true,
     decorationSize: 82,
     logoSize: 100,
     titleSize: 100,
@@ -240,6 +242,7 @@ export default function CertificateBuilderPage() {
     awardDate: 'showAwardDate',
     certificateNumber: 'showCertificateNumber',
     progress: 'showProgress',
+    otjHours: 'showOtjHours',
     footer: 'showFooter',
     website: 'showWebsite',
   };
@@ -255,6 +258,7 @@ export default function CertificateBuilderPage() {
     programmeName: 'bodySize',
     recognitionText: 'bodySize',
     progress: 'bodySize',
+    otjHours: 'bodySize',
     qr: 'qrSize',
     instructor: 'signatureSize',
     awardDate: 'signatureSize',
@@ -275,6 +279,7 @@ export default function CertificateBuilderPage() {
     programmeName: 'Programme name',
     recognitionText: 'Recognition text',
     progress: 'Progress line',
+    otjHours: 'OTJ hours',
     qr: 'Verification QR',
     instructor: 'Instructor',
     awardDate: 'Award date',
@@ -366,6 +371,10 @@ export default function CertificateBuilderPage() {
 
           {selectedElement === 'progress' ? (
             <Field label="Progress prefix" value={form.layoutConfig.progressPrefix || 'with progress'} onChange={(value) => updateLayout({ progressPrefix: value })} />
+          ) : null}
+
+          {selectedElement === 'otjHours' ? (
+            <Field label="OTJ hours label" value={form.layoutConfig.otjHoursLabel || 'OTJ hours completed'} onChange={(value) => updateLayout({ otjHoursLabel: value })} />
           ) : null}
 
           {selectedElement === 'instructor' ? (
@@ -493,7 +502,7 @@ export default function CertificateBuilderPage() {
         <div role="tabpanel" id="certificate-panel-builder" aria-labelledby="certificate-tab-builder" hidden={tab !== 'builder'} className="space-y-5">
         <AdminPageHeader
           title="Certificate Builder"
-          description="Configure the certificate unlocked when a learner reaches the eligibility threshold."
+          description="Configure certificate eligibility and design. Publishing updates active certificates while preserving individual corrections and original award details."
           icon="ri-award-line"
           actions={(
             <div className="flex gap-2">
@@ -640,6 +649,8 @@ export default function CertificateBuilderPage() {
             </div>
             <Field label="Website" value={form.layoutConfig.website || form.layoutConfig.footerText || 'www.kentbusinesscollege.com'} onChange={(value) => updateLayout({ website: value, footerText: value })} />
             <Field label="Progress prefix" value={form.layoutConfig.progressPrefix || 'with progress'} onChange={(value) => updateLayout({ progressPrefix: value })} />
+            <Field label="OTJ hours label" value={form.layoutConfig.otjHoursLabel || 'OTJ hours completed'} onChange={(value) => updateLayout({ otjHoursLabel: value })} />
+            <p className="text-xs text-foreground-500">Recorded OTJ time for this course, hidden when unavailable. The preview uses example hours.</p>
             <label className="space-y-1.5">
               <span className="text-xs font-bold text-foreground-600">Recognition text</span>
               <textarea
@@ -727,6 +738,10 @@ export default function CertificateBuilderPage() {
                   Progress
                 </label>
                 <label className="flex items-center gap-2">
+                  <input type="checkbox" checked={form.layoutConfig.showOtjHours !== false} onChange={(event) => updateLayout({ showOtjHours: event.target.checked })} />
+                  OTJ hours
+                </label>
+                <label className="flex items-center gap-2">
                   <input type="checkbox" checked={form.layoutConfig.showFooter !== false} onChange={(event) => updateLayout({ showFooter: event.target.checked })} />
                   Footer text
                 </label>
@@ -748,6 +763,7 @@ export default function CertificateBuilderPage() {
               learnerName="Student name"
               programmeName="Course name"
               progressLabel="Progress"
+              otjHours={12.5}
               certificateNumber="Certificate code"
               awardedOn="End Date"
               verificationUrl="https://kentbusinesscollege.com/verify/demo"

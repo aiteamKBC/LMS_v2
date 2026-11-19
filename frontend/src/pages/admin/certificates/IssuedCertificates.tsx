@@ -26,10 +26,11 @@ function Preview({ certificate, values, pending = false }: { certificate: AdminI
     <p className="mb-3 text-sm font-semibold">{pending ? 'Preview of your correction' : `Certificate copy · revision ${certificate.revision}`}</p>
     <CertificateDocument title={values.title} bodyText={values.bodyText} learnerName={values.learnerName}
       programmeName={values.courseTitle} progressLabel={`${certificate.progressPercent}%`}
+      otjHours={certificate.otjHours}
       certificateNumber={certificate.certificateNumber} awardedOn={date(certificate.issuedAt)} verificationUrl={url}
-      revisionLabel={pending ? 'Correction preview — not saved' : certificate.revision > 1 ? `Corrected copy · Revision ${certificate.revision} · ${date(certificate.correctedAt)}` : undefined}
+      revisionLabel={pending ? 'Correction preview — not saved' : undefined}
       layoutConfig={{ ...certificate.layoutConfig, instructorName: values.instructorName, instructorLabel: values.instructorLabel }} />
-    <p className="mt-3 text-xs text-foreground-600">Progress shown here was recorded at issue. The verification page shows the latest available course progress.</p>
+    <p className="mt-3 text-xs text-foreground-600">Progress on this copy: {certificate.progressPercent}%. Progress at issue: {certificate.progressAtIssue ?? certificate.progressPercent}%. The original award date is retained.</p>
   </div>;
 }
 
@@ -119,6 +120,7 @@ export default function IssuedCertificates({ active }: { active: boolean }) {
         {cert.status === 'issued' && <a href={cert.verificationUrl} target="_blank" rel="noopener noreferrer" className={button}>Open verification page</a>}
       </div>
       {notice && <p role="status" className="rounded-xl bg-emerald-50 p-4 text-sm text-emerald-800">{notice}</p>}
+      {!!cert.refreshWarnings?.length && <div role="alert" className="rounded-xl bg-amber-50 p-4 text-sm text-amber-900">{cert.refreshWarnings.map(warning => <p key={warning}>{warning}</p>)}</div>}
       {error && <div role="alert" className="rounded-xl bg-red-50 p-4 text-sm text-red-800">{error} <button type="button" disabled={busy} className="ml-2 underline" onClick={() => void open(cert.id)}>Reload certificate</button></div>}
       <div className="flex flex-wrap gap-3 text-sm text-foreground-600">
         <span>Originally issued: {date(cert.issuedAt)}</span>
@@ -132,7 +134,7 @@ export default function IssuedCertificates({ active }: { active: boolean }) {
       </div>}
       <div className={mode === 'correct' ? 'grid min-w-0 items-start gap-5 xl:grid-cols-[320px_minmax(0,1fr)]' : 'space-y-5'}>
         {mode !== 'view' && <form onSubmit={save} aria-label={mode === 'correct' ? 'Certificate correction' : 'Certificate revocation'} className="space-y-4 rounded-2xl border bg-white p-5">
-          <p className="text-sm text-foreground-600">{mode === 'correct' ? 'Correct the details on this certificate. The student profile, course records and template stay unchanged.' : 'Revoking this certificate makes its verification link invalid. The record and its history are retained.'}</p>
+          <p className="text-sm text-foreground-600">{mode === 'correct' ? 'This copy uses current learner and course details and the published template. Your corrections take priority for the fields you change, without editing the student profile or template.' : 'Revoking this certificate makes its verification link invalid. The record and its history are retained.'}</p>
           {mode === 'correct' && fields.map(field => <label key={field.key} className="block space-y-1 text-sm font-semibold">
             <span>{field.label}</span>
             {field.key === 'bodyText' ? <textarea className={input} rows={4} required maxLength={field.max} disabled={busy} value={draft[field.key]} onChange={e => setDraft({ ...draft, [field.key]: e.target.value })} />
