@@ -123,13 +123,41 @@ describe('shared subject and week selection', () => {
     expect(learningDeadlines([subject], '2050-01-01')).toEqual([{ id: 'due', title: 'Activity due', type: 'assignment', date: '2050-10-10', subjectId: 'current:M1' }]);
   });
 
-  it('requires a passed final quiz when the certificate template says so', () => {
-    const quiz = { ...entry('final', '2026-09-10', true), native: { componentId: 'FINAL', title: 'Final Test', isQuiz: true, quizAttempts: [{ passed: false }] } } as SubjectEntry;
-    const subject: Subject = { id: 'current:M1', title: 'Current', source: 'current', activities: [quiz] };
-    const template = { id: 1, version: 2, title: 'Certificate', minimumProgress: 100, requireFinalTest: true };
+  // Certificates now depend only on course progress, including older published
+  // templates which still contain requireFinalTest=true.
+  it.each(['current:M1', 'unlinked:Course', 'legacy:50', 'free:FC-1'])('unlocks %s at the configured progress without a final exam', id => {
+    const subject: Subject = { id, title: 'Course', source: id.startsWith('legacy:') ? 'legacy' : 'current',
+      activities: Array.from({ length: 5 }, (_, i) => entry(String(i), '2026-09-10', i < 3)) };
+    const template = { id: 1, version: 2, title: 'Certificate', minimumProgress: 80, requireFinalTest: true };
     expect(certificateEligible(subject, template)).toBe(false);
-    quiz.native!.quizAttempts = [{ passed: true, grade: 1, quizId: 1, startedAt: '2026-09-10T09:00:00Z', submittedAt: '2026-09-10T09:10:00Z' }];
+    subject.activities[3].completed = true;
     expect(certificateEligible(subject, template)).toBe(true);
+    expect(certificateEligible(subject, null)).toBe(false);
+    expect(certificateEligible({ ...subject, activities: [] }, { ...template, minimumProgress: 0 })).toBe(false);
+    expect(certificateEligible({ ...subject, demoProgress: true }, template)).toBe(false);
+  });
+
+  it('uses completed activities even when an aggregate or hours percentage differs', () => {
+    const subject: Subject = { id: 'legacy:50', title: 'Course', source: 'legacy', activities: [entry('1', '', false)], aggregateProgress: 100, acceptedHours: 100 };
+    const template = { title: 'Certificate', minimumProgress: 80, requireFinalTest: false };
+    expect(certificateEligible(subject, template)).toBe(false);
+    expect(certificateEligible({ ...subject, aggregateProgress: 0, acceptedHours: 0, activities: [entry('1', '', true)] }, template)).toBe(true);
+  });
+
+  it.each(['current:M1', 'legacy:50', 'free:FC-1'])('uses the activity counts on the %s card and applies the configured threshold exactly', id => {
+    const subject: Subject = { id, title: 'Course', source: 'current', activities: [], acceptedHours: 100,
+      card: { activityCount: 200, completedActivityCount: 159, progress: 80, finalTestPassed: false, status: 'In progress' } };
+    const template = { title: 'Certificate', minimumProgress: 80, requireFinalTest: false };
+    expect(certificateEligible(subject, template)).toBe(false); // 79.5% cannot round up to 80%.
+    subject.card!.completedActivityCount = 160;
+    subject.card!.progress = 20;
+    subject.acceptedHours = 0;
+    expect(certificateEligible(subject, template)).toBe(true);
+    expect(certificateEligible(subject, { ...template, minimumProgress: 100 })).toBe(false);
+    subject.card!.completedActivityCount = 199;
+    expect(certificateEligible(subject, { ...template, minimumProgress: 100 })).toBe(false);
+    subject.card!.completedActivityCount = 200;
+    expect(certificateEligible(subject, { ...template, minimumProgress: 100 })).toBe(true);
   });
 
   it('keeps a calendar week together across two months and preserves every activity', () => {
@@ -430,7 +458,9 @@ describe('map and My Learning navigation', () => {
 
   it('does not use automatic attendance as the last learner interaction', () => {
     const real = { modules: ['Leadership'], components: [{ moduleId: 'M1', module: 'Leadership',
-      componentId: 'LIVE', component: 'Live lecture', type: 'live_session', attendanceCompleted: true }],
+      componentId: 'LIVE', component: 'Live lecture', type: 'live_session', attendanceCompleted: true,
+      reflectionRequired: true, liveSessionLearning: { attendance: 'present', status: 'completed',
+        requirementsStatus: 'reflection-required', attendedSeconds: 7200, attendedAt: '2026-11-11T10:00:00Z' } }],
       componentProgress: [{ componentId: 'LIVE', kind: 'component', submittedAt: '2026-11-11T10:00:00Z',
         timeTrackingSource: 'verified_teams_attendance', startedAt: null }], videoProgress: [], quizAttempts: [] } as unknown as LearnerDetail;
     const subjects = subjectsFrom(null, real, { covers: {}, current_subjects: [{ id: 'M1', title: 'Leadership' }] });
@@ -480,7 +510,7 @@ describe('map and My Learning navigation', () => {
     ['reading', { contentHtml: '<p>Current lesson</p>' }, '/learner/component/commercial/132/CURRENT'],
     ['video', { videoUrl: 'https://example.org/lesson.mp4' }, '/learner/video/commercial/132/CURRENT'],
     ['quiz', { isQuiz: true, quizMeta: { quizId: 25, questions: 2, duration: null, timeUnit: null } }, '/learner/quiz/commercial/132/25'],
-    ['live_session', { sessionDate: '2026-09-13' }, '/learner/component/commercial/132/CURRENT'],
+    ['live_session', { sessionDate: '2026-09-13', liveSessionAccess: { open: true, status: 'ready', message: '' } }, '/learner/component/commercial/132/CURRENT'],
   ])('opens the current %s player directly from Open subject and Back returns to the catalogue', async (type, content, path) => {
     vi.useFakeTimers({ toFake: ['Date'] });
     vi.setSystemTime(new Date('2026-09-13T12:00:00Z'));

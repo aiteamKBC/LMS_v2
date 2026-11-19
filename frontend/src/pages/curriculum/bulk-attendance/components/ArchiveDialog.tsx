@@ -98,7 +98,7 @@ export default function ArchiveDialog({
         </div>
 
         <div className="flex flex-col gap-2 border-b border-background-200 bg-background-100 px-5 py-2.5">
-          <div className="flex h-10 items-center gap-2 rounded-lg border border-background-300 bg-background-50 px-3 focus-within:border-primary-400">
+          <div data-search-field className="flex h-10 items-center gap-2 rounded-lg border border-background-300 bg-background-50 px-3 focus-within:border-primary-400">
             <i className="ri-search-line text-base text-foreground-500" />
             <input
               type="text"

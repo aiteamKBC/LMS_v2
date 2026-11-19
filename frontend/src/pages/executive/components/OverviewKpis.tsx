@@ -1,35 +1,35 @@
+import { memo, type ReactNode } from "react";
 import KpiCard from "@/components/base/KpiCard";
-import { TIME_ZONE_LABEL, todayIso } from "@/pages/curriculum/recordings/utils";
+import criticalStyles from "./CriticalCard.module.css";
+import followUpStyles from "./FollowUpCards.module.css";
 import {
+  countFeedbackClassifications,
   countByRag,
   formatNumber,
   formatPct,
-  isOpenAction,
 } from "@/lib/qms";
-import type { FormDefinition, QualityAction, QualityRecord } from "@/types/qms";
+import type { FormDefinition, QualityRecord } from "@/types/qms";
+import styles from "../ExecutiveOverview.module.css";
 
 interface OverviewKpisProps {
   records: QualityRecord[];
-  actions: QualityAction[];
   forms: FormDefinition[];
-  availability: { actions: boolean; criticalIssues: boolean; feedback: boolean };
+  availability: { actions: boolean; criticalIssues: boolean; feedback: boolean; feedbackScores: boolean };
   onOpenAuditTypes?: () => void;
+  attentionPanel?: ReactNode;
 }
 
-export default function OverviewKpis({ records, actions, forms, availability, onOpenAuditTypes }: OverviewKpisProps) {
-  const today = todayIso(TIME_ZONE_LABEL);
+function OverviewKpis({ records, forms, availability, onOpenAuditTypes, attentionPanel }: OverviewKpisProps) {
   const audits = records.filter(
     (record) => record.category === "Quality Audit" && record.reviewStatus === "completed",
   );
   const feedback = records.filter(
-    (record) => record.respondentType === "Learner" || record.respondentType === "Employer",
+    (record) => record.category === "Learner Feedback" || record.category === "Employer Feedback",
   );
   const counts = countByRag(records);
-  const critical = records.filter((record) => record.critical && record.rag === "red");
-  const openActions = actions.filter(isOpenAction);
-  const overdueActions = openActions.filter(
-    (action) => action.status === "Overdue" || action.dueOn < today,
-  );
+  const feedbackClasses = countFeedbackClassifications(feedback);
+  const feedbackToReview = feedbackClasses.neutral + feedbackClasses.negative;
+  const criticalFeedback = feedbackClasses.negative;
 
   const auditForms = forms.filter((form) => form.category === "Quality Audit" && form.completionRate);
   const scheduledTotal = auditForms.reduce((sum, form) => sum + form.scheduled, 0);
@@ -46,11 +46,11 @@ export default function OverviewKpis({ records, actions, forms, availability, on
 
   return (
     <section aria-label="Key quality indicators">
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-6">
+      <div className={`${styles.kpiGrid} ${attentionPanel ? styles.withAttention : ""}`}>
         <KpiCard
           label="Completed audits"
           value={formatNumber(audits.length)}
-          definition="Quality audits with a recorded submission date in the period."
+          definition="Quality audits with a completed saved review in the period."
           hint={auditCoverageHint}
           icon="ri-file-shield-2-line"
           accent="primary"
@@ -70,38 +70,37 @@ export default function OverviewKpis({ records, actions, forms, availability, on
         />
 
         <KpiCard
-          label="Critical issues"
-          value={availability.criticalIssues ? formatNumber(critical.length) : '—'}
-          definition="Red outcomes with a critical compliance concern flagged."
-          hint={!availability.criticalIssues ? 'Critical issue data is unavailable' : critical.length ? "Immediate review or escalation required" : "No critical concerns in scope"}
+          label="Feedback to review"
+          value={availability.feedbackScores ? formatNumber(feedbackToReview) : '—'}
+          definition="Negative and Neutral feedback awaiting a quality review; Positive feedback needs no follow-up."
+          hint={availability.feedbackScores
+            ? feedbackToReview ? "Review the original responses and decide whether follow-up is required" : "No Negative or Neutral feedback in scope"
+            : "Feedback classification data is unavailable"}
           icon="ri-alert-line"
-          accent={availability.criticalIssues ? 'critical' : 'secondary'}
-          to="/qa/escalations"
-          linkLabel="Review critical actions"
+          accent={feedbackToReview ? "accent" : "secondary"}
+          to="/curriculum/quality?view=feedbacks&classification=review"
+          linkLabel="Review feedback"
         />
 
         <KpiCard
-          label="Open actions"
-          value={availability.actions ? formatNumber(openActions.length) : '—'}
-          definition="Improvement actions not yet resolved or closed."
-          hint={availability.actions ? `${overdueActions.length} past target date` : 'Action status data is unavailable'}
-          icon="ri-task-line"
-          accent={overdueActions.length ? "accent" : "secondary"}
-          to="/qa/findings"
-          linkLabel="Open action tracker"
+          label="Critical feedback"
+          className={`${criticalStyles.card} ${followUpStyles.card} ${followUpStyles.critical}`}
+          value={availability.feedbackScores ? formatNumber(criticalFeedback) : '—'}
+          definition="Negative scored feedback needing immediate review. This is a feedback classification, not an Assessed policy outcome."
+          hint={!availability.feedbackScores ? 'Feedback classification data is unavailable' : criticalFeedback ? "Open the original responses to review" : "No Negative feedback in scope"}
+          icon="ri-alert-line"
+          accent={criticalFeedback ? 'critical' : 'secondary'}
+          to="/curriculum/quality?view=feedbacks&classification=negative"
+          linkLabel="Review critical feedback"
         />
 
-        <KpiCard
-          label="Not assessed"
-          value={formatNumber(counts.unrated + counts.na)}
-          definition="Records without an approved evaluation policy."
-          hint="Reported descriptively only — never banded"
-          icon="ri-question-line"
-          accent="secondary"
-          to="/curriculum/coaching-recordings/reviews"
-          linkLabel="See quality checks"
-        />
+        <KpiCard label="Not assessed" value={formatNumber(counts.unrated + counts.na)}
+          definition="Records without an approved evaluation policy." hint="Reported descriptively only ? never banded"
+          icon="ri-question-line" accent="secondary" to="/curriculum/coaching-recordings/reviews" linkLabel="See quality checks" />
+        {attentionPanel ? <aside className={`${styles.attentionPanel} ${followUpStyles.attention}`}>{attentionPanel}</aside> : null}
       </div>
     </section>
   );
 }
+
+export default memo(OverviewKpis);

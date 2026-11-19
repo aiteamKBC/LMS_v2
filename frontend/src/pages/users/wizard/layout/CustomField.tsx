@@ -1,3 +1,4 @@
+import { LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
 import { useEffect, useState } from 'react';
 import { AppIcon } from '@/components/feature/AppIcon';
 import { useToast } from "@/hooks/useToast";
@@ -150,7 +151,7 @@ function CustomUploadField({ item, label, required }: { item: LayoutItem; label:
     <FieldRow label={label} required={required}>
       <div className="space-y-2">
         {loading ? (
-          <EmptyState text="Loading…" />
+          <LoadingSkeleton label="Loading…" variant="rows" />
         ) : files.length > 0 && (
           <div className="divide-y divide-foreground-100 rounded-lg border border-foreground-100">
             {files.map((f) => (

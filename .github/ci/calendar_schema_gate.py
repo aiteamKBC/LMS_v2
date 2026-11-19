@@ -9,13 +9,23 @@ import json
 import os
 import sys
 
-TARGET = ('curriculum_api', '0090_delivery_calendars')
-ALLOWED = {('curriculum_api', '0089_module_week_starts_on'), TARGET}
-PRODUCTION_BRANCH = 'br-holy-band-abhispwg'
+LATEST_TARGET = ('curriculum_api', '0091_module_week_boundary_mode')
+TARGET = LATEST_TARGET
+ALLOWED = {('curriculum_api', '0089_module_week_starts_on'), ('curriculum_api', '0090_delivery_calendars'), TARGET}
+PRODUCTION_BRANCH = 'br-lucky-resonance-abhjt0li'
 
 
 class GateError(RuntimeError):
     pass
+
+
+def candidate_target(disk_migrations):
+    # Rollback images containing the original calendar feature do not contain
+    # 0091. Verify their own minimum schema; never reverse the newer ledger.
+    for target in (LATEST_TARGET, ('curriculum_api', '0090_delivery_calendars')):
+        if target in disk_migrations:
+            return target
+    raise GateError('candidate_calendar_migration_missing')
 
 
 def checked_database(config, endpoint, database):
@@ -69,7 +79,7 @@ def fingerprint(cursor, previous=None):
         if previous is None:
             cursor.execute('''SELECT column_name FROM information_schema.columns
                 WHERE table_schema='curriculum' AND table_name=%s''', [table])
-            added = sorted({'calendar_policy', 'week_starts_on'} - {row[0] for row in cursor.fetchall()})
+            added = sorted({'calendar_policy', 'week_starts_on', 'week_boundary_mode'} - {row[0] for row in cursor.fetchall()})
         else:
             added = previous[table]['added']
         # Preserve all existing fields, including existing overrides. Only newly
@@ -80,7 +90,7 @@ def fingerprint(cursor, previous=None):
         result[table] = {'rows': cursor.fetchone(), 'added': added}
         if previous is not None and table in {'modules', 'cohorts'}:
             for column in added:
-                if column == 'week_starts_on' and table != 'modules':
+                if column in {'week_starts_on', 'week_boundary_mode'} and table != 'modules':
                     continue
                 cursor.execute(f'SELECT count(*) FROM curriculum.{table} WHERE {column} IS NOT NULL')
                 if cursor.fetchone()[0] != 0:
@@ -89,9 +99,12 @@ def fingerprint(cursor, previous=None):
 
 
 def verify_schema(cursor):
-    for table, column, data_type in (
+    columns = [
             ('modules', 'week_starts_on', 'character varying'),
-            ('modules', 'calendar_policy', 'jsonb'), ('cohorts', 'calendar_policy', 'jsonb')):
+            ('modules', 'calendar_policy', 'jsonb'), ('cohorts', 'calendar_policy', 'jsonb')]
+    if TARGET == LATEST_TARGET:
+        columns.insert(1, ('modules', 'week_boundary_mode', 'character varying'))
+    for table, column, data_type in columns:
         cursor.execute('''SELECT data_type, is_nullable FROM information_schema.columns
             WHERE table_schema='curriculum' AND table_name=%s AND column_name=%s''', [table, column])
         if cursor.fetchone() != (data_type, 'YES'):
@@ -161,8 +174,13 @@ def main():
     alias = 'calendar_release'
     connections.databases[alias] = config
     db = connections[alias]
+    def candidate_executor(database):
+        global TARGET
+        executor = MigrationExecutor(database)
+        TARGET = candidate_target(executor.loader.disk_migrations)
+        return executor
     try:
-        result = run_gate(db, MigrationExecutor, transaction.atomic, os.environ['CALENDAR_GATE_MODE'],
+        result = run_gate(db, candidate_executor, transaction.atomic, os.environ['CALENDAR_GATE_MODE'],
                           os.environ.get('CALENDAR_RESTORE_POINT', ''), config['NAME'])
         print('CALENDAR_SCHEMA_GATE ' + json.dumps(result, sort_keys=True))
     finally:

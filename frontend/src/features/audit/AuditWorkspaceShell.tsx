@@ -22,7 +22,7 @@ export function AuditWorkspaceShell({ children, homePath, title }: {
       pageTitle={title}
       hideBreadcrumbs
     >
-      <div className="workspace-audit-content min-h-full">{children}</div>
+      <div className="workspace-audit-content min-h-full" data-audit-home={homePath}>{children}</div>
     </WorkspaceShell>
   );
 }

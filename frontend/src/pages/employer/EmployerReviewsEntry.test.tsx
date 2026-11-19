@@ -32,7 +32,8 @@ it.each([GatewayEntry, ProgressEntry])('requires sign-in rather than showing sam
 it('waits for session initialization before choosing an employer', () => {
   session.isInitialized = false;
   show(GatewayEntry);
-  expect(screen.getByRole('status')).toHaveTextContent('Loading');
+  expect(screen.getByRole('status')).toHaveAccessibleName('Loading your account...');
+  expect(screen.getByRole('status').textContent).toBe('');
   expect(screen.queryByTestId('destination')).not.toBeInTheDocument();
 });
 it('keeps staff on their own workspace instead of guessing an employer identity', () => {

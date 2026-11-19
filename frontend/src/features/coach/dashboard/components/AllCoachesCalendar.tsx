@@ -258,16 +258,6 @@ export function AllCoachesCalendar({
             })}
           </div>
         )}
-
-        {coaches.length > 0 && (
-          <div className="mt-4 flex flex-wrap gap-x-4 gap-y-2 border-t border-foreground-200/60 pt-4">
-            {coaches.map((coach, index) => (
-              <button key={coach.email} type="button" onClick={() => setSelectedCoach(current => current === coach.email ? 'all' : coach.email)} className={`flex items-center gap-1.5 text-[10px] font-semibold ${selectedCoach === coach.email ? 'text-foreground-900' : 'text-foreground-500 hover:text-foreground-800'}`}>
-                <i className={`h-2 w-2 rounded-full ${COACH_COLOURS[index % COACH_COLOURS.length].dot}`} />{coachLabel(coach)}
-              </button>
-            ))}
-          </div>
-        )}
       </div>
     </section>
   );

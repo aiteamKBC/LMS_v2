@@ -1,3 +1,4 @@
+import { LoadingLabel } from '@/components/feature/LoadingSkeleton';
 import { BarChart3, Check, Clock3, FileText, ShieldCheck, UserRound, Users } from 'lucide-react';
 import type { AdvancedAdminCoachingSessionDetail, AdvancedAdminReview } from '@/api/advancedAdmin';
 import StructuredRecord from './StructuredRecord';
@@ -32,7 +33,7 @@ function transcriptTurns(content: string) {
   });
 }
 
-export function TranscriptPanel({ detail, fallback }: { detail: AdvancedAdminCoachingSessionDetail | null; fallback: string }) {
+export function TranscriptPanel({ detail, fallback }: { detail: AdvancedAdminCoachingSessionDetail | null; fallback: React.ReactNode }) {
   const content = detail?.transcript?.content;
   if (!content?.trim()) return <EmptyPanel text={fallback} />;
   const turns = transcriptTurns(content);
@@ -52,8 +53,8 @@ export function TranscriptPanel({ detail, fallback }: { detail: AdvancedAdminCoa
   </section>;
 }
 
-export function EmptyPanel({ text }: { text: string }) {
-  return <p className="rounded-2xl border border-foreground-200 bg-white p-5 text-sm text-foreground-600">{text}</p>;
+export function EmptyPanel({ text }: { text: React.ReactNode }) {
+  return <p className="rounded-2xl border border-foreground-200 bg-white p-5 text-sm text-foreground-600"><LoadingLabel>{text}</LoadingLabel></p>;
 }
 
 function InfoTile({ label, value, icon }: { label: string; value: string; icon: React.ReactNode }) {
@@ -85,7 +86,7 @@ function QualityCheck({ item }: { item: CheckItem }) {
   </article>;
 }
 
-export function AiReportPanel({ report, review, detail, fallback }: { report: Report | null; review: AdvancedAdminReview; detail: AdvancedAdminCoachingSessionDetail | null; fallback: string }) {
+export function AiReportPanel({ report, review, detail, fallback }: { report: Report | null; review: AdvancedAdminReview; detail: AdvancedAdminCoachingSessionDetail | null; fallback: React.ReactNode }) {
   if (!report) return <EmptyPanel text={fallback} />;
   const overall = asRecord(report.overall_rating);
   const checks: CheckItem[] = Array.isArray(report.qa) ? report.qa.filter(item => asRecord(item)) as CheckItem[] : [];
@@ -113,7 +114,7 @@ export function AiReportPanel({ report, review, detail, fallback }: { report: Re
   </div>;
 }
 
-export function AttendancePanel({ detail, fallback, transcriptUnavailable }: { detail: AdvancedAdminCoachingSessionDetail | null; fallback: string; transcriptUnavailable: string }) {
+export function AttendancePanel({ detail, fallback, transcriptUnavailable }: { detail: AdvancedAdminCoachingSessionDetail | null; fallback: React.ReactNode; transcriptUnavailable: React.ReactNode }) {
   if (!detail?.attendance) return <EmptyPanel text={fallback} />;
   const { attendance } = detail;
   const learner = Boolean(attendance.learner || detail.learnerAttended === true);
@@ -126,6 +127,6 @@ export function AttendancePanel({ detail, fallback, transcriptUnavailable }: { d
   return <div className="space-y-4">
     <section className="rounded-2xl border border-foreground-200 bg-white p-5"><h4 className="font-bold text-primary-950">Attendance Quality <span className="ml-2 rounded-full bg-emerald-50 px-2.5 py-1 text-xs text-emerald-700">{quality}</span></h4><p className="mt-3 text-sm text-foreground-600">{learner && manager ? 'Learner and manager attendance recorded.' : 'Attendance records are shown below.'}{detail.transcript?.content ? ' A transcript is available.' : ''}</p></section>
     <div className="grid gap-3 md:grid-cols-2">{attendee('Learner Attendance', learner, attendance.learner?.durationSeconds)}{attendee('Manager Attendance', manager, attendance.manager?.durationSeconds)}</div>
-    <section className="rounded-2xl border border-foreground-200 bg-white p-5"><h5 className="font-bold text-primary-950">Session Metrics</h5><div className="mt-3 grid gap-3 md:grid-cols-2"><div className="rounded-xl bg-primary-50 p-5 text-center"><p className="text-xs font-bold uppercase text-foreground-500">Days diff</p><strong className="mt-1 block text-2xl text-primary-950">{days === null || Number.isNaN(days) ? '—' : `${days > 0 ? '+' : ''}${days}`}</strong><p className="text-xs text-foreground-500">{days === null || Number.isNaN(days) ? 'Not recorded' : days === 0 ? 'On planned date' : 'From planned date'}</p></div><div className="rounded-xl bg-primary-50 p-5 text-center"><p className="text-xs font-bold uppercase text-foreground-500">Transcript</p><FileText size={24} className="mx-auto mt-2 text-emerald-600" /><p className="mt-1 text-xs font-semibold text-emerald-700">{detail.transcript?.content?.trim() ? 'Available' : 'Not available'}</p>{!detail.transcript?.content?.trim() && <p className="mt-1 text-xs text-foreground-500">{transcriptUnavailable}</p>}</div></div></section>
+    <section className="rounded-2xl border border-foreground-200 bg-white p-5"><h5 className="font-bold text-primary-950">Session Metrics</h5><div className="mt-3 grid gap-3 md:grid-cols-2"><div className="rounded-xl bg-primary-50 p-5 text-center"><p className="text-xs font-bold uppercase text-foreground-500">Days diff</p><strong className="mt-1 block text-2xl text-primary-950">{days === null || Number.isNaN(days) ? '—' : `${days > 0 ? '+' : ''}${days}`}</strong><p className="text-xs text-foreground-500">{days === null || Number.isNaN(days) ? 'Not recorded' : days === 0 ? 'On planned date' : 'From planned date'}</p></div><div className="rounded-xl bg-primary-50 p-5 text-center"><p className="text-xs font-bold uppercase text-foreground-500">Transcript</p><FileText size={24} className="mx-auto mt-2 text-emerald-600" /><p className="mt-1 text-xs font-semibold text-emerald-700">{detail.transcript?.content?.trim() ? 'Available' : 'Not available'}</p>{!detail.transcript?.content?.trim() && <p className="mt-1 text-xs text-foreground-500"><LoadingLabel>{transcriptUnavailable}</LoadingLabel></p>}</div></div></section>
   </div>;
 }

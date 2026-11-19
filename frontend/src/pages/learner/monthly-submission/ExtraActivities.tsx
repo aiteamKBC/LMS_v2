@@ -1,3 +1,4 @@
+import { LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
 import { Link } from 'react-router-dom';
 import { formatSystemTimestamp } from '@/lib/format';
 import { useExtraActivities } from '@/api/extraActivities';
@@ -9,7 +10,7 @@ export function ExtraActivities({ kind, learnerId, month }: { kind: string; lear
   const { activities, loading, error, refresh } = useExtraActivities(kind, learnerId, month);
   return <section aria-label="Extra activities" className="my-5 space-y-3">
     <div className={styles.sectionHeading}><h3>Extra activities</h3><button type="button" className={styles.secondary} onClick={refresh}>Refresh activities</button></div>
-    {loading && <p role="status">Loading extra activities...</p>}
+    {loading && <p ><LoadingSkeleton label="Loading extra activities..." variant="rows" /></p>}
     {error && <p role="alert">{error}</p>}
     {!loading && !error && !activities.length && <p>No extra activities submitted{month ? ' this month' : ' yet'}.</p>}
     {activities.map(activity => <article key={activity.activityId} className={styles.submissionAttempt}>

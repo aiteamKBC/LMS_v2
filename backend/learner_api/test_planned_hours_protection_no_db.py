@@ -95,9 +95,13 @@ class PersistSnapshotKeepsOfficialPlannedHoursTests(SimpleTestCase):
 
 def live_snapshot_inputs(stack, *, review_planned):
     """Mock the inputs of the real _live_otjh_snapshot, keeping its arithmetic."""
+    stack.enter_context(patch('learner_api.canonical_hours.profile_actual_hours', return_value=12.0))
+    stack.enter_context(patch('learner_api.manual_attendance_completion.read_manual_context', return_value={}))
+    stack.enter_context(patch('learner_api.progress_transfer_store.read_state', return_value={'items': [], 'records': []}))
+    stack.enter_context(patch('learner_api.attendance_learning.with_learning_requirements', side_effect=lambda source, credits: credits))
+    stack.enter_context(patch('learner_api.live_session_access.annotate_access', side_effect=lambda source, components: components))
     for name, value in (
         ("_review_otjh_hours", (review_planned, 0)),
-        ("completed_hours_from_progress", "12"),
         ("_cumulative_week_target", 20.0),
         ("_week_target_rows", []),
         ("week_by_elapsed_time", None),
@@ -146,7 +150,8 @@ class SummaryPageLoadTests(SimpleTestCase):
                 return stack.enter_context(patch.object(reader, name, **kwargs))
 
             # Other GET-side writers are a separate approved slice; mocked here.
-            others = [mock(name) for name in ("advance_learner", "hydrate_source_training_plan")]
+            others = [mock(name) for name in ("advance_learner", "install_canonical_training_plan")]
+            legacy_hydration = mock("hydrate_source_training_plan")
             mock("effective_training_plan", return_value=[])
             mock("_active_profile_for_source", return_value=profile)
             mock("_linked_profile_ids", return_value=())
@@ -164,9 +169,9 @@ class SummaryPageLoadTests(SimpleTestCase):
             build = stack.enter_context(patch.object(reader, "build_learner_detail",
                                                      wraps=reader.build_learner_detail))
             stack.enter_context(patch("learner_api.teams_attendance.annotate_attendance_completion",
-                                      side_effect=lambda rows, profile: rows))
+                                      side_effect=lambda rows, profile, **kwargs: rows))
             stack.enter_context(patch("learner_api.replacement_learning.annotate_replacement_learning",
-                                      side_effect=lambda rows, pk: rows))
+                                      side_effect=lambda rows, pk, **kwargs: rows))
             stack.enter_context(patch("learner_api.live_session_progress.read_live_credits", return_value=[]))
             stack.enter_context(patch("learner_api.live_session_progress.supplement_component_progress",
                                       side_effect=lambda rows, credits: rows))
@@ -174,6 +179,7 @@ class SummaryPageLoadTests(SimpleTestCase):
             request = RequestFactory().get("/learner_api/learner-detail/commercial/7/", {"content": "summary"})
             for _ in range(times):
                 responses.append(reader.learner_detail.__wrapped__(request, "commercial", 7))
+        legacy_hydration.assert_not_called()
         for other in others:
             self.assertEqual(other.call_count, times)
         # The summary path still persists the other snapshot columns.

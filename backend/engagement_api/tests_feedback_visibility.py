@@ -85,7 +85,7 @@ class FeedbackVisibilityTests(SimpleTestCase):
         self.assertIn(b'Assigned feedback', response.content)
         self.assertIn(b'Session 1', response.content)
         self.assertNotIn(b'Session 2', response.content)
-        self.assertEqual(recipients.filter.call_args_list[0].kwargs['learner_id'], '61')
+        self.assertEqual(recipients.filter.call_args_list[0].kwargs['enrolment_id'], '61')
         self.assertEqual(recipients.filter.call_args_list[0].kwargs['delivery__form__form_type__in'], ['post_lecture'])
         assignment.assert_not_called()
         general_forms.assert_not_called()
@@ -152,7 +152,7 @@ class FeedbackVisibilityTests(SimpleTestCase):
             delivery.attendance_source = 'qr_schedule'
             self.assertEqual(feedback._learner_feedback_context('61', delivery_id=21, lecture_only=True), (None, None, None))
             self.assertEqual(query.get.call_args.kwargs, {
-                'delivery_id': 21, 'learner_id': '61', 'revoked_at__isnull': True,
+                'delivery_id': 21, 'enrolment_id': '61', 'revoked_at__isnull': True,
                 'delivery__status': 'open', 'delivery__form__status': 'published',
                 'delivery__form__form_type': 'post_lecture',
             })

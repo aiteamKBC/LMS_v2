@@ -104,6 +104,16 @@ def to_list_row(u):
         # "Add" vs "Edit" without fetching every learner's plan.
         "hasLearningPlan": has_plan,
         "programmeStatus": programme_status(u),
+        # Lightweight progression fields for staff dashboards. These are
+        # already stored on Created_users; exposing them here keeps the
+        # directory-backed Deep Dive view on one bounded collection request.
+        "learnerStartDate": _s(getattr(u, "learner_start_date", None)),
+        "learnerEndDate": _s(getattr(u, "learner_end_date", None)),
+        "startDate": _s(getattr(u, "start_date", None)),
+        "endDate": _s(getattr(u, "apprenticeship_end_date", None)) or _s(getattr(u, "end_date", None)),
+        "coachName": _s(getattr(u, "coach_name", None)),
+        "coachEmail": _s(getattr(u, "coach_email", None)),
+        "referenceNumber": _s(getattr(u, "reference_number", None)),
         # The programme itself, not just its status — the directory shows both.
         # Staff and employer rows have no programme, so their mappers leave it
         # absent and the table renders a dash.

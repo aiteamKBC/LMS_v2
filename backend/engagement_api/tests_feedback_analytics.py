@@ -47,10 +47,11 @@ class FeedbackAnalyticsTests(SimpleTestCase):
             mock.patch.object(feedback, 'question_analytics', return_value={'questionMetrics': [], 'overallScore': {'score': None}}) as metrics,
             mock.patch.object(feedback, 'lecture_analytics_options', return_value=[]) as lectures,
             mock.patch.object(feedback, '_forms_queryset', return_value=forms),
-            mock.patch.object(feedback, '_assigned_count', return_value=10),
+            mock.patch.object(feedback, 'form_report_counts', return_value={20: {'assigned': 10}}),
             mock.patch.object(feedback.FeedbackForm.objects, 'filter', return_value=family_forms),
             mock.patch.object(feedback.FeedbackResponse.objects, 'all', return_value=responses),
             mock.patch.object(feedback.FeedbackQuestion.objects, 'filter', return_value=rating_questions),
+            mock.patch.object(feedback.FeedbackAnswer.objects, 'filter', return_value=SimpleNamespace(values_list=lambda *args: [(7, 8), (7, 10)])),
         ):
             response = feedback.analytics(self.factory.get('/?formType=post_lecture'))
 

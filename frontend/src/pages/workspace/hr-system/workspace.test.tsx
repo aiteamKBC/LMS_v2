@@ -23,19 +23,27 @@ beforeEach(() => {
 });
 
 describe('programme demonstration', () => {
+  it.each(['', 'learners'])('keeps Learners out of navigation and shows Overview for view=%s', (view) => {
+    show(view);
+    expect(screen.queryByRole('link', { name: 'Learners' })).not.toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Learning that moves people forward.' })).toBeInTheDocument();
+    expect(screen.getByRole('table', { name: 'Demo programme learner progress' })).toBeInTheDocument();
+    expect(api.list).not.toHaveBeenCalled();
+  });
+
   it('starts each HR section at the top while retaining learner filters', async () => {
     const user = userEvent.setup();
     show();
     await user.click(screen.getByRole('button', { name: /At risk\s*1/ }));
     const main = screen.getByRole('main');
     main.scrollTop = 180;
-    await user.click(screen.getByRole('link', { name: 'Learners' }));
-    expect(main.scrollTop).toBe(0);
-    expect(within(screen.getByRole('table', { name: 'Demo programme learner progress' })).getAllByRole('row')).toHaveLength(2);
-    main.scrollTop = 100;
     await user.click(screen.getByRole('link', { name: 'Programme & modules' }));
     expect(main.scrollTop).toBe(0);
     expect(screen.getByRole('table', { name: 'Module breakdown for Demo Learner 01' })).toBeInTheDocument();
+    main.scrollTop = 100;
+    await user.click(screen.getByRole('link', { name: 'Overview' }));
+    expect(main.scrollTop).toBe(0);
+    expect(within(screen.getByRole('table', { name: 'Demo programme learner progress' })).getAllByRole('row')).toHaveLength(2);
     expect(api.list).not.toHaveBeenCalled();
   });
 

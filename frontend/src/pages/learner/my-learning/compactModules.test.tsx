@@ -57,6 +57,26 @@ beforeEach(() => {
 afterEach(() => { clearAllCachedResources(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
 describe('compact My Learning route', () => {
+  it.each(['commercial', 'apprenticeship'] as const)('shows certificates for an old course and inside an assigned builder free course (%s)', async kind => {
+    const catalogue = makeCatalogue(kind);
+    catalogue.modules = [{ ...catalogue.modules[1], completedActivityCount: 3, progress: 100, status: 'Completed' }];
+    const module = makeModule();
+    const completedModule = { ...module, detail: { ...module.detail, componentProgress: [{ componentId: 'C1', passed: true }] } };
+    vi.mocked(fetch).mockImplementation(async input => {
+      const url = String(input);
+      if (url.includes('/certificates/')) return reply({ template: { id: 1, version: 2, title: 'Achievement', minimumProgress: 80, requireFinalTest: true }, csrfToken: 'csrf' });
+      if (url.includes('/free-courses/')) return reply({ freeCourses: [{ freeCourseId: 'FC-1', moduleId: 'M1', courseName: 'One', weeks: [], weekCount: 1, activityCount: 1 }] });
+      if (url.includes('/modules/')) return reply(completedModule);
+      return reply(catalogue);
+    });
+    route(`/learner/my-learning/${kind}/7`);
+    expect(await screen.findByRole('button', { name: 'Get certificate' })).toBeVisible();
+    fireEvent.click(screen.getByRole('radio', { name: 'Free courses' }));
+    fireEvent.click(await screen.findByRole('button', { name: /Open course/ }));
+    await screen.findByRole('region', { name: 'Module progress' });
+    expect(await screen.findByRole('button', { name: 'Get certificate' })).toBeVisible();
+  });
+
   it.each(['commercial', 'apprenticeship'] as const)('shows each course KSB percentage from the catalogue (%s)', async kind => {
     const catalogue = makeCatalogue(kind);
     catalogue.modules[0].ksbProgress = { completed: 1, total: 4, percent: 25, status: 'ready' };
@@ -227,7 +247,9 @@ describe('compact My Learning route', () => {
     fireEvent.change(search, { target: { value: 'Quiet lesson' } });
     let finish!: (response: Response) => void;
     vi.mocked(fetch).mockImplementation(async input => String(input).includes('/certificates/')
-      ? reply({ template: null, csrfToken: '' }) : new Promise(resolve => { finish = resolve; }));
+      ? reply({ template: null, csrfToken: '' }) : String(input).includes('/search/')
+        ? reply({ matches: [{ id: 'current:M1' }], nextOffset: null })
+        : new Promise(resolve => { finish = resolve; }));
     act(() => invalidateLearnerReads());
     expect(screen.getByText('1 of 2 activities completed')).toBeVisible();
     expect(search).toHaveValue('Quiet lesson');
@@ -432,7 +454,9 @@ it('retains the frontend current/previous canonical summary fixture', () => {
     { componentId: 'C1', moduleId: 'M1', module: 'One', component: 'Lesson', type: 'reading' },
     { componentId: 'Q1', moduleId: 'M1', module: 'One', component: 'Quiz', isQuiz: true, quizMeta: { quizId: 1 } },
     { componentId: 'Q2', moduleId: 'M1', module: 'One', component: 'Quiz 2', isQuiz: true, quizMeta: { quizId: 1 } },
-    { componentId: 'L1', moduleId: 'M1', module: 'One', component: 'Live', type: 'live_session', attendanceCompleted: true }],
+    { componentId: 'L1', moduleId: 'M1', module: 'One', component: 'Live', type: 'live_session', attendanceCompleted: true,
+      reflectionRequired: true, liveSessionLearning: { attendance: 'present', status: 'completed',
+        requirementsStatus: 'reflection-required', attendedSeconds: 7200, attendedAt: '2026-11-11T10:00:00Z' } }],
     componentProgress: [{ componentId: 'C1', kind: 'component' }], quizAttempts: [
       { componentId: 'Q2', quizId: 1, passed: true }, { componentId: 'Q2', quizId: 1, passed: false }, { componentId: 'OLD', quizId: 99, passed: true }],
     retiredQuizComponents: [{ componentId: 'OLD', moduleId: 'M1', module: 'One', component: 'Old quiz', isQuiz: true, quizMeta: { quizId: 99 } }] } as unknown as LearnerDetail;

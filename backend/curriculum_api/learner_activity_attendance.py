@@ -8,9 +8,9 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 
 from old_otjh.service import ServiceError
+from learner_api.live_session_policy import LIVE_SESSION_CREDIT_SECONDS as ATTENDED_SECONDS
 
 UK = ZoneInfo('Europe/London')
-ATTENDED_SECONDS = 9000
 EVENT = 'attendance_confirmation'
 
 

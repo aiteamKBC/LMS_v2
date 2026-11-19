@@ -1,3 +1,4 @@
+import { LoadingControl, LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
 import { AssignedLearners, LearnerDirectoryProvider } from '../shared/entities/AssignedLearners';
 import { useWeekPointDrafts, type WeekPointDrafts } from './useWeekPointDrafts';
 import { WebWeekPointsEditor } from './WebWeekPointsEditor';
@@ -4191,7 +4192,7 @@ function ModuleBuilderContent() {
               <div className="min-w-0">
                 <h2 className="text-lg font-heading font-bold text-foreground-950">Module Builder</h2>
                 <p className="mt-1 max-w-2xl text-[12px] leading-5 text-foreground-500">
-                  {loading ? 'Loading live LMS modules...' : 'Manage module structures, delivery scope and KSB mapping in one workspace.'}
+                  {loading ? <LoadingSkeleton label="Loading live LMS modules..." variant="text" /> : 'Manage module structures, delivery scope and KSB mapping in one workspace.'}
                 </p>
               </div>
             </div>
@@ -4769,7 +4770,7 @@ function WorkspaceHeader({ module, programmeOptions, hierarchy, ksbProfileOption
           </div>
           <div className="block min-w-0">
             <span className="mb-1 block text-[9px] font-bold uppercase tracking-wide text-foreground-400">KSB source</span>
-            <SelectMenu
+            {<LoadingControl loading={(standardsLoading)}><SelectMenu
               ariaLabel="KSB source"
               value={ksbProfileValue}
               disabled={programmeLocked}
@@ -4781,7 +4782,7 @@ function WorkspaceHeader({ module, programmeOptions, hierarchy, ksbProfileOption
               placeholder={standardsLoading ? 'Loading standards...' : 'No source selected'}
               clearable
               size="sm"
-            />
+            /></LoadingControl>}
             {programmeLocked && <span className="mt-0.5 block text-[9px] font-semibold text-foreground-400">Locked to programme KSB source</span>}
           </div>
           <div className="block min-w-0">
@@ -5397,7 +5398,13 @@ function CourseStructure({ pointDrafts, readOnly = false, module, selection, dra
                 <button type="button" onClick={() => onSelectWeek(week.id)} className="min-w-0 text-left">
                   <span className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
                     <span className="min-w-0 break-words text-[12px] font-bold text-foreground-900 [overflow-wrap:anywhere]">{week.title || `Week ${week.weekNumber}`}</span>
-                    {moduleWeekDeliveryDate(week) && (
+                    {week.studyWeekStartDate ? (
+                      <span className="inline-flex flex-wrap items-center gap-x-1 text-[10px] font-medium text-foreground-500">
+                        <AppIcon className="ri-calendar-line shrink-0" />
+                        Study week: <time dateTime={week.studyWeekStartDate}>{formatDateLabel(week.studyWeekStartDate)}</time>
+                        – <time dateTime={week.studyWeekEndDate}>{formatDateLabel(week.studyWeekEndDate || '')}</time>
+                      </span>
+                    ) : moduleWeekDeliveryDate(week) && (
                       <span className="inline-flex flex-wrap items-center gap-x-1 text-[10px] font-medium text-foreground-400">
                         <AppIcon className="ri-calendar-line shrink-0" />
                         Delivery:
@@ -5524,7 +5531,7 @@ function CourseStructure({ pointDrafts, readOnly = false, module, selection, dra
                     pointsByType={pointsByType}
                     variant="nested"
                     weekSessionDate={week.sessionDate}
-                    holidayDates={weekHolidayNotices.map(slot => slot.date)}
+                    holidayDates={module.weekBoundaryMode === 'calendar' ? [] : weekHolidayNotices.map(slot => slot.date)}
                     dateDriftByComponentId={dateDriftByComponentId}
                     onReuseComponents={() => onReuseComponents(week.id)}
                     otherWeeks={module.weekStructure
@@ -5831,20 +5838,8 @@ function OpeningModuleAlert({ title, mode, complete }: { title: string; mode: 'b
     <div className="fixed inset-0 z-[90] flex items-center justify-center bg-black/40 p-4 backdrop-blur-sm" aria-live="polite" aria-busy="true">
       <div className="w-full max-w-md overflow-hidden rounded-2xl border border-white/10 bg-background-50 text-center shadow-2xl">
         <div className="p-6">
-          <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-full border-4 border-primary-100 bg-primary-50 text-primary-600">
-            <AppIcon className="ri-loader-4-line animate-spin text-3xl"></AppIcon>
-          </div>
-          <h3 className="mt-4 text-lg font-heading font-bold text-foreground-950">
-            {isSettings ? 'Opening module settings...' : 'Opening module builder...'}
-          </h3>
-          <p className="mx-auto mt-2 max-w-xs text-[13px] leading-relaxed text-foreground-500">
-            Loading <span className="font-semibold text-foreground-900">{title}</span> and preparing the authoring workspace.
-          </p>
-          <div className="mt-5 rounded-xl border border-background-200 bg-background-100/70 p-3 text-left">
-            <div className="flex items-center gap-2 text-[12px] font-semibold text-foreground-700">
-              <AppIcon className={`${isSettings ? 'ri-settings-3-line' : 'ri-layout-4-line'} text-primary-600`}></AppIcon>
-              {isSettings ? 'Preparing settings panel...' : 'Loading module structure...'}
-            </div>
+          <LoadingSkeleton label={`Opening ${title} ${isSettings ? 'settings' : 'builder'}`} className="w-full" variant="rows" />
+          <div aria-hidden="true" className="mt-5 rounded-xl border border-background-200 bg-background-100/70 p-3 text-left">
             <LoadingProgressBar complete={complete} />
           </div>
         </div>
@@ -6849,7 +6844,7 @@ function LinkedQuizSelector({
         </div>
       ) : (
         <div className="rounded-xl border border-dashed border-background-300 bg-background-50 px-3 py-4 text-center text-[12px] font-semibold text-foreground-500">
-          {loading ? 'Loading LMS quizzes...' : 'No quiz selected. Choose any available LMS quiz from the list above.'}
+          {loading ? <LoadingSkeleton label="Loading LMS quizzes..." variant="text" /> : 'No quiz selected. Choose any available LMS quiz from the list above.'}
         </div>
       )}
       <div className="rounded-xl border border-background-200 bg-background-50">
@@ -7724,7 +7719,9 @@ function KsbSelectorModal({ standards, standardsLoading, ksbSets, ksbSetsLoading
               );
             })}
             {!sourceLocked && !resolvedSelectedSource && <EmptyState text="Choose a KSB Source from the module-level dropdown first." />}
-            {sourceLocked && !resolvedSelectedSource && <EmptyState text="Loading the selected KSB Source, or it is no longer available." />}
+            {sourceLocked && !resolvedSelectedSource && (ksbSetsLoading || standardsLoading
+              ? <LoadingSkeleton label="Loading the selected KSB Source" variant="rows" />
+              : <EmptyState text="The selected KSB Source is no longer available." />)}
             {resolvedSelectedSource && !sourceKsbOptions.length && <EmptyState text="No KSBs are available for this selection." />}
             {resolvedSelectedSource && Boolean(sourceKsbOptions.length) && !filteredKsbOptions.length && <EmptyState text="No KSBs match your search or filter." />}
           </div>
@@ -8501,7 +8498,7 @@ function ModuleCatalogueCard({
             className="inline-flex h-9 min-w-[126px] items-center justify-center gap-1.5 rounded-lg border border-background-200 bg-background-50 px-3 text-[11px] font-bold text-foreground-700 transition-all duration-150 hover:border-primary-200 hover:bg-primary-50 hover:text-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-100 focus:ring-offset-1 active:translate-y-px disabled:cursor-wait disabled:border-primary-200 disabled:bg-primary-50 disabled:text-primary-700 disabled:shadow-inner"
           >
             <AppIcon name={ksbMapLoading ? 'ri-loader-4-line' : 'ri-node-tree'} className={ksbMapLoading ? 'animate-spin' : ''} size={15}></AppIcon>
-            {ksbMapLoading ? 'Loading module KSBs...' : 'Review module KSBs'}
+            {ksbMapLoading ? <LoadingSkeleton label="Loading module KSBs..." variant="text" /> : 'Review module KSBs'}
           </button>
         </div>
         <div className={catalogueStyles.secondaryActions}>
@@ -9406,6 +9403,7 @@ function moduleFormTargetFromCatalogue(module: ModuleCatalogueItem, usage?: Modu
     weeklySchedule: module.weeklySchedule || module.sourceModule?.weeklySchedule || [],
     scheduleMode: module.scheduleMode || module.sourceModule?.scheduleMode,
     weekStartsOn: module.weekStartsOn ?? module.sourceModule?.weekStartsOn,
+    weekBoundaryMode: module.weekBoundaryMode ?? module.sourceModule?.weekBoundaryMode,
     weekDays: usage?.weekDays || String(module.deliveryMetadata?.weekDays || module.sourceModule?.weekDays || ''),
     startTime: usage?.startTime || String(module.deliveryMetadata?.startTime || module.sourceModule?.startTime || ''),
     endTime: usage?.endTime || String(module.deliveryMetadata?.endTime || module.sourceModule?.endTime || ''),

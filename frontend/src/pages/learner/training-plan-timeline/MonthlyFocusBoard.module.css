@@ -66,7 +66,7 @@
   min-height: 2.35rem;
   padding: .45rem .9rem;
   border: 1px solid #d9ccf2;
-  border-radius: .6rem;
+  border-radius: var(--lms-radius, 16px);
   background: var(--kbc-surface, #fff);
   color: var(--board-accent);
   font: inherit;
@@ -107,7 +107,7 @@
   min-width: 0;
   padding: .85rem 1rem;
   border: 1px solid var(--board-line);
-  border-radius: .9rem;
+  border-radius: var(--lms-radius, 16px);
   background: var(--kbc-surface, #fff);
   box-shadow: 0 2px 9px rgb(79 45 127 / .06);
 }
@@ -350,7 +350,7 @@
 
 .assignment {
   border: 1px solid var(--board-line);
-  border-radius: .75rem;
+  border-radius: var(--lms-radius, 16px);
 }
 
 .assignmentHead {
@@ -383,7 +383,7 @@
   width: 2.3rem;
   height: 2.3rem;
   place-items: center;
-  border-radius: .55rem;
+  border-radius: var(--lms-radius, 16px);
   background: var(--board-soft);
   color: var(--board-accent);
 }
@@ -451,7 +451,7 @@
   gap: .35rem;
   min-width: 5.5rem;
   padding: .55rem 1rem;
-  border-radius: .55rem;
+  border-radius: var(--lms-radius, 16px);
   background: var(--board-action);
   color: #fff;
   font-size: .75rem;

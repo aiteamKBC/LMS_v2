@@ -349,7 +349,7 @@ export default function EngagementDashboard() {
                     <CartesianGrid strokeDasharray="3 3" stroke="var(--background-200)" />
                     <XAxis dataKey="range" tick={{ fontSize: 11, fill: 'var(--foreground-400)' }} axisLine={{ stroke: 'var(--background-200)' }} tickLine={false} />
                     <YAxis tick={{ fontSize: 11, fill: 'var(--foreground-400)' }} axisLine={false} tickLine={false} allowDecimals={false} />
-                    <Tooltip contentStyle={{ borderRadius: '8px', border: '1px solid var(--background-200)', fontSize: '11px' }} />
+                    <Tooltip contentStyle={{ borderRadius: 'var(--lms-radius, 16px)', border: '1px solid var(--background-200)', fontSize: '11px' }} />
                     <Bar dataKey="count" radius={[4, 4, 0, 0]} name="Learners">
                       {engagementDistribution.map((entry, index) => <Cell key={`cell-${index}`} fill={entry.fill} />)}
                     </Bar>
@@ -372,7 +372,7 @@ export default function EngagementDashboard() {
                     </Pie>
                     <text x="50%" y="47%" textAnchor="middle" dominantBaseline="middle" className="fill-foreground-900 text-2xl font-semibold">{learners.length}</text>
                     <text x="50%" y="58%" textAnchor="middle" dominantBaseline="middle" className="fill-foreground-400 text-[10px]">learners</text>
-                    <Tooltip contentStyle={{ borderRadius: '8px', border: '1px solid var(--background-200)', fontSize: '11px' }} />
+                    <Tooltip contentStyle={{ borderRadius: 'var(--lms-radius, 16px)', border: '1px solid var(--background-200)', fontSize: '11px' }} />
                     <Legend verticalAlign="bottom" height={36} iconType="circle" wrapperStyle={{ fontSize: '11px' }} />
                   </PieChart>
                 </ResponsiveContainer>
@@ -422,7 +422,7 @@ export default function EngagementDashboard() {
                     <CartesianGrid horizontal={false} stroke="var(--background-200)" />
                     <XAxis type="number" domain={[0, 100]} tick={{ fontSize: 10, fill: 'var(--foreground-400)' }} axisLine={false} tickLine={false} />
                     <YAxis type="category" dataKey="name" width={62} tick={{ fontSize: 10, fill: 'var(--foreground-500)' }} axisLine={false} tickLine={false} />
-                    <Tooltip contentStyle={{ borderRadius: '8px', border: '1px solid var(--background-200)', fontSize: '11px' }} />
+                    <Tooltip contentStyle={{ borderRadius: 'var(--lms-radius, 16px)', border: '1px solid var(--background-200)', fontSize: '11px' }} />
                     <Bar dataKey="value" fill="oklch(var(--primary-500))" radius={[0, 5, 5, 0]} barSize={14} name="Average" />
                   </BarChart>
                 </ResponsiveContainer>
@@ -442,7 +442,7 @@ export default function EngagementDashboard() {
                       <CartesianGrid horizontal={false} stroke="var(--background-200)" />
                       <XAxis type="number" domain={[0, 100]} tick={{ fontSize: 10, fill: 'var(--foreground-400)' }} axisLine={false} tickLine={false} />
                       <YAxis type="category" dataKey="name" width={140} tick={{ fontSize: 9, fill: 'var(--foreground-500)' }} axisLine={false} tickLine={false} />
-                      <Tooltip contentStyle={{ borderRadius: '8px', border: '1px solid var(--background-200)', fontSize: '11px' }} />
+                      <Tooltip contentStyle={{ borderRadius: 'var(--lms-radius, 16px)', border: '1px solid var(--background-200)', fontSize: '11px' }} />
                       <Bar dataKey="engagement" fill="oklch(var(--primary-500))" radius={[0, 4, 4, 0]} barSize={9} name="Engagement" />
                       <Bar dataKey="attendance" fill="oklch(var(--accent-500))" radius={[0, 4, 4, 0]} barSize={9} name="Attendance" />
                     </BarChart>

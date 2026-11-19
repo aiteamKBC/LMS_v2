@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { useState } from 'react';
 import { fireEvent, render, screen, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { MemoryRouter, useLocation } from 'react-router-dom';
 import { Sidebar } from '../Sidebar';
 import { adminNavItems } from '@/mocks/navigation';
@@ -9,7 +10,7 @@ const { denied, auth } = vi.hoisted(() => {
   const denied = new Set<string>();
   return { denied, auth: { canSeeNavItem: (id: string) => !denied.has(id) } };
 });
-vi.mock("@/hooks/useAuth", () => ({ useAuth: () => auth }));
+vi.mock('@/hooks/useAuth', () => ({ useAuth: () => auth }));
 
 function CurrentPath() {
   return <output data-testid="current-path">{useLocation().pathname}</output>;
@@ -21,17 +22,9 @@ function showSidebar(path = '/workspace/admin', pinned = true) {
     return <Sidebar role="admin" roleLabel="Super Admin" navItems={adminNavItems}
       pinned={open} onPinChange={setOpen} mobileOpen={false} onCloseMobile={() => {}} />;
   }
-  render(
-    <MemoryRouter initialEntries={[path]}>
-      <ControlledSidebar />
-      <CurrentPath />
-    </MemoryRouter>,
-  );
+  render(<MemoryRouter initialEntries={[path]}><ControlledSidebar /><CurrentPath /></MemoryRouter>);
   const sidebar = screen.getByRole('complementary', { name: 'Super Admin sidebar' });
-  return {
-    rail: within(within(sidebar).getByRole('navigation', { name: 'Super Admin primary navigation' })),
-    panel: within(sidebar.querySelector('#admin-secondary-navigation') as HTMLElement),
-  };
+  return { sidebar, nav: within(sidebar).getByRole('navigation', { name: 'Super Admin primary navigation' }) };
 }
 
 beforeEach(() => {
@@ -40,127 +33,86 @@ beforeEach(() => {
   localStorage.setItem('kbc_sidebar_expanded', '[]');
 });
 
-describe('Super Admin secondary navigation preview', () => {
-  it('closes when the pointer leaves the entire sidebar', () => {
-    const { rail } = showSidebar();
-    fireEvent.mouseEnter(rail.getByRole('button', { name: 'Platform' }));
-    fireEvent.mouseLeave(screen.getByRole('complementary', { name: 'Super Admin sidebar' }), { relatedTarget: document.body });
-    expect(document.getElementById('admin-secondary-navigation')).toHaveAttribute('inert');
-    expect(document.getElementById('admin-secondary-navigation')).toHaveAttribute('aria-hidden', 'true');
-    expect(rail.getByRole('link', { name: 'Dashboard' })).toBeTruthy();
+describe('Super Admin single-column navigation', () => {
+  it('shows every permitted section with its icon and label in one list', () => {
+    const { sidebar, nav } = showSidebar();
+    expect(within(sidebar).getAllByRole('navigation')).toHaveLength(1);
+    expect(document.getElementById('admin-secondary-navigation')).toBeNull();
+    for (const item of adminNavItems) {
+      const control = within(nav).getByRole(item.children?.length ? 'button' : 'link', { name: item.external ? `${item.label} (opens in a new tab)` : item.label });
+      expect(control.querySelector('svg')).not.toBeNull();
+      expect(within(control).getByText(item.label, { exact: false })).not.toHaveClass('sr-only');
+    }
   });
 
-  it.each([
-    ['/workspace/admin', 'Dashboard'],
-    ['/admin/roles', 'Roles'],
-  ])('opens the current page from the hamburger on %s instead of the last preview', (path, label) => {
-    const { rail, panel } = showSidebar(path);
-    fireEvent.mouseEnter(rail.getByRole('button', { name: 'Platform' }));
-    const sidebar = screen.getByRole('complementary', { name: 'Super Admin sidebar' });
+  it('keeps the complete list open when the pointer leaves', () => {
+    const { sidebar, nav } = showSidebar();
     fireEvent.mouseLeave(sidebar, { relatedTarget: document.body });
-    // Even hovering another icon while collapsed must not change what the hamburger opens.
-    fireEvent.mouseEnter(rail.getByRole('link', { name: 'Platform Report' }));
-    fireEvent.click(within(sidebar).getByRole('button', { name: 'Expand navigation' }));
-    expect(document.getElementById('admin-secondary-navigation')).not.toHaveAttribute('inert');
-    expect(panel.getByRole('link', { name: label })).toHaveAttribute('aria-current', 'page');
-    expect(panel.queryByRole('link', { name: 'Platform Report' })).toBeNull();
-    expect(screen.getByTestId('current-path')).toHaveTextContent(path);
+    expect(within(sidebar).queryByRole('button', { name: /^(Collapse|Expand) navigation$/ })).toBeNull();
+    expect(within(nav).getByRole('button', { name: 'Platform' })).toBeVisible();
+    expect(within(nav).getByRole('link', { name: 'Dashboard' })).toHaveAttribute('aria-current', 'page');
   });
 
-  it.each([
-    ['button', 'Platform', 'Documents'],
-    ['link', 'Platform Report', 'Dashboard'],
-  ])('clears the hover appearance for %s %s while retaining its panel', (role, label, childLabel) => {
-    const { rail, panel } = showSidebar();
-    const item = rail.getByRole(role, { name: label });
-    const idleClasses = item.className;
-    fireEvent.mouseEnter(item);
-    fireEvent.mouseLeave(item, { relatedTarget: document.getElementById('admin-secondary-navigation') });
-    expect(item.className).toBe(idleClasses);
-    expect(item).not.toHaveAttribute('aria-current');
-    expect(panel.getByRole('link', { name: childLabel })).toBeTruthy();
-    expect(rail.getByRole('link', { name: 'Dashboard' })).toHaveClass('bg-brand-accent');
-  });
-
-  it.each([
-    ['/workspace/admin', 'link', 'Dashboard'],
-    ['/admin/roles', 'button', 'User & Access Control'],
-  ])('keeps the current main item active on %s while another group is previewed', (path, role, label) => {
-    const { rail } = showSidebar(path);
-    const active = rail.getByRole(role, { name: label });
-    fireEvent.mouseEnter(rail.getByRole('button', { name: 'Platform' }));
-    expect(active).toHaveClass('bg-brand-accent');
-    expect(active).toHaveAttribute('aria-current');
-    expect(rail.getByRole('button', { name: 'Platform' })).not.toHaveClass('bg-brand-accent');
-  });
-
-  it('opens the collapsed panel on group click and keeps it open on repeated clicks', () => {
-    const { rail, panel } = showSidebar('/workspace/admin', false);
-    const group = rail.getByRole('button', { name: 'Platform' });
-    expect(document.getElementById('admin-secondary-navigation')).toHaveAttribute('inert');
-    fireEvent.click(group);
-    expect(document.getElementById('admin-secondary-navigation')).not.toHaveAttribute('inert');
-    expect(panel.getByRole('link', { name: 'Documents' })).toBeTruthy();
-    fireEvent.click(group);
-    expect(panel.getByRole('link', { name: 'Documents' })).toBeTruthy();
+  it('discloses children inline without replacing other sections or changing the route', () => {
+    const { nav } = showSidebar();
+    const access = within(nav).getByRole('button', { name: 'User & Access Control' });
+    const platform = within(nav).getByRole('button', { name: 'Platform' });
+    fireEvent.click(access);
+    fireEvent.click(platform);
+    expect(within(nav).getByRole('link', { name: 'Accounts' })).toHaveAttribute('href', '/admin/users');
+    expect(within(nav).getByRole('link', { name: 'Documents' })).toHaveAttribute('href', '/admin/documents');
+    fireEvent.click(platform);
+    expect(within(nav).queryByRole('link', { name: 'Documents' })).toBeNull();
+    expect(within(nav).getByRole('link', { name: 'Accounts' })).toBeVisible();
     expect(screen.getByTestId('current-path')).toHaveTextContent('/workspace/admin');
   });
 
-  it('closes the panel for a clicked direct link and preserves navigation', () => {
-    const { rail, panel } = showSidebar('/workspace/admin', false);
-    fireEvent.click(rail.getByRole('link', { name: 'Platform Report' }));
-    expect(panel.queryByRole('link', { name: 'Platform Report' })).toBeNull();
-    expect(document.getElementById('admin-secondary-navigation')).toHaveAttribute('inert');
+  it.each([['/workspace/admin', 'Dashboard'], ['/admin/roles', 'Roles']])(
+    'retains the active destination when leaving the permanently open menu on %s', (path, label) => {
+      const { sidebar, nav } = showSidebar(path);
+      fireEvent.mouseLeave(sidebar, { relatedTarget: document.body });
+      expect(within(nav).getByRole('link', { name: label })).toHaveAttribute('aria-current', 'page');
+      expect(screen.getByTestId('current-path')).toHaveTextContent(path);
+    },
+  );
+
+  it('ignores the legacy collapsed prop and discloses groups inline', () => {
+    const { sidebar, nav } = showSidebar('/workspace/admin', false);
+    fireEvent.click(within(nav).getByRole('button', { name: 'Platform' }));
+    expect(within(sidebar).queryByRole('button', { name: /^(Collapse|Expand) navigation$/ })).toBeNull();
+    expect(within(nav).getByRole('link', { name: 'Documents' })).toBeVisible();
+    expect(within(nav).getByRole('link', { name: 'Dashboard' })).toBeVisible();
+    fireEvent.click(within(nav).getByRole('button', { name: 'Platform' }));
+    expect(within(nav).queryByRole('link', { name: 'Documents' })).toBeNull();
+  });
+
+  it.each([false, true])('preserves direct navigation regardless of the legacy pinned state (%s)', open => {
+    const { sidebar, nav } = showSidebar('/workspace/admin', open);
+    fireEvent.click(within(nav).getByRole('link', { name: 'Platform Report' }));
     expect(screen.getByTestId('current-path')).toHaveTextContent('/admin/platform-report');
+    expect(sidebar.style.width).toBe('264px');
+    expect(within(sidebar).queryByRole('button', { name: /^(Collapse|Expand) navigation$/ })).toBeNull();
   });
 
-  it('shows only the hovered group, regardless of saved accordion state', () => {
-    const { rail, panel } = showSidebar();
-    fireEvent.mouseEnter(rail.getByRole('button', { name: 'User & Access Control' }));
-    expect(panel.getByRole('link', { name: 'Accounts' })).toHaveAttribute('href', '/admin/users');
-    expect(panel.queryByRole('link', { name: 'Documents' })).toBeNull();
-    fireEvent.mouseEnter(rail.getByRole('button', { name: 'Platform' }));
-    expect(panel.getByRole('link', { name: 'Documents' })).toHaveAttribute('href', '/admin/documents');
-    expect(panel.queryByRole('link', { name: 'Accounts' })).toBeNull();
-    expect(screen.getByTestId('current-path')).toHaveTextContent('/workspace/admin');
-  });
-
-  it('keeps the preview available while moving into its submenu', () => {
-    const { rail, panel } = showSidebar();
-    const group = rail.getByRole('button', { name: 'Platform' });
-    fireEvent.mouseEnter(group);
-    const documents = panel.getByRole('link', { name: 'Documents' });
-    fireEvent.mouseLeave(group, { relatedTarget: documents });
-    fireEvent.mouseEnter(documents);
-    fireEvent.click(documents);
+  it('supports keyboard disclosure and child navigation', async () => {
+    const user = userEvent.setup();
+    const { nav } = showSidebar();
+    within(nav).getByRole('button', { name: 'Platform' }).focus();
+    await user.keyboard('{Enter}');
+    const documents = within(nav).getByRole('link', { name: 'Documents' });
+    documents.focus();
+    await user.keyboard('{Enter}');
     expect(screen.getByTestId('current-path')).toHaveTextContent('/admin/documents');
+    expect(documents).toHaveAttribute('aria-current', 'page');
   });
 
-  it.each(['Dashboard', 'Platform Report'])('keeps the active preview while hovering direct destination %s', (label) => {
-    const { rail, panel } = showSidebar();
-    const primary = rail.getByRole('link', { name: label });
-    fireEvent.mouseEnter(primary);
-    const secondary = panel.getByRole('link', { name: 'Dashboard' });
-    expect(panel.getAllByRole('link')).toHaveLength(1);
-    expect(secondary).toHaveAttribute('href', '/workspace/admin');
-    expect(secondary.querySelector('svg')).toBeNull();
-  });
-
-  it('supports keyboard focus and starts with the current route group', () => {
-    const { rail, panel } = showSidebar('/admin/roles');
-    expect(panel.getByRole('link', { name: 'Roles' })).toHaveAttribute('aria-current', 'page');
-    fireEvent.focus(rail.getByRole('button', { name: 'Platform' }));
-    expect(panel.getByRole('link', { name: 'Evidence' })).toBeTruthy();
-    expect(panel.queryByRole('link', { name: 'Roles' })).toBeNull();
-  });
-
-  it('uses permission-filtered navigation for both groups and children', () => {
+  it('filters forbidden groups and children in the same list', () => {
     denied.add('admin-group-platform');
     denied.add('admin-permissions');
-    const { rail, panel } = showSidebar();
-    expect(rail.queryByRole('button', { name: 'Platform' })).toBeNull();
-    fireEvent.mouseEnter(rail.getByRole('button', { name: 'User & Access Control' }));
-    expect(panel.queryByRole('link', { name: 'Permissions' })).toBeNull();
-    expect(panel.getByRole('link', { name: 'Accounts' })).toBeTruthy();
+    const { nav } = showSidebar();
+    expect(within(nav).queryByRole('button', { name: 'Platform' })).toBeNull();
+    fireEvent.click(within(nav).getByRole('button', { name: 'User & Access Control' }));
+    expect(within(nav).queryByRole('link', { name: 'Permissions' })).toBeNull();
+    expect(within(nav).getByRole('link', { name: 'Accounts' })).toHaveAttribute('href', '/admin/users');
   });
 });

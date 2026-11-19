@@ -79,7 +79,7 @@ describe('overview learning panels', () => {
     week.modules[0] = { ...week.modules[0], completed: 3, percent: 75 };
     await act(async () => { invalidateLearnerReads(); });
     expect(screen.getByRole('progressbar')).toHaveAttribute('aria-valuenow', '75');
-    expect(screen.queryByText('Loading this week\'s activities…')).not.toBeInTheDocument();
+    expect(screen.queryByRole('status', { name: 'Loading this week\'s activities…' })).not.toBeInTheDocument();
   });
   it('excludes assigned placeholders without current-week activities', async () => {
     const week = fixture();

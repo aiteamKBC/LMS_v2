@@ -1,0 +1,234 @@
+.library {
+  width: 100%;
+  margin-inline: 0;
+  overflow: hidden;
+  border: 1px solid var(--kbc-border, oklch(var(--foreground-200) / 0.65));
+  border-radius: var(--lms-radius, 16px);
+  background: var(--kbc-surface, oklch(var(--background-50)));
+}
+
+.libraryHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 22px 24px;
+  border-bottom: 1px solid var(--enrolment-ui-divider, oklch(var(--foreground-200) / 0.55));
+}
+
+.library .libraryTitle {
+  color: var(--enrolment-ui-heading, oklch(var(--foreground-900)));
+  font-size: 17px;
+  font-weight: 700;
+  line-height: 1.4;
+}
+
+.libraryDescription {
+  margin-top: 5px;
+  color: var(--kbc-muted, oklch(var(--foreground-500)));
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.reportCount,
+.category {
+  flex-shrink: 0;
+  padding: 5px 10px;
+  border-radius: 999px;
+  background: var(--kbc-purple-soft, oklch(var(--primary-50)));
+  color: var(--kbc-primary, oklch(var(--primary-700)));
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+.reportGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 28rem), 1fr));
+  align-items: start;
+  gap: 16px;
+  padding: 20px;
+  background: var(--kbc-purple-wash, oklch(var(--background-100) / 0.5));
+}
+
+.card {
+  display: flex;
+  min-width: 0;
+  height: 100%;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid var(--kbc-border, oklch(var(--foreground-200) / 0.65));
+  border-radius: var(--lms-radius, 16px);
+  background: var(--kbc-surface, oklch(var(--background-50)));
+  box-shadow: 0 2px 5px oklch(var(--foreground-950) / 0.025);
+}
+
+.expandedCard {
+  grid-column: 1 / -1;
+  border-color: oklch(var(--primary-300) / 0.65);
+}
+
+.cardBody {
+  flex: 1;
+  padding: 20px 20px 16px;
+}
+
+.cardHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.reportIcon {
+  display: flex;
+  width: 44px;
+  height: 44px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 13px;
+}
+
+.library .reportTitle {
+  color: var(--enrolment-ui-heading, oklch(var(--foreground-900)));
+  font-size: 15px;
+  font-weight: 700;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.description {
+  margin-top: 5px;
+  color: var(--kbc-muted, oklch(var(--foreground-500)));
+  font-size: 12px;
+  line-height: 1.7;
+}
+
+.lastGenerated {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-top: 14px;
+  color: var(--kbc-muted, oklch(var(--foreground-500)));
+  font-size: 11px;
+}
+
+.lastGenerated svg {
+  width: 13px;
+  height: 13px;
+}
+
+.lastGenerated span {
+  font-weight: 600;
+}
+
+.cardFooter {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 16px 20px 20px;
+  border-top: 1px solid var(--enrolment-ui-divider, oklch(var(--foreground-200) / 0.45));
+}
+
+.filters {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.library .field {
+  display: flex;
+  min-width: 0;
+  flex: 1 1 100px;
+  flex-direction: column;
+  gap: 6px;
+  color: var(--kbc-text, oklch(var(--foreground-600)));
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.library .programmeField {
+  flex-basis: 200px;
+}
+
+:global(.dashboard-theme .workspace-main) .library .control {
+  width: 100%;
+  min-width: 0;
+  min-height: 40px;
+  padding: 9px 12px;
+  border-radius: 10px;
+  font-size: 12px;
+}
+
+:global(.dashboard-theme .workspace-main) .library select.control {
+  padding-right: 34px;
+  cursor: pointer;
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+:global(.dashboard-theme .workspace-main) .library .action {
+  display: inline-flex;
+  min-height: 40px;
+  flex: 1 1 140px;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  padding: 10px 14px;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.5;
+  cursor: pointer;
+  transition: background-color 160ms ease, border-color 160ms ease;
+}
+
+.action svg {
+  width: 15px;
+  height: 15px;
+}
+
+.generate {
+  background: var(--enrolment-ui-action, #6433a2);
+  color: #fff;
+}
+
+.generate:not(:disabled):hover { background: var(--enrolment-ui-action-hover, #522589); }
+.generate:not(:disabled):active { background: #431b74; }
+
+.download {
+  border-color: var(--kbc-border, oklch(var(--foreground-200) / 0.85)) !important;
+  background: var(--kbc-surface, oklch(var(--background-50)));
+  color: var(--kbc-text, oklch(var(--foreground-700)));
+}
+
+.download:hover { background: var(--enrolment-ui-hover, oklch(var(--primary-50))); }
+.download:active { background: var(--kbc-purple-soft, oklch(var(--primary-100))); }
+
+.action:focus-visible {
+  outline: 3px solid oklch(var(--primary-400));
+  outline-offset: 3px;
+}
+
+.action:disabled { cursor: wait; }
+
+.preview {
+  min-width: 0;
+  padding: 0 20px 20px;
+}
+
+@media (max-width: 600px) {
+  .libraryHeader { align-items: flex-start; padding: 18px 16px; }
+  .reportGrid { padding: 12px; gap: 12px; }
+  .cardBody { padding: 16px; }
+  .cardFooter { padding: 14px 16px 16px; }
+  .preview { padding: 0 16px 16px; }
+}

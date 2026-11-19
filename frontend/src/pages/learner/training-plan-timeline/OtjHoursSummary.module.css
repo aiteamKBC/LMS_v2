@@ -7,7 +7,7 @@
   min-width: 0;
   padding: clamp(1rem, 1.5cqi, 1.375rem);
   border: 1px solid var(--kbc-border, #e0e5ed);
-  border-radius: 1.125rem;
+  border-radius: var(--lms-radius, 16px);
   background: var(--kbc-surface, #fff);
   box-shadow: 0 2px 8px rgb(79 45 127 / .04);
 }
@@ -34,7 +34,7 @@
   min-width: 0;
   padding: .625rem .5rem;
   border: 1px solid var(--kbc-border, #e0e5ed);
-  border-radius: .625rem;
+  border-radius: var(--lms-radius, 16px);
   background: #f4f7fa;
 }
 .tile dt {

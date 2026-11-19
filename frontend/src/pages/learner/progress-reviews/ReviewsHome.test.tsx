@@ -125,7 +125,8 @@ it.each([
   { loading: false, error: 'Request failed', message: 'Your reviews could not be loaded' },
 ])('does not claim there are zero reviews before a successful read: $message', state => {
   mount(state);
-  expect(screen.getByText(state.message)).toBeVisible();
+  if (state.loading) expect(screen.getByRole('status', { name: state.message })).toBeVisible();
+  else expect(screen.getByText(state.message)).toBeVisible();
   expect(screen.getByRole('link', { name: 'View all reviews' })).toBeVisible();
   expect(screen.queryByRole('link', { name: 'View all reviews (0)' })).not.toBeInTheDocument();
   expect(screen.queryByText('No current review')).not.toBeInTheDocument();

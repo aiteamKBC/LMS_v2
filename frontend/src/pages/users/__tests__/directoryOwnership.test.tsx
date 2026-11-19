@@ -12,8 +12,8 @@ import type { UserListRow } from '../types';
 import * as directoryExport from '../directoryExport';
 
 vi.mock('@/hooks/useAuth', () => ({ useAuth: () => ({ isAdmin: true }) }));
-vi.mock('@/components/feature/WorkspaceShell', () => ({
-  WorkspaceShell: ({ children }: { children: ReactNode }) => <>{children}</>,
+vi.mock('@/pages/users/presentation/EnrolmentWorkspaceShell', () => ({
+  EnrolmentWorkspaceShell: ({ children }: { children: ReactNode }) => <>{children}</>,
 }));
 vi.mock('@/api/enrolmentUsers', async importOriginal => ({
   ...await importOriginal<typeof import('@/api/enrolmentUsers')>(), fetchEnrolmentUsers: vi.fn(),
@@ -53,8 +53,11 @@ async function show(users: UserListRow[]) {
   await screen.findByText(users[0].name);
 }
 
-function select(label: string): HTMLSelectElement {
-  return screen.getByText(label, { selector: 'label' }).parentElement!.querySelector('select')!;
+function choose(label: string, option: string) {
+  const toggle = screen.getByRole('button', { name: 'Filters' });
+  if (toggle.getAttribute('aria-expanded') === 'false') fireEvent.click(toggle);
+  fireEvent.click(screen.getByRole('combobox', { name: label }));
+  fireEvent.click(screen.getByRole('option', { name: option }));
 }
 
 function dropdown(label: string): HTMLButtonElement {
@@ -70,7 +73,7 @@ it('loads only Created_users and preserves separate IDs sharing email and empty 
   expect(fetchStaffUsers).not.toHaveBeenCalled();
   expect(listEmployers).not.toHaveBeenCalled();
   const first = screen.getByText('Example User 42').closest('tr')!;
-  expect(within(first).getByText('Admin')).toBeInTheDocument();
+  expect(within(first.querySelector('[data-label="Type"]')!).getByText('Admin')).toBeInTheDocument();
   expect(within(first).queryByText('Programme A')).not.toBeInTheDocument();
   expect(screen.getByTitle("Open Example User 42's learner page")).toBeInTheDocument();
 });
@@ -91,9 +94,9 @@ it('exports all matching records on either page rather than only the eight visib
   const download = vi.spyOn(directoryExport, 'exportUsersCsv').mockImplementation(() => {});
   const users = Array.from({ length: 10 }, (_, i) => user(i + 1));
   await show(users);
-  await waitFor(() => expect(screen.getByRole('button', { name: 'Export' })).toBeEnabled());
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Export CSV' })).toBeEnabled());
   fireEvent.click(screen.getByRole('button', { name: 'Next page' }));
-  fireEvent.click(screen.getByRole('button', { name: 'Export' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Export CSV' }));
   expect(download.mock.calls[0][0]).toEqual(users);
   expect(download.mock.calls[0][1](users[0])).toBe('Live Sessions');
   expect(fetchEnrolmentUsers).toHaveBeenCalledTimes(1);
@@ -106,7 +109,7 @@ it.each(['Example User 2', 'unique@example.test'])('searches authoritative name/
   await waitFor(() => expect(screen.getByText('Showing 1 to 1 of 1 users')).toBeInTheDocument());
   expect(screen.getByText('Example User 2')).toBeInTheDocument();
   expect(screen.queryByText('Example User 1')).not.toBeInTheDocument();
-  fireEvent.click(screen.getByRole('button', { name: 'Export' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Export CSV' }));
   expect(download.mock.calls[0][0].map(row => row.id)).toEqual(['2']);
 });
 
@@ -114,19 +117,18 @@ it('applies programme, cohort, group and both independent status filters', async
   const download = vi.spyOn(directoryExport, 'exportUsersCsv').mockImplementation(() => {});
   await show([user(1, { subscriptionStatus: 'Invited', subscriptionVerified: false }),
     user(2, { programme: 'Programme B', cohort: 'Cohort B', group: 'Group B', programmeStatus: 'Active' })]);
-  fireEvent.change(select('Programme'), { target: { value: 'Programme A' } });
-  await waitFor(() => expect(within(select('Cohort')).getByRole('option', { name: 'Cohort A' })).toBeInTheDocument());
-  fireEvent.change(select('Cohort'), { target: { value: 'Cohort A' } });
+  choose('Programme', 'Programme A');
+  choose('Cohort', 'Cohort A');
   fireEvent.click(dropdown('Group'));
   fireEvent.click(screen.getByRole('checkbox', { name: 'Group A' }));
   fireEvent.click(dropdown('Status'));
   fireEvent.click(screen.getByRole('checkbox', { name: 'Invited' }));
-  fireEvent.change(select('Programme status'), { target: { value: 'Delivery' } });
+  choose('Programme status', 'Delivery');
   fireEvent.click(screen.getByRole('button', { name: 'Apply filters' }));
   await waitFor(() => expect(screen.getByText('Showing 1 to 1 of 1 users')).toBeInTheDocument());
   expect(screen.getByText('Example User 1')).toBeInTheDocument();
   expect(screen.queryByText('Example User 2')).not.toBeInTheDocument();
-  fireEvent.click(screen.getByRole('button', { name: 'Export' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Export CSV' }));
   expect(download.mock.calls[0][0].map(row => row.id)).toEqual(['1']);
 });
 
@@ -135,7 +137,7 @@ it('exports a header-only matching set when search has no results', async () => 
   await show([user(1)]);
   fireEvent.change(screen.getByPlaceholderText('Search name, email, group or programme...'), { target: { value: 'no-match' } });
   await screen.findByText('No users match your filters.');
-  fireEvent.click(screen.getByRole('button', { name: 'Export' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Export CSV' }));
   expect(download.mock.calls[0][0]).toEqual([]);
 });
 
@@ -144,8 +146,8 @@ it('never exports after the authorised directory request is denied', async () =>
   vi.mocked(fetchEnrolmentUsers).mockRejectedValue(new Error('Request failed (403)'));
   render(<MemoryRouter><UsersListPage /></MemoryRouter>);
   await screen.findByText('Request failed (403)');
-  expect(screen.getByRole('button', { name: 'Export' })).toBeDisabled();
-  fireEvent.click(screen.getByRole('button', { name: 'Export' }));
+  expect(screen.getByRole('button', { name: 'Export CSV' })).toBeDisabled();
+  fireEvent.click(screen.getByRole('button', { name: 'Export CSV' }));
   expect(download).not.toHaveBeenCalled();
 });
 
@@ -154,8 +156,8 @@ it('exports the same Recorded and Live Sessions labels as the attendance column'
   vi.mocked(fetchAttendanceModes).mockResolvedValue({ available: true, modes: { 1: { mode: 'lazy', requestedMode: null } } });
   const users = [user(1), user(2)];
   await show(users);
-  await waitFor(() => expect(screen.getByRole('button', { name: 'Export' })).toBeEnabled());
-  fireEvent.click(screen.getByRole('button', { name: 'Export' }));
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Export CSV' })).toBeEnabled());
+  fireEvent.click(screen.getByRole('button', { name: 'Export CSV' }));
   const label = download.mock.calls[0][1];
   expect(label(users[0])).toBe('Recorded');
   expect(label(users[1])).toBe('Live Sessions');
@@ -165,12 +167,12 @@ it('uses the displayed dash for unavailable attendance and blocks an unresolvabl
   const download = vi.spyOn(directoryExport, 'exportUsersCsv').mockImplementation(() => {});
   vi.mocked(fetchAttendanceModes).mockRejectedValue(new Error('Unavailable'));
   await show([user(1)]);
-  await waitFor(() => expect(screen.getByRole('button', { name: 'Export' })).toBeEnabled());
-  fireEvent.click(screen.getByRole('button', { name: 'Export' }));
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Export CSV' })).toBeEnabled());
+  fireEvent.click(screen.getByRole('button', { name: 'Export CSV' }));
   expect(download.mock.calls[0][1](user(1))).toBe('—');
-  fireEvent.change(select('Attendance mode'), { target: { value: 'lazy' } });
+  choose('Attendance mode', 'Recorded');
   fireEvent.click(screen.getByRole('button', { name: 'Apply filters' }));
-  expect(screen.getByRole('button', { name: 'Export' })).toBeDisabled();
+  expect(screen.getByRole('button', { name: 'Export CSV' })).toBeDisabled();
 });
 
 it('preserves all Created_users types and derives summary categories from that Type', async () => {
@@ -185,7 +187,7 @@ it('preserves all Created_users types and derives summary categories from that T
 
 it('retains the export control and staff/employer creation menu without fetching their directory rows', async () => {
   await show([user(1)]);
-  expect(screen.getByRole('button', { name: 'Export' })).toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'Export CSV' })).toBeInTheDocument();
   fireEvent.click(screen.getByRole('button', { name: 'Create user' }));
   for (const name of ['Create admin', 'Create tutor', 'Create employer profile', 'Create organisation profile']) {
     expect(screen.getByRole('button', { name })).toBeInTheDocument();

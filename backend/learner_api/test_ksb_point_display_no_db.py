@@ -48,7 +48,16 @@ class KsbPointDisplayTests(unittest.TestCase):
                        account_email=f'learner-{i}@example.test', account_aptem_id=4000+i)
                   for i, kind in enumerate(['apprenticeship', 'commercial'])]
         def query(sql, params):
-            if 'FROM "Learner".learners l' in sql:
+            # The lock query also joins learners; it must not receive owner rows.
+            for table, expected in (
+                ('learner_monthly_signatures', [700, 701]),
+                ('learner_monthly_locks', [700, 701] * 3),
+                ('live_session_learner_attendance', [700, 701]),
+            ):
+                if table in sql:
+                    self.assertEqual(params, expected)
+                    return []
+            if 'u.id AS account_record_id' in sql:
                 return owners
             if 'FROM "Learner".learner_progress_entries p' in sql:
                 self.assertEqual(params, [[700, 701]])
@@ -67,3 +76,5 @@ class KsbPointDisplayTests(unittest.TestCase):
         self.assertEqual(result[11]['ksb']['points'][0]['definitionCode'], 'B1.2')
         self.assertEqual(result[10]['ksb']['points'][0]['activityId'], '1')
         self.assertEqual(result[11]['ksb']['points'][0]['activityId'], '2')
+        for table in ('learner_monthly_signatures', 'learner_monthly_locks', 'live_session_learner_attendance'):
+            self.assertEqual(sum(table in call.args[0] for call in self.query.call_args_list), 1)

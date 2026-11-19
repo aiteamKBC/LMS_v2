@@ -29,7 +29,7 @@ def graph_calendar_time(value, zone_name, graph_zone):
     return {'dateTime': local.replace(tzinfo=None).isoformat(timespec='seconds'), 'timeZone': graph_zone}
 
 
-def calendar_targets(payload, start, duration, repeat, count, zone_name):
+def calendar_targets(payload, start, duration, repeat, count, zone_name, *, max_sessions=52):
     supplied = payload.get('scheduledOccurrences')
     if supplied is not None and (not isinstance(supplied, list) or not supplied):
         raise ValueError('Supply at least one session to review.')
@@ -51,8 +51,8 @@ def calendar_targets(payload, start, duration, repeat, count, zone_name):
             local += timedelta(days=7 if repeat == 'weekly' else 1)
             while repeat == 'weekdays' and local.weekday() > 4:
                 local += timedelta(days=1)
-    if not targets or len(targets) > 52 or (repeat == 'none' and len(targets) != 1):
-        raise ValueError('Review a maximum of 52 sessions, with one session for a non-repeating meeting.')
+    if not targets or len(targets) > max_sessions or (repeat == 'none' and len(targets) != 1):
+        raise ValueError(f'Review a maximum of {max_sessions} sessions, with one session for a non-repeating meeting.')
     if len({t['session_number'] for t in targets}) != len(targets):
         raise ValueError('Session numbers must be unique.')
     targets.sort(key=lambda t: t['start'])
@@ -64,7 +64,7 @@ def calendar_targets(payload, start, duration, repeat, count, zone_name):
     return targets
 
 
-def local_calendar_recurrence(targets, repeat, zone_name, graph_zone):
+def local_calendar_recurrence(targets, repeat, zone_name, graph_zone, *, max_sessions=52):
     """Derive weekdays in the business zone, separately for every DST offset."""
     if repeat == 'none':
         return None
@@ -80,8 +80,8 @@ def local_calendar_recurrence(targets, repeat, zone_name, graph_zone):
         pattern = {'type': 'weekly', 'interval': 1, 'daysOfWeek': names}
     slots = sum(1 for day in range((last - first).days + 1)
                 if repeat == 'daily' or (first + timedelta(days=day)).strftime('%A').lower() in names)
-    if slots > 52:
-        raise ValueError('The reviewed calendar spans more than 52 recurrence slots. Shorten the calendar before sending.')
+    if slots > max_sessions:
+        raise ValueError(f'The reviewed calendar spans more than {max_sessions} recurrence slots. Shorten the calendar before sending.')
     return {'pattern': pattern, 'range': {'type': 'numbered', 'startDate': first.isoformat(),
             'numberOfOccurrences': slots, 'recurrenceTimeZone': graph_zone}}
 
@@ -167,6 +167,46 @@ def event_instant(event, field):
     return raw.astimezone(timezone.utc)
 
 
+def read_calendar_instances(request, path):
+    """Read one calendar completely; reject foreign, looping or oversized pages.
+
+    Graph's nextLink query is opaque. Keep it intact, but only accept the same
+    /instances resource on Graph v1.0 before passing a relative path to transport.
+    """
+    from urllib.parse import unquote
+    resource = unquote(urlparse(path).path.lstrip('/'))
+    current, seen, ids, items = path, set(), set(), []
+    for _ in range(64):
+        if current in seen:
+            raise CalendarMismatch('Microsoft returned a repeated calendar page.')
+        seen.add(current)
+        response = request('GET', current)
+        if not isinstance(response, dict) or not isinstance(response.get('value'), list):
+            raise CalendarMismatch('Microsoft returned an invalid calendar page.')
+        for item in response['value']:
+            if not isinstance(item, dict) or not isinstance(item.get('id'), str) or not item['id'] or item['id'] in ids:
+                raise CalendarMismatch('Microsoft returned invalid or duplicate calendar instances.')
+            ids.add(item['id'])
+            items.append(item)
+        if len(items) > 1000:
+            raise CalendarMismatch('Microsoft returned too many calendar instances to verify safely.')
+        following = response.get('@odata.nextLink')
+        if not following:
+            return items
+        if not isinstance(following, str):
+            raise CalendarMismatch('Microsoft returned an invalid calendar continuation.')
+        parsed = urlparse(following)
+        relative = parsed.path.lstrip('/')
+        if parsed.scheme or parsed.netloc:
+            if parsed.scheme != 'https' or parsed.netloc.lower() != 'graph.microsoft.com' or not relative.startswith('v1.0/'):
+                raise CalendarMismatch('Microsoft returned a calendar continuation outside the reviewed resource.')
+            relative = relative[len('v1.0/'):]
+        if parsed.fragment or unquote(relative) != resource or not parsed.query:
+            raise CalendarMismatch('Microsoft returned a calendar continuation outside the reviewed resource.')
+        current = relative + '?' + parsed.query
+    raise CalendarMismatch('Microsoft returned too many calendar pages to verify safely.')
+
+
 def verify_calendar(request, owner, event_id, targets, expected_join_url='', recurring=True):
     """Read Microsoft before publishing invitations or confirming local dates."""
     path = f'users/{owner}/events/{quote(event_id, safe="")}'
@@ -181,10 +221,7 @@ def verify_calendar(request, owner, event_id, targets, expected_join_url='', rec
     if recurring:
         query = urlencode({'startDateTime': (targets[0]['start'] - timedelta(days=7)).isoformat(),
                            'endDateTime': (targets[-1]['end'] + timedelta(days=7)).isoformat(), '$top': 200})
-        response = request('GET', path + '/instances?' + query)
-        if response.get('@odata.nextLink'):
-            raise CalendarMismatch('Microsoft returned an incomplete calendar. Review it before sending invitations.')
-        instances = response.get('value') or []
+        instances = read_calendar_instances(request, path + '/instances?' + query)
     else:
         instances = [event]
     available = list(instances)

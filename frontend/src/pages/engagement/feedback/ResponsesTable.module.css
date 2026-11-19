@@ -1,0 +1,182 @@
+.card {
+  --response-surface: var(--kbc-surface, oklch(var(--background-50)));
+  --response-header: var(--kbc-purple-soft, oklch(var(--primary-50)));
+  --response-border: var(--kbc-border, oklch(var(--foreground-200)));
+  --response-text: var(--kbc-text, oklch(var(--foreground-800)));
+  --response-muted: var(--kbc-muted, oklch(var(--foreground-500)));
+  --response-hover: var(--enrolment-ui-hover, oklch(var(--primary-50)));
+  overflow: hidden;
+  border: 1px solid var(--response-border);
+  border-radius: 20px;
+  background: var(--response-surface);
+}
+
+.toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 16px;
+  border-bottom: 1px solid var(--response-border);
+}
+
+.filters {
+  display: flex;
+  flex: 1;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.filters :is(select, input) {
+  min-height: 40px;
+  max-width: 100%;
+  border-color: var(--response-border);
+  border-radius: 10px;
+  background: var(--response-surface);
+  color: var(--response-text);
+  box-shadow: none;
+}
+
+.filters input { width: 200px; }
+.formFilters input { width: auto; min-width: min(224px, 100%); }
+
+.scrollArea {
+  max-height: min(60vh, 40rem);
+  overflow: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+  --app-scrollbar-thumb: oklch(var(--primary-300));
+  --app-scrollbar-thumb-hover: oklch(var(--primary-400));
+  --app-scrollbar-track: var(--response-surface);
+}
+
+.scrollArea thead {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+
+.scrollArea:focus-visible {
+  outline: 2px solid oklch(var(--primary-400));
+  outline-offset: -2px;
+}
+
+/* Local specificity overrides the shared workspace table treatment only here. */
+.card .scrollArea .table {
+  min-width: 1100px;
+  overflow: visible;
+  border: 0 !important;
+  border-radius: 0 !important;
+  background: var(--response-surface) !important;
+  box-shadow: none !important;
+}
+
+.card .scrollArea .table thead th {
+  height: 48px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--response-border) !important;
+  background: var(--response-header) !important;
+  color: var(--response-muted) !important;
+  text-align: left;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.card .scrollArea .table tbody tr:nth-child(n) {
+  background: var(--response-surface) !important;
+}
+
+.card .scrollArea .table tbody tr:is(:hover, :focus-within) {
+  background: var(--response-hover) !important;
+}
+
+.card .scrollArea .table tbody td {
+  height: 72px;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--response-border) !important;
+  color: var(--response-text);
+  text-align: left;
+  vertical-align: middle;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.card .scrollArea .table tbody tr:last-child td { border-bottom: 0 !important; }
+.card .scrollArea .table tbody td:first-child { min-width: 190px; }
+.card .scrollArea .table tbody td:nth-child(3) { min-width: 155px; }
+.card .scrollArea .table tbody td:nth-child(4) { min-width: 170px; }
+.card .scrollArea .table tbody td:nth-child(n + 6) { color: var(--response-muted); }
+.respondent { font-weight: 600; }
+
+.card .scrollArea .table.formsTable { min-width: 1200px; }
+.card .scrollArea .table.formsTable tbody td:first-child { min-width: 240px; }
+.card .scrollArea .table.formsTable tbody td:nth-child(3) { min-width: 80px; }
+.card .scrollArea .table.formsTable tbody td:nth-child(4) { min-width: 100px; }
+.card .scrollArea .table.formsTable tbody td:nth-child(5) { color: var(--response-muted); }
+.card .scrollArea .table.formsTable tbody td:is(:nth-child(5), :nth-child(6)) { white-space: nowrap; }
+.formActions { min-width: 360px; }
+
+.status > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 9px;
+  border: 1px solid transparent;
+  white-space: nowrap;
+  font-size: 10px;
+}
+
+.status > span::before {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: currentColor;
+  content: '';
+}
+
+.status[data-status='completed'] > span,
+.status[data-status='published'] > span {
+  border-color: #b6e2cf;
+  background: #f0faf5;
+  color: #187555;
+}
+
+.status[data-status='in_progress'] > span,
+.status[data-status='draft'] > span {
+  border-color: #efd5a2;
+  background: #fffaef;
+  color: #93621b;
+}
+
+:global([data-theme='dark']) .card .scrollArea .table thead th {
+  background: var(--response-header) !important;
+  border-color: var(--response-border) !important;
+  color: var(--response-muted) !important;
+}
+
+:global([data-theme='dark']) .card .scrollArea .table tbody tr:nth-child(n) {
+  background: var(--response-surface) !important;
+}
+
+:global([data-theme='dark']) .card .scrollArea .table tbody tr:is(:hover, :focus-within) {
+  background: var(--response-hover) !important;
+}
+
+:global([data-theme='dark']) .status[data-status='completed'] > span,
+:global([data-theme='dark']) .status[data-status='published'] > span {
+  border-color: #2d664f;
+  background: #17382c;
+  color: #a2dfbc;
+}
+
+:global([data-theme='dark']) .status[data-status='in_progress'] > span,
+:global([data-theme='dark']) .status[data-status='draft'] > span {
+  border-color: #715329;
+  background: #3a2c1a;
+  color: #edcd8e;
+}

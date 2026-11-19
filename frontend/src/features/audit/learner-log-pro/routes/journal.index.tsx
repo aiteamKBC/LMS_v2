@@ -1,3 +1,4 @@
+import { LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
 import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { createFileRoute } from '@tanstack/react-router';
@@ -84,7 +85,7 @@ function JournalPage() {
         <section className="rounded-lg border border-border bg-card p-7 shadow-panel">
           <div className="flex flex-wrap items-start justify-between gap-5 border-b border-border pb-6">
             <div>
-              <h1 className="font-serif text-2xl text-foreground">Learner Journal — {metadata.isLoading ? "Loading…" : monthLabel}</h1>
+              <h1 className="font-serif text-2xl text-foreground">Learner Journal — {metadata.isLoading ? <LoadingSkeleton label="Loading…" variant="text" /> : monthLabel}</h1>
               <p className="mt-2 text-sm text-muted-foreground">Generated live from <span className="font-mono">Audit.mre</span>.</p>
             </div>
             <Button
@@ -106,7 +107,7 @@ function JournalPage() {
               {pageError instanceof Error ? pageError.message : "Could not load the journal."}
             </p>
           ) : isLoading || !selectedLearner || !selectedPeriod ? (
-            <p className="py-10 text-center text-sm text-muted-foreground">Loading journal from Neon…</p>
+            <p className="py-10 text-center text-sm text-muted-foreground"><LoadingSkeleton label="Loading journal from Neon…" variant="rows" /></p>
           ) : learner ? (
             <>
               <div className="py-5">

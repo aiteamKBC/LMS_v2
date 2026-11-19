@@ -193,7 +193,7 @@ export default function CurriculumRecordingsPage() {
           <div className={`${styles.hero} flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between`}>
             <nav aria-label="Breadcrumb" className={styles.breadcrumb}>
               <Link to="/curriculum">Curriculum</Link><span aria-hidden="true">›</span>
-              <Link to="/curriculum/recordings-hub">Recordings hub</Link><span aria-hidden="true">›</span>
+              <Link to="/curriculum/recordings-hub">Recording Quality</Link><span aria-hidden="true">›</span>
               <span aria-current="page">Tutor session recordings</span>
             </nav>
             <div className={styles.heroHeading}>
@@ -202,7 +202,7 @@ export default function CurriculumRecordingsPage() {
                 <p className="mt-1.5 max-w-2xl text-sm text-foreground-600">Find a teaching session, check its recording was saved, and open the transcript, attendance and quality check without leaving the calendar.</p>
               </div>
               <nav aria-label="Recording libraries" className="flex flex-wrap gap-2 text-sm font-semibold">
-                <Link to="/curriculum/recordings-hub"><ArrowLeft size={14} aria-hidden="true" />Recordings hub</Link>
+                <Link to="/curriculum/recordings-hub"><ArrowLeft size={14} aria-hidden="true" />Recording Quality</Link>
                 <Link to="/curriculum/coaching-recordings">Coach Meetings &amp; Recordings</Link>
               </nav>
             </div>

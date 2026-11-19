@@ -250,6 +250,7 @@ export function emptyTeamsCalendarForm(): TeamsCalendarForm {
 /** The module a calendar is being created for: its identity and its dates. */
 export interface TeamsCalendarTarget extends TeamsSchedulePreviewRow {
   catalogueId: string;
+  module?: Pick<CurriculumModule, 'weekBoundaryMode' | 'weekStructure' | 'deliveryWeeks' | 'weeks'>;
 }
 
 
@@ -287,6 +288,8 @@ export function buildTeamsCalendarInput(row: TeamsCalendarTarget, form: TeamsCal
     presenters: emailList(form.presenters),
     coOrganizers: presenterCoOrganizers(form.presenters, form.coOrganizers, form.organizerEmail),
     moduleCatalogueId: row.catalogueId,
+    ...(row.module?.weekBoundaryMode === 'calendar' ? { reviewSessionLimit:
+      Math.max(52, Math.min(104, Number(row.module.weekStructure?.length || row.module.deliveryWeeks || row.module.weeks) || 0) * 7) } : {}),
     moduleTitle: meetingTitle,
     localStartDateTime: sessionNaiveLocal(row.sessions[0]),
     startDateTimeUtc: occurrences[0].startDateTimeUtc,

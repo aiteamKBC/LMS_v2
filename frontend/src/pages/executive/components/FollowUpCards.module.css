@@ -1,0 +1,35 @@
+:global(#root) :is(.card, .attention section) {
+  --card-highlight: rgb(255 255 255 / 0.7);
+  --card-tint: oklch(var(--primary-200) / 0.25);
+  --card-wash: oklch(var(--primary-50));
+  --card-border: oklch(var(--primary-300));
+  --card-glow: oklch(var(--primary-400) / 0.35);
+  border: 1px solid var(--card-border) !important;
+  background:
+    radial-gradient(ellipse at top right, var(--card-tint), transparent 65%),
+    linear-gradient(135deg, var(--card-highlight), transparent 55%),
+    linear-gradient(135deg, oklch(var(--background-50)) 25%, var(--card-wash)) !important;
+  box-shadow:
+    var(--tw-ring-offset-shadow, 0 0 #0000),
+    var(--tw-ring-shadow, 0 0 #0000),
+    inset 0 1px 0 var(--card-highlight),
+    0 5px 16px -12px var(--card-glow) !important;
+}
+
+:global(#root) .critical.card {
+  --card-tint: rgb(220 38 38 / 0.12);
+  --card-wash: color-mix(in srgb, #dc2626 12%, oklch(var(--background-50)));
+  --card-border: color-mix(in srgb, #dc2626 40%, oklch(var(--background-50)));
+  --card-glow: rgb(220 38 38 / 0.25);
+}
+
+:global([data-theme='dark']) :global(#root) :is(.card, .attention section) {
+  --card-highlight: rgb(255 255 255 / 0.06);
+}
+
+:global([data-theme='dark']) :global(#root) .critical.card {
+  --card-tint: rgb(248 113 113 / 0.12);
+  --card-wash: color-mix(in srgb, #f87171 12%, oklch(var(--background-50)));
+  --card-border: color-mix(in srgb, #f87171 45%, oklch(var(--background-50)));
+  --card-glow: rgb(248 113 113 / 0.25);
+}

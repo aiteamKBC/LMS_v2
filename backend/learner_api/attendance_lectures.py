@@ -467,9 +467,20 @@ def lecture_register(
                 if row.get('source') == 'live-register':
                     # Keep Teams/report metadata from the scheduled row while
                     # replacing only the learner outcome saved by Bulk.
+                    saved_report = str(row.get('attendance_report_id') or '').strip()
+                    scheduled_report = str(schedule.get('attendance_report_id') or '').strip()
+                    verified_seconds = (max(0, int(row.get('attended_seconds') or 0))
+                                        if saved_report and (not scheduled_report or saved_report == scheduled_report)
+                                        else 0)
                     projected = {
                         **schedule,
                         'attendance_status': row['attendance_status'],
+                        'resolved_attendance_status': row['attendance_status'],
+                        # The register already resolved this learner's Teams
+                        # identity (including guests/aliases). Keep its evidence;
+                        # the schedule's raw-email lookup cannot replace it.
+                        'attended_seconds': verified_seconds,
+                        'attended': row['attendance_status'] == 'present' and verified_seconds > 180,
                         'source': 'microsoft-teams',
                         'updated_at': _aware(row.get('updated_at')) or schedule.get('updated_at'),
                     }

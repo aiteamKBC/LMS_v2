@@ -1,3 +1,4 @@
+import { LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
 import { useEffect, useState } from 'react';
 import { BarChart3, CheckCircle2, Users } from 'lucide-react';
 import { loadRecordingInsights, type RecordingInsights as Insights } from '@/api/recordingInsights';
@@ -42,7 +43,7 @@ export function RecordingInsights({ seriesId, file, learner }: { seriesId: strin
     </summary>
     {open && <div className="space-y-4 border-t border-background-200 p-4 text-sm leading-relaxed text-foreground-800">
       {error ? <p role="status">{error}{' '}<button type="button" className="min-h-11 px-2 font-semibold text-primary-700 underline" onClick={() => setRetry(value => value + 1)}>Retry insights</button></p>
-        : !data ? <p role="status">Loading viewing insights…</p>
+        : !data ? <p ><LoadingSkeleton label="Loading viewing insights…" variant="rows" /></p>
           : data.audience === 'staff' && <>
             <dl className="grid grid-cols-1 gap-4 sm:grid-cols-2">
               {[['Learners watched', number(data.learners)], ['Finished watching', number(data.finished)],

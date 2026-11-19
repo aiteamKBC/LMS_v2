@@ -1,27 +1,27 @@
 .summary { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem; margin: 0; color: #e6dce9; font-size: .75rem; }
 .summaryBadge { display: inline-flex; align-items: center; gap: .375rem; padding: .125rem .625rem; border: 1px solid #b6d6dc; border-radius: 999px; background: #eff9f9; color: #34545b; font-weight: 600; }
 .summaryBadge > span { width: .375rem; height: .375rem; border-radius: 50%; background: #4d8e95; }
-.infoStrip { display: flex; align-items: center; gap: .625rem; min-width: 0; margin: 0 0 -.5rem; padding: .75rem .875rem; border: 1px solid #c3e0e6; border-radius: .875rem; background: #f0f8f9; color: #365158; font-size: .8125rem; line-height: 1.5; }
+.infoStrip { display: flex; align-items: center; gap: .625rem; min-width: 0; margin: 0 0 -.5rem; padding: .75rem .875rem; border: 1px solid #c3e0e6; border-radius: var(--lms-radius, 16px); background: #f0f8f9; color: #365158; font-size: .8125rem; line-height: 1.5; }
 .infoStrip > svg { flex-shrink: 0; }
-.filters { min-width: 0; padding: .875rem .75rem 0; border: 1px solid #e1d9eb; border-radius: 1rem; background: #fcfbfd; }
+.filters { min-width: 0; padding: .875rem .75rem 0; border: 1px solid #e1d9eb; border-radius: var(--lms-radius, 16px); background: #fcfbfd; }
 .filterFields { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: .75rem; }
 .filterFields fieldset { display: contents; }
 .filterFields label { display: grid; gap: .375rem; min-width: 0; color: #7d746d; font-size: .625rem; font-weight: 700; line-height: 1.4; text-transform: uppercase; }
-.filterFields :is(input, select) { box-sizing: border-box; width: 100%; min-width: 0; height: 2.25rem; padding: .375rem .75rem; border: 1px solid #d7cbe6; border-radius: 1rem; background: #fff; color: #383230; font: 400 .8125rem/1.5 var(--font-body); color-scheme: light; }
+.filterFields :is(input, select) { box-sizing: border-box; width: 100%; min-width: 0; height: 2.25rem; padding: .375rem .75rem; border: 1px solid #d7cbe6; border-radius: var(--lms-radius, 16px); background: #fff; color: #383230; font: 400 .8125rem/1.5 var(--font-body); color-scheme: light; }
 .filterFields select { cursor: pointer; }
 .selectFilter { display: grid; align-content: start; gap: .375rem; min-width: 0; }
-.filterFields .selectTrigger { height: 2.25rem; min-height: 2.25rem; border: 1px solid #d7cbe6; border-radius: 1rem; background: #fff; color: #383230; box-shadow: none; font: 400 .8125rem/1.5 var(--font-body); text-transform: none; }
+.filterFields .selectTrigger { height: 2.25rem; min-height: 2.25rem; border: 1px solid #d7cbe6; border-radius: var(--lms-radius, 16px); background: #fff; color: #383230; box-shadow: none; font: 400 .8125rem/1.5 var(--font-body); text-transform: none; }
 .filterFields .selectTrigger > span { font-size: inherit; font-weight: inherit; color: inherit; }
 .filterFields .selectTrigger[aria-expanded="true"] { border-color: #9c75be; box-shadow: 0 0 0 3px #eadff4; }
 .dateFilter { display: grid; align-content: start; gap: .375rem; min-width: 0; }
 .dateFilter > span { color: #7d746d; font: 700 .625rem/1.4 var(--font-body); }
-.dateFilter > div:has(> input) { height: 2.25rem; min-height: 2.25rem; margin: 0; padding-left: .625rem; gap: .375rem; border: 1px solid #d7cbe6; border-radius: 1rem; background: #fff; }
+.dateFilter > div:has(> input) { height: 2.25rem; min-height: 2.25rem; margin: 0; padding-left: .625rem; gap: .375rem; border: 1px solid #d7cbe6; border-radius: var(--lms-radius, 16px); background: #fff; }
 .dateFilter > div:has(> input[aria-expanded="true"]) { border-color: #9c75be; box-shadow: 0 0 0 3px #eadff4; }
 .dateFilter > div > svg { width: .875rem; color: #8b779b; }
 :global(.dashboard-theme .workspace-main) .dateFilter input[role="combobox"] { width: 100%; height: 100%; min-height: 0; padding: 0; border: 0 !important; border-radius: 0; background: transparent !important; box-shadow: none !important; outline: none !important; color: #383230; font: 400 .8125rem/1.5 var(--font-body); }
 .dateFilter > div > button { width: 1.5rem; min-width: 1.5rem; color: #8b779b; }
 .dateFilter > p { margin: 0; font-size: .6875rem; }
-.datePanel { z-index: 60 !important; max-width: calc(100vw - 24px); border: 1px solid #d9cce7; border-radius: .875rem; background: #fff; box-shadow: 0 10px 30px #2b153a24; color: #47394e; }
+.datePanel { z-index: 60 !important; max-width: calc(100vw - 24px); border: 1px solid #d9cce7; border-radius: var(--lms-radius, 16px); background: #fff; box-shadow: 0 10px 30px #2b153a24; color: #47394e; }
 .datePanel > div:first-child, .datePanel > div:last-child { border-color: #e6ddee; background: #faf7fc; }
 .datePanel button { font-family: var(--font-body); font-weight: 500; }
 .datePanel button[aria-selected="true"], .datePanel :global(.bg-primary-600) { background: #5d2e88; color: #fff; }
@@ -30,21 +30,21 @@
 .filterFooter { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: .5rem; margin-top: .75rem; padding: .75rem 0; border-top: 1px solid #e4dcec; color: #7d746d; font-size: .75rem; }
 .filterFooter p { margin: 0; }
 .filterFooter strong { font-weight: 600; color: #4c4348; }
-.clearFilters { display: inline-flex; align-items: center; gap: .375rem; min-height: 2rem; padding: .25rem .5rem; border-radius: .5rem; color: #786d67; font-size: .75rem; cursor: pointer; }
+.clearFilters { display: inline-flex; align-items: center; gap: .375rem; min-height: 2rem; padding: .25rem .5rem; border-radius: var(--lms-radius, 16px); color: #786d67; font-size: .75rem; cursor: pointer; }
 .clearFilters:hover:not(:disabled) { background: #f1eafa; color: #5d2e88; }
 .clearFilters:disabled { opacity: .55; cursor: not-allowed; }
-.statusFilters { display: flex; flex-wrap: wrap; align-items: center; gap: .125rem; width: fit-content; max-width: 100%; margin-top: -.5rem; padding: .25rem; border: 1px solid #e2d9ed; border-radius: 1rem; background: #f0edf5; }
-.statusFilters button { display: inline-flex; align-items: center; justify-content: center; gap: .5rem; min-height: 2rem; padding: .375rem .625rem; border-radius: .75rem; color: #665c5a; font: 500 .75rem/1.5 var(--font-body); cursor: pointer; }
+.statusFilters { display: flex; flex-wrap: wrap; align-items: center; gap: .125rem; width: fit-content; max-width: 100%; margin-top: -.5rem; padding: .25rem; border: 1px solid #e2d9ed; border-radius: var(--lms-radius, 16px); background: #f0edf5; }
+.statusFilters button { display: inline-flex; align-items: center; justify-content: center; gap: .5rem; min-height: 2rem; padding: .375rem .625rem; border-radius: var(--lms-radius, 16px); color: #665c5a; font: 500 .75rem/1.5 var(--font-body); cursor: pointer; }
 .statusFilters button:hover { background: #e7dfef; }
 .statusFilters button[aria-pressed="true"] { background: #5d2e88; color: #fff; }
 .statusFilters button > span { min-width: 1.125rem; padding: .0625rem .3125rem; border-radius: 999px; background: #e4dfec; color: #75697f; font-size: .625rem; line-height: 1.3; text-align: center; font-variant-numeric: tabular-nums; }
 .statusFilters button[aria-pressed="true"] > span { background: #ffffff30; color: #fff; }
 .results { min-width: 0; margin-top: -.25rem; }
-.sessionTable { container-type: inline-size; min-width: 0; padding: 1rem; border: 1px solid #e3d4fc; border-radius: 1rem; background: #f1eafa; }
+.sessionTable { container-type: inline-size; min-width: 0; padding: 1rem; border: 1px solid #e3d4fc; border-radius: var(--lms-radius, 16px); background: #f1eafa; }
 .sessionTable table { width: 100%; border: 0 !important; border-collapse: separate; background: transparent !important; box-shadow: none !important; color: #51484a; font-size: .75rem; }
 .sessionTable :is(caption, thead) { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
 .sessionTable tbody { display: grid; gap: .625rem; }
-.sessionTable tbody tr { display: grid; grid-template-columns: minmax(9rem, 1.2fr) minmax(7rem, 1.2fr) minmax(6rem, 1fr) minmax(7rem, 1fr) minmax(6rem, 1fr) minmax(6rem, 1fr) auto; grid-template-rows: auto auto; align-items: center; gap: 0 .75rem; min-height: 5rem; padding: .75rem 1rem; border: 1px solid #e2d9ee; border-radius: 1rem; background: #fcf9ff; transition: border-color 150ms ease, background-color 150ms ease; }
+.sessionTable tbody tr { display: grid; grid-template-columns: minmax(9rem, 1.2fr) minmax(7rem, 1.2fr) minmax(6rem, 1fr) minmax(7rem, 1fr) minmax(6rem, 1fr) minmax(6rem, 1fr) auto; grid-template-rows: auto auto; align-items: center; gap: 0 .75rem; min-height: 5rem; padding: .75rem 1rem; border: 1px solid #e2d9ee; border-radius: var(--lms-radius, 16px); background: #fcf9ff; transition: border-color 150ms ease, background-color 150ms ease; }
 .sessionTable tbody tr:hover { border-color: #c9b4e1; background: #fff; }
 .sessionTable tbody td { min-width: 0; padding: 0; border: 0; font-size: .75rem; line-height: 1.5; overflow-wrap: anywhere; }
 .sessionTable td[data-label]::before { display: block; margin-bottom: .375rem; color: #857b74; content: attr(data-label); font-size: .625rem; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; }
@@ -75,7 +75,7 @@
 :global(.dashboard-theme .workspace-main) .sessionTable tbody tr:nth-child(n) { background: #fcf9ff !important; }
 :global(.dashboard-theme .workspace-main) .sessionTable tbody tr:hover { background: #fff !important; }
 :global(.dashboard-theme .workspace-main) .sessionTable tbody td[data-label] { height: auto; max-width: none; border: 0 !important; background: transparent !important; color: #51484a; text-align: left; font-size: .75rem; white-space: normal; }
-:global(.dashboard-theme .workspace-main) .filterFields :is(input, select) { min-height: 2.25rem; border: 1px solid #d7cbe6; border-radius: 1rem; background: #fff; color: #383230; }
+:global(.dashboard-theme .workspace-main) .filterFields :is(input, select) { min-height: 2.25rem; border: 1px solid #d7cbe6; border-radius: var(--lms-radius, 16px); background: #fff; color: #383230; }
 :global(.dashboard-theme .workspace-main) .filterFields label { color: #7d746d; }
 :is(.filters, .statusFilters, .sessionTable) :is(button, a, input, select):focus-visible { outline: 3px solid #9c75bd; outline-offset: 3px; }
 @media (max-width: 1279px) {
@@ -105,7 +105,7 @@
   :global(.dashboard-theme .workspace-main) .dateFilter input[role="combobox"] { font-size: .75rem; }
   :global(.dashboard-theme .workspace-main) .filterFields :is(input, select) { min-height: 2.75rem; }
   .clearFilters { min-height: 2.75rem; }
-  .statusFilters { width: 100%; border-radius: 1rem; }
+  .statusFilters { width: 100%; border-radius: var(--lms-radius, 16px); }
   .statusFilters button { flex-grow: 1; min-height: 2.75rem; }
   .sessionTable { padding: .625rem; }
 }

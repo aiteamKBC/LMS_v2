@@ -592,7 +592,7 @@ class CanonicalAssignmentWriteProtectionTests(SimpleTestCase):
              patch.object(learning_plan_module, "training_plan_field", return_value="training_plan"), \
              patch.object(learning_plan_module, "sync_learning_plan_mirror") as sync, \
              patch.object(learning_plan_module, "advance_learner"), \
-             patch.object(learning_plan_module, "_serialize", return_value={"freeCourses": []}):
+             patch.object(learning_plan_module, "_legacy_serialize", return_value={"freeCourses": []}):
             response = endpoint(request, pk=19)
         self.assertEqual(response.status_code, 200)
         self.learner.save.assert_called_once_with(update_fields=["training_plan"])

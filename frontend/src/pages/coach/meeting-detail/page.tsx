@@ -1,3 +1,4 @@
+import { LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
 import { ukOffsetForDate } from '@/lib/timeZones';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
@@ -722,10 +723,10 @@ export default function CoachMeetingDetail() {
                 />
               ) : (
                 <Panel className="bg-white">
-                  <p role="status" className="text-sm text-foreground-600">
+                  <p  className="text-sm text-foreground-600">
                     {importedReview
                       ? 'Session checks require an available review form and a synced Teams booking. Open the review form to check its availability.'
-                      : importedReviewError ? 'Refresh the booking to load this review’s meeting resources.' : 'Loading review meeting resources…'}
+                      : importedReviewError ? 'Refresh the booking to load this review’s meeting resources.' : <LoadingSkeleton label="Loading review meeting resources…" variant="text" />}
                   </p>
                 </Panel>
               ) : <CoachMeetingArtifactsPanel event={event} onEventStatusChange={handleArtifactsStatusChange}

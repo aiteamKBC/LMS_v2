@@ -92,6 +92,12 @@ class AssignmentHoursTests(SimpleTestCase):
 
 
 class AssignmentHoursPersistenceTests(SimpleTestCase):
+    def setUp(self):
+        # The authored activity in these persistence fixtures is an assignment.
+        metadata = patch('learner_api.live_session_access._read', return_value=[{'type': 'assignment'}])
+        metadata.start()
+        self.addCleanup(metadata.stop)
+
     def post(self, hours, saved=(), kind="commercial", mode="draft", day="2026-09-01"):
         from .reflection_submissions import _submit_reflection
         payload = {"learnerKind": kind, "learnerId": "1", "activityType": "assignment", "activityId": "A",

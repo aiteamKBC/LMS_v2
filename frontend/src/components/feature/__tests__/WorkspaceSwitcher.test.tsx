@@ -282,6 +282,34 @@ describe('WorkspaceSwitcher', () => {
     expect(path()).toBe('/workspace/auditor-copy');
   });
 
+  it('keeps the keyboard-highlighted destination visible in a scrolling menu', async () => {
+    signedIn();
+    const user = userEvent.setup();
+    renderAt('/workspace/admin');
+    await user.click(trigger());
+    const lastRow = screen.getAllByRole('menuitem').at(-1)!;
+    const scrollIntoView = vi.fn();
+    Object.defineProperty(lastRow, 'scrollIntoView', { configurable: true, value: scrollIntoView });
+
+    await user.keyboard('{ArrowUp}');
+
+    expect(lastRow).toHaveAttribute('data-highlighted', 'true');
+    expect(scrollIntoView).toHaveBeenCalledWith({ block: 'nearest' });
+    expect(path()).toBe('/workspace/admin');
+  });
+
+  it('reopens on the current workspace after highlighting another destination', async () => {
+    signedIn();
+    const user = userEvent.setup();
+    renderAt('/workspace/hr-system');
+    await user.click(trigger());
+    await user.keyboard('{ArrowUp}{ArrowUp}{Escape}');
+    await user.click(trigger());
+
+    expect(screen.getByRole('menuitem', { name: /HR System/ })).toHaveAttribute('data-highlighted', 'true');
+    expect(screen.getAllByRole('menuitem').at(-1)).not.toHaveAttribute('data-highlighted');
+  });
+
   it('closes on Escape without navigating', async () => {
     signedIn();
     const user = userEvent.setup();

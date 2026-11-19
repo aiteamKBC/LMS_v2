@@ -1,3 +1,4 @@
+import { LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
 import { useEffect, useState } from 'react';
 import { loadCoachingKeywords, loadCoachingQuality, type CoachingKeywordQuality, type CoachingQuality } from '@/api/coachingRecordings';
 import { categoryLabels as labels } from './model';
@@ -87,7 +88,7 @@ export function AiQualitySuggestion({ eventKey, context }: { eventKey: string; c
   return <section aria-label="Meeting type suggestion" className="mt-5 rounded-lg border border-primary-200 bg-primary-50 p-3">
     <h4 className="text-sm font-semibold">Meeting type suggestion</h4>
     <p className="mt-1 text-xs text-foreground-600">Quality review only. Suggestions may include several types. Confidence is an AI estimate. Booking type, attendance and sanctions stay unchanged.</p>
-    {busy && <p role="status" className="mt-2 text-sm">{data ? 'Analysing meeting…' : 'Loading saved analysis…'}</p>}
+    {busy && <p  className="mt-2 text-sm">{data ? 'Analysing meeting…' : <LoadingSkeleton label="Loading saved analysis…" variant="text" />}</p>}
     {error && <p role="alert" className="mt-2 text-sm text-rose-800">{error}</p>}
     {data?.state === 'not-analysed' && <p className="mt-2 text-xs">Analyse the calendar title and saved transcript against this programme’s templates. The result is saved and reused.</p>}
     {data?.state === 'running' && <p role="status" className="mt-2 text-sm">An analysis is already in progress. Check the saved result shortly.</p>}

@@ -59,14 +59,36 @@ Rollback produces no Feedback. The existing learner Feedback release flags are
 respected. A failed database callback emits a pending warning; committed Review
 state remains available for reconciliation.
 
-The learner Feedback list reconciles both persisted sources when opened. There
-is no direct live Aptem request or assumed webhook. The codebase contains
-readers of the imported rows but no identified writer for the Aptem status/date
-import, so this change does not install an import hook or periodic job. Aptem
-changes become eligible only after the import reaches `Learner.reviews`, then
-the next Feedback page read or explicitly scheduled/scoped command discovers
-them. Post-commit callbacks alone are not a guaranteed background delivery
-system; the durable Review rows plus reconciliation are the recovery path.
+The learner Feedback list still reconciles both persisted sources when opened.
+Since 19 November 2026, `review_feedback_reconciliation` also discovers imported
+profiles in batches and calls the same service through the trusted enrolment
+bridge. `review_feedback_scheduler` is wired into both real ASGI/WSGI HTTP
+entrypoints, following the existing serving-process scheduler pattern. It starts
+after a normal HTTP request, waits 60 seconds, then polls 300 seconds after each
+full sweep. ASGI health-only traffic bypasses the scheduler wrappers. It requires a
+continuously running serving process; this is eventual discovery, not an Aptem
+webhook or an immediate database trigger. Sweep duration adds to the interval.
+
+The Aptem Review status/date writer was not found in this repository. The Aptem
+learner-sync workflow updates learner details, not `Learner.reviews`, and the
+Advanced Admin Review sync reads imported rows to fetch PDFs. Its external
+writer's actual location remains unidentified. The polling path does not depend
+on adding an unused callback to that writer: it reads committed persisted rows,
+including SQL/bulk imports, new completed rows and late-arriving dates. There is
+no persistent completion watermark; every sweep reconsiders the source, so failed
+assignments, older rows updated later and pending employer links remain retryable.
+
+Each scheduled profile is claimed with a short PostgreSQL transaction-scoped
+advisory lock, compatible with transaction-pooling endpoints. Commit/rollback or
+connection loss releases the claim. The existing unique constraints remain the
+durable protection against duplication by page reads, callbacks and commands.
+One profile's failure rolls back its scheduled writes and does not block other
+profiles; errors are logged without payloads and retried by a later sweep.
+Counts report success only after commit. Release flags are retained. Tests and
+management commands never auto-start the thread; `REVIEW_FEEDBACK_SCHEDULE=false`
+is an operational opt-out, without changing the files in this implementation.
+
+See [the investigation, checks and recovery plan](REVIEW_FEEDBACK_DISCOVERY_2026-11-19.md).
 
 For an import pipeline or recovery run, after verifying the target environment:
 
@@ -76,8 +98,12 @@ For an import pipeline or recovery run, after verifying the target environment:
 ```
 
 The command prints counts only (`created`, `existing`, `incomplete`,
-`historical`, `undated`, `future`, `unlinked`, `identityConflicts`). It requires
-explicit learner IDs and never sends notifications, invitations or mail.
+`historical`, `undated`, `future`, `unlinked`, `identityConflicts`, and independent
+employer counts). It requires explicit learner IDs or an explicit `--discover`.
+`--dry-run` adds `wouldCreate`/`employerWouldCreate` without creating assignments
+or resolving employer links. `--source-review-id` narrows recovery to exact
+source reviews with one enrolment learner ID. It never sends notifications,
+invitations or mail.
 MCM/PR use the existing reviewed Feedback Review schema and its unique
 source_review_id constraint. EPA additionally requires migration
 `0012_epa_review_feedback` to permit its form type. Do not

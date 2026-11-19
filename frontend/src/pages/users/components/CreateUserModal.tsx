@@ -1,3 +1,4 @@
+import { LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
 import { useEffect, useState } from 'react';
 import { useToast } from "@/hooks/useToast";
 import { reviewHandoverMessage } from '@/api/reviewHandover';
@@ -715,9 +716,7 @@ export function CreateUserModal({ onClose, onCreated, editing, onSaved }: {
         </div>
       )}
       {hydrating && !hydrateError && (
-        <p className="mb-4 text-[12px] text-foreground-500">
-          <AppIcon className="ri-loader-4-line animate-spin mr-1" />Loading {editing?.name || 'this learner'}&apos;s details…
-        </p>
+        <p className="mb-4 text-[12px] text-foreground-500"><LoadingSkeleton label={`Loading ${editing?.name || 'this learner'}'s details…`} variant="rows" /></p>
       )}
       <form onSubmit={handleSubmit} className="space-y-5">
         {SECTIONS.map((section) => {

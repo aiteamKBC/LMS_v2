@@ -7,18 +7,18 @@ import { RecordingsPageHelp } from './help/RecordingsPageHelp';
 
 export default function RecordingsHub() {
   return <WorkspaceShell role="curriculum" roleLabel="Curriculum Designer" navItems={curriculumNavItems}
-    workspaceLabel="Curriculum Studio" pageTitle="Coach & Tutor Recordings"
+    workspaceLabel="Curriculum Studio" pageTitle="Recording Quality"
     pageSubtitle="Choose a recording workspace to review sessions and quality checks.">
     <main className={styles.page}>
       <div className={styles.introduction}>
-        <h1>Coach & Tutor Recordings</h1>
+        <h1>Recording Quality</h1>
         <p>Choose the sessions you want to review.</p>
       </div>
       <div className={styles.cards}>
           {[
             {
               title: 'Tutor Session Recordings', heading: 'Tutor session recordings', href: '/curriculum/recordings',
-              eyebrow: 'Teaching delivery', image: 'tutor',
+              eyebrow: 'Teaching delivery', image: 'tutor-purple.png',
               description: 'Every teaching session captured from Microsoft Teams, organised by day or by LMS module. Open a session to review its recordings, transcript, attendance and teaching quality check.',
               features: [
                 { icon: CalendarDays, label: 'Day, week and month calendar' },
@@ -30,7 +30,7 @@ export default function RecordingsHub() {
             },
             {
               title: 'Coach Meetings & Recordings', heading: 'Coach meetings & recordings', href: '/curriculum/coaching-recordings',
-              eyebrow: 'Coaching operations', image: 'coach',
+              eyebrow: 'Coaching operations', image: 'coach-teal.png',
               description: 'Coaching meetings for the selected coach, with meeting type classification, LMS matching status, SharePoint recordings and quality reviews in one place.',
               features: [
                 { icon: Users, label: 'Coach, learner and type filters' },
@@ -42,7 +42,7 @@ export default function RecordingsHub() {
             },
             {
               title: 'Quality Assurance', heading: 'Quality assurance', href: '/curriculum/quality',
-              eyebrow: 'Quality management', image: '',
+              eyebrow: 'Quality management', image: 'quality.svg',
               description: 'Review quality checks, manage forms and monitor curriculum issues in one workspace.',
               features: [
                 { icon: ShieldCheck, label: 'Quality checks and reviews' },
@@ -52,9 +52,9 @@ export default function RecordingsHub() {
             },
           ].map(card => <Link key={card.href} to={card.href} aria-label={card.title} className={styles.card}>
             <span className={styles.hoverFill} aria-hidden="true" />
-            {card.image && <span className={styles.illustration} aria-hidden="true">
-              <img src={`${import.meta.env.BASE_URL}recordings-hub/${card.image}.jpg`} alt="" width={480} height={480} />
-            </span>}
+            <span className={styles.illustration} aria-hidden="true">
+              <img src={`${import.meta.env.BASE_URL}recordings-hub/${card.image}`} alt="" width={480} height={480} />
+            </span>
             <div className={styles.content}>
               <p className={styles.eyebrow}>{card.eyebrow}</p>
               <h2 className={styles.title}>{card.heading}</h2>

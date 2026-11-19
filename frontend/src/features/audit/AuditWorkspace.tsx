@@ -1,3 +1,4 @@
+import { LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { jsPDF } from 'jspdf';
 import SignaturePad from 'signature_pad';
@@ -1027,7 +1028,7 @@ function AuditSourceViewer({ item, onClose }: { item: AuditActivityItem | null; 
         {viewer?.notice && <div className="border-b border-amber-200 bg-amber-50 px-4 py-2 text-xs font-bold text-amber-800">{viewer.notice}</div>}
         <div className="min-h-[360px] flex-1 bg-[#17110b]">
           {loading ? (
-            <div className="grid h-[70vh] place-items-center text-sm font-bold text-white"><AppIcon className="ri-loader-4-line mr-2 animate-spin" />Loading component...</div>
+            <div className="grid h-[70vh] place-items-center text-sm font-bold text-white"><LoadingSkeleton label="Loading component..." variant="rows" /></div>
           ) : error ? (
             <div className="grid h-[70vh] place-items-center p-8 text-center text-white">
               <div>

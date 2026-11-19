@@ -1,3 +1,4 @@
+import { LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
 import { ChangeEvent, FormEvent, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { AppIcon } from '@/components/feature/AppIcon';
@@ -2038,7 +2039,7 @@ export default function QuizXmlWorkspacePage() {
         <div className="bg-background-50 rounded-xl border border-foreground-200/60 overflow-hidden">
           <div className="quiz-workspace-cards divide-y divide-foreground-200/50">
             {loading && (
-              <div className="px-4 py-10 text-center text-sm text-foreground-400">Loading quizzes...</div>
+              <div className="px-4 py-10 text-center text-sm text-foreground-400"><LoadingSkeleton label="Loading quizzes..." variant="rows" /></div>
             )}
             {!loading && paginatedQuizzes.map(quiz => (
               <article key={quiz.id} onClick={() => setSelectedQuiz(quiz)} className="p-4 sm:p-5 hover:bg-background-100/50 transition-smooth cursor-pointer">
@@ -2132,7 +2133,7 @@ export default function QuizXmlWorkspacePage() {
               </thead>
               <tbody>
                 {loading && (
-                  <tr><td colSpan={7} className="px-4 py-10 text-center text-sm text-foreground-400">Loading quizzes...</td></tr>
+                  <tr><td colSpan={7} className="px-4 py-10 text-center text-sm text-foreground-400"><LoadingSkeleton label="Loading quizzes..." variant="rows" /></td></tr>
                 )}
                 {!loading && paginatedQuizzes.map(quiz => (
                   <tr key={quiz.id} onClick={() => setSelectedQuiz(quiz)} className="border-b border-foreground-200/40 hover:bg-background-100/40 transition-smooth cursor-pointer">

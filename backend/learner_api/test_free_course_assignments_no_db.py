@@ -163,7 +163,7 @@ class AssignmentEndpointTests(SimpleTestCase):
         request = self.factory.get("/learner_api/learning-plan/19/")
         with patch.object(permissions, "authenticate_request", return_value=STAFF), \
              patch.object(learning_plan.EnrolmentUser, "all_learners", manager), \
-             patch.object(learning_plan, "_serialize", return_value={"freeCourses": []}):
+             patch.object(learning_plan, "_legacy_serialize", return_value={"freeCourses": []}):
             response = learning_plan.learning_plan(request, pk=19)
         self.assertEqual(response.status_code, 200)
         self.assertIn("csrftoken", response.cookies)

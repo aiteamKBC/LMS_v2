@@ -48,6 +48,10 @@ def completion_records(records, owners, read, table):
             result.append(row)
             continue
         owner = owners.get(str(row['learner_id']), {})
+        if owner.get('id') is None:
+            # Missing roster identity cannot authorize assignment marks.
+            result.append(row)
+            continue
         identity = (int(owner['id']), str(owner.get('learner_type') or ''))
         # The native reader keys marks by the original component reference.
         mark = markings.get((*identity, str(row.get('component_ref') or '')))

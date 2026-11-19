@@ -50,7 +50,25 @@ export interface PreviousLearningCompletion {
   completed: boolean;
 }
 
+export interface LiveSessionLearning {
+  attendance: 'present';
+  attendedSeconds: number | null;
+  attendedAt: string | null;
+  status: 'completed' | 'reflection-required' | 'evidence-required' | 'submission-required' | 'awaiting-review' | 'changes-required';
+  /** Review/reflection work is tracked separately from attendance completion. */
+  requirementsStatus?: LiveSessionLearning['status'];
+}
+
+export interface LiveSessionAccess {
+  /** Recording readiness for time entry; the activity itself remains viewable. */
+  open: boolean;
+  status: 'ready' | 'upcoming' | 'in_progress' | 'awaiting_recording' | 'unlinked' | 'cancelled';
+  message: string;
+}
+
 export interface LearnerComponentEntry {
+  liveSessionAccess?: LiveSessionAccess;
+  liveSessionLearning?: LiveSessionLearning;
   /** Exact owned source activity in a verified course replacement; no new attempt or hours. */
   previousLearning?: PreviousLearningCompletion;
   module: string | null;
@@ -281,6 +299,7 @@ export function peekLearnerDetail(kind: LearnerKind, id: string, whileRefreshing
 
 /** A completed non-quiz, non-video component (podcast/reading/slides/reflection/…). */
 export interface LearnerComponentProgress {
+  completionEligible?: boolean;
   /**
    * The component's off-the-job hours — what this completion put towards the
    * learner's total (see active_users.completed_hours_from_progress). Absent on

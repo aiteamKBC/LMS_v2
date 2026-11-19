@@ -310,6 +310,10 @@ def submit_component_progress(request, component_id):
     except (DatabaseError, ValueError) as exc:
         return _error(f"Database error: {exc}", 502)
 
+    from .live_session_access import access_refusal
+    refused = access_refusal(kind, learner_id, component_id, source=source, component_type=live_type)
+    if refused is not None:
+        return refused
     # Every assignment uses the monthly submission. Legacy author flags on
     # this component or elsewhere in the plan must not bypass its checks.
     monthly_submission = normalise_component_type(live_type or client_type) == "assignment"

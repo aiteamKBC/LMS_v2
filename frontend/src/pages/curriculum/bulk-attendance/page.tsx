@@ -1,3 +1,4 @@
+import { LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { WorkspaceShell } from "@/components/feature/WorkspaceShell";
 import { Pagination } from "@/components/ui/Pagination";
@@ -1112,10 +1113,7 @@ export default function AttendancePage() {
               <p className="mt-2 text-xs text-foreground-500">Open View details to see this learner's saved attendance history.</p>
             )}
             {scopeRosterLoading && (
-              <p className="mt-2 flex items-center gap-1.5 text-xs text-foreground-600" role="status">
-                <i className="ri-loader-4-line animate-spin" />
-                Loading learners for the selected filters. You can continue changing the filters while it loads.
-              </p>
+              <p className="mt-2 flex items-center gap-1.5 text-xs text-foreground-600" ><LoadingSkeleton label="Loading learners for the selected filters. You can continue changing the filters while it loads." variant="rows" /></p>
             )}
             {scopeRosterError && (
               <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-danger-600" role="alert">

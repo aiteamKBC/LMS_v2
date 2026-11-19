@@ -1,3 +1,4 @@
+import { LegacyQualityRedirect } from './LegacyQualityRedirect';
 import type { RouteObject } from "react-router-dom";
 import { Navigate } from "react-router-dom";
 import { CHAT_ENABLED, LEARNER_FEEDBACK_ENABLED, LEARNER_POST_LECTURE_FEEDBACK_ENABLED } from "@/lib/featureFlags";
@@ -1195,7 +1196,7 @@ const routes: RouteObject[] = [
     path: "/curriculum/quality-demo",
     // Kept as a compatibility URL for bookmarks, but the old mock dashboard
     // is retired. Quality has one live workspace and one source of truth.
-    element: <Navigate to="/curriculum/quality" replace />,
+    element: <LegacyQualityRedirect />,
   },
   {
     path: "/curriculum/module-builder",

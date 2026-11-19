@@ -90,7 +90,8 @@ class KsbCorrectionTests(SimpleTestCase):
         request = RequestFactory().post('/reflection', data=json.dumps(dict(learnerKind='commercial',
             learnerId='101', activityType='video', activityId='component', learningReflection='Learner text',
             ksbCodes=['B4.1'])), content_type='application/json')
-        with patch.object(view, 'connections', {'enrolment': connection}), patch.object(view.transaction, 'atomic', return_value=nullcontext()):
+        with patch('learner_api.live_session_access._read', return_value=[{'type': 'video'}]), \
+                patch.object(view, 'connections', {'enrolment': connection}), patch.object(view.transaction, 'atomic', return_value=nullcontext()):
             response = unwrap(view._submit_reflection)(request)
         self.assertEqual(response.status_code, 400)
         catalogue.assert_called_once_with('commercial', '101')

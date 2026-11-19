@@ -1,7 +1,6 @@
-import { cleanup, render, screen, within } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, describe, expect, it } from 'vitest';
-import ActionsList from './components/ActionsList';
 import ConcernList from './components/ConcernList';
 import HealthOverview from './components/HealthOverview';
 import OverviewKpis from './components/OverviewKpis';
@@ -13,37 +12,79 @@ afterEach(cleanup);
 
 describe('executive overview source availability', () => {
   it('distinguishes unavailable indicators from a confirmed empty result', () => {
-    const { rerender } = render(<MemoryRouter><OverviewKpis records={[]} actions={[]} forms={[]}
-      availability={{ actions: false, criticalIssues: false, feedback: false }} /></MemoryRouter>);
+    const { rerender } = render(<MemoryRouter><OverviewKpis records={[]} forms={[]}
+      availability={{ actions: false, criticalIssues: false, feedback: false, feedbackScores: false }} /></MemoryRouter>);
     expect(screen.getAllByText('—')).toHaveLength(3);
-    expect(screen.getByText('Critical issue data is unavailable')).toBeInTheDocument();
-    expect(screen.getByText('Action status data is unavailable')).toBeInTheDocument();
+    expect(screen.getAllByText('Feedback classification data is unavailable')).toHaveLength(2);
     expect(screen.getByText('Feedback response data is unavailable')).toBeInTheDocument();
-    expect(screen.queryByText('No critical concerns in scope')).not.toBeInTheDocument();
-    rerender(<MemoryRouter><OverviewKpis records={[]} actions={[]} forms={[]}
-      availability={{ actions: true, criticalIssues: true, feedback: true }} /></MemoryRouter>);
-    expect(screen.queryByText('Critical issue data is unavailable')).not.toBeInTheDocument();
-    expect(screen.getByText('No critical concerns in scope')).toBeInTheDocument();
-    expect(screen.getByText('0 past target date')).toBeInTheDocument();
+    expect(screen.queryByText('Open actions')).not.toBeInTheDocument();
+    expect(screen.getByText('Not assessed')).toBeInTheDocument();
+    expect(screen.queryByText('No Negative feedback in scope')).not.toBeInTheDocument();
+    rerender(<MemoryRouter><OverviewKpis records={[]} forms={[]}
+      availability={{ actions: true, criticalIssues: true, feedback: true, feedbackScores: true }} /></MemoryRouter>);
+    expect(screen.queryByText('Feedback classification data is unavailable')).not.toBeInTheDocument();
+    expect(screen.getByText('No Negative feedback in scope')).toBeInTheDocument();
   });
 
-  it('does not claim actions were resolved when their statuses are unavailable', () => {
-    render(<MemoryRouter><ActionsList actions={[]} available={false} /></MemoryRouter>);
-    expect(screen.getByText('Action status data is unavailable')).toBeInTheDocument();
-    expect(screen.queryByText('No open actions in scope')).not.toBeInTheDocument();
-    expect(screen.queryByText('All improvement actions for these filters are resolved or closed.')).not.toBeInTheDocument();
+  it('no longer shows an Assessed records card', () => {
+    const base: QualityRecord = {
+      id: 'completed-review', formId: 'MCM', formName: 'Synthetic MCM', category: 'Quality Audit',
+      subjectType: 'Coach', subjectName: 'Synthetic Coach', department: 'Not available', programme: 'Not available',
+      respondentType: 'Coach', respondentName: 'Synthetic Coach', auditor: 'Synthetic Reviewer', assessedOn: '2026-10-20',
+      rag: 'unrated', policyVersion: null, critical: false, summary: 'Completed review', learnerRef: null,
+      answeredQuestions: 1, totalQuestions: 1, reviewStatus: 'completed',
+    };
+    render(<MemoryRouter><OverviewKpis records={[base, { ...base, id: 'assessed-review', rag: 'green', policyVersion: 'qms-v1' }]}
+      forms={[]} availability={{ actions: true, criticalIssues: true, feedback: true, feedbackScores: true }} /></MemoryRouter>);
+    expect(screen.queryByText('Assessed records')).not.toBeInTheDocument();
   });
 
-  it('retains the confirmed empty-action state when action data is available', () => {
-    render(<MemoryRouter><ActionsList actions={[]} available /></MemoryRouter>);
-    expect(screen.getByText('No open actions in scope')).toBeInTheDocument();
-    expect(screen.getByText('All improvement actions for these filters are resolved or closed.')).toBeInTheDocument();
+  it('counts Negative feedback as critical and Neutral plus Negative as needing review without marking them assessed', () => {
+    const feedback: QualityRecord = {
+      id: 'neutral-feedback', formId: 'feedback-1', formName: 'Synthetic Feedback', category: 'Learner Feedback',
+      subjectType: 'Coach', subjectName: 'Synthetic Coach', department: 'Not available', programme: 'Not available',
+      respondentType: 'Learner', respondentName: 'Synthetic Learner', auditor: 'Feedback response', assessedOn: '2026-10-20',
+      rag: 'unrated', policyVersion: null, critical: false, summary: 'Completed feedback', learnerRef: 'learner-1',
+      answeredQuestions: 1, totalQuestions: 1, reviewStatus: 'completed', feedbackClassification: 'neutral',
+    };
+    render(<MemoryRouter><OverviewKpis records={[feedback, { ...feedback, id: 'negative-feedback', feedbackClassification: 'negative' }, { ...feedback, id: 'positive-feedback', feedbackClassification: 'positive' }]}
+      forms={[]} availability={{ actions: false, criticalIssues: false, feedback: true, feedbackScores: true }} /></MemoryRouter>);
+    expect(screen.getByText('Feedback to review')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Review feedback' })).toHaveAttribute('href', '/curriculum/quality?view=feedbacks&classification=review');
+    expect(within(screen.getByText('Feedback to review').closest('.group') as HTMLElement).getByText('2')).toBeInTheDocument();
+    expect(within(screen.getByText('Critical feedback').closest('.group') as HTMLElement).getByText('1')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Review critical feedback' })).toHaveAttribute('href', '/curriculum/quality?view=feedbacks&classification=negative');
+    expect(screen.getByText('Review the original responses and decide whether follow-up is required')).toBeInTheDocument();
   });
 
-  it('does not report zero critical outcomes when critical flags are unavailable', () => {
-    render(<HealthOverview records={[]} actions={[]} availability={{ actions: false, criticalIssues: false }} />);
-    expect(screen.getByText('Critical issue data is unavailable')).toBeInTheDocument();
-    expect(screen.queryByText('No critical red outcomes in scope')).not.toBeInTheDocument();
+  it('shows scored feedback health separately from formal QA assessment', () => {
+    const base: QualityRecord = {
+      id: 'feedback-1', formId: 'feedback-form-1', formName: 'Synthetic Feedback', category: 'Learner Feedback',
+      subjectType: 'Coach', subjectName: 'Synthetic Coach', department: 'Not available', programme: 'Not available',
+      respondentType: 'Learner', respondentName: 'Synthetic Learner', auditor: 'Feedback response', assessedOn: '2026-10-20',
+      rag: 'unrated', policyVersion: null, critical: false, summary: 'Completed feedback', learnerRef: 'learner-1',
+      answeredQuestions: 1, totalQuestions: 1, reviewStatus: 'completed', feedbackClassification: 'positive',
+    };
+    const records = [
+      base,
+      { ...base, id: 'feedback-2', feedbackClassification: 'neutral' as const },
+      { ...base, id: 'feedback-3', feedbackClassification: 'negative' as const },
+      { ...base, id: 'feedback-4', feedbackClassification: 'unscored' as const },
+    ];
+    render(<HealthOverview records={records} availability={{ feedbackScores: true }} />);
+    const feedback = within(screen.getByRole('region', { name: 'Feedback response health' }));
+    for (const label of ['Positive', 'Neutral', 'Negative']) {
+      expect(within(feedback.getByText(label).closest('div') as HTMLElement).getByText('1')).toBeInTheDocument();
+    }
+    expect(feedback.getByText('3 scored responses in scope', { exact: false })).toHaveTextContent('1 unscored');
+    expect(screen.queryByText('Formal QA policy outcomes')).not.toBeInTheDocument();
+  });
+
+  it('reports unavailable feedback health without showing false zeroes', () => {
+    render(<HealthOverview records={[]} availability={{ feedbackScores: false }} />);
+    const feedback = within(screen.getByRole('region', { name: 'Feedback response health' }));
+    expect(feedback.getByText('Feedback classification data is unavailable.')).toBeInTheDocument();
+    expect(feedback.queryByText('Positive')).not.toBeInTheDocument();
   });
 
   it('does not claim concern themes were extracted when the source is unavailable', () => {
@@ -90,5 +131,29 @@ describe('executive overview source availability', () => {
     render(<RegistryTable forms={[form]} />);
     expect(screen.getByText('100% of saved records completed')).toBeInTheDocument();
     expect(screen.queryByText('100% of 0')).not.toBeInTheDocument();
+  });
+  it('shows the evaluation rule and per-form outcome breakdown instead of a status mix', () => {
+    const form: FormDefinition = {
+      id: 'feedback-7', name: 'Synthetic Feedback', shortName: 'Synthetic Feedback', category: 'Learner Feedback', version: '1',
+      sourceTable: 'synthetic', owner: 'Learner Experience', respondentType: 'Learner', subjectType: 'Tutor',
+      questionCount: 4, answerTypes: ['Rating'], scoringMethod: 'Response score classification', policyId: 'Feedback score bands',
+      policyVersion: '1', policySummary: 'Positive ≥75%', requiresAction: false, access: 'Feedback analytics access',
+      scheduled: 0, submissions: 3, latest: '2026-10-20', completionRate: null, ragSupported: false,
+      rag: { green: 0, amber: 0, red: 0, unrated: 3, na: 0, total: 3 },
+    };
+    const record: QualityRecord = {
+      id: 'r1', formId: 'feedback-7', formName: 'Synthetic Feedback', category: 'Learner Feedback',
+      subjectType: 'Tutor', subjectName: 'Synthetic Tutor', department: 'Not available', programme: 'Not available',
+      respondentType: 'Learner', respondentName: 'Synthetic Learner', auditor: 'Feedback response', assessedOn: '2026-10-20',
+      rag: 'unrated', policyVersion: null, critical: false, summary: 'Completed feedback', learnerRef: null,
+      answeredQuestions: 4, totalQuestions: 4, reviewStatus: 'completed', feedbackClassification: 'positive',
+    };
+    render(<RegistryTable forms={[form]} records={[record, { ...record, id: 'r2' }, { ...record, id: 'r3', feedbackClassification: 'negative' }]} />);
+    expect(screen.queryByText('Evaluation policy')).not.toBeInTheDocument();
+    expect(screen.queryByText('Status mix')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /Detail/ }));
+    expect(within(screen.getByText('Positive').closest('div') as HTMLElement).getByText('2')).toBeInTheDocument();
+    expect(within(screen.getByText('Negative').closest('div') as HTMLElement).getByText('1')).toBeInTheDocument();
+    expect(screen.getByText('Evaluation rule')).toBeInTheDocument();
   });
 });

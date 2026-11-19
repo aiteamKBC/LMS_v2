@@ -1,7 +1,9 @@
+import { SCORE_CLASSIFICATION_TEXT } from '@/features/feedback/scoreClassification';
 import { qualityDefinition, qualityForms, qualityReviews, type QualityFormCard, type QualitySummary, type QualityTemplateState } from '@/api/coachingQualityReviews';
 import { feedbackApi, type FeedbackForm, type FeedbackResponse, type FeedbackScoreClass } from '@/api/feedback';
 import { addDays, TIME_ZONE_LABEL, todayIso } from '@/pages/curriculum/recordings/utils';
 import type { ConcernTheme, FeedbackClassification, FormDefinition, QualityAction, QualityRecord, RagCounts, RagStatus } from '@/types/qms';
+import { isQualityDashboardHiddenFormName } from '@/lib/qualityDashboardFeedback';
 
 const PAGE_SIZE_LIMIT = 10000;
 
@@ -130,10 +132,10 @@ function feedbackFormDefinition(form: FeedbackForm, rows: FeedbackResponse[], cl
     subjectType: rows.some(row => row.activity?.tutorName && !row.activity.coachName) ? 'Tutor' : 'Coach',
     questionCount: questionTotal,
     answerTypes: feedbackAnswerTypes(form),
-    scoringMethod: 'Feedback analytics classification; no QMS RAG policy configured',
-    policyId: null,
-    policyVersion: null,
-    policySummary: 'Feedback scores are available in the Feedback Insights workspace. No approved QMS RAG policy is returned for this form, so this view keeps the status Not assessed.',
+    scoringMethod: 'Response score classification',
+    policyId: 'Feedback score bands',
+    policyVersion: '1',
+    policySummary: `Each completed response is scored and classified: ${SCORE_CLASSIFICATION_TEXT}`,
     requiresAction: false,
     access: 'Feedback analytics access',
     scheduled: form.assignedCount,
@@ -149,25 +151,31 @@ async function loadFeedbackData(start: string, end: string) {
   try {
     const [{ forms }, { responses }, insights] = await Promise.all([
       feedbackApi.listForms(),
-      feedbackApi.responses(),
-      feedbackApi.insightsDashboard({}).catch(() => null),
+      feedbackApi.responses({ status: 'completed', submittedFrom: start, submittedTo: end }),
+      feedbackApi.insightsDashboard({ submittedFrom: start, submittedTo: end }).catch(() => null),
     ]);
     const classifications = new Map<number, FeedbackScoreClass>();
     insights?.analytics.insights?.classification?.responses.forEach(row => classifications.set(row.responseId, row.classification));
     const inPeriod = responses.filter(row => {
       const date = (row.submittedAt || row.updatedAt || row.startedAt).slice(0, 10);
-      return date >= start && date <= end;
+      return row.status === 'completed' && date >= start && date <= end;
     });
+    // The forms index lists current versions only; completed responses may belong to older versions.
+    const currentIds = new Set(forms.map(form => form.id));
+    const historicalIds = [...new Set(inPeriod.map(row => row.formId).filter(id => !currentIds.has(id)))];
+    const historicalForms = await Promise.all(historicalIds.map(async id => (await feedbackApi.getForm(id)).form));
+    const allForms = [...forms, ...historicalForms].filter(form => !isQualityDashboardHiddenFormName(form.title));
+    const visibleResponses = inPeriod.filter(row => !isQualityDashboardHiddenFormName(row.formTitle));
     const rowsByForm = new Map<number, FeedbackResponse[]>();
-    inPeriod.forEach(row => rowsByForm.set(row.formId, [...(rowsByForm.get(row.formId) ?? []), row]));
+    visibleResponses.forEach(row => rowsByForm.set(row.formId, [...(rowsByForm.get(row.formId) ?? []), row]));
     return {
-      forms: forms.map(form => feedbackFormDefinition(form, rowsByForm.get(form.id) ?? [], classifications)),
-      records: forms.flatMap(form => feedbackRecords(form, rowsByForm.get(form.id) ?? [], classifications)),
+      forms: allForms.map(form => feedbackFormDefinition(form, rowsByForm.get(form.id) ?? [], classifications)),
+      records: allForms.flatMap(form => feedbackRecords(form, rowsByForm.get(form.id) ?? [], classifications)),
       feedbackTypes: [...new Map(
-        [...forms.map(form => form.formType), ...inPeriod.map(row => row.formType)]
+        [...allForms.map(form => form.formType), ...visibleResponses.map(row => row.formType)]
           .map(type => [type, feedbackTypeLabel(type)] as const),
       )].map(([id, name]) => ({ id, name })),
-      scoresAvailable: insights !== null,
+      scoresAvailable: Boolean(insights?.analytics.insights?.classification),
     };
   } catch {
     return null;
@@ -222,10 +230,12 @@ function formDefinition(card: QualityFormCard, state: QualityTemplateState | nul
     subjectType: 'Coach',
     questionCount: questionTotal,
     answerTypes: answerTypes(state),
-    scoringMethod: questionTotal ? 'Criteria captured; RAG policy not configured' : 'Definition unavailable',
-    policyId: null,
-    policyVersion: null,
-    policySummary: 'No approved RAG policy is returned for this form. Records remain Not assessed until a policy is configured and published.',
+    scoringMethod: questionTotal ? 'Reviewer rates each criterion' : 'Definition unavailable',
+    policyId: questionTotal ? 'Criterion ratings' : null,
+    policyVersion: questionTotal ? String(state?.published.version ?? '1') : null,
+    policySummary: questionTotal
+      ? 'The reviewer rates each criterion Gold, Green, Amber, Red or Not applicable. Ratings are reported per criterion; no overall form score is calculated.'
+      : 'The form definition is unavailable, so no evaluation rule can be shown.',
     requiresAction: rows.some(row => row.actionCount > 0),
     access: 'Curriculum quality access',
     scheduled: 0,
@@ -268,11 +278,14 @@ export async function loadLiveQmsData(signal: AbortSignal): Promise<LiveQmsData>
   const end = todayIso(TIME_ZONE_LABEL);
   const start = addDays(end, -365);
   const [catalog, rows, feedback] = await Promise.all([
-    qualityForms(signal),
+    qualityForms(signal, false, true),
     allReviews(start, end, signal),
     loadFeedbackData(start, end),
   ]);
-  const definitions = await Promise.all(catalog.forms.map(async card => {
+  const visibleCatalogForms = catalog.forms.filter(card => !isQualityDashboardHiddenFormName(card.title));
+  const definitions = await Promise.all(visibleCatalogForms.map(async card => {
+    const bundled = catalog.templates?.[card.reviewType];
+    if (bundled) return [card.reviewType, bundled] as const;
     try {
       const result = await qualityDefinition(signal, card.reviewType);
       return [card.reviewType, result.template] as const;
@@ -287,11 +300,11 @@ export async function loadLiveQmsData(signal: AbortSignal): Promise<LiveQmsData>
     rowsByType.set(key, [...(rowsByType.get(key) ?? []), row]);
   });
   const forms = [
-    ...catalog.forms.map(card => formDefinition(card, definitionByType.get(card.reviewType) ?? null, rowsByType.get(card.reviewType) ?? [])),
+    ...visibleCatalogForms.map(card => formDefinition(card, definitionByType.get(card.reviewType) ?? null, rowsByType.get(card.reviewType) ?? [])),
     ...(feedback?.forms ?? []),
   ];
   const records = [
-    ...catalog.forms.flatMap(card => formRecords(card, rowsByType.get(card.reviewType) ?? [], definitionByType.get(card.reviewType) ?? null)),
+    ...visibleCatalogForms.flatMap(card => formRecords(card, rowsByType.get(card.reviewType) ?? [], definitionByType.get(card.reviewType) ?? null)),
     ...(feedback?.records ?? []),
   ];
   const sourceLabel = feedback ? 'Quality Forms, saved Reviews, and Feedback Forms/Responses' : 'Quality Forms and saved Reviews (Feedback API unavailable)';

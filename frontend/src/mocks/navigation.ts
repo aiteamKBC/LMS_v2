@@ -260,12 +260,16 @@ export const curriculumNavItems: SidebarNavItem[] = [
   },
   {
     id: 'curriculum-coaching-recordings',
-    label: 'Recordings',
+    label: 'Recording Quality',
     icon: 'ri-video-line',
+    href: '/curriculum/recordings-hub',
+    overviewPermissionId: 'curriculum-recordings-hub',
     children: [
-      { id: 'curriculum-recordings-hub', label: 'Recordings hub', icon: 'ri-layout-grid-line', href: '/curriculum/recordings-hub' },
       { id: 'curriculum-tutor-recordings', label: 'Tutor session recordings', icon: 'ri-presentation-line', href: '/curriculum/recordings' },
       { id: 'curriculum-coach-meetings', label: 'Coach meetings', icon: 'ri-user-settings-line', href: '/curriculum/coaching-recordings' },
+      { id: 'curriculum-quality-assurance', label: 'Quality Assurance', icon: 'ri-shield-check-line', href: '/curriculum/quality' },
+      { id: 'curriculum-quality-checks', label: 'Quality Checks', icon: 'ri-checkbox-circle-line', href: '/curriculum/coaching-recordings/reviews', matchPaths: ['/curriculum/quality/forms'], permissionParentId: 'curriculum-quality-assurance' },
+      { id: 'curriculum-quality-deep-dive', label: 'Deep Dive', icon: 'ri-file-chart-line', href: '/curriculum/quality?view=deep-dive', permissionParentId: 'curriculum-quality-assurance' },
     ],
   },
   {

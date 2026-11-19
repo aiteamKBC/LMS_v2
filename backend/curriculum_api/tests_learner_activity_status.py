@@ -320,6 +320,79 @@ class ActivityStatusTests(SimpleTestCase):
         self.assertEqual(row, original)
         self.assertEqual(state['snapshotHash'], status.digest([original]))
 
+    def test_selected_input_and_timer_time_match_the_learner_without_changing_evidence(self):
+        for mode, selected, verified in [('input', 7200, 35), ('input', 0, 35),
+                                         ('input', 3600, None), ('timer', 3600, 120)]:
+            with self.subTest(mode=mode, selected=selected):
+                row = self.native_timer(time_tracking_source=f'signed_session:{mode}',
+                                        claimed_seconds=selected, verified_seconds=verified, expected_otjh=10)
+                original = dict(row)
+                state = status.facts([row])
+                self.assertEqual((state['actualOtjh'], state['acceptedOtjh']), (selected / 3600,) * 2)
+                self.assertEqual(state['hoursSource'], 'learner_progress_entries.claimed_seconds')
+                self.assertEqual(state['unallocatedAcceptedRecords'], 0)
+                self.assertEqual(row, original)
+                self.assertEqual(state['snapshotHash'], status.digest([original]))
+
+    def test_selected_input_does_not_replace_stored_allocations_or_accept_ineligible_records(self):
+        row = self.native_timer(time_tracking_source='signed_session:input', claimed_seconds=7200)
+        for seconds in (0, 900):
+            with self.subTest(seconds=seconds):
+                saved = {**row, 'actual_seconds': seconds, 'actual_basis': 'staff:module-progress'}
+                state = status.facts([saved, {**row, 'id': 2}])
+                self.assertEqual(state['acceptedOtjh'], seconds / 3600)
+                self.assertEqual(state['hoursSource'], 'learner_progress_entries.actual_seconds')
+        for changes in ({'source_system': 'import'}, {'accepted': False}, {'submitted_at': None},
+                        {'component_link_source': 'unresolved'}):
+            with self.subTest(changes=changes):
+                self.assertEqual(status.facts([{**row, **changes}])['acceptedOtjh'], 0)
+
+    def test_invalid_selected_time_uses_only_valid_verified_time_and_never_planned_hours(self):
+        for invalid in (None, -1, float('nan'), float('inf'), 'invalid'):
+            row = self.native_timer(time_tracking_source='signed_session:input', claimed_seconds=invalid,
+                                    expected_otjh=10)
+            with self.subTest(invalid=invalid):
+                self.assertEqual(status.facts([row])['acceptedOtjh'], .5)
+                self.assertIsNone(status.facts([{**row, 'verified_seconds': None}])['actualOtjh'])
+
+    def test_selected_retry_decisions_use_the_saved_choice_once(self):
+        old = self.native_timer(time_tracking_source='signed_session:input', claimed_seconds=3600,
+                                verified_seconds=60)
+        for choice, seconds in [('add', 4500), ('correct', 900), ('keep', 3600), ('retry', 3600)]:
+            with self.subTest(choice=choice):
+                new = {**old, 'id': 2, 'claimed_seconds': 900, 'verified_seconds': 30,
+                       'submitted_at': '2026-10-02T10:00:00Z', 'source_payload': {'retakeTimeChoice': choice}}
+                state = status.facts([old, new])
+                self.assertEqual(state['acceptedOtjh'], seconds / 3600)
+                self.assertEqual(old['actual_seconds'], None)
+                self.assertEqual(new['actual_seconds'], None)
+
+    def test_selected_hours_update_current_summary_and_keep_history_and_other_learner_separate(self):
+        current = self.native_timer(time_tracking_source='signed_session:input', claimed_seconds=7200, verified_seconds=35)
+        rows = [current, self.native_timer(id=2, component_ref='old-c1', actual_seconds=600),
+                self.native_timer(id=3, learner_id=2, verified_seconds=900)]
+        payload = {'identifier': 'MOD-1', 'otjhAchievement': {'learners': [
+            {'learnerId': 1, 'plannedOtjh': 10}, {'learnerId': 2, 'plannedOtjh': 10}]},
+            'learnerActivityPlan': [{'learnerId': learner, 'componentId': 'c1', 'componentType': 'reading'} for learner in (1, 2)]}
+        with patch.object(status, 'load_records', return_value=rows), patch.object(status, 'query', return_value=[]) as read, \
+             patch('learner_api.attendance_otjh.protected_months', return_value={}) as protection:
+            status.enrich(payload, None)
+        protection.assert_called_once_with([1], read, status.table)
+        self.assertEqual(payload['learnerActivityPlan'][0]['logState']['acceptedOtjh'], 2)
+        self.assertEqual([row['achievedOtjh'] for row in payload['moduleProgressOtjh']['learners']], [2, .25])
+        self.assertEqual(payload['moduleProgressOtjh']['achievedTotal'], 2.25)
+        self.assertEqual(payload['moduleProgressOtjh']['historicalTotal'], 600 / 3600)
+        self.assertIsNone(current['actual_seconds'])
+
+    def test_closed_months_keep_previous_hour_projection_for_current_and_declared_month(self):
+        for dates in ({'reporting_month': '2026-09'}, {'declared_completed_at': '2026-09-30T12:00:00Z'},
+                      {'submitted_at': '2026-09-30T12:00:00Z', 'reporting_month': '2026-09'}):
+            row = self.native_timer(time_tracking_source='signed_session:input', claimed_seconds=7200, **dates)
+            with self.subTest(dates=dates):
+                hours = status.recorded_hour_rows([row], protected={1: {'2026-09': {}}})
+                self.assertEqual(status.facts([row], hour_rows=hours)['acceptedOtjh'], .5)
+                self.assertEqual(status.facts([row])['acceptedOtjh'], 2)
+
     def test_stored_zero_and_manual_corrections_override_verified_retry_time(self):
         for seconds in (0, 900):
             stored = self.native_timer(actual_seconds=seconds, actual_basis='staff:module-progress')
@@ -653,12 +726,13 @@ class ActivityStatusTests(SimpleTestCase):
         payload = {'identifier': 'MOD-1', 'learnerActivityPlan': [
             {'learnerId': 1, 'componentId': f'c{i}', 'componentType': 'live_session'} for i in range(100)]}
         def bulk(sql, params=()):
+            if 'learner_monthly_signatures' in sql or 'learner_monthly_locks' in sql: return []
             if 'components' in sql: return [{'id': f'c{i}', 'type': 'live_session', 'settings_json': {'sessionDate': '2026-10-01'}} for i in range(100)]
             if 'learners' in sql: return [{'id': 1, 'coach_email': 'another@example.com'}]
             return []
         with patch.object(status, 'query', side_effect=bulk) as read, patch.object(status, '_accesses_of', return_value={'coach'}):
             status.enrich(payload, self.actor)
-        self.assertEqual(read.call_count, 6)
+        self.assertEqual(read.call_count, 9)  # Register and signature/lock reads stay batched.
         self.assertTrue(all(not row['canChangeStatus'] for row in payload['learnerActivityPlan']))
         self.assertTrue(all(row['lectureDate'] == '2026-10-01' for row in payload['learnerActivityPlan']))
 

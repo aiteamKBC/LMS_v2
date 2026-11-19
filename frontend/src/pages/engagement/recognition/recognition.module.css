@@ -1,0 +1,7 @@
+.publicOnly {
+  --enrolment-ui-focus: transparent;
+}
+
+.publicOnly:focus-visible {
+  box-shadow: 0 0 0 1px currentColor;
+}

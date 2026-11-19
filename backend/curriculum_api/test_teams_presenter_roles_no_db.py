@@ -66,10 +66,10 @@ class EventPayloadTests(unittest.TestCase):
             'teams_meeting_default_organizer': lambda: 'owner@example.invalid',
             'graph_timezone_iana': lambda settings: 'Europe/London', 'calendar_zone': ZoneInfo,
             'TEAMS_REPEAT_VALUES': {'none', 'weekly'},
-            'calendar_targets': lambda payload, start, duration, repeat, count, zone: [{'start': start, 'end': start}],
+            'calendar_targets': lambda payload, start, duration, repeat, count, zone, *, max_sessions=52: [{'start': start, 'end': start}],
             'graph_calendar_time': lambda instant, zone, graph_zone: {'dateTime': instant.isoformat(), 'timeZone': graph_zone},
             'teams_event_body_html': lambda title, details: title,
-            'local_calendar_recurrence': lambda *args: None,
+            'local_calendar_recurrence': lambda *args, **kwargs: None,
         }
         exec(compile(module, str(ROOT / 'views.py'), 'exec'), scope)
         return scope['teams_event_payload']

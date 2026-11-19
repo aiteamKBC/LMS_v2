@@ -54,12 +54,16 @@ def component_content_available(c):
     Kept in step by frontend/src/utils/__tests__/componentContentCases.json,
     which both this module's tests and the frontend's run.
     """
+    ctype = c.get("type") if isinstance(c.get("type"), str) else ""
+    ctype = _TYPE_SPACE.sub("_", _js_trim(ctype).lower())
+    if ctype == "live_session":
+        return (isinstance(c.get('liveSessionAccess'), dict) or _has_url(c.get('liveSessionUrl'))
+                or _has_text(c.get('sessionDateTimeUtc')) or _has_text(c.get('sessionDate'))
+                or bool(c.get('teamsLiveSessionId')) or _has_text(c.get('description')))
     if c.get("isQuiz"):
         meta = c.get("quizMeta") or {}
         questions = meta.get("questions")
         return meta.get("quizId") is not None and (questions if questions is not None else 0) > 0
-    ctype = c.get("type") if isinstance(c.get("type"), str) else ""
-    ctype = _TYPE_SPACE.sub("_", _js_trim(ctype).lower())
     if ctype == "quiz":
         return False
     has_description = _has_text(c.get("description"))
@@ -79,9 +83,6 @@ def component_content_available(c):
         return _has_url(c.get("resourceUrl")) or has_description
     if ctype == "reflection":
         return True
-    if ctype == "live_session":
-        return (_has_url(c.get("liveSessionUrl")) or _has_text(c.get("sessionDateTimeUtc"))
-                or _has_text(c.get("sessionDate")) or bool(c.get("teamsLiveSessionId")) or has_description)
     if ctype == "assignment":
         return (any(_topic_has_content(topic) for topic in c.get("assignmentTopics") or [])
                 or _has_text(c.get("assignmentBrief")) or _has_text(c.get("assignmentBriefHtml"))
@@ -129,6 +130,7 @@ def _weekly_component(c):
         # its authored activity by these dates (liveSessionRoute.ts).
         row["sessionDate"] = c.get("sessionDate")
         row["sessionDateTimeUtc"] = c.get("sessionDateTimeUtc")
+        row['liveSessionAccess'] = c.get('liveSessionAccess')
         if c.get("additionalMeeting") is True:
             row["additionalMeeting"] = True
     # As learner-detail's compact mode: omitted means null to every consumer.
@@ -268,6 +270,9 @@ def build_learning_content_summary(source, pk, *, learning_summary=False, assign
             ]
     if week_ids is not None:
         components = [c for c in components if str(c.get("weekId")) in set(map(str, week_ids))]
+    if not identities_only or preserve_legacy:
+        from .live_session_access import annotate_access
+        components = annotate_access(source, components)
     result = {
         "id": str(source.id),
         # learnerHeaderPlan matches the learner's placement to choose the module.

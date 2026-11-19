@@ -33,6 +33,7 @@ class LiveSessionProgressTests(SimpleTestCase):
         patch('learner_api.recorded_attendance.saved_delivery_mode', return_value='live').start()
         self.manual = patch('learner_api.live_session_progress.read_manual_live_credits', return_value=({}, [])).start()
         self.saved = patch('learner_api.live_session_progress.read_completed_live_credits', return_value=[]).start()
+        patch('learner_api.live_session_progress.protect_credit_hours', side_effect=lambda source, credits: credits).start()
         self.addCleanup(patch.stopall)
 
     def credits(self, components=None, register=None):
@@ -175,7 +176,21 @@ class LiveSessionProgressTests(SimpleTestCase):
         entries.objects.using.assert_called_once_with('enrolment')
         entries.objects.using.return_value.filter.assert_called_once_with(
             learner_id=70, component_ref__in=['C1'], kind='component', deleted_at__isnull=True)
-        self.assertEqual(credits[0]['hours'], 2.5)
+        self.assertEqual(credits[0]['hours'], 0)
+
+    def test_legacy_recording_input_without_a_tracking_label_keeps_its_entered_duration(self):
+        saved = [{'kind': 'component', 'componentId': 'C1', 'moduleId': 'M1',
+                  'submittedAt': NOW.isoformat(), 'reportedTime': '125 minutes'}]
+        credits = project_completed_live_credits([component()], saved)
+        self.assertEqual(supplement_component_progress(saved, credits), saved)
+        metrics = {'M1': {'hours': {'actual': 125 / 60}}}
+        self.assertEqual(supplement_module_hours(metrics,
+            [{'component_ref': 'C1', 'actual_seconds': 7500, 'accepted': True}], credits), metrics)
+
+    def test_resolved_present_register_completes_even_without_provider_duration(self):
+        credits = self.credits(register=[lecture(resolved_attendance_status='present',
+            attended_seconds=0, attendance_report_id=None)])
+        self.assertEqual([(credit['hours'], credit['verifiedSeconds']) for credit in credits], [(2.5, 0)])
 
     def test_manual_completion_is_used_in_recorded_and_live_modes_for_both_kinds(self):
         self.saved.return_value = project_completed_live_credits([component()], [
@@ -189,8 +204,8 @@ class LiveSessionProgressTests(SimpleTestCase):
                         components=[component()], register=[lecture(attendance_status='absent', attended_seconds=0)])
                     self.assertEqual(credits, self.saved.return_value)
 
-    def test_hours_top_up_existing_manual_time_without_changing_stored_rows(self):
-        for seconds, expected in [(0, 2.5), (1800, 2.5), (7200, 2.5), (10800, 3)]:
+    def test_presence_replaces_saved_time_without_changing_stored_rows(self):
+        for seconds, expected in [(0, 2.5), (1800, 2.5), (7200, 2.5), (10800, 2.5)]:
             with self.subTest(seconds=seconds):
                 records = [{'component_ref': 'C1', 'actual_seconds': seconds, 'accepted': True}]
                 before = deepcopy(records)
@@ -201,11 +216,12 @@ class LiveSessionProgressTests(SimpleTestCase):
                 self.assertEqual(metrics['M1']['hours']['actual'], seconds / 3600)
                 self.assertEqual(supplement_module_hours(metrics, records, self.credits()), result)
 
-    def test_explicit_staff_hours_correction_wins(self):
+    def test_verified_presence_earns_fixed_credit_over_an_open_month_zero_correction(self):
         records = [{'component_ref': 'C1', 'actual_seconds': 0, 'accepted': True,
                     'actual_basis': 'staff:module-progress'}]
         metrics = {'M1': {'hours': {'actual': 0}}, 'OTHER': {'hours': {'actual': 4}}}
-        self.assertEqual(supplement_module_hours(metrics, records, self.credits()), metrics)
+        self.assertEqual(supplement_module_hours(metrics, records, self.credits()),
+                         {'M1': {'hours': {'actual': 2.5}}, 'OTHER': {'hours': {'actual': 4}}})
 
     def test_other_activity_hours_and_completion_are_preserved(self):
         metrics = {'M1': {'hours': {'actual': 3}}}
@@ -316,10 +332,14 @@ class LiveSessionProgressTests(SimpleTestCase):
 
     def test_canonical_module_percentage_includes_verified_live_completion(self):
         from .module_progress import canonical_module_progress
-        source = SimpleNamespace(pk=7)
         profile = SimpleNamespace(pk=70, enrolment_id=7)
+        source = SimpleNamespace(pk=7, _case_file_profile=profile)
+        connection = MagicMock()
+        connection.cursor.return_value.__enter__.return_value.fetchall.return_value = [
+            ('C1', 'M1', False, False, False, None, False, False)]
         detail = {'components': [component(), component(componentId='C2', type='reading')], 'quizAttempts': []}
         with patch('learner_api.canonical_learning.require_profile', return_value={'id': 70}), \
+             patch('learner_api.attendance_learning.connections', {'enrolment': connection}), \
              patch('learner_api.attendance_lectures.lecture_register', return_value=[lecture()]), \
              patch('learner_api.live_session_progress.timezone.now', return_value=NOW):
             result = canonical_module_progress(source, profile,

@@ -413,6 +413,7 @@ INSTALLED_APPS = [
     # Platform authentication (auth schema on the Neon enrolment database).
     # Its tables are unmanaged and created by `manage.py apply_login_tables`.
     'login',
+    'qms_api',
 ]
 
 MIDDLEWARE = [
@@ -789,6 +790,7 @@ if USE_NEW_ENDPOINT:
 _assistant_conversations_database_url = (
     os.environ.get('ASSISTANT_CONVERSATIONS_DATABASE_URL')
     or os.environ.get('TICKETING_DATABASE_URL')
+    or os.environ.get('Database_ticket_system')
 )
 if _assistant_conversations_database_url and not USE_SQLITE_FOR_TESTS and 'test' not in sys.argv:
     DATABASES['assistant_conversations'] = database_from_url(_assistant_conversations_database_url)

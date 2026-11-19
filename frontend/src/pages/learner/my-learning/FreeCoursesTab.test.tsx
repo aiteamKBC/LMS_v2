@@ -24,7 +24,8 @@ vi.mock('./FreeCourseMaterial', () => ({
 vi.mock('./FreeCourseQuiz', () => ({
   FreeCourseQuiz: ({ readOnly }: { readOnly?: boolean }) => <div>{readOnly ? 'Read-only quiz preview' : 'Interactive quiz'}</div>,
 }));
-vi.mock('./SubjectWorkspace', () => ({ Cover: ({ title }: { title: string }) => <div>Cover {title}</div> }));
+vi.mock('./SubjectWorkspace', async importOriginal => ({ ...await importOriginal<typeof import('./SubjectWorkspace')>(), Cover: ({ title }: { title: string }) => <div>Cover {title}</div> }));
+vi.mock('@/api/learnerCertificates', () => ({ fetchLearnerCertificateTemplate: vi.fn(async () => ({ template: null, csrfToken: '' })) }));
 
 const summary: FreeCourseSummary = {
   freeCourseId: 'FREE-1', courseName: 'Canonical course', description: 'Description', coverImageUrl: '',

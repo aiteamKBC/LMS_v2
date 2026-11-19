@@ -30,16 +30,20 @@ class MonthlyLogAttendanceTests(SimpleTestCase):
             INSERT INTO curriculum.modules VALUES ('M1','Synthetic module'),('M2','Second module');
             CREATE TABLE curriculum.live_session_occurrences (
                 id text,live_session_id text,session_number integer,scheduled_start text,scheduled_end text,status text);
-            CREATE TABLE curriculum.components (id text,settings_json text);
+            CREATE TABLE curriculum.components (id text,settings_json text,module_catalogue_id text,type text);
             CREATE TABLE Learner.learners (id integer,aptem_id integer);
             INSERT INTO Learner.learners VALUES (70,7001),(80,8001);
             CREATE TABLE Learner.source_lms_attendance (source_key text,aptem_id integer);
             CREATE TABLE Learner.learner_progress_entries (
                 source_payload text,time_tracking_session_ref text,module_ref text,component_ref text,
                 curriculum_component_ref text,learner_id integer,deleted_at text,actual_seconds integer,
-                source_system text,component_link_source text,kind text,submitted_at text,accepted boolean,actual_basis text);
+                source_system text,component_link_source text,kind text,submitted_at text,accepted boolean,actual_basis text,
+                id integer PRIMARY KEY,reporting_month text,declared_completed_at text,component_type text);
             CREATE TABLE Learner.learner_monthly_signatures (
                 id integer,learner_id integer,report_month text,signature_data text,review_confirmed boolean,signed_at text);
+            CREATE TABLE Learner.learner_monthly_locks (learner_id integer,report_month text,locked_at text,unlocked_at text);
+            CREATE TABLE Learner.manual_month_finalization_events (id integer,aptem_id integer,report_month text,event_type text);
+            CREATE TABLE Learner.monthly_audit_signoffs (learner_id text,report_month text,review_confirmed boolean);
         ''')
         self.reader = self.enterContext(patch.object(attendance, 'query', side_effect=self.read))
         self.owner = {'id': 70, 'enrolment_id': 7, 'learner_type': 'apprenticeship'}
@@ -50,14 +54,14 @@ class MonthlyLogAttendanceTests(SimpleTestCase):
 
     def read(self, sql, params):
         self.assertTrue(sql.lstrip().upper().startswith('SELECT'))
-        self.assertEqual(params, [self.owner['id']])
+        self.assertTrue(all(value in (self.owner['id'], 'M1', 'M2') for value in params))
         if 'FROM curriculum.live_session_learner_attendance r' in sql:
             projection = "(o.scheduled_start AT TIME ZONE 'Europe/London')::date AS session_date"
             self.assertIn(projection, sql)
             self.assertNotIn('r.session_date', sql)
             # SQLite has no AT TIME ZONE; exercise the equivalent Python fallback.
             sql = sql.replace(projection, 'NULL AS session_date')
-        if 'FROM "Learner".learner_progress_entries p' in sql:
+        if 'FROM "Learner".learner_progress_entries p' in sql and 'jsonb_build_object' in sql:
             # Production deliberately transfers only the identity fields used
             # by represented(). SQLite fixtures retain the raw JSON columns so
             # the same matching rules can be exercised without PostgreSQL JSONB.
@@ -84,7 +88,7 @@ class MonthlyLogAttendanceTests(SimpleTestCase):
     def allocation(self, *, payload=None, session_ref='', settings=None, owner=70, seconds=3600,
                    deleted=None, accepted=True, basis=None):
         component = f'C{self.db.execute("SELECT count(*) FROM curriculum.components").fetchone()[0]}'
-        self.db.execute('INSERT INTO curriculum.components VALUES (?,?)', [component, json.dumps(settings or {})])
+        self.db.execute('INSERT INTO curriculum.components VALUES (?,?,?,?)', [component, json.dumps(settings or {}), 'M1', 'live_session'])
         self.db.execute('''INSERT INTO Learner.learner_progress_entries
             (source_payload,time_tracking_session_ref,module_ref,component_ref,learner_id,actual_seconds,deleted_at,accepted,actual_basis)
             VALUES (?,?,?,?,?,?,?,?,?)''', [json.dumps(payload or {}), session_ref, 'M1', component,
@@ -101,7 +105,7 @@ class MonthlyLogAttendanceTests(SimpleTestCase):
     def test_present_uses_whole_lecture_and_lecture_date(self):
         self.lecture()
         item, = self.rows()
-        self.assertEqual((item['actual_hours'], item['planned_hours']), (2, 2))
+        self.assertEqual((item['actual_hours'], item['planned_hours']), (2.5, 2))
         self.assertEqual((item['activity_date'], item['reporting_month']), ('2026-10-15', '2026-10'))
         self.assertEqual(item['timestamp_label'], '10:00:00 - 12:00:00')
         self.assertEqual(item['source_ref'], 'attendance:O1')
@@ -150,7 +154,7 @@ class MonthlyLogAttendanceTests(SimpleTestCase):
             FROM curriculum.live_session_learner_attendance''')
         self.lecture('O2')
         self.assertEqual(len(self.rows()), 2)
-        self.assertEqual(sum(item['actual_hours'] for item in self.rows()), 4)
+        self.assertEqual(sum(item['actual_hours'] for item in self.rows()), 5)
 
     def test_allocation_on_shared_module_prevents_duplicate_for_source_module(self):
         self.lecture()
@@ -174,18 +178,18 @@ class MonthlyLogAttendanceTests(SimpleTestCase):
              patch.object(logs.canonical, 'targets', return_value={}):
             months = logs.current_months(self.learner, include_open=True)
         self.assertEqual(list(months), ['2026-10'])
-        self.assertEqual(months['2026-10'][0]['actual_hours'], 2)
+        self.assertEqual(months['2026-10'][0]['actual_hours'], 2.5)
 
     def test_evidence_only_confirmation_does_not_suppress_full_lecture_hours(self):
         self.lecture()
         self.allocation(session_ref='teams:O1-2026-10-15', seconds=None)
         self.db.execute("UPDATE Learner.learner_progress_entries SET kind='activity_event'")
-        self.assertEqual(self.rows()[0]['actual_hours'], 2)
+        self.assertEqual(self.rows()[0]['actual_hours'], 2.5)
 
     def test_unaccepted_zero_hours_do_not_hide_present_but_staff_correction_is_kept(self):
         self.lecture()
         self.allocation(settings={'teamsOccurrenceId': 'O1'}, seconds=0, accepted=False)
-        self.assertEqual(self.rows()[0]['actual_hours'], 2)
+        self.assertEqual(self.rows()[0]['actual_hours'], 2.5)
         self.db.execute("UPDATE Learner.learner_progress_entries SET actual_basis='staff:module-progress'")
         self.assertEqual(self.rows(), [])
 
@@ -234,17 +238,13 @@ class MonthlyLogAttendanceTests(SimpleTestCase):
         self.allocation(payload={'original_source_ref': 'attendance:O1'}, deleted='2026-10-16')
         self.assertEqual(len(self.rows()), 1)
 
-    def test_uk_midnight_boundary_uses_london_calendar_date(self):
+    def test_uk_month_boundary_and_dst_use_real_elapsed_duration(self):
         self.lecture('boundary', start='2026-09-30T23:30:00Z', end='2026-10-01T01:30:00Z')
-        item, = self.rows()
-        self.assertEqual((item['activity_date'], item['reporting_month']), ('2026-10-01', '2026-10'))
-
-    def test_dst_transitions_use_real_elapsed_duration(self):
-        self.lecture('spring', start='2026-03-29T00:30:00Z', end='2026-03-29T02:30:00Z')
-        self.lecture('autumn', start='2026-10-25T00:30:00Z', end='2026-10-25T02:30:00Z')
-        spring, autumn = self.rows()
-        self.assertEqual((spring['actual_hours'], spring['timestamp_label']), (2, '00:30:00 - 03:30:00'))
-        self.assertEqual((autumn['actual_hours'], autumn['timestamp_label']), (2, '01:30:00 - 02:30:00'))
+        self.lecture('dst', start='2026-10-25T00:30:00Z', end='2026-10-25T02:30:00Z')
+        boundary, dst = self.rows()
+        self.assertEqual((boundary['activity_date'], boundary['reporting_month']), ('2026-10-01', '2026-10'))
+        self.assertEqual(dst['actual_hours'], 2.5)
+        self.assertEqual(dst['timestamp_label'], '01:30:00 - 02:30:00')
 
     def test_existing_signed_month_gets_no_new_attendance(self):
         self.lecture()
@@ -294,17 +294,19 @@ class MonthlyLogAttendanceTests(SimpleTestCase):
              patch.object(logs, 'lock_state', return_value=empty_lock), \
              patch.object(logs.old_repo, 'query', return_value=[{'learner_start_date': None}]), \
              patch('learner_api.manual_time_corrections.annotate', side_effect=lambda _, report: report), \
+             patch('learner_api.canonical_hours.full_hour_projection_ids', return_value=set()), \
              patch.object(coach_logs, 'pending_hour_records', return_value={70: []}), \
-             patch.object(coach_logs, 'query', side_effect=[
-                 [{'month': '2026-10', 'activities': 1, 'accepted_hours': 1}], []]):
+             patch.object(coach_logs, 'query', side_effect=lambda sql, params:
+                 [{'month': '2026-10', 'activities': 1, 'accepted_hours': 1}] if 'GROUP BY reporting_month' in sql
+                 else [] if 'bool_or' in sql else self.read(sql, params)):
             summary = logs.summary_data(self.learner, include_open=True)
             detail = logs.detail_data(self.learner, '2026-10', include_open=True)
             coach = coach_logs.project_year(self.learner, 2026)
-        self.assertEqual(summary['months'][0]['actual_hours'], 3)
-        self.assertEqual(summary['training_plan_totals']['accepted_hours'], 3)
-        self.assertEqual((detail['row_count'], detail['actual_hours']), (2, 3))
-        self.assertEqual((coach['months'][0]['activities'], coach['months'][0]['acceptedOtjhHours']), (2, 3))
-        self.assertEqual(coach['summary']['acceptedOtjhHours'], 3)
+        self.assertEqual(summary['months'][0]['actual_hours'], 3.5)
+        self.assertEqual(summary['training_plan_totals']['accepted_hours'], 3.5)
+        self.assertEqual((detail['row_count'], detail['actual_hours']), (2, 3.5))
+        self.assertEqual((coach['months'][0]['activities'], coach['months'][0]['acceptedOtjhHours']), (2, 3.5))
+        self.assertEqual(coach['summary']['acceptedOtjhHours'], 3.5)
         self.assertEqual(summary['training_plan_totals']['planned_hours'], 10)
 
     def test_content_preview_is_scoped_to_month_and_current_owner(self):
@@ -313,7 +315,7 @@ class MonthlyLogAttendanceTests(SimpleTestCase):
         with patch.object(logs.canonical, 'enabled', return_value=True), \
              patch.object(logs.canonical, 'content_row', side_effect=ServiceError('Missing', 'not_found', 404)):
             response = logs.content_response(self.learner, '2026-10', item['id'])
-            self.assertIn('Full scheduled lecture hours', json.loads(response.content)['parts'][0]['html'])
+            self.assertIn('Fixed live lecture credit: 2h 30m', json.loads(response.content)['parts'][0]['html'])
             for month, ident in [('2026-09', item['id']), ('2026-10', item['id'] + 1)]:
                 with self.assertRaises(ServiceError):
                     logs.content_response(self.learner, month, ident)

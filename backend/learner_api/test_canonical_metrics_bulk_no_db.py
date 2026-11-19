@@ -29,6 +29,8 @@ class CanonicalMetricsBulkTests(TestCase):
             for owner in owners
         ]
         def load(sql, params):
+            if any(name in sql for name in ('learner_monthly_signatures', 'learner_monthly_locks', 'live_session_learner_attendance')):
+                return []
             if 'FROM "Learner".learners l' in sql:
                 return owners
             if 'FROM "Learner".learner_progress_entries p' in sql:
@@ -63,7 +65,7 @@ class CanonicalMetricsBulkTests(TestCase):
             {"2026-09": 10},
         )
         self.assertEqual(result[10], expected)
-        self.assertEqual(count, 9)
+        self.assertEqual(count, 12)
 
     def test_list_source_payload_does_not_break_caseload_metrics(self):
         result, _ = self.run_bulk([10], ["synthetic-evidence-a", "synthetic-evidence-b"])
@@ -72,8 +74,8 @@ class CanonicalMetricsBulkTests(TestCase):
     def test_query_count_is_constant_for_a_representative_caseload(self):
         one, one_count = self.run_bulk([10])
         many, many_count = self.run_bulk(list(range(10, 35)))
-        self.assertEqual(one_count, 9)
-        self.assertEqual(many_count, 9)
+        self.assertEqual(one_count, 12)
+        self.assertEqual(many_count, 12)
         self.assertEqual(len(one), 1)
         self.assertEqual(len(many), 25)
 
@@ -81,7 +83,7 @@ class CanonicalMetricsBulkTests(TestCase):
         result, count = self.run_bulk([10, 11], learner_workspace=True)
         self.assertEqual(result[10]['otjh']['planned'], 576)
         self.assertEqual(result[11]['aptem_planned_total'], 576)
-        self.assertEqual(count, 9)
+        self.assertEqual(count, 12)
 
     def test_workspace_plan_validation_matches_the_single_learner_reader(self):
         for value in (None, 'invalid', -1, float('inf'), float('nan'), 0, '576.12345'):
@@ -153,7 +155,7 @@ class CanonicalKsbPointTests(TestCase):
 
     def test_bulk_point_rows_are_scoped_to_the_verified_learner(self):
         result, count = CanonicalMetricsBulkTests().run_bulk([10, 11], learner_workspace=True, include_ksb_points=True)
-        self.assertEqual(count, 9)
+        self.assertEqual(count, 12)
         self.assertEqual(result[10]['ksb']['points'][0]['activityId'], '1')
         self.assertEqual(result[11]['ksb']['points'][0]['activityId'], '2')
         for payload in result.values():

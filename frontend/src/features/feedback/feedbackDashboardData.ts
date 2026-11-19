@@ -21,6 +21,14 @@ export function dashboardPeriod(today: string, weeks: number) {
   return { submittedFrom: first.toISOString().slice(0, 10), submittedTo: today };
 }
 
+export function qualityDashboardFeedbackTypeEntries(forms?: readonly { formType: string }[]) {
+  if (!forms) return Object.entries(FEEDBACK_TYPE_LABELS);
+  const labels: Record<string, string> = FEEDBACK_TYPE_LABELS;
+  return [...new Set(forms.map(form => form.formType))]
+    .map(type => [type, labels[type] ?? type.replace(/_/g, ' ')] as const)
+    .sort((a, b) => a[1].localeCompare(b[1]));
+}
+
 export function weeklyClassifications(report: FeedbackClassificationReport) {
   const weeks = new Map<string, { week: string; positive: number; negative: number }>();
   for (const response of report.responses) {
