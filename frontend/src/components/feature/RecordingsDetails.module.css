@@ -193,7 +193,7 @@
   .drawer.drawer .secondary:hover { background: var(--details-border) !important; }
   .drawer.drawer .transcript { margin-top: 20px; padding-top: 0 !important; border-top: 0 !important; }
   .drawer.drawer .transcript > div { padding: 0 !important; }
-  .drawer.drawer .transcript button { min-height: 48px; color: var(--details-accent) !important; font-size: 13px !important; }
+  .drawer.drawer .transcript > div > button { min-height: 48px; color: var(--details-accent) !important; font-size: 13px !important; }
   .drawer.drawer .transcript > div > button { display: flex !important; justify-content: space-between !important; padding: 14px 16px !important; }
   .drawer.drawer .attendance { margin-top: 20px; }
   .drawer.drawer .attendance > div { padding: 14px 16px !important; border: 1px solid var(--details-border) !important; border-radius: var(--lms-radius, 16px) !important; background: var(--details-surface) !important; color: var(--details-text) !important; }

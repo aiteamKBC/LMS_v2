@@ -190,10 +190,6 @@
 .kpiGrid > div > div:nth-child(2) > span:first-child { font-size: 36px; font-variant-numeric: tabular-nums; }
 .kpiGrid > div > p { font-size: 12px; line-height: 1.65; }
 .kpiGrid > div:first-child { border-color: oklch(var(--primary-200)); background: oklch(var(--primary-50) / .5); }
-/* Follow-up indicators share the second row with the optional alerts panel. */
-.kpiGrid > div:nth-child(n + 5) { grid-column: span 4; }
-.kpiGrid.withAttention > div:nth-child(n + 5) { grid-column: span 3; }
-.kpiGrid > div:nth-child(5) { border-left: 3px solid oklch(var(--accent-500)); }
 
 .analyticsGrid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: stretch; gap: 20px; }
 .ratingCard { display: flex; flex-direction: column; padding: 22px; }
