@@ -16,6 +16,7 @@ versions remain authoritative whenever a learner has one.
 from django.db import connections
 
 
+LEGACY_KSB_RELATION = '"Learner".learner_ksbs'
 LEGACY_KSB_READ_SQL = '''
     SELECT category, code, title, level
     FROM "Learner".learner_ksbs
@@ -54,6 +55,20 @@ def read_legacy_learner_ksbs(learner_id, *, using="enrolment"):
         return []
 
     with connections[using].cursor() as cursor:
+        cursor.execute(
+            """
+            SELECT array_agg(attribute.attname)
+            FROM pg_attribute attribute
+            WHERE attribute.attrelid = to_regclass(%s)
+              AND attribute.attnum > 0
+              AND NOT attribute.attisdropped
+            """,
+            [LEGACY_KSB_RELATION],
+        )
+        result = cursor.fetchone()
+        available_columns = set(result[0] or []) if result else set()
+        if not {"learner_id", "category", "code", "title", "level"}.issubset(available_columns):
+            return []
         cursor.execute(LEGACY_KSB_READ_SQL, [learner_id])
         rows = cursor.fetchall()
 

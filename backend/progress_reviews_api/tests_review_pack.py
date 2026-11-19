@@ -3,6 +3,7 @@ from unittest.mock import MagicMock, patch
 
 from django.test import SimpleTestCase
 
+from .identity import LearnerIdentity
 from .period import build_review_period
 from .review_pack import (
     NOT_AVAILABLE,
@@ -19,7 +20,7 @@ from .review_pack import (
 EVIDENCE_COLUMNS = (
     "id", "original_filename", "content_type", "size_bytes", "status", "scan_result",
     "section_ref", "uploaded_at", "Training_plan_details", "component_ref",
-    "progress_entry_id", "container", "blob_name",
+    "progress_entry_id", "blob_name",
 )
 
 
@@ -103,14 +104,15 @@ class BuildEvidenceSectionsTests(SimpleTestCase):
     @patch("learner_api.evidence_storage.azure_configured", return_value=False)
     @patch("learner_api.evidence._marking_status", return_value="")
     @patch("learner_api.evidence.ensure_evidence_tables")
+    @patch("learner_api.evidence_ownership.profile_id_for_source", return_value=42)
     def test_a_json_string_training_plan_details_does_not_crash_the_pipeline(
-        self, mock_ensure, mock_marking, mock_azure_configured,
+        self, mock_profile, mock_ensure, mock_marking, mock_azure_configured,
     ):
         period = build_review_period(date(2026, 6, 15), review_number=1)
         row = (
             "ev-1", "brief.pdf", "application/pdf", 1024, "approved", "clean",
             "comp-1", date(2026, 5, 1), '{"componentTitle": "Campaign brief", "ksbCodes": ["K1"]}',
-            "comp-1", 55, "evidence-approved", "a/b/brief.pdf",
+            "comp-1", 55, "a/b/brief.pdf",
         )
         fake_connection = _FakeConnection(_FakeCursor(EVIDENCE_COLUMNS, [row]))
 
@@ -127,12 +129,15 @@ class BuildEvidenceSectionsTests(SimpleTestCase):
     @patch("learner_api.evidence_storage.azure_configured", return_value=False)
     @patch("learner_api.evidence._marking_status", return_value="")
     @patch("learner_api.evidence.ensure_evidence_tables")
-    def test_an_already_decoded_dict_still_works(self, mock_ensure, mock_marking, mock_azure_configured):
+    @patch("learner_api.evidence_ownership.profile_id_for_source", return_value=42)
+    def test_an_already_decoded_dict_still_works(
+        self, mock_profile, mock_ensure, mock_marking, mock_azure_configured,
+    ):
         period = build_review_period(date(2026, 6, 15), review_number=1)
         row = (
             "ev-2", "photo.png", "image/png", 2048, "approved", "clean",
             "", date(2026, 5, 2), {"componentTitle": "Site visit"},
-            None, None, "evidence-approved", "a/b/photo.png",
+            None, None, "a/b/photo.png",
         )
         fake_connection = _FakeConnection(_FakeCursor(EVIDENCE_COLUMNS, [row]))
 
@@ -239,6 +244,8 @@ def _mock_source(learner_id=42, learner_type="apprenticeship"):
 
 def _mock_profile(active=True):
     profile = MagicMock()
+    profile.pk = 501
+    profile.enrolment_id = 42
     profile.lifecycle_status = "active" if active else "leaver"
     profile.start_date = date(2025, 1, 1)
     profile.end_date = date(2026, 6, 30)
@@ -248,6 +255,16 @@ def _mock_profile(active=True):
     profile.otjh_status = "On track"
     profile.coach_name = "Coach Casey"
     return profile
+
+
+def _mock_identity(active=True):
+    return LearnerIdentity(
+        profile_id=501,
+        enrolment_id=42,
+        learner_kind="apprenticeship",
+        profile=_mock_profile(active=active),
+        source=_mock_source(),
+    )
 
 
 class BuildReviewPackTests(SimpleTestCase):
@@ -261,13 +278,9 @@ class BuildReviewPackTests(SimpleTestCase):
     @patch("progress_reviews_api.review_pack._build_evidence_sections", return_value=([], [], []))
     @patch("progress_reviews_api.review_pack._build_attendance_section")
     @patch("learner_api.learner_detail.build_learner_detail")
-    @patch("progress_reviews_api.review_pack._resolve_profile")
-    @patch("progress_reviews_api.review_pack._resolve_learner")
     def test_active_learner_produces_a_complete_pack(
-        self, mock_resolve_learner, mock_resolve_profile, mock_build_detail, mock_attendance, mock_evidence,
+        self, mock_build_detail, mock_attendance, mock_evidence,
     ):
-        mock_resolve_learner.return_value = ("apprenticeship", _mock_source())
-        mock_resolve_profile.return_value = _mock_profile(active=True)
         mock_build_detail.return_value = {
             "name": "Jordan Example", "email": "jordan@example.com", "programme": "Marketing Executive Level 4",
             "employer": "Acme Ltd", "lineManager": "Sam Manager", "cohort": "Cohort A", "group": "Group 1",
@@ -279,7 +292,9 @@ class BuildReviewPackTests(SimpleTestCase):
             "catch_ups_completed": 0, "catch_ups_needed": 0, "engagement_notes": "Fine.",
         }
 
-        pack = build_review_pack(42, self.period, review_id="run-1", generated_by="coach@kbc.example")
+        pack = build_review_pack(
+            _mock_identity(), self.period, review_id="run-1", generated_by="coach@kbc.example",
+        )
 
         self.assertEqual(set(pack.keys()), {
             "learner", "review", "attendance", "progress", "otj", "lms_modules", "evidence",
@@ -295,38 +310,30 @@ class BuildReviewPackTests(SimpleTestCase):
     @patch("progress_reviews_api.review_pack._build_evidence_sections", return_value=([], [], []))
     @patch("progress_reviews_api.review_pack._build_attendance_section")
     @patch("learner_api.learner_detail.build_learner_detail")
-    @patch("progress_reviews_api.review_pack._resolve_profile")
-    @patch("progress_reviews_api.review_pack._resolve_learner")
     def test_inactive_learner_is_flagged_not_generation_blocked_here(
-        self, mock_resolve_learner, mock_resolve_profile, mock_build_detail, mock_attendance, mock_evidence,
+        self, mock_build_detail, mock_attendance, mock_evidence,
     ):
         """build_review_pack always builds a preview; the /generate endpoint is
         what enforces 'active learners only', by reading learner.active_status."""
-        mock_resolve_learner.return_value = ("apprenticeship", _mock_source())
-        mock_resolve_profile.return_value = _mock_profile(active=False)
         mock_build_detail.return_value = {"components": [], "ksbs": [], "quizAttempts": [], "videoProgress": [], "componentProgress": []}
         mock_attendance.return_value = {
             "attendance_percentage": NOT_AVAILABLE, "monthly_summary": [], "missed_sessions": NOT_AVAILABLE,
             "catch_ups_completed": NOT_AVAILABLE, "catch_ups_needed": NOT_AVAILABLE, "engagement_notes": NOT_AVAILABLE,
         }
 
-        pack = build_review_pack(42, self.period)
+        pack = build_review_pack(_mock_identity(active=False), self.period)
 
         self.assertFalse(pack["learner"]["active_status"])
 
     @patch("progress_reviews_api.review_pack._build_evidence_sections", return_value=([], [], []))
     @patch("learner_api.attendance.fetch_kbc_attendance_rows", side_effect=RuntimeError("no route to host"))
     @patch("learner_api.learner_detail.build_learner_detail")
-    @patch("progress_reviews_api.review_pack._resolve_profile")
-    @patch("progress_reviews_api.review_pack._resolve_learner")
     def test_attendance_failure_degrades_to_not_available_with_a_warning(
-        self, mock_resolve_learner, mock_resolve_profile, mock_build_detail, mock_attendance, mock_evidence,
+        self, mock_build_detail, mock_attendance, mock_evidence,
     ):
-        mock_resolve_learner.return_value = ("apprenticeship", _mock_source())
-        mock_resolve_profile.return_value = _mock_profile(active=True)
         mock_build_detail.return_value = {"components": [], "ksbs": [], "quizAttempts": [], "videoProgress": [], "componentProgress": []}
 
-        pack = build_review_pack(42, self.period)
+        pack = build_review_pack(_mock_identity(), self.period)
 
         self.assertEqual(pack["attendance"]["attendance_percentage"], NOT_AVAILABLE)
         self.assertTrue(any("attendance" in warning.lower() for warning in pack["source_warnings"]))

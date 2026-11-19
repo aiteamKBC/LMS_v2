@@ -162,7 +162,10 @@ class DashboardWeeklyTests(SimpleTestCase):
     def test_routing_loads_only_selected_week_without_attempt_bodies_or_unrelated_quizzes(self):
         navigation = {'id': 'M1:1', 'moduleId': 'M1', 'weekId': 'W1', 'kind': 'live-session', 'slotNumber': 1}
         selected = {'weekId': 'M1:1', 'activities': [{'id': 'C1', 'status': 'not-started', 'expectedHours': 2}], 'summary': {}, 'liveSession': None}
-        source = SimpleNamespace(pk=265, programme='P', _canonical_training_plan=[{'moduleId': 'M1'}])
+        canonical_module = {'moduleId': 'M1', 'weeks': [
+            {'weekId': 'W1', 'components': [{'componentId': 'C1'}]},
+        ]}
+        source = SimpleNamespace(pk=265, programme='P', _canonical_training_plan=[canonical_module])
         with patch.object(weekly.canonical_learning, 'require_profile', return_value={'id': 17}), \
              patch.object(weekly, 'learner_profile_for_source', return_value=SimpleNamespace(pk=17, enrolment_id=265)), \
              patch.object(weekly, 'read_weekly_learning', return_value={'modules': [], 'weeks': [navigation], 'selectedWeek': selected}), \
@@ -172,7 +175,8 @@ class DashboardWeeklyTests(SimpleTestCase):
              patch.object(weekly, 'recorded_ksbs', return_value={'C1': ['S2']}) as recorded:
             result = weekly.read_dashboard_weekly(source, 265, module_id='M1', week_id='slot:M1:1')
         self.assertEqual(routing.call_args.kwargs['week_ids'], ['W1'])
-        self.assertEqual(routing.call_args.kwargs['assigned_modules'], [{'moduleId': 'M1'}])
+        self.assertEqual(routing.call_args.kwargs['assigned_modules'], [canonical_module])
+        self.assertIs(routing.call_args.kwargs['plan_owned_only'], True)
         self.assertEqual(result['selectedWeek']['activities'][0]['expectedHours'], 2)
         self.assertTrue(result['selectedWeek']['activities'][0]['contentAvailable'])
         self.assertEqual(result['selectedWeek']['activities'][0]['reflectionKsbs'], [{'status': 'draft', 'codes': ['K1']}])

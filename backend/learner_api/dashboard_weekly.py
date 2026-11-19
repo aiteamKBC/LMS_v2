@@ -115,10 +115,15 @@ def read_dashboard_weekly(source, pk, *, week_id=None, module_id=None):
         # Eligibility and routing remain the Student resolver's responsibility.
         # Only the selected authored week and its saved KSB links are read;
         # no attempt bodies or separate progress/schedule payload cross the wire.
+        assigned_module = next((
+            module for module in source._canonical_training_plan or []
+            if str(module.get('moduleId') or '') == str(navigation['moduleId'])
+        ), None)
         _, _, components = _resolve_from_master([], [], [],
-            assigned_modules=[{'moduleId': navigation['moduleId']}], strict=True, compact=True,
+            assigned_modules=[assigned_module] if assigned_module else [], strict=True, compact=True,
             live_session_ids=False, week_ids=[str(navigation['weekId'])],
-            resolved_metadata=getattr(source, '_weekly_resolved_metadata', None), routing_only=True)
+            resolved_metadata=getattr(source, '_weekly_resolved_metadata', None), routing_only=True,
+            plan_owned_only=True)
         components = _apply_programme_assignment_template(components, source.programme)
         routing = {str(row['componentId']): _weekly_component(row) for row in components}
         activity_ids = [str(activity['id']) for activity in selected['activities']]

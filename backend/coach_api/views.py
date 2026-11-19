@@ -5070,7 +5070,7 @@ def fetch_evidence_file_queue(owner_email: str) -> tuple[list[dict], list[dict]]
         return [], caseload_learners
 
     columns = relation_columns(connection, relation)
-    learner_id_column = first_existing_column(columns, "learner_id", "learnerid", "Learner ID")
+    learner_id_column = first_existing_column(columns, "learner_profile_id")
     created_at_column = first_existing_column(columns, "created_at", "submitted_at", "uploaded_at", "updated_at")
     if not learner_id_column:
         return [], caseload_learners

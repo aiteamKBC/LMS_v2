@@ -29,7 +29,8 @@ from django.http import JsonResponse
 from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
 
-from .evidence_tables import ensure_evidence_tables
+from .evidence_tables import ensure_evidence_tables, ensure_evidence_write_tables
+from .evidence_ownership import plan_component_id, profile_id_for_source
 from .evidence_retention import retained_by_submission
 from .evidence_storage import (
     azure_configured, upload_to_quarantine, move_blob, blob_url, get_download_sas,
@@ -99,8 +100,9 @@ MAX_BYTES = 50 * 1024 * 1024  # 50 MB
 #: way to fetch it rather than a fact about it -- the same rule this codebase
 #: applies to meeting join links.
 EVIDENCE_AUDIT_COLUMNS = (
-    'id', 'learner_kind', 'learner_id', 'section_ref', 'component_ref',
-    'progress_entry_id', 'original_filename', 'content_type', 'size_bytes',
+    'id', 'learner_kind', 'learner_profile_id', 'created_user_id', 'section_ref',
+    'plan_component_id', 'component_ref', 'progress_entry_id',
+    'original_filename', 'content_type', 'size_bytes',
     'status', 'scan_result', 'uploaded_by', 'uploaded_at', 'reviewed_at',
 )
 EVIDENCE_AUDIT_SQL = ', '.join(f'"{column}"' for column in EVIDENCE_AUDIT_COLUMNS)
@@ -180,27 +182,30 @@ def _training_plan_details(value):
 
 def _evidence_lineage(kind, learner_id, section_ref):
     section_ref = str(section_ref or "").strip()
-    lineage = {"component_ref": None, "progress_entry_id": None}
+    lineage = {"learner_profile_id": None, "plan_component_id": None,
+               "component_ref": None, "progress_entry_id": None}
     if not section_ref:
         return lineage
     try:
         with _conn().cursor() as cur:
+            learner_profile_id = profile_id_for_source(cur, kind, learner_id)
+            lineage["learner_profile_id"] = learner_profile_id
+            if learner_profile_id is None:
+                return lineage
             cur.execute(read_sql("select id from curriculum.components where id = %s limit 1", cur.db), [section_ref])
             if cur.fetchone():
                 lineage["component_ref"] = section_ref
-            learner_ids = _learner_profile_ids_for_source(cur, learner_id, kind)
-            if not learner_ids:
-                return lineage
+                lineage["plan_component_id"] = plan_component_id(cur, learner_profile_id, section_ref)
             cur.execute(
                 """
                 select p.id
                   from "Learner"."learner_progress_entries" p
                  where p.component_ref = %s
-                   and p.learner_id::text = any(%s)
+                    and p.learner_id = any(%s::bigint[])
                  order by p.submitted_at desc nulls last, p.id desc
                  limit 1
                 """,
-                [section_ref, learner_ids],
+                [section_ref, [learner_profile_id]],
             )
             row = cur.fetchone()
             if row:
@@ -249,8 +254,10 @@ def upload_evidence(request, kind, pk):
         except ValueError:
             return _error("training_plan_details must be valid JSON.", 400)
     lineage = _evidence_lineage(kind, pk, section_ref)
+    if lineage["learner_profile_id"] is None:
+        return _error("Learner not found.", 404)
 
-    ensure_evidence_tables()
+    ensure_evidence_write_tables()
 
     ext = f.name.rsplit(".", 1)[-1].lower() if "." in f.name else "bin"
     file_id = uuid.uuid4()
@@ -269,15 +276,17 @@ def upload_evidence(request, kind, pk):
             cur.execute(
                 """
                 insert into "Learner"."evidence_files"
-                  (id, learner_kind, learner_id, section_ref, container, blob_name,
+                  (id, learner_kind, learner_profile_id, created_user_id,
+                   section_ref, blob_name,
                    original_filename, content_type, size_bytes, status, uploaded_by, uploaded_at,
-                   "Training_plan_details", component_ref, progress_entry_id)
-                values (%s, %s, %s, %s, %s, %s, %s, %s, %s, 'pending', %s, %s, %s, %s, %s)
+                   "Training_plan_details", plan_component_id, component_ref, progress_entry_id)
+                values (%s, %s, %s, %s, %s, %s, %s, %s, %s, 'pending', %s, %s, %s, %s, %s, %s)
                 """,
-                [str(file_id), kind, str(pk), section_ref, quarantine, blob_name,
+                [str(file_id), kind, lineage["learner_profile_id"], pk, section_ref, blob_name,
                  f.name, f.content_type, f.size, str(pk), timezone.now(),
                  json.dumps(training_plan_details) if training_plan_details is not None else None,
-                 lineage.get("component_ref"), lineage.get("progress_entry_id")],
+                 lineage.get("plan_component_id"), lineage.get("component_ref"),
+                 lineage.get("progress_entry_id")],
             )
     except DatabaseError as exc:
         logger.warning("Could not record evidence_files row: %s", exc)
@@ -300,10 +309,10 @@ def upload_evidence(request, kind, pk):
         with _conn().cursor() as cur:
             cur.execute(
                 'update "Learner"."evidence_files" '
-                "set container = %s, status = %s, scan_result = %s, reviewed_at = %s "
+                "set status = %s, scan_result = %s, reviewed_at = %s "
                 "where id = %s "
                 "returning " + EVIDENCE_AUDIT_SQL,
-                [dest, status, verdict, timezone.now(), str(file_id)],
+                [status, verdict, timezone.now(), str(file_id)],
             )
             # Recorded here rather than at the insert above. The insert writes a
             # `pending` row that this statement settles moments later in the
@@ -334,19 +343,24 @@ def list_evidence(request, kind, pk):
         return _error("Unknown learner kind.", 400)
     ensure_evidence_tables()
 
-    where = ["learner_kind = %s", "learner_id = %s"]
-    params = [kind, str(pk)]
+    where = ["learner_kind = %s", "learner_profile_id = %s"]
     section_ref = (request.GET.get("section_ref") or "").strip()
     status = (request.GET.get("status") or "").strip()
     if section_ref:
         where.append("section_ref = %s")
-        params.append(section_ref)
     if status:
         where.append("status = %s")
-        params.append(status)
 
     try:
         with _conn().cursor() as cur:
+            learner_profile_id = profile_id_for_source(cur, kind, pk)
+            if learner_profile_id is None:
+                return JsonResponse({"results": []})
+            params = [kind, learner_profile_id]
+            if section_ref:
+                params.append(section_ref)
+            if status:
+                params.append(status)
             cur.execute(
                 "select id, original_filename, content_type, size_bytes, status, "
                 'scan_result, section_ref, uploaded_at, "Training_plan_details", component_ref, progress_entry_id '
@@ -410,10 +424,13 @@ def download_evidence(request, kind, pk, file_id):
 
     try:
         with _conn().cursor() as cur:
+            learner_profile_id = profile_id_for_source(cur, kind, pk)
+            if learner_profile_id is None:
+                return _error("Evidence not found.", 404)
             cur.execute(
                 'select blob_name, status from "Learner"."evidence_files" '
-                "where id = %s and learner_kind = %s and learner_id = %s",
-                [str(file_id), kind, str(pk)],
+                "where id = %s and learner_kind = %s and learner_profile_id = %s",
+                [str(file_id), kind, learner_profile_id],
             )
             row = cur.fetchone()
     except DatabaseError as exc:
@@ -537,7 +554,7 @@ def delete_evidence(request, kind, pk, file_id):
         return _error("Method not allowed.", 405)
     if kind not in VALID_KINDS:
         return _error("Unknown learner kind.", 400)
-    ensure_evidence_tables()
+    ensure_evidence_write_tables()
 
     # Assignment saves take the same lock before recording a submitted attempt.
     # Serialize the retention check with those saves, including the first one.
@@ -549,11 +566,14 @@ def delete_evidence(request, kind, pk, file_id):
     # file id simply does not resolve here.
     try:
         with _conn().cursor() as cur:
+            learner_profile_id = profile_id_for_source(cur, kind, pk)
+            if learner_profile_id is None:
+                return _error("Evidence not found.", 404)
             cur.execute(
-                'select blob_name, container, section_ref, progress_entry_id, original_filename '
+                'select blob_name, status, section_ref, progress_entry_id, original_filename '
                 'from "Learner"."evidence_files" '
-                "where id = %s and learner_kind = %s and learner_id = %s",
-                [str(file_id), kind, str(pk)],
+                "where id = %s and learner_kind = %s and learner_profile_id = %s",
+                [str(file_id), kind, learner_profile_id],
             )
             row = cur.fetchone()
     except DatabaseError as exc:
@@ -562,7 +582,7 @@ def delete_evidence(request, kind, pk, file_id):
 
     if not row:
         return _error("Evidence not found.", 404)
-    blob_name, container, section_ref, progress_entry_id, filename = row
+    blob_name, evidence_status, section_ref, progress_entry_id, filename = row
 
     if _is_submitted_for_marking(kind, pk, section_ref) or not _can_delete_evidence(
         "", _evidence_submissions(kind, pk), str(file_id), filename, section_ref,
@@ -576,7 +596,10 @@ def delete_evidence(request, kind, pk, file_id):
     # Blob first: a delete that removed the row but left the blob would strand
     # a file nothing points at any more. A blob that has already gone is not a
     # failure — the row still has to go.
-    if azure_configured() and blob_name and container:
+    container = (settings.AZURE_APPROVED_CONTAINER if evidence_status == "approved" else
+                 settings.AZURE_REJECTED_CONTAINER if evidence_status == "rejected" else
+                 settings.AZURE_QUARANTINE_CONTAINER)
+    if azure_configured() and blob_name:
         try:
             delete_blob(container, blob_name)
         except Exception as exc:  # already deleted / SDK / network
@@ -586,9 +609,9 @@ def delete_evidence(request, kind, pk, file_id):
         with _conn().cursor() as cur:
             cur.execute(
                 'delete from "Learner"."evidence_files" '
-                "where id = %s and learner_kind = %s and learner_id = %s "
+                "where id = %s and learner_kind = %s and learner_profile_id = %s "
                 "returning " + EVIDENCE_AUDIT_SQL,
-                [str(file_id), kind, str(pk)],
+                [str(file_id), kind, learner_profile_id],
             )
             # Read from what the delete returned: that is the only moment the
             # row still exists, and a trail entry for a deletion that cannot say

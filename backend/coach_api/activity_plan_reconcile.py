@@ -26,12 +26,12 @@ def fingerprints(profile_ids):
                 s.activity_status,s.curriculum_component_ref,s.deleted_at)::text),'' ORDER BY s.id)) AS revision
             FROM "Learner".learner_activity_sources s JOIN wanted w ON w.id=s.learner_id GROUP BY s.learner_id
         ), journal AS (
-            SELECT j.canonical_learner_id,md5(string_agg(md5(jsonb_build_array(j.id,j.progress_id,
+            SELECT j.learner_id,md5(string_agg(md5(jsonb_build_array(j.id,j.progress_id,
                 j.source_id,j.group_id,j.activity_id,j.activity_date,j.deleted_at)::text),'' ORDER BY j.id)) AS revision
-            FROM "Learner".learner_journal_rows j JOIN wanted w ON w.id=j.canonical_learner_id GROUP BY j.canonical_learner_id
+            FROM "Learner".learner_journal_rows j JOIN wanted w ON w.id=j.learner_id GROUP BY j.learner_id
         ) SELECT w.id,md5(w.identity || coalesce(p.revision,'') || coalesce(s.revision,'') || coalesce(j.revision,''))
             FROM wanted w LEFT JOIN progress p ON p.learner_id=w.id
-            LEFT JOIN sources s ON s.learner_id=w.id LEFT JOIN journal j ON j.canonical_learner_id=w.id''', [list(profile_ids)])
+            LEFT JOIN sources s ON s.learner_id=w.id LEFT JOIN journal j ON j.learner_id=w.id''', [list(profile_ids)])
         return dict(cursor.fetchall())
 
 

@@ -51,7 +51,10 @@ def learners(email, search):
 
 def first_evidence_date(learner_id):
     return query('''SELECT min(uploaded_at)::date AS first_date FROM "Learner".evidence_files
-                    WHERE learner_id=%s AND status='approved' ''', [str(learner_id)])[0]['first_date']
+                    WHERE learner_profile_id=(
+                        SELECT min(id) FROM "Learner".learners
+                        WHERE enrolment_id=%s HAVING count(*)=1
+                    ) AND status='approved' ''', [learner_id])[0]['first_date']
 
 
 def monthly_target(learner, month):
@@ -173,8 +176,9 @@ def _reflections(learner, progress):
 
 def _documents(learner, rows):
     records = query('''SELECT id,original_filename,content_type,component_ref,progress_entry_id,section_ref
-        FROM "Learner".evidence_files WHERE learner_id=%s AND status='approved'
-        ORDER BY uploaded_at,id''', [str(learner['id'])])
+        FROM "Learner".evidence_files WHERE learner_profile_id=(
+            SELECT min(id) FROM "Learner".learners WHERE enrolment_id=%s HAVING count(*)=1
+        ) AND status='approved' ORDER BY uploaded_at,id''', [learner['id']])
     for doc in records:
         for item in rows:
             matches = item['source_ref'] == f"progress:{doc.get('progress_entry_id')}"

@@ -79,8 +79,11 @@ class MonthlyFocusTests(SimpleTestCase):
         owner = {'id': 101, 'enrolment_id': 201, 'programme_id': 'P1'}
         with patch('learner_api.canonical_learning.query', return_value=[{'report_month': '2026-10', 'target_hours': 50}]) as read:
             self.assertEqual(targets_for(owner, month='2026-10'), {'2026-10': 50})
-        self.assertIn('AND report_month=%s', read.call_args.args[0])
-        self.assertEqual(read.call_args.args[1], [101, 201, 'P1', '2026-10', 201, 'P1'])
+        sql = read.call_args.args[0]
+        self.assertIn('AND report_month=%s', sql)
+        self.assertIn('learner_id=%s', sql)
+        self.assertNotIn('enrolment_id', sql)
+        self.assertEqual(read.call_args.args[1], [101, 'P1', '2026-10', 'P1'])
 
     def test_invalid_month_or_wrong_coach_cannot_read_projection(self):
         context = MagicMock(profile=SimpleNamespace(id=101, enrolment_id=201))

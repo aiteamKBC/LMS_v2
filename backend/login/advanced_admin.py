@@ -866,8 +866,8 @@ def learner_evidence(request, profile_id):
             cursor.execute('''select id, original_filename, content_type, size_bytes,
                 status, scan_result, section_ref, uploaded_at
                 from "Learner".evidence_files
-                where learner_kind=%s and learner_id=%s
-                order by uploaded_at desc''', ['commercial', str(profile.enrolment_id)])
+                where learner_kind=%s and learner_profile_id=%s
+                order by uploaded_at desc''', [profile.learner_type, profile.pk])
             rows = cursor.fetchall()
     except DatabaseError:
         return JsonResponse({'error': 'Evidence records are unavailable.'}, status=503)
@@ -1360,8 +1360,8 @@ def learner_evidence_download(request, profile_id, file_id):
     try:
         with connections['enrolment'].cursor() as cursor:
             cursor.execute('''select blob_name from "Learner".evidence_files
-                where id=%s and learner_kind=%s and learner_id=%s and status='approved' ''',
-                [str(file_id), 'commercial', str(profile.enrolment_id)])
+                where id=%s and learner_kind=%s and learner_profile_id=%s and status='approved' ''',
+                [str(file_id), profile.learner_type, profile.pk])
             row = cursor.fetchone()
     except DatabaseError:
         return JsonResponse({'error': 'Evidence record is unavailable.'}, status=503)

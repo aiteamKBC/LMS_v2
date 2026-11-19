@@ -54,6 +54,19 @@ COMPONENT_SCHEDULE_SETTINGS = '''jsonb_build_object(
 COMPONENT_ORDER = 'c.module_catalogue_id,c.display_order,c.id'
 
 
+def read_schedule_components(cursor, module_ids):
+    """The lightweight component facts used to place Monthly activities."""
+    if not module_ids:
+        return []
+    cursor.execute(f'''SELECT c.id,c.module_catalogue_id,c.week_id,c.title,c.type,
+        {COMPONENT_SCHEDULE_SETTINGS}
+        FROM curriculum.components c
+        WHERE c.module_catalogue_id=ANY(%s)
+          AND {visible_child_sql('c')}
+        ORDER BY {COMPONENT_ORDER}''', [module_ids])
+    return cursor.fetchall()
+
+
 def delivery_week(module_id, week):
     """Readonly display placement; never replace activity/meeting/report dates."""
     primary = next((component for component in week['components']
@@ -115,13 +128,7 @@ def read_builder_activity_dates(cursor, module_ids, components=None, *, resolved
         weeks = {(str(module_id), str(week_id)): {'id': str(week_id), 'title': title, 'components': []}
                  for week_id, module_id, title in cursor.fetchall()}
     if components is None:
-        cursor.execute(f'''SELECT c.id,c.module_catalogue_id,c.week_id,c.title,c.type,
-            {COMPONENT_SCHEDULE_SETTINGS}
-            FROM curriculum.components c
-            WHERE c.module_catalogue_id=ANY(%s)
-              AND {visible_child_sql('c')}
-            ORDER BY {COMPONENT_ORDER}''', [ids])
-        components = cursor.fetchall()
+        components = read_schedule_components(cursor, ids)
     else:
         components = [row for row in components if str(row[1]) in modules]
     dates = {}

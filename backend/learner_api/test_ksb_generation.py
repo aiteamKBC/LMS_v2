@@ -10,17 +10,20 @@ from . import ksb_generation
 class KsbGenerationTests(TestCase):
     def test_evidence_is_scoped_to_owner_and_approved_files(self):
         cursor = MagicMock()
-        cursor.fetchall.return_value = [('file1', 'report.txt', 'approved', 'blob')]
+        cursor.fetchall.return_value = [('file1', 'report.txt', 'blob')]
         connection = MagicMock()
         connection.cursor.return_value.__enter__.return_value = cursor
         with patch.object(ksb_generation, 'connections', {'enrolment': connection}), patch(
+            'learner_api.evidence_ownership.profile_id_for_source', return_value=248
+        ), patch(
             'learner_api.evidence_storage.download_blob_bytes', return_value=b'My project report'
         ):
             documents, notices = ksb_generation.evidence_context('commercial', '123', [
                 {'id': 'file1'}, {'id': 'someone-elses-file'}, {'id': 'link:1'}])
         sql, params = cursor.execute.call_args.args
-        self.assertIn('learner_kind = %s AND learner_id = %s AND status = %s', sql)
-        self.assertEqual(params[:3], ['commercial', '123', 'approved'])
+        self.assertIn('learner_kind = %s AND learner_profile_id = %s', sql)
+        self.assertIn('status = %s', sql)
+        self.assertEqual(params[:3], ['commercial', 248, 'approved'])
         self.assertEqual([d['id'] for d in documents], ['file1'])
         self.assertEqual(documents[0]['text'], 'My project report')
         self.assertTrue(any('unavailable' in n for n in notices))

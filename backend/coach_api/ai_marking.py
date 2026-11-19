@@ -246,29 +246,33 @@ def collect_evidence_files(learner_kind, learner_id, activity_id, selected_file_
     before it has would defeat the point of the quarantine.
     """
     files = []
-    params = [_s(learner_kind), _s(learner_id)]
+    selection_params = []
     if selected_file_ids is None:
         selection = 'AND section_ref = %s'
-        params.append(_s(activity_id))
+        selection_params.append(_s(activity_id))
     else:
         ids = sorted(set(str(value) for value in selected_file_ids if value))
         if not ids:
             return []
         selection = 'AND cast(id as text) IN (' + ', '.join(['%s'] * len(ids)) + ')'
-        params.extend(ids)
+        selection_params.extend(ids)
     try:
         with connections["enrolment"].cursor() as cur:
+            from learner_api.evidence_ownership import profile_id_for_source
+            learner_profile_id = profile_id_for_source(cur, learner_kind, learner_id)
+            if learner_profile_id is None:
+                return []
             cur.execute(
                 f"""
-                SELECT container, blob_name, original_filename, content_type, size_bytes
+                SELECT blob_name, original_filename, content_type, size_bytes
                   FROM "Learner"."evidence_files"
                  WHERE learner_kind = %s
-                   AND learner_id = %s
+                   AND learner_profile_id = %s
                    {selection}
                    AND status = 'approved'
                  ORDER BY uploaded_at
                 """,
-                params,
+                [_s(learner_kind), learner_profile_id, *selection_params],
             )
             rows = cur.fetchall()
     except DatabaseError as exc:
@@ -277,11 +281,11 @@ def collect_evidence_files(learner_kind, learner_id, activity_id, selected_file_
 
     from learner_api.evidence_storage import download_blob_bytes
 
-    for container, blob_name, filename, content_type, size_bytes in rows:
+    for blob_name, filename, content_type, size_bytes in rows:
         entry = {"filename": filename, "contentType": content_type, "size": size_bytes, "text": ""}
         if _evidence_file_format(content_type, filename):
             try:
-                data = download_blob_bytes(container, blob_name)
+                data = download_blob_bytes(settings.AZURE_APPROVED_CONTAINER, blob_name)
                 entry["text"] = extract_file_text(content_type, filename, data)[:MAX_FILE_CHARS]
             except Exception:  # noqa: BLE001 - storage is best-effort here
                 logger.warning("Could not download an evidence file for AI feedback.")

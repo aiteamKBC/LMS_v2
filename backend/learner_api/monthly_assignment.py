@@ -17,6 +17,7 @@ from django.http import HttpResponse, JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 from login.permissions import learner_self_or_admin
 from .booking_calendar import booking_date_restriction
+from .evidence_ownership import profile_id_for_source
 
 
 def text(value):
@@ -138,11 +139,16 @@ def valid_uploaded_presentation(payload):
     if not file_id:
         return False
     with connections["enrolment"].cursor() as cur:
+        learner_profile_id = profile_id_for_source(
+            cur, payload.get("learnerKind"), payload.get("learnerId"),
+        )
+        if learner_profile_id is None:
+            return False
         cur.execute(
             'SELECT original_filename FROM "Learner"."evidence_files" '
-            "WHERE id::text = %s AND learner_kind = %s AND learner_id = %s "
+            "WHERE id::text = %s AND learner_kind = %s AND learner_profile_id = %s "
             "AND section_ref = %s AND status = 'approved' AND size_bytes > 0 AND size_bytes <= %s",
-            [file_id, payload.get("learnerKind"), str(payload.get("learnerId")),
+            [file_id, payload.get("learnerKind"), learner_profile_id,
              payload.get("activityId"), 50 * 1024 * 1024],
         )
         row = cur.fetchone()
@@ -151,10 +157,15 @@ def valid_uploaded_presentation(payload):
 
 def approved_evidence_ids(payload):
     with connections["enrolment"].cursor() as cur:
+        learner_profile_id = profile_id_for_source(
+            cur, payload.get("learnerKind"), payload.get("learnerId"),
+        )
+        if learner_profile_id is None:
+            return set()
         cur.execute(
             'SELECT id::text FROM "Learner"."evidence_files" '
-            "WHERE learner_kind = %s AND learner_id = %s AND status = 'approved'",
-            [payload.get("learnerKind"), str(payload.get("learnerId"))],
+            "WHERE learner_kind = %s AND learner_profile_id = %s AND status = 'approved'",
+            [payload.get("learnerKind"), learner_profile_id],
         )
         return {str(row[0]) for row in cur.fetchall()}
 

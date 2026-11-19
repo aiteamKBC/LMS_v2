@@ -34,6 +34,12 @@ def _existing_tables(cursor):
     return {r[0] for r in cursor.fetchall()}
 
 
+def _schema_issues(cursor, existing):
+    if "progress_review_runs" not in existing:
+        return []
+    return tables.progress_review_run_schema_issues(cursor)
+
+
 class Command(BaseCommand):
     help = 'Create "Learner".progress_review_* tables for Progress Review PPTX generation.'
 
@@ -47,12 +53,15 @@ class Command(BaseCommand):
 
         with conn.cursor() as cursor:
             before = _existing_tables(cursor)
+            schema_issues = _schema_issues(cursor, before)
         missing = sorted(set(TABLES) - before)
         if missing:
             for name in missing:
                 self.stdout.write(f'  missing: "Learner".{name}')
         else:
             self.stdout.write("All expected tables present.")
+        for issue in schema_issues:
+            self.stdout.write(self.style.ERROR(f"  schema mismatch: {issue}"))
 
         if options["check"]:
             return

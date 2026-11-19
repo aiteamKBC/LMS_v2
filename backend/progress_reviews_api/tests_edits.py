@@ -7,6 +7,7 @@ from unittest.mock import patch
 from django.test import SimpleTestCase
 
 from . import edits
+from .identity import LearnerIdentity
 from .review_pack import NOT_AVAILABLE
 from .tests_pptx_generator import _sample_pack
 
@@ -113,8 +114,13 @@ def _account(role, subject_id=0, email="user@example.invalid"):
     return SimpleNamespace(role=role, subject_id=subject_id, email=email, is_staff=role != "learner")
 
 
+IDENTITY = LearnerIdentity(501, 42, "apprenticeship", object(), object())
+OTHER_IDENTITY = LearnerIdentity(700, 7, "apprenticeship", object(), object())
+
+
 RUN = {
-    "id": "run-1", "learner_id": 42, "learner_kind": "apprenticeship", "generation_status": "completed",
+    "id": "run-1", "learner_id": 501,
+    "learner_kind": "apprenticeship", "generation_status": "completed",
     "review_number": None, "review_date": date(2026, 9, 29),
     "review_period_start": date(2026, 9, 2), "review_period_end": date(2026, 9, 29),
     "action_period_start": date(2026, 9, 30), "action_period_end": date(2026, 10, 27),
@@ -123,6 +129,17 @@ RUN = {
 
 class EditOwnershipTests(SimpleTestCase):
     """The learner owns the MCM deck; the coach owns the Progress Review deck."""
+
+    def setUp(self):
+        patcher = patch("progress_reviews_api.views.identity_for_run", return_value=IDENTITY)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        patcher = patch(
+            "progress_reviews_api.views.identity_from_enrolment_id",
+            side_effect=lambda value: IDENTITY if int(value) == 42 else OTHER_IDENTITY,
+        )
+        patcher.start()
+        self.addCleanup(patcher.stop)
 
     def status(self, kind, account):
         with patch("progress_reviews_api.views.runs") as mock_runs, \
@@ -136,6 +153,16 @@ class EditOwnershipTests(SimpleTestCase):
         self.assertEqual(self.status("mcm", _account("learner", 42)), 200)
         self.assertEqual(self.status("mcm", _account("learner", 7)), 403)
         self.assertEqual(self.status("mcm", _account("coach")), 403)
+
+    def test_cross_learner_cannot_retrieve_the_source_snapshot(self):
+        with patch("progress_reviews_api.views.runs") as mock_runs, \
+                patch("progress_reviews_api.views.authenticate_request", return_value=_account("learner", 7)), \
+                patch.dict(os.environ, {"LEARNER_API_REQUIRE_AUTH": "1"}):
+            mock_runs.get_run.return_value = {**RUN, "review_kind": "mcm"}
+            response = self.client.get("/progress_reviews_api/run-1/edit/")
+
+        self.assertEqual(response.status_code, 403)
+        mock_runs.get_snapshot.assert_not_called()
 
     def test_progress_review_deck_is_editable_by_staff_only(self):
         self.assertEqual(self.status("progress_review", _account("coach")), 200)
@@ -178,6 +205,7 @@ class EditOwnershipTests(SimpleTestCase):
             )
         self.assertEqual(response.status_code, 201)
         kwargs = mock_store.call_args.kwargs
+        self.assertEqual(kwargs["learner_identity"].profile_id, 501)
         self.assertEqual(kwargs["parent_run_id"], "run-1")
         self.assertEqual(kwargs["revision_source"], "edited")
         self.assertEqual(kwargs["pack"]["learner"]["employer"], "New Co")
@@ -228,6 +256,7 @@ class UploadOwnDeckTests(SimpleTestCase):
         from django.core.files.uploadedfile import SimpleUploadedFile
 
         with patch("progress_reviews_api.views.authenticate_request", return_value=_account("coach")), \
+                patch("progress_reviews_api.permissions.identity_from_enrolment_id", return_value=IDENTITY), \
                 patch.dict(os.environ, {"LEARNER_API_REQUIRE_AUTH": "0"}):
             return self.client.post(
                 "/progress_reviews_api/42/upload/",

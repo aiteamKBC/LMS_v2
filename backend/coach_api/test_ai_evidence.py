@@ -97,8 +97,8 @@ class UploadedEvidenceTests(SimpleTestCase):
         self.addCleanup(self.db.close)
         self.db.execute("ATTACH DATABASE ':memory:' AS Learner")
         self.db.execute('''CREATE TABLE Learner.evidence_files (
-            learner_kind TEXT, learner_id TEXT, section_ref TEXT, component_ref TEXT,
-            status TEXT, container TEXT, blob_name TEXT, original_filename TEXT,
+            learner_kind TEXT, learner_profile_id INTEGER, section_ref TEXT, component_ref TEXT,
+            status TEXT, blob_name TEXT, original_filename TEXT,
             content_type TEXT, size_bytes INTEGER, uploaded_at INTEGER, id TEXT)''')
         self.cursor = MagicMock()
         self.cursor.__enter__.return_value = self.cursor
@@ -114,14 +114,21 @@ class UploadedEvidenceTests(SimpleTestCase):
         self.connections = patch.object(ai_marking, "connections", {"enrolment": connection})
         self.connections.start()
         self.addCleanup(self.connections.stop)
+        self.profile = patch(
+            "learner_api.evidence_ownership.profile_id_for_source",
+            side_effect=lambda cursor, kind, learner_id: 70 if str(learner_id) == "17" else None,
+        )
+        self.profile.start()
+        self.addCleanup(self.profile.stop)
         self.storage = patch("learner_api.evidence_storage.download_blob_bytes", return_value=docx_bytes())
         self.download = self.storage.start()
         self.addCleanup(self.storage.stop)
 
     def add_file(self, *, kind="apprenticeship", learner="17", section="COMP-1", component=None,
                  status="approved", filename="report.docx", mime="application/octet-stream"):
-        self.db.execute("INSERT INTO Learner.evidence_files VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                        (kind, learner, section, component, status, "approved", filename, filename, mime, 100, 1, filename))
+        learner_profile_id = 70 if str(learner) == "17" else 71
+        self.db.execute("INSERT INTO Learner.evidence_files VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                        (kind, learner_profile_id, section, component, status, filename, filename, mime, 100, 1, filename))
 
     def test_revised_submission_reads_only_selected_owned_approved_files(self):
         self.add_file(filename='old.docx')

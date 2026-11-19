@@ -4,7 +4,7 @@ rendered from (pptx_generator.py consumes exactly this shape, nothing else).
 
 Composes EXISTING learner_api functions rather than re-deriving learner data:
   learner_api.learner_detail.build_learner_detail   profile/programme/KSBs/components
-  learner_api.identity.learner_profile_for_source   EnrolmentUser -> LearnerProfile
+  progress_reviews_api.identity                     validated canonical learner identity
   learner_api.attendance.fetch_kbc_attendance_rows  live KBC attendance register
   learner_api.evidence                              "Learner"."evidence_files" + marking status
 
@@ -24,8 +24,9 @@ from decimal import Decimal, InvalidOperation
 from django.conf import settings
 from django.db import DatabaseError
 
-from .period import ReviewPeriod
 from .evidence_images import blob_image_ref
+from .identity import LearnerIdentityError
+from .period import ReviewPeriod
 
 logger = logging.getLogger(__name__)
 
@@ -33,10 +34,6 @@ NOT_AVAILABLE = "Not available"
 
 # Mirrors frontend/src/utils/learnerJourney.ts::progressCountsAsAchieved.
 GRADED_PROGRESS_KINDS = {"quiz"}
-
-
-class LearnerLookupError(Exception):
-    """The learner_id does not resolve to any learner (either kind)."""
 
 
 # --------------------------------------------------------------------------- #
@@ -227,22 +224,6 @@ def build_ksb_progress(detail: dict, evidenced_codes=None) -> list:
 # --------------------------------------------------------------------------- #
 # learner + review metadata
 # --------------------------------------------------------------------------- #
-
-def _resolve_learner(learner_id: int):
-    from learner_api.models import EnrolmentUser
-
-    try:
-        source = EnrolmentUser.all_learners.get(pk=learner_id)
-    except EnrolmentUser.DoesNotExist as exc:
-        raise LearnerLookupError(f"No learner found with id {learner_id}.") from exc
-    kind = "commercial" if _clean(source.learner_type).lower() == "commercial" else "apprenticeship"
-    return kind, source
-
-
-def _resolve_profile(source, learner_id: int):
-    from learner_api.identity import learner_profile_for_source
-    return learner_profile_for_source(source, source_pk=learner_id)
-
 
 def _build_learner_section(source, profile, detail, warnings: list) -> dict:
     start = _parse_date(getattr(profile, "start_date", None)) or _parse_date(getattr(source, "start_date", None))
@@ -536,17 +517,22 @@ def _build_evidence_sections(kind, learner_id, period: ReviewPeriod, warnings: l
 
         ensure_evidence_tables()
         with connections["enrolment"].cursor() as cur:
-            cur.execute(
-                'select id, original_filename, content_type, size_bytes, status, '
-                'scan_result, section_ref, uploaded_at, "Training_plan_details", '
-                'component_ref, progress_entry_id, container, blob_name '
-                'from "Learner"."evidence_files" '
-                'where learner_kind = %s and learner_id = %s '
-                'order by uploaded_at desc',
-                [kind, str(learner_id)],
-            )
-            columns = [c[0] for c in cur.description]
-            rows = [dict(zip(columns, row)) for row in cur.fetchall()]
+            from learner_api.evidence_ownership import profile_id_for_source
+            learner_profile_id = profile_id_for_source(cur, kind, learner_id)
+            if learner_profile_id is None:
+                rows = []
+            else:
+                cur.execute(
+                    'select id, original_filename, content_type, size_bytes, status, '
+                    'scan_result, section_ref, uploaded_at, "Training_plan_details", '
+                    'component_ref, progress_entry_id, blob_name '
+                    'from "Learner"."evidence_files" '
+                    'where learner_kind = %s and learner_profile_id = %s '
+                    'order by uploaded_at desc',
+                    [kind, learner_profile_id],
+                )
+                columns = [c[0] for c in cur.description]
+                rows = [dict(zip(columns, row)) for row in cur.fetchall()]
     except DatabaseError as exc:
         logger.warning("Progress review: evidence lookup failed for learner %s: %s", learner_id, exc)
         warnings.append("Evidence records could not be loaded; evidence section is empty.")
@@ -570,7 +556,10 @@ def _build_evidence_sections(kind, learner_id, period: ReviewPeriod, warnings: l
         file_link = NOT_AVAILABLE
         if row.get("status") == "approved" and azure_configured():
             try:
-                file_link = get_download_sas(row["container"], row["blob_name"], filename=row["original_filename"])
+                file_link = get_download_sas(
+                    settings.AZURE_APPROVED_CONTAINER, row["blob_name"],
+                    filename=row["original_filename"],
+                )
             except Exception:
                 file_link = NOT_AVAILABLE
 
@@ -584,7 +573,7 @@ def _build_evidence_sections(kind, learner_id, period: ReviewPeriod, warnings: l
             # A stable blob reference, not the short-lived SAS link, so a deck
             # rebuilt later from this snapshot (an edit) still finds the image.
             "image_or_screenshot_link": (
-                blob_image_ref(row["container"], row["blob_name"])
+                blob_image_ref(settings.AZURE_APPROVED_CONTAINER, row["blob_name"])
                 if row.get("status") == "approved" and _clean(row.get("content_type")).startswith("image/")
                 else NOT_AVAILABLE
             ),
@@ -773,23 +762,25 @@ def _build_manager_questions(manager_name: str) -> list:
 # --------------------------------------------------------------------------- #
 
 def build_review_pack(
-    learner_id: int,
+    learner_identity,
     period: ReviewPeriod,
     *,
     review_id=None,
     generated_by="",
 ) -> dict:
-    """Assemble the full progress_review_pack for one learner and period.
+    """Assemble a pack from one already validated canonical learner identity.
 
-    Raises LearnerLookupError if `learner_id` does not resolve to any learner
-    (either kind) — that is a caller error (404), not a data-quality warning.
+    Legacy source reads use the identity's explicit enrolment relationship.
     Everything else degrades to NOT_AVAILABLE plus a source_warnings entry.
     """
     from django.utils import timezone
     from learner_api.learner_detail import build_learner_detail
 
     warnings: list = []
-    kind, source = _resolve_learner(learner_id)
+    kind = learner_identity.learner_kind
+    source = learner_identity.source
+    profile = learner_identity.profile
+    learner_id = learner_identity.enrolment_id
 
     try:
         detail = build_learner_detail(source, learner_id)
@@ -798,10 +789,11 @@ def build_review_pack(
         warnings.append("Learner detail could not be loaded; programme/KSB/module sections are limited.")
         detail = {}
 
-    # Read after build_learner_detail, which refreshes the profile's OTJ snapshot.
-    profile = _resolve_profile(source, learner_id)
-    if profile is None:
-        warnings.append("This learner has no active LearnerProfile record; profile-derived fields may be limited.")
+    # build_learner_detail refreshes the profile's OTJ snapshot. Preserve the
+    # historical fresh read, but keep the validated identity relationship exact.
+    profile.refresh_from_db()
+    if int(profile.enrolment_id) != learner_identity.enrolment_id:
+        raise LearnerIdentityError("Learner identity relationship changed while building the review.")
 
     try:
         from learner_api.dashboard_metrics import read_metrics

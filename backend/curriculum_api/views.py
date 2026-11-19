@@ -30987,9 +30987,9 @@ def reflection_submission_ksb_consumption(learners, programme_ksb_codes, compone
 def progress_evidence_index(progress_ids):
     """Evidence files keyed by the progress entry they were uploaded against.
 
-    ``evidence_files.learner_id`` has the same enrolment-source id problem as the
-    reflection table, so this joins on ``progress_entry_id`` — the same
-    deterministic key Learner, Coach and Curriculum already share.
+    Evidence ownership is normalized through ``learner_profile_id``. This index
+    joins on ``progress_entry_id`` instead — the same deterministic key Learner,
+    Coach and Curriculum already share.
     """
     ids = unique([str(value) for value in (progress_ids or []) if value not in (None, '')])
     if not ids or connection.vendor != 'postgresql':

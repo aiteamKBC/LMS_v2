@@ -1684,7 +1684,7 @@ _SUBMITTED_ASSIGNMENTS_SQL = """
 _ASSIGNMENT_FILES_SQL = """
     select id, original_filename, section_ref, uploaded_at
     from "Learner"."evidence_files"
-    where learner_kind = %s and learner_id = %s and status = 'approved' and section_ref = any(%s)
+    where learner_kind = %s and learner_profile_id = %s and status = 'approved' and section_ref = any(%s)
     order by uploaded_at
 """
 
@@ -1714,7 +1714,7 @@ def _learner_assignments(kind, learner):
         files_by_activity = {}
         activity_ids = [row[0] for row in submissions]
         if activity_ids:
-            cur.execute(_ASSIGNMENT_FILES_SQL, [kind, str(learner.pk), activity_ids])
+            cur.execute(_ASSIGNMENT_FILES_SQL, [kind, profile.pk, activity_ids])
             for file_id, name, section_ref, uploaded_at in cur.fetchall():
                 files_by_activity.setdefault(section_ref, []).append(
                     {"source": "lms", "id": str(file_id), "name": _s(name) or "Uploaded file"},
@@ -1801,7 +1801,7 @@ def employer_portal_assignment_file(request, employer_id, kind, learner_id, file
                 """
                 select f.blob_name, f.original_filename
                 from "Learner"."evidence_files" f
-                where f.id = %s and f.learner_kind = %s and f.learner_id = %s and f.status = 'approved'
+                where f.id = %s and f.learner_kind = %s and f.learner_profile_id = %s and f.status = 'approved'
                   and exists (
                     select 1 from "Learner"."learning_reflection_submissions" s
                     where s.learner_kind = f.learner_kind and s.learner_id = %s
@@ -1809,7 +1809,7 @@ def employer_portal_assignment_file(request, employer_id, kind, learner_id, file
                       and s.activity_id = f.section_ref
                   )
                 """,
-                [str(file_id), kind, str(learner.pk), profile.pk],
+                [str(file_id), kind, profile.pk, profile.pk],
             )
             row = cur.fetchone()
     except DatabaseError:

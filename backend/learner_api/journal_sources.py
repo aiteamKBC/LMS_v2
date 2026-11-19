@@ -82,11 +82,11 @@ def monthly_targets(owner_id, query):
     records = query('''SELECT j.month, sum(j.planned_hours) AS planned
         FROM "Learner".learner_journal_rows j
         JOIN "Learner".learner_activity_sources s ON s.id=j.source_id
-          AND s.learner_id=j.canonical_learner_id AND s.canonical_progress_id=j.progress_id
+          AND s.learner_id=j.learner_id AND s.canonical_progress_id=j.progress_id
           AND s.deleted_at IS NULL
         JOIN "Learner".learner_progress_entries p ON p.id=j.progress_id
-          AND p.learner_id=j.canonical_learner_id AND p.deleted_at IS NULL
-        WHERE j.canonical_learner_id=%s AND j.deleted_at IS NULL
+          AND p.learner_id=j.learner_id AND p.deleted_at IS NULL
+        WHERE j.learner_id=%s AND j.deleted_at IS NULL
         GROUP BY j.month ORDER BY j.month''', [owner_id])
     return {r['month']: float(r['planned']) for r in records if r['planned'] is not None}
 
@@ -96,11 +96,11 @@ def planned_by_progress(owner_id, query):
         SELECT j.progress_id,sum(j.planned_hours) AS planned
         FROM "Learner".learner_journal_rows j
         JOIN "Learner".learner_activity_sources s ON s.id=j.source_id
-          AND s.learner_id=j.canonical_learner_id AND s.canonical_progress_id=j.progress_id
+          AND s.learner_id=j.learner_id AND s.canonical_progress_id=j.progress_id
           AND s.deleted_at IS NULL
         JOIN "Learner".learner_progress_entries p ON p.id=j.progress_id
-          AND p.learner_id=j.canonical_learner_id AND p.deleted_at IS NULL
-        WHERE j.canonical_learner_id=%s AND j.deleted_at IS NULL
+          AND p.learner_id=j.learner_id AND p.deleted_at IS NULL
+        WHERE j.learner_id=%s AND j.deleted_at IS NULL
         GROUP BY j.progress_id''', [owner_id]) if r['planned'] is not None}
 
 

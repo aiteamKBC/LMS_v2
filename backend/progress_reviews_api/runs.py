@@ -69,7 +69,8 @@ def new_run_id() -> str:
 
 
 def create_run(
-    *, run_id, learner_kind, learner_id, period, generated_by, review_kind="progress_review",
+    *, run_id, learner_kind, learner_id, period, generated_by,
+    review_kind="progress_review",
     parent_run_id=None, revision_source="generated",
 ):
     ensure_progress_review_tables()

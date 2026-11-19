@@ -35,15 +35,18 @@ from django.http import HttpResponse, JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 
 from login.permissions import (
-    auth_gate_enabled, authenticate_request, learner_self_only, learner_self_or_staff, staff_only,
+    auth_gate_enabled,
+    authenticate_request,
+    staff_only,
 )
 
 from . import edits, mcm, pdf_preview, runs, storage
-from .period import ReviewPeriod
-from .period import iter_review_periods, resolve_review_period
 from .evidence_images import default_image_fetcher
+from .identity import LearnerIdentityError, identity_for_run, identity_from_enrolment_id
+from .period import ReviewPeriod, iter_review_periods, resolve_review_period
+from .permissions import canonical_learner_self_only, canonical_learner_self_or_staff
 from .pptx_generator import generate_progress_review_pptx
-from .review_pack import LearnerLookupError, _parse_date, build_review_pack
+from .review_pack import _parse_date, build_review_pack
 
 logger = logging.getLogger(__name__)
 
@@ -108,20 +111,10 @@ def _curriculum_programme_id(source):
         return None
 
 
-def _programme_window(learner_id):
-    """(start, end, kind, source) for one learner_id, resolved the same way
-    review_pack does — LearnerProfile's real DateFields first, falling back to
-    EnrolmentUser's text-typed dates. Returns (None, None, None, None) if the
-    id does not resolve to any learner."""
-    from learner_api.identity import learner_profile_for_source
-    from learner_api.models import EnrolmentUser
-
-    try:
-        source = EnrolmentUser.all_learners.get(pk=learner_id)
-    except EnrolmentUser.DoesNotExist:
-        return None, None, None, None
-
-    profile = learner_profile_for_source(source, source_pk=learner_id)
+def _programme_window(learner_identity):
+    """Programme window for one already validated canonical identity."""
+    source = learner_identity.source
+    profile = learner_identity.profile
     # The learner's OWN date wins. LearnerProfile.start_date is the profile
     # mirror, which active_users.mirror_learner_placement stamps with the
     # COHORT delivery window on every placement edit -- reading it first made
@@ -135,8 +128,14 @@ def _programme_window(learner_id):
         or _parse_date(getattr(source, "apprenticeship_end_date", None))
         or _parse_date(getattr(source, "practical_period_end_date", None))
     )
-    kind = "commercial" if str(getattr(source, "learner_type", "")).strip().lower() == "commercial" else "apprenticeship"
-    return start, end, kind, source
+    return start, end, learner_identity.learner_kind, source
+
+
+def _boundary_identity(request, enrolment_id):
+    identity = getattr(request, "progress_review_learner_identity", None)
+    if identity is not None and identity.enrolment_id == int(enrolment_id):
+        return identity
+    return identity_from_enrolment_id(enrolment_id)
 
 
 # --------------------------------------------------------------------------- #
@@ -159,14 +158,17 @@ def _render_deck(pack, review_kind, run_id):
 
 
 def _store_deck(
-    *, run_id, learner_kind, learner_id, period, pack, review_kind, generated_by,
+    *, run_id, learner_identity, period, pack, review_kind, generated_by,
     pptx_bytes=None, parent_run_id=None, revision_source="generated", save_as_draft=False,
 ) -> dict:
     """Record one deck version: the run, the pack it came from, the rendered
     (or uploaded) PPTX in blob storage, and its file row. Shared by generate,
     edit and re-upload so every version is stored and audited the same way."""
     runs.create_run(
-        run_id=run_id, learner_kind=learner_kind, learner_id=learner_id, period=period,
+        run_id=run_id,
+        learner_kind=learner_identity.learner_kind,
+        learner_id=learner_identity.profile_id,
+        period=period,
         generated_by=generated_by, review_kind=review_kind,
         parent_run_id=parent_run_id, revision_source=revision_source,
     )
@@ -184,7 +186,12 @@ def _store_deck(
     prefix = "monthly-coaching-meeting" if review_kind == mcm.REVIEW_KIND else "progress-review"
     suffix = "" if revision_source == "generated" else f"-{revision_source}"
     filename = f"{prefix}-{learner_slug}-{period.review_date.isoformat()}{suffix}.pptx"
-    blob_name = f"{learner_kind}/{learner_id}/{run_id}/{filename}"
+    # Keep the historical storage path stable. The value comes only from the
+    # validated canonical profile relationship, never from numeric coincidence.
+    blob_name = (
+        f"{learner_identity.learner_kind}/{learner_identity.enrolment_id}/"
+        f"{run_id}/{filename}"
+    )
 
     try:
         storage.upload_pptx(io.BytesIO(pptx_bytes), blob_name)
@@ -210,7 +217,7 @@ def _store_deck(
 
     return {
         "reviewId": run_id,
-        "learnerId": learner_id,
+        "learnerId": learner_identity.enrolment_id,
         "reviewNumber": period.review_number,
         "reviewDate": period.review_date.isoformat(),
         "reviewPeriodStart": period.review_period_start.isoformat(),
@@ -230,9 +237,11 @@ def _generate_for_learner(
     template, or — with `uploaded_pptx` — the owner's own presentation, kept
     alongside the same real-data pack so it can still be edited later."""
     is_mcm = review_kind == mcm.REVIEW_KIND
-    start, end, kind, source = _programme_window(learner_id)
-    if source is None:
+    try:
+        learner_identity = identity_from_enrolment_id(learner_id)
+    except LearnerIdentityError:
         raise GenerationError(f"No learner found with id {learner_id}.", 404)
+    start, end, _kind, source = _programme_window(learner_identity)
     if start is None:
         raise GenerationError("This learner has no programme start date recorded.", 422)
 
@@ -246,8 +255,8 @@ def _generate_for_learner(
     run_id = runs.new_run_id()
 
     try:
-        pack = build_review_pack(learner_id, period, review_id=run_id, generated_by=generated_by)
-    except LearnerLookupError as exc:
+        pack = build_review_pack(learner_identity, period, review_id=run_id, generated_by=generated_by)
+    except LearnerIdentityError as exc:
         raise GenerationError(str(exc), 404) from exc
 
     if is_mcm:
@@ -263,7 +272,7 @@ def _generate_for_learner(
         )
 
     return _store_deck(
-        run_id=run_id, learner_kind=kind, learner_id=learner_id, period=period, pack=pack,
+        run_id=run_id, learner_identity=learner_identity, period=period, pack=pack,
         review_kind=review_kind, generated_by=generated_by, pptx_bytes=uploaded_pptx,
         revision_source="uploaded" if uploaded_pptx is not None else "generated",
         save_as_draft=save_as_draft,
@@ -304,13 +313,12 @@ def active_learners(request):
     return JsonResponse({"results": results})
 
 
-@learner_self_or_staff(kwarg="learner_id")
+@canonical_learner_self_or_staff(kwarg="learner_id")
 def periods(request, learner_id):
     if request.method != "GET":
         return _error("Method not allowed.", 405)
-    start, end, _kind, source = _programme_window(learner_id)
-    if source is None:
-        return _error(f"No learner found with id {learner_id}.", 404)
+    learner_identity = _boundary_identity(request, learner_id)
+    start, end, _kind, source = _programme_window(learner_identity)
     if start is None:
         return _error("This learner has no programme start date recorded.", 422)
     results = [
@@ -322,13 +330,12 @@ def periods(request, learner_id):
     return JsonResponse({"results": results})
 
 
-@learner_self_or_staff(kwarg="learner_id")
+@canonical_learner_self_or_staff(kwarg="learner_id")
 def pack(request, learner_id):
     if request.method != "GET":
         return _error("Method not allowed.", 405)
-    start, end, _kind, source = _programme_window(learner_id)
-    if source is None:
-        return _error(f"No learner found with id {learner_id}.", 404)
+    learner_identity = _boundary_identity(request, learner_id)
+    start, end, _kind, source = _programme_window(learner_identity)
     if start is None:
         return _error("This learner has no programme start date recorded.", 422)
 
@@ -338,13 +345,13 @@ def pack(request, learner_id):
         programme_id=_curriculum_programme_id(source),
     )
     try:
-        pack_data = build_review_pack(learner_id, period, generated_by=_current_email(request))
-    except LearnerLookupError:
+        pack_data = build_review_pack(learner_identity, period, generated_by=_current_email(request))
+    except LearnerIdentityError:
         return _error(f"No learner found with id {learner_id}.", 404)
     return JsonResponse(pack_data)
 
 
-@learner_self_or_staff(kwarg="learner_id")
+@canonical_learner_self_or_staff(kwarg="learner_id")
 def latest_run(request, learner_id):
     """Does a PPTX already exist for this exact review? Backs a review card's
     "Create slides" vs "Slides"/"View slides" button state, and the same
@@ -357,10 +364,11 @@ def latest_run(request, learner_id):
     if review_date is None:
         return _error("review_date is required (YYYY-MM-DD).", 400)
 
+    learner_identity = _boundary_identity(request, learner_id)
     account = authenticate_request(request)
     include_draft = request.GET.get("include_draft") == "1" and account is not None and _is_staff(account)
     row = (runs.get_latest_run_for_period if include_draft else runs.get_latest_completed_run_for_period)(
-        learner_id, review_date,
+        learner_identity.profile_id, review_date,
     )
     if not row:
         return JsonResponse({"exists": False})
@@ -399,11 +407,24 @@ def _is_staff(account):
     return account.role != "learner" and (getattr(account, "is_staff", False) or account.role in STAFF_ROLES)
 
 
+def _account_profile_id(account):
+    if account is None or account.role != "learner":
+        return None
+    try:
+        return identity_from_enrolment_id(account.subject_id).profile_id
+    except LearnerIdentityError:
+        return None
+
+
 def _readable_run(request, review_id):
     """(run, None) for a deck the caller may view, else (None, error)."""
     run = runs.get_run(review_id)
     if not run:
         return None, _error("Review not found.", 404)
+    try:
+        run_profile_id = int(run["learner_id"])
+    except (KeyError, TypeError, ValueError):
+        return None, _error("Review learner identity is inconsistent.", 409)
     account = authenticate_request(request)
     # This view can't use @staff_only() -- a learner is allowed through, just
     # restricted to their own deck below -- so it re-checks the same
@@ -414,9 +435,9 @@ def _readable_run(request, review_id):
             return None, _error("Authentication required.", 401)
     else:
         # Staff may download any generated deck; learners may download only
-        # their own review deck. The run stores the canonical learner id, so
-        # the review id cannot be used to access another learner's PPTX.
-        if account.role == "learner" and int(run["learner_id"]) != int(account.subject_id):
+        # their own canonical profile's deck.
+        actor_profile_id = _account_profile_id(account)
+        if account.role == "learner" and actor_profile_id != run_profile_id:
             return None, _error("You do not have permission to perform this action.", 403)
         if account.role != "learner" and not _is_staff(account):
             return None, _error("You do not have permission to perform this action.", 403)
@@ -424,7 +445,7 @@ def _readable_run(request, review_id):
             owner = (
                 run.get("review_kind") == mcm.REVIEW_KIND
                 and account.role == "learner"
-                and int(run["learner_id"]) == int(account.subject_id)
+                and actor_profile_id == run_profile_id
             ) or (
                 run.get("review_kind") != mcm.REVIEW_KIND
                 and _is_staff(account)
@@ -436,7 +457,7 @@ def _readable_run(request, review_id):
 
 def _authorised_pptx_file(request, review_id):
     """(pptx_file, None) for a deck the caller may read, else (None, error)."""
-    run, error = _readable_run(request, review_id)
+    _run, error = _readable_run(request, review_id)
     if error:
         return None, error
     pptx_file = runs.get_pptx_file_for_run(review_id)
@@ -535,40 +556,40 @@ def _meeting_date(request):
     return _parse_date_param(request.GET.get("meeting_date"))
 
 
-@learner_self_or_staff(kwarg="learner_id")
+@canonical_learner_self_or_staff(kwarg="learner_id")
 def mcm_pack(request, learner_id):
     if request.method != "GET":
         return _error("Method not allowed.", 405)
     meeting_date = _meeting_date(request)
     if meeting_date is None:
         return _error("meeting_date is required (YYYY-MM-DD).", 400)
-    start, _end, _kind, source = _programme_window(learner_id)
-    if source is None:
-        return _error(f"No learner found with id {learner_id}.", 404)
+    learner_identity = _boundary_identity(request, learner_id)
+    _start, _end, _kind, source = _programme_window(learner_identity)
     period = mcm.build_mcm_period(meeting_date, programme_id=_curriculum_programme_id(source))
     try:
-        pack_data = build_review_pack(learner_id, period, generated_by=_current_email(request))
-    except LearnerLookupError:
+        pack_data = build_review_pack(learner_identity, period, generated_by=_current_email(request))
+    except LearnerIdentityError:
         return _error(f"No learner found with id {learner_id}.", 404)
     return JsonResponse(mcm.label_pack(pack_data))
 
 
-@learner_self_or_staff(kwarg="learner_id")
+@canonical_learner_self_or_staff(kwarg="learner_id")
 def mcm_latest_run(request, learner_id):
     if request.method != "GET":
         return _error("Method not allowed.", 405)
     meeting_date = _meeting_date(request)
     if meeting_date is None:
         return _error("meeting_date is required (YYYY-MM-DD).", 400)
+    learner_identity = _boundary_identity(request, learner_id)
     account = authenticate_request(request)
     include_draft = (
         request.GET.get("include_draft") == "1"
         and account is not None
         and account.role == "learner"
-        and int(account.subject_id) == int(learner_id)
+        and getattr(request, "progress_review_actor_profile_id", None) == learner_identity.profile_id
     )
     row = (runs.get_latest_run_for_period if include_draft else runs.get_latest_completed_run_for_period)(
-        learner_id, meeting_date, review_kind=mcm.REVIEW_KIND,
+        learner_identity.profile_id, meeting_date, review_kind=mcm.REVIEW_KIND,
     )
     if not row:
         return JsonResponse({"exists": False})
@@ -582,7 +603,7 @@ def mcm_latest_run(request, learner_id):
 
 
 @csrf_exempt
-@learner_self_only(kwarg="learner_id")
+@canonical_learner_self_only(kwarg="learner_id")
 def mcm_generate(request, learner_id):
     if request.method != "POST":
         return _error("Method not allowed.", 405)
@@ -611,7 +632,7 @@ MAX_UPLOADED_PPTX_BYTES = 50 * 1024 * 1024
 
 
 def _editable_run(request, review_id):
-    """(run, account_email, None) when the caller owns this deck, else an error.
+    """(run, identity, account_email, None) for an editable owned deck.
 
     Ownership follows who runs the meeting: the learner prepares and presents
     their Monthly Coaching Meeting deck, and the coach owns the Progress
@@ -619,20 +640,24 @@ def _editable_run(request, review_id):
     """
     run = runs.get_run(review_id)
     if not run:
-        return None, None, _error("Review not found.", 404)
+        return None, None, None, _error("Review not found.", 404)
     if run["generation_status"] not in {"draft", "completed"}:
-        return None, None, _error("Only a generated deck can be edited.", 409)
+        return None, None, None, _error("Only a generated deck can be edited.", 409)
+    try:
+        run_identity = identity_for_run(run)
+    except LearnerIdentityError:
+        return None, None, None, _error("Review learner identity is inconsistent.", 409)
     account = authenticate_request(request)
     if account is None:
         if auth_gate_enabled():
-            return None, None, _error("Authentication required.", 401)
-        return run, "system", None
+            return None, None, None, _error("Authentication required.", 401)
+        return run, run_identity, "system", None
     if run.get("review_kind") == mcm.REVIEW_KIND:
-        if account.role != "learner" or int(run["learner_id"]) != int(account.subject_id):
-            return None, None, _error("Only the learner can edit their Monthly Coaching Meeting slides.", 403)
+        if account.role != "learner" or _account_profile_id(account) != run_identity.profile_id:
+            return None, None, None, _error("Only the learner can edit their Monthly Coaching Meeting slides.", 403)
     elif not _is_staff(account):
-        return None, None, _error("Only a coach can edit Progress Review slides.", 403)
-    return run, (getattr(account, "email", "") or "").strip() or "system", None
+        return None, None, None, _error("Only a coach can edit Progress Review slides.", 403)
+    return run, run_identity, (getattr(account, "email", "") or "").strip() or "system", None
 
 
 def _period_of(run) -> ReviewPeriod:
@@ -646,7 +671,7 @@ def _period_of(run) -> ReviewPeriod:
     )
 
 
-def _new_revision(run, pack, *, edited_by, revision_source, pptx_bytes=None):
+def _new_revision(run, learner_identity, pack, *, edited_by, revision_source, pptx_bytes=None):
     run_id = runs.new_run_id()
     pack["review"]["review_id"] = run_id
     pack["review"]["revision"] = {
@@ -654,15 +679,16 @@ def _new_revision(run, pack, *, edited_by, revision_source, pptx_bytes=None):
         "by": edited_by, "at": datetime.now().isoformat(timespec="seconds"),
     }
     return _store_deck(
-        run_id=run_id, learner_kind=run["learner_kind"], learner_id=int(run["learner_id"]),
+        run_id=run_id, learner_identity=learner_identity,
         period=_period_of(run), pack=pack, review_kind=run.get("review_kind") or "progress_review",
         generated_by=edited_by, pptx_bytes=pptx_bytes,
         parent_run_id=run["id"], revision_source=revision_source,
     )
 
 
-def _result_for_run(run):
+def _result_for_run(run, learner_identity=None):
     """Return the same response shape as generation for a newly published run."""
+    learner_identity = learner_identity or identity_for_run(run)
     snapshot = runs.get_snapshot(run["id"]) or {}
     snapshot_warnings = snapshot.get("source_warnings", []) if isinstance(snapshot, dict) else []
     warnings = run.get("source_warnings") or snapshot_warnings
@@ -673,7 +699,7 @@ def _result_for_run(run):
             warnings = []
     return {
         "reviewId": run["id"],
-        "learnerId": int(run["learner_id"]),
+        "learnerId": learner_identity.enrolment_id,
         "reviewNumber": run.get("review_number"),
         "reviewDate": run["review_date"].isoformat(),
         "reviewPeriodStart": run["review_period_start"].isoformat(),
@@ -690,7 +716,7 @@ def publish(request, review_id):
     """Publish a generated draft after its owner has reviewed it."""
     if request.method != "POST":
         return _error("Method not allowed.", 405)
-    run, _edited_by, error = _editable_run(request, review_id)
+    run, learner_identity, _edited_by, error = _editable_run(request, review_id)
     if error:
         return error
     if run["generation_status"] != "draft":
@@ -700,7 +726,10 @@ def publish(request, review_id):
     saved = runs.get_run(review_id)
     if not saved:
         return _error("The saved deck could not be found.", 404)
-    return JsonResponse(_result_for_run(saved))
+    try:
+        return JsonResponse(_result_for_run(saved, learner_identity))
+    except LearnerIdentityError:
+        return _error("Review learner identity is inconsistent.", 409)
 
 
 @csrf_exempt
@@ -709,7 +738,7 @@ def edit(request, review_id):
     corrected version (a new run — the version it revises is kept)."""
     if request.method not in ("GET", "POST"):
         return _error("Method not allowed.", 405)
-    run, edited_by, error = _editable_run(request, review_id)
+    run, learner_identity, edited_by, error = _editable_run(request, review_id)
     if error:
         return error
     snapshot = runs.get_snapshot(review_id)
@@ -727,11 +756,16 @@ def edit(request, review_id):
     if payload is None or not isinstance(payload.get("edits"), dict):
         return _error("Send the corrected fields as {\"edits\": {...}}.", 400)
     try:
-        pack = edits.apply_edits(snapshot, payload["edits"], review_kind=review_kind, learner_id=run["learner_id"])
+        pack = edits.apply_edits(
+            snapshot, payload["edits"], review_kind=review_kind,
+            learner_id=learner_identity.enrolment_id,
+        )
     except edits.EditError as exc:
         return _error(str(exc), 400)
     try:
-        result = _new_revision(run, pack, edited_by=edited_by, revision_source="edited")
+        result = _new_revision(
+            run, learner_identity, pack, edited_by=edited_by, revision_source="edited",
+        )
     except GenerationError as exc:
         return _error(exc.message, exc.status)
     return JsonResponse(result, status=201)
@@ -746,6 +780,10 @@ def edit_image(request, review_id):
         run, error = _readable_run(request, review_id)
         if error:
             return error
+        try:
+            learner_identity = identity_for_run(run)
+        except LearnerIdentityError:
+            return _error("Review learner identity is inconsistent.", 409)
         ref = request.GET.get("ref") or ""
         snapshot = runs.get_snapshot(review_id) or {}
         own = {
@@ -754,7 +792,10 @@ def edit_image(request, review_id):
             for item in snapshot.get(key) or []
         }
         blob = edits.parse_blob_image_ref(ref)
-        if not blob or (ref not in own and not blob[1].startswith(edits.upload_prefix(run["learner_id"]))):
+        if not blob or (
+            ref not in own
+            and not blob[1].startswith(edits.upload_prefix(learner_identity.enrolment_id))
+        ):
             return _error("Image not found.", 404)
         data = default_image_fetcher(ref)
         if data is None:
@@ -765,7 +806,7 @@ def edit_image(request, review_id):
 
     if request.method != "POST":
         return _error("Method not allowed.", 405)
-    run, _edited_by, error = _editable_run(request, review_id)
+    run, learner_identity, _edited_by, error = _editable_run(request, review_id)
     if error:
         return error
     upload = request.FILES.get("image")
@@ -776,7 +817,9 @@ def edit_image(request, review_id):
     jpeg = _normalised_jpeg(upload.read())
     if jpeg is None:
         return _error("Upload a JPEG, PNG or WebP image.", 400)
-    blob_name = f"{edits.upload_prefix(run['learner_id'])}{runs.new_run_id()}.jpg"
+    blob_name = (
+        f"{edits.upload_prefix(learner_identity.enrolment_id)}{runs.new_run_id()}.jpg"
+    )
     try:
         storage.upload_image(io.BytesIO(jpeg), blob_name)
     except Exception:
@@ -791,7 +834,7 @@ def upload_revision(request, review_id):
     version (a new run — the version it revises is kept)."""
     if request.method != "POST":
         return _error("Method not allowed.", 405)
-    run, edited_by, error = _editable_run(request, review_id)
+    run, learner_identity, edited_by, error = _editable_run(request, review_id)
     if error:
         return error
     data, error = _uploaded_pptx(request)
@@ -801,7 +844,10 @@ def upload_revision(request, review_id):
     if not snapshot:
         return _error("This deck has no stored data to revise.", 404)
     try:
-        result = _new_revision(run, snapshot, edited_by=edited_by, revision_source="uploaded", pptx_bytes=data)
+        result = _new_revision(
+            run, learner_identity, snapshot, edited_by=edited_by,
+            revision_source="uploaded", pptx_bytes=data,
+        )
     except GenerationError as exc:
         return _error(exc.message, exc.status)
     return JsonResponse(result, status=201)
@@ -879,7 +925,7 @@ def upload_own(request, learner_id):
 
 
 @csrf_exempt
-@learner_self_only(kwarg="learner_id")
+@canonical_learner_self_only(kwarg="learner_id")
 def mcm_upload_own(request, learner_id):
     """POST multipart {file, meeting_date}: the learner's own MCM deck instead
     of a generated one."""

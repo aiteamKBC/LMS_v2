@@ -120,8 +120,15 @@ works the same way). Three ways to create them, in order of preference:
    the recommended path (see `enrolment_api/document_tables.py` for why relying
    on it alone is risky once a later release adds a column).
 
-All three are exactly equivalent DDL; running more than one is harmless
-(`CREATE TABLE IF NOT EXISTS`).
+For a fresh database all three use the same DDL; running more than one is
+harmless (`CREATE TABLE IF NOT EXISTS`).
+
+`progress_review_runs.learner_id` is the canonical `"Learner".learners.id`
+and has a NOT NULL foreign key to that table. Existing dual-column databases
+must use the reviewed cutover migration (drop the legacy column, then rename
+`learner_profile_id`); the runtime setup helper deliberately does not rewrite
+an existing table. It validates the final shape and fails explicitly if the
+old dual-column schema is still present.
 
 ## Azure Blob container
 
@@ -221,6 +228,15 @@ learner themselves as well as staff (not just staff — see `views.py`):
 ```
 DJANGO_USE_SQLITE=true DJANGO_SETTINGS_MODULE=config.settings_sqlite_test python manage.py test progress_reviews_api
 ```
+
+The final raw-SQL schema is also covered against real PostgreSQL. Point only at
+a disposable local database whose name starts with `test_`:
+
+```
+PROGRESS_REVIEW_TEST_DATABASE_URL=postgresql://.../test_progress_reviews python -m unittest progress_reviews_api.tests_postgres -v
+```
+
+That suite refuses remote hosts and non-test database names.
 
 - `tests_period.py` — the 12-week period math, in isolation.
 - `tests_review_pack.py` — the KSB-coverage port of

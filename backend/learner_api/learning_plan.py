@@ -117,6 +117,69 @@ def install_canonical_training_plan(source, profile=None, *, profile_id=None):
     return plan
 
 
+def install_canonical_training_plan_modules(source, profile):
+    """Attach a compact normalized plan tree in one read.
+
+    Monthly Plan originally used only the module FK list and rebuilt every
+    child from Curriculum.  That loses the learner-owned week/component
+    boundary.  Keep the performance benefit of a single values query while
+    retaining the complete canonical ownership chain and saved placement.
+    """
+    if hasattr(source, "_canonical_training_plan"):
+        return source._canonical_training_plan
+    source_id = getattr(source, "pk", None) or getattr(source, "id", None)
+    if source_id is None or profile.enrolment_id != source_id:
+        raise ValueError("The learner profile does not own this enrolment source.")
+    using = getattr(getattr(profile, "_state", None), "db", None) or "enrolment"
+    with connections[using].cursor() as cursor:
+        cursor.execute('''
+            SELECT plan_module.id,plan_module.curriculum_module_id,module.title,
+                   plan_week.id,plan_week.curriculum_week_id,week.title,
+                   plan_component.id,plan_component.curriculum_component_id
+            FROM "Learner".learner_training_plan_modules plan_module
+            LEFT JOIN curriculum.modules module
+              ON module.module_catalogue_id=plan_module.curriculum_module_id
+            LEFT JOIN "Learner".learner_training_plan_weeks plan_week
+              ON plan_week.plan_module_id=plan_module.id
+            LEFT JOIN curriculum.weeks week
+              ON week.id=plan_week.curriculum_week_id
+            LEFT JOIN "Learner".learner_training_plan_components plan_component
+              ON plan_component.plan_week_id=plan_week.id
+            WHERE plan_module.learner_id=%s
+            ORDER BY plan_module.position,plan_module.id,
+                     plan_week.position,plan_week.id,
+                     plan_component.position,plan_component.id
+        ''', [profile.pk])
+        rows = cursor.fetchall()
+
+    modules = {}
+    weeks = {}
+    for module_pk, module_id, module_title, week_pk, week_id, week_title, _component_pk, component_id in rows:
+        if not module_id:
+            continue
+        module = modules.setdefault(module_pk, {
+            "moduleId": _s(module_id),
+            "moduleTitle": _s(module_title),
+            "weeks": [],
+        })
+        if week_pk is None or not week_id:
+            continue
+        week = weeks.get(week_pk)
+        if week is None:
+            week = {
+                "weekId": _s(week_id),
+                "weekTitle": _s(week_title),
+                "components": [],
+            }
+            weeks[week_pk] = week
+            module["weeks"].append(week)
+        if component_id:
+            week["components"].append({"componentId": _s(component_id)})
+    plan = list(modules.values())
+    source._canonical_training_plan = plan
+    return plan
+
+
 def _error(message, status):
     return JsonResponse({"error": message}, status=status)
 
