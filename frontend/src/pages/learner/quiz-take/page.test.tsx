@@ -5,6 +5,7 @@ import QuizTakePage from './page';
 import { CompletionValidationError } from '@/lib/completionValidation';
 import { ActivityTimeConflictError } from '@/lib/activityTimeConflict';
 import { useState } from 'react';
+import { defaultQuizGradeSettings } from '@/lib/quizGradeSettings';
 
 const mocks = vi.hoisted(() => ({
   detail: vi.fn(), quiz: vi.fn(), start: vi.fn(), submit: vi.fn(), checkpoint: vi.fn(),
@@ -69,7 +70,7 @@ describe('quiz requirements loading', () => {
   });
   it.each(['commercial', 'apprenticeship'])('shows the %s quiz mappings from the requested module and week', async kind => {
     const mapped = (module: string, week: string, code: string) => ({
-      quizMeta: { quizId: 1 }, module, week,
+      componentId: `COMP-${code}`, quizMeta: { quizId: 1 }, module, week,
       ksbMappings: [{ code, description: `${code} description`, weight: 20, classification: 'main' }],
     });
     mocks.detail.mockResolvedValue({ ...detail, components: [
@@ -81,6 +82,74 @@ describe('quiz requirements loading', () => {
     expect(panel).toHaveTextContent('K1 description');
     expect(panel).not.toHaveTextContent(/K99|S99/);
     expect(mocks.start).not.toHaveBeenCalled();
+  });
+
+  it.each(['commercial', 'apprenticeship'])('explains exhausted attempts and hides disabled history for %s', async kind => {
+    mocks.detail.mockResolvedValue({ ...detail, quizAttempts: [{ quizId: 1, attempt: 2, passed: true, grade: .8 }] });
+    mocks.quiz.mockResolvedValue({ ...(await mocks.quiz()), policyEnabled: true, attemptHistory: false,
+      unavailableReason: 'You have used all available attempts for this quiz.',
+      quizPolicy: { enabled: true, attemptsUsed: 2, attemptLimit: 2, bestGrade: .8, passed: true, canAttempt: false } });
+    renderPage(kind);
+    expect(await screen.findByText('You have used all available attempts for this quiz.')).toBeVisible();
+    expect(screen.getByText(/Attempts used: 2/)).toHaveTextContent('Highest score: 80%');
+    expect(screen.queryByRole('button', { name: /View latest result/ })).not.toBeInTheDocument();
+    expect(mocks.start).not.toHaveBeenCalled();
+  });
+
+  it.each(['default', 'global', 'pagination'])('honours the new %s quiz layout', async quizStyle => {
+    mocks.detail.mockResolvedValue(detail);
+    const quiz = await mocks.quiz();
+    mocks.quiz.mockResolvedValue({ ...quiz, policyEnabled: true, quizStyle,
+      questions: [...quiz.questions, { ...quiz.questions[0], id: 2, text: 'Second question' }] });
+    renderPage();
+    fireEvent.click(await screen.findByRole('button', { name: 'Start Quiz' }));
+    expect(screen.getByText('Choose an outcome')).toBeVisible();
+    if (quizStyle === 'pagination') {
+      expect(screen.queryByText('Second question')).not.toBeInTheDocument();
+      fireEvent.click(screen.getByRole('button', { name: /Next/ }));
+    }
+    expect(screen.getByText('Second question')).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Finish Quiz' })).toBeVisible();
+  });
+
+  it('keeps the highest grade visible after a lower retake and applies the returned attempt limit', async () => {
+    mocks.detail.mockResolvedValue(detail);
+    mocks.quiz.mockResolvedValue({ ...(await mocks.quiz()), policyEnabled: true, showCorrectAnswer: false,
+      gradeSettings: { ...defaultQuizGradeSettings, resultDisplay: 'grade_percentage' } });
+    mocks.submit.mockResolvedValue({
+      attempt: { kind: 'quiz', quizId: 1, attempt: 2, passed: false, grade: .5, timeTaken: '00:10', questions: [] },
+      breakdown: [{ questionId: 1, questionText: 'Choose an outcome', correct: false, chosenAnswer: 'Measured outcome', correctAnswer: 'Hidden key', earned: 0, possible: 1 }],
+      earned: 0, possible: 1, grade: .5, achievedScore: 0, totalScore: 1, passed: false,
+      quizPolicy: { enabled: true, attemptsUsed: 2, attemptLimit: 2, bestGrade: .9, passed: true, canAttempt: false,
+        unavailableReason: 'You have used all available attempts for this quiz.' },
+    });
+    renderPage();
+    fireEvent.click(await screen.findByRole('button', { name: 'Start Quiz' }));
+    fireEvent.click(screen.getByRole('button', { name: /Measured outcome/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'Finish Quiz' }));
+    expect(await screen.findByText('Quiz Not Passed')).toBeVisible();
+    expect(screen.getByText(/Highest score kept:/)).toHaveTextContent('A (90%)');
+    expect(screen.getByRole('button', { name: 'Retake Quiz' })).toBeDisabled();
+    expect(screen.queryByText('Hidden key')).not.toBeInTheDocument();
+  });
+
+  it.each(['inside_quiz', 'separate_tab', 'hidden'] as const)('honours the %s grading scale setting', async coursePageDisplay => {
+    mocks.detail.mockResolvedValue(detail);
+    mocks.quiz.mockResolvedValue({ ...(await mocks.quiz()), policyEnabled: true,
+      gradeSettings: { ...defaultQuizGradeSettings, coursePageDisplay } });
+    renderPage();
+    await screen.findByRole('button', { name: 'Start Quiz' });
+    if (coursePageDisplay === 'hidden') {
+      expect(screen.queryByText('Grading scale')).not.toBeInTheDocument();
+    } else if (coursePageDisplay === 'separate_tab') {
+      fireEvent.click(screen.getByRole('button', { name: 'View grading scale' }));
+      expect(screen.getByRole('table')).toHaveTextContent('A+');
+      fireEvent.click(screen.getByRole('button', { name: 'Back to quiz overview' }));
+      expect(screen.getByRole('button', { name: 'Start Quiz' })).toBeVisible();
+    } else {
+      fireEvent.click(screen.getAllByText('Grading scale')[0]);
+      expect(screen.getByRole('table')).toHaveTextContent('A+');
+    }
   });
 
   it.each(['commercial', 'apprenticeship'])('reopens the %s quiz reflection using the original quiz submission identity', async kind => {

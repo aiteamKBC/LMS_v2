@@ -1170,7 +1170,7 @@ def _create_progress_entry(**fields):
     return LearnerProgressEntry.objects.create(**fields)
 
 
-def save_progress_record(learner, record, activity=None, *, monthly_assignment=False):
+def save_progress_record(learner, record, activity=None, *, monthly_assignment=False, enforce_quiz_policy=False):
     """Store progress, quiz detail, KSB links, and feed presentation atomically."""
     if learner is None:
         return None
@@ -1225,6 +1225,9 @@ def save_progress_record(learner, record, activity=None, *, monthly_assignment=F
                 learner=learner, kind="quiz", quiz_ref=str(record["quizId"]),
             ).aggregate(total=Count("id"), highest=Max("attempt"))
             record["attempt"] = max(prior["total"], prior["highest"] or 0) + 1
+            if enforce_quiz_policy:
+                from quiz_api.policy import check_locked_attempt
+                check_locked_attempt(learner, record['quizId'], record)
         from .retake_timing import validate_activity_time
         from .activity_time_history import attendance_baseline
         authoritative_record = {**record, 'componentType': component_context.get('componentType') or record.get('componentType')}

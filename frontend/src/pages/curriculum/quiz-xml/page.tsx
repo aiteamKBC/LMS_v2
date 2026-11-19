@@ -1,4 +1,4 @@
-import { ChangeEvent, FormEvent, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { ChangeEvent, FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { AppIcon } from '@/components/feature/AppIcon';
 import { QuizQuestionImage } from '@/components/feature/QuizQuestionImage';
@@ -9,12 +9,13 @@ import { ThemedSelect } from '@/components/feature/ThemedSelect';
 import { ImageMatchingPairFields } from '@/components/feature/ImageMatchingPairFields';
 import { QuestionAnswersView } from '@/components/feature/QuestionTypeRenderer';
 import { roleNavMap } from '@/mocks/navigation';
-import { kbcUsers } from '@/mocks/users';
 import { useToast } from "@/hooks/useToast";
 import { KnowledgeBookPicker, KnowledgeSourcesSummary, type KnowledgeSourcesMeta } from '@/features/knowledge-base/KnowledgeBookPicker';
 import { fetchWeeks, type WeekItem } from '@/api/curriculum';
-import { formatQuizGradeRange, type QuizGradeRow, type QuizGradeSettings, useQuizGradeSettings } from '@/lib/quizGradeSettings';
-import { type QuizGeneralSettings, useQuizGeneralSettings } from '@/lib/quizGeneralSettings';
+import { defaultQuizGradeSettings, type QuizGradeSettings } from '@/lib/quizGradeSettings';
+import { defaultQuizGeneralSettings, type QuizGeneralSettings } from '@/lib/quizGeneralSettings';
+import { saveQuizDefaults, useQuizDefaults } from '@/lib/quizDefaults';
+import { GradeSettingsModal, GradeSettingRow } from './GradeSettingsModal';
 import { convertAnswerTextForQuestionType, isPairAnswerComplete, parseQuizPairAnswer, serializeQuizPairAnswer } from '@/lib/quizPairAnswers';
 import { showCurriculumConfirm } from '@/components/feature/CurriculumSweetAlert';
 
@@ -226,7 +227,6 @@ interface QuizFormState {
   version: string;
   questions: string;
   status: QuizStatus;
-  author: string;
   linkedCourses: string;
 }
 
@@ -241,7 +241,6 @@ interface AiGeneratorState {
   week: string;
   weekId: string;
   questionCount: string;
-  author: string;
 }
 
 interface CurriculumModuleOption {
@@ -286,7 +285,6 @@ const emptyForm: QuizFormState = {
   version: 'v1.0',
   questions: '',
   status: 'draft',
-  author: 'Curriculum Team',
   linkedCourses: '0',
 };
 
@@ -426,261 +424,26 @@ function QuizRowActions({
   );
 }
 
-function GradeSettingsModal({
-  settings,
-  onChange,
-  onClose,
-  onSaved,
-}: {
-  settings: QuizGradeSettings;
-  onChange: (settings: QuizGradeSettings) => void;
-  onClose: () => void;
-  onSaved: () => void;
-}) {
-  const [newGrade, setNewGrade] = useState({ grade: '', point: '', min: '', color: '#1d7df2' });
-  const [draggedGradeKey, setDraggedGradeKey] = useState<string | null>(null);
-  const [dragOverGradeKey, setDragOverGradeKey] = useState<string | null>(null);
-
-  const gradeRowKey = (row: QuizGradeRow) => `${row.grade}-${row.min}-${row.point}`;
-
-  const updateSettings = (patch: Partial<QuizGradeSettings>) => {
-    onChange({ ...settings, ...patch });
-  };
-
-  const deleteRow = (row: QuizGradeRow) => {
-    const nextRows = settings.rows.filter(item => !(item.grade === row.grade && item.min === row.min && item.point === row.point));
-    if (!nextRows.length) return;
-    onChange({ ...settings, rows: nextRows });
-    onSaved();
-  };
-
-  const confirmDeleteRow = async (row: QuizGradeRow) => {
-    await showCurriculumConfirm({
-      title: `Delete ${row.grade} grade?`,
-      text: `Are you sure you want to delete the ${row.grade} grade from the default quiz grades table?`,
-      icon: 'warning',
-      confirmButtonText: 'Delete grade',
-      onConfirm: () => deleteRow(row),
-    });
-  };
-
-  const addRow = () => {
-    const grade = newGrade.grade.trim();
-    const point = Number(newGrade.point);
-    const min = Math.round(Number(newGrade.min));
-    if (!grade || !Number.isFinite(point) || !Number.isFinite(min)) return;
-    onChange({
-      ...settings,
-      rows: [
-        ...settings.rows,
-        {
-          grade,
-          point,
-          min: Math.max(0, Math.min(100, min)),
-          color: newGrade.color,
-        },
-      ],
-    });
-    setNewGrade({ grade: '', point: '', min: '', color: '#1d7df2' });
-    onSaved();
-  };
-
-  const moveGradeRow = (sourceIndex: number, targetIndex: number, notify = true) => {
-    if (sourceIndex === targetIndex) return;
-    const nextRows = [...settings.rows];
-    const [moved] = nextRows.splice(sourceIndex, 1);
-    nextRows.splice(targetIndex, 0, moved);
-    onChange({ ...settings, rows: nextRows });
-    if (notify) onSaved();
-  };
-
-  const moveDraggedGradeOver = (targetIndex: number) => {
-    if (!draggedGradeKey) return;
-    const sourceIndex = settings.rows.findIndex(row => gradeRowKey(row) === draggedGradeKey);
-    if (sourceIndex === -1 || sourceIndex === targetIndex) return;
-    moveGradeRow(sourceIndex, targetIndex, false);
-  };
-
-  const finishGradeDrag = () => {
-    if (draggedGradeKey) onSaved();
-    setDraggedGradeKey(null);
-    setDragOverGradeKey(null);
-  };
-
-  return (
-    <div className="fixed inset-0 z-[70] flex items-start justify-center overflow-y-auto bg-black/45 p-4 sm:p-6" onClick={onClose}>
-      <div className="w-full max-w-4xl rounded-2xl bg-[#eef3f6] p-5 sm:p-6 shadow-2xl border border-white/70" onClick={event => event.stopPropagation()}>
-        <div className="mb-6 flex items-center justify-between gap-4">
-          <h3 className="text-2xl font-heading font-bold text-[#10233d]">Grades Settings</h3>
-          <button type="button" onClick={onClose} className="h-9 w-9 rounded-full bg-white text-[#64748b] hover:bg-[#e2e8f0]">
-            <AppIcon className="ri-close-line text-lg"></AppIcon>
-          </button>
-        </div>
-
-        <div className="space-y-3">
-          <GradeSettingRow title="Result display" subtitle="Select the format to display scores to student">
-            <ThemedSelect
-              value={settings.resultDisplay}
-              options={[
-                { value: 'grade', label: 'Grade' },
-                { value: 'percentage', label: 'Percentage' },
-                { value: 'points', label: 'Points' },
-                { value: 'grade_percentage', label: 'Grade and percentage' },
-              ]}
-              onChange={resultDisplay => {
-                updateSettings({ resultDisplay });
-                onSaved();
-              }}
-              buttonClassName="h-9 bg-[#f8fafc]"
-            />
-          </GradeSettingRow>
-
-          <GradeSettingRow title="Score Separator" subtitle="Choose the symbol or text to separate the score from the maximum value">
-            <input
-              value={settings.scoreSeparator}
-              onChange={event => updateSettings({ scoreSeparator: event.target.value })}
-              onBlur={onSaved}
-              className="h-9 w-full rounded-md border border-[#b9c4d1] bg-[#f8fafc] px-3 text-sm outline-none focus:border-[#5b2dbb] focus:ring-2 focus:ring-[#ede9fe]"
-            />
-          </GradeSettingRow>
-
-          <GradeSettingRow title="Grades Display on Course Page" subtitle="Select how grades will be shown">
-            <ThemedSelect
-              value={settings.coursePageDisplay}
-              options={[
-                { value: 'separate_tab', label: 'Show as separate tab' },
-                { value: 'inside_quiz', label: 'Show inside quiz settings' },
-                { value: 'hidden', label: 'Hidden from course page' },
-              ]}
-              onChange={coursePageDisplay => {
-                updateSettings({ coursePageDisplay });
-                onSaved();
-              }}
-              buttonClassName="h-9 bg-[#f8fafc]"
-            />
-          </GradeSettingRow>
-
-          <section className="rounded-lg bg-white px-4 py-5">
-            <h4 className="mb-3 text-2xl font-heading font-bold text-[#0f172a]">Grades Table</h4>
-            <div className="overflow-hidden rounded border border-[#d5deea]">
-              <table className="w-full text-left">
-                <thead>
-                  <tr className="border-b border-[#d5deea] bg-white">
-                    <th className="w-10 px-3 py-3 text-xs font-bold text-[#0f172a]"></th>
-                    <th className="px-4 py-3 text-xs font-bold text-[#0f172a]">Grade name</th>
-                    <th className="px-4 py-3 text-xs font-bold text-[#0f172a]">Grade point</th>
-                    <th className="px-4 py-3 text-xs font-bold text-[#0f172a]">Grade range</th>
-                    <th className="w-16 px-4 py-3 text-xs font-bold text-[#0f172a]"></th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {settings.rows.map((row, index) => (
-                    <tr
-                      key={gradeRowKey(row)}
-                      draggable
-                      onDragStart={event => {
-                        setDraggedGradeKey(gradeRowKey(row));
-                        event.dataTransfer.effectAllowed = 'move';
-                        event.dataTransfer.setData('text/plain', gradeRowKey(row));
-                      }}
-                      onDragOver={event => {
-                        event.preventDefault();
-                        event.dataTransfer.dropEffect = 'move';
-                        setDragOverGradeKey(gradeRowKey(row));
-                        moveDraggedGradeOver(index);
-                      }}
-                      onDragLeave={() => setDragOverGradeKey(current => current === gradeRowKey(row) ? null : current)}
-                      onDrop={event => {
-                        event.preventDefault();
-                        finishGradeDrag();
-                      }}
-                      onDragEnd={finishGradeDrag}
-                      className={`border-b border-[#d5deea] transition-smooth last:border-b-0 ${draggedGradeKey === gradeRowKey(row) ? 'opacity-50' : ''} ${dragOverGradeKey === gradeRowKey(row) && draggedGradeKey !== gradeRowKey(row) ? 'bg-[#f4f0ff] ring-2 ring-inset ring-[#c4b5fd]' : 'bg-white'}`}
-                    >
-                      <td className="px-3 py-2.5">
-                        <span className="flex h-8 w-8 cursor-grab items-center justify-center rounded bg-[#f1f5f9] text-[#94a3b8] active:cursor-grabbing" title="Drag to reorder">
-                          <AppIcon className="ri-draggable text-sm"></AppIcon>
-                        </span>
-                      </td>
-                      <td className="px-4 py-2.5">
-                        <span className="inline-flex min-w-9 items-center justify-center rounded-full px-2.5 py-1 text-sm font-bold text-white" style={{ backgroundColor: row.color }}>{row.grade}</span>
-                      </td>
-                      <td className="px-4 py-2.5 text-sm text-[#0f172a]">{row.point}</td>
-                      <td className="px-4 py-2.5 text-sm text-[#0f172a]">{formatQuizGradeRange(settings.rows, index)}</td>
-                      <td className="px-4 py-2.5 text-right">
-                        <button type="button" onClick={() => void confirmDeleteRow(row)} className="h-9 w-9 rounded bg-red-50 text-red-500 hover:bg-red-100" title={`Delete ${row.grade}`}>
-                          <AppIcon className="ri-delete-bin-fill"></AppIcon>
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-
-            <div className="mt-6 grid grid-cols-1 gap-3 md:grid-cols-[1fr_1fr_1fr_1fr_auto] md:items-end">
-              <GradeAddField label="Grade name">
-                <input value={newGrade.grade} onChange={event => setNewGrade({ ...newGrade, grade: event.target.value })} placeholder="A+" className="h-10 w-full rounded border border-[#b9c4d1] bg-[#f8fafc] px-3 text-sm outline-none focus:border-[#5b2dbb]" />
-              </GradeAddField>
-              <GradeAddField label="Grade point">
-                <input value={newGrade.point} onChange={event => setNewGrade({ ...newGrade, point: event.target.value })} placeholder="1" type="number" step="0.1" className="h-10 w-full rounded border border-[#b9c4d1] bg-[#f8fafc] px-3 text-sm outline-none focus:border-[#5b2dbb]" />
-              </GradeAddField>
-              <GradeAddField label="Grade range min, %">
-                <input value={newGrade.min} onChange={event => setNewGrade({ ...newGrade, min: event.target.value })} placeholder="20%" type="number" min="0" max="100" className="h-10 w-full rounded border border-[#b9c4d1] bg-[#f8fafc] px-3 text-sm outline-none focus:border-[#5b2dbb]" />
-              </GradeAddField>
-              <GradeAddField label="Color">
-                <div className="flex h-10 items-center gap-2 rounded border border-[#b9c4d1] bg-[#f8fafc] px-2">
-                  <input value={newGrade.color} onChange={event => setNewGrade({ ...newGrade, color: event.target.value })} type="color" className="h-7 w-8 rounded border border-[#cbd5e1] bg-white p-0" />
-                  <span className="min-w-0 truncate text-xs text-[#94a3b8]">{newGrade.color}</span>
-                </div>
-              </GradeAddField>
-              <button type="button" onClick={addRow} disabled={!newGrade.grade.trim() || !newGrade.point || !newGrade.min} className="h-10 rounded-md bg-[#1f6fed] px-5 text-sm font-bold text-white hover:bg-[#1858c7] disabled:opacity-45 disabled:cursor-not-allowed">
-                Add
-              </button>
-            </div>
-          </section>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function GradeSettingRow({ title, subtitle, children }: { title: string; subtitle: string; children: ReactNode }) {
-  return (
-    <section className="grid grid-cols-1 gap-3 rounded-lg bg-white px-4 py-4 md:grid-cols-[280px_1fr] md:items-center">
-      <div>
-        <p className="text-sm font-semibold text-[#0f172a]">{title}</p>
-        <p className="mt-2 text-xs text-[#7b8aa0]">{subtitle}</p>
-      </div>
-      {children}
-    </section>
-  );
-}
-
-function GradeAddField({ label, children }: { label: string; children: ReactNode }) {
-  return (
-    <label className="block">
-      <span className="mb-2 block text-xs font-bold text-[#0f172a]">{label}</span>
-      {children}
-    </label>
-  );
-}
-
 function GeneralQuizSettingsModal({
   settings,
   onChange,
   onClose,
   onSaved,
+  saving,
+  error,
+  onReload,
 }: {
   settings: QuizGeneralSettings;
   onChange: (settings: QuizGeneralSettings) => void;
   onClose: () => void;
   onSaved: () => void;
+  saving: boolean;
+  error: string;
+  onReload: () => void;
 }) {
   const updateSettings = (patch: Partial<QuizGeneralSettings>) => onChange({ ...settings, ...patch });
   const saveAndClose = () => {
     onSaved();
-    onClose();
   };
   const SettingSwitch = ({ checked, onToggle }: { checked: boolean; onToggle: (checked: boolean) => void }) => (
     <button
@@ -694,25 +457,24 @@ function GeneralQuizSettingsModal({
   );
 
   return (
-    <div className="fixed inset-0 z-[70] flex items-start justify-center overflow-y-auto bg-black/45 p-4 sm:p-6" onClick={onClose}>
-      <div className="w-full max-w-4xl rounded-2xl bg-background-50 p-5 sm:p-6 shadow-2xl border border-foreground-200/60" onClick={event => event.stopPropagation()}>
+    <div className="fixed inset-0 z-[70] flex items-start justify-center overflow-y-auto bg-black/45 p-4 sm:p-6" onClick={onClose} onKeyDown={event => { if (event.key === 'Escape' && !saving) onClose(); }}>
+      <div role="dialog" aria-modal="true" aria-label="General quiz settings" className="w-full max-w-4xl rounded-2xl bg-background-50 p-5 sm:p-6 shadow-2xl border border-foreground-200/60" onClick={event => event.stopPropagation()}>
         <div className="mb-6 flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
           <div>
             <p className="text-xs font-bold uppercase tracking-wider text-primary-600 mb-1">General Quiz Settings</p>
             <h3 className="text-2xl font-heading font-bold text-foreground-900">Quiz</h3>
           </div>
           <div className="flex flex-col sm:flex-row gap-2">
-            <div className="relative w-full sm:w-72">
-              <input placeholder="Search..." className="h-10 w-full rounded-full border border-foreground-200/70 bg-white px-4 pr-10 text-sm outline-none focus:border-primary-400 focus:ring-2 focus:ring-primary-100" />
-              <AppIcon className="ri-search-line absolute right-3 top-1/2 -translate-y-1/2 text-foreground-400"></AppIcon>
-            </div>
-            <button type="button" onClick={saveAndClose} className="h-10 px-5 rounded-lg bg-primary-500 text-white text-sm font-bold hover:bg-primary-600 transition-smooth">
-              Save Settings
+            <button type="button" disabled={saving} onClick={saveAndClose} className="h-10 px-5 rounded-lg bg-primary-500 text-white text-sm font-bold hover:bg-primary-600 transition-smooth disabled:opacity-50">
+              {saving ? 'Saving...' : 'Save Settings'}
             </button>
+            <button type="button" disabled={saving} onClick={onClose} className="h-10 px-4 text-sm">Close settings</button>
           </div>
         </div>
 
-        <div className="space-y-3">
+        {error && <p role="alert" className="mb-3 text-sm text-red-700">{error}</p>}
+        {error && <button type="button" disabled={saving} onClick={onReload} className="mb-3 text-sm text-primary-700">Reload saved settings (discard changes)</button>}
+        <fieldset disabled={saving} className="space-y-3">
           <GradeSettingRow title="Attempts to retake quizzes" subtitle="Choose limited or unlimited attempts for students to retake quizzes.">
             <div className="grid grid-cols-1 sm:grid-cols-[1fr_120px] gap-2">
               <ThemedSelect
@@ -763,7 +525,7 @@ function GeneralQuizSettingsModal({
               buttonClassName="h-10"
             />
           </GradeSettingRow>
-        </div>
+        </fieldset>
       </div>
     </div>
   );
@@ -780,7 +542,6 @@ const emptyGeneratorForm: AiGeneratorState = {
   week: '',
   weekId: '',
   questionCount: '5',
-  author: 'Curriculum Team',
 };
 
 function formatDate(value: string) {
@@ -926,8 +687,33 @@ export default function QuizXmlWorkspacePage() {
   const [readingQuestionImage, setReadingQuestionImage] = useState(false);
   const [manualQuestions, setManualQuestions] = useState<QuizPreviewQuestion[]>(() => [createManualQuestion(1)]);
   const [openManualQuestionId, setOpenManualQuestionId] = useState<number | null>(null);
-  const [gradeSettings, setGradeSettings] = useQuizGradeSettings();
-  const [generalSettings, setGeneralSettings] = useQuizGeneralSettings();
+  const defaults = useQuizDefaults();
+  const [gradeSettings, setGradeSettings] = useState<QuizGradeSettings>(defaultQuizGradeSettings);
+  const [generalSettings, setGeneralSettings] = useState<QuizGeneralSettings>(defaultQuizGeneralSettings);
+  const [savingDefaults, setSavingDefaults] = useState(false);
+  const [defaultsError, setDefaultsError] = useState('');
+  useEffect(() => {
+    if (defaults.data) {
+      setGradeSettings(defaults.data.grades);
+      setGeneralSettings(defaults.data.general);
+    }
+  }, [defaults.data]);
+  const persistDefaults = async () => {
+    if (!defaults.data || defaults.loading || savingDefaults) return;
+    setSavingDefaults(true);
+    setDefaultsError('');
+    try {
+      const saved = await saveQuizDefaults({ general: generalSettings, grades: gradeSettings, revision: defaults.data.revision });
+      defaults.setData(saved);
+      setShowGradeSettings(false);
+      setShowGeneralSettings(false);
+      success('Quiz defaults saved', 'New quizzes use these shared settings. Existing quizzes keep their settings.');
+    } catch (reason) {
+      setDefaultsError(reason instanceof Error ? reason.message : 'Could not save quiz defaults.');
+    } finally {
+      setSavingDefaults(false);
+    }
+  };
   const [trainingPlanOptions, setTrainingPlanOptions] = useState<CurriculumModuleOptions>({ programmes: [], modulesByProgramme: {} });
   const [formWeeks, setFormWeeks] = useState<WeekItem[]>([]);
   const [formWeeksState, setFormWeeksState] = useState<WeekLoadState>('idle');
@@ -1177,14 +963,6 @@ export default function QuizXmlWorkspacePage() {
       ...(filterStatus === 'trash' ? [{ value: 'delete', label: 'Delete permanently' }] : []),
     ];
   }, [filterStatus]);
-  const authorOptions = useMemo(() => {
-    const authors = Array.from(new Set([
-      'Curriculum Team',
-      ...kbcUsers.map(user => user.fullName),
-      ...quizzes.map(quiz => quiz.author).filter(Boolean),
-    ]));
-    return authors.map(author => ({ value: author, label: author }));
-  }, [quizzes]);
   const programmeOptions = useMemo(() => [
     { value: '', label: 'Programme' },
     ...trainingPlanOptions.programmes,
@@ -1313,7 +1091,6 @@ export default function QuizXmlWorkspacePage() {
           version: form.version,
           questions: Number(form.questions || 0),
           status: form.status,
-          author: form.author,
           linkedCourses: Number(form.linkedCourses || 0),
           packageType: 'xml',
         }),
@@ -1457,7 +1234,6 @@ export default function QuizXmlWorkspacePage() {
         questions: manualQuestions.length,
         questionType: manualQuestions[0]?.questionType || 'single_choice',
         status: form.status,
-        author: form.author,
         linkedCourses: Number(form.linkedCourses || 0),
         packageType: 'xml',
         schemaValid: true,
@@ -1564,7 +1340,6 @@ export default function QuizXmlWorkspacePage() {
         questions: generatedQuestions.length,
         questionType: generatedQuestions[0]?.questionType || 'single_choice',
         status: 'draft',
-        author: generatorForm.author,
         linkedCourses: 0,
         packageType: 'xml',
         schemaValid: true,
@@ -1596,17 +1371,6 @@ export default function QuizXmlWorkspacePage() {
     setBulkAction('');
     await loadQuizzes();
     success(status === 'trash' ? 'Quizzes archived' : 'Status updated', `${ids.length} selected quiz${ids.length === 1 ? '' : 'zes'} updated.`);
-  };
-
-  const updateAuthor = async (quiz: QuizPackage, author: string) => {
-    if (quiz.author === author) return;
-    await fetch(`/quiz_api/quizzes/${quiz.id}/`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ author }),
-    });
-    setQuizzes(prev => prev.map(item => item.id === quiz.id ? { ...item, author } : item));
-    setSelectedQuiz(prev => prev?.id === quiz.id ? { ...prev, author } : prev);
   };
 
   const deleteSelected = async () => {
@@ -2086,12 +1850,7 @@ export default function QuizXmlWorkspacePage() {
                       </div>
                       <div className="rounded-lg bg-background-100/80 px-3 py-2" onClick={event => event.stopPropagation()}>
                         <p className="mb-1 text-[10px] font-bold uppercase tracking-wide text-foreground-400">Author</p>
-                        <ThemedSelect
-                          value={quiz.author || 'Curriculum Team'}
-                          options={authorOptions}
-                          onChange={author => void updateAuthor(quiz, author)}
-                          className="w-full"
-                        />
+                        <p className="font-semibold text-foreground-800 break-words [overflow-wrap:anywhere]">{quiz.author || 'Not recorded'}</p>
                       </div>
                     </div>
 
@@ -2159,12 +1918,7 @@ export default function QuizXmlWorkspacePage() {
                       <p>{formatDate(quiz.updatedAt)}</p>
                     </td>
                     <td className="px-4 py-3" onClick={event => event.stopPropagation()}>
-                      <ThemedSelect
-                        value={quiz.author || 'Curriculum Team'}
-                        options={authorOptions}
-                        onChange={author => void updateAuthor(quiz, author)}
-                        className="w-48"
-                      />
+                      <p className="text-sm text-foreground-800 break-words [overflow-wrap:anywhere]">{quiz.author || 'Not recorded'}</p>
                     </td>
                     <td className="px-4 py-3 align-middle">
                       <div className="mx-auto grid w-fit grid-cols-[5.5rem_3.5rem_1.25rem] items-center gap-2">
@@ -2518,12 +2272,12 @@ export default function QuizXmlWorkspacePage() {
                                 <p className="text-sm font-semibold text-[#0f172a] truncate">{student.name}</p>
                                 <p className="text-xs text-[#64748b] truncate">{student.email || student.programme || 'No email saved'}</p>
                               </div>
-                              <span className={`text-[11px] font-bold px-2 py-1 rounded-full shrink-0 ${student.latestAttempt.passed ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-700'}`}>
-                                {student.latestAttempt.grade || '-'}
+                              <span className={`text-[11px] font-bold px-2 py-1 rounded-full shrink-0 ${student.attempts.some(attempt => attempt.passed) ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-700'}`}>
+                                Best: {student.bestGrade == null ? '-' : `${student.bestGrade}%`}
                               </span>
                             </div>
                             <div className="mt-2 flex flex-wrap items-center gap-2 text-[11px] text-[#64748b]">
-                              <span>{student.latestAttempt.score || 'No score'}</span>
+                              <span>Latest: {student.latestAttempt.score || 'No score'}</span>
                               <span>•</span>
                               <span>{student.attemptCount} attempt{student.attemptCount === 1 ? '' : 's'}</span>
                             </div>
@@ -2944,21 +2698,36 @@ export default function QuizXmlWorkspacePage() {
           </div>
         )}
 
-        {showGradeSettings && (
+        {(showGradeSettings || showGeneralSettings) && (defaults.loading || defaults.error) && (
+          <div role="alert" className="fixed inset-0 z-[75] grid place-items-center bg-black/40 p-4">
+            <div className="rounded-xl bg-white p-6 text-sm">
+              <p>{defaults.loading ? 'Loading shared quiz settings...' : defaults.error}</p>
+              <button type="button" onClick={defaults.reload} disabled={defaults.loading} className="mt-4 mr-4 text-primary-700">Retry</button>
+              <button type="button" onClick={() => { setShowGradeSettings(false); setShowGeneralSettings(false); }}>Close</button>
+            </div>
+          </div>
+        )}
+        {showGradeSettings && defaults.data && !defaults.loading && !defaults.error && (
           <GradeSettingsModal
             settings={gradeSettings}
             onChange={setGradeSettings}
-            onClose={() => setShowGradeSettings(false)}
-            onSaved={() => success('Grade settings updated', 'Default quiz grades now appear in the settings grade table.')}
+            onClose={() => { if (!savingDefaults) { setShowGradeSettings(false); setGradeSettings(defaults.data!.grades); setDefaultsError(''); } }}
+            saving={savingDefaults}
+            error={defaultsError}
+            onReload={defaults.reload}
+            onSaved={() => void persistDefaults()}
           />
         )}
 
-        {showGeneralSettings && (
+        {showGeneralSettings && defaults.data && !defaults.loading && !defaults.error && (
           <GeneralQuizSettingsModal
             settings={generalSettings}
             onChange={setGeneralSettings}
-            onClose={() => setShowGeneralSettings(false)}
-            onSaved={() => success('General settings updated', 'Default quiz behaviour now applies to newly created quizzes.')}
+            onClose={() => { if (!savingDefaults) { setShowGeneralSettings(false); setGeneralSettings(defaults.data!.general); setDefaultsError(''); } }}
+            saving={savingDefaults}
+            error={defaultsError}
+            onReload={defaults.reload}
+            onSaved={() => void persistDefaults()}
           />
         )}
 
@@ -2981,7 +2750,7 @@ export default function QuizXmlWorkspacePage() {
                   <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
                     <input required value={form.title} onChange={event => setForm({ ...form, title: event.target.value })} placeholder="Quiz title" className="sm:col-span-2 h-10 rounded-lg border border-foreground-200/60 px-3 text-sm outline-none focus:border-primary-400" />
                     <input value={form.version} onChange={event => setForm({ ...form, version: event.target.value })} placeholder="Version" className="h-10 rounded-lg border border-foreground-200/60 px-3 text-sm outline-none focus:border-primary-400" />
-                    <input value={form.author} onChange={event => setForm({ ...form, author: event.target.value })} placeholder="Author" className="h-10 rounded-lg border border-foreground-200/60 px-3 text-sm outline-none focus:border-primary-400" />
+                    <p className="self-center text-xs text-foreground-500">Your account will be recorded as the author.</p>
                     <ThemedSelect
                       value={form.programme}
                       options={programmeOptions}
@@ -3258,7 +3027,7 @@ export default function QuizXmlWorkspacePage() {
                 />
                 <input value={form.version} onChange={e => setForm({ ...form, version: e.target.value })} placeholder="Version" className="h-10 rounded-lg border border-foreground-200/60 px-3 text-sm" />
                 <input type="number" min="0" value={form.questions} onChange={e => setForm({ ...form, questions: e.target.value })} placeholder="Questions" className="h-10 rounded-lg border border-foreground-200/60 px-3 text-sm" />
-                <input value={form.author} onChange={e => setForm({ ...form, author: e.target.value })} placeholder="Author" className="h-10 rounded-lg border border-foreground-200/60 px-3 text-sm" />
+                <p className="self-center text-xs text-foreground-500">Your account will be recorded as the author.</p>
                 <ThemedSelect
                   value={form.status}
                   options={editableStatusOptions}

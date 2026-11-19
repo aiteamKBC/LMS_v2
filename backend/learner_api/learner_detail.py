@@ -2877,6 +2877,9 @@ def learner_detail(request, kind, pk):
                 # so a missing row is not an error here.
                 lesson = _lesson_content(source, component_id)
                 component['lessonContentHtml'] = (lesson or {}).get('lessonContentHtml')
+            if getattr(getattr(request, 'login_account', None), 'role', None) == 'learner':
+                from quiz_api.policy import visible_learner_attempts
+                detail = visible_learner_attempts(detail)
             response = JsonResponse(detail)
             response['Cache-Control'] = 'private, no-store'
             return response
@@ -2888,7 +2891,11 @@ def learner_detail(request, kind, pk):
             section=request.GET.get('content') or 'complete',
         ) as measurement:
             with measurement.stage('detail'):
-                return JsonResponse(build_learner_detail(source, pk, **options))
+                detail = build_learner_detail(source, pk, **options)
+                if getattr(getattr(request, 'login_account', None), 'role', None) == 'learner':
+                    from quiz_api.policy import visible_learner_attempts
+                    detail = visible_learner_attempts(detail)
+                return JsonResponse(detail)
     except ServiceError as exc:
         return _error(str(exc), exc.status)
     except DATABASE_ERRORS as exc:

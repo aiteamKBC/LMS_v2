@@ -63,12 +63,14 @@ def main():
     from quiz_api.tests_history_postgres import prepare_database, QuizHistoryPostgresTests
     from quiz_api.tests_question_fk_migration_postgres import QuestionForeignKeyMigrationTests
     from quiz_api.tests_question_bank_postgres import QuestionBankPostgresTests
+    from quiz_api.tests_quiz_reads_postgres import QuizReadPostgresTests
+    from quiz_api.tests_policy_postgres import QuizPolicyPostgresTests
     with patch.object(socket.socket, 'connect', side_effect=AssertionError('External services forbidden')):
         try:
             prepare_database()
             print('Verified isolated PostgreSQL; synthetic fixtures; external services blocked.', flush=True)
             suite = unittest.TestSuite(unittest.defaultTestLoader.loadTestsFromTestCase(cls)
-                for cls in (QuestionForeignKeyMigrationTests, QuizHistoryPostgresTests, QuestionBankPostgresTests))
+                for cls in (QuestionForeignKeyMigrationTests, QuizHistoryPostgresTests, QuestionBankPostgresTests, QuizReadPostgresTests, QuizPolicyPostgresTests))
             result = unittest.TextTestRunner(verbosity=2).run(suite)
         finally:
             connections.close_all()

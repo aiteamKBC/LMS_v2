@@ -80,6 +80,9 @@ spec.loader.exec_module(mobile)
 
 class MobileFacadeTests(unittest.TestCase):
     def setUp(self):
+        # The facade isolates database-backed services. Actual quiz redaction
+        # and retained staff evidence are covered by tests_policy_postgres.
+        self.quiz_visibility = self.enterContext(patch('quiz_api.policy.visible_learner_attempts', side_effect=lambda detail: detail))
         self.factory = RequestFactory()
         self.account = SimpleNamespace(pk=9, subject_id=501, role="learner",
                                        subject_type="learner", is_active=True, display_name="Test learner")

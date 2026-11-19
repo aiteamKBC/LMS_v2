@@ -19,6 +19,12 @@ export interface AttentionIssue { key: AttentionKey; count: number }
 
 export function clean(value: unknown) { return String(value ?? '').trim(); }
 
+/** When the module was last edited, as a date; '' when the database has no stamp. */
+export function lastEditedLabel(value: string) {
+  const parsed = new Date(clean(value));
+  return Number.isNaN(parsed.getTime()) ? '' : parsed.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
+}
+
 const moduleBuilder = (record: AttentionRecord) => `/curriculum/module-builder?module=${encodeURIComponent(record.id)}`;
 
 export const ATTENTION_META: Record<AttentionKey, AttentionMeta> = {

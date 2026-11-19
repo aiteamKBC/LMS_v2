@@ -69,3 +69,33 @@ describe('canonical Free Course quiz editing', () => {
     });
   });
 });
+
+describe('quiz learner rules', () => {
+  it('retains old rules on an unrelated save and requires an explicit opt-in', async () => {
+    vi.stubGlobal('AppIcon', AppIcon);
+    let quiz = { id: 7, title: 'Existing quiz', packageType: 'xml', status: 'published', quizStyle: 'pagination',
+      duration: 10, passingGrade: 0, policyEnabled: false, limitAttempts: true, attemptLimit: 3 };
+    const writes: Record<string, unknown>[] = [];
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+      if (url.endsWith('/course-links/')) return new Response(JSON.stringify({ courses: [] }));
+      if (init?.method === 'PATCH') {
+        const payload = JSON.parse(String(init.body));
+        writes.push(payload); quiz = { ...quiz, ...payload };
+      }
+      return new Response(JSON.stringify({ quiz, questions: [] }));
+    }));
+    render(<MemoryRouter><QuizEditorPanel quizId={7} /></MemoryRouter>);
+    fireEvent.click(await screen.findByRole('button', { name: 'Settings' }));
+    expect(screen.getByLabelText('Apply learner rules to this quiz')).toHaveAttribute('aria-pressed', 'false');
+    fireEvent.change(screen.getByLabelText('Maximum attempts'), { target: { value: '2' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save settings' }));
+    await waitFor(() => expect(writes).toHaveLength(1));
+    expect(writes[0]).toMatchObject({ policyEnabled: false, passingGrade: 0, attemptLimit: 2 });
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Save settings' })).toBeDisabled());
+    fireEvent.click(screen.getByLabelText('Apply learner rules to this quiz'));
+    fireEvent.click(screen.getByRole('button', { name: 'Save settings' }));
+    await waitFor(() => expect(writes).toHaveLength(2));
+    expect(writes[1]).toMatchObject({ policyEnabled: true, passingGrade: 0, attemptLimit: 2 });
+    expect(writes[1]).not.toHaveProperty('retakePointsCut');
+  });
+});

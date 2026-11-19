@@ -198,6 +198,7 @@ class GenericQuizCompatibilityTests(SimpleTestCase):
 
     def call_detail(self, context_result):
         with patch.object(permissions, "authenticate_request", return_value=LEARNER_19), \
+             patch.object(quizzes, "learner_profile_for_source", return_value=None), \
              patch.object(quizzes, "_programme_quiz_context", return_value=context_result), \
              patch.object(quizzes, "_fetch_quiz", return_value=QUIZ), \
              patch.object(quizzes, "_scrub_answer_key", return_value={"id": 7, "questions": []}):
@@ -263,9 +264,13 @@ class GenericQuizCompatibilityTests(SimpleTestCase):
         component = {"componentId": "PROGRAMME-Q1", "isQuiz": True, "quizMeta": {"quizId": 7}}
         response = self.call_detail((source(), component, None))
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(json.loads(response.content), {"id": 7, "questions": []})
+        self.assertEqual(json.loads(response.content), {"id": 7, "questions": [], 'unavailableReason': None,
+            'quizPolicy': {'enabled': False, 'attemptsUsed': 0, 'attemptLimit': None, 'bestGrade': None,
+                           'passed': False, 'canAttempt': True, 'retakeAfterPass': True,
+                           'unavailableReason': None, 'code': None}})
 
     def test_generic_response_strips_answer_key_fields(self):
+        self.enterContext(patch.object(quizzes, 'learner_profile_for_source', return_value=None))
         component = {"componentId": "PROGRAMME-Q1", "isQuiz": True, "quizMeta": {"quizId": 7}}
         quiz = {
             "id": 7,

@@ -10,7 +10,7 @@ from unittest.mock import patch
 from uuid import uuid4
 
 from django.conf import settings
-from django.db import IntegrityError, connections, transaction
+from django.db import DatabaseError, IntegrityError, connections, transaction
 from django.test import RequestFactory
 from django.utils import timezone
 from psycopg import sql
@@ -67,7 +67,11 @@ def prepare_database():
         CREATE UNIQUE INDEX learner_progress_tracking_session_uq
         ON "Learner".learner_progress_entries(time_tracking_session_ref)
         WHERE time_tracking_session_ref <> '';
-        ALTER TABLE "Learner".learner_progress_entries ADD COLUMN source_payload jsonb;
+        ALTER TABLE "Learner".learner_progress_entries
+            ADD COLUMN source_payload jsonb,
+            ADD COLUMN source_system text,
+            ADD COLUMN actual_basis text,
+            ADD COLUMN reporting_month text;
         CREATE TABLE enrolment."Created_users"(id bigint PRIMARY KEY);
         CREATE TABLE curriculum.coaches(id text PRIMARY KEY,name text,email text);
         CREATE TABLE curriculum.components(id text PRIMARY KEY,module_catalogue_id text,settings_json jsonb,deleted_at timestamptz,is_programme_deleted boolean);
@@ -78,6 +82,9 @@ def prepare_database():
         CREATE TABLE curriculum.quiz_course_links(id bigserial PRIMARY KEY,quiz_id bigint,module_catalogue_id text,week_id text)''')
     from .tests_question_fk_migration_postgres import apply_migration
     apply_migration()
+    from importlib import import_module
+    with connections['default'].schema_editor() as editor:
+        import_module('quiz_api.migrations.0006_quiz_policies').install(None, editor)
 
 
 @unittest.skipUnless(getattr(settings, 'QUIZ_HISTORY_POSTGRES_TESTS', False), 'Use the isolated PostgreSQL runner')
@@ -218,10 +225,10 @@ class QuizHistoryPostgresTests(unittest.TestCase):
             view = view.__wrapped__
         return view
 
-    def submit(self, view, token=None):
-        request = RequestFactory().post('/quiz/?kind=commercial&learnerId=77',
+    def submit(self, view, token=None, *, kind='commercial', learner_id=77, payload=None):
+        request = RequestFactory().post(f'/quiz/?kind={kind}&learnerId={learner_id}',
             json.dumps({'answers':{str(self.question.pk):self.answer.pk}, 'trackingToken':token or uuid4().hex,
-                        'timeTakenSeconds':300}), content_type='application/json')
+                        'timeTakenSeconds':300, **(payload or {})}), content_type='application/json')
         response = view(request, self.quiz.pk)
         return response.status_code, json.loads(response.content)
 
@@ -241,9 +248,9 @@ class QuizHistoryPostgresTests(unittest.TestCase):
         # Both requests finish their pre-save checks with the same history.
         barrier = threading.Barrier(2)
         original = quizzes.save_progress_record
-        def competing(*args):
+        def competing(*args, **kwargs):
             barrier.wait(timeout=10)
-            return original(*args)
+            return original(*args, **kwargs)
         with patch.object(quizzes, 'save_progress_record', side_effect=competing):
             replies = self.concurrent(lambda _: self.submit(view), range(2))
         self.assertEqual([code for code, _ in replies], [200, 200])
@@ -258,9 +265,9 @@ class QuizHistoryPostgresTests(unittest.TestCase):
         token = uuid4().hex
         barrier = threading.Barrier(2)
         original = quizzes.save_progress_record
-        def competing(*args):
+        def competing(*args, **kwargs):
             barrier.wait(timeout=10)
-            return original(*args)
+            return original(*args, **kwargs)
         with patch.object(quizzes, 'save_progress_record', side_effect=competing):
             replies = self.concurrent(lambda _: self.submit(view, token), range(2))
         self.assertEqual(sorted(code for code, _ in replies), [200,409])
@@ -269,6 +276,117 @@ class QuizHistoryPostgresTests(unittest.TestCase):
         self.assertEqual(self.snapshot(), before)
         self.assertEqual(LearnerProgressEntry.objects.filter(learner=self.learner).count(), 1)
         self.assertEqual(self.award.call_count, 1)
+
+    def test_two_learners_and_duplicate_submission_keep_results_separate(self):
+        first = self.save()
+        original = LearnerProgressEntry.objects.filter(pk=first.pk).values().get()
+        other = LearnerProfile.objects.create(full_name='Other synthetic learner',
+            email=uuid4().hex+'@example.invalid', lifecycle_status='active', completed_hours=7,
+            enrolment_id=self.learner.enrolment_id + 1)
+        execute('INSERT INTO enrolment."Created_users" VALUES(%s)', [other.enrolment_id])
+        incorrect = QuizAnswer.objects.get(question=self.question, is_correct=False)
+        view = self.submission_context()
+        learners = {'77': self.learner, '88': other}
+        self.award.reset_mock()
+        barrier = threading.Barrier(3)
+        original_save = quizzes.save_progress_record
+
+        def competing(*args, **kwargs):
+            # All requests pass the early duplicate check before any save.
+            barrier.wait(timeout=10)
+            return original_save(*args, **kwargs)
+
+        token = uuid4().hex
+        requests = [
+            {'token': token}, {'token': token},
+            {'kind': 'apprenticeship', 'learner_id': 88,
+             'payload': {'answers': {str(self.question.pk): incorrect.pk}}},
+        ]
+        with patch.object(quizzes, '_programme_quiz_context', side_effect=lambda kind, ident, *args:
+                          (SimpleNamespace(pk=int(ident)), {'componentId': ''}, None)), \
+             patch.object(quizzes, 'learner_profile_for_source', side_effect=lambda source, ident, **kwargs: learners[ident]), \
+             patch.object(quizzes, 'save_progress_record', side_effect=competing):
+            replies = self.concurrent(lambda values: self.submit(view, **values), requests)
+
+        self.assertEqual(sorted(code for code, _ in replies[:2]), [200, 409])
+        own_reply = next(data for code, data in replies[:2] if code == 200)
+        self.assertEqual((own_reply['attempt']['attempt'], own_reply['grade']), (2, 1))
+        self.assertEqual((replies[2][0], replies[2][1]['attempt']['attempt'], replies[2][1]['grade']), (200, 1, 0))
+        own = LearnerProgressEntry.objects.get(learner=self.learner, attempt=2)
+        other_progress = LearnerProgressEntry.objects.get(learner=other)
+        self.assertEqual((own.grade, other_progress.grade), (1, 0))
+        for progress, answer_id, correct in ((own, self.answer.pk, True), (other_progress, incorrect.pk, False)):
+            answer = LearnerQuizAnswer.objects.get(progress=progress)
+            self.assertEqual((answer.question_ref, answer.chosen_answer_ref, answer.is_correct),
+                             (self.question.pk, answer_id, correct))
+            self.assertEqual(progress.verified_seconds, 300)
+        self.assertEqual(LearnerProgressEntry.objects.filter(learner=self.learner).count(), 2)
+        self.assertEqual(LearnerProgressEntry.objects.filter(pk=first.pk).values().get(), original)
+        self.assertCountEqual([(call.kwargs['learner_id'], call.kwargs['attempt_number'])
+                               for call in self.audit.call_args_list], [('77', 2), ('88', 1)])
+        self.assertEqual(self.award.call_count, 2)
+        self.learner.refresh_from_db()
+        other.refresh_from_db()
+        self.assertEqual((self.learner.completed_hours, other.completed_hours), (12, 7))
+
+    def test_failed_save_releases_session_and_attempt_number_for_retry(self):
+        self.save()
+        self.award.reset_mock()
+        before = self.snapshot()
+        view = self.submission_context()
+        token = uuid4().hex
+        # Fail after both the progress row and its answer have been inserted.
+        with patch.object(LearnerQuizCorrectAnswer.objects, 'bulk_create', side_effect=DatabaseError('Synthetic failure')):
+            self.assertEqual(self.submit(view, token)[0], 503)
+        self.assertEqual(self.snapshot(), before)
+        self.award.assert_not_called()
+        self.audit.assert_not_called()
+
+        status, reply = self.submit(view, token)
+        self.assertEqual((status, reply['attempt']['attempt']), (200, 2))
+        self.assertEqual(LearnerProgressEntry.objects.filter(time_tracking_session_ref=token).count(), 1)
+        after = self.snapshot()
+        self.assertEqual(self.submit(view, token)[0], 409)
+        self.assertEqual(self.snapshot(), after)
+        self.award.assert_called_once()
+        self.audit.assert_called_once()
+
+    def test_concurrent_retake_time_additions_recheck_saved_time_under_lock(self):
+        first = self.save()
+        original = LearnerProgressEntry.objects.filter(pk=first.pk).values().get()
+        self.award.reset_mock()
+        view = self.submission_context()
+        barrier = threading.Barrier(2)
+        original_save = quizzes.save_progress_record
+
+        def competing(*args, **kwargs):
+            barrier.wait(timeout=10)
+            try:
+                return original_save(*args, **kwargs)
+            except DatabaseError as exc:
+                raise AssertionError('Concurrent retake persistence failed') from exc
+
+        with patch('learner_api.manual_time_corrections.require_activity_time_month'), \
+             patch.object(quizzes, 'save_progress_record', side_effect=competing):
+            replies = self.concurrent(lambda _: self.submit(view, payload={
+                'retakeTimeChoice': 'add', 'retakePreviousSeconds': 300}), range(2))
+        self.assertEqual(sorted(code for code, _ in replies), [200, 409])
+        success = next(data for code, data in replies if code == 200)
+        conflict = next(data for code, data in replies if code == 409)
+        self.assertEqual((success['attempt']['attempt'], success['attempt']['countedSeconds']), (2, 600))
+        self.assertEqual((conflict['code'], conflict['previousSeconds']), ('activity_time_conflict', 600))
+        self.assertEqual(list(LearnerProgressEntry.objects.filter(learner=self.learner)
+                              .order_by('attempt').values_list('attempt', flat=True)), [1, 2])
+        self.assertEqual(LearnerProgressEntry.objects.filter(pk=first.pk).values().get(), original)
+        saved_choice = execute('SELECT source_payload FROM "Learner".learner_progress_entries '
+                               'WHERE learner_id=%s AND attempt=2', [self.learner.pk])[0][0]
+        if isinstance(saved_choice, str):
+            saved_choice = json.loads(saved_choice)
+        self.assertEqual(saved_choice, {'retakeTimeChoice': 'add', 'retakePreviousSeconds': 300})
+        self.learner.refresh_from_db()
+        self.assertEqual(self.learner.completed_hours, 12)
+        self.award.assert_called_once()
+        self.audit.assert_called_once()
 
     def test_numbering_preserves_duplicate_and_deleted_history_and_scope(self):
         for attempt, deleted in ((1,False),(1,False),(8,True)):

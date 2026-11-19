@@ -31,7 +31,10 @@ from .answer_keys import choice_key_error, choice_label, quiz_publication_error
 from .key_readiness import quiz_requires_valid_key
 from .intake import InvalidQuizIntake, intake_error, key_indexes
 from .history import is_question_reference_violation, referenced_question_ids
+from .policy import quiz_settings
 from learner_api.models import LearnerProfile
+from login.permissions import _forbidden, _unauthenticated, _unavailable
+from login.sessions import authenticate_request, session_unreadable
 
 logger = logging.getLogger(__name__)
 
@@ -486,6 +489,9 @@ def _serialize_quiz(quiz):
         "limitAttempts": quiz.limit_attempts,
         "passingGrade": quiz.passing_grade,
         "retakePointsCut": quiz.retake_points_cut,
+        "policyEnabled": quiz.policy_enabled,
+        "attemptLimit": quiz.attempt_limit,
+        "gradeSettings": quiz.grade_settings,
         "publishedAt": quiz.published_at.isoformat() if quiz.published_at else None,
         "createdAt": quiz.created_at.isoformat(),
         "updatedAt": quiz.updated_at.isoformat(),
@@ -1926,7 +1932,7 @@ def _selected_quiz_module_link_assignments(quiz, module_options):
     return [{"moduleCatalogueId": module_id, "weekId": ""} for module_id in selected_ids]
 
 
-def _sync_quiz_assignment_count(quiz):
+def _sync_quiz_assignment_count(quiz, *, persist=True):
     try:
         _ensure_quiz_component_links_table()
         _ensure_quiz_course_links_table()
@@ -1948,11 +1954,12 @@ def _sync_quiz_assignment_count(quiz):
 
     if quiz.linked_courses != count:
         quiz.linked_courses = count
-        quiz.save(update_fields=["linked_courses", "updated_at"])
+        if persist:
+            quiz.save(update_fields=["linked_courses", "updated_at"])
     return quiz
 
 
-def _sync_quiz_assignment_counts(quizzes):
+def _sync_quiz_assignment_counts(quizzes, *, persist=True):
     quizzes = list(quizzes)
     if not quizzes:
         return quizzes
@@ -2069,7 +2076,8 @@ def _sync_quiz_assignment_counts(quizzes):
         quiz._linked_group_count = group_count
         if quiz.linked_courses != count:
             quiz.linked_courses = count
-            quiz.save(update_fields=["linked_courses", "updated_at"])
+            if persist:
+                quiz.save(update_fields=["linked_courses", "updated_at"])
     return quizzes
 
 
@@ -3326,9 +3334,38 @@ Rules:
         return JsonResponse({"error": f"Question generation failed: {message}"}, status=502)
 
 
+def _quiz_creation_author(request):
+    """Snapshot the authenticated creator; never accept a posted author name."""
+    try:
+        account = authenticate_request(request)
+        if account is not None:
+            if account.role not in {"admin", "staff"}:
+                return None, _forbidden(["admin", "staff"])
+            name = str(account.display_name or "").strip() or str(account.email or "").strip()
+        else:
+            if session_unreadable(request):
+                return None, _unauthenticated(request)
+            # The API gate also supports the existing Django-auth session.
+            user = getattr(request, "user", None)
+            if user is None or not user.is_authenticated:
+                return None, _unauthenticated(request)
+            name = user.get_full_name().strip() or user.get_username().strip()
+    except DatabaseError:
+        return None, _unavailable()
+    if not name:
+        return None, JsonResponse({"error": "Your account name is unavailable. Please contact an administrator.",
+                                   "code": "quiz_author_unavailable"}, status=400)
+    # Keep the existing author column and historical values unchanged.
+    return name[:QuizPackage._meta.get_field("author").max_length], None
+
+
 @csrf_exempt
 @require_http_methods(["GET", "POST"])
 def quizzes(request):
+    if request.method == "POST":
+        author, refusal = _quiz_creation_author(request)
+        if refusal is not None:
+            return refusal
     _ensure_quiz_assessment_type_column()
     if request.method == "GET":
         query = request.GET.get("search", "").strip()
@@ -3357,9 +3394,9 @@ def quizzes(request):
                 {name: row[column] for name, column in QUIZ_PICKER_FIELDS.items()}
                 for row in queryset.values(*QUIZ_PICKER_FIELDS.values())
             ]})
-        quizzes_to_serialize = _sync_quiz_assignment_counts(queryset)
+        quizzes_to_serialize = _sync_quiz_assignment_counts(queryset, persist=False)
         if status == "trash":
-            quizzes_to_serialize = [_sync_quiz_assignment_count(quiz) for quiz in quizzes_to_serialize]
+            quizzes_to_serialize = [_sync_quiz_assignment_count(quiz, persist=False) for quiz in quizzes_to_serialize]
         return JsonResponse({"results": [_serialize_quiz(quiz) for quiz in quizzes_to_serialize]})
 
     uploaded_file = request.FILES.get("file")
@@ -3408,6 +3445,11 @@ def quizzes(request):
             return JsonResponse({"error": "Quiz duration must be between 1 and 1440 minutes."}, status=400)
 
         try:
+            settings_values = quiz_settings({}, creating=True)
+        except DatabaseError:
+            return JsonResponse({"error": "Could not load quiz defaults. Please retry."}, status=503)
+
+        try:
             _store_question_images(parsed_questions)
         except ValueError as exc:
             return JsonResponse({"error": str(exc)}, status=400)
@@ -3431,10 +3473,11 @@ def quizzes(request):
                 schema_valid=valid,
                 validation_message=message,
                 mapped_components=int(request.POST.get("mappedComponents") or 0),
-                author=request.POST.get("author", "Curriculum Team"),
+                author=author,
                 linked_courses=linked_courses,
                 duration=duration,
                 time_unit="minutes",
+                **settings_values,
             )
             _save_questions(quiz, parsed_questions)
         return JsonResponse(_serialize_quiz(_sync_quiz_assignment_count(quiz)), status=201)
@@ -3443,6 +3486,15 @@ def quizzes(request):
         payload = json.loads(request.body or "{}")
     except json.JSONDecodeError:
         return JsonResponse({"error": "Invalid JSON body"}, status=400)
+
+    if not isinstance(payload, dict):
+        return JsonResponse({"error": "Quiz details must be an object."}, status=400)
+    try:
+        settings_values = quiz_settings(payload, creating=True)
+    except ValueError as exc:
+        return JsonResponse({"error": str(exc)}, status=400)
+    except DatabaseError:
+        return JsonResponse({"error": "Could not load quiz defaults. Please retry."}, status=503)
 
     # Empty authoring shells stay drafts; complete initial batches are validated below.
     if _clean_quiz_status(payload.get("status"), "draft") == "published" and "initialQuestions" not in payload:
@@ -3491,8 +3543,9 @@ def quizzes(request):
             package_type=payload.get("packageType", "xml"),
             schema_valid=bool(payload.get("schemaValid", True)),
             mapped_components=int(payload.get("mappedComponents") or 0),
-            author=payload.get("author", "Curriculum Team"),
+            author=author,
             linked_courses=int(payload.get("linkedCourses") or 0),
+            **settings_values,
         )
         if prepared:
             _save_questions(quiz, prepared)
@@ -3673,7 +3726,7 @@ def quiz_students(request, pk):
         return JsonResponse({"error": f"Database error: {exc}"}, status=502)
 
     students.sort(key=lambda item: (item["latestAttempt"].get("submittedAt") or "", item["name"]), reverse=True)
-    passed_count = sum(1 for student in students if student["latestAttempt"].get("passed"))
+    passed_count = sum(1 for student in students if any(attempt.get("passed") for attempt in student["attempts"]))
     average_best = round(sum(all_grade_percents) / len(all_grade_percents), 1) if all_grade_percents else None
 
     return JsonResponse({
@@ -3724,6 +3777,17 @@ def _quiz_detail_locked(request, pk):
     except json.JSONDecodeError:
         return JsonResponse({"error": "Invalid JSON body"}, status=400)
 
+    if not isinstance(payload, dict):
+        return JsonResponse({"error": "A quiz object is required."}, status=400)
+    if "author" in payload and payload["author"] != quiz.author:
+        return JsonResponse({"error": "The quiz author is its original creator and cannot be changed.",
+                             "code": "quiz_author_read_only"}, status=400)
+
+    try:
+        settings_values = quiz_settings(payload)
+    except ValueError as exc:
+        return JsonResponse({"error": str(exc)}, status=400)
+
     if "status" in payload:
         status = _clean_quiz_status(payload["status"], "")
         if not status:
@@ -3737,17 +3801,11 @@ def _quiz_detail_locked(request, pk):
                 return JsonResponse({"error": error}, status=400)
         quiz.status = status
 
-    for field in ["title", "module", "programme", "version", "author"]:
+    for field in ["title", "module", "programme", "version"]:
         if field in payload:
             setattr(quiz, field, payload[field])
-    for field, attr in [
-        ("shortDescription", "short_description"),
-        ("lessonContent", "lesson_content"),
-        ("timeUnit", "time_unit"),
-        ("quizStyle", "quiz_style"),
-    ]:
-        if field in payload:
-            setattr(quiz, attr, payload[field] or "")
+    for attr, value in settings_values.items():
+        setattr(quiz, attr, value)
     if "questionType" in payload:
         quiz.default_question_type = payload["questionType"] or "single_choice"
     if "assessmentType" in payload:
@@ -3762,22 +3820,9 @@ def _quiz_detail_locked(request, pk):
         ("questions", "questions"),
         ("mappedComponents", "mapped_components"),
         ("linkedCourses", "linked_courses"),
-        ("duration", "duration"),
-        ("passingGrade", "passing_grade"),
-        ("retakePointsCut", "retake_points_cut"),
     ]:
         if field in payload:
             setattr(quiz, attr, int(payload[field] or 0))
-    for field, attr in [
-        ("randomizeQuestions", "randomize_questions"),
-        ("randomizeAnswers", "randomize_answers"),
-        ("showCorrectAnswer", "show_correct_answer"),
-        ("attemptHistory", "attempt_history"),
-        ("retakeAfterPass", "retake_after_pass"),
-        ("limitAttempts", "limit_attempts"),
-    ]:
-        if field in payload:
-            setattr(quiz, attr, bool(payload[field]))
     if "schemaValid" in payload:
         quiz.schema_valid = bool(payload["schemaValid"])
     if quiz.status == "published" and not quiz.published_at:
@@ -3992,7 +4037,8 @@ def quiz_course_links(request, pk):
 
     if quiz.linked_courses != len(selected_ids):
         quiz.linked_courses = len(selected_ids)
-        quiz.save(update_fields=["linked_courses", "updated_at"])
+        if request.method == "PATCH":
+            quiz.save(update_fields=["linked_courses", "updated_at"])
 
     quiz._linked_group_count = _distinct_assignment_group_count(module_options, selected_ids)
 

@@ -3,10 +3,6 @@
   min-width: 0;
 }
 
-.dashboard-theme .workspace-main .question-bank-page .question-bank-hero {
-  container: question-bank-hero / inline-size;
-}
-
 .dashboard-theme .workspace-main .question-bank-page .question-bank-hero .workspace-hero-banner__content {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
@@ -42,16 +38,6 @@
   font-size: 0.625rem;
 }
 
-.dashboard-theme .workspace-main .question-bank-page .question-bank-hero .workspace-hero-banner__actions {
-  justify-self: start;
-}
-
-.dashboard-theme .workspace-main .question-bank-page .question-bank-hero .workspace-hero-banner__actions > button {
-  height: auto !important;
-  min-height: 2.75rem;
-  padding-block: 0.65rem;
-}
-
 .question-bank-heading > :first-child {
   flex: 1 1 28rem;
 }
@@ -85,20 +71,6 @@
 .question-bank-dialog {
   max-height: calc(100dvh - 2rem);
   overflow-y: auto;
-}
-
-@container question-bank-hero (min-width: 48rem) {
-  .dashboard-theme .workspace-main .question-bank-page .question-bank-hero .workspace-hero-banner__content {
-    grid-template-columns: minmax(0, 1fr) auto;
-  }
-
-  .dashboard-theme .workspace-main .question-bank-page .question-bank-hero .workspace-hero-banner__identity {
-    grid-column: 1 / -1;
-  }
-
-  .dashboard-theme .workspace-main .question-bank-page .question-bank-hero .workspace-hero-banner__actions {
-    justify-self: end;
-  }
 }
 
 @container question-bank (min-width: 62rem) {
