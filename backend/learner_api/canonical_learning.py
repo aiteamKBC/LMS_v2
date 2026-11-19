@@ -572,6 +572,21 @@ def input_activity_date(entry):
     return value if parsed.strftime('%Y-%m-%d') == value and value[:7] == entry.get('reporting_month') else None
 
 
+def assignment_activity_date(entry):
+    """Use the saved assignment date for display without moving its hours."""
+    category = str(entry.get('component_type') or entry.get('kind') or '').strip().casefold()
+    if category != 'assignment':
+        return None
+    value = source_payload_metadata(entry.get('source_payload')).get('activity_date')
+    if not isinstance(value, str) or not re.fullmatch(r'\d{4}-\d{2}-\d{2}', value):
+        return None
+    try:
+        datetime.strptime(value, '%Y-%m-%d')
+    except ValueError:
+        return None
+    return value
+
+
 def rows_for(owner, records=None):
     records = list(records if records is not None else entries_for(owner))
     recovered_titles = {}
@@ -614,6 +629,9 @@ def rows_for(owner, records=None):
             item['activity_date'] = declared_date
         if entry.get('completion_reporting_date'):
             item['activity_date'] = entry['completion_reporting_date']
+        saved_assignment_date = assignment_activity_date(entry)
+        if saved_assignment_date:
+            item['activity_date'] = saved_assignment_date
         # Translate the historical system label for display without rewriting the ledger.
         if timestamp_label == '\u062a\u0642\u062f\u064a\u0631\u064a \u2014 \u064a\u062d\u062a\u0627\u062c \u0627\u0639\u062a\u0645\u0627\u062f':
             timestamp_label = 'Estimated — approval required'
