@@ -4,6 +4,9 @@ from unittest import mock
 from uuid import uuid4
 
 from django.test import RequestFactory, SimpleTestCase
+from django.urls import resolve
+
+from login.api_gate import STAFF, rule_for
 
 from .views import (
     _ilr_contact,
@@ -14,6 +17,15 @@ from .views import (
     deep_dive_record_detail,
     deep_dive_record_summaries,
 )
+
+
+class DeepDiveRouteTests(SimpleTestCase):
+    def test_deployed_alias_resolves_to_staff_gated_qms_view(self):
+        path = "/coach_api/qms/deep-dive/records/summary/"
+        self.assertIs(resolve(path).func, deep_dive_record_summaries)
+        self.assertEqual(rule_for(path), ("/coach_api/", STAFF))
+        self.assertIs(resolve("/qms_api/deep-dive/records/summary/").func, deep_dive_record_summaries)
+        self.assertEqual(resolve("/coach_api/qms/feedback-findings/").url_name, "feedback-findings")
 
 
 class IlrContactTests(SimpleTestCase):
