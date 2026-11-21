@@ -100,7 +100,7 @@ MAX_BYTES = 50 * 1024 * 1024  # 50 MB
 #: way to fetch it rather than a fact about it -- the same rule this codebase
 #: applies to meeting join links.
 EVIDENCE_AUDIT_COLUMNS = (
-    'id', 'learner_kind', 'learner_profile_id', 'created_user_id', 'section_ref',
+    'id', 'learner_kind', 'learner_profile_id', 'section_ref',
     'plan_component_id', 'component_ref', 'progress_entry_id',
     'original_filename', 'content_type', 'size_bytes',
     'status', 'scan_result', 'uploaded_by', 'uploaded_at', 'reviewed_at',
@@ -276,13 +276,12 @@ def upload_evidence(request, kind, pk):
             cur.execute(
                 """
                 insert into "Learner"."evidence_files"
-                  (id, learner_kind, learner_profile_id, created_user_id,
-                   section_ref, blob_name,
+                  (id, learner_kind, learner_profile_id, section_ref, blob_name,
                    original_filename, content_type, size_bytes, status, uploaded_by, uploaded_at,
                    "Training_plan_details", plan_component_id, component_ref, progress_entry_id)
-                values (%s, %s, %s, %s, %s, %s, %s, %s, %s, 'pending', %s, %s, %s, %s, %s, %s)
+                values (%s, %s, %s, %s, %s, %s, %s, %s, 'pending', %s, %s, %s, %s, %s, %s)
                 """,
-                [str(file_id), kind, lineage["learner_profile_id"], pk, section_ref, blob_name,
+                [str(file_id), kind, lineage["learner_profile_id"], section_ref, blob_name,
                  f.name, f.content_type, f.size, str(pk), timezone.now(),
                  json.dumps(training_plan_details) if training_plan_details is not None else None,
                  lineage.get("plan_component_id"), lineage.get("component_ref"),

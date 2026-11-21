@@ -37,5 +37,5 @@ CREATE TABLE "Learner".learning_reflection_submissions(
  actual_time_hours numeric,quality_score numeric,coach_feedback text,reviewed_by text,reviewed_at timestamptz,
  component_ref text,assignment_topic_id text NOT NULL DEFAULT '',
  UNIQUE(learner_kind,learner_id,activity_type,activity_id,assignment_topic_id));
-CREATE TABLE "Learner".evidence_files(id uuid PRIMARY KEY,learner_id text NOT NULL,status text NOT NULL,
+CREATE TABLE "Learner".evidence_files(id uuid PRIMARY KEY,learner_profile_id bigint NOT NULL REFERENCES "Learner".learners(id),status text NOT NULL,
  learner_kind text NOT NULL DEFAULT 'apprenticeship',original_filename text,section_ref text,uploaded_at timestamptz DEFAULT now());

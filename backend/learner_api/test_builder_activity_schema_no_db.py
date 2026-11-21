@@ -8,6 +8,10 @@ from .builder_activity_dates import read_builder_activity_dates, STUDY_WEEK_SCHE
 
 
 class BuilderActivitySchemaTests(SimpleTestCase):
+    def test_optional_week_count_uses_schema_tolerant_json_access(self):
+        self.assertIn("to_jsonb(m)->'weeks_number'", STUDY_WEEK_SCHEDULE_SQL)
+        self.assertNotIn('m.weeks_number', STUDY_WEEK_SCHEDULE_SQL)
+
     def test_assignment_dates_load_without_module_deletion_columns(self):
         with sqlite3.connect(':memory:') as db:
             db.execute("ATTACH DATABASE ':memory:' AS curriculum")

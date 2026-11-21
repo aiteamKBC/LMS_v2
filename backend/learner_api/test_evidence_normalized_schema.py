@@ -7,6 +7,8 @@ from django.db import ProgrammingError
 from django.test import RequestFactory, SimpleTestCase
 
 from . import evidence, evidence_tables
+from .evidence_ownership import profile_id_for_source
+from .management.commands import apply_learner_enrolment_id, unify_learner_ids
 
 
 class EvidenceSchemaGuardTests(SimpleTestCase):
@@ -33,6 +35,30 @@ class EvidenceSchemaGuardTests(SimpleTestCase):
         for write_keyword in ("create ", "alter ", "drop ", "insert ", "update ", "delete "):
             self.assertNotIn(write_keyword, sql)
 
+    def test_schema_guard_accepts_canonical_schema_without_created_user_id(self):
+        self.assertIn("learner_profile_id", evidence_tables.REQUIRED_COLUMNS)
+        self.assertNotIn("created_user_id", evidence_tables.REQUIRED_COLUMNS)
+
+        connection = MagicMock()
+        cursor = connection.cursor.return_value.__enter__.return_value
+        cursor.fetchall.return_value = [(column,) for column in evidence_tables.REQUIRED_COLUMNS]
+
+        with patch.object(evidence_tables, "connections", {"enrolment": connection}):
+            evidence_tables.ensure_evidence_tables()
+
+        cursor.execute.assert_called_once()
+
+    def test_schema_guard_accepts_transition_schema_with_created_user_id_still_present(self):
+        connection = MagicMock()
+        cursor = connection.cursor.return_value.__enter__.return_value
+        columns = set(evidence_tables.REQUIRED_COLUMNS) | {"created_user_id"}
+        cursor.fetchall.return_value = [(column,) for column in columns]
+
+        with patch.object(evidence_tables, "connections", {"enrolment": connection}):
+            evidence_tables.ensure_evidence_tables()
+
+        cursor.execute.assert_called_once()
+
     def test_incompatible_schema_fails_visibly(self):
         connection = MagicMock()
         cursor = connection.cursor.return_value.__enter__.return_value
@@ -44,6 +70,39 @@ class EvidenceSchemaGuardTests(SimpleTestCase):
         with patch.object(evidence_tables, "connections", {"enrolment": connection}):
             with self.assertRaisesMessage(ProgrammingError, "learner_profile_id"):
                 evidence_tables.ensure_evidence_tables()
+
+
+class EvidenceIdentityCommandTests(SimpleTestCase):
+    def test_enrolment_backfill_does_not_expect_legacy_evidence_learner_id(self):
+        evidence_targets = [target for target in apply_learner_enrolment_id.TARGETS
+                            if target[0] == "evidence_files"]
+        self.assertEqual(evidence_targets, [])
+
+    def test_profile_id_unification_remaps_canonical_evidence_owner(self):
+        self.assertIn(
+            ("Learner", "evidence_files", "learner_profile_id"),
+            unify_learner_ids.CHILD_COLUMNS,
+        )
+
+
+class EvidenceRouteIdentityTests(SimpleTestCase):
+    def test_route_id_resolves_directly_to_the_canonical_profile(self):
+        cursor = MagicMock()
+        cursor.fetchall.return_value = [(248,)]
+
+        self.assertEqual(profile_id_for_source(cursor, "commercial", "56"), 248)
+
+        sql, params = cursor.execute.call_args.args
+        self.assertIn('from "Learner".learners where enrolment_id = %s', sql)
+        self.assertIn("learner_type", sql)
+        self.assertNotIn("Created_users", sql)
+        self.assertEqual(params, [56, "commercial"])
+
+    def test_ambiguous_route_id_is_not_accepted_as_an_owner(self):
+        cursor = MagicMock()
+        cursor.fetchall.return_value = [(248,), (249,)]
+
+        self.assertIsNone(profile_id_for_source(cursor, "apprenticeship", 56))
 
 
 class NormalizedEvidenceReaderTests(SimpleTestCase):

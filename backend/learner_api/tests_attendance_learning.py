@@ -5,6 +5,7 @@ from unittest.mock import MagicMock, patch
 
 from django.db import DatabaseError
 from django.test import SimpleTestCase
+from curriculum_api.week_visibility import visible_child_sql
 
 from .attendance_learning import annotate_learning, learning_state, with_learning_requirements
 from .live_session_progress import supplement_component_progress, supplement_module_hours
@@ -102,6 +103,9 @@ class AttendanceLearningTests(SimpleTestCase):
                 self.assertIn('p.module_ref=c.module_catalogue_id', sql)
                 self.assertIn('p.deleted_at IS NULL', sql)
                 self.assertIn('learner_kind=%s', sql)
+                self.assertIn(visible_child_sql('c'), sql)
+                self.assertNotIn('c.deleted_at', sql)
+                self.assertNotIn('c.is_programme_deleted', sql)
 
     def test_absence_legacy_manual_progress_recording_and_snapshots_are_unchanged(self):
         with patch('learner_api.attendance_learning.connections') as db:

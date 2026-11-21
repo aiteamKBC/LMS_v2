@@ -1,4 +1,5 @@
 """Database-free safety regressions for LMS alias reconciliation."""
+import importlib.util
 import inspect
 from pathlib import Path
 import unittest
@@ -36,27 +37,36 @@ class LmsAliasReconciliationTests(unittest.TestCase):
             reconciliation.verify_apply_branch(cursor, 'br-safe-child'), 'br-safe-child'
         )
 
-    def test_identity_payload_normalizes_email_without_logging_it(self):
-        payload = reconciliation._identity_payload({
-            'aptem_id': 10, 'lms_email': ' Former@Example.org ',
+    def test_reconciliation_has_no_deleted_identity_dependency(self):
+        source = inspect.getsource(reconciliation)
+        self.assertNotIn('learner_external_identities', source)
+        self.assertIn('source_lms_learner_aliases', source)
+
+    def test_sync_script_is_read_only_and_rejects_apply(self):
+        path = Path(__file__).resolve().parents[1] / 'scripts' / 'sync_legacy_lms_identities.py'
+        source = path.read_text(encoding='utf-8-sig')
+        self.assertNotIn('learner_external_identities', source)
+        for verb in ('INSERT INTO', 'UPDATE "Learner"', 'DELETE FROM', 'LOCK TABLE'):
+            self.assertNotIn(verb, source)
+        spec = importlib.util.spec_from_file_location('sync_legacy_lms_identities', path)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        with self.assertRaises(SystemExit):
+            module.parse_args(['--apply'])
+        source_row = {
+            'aptem_id': 10, 'canonical_lms_id': 100, 'lms_learner_id': 100,
+            'aptem_email': None, 'lms_email': None, 'is_primary': True,
+            'match_basis': 'synthetic', 'first_seen': 'a', 'last_seen': 'b',
+        }
+        canonical_row = {**source_row, 'learner_profile_id': None}
+        report = module.verify({
+            'source': [source_row, {**source_row, 'lms_learner_id': 101}],
+            'aliases': [canonical_row],
+            'linked': [],
         })
-        self.assertEqual(payload['source_email'], 'former@example.org')
-        self.assertEqual(payload['identity_import'], reconciliation.RUN_KIND)
-
-    def test_external_identity_writes_do_not_name_removed_enrolment_id(self):
-        source = inspect.getsource(reconciliation.apply)
-        identity_insert = source.split('learner_external_identities AS existing (', 1)[1].split(
-            'ON CONFLICT', 1,
-        )[0]
-        self.assertNotIn('enrolment_id', identity_insert)
-
-        script = (Path(__file__).resolve().parents[1] / 'scripts' / 'sync_legacy_lms_identities.py').read_text(
-            encoding='utf-8-sig',
-        )
-        script_insert = script.split('INSERT INTO "Learner".learner_external_identities', 1)[1].split(
-            'VALUES', 1,
-        )[0]
-        self.assertNotIn('enrolment_id', script_insert)
+        self.assertTrue(report['consistent'])
+        self.assertEqual(report['historical_records'], 1)
+        self.assertEqual(report['source_only_records'], 1)
 
 
 if __name__ == '__main__':

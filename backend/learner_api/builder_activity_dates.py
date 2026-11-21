@@ -58,7 +58,7 @@ COMPONENT_ORDER = 'c.module_catalogue_id,c.display_order,c.id'
 STUDY_WEEK_SCHEDULE_SQL = """CASE WHEN to_jsonb(m)->>'week_boundary_mode'='calendar'
     THEN jsonb_build_object(
         'week_boundary_mode','calendar', 'week_starts_on',to_jsonb(m)->'week_starts_on',
-        'weeks_number',m.weeks_number, 'end_date',m.end_date,
+        'weeks_number',to_jsonb(m)->'weeks_number', 'end_date',m.end_date,
         'schedule_mode',to_jsonb(m)->'schedule_mode',
         'weekly_schedule',to_jsonb(m)->'weekly_schedule',
         'session_holidays',to_jsonb(m)->'session_holidays',

@@ -85,7 +85,7 @@ def _json(value):
 
 def _candidate_identities(cursor):
     aliases = _rows(cursor, '''SELECT aptem_id,canonical_lms_id,lms_learner_id,
-        aptem_email,lms_email,is_primary,first_seen,last_seen
+        aptem_email,lms_email,is_primary,first_seen,last_seen,learner_profile_id
         FROM "Learner".source_lms_learner_aliases
         ORDER BY aptem_id,is_primary DESC,lms_learner_id''')
     emails_by_aptem = defaultdict(set)
@@ -116,30 +116,35 @@ def _candidate_identities(cursor):
             'candidate_ids': [], 'eligible': {}, 'blocked_ids': set(),
             'aliases': [], 'identity_conflicts': 0,
         }
+    profile_ids = sorted({
+        int(alias['learner_profile_id']) for alias in candidate_aliases
+        if alias.get('learner_profile_id') is not None
+    })
     owners = _rows(cursor, '''SELECT l.id AS learner_id,l.enrolment_id,l.programme_id,
         l.aptem_id,l.email AS owner_email,account.id AS account_id,
         account."Email" AS account_email,account.aptem_id AS account_aptem_id
         FROM "Learner".learners l
         LEFT JOIN enrolment."Created_users" account ON account.id=l.enrolment_id
-        WHERE l.aptem_id=ANY(%s)
-        ORDER BY l.aptem_id,l.id''', [candidate_ids])
-    owners_by_aptem = defaultdict(list)
+        WHERE l.id=ANY(%s)
+        ORDER BY l.id''', [profile_ids]) if profile_ids else []
+    owners_by_id = {int(owner['learner_id']): owner for owner in owners}
     aliases_by_aptem = defaultdict(list)
-    for owner in owners:
-        owners_by_aptem[int(owner['aptem_id'])].append(owner)
     for alias in candidate_aliases:
         aliases_by_aptem[int(alias['aptem_id'])].append(alias)
     eligible, blocked_ids = {}, set(conflict_ids)
     for aptem_id in candidate_ids:
-        candidates = owners_by_aptem.get(aptem_id, [])
         source_aliases = aliases_by_aptem.get(aptem_id, [])
+        linked_aliases = [alias for alias in source_aliases
+                          if alias.get('learner_profile_id') is not None]
+        linked_profiles = {int(alias['learner_profile_id']) for alias in linked_aliases}
         canonical_ids = {str(alias['canonical_lms_id']) for alias in source_aliases}
-        source_emails = {normalize_email(alias.get('lms_email')) for alias in source_aliases}
-        source_emails.discard('')
-        if len(candidates) != 1 or not source_aliases or len(canonical_ids) != 1:
+        if len(linked_profiles) != 1 or not source_aliases or len(canonical_ids) != 1:
             blocked_ids.add(aptem_id)
             continue
-        owner = candidates[0]
+        owner = owners_by_id.get(next(iter(linked_profiles)))
+        if owner is None or owner.get('aptem_id') is None or int(owner['aptem_id']) != aptem_id:
+            blocked_ids.add(aptem_id)
+            continue
         owner_email = normalize_email(owner.get('owner_email'))
         account_email = normalize_email(owner.get('account_email'))
         account_aptem = normalize_aptem(owner.get('account_aptem_id'))
@@ -148,10 +153,12 @@ def _candidate_identities(cursor):
             or (account_aptem and account_aptem != normalize_aptem(aptem_id))
         )
         if (account_invalid
-                or any(not normalize_email(alias.get('lms_email')) for alias in source_aliases)):
+                or any(not normalize_email(alias.get('lms_email')) for alias in linked_aliases)):
             blocked_ids.add(aptem_id)
             continue
-        eligible[aptem_id] = {'owner': owner, 'aliases': source_aliases}
+        # A NULL profile is historical evidence only. It never inherits current
+        # ownership from another alias, an email, APTem ID or old LMS ID.
+        eligible[aptem_id] = {'owner': owner, 'aliases': linked_aliases}
     for aptem_id in blocked_ids:
         eligible.pop(aptem_id, None)
     return {
@@ -356,20 +363,13 @@ def _course_memberships(cursor, eligible):
 
 def _existing_state(cursor, eligible, candidates, memberships):
     learner_ids = sorted(int(bundle['owner']['learner_id']) for bundle in eligible.values())
-    source_ids = sorted({
-        str(alias['lms_learner_id'])
+    alias_by_source = {
+        str(alias['lms_learner_id']): {
+            'learner_id': int(bundle['owner']['learner_id']),
+            'aptem_id': int(alias['aptem_id']),
+        }
         for bundle in eligible.values() for alias in bundle['aliases']
-    })
-    identities = _rows(cursor, '''SELECT learner_id,source_learner_id,source_payload
-        FROM "Learner".learner_external_identities
-        WHERE source_system=%s AND source_learner_id=ANY(%s) AND deleted_at IS NULL''',
-        [SOURCE_SYSTEM, source_ids]) if source_ids else []
-    identity_by_source = {str(record['source_learner_id']): record for record in identities}
-    identity_conflicts = sum(
-        int(record['learner_id']) != int(eligible[int(alias['aptem_id'])]['owner']['learner_id'])
-        for bundle in eligible.values() for alias in bundle['aliases']
-        if (record := identity_by_source.get(str(alias['lms_learner_id']))) is not None
-    )
+    }
     existing_memberships = set()
     if learner_ids:
         existing_memberships = {
@@ -444,8 +444,8 @@ def _existing_state(cursor, eligible, candidates, memberships):
         else:
             activity_actions.append({**candidate, 'action': 'create_progress', 'progress_id': None})
     return {
-        'identity_by_source': identity_by_source,
-        'identity_conflicts': identity_conflicts,
+        'alias_by_source': alias_by_source,
+        'identity_conflicts': 0,
         'missing_memberships': [record for record in memberships
             if (record['learner_id'], record['source_course_id']) not in existing_memberships],
         'activity_actions': activity_actions,
@@ -469,9 +469,8 @@ def inspect(cursor):
         ),
         'alias_rows': sum(len(bundle['aliases']) for bundle in identities['eligible'].values()),
         'identity_conflicts': identities['identity_conflicts'] + existing['identity_conflicts'],
-        'external_identities_missing': sum(
-            str(alias['lms_learner_id']) not in existing['identity_by_source']
-            for bundle in identities['eligible'].values() for alias in bundle['aliases']
+        'historical_alias_rows_skipped': sum(
+            alias.get('learner_profile_id') is None for alias in identities['aliases']
         ),
         'course_memberships_missing': len(existing['missing_memberships']),
         'course_memberships_unmapped': unmapped_memberships,
@@ -548,34 +547,6 @@ def apply(cursor, expected_branch_id):
         cursor.execute('SELECT pg_advisory_xact_lock(%s,%s)',
                        [LOCK_NAMESPACE, int(bundle['owner']['learner_id'])])
 
-    identities_written = 0
-    for bundle in identities['eligible'].values():
-        owner = bundle['owner']
-        for alias in bundle['aliases']:
-            payload = _identity_payload(alias)
-            cursor.execute('''INSERT INTO "Learner".learner_external_identities AS existing (
-                learner_id,source_system,source_learner_id,source_payload,
-                first_seen_at,last_seen_at
-            ) VALUES (%s,%s,%s,%s::jsonb,%s,%s)
-            ON CONFLICT (source_system,source_learner_id) WHERE deleted_at IS NULL
-            DO UPDATE SET
-                source_payload=(CASE
-                  WHEN jsonb_typeof(existing.source_payload)='object'
-                  THEN existing.source_payload ELSE '{}'::jsonb END)
-                  || EXCLUDED.source_payload,
-                first_seen_at=least(existing.first_seen_at,EXCLUDED.first_seen_at),
-                last_seen_at=greatest(existing.last_seen_at,EXCLUDED.last_seen_at)
-            WHERE existing.learner_id=EXCLUDED.learner_id
-            RETURNING id''', [
-                owner['learner_id'], SOURCE_SYSTEM,
-                str(alias['lms_learner_id']), _json(payload),
-                alias.get('first_seen') or datetime.now(timezone.utc),
-                alias.get('last_seen') or datetime.now(timezone.utc),
-            ])
-            if cursor.fetchone() is None:
-                raise ValueError('An external identity changed ownership during apply.')
-            identities_written += 1
-
     memberships_inserted = 0
     for membership in existing['missing_memberships']:
         cursor.execute('''INSERT INTO "Learner".learner_source_course_memberships (
@@ -649,7 +620,9 @@ def apply(cursor, expected_branch_id):
 
     result = {
         **summary,
-        'external_identities_written': identities_written,
+        'source_aliases_verified': sum(
+            len(bundle['aliases']) for bundle in identities['eligible'].values()
+        ),
         'course_memberships_inserted': memberships_inserted,
         'activity_sources_attached': sources_attached,
         'progress_rows_created': progress_created,

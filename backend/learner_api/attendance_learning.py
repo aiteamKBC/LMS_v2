@@ -4,6 +4,7 @@ Read-time metadata only. Historical progress, attendance and hour records are
 never rewritten. Unmatched identities never enter this projection.
 """
 from django.db import connections
+from curriculum_api.week_visibility import visible_child_sql
 
 
 def learning_state(credit, requirements):
@@ -49,7 +50,7 @@ def with_learning_requirements(source, credits, *, as_of=None):
     learner_id = profile.pk
     kind = 'commercial' if getattr(source, 'learner_type', '') == 'commercial' else 'apprenticeship'
     with connections['enrolment'].cursor() as cursor:
-        cursor.execute('''SELECT c.id,c.module_catalogue_id,c.reflection_required,
+        cursor.execute(f'''SELECT c.id,c.module_catalogue_id,c.reflection_required,
             (coalesce(c.tutor_validation_required,false) OR coalesce(c.coach_validation_required,true)),
             c.workplace_evidence_required,submission.status,
             ((submission.status IN ('submitted_for_tutor_review','accepted')
@@ -69,7 +70,7 @@ def with_learning_requirements(source, credits, *, as_of=None):
                 ORDER BY submitted_at DESC NULLS LAST,id DESC LIMIT 1
             ) submission ON true
             WHERE c.id=ANY(%s) AND lower(replace(c.type,'-','_'))='live_session'
-              AND c.deleted_at IS NULL AND NOT coalesce(c.is_programme_deleted,false)''',
+              AND {visible_child_sql("c")}''',
             [ACTIVITY_MARKING_REFLECTION, profile.pk, kind, learner_id, learner_id, kind,
              sorted({credit['componentId'] for credit in attended})])
         requirements = {(str(cid), str(mid)): dict(zip(

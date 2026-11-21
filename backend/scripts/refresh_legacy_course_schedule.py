@@ -55,10 +55,10 @@ def read_state(cur, args):
         WHERE c.source_system='old_lms' AND c.source_course_ref=%s AND c.deleted_at IS NULL
         AND EXISTS (SELECT 1 FROM "Learner".learner_source_course_memberships m
             JOIN "Learner".learners l ON l.id=m.learner_id
-            JOIN "Learner".learner_external_identities i ON i.learner_id=l.id
+            JOIN "Learner".source_lms_learner_aliases i ON i.learner_profile_id=l.id
             WHERE m.source_course_id=c.id AND m.deleted_at IS NULL AND l.aptem_id=%s
-              AND i.source_system='old_lms' AND i.source_learner_id=%s AND i.deleted_at IS NULL)''',
-        [str(args.course_id), args.aptem_id, str(args.source_user_id)]).fetchall()
+              AND i.lms_learner_id=%s)''',
+        [str(args.course_id), args.aptem_id, args.source_user_id]).fetchall()
     if len(courses) != 1:
         raise ValueError('Course/source identity is not uniquely assigned to the selected learner.')
     course = courses[0]

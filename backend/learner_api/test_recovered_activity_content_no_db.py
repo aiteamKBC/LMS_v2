@@ -106,7 +106,8 @@ class RecoveredActivityContentTests(SimpleTestCase):
         with patch.object(recovery, 'query', return_value=[attempt]) as query:
             html = recovery.saved_question_html(self.owner, 30)
         self.assertEqual(query.call_args.args[1], [30, 7])
-        self.assertIn('identity.learner_id=%s', query.call_args.args[0])
+        self.assertIn('identity.learner_profile_id=%s', query.call_args.args[0])
+        self.assertIn('history.learner_id=identity.lms_learner_id', query.call_args.args[0])
         self.assertIn('history.activity_id=%s', query.call_args.args[0])
         self.assertIn('Original question?', html)
         self.assertNotIn('Private answer', html)

@@ -1168,7 +1168,7 @@ def register_learner_records():
         status='status',
         using='enrolment',
         columns=(
-            'id', 'learner_kind', 'learner_profile_id', 'created_user_id',
+            'id', 'learner_kind', 'learner_profile_id',
             'section_ref', 'plan_component_id', 'component_ref', 'progress_entry_id',
             'original_filename', 'content_type', 'size_bytes',
             'status', 'scan_result', 'uploaded_by', 'uploaded_at', 'reviewed_at',

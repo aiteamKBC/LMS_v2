@@ -31,17 +31,16 @@ def read_review(owner, group_id, quiz_id, *, allow_attempts=False, demo_preview=
             history.quiz_maximum_score AS maximum_score, history.quiz_passed AS passed,
             history.quiz_attempt_number AS attempt_number, history.status,
             history.quiz_answers AS answers
-        FROM "Learner".learner_external_identities identity
+        FROM "Learner".source_lms_learner_aliases identity
         JOIN "Last_audit".activity_results history
-          ON history.learner_id::text=identity.source_learner_id
+          ON history.learner_id=identity.lms_learner_id
         JOIN "Last_audit".activities activity ON activity.activity_id=history.activity_id
           AND (activity.quiz_id::text=%s OR (activity.activity_id=%s
             AND lower(activity.activity_type)='quiz' AND activity.quiz_id IS NULL))
-        WHERE identity.learner_id=%s AND identity.source_system='old_lms'
-          AND identity.deleted_at IS NULL AND history.group_id=%s
+        WHERE identity.learner_profile_id=%s AND history.group_id=%s
         ORDER BY history.quiz_score / nullif(history.quiz_maximum_score,0) DESC NULLS LAST,
                  (history.quiz_answers IS NOT NULL AND history.quiz_answers<>'[]'::jsonb) DESC,
-                 history.quiz_attempt_number DESC NULLS LAST, identity.id
+                 history.quiz_attempt_number DESC NULLS LAST, identity.lms_learner_id
         LIMIT 1''', [str(quiz_id), quiz_id, owner['id'], group_id])
     # Score, status and answers always belong to the same retained attempt.
     attempt = attempts[0] if attempts else {}
