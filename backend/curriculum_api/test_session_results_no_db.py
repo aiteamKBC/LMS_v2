@@ -31,6 +31,7 @@ from curriculum_api.session_transfer_progress import byte_count
 from curriculum_api.session_media_policy import (hidden_artifact_ids, recordings_for_transcript,
     recording_transcript_links, transcript_timing_ready, artifact_metadata)
 from curriculum_api.canonical_read_sql import current_status_sql
+from curriculum_api.week_visibility import visible_child_sql, visible_week_sql
 
 
 def functions(path, names, namespace):
@@ -1548,6 +1549,12 @@ class EndpointTests(unittest.TestCase):
                 self.assertIsNotNone(learner)
                 self.assertEqual(found, {**series, 'learner_shared_module_ids': ['ALIAS'],
                                        'linked_session_numbers': {1}, 'additional_meeting_access': True})
+                sql = self.ns['read'].call_args.args[0]
+                self.assertIn(visible_child_sql('c'), sql)
+                self.assertIn(current_status_sql('m'), sql)
+                self.assertIn(visible_week_sql('w'), sql)
+                for column in ('deleted_at', 'is_programme_deleted', 'deleted_via_parent'):
+                    self.assertNotIn(column, sql)
         self.assertEqual(self.learner_series(['OTHER'], {}, series)[0], (None, None))
         regular = {**series, 'status': 'active', 'meeting_type': 'linked-external'}
         self.assertEqual(self.learner_series(['ALIAS'], {}, regular, additional=['ALIAS'])[0], (None, None))

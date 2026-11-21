@@ -142,8 +142,8 @@ def _read_manual_context(candidates, profile):
         module_catalogue_id__in=module_ids).values_list('module_catalogue_id', 'title'))
     components = list(ModuleAuthoringComponent.objects.using('enrolment').filter(
         module_catalogue_id__in=modules, type__in=['live_session', 'live-session'],
-        deleted_at__isnull=True, is_programme_deleted=False,
-    ).values('id', 'module_catalogue_id', 'title', 'settings_json', 'expected_otjh'))
+    ).exclude(status__iexact='inactive').values(
+        'id', 'module_catalogue_id', 'title', 'settings_json', 'expected_otjh'))
     occurrences = read_native_occurrences(source, module_ids=list(modules)) if modules else []
     return project_manual_completion(components, occurrences, adjustments, manual, modules), components, occurrences
 
