@@ -257,7 +257,7 @@ describe('Personal Support Plan booking controls', () => {
     expect(bookMigratedReview).toHaveBeenCalledExactlyOnceWith(pending.instance.id, expect.objectContaining({
       scheduledDate: '2026-09-22', scheduledTime: '10:00', durationMinutes: 75,
     }));
-    expect(screen.getByRole('button', { name: 'Reschedule' })).toBeVisible();
+    expect(screen.queryByRole('button', { name: 'Reschedule' })).not.toBeInTheDocument();
     expect(screen.getByText(/Review status:/)).toHaveTextContent('scheduled');
     expect(onStatusChange).toHaveBeenCalledWith('scheduled');
     expect(screen.queryByRole('button', { name: /Save draft|Submit Review|Start migrated review/ })).not.toBeInTheDocument();
@@ -265,24 +265,14 @@ describe('Personal Support Plan booking controls', () => {
     expect(saveReviewInstanceAnswers).not.toHaveBeenCalled();
   });
 
-  it('prefills the existing PSP meeting and reschedules the same booking', async () => {
+  it('shows the booked PSP meeting without booking actions inside the form', async () => {
     const current = personalSupportBooking(true);
     vi.mocked(fetchReviewInstanceForm).mockResolvedValue(current);
-    vi.mocked(rescheduleMigratedReview).mockResolvedValue({ ...current,
-      booking: { ...current.booking!, scheduledDate: '2026-11-03', scheduledTime: '12:00' },
-    });
     mount(current.instance.id);
-    fireEvent.click(await screen.findByRole('button', { name: 'Reschedule' }));
-    expect(screen.getByLabelText('Meeting date')).toHaveValue('2026-09-22');
-    await chooseCoachTime('10:00');
-    expect(screen.getByLabelText('Meeting duration')).toHaveValue(75);
-    fireEvent.change(screen.getByLabelText('Meeting date'), { target: { value: '2026-11-03' } });
-    await chooseCoachTime('12:00');
-    fireEvent.click(screen.getByRole('button', { name: 'Save new time' }));
-    await waitFor(() => expect(rescheduleMigratedReview).toHaveBeenCalledExactlyOnceWith(current.instance.id,
-      expect.objectContaining({ scheduledDate: '2026-11-03', scheduledTime: '12:00', durationMinutes: 75 }), current.booking));
-    expect(screen.getByRole('region', { name: 'Migrated review meeting' })).toHaveTextContent('2026-11-03 at 12:00');
+    expect(await screen.findByRole('region', { name: 'Migrated review meeting' })).toHaveTextContent('2026-09-22 at 10:00');
     expect(screen.getByRole('link', { name: 'Join Teams' })).toHaveAttribute('href', current.booking!.meetingLink);
+    expect(screen.queryByRole('button', { name: /^(Book Meeting|Reschedule)$/ })).not.toBeInTheDocument();
+    expect(rescheduleMigratedReview).not.toHaveBeenCalled();
     expect(bookMigratedReview).not.toHaveBeenCalled();
   });
 
@@ -971,19 +961,21 @@ describe('review reopen flow', () => {
     expect(completeReviewInstance).not.toHaveBeenCalled();
   });
 
-  it.each(['PR', 'PR_SKILLS_RADAR'] as const)('starts scheduled migrated %s without touching native review flow', async (family) => {
+  it.each(['PR', 'PR_SKILLS_RADAR'] as const)('keeps scheduled migrated %s booking actions outside the form', async (family) => {
     const scheduled: ReviewInstanceFormDefinition = {
       ...migratedPrDefinition('scheduled', family),
       localStatus: 'scheduled', readOnly: false,
-      booking: { booked: true, conflict: false, canBook: false, eventKey: 'imported-review:scheduled', scheduledDate: '2026-10-30', scheduledTime: '10:00', durationMinutes: 60, meetingLink: 'https://example.invalid/teams', syncState: 'synced' },
+      booking: { booked: true, conflict: false, canBook: false, canReschedule: true, eventKey: 'imported-review:scheduled', scheduledDate: '2026-10-30', scheduledTime: '10:00', durationMinutes: 60, meetingLink: 'https://example.invalid/teams', syncState: 'synced' },
       instance: { ...definition('scheduled').instance, id: 'imported-review:scheduled', occurrenceNumber: null, reviewTemplateId: '' },
     };
     vi.mocked(fetchReviewInstanceForm).mockResolvedValue(scheduled);
-    vi.mocked(startMigratedReview).mockResolvedValue({ ...scheduled, localStatus: 'in-progress', instance: { ...scheduled.instance, status: 'in-progress' } });
     mount();
-    fireEvent.click(await screen.findByRole('button', { name: 'Start migrated review (optional)' }));
-    await waitFor(() => expect(startMigratedReview).toHaveBeenCalledWith('imported-review:scheduled'));
     expect(await screen.findByRole('button', { name: 'Submit Review' })).toBeVisible();
+    expect(screen.getByRole('link', { name: 'Join Teams' })).toHaveAttribute('href', 'https://example.invalid/teams');
+    expect(screen.queryByRole('button', { name: 'Reschedule' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Start migrated review (optional)' })).not.toBeInTheDocument();
+    expect(startMigratedReview).not.toHaveBeenCalled();
+    expect(rescheduleMigratedReview).not.toHaveBeenCalled();
   });
 
   it.each(['PR', 'PR_SKILLS_RADAR'] as const)('books migrated %s explicitly and then shows meeting actions', async (family) => {
@@ -1006,7 +998,7 @@ describe('review reopen flow', () => {
     await waitFor(() => expect(bookMigratedReview).toHaveBeenCalledTimes(1));
     expect(await screen.findByRole('link', { name: 'Join Teams' })).toHaveAttribute('href', 'https://example.invalid/teams');
     expect(screen.getByRole('region', { name: 'Migrated review meeting' })).toHaveTextContent('10:00');
-    expect(screen.getByRole('button', { name: 'Start migrated review (optional)' })).toBeVisible();
+    expect(screen.queryByRole('button', { name: 'Start migrated review (optional)' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Book Meeting' })).not.toBeInTheDocument();
   });
 
@@ -1084,7 +1076,7 @@ describe('review reopen flow', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Retry linking meeting' }));
     await waitFor(() => expect(screen.queryByRole('button', { name: 'Retry linking meeting' })).not.toBeInTheDocument());
     expect(screen.getByDisplayValue('Unsaved coach answer')).toBeVisible();
-    expect(screen.queryByRole('button', { name: 'Check Session' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Check Session' })).toBeEnabled();
     expect(bookMigratedReview).not.toHaveBeenCalled();
     expect(adoptMigratedReviewBooking).toHaveBeenLastCalledWith(existing.instance.id, undefined, 'saved-review-content');
     fireEvent.click(screen.getByRole('button', { name: 'Save draft' }));
@@ -1501,32 +1493,25 @@ describe('coach review signature workflow', () => {
     await waitFor(() => expect(submitMigratedReview).toHaveBeenCalledWith(review.instance.id, { 'field-1': 'Review the next module', 'new-field': 'New answer' }, { answerVersion: 'synchronized-version', editedFields: ['new-field'] }));
   });
 
-  it.each(['MCM', 'PR', 'PR_SKILLS_RADAR'] as const)('reschedules Scheduled %s and preserves unsaved answers and their version', async family => {
-    const initial = family === 'MCM' ? migratedDefinition('scheduled') : migratedPrDefinition('scheduled', family);
+  it('keeps Scheduled MCM answers editable without booking actions inside the form', async () => {
+    const initial = migratedDefinition('scheduled');
     initial.answerVersion = 'before-reschedule';
     initial.booking = { booked: true, conflict: false, canBook: false, canReschedule: true, eventKey: initial.instance.id,
       scheduledDate: '2026-10-29', scheduledTime: '10:00', durationMinutes: 45,
       meetingLink: 'https://example.invalid/meeting', syncState: 'synced' };
     vi.mocked(fetchReviewInstanceForm).mockResolvedValue(initial);
-    vi.mocked(rescheduleMigratedReview).mockResolvedValue({ ...initial, answerVersion: 'concurrent-answer-version',
-      booking: { ...initial.booking, scheduledTime: '11:00' } });
     vi.mocked(saveReviewInstanceAnswers).mockResolvedValue(initial);
     mount(initial.instance.id);
     const answer = await screen.findByRole('textbox');
     fireEvent.change(answer, { target: { value: 'Unsaved coach draft' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Reschedule' }));
-    await chooseCoachTime('10:00');
-    expect(screen.getByLabelText('Meeting duration')).toHaveValue(45);
-    await chooseCoachTime('11:00');
-    fireEvent.click(screen.getByRole('button', { name: 'Save new time' }));
-    await waitFor(() => expect(rescheduleMigratedReview).toHaveBeenCalledWith(initial.instance.id,
-      expect.objectContaining({ scheduledTime: '11:00', durationMinutes: 45 }), initial.booking));
-    await screen.findByRole('button', { name: 'Reschedule' });
+    expect(screen.getByRole('link', { name: 'Join Teams' })).toHaveAttribute('href', initial.booking.meetingLink);
+    expect(screen.queryByRole('button', { name: /^(Book Meeting|Reschedule|Start migrated review \(optional\))$/ })).not.toBeInTheDocument();
     expect(answer).toHaveValue('Unsaved coach draft');
     fireEvent.click(screen.getByRole('button', { name: 'Save draft' }));
     await waitFor(() => expect(saveReviewInstanceAnswers).toHaveBeenCalledWith(initial.instance.id,
       { 'field-1': 'Unsaved coach draft' }, { answerVersion: 'before-reschedule', editedFields: ['field-1'] }));
     expect(bookMigratedReview).not.toHaveBeenCalled();
+    expect(rescheduleMigratedReview).not.toHaveBeenCalled();
     expect(startMigratedReview).not.toHaveBeenCalled();
   });
 
@@ -1547,7 +1532,7 @@ describe('coach review signature workflow', () => {
     vi.mocked(submitMigratedReview).mockResolvedValue(submitted);
     mount(initial.instance.id);
     expect(await screen.findByRole('textbox')).toBeEnabled();
-    expect(screen.getByRole('button', { name: 'Start migrated review (optional)' })).toBeVisible();
+    expect(screen.queryByRole('button', { name: 'Start migrated review (optional)' })).not.toBeInTheDocument();
     expect(screen.queryByText('Not yet in progress')).not.toBeInTheDocument();
     expect(screen.queryByText('Start the review from the meeting actions before completing this form.')).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Submit Review' }));

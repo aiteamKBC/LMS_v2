@@ -49,18 +49,21 @@ beforeEach(() => {
   fetchSlots.mockResolvedValue(['10:00', '11:00']);
 });
 
-it('refreshes imported booking eligibility after link and undo without losing unsaved answers', async () => {
+it('refreshes imported booking after link and undo without showing form reschedule or losing unsaved answers', async () => {
   fetchForm.mockResolvedValueOnce(definition(true)).mockResolvedValueOnce(definition(false))
     .mockResolvedValueOnce(definition(true));
   render(<MemoryRouter><ReviewInstanceModal instanceId={reviewId} onClose={vi.fn()} /></MemoryRouter>);
   const answer = await screen.findByDisplayValue('Original answer');
-  expect(screen.getByRole('button', { name: 'Reschedule' })).toBeVisible();
+  expect(screen.getByRole('link', { name: 'Join Teams' })).toHaveAttribute('href', 'https://example.invalid/meeting');
+  expect(screen.queryByRole('button', { name: 'Reschedule' })).not.toBeInTheDocument();
   fireEvent.change(answer, { target: { value: 'Unsaved answer' } });
   fireEvent.click(screen.getByRole('button', { name: 'Confirm alternate email link' }));
   await waitFor(() => expect(fetchForm).toHaveBeenCalledTimes(2));
   await waitFor(() => expect(screen.queryByRole('button', { name: 'Reschedule' })).not.toBeInTheDocument());
   expect(answer).toHaveValue('Unsaved answer');
   fireEvent.click(screen.getByRole('button', { name: 'Confirm alternate email link' }));
-  expect(await screen.findByRole('button', { name: 'Reschedule' })).toBeVisible();
+  await waitFor(() => expect(fetchForm).toHaveBeenCalledTimes(3));
+  expect(screen.queryByRole('button', { name: 'Reschedule' })).not.toBeInTheDocument();
+  expect(screen.getByRole('link', { name: 'Join Teams' })).toHaveAttribute('href', 'https://example.invalid/meeting');
   expect(answer).toHaveValue('Unsaved answer');
 });
