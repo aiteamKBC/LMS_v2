@@ -1,3 +1,4 @@
+import { LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
 import { LearnerPreview } from '../module-builder/LearnerPreview';
 import { Notice } from '@/components/ui/Notice';
 import { componentSessionTitle } from '../shared/sessionDisplayTitle';
@@ -552,7 +553,7 @@ export default function ModuleWorkspacePage() {
             <MeetingChip status={cleanText(occurrence.status, 'scheduled')} attended={attended} />
           ) : (
             <span className="rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-amber-700">
-              {teamsLoading ? 'Loading…' : 'Not on the calendar'}
+              {teamsLoading ? <LoadingSkeleton label="Loading…" variant="text" /> : 'Not on the calendar'}
             </span>
           )}
           {hasDetail && (
@@ -675,7 +676,7 @@ export default function ModuleWorkspacePage() {
       navItems={curriculumNavItems}
       workspaceLabel="Curriculum Studio"
       pageTitle={moduleDisplayName}
-      pageSubtitle={context ? `${context.programmeName} / ${context.cohortName} / ${context.groupName}` : 'Loading module'}
+      pageSubtitle={context ? `${context.programmeName} / ${context.cohortName} / ${context.groupName}` : <LoadingSkeleton label={'Loading module'} />}
       breadcrumbCurrentLabel={`Modules — ${moduleDisplayName}`}
       userName="Rachel Myers"
       userRole="Curriculum Designer"
@@ -999,7 +1000,7 @@ export default function ModuleWorkspacePage() {
               </>
             )}
           >
-            {structureLoading && <p className="text-[12px] text-foreground-400">Loading module structure…</p>}
+            {structureLoading && <p className="text-[12px] text-foreground-400"><LoadingSkeleton label="Loading module structure…" variant="rows" /></p>}
             {!structureLoading && structureError && <InlineError message={structureError} onRetry={() => void loadStructure()} />}
             {!structureLoading && !structureError && !weekStructure.length && (
               <p className="text-[12px] text-foreground-500">No weeks have been authored for this module yet.</p>
@@ -1175,7 +1176,7 @@ export default function ModuleWorkspacePage() {
             </WorkspacePanel>
 
             <WorkspacePanel title="Coverage" description="How much of the standard this module reaches.">
-              {coverageLoading && <p className="text-[12px] text-foreground-400">Loading coverage…</p>}
+              {coverageLoading && <p className="text-[12px] text-foreground-400"><LoadingSkeleton label="Loading coverage…" variant="rows" /></p>}
               {!coverageLoading && !coverage && <p className="text-[12px] text-foreground-500">No coverage data available.</p>}
               {coverage && (
                 <>

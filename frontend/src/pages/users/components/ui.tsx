@@ -33,7 +33,7 @@ export function ActionLink({ label, onClick, icon, danger = false }: { label: st
 export function Hero({ icon, title, subtitle, right }: { icon: string; title: string; subtitle?: ReactNode; right?: ReactNode }) {
   return (
     <div
-      className="workspace-page-hero relative overflow-hidden rounded-[1.25rem] border border-foreground-200/60 bg-background-50 shadow-lg shadow-foreground-950/10"
+      className="workspace-page-hero relative overflow-hidden rounded-2xl border border-foreground-200/60 bg-background-50 shadow-lg shadow-foreground-950/10"
     >
       <div className="absolute inset-x-0 top-0 h-px bg-primary-200/70" />
       <div className="absolute inset-x-0 bottom-0 h-px bg-foreground-200/60" />

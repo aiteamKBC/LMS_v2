@@ -1,3 +1,4 @@
+import { LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
 import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { ArrowLeft, BookOpen, ChevronDown, ChevronRight, Search } from 'lucide-react';
@@ -187,7 +188,7 @@ export default function LearnerModuleProgress({ learner, learning, progress, wor
           <div className="mt-4 border-t border-primary-100 pt-3"><div className="mb-2 flex justify-between text-sm font-semibold"><span>Overall Progress</span><span>{displayPercent(overall)}</span></div>
             <ProgressBar value={overall} label="Overall progress" /><p className="mt-2 text-xs text-primary-700">Average of OTH, KSB and activities when all three values are available.</p></div>
         </section>
-        {hoursLoading && <p role="status" className="rounded-xl border border-primary-100 bg-white p-4 text-sm text-primary-700">Loading off-the-job hours…</p>}
+        {hoursLoading && <p  className="rounded-xl border border-primary-100 bg-white p-4 text-sm text-primary-700"><LoadingSkeleton label="Loading off-the-job hours…" variant="rows" /></p>}
         {hoursError && <p role="alert" className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-800">Off-the-job hours unavailable: {hoursError}</p>}
         {chartData && <div className={styles.hoursChart}>
           <OtjHoursChart data={chartData} programmeStartMonth={progress.programmeStartDate?.slice(0, 7)}

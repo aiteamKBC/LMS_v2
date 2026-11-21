@@ -364,7 +364,7 @@ describe('ScopeAchievementPanel', () => {
     );
 
     expect(await screen.findByText('Learners assigned')).toBeInTheDocument();
-    expect(screen.queryByText(/Loading learner achievement/)).not.toBeInTheDocument();
+    expect(screen.queryByRole('status', { name: /Loading learner achievement/ })).not.toBeInTheDocument();
   });
 
   it('offers a retry rather than an empty panel when the read fails', async () => {

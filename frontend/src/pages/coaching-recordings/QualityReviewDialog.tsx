@@ -1,3 +1,4 @@
+import { LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Check, FileDown, Plus, Save, Trash2, Upload } from 'lucide-react';
 import { Link } from 'react-router-dom';
@@ -125,6 +126,15 @@ export default function QualityReviewDialog({ teachingLecture, eventKey = '', re
   };
   const completed = template?.sections.flatMap(item => item.criteria).filter(item => (item.type || 'rating') === 'rating' ? Boolean(form?.criteria[item.id]?.rating) : item.type === 'image' ? Boolean(form?.images[item.id]?.length) : item.type === 'file' ? Boolean(form?.attachments?.[item.id]?.length) : form?.answers?.[item.id] != null && form.answers[item.id] !== '' && (!Array.isArray(form.answers[item.id]) || (form.answers[item.id] as string[]).length > 0)).length ?? 0;
   const selected = teachingLecture || review?.learner || context?.learners.find(item => item.id === learner);
+  const selectedLearnerName = teachingLecture ? 'Whole lecture' : review?.learner?.name ?? context?.learners.find(item => item.id === learner)?.name ?? 'Not selected';
+  const observer = review?.reviewer ?? context?.observer;
+  const observerChecks = [
+    { label: 'Observer identity', detail: observer?.name || 'No signed-in observer returned', passed: Boolean(observer?.name) },
+    { label: 'Learner data link', detail: selectedLearnerName === 'Not selected' ? 'No learner is linked' : selectedLearnerName, passed: selectedLearnerName !== 'Not selected' },
+    { label: 'Quality form', detail: template?.title || 'No quality form loaded', passed: Boolean(formType && template) },
+    { label: 'Required review data', detail: form && template && !qualityCompletionIssue(template, form) ? 'All required answers and evidence are present' : 'Some required answers or evidence are missing', passed: Boolean(form && template && !qualityCompletionIssue(template, form)) },
+  ];
+  const observerReady = observerChecks.every(item => item.passed);
   const lecture = review?.lecture ?? context?.snapshot.lecture;
   const detailsTitle = teachingLecture ? 'Session and evidence details' : 'Learner and evidence details';
   const meeting = review?.meeting ?? context?.snapshot.meeting, coach = review?.coach ?? context?.snapshot.coach;
@@ -141,7 +151,7 @@ export default function QualityReviewDialog({ teachingLecture, eventKey = '', re
         <button className={button} disabled={busy || loading || !formType || !selected || !form} onClick={() => void save('draft')}><Save size={14} />Save draft</button>
         <button className={`${button} bg-primary-600 text-white`} disabled={busy || loading || !formType || !selected || !form} onClick={() => void save('completed')}><Check size={14} />Complete review</button>
       </div></>}>
-      {loading ? <p role="status" className="py-12 text-center text-sm">Loading the saved form…</p> : <>
+      {loading ? <p  className="py-12 text-center text-sm"><LoadingSkeleton label="Loading the saved form…" variant="rows" /></p> : <>
         {error && <div role="alert" className="mb-4 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-950">{error}
           {conflict && <button className={`${button} ml-2`} onClick={() => { if (!dirty || window.confirm('Replace your edits with the saved version?')) { invalidateQualityReviews(); setReload(value => value + 1); } }}>Reload saved version</button>}
           {!form && <button className={`${button} ml-2`} onClick={() => setReload(value => value + 1)}>Retry form</button>}</div>}
@@ -166,15 +176,22 @@ export default function QualityReviewDialog({ teachingLecture, eventKey = '', re
           <div className="grid gap-4 lg:grid-cols-[230px_minmax(0,1fr)]">
             <label className="grid gap-2 text-xs font-semibold lg:hidden">Review section · {completed} questions answered
               <RecordingSelect ariaLabel="Review section" value={section} onChange={setSection} disabled={busy}
-                options={[{ id: 'details', title: detailsTitle }, ...template.sections, { id: 'actions', title: template.actionsTitle || 'SMART action plan' }].map(item => ({ value: item.id, label: item.title }))} />
+                options={[{ id: 'observer', title: 'Observer' }, { id: 'details', title: detailsTitle }, ...template.sections, { id: 'actions', title: template.actionsTitle || 'SMART action plan' }].map(item => ({ value: item.id, label: item.title }))} />
             </label>
             <nav aria-label="Review sections" className="hidden flex-col gap-1 rounded-xl border border-background-200 bg-white p-2 lg:flex">
               <p className="px-3 py-2 text-xs font-semibold text-foreground-500">{completed} of {template.sections.reduce((sum, item) => sum + item.criteria.length, 0)} criteria rated</p>
-              {[{ id: 'details', title: detailsTitle }, ...template.sections, { id: 'actions', title: template.actionsTitle || 'SMART action plan' }].map(item => <button type="button" key={item.id}
+              {[{ id: 'observer', title: 'Observer' }, { id: 'details', title: detailsTitle }, ...template.sections, { id: 'actions', title: template.actionsTitle || 'SMART action plan' }].map(item => <button type="button" key={item.id}
                 aria-current={section === item.id ? 'step' : undefined} onClick={() => setSection(item.id)} className={`rounded-lg px-3 py-2 text-left text-xs leading-5 ${section === item.id ? 'bg-primary-600 font-semibold text-white' : 'text-foreground-700 hover:bg-primary-50'}`}>{item.title}</button>)}
             </nav>
             <div className="min-w-0 space-y-4">
               <p className="rounded-xl border border-primary-100 bg-primary-50 p-3 text-xs leading-5 text-foreground-600">Record what you observed in this session. Use the recording, transcript and other evidence to support each judgement. No ratings are selected automatically.</p>
+              {section === 'observer' && <section aria-label="Observer" className="space-y-4 rounded-xl border border-background-200 bg-white p-4">
+                <div><h3 className="font-bold">Automatic data verification</h3><p className="mt-1 text-xs leading-5 text-foreground-600">This tab checks the Quality Check data automatically. No manual confirmation or meeting attendance is required.</p></div>
+                <div className={`rounded-lg p-4 ${observerReady ? 'bg-emerald-50 text-emerald-900' : 'bg-amber-50 text-amber-950'}`}><p className="font-semibold">{observerReady ? 'Data checks passed' : 'Needs attention'}</p><p className="mt-1 text-xs">Observer: {observer?.name || 'Not recorded'}{observer?.email ? ` · ${observer.email}` : ''}</p></div>
+                <div className="space-y-2 rounded-lg bg-background-50 p-4">
+                  {observerChecks.map(check => <div key={check.label} className="flex items-start justify-between gap-3 text-sm"><div><p className="font-semibold">{check.label}</p><p className="text-xs text-foreground-500">{check.detail}</p></div><span className={check.passed ? 'text-emerald-700' : 'text-amber-700'}>{check.passed ? 'Checked' : 'Needs attention'}</span></div>)}
+                </div>
+              </section>}
               {section === 'details' && <section aria-label={detailsTitle} className="space-y-4 rounded-xl border border-background-200 bg-white p-4">
                 <h3 className="font-bold">{detailsTitle}</h3>
                 <div className="grid gap-4 sm:grid-cols-2">{([['employer', 'Employer', 'text'], ['programme', 'Programme / standard', 'text'], ['activityDate', 'Activity date', 'date'], ['startDate', 'Start date', 'date'], ['endDate', 'Planned end date', 'date']] as const).filter(([key]) => !teachingLecture || key === 'programme' || key === 'activityDate').map(([key, label, type]) =>

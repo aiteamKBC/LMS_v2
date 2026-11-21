@@ -1,3 +1,4 @@
+import { LoadingLabel, LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
@@ -124,8 +125,8 @@ export default function LearnerProfilePage() {
               <DetailGroup title="Workplace & support">
                 <DetailRow label="Employer" value={learner.employer} />
                 <DetailRow label="Line manager" value={learner.lineManager} />
-                <DetailRow label="Attendance risk" value={attendanceLoading ? 'Loading attendance…' : attendanceError ? 'Temporarily unavailable' : attendance?.risk ? attendance.risk[0].toUpperCase() + attendance.risk.slice(1) : 'No record'} />
-                <DetailRow label="Last attendance" value={attendanceLoading ? 'Loading attendance…' : attendanceError ? 'Temporarily unavailable' : attendance?.lastSessionDate ? new Date(attendance.lastSessionDate).toLocaleDateString('en-GB') : 'Not recorded'} />
+                <DetailRow label="Attendance risk" value={attendanceLoading ? <LoadingSkeleton label={'Loading attendance…'} /> : attendanceError ? 'Temporarily unavailable' : attendance?.risk ? attendance.risk[0].toUpperCase() + attendance.risk.slice(1) : 'No record'} />
+                <DetailRow label="Last attendance" value={attendanceLoading ? <LoadingSkeleton label={'Loading attendance…'} /> : attendanceError ? 'Temporarily unavailable' : attendance?.lastSessionDate ? new Date(attendance.lastSessionDate).toLocaleDateString('en-GB') : 'Not recorded'} />
               </DetailGroup>
             </ProfileSection>
 
@@ -184,8 +185,8 @@ function DetailGroup({ title, children }: { title: string; children: React.React
   return <div className="border-b border-background-200 py-4 last:border-b-0"><h3 className="mb-1 text-[10px] font-bold uppercase tracking-[0.14em] text-foreground-400">{title}</h3><div>{children}</div></div>;
 }
 
-function DetailRow({ label, value }: { label: string; value?: string }) {
-  return <div className="grid gap-1 py-2.5 sm:grid-cols-[145px_minmax(0,1fr)] sm:gap-4"><p className="text-xs text-foreground-500">{label}</p><p className="break-words text-[13px] font-semibold text-foreground-800">{value || 'Not set'}</p></div>;
+function DetailRow({ label, value }: { label: string; value?: React.ReactNode }) {
+  return <div className="grid gap-1 py-2.5 sm:grid-cols-[145px_minmax(0,1fr)] sm:gap-4"><p className="text-xs text-foreground-500">{label}</p><p className="break-words text-[13px] font-semibold text-foreground-800"><LoadingLabel>{value || 'Not set'}</LoadingLabel></p></div>;
 }
 
 function Loading() {

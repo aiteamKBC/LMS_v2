@@ -59,26 +59,26 @@
 .labelRow { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 
 .forgotButton, .rememberRow, .passwordToggle { border: 0; background: transparent; cursor: pointer; font: inherit; }
-.forgotButton { border-radius: 5px; color: var(--login-purple); font-size: clamp(10px, .82vw, 13px); font-weight: 700; line-height: 1.3; }
+.forgotButton { border-radius: var(--lms-radius, 16px); color: var(--login-purple); font-size: clamp(10px, .82vw, 13px); font-weight: 700; line-height: 1.3; }
 .forgotButton:hover { color: var(--login-purple-dark); }
 .inputShell { position: relative; }
-.inputShell input { display: block; width: 100%; height: clamp(42px, 3.55vw, 52px); box-sizing: border-box; border: 1px solid #d9d0e7; border-radius: 9px; outline: 0; background: rgba(255,255,255,.8); color: #291442; font: inherit; font-size: clamp(12px, .95vw, 15px); line-height: 1; padding: 0 43px; transition: border-color 180ms ease, box-shadow 180ms ease, background-color 180ms ease; }
+.inputShell input { display: block; width: 100%; height: clamp(42px, 3.55vw, 52px); box-sizing: border-box; border: 1px solid #d9d0e7; border-radius: var(--lms-radius, 16px); outline: 0; background: rgba(255,255,255,.8); color: #291442; font: inherit; font-size: clamp(12px, .95vw, 15px); line-height: 1; padding: 0 43px; transition: border-color 180ms ease, box-shadow 180ms ease, background-color 180ms ease; }
 .inputShell input::placeholder { color: #887c99; opacity: 1; }
 .inputShell input:hover { border-color: #b8a6d2; background: #fff; }
 .inputShell input:focus { border-color: var(--login-purple); background: #fff; box-shadow: 0 0 0 3px rgba(91,33,182,.16); }
 .inputIcon { position: absolute; z-index: 1; top: 50%; left: 14px; color: #77658d; font-size: 17px; line-height: 1; transform: translateY(-50%); pointer-events: none; }
-.passwordToggle { position: absolute; z-index: 1; top: 50%; right: 7px; display: grid; width: 32px; height: 32px; place-items: center; border-radius: 7px; color: #77658d; font-size: 17px; transform: translateY(-50%); }
+.passwordToggle { position: absolute; z-index: 1; top: 50%; right: 7px; display: grid; width: 32px; height: 32px; place-items: center; border-radius: var(--lms-radius, 16px); color: #77658d; font-size: 17px; transform: translateY(-50%); }
 .passwordToggle:hover { background: #f0e9ff; color: var(--login-purple); }
 .forgotButton:focus-visible, .rememberRow:focus-visible, .passwordToggle:focus-visible, .primaryButton:focus-visible, .microsoftButton:focus-visible { outline: 3px solid rgba(91,33,182,.3); outline-offset: 2px; }
 
 .rememberGroup { display: grid; gap: 5px; justify-items: start; }
 .rememberRow { display: inline-flex; width: max-content; align-items: center; gap: 8px; padding: 0; color: #4e415b; font-size: clamp(11px, .82vw, 13px); font-weight: 700; line-height: 1.3; }
-.checkboxVisual { display: grid; width: 17px; height: 17px; flex: 0 0 auto; place-items: center; border: 1.5px solid #9586a2; border-radius: 4px; background: #fff; color: transparent; font-size: 12px; }
+.checkboxVisual { display: grid; width: 17px; height: 17px; flex: 0 0 auto; place-items: center; border: 1.5px solid #9586a2; border-radius: var(--lms-radius, 16px); background: #fff; color: transparent; font-size: 12px; }
 .rememberRow[aria-pressed='true'] .checkboxVisual { border-color: var(--login-purple); background: var(--login-purple); color: #fff; }
 .rememberHint { max-width: 300px; margin: 0; color: #766a81; font-size: clamp(9px, .7vw, 11px); line-height: 1.45; }
 
-.error { display: flex; align-items: flex-start; gap: 8px; padding: 9px 11px; border: 1px solid #fecaca; border-radius: 8px; background: #fff7f7; color: #b91c1c; font-size: clamp(10px, .78vw, 12px); line-height: 1.4; }
-.primaryButton, .microsoftButton { display: flex; width: 100%; min-height: clamp(42px, 3.55vw, 52px); box-sizing: border-box; align-items: center; justify-content: center; border-radius: 9px; cursor: pointer; font: inherit; font-size: clamp(11px, .9vw, 14px); font-weight: 800; line-height: 1; }
+.error { display: flex; align-items: flex-start; gap: 8px; padding: 9px 11px; border: 1px solid #fecaca; border-radius: var(--lms-radius, 16px); background: #fff7f7; color: #b91c1c; font-size: clamp(10px, .78vw, 12px); line-height: 1.4; }
+.primaryButton, .microsoftButton { display: flex; width: 100%; min-height: clamp(42px, 3.55vw, 52px); box-sizing: border-box; align-items: center; justify-content: center; border-radius: var(--lms-radius, 16px); cursor: pointer; font: inherit; font-size: clamp(11px, .9vw, 14px); font-weight: 800; line-height: 1; }
 .primaryButton { border: 0; background: linear-gradient(105deg, #4b168c 0%, #6525b5 100%); color: #fff; box-shadow: 0 9px 18px rgba(91,33,182,.22); transition: transform 170ms ease, box-shadow 170ms ease; }
 .primaryButton:hover:not(:disabled) { box-shadow: 0 12px 24px rgba(91,33,182,.3); transform: translateY(-1px); }
 .primaryButton:active:not(:disabled), .microsoftButton:active:not(:disabled) { transform: translateY(1px); }
@@ -246,7 +246,7 @@
   line-height: 1.6;
 }
 .downloadCard h1 { font-size: 30px; line-height: 1.2; }
-.downloadCard img { background: #153f35; padding: 8px; border-radius: 8px; box-sizing: content-box; }
+.downloadCard img { background: #153f35; padding: 8px; border-radius: var(--lms-radius, 16px); box-sizing: content-box; }
 .downloadCard a { display: flex; align-items: center; justify-content: center; text-decoration: none; }
 .downloadCard a, .downloadCard button { min-height: 56px; font-size: 17px; }
 .downloadCard a { background: #153f35; box-shadow: none; }

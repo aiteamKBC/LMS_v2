@@ -1,3 +1,4 @@
+import { LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
@@ -152,7 +153,7 @@ export default function LearnerEngagementPage() {
             <span className="text-[10px] text-foreground-400 bg-background-100 px-2 py-1 rounded-full">{filtered.length} learners</span>
           </div>
 
-          {loading && <p className="text-[11px] text-foreground-400 py-8 text-center">Loading learner analytics…</p>}
+          {loading && <p className="text-[11px] text-foreground-400 py-8 text-center"><LoadingSkeleton label="Loading learner analytics…" variant="rows" /></p>}
           {!loading && filtered.length === 0 && (
             <div className="p-6"><EmptyState icon="ri-search-line" title="No learners match this view" /></div>
           )}

@@ -45,6 +45,14 @@ export interface UserListRow {
    *  longer applies at that point; a password reset does. */
   hasSignedIn?: boolean;
   programmeStatus?: ProgrammeStatus;
+  /** Dates and owner fields used by staff progression views. */
+  learnerStartDate?: string;
+  learnerEndDate?: string;
+  startDate?: string;
+  endDate?: string;
+  coachName?: string;
+  coachEmail?: string;
+  referenceNumber?: string;
   /**
    * The programme the learner is on. Absent for staff, admin and employer rows,
    * which have no programme — the directory lists all four kinds in one table.

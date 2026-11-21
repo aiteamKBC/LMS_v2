@@ -1,3 +1,4 @@
+import { LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
 import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { createFileRoute, useRouter } from '@tanstack/react-router';
@@ -361,7 +362,7 @@ function ActivityLogPage() {
 
       <main className="mx-auto w-full max-w-[1700px] space-y-6 px-6 py-8">
         {detail.isLoading && (
-          <div className="rounded-lg border border-border bg-card px-7 py-16 text-center text-sm text-muted-foreground">Loading activity…</div>
+          <div className="rounded-lg border border-border bg-card px-7 py-16 text-center text-sm text-muted-foreground"><LoadingSkeleton label="Loading activity…" variant="rows" /></div>
         )}
         {detail.isError && (
           <div className="rounded-lg border border-border bg-card px-7 py-16 text-center text-sm text-destructive">

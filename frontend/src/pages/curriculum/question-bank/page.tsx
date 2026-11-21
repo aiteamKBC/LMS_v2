@@ -1,3 +1,4 @@
+import { LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useListQueryState } from '@/hooks/useListQueryState';
@@ -289,7 +290,7 @@ export default function QuestionBankPage() {
             { label: 'KSB Tagged', value: `${ksbTaggedPercent}%`, icon: 'ri-price-tag-3-line' },
           ]}
           actions={(
-            <button type="button" className="inline-flex h-[4.5rem] min-w-[7.5rem] items-center justify-center whitespace-nowrap rounded-[0.75rem] bg-[#b27715] px-3 text-xs font-semibold text-white transition-smooth hover:bg-[#986511]">
+            <button type="button" className="inline-flex h-[4.5rem] min-w-[7.5rem] items-center justify-center whitespace-nowrap rounded-2xl bg-[#b27715] px-3 text-xs font-semibold text-white transition-smooth hover:bg-[#986511]">
               <AppIcon className="mr-1" name="ri-add-line" size={13} /> Create Bank
             </button>
           )}
@@ -376,7 +377,7 @@ export default function QuestionBankPage() {
               </div>
 
               {bankError && <div className="mb-4 rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">{bankError}</div>}
-              {bankLoading && <div className="py-16 text-center text-sm text-[#647083]">Loading question bank...</div>}
+              {bankLoading && <div className="py-16 text-center text-sm text-[#647083]"><LoadingSkeleton label="Loading question bank..." variant="rows" /></div>}
               {!bankLoading && (!questionBank || filteredQuestions.length === 0) && (
                 <div className="rounded-2xl border border-[#e2e8f0] bg-white p-10 text-center">
                   <span className="w-14 h-14 rounded-2xl bg-[#f2f0ff] text-[#5b2dbb] flex items-center justify-center mx-auto mb-3">

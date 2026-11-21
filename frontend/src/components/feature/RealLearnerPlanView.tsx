@@ -1,3 +1,4 @@
+import { LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
 import { useEffect, useState } from 'react';
 import { useNavigate, type NavigateFunction } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
@@ -64,7 +65,7 @@ export function RealLearnerPlanView({
       roleLabel={learnerNav.label}
       navItems={learnerNav.items}
       workspaceLabel={learnerNav.workspaceLabel}
-      pageTitle={loading ? 'Loading learner…' : (real?.name || 'Learner')}
+      pageTitle={loading ? <LoadingSkeleton label={'Loading learner…'} /> : (real?.name || 'Learner')}
       pageSubtitle={subtitle}
       userName={real?.name || 'Learner'}
       userRole={real?.programme ? `${real.programme} Learner` : 'Learner'}

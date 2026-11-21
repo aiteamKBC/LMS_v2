@@ -262,8 +262,8 @@ describe('Delivery dashboard using existing curriculum reads', () => {
   it('keeps navigation while loading without presenting zero counts or assignment success', () => {
     state.data = null; state.loading = true; sessionRead.sessions = []; sessionRead.loading = true;
     renderDelivery();
-    expect(screen.getByText('Loading delivery figures.')).toBeInTheDocument();
-    expect(screen.getByText('Loading live sessions.')).toBeInTheDocument();
+    expect(screen.getByRole('status', { name: 'Loading delivery figures.' })).toBeInTheDocument();
+    expect(screen.getByRole('status', { name: 'Loading live sessions.' })).toBeInTheDocument();
     expect(screen.getByRole('region', { name: 'Delivery numbers' })).toHaveAttribute('aria-busy', 'true');
     expect(screen.queryByText('Clear')).not.toBeInTheDocument();
     expect(screen.queryByText('0 cohorts')).not.toBeInTheDocument();

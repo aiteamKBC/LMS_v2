@@ -21,13 +21,27 @@ describe('Coach and tutor recordings entry points', () => {
     expect(screen.getByRole('link', { name: /Tutor Session Recordings/ })).toHaveAttribute('href', '/curriculum/recordings');
     expect(screen.getByRole('link', { name: /Quality Assurance/ })).toHaveAttribute('href', '/curriculum/quality-demo');
   });
+  it('uses the same quality destination from its card and the curriculum sidebar', () => {
+    render(<MemoryRouter><RecordingsHub /></MemoryRouter>);
+    const card = screen.getByRole('link', { name: 'Quality Assurance' });
+    const recordings = curriculumNavItems.find(item => item.id === 'curriculum-coaching-recordings');
+    const entry = recordings?.children?.find(item => item.id === 'curriculum-quality-assurance');
+    expect(entry?.href).toBe(card.getAttribute('href'));
+    expect(entry?.children).toBeUndefined();
+    expect(curriculumNavItems.some(item => item.id === 'curriculum-quality-assurance')).toBe(false);
+    expect(card.querySelector('img')).toHaveAttribute('src', '/recordings-hub/quality.svg');
+  });
   it('keeps all recording destinations in the existing permissioned sidebar group', () => {
     const entry = curriculumNavItems.find(item => item.id === 'curriculum-coaching-recordings');
-    expect(entry?.label).toBe('Recordings');
+    expect(entry?.label).toBe('Recording Quality');
+    expect(entry?.href).toBe('/curriculum/recordings-hub');
+    expect(entry?.overviewPermissionId).toBe('curriculum-recordings-hub');
     expect(entry?.children?.map(({ id, label, href }) => ({ id, label, href }))).toEqual([
-      { id: 'curriculum-recordings-hub', label: 'Recordings hub', href: '/curriculum/recordings-hub' },
       { id: 'curriculum-tutor-recordings', label: 'Tutor session recordings', href: '/curriculum/recordings' },
       { id: 'curriculum-coach-meetings', label: 'Coach meetings', href: '/curriculum/coaching-recordings' },
+      { id: 'curriculum-quality-assurance', label: 'Quality Assurance', href: '/curriculum/quality-demo' },
+      { id: 'curriculum-quality-checks', label: 'Quality Checks', href: '/curriculum/coaching-recordings/reviews' },
+      { id: 'curriculum-quality-deep-dive', label: 'Deep Dive', href: '/curriculum/quality-demo?view=deep-dive' },
     ]);
     expect(curriculumNavItems.find(item => item.href === '/curriculum/delivery')?.matchPaths).not.toContain('/curriculum/recordings');
   });

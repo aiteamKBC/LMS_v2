@@ -1,0 +1,21 @@
+/* Only wrappers that own a search field's frame opt in. Inputs with overlaid
+   icons retain their own border, padding and focus treatment. */
+@layer workspace-enrolment {
+  [data-search-field]:focus-within {
+    outline: 2px solid var(--enrolment-ui-focus, #9c75bd) !important;
+    outline-offset: 2px;
+    box-shadow: none !important;
+  }
+
+  [data-search-field] > input,
+  .workspace-shell:not([data-workspace-role='curriculum']):not(:has([data-audit-home='/workspace/auditor-copy'])) .workspace-main [data-search-field] > input,
+  .workspace-shell:not([data-workspace-role='curriculum']):not(:has([data-audit-home='/workspace/auditor-copy'])) .workspace-main [data-search-field] > input:focus-visible {
+    min-width: 0;
+    min-height: 0 !important;
+    border: 0 !important;
+    border-radius: 0 !important;
+    background: transparent !important;
+    outline: none !important;
+    box-shadow: none !important;
+  }
+}

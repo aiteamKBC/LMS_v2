@@ -91,7 +91,7 @@ describe('Employer uses learner facts and display calculations', () => {
     let rejectRead!: (error: Error) => void;
     vi.mocked(fetchEmployerTraining).mockReturnValueOnce(new Promise((_resolve, reject) => { rejectRead = reject; }));
     render(<EmployerTrainingPlan employerId="9" kind="commercial" learnerId="265" />, { wrapper });
-    expect(screen.getByRole('status')).toHaveTextContent('Loading training plan');
+    expect(screen.getByRole('status')).toHaveAccessibleName(expect.stringContaining('Loading training plan'));
     rejectRead(new Error('Training plan unavailable'));
     expect(await screen.findByRole('alert')).toHaveTextContent('Training plan unavailable');
     vi.mocked(fetchEmployerTraining).mockResolvedValueOnce({ timeline: { start: '2026-09', end: '2026-11', modules: [], reviews: [], coachName: '' }, selectedModuleId: null, selectedModule: null });
@@ -116,7 +116,7 @@ describe('Employer uses learner facts and display calculations', () => {
     let resolveRead!: (payload: ReturnType<typeof dashboardOverviewFixture>) => void;
     vi.mocked(fetchEmployerLearningOverview).mockReturnValueOnce(new Promise(resolve => { resolveRead = resolve; }));
     render(<EmployerLearningOverview employerId="9" kind="commercial" learnerId="265" />, { wrapper });
-    expect(screen.getByRole('status')).toHaveTextContent('Loading learner progress');
+    expect(screen.getByRole('status')).toHaveAccessibleName(expect.stringContaining('Loading learner progress'));
     const payload = dashboardOverviewFixture();
     payload.modules = [];
     payload.programme = [];

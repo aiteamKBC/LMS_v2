@@ -22,6 +22,8 @@ vi.mock('@/api/feedback', async importOriginal => {
     feedbackApi: {
       ...actual.feedbackApi,
       listForms: vi.fn(), responses: vi.fn(), response: vi.fn(), responseEmails: vi.fn(), sendResponseEmail: vi.fn(), analytics: vi.fn(), questionAnalytics: vi.fn(), insightsDashboard: vi.fn(), versions: vi.fn(), recipients: vi.fn(),
+      createQualityTicket: vi.fn().mockResolvedValue({ ticket: { id: 'synthetic-quality-ticket', assignedTeam: 'Quality Team', status: 'Open' } }),
+      qualityTicketStatus: vi.fn().mockResolvedValue({ ticket: { id: 'synthetic-quality-ticket', assignedTeam: 'Quality Team', status: 'Open' } }),
     },
   };
 });
@@ -80,13 +82,13 @@ describe('feedback form version history', () => {
     });
   });
 
-  it('opens Insights while the initial Forms and legacy Analytics requests are still pending', async () => {
+  it('opens Insights while the initial Forms and overview metrics requests are still pending', async () => {
     vi.mocked(feedbackApi.listForms).mockReturnValue(new Promise(() => {}));
     vi.mocked(feedbackApi.analytics).mockReturnValue(new Promise(() => {}));
     vi.mocked(feedbackApi.insightsDashboard).mockResolvedValue({ analytics: emptyInsights() });
     const user = userEvent.setup();
     render(<MemoryRouter><FeedbackPage /></MemoryRouter>);
-    await user.click(screen.getByRole('button', { name: 'Feedback Insights' }));
+    await user.click(screen.getByRole('button', { name: 'Analytics' }));
     expect(await screen.findByRole('region', { name: 'Submitted feedback' })).toBeVisible();
     expect(screen.queryByText('Loading feedback…')).not.toBeInTheDocument();
     expect(feedbackApi.responses).not.toHaveBeenCalled();
@@ -111,18 +113,18 @@ describe('feedback form version history', () => {
     vi.mocked(feedbackApi.insightsDashboard).mockResolvedValue({ analytics: emptyInsights() });
     const user = userEvent.setup();
     render(<MemoryRouter><FeedbackPage /></MemoryRouter>);
-    await user.click(screen.getByRole('button', { name: 'Feedback Insights' }));
+    await user.click(screen.getByRole('button', { name: 'Analytics' }));
     await screen.findByRole('region', { name: 'Submitted feedback' });
-    await user.selectOptions(screen.getByRole('combobox', { name: 'Insights date range' }), '0');
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Analytics date range' }), '0');
     await waitFor(() => expect(feedbackApi.insightsDashboard).toHaveBeenCalledTimes(2));
-    await waitFor(() => expect(screen.queryByText('Updating insights…')).not.toBeInTheDocument());
+    await waitFor(() => expect(screen.queryByText('Updating analytics…')).not.toBeInTheDocument());
     await user.click(screen.getByRole('button', { name: 'Forms', pressed: false }));
     let finish!: (value: { analytics: FeedbackDashboardReport }) => void;
     vi.mocked(feedbackApi.insightsDashboard).mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
-    await user.click(screen.getByRole('button', { name: 'Feedback Insights' }));
-    expect(screen.getByRole('combobox', { name: 'Insights date range' })).toHaveValue('0');
+    await user.click(screen.getByRole('button', { name: 'Analytics' }));
+    expect(screen.getByRole('combobox', { name: 'Analytics date range' })).toHaveValue('0');
     expect(screen.getByRole('region', { name: 'Submitted feedback' })).toBeVisible();
-    expect(screen.getByText('Updating insights…')).toBeVisible();
+    expect(screen.getByText('Updating analytics…')).toBeVisible();
     expect(feedbackApi.insightsDashboard).toHaveBeenCalledTimes(3);
     await act(async () => finish({ analytics: emptyInsights() }));
   });
@@ -133,7 +135,7 @@ describe('feedback form version history', () => {
     try {
       const user = userEvent.setup();
       render(<MemoryRouter><FeedbackPage /></MemoryRouter>);
-      await user.click(screen.getByRole('button', { name: 'Feedback Insights' }));
+      await user.click(screen.getByRole('button', { name: 'Analytics' }));
       await screen.findByRole('region', { name: 'Submitted feedback' });
       await user.click(screen.getByRole('button', { name: 'Forms', pressed: false }));
       await screen.findByRole('table', { name: 'Feedback forms' });
@@ -144,28 +146,31 @@ describe('feedback form version history', () => {
       expect(feedbackApi.listForms).toHaveBeenCalledTimes(2);
       let finish!: (value: { analytics: FeedbackDashboardReport }) => void;
       vi.mocked(feedbackApi.insightsDashboard).mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
-      await user.click(screen.getByRole('button', { name: 'Feedback Insights' }));
+      await user.click(screen.getByRole('button', { name: 'Analytics' }));
       expect(screen.queryByRole('region', { name: 'Submitted feedback' })).not.toBeInTheDocument();
-      expect(screen.getByText('Loading feedback insights…')).toBeVisible();
+      expect(screen.getByText('Loading analytics…')).toBeVisible();
       await act(async () => finish({ analytics: emptyInsights() }));
     } finally { update.mockRestore(); }
   });
 
-  it('keeps active and inactive tab colours readable when switching from Responses to Analytics', async () => {
+  it('keeps active and inactive tab colours readable when switching from Responses to Insights', async () => {
     const user = userEvent.setup();
+    vi.mocked(feedbackApi.insightsDashboard).mockResolvedValue({ analytics: emptyInsights() });
     render(<MemoryRouter><FeedbackPage /></MemoryRouter>);
 
     const responsesTab = await screen.findByRole('button', { name: 'Responses' });
-    const analyticsTab = screen.getByRole('button', { name: 'Analytics' });
+    const insightsTab = screen.getByRole('button', { name: 'Analytics' });
     await user.click(responsesTab);
     expect(responsesTab).toHaveAttribute('aria-pressed', 'true');
-    expect(responsesTab).toHaveClass('!bg-[#541EA0]', '!text-white');
+    expect(responsesTab).toHaveClass('primary-action', 'text-white');
 
-    await user.click(analyticsTab);
-    expect(analyticsTab).toHaveAttribute('aria-pressed', 'true');
-    expect(analyticsTab).toHaveClass('!bg-[#541EA0]', '!text-white');
+    await user.click(insightsTab);
+    expect(insightsTab).toHaveAttribute('aria-pressed', 'true');
+    expect(insightsTab).toHaveClass('primary-action', 'text-white');
+    expect(screen.getByRole('heading', { name: 'Analytics' })).toBeVisible();
     expect(responsesTab).toHaveAttribute('aria-pressed', 'false');
-    expect(responsesTab).toHaveClass('!bg-transparent', '!text-foreground-600');
+    expect(responsesTab).not.toHaveClass('primary-action');
+    expect(responsesTab).toHaveClass('bg-transparent', 'text-foreground-600');
   });
 
   it('shows the current version and opens historical versions read-only', async () => {
@@ -461,183 +466,27 @@ describe('feedback form version history', () => {
     expect(screen.getByRole('columnheader', { name: 'Event' })).toBeInTheDocument();
   });
 
-  it('shows completion analytics and reloads metrics for a feedback type', async () => {
-    const user = userEvent.setup();
-    vi.mocked(feedbackApi.responses).mockResolvedValue({ responses: [{
-      id: 91, formId: 20, formTitle: 'Lecture feedback', templateKey: 'template-1', formType: 'post_lecture', deliveryId: 30, sessionTitle: 'Marketing - Session 1', sessionStartsAt: '2026-10-19T09:00:00Z', tutorName: 'Test Tutor', learnerId: '61', learnerName: 'Test Learner',
-      programme: 'Business', status: 'completed', startedAt: '2026-10-20T09:00:00Z',
-      updatedAt: '2026-10-20T09:10:00Z', submittedAt: '2026-10-20T09:10:00Z',
-    }] });
-    vi.mocked(feedbackApi.analytics).mockReset()
-      .mockResolvedValueOnce({ analytics: { totalAssigned: 22, notStarted: 19, inProgress: 0, completed: 3, completionRate: 14, ratingAverages: [] } })
-      .mockResolvedValueOnce({ analytics: { totalAssigned: 22, notStarted: 17, inProgress: 1, completed: 4, completionRate: 18.2, ratingAverages: [
-        { questionId: 4, question: 'How useful was this session?', average: 4.5, responses: 4, min: 1, max: 5 },
-      ] } });
-
+  it('keeps overview completion metrics with only the remaining feedback tabs available', async () => {
     render(<MemoryRouter><FeedbackPage /></MemoryRouter>);
-    await user.click(await screen.findByRole('button', { name: 'Analytics' }));
 
-    expect(await screen.findByRole('heading', { name: 'Feedback Analytics' })).toBeVisible();
-    expect(screen.getByRole('region', { name: 'Feedback completion metrics' })).toBeVisible();
-    expect(screen.getByText('Completion split')).toBeVisible();
-    for (const heading of ['Response rate by form', 'Average rating questions', 'Rating insights']) {
-      expect(screen.queryByRole('heading', { name: heading })).not.toBeInTheDocument();
+    const metrics = await screen.findByRole('region', { name: 'Feedback completion metrics' });
+    for (const [label, value] of [['Assigned', '22'], ['Not started', '19'], ['In progress', '0'], ['Submitted', '3'], ['Completion rate', '14%']]) {
+      expect(within(within(metrics).getByText(label).parentElement!).getByText(value)).toBeVisible();
     }
-    expect(screen.getByText('Test Learner')).toBeVisible();
-
-    await user.click(screen.getByRole('button', { name: 'All feedback types' }));
-    await user.click(screen.getByRole('option', { name: 'Live Sessions Feedback' }));
-
-    await waitFor(() => expect(feedbackApi.analytics).toHaveBeenCalledWith({ formType: 'post_lecture' }));
-    await waitFor(() => expect(within(screen.getByRole('region', { name: 'Feedback completion metrics' })).getByText('18.2%')).toBeVisible());
-    expect(screen.queryByText('How useful was this session?')).not.toBeInTheDocument();
-    for (const heading of ['Response rate by form', 'Average rating questions', 'Rating insights']) {
-      expect(screen.queryByRole('heading', { name: heading })).not.toBeInTheDocument();
-    }
-    expect(screen.getByText('Test Learner')).toBeVisible();
-  });
-
-  it('shows the new question score and answer-rate report in the existing Analytics tab', async () => {
-    const user = userEvent.setup();
-    vi.mocked(feedbackApi.analytics).mockResolvedValue({ analytics: {
-      totalAssigned: 40, notStarted: 10, inProgress: 0, completed: 30, completionRate: 75, ratingAverages: [],
-      overallScore: { score: 80, scoredQuestions: 1, includedQuestions: 1 },
-      questionMetrics: [{ questionId: 7, question: 'Supported?', type: 'yes_no', formId: 20, formTitle: 'Lecture feedback', version: 2, category: 'Teaching', importance: 'high', weight: 3, includedInOverall: true, assignedCount: 40, answeredCount: 30, answerRate: 75, score: 80, scoredResponses: 30, status: 'good', averageRating: null, scaleMax: null, distribution: [{ label: 'Yes', count: 24 }, { label: 'No', count: 6 }] }],
-    } });
-    render(<MemoryRouter><FeedbackPage /></MemoryRouter>);
-    await user.click(await screen.findByRole('button', { name: 'Analytics' }));
-    expect(await screen.findByRole('region', { name: 'Question analytics' })).toBeVisible();
-    await user.click(screen.getByRole('button', { name: /Lecture feedback.*Version 2/ }));
-    expect(screen.getByRole('row', { name: /Supported/ })).toHaveTextContent('75%');
-    expect(screen.getByRole('row', { name: /Supported/ })).toHaveTextContent('80%');
-    expect(screen.getByRole('row', { name: /Supported/ })).toHaveTextContent('30 answered / 40 assigned');
-    expect(screen.getByText('Weighted Overall Score')).toBeVisible();
-  });
-
-  it('shows lecture filters only for the lecture type and keeps other question reports visible', async () => {
-    const user = userEvent.setup();
-    vi.mocked(feedbackApi.analytics).mockResolvedValue({ analytics: {
-      totalAssigned: 22, notStarted: 19, inProgress: 0, completed: 3, completionRate: 14,
-      ratingAverages: [], questionMetrics: [], overallScore: { score: null, scoredQuestions: 0, includedQuestions: 0 },
-    } });
-    render(<MemoryRouter><FeedbackPage /></MemoryRouter>);
-    await user.click(await screen.findByRole('button', { name: 'Analytics' }));
-    expect(screen.queryByText('Find a lecture')).not.toBeInTheDocument();
-    expect(screen.getByRole('region', { name: 'Question analytics' })).toBeVisible();
-
-    let currentType = 'All feedback types';
-    for (const label of ['Live Sessions Feedback', 'Wellbeing', 'End-module Feedback', 'MCM Feedback', 'Progress Review Feedback', 'Event Feedback', 'Event RSVP', 'General Feedback', 'All feedback types']) {
-      await user.click(screen.getByRole('button', { name: currentType }));
-      await user.click(screen.getByRole('option', { name: label }));
-      if (label === 'Live Sessions Feedback') {
-        expect(screen.getByText('Find a lecture')).toBeVisible();
-        expect(screen.getByRole('combobox', { name: 'Question report lecture' })).toBeVisible();
-      } else {
-        expect(screen.queryByText('Find a lecture')).not.toBeInTheDocument();
-        expect(screen.queryByRole('combobox', { name: 'Question report lecture' })).not.toBeInTheDocument();
-      }
-      expect(screen.getByRole('region', { name: 'Question analytics' })).toBeVisible();
-      currentType = label;
-    }
-    expect(feedbackApi.questionAnalytics).not.toHaveBeenCalled();
-  });
-
-  it('recognizes a selected lecture form under all types and hides the filters for an event form', async () => {
-    const user = userEvent.setup();
-    const eventForm = { ...form, id: 31, title: 'Event feedback', formType: 'post_event' as const };
-    vi.mocked(feedbackApi.listForms).mockResolvedValue({ forms: [form, eventForm], summary: { totalForms: 2, publishedForms: 2, draftForms: 0, totalResponses: 6 } });
-    vi.mocked(feedbackApi.analytics).mockResolvedValue({ analytics: {
-      totalAssigned: 22, notStarted: 19, inProgress: 0, completed: 3, completionRate: 14,
-      ratingAverages: [], questionMetrics: [], overallScore: { score: null, scoredQuestions: 0, includedQuestions: 0 },
-    } });
-    render(<MemoryRouter><FeedbackPage /></MemoryRouter>);
-    await user.click(await screen.findByRole('button', { name: 'Analytics' }));
-    await user.click(screen.getByRole('button', { name: 'All forms' }));
-    await user.click(screen.getByRole('option', { name: 'Lecture feedback' }));
-    expect(screen.getByText('Find a lecture')).toBeVisible();
-    await waitFor(() => expect(feedbackApi.analytics).toHaveBeenLastCalledWith({ formId: 20 }));
-    await user.click(screen.getByRole('button', { name: 'Lecture feedback' }));
-    await user.click(screen.getByRole('option', { name: 'Event feedback' }));
-    expect(screen.queryByText('Find a lecture')).not.toBeInTheDocument();
-    expect(screen.getByRole('region', { name: 'Question analytics' })).toBeVisible();
-    await waitFor(() => expect(feedbackApi.analytics).toHaveBeenLastCalledWith({ formId: 31 }));
-    expect(feedbackApi.questionAnalytics).not.toHaveBeenCalled();
-  });
-
-  it('filters lecture questions without replacing the global KPI counters or refetching whole analytics', async () => {
-    const user = userEvent.setup();
-    const metric = { questionId: 7, question: 'All lecture support?', type: 'yes_no' as const, formId: 20, formTitle: 'Lecture feedback', version: 2, category: 'Teaching', importance: 'high' as const, weight: 3, includedInOverall: true, assignedCount: 40, answeredCount: 30, answerRate: 75, score: 80, scoredResponses: 30, status: 'good' as const, averageRating: null, scaleMax: null, distribution: [] };
-    vi.mocked(feedbackApi.analytics).mockResolvedValue({ analytics: {
-      totalAssigned: 40, notStarted: 10, inProgress: 0, completed: 30, completionRate: 75, ratingAverages: [],
-      questionMetrics: [metric], overallScore: { score: 80, scoredQuestions: 1, includedQuestions: 1 },
-      lectures: [{ deliveryId: 30, moduleId: 'M1', moduleName: 'Marketing', sessionTitle: 'Session 1', occurrenceKey: 'lecture-30', startsAt: '2026-10-20T09:00:00Z', groupName: 'Group A', cohortName: 'Cohort A', formTitle: 'Lecture feedback', version: 2 }],
-    } });
-    vi.mocked(feedbackApi.questionAnalytics).mockResolvedValue({ analytics: {
-      questionMetrics: [{ ...metric, question: 'Only lecture 30?', assignedCount: 2, answeredCount: 1, answerRate: 50, score: 0 }],
-      overallScore: { score: 0, scoredQuestions: 1, includedQuestions: 1 },
-    } });
-    render(<MemoryRouter><FeedbackPage /></MemoryRouter>);
-    await user.click(await screen.findByRole('button', { name: 'Analytics' }));
-    await user.click(screen.getByRole('button', { name: 'All feedback types' }));
-    await user.click(screen.getByRole('option', { name: 'Live Sessions Feedback' }));
-    await waitFor(() => expect(feedbackApi.analytics).toHaveBeenCalledWith({ formType: 'post_lecture' }));
-    const counters = screen.getByRole('region', { name: 'Feedback completion metrics' }).textContent;
-    await user.selectOptions(screen.getByRole('combobox', { name: 'Question report lecture' }), '30');
-    await user.click(await screen.findByRole('button', { name: /Lecture feedback.*Version 2/ }));
-    expect(await screen.findByText('Only lecture 30?')).toBeVisible();
-    expect(screen.queryByText('All lecture support?')).not.toBeInTheDocument();
-    expect(screen.getByRole('region', { name: 'Feedback completion metrics' }).textContent).toBe(counters);
-    expect(feedbackApi.analytics).toHaveBeenCalledTimes(2);
-    expect(feedbackApi.questionAnalytics).toHaveBeenCalledWith({ formType: 'post_lecture', deliveryId: 30 });
-  });
-
-  it('keeps insights and completion counters visible without submission date filters', async () => {
-    const user = userEvent.setup();
-    const insights = { stars: { average: 5, answers: 30, distribution: [{ stars: 5, count: 30 }] }, categories: [], trend: [], undatedScoredAnswers: 0 };
-    vi.mocked(feedbackApi.analytics).mockResolvedValue({ analytics: {
-      totalAssigned: 40, notStarted: 10, inProgress: 0, completed: 30, completionRate: 75,
-      ratingAverages: [{ questionId: 4, question: 'Historical average?', average: 4.5, responses: 30 }],
-      questionMetrics: [], overallScore: { score: null, scoredQuestions: 0, includedQuestions: 0 }, insights,
-    } });
-    render(<MemoryRouter><FeedbackPage /></MemoryRouter>);
-    await user.click(await screen.findByRole('button', { name: 'Analytics' }));
-    expect(screen.getByText('5.00 / 5')).toBeVisible();
-    expect(screen.getByRole('region', { name: 'Feedback completion metrics' })).toHaveTextContent('40');
-    expect(within(screen.getByText('Star answers').parentElement!).getByText('30')).toBeVisible();
-    expect(screen.getByRole('region', { name: 'Question analytics' })).toBeVisible();
-    expect(screen.queryByText('Submission period')).not.toBeInTheDocument();
-    expect(screen.queryByLabelText('Submission date from')).not.toBeInTheDocument();
-    expect(screen.queryByLabelText('Submission date to')).not.toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Apply dates' })).not.toBeInTheDocument();
-    expect(screen.queryByText('Historical average?')).not.toBeInTheDocument();
-    for (const heading of ['Response rate by form', 'Average rating questions', 'Rating insights']) {
-      expect(screen.queryByRole('heading', { name: heading })).not.toBeInTheDocument();
-    }
-    expect(screen.queryByText('Find a lecture')).not.toBeInTheDocument();
+    const tabs = screen.getByRole('button', { name: 'Overview' }).parentElement!;
+    expect(within(tabs).getAllByRole('button').map(tab => tab.textContent)).toEqual([
+      'Overview', 'Forms', 'Responses', 'Analytics',
+    ]);
+    expect(screen.getByRole('button', { name: 'Overview', pressed: true })).toBeVisible();
+    expect(screen.getByRole('heading', { name: 'Recently updated forms' })).toBeVisible();
+    expect(screen.queryByRole('button', { name: 'Feedback Insights' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: 'Feedback Analytics' })).not.toBeInTheDocument();
     expect(feedbackApi.analytics).toHaveBeenCalledTimes(1);
+    expect(feedbackApi.responses).not.toHaveBeenCalled();
     expect(feedbackApi.questionAnalytics).not.toHaveBeenCalled();
   });
 
-  it('shows rule-based classifications and opens a response through the existing staff read endpoint', async () => {
-    const user = userEvent.setup();
-    vi.mocked(feedbackApi.analytics).mockResolvedValue({ analytics: {
-      totalAssigned: 40, notStarted: 39, inProgress: 0, completed: 1, completionRate: 2.5, ratingAverages: [], questionMetrics: [], overallScore: { score: null, scoredQuestions: 0, includedQuestions: 0 },
-      insights: { stars: { average: null, answers: 0, distribution: [] }, categories: [], trend: [], undatedScoredAnswers: 0, classification: {
-        total: 1, positive: 0, neutral: 0, negative: 1, unscored: 0, byType: [], trend: [],
-        responses: [{ responseId: 99, formId: 20, formTitle: 'Lecture feedback', formType: 'post_lecture', version: 2, respondent: 'Anonymous learner', score: 0, classification: 'negative', scoredQuestions: 2, submittedAt: '2026-10-20T10:00:00Z' }],
-      } },
-    } });
-    vi.mocked(feedbackApi.response).mockResolvedValue({ response: { id: 99, formId: 20, formTitle: 'Lecture feedback', templateKey: 'template-1', formType: 'post_lecture', deliveryId: 30, sessionTitle: 'Marketing - Session 1', sessionStartsAt: '2026-10-19T09:00:00Z', tutorName: 'Test Tutor', learnerId: null, learnerName: 'Anonymous learner', programme: '', status: 'completed', startedAt: '2026-10-20T09:00:00Z', updatedAt: '2026-10-20T10:00:00Z', submittedAt: '2026-10-20T10:00:00Z', sections: [] } });
-    render(<MemoryRouter><FeedbackPage /></MemoryRouter>);
-    await user.click(await screen.findByRole('button', { name: 'Analytics' }));
-    expect(screen.getByRole('region', { name: 'Score-based response classification' })).toBeVisible();
-    await user.click(screen.getByRole('button', { name: 'View answers' }));
-    await waitFor(() => expect(feedbackApi.response).toHaveBeenCalledWith(99));
-    expect(await screen.findByRole('heading', { name: 'Feedback response' })).toBeVisible();
-    expect(screen.getAllByText('Anonymous learner').length).toBeGreaterThan(1);
-  });
-
-  it('adds Feedback Insights beside Analytics and reviews original answers without replacing the existing report', async () => {
+  it('reviews original answers from Analytics and returns to the overview metrics', async () => {
     const user = userEvent.setup();
     vi.mocked(feedbackApi.insightsDashboard).mockResolvedValue({ analytics: {
       groups: [], coverage: { assigned: 22, submitted: 3, rate: 13.6 }, questionMetrics: [], overallScore: { score: null, scoredQuestions: 0, includedQuestions: 0 },
@@ -648,15 +497,15 @@ describe('feedback form version history', () => {
     } });
     vi.mocked(feedbackApi.response).mockResolvedValue({ response: { id: 101, formId: 20, formTitle: 'Lecture feedback', templateKey: 'template-1', formType: 'post_lecture', deliveryId: 30, sessionTitle: 'Marketing - Session 1', sessionStartsAt: '2026-10-19T09:00:00Z', tutorName: 'Test Tutor', learnerId: null, learnerName: 'Anonymous learner', programme: '', status: 'completed', startedAt: '2026-10-20T09:00:00Z', updatedAt: '2026-10-20T10:00:00Z', submittedAt: null, sections: [] } });
     render(<MemoryRouter><FeedbackPage /></MemoryRouter>);
-    await user.click(await screen.findByRole('button', { name: 'Feedback Insights' }));
+    await user.click(await screen.findByRole('button', { name: 'Analytics' }));
     expect(await screen.findByText('Synthetic lecture session')).toBeVisible();
     expect(screen.queryByRole('heading', { name: 'Feedback Forms' })).not.toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: 'Review response 101' }));
     await waitFor(() => expect(feedbackApi.response).toHaveBeenCalledWith(101));
     expect(await screen.findByRole('heading', { name: 'Feedback response' })).toBeVisible();
     await user.click(screen.getByRole('button', { name: 'Back' }));
-    await user.click(screen.getByRole('button', { name: 'Analytics' }));
-    expect(screen.getByRole('heading', { name: 'Feedback Analytics' })).toBeVisible();
+    await user.click(screen.getByRole('button', { name: 'Overview' }));
+    expect(screen.getByRole('heading', { name: 'Recently updated forms' })).toBeVisible();
     expect(screen.getByRole('region', { name: 'Feedback completion metrics' })).toBeVisible();
     expect(feedbackApi.analytics).toHaveBeenCalledTimes(1);
     expect(feedbackApi.questionAnalytics).not.toHaveBeenCalled();

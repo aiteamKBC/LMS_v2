@@ -1,3 +1,4 @@
+import { memo } from "react";
 import {
   CartesianGrid,
   Line,
@@ -8,16 +9,16 @@ import {
   YAxis,
 } from "recharts";
 import type { MonthlyPoint } from "@/lib/qms";
+import styles from "./RagTrendChart.module.css";
 
 interface RagTrendChartProps {
   data: MonthlyPoint[];
 }
 
 const SERIES = [
-  { key: "green", label: "Green — meets standard", color: "#2f8f57" },
-  { key: "amber", label: "Amber — improvement required", color: "#d98a2b" },
-  { key: "red", label: "Red — critical concern", color: "#c65353" },
-  { key: "unrated", label: "Not assessed", color: "#8c86b8" },
+  { key: "green", label: "Green — Positive feedback / meets standard", color: "#2f8f57" },
+  { key: "amber", label: "Amber — Neutral feedback / improvement required", color: "#d98a2b" },
+  { key: "red", label: "Red — Negative feedback / critical concern", color: "#c65353" },
 ] as const;
 
 function TrendTooltip({ active, payload, label }: any) {
@@ -43,15 +44,15 @@ function TrendTooltip({ active, payload, label }: any) {
         ))}
       </ul>
       <p className="mt-1.5 border-t border-background-200 pt-1.5 text-foreground-600">
-        Total records: <span className="font-semibold text-foreground-900">{total}</span>
+        Banded records: <span className="font-semibold text-foreground-900">{total}</span>
       </p>
     </div>
   );
 }
 
-export default function RagTrendChart({ data }: RagTrendChartProps) {
+function RagTrendChart({ data }: RagTrendChartProps) {
   return (
-    <div>
+    <div className={styles.chart}>
       <ul className="mb-4 flex flex-wrap items-center gap-x-4 gap-y-2">
         {SERIES.map((series) => (
           <li
@@ -69,21 +70,25 @@ export default function RagTrendChart({ data }: RagTrendChartProps) {
       </ul>
 
       <div
-        className="h-[260px] w-full"
+        className="w-full"
         role="img"
-        aria-label={`Monthly quality record volume by status, ${data.length} months. ${data
-          .map((point) => `${point.label}: ${point.total} records`)
+        aria-label={`Monthly Red, Amber and Green record volume, ${data.length} months. ${data
+          .map((point) => `${point.label}: ${point.green} green, ${point.amber} amber, ${point.red} red`)
           .join(", ")}.`}
       >
-        <ResponsiveContainer width="100%" height="100%">
-          <LineChart data={data} margin={{ top: 4, right: 8, bottom: 0, left: -18 }}>
+        <div className="h-[300px] w-full">
+          <ResponsiveContainer width="100%" height="100%">
+            <LineChart data={data} margin={{ top: 4, right: 8, bottom: 42, left: -18 }}>
             <CartesianGrid stroke="oklch(var(--background-200))" vertical={false} />
             <XAxis
               dataKey="label"
-              tick={{ fill: "oklch(var(--foreground-600))", fontSize: 11 }}
+              tick={{ fill: "oklch(var(--foreground-600))", fontSize: 10 }}
               tickLine={false}
               axisLine={{ stroke: "oklch(var(--background-300))" }}
               interval={0}
+              angle={-35}
+              textAnchor="end"
+              height={58}
             />
             <YAxis
               tick={{ fill: "oklch(var(--foreground-600))", fontSize: 11 }}
@@ -104,12 +109,15 @@ export default function RagTrendChart({ data }: RagTrendChartProps) {
                 dot={false}
                 activeDot={{ r: 4, strokeWidth: 2, stroke: "oklch(var(--background-50))" }}
                 connectNulls
+                isAnimationActive={false}
               />
             ))}
-          </LineChart>
-        </ResponsiveContainer>
+            </LineChart>
+          </ResponsiveContainer>
+        </div>
       </div>
     </div>
   );
 }
 
+export default memo(RagTrendChart);

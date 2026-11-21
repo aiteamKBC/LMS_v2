@@ -376,7 +376,7 @@ describe('Curriculum archive', { timeout: 15000 }, () => {
     expect(screen.queryByText('Date not recorded')).not.toBeInTheDocument();
 
     await userEvent.click(screen.getByRole('button', { name: /details/i }));
-    expect(await screen.findByText('Loading…')).toBeInTheDocument();
+    expect(await screen.findByRole('status', { name: 'Loading…' })).toBeInTheDocument();
     expect(fetchProgrammeKsbStats).toHaveBeenCalledTimes(1);
     expect(screen.queryByText('0 of 10')).not.toBeInTheDocument();
   });
@@ -391,7 +391,7 @@ describe('Curriculum archive', { timeout: 15000 }, () => {
     fetchProgrammeKsbStats.mockRejectedValueOnce(new Error('Curriculum API returned 404'));
     renderArchive('/curriculum/archive?open=programme%3APROG-OLD');
     expect(await screen.findAllByText('Retired Leadership Programme')).not.toHaveLength(0);
-    await waitFor(() => expect(screen.queryByText('Loading…')).not.toBeInTheDocument());
+    await waitFor(() => expect(screen.queryByRole('status', { name: 'Loading…' })).not.toBeInTheDocument());
     expect(screen.queryByText(/of 10/)).not.toBeInTheDocument();
   });
 

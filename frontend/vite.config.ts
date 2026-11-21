@@ -157,6 +157,11 @@ export default defineConfig(({ mode }) => {
         target: apiTarget,
         changeOrigin: true,
       },
+      // QMS Deep Dive records and the monthly Created_users sync.
+      "/qms_api": {
+        target: apiTarget,
+        changeOrigin: true,
+      },
       "/integrations_api": {
         target: apiTarget,
         changeOrigin: true,

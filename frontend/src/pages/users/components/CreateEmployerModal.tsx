@@ -1,3 +1,4 @@
+import { LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
 import { useCallback, useEffect, useState } from 'react';
 import { useToast } from "@/hooks/useToast";
 import {
@@ -170,7 +171,7 @@ function EmployerGroupPicker({
           </thead>
           <tbody>
             {loading && !selectedOnly && (
-              <tr><td colSpan={4} className="py-6 text-center text-foreground-400"><i className="ri-loader-4-line animate-spin mr-1.5" />Loading organisations…</td></tr>
+              <tr><td colSpan={4} className="py-6 text-center text-foreground-400"><LoadingSkeleton label="Loading organisations…" variant="rows" /></td></tr>
             )}
             {!loading && err && (
               <tr><td colSpan={4} className="py-6 text-center">

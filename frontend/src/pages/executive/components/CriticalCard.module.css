@@ -1,0 +1,13 @@
+.card.card {
+  --rag-red-bg: #fee2e2;
+  --rag-red-fg: #991b1b;
+  background: color-mix(in srgb, #dc2626 12%, oklch(var(--background-50)));
+  border-color: color-mix(in srgb, #dc2626 30%, oklch(var(--background-50)));
+}
+
+:global([data-theme='dark']) .card.card {
+  --rag-red-bg: #451c23;
+  --rag-red-fg: #fca5a5;
+  background: color-mix(in srgb, #f87171 12%, oklch(var(--background-50)));
+  border-color: color-mix(in srgb, #f87171 30%, oklch(var(--background-50)));
+}
