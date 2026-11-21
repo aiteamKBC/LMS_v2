@@ -1,5 +1,50 @@
 # Imported Review Feedback discovery — 19 November 2026
 
+**Status update — 21 November 2026:** the automatic polling implementation below
+was withdrawn at the owner's request because a full sweep every five minutes in
+each serving worker creates unnecessary Neon reads. The scheduler, global
+discovery module, ASGI/WSGI hooks, `--discover` and `--batch-size` were removed.
+There is no automatic Review-feedback polling or full-discovery command to
+enable in the current source. The rest of this document is the historical
+19 November investigation and validation, not current activation instructions.
+Exact-source recovery, dry-run, eligibility rules and the existing completion
+callbacks remain. The separately authorized 54 MCM assignments are unaffected.
+
+The replacement still needs the actual external import writer: invoke the scoped
+service after its batch commits, for changed review IDs only, and retry failed
+IDs through that import workflow. No such external integration is claimed here.
+The remaining command requires learner IDs; removed full-scan options fail before
+any database access and cannot be scheduled as a substitute. Local removal does not stop an already-deployed older worker;
+that requires the normal reviewed deployment/restart, which was not performed.
+
+Initial scheduler-removal validation on 21 November: the same core command listed below passed
+**91 tests**; the wider command ran **139 tests: 137 passed, one failure and one
+error**, the same two existing Employer issues documented below. Tests for the
+removed scheduler lifecycle were retired with that feature; its entrypoint test
+now rejects automatic Review discovery imports/calls in both server bootstraps,
+and command-scope coverage also rejects execution without an explicit scope.
+Eligibility, transaction, uniqueness, identity and recovery assertions remain.
+`git diff --check` passed. No Neon access, database writes, frontend changes or
+deployment occurred during removal. Teams baseline/expanded checks: NOT REQUIRED;
+Live Teams: NOT RUN.
+
+Final full-scan cleanup on 21 November: global-discovery implementation and tests
+of that removed mechanism were also retired. Recovery tests now exercise the
+real learner-scoped command against disposable SQLite import/delivery tables,
+retaining source insert/update/late-date, rollback, retry, uniqueness and
+independent recipient coverage. Regression checks reject startup imports/calls,
+assert that neither removed module can be imported, and reject `--discover`,
+`--batch-size` and missing learner scope before any service call. The same core
+command below passed **81 tests**. The wider command ran **129 tests: 127 passed,
+one failure and one error**, the same two existing Employer issues recorded below.
+A repository-wide scan of Python/startup code, workflows and shell/service/timer
+definitions found the removed scheduler/discovery identifiers only in regression
+guards, not executable application code. There were no Neon connections or
+application data writes during cleanup. No pipeline enforcement was installed;
+the regression suite must continue to run in review/CI. Validation/restart of a
+deployed or already-running old process remains separate from these local source
+checks. Teams and frontend checks remain NOT REQUIRED; Live Teams NOT RUN.
+
 ## Cause and supported types
 
 The repository previously had a post-commit `ImportedReviewInstance.post_save`
