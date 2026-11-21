@@ -60,33 +60,29 @@ respected. A failed database callback emits a pending warning; committed Review
 state remains available for reconciliation.
 
 The learner Feedback list still reconciles both persisted sources when opened.
-Since 19 November 2026, `review_feedback_reconciliation` also discovers imported
-profiles in batches and calls the same service through the trusted enrolment
-bridge. `review_feedback_scheduler` is wired into both real ASGI/WSGI HTTP
-entrypoints, following the existing serving-process scheduler pattern. It starts
-after a normal HTTP request, waits 60 seconds, then polls 300 seconds after each
-full sweep. ASGI health-only traffic bypasses the scheduler wrappers. It requires a
-continuously running serving process; this is eventual discovery, not an Aptem
-webhook or an immediate database trigger. Sweep duration adds to the interval.
+On 21 November 2026 the automatic full sweep and global discovery helper
+were removed, including their modules and both ASGI/WSGI startup hooks,
+because periodic scans multiply Neon queries across all serving workers even
+when no source review changed. HTTP startup no longer launches Review feedback
+polling. No interval, opt-in schedule or deployment environment setting enables
+the removed scheduler.
 
 The Aptem Review status/date writer was not found in this repository. The Aptem
 learner-sync workflow updates learner details, not `Learner.reviews`, and the
 Advanced Admin Review sync reads imported rows to fetch PDFs. Its external
-writer's actual location remains unidentified. The polling path does not depend
-on adding an unused callback to that writer: it reads committed persisted rows,
-including SQL/bulk imports, new completed rows and late-arriving dates. There is
-no persistent completion watermark; every sweep reconsiders the source, so failed
-assignments, older rows updated later and pending employer links remain retryable.
+writer's actual location remains unidentified. Automatic handling of its SQL/bulk
+imports is therefore still pending integration. The intended replacement is an
+after-commit call for only the changed source Review IDs, using the existing
+scoped service/command and a durable retry in the actual import workflow. Do not
+claim that integration exists until the real writer calls it. Existing LMS
+completion callbacks and page/explicit-command retry paths are preserved.
 
-Each scheduled profile is claimed with a short PostgreSQL transaction-scoped
-advisory lock, compatible with transaction-pooling endpoints. Commit/rollback or
-connection loss releases the claim. The existing unique constraints remain the
-durable protection against duplication by page reads, callbacks and commands.
-One profile's failure rolls back its scheduled writes and does not block other
-profiles; errors are logged without payloads and retried by a later sweep.
-Counts report success only after commit. Release flags are retained. Tests and
-management commands never auto-start the thread; `REVIEW_FEEDBACK_SCHEDULE=false`
-is an operational opt-out, without changing the files in this implementation.
+`--discover` and `--batch-size` were removed from the command; invoking either
+is rejected before any service/database work. An explicit `--learner-id` is
+required. Use `--source-review-id` as well for exact-review recovery.
+Existing unique constraints continue protecting assignments, original forms and
+responses. Removing the polling code does not remove or rewrite assignments
+already created, including the separately authorized MCM recovery batch.
 
 See [the investigation, checks and recovery plan](REVIEW_FEEDBACK_DISCOVERY_2026-11-19.md).
 
@@ -99,7 +95,7 @@ For an import pipeline or recovery run, after verifying the target environment:
 
 The command prints counts only (`created`, `existing`, `incomplete`,
 `historical`, `undated`, `future`, `unlinked`, `identityConflicts`, and independent
-employer counts). It requires explicit learner IDs or an explicit `--discover`.
+employer counts). It requires explicit learner IDs; there is no global-discovery option.
 `--dry-run` adds `wouldCreate`/`employerWouldCreate` without creating assignments
 or resolving employer links. `--source-review-id` narrows recovery to exact
 source reviews with one enrolment learner ID. It never sends notifications,

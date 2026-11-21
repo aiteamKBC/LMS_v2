@@ -13,6 +13,7 @@ from tempfile import TemporaryDirectory
 from threading import Barrier, local
 from types import SimpleNamespace
 from unittest import TestCase, mock
+import json
 
 from django.core.management import call_command
 from django.db import DatabaseError, connections, transaction
@@ -455,20 +456,13 @@ class IsolatedDeliveryTransactionTests(TestCase):
         del connections[self.alias]
         connections.databases.pop(self.alias, None)
 
-    def imported_source_discovery(self):
+    def imported_source_recovery(self):
         """Actual committed source rows in this test's verified temporary DB."""
-        from . import review_feedback_reconciliation as discovery
 
         db = connections[self.alias]
         with db.cursor() as cursor:
             cursor.execute('CREATE TABLE feedback_test_imports (id INTEGER PRIMARY KEY, learner_id INTEGER, '
                            'status TEXT, completed_date TEXT)')
-
-        def ids(after, limit):
-            with db.cursor() as cursor:
-                cursor.execute('SELECT DISTINCT learner_id FROM feedback_test_imports WHERE learner_id > %s '
-                               'ORDER BY learner_id LIMIT %s', [after, limit])
-                return [row[0] for row in cursor.fetchall()]
 
         def rows(profile_id, source_id=None):
             with db.cursor() as cursor:
@@ -477,55 +471,53 @@ class IsolatedDeliveryTransactionTests(TestCase):
                 return [source_row(id=row[0], learner_id=row[1], status=row[2], completed_date=row[3])
                         for row in cursor.fetchall() if source_id is None or source_id == row[0]]
 
-        self.stack.enter_context(mock.patch.object(discovery, 'connection', db))
-        self.stack.enter_context(mock.patch.object(discovery, 'source_profile_ids', side_effect=ids))
-        self.stack.enter_context(mock.patch.object(discovery.LearnerProfile.objects, 'filter',
-                                                   return_value=[SimpleNamespace(pk=17)]))
-        self.stack.enter_context(mock.patch.object(discovery, 'enrolment_for_review_profile',
-                                                   return_value=SimpleNamespace(pk=71)))
         reviews._source_rows.side_effect = rows
-        return discovery, db
 
-    def test_insert_update_late_date_and_bulk_reimport_are_discovered_without_a_page_read(self):
-        discovery, db = self.imported_source_discovery()
+        def recover():
+            output = StringIO()
+            call_command('sync_review_feedback', '--learner-id=71', stdout=output)
+            return json.loads(output.getvalue())
+
+        return recover, db
+
+    def test_scoped_command_recovers_insert_update_late_date_and_reimport_without_a_page_read(self):
+        recover, db = self.imported_source_recovery()
         with db.cursor() as cursor:
             cursor.execute('INSERT INTO feedback_test_imports VALUES (9001,17,%s,NULL)', ['Not Scheduled'])
-        self.assertEqual(discovery.reconcile_imported_reviews()['incomplete'], 1)
+        self.assertEqual(recover()['incomplete'], 1)
         with db.cursor() as cursor:
             cursor.execute('UPDATE feedback_test_imports SET status=%s', ['Completed'])
-        self.assertEqual(discovery.reconcile_imported_reviews()['undated'], 1)
+        self.assertEqual(recover()['undated'], 1)
         with db.cursor() as cursor:
             cursor.execute('UPDATE feedback_test_imports SET completed_date=%s', [COMPLETED.isoformat()])
             cursor.execute('INSERT INTO feedback_test_imports VALUES (9002,17,%s,%s)',
                            ['Completed', COMPLETED.isoformat()])
-        self.assertEqual(discovery.reconcile_imported_reviews()['created'], 2)
+        self.assertEqual(recover()['created'], 2)
         with db.cursor() as cursor:
             cursor.execute('UPDATE feedback_test_imports SET status=%s', ['Finished'])
-        self.assertEqual(discovery.reconcile_imported_reviews()['existing'], 2)
+        self.assertEqual(recover()['existing'], 2)
         self.assertEqual(self.deliveries.count(), 2)
 
     def test_import_rollback_never_assigns_and_committed_completed_insert_is_retried(self):
-        discovery, db = self.imported_source_discovery()
+        recover, db = self.imported_source_recovery()
         with self.assertRaises(ValueError):
             with transaction.atomic(using=self.alias):
                 with db.cursor() as cursor:
                     cursor.execute('INSERT INTO feedback_test_imports VALUES (9001,17,%s,%s)',
                                    ['Completed', COMPLETED.isoformat()])
-                with self.assertRaises(RuntimeError):
-                    discovery.reconcile_imported_reviews()
+                self.assertEqual(recover()['created'], 1)
                 raise ValueError('Synthetic import rollback')
-        self.assertEqual(discovery.reconcile_imported_reviews()['profiles'], 0)
+        self.assertEqual(recover()['created'], 0)
         self.assertEqual(self.deliveries.count(), 0)
         with transaction.atomic(using=self.alias):
             with db.cursor() as cursor:
                 cursor.execute('INSERT INTO feedback_test_imports VALUES (9001,17,%s,%s)',
                                ['Completed', COMPLETED.isoformat()])
         with mock.patch.object(reviews.FeedbackReviewDelivery.objects, 'get_or_create',
-                               side_effect=DatabaseError('Synthetic outage')), \
-                self.assertLogs('engagement_api.review_feedback_reconciliation', level='ERROR'):
-            self.assertEqual(discovery.reconcile_imported_reviews()['failedProfiles'], 1)
+                               side_effect=DatabaseError('Synthetic outage')), self.assertRaises(DatabaseError):
+            recover()
         self.assertEqual(self.deliveries.count(), 0)
-        self.assertEqual(discovery.reconcile_imported_reviews()['created'], 1)
+        self.assertEqual(recover()['created'], 1)
         self.assertEqual(self.deliveries.get().learner_id, '71')
 
     def test_retry_and_recompletion_preserve_one_delivery_and_original_template(self):
