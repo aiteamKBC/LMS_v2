@@ -12,7 +12,7 @@ ever share one.
 Worse, a column named ``learner_id`` already means two different things
 depending on the table:
 
-    holds the ENROLMENT id   evidence_files, learning_reflection_submissions,
+    holds the ENROLMENT id   learning_reflection_submissions,
                              calendar_connections
     holds the PROFILE id     learner_attendance_details, verified_teams_attendance
 
@@ -55,7 +55,6 @@ SCHEMA = "Learner"
 #:             bridge, so it inherits whatever the bridge matched.
 TARGETS = [
     ("learners", "bridge", None),
-    ("evidence_files", "direct", "learner_id"),
     ("learning_reflection_submissions", "direct", "learner_id"),
     ("calendar_connections", "direct", "learner_id"),
     ("learner_attendance_details", "profile", "learner_id"),

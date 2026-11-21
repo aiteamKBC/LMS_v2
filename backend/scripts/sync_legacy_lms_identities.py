@@ -1,13 +1,10 @@
-"""Preview/apply existing legacy aliases to canonical identities for all learners.
+"""Verify legacy LMS aliases against the canonical source-alias table.
 
-No Django startup, API calls, account-email edits, progress writes or hour changes.
-The schema migration and missing identity inserts commit in one transaction.
-Conflicts are reported by reason/IDs only; no emails or credentials are printed.
+This command is deliberately read-only. Historical ``learner_profile_id=NULL``
+rows remain valid evidence, but never authorize or identify a current learner.
 """
 import argparse
-from collections import Counter
 import hashlib
-import importlib
 import json
 import os
 from pathlib import Path
@@ -15,12 +12,6 @@ import sys
 
 import psycopg
 from psycopg.rows import dict_row
-from psycopg.types.json import Jsonb
-
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from learner_api.legacy_identity_aliases import plan_aliases
-
-MIGRATION = '0014_legacy_lms_identity_aliases'
 
 
 def digest(value):
@@ -42,124 +33,79 @@ def database_url():
 
 
 def read_state(cur):
+    source = cur.execute('''SELECT aptem_id,canonical_lms_id,lms_learner_id,
+        aptem_email,lms_email,is_primary,match_basis,first_seen,last_seen
+        FROM "Last_audit".learner_lms_aliases
+        ORDER BY aptem_id,lms_learner_id''').fetchall()
+    aliases = cur.execute('''SELECT aptem_id,canonical_lms_id,lms_learner_id,
+        aptem_email,lms_email,is_primary,match_basis,first_seen,last_seen,learner_profile_id
+        FROM "Learner".source_lms_learner_aliases
+        ORDER BY aptem_id,lms_learner_id''').fetchall()
+    linked = cur.execute('''SELECT alias.aptem_id,alias.lms_learner_id,
+        alias.learner_profile_id,learner.aptem_id AS learner_aptem_id
+        FROM "Learner".source_lms_learner_aliases alias
+        LEFT JOIN "Learner".learners learner ON learner.id=alias.learner_profile_id
+        WHERE alias.learner_profile_id IS NOT NULL
+        ORDER BY alias.aptem_id,alias.lms_learner_id''').fetchall()
+    return {'source': source, 'aliases': aliases, 'linked': linked}
+
+
+def verify(state):
+    source_by_key = {(row['aptem_id'], row['lms_learner_id']): row for row in state['source']}
+    aliases_by_key = {(row['aptem_id'], row['lms_learner_id']): row for row in state['aliases']}
+    missing = sorted(set(source_by_key) - set(aliases_by_key))
+    extra = sorted(set(aliases_by_key) - set(source_by_key))
+    compared_fields = (
+        'canonical_lms_id', 'aptem_email', 'lms_email', 'is_primary',
+        'match_basis', 'first_seen', 'last_seen',
+    )
+    mismatched = sorted(
+        key for key in set(source_by_key) & set(aliases_by_key)
+        if any(source_by_key[key].get(field) != aliases_by_key[key].get(field)
+               for field in compared_fields)
+    )
+    linked_mismatches = sorted(
+        (row['aptem_id'], row['lms_learner_id'], row['learner_profile_id'])
+        for row in state['linked']
+        if row['learner_aptem_id'] is None or row['learner_aptem_id'] != row['aptem_id']
+    )
+    historical = sum(row['learner_profile_id'] is None for row in state['aliases'])
     return {
-        'aliases': cur.execute('''SELECT * FROM "Last_audit".learner_lms_aliases
-            ORDER BY aptem_id,lms_learner_id''').fetchall(),
-        'learners': cur.execute('''SELECT l.id,l.aptem_id,l.enrolment_id,l.email,
-            e.id AS account_id,e."Email" AS account_email,e.aptem_id AS account_aptem_id
-            FROM "Learner".learners l
-            LEFT JOIN enrolment."Created_users" e ON e.id=l.enrolment_id ORDER BY l.id''').fetchall(),
-        'identities': cur.execute('SELECT * FROM "Learner".learner_external_identities ORDER BY id').fetchall(),
+        'source_records': len(state['source']),
+        'canonical_records': len(state['aliases']),
+        'historical_records': historical,
+        'linked_records': len(state['aliases']) - historical,
+        # Last_audit contains additional source observations that were not part
+        # of the reviewed 439-row canonical import. Report, but do not import,
+        # authorize, or classify those records as a canonical inconsistency.
+        'source_only_records': len(missing),
+        'canonical_orphan_records': len(extra),
+        'metadata_mismatch_records': len(mismatched),
+        'linked_aptem_mismatch_records': len(linked_mismatches),
+        'consistent': not (extra or mismatched or linked_mismatches),
     }
 
 
-def report(plan):
-    return {
-        'resolutions': dict(Counter(p['resolution'] for p in plan)),
-        'learners_receiving_aliases': len({p['learner_id'] for p in plan if p['resolution'] == 'insert'}),
-        'review_reasons': dict(Counter(p['reason'] for p in plan if p.get('reason'))),
-        'review_records': [{k: p[k] for k in ('aptem_id', 'source_learner_id', 'reason')}
-                           for p in plan if p.get('reason')],
-    }
-
-
-def apply_plan(cur, state, plan, fingerprint):
-    if not cur.execute('''SELECT 1 FROM django_migrations
-            WHERE app='learner_api' AND name='0013_declared_completion' ''').fetchone():
-        raise ValueError('Schema migration prerequisite has not been applied.')
-    # Retain the unique owner of each active source ID. Only the one-account-
-    # per-learner restriction is removed; the ownership index must be present.
-    index = cur.execute('''SELECT i.indisunique,i.indisvalid,pg_get_indexdef(i.indexrelid) AS definition
-        FROM pg_index i WHERE i.indexrelid=to_regclass(%s)''',
-        ['"Learner".learner_external_identities_source_uniq']).fetchone()
-    if (not index or not index['indisunique'] or not index['indisvalid']
-            or '(source_system, source_learner_id)' not in index['definition']
-            or '(deleted_at IS NULL)' not in index['definition']):
-        raise ValueError('Expected unique active source-ownership index is missing.')
-    migration = importlib.import_module('learner_api.migrations.' + MIGRATION)
-    for statement in migration.STATEMENTS:
-        cur.execute(statement)
-    changed_payloads = {}
-    for item in plan:
-        if item['resolution'] not in ('insert', 'add_source_email'):
-            continue
-        payload = dict(item['source_payload'])
-        payload['identity_import'] = {**payload.get('identity_import', {}),
-            'source_table': 'Last_audit.learner_lms_aliases', 'version': 1,
-            'preview_fingerprint': fingerprint}
-        # Serialize legacy timestamps as strings inside the lineage payload.
-        payload = json.loads(json.dumps(payload, default=str))
-        if item['resolution'] == 'add_source_email':
-            cur.execute('''UPDATE "Learner".learner_external_identities SET source_payload=%s
-                WHERE id=%s AND learner_id=%s AND deleted_at IS NULL''',
-                [Jsonb(payload), item['identity_id'], item['learner_id']])
-            if cur.rowcount != 1:
-                raise ValueError('Source email owner changed; rolling back.')
-            changed_payloads[item['identity_id']] = payload
-            continue
-        cur.execute('''INSERT INTO "Learner".learner_external_identities
-            (learner_id,source_system,source_learner_id,source_payload,
-             first_seen_at,last_seen_at)
-            VALUES (%s,'old_lms',%s,%s,now(),now())''',
-            [item['learner_id'], item['source_learner_id'], Jsonb(payload)])
-    if not cur.execute('SELECT 1 FROM django_migrations WHERE app=%s AND name=%s',
-                       ['learner_api', MIGRATION]).fetchone():
-        cur.execute('INSERT INTO django_migrations (app,name,applied) VALUES (%s,%s,now())',
-                    ['learner_api', MIGRATION])
-    after = read_state(cur)
-    # Only the reviewed source-email metadata may change on an existing row.
-    # Preserve original payload fields, tombstones, learner and enrolment links.
-    previous = {r['id']: {**r, **({'source_payload': changed_payloads[r['id']]}
-                    if r['id'] in changed_payloads else {})} for r in state['identities']}
-    retained = {r['id']: r for r in after['identities'] if r['id'] in previous}
-    if (digest(previous) != digest(retained) or state['learners'] != after['learners']
-            or state['aliases'] != after['aliases']):
-        raise ValueError('An existing record changed; rolling back.')
-    expected = sum(p['resolution'] == 'insert' for p in plan)
-    if len(after['identities']) != len(state['identities']) + expected:
-        raise ValueError('Inserted identity count differs; rolling back.')
-    remaining = plan_aliases(after)
-    if any(p['resolution'] in ('insert', 'add_source_email') for p in remaining):
-        raise ValueError('Identity coverage verification failed; rolling back.')
-    if report(remaining)['review_records'] != report(plan)['review_records']:
-        raise ValueError('Unresolved identity set changed; rolling back.')
-    return remaining
-
-
-def main():
+def parse_args(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--apply', action='store_true')
-    parser.add_argument('--expected-database')
-    parser.add_argument('--expected-fingerprint')
-    args = parser.parse_args()
-    if args.apply and not (args.expected_database and args.expected_fingerprint):
-        parser.error('Apply requires the database and fingerprint from a read-only preview.')
+    parser.add_argument('--apply', action='store_true', help=argparse.SUPPRESS)
+    args = parser.parse_args(argv)
+    if args.apply:
+        parser.error('Apply mode is retired; this verifier is read-only.')
+    return args
+
+
+def main(argv=None):
+    parse_args(argv)
     with psycopg.connect(database_url(), connect_timeout=10, row_factory=dict_row) as conn:
-        conn.read_only = not args.apply
+        conn.read_only = True
         with conn.cursor() as cur:
             cur.execute('SET LOCAL statement_timeout=20000')
-            cur.execute('SET LOCAL lock_timeout=5000')
             database = cur.execute('SELECT current_database() AS name').fetchone()['name']
-            if args.apply:
-                if database != args.expected_database:
-                    raise ValueError('Database differs from reviewed preview.')
-                cur.execute("SELECT pg_advisory_xact_lock(hashtext('legacy-lms-identity-aliases'))")
-                cur.execute('LOCK TABLE "Learner".learner_external_identities IN SHARE ROW EXCLUSIVE MODE')
-                # Hold source ownership stable until verification and commit.
-                cur.execute('SELECT aptem_id FROM "Last_audit".learner_lms_aliases FOR SHARE')
-                cur.execute('SELECT id FROM "Learner".learners FOR SHARE')
-                cur.execute('''SELECT id FROM enrolment."Created_users"
-                    WHERE id IN (SELECT enrolment_id FROM "Learner".learners) FOR SHARE''')
             state = read_state(cur)
-            plan = plan_aliases(state)
-            fingerprint = digest(state)
-            output = {'database': database, 'fingerprint': fingerprint, **report(plan)}
-            if args.apply:
-                if fingerprint != args.expected_fingerprint:
-                    raise ValueError('Data changed since preview; preview again before applying.')
-                remaining = apply_plan(cur, state, plan, fingerprint)
-                output.update(applied=True, verification='passed', remaining=report(remaining))
-    print(json.dumps(output, default=str))  # Only report success after commit.
+            output = {'database': database, 'fingerprint': digest(state), **verify(state)}
+    print(json.dumps(output, default=str))
+    return output
 
 
 if __name__ == '__main__':

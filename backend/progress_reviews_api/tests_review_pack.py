@@ -8,10 +8,12 @@ from .period import build_review_period
 from .review_pack import (
     NOT_AVAILABLE,
     _build_evidence_sections,
+    _classify_evidence,
     _normalize_training_plan_details,
     build_ksb_progress,
     build_review_pack,
     completed_component_ids,
+    evidence_pool_keys,
     ksb_parent_code,
     ksb_type_code,
     progress_counts_as_achieved,
@@ -20,7 +22,8 @@ from .review_pack import (
 EVIDENCE_COLUMNS = (
     "id", "original_filename", "content_type", "size_bytes", "status", "scan_result",
     "section_ref", "uploaded_at", "Training_plan_details", "component_ref",
-    "progress_entry_id", "blob_name",
+    "progress_entry_id", "blob_name", "plan_component_id", "progress_component_type",
+    "curriculum_component_type", "workplace_evidence_required",
 )
 
 
@@ -96,6 +99,58 @@ class NormalizeTrainingPlanDetailsTests(SimpleTestCase):
         self.assertEqual(_normalize_training_plan_details("[1, 2]"), {})
 
 
+class EvidenceClassificationTests(SimpleTestCase):
+    def test_only_assignment_component_semantics_classify_as_assignment(self):
+        self.assertEqual(_classify_evidence({
+            "progressEntryId": 55,
+            "progressComponentType": "assignment",
+        }), "assignment")
+
+    def test_link_identifiers_alone_do_not_classify_as_assignment(self):
+        for row in (
+            {"progressEntryId": 55},
+            {"componentRef": "component-1"},
+            {"planComponentId": 501},
+        ):
+            with self.subTest(row=row):
+                self.assertEqual(_classify_evidence(row), "learning_activity")
+
+    def test_non_assignment_component_types_are_learning_evidence(self):
+        for component_type in ("reading", "video", "podcast", "powerpoint", "live_session"):
+            with self.subTest(component_type=component_type):
+                self.assertEqual(_classify_evidence({
+                    "progressEntryId": 55,
+                    "progressComponentType": component_type,
+                }), "learning_activity")
+
+    def test_linked_progress_type_wins_over_stale_upload_metadata(self):
+        self.assertEqual(_classify_evidence({
+            "progressEntryId": 55,
+            "progressComponentType": "video",
+            "curriculumComponentType": "video",
+            "trainingPlanDetails": {"componentType": "assignment"},
+        }), "learning_activity")
+
+    def test_workplace_extra_activity_and_standalone_library_rules_are_preserved(self):
+        cases = (
+            {"sectionRef": "extra:synthetic"},
+            {"curriculumComponentType": "reading", "workplaceEvidenceRequired": True},
+            {"trainingPlanDetails": {"componentTitle": "Workplace project"}},
+            {},
+        )
+        for row in cases:
+            with self.subTest(row=row):
+                self.assertEqual(_classify_evidence(row), "workplace_activity")
+
+    def test_flat_pool_retains_non_assignment_learning_evidence(self):
+        pack = {
+            "evidence": [{"id": "assignment"}, {"id": "reading"}],
+            "assignments": [{"id": "assignment"}],
+            "workplace_activities": [],
+        }
+        self.assertEqual(evidence_pool_keys(pack), ("evidence",))
+
+
 class BuildEvidenceSectionsTests(SimpleTestCase):
     """Regression coverage for _build_evidence_sections against a real-shaped
     DB row, since the unit-level NormalizeTrainingPlanDetailsTests above only
@@ -112,7 +167,7 @@ class BuildEvidenceSectionsTests(SimpleTestCase):
         row = (
             "ev-1", "brief.pdf", "application/pdf", 1024, "approved", "clean",
             "comp-1", date(2026, 5, 1), '{"componentTitle": "Campaign brief", "ksbCodes": ["K1"]}',
-            "comp-1", 55, "a/b/brief.pdf",
+            "comp-1", 55, "a/b/brief.pdf", 501, "assignment", "assignment", False,
         )
         fake_connection = _FakeConnection(_FakeCursor(EVIDENCE_COLUMNS, [row]))
 
@@ -123,7 +178,7 @@ class BuildEvidenceSectionsTests(SimpleTestCase):
         self.assertEqual(len(evidence), 1)
         self.assertEqual(evidence[0]["evidence_summary"], "Campaign brief")
         self.assertEqual(evidence[0]["ksb_mappings"], ["K1"])
-        self.assertEqual(len(assignments), 1)  # linked via component_ref -> classified as an assignment
+        self.assertEqual(len(assignments), 1)
         self.assertEqual(workplace, [])
 
     @patch("learner_api.evidence_storage.azure_configured", return_value=False)
@@ -137,7 +192,7 @@ class BuildEvidenceSectionsTests(SimpleTestCase):
         row = (
             "ev-2", "photo.png", "image/png", 2048, "approved", "clean",
             "", date(2026, 5, 2), {"componentTitle": "Site visit"},
-            None, None, "a/b/photo.png",
+            None, None, "a/b/photo.png", None, None, None, None,
         )
         fake_connection = _FakeConnection(_FakeCursor(EVIDENCE_COLUMNS, [row]))
 
@@ -147,6 +202,33 @@ class BuildEvidenceSectionsTests(SimpleTestCase):
         self.assertEqual(evidence[0]["evidence_summary"], "Site visit")
         self.assertEqual(assignments, [])
         self.assertEqual(len(workplace), 1)  # no component/progress link -> workplace evidence
+
+    @patch("learner_api.evidence_storage.azure_configured", return_value=False)
+    @patch("learner_api.evidence._marking_status", return_value="")
+    @patch("learner_api.evidence.ensure_evidence_tables")
+    @patch("learner_api.evidence_ownership.profile_id_for_source", return_value=42)
+    def test_each_curriculum_component_type_keeps_its_semantic_classification(
+        self, mock_profile, mock_ensure, mock_marking, mock_azure_configured,
+    ):
+        period = build_review_period(date(2026, 6, 15), review_number=1)
+        component_types = ("assignment", "reading", "video", "podcast", "powerpoint", "live_session")
+        rows = [(
+            f"ev-{component_type}", f"{component_type}.pdf", "application/pdf", 100,
+            "approved", "clean", f"component-{component_type}", date(2026, 5, 3),
+            {"componentTitle": component_type.title(), "componentType": component_type},
+            f"component-{component_type}", index, f"a/b/{component_type}.pdf", 500 + index,
+            component_type, component_type, False,
+        ) for index, component_type in enumerate(component_types, start=1)]
+        fake_connection = _FakeConnection(_FakeCursor(EVIDENCE_COLUMNS, rows))
+
+        with patch("django.db.connections", {"enrolment": fake_connection}):
+            evidence, assignments, workplace = _build_evidence_sections(
+                "apprenticeship", 42, period, [],
+            )
+
+        self.assertEqual(len(evidence), 6)
+        self.assertEqual([item["evidence_summary"] for item in assignments], ["Assignment"])
+        self.assertEqual(workplace, [])
 
 
 class KsbCodeHelpersTests(SimpleTestCase):

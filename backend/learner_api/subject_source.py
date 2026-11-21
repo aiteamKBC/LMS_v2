@@ -194,13 +194,10 @@ def read_learner(cursor, aptem_id, email):
     if not email or not secret or not endpoint:
         logger.warning('learner_live_source stage=configuration result=failed aptem_id=%s endpoint_configured=%s api_key_configured=%s', aptem_id, bool(endpoint), bool(secret))
         return None
-    cursor.execute('''SELECT l.id,i.source_learner_id,
-        coalesce(nullif(i.source_payload->>'source_email',''),i.source_payload->>'learner_email'),
-        coalesce((i.source_payload#>>'{legacy_alias,is_primary}')::boolean,
-                 i.source_payload ? 'record_id') AS is_primary
+    cursor.execute('''SELECT l.id,i.lms_learner_id,i.lms_email,i.is_primary
         FROM "Learner".learners l
-        JOIN "Learner".learner_external_identities i
-          ON i.learner_id=l.id AND i.source_system='old_lms' AND i.deleted_at IS NULL
+        JOIN "Learner".source_lms_learner_aliases i
+          ON i.learner_profile_id=l.id
         WHERE l.aptem_id=%s AND lower(btrim(l.email))=%s
         UNION ALL
         SELECT l.learner_id,coalesce(a.lms_learner_id,l.learner_id)::text,

@@ -92,8 +92,7 @@ def catalogue_plan(definitions, export, removals, *, preserve_unmatched=False, p
 def course_source_identity(identities, memberships, learner_id):
     """Resolve an owned course's source account, retaining other verified aliases."""
     candidates = [identity for identity in identities
-                  if identity['learner_id'] == learner_id
-                  and identity['source_system'] == 'old_lms' and identity['deleted_at'] is None]
+                  if identity['learner_id'] == learner_id]
     bindings = {str(member.get('source_learner_id') or '').strip()
                 for member in memberships if member['learner_id'] == learner_id
                 and member.get('deleted_at') is None}
@@ -154,7 +153,7 @@ def read_state(cur, course_id, aptem_id, *, catalogue_only=False, verified_expor
             FROM "Learner".learner_progress_entries WHERE learner_id=ANY(%s)
             AND deleted_at IS NULL AND accepted=true GROUP BY learner_id ORDER BY learner_id''', [learner_ids]).fetchall()
     for key, table in [('progress', 'learner_progress_entries'), ('sources', 'learner_activity_sources'),
-                       ('segments', 'learner_activity_reporting_segments'), ('identities', 'learner_external_identities')]:
+                       ('segments', 'learner_activity_reporting_segments')]:
         condition, params = 'learner_id=ANY(%s)', [learner_ids]
         if progress_ids is not None and key in ('progress', 'segments'):
             condition += ' AND ' + ('id' if key == 'progress' else 'progress_id') + '=ANY(%s)'
@@ -163,6 +162,12 @@ def read_state(cur, course_id, aptem_id, *, catalogue_only=False, verified_expor
             condition += ' AND (canonical_progress_id=ANY(%s) OR (source_system=\'old_lms\' AND source_activity_id=ANY(%s)))'
             params.extend([progress_ids, [d['source_activity_id'] for d in state['definitions']]])
         state[key] = cur.execute(f'SELECT * FROM "Learner".{table} WHERE {condition} ORDER BY id', params).fetchall()
+    state['identities'] = cur.execute('''SELECT lms_learner_id AS id,
+        learner_profile_id AS learner_id,aptem_id,lms_learner_id AS source_learner_id,
+        lms_email,is_primary,canonical_lms_id,first_seen,last_seen
+        FROM "Learner".source_lms_learner_aliases
+        WHERE learner_profile_id=ANY(%s) ORDER BY learner_profile_id,lms_learner_id''',
+        [learner_ids]).fetchall()
     condition, params = 'canonical_learner_id=ANY(%s)', [learner_ids]
     if progress_ids is not None:
         condition += ' AND (progress_id=ANY(%s) OR source_ref LIKE %s)'
@@ -182,7 +187,7 @@ def read_state(cur, course_id, aptem_id, *, catalogue_only=False, verified_expor
     state['snapshot'] = cur.execute('''SELECT p.*,s.email AS source_email
         FROM "MBA".student_progress p JOIN "MBA".students s ON s.user_id=p.user_id
         WHERE p.user_id=%s AND p.course_id=%s''', [int(identity['source_learner_id']), course_id]).fetchone()
-    email = metadata(identity['source_payload']).get('source_email') or metadata(identity['source_payload']).get('learner_email')
+    email = identity['lms_email']
     if ((not state['snapshot'] and not catalogue_only) or not email or
             (state['snapshot'] and state['snapshot']['source_email'].strip().casefold() != email.strip().casefold())):
         raise ValueError('Retained source identity does not match.')

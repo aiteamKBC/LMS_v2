@@ -74,8 +74,10 @@ class EvidenceUploadDeleteTests(SimpleTestCase):
     def setUp(self):
         self.factory = RequestFactory()
 
-    def test_upload_saves_the_server_resolved_progress_lineage(self):
+    def test_upload_uses_only_canonical_owner_while_legacy_column_can_remain(self):
         cursor = MagicMock()
+        audit_row = tuple(range(len(evidence.EVIDENCE_AUDIT_COLUMNS)))
+        cursor.fetchone.return_value = audit_row
         connection = self.enterContext(patch.object(evidence, "_conn"))
         connection.return_value.cursor.return_value.__enter__.return_value = cursor
         self.enterContext(patch.object(evidence, "azure_configured", return_value=True))
@@ -84,6 +86,7 @@ class EvidenceUploadDeleteTests(SimpleTestCase):
         self.enterContext(patch.object(evidence, "move_blob"))
         self.enterContext(patch.object(evidence, "blob_url", return_value="https://files.example.test/evidence"))
         self.enterContext(patch.object(evidence, "_record_approved_evidence"))
+        record_evidence_file = self.enterContext(patch.object(evidence, "_record_evidence_file"))
         self.enterContext(patch.object(
             evidence,
             "_evidence_lineage",
@@ -102,9 +105,10 @@ class EvidenceUploadDeleteTests(SimpleTestCase):
         self.assertEqual(response.status_code, 201)
         insert_call = next(call for call in cursor.execute.call_args_list if "insert into" in call.args[0].lower())
         self.assertIn("learner_profile_id", insert_call.args[0])
-        self.assertIn("created_user_id", insert_call.args[0])
-        self.assertEqual(insert_call.args[1][2:5], [248, 56, "COMP-1"])
+        self.assertNotIn("created_user_id", insert_call.args[0])
+        self.assertEqual(insert_call.args[1][2:4], [248, "COMP-1"])
         self.assertEqual(insert_call.args[1][-3:], [77, "COMP-1", 902])
+        record_evidence_file.assert_called_once_with(audit_row)
 
     def test_delete_of_another_learners_file_is_not_found(self):
         cursor = MagicMock()
@@ -133,7 +137,9 @@ class EvidenceUploadDeleteTests(SimpleTestCase):
 
     def test_owner_can_delete_an_unsubmitted_file_with_scoped_queries(self):
         cursor = MagicMock()
-        cursor.fetchone.return_value = ("commercial/56/COMP-1/file.pdf", "approved", "COMP-1", None, "file.pdf")
+        lookup_row = ("commercial/56/COMP-1/file.pdf", "approved", "COMP-1", None, "file.pdf")
+        audit_row = tuple(range(len(evidence.EVIDENCE_AUDIT_COLUMNS)))
+        cursor.fetchone.side_effect = [lookup_row, audit_row]
         connection = self.enterContext(patch.object(evidence, "_conn"))
         connection.return_value.cursor.return_value.__enter__.return_value = cursor
         self.enterContext(patch.object(evidence, "ensure_evidence_write_tables"))
@@ -141,7 +147,7 @@ class EvidenceUploadDeleteTests(SimpleTestCase):
         self.enterContext(patch.object(evidence, "_is_submitted_for_marking", return_value=False))
         self.enterContext(patch.object(evidence, "_evidence_submissions", return_value=[]))
         self.enterContext(patch.object(evidence, "azure_configured", return_value=False))
-        self.enterContext(patch.object(evidence, "_record_evidence_file"))
+        record_evidence_file = self.enterContext(patch.object(evidence, "_record_evidence_file"))
         request = self.factory.delete("/evidence/file-id/")
 
         response = inspect.unwrap(evidence.delete_evidence)(
@@ -158,6 +164,7 @@ class EvidenceUploadDeleteTests(SimpleTestCase):
             and "evidence_files" in call.args[0]
         )
         self.assertEqual(delete_call.args[1], ["file-id", "commercial", 248])
+        record_evidence_file.assert_called_once_with(audit_row, deleted=True)
 
 
 class SubmittedForMarkingTests(SimpleTestCase):

@@ -13,7 +13,7 @@ REQUIRED_COLUMNS = frozenset({
     "id", "learner_kind", "section_ref", "blob_name", "original_filename",
     "content_type", "size_bytes", "status", "scan_result", "uploaded_by",
     "uploaded_at", "reviewed_at", "Training_plan_details", "progress_entry_id",
-    "learner_profile_id", "created_user_id", "plan_component_id", "component_ref",
+    "learner_profile_id", "plan_component_id", "component_ref",
 })
 
 

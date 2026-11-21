@@ -226,7 +226,7 @@ class PostgreSQLRewardsTests(unittest.TestCase):
         self.assertEqual(VoucherClaim.objects.count(),1);self.assertEqual(points_summary("501")["balance"],0)
 
     def test_bonus_once_only_and_approved_evidence_owner(self):
-        evidence=str(uuid.uuid4());sql('INSERT INTO "Learner".evidence_files(id,learner_id,status) VALUES(%s,\'501\',\'approved\')',[evidence])
+        evidence=str(uuid.uuid4());sql('INSERT INTO "Learner".evidence_files(id,learner_profile_id,status) VALUES(%s,991,\'approved\')',[evidence])
         kwargs=dict(learner_id="501",learner_name="Synthetic",module_id=r.PILOT_MODULE,opportunity="inclusiveness",
                     evidence_reference=evidence,completion_date=self.now.date(),staff_id="staff:1",learner_kind="apprenticeship")
         first=r.verify_bonus(**kwargs,verification_id="verify:1")
@@ -354,7 +354,7 @@ class PostgreSQLRewardsTests(unittest.TestCase):
 
     def test_verified_bonus_reused_id_must_not_change_evidence_or_date(self):
         evidence=str(uuid.uuid4())
-        sql('INSERT INTO "Learner".evidence_files(id,learner_id,status) VALUES(%s,\'501\',\'approved\')',[evidence])
+        sql('INSERT INTO "Learner".evidence_files(id,learner_profile_id,status) VALUES(%s,991,\'approved\')',[evidence])
         kwargs=dict(learner_id="501",learner_name="Synthetic",module_id=r.PILOT_MODULE,
           opportunity="career-planner",evidence_reference=evidence,completion_date=self.now.date(),
           staff_id="staff:1",learner_kind="apprenticeship",verification_id="strict-id")
@@ -372,12 +372,12 @@ class PostgreSQLRewardsTests(unittest.TestCase):
         grant=self.credit(100)
         sql('INSERT INTO "Engagement".shared_reward_award_links VALUES(%s,%s,%s)',[grant.pk,r.PILOT_MODULE,"synthetic-credit"])
         evidence=str(uuid.uuid4())
-        sql('INSERT INTO "Learner".evidence_files(id,learner_id,status) VALUES(%s,\'502\',\'approved\')',[evidence])
+        sql('INSERT INTO "Learner".evidence_files(id,learner_profile_id,status) VALUES(%s,992,\'approved\')',[evidence])
         kwargs=dict(learner_id="502",learner_name="Synthetic",module_id=r.PILOT_MODULE,
           opportunity="semester-winner",evidence_reference=evidence,completion_date=semester,
           staff_id="staff:1",learner_kind="apprenticeship",verification_id="winner",confirmed_winner=True)
         with self.assertRaisesRegex(RewardError,"winner_must_top_module_leaderboard"):r.verify_bonus(**kwargs)
-        sql('UPDATE "Learner".evidence_files SET learner_id=\'501\' WHERE id=%s',[evidence])
+        sql('UPDATE "Learner".evidence_files SET learner_profile_id=991 WHERE id=%s',[evidence])
         self.assertEqual(r.verify_bonus(**{**kwargs,"learner_id":"501"})["points"],1000)
         self.assertTrue(r.verify_bonus(**{**kwargs,"learner_id":"501"})["duplicate"])
 

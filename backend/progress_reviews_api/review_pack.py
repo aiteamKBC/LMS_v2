@@ -91,6 +91,12 @@ def evidence_pool_keys(pack: dict) -> tuple:
     anything — every evidence row."""
     if "slide_evidence" in pack:
         return ("slide_evidence",)
+    # A linked reading, video, podcast, PowerPoint or live session is learning
+    # evidence, but it is neither an assignment nor a workplace activity. If
+    # one is present, use the flat pool so future decks do not silently drop it.
+    classified_count = len(pack.get("assignments") or []) + len(pack.get("workplace_activities") or [])
+    if len(pack.get("evidence") or []) > classified_count:
+        return ("evidence",)
     if pack.get("assignments") or pack.get("workplace_activities"):
         return ("assignments", "workplace_activities")
     return ("evidence",)
@@ -496,16 +502,39 @@ def _normalize_training_plan_details(value) -> dict:
 
 
 def _classify_evidence(row: dict) -> str:
-    """assignment vs workplace_activity, from what is actually on the row —
-    a curriculum link (component_ref/progress_entry_id) means the evidence was
-    uploaded against a set assignment; anything else is freeform workplace
-    evidence the learner or coach attached without a curriculum reference."""
+    """Classify from activity semantics, never from link existence alone.
+
+    ``learning_activity`` is intentionally internal: those rows remain in the
+    flat ``evidence`` response but do not claim to be assignments or workplace
+    activity. Standalone library uploads retain the historical workplace
+    treatment, as do explicit Extra Activity and workplace/project evidence.
+    """
     details = row.get("trainingPlanDetails") or {}
     text = " ".join(str(v) for v in details.values() if isinstance(v, str)).lower()
-    if "workplace" in text or "project" in text:
+    # The linked Progress Entry is authoritative. Curriculum metadata and the
+    # historical upload payload are fallbacks for standalone/older rows only.
+    component_type = next((
+        _clean(value).lower().replace("-", "_").replace(" ", "_")
+        for value in (
+            row.get("progressComponentType"),
+            row.get("curriculumComponentType"),
+            details.get("componentType"),
+        )
+        if _clean(value)
+    ), "")
+    section_ref = _clean(row.get("sectionRef") or row.get("section_ref")).lower()
+    if (
+        section_ref.startswith("extra:")
+        or component_type == "extra_activity"
+        or row.get("workplaceEvidenceRequired") is True
+        or "workplace" in text
+        or "project" in text
+    ):
         return "workplace_activity"
-    if row.get("componentRef") or row.get("progressEntryId"):
+    if component_type == "assignment":
         return "assignment"
+    if component_type or row.get("componentRef") or row.get("progressEntryId") or row.get("planComponentId"):
+        return "learning_activity"
     return "workplace_activity"
 
 
@@ -523,12 +552,21 @@ def _build_evidence_sections(kind, learner_id, period: ReviewPeriod, warnings: l
                 rows = []
             else:
                 cur.execute(
-                    'select id, original_filename, content_type, size_bytes, status, '
-                    'scan_result, section_ref, uploaded_at, "Training_plan_details", '
-                    'component_ref, progress_entry_id, blob_name '
-                    'from "Learner"."evidence_files" '
-                    'where learner_kind = %s and learner_profile_id = %s '
-                    'order by uploaded_at desc',
+                    'select evidence.id, evidence.original_filename, evidence.content_type, '
+                    'evidence.size_bytes, evidence.status, evidence.scan_result, '
+                    'evidence.section_ref, evidence.uploaded_at, evidence."Training_plan_details", '
+                    'evidence.component_ref, evidence.progress_entry_id, evidence.blob_name, '
+                    'evidence.plan_component_id, progress.component_type as progress_component_type, '
+                    'component.type as curriculum_component_type, '
+                    'component.workplace_evidence_required '
+                    'from "Learner"."evidence_files" evidence '
+                    'left join "Learner"."learner_progress_entries" progress '
+                    '  on progress.id = evidence.progress_entry_id '
+                    ' and progress.learner_id = evidence.learner_profile_id '
+                    ' and progress.deleted_at is null '
+                    'left join curriculum.components component on component.id = evidence.section_ref '
+                    'where evidence.learner_kind = %s and evidence.learner_profile_id = %s '
+                    'order by evidence.uploaded_at desc',
                     [kind, learner_profile_id],
                 )
                 columns = [c[0] for c in cur.description]
@@ -581,7 +619,17 @@ def _build_evidence_sections(kind, learner_id, period: ReviewPeriod, warnings: l
             "ai_classification_summary": NOT_AVAILABLE,
             "ksb_mappings": ksb_codes or [],
             "evidence_strength": "strong" if marking == "accepted" else ("pending" if row.get("status") == "pending" else "unverified"),
-            "_kind": _classify_evidence({**row, "trainingPlanDetails": details, "componentRef": row.get("component_ref"), "progressEntryId": row.get("progress_entry_id")}),
+            "_kind": _classify_evidence({
+                **row,
+                "trainingPlanDetails": details,
+                "sectionRef": row.get("section_ref"),
+                "componentRef": row.get("component_ref"),
+                "progressEntryId": row.get("progress_entry_id"),
+                "planComponentId": row.get("plan_component_id"),
+                "progressComponentType": row.get("progress_component_type"),
+                "curriculumComponentType": row.get("curriculum_component_type"),
+                "workplaceEvidenceRequired": row.get("workplace_evidence_required"),
+            }),
         }
         evidence_out.append(item)
 
