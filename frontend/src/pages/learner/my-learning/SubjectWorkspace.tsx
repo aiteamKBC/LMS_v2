@@ -116,7 +116,8 @@ export function SubjectCertificateAction({
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
   const [cachedHref, setCachedHref] = useState('');
-  const ready = !!kind && !!learnerId && certificateEligible(subject, template);
+  const issued = template?.issuedModuleRefs?.includes(subject.id) ?? false;
+  const ready = !!kind && !!learnerId && (issued || certificateEligible(subject, template));
   const cacheKey = ready && template && kind && learnerId
     ? `learner-certificate:${kind}:${learnerId}:${subject.id}:v${template.version}`
     : '';
@@ -183,7 +184,7 @@ export function SubjectCertificateAction({
   return <div className={styles.certificateAction}>
     <button type="button" onClick={issue} disabled={busy} className={styles.certificateButton}>
       {busy ? <Loader2 size={14} className="animate-spin" aria-hidden="true" /> : <Award size={14} aria-hidden="true" />}
-      {busy ? 'Issuing certificate' : cachedHref ? 'View certificate' : 'Get certificate'}
+      {busy ? 'Issuing certificate' : cachedHref || issued ? 'View certificate' : 'Get certificate'}
     </button>
     {message && <p className={styles.certificateError}>{message}</p>}
   </div>;

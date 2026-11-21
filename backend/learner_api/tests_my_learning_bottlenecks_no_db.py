@@ -173,14 +173,22 @@ class BottleneckReadParityTests(SimpleTestCase):
                   'components': [{'componentTitle': 'Historical'}]}]}
         plan = [{'moduleId': 'M1', 'moduleTitle': 'Native', 'weeks': [
             {'weekId': 'W1', 'components': [{'componentId': str(i)} for i in range(1000)]}]}, legacy]
+        def required_hours(components):
+            for component in components:
+                component['expectedOtjh'] = 0.5
+            return components, 0.5
         with patch.object(weekly, 'get_training_plan', return_value=plan), \
              patch.object(weekly, 'flatten_training_plan', wraps=flatten_training_plan) as flatten, \
              patch('learner_api.learner_detail._resolve_from_master', side_effect=lambda m,w,c,**kw: (m,w,c)), \
+             patch('learner_api.learner_detail._annotate_otjh', side_effect=required_hours) as annotate, \
              patch('learner_api.learner_detail._append_week_quizzes', side_effect=lambda w,c,**kw: (w,c)):
             result = weekly.build_learning_content_summary(source, 7, assigned_modules=[{'moduleId': 'M1'}],
                 identities_only=True, preserve_legacy=True, strict=True, resolved_metadata={}, progress=([],[],[]))
         flatten.assert_called_once_with([legacy])
         self.assertEqual(result['components'][0]['component'], 'Historical')
+        self.assertEqual(result['components'][0]['expectedOtjh'], 0.5)
+        self.assertEqual([c['component'] for c in annotate.call_args.args[0]], ['Historical'])
+        annotate.assert_called_once()
 
     def test_native_read_supplies_separate_text_schedule_facts_without_extra_select(self):
         from . import learner_detail

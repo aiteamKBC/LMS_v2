@@ -7,7 +7,7 @@ function bindingRevision(instanceId: string, binding: MigratedSummaryBinding) {
     binding.generatedAt, binding.generationError?.requestId]);
 }
 
-export function MigratedSummaryActions({ instanceId, binding, editable, showActions = editable, teamsAvailable, busy, unsaved,
+export function MigratedSummaryActions({ instanceId, binding, editable, showActions = editable, teamsAvailable, busy,
   onResult, onBusyChange, onGenerationBusyChange, onApplySuggestion }: {
   instanceId: string;
   binding: MigratedSummaryBinding;
@@ -15,7 +15,6 @@ export function MigratedSummaryActions({ instanceId, binding, editable, showActi
   showActions?: boolean;
   teamsAvailable: boolean;
   busy: boolean;
-  unsaved: boolean;
   onResult: (result: CoachMeetingArtifactsResponse) => void;
   onBusyChange: (busy: boolean) => void;
   onGenerationBusyChange: (busy: boolean) => void;
@@ -37,7 +36,7 @@ export function MigratedSummaryActions({ instanceId, binding, editable, showActi
   const failureMessage = (value?: MigratedSummaryBinding['generationError']) => value
     ? `${value.message} Your saved answer is unchanged. Reference: ${value.requestId}`
     : 'The transcript was processed, but the AI summary could not be generated. You can enter the answer manually.';
-  const disabled = !editable || busy || unsaved || !!action;
+  const disabled = !editable || busy || !!action;
   const generate = async (file?: File) => {
     if (!editable || disabled || running.current || (!file && !teamsAvailable)) return;
     setError('');
@@ -120,7 +119,6 @@ export function MigratedSummaryActions({ instanceId, binding, editable, showActi
       </div>
       {!editable && <p id={actionHelpId} className="text-xs text-foreground-600">Available to the assigned Coach only.</p>}
       {editable && !teamsAvailable && <p className="text-xs text-foreground-600">No synced Teams meeting is associated. You can upload a transcript instead.</p>}
-      {editable && unsaved && <p className="text-xs text-foreground-600">Save your draft before generating a summary so your edits are preserved.</p>}
     </>}
     {binding.suggestionSource && <p className="text-xs text-primary-800">Latest AI summary generated from {binding.suggestionSource === 'teams' ? 'Teams transcript' : 'uploaded transcript'}.</p>}
     {binding.provisional && <p role="status" className="text-xs text-amber-800">Provisional AI summary: the saved Teams transcript may be partial. Review and edit the answer before saving.</p>}
