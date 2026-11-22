@@ -8714,7 +8714,13 @@ function ModuleCatalogueCard({
                   Active
                 </span>}
                 <span className={catalogueStyles.learnerBadge}>
-                  <ModuleLearnerCount moduleId={moduleLearnerIdentifier(module)} moduleName={module.title} onOpen={onLearners} refreshKey={module.sourceModule} />
+                  <ModuleLearnerCount
+                    moduleId={moduleLearnerIdentifier(module)}
+                    moduleName={module.title}
+                    onOpen={onLearners}
+                    refreshKey={module.sourceModule}
+                    enabled={module.isFreeCourse || Boolean(module.deliveryUsages?.length)}
+                  />
                 </span>
                 {!hasContent && (
                   <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-amber-50 px-2 py-0.5 text-[9px] font-bold uppercase tracking-wide text-amber-700 ring-1 ring-amber-100">
