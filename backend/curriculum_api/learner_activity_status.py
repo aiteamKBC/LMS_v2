@@ -21,7 +21,7 @@ from learner_api.canonical_learning import allocations, counts_as_completed, inp
 from learner_api.current_learning import source_payload_metadata
 from learner_api.active_users import _manual_claimed_seconds, _selected_timer_seconds
 from learner_api.retake_timing import native_choices
-from learner_api.quiz_placement import read_labelled_quiz_records, read_placements as read_quiz_placements
+from learner_api.quiz_placement import read_placements as read_quiz_placements, read_unplaced_quiz_records
 from . import schema_gate
 from . import learner_activity_attendance as attendance
 from .module_progress_metrics import completion_records, apply_ksb_metrics
@@ -281,14 +281,14 @@ def enrich(payload, account):
         else:
             earlier_rows[learner].append(record)
     add_quiz_completion(plan, canonical_records, payload['identifier'], completion_by_component)
-    # Older saves may have the original module/week labels but no module id.
+    # Recover older saves using verified catalogue or learner plan placement.
     # Add only to completion evidence. The assignment roster, saved records,
     # Activity Log allocations and correction snapshots keep their own scope.
     assigned_quizzes = {(str(row['learnerId']), row['componentId']) for row in plan
                         if str(row.get('componentType') or '').lower() == 'quiz'}
-    labelled_quizzes = read_labelled_quiz_records(
+    unplaced_quizzes = read_unplaced_quiz_records(
         payload['identifier'], [int(learner) for learner, _ in assigned_quizzes])
-    for record in completion_records(labelled_quizzes, owners, query, table):
+    for record in completion_records(unplaced_quizzes, owners, query, table):
         key = (str(record['learner_id']), record['matched_quiz_component'])
         if key in assigned_quizzes:
             completion_by_component[key].append(record)

@@ -567,7 +567,7 @@ class ActivityStatusTests(SimpleTestCase):
             {**passed, 'id': 3, 'matched_quiz_component': 'quiz-p2'},
         ]
         with patch.object(status, 'load_records', return_value=[]), \
-             patch.object(status, 'read_labelled_quiz_records', return_value=labelled) as resolve, \
+             patch.object(status, 'read_unplaced_quiz_records', return_value=labelled) as resolve, \
              patch.object(status, 'query', return_value=[]):
             status.enrich(payload, None)
 
