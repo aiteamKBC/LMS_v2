@@ -1097,7 +1097,7 @@ def _create_progress_entry(**fields):
     return LearnerProgressEntry.objects.create(**fields)
 
 
-def save_progress_record(learner, record, activity=None, *, monthly_assignment=False):
+def save_progress_record(learner, record, activity=None, *, monthly_assignment=False, quiz_placement=None):
     """Store progress, quiz detail, KSB links, and feed presentation atomically."""
     if learner is None:
         return None
@@ -1116,13 +1116,16 @@ def save_progress_record(learner, record, activity=None, *, monthly_assignment=F
     #
     # Activity that is genuinely not Component-based (a standalone quiz, for
     # example) carries no componentId and is unaffected.
-    component_id = _s(record.get("componentId"))
+    quiz_placement = quiz_placement or {}
+    component_id = _s(record.get("componentId") or quiz_placement.get("componentId"))
     if component_id:
         state, deleted_level = component_reference_state(component_id)
         if state == "unknown":
             raise OrphanComponentReferenceError(component_id)
         if state == "deleted":
             raise DeletedComponentReferenceError(component_id, deleted_level)
+    # Quiz placement is verified by the submit endpoint. Keep its existing
+    # reflection KSB selection and time basis when adding the curriculum refs.
     component_context = _component_learning_context(record.get("componentId"))
     ksb_mappings = component_context.get("ksbMappings") or record.get("ksbMappings") or []
     if ksb_mappings:
@@ -1194,11 +1197,11 @@ def save_progress_record(learner, record, activity=None, *, monthly_assignment=F
             cohort_title=_s(record.get("cohort") or component_context.get("cohort")),
             group_ref=_s(record.get("groupId") or component_context.get("groupId")) or None,
             group_title=_s(record.get("group") or component_context.get("group")),
-            module_ref=_s(record.get("moduleId") or component_context.get("moduleId")) or None,
+            module_ref=_s(record.get("moduleId") or quiz_placement.get("moduleId") or component_context.get("moduleId")) or None,
             module_title=_s(record.get("moduleTitle") or record.get("module") or component_context.get("moduleTitle") or activity.get("module")),
-            week_ref=_s(record.get("weekId") or component_context.get("weekId")) or None,
+            week_ref=_s(record.get("weekId") or quiz_placement.get("weekId") or component_context.get("weekId")) or None,
             week_title=_s(record.get("weekTitle") or record.get("week") or component_context.get("weekTitle") or activity.get("week")),
-            component_ref=_s(record.get("componentId")) or None,
+            component_ref=component_id or None,
             component_title=_s(record.get("componentTitle") or component_context.get("componentTitle") or activity.get("title")),
             component_type=_s(record.get("componentType") or component_context.get("componentType") or activity.get("componentType")),
             expected_otjh=_decimal(record.get("expectedOtjh") or component_context.get("expectedOtjh")),

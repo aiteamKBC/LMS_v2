@@ -34,6 +34,7 @@ from .identity import learner_profile_for_source
 
 from .active_users import ComponentReferenceError, save_progress_record
 from .models import CommercialUser, EnrolmentUser
+from .quiz_placement import submission_placement
 from .time_tracking import TrackingSessionError, tracking_session_already_used, verify_tracking_session
 from .working_rules import (
     DeclaredCompletionError,
@@ -654,7 +655,11 @@ def submit_quiz_attempt(request, quiz_id):
             "at": submitted_at,
         }
         try:
-            save_progress_record(active, attempt, activity)
+            placement = submission_placement(source, quiz["id"], module=module_title, week=week_title)
+            if placement:
+                save_progress_record(active, attempt, activity, quiz_placement=placement)
+            else:
+                save_progress_record(active, attempt, activity)
         except ComponentReferenceError as exc:
             return _error(str(exc), 400)
         except ActivityTimeConflict as exc:

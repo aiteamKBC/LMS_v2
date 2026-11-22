@@ -517,6 +517,67 @@ class ActivityStatusTests(SimpleTestCase):
         self.assertEqual(payload['learnerActivityPlan'][0]['displayStatus'], 'not_started')
         self.assertEqual(payload['activityLogProgress']['completedActivities'], 0)
 
+    def test_enrichment_recovers_only_passed_quizzes_with_a_verified_module_slot(self):
+        plan = [{'learnerId': 1, 'componentId': ident, 'componentType': 'quiz'}
+                for ident in ('unique', 'ambiguous-a', 'ambiguous-b', 'failed', 'wrong-week', 'manual')]
+        plan.append({'learnerId': 2, 'componentId': 'unique', 'componentType': 'quiz'})
+        payload = {'identifier': 'MOD-1', 'learnerActivityPlan': plan,
+                   'otjhAchievement': {'learners': [{'learnerId': 1, 'plannedOtjh': 5}]}}
+        passed = {'kind': 'quiz', 'passed': True, 'learner_id': 1, 'module_ref': 'MOD-1',
+                  'submitted_at': '2026-10-01T12:00:00Z', 'accepted': True, 'actual_seconds': 3600}
+        rows = [
+            {**passed, 'id': 1, 'quiz_ref': '7'},
+            {**passed, 'id': 2, 'quiz_ref': '8'},
+            {**passed, 'id': 3, 'quiz_ref': '9', 'passed': False},
+            {**passed, 'id': 4, 'quiz_ref': '10', 'week_ref': 'old-week'},
+            {**passed, 'id': 5, 'quiz_ref': '11'},
+            {**passed, 'id': 6, 'quiz_ref': '7', 'learner_id': 2, 'module_ref': None},
+        ]
+        slots = [{'quizRef': ref, 'componentId': ident, 'weekId': 'week'}
+                 for ref, ident in zip(('7', '8', '8', '9', '10', '11'), (row['componentId'] for row in plan))]
+
+        def read(sql, params=()):
+            if 'learner_activity_display_overrides' in sql:
+                return [{'learner_id': 1, 'component_id': 'manual', 'display_status': 'not_started'}]
+            return []
+
+        with patch.object(status, 'load_records', return_value=rows), \
+             patch.object(status, 'read_quiz_placements', return_value=slots), \
+             patch.object(status, 'query', side_effect=read):
+            status.enrich(payload, None)
+
+        self.assertEqual([row['displayStatus'] for row in plan], ['completed'] + ['not_started'] * 6)
+        self.assertEqual(plan[5]['calculatedStatus'], 'completed')
+        self.assertEqual(payload['activityLogProgress']['completedActivities'], 1)
+        self.assertEqual(payload['activityLogOtjh']['achievedTotal'], 0)
+        self.assertNotIn('component_ref', rows[0])
+
+    def test_enrichment_applies_labelled_quiz_evidence_only_to_assigned_quiz(self):
+        plan = [
+            {'learnerId': 1, 'componentId': 'quiz-p1', 'componentType': 'quiz'},
+            {'learnerId': 1, 'componentId': 'reading', 'componentType': 'reading'},
+            {'learnerId': 2, 'componentId': 'quiz-p2', 'componentType': 'quiz'},
+        ]
+        payload = {'identifier': 'MOD-1', 'learnerActivityPlan': plan}
+        passed = {'kind': 'quiz', 'passed': True, 'accepted': True, 'learner_id': 1,
+                  'quiz_ref': '77', 'module_ref': None, 'actual_seconds': 3600}
+        labelled = [
+            {**passed, 'id': 1, 'matched_quiz_component': 'quiz-p1'},
+            {**passed, 'id': 2, 'matched_quiz_component': 'reading'},
+            {**passed, 'id': 3, 'matched_quiz_component': 'quiz-p2'},
+        ]
+        with patch.object(status, 'load_records', return_value=[]), \
+             patch.object(status, 'read_labelled_quiz_records', return_value=labelled) as resolve, \
+             patch.object(status, 'query', return_value=[]):
+            status.enrich(payload, None)
+
+        self.assertEqual(resolve.call_args.args[0], 'MOD-1')
+        self.assertCountEqual(resolve.call_args.args[1], [1, 2])
+        self.assertEqual([row['displayStatus'] for row in plan], ['completed', 'not_started', 'not_started'])
+        self.assertEqual(payload['activityLogProgress']['completedActivities'], 1)
+        self.assertEqual(plan[0]['logState']['acceptedOtjh'], 0)
+        self.assertEqual(plan[0]['logState']['snapshotHash'], status.digest([]))
+
     def test_module_read_ignores_deleted_and_feed_rows_and_resolves_blank_corrected_reference(self):
         self.query('''INSERT INTO learner_progress_entries
             (learner_id,component_ref,curriculum_component_ref,kind,accepted,actual_seconds)

@@ -21,6 +21,7 @@ from learner_api.canonical_learning import allocations, counts_as_completed, inp
 from learner_api.current_learning import source_payload_metadata
 from learner_api.active_users import _manual_claimed_seconds, _selected_timer_seconds
 from learner_api.retake_timing import native_choices
+from learner_api.quiz_placement import read_labelled_quiz_records, read_placements as read_quiz_placements
 from . import schema_gate
 from . import learner_activity_attendance as attendance
 from .module_progress_metrics import completion_records, apply_ksb_metrics
@@ -219,6 +220,26 @@ def earlier_progress(rows, linked_keys, *, hour_rows=None):
     }
 
 
+def add_quiz_completion(plan, records, module_id, completion):
+    """Recover passed attempts with a unique authored slot in their saved module."""
+    attempts = [row for row in records if row.get('kind') == 'quiz' and row.get('passed') is True
+                and row.get('submitted_at') and row.get('module_ref') == module_id
+                and row.get('quiz_ref') and not component_reference(row)]
+    if not attempts:
+        return
+    assigned = {(str(row['learnerId']), row['componentId']) for row in plan}
+    slots = defaultdict(list)
+    for slot in read_quiz_placements([module_id], [row['quiz_ref'] for row in attempts]):
+        slots[slot['quizRef']].append(slot)
+    for row in attempts:
+        week_id = row.get('week_ref')
+        matches = [slot for slot in slots[row['quiz_ref']] if not week_id or slot['weekId'] == week_id]
+        if len(matches) == 1:
+            key = (str(row['learner_id']), matches[0]['componentId'])
+            if key in assigned:
+                completion[key].append(row)
+
+
 def enrich(payload, account):
     """Bounded bulk reads; no per-activity identity/permission queries."""
     schema_gate.require_tables(*TABLES)
@@ -259,6 +280,18 @@ def enrich(payload, account):
             completion_by_component[(learner, component_reference(record))].append(record)
         else:
             earlier_rows[learner].append(record)
+    add_quiz_completion(plan, canonical_records, payload['identifier'], completion_by_component)
+    # Older saves may have the original module/week labels but no module id.
+    # Add only to completion evidence. The assignment roster, saved records,
+    # Activity Log allocations and correction snapshots keep their own scope.
+    assigned_quizzes = {(str(row['learnerId']), row['componentId']) for row in plan
+                        if str(row.get('componentType') or '').lower() == 'quiz'}
+    labelled_quizzes = read_labelled_quiz_records(
+        payload['identifier'], [int(learner) for learner, _ in assigned_quizzes])
+    for record in completion_records(labelled_quizzes, owners, query, table):
+        key = (str(record['learner_id']), record['matched_quiz_component'])
+        if key in assigned_quizzes:
+            completion_by_component[key].append(record)
     for record in recorded_hour_rows(canonical_records, protected=protected_native_months(canonical_records)):
         if component_reference(record) in current_components:
             hour_rows[(str(record['learner_id']), component_reference(record))].append(record)

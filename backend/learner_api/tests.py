@@ -1739,6 +1739,27 @@ class OrphanComponentReferenceTests(SimpleTestCase):
                     save_progress_record(learner, {"kind": "quiz", "quizId": "64"})
         state.assert_not_called()
 
+    def test_verified_quiz_placement_is_written_with_the_existing_attempt_fields(self):
+        from . import active_users
+
+        learner = SimpleNamespace(pk=1, training_plan_progress=[])
+        placement = {"componentId": "C1", "moduleId": "M1", "weekId": "W1"}
+        with patch.object(active_users, "component_reference_state", return_value=("active", "")), \
+             patch.object(active_users, "transaction") as transaction, \
+             patch.object(active_users.LearnerProfile, "objects") as learners, \
+             patch.object(active_users.LearnerProgressEntry, "objects") as entries, \
+             patch.object(active_users, "_create_progress_entry", side_effect=RuntimeError("capture insert")) as create:
+            transaction.atomic.return_value = MagicMock()
+            learners.select_for_update.return_value.get.return_value = learner
+            entries.filter.return_value.aggregate.return_value = {"value": 0}
+            with self.assertRaisesRegex(RuntimeError, "capture insert"):
+                save_progress_record(learner, {"kind": "quiz", "quizId": "77", "passed": True,
+                                              "verifiedSeconds": 320}, quiz_placement=placement)
+        fields = create.call_args.kwargs
+        self.assertEqual((fields["component_ref"], fields["module_ref"], fields["week_ref"]), ("C1", "M1", "W1"))
+        self.assertEqual((fields["quiz_ref"], fields["passed"], fields["verified_seconds"]), ("77", True, 320))
+        self.assertIsNone(fields["expected_otjh"])
+
 
 class ComponentWriteSoftDeleteTests(SimpleTestCase):
     """New activity may not target deleted curriculum; history still resolves.
@@ -2153,6 +2174,44 @@ class QuizSubmitWorkingRulesTests(SimpleTestCase):
         record = save.call_args.args[1]
         self.assertIsNone(record["declaredCompletedAt"])
         self.assertEqual(record["submissionValidationReason"], "")
+
+    def test_submit_adds_verified_quiz_placement_without_trusting_client_component(self):
+        payload = {"module": "Module 1", "week": "Week 1", "componentId": "UNASSIGNED"}
+        slot = {"componentId": "C1", "moduleId": "M1", "weekId": "W1",
+                "module": "Module 1", "week": "Week 1"}
+        with patch("learner_api.learning_plan.effective_training_plan", return_value=[{"moduleId": "M1"}]), \
+             patch("learner_api.quiz_placement.read_placements", return_value=[slot]) as lookup:
+            save = Mock()
+            response, _audit = self._post(save, payload=payload)
+        self.assertEqual(response.status_code, 200)
+        lookup.assert_called_once_with(["M1"], ["77"])
+        self.assertEqual(save.call_args.kwargs["quiz_placement"], {
+            "componentId": "C1", "moduleId": "M1", "weekId": "W1",
+        })
+        self.assertNotIn("componentId", save.call_args.args[1])
+        self.assertTrue(save.call_args.args[1]["passed"])
+
+    def test_submit_retains_attempt_without_attributing_reused_quiz_to_two_slots(self):
+        slot = {"componentId": "C1", "moduleId": "M1", "weekId": "W1",
+                "module": "Module 1", "week": "Week 1"}
+        with patch("learner_api.learning_plan.effective_training_plan", return_value=[
+            {"moduleId": "M1"}, {"moduleId": "M2"},
+        ]), patch("learner_api.quiz_placement.read_placements", return_value=[
+            slot, {**slot, "componentId": "C2", "moduleId": "M2", "weekId": "W2"},
+        ]):
+            save = Mock()
+            response, _audit = self._post(save, payload={"module": "Module 1", "week": "Week 1"})
+            self.assertEqual(response.status_code, 200)
+            save.assert_called_once()
+            self.assertNotIn("quiz_placement", save.call_args.kwargs)
+
+            save.reset_mock()
+            response, _audit = self._post(save, payload={"module": "M2", "week": "Week 1"})
+            self.assertEqual(response.status_code, 200)
+            save.assert_called_once()
+            self.assertEqual(save.call_args.kwargs["quiz_placement"], {
+                "componentId": "C2", "moduleId": "M2", "weekId": "W2",
+            })
 
     def test_diagram_is_returned_and_snapshotted_with_the_scored_question(self):
         quiz = self._quiz()
