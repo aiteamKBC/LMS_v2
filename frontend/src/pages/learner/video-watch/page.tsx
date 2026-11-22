@@ -80,7 +80,7 @@ import { ReadingSurface } from './ReadingSurface';
 import { ReadingAttachmentText } from './ReadingAttachmentText';
 import { PdfReadingText } from './PdfReadingText';
 import { extractScannedPage } from './readingOcr';
-import { clearReadingHighlights, highlightReadingSelection, ReadingToolsContext, DEFAULT_READING_PREFERENCES, readingStorageKey, readStoredJson, type ReadingAnnotations, type ReadingPreferences, type ReadingColourMode, type ReadingFont } from './readingAccessibility';
+import { clearReadingHighlights, highlightReadingSelection, readingHighlightColourHex, ReadingToolsContext, READING_HIGHLIGHT_COLOURS, DEFAULT_READING_PREFERENCES, readingStorageKey, readStoredJson, type ReadingAnnotations, type ReadingPreferences, type ReadingColourMode, type ReadingFont, type ReadingHighlightColour } from './readingAccessibility';
 import {
   loadTeamsMeetingArtifacts,
   teamsMeetingArtifactContentUrl,
@@ -1731,9 +1731,22 @@ function ReadingAccessibilityToolbar({
           </button>
         )}
         {onHighlight && <button type="button" onMouseDown={event => event.preventDefault()} onClick={onHighlight} className="rounded-lg border border-amber-300 bg-amber-100 px-2.5 py-1.5 text-xs font-bold text-amber-900"><AppIcon className="ri-mark-pen-line" /> Highlight selection</button>}
-        {onClearHighlights && <button type="button" onClick={onClearHighlights} className="rounded-lg border border-blue-200 bg-white px-2.5 py-1.5 text-xs font-bold text-blue-800">Clear highlights</button>}
-        <button type="button" onClick={onSave} className="ml-auto rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-bold text-white hover:bg-emerald-700">
-          <AppIcon className="ri-save-line" /> {saved ? 'Saved' : 'Save changes'}
+        {onHighlight && (
+          <select
+            value={preferences.highlightColour}
+            onChange={event => update('highlightColour', event.target.value as ReadingHighlightColour)}
+            aria-label="Highlight colour"
+            title="Highlight colour"
+            className="h-8 rounded-lg border border-blue-200 bg-white px-2 text-xs font-bold text-blue-900"
+          >
+            {(Object.keys(READING_HIGHLIGHT_COLOURS) as ReadingHighlightColour[]).map(colour => (
+              <option key={colour} value={colour}>{READING_HIGHLIGHT_COLOURS[colour].label}</option>
+            ))}
+          </select>
+        )}
+        {onClearHighlights && <button type="button" onMouseDown={event => event.preventDefault()} onClick={onClearHighlights} className="rounded-lg border border-blue-200 bg-white px-2.5 py-1.5 text-xs font-bold text-blue-800">Clear selected highlight</button>}
+        <button type="button" onClick={onSave} className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-bold text-white hover:bg-emerald-700">
+          <AppIcon className="ri-save-line" /> {saved ? 'Highlights saved' : 'Save highlights'}
         </button>
       </div>
       <p className="mt-2 text-[10px] font-semibold text-blue-700">Preferences and highlights are kept on this device. For PDF fonts, spacing and text selection, choose Text reading view. Original PDF keeps its own marker. Focus a reading area and use the arrow keys to move the ruler.</p>
@@ -1778,7 +1791,7 @@ function AccessibleReadingMaterial({
     else annotations.current.delete(id);
   }, []);
   const onAnnotationsDirty = useCallback(() => setSaved(false), []);
-  const readingTools = useMemo(() => ({ preferences, register: registerAnnotations, onDirty: onAnnotationsDirty }), [preferences, registerAnnotations, onAnnotationsDirty]);
+  const readingTools = useMemo(() => ({ preferences, register: registerAnnotations, onDirty: onAnnotationsDirty, highlightColour: preferences.highlightColour }), [preferences, registerAnnotations, onAnnotationsDirty]);
   const narration = useReadingNarration(`${componentId}:${component.resourceUrl || ''}:${sourceHtml}:${readingPage}`);
   const { speaking, stop: stopNarration } = narration;
   const pdfReaders = useRef(new Map<string, PdfPageReader>());
@@ -1798,7 +1811,7 @@ function AccessibleReadingMaterial({
 
   const highlightSelection = () => {
     setHighlightNotice('');
-    if (highlightReadingSelection(contentRef.current)) {
+    if (highlightReadingSelection(contentRef.current, preferences.highlightColour)) {
       setHtml(contentRef.current!.innerHTML);
       setSaved(false);
       return;
@@ -1809,19 +1822,26 @@ function AccessibleReadingMaterial({
 
   const clearHighlights = () => {
     const root = contentRef.current;
-    if (root) {
-      clearReadingHighlights(root);
+    const clearedInMainReading = clearReadingHighlights(root);
+    if (clearedInMainReading && root) {
       setHtml(root.innerHTML);
     }
-    annotations.current.forEach(actions => actions.clear());
-    setHighlightNotice('');
-    setSaved(false);
+    let cleared = clearedInMainReading;
+    annotations.current.forEach(actions => {
+      if (actions.clear()) cleared = true;
+    });
+    if (cleared) {
+      setHighlightNotice('');
+      setSaved(false);
+    } else {
+      setHighlightNotice('Select a highlighted passage first.');
+    }
   };
 
   const save = () => {
     // Saved apart, so a reading too large for the browser's storage still keeps
     // the learner's display preferences -- and the learner is told which part
-    // was not kept instead of the button silently staying on "Save changes".
+    // was not kept instead of the button silently staying on "Save highlights".
     try {
       window.localStorage.setItem(readingStorageKey(componentId, 'preferences'), JSON.stringify(preferences));
     } catch {
@@ -2296,7 +2316,7 @@ export function InlineAttachmentPreview({ url, title, fileName, readingPreferenc
   );
 }
 
-type PdfHighlight = { x: number; y: number; width: number; height: number };
+type PdfHighlight = { x: number; y: number; width: number; height: number; colour?: ReadingHighlightColour };
 
 function PdfCanvasPreview({ url, title, fileName, readingPreferences, annotationKey, allowAnnotatedDownload, fitWidth = false, onReady }: {
   onReady?: () => void;
@@ -2347,7 +2367,7 @@ function PdfCanvasPreview({ url, title, fileName, readingPreferences, annotation
   useEffect(() => {
     registerAnnotations?.(pdfReaderId, {
       highlight: () => false,
-      clear: () => { setHighlights({}); setAnnotationsSaved(false); },
+      clear: () => false,
       save: persistHighlights,
     });
   }, [registerAnnotations, pdfReaderId, persistHighlights]);
@@ -2542,8 +2562,8 @@ function PdfCanvasPreview({ url, title, fileName, readingPreferences, annotation
         await page.render({ canvas: exportCanvas, canvasContext: context, viewport }).promise;
         context.save();
         context.globalAlpha = 0.38;
-        context.fillStyle = '#fde047';
         (highlights[pageIndex] || []).forEach((mark) => {
+          context.fillStyle = readingHighlightColourHex(mark.colour || 'yellow');
           context.fillRect(mark.x * exportCanvas.width, mark.y * exportCanvas.height, mark.width * exportCanvas.width, mark.height * exportCanvas.height);
         });
         context.restore();
@@ -2661,7 +2681,7 @@ function PdfCanvasPreview({ url, title, fileName, readingPreferences, annotation
           )}
         </div>
       </div>
-      {textView && <p className="border-b border-background-200 bg-white px-4 py-2 text-xs text-foreground-600">Use the reading tools above to adjust and highlight this page. Save changes keeps text highlights on this device. Original PDF preserves the page layout, images and marker annotations.</p>}
+      {textView && <p className="border-b border-background-200 bg-white px-4 py-2 text-xs text-foreground-600">Use the reading tools above to adjust and highlight this page. Save highlights keeps text highlights on this device. Original PDF preserves the page layout, images and marker annotations.</p>}
       {exportError && <p role="alert" className="p-3 text-sm text-red-700">{exportError}</p>}
       {narration.speechError && <p role="alert" className="p-3 text-sm text-red-700">{narration.speechError}</p>}
       {readingPreferences && pdf && <PdfReadingText pdf={pdf} pageNumber={pageNumber} active={textView} ocrText={ocrText}
@@ -2698,7 +2718,7 @@ function PdfCanvasPreview({ url, title, fileName, readingPreferences, annotation
               if (!markerActive || !start) return;
               const mark = updateDraftHighlight(start, pointFromPointer(event));
               if (mark.width > 0.003 && mark.height > 0.003) {
-                setHighlights((current) => ({ ...current, [pageNumber]: [...(current[pageNumber] || []), mark] }));
+                setHighlights((current) => ({ ...current, [pageNumber]: [...(current[pageNumber] || []), { ...mark, colour: preferences.highlightColour }] }));
                 setAnnotationsSaved(false);
               }
               dragStartRef.current = null;
@@ -2706,9 +2726,9 @@ function PdfCanvasPreview({ url, title, fileName, readingPreferences, annotation
             }}
           >
             {(highlights[pageNumber] || []).map((mark, index) => (
-              <rect key={index} x={mark.x * 1000} y={mark.y * 1000} width={mark.width * 1000} height={mark.height * 1000} fill="#fde047" fillOpacity="0.4" />
+              <rect key={index} x={mark.x * 1000} y={mark.y * 1000} width={mark.width * 1000} height={mark.height * 1000} fill={readingHighlightColourHex(mark.colour || 'yellow')} fillOpacity="0.4" />
             ))}
-            {draftHighlight && <rect x={draftHighlight.x * 1000} y={draftHighlight.y * 1000} width={draftHighlight.width * 1000} height={draftHighlight.height * 1000} fill="#fde047" fillOpacity="0.4" stroke="#ca8a04" strokeWidth="2" />}
+            {draftHighlight && <rect x={draftHighlight.x * 1000} y={draftHighlight.y * 1000} width={draftHighlight.width * 1000} height={draftHighlight.height * 1000} fill={readingHighlightColourHex(preferences.highlightColour)} fillOpacity="0.4" stroke="#4b5563" strokeWidth="2" />}
           </svg>
         </div>
         {(highlights[pageNumber] || []).length > 0 && (
