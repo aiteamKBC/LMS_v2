@@ -115,7 +115,7 @@ def saved_question_html(owner, material_id):
     """
     rows = query('''SELECT DISTINCT history.group_id,history.quiz_answers,
             history.quiz_score,history.quiz_maximum_score,history.quiz_attempt_number
-        FROM "Learner".source_lms_learner_aliases identity
+        FROM "Last_audit".learner_lms_aliases identity
         JOIN "Last_audit".activity_results history
           ON history.learner_id=identity.lms_learner_id AND history.activity_id=%s
         WHERE identity.learner_profile_id=%s

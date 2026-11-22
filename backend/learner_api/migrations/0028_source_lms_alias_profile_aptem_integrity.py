@@ -63,14 +63,17 @@ def _has_parent_unique_key(cursor):
     return cursor.fetchone()[0]
 
 
-def _has_equivalent_alias_fk(cursor, *, require_actions=True):
+def _has_equivalent_alias_fk(cursor, *, require_actions=True,
+                             relation='"Learner".source_lms_learner_aliases',
+                             require_validated=False, update_action='a'):
     cursor.execute(
         """SELECT EXISTS (
                SELECT 1
                  FROM pg_constraint con
-                WHERE con.conrelid='"Learner".source_lms_learner_aliases'::regclass
+                WHERE con.conrelid=%s::regclass
                   AND con.confrelid='"Learner".learners'::regclass
                   AND con.contype='f'
+                  AND (NOT %s OR con.convalidated)
                   AND con.conkey=ARRAY[
                       (SELECT attnum FROM pg_attribute
                         WHERE attrelid=con.conrelid AND attname='learner_profile_id'),
@@ -83,9 +86,9 @@ def _has_equivalent_alias_fk(cursor, *, require_actions=True):
                       (SELECT attnum FROM pg_attribute
                         WHERE attrelid=con.confrelid AND attname='aptem_id')
                   ]::smallint[]
-                  AND (NOT %s OR (con.confdeltype='r' AND con.confupdtype='a'))
+                  AND (NOT %s OR (con.confdeltype='r' AND con.confupdtype=%s))
            )"""
-        , [require_actions]
+        , [relation, require_validated, require_actions, update_action]
     )
     return cursor.fetchone()[0]
 
@@ -136,6 +139,17 @@ def apply_schema(apps, schema_editor):
     with schema_editor.connection.cursor() as cursor:
         learner_relation = _relation(cursor, '"Learner".learners')
         alias_relation = _relation(cursor, '"Learner".source_lms_learner_aliases')
+        if learner_relation is not None and alias_relation is None:
+            replacement = _relation(cursor, '"Last_audit".learner_lms_aliases')
+            if replacement is not None:
+                # Cleanup retired the old relation. Validate the replacement's
+                # ownership guard without recreating or altering either table.
+                # Its approved FK restricts both updates and deletes.
+                if not _has_equivalent_alias_fk(cursor,
+                        relation='"Last_audit".learner_lms_aliases',
+                        require_validated=True, update_action='r'):
+                    raise RuntimeError('Replacement LMS aliases lack validated profile/APTem ownership.')
+                return
         if learner_relation is None and alias_relation is None:
             return  # Externally managed relations are absent from this installation.
         if learner_relation is None or alias_relation is None:

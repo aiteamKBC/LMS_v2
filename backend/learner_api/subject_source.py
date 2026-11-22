@@ -194,10 +194,10 @@ def read_learner(cursor, aptem_id, email):
     if not email or not secret or not endpoint:
         logger.warning('learner_live_source stage=configuration result=failed aptem_id=%s endpoint_configured=%s api_key_configured=%s', aptem_id, bool(endpoint), bool(secret))
         return None
-    cursor.execute('''SELECT l.id,i.lms_learner_id,i.lms_email,i.is_primary
+    cursor.execute('''SELECT l.id,i.lms_learner_id::text,i.lms_email,i.is_primary
         FROM "Learner".learners l
-        JOIN "Learner".source_lms_learner_aliases i
-          ON i.learner_profile_id=l.id
+        JOIN "Last_audit".learner_lms_aliases i
+          ON i.learner_profile_id=l.id AND i.aptem_id=l.aptem_id
         WHERE l.aptem_id=%s AND lower(btrim(l.email))=%s
         UNION ALL
         SELECT l.learner_id,coalesce(a.lms_learner_id,l.learner_id)::text,

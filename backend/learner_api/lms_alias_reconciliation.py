@@ -86,7 +86,7 @@ def _json(value):
 def _candidate_identities(cursor):
     aliases = _rows(cursor, '''SELECT aptem_id,canonical_lms_id,lms_learner_id,
         aptem_email,lms_email,is_primary,first_seen,last_seen,learner_profile_id
-        FROM "Learner".source_lms_learner_aliases
+        FROM "Last_audit".learner_lms_aliases
         ORDER BY aptem_id,is_primary DESC,lms_learner_id''')
     emails_by_aptem = defaultdict(set)
     aptems_by_email = defaultdict(set)

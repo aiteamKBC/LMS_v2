@@ -1,7 +1,7 @@
-"""Opt-in PostgreSQL regression checks for the alias integrity migration.
+"""Opt-in PostgreSQL regression checks for the authoritative alias table.
 
-Run only against an explicitly disposable Neon child branch after applying
-0028. The test rolls back every data change.
+Run only against an explicitly disposable Neon child branch after the alias
+cleanup. The test rolls back every data change; do not run for read-only tasks.
 """
 import os
 import unittest
@@ -52,7 +52,7 @@ class SourceLmsAliasIntegrityPostgresTests(unittest.TestCase):
                 coalesce(aptem_email,''),coalesce(lms_email,''),is_primary,match_basis,
                 first_seen,last_seen,coalesce(learner_profile_id::text,'')), E'\\n'
                 ORDER BY aptem_id,lms_learner_id)) AS checksum
-            FROM "Learner".source_lms_learner_aliases''').fetchone()
+            FROM "Last_audit".learner_lms_aliases''').fetchone()
 
     def _expect_integrity_error(self, sql, params, constraint=None, sqlstate=None):
         self.cursor.execute('SAVEPOINT alias_integrity_case')
@@ -74,27 +74,31 @@ class SourceLmsAliasIntegrityPostgresTests(unittest.TestCase):
             for row in self.cursor.execute('''SELECT conname,convalidated,confdeltype,confupdtype,
                 pg_get_constraintdef(oid) AS definition FROM pg_constraint
                 WHERE conrelid IN ('"Learner".learners'::regclass,
-                    '"Learner".source_lms_learner_aliases'::regclass)''')
+                    '"Last_audit".learner_lms_aliases'::regclass)''')
         }
-        self.assertIn('UNIQUE (id, aptem_id)', constraints['learners_id_aptem_identity_uniq']['definition'])
-        child = constraints['source_alias_profile_aptem_fk']
+        self.assertTrue(any('UNIQUE (id, aptem_id)' in row['definition'] for row in constraints.values()))
+        children = [row for row in constraints.values()
+                    if row['definition'].startswith('FOREIGN KEY (learner_profile_id, aptem_id)')
+                    and 'REFERENCES "Learner".learners(id, aptem_id)' in row['definition']]
+        self.assertEqual(len(children), 1)
+        child = children[0]
         self.assertTrue(child['convalidated'])
-        self.assertEqual((child['confdeltype'], child['confupdtype']), ('r', 'a'))
+        self.assertEqual((child['confdeltype'], child['confupdtype']), ('r', 'r'))
 
         rows = self.cursor.execute('''SELECT a.aptem_id,a.canonical_lms_id,a.learner_profile_id,
             a.aptem_email,a.lms_email
-            FROM "Learner".source_lms_learner_aliases a
+            FROM "Last_audit".learner_lms_aliases a
             WHERE a.learner_profile_id IS NOT NULL
             ORDER BY a.aptem_id LIMIT 2''').fetchall()
         self.assertEqual(len(rows), 2)
         owner, other = rows
         if owner['aptem_id'] == other['aptem_id']:
             other = self.cursor.execute('''SELECT learner_profile_id,aptem_id
-                FROM "Learner".source_lms_learner_aliases
+                FROM "Last_audit".learner_lms_aliases
                 WHERE learner_profile_id IS NOT NULL AND aptem_id<>%s LIMIT 1''',
                 [owner['aptem_id']]).fetchone()
 
-        insert = '''INSERT INTO "Learner".source_lms_learner_aliases
+        insert = '''INSERT INTO "Last_audit".learner_lms_aliases
             (aptem_id,aptem_email,canonical_lms_id,lms_learner_id,lms_email,
              is_primary,match_basis,first_seen,last_seen,learner_profile_id)
             VALUES (%s,%s,%s,%s,%s,%s,'isolated-regression',now(),now(),%s)'''
@@ -106,18 +110,18 @@ class SourceLmsAliasIntegrityPostgresTests(unittest.TestCase):
 
         self._expect_integrity_error(insert, [owner['aptem_id'], owner['aptem_email'],
             owner['canonical_lms_id'], -900000000000003, owner['lms_email'], False,
-            other['learner_profile_id']], 'source_alias_profile_aptem_fk', '23503')
+            other['learner_profile_id']], child['conname'], '23503')
         self._expect_integrity_error(insert, [None, owner['aptem_email'],
             owner['canonical_lms_id'], -900000000000004, owner['lms_email'], False,
             owner['learner_profile_id']], sqlstate='23502')
         self._expect_integrity_error('''UPDATE "Learner".learners SET aptem_id=%s WHERE id=%s''',
             [-900000000000005, owner['learner_profile_id']],
-            'source_alias_profile_aptem_fk', '23503')
+            child['conname'], '23503')
         self._expect_integrity_error('''DELETE FROM "Learner".learners WHERE id=%s''',
             [owner['learner_profile_id']], sqlstate='23503')
         self._expect_integrity_error(insert, [owner['aptem_id'], owner['aptem_email'],
             -900000000000006, -900000000000006, owner['lms_email'], True,
-            owner['learner_profile_id']], 'source_alias_one_primary_uniq', '23505')
+            owner['learner_profile_id']], sqlstate='23505')
 
 
 if __name__ == '__main__':

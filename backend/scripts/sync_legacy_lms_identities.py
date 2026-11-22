@@ -33,17 +33,17 @@ def database_url():
 
 
 def read_state(cur):
-    source = cur.execute('''SELECT aptem_id,canonical_lms_id,lms_learner_id,
-        aptem_email,lms_email,is_primary,match_basis,first_seen,last_seen
-        FROM "Last_audit".learner_lms_aliases
-        ORDER BY aptem_id,lms_learner_id''').fetchall()
     aliases = cur.execute('''SELECT aptem_id,canonical_lms_id,lms_learner_id,
         aptem_email,lms_email,is_primary,match_basis,first_seen,last_seen,learner_profile_id
-        FROM "Learner".source_lms_learner_aliases
+        FROM "Last_audit".learner_lms_aliases
         ORDER BY aptem_id,lms_learner_id''').fetchall()
+    # One authoritative table remains. Retain the report's source projection
+    # for callers without pretending a second copy is being verified.
+    source = [{key: value for key, value in row.items() if key != 'learner_profile_id'}
+              for row in aliases]
     linked = cur.execute('''SELECT alias.aptem_id,alias.lms_learner_id,
         alias.learner_profile_id,learner.aptem_id AS learner_aptem_id
-        FROM "Learner".source_lms_learner_aliases alias
+        FROM "Last_audit".learner_lms_aliases alias
         LEFT JOIN "Learner".learners learner ON learner.id=alias.learner_profile_id
         WHERE alias.learner_profile_id IS NOT NULL
         ORDER BY alias.aptem_id,alias.lms_learner_id''').fetchall()
@@ -75,9 +75,8 @@ def verify(state):
         'canonical_records': len(state['aliases']),
         'historical_records': historical,
         'linked_records': len(state['aliases']) - historical,
-        # Last_audit contains additional source observations that were not part
-        # of the reviewed 439-row canonical import. Report, but do not import,
-        # authorize, or classify those records as a canonical inconsistency.
+        # Compatibility counters: read_state now projects the same authoritative
+        # rows, so copy-comparison counters are zero; ownership is checked below.
         'source_only_records': len(missing),
         'canonical_orphan_records': len(extra),
         'metadata_mismatch_records': len(mismatched),

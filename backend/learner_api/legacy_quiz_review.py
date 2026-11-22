@@ -31,7 +31,7 @@ def read_review(owner, group_id, quiz_id, *, allow_attempts=False, demo_preview=
             history.quiz_maximum_score AS maximum_score, history.quiz_passed AS passed,
             history.quiz_attempt_number AS attempt_number, history.status,
             history.quiz_answers AS answers
-        FROM "Learner".source_lms_learner_aliases identity
+        FROM "Last_audit".learner_lms_aliases identity
         JOIN "Last_audit".activity_results history
           ON history.learner_id=identity.lms_learner_id
         JOIN "Last_audit".activities activity ON activity.activity_id=history.activity_id
