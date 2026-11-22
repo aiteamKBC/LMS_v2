@@ -4,16 +4,16 @@ import { MemoryRouter } from 'react-router-dom';
 import type { ReactNode } from 'react';
 import IssuedCertificates from './IssuedCertificates';
 import Page from './page';
-import { listIssuedCertificates, readIssuedCertificate, updateIssuedCertificate, fetchCertificateTemplate,
+import { listIssuedCertificates, readIssuedCertificate, updateIssuedCertificate, fetchCertificateTemplate, saveCertificateTemplate,
   type AdminIssuedCertificate, type IssuedCertificateDetail } from '@/api/platformAdmin';
 
 vi.mock('@/api/platformAdmin', async original => ({ ...await original<typeof import('@/api/platformAdmin')>(),
-  listIssuedCertificates: vi.fn(), readIssuedCertificate: vi.fn(), updateIssuedCertificate: vi.fn(), fetchCertificateTemplate: vi.fn(),
+  listIssuedCertificates: vi.fn(), readIssuedCertificate: vi.fn(), updateIssuedCertificate: vi.fn(), fetchCertificateTemplate: vi.fn(), saveCertificateTemplate: vi.fn(),
 }));
 vi.mock('@/components/feature/WorkspaceShell', () => ({ WorkspaceShell: ({ children }: { children: ReactNode }) => <>{children}</> }));
 vi.mock('../_shared/AdminPage', () => ({ AdminPageHeader: ({ title, actions }: { title: string; actions?: ReactNode }) => <header><h1>{title}</h1>{actions}</header> }));
-vi.mock('@/components/feature/CertificateDocument', () => ({ CertificateDocument: (props: { learnerName: string; programmeName: string; revisionLabel?: string }) =>
-  <div data-testid="certificate-preview">{props.learnerName} · {props.programmeName} · {props.revisionLabel}</div> }));
+vi.mock('@/components/feature/CertificateDocument', () => ({ CertificateDocument: (props: { learnerName: string; programmeName: string; revisionLabel?: string; otjHours?: number | null }) =>
+  <div data-testid="certificate-preview" data-otj-hours={props.otjHours}>{props.learnerName} · {props.programmeName} · {props.revisionLabel}</div> }));
 
 const original: AdminIssuedCertificate = {
   id: 11, certificateNumber: 'KBC-TEST', templateId: 1, templateVersion: 3, progressPercent: 80,
@@ -63,6 +63,22 @@ it('searches names or numbers, filters statuses, and paginates on the server', a
   await waitFor(() => expect(listIssuedCertificates).toHaveBeenLastCalledWith({ q: 'KBC-TEST', status: 'revoked', page: 1 }));
 });
 
+it('saves the OTJ label and visibility without changing the component threshold', async () => {
+  vi.mocked(saveCertificateTemplate).mockImplementation(async template => ({ template }));
+  render(<MemoryRouter><Page /></MemoryRouter>);
+  await waitFor(() => expect(fetchCertificateTemplate).toHaveBeenCalledOnce());
+  expect(screen.getByLabelText('OTJ hours')).toBeChecked();
+  expect(screen.getByTestId('certificate-preview')).toHaveAttribute('data-otj-hours', '12.5');
+  fireEvent.change(screen.getByLabelText('OTJ hours label'), { target: { value: 'Recorded OTJ time' } });
+  fireEvent.click(screen.getByLabelText('OTJ hours'));
+  fireEvent.click(screen.getByRole('button', { name: 'Save draft' }));
+  await waitFor(() => expect(saveCertificateTemplate).toHaveBeenCalledWith(expect.objectContaining({
+    minimumProgress: 85,
+    layoutConfig: expect.objectContaining({ otjHoursLabel: 'Recorded OTJ time', showOtjHours: false, showProgress: true }),
+  }), false));
+  expect(screen.getByLabelText('OTJ hours')).not.toBeChecked();
+});
+
 it('previews a name correction and submits only the changed field with reason and revision', async () => {
   const updated = detail();
   updated.certificate = { ...updated.certificate, revision: 2, correctedAt: '2026-11-19T12:00:00Z', editable: { ...original.editable, learnerName: 'Corrected name' } };
@@ -74,12 +90,15 @@ it('previews a name correction and submits only the changed field with reason an
   expect(screen.getByRole('button', { name: 'Save corrected copy' })).toBeDisabled();
   fireEvent.change(name, { target: { value: 'Corrected name' } });
   expect(screen.getByTestId('certificate-preview')).toHaveTextContent('Corrected name');
+  expect(screen.getByTestId('certificate-preview')).toHaveTextContent('Correction preview — not saved');
   fireEvent.change(screen.getByLabelText('Reason for correction'), { target: { value: 'Spelling' } });
   fireEvent.submit(screen.getByRole('form', { name: 'Certificate correction' }));
   await waitFor(() => expect(updateIssuedCertificate).toHaveBeenCalledWith(11, {
     action: 'correct', revision: 1, reason: 'Spelling', changes: { learnerName: 'Corrected name' },
   }));
   expect(await screen.findByRole('status')).toHaveTextContent('Corrected copy saved');
+  expect(screen.getByTestId('certificate-preview')).not.toHaveTextContent('Corrected copy');
+  expect(screen.getByTestId('certificate-preview')).not.toHaveTextContent('Correction preview');
   expect(screen.getByRole('link', { name: 'Open verification page' })).toHaveAttribute('href', '/verify-certificate/token');
   expect(screen.getByText(/Original name → Corrected name/)).toBeVisible();
   fireEvent.click(screen.getByRole('button', { name: 'View copy before this change (revision 1)' }));
@@ -130,4 +149,18 @@ it('shows a failed list read as an error and offers a retry', async () => {
   expect(screen.queryByText('No certificates match your search.')).not.toBeInTheDocument();
   fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
   expect(await screen.findByRole('button', { name: 'Correct KBC-TEST' })).toBeVisible();
+});
+
+it('edits the current display while keeping progress at issue distinct and exposing refresh failures', async () => {
+  const current = detail();
+  current.certificate = { ...current.certificate, progressAtIssue: 80, progressPercent: 100, otjHours: 2.5,
+    editable: { ...original.editable, learnerName: 'Current profile name', courseTitle: 'Renamed course' },
+    refreshWarnings: ['No published template is available. Showing the saved design.'] };
+  vi.mocked(readIssuedCertificate).mockResolvedValue(current);
+  expect(await edit()).toHaveValue('Current profile name');
+  expect(screen.getByLabelText('Course name')).toHaveValue('Renamed course');
+  expect(screen.getByText(/Progress on this copy: 100%. Progress at issue: 80%/)).toBeVisible();
+  expect(screen.getByTestId('certificate-preview')).toHaveAttribute('data-otj-hours', '2.5');
+  expect(screen.getByRole('alert')).toHaveTextContent('Showing the saved design');
+  expect(screen.getByRole('button', { name: 'Save corrected copy' })).toBeDisabled();
 });

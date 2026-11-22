@@ -33,7 +33,6 @@ import {
   saveReviewInstanceAnswers,
   signReviewInstance,
   signMigratedReviewAsCoach,
-  startMigratedReview,
   submitMigratedReview,
   type PreviousReviewSession,
   type ReviewInstanceFormDefinition,
@@ -745,21 +744,6 @@ function ReviewInstanceContent({
     }
   };
 
-  const startMigrated = async () => {
-    if (!definition?.migratedForm || isViewingAsCoach) return;
-    setSaving(true);
-    setError(null);
-    try {
-      const updated = await startMigratedReview(definition.instance.id);
-      setDefinition(updated);
-      onStatusChanged?.(updated.localStatus || updated.instance.status);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Unable to start this migrated review.');
-    } finally {
-      setSaving(false);
-    }
-  };
-
   const bookMigrated = async () => {
     if (!definition || !hasImportedBooking || !(definition.booking?.canBook || definition.booking?.canAttach || definition.booking?.canReschedule) || bookingReadOnly || bookingInFlightRef.current) return;
     if (!definition.booking.canAttach && (bookingAvailabilityLoading || bookingAvailabilityError
@@ -1127,7 +1111,8 @@ function ReviewInstanceContent({
                 meetingLink={definition.booking.meetingLink}
                 bound={Boolean(meetingSummaryFieldId)}
                 savedBinding={definition.summaryBinding}
-                checkBlocked={hasUnsavedMigratedAnswers || busy || templateSyncConflict}
+                checkBlocked={busy || templateSyncConflict}
+                attendanceLinkBlocked={hasUnsavedMigratedAnswers}
                 onCheckComplete={onMigratedCheckComplete}
                 onCheckingChange={setCheckingSession}
                 onAttendanceLinkChange={onAttendanceLinkChange}
@@ -1150,7 +1135,7 @@ function ReviewInstanceContent({
             {hasImportedBooking && definition.booking?.conflict ? (
               <p role="alert" className="text-sm text-red-700">This review has a conflicting calendar association. Ask an administrator to resolve it before booking.</p>
             ) : null}
-            {hasImportedBooking && (definition.booking?.canBook || definition.booking?.canReschedule) && !bookingReadOnly ? (
+            {hasImportedBooking && definition.booking?.canBook && !definition.booking.canReschedule && !bookingReadOnly ? (
               <section aria-label={definition.booking.canReschedule ? 'Reschedule migrated review meeting' : 'Book migrated review meeting'} className="rounded-xl border border-primary-200 bg-white p-4">
                 {!bookingOpen ? <button type="button" onClick={() => { setBookingDate(initialReviewBookingDate(definition)); setBookingTime(definition.booking?.scheduledTime || ''); setBookingDuration(initialReviewBookingDuration(definition)); setBookingOpen(true); }} disabled={busy} className="rounded-lg bg-primary-700 px-4 py-2 text-sm font-semibold text-white disabled:opacity-60">{definition.booking.canReschedule ? 'Reschedule' : 'Book Meeting'}</button> : (
                   <div className="flex flex-wrap items-end gap-3">
@@ -1168,12 +1153,6 @@ function ReviewInstanceContent({
                   </div>
                 )}
               </section>
-            ) : null}
-            {definition.migratedForm && !personalSupportForm && definition.localStatus === 'scheduled' && definition.booking?.booked && !formReadOnly ? (
-              <button type="button" onClick={() => { void startMigrated(); }} disabled={busy}
-                className="rounded-lg bg-primary-700 px-4 py-2 text-sm font-semibold text-white disabled:opacity-60">
-                Start migrated review (optional)
-              </button>
             ) : null}
             {personalSupportForm && !formReadOnly ? (
               <p className="text-sm text-primary-800">{signatureFreePersonalSupport ? 'Save your answers to complete this Personal Support Plan once all required questions are answered.' : 'Save all required answers to send this Personal Support Plan for the selected signatures.'}</p>
@@ -1428,7 +1407,7 @@ function ReviewInstanceContent({
                   showActions={showMigratedSummaryActions ? true : undefined}
                   teamsAvailable={Boolean(definition.booking?.booked && definition.booking.syncState === 'synced'
                     && !definition.booking.conflict && definition.booking.eventKey)}
-                  busy={busy} unsaved={hasUnsavedMigratedAnswers} onResult={onMigratedSummaryComplete}
+                  busy={busy} onResult={onMigratedSummaryComplete}
                   onBusyChange={setCheckingSession} onGenerationBusyChange={setGeneratingMigratedSummary}
                   onApplySuggestion={(text) => handleAnswerChange(field.id, text)}
                 /> : null) :

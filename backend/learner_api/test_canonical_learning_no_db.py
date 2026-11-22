@@ -52,6 +52,65 @@ def adapter(query):
     return scope
 
 
+class AssignmentActivityDateTests(unittest.TestCase):
+    def setUp(self):
+        self.query = Mock(return_value=[])
+        self.scope = adapter(self.query)
+        self.owner = {'id': 510, 'enrolment_id': 271}
+
+    def test_assignment_displays_saved_activity_date_without_changing_other_fields(self):
+        self.query.return_value = [{'id': 9, 'progress_id': 1,
+                                   'display_name': 'Synthetic assignment.pdf',
+                                   'content_type': 'application/pdf'}]
+        for category in ({'kind': 'assignment'}, {'kind': 'component', 'component_type': 'assignment'}):
+            for saved_date in ('2026-11-04', '2026-10-30'):
+                with self.subTest(category=category, saved_date=saved_date):
+                    entry = {'id': 1, **category, 'source_system': 'aptem', 'ksbs': ['K1'],
+                             'accepted': True, 'actual_seconds': 3600, 'expected_otjh': 2,
+                             'reporting_month': '2026-11',
+                             'started_at': '2026-11-19T09:00:00Z',
+                             'submitted_at': '2026-11-19T10:00:00Z',
+                             'reporting_started_at': f'{saved_date}T00:00:00Z',
+                             'reporting_timestamp_label': 'Input',
+                             'source_payload': {'activity_date': saved_date}}
+                    original = json.loads(json.dumps(entry))
+                    previous = self.scope['rows_for'](self.owner, [{**entry, 'source_payload': {}}])[0]
+                    result = self.scope['rows_for'](self.owner, [entry])[0]
+                    self.assertEqual(previous['activity_date'], '2026-11-19')
+                    self.assertEqual(result, {**previous, 'activity_date': saved_date})
+                    self.assertEqual(result['reporting_month'], '2026-11')
+                    self.assertEqual(result['actual_hours'], 1)
+                    self.assertEqual(result['documents'][0]['display_name'], 'Synthetic assignment.pdf')
+                    self.assertEqual(entry, original)
+                    allocation = self.scope['allocations'](entry)[0]
+                    self.assertEqual(allocation['completion_reporting_date'], '2026-11-19')
+
+    def test_assignment_saved_date_supports_json_metadata_and_rejects_invalid_dates(self):
+        self.query.return_value = []
+        entry = {'id': 1, 'kind': 'assignment', 'ksbs': [], 'accepted': False,
+                 'actual_seconds': 0, 'reporting_month': '2026-11',
+                 'submitted_at': '2026-11-19T10:00:00Z'}
+        result = self.scope['rows_for'](self.owner, [{**entry,
+            'source_payload': json.dumps({'activity_date': '2026-11-04'})}])[0]
+        self.assertEqual(result['activity_date'], '2026-11-04')
+        self.assertFalse(result['accepted'])
+        self.assertEqual(result['actual_hours'], 0)
+        for payload in ({}, None, [], '[]', *({'activity_date': value} for value in (
+                None, '', '2026-02-30', '2026-1-4', '2026-11-04T00:00:00Z', 20261104, []))):
+            with self.subTest(payload=payload):
+                row = self.scope['rows_for'](self.owner, [{**entry, 'source_payload': payload}])[0]
+                self.assertEqual(row['activity_date'], '2026-11-19')
+
+    def test_non_assignment_keeps_existing_completion_date_policy(self):
+        self.query.return_value = []
+        entry = {'id': 1, 'kind': 'video', 'ksbs': [], 'accepted': True,
+                 'actual_seconds': 60, 'reporting_month': '2026-11',
+                 'submitted_at': '2026-11-19T10:00:00Z',
+                 'source_payload': {'activity_date': '2026-11-04'}}
+        result = self.scope['rows_for'](self.owner, [entry])[0]
+        self.assertEqual(result['activity_date'], '2026-11-19')
+
+
 class CanonicalLearningTests(unittest.TestCase):
     def test_new_completion_date_moves_month_and_timestamp_without_rewriting_audit(self):
         self.query.return_value = []

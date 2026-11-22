@@ -17,8 +17,7 @@ application = get_wsgi_application()
 
 from curriculum_api.country_calendar_scheduler import CountryCalendarWSGI
 from coach_api.dashboard_snapshot_scheduler import CoachDashboardSnapshotWSGI
-from engagement_api.review_feedback_scheduler import ReviewFeedbackWSGI
 from curriculum_api.session_sync_runtime import SessionSyncWSGI
 from learner_api.catchup_reminders import CatchupReminderWSGI
 
-application = ReviewFeedbackWSGI(CountryCalendarWSGI(CoachDashboardSnapshotWSGI(CatchupReminderWSGI(SessionSyncWSGI(application)))))
+application = CountryCalendarWSGI(CoachDashboardSnapshotWSGI(CatchupReminderWSGI(SessionSyncWSGI(application))))

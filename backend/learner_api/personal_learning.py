@@ -126,11 +126,11 @@ def activity_state(context):
         yield {'progress': [], 'submissions': {}}
 
 
-def progress(detail, module_id):
+def progress(detail, module_id, *, required_only=False):
     from .certificates import _module_progress
     if not detail['components']:
         return {'progressPercent': 0, 'trackableTotal': 0, 'trackableDone': 0, 'finalTestPassed': False, 'moduleRef': f'current:{module_id}', 'moduleTitle': detail['modules'][0]}
-    return _module_progress(detail, f'current:{module_id}')
+    return _module_progress(detail, f'current:{module_id}', required_only=required_only)
 
 
 @endpoint
@@ -305,6 +305,11 @@ def certificate(context, account, detail, request, issue=False):
     with connections['enrolment'].cursor() as cursor:
         template = _template_dict(_published_template(cursor))
     if not issue:
+        if template and context['mode'] == 'study':
+            with connections['enrolment'].cursor() as cursor:
+                cursor.execute('SELECT id FROM "Learner".personal_course_certificates WHERE account_id=%s AND module_id=%s LIMIT 1',
+                               [account.id, context['module_id']])
+                template = {**template, 'issuedModuleRefs': [f"current:{context['module_id']}"] if cursor.fetchone() else []}
         return {'configured': bool(template), 'template': template, 'csrfToken': get_token(request)}
     if context['mode'] != 'study':
         raise PermissionError('Certificates cannot be issued in preview. Join this course to earn a certificate.')
@@ -313,14 +318,14 @@ def certificate(context, account, detail, request, issue=False):
     with transaction.atomic(using='enrolment'):
         state = store.load(account.id, context['module_id'], lock=True)
         with connections['enrolment'].cursor() as cursor:
-            cursor.execute('SELECT certificate FROM "Learner".personal_course_certificates WHERE account_id=%s AND module_id=%s AND template_id=%s AND template_version=%s',
-                           [account.id, context['module_id'], template['id'], template['version']])
+            cursor.execute('SELECT certificate FROM "Learner".personal_course_certificates WHERE account_id=%s AND module_id=%s ORDER BY id DESC LIMIT 1',
+                           [account.id, context['module_id']])
             existing = cursor.fetchone()
             if existing:
                 return {'certificate': store.json_value(existing[0], dict), 'template': template, 'issued': False}
             detail, _ = course_detail(context, account, state)
             ensure_open(detail, context)
-            eligibility = progress(detail, context['module_id'])
+            eligibility = progress(detail, context['module_id'], required_only=True)
             if not eligibility['trackableTotal'] or eligibility['trackableDone'] * 100 < template['minimumProgress'] * eligibility['trackableTotal']:
                 raise PermissionError('Complete the required activities, tutor reviews and assessments before requesting this certificate.')
             token = str(uuid.uuid4())
@@ -339,17 +344,38 @@ def certificate(context, account, detail, request, issue=False):
 
 
 def verify_certificate(request, token):
+    from login.models import LoginAccount
+    from .certificate_display import certificate_display
+    from .certificates import _template_dict, _published_template
     if request.method != 'GET':
         return JsonResponse({'error': 'Method not allowed.'}, status=405)
     try:
         with connections['enrolment'].cursor() as cursor:
-            cursor.execute('SELECT certificate FROM "Learner".personal_course_certificates WHERE token=%s', [token])
+            cursor.execute('SELECT certificate,account_id,module_id FROM "Learner".personal_course_certificates WHERE token=%s', [token])
             row = cursor.fetchone()
+            if not row:
+                return JsonResponse({'error': 'Certificate not found.'}, status=404)
+            template = _template_dict(_published_template(cursor))
     except DatabaseError:
         return JsonResponse({'error': 'Certificate verification is unavailable.'}, status=503)
-    if not row:
-        return JsonResponse({'error': 'Certificate not found.'}, status=404)
-    response = JsonResponse({'valid': True, 'certificate': store.json_value(row[0], dict)})
+    warnings = []
+    if not template:
+        warnings.append('No published template is available. Showing the saved design.')
+    learner, current_progress = None, None
+    try:
+        account = LoginAccount.objects.get(pk=row[1])
+        learner = {'name': account.display_name or account.email}
+        context = context_for(f'pl.{account.id}.study.{row[2]}', account)
+        detail, _ = course_detail(context, account)
+        learner['programme'] = detail.get('programme', '')
+        current_progress = progress(detail, row[2], required_only=True)
+    except (LoginAccount.DoesNotExist, LookupError, ValueError, PermissionError, DatabaseError):
+        warnings.append('Current learner or course details could not be loaded. Showing saved details where unavailable.')
+    saved = store.json_value(row[0], dict)
+    current = certificate_display(saved, template, learner=learner, progress=current_progress,
+                                  overrides=saved.get('snapshot', {}).get('certificateOverrides'))
+    current['refreshWarnings'] = warnings
+    response = JsonResponse({'valid': True, 'certificate': current})
     response['Cache-Control'] = 'private, no-store'
     return response
 
