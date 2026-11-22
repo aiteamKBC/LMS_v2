@@ -87,21 +87,21 @@ export function PdfReadingText({ pdf, pageNumber, active, storageKey, preference
   useEffect(() => {
     register?.(id, {
       highlight: () => {
-        if (!active || !highlightReadingSelection(root.current)) return false;
+        if (!active || !highlightReadingSelection(root.current, tools?.highlightColour || preferences.highlightColour)) return false;
         const highlightedHtml = root.current!.innerHTML;
         setDocuments(current => ({ ...current, [pageNumber]: { sourceHtml, html: highlightedHtml } }));
         onDirty?.();
         return true;
       },
       clear: () => {
-        const cleared = Object.fromEntries(Object.entries(documents).map(([page, doc]) => [page, { ...doc, html: doc.sourceHtml }]));
-        if (root.current) clearReadingHighlights(root.current);
-        setDocuments(cleared);
+        if (!root.current || !clearReadingHighlights(root.current)) return false;
+        setDocuments(current => ({ ...current, [pageNumber]: { sourceHtml, html: root.current!.innerHTML } }));
         onDirty?.();
+        return true;
       },
       save: () => window.localStorage.setItem(storageKey, JSON.stringify(documents)),
     });
-  }, [register, id, active, pageNumber, sourceHtml, documents, storageKey, onDirty]);
+  }, [register, id, active, pageNumber, sourceHtml, documents, storageKey, onDirty, tools?.highlightColour, preferences.highlightColour]);
   useEffect(() => () => register?.(id, null), [register, id]);
 
   if (!active) return null;

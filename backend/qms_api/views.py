@@ -145,12 +145,16 @@ def _lms_summary_context(learner_ids):
         return {}
     from learner_api.models import EnrolmentUser
 
-    learners = EnrolmentUser.all_learners.filter(id__in=ids).only(
+    learners = list(EnrolmentUser.all_learners.filter(id__in=ids).only(
         "id", "username", "email", "programme_status", "programme", "cohort",
         "learner_type", "reference_number", "coach_name", "coach_email",
         "learner_start_date", "learner_end_date", "start_date", "end_date",
         "apprenticeship_end_date",
-    )
+    ))
+    # The Deep Dive table is ordered by the same ILR postcode used by the
+    # monthly postcode-area sync. Resolve these in bulk so the summary list
+    # does not make one contact query per learner.
+    postcodes = _ilr_postcodes_for_learners(learners)
     return {
         str(learner.id): {
             "fullName": _text(learner.username),
@@ -167,6 +171,7 @@ def _lms_summary_context(learner_ids):
             "startDate": _text(learner.start_date),
             "endDate": _text(learner.end_date),
             "apprenticeshipEndDate": _text(learner.apprenticeship_end_date),
+            "postcode": postcodes.get(learner.id, ""),
         }
         for learner in learners
     }
@@ -494,6 +499,9 @@ def _reviewer_names(records):
 def _serialize(record, context=None, reviewer_names=None):
     raw = dict(record.raw or {})
     authoritative = (context or {}).get(str(record.lms_learner_id))
+    postcode = _text((authoritative or {}).get("postcode")) or _raw_text(
+        raw, "postcode", "learnerPostcode", "learner_postcode",
+    )
     reviewer_value = _text(record.reviewed_by, 255)
     reviewer_label = (reviewer_names or {}).get(reviewer_value.casefold(), reviewer_value)
     if authoritative:
@@ -523,6 +531,7 @@ def _serialize(record, context=None, reviewer_names=None):
         "apprenticeshipEndDate": record.apprenticeship_end_date or (authoritative or {}).get("apprenticeshipEndDate", ""),
         "plannedGatewayDate": record.planned_gateway_date or (authoritative or {}).get("plannedGatewayDate", ""),
         "plannedEpaDate": record.planned_epa_date or (authoritative or {}).get("plannedEpaDate", ""),
+        "postcode": postcode,
         "operational": _merged_operational(authoritative, record.operational_overrides),
         "observer": record.observer,
         "reviewedBy": reviewer_label,
