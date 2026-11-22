@@ -123,17 +123,8 @@ def certificate_template(request):
                 superseded_count = 0
                 if publish:
                     cursor.execute('UPDATE "Learner".certificate_templates SET status=%s, updated_at=now() WHERE certificate_type=%s AND status=%s', ["archived", "progress-achievement", "published"])
-                    cursor.execute('''UPDATE "Learner".learner_certificates lc
-                        SET status=%s,
-                            revoked_by=%s,
-                            revoked_at=now(),
-                            revoke_reason=%s
-                        FROM "Learner".certificate_templates ct
-                        WHERE lc.template_id=ct.id
-                          AND ct.certificate_type=%s
-                          AND lc.status=%s''',
-                        ["superseded", actor, f"Superseded by certificate template version {version}", "progress-achievement", "issued"])
-                    superseded_count = cursor.rowcount
+                    # Existing awards keep their identity and status. Their display
+                    # reads the published template, with per-certificate corrections.
                 cursor.execute('''INSERT INTO "Learner".certificate_templates
                     (name,certificate_type,version,status,title,body_text,minimum_progress,require_final_test,layout_config,created_by,published_by,published_at)
                     VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb,%s,%s,CASE WHEN %s THEN now() END)
