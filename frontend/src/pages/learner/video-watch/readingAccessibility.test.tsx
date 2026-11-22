@@ -71,6 +71,11 @@ it('updates, saves and restores every display preference for authored reading te
   expect(screen.getByRole('region', { name: 'Reading text' })).toHaveStyle({ backgroundColor: '#fff', color: '#1f2937' });
 });
 
+it('keeps the reading tools visible while the material scrolls', () => {
+  render(reading());
+  expect(screen.getByLabelText('Reading accessibility tools')).toHaveClass('sticky', 'top-0', 'z-30');
+});
+
 it('keeps the ruler relative to the reading area when the pointer moves over nested content', () => {
   render(reading());
   fireEvent.click(screen.getByRole('button', { name: 'Reading ruler' }));
@@ -178,6 +183,39 @@ it('reads a PDF page once when its extracted text is also visible', async () => 
   expect(speak.mock.calls[0][0].text).toBe('Page 1 reading text.');
   await act(async () => speak.mock.calls[0][0].onend());
   expect(screen.getByRole('button', { name: 'Read aloud' })).toHaveAttribute('aria-pressed', 'false');
+});
+
+it('automatically extracts a scanned PDF page for the main Read aloud control', async () => {
+  const speak = vi.fn();
+  vi.stubGlobal('speechSynthesis', { speak, cancel: vi.fn() });
+  vi.stubGlobal('SpeechSynthesisUtterance', class { text: string; constructor(text: string) { this.text = text; } });
+  pdfText.mockResolvedValue({ items: [] });
+  vi.mocked(extractScannedPage).mockResolvedValue('Scanned page text for narration.');
+
+  render(reading({ contentHtml: '', resourceUrl: '/scanned.pdf' }));
+  await screen.findByRole('region', { name: 'Original PDF page' });
+  await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Read aloud' })));
+
+  await waitFor(() => expect(extractScannedPage).toHaveBeenCalledWith(
+    expect.anything(), 1, expect.any(AbortSignal),
+  ));
+  await waitFor(() => expect(speak).toHaveBeenCalledOnce());
+  expect(speak.mock.calls[0][0].text).toBe('Scanned page text for narration.');
+});
+
+it('keeps authored reading narration working when a PDF OCR attempt fails', async () => {
+  const speak = vi.fn();
+  vi.stubGlobal('speechSynthesis', { speak, cancel: vi.fn() });
+  vi.stubGlobal('SpeechSynthesisUtterance', class { text: string; constructor(text: string) { this.text = text; } });
+  pdfText.mockResolvedValue({ items: [] });
+  vi.mocked(extractScannedPage).mockRejectedValue(new Error('OCR unavailable'));
+
+  render(reading({ resourceUrl: '/unreadable.pdf' }));
+  await screen.findByRole('region', { name: 'Original PDF page' });
+  await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Read aloud' })));
+
+  await waitFor(() => expect(speak).toHaveBeenCalledOnce());
+  expect(speak.mock.calls[0][0].text).toContain('First important paragraph.');
 });
 
 it('keeps two documents on the same page number isolated when saving PDF text highlights', async () => {

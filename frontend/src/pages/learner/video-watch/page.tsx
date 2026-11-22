@@ -79,6 +79,7 @@ import { SlideDeckViewer } from '@/components/feature/SlideDeckViewer';
 import { ReadingSurface } from './ReadingSurface';
 import { ReadingAttachmentText } from './ReadingAttachmentText';
 import { PdfReadingText } from './PdfReadingText';
+import { extractScannedPage } from './readingOcr';
 import { clearReadingHighlights, highlightReadingSelection, ReadingToolsContext, DEFAULT_READING_PREFERENCES, readingStorageKey, readStoredJson, type ReadingAnnotations, type ReadingPreferences, type ReadingColourMode, type ReadingFont } from './readingAccessibility';
 import {
   loadTeamsMeetingArtifacts,
@@ -1657,7 +1658,7 @@ function ReadingAccessibilityToolbar({
     onChange({ ...preferences, [key]: value });
   };
   return (
-    <div className="mb-4 rounded-xl border border-blue-200 bg-blue-50/70 p-3" aria-label="Reading accessibility tools">
+    <div className="sticky top-0 z-30 mb-4 rounded-xl border border-blue-200 bg-blue-50/95 p-3 shadow-sm backdrop-blur-sm" aria-label="Reading accessibility tools">
       <div className="flex flex-wrap items-center gap-2">
         <span className="mr-1 inline-flex items-center gap-1.5 text-xs font-black text-blue-900">
           <AppIcon className="ri-accessibility-line text-base" />
@@ -1807,8 +1808,23 @@ function AccessibleReadingMaterial({
     void narration.read(async () => {
       const text = Array.from(readingBodyRef.current?.querySelectorAll('[data-reading-text]:not([data-pdf-reading-text])') || [])
         .flatMap(narrationFromHtml);
-      const pages = await Promise.all(Array.from(pdfReaders.current.values(), readPage => readPage()));
-      return [...text, ...pages.flat()];
+      let firstPdfError: ReadingNarrationError | null = null;
+      const pages = await Promise.all(Array.from(pdfReaders.current.values(), async readPage => {
+        try {
+          return await readPage();
+        } catch (error) {
+          // One unavailable/scanned PDF must not prevent authored reading text
+          // or another readable PDF from being narrated.
+          if (error instanceof ReadingNarrationError) {
+            firstPdfError ||= error;
+            return [];
+          }
+          throw error;
+        }
+      }));
+      const blocks = [...text, ...pages.flat()];
+      if (!blocks.length && firstPdfError) throw firstPdfError;
+      return blocks;
     });
   };
 
@@ -2267,6 +2283,7 @@ function PdfCanvasPreview({ url, title, fileName, readingPreferences, annotation
   const [textView, setTextView] = useState(false);
   const ocrDocument = useMemo(() => ({ pdf, pages: new Map<number, string>() }), [pdf]);
   const ocrText = ocrDocument.pages;
+  const ocrRequest = useRef<AbortController | null>(null);
   const preferences = readingPreferences || DEFAULT_READING_PREFERENCES;
 
   const persistHighlights = useCallback(() => {
@@ -2292,14 +2309,32 @@ function PdfCanvasPreview({ url, title, fileName, readingPreferences, annotation
         ? 'The PDF is still loading. Please wait, then try Read aloud again.'
         : 'The open PDF could not be read. Please reload its preview and try again.');
     }
-    const page = await pdf.getPage(pageNumber);
-    const content = await page.getTextContent();
-    const blocks = narrationFromPdf(content.items);
+    let blocks: ReturnType<typeof narrationFromPdf>;
+    try {
+      const page = await pdf.getPage(pageNumber);
+      const content = await page.getTextContent();
+      blocks = narrationFromPdf(content.items);
+    } catch (error) {
+      throw new ReadingNarrationError(error instanceof Error ? error.message : 'Could not extract text from this PDF page.');
+    }
     if (!blocks.length && ocrText.has(pageNumber)) {
       return [{ text: ocrText.get(pageNumber)!, pauseMs: 650 }];
     }
     if (!blocks.length) {
-      throw new ReadingNarrationError('No readable text was found on the open PDF page. Open Text reading view and choose Extract page text, then try Read aloud again.');
+      ocrRequest.current?.abort();
+      const controller = new AbortController();
+      ocrRequest.current = controller;
+      try {
+        const text = await extractScannedPage(pdf, pageNumber, controller.signal);
+        if (!text.trim()) throw new ReadingNarrationError('No readable text was found on the open PDF page.');
+        ocrText.set(pageNumber, text.trim());
+        return [{ text: text.trim(), pauseMs: 650 }];
+      } catch (error) {
+        if (error instanceof ReadingNarrationError) throw error;
+        throw new ReadingNarrationError(error instanceof Error ? error.message : 'Could not extract text from this PDF page.');
+      } finally {
+        if (ocrRequest.current === controller) ocrRequest.current = null;
+      }
     }
     return blocks;
   }, [pageNumber, pdf, status, ocrText]);
@@ -2307,6 +2342,8 @@ function PdfCanvasPreview({ url, title, fileName, readingPreferences, annotation
   useEffect(() => {
     registerPdfReader?.(pdfReaderId, currentPageNarration);
   }, [registerPdfReader, pdfReaderId, currentPageNarration]);
+
+  useEffect(() => () => ocrRequest.current?.abort(), []);
 
   // Keep a preview's place in the narration order when its page changes.
   // Remove it only when the preview closes or the activity unmounts.
