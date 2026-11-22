@@ -1,5 +1,6 @@
 """Isolated in-memory SQLite checks for canonical assignment reconciliation."""
 from unittest import TestCase
+from datetime import datetime, timezone
 
 from django.db import connections
 
@@ -71,6 +72,8 @@ class IsolatedProgressWriteTests(TestCase):
                 component_ref text NOT NULL,
                 free_course_ref text NOT NULL,
                 completed_at datetime NULL,
+                is_completed boolean NOT NULL DEFAULT 0,
+                activity_state text NOT NULL DEFAULT 'not_started',
                 status varchar(20) NOT NULL,
                 deleted_at datetime NULL,
                 UNIQUE (learner_id, component_ref)
@@ -99,3 +102,93 @@ class IsolatedProgressWriteTests(TestCase):
         self.assertEqual(row.pk, original_id)
         self.assertEqual(row.status, "inactive")
         self.assertEqual(manager.count(), 1)
+
+    def progress(self, **values):
+        defaults = dict(learner_id=501, component_ref="COMP-1", free_course_ref="FREE-1")
+        return LearnerFreeCourseProgress.objects.using("enrolment").create(**(defaults | values))
+
+    def test_completion_with_unknown_date_is_counted_and_never_backfilled(self):
+        from .free_course_progress import completed_component_refs
+        row = self.progress(is_completed=True, activity_state="completed", completed_at=None)
+        self.assertEqual(completed_component_refs(501), {"COMP-1"})
+        self.assertTrue(_record_completion(501, "COMP-1", "FREE-1"))
+        row.refresh_from_db()
+        self.assertIsNone(row.completed_at)
+
+    def test_incomplete_and_archived_records_do_not_count_even_with_dates(self):
+        from .free_course_progress import completed_component_refs
+        at = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        for index, (state, completed, status, deleted) in enumerate([
+            ("not_started", False, "active", None),
+            ("reading_viewed", False, "active", None),
+            ("completed", True, "inactive", at),
+            ("not_started", False, "inactive", at),
+            ("completed", True, "active", at),
+        ]):
+            self.progress(component_ref=str(index), activity_state=state, is_completed=completed,
+                          status=status, deleted_at=deleted, completed_at=at)
+        self.assertEqual(completed_component_refs(501), set())
+
+    def test_events_advance_without_downgrades_or_duplicate_rows(self):
+        from .free_course_progress import save_activity_state, completed_component_refs
+        manager = LearnerFreeCourseProgress.objects.using("enrolment")
+        for state in ("not_started", "reading_viewed", "not_started"):
+            self.assertTrue(save_activity_state(501, "COMP-1", "FREE-1", state))
+        row = manager.get()
+        self.assertEqual((row.activity_state, row.is_completed, row.completed_at),
+                         ("reading_viewed", False, None))
+        self.assertEqual(completed_component_refs(501), set())
+        self.assertTrue(_record_completion(501, "COMP-1", "FREE-1"))
+        row.refresh_from_db()
+        at = row.completed_at
+        for state in ("reading_viewed", "not_started", "completed"):
+            self.assertTrue(save_activity_state(501, "COMP-1", "FREE-1", state,
+                                                datetime(2026, 2, 1, tzinfo=timezone.utc)))
+        row.refresh_from_db()
+        self.assertEqual((row.activity_state, row.is_completed, row.completed_at), ("completed", True, at))
+        self.assertEqual(manager.count(), 1)
+        self.assertEqual(completed_component_refs(501), {"COMP-1"})
+        self.assertEqual(completed_component_refs(502), set())
+
+    def test_archived_history_and_wrong_course_are_unchanged_by_any_event(self):
+        from .free_course_progress import save_activity_state
+        manager = LearnerFreeCourseProgress.objects.using("enrolment")
+        self.progress(is_completed=True, activity_state="completed", status="inactive",
+                      deleted_at=datetime(2026, 1, 1, tzinfo=timezone.utc))
+        before = list(manager.values())
+        for state in ("not_started", "reading_viewed", "completed"):
+            self.assertFalse(save_activity_state(501, "COMP-1", "FREE-1", state,
+                                                 datetime(2026, 2, 1, tzinfo=timezone.utc)))
+        self.assertEqual(list(manager.values()), before)
+        row = self.progress(component_ref="COMP-2")
+        self.assertFalse(_record_completion(501, "COMP-2", "OTHER-COURSE"))
+        row.refresh_from_db()
+        self.assertEqual(row.free_course_ref, "FREE-1")
+        self.assertFalse(row.is_completed)
+
+    def test_live_card_and_detail_count_only_explicit_eligible_completions(self):
+        import json
+        from unittest.mock import patch
+        from django.test import RequestFactory
+        from . import free_courses_view as view
+        from .test_free_course_progress_status_no_db import inner
+        from types import SimpleNamespace
+        self.progress(is_completed=True, activity_state="completed")
+        self.progress(component_ref="READ", activity_state="reading_viewed")
+        self.progress(component_ref="ARCHIVE", is_completed=True, activity_state="completed",
+                      status="inactive", deleted_at=datetime(2026, 1, 1, tzinfo=timezone.utc))
+        catalogue = ({"FREE-1": {"id": "FREE-1", "course_name": "Synthetic"}},
+                     [{"id": "W", "course_id": "FREE-1"}],
+                     [{"id": ref, "free_module_id": "W", "type": "reading"}
+                      for ref in ("COMP-1", "READ", "ARCHIVE", "NEW")])
+        with patch.object(view, '_resolve_source', return_value=(SimpleNamespace(pk=501), None)), \
+             patch.object(view, 'assigned_course_ids', return_value=['FREE-1']), \
+             patch.object(view, '_scoped_rows', return_value=catalogue):
+            request = RequestFactory().get('/')
+            summary = json.loads(inner(view.free_courses)(request, 'commercial', 19).content)['freeCourses'][0]
+            detail = json.loads(inner(view.free_course_detail)(request, 'commercial', 19, 'FREE-1').content)
+        self.assertEqual((summary['completedActivities'], summary['progressPercentage']), (1, 25))
+        activities = detail['freeCourse']['weeks'][0]['activities']
+        self.assertEqual([(a['is_completed'], a['activity_state']) for a in activities],
+                         [(True, 'completed'), (False, 'reading_viewed'),
+                          (False, 'not_started'), (False, 'not_started')])

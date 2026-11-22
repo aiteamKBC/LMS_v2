@@ -93,3 +93,22 @@ describe('assigned Free Courses learner flow', () => {
   });
 });
 
+
+describe('migrated activity states', () => {
+  it('counts a completion without a date and resumes the viewed incomplete reading', async () => {
+    vi.mocked(fetchLearnerFreeCourse).mockResolvedValue({ ...detail, weeks: [
+      { ...detail.weeks[0], activities: [
+        { ...detail.weeks[0].activities[0], completed: false, is_completed: true,
+          activity_state: 'completed', completed_at: null },
+        { componentId: 'READ-2', title: 'Read next', type: 'reading', contentHtml: '<p>Next</p>',
+          is_completed: false, activity_state: 'reading_viewed' },
+      ] },
+    ] });
+    mount();
+    fireEvent.click(await screen.findByRole('button', { name: /Canonical course/ }));
+    expect(await screen.findByText('Material: Read next')).toBeVisible();
+    expect(screen.getByText('1 of 2 completed')).toBeVisible();
+    expect(screen.getByText(/Viewed/)).toBeVisible();
+    expect(markFreeCourseActivityComplete).not.toHaveBeenCalled();
+  });
+});

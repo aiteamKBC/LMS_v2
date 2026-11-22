@@ -48,6 +48,7 @@ def catalogue_rows():
 
 class AssignedFreeCourseReadTests(SimpleTestCase):
     def setUp(self):
+        self.enterContext(patch.object(view, "_activity_states", return_value={}))
         self.factory = RequestFactory()
         self.enterContext(patch.dict("os.environ", {"LEARNER_API_REQUIRE_AUTH": "1"}))
 
@@ -431,8 +432,10 @@ class CanonicalFreeCourseModelTests(SimpleTestCase):
             refs = view._completed_refs(7, ["FREE-1"])
         self.assertEqual(refs, {("FREE-1", "C-1")})
         filters = queryset.filter.call_args.kwargs
-        self.assertEqual(set(filters), {"learner_id", "free_course_ref__in", "status"})
+        self.assertEqual(set(filters), {"learner_id", "free_course_ref__in", "status", "is_completed", "deleted_at__isnull"})
         self.assertEqual(filters["status"], "active")
+        self.assertTrue(filters["is_completed"])
+        self.assertTrue(filters["deleted_at__isnull"])
         self.assertEqual(captured["fields"], ("free_course_ref", "component_ref"))
 
 

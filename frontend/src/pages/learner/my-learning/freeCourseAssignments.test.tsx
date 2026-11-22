@@ -121,7 +121,7 @@ describe('standalone free-course certificates', () => {
     mixed.weeks[0].activities.push(...Array.from({ length: 5 }, (_, i) => ({ componentId: `O${i}`, title: `Extra ${i}`,
       type: 'reading', expectedOtjh: 0, contentHtml: '<p>Extra</p>', completed: false })));
     vi.mocked(fetch).mockImplementation(async input => new Response(JSON.stringify(String(input).includes('/certificates/')
-      ? { template, csrfToken: 'csrf' } : { freeCourses: [mixed] })));
+      ? { template, csrfToken: 'csrf' } : { freeCourses: [{ ...mixed, activityCount: 10, completedActivities: 4, progressPercentage: 40 }] })));
     renderCourses(kind);
     expect(await screen.findByRole('button', { name: 'Get certificate' })).toBeVisible();
     expect(screen.getByRole('progressbar', { name: 'Legacy skills progress' })).toHaveAttribute('aria-valuenow', '40');
@@ -131,7 +131,7 @@ describe('standalone free-course certificates', () => {
     const optional = course(5);
     optional.weeks[0].activities.forEach(activity => { activity.expectedOtjh = 0; });
     vi.mocked(fetch).mockImplementation(async input => new Response(JSON.stringify(String(input).includes('/certificates/')
-      ? { template: { ...template, minimumProgress: 0 }, csrfToken: 'csrf' } : { freeCourses: [optional] })));
+      ? { template: { ...template, minimumProgress: 0 }, csrfToken: 'csrf' } : { freeCourses: [{ ...optional, activityCount: 5, completedActivities: 5, progressPercentage: 100 }] })));
     renderCourses();
     expect(await screen.findByRole('progressbar', { name: 'Legacy skills progress' })).toHaveAttribute('aria-valuenow', '100');
     expect(screen.queryByRole('button', { name: 'Get certificate' })).not.toBeInTheDocument();

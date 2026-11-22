@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { FreeCourseActivity } from '@/api/freeCourses';
-import { computeLocks } from './freeCourseAccess';
+import { isFreeCourseActivityCompleted, computeLocks } from './freeCourseAccess';
 
 // ============================================================================
 // Free-course access no longer depends on completion.
@@ -61,5 +61,15 @@ describe('free-course activity access', () => {
     const activities = [material('m1'), quiz('q1'), material('m2', true), quiz('q2'), emptyActivity('e1')];
     const locks = computeLocks(activities);
     expect([...locks.values()].filter(lock => lock.locked)).toHaveLength(0);
+  });
+});
+
+describe('canonical Free Course completion', () => {
+  it.each([null, '2026-01-01T00:00:00Z'])('retains explicit completion with date %s', completed_at => {
+    expect(isFreeCourseActivityCompleted({ ...material('m'), is_completed: true, completed_at })).toBe(true);
+  });
+  it.each(['not_started', 'reading_viewed'] as const)('keeps %s incomplete despite a stale compatibility flag or date', activity_state => {
+    expect(isFreeCourseActivityCompleted({ ...material('m', true), is_completed: false,
+      activity_state, completed_at: '2026-01-01T00:00:00Z' })).toBe(false);
   });
 });

@@ -53,7 +53,9 @@ class Store:
         def matches(row):
             return (row.learner_id == criteria["learner_id"]
                     and row.free_course_ref in criteria["free_course_ref__in"]
-                    and ("status" not in criteria or row.status == criteria["status"]))
+                    and ("status" not in criteria or row.status == criteria["status"])
+                    and ("is_completed" not in criteria or row.is_completed == criteria['is_completed'])
+                    and ("deleted_at__isnull" not in criteria or (row.deleted_at is None) == criteria['deleted_at__isnull']))
         selected = [row for row in self.rows if matches(row)]
         return SimpleNamespace(values_list=lambda *fields: [tuple(getattr(row, f) for f in fields) for row in selected])
 
@@ -69,7 +71,8 @@ class Store:
 
 def row(component_ref, status="active", completed_at=WITHDRAWN_AT, deleted_at=None):
     return {"learner_id": LEARNER.pk, "component_ref": component_ref, "free_course_ref": "FREE-SAFE",
-            "completed_at": completed_at, "status": status, "deleted_at": deleted_at}
+            "completed_at": completed_at, "status": status, "deleted_at": deleted_at,
+            "is_completed": True, "activity_state": "completed"}
 
 
 def inactive(component_ref):
@@ -96,6 +99,18 @@ class GuardedSideEffects(SimpleTestCase):
 
 
 class ModelTests(SimpleTestCase):
+    def test_canonical_owner_never_falls_back_to_the_enrolment_id(self):
+        from .free_course_records import progress_owner
+        with patch('learner_api.identity.learner_profile_for_source', return_value=None) as resolve:
+            self.assertIsNone(progress_owner(SimpleNamespace(pk=19)))
+            self.assertFalse(resolve.call_args.kwargs['heal'])
+
+    def test_completion_and_activity_defaults_are_independent_of_lifecycle(self):
+        progress = LearnerFreeCourseProgress(learner_id=501, component_ref='C', free_course_ref='F')
+        self.assertEqual((progress.is_completed, progress.activity_state, progress.status,
+                          progress.completed_at, progress.deleted_at),
+                         (False, 'not_started', 'active', None, None))
+
     def test_status_defaults_active_and_deleted_at_is_optional(self):
         status = LearnerFreeCourseProgress._meta.get_field("status")
         deleted_at = LearnerFreeCourseProgress._meta.get_field("deleted_at")
@@ -130,6 +145,14 @@ class ReadTests(GuardedSideEffects):
         self.assertEqual((card["completedActivities"], card["progressPercentage"]), (2, 50))
         self.assertTrue(self.detail()["READ"])
 
+    def test_incomplete_rows_and_soft_deleted_completions_are_excluded(self):
+        unread = row("READ") | {"is_completed": False, "activity_state": "not_started"}
+        viewed = row("VIDEO") | {"is_completed": False, "activity_state": "reading_viewed"}
+        archived = row("AUDIO", completed_at=None, deleted_at=WITHDRAWN_AT)
+        self.use(Store(unread, viewed, archived))
+        self.assertEqual(self.summary()["completedActivities"], 0)
+        self.assertFalse(any(self.detail().values()))
+
     def test_inactive_rows_alone_leave_progress_at_zero(self):
         self.use(Store(inactive("VIDEO"), inactive("AUDIO"), inactive("QUIZ")))
         card = self.summary()
@@ -142,12 +165,25 @@ class ActivityWriteTests(GuardedSideEffects):
         super().setUp()
         self.enterContext(patch.dict("os.environ", {"LEARNER_API_REQUIRE_AUTH": "1"}))
 
-    def complete(self, component_id, account=LEARNER_ACCOUNT):
+    def complete(self, component_id, account=LEARNER_ACCOUNT, activity_state=None):
         request = RequestFactory().post("/learner_api/free-courses/commercial/134/complete/",
-                                        data=json.dumps({"componentId": component_id}),
+                                        data=json.dumps({"componentId": component_id, **({"activityState": activity_state} if activity_state is not None else {})}),
                                         content_type="application/json")
         with patch.object(permissions, "authenticate_request", return_value=account):
             return view.complete_free_course_activity(request, kind="commercial", pk=134)
+
+    def test_reading_view_initializes_incomplete_progress_and_bad_states_are_rejected(self):
+        store = self.use(Store())
+        response = self.complete("READ", activity_state="reading_viewed")
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(json.loads(response.content)['completed'])
+        self.assertEqual((store.rows[0].activity_state, store.rows[0].is_completed,
+                          store.rows[0].completed_at), ('reading_viewed', False, None))
+        for state in ('inactive', 'unknown', []):
+            self.assertEqual(self.complete("READ", activity_state=state).status_code, 400)
+        self.assertEqual(self.complete("VIDEO", activity_state="reading_viewed").status_code, 400)
+        self.assertEqual(self.complete("QUIZ", activity_state="completed").status_code, 409)
+        self.assertEqual(store.created, 1)
 
     def test_new_completion_is_saved_active_with_a_date(self):
         store = self.use(Store())

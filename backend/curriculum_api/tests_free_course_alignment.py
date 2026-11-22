@@ -19,7 +19,8 @@ class AlignmentPlanTests(SimpleTestCase):
                                                        settings_json={'readingContent': 'Source text'})]
         self.source['learner_free_courses'] = [dict(id=1, learner_id=7, free_course_ref='COURSE', position=1)]
         self.source['learner_free_course_progress'] = [dict(id=1, learner_id=7, free_course_ref='COURSE',
-            component_ref='ITEM', completed_at=None, status='active', deleted_at=None)]
+            component_ref='ITEM', completed_at=None, status='active', deleted_at=None,
+            is_completed=True, activity_state='completed')]
         self.target = {table: [] for table in TABLES}
         self.target.update(profiles=[{'id': 80, 'enrolment_id': 50}],
                            assignments_json=[{'id': 50, 'value': []}], quiz_ids=[],
@@ -66,6 +67,14 @@ class AlignmentPlanTests(SimpleTestCase):
         self.source['learner_free_course_progress'][0].update(status='inactive', deleted_at=at, completed_at=at)
         saved = build_plan(self.source, self.target).inserts['learner_free_course_progress'][0]
         self.assertEqual((saved['status'], saved['deleted_at'], saved['completed_at']), ('inactive', at, at))
+
+    def test_activity_state_and_unknown_completion_dates_are_preserved(self):
+        for state in ('not_started', 'reading_viewed', 'completed'):
+            self.source['learner_free_course_progress'][0].update(
+                activity_state=state, is_completed=state == 'completed', completed_at=None)
+            saved = build_plan(self.source, self.target).inserts['learner_free_course_progress'][0]
+            self.assertEqual((saved['activity_state'], saved['is_completed'], saved['completed_at']),
+                             (state, state == 'completed', None))
 
     def test_rejects_ambiguous_learner_identity(self):
         self.target['profiles'].append(dict(id=81, enrolment_id=50))

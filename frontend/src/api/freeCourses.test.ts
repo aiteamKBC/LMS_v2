@@ -1,11 +1,11 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { readLearnerJson } from './learnerRead';
 import { clearAllCachedResources } from './cachedRequest';
 
 vi.mock('./learnerRead', () => ({ readLearnerJson: vi.fn() }));
 
-import { fetchFreeCourseQuiz, fetchLearnerFreeCourse, fetchLearnerFreeCourses } from './freeCourses';
+import { fetchFreeCourseQuiz, fetchLearnerFreeCourse, fetchLearnerFreeCourses, saveFreeCourseActivityState } from './freeCourses';
 
 
 describe('Free Course quiz reads', () => {
@@ -37,5 +37,24 @@ describe('Free Course quiz reads', () => {
     expect(readLearnerJson).toHaveBeenCalledWith(
       '/learner_api/free-courses/commercial/19/quiz/FREECOMP%201/',
     );
+  });
+});
+
+describe('canonical Free Course activity events', () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('records reading viewed without requesting completion', async () => {
+    const request = vi.fn(async () => new Response(JSON.stringify({ completed: false }), { status: 200 }));
+    vi.stubGlobal('fetch', request);
+    await saveFreeCourseActivityState('commercial', '19', 'READ-1', 'reading_viewed');
+    expect(request).toHaveBeenCalledWith('/learner_api/free-courses/commercial/19/complete/',
+      expect.objectContaining({ method: 'POST',
+        body: JSON.stringify({ componentId: 'READ-1', activityState: 'reading_viewed' }) }));
+  });
+
+  it('does not report an archived activity as successfully saved', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ error: 'Completion withdrawn' }), { status: 409 })));
+    await expect(saveFreeCourseActivityState('commercial', '19', 'READ-1', 'completed'))
+      .rejects.toThrow('Completion withdrawn');
   });
 });

@@ -7,13 +7,12 @@ import type { Quiz } from './quizzes';
 // ============================================================================
 // Learner-facing free-courses API client.
 //
-// Reads the free courses assigned to a learner from the learner-gated endpoint
-// /learner_api/free-courses/<kind>/<pk>/. Free courses carry no hours, KSBs or
-// progress by design, so the list is deliberately a lightweight summary. The
-// authored week/activity tree is fetched only after a learner opens one course.
-// Builder courses carry a moduleId and open the normal learning workspace; only
-// legacy courses use the tree and isolated completion endpoints in this client.
+// Reads canonical assignments and isolated progress through learner-gated APIs.
+// The list is a lightweight summary; the canonical week/activity tree loads
+// when a course is opened. Completion is independent of programme OTJH/KSBs.
 // ============================================================================
+
+export type FreeCourseActivityState = 'not_started' | 'reading_viewed' | 'completed';
 
 /** One openable activity inside a free-course week. */
 export interface FreeCourseActivity {
@@ -40,7 +39,10 @@ export interface FreeCourseActivity {
   manualUnlock?: boolean;
   /** This learner's own completion of the activity. Its own store — never part
    *  of programme OTJH/KSBs or the overall progress figure. */
-  completed?: boolean;
+  completed?: boolean; // Compatibility alias supplied by the backend.
+  is_completed?: boolean;
+  activity_state?: FreeCourseActivityState;
+  completed_at?: string | null; // Optional historical timestamp, never a completion flag.
 }
 
 export interface FreeCourseWeek {
@@ -117,12 +119,18 @@ export function fetchLearnerFreeCourse(
 /** Record that the learner finished one free-course activity. Its completion is
  *  stored in an isolated table and never affects overall progress/OTJH/KSBs. */
 export async function markFreeCourseActivityComplete(kind: LearnerKind, id: string, componentId: string): Promise<void> {
+  await saveFreeCourseActivityState(kind, id, componentId, 'completed');
+}
+
+export async function saveFreeCourseActivityState(
+  kind: LearnerKind, id: string, componentId: string, activityState: FreeCourseActivityState,
+): Promise<void> {
   let res: Response;
   try {
     res = await learningFetch(`${BASE}/${kind}/${id}/complete/`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ componentId }),
+      body: JSON.stringify(activityState === 'completed' ? { componentId } : { componentId, activityState }),
     });
   } catch {
     throw new Error('Could not reach the server. Please try again.');

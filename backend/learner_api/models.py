@@ -1320,13 +1320,14 @@ class LearnerFreeCourseProgress(models.Model):
     )
     component_ref = models.TextField()
     free_course_ref = models.TextField()
-    # NULL = completed on a date nobody can verify (rows carried over from the
-    # old free-course store). The row itself is the completion; readers key on
-    # (free_course_ref, component_ref) and never on this date. New completions
-    # always store timezone.now(). Never backfill a NULL.
+    # Completion is explicit; historical completed rows may have no timestamp.
     completed_at = models.DateTimeField(null=True, blank=True)
-    # Only 'active' rows are completions. An 'inactive' row is a withdrawn
-    # completion kept for history (deleted_at says when); no write reactivates it.
+    is_completed = models.BooleanField(default=False)
+    activity_state = models.TextField(default="not_started", choices=(
+        ("not_started", "Not started"), ("reading_viewed", "Reading viewed"),
+        ("completed", "Completed"),
+    ))
+    # Lifecycle is independent of activity progress. Never reactivate history.
     status = models.CharField(max_length=20, default=FREE_PROGRESS_ACTIVE)
     deleted_at = models.DateTimeField(null=True, blank=True)
 

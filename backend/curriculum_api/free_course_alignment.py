@@ -192,8 +192,12 @@ def build_plan(source, target):
             raise ValueError('Source progress has conflicting course/component ownership.')
         if record['status'] not in ('active', 'inactive'):
             raise ValueError('Unknown source progress state.')
+        if (record['activity_state'] not in ('not_started', 'reading_viewed', 'completed')
+                or record['is_completed'] != (record['activity_state'] == 'completed')):
+            raise ValueError('Conflicting source activity completion state.')
         inserts['learner_free_course_progress'].append({**{k: record[k] for k in
-            ('free_course_ref', 'component_ref', 'completed_at', 'status', 'deleted_at')}, 'learner_id': target_id})
+            ('free_course_ref', 'component_ref', 'completed_at', 'status', 'deleted_at',
+             'is_completed', 'activity_state')}, 'learner_id': target_id})
         known.add((target_id, record['component_ref']))
     return Plan(inserts, dict(appends), digest([source, target]), unlinked)
 

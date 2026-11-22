@@ -5,7 +5,7 @@ import { ArrowRight, BookOpen, CheckCircle2, ChevronLeft, ChevronRight, FileText
 import { fetchLearnerFreeCourse, fetchLearnerFreeCourses, markFreeCourseActivityComplete, peekLearnerFreeCourses, type FreeCourse, type FreeCourseActivity, type FreeCourseSummary } from '@/api/freeCourses';
 import type { LearnerKind } from '@/api/learnerDetail';
 import { fetchLearnerCertificateTemplate, type CertificateTemplateSummary } from '@/api/learnerCertificates';
-import { computeLocks, hasContent, isQuiz } from './freeCourseAccess';
+import { computeLocks, hasContent, isQuiz, isFreeCourseActivityCompleted } from './freeCourseAccess';
 import { Panel } from '@/components/ui/Panel';
 import { EmptyState, EmptyStateAction } from '@/components/ui/EmptyState';
 import { Cover, SubjectCertificateAction } from './SubjectWorkspace';
@@ -286,7 +286,7 @@ function FreeCourseDetail({ course, tone, kind, learnerId, activeId, isDone, onS
                             {done ? <CheckCircle2 size={14} /> : <Icon size={14} />}
                           </span>
                           <span className="min-w-0 flex-1">
-                            <span className="block text-[9px] font-semibold uppercase tracking-wider text-foreground-400">{empty ? 'Not available yet' : label}</span>
+                            <span className="block text-[9px] font-semibold uppercase tracking-wider text-foreground-400">{empty ? 'Not available yet' : !done && activity.activity_state === 'reading_viewed' ? `${label} (Viewed)` : label}</span>
                             <span className={`block truncate text-[13px] font-semibold leading-snug ${
                               done ? 'text-emerald-900' : isCurrent ? 'text-primary-700' : muted ? 'text-foreground-400' : 'text-foreground-800'
                             }`}>{activity.title}</span>
@@ -406,7 +406,7 @@ export function FreeCoursesTab({ kind, id, readOnly = false }: { kind?: LearnerK
   const [completingId, setCompletingId] = useState<string | null>(null);
   const [completeError, setCompleteError] = useState('');
   const doneIds = done.identity === identity ? done.ids : null;
-  const isDone = (activity: FreeCourseActivity) => Boolean(activity.completed) || Boolean(doneIds?.has(activity.componentId));
+  const isDone = (activity: FreeCourseActivity) => isFreeCourseActivityCompleted(activity) || Boolean(doneIds?.has(activity.componentId));
   const complete = (componentId: string) => {
     if (!kind || !id || completingId || readOnly) return;
     setCompletingId(componentId);
@@ -420,7 +420,7 @@ export function FreeCoursesTab({ kind, id, readOnly = false }: { kind?: LearnerK
   // only needs to reflect it in the local overlay (no extra POST).
   const noteDone = (componentId: string) => {
     const serverDone = detailState.course?.weeks.some((week) => week.activities.some(
-      (activity) => activity.componentId === componentId && activity.completed,
+      (activity) => activity.componentId === componentId && isFreeCourseActivityCompleted(activity),
     ));
     const alreadyDone = Boolean(serverDone) || Boolean(doneIds?.has(componentId));
     setDone((previous) => {
