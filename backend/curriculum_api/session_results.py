@@ -21,6 +21,7 @@ from .session_media_policy import hidden_artifact_ids, recording_transcript_link
 from .session_sync_runtime import start_requested_sync
 from .session_transfer_progress import summarize_transfers
 from .session_sync_issues import sync_issues
+from learner_api.weekly_read_cache import reuse_weekly_read
 
 log = logging.getLogger(__name__)
 
@@ -41,6 +42,7 @@ def effective_module_register_rows(module_catalogue_id, occurrences):
     } for occurrence in occurrences for member in members]
 
 
+@reuse_weekly_read
 def read(sql, params=()):
     with connections['default'].cursor() as cursor:
         cursor.execute(sql, params)

@@ -16,10 +16,13 @@ from django.http import JsonResponse
 from django.views.decorators.http import require_GET
 from login.permissions import learner_self_or_staff
 from old_otjh.service import ServiceError
+from old_otjh.repository import request_read_scope
 from curriculum_api.week_visibility import visible_child_sql, visible_week_sql
 from curriculum_api.learning_storage import read_sql
 
 from .response_cache import cached_learner_read
+from .weekly_read_cache import weekly_read_scope
+from .subject_dates import schedule_read_scope
 from . import canonical_learning as canonical
 from .journal_sources import learner_journal_view, enabled as journal_enabled
 from .learner_detail import SOURCE_MODELS
@@ -480,7 +483,8 @@ def load_context(source, owner, subject_id=None, *, purpose='catalogue', records
         content_source.learning_plan = content_plan
     with projection_stage('native_learning'):
         native = build_learning_content_summary(content_source, source.pk, learning_summary=True, assigned_modules=content_plan,
-            identities_only=True, preserve_legacy=True, strict=True, resolved_metadata=resolved)
+            identities_only=True, preserve_legacy=True, strict=True, resolved_metadata=resolved,
+            **({'include_presentation': False} if subject_id is None and purpose == 'catalogue' else {}))
     if subject_id is None and purpose == 'catalogue':
         with projection_stage('attendance_completion'):
             native['components'] = annotate_attendance_completion(native['components'], profile)
@@ -558,6 +562,9 @@ def load_context(source, owner, subject_id=None, *, purpose='catalogue', records
     return assigned, ids, records, native, courses, definitions, done, started, hours, metadata, credits
 
 
+@weekly_read_scope()
+@request_read_scope()
+@schedule_read_scope()
 def read_catalogue(source, kind, owner, *, upcoming_only=False):
     from .subject_store import covers_for
     assigned, ids, records, native, courses, definitions, done, started, hours, metadata, credits = load_context(source, owner)

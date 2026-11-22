@@ -57,6 +57,21 @@ beforeEach(() => {
 afterEach(() => { clearAllCachedResources(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
 describe('compact My Learning route', () => {
+  it.each(['quizzes', 'assignments'])('loads the %s list without requesting dashboard hour totals', async tab => {
+    vi.mocked(fetch).mockImplementation(async input => {
+      const url = String(input);
+      if (url.includes('/learner-detail/') && url.includes('content=quiz')) return reply({
+        id: '7', name: 'Synthetic learner', programme: 'Programme', components: [],
+        quizAttempts: [], componentProgress: [], retiredQuizComponents: [] });
+      if (url.includes('/reflection/submissions/')) return reply({ assignments: [], statuses: [] });
+      throw new Error(`Unexpected assessment request: ${url}`);
+    });
+    route(`/learner/my-learning/commercial/7?tab=${tab}`);
+    expect(await screen.findByText(tab === 'quizzes' ? 'No quizzes linked yet' : 'No assignments linked yet')).toBeVisible();
+    expect(urls().some(url => url.includes('content=quiz'))).toBe(true);
+    expect(urls().some(url => url.includes('content=summary'))).toBe(false);
+  });
+
   it.each(['commercial', 'apprenticeship'] as const)('shows certificates for an old course and inside an assigned builder free course (%s)', async kind => {
     const catalogue = makeCatalogue(kind);
     catalogue.modules = [{ ...catalogue.modules[1], completedActivityCount: 3, progress: 100, status: 'Completed' }];

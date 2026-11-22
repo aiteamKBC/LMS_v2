@@ -88,9 +88,13 @@ def _certificate_dict(row):
     return data
 
 
-def _published_template(cursor):
+def _published_template(cursor, *, summary=False):
+    # The catalogue only consumes metadata. Keep the existing tuple shape but
+    # avoid transferring/parsing embedded certificate artwork for that read.
+    body = "NULL::text" if summary else "body_text"
+    layout = "NULL::jsonb" if summary else "layout_config"
     cursor.execute(
-        '''SELECT id,version,title,body_text,minimum_progress,require_final_test,layout_config
+        f'''SELECT id,version,title,{body},minimum_progress,require_final_test,{layout}
            FROM "Learner".certificate_templates
            WHERE certificate_type=%s AND status=%s
            ORDER BY version DESC LIMIT 1''',
@@ -414,7 +418,7 @@ def learner_certificate_template(request, kind, pk):
         return JsonResponse({"error": "Method not allowed."}, status=405)
     try:
         with connections["enrolment"].cursor() as cursor:
-            row = _published_template(cursor)
+            row = _published_template(cursor, summary=request.GET.get("summary") == "1")
     except DatabaseError:
         return JsonResponse({"template": None, "configured": False})
     if not row:
