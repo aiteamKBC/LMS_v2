@@ -3,7 +3,7 @@ import importlib.util
 import inspect
 from pathlib import Path
 import unittest
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 from learner_api import lms_alias_reconciliation as reconciliation
 
@@ -40,7 +40,38 @@ class LmsAliasReconciliationTests(unittest.TestCase):
     def test_reconciliation_has_no_deleted_identity_dependency(self):
         source = inspect.getsource(reconciliation)
         self.assertNotIn('learner_external_identities', source)
-        self.assertIn('source_lms_learner_aliases', source)
+        self.assertIn('"Last_audit".learner_lms_aliases', source)
+        self.assertNotIn('source_lms_learner_aliases', source)
+
+    def test_only_owned_matching_aliases_feed_course_memberships(self):
+        aliases = [
+            {'aptem_id': 10, 'canonical_lms_id': 100, 'lms_learner_id': 100,
+             'aptem_email': 'current@example.test', 'lms_email': 'current@example.test',
+             'is_primary': True, 'learner_profile_id': 1},
+            {'aptem_id': 10, 'canonical_lms_id': 100, 'lms_learner_id': 101,
+             'aptem_email': 'current@example.test', 'lms_email': 'former@example.test',
+             'is_primary': False, 'learner_profile_id': None},
+        ]
+        owner = {'learner_id': 1, 'aptem_id': 10, 'enrolment_id': 11,
+                 'owner_email': 'current@example.test', 'account_id': None}
+        for owner_aptem, linked_profile, expected in ((10, 1, {10}), (20, 1, set()), (10, None, set())):
+            with self.subTest(owner_aptem=owner_aptem, linked_profile=linked_profile):
+                rows = [{**aliases[0], 'learner_profile_id': linked_profile}, aliases[1]]
+                with patch.object(reconciliation, '_rows', side_effect=[rows, [{**owner, 'aptem_id': owner_aptem}]]):
+                    result = reconciliation._candidate_identities(MagicMock())
+                self.assertEqual(set(result['eligible']), expected)
+                if not expected:
+                    continue
+                self.assertEqual(result['eligible'][10]['aliases'], [rows[0]])
+                with patch.object(reconciliation, '_rows', side_effect=[
+                    [{'learner_id': 100, 'group_id': 50}],
+                    [{'id': 5, 'source_course_ref': '50'}],
+                ]) as read:
+                    memberships, unmapped = reconciliation._course_memberships(MagicMock(), result['eligible'])
+                self.assertEqual(read.call_args_list[0].args[2], [[100]])
+                self.assertEqual(unmapped, 0)
+                self.assertEqual(memberships, [{'learner_id': 1, 'enrolment_id': 11,
+                    'source_course_id': 5, 'source_learner_id': '100', 'is_primary': True}])
 
     def test_sync_script_is_read_only_and_rejects_apply(self):
         path = Path(__file__).resolve().parents[1] / 'scripts' / 'sync_legacy_lms_identities.py'

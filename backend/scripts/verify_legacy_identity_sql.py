@@ -27,7 +27,7 @@ def select_sql(filename, function):
 
 TABLES = {
     'learners': '"Learner".learners',
-    'identities': '"Learner".source_lms_learner_aliases',
+    'identities': '"Last_audit".learner_lms_aliases',
     'memberships': '"Learner".learner_source_course_memberships',
     'courses': 'curriculum.source_courses',
     'catalogue': 'curriculum.source_activities',
@@ -35,7 +35,6 @@ TABLES = {
     'activities': '"Last_audit".activities',
     'results': '"Last_audit".activity_results',
     'legacy_learners': '"Last_audit".learners',
-    'legacy_aliases': '"Last_audit".learner_lms_aliases',
 }
 
 
@@ -47,7 +46,9 @@ def fixture():
                        dict(aptem_id=101, canonical_lms_id=21, lms_learner_id=22,
                             lms_email='personal@example.test', is_primary=False, learner_profile_id=1),
                        dict(aptem_id=202, canonical_lms_id=23, lms_learner_id=23,
-                            lms_email='another@example.test', is_primary=True, learner_profile_id=2)],
+                            lms_email='another@example.test', is_primary=True, learner_profile_id=2),
+                       dict(aptem_id=101, canonical_lms_id=21, lms_learner_id=99,
+                            lms_email='stale@example.test', is_primary=False, learner_profile_id=None)],
         'memberships': [dict(id=1, learner_id=1, source_course_id=10)],
         'courses': [dict(id=10, source_system='old_lms', source_course_ref='55')],
         'catalogue': [dict(id=15, source_system='old_lms', source_course_id=10,
@@ -63,8 +64,6 @@ def fixture():
                     dict(learner_id=23, group_id=55, activity_id=5, quiz_score=100, quiz_maximum_score=100,
                          quiz_answers=[{'synthetic': 'other learner'}], status='completed')],
         'legacy_learners': [dict(learner_id=21, aptem_id=101, learner_email='work@example.test')],
-        'legacy_aliases': [dict(aptem_id=101, canonical_lms_id=21, lms_learner_id=99,
-                               lms_email='stale@example.test', is_primary=False)],
     }
 
 
@@ -120,6 +119,12 @@ class ReadOnlyIdentitySQLTests(unittest.TestCase):
             data['results'][1][field] = value
             self.assertFalse(self.material(data)[0]['video_completed'])
 
+    def test_mismatched_alias_aptem_cannot_supply_results_or_identity(self):
+        data = fixture()
+        data['identities'][1]['aptem_id'] = 202
+        self.assertFalse(self.material(data)[0]['reading_viewed'])
+        self.assertEqual({str(row['lms_learner_id']) for row in self.identities(data)}, {'21'})
+
     def test_unowned_course_or_ambiguous_canonical_owner_is_not_authorized(self):
         data = fixture()
         data['memberships'][0]['learner_id'] = 2
@@ -146,7 +151,7 @@ class ReadOnlyIdentitySQLTests(unittest.TestCase):
     def test_legacy_only_learner_keeps_existing_fallback(self):
         data = fixture()
         data['learners'] = []
-        self.assertEqual(str(self.identities(data)[0]['lms_learner_id']), '99')
+        self.assertEqual({str(row['lms_learner_id']) for row in self.identities(data)}, {'21', '22', '99'})
 
 
 if __name__ == '__main__':

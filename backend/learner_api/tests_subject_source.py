@@ -129,7 +129,11 @@ class SubjectSourceTests(SimpleTestCase):
         self.assertTrue(all(row['completed'] for row in result['activities']))
         identity_sql = cursor.execute.call_args.args[0]
         canonical_sql = identity_sql.split('UNION ALL', 1)[0]
-        self.assertIn('"Learner".source_lms_learner_aliases', canonical_sql)
+        self.assertIn('"Last_audit".learner_lms_aliases', canonical_sql)
+        self.assertIn('i.learner_profile_id=l.id', canonical_sql)
+        self.assertIn('i.aptem_id=l.aptem_id', canonical_sql)
+        self.assertIn('i.lms_learner_id::text', canonical_sql)
+        self.assertNotIn('source_lms_learner_aliases', identity_sql)
         self.assertNotIn('learner_external_identities', identity_sql)
 
     def test_missing_or_conflicting_alias_email_is_not_guessed(self):

@@ -257,10 +257,10 @@ def read_student_material(cursor, aptem_id, group_id, activity_id, *, include_so
                         WHEN 'quiz_attempted' THEN 2 WHEN 'reading_viewed' THEN 1 ELSE 0 END) OVER ()
                      WHEN 3 THEN 'completed' WHEN 2 THEN 'quiz_attempted'
                      WHEN 1 THEN 'reading_viewed' ELSE history.status END AS status
-            FROM "Learner".source_lms_learner_aliases identity
+            FROM "Last_audit".learner_lms_aliases identity
             JOIN "Last_audit".activity_results history
               ON history.learner_id=identity.lms_learner_id
-            WHERE identity.learner_profile_id=l.id
+            WHERE identity.learner_profile_id=l.id AND identity.aptem_id=l.aptem_id
               AND history.group_id::text=course.source_course_ref AND history.activity_id=a.activity_id
             ORDER BY history.quiz_score / nullif(history.quiz_maximum_score,0) DESC NULLS LAST,
                      (history.quiz_answers IS NOT NULL AND history.quiz_answers<>'[]'::jsonb) DESC,

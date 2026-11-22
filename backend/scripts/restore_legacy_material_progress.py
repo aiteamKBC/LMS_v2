@@ -104,7 +104,7 @@ def read_state(cur, aptem_id, course_id, selected):
     state['identities'] = cur.execute('''SELECT lms_learner_id AS id,
         learner_profile_id AS learner_id,aptem_id,lms_learner_id AS source_learner_id,
         lms_email,is_primary,canonical_lms_id,first_seen,last_seen
-        FROM "Learner".source_lms_learner_aliases
+        FROM "Last_audit".learner_lms_aliases
         WHERE learner_profile_id=%s ORDER BY lms_learner_id''', [owner['id']]).fetchall()
     for key, table in [('progress', 'learner_progress_entries'), ('sources', 'learner_activity_sources'),
                        ('segments', 'learner_activity_reporting_segments')]:
@@ -296,7 +296,7 @@ def main():
                 for table in ('learner_progress_entries', 'learner_activity_sources'):
                     cur.execute(f'SELECT id FROM "Learner".{table} WHERE learner_id=%s FOR UPDATE', [owners[0]['id']])
                 cur.execute('''SELECT aptem_id,lms_learner_id
-                    FROM "Learner".source_lms_learner_aliases
+                    FROM "Last_audit".learner_lms_aliases
                     WHERE learner_profile_id=%s ORDER BY lms_learner_id FOR UPDATE''', [owners[0]['id']])
                 cur.execute('SELECT id FROM "Learner".learner_journal_rows WHERE canonical_learner_id=%s FOR UPDATE', [owners[0]['id']])
             state = read_state(cur, args.aptem_id, args.course_id, args.material_ids)

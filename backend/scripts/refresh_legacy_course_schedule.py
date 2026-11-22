@@ -55,7 +55,7 @@ def read_state(cur, args):
         WHERE c.source_system='old_lms' AND c.source_course_ref=%s AND c.deleted_at IS NULL
         AND EXISTS (SELECT 1 FROM "Learner".learner_source_course_memberships m
             JOIN "Learner".learners l ON l.id=m.learner_id
-            JOIN "Learner".source_lms_learner_aliases i ON i.learner_profile_id=l.id
+            JOIN "Last_audit".learner_lms_aliases i ON i.learner_profile_id=l.id AND i.aptem_id=l.aptem_id
             WHERE m.source_course_id=c.id AND m.deleted_at IS NULL AND l.aptem_id=%s
               AND i.lms_learner_id=%s)''',
         [str(args.course_id), args.aptem_id, args.source_user_id]).fetchall()

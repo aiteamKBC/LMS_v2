@@ -106,7 +106,7 @@ def read_owners(cur):
         e.aptem_id::text AS account_aptem_id,i.lms_learner_id AS identity_id,
         i.lms_learner_id AS source_learner_id,i.lms_email AS source_email,i.is_primary
         FROM "Learner".learners l JOIN enrolment."Created_users" e ON e.id=l.enrolment_id
-        JOIN "Learner".source_lms_learner_aliases i ON i.learner_profile_id=l.id
+        JOIN "Last_audit".learner_lms_aliases i ON i.learner_profile_id=l.id AND i.aptem_id=l.aptem_id
         ORDER BY l.id,i.lms_learner_id''').fetchall()
     owners, source_owners, enrolment_owners = {}, defaultdict(set), defaultdict(set)
     invalid = set()

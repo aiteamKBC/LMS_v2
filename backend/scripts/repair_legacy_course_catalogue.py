@@ -165,7 +165,7 @@ def read_state(cur, course_id, aptem_id, *, catalogue_only=False, verified_expor
     state['identities'] = cur.execute('''SELECT lms_learner_id AS id,
         learner_profile_id AS learner_id,aptem_id,lms_learner_id AS source_learner_id,
         lms_email,is_primary,canonical_lms_id,first_seen,last_seen
-        FROM "Learner".source_lms_learner_aliases
+        FROM "Last_audit".learner_lms_aliases
         WHERE learner_profile_id=ANY(%s) ORDER BY learner_profile_id,lms_learner_id''',
         [learner_ids]).fetchall()
     condition, params = 'canonical_learner_id=ANY(%s)', [learner_ids]
