@@ -3,22 +3,29 @@ import { Context } from '../shared/entities/assignedLearnerDirectory';
 import type { StatusCountState } from '../shared/entities/learnerStatusCountStore';
 
 /** The module catalogue opens its assignments directly; other directories keep their own navigation. */
-export function ModuleLearnerCount({ moduleId, moduleName, refreshKey, onOpen }: {
+export function ModuleLearnerCount({ moduleId, moduleName, refreshKey, onOpen, enabled = true }: {
   moduleId: string;
   moduleName: string;
   refreshKey?: unknown;
   onOpen: () => Promise<number | null>;
+  /** Unattached modules do not have a delivery roster to count. */
+  enabled?: boolean;
 }) {
   const context = useContext(Context);
   const [state, setState] = useState<StatusCountState>({ value: null, loading: true, error: '' });
   const [opening, setOpening] = useState(false);
   useEffect(() => {
+    if (!enabled) {
+      setState({ value: { total: 0, statuses: {} }, loading: false, error: '' });
+      return undefined;
+    }
     setState({ value: null, loading: true, error: '' });
     return context?.statusStore.subscribe({ scope: 'module', id: moduleId, name: moduleName }, setState);
-  }, [context?.statusStore, moduleId, moduleName]);
+  }, [context?.statusStore, enabled, moduleId, moduleName]);
   useEffect(() => {
+    if (!enabled) return;
     if (refreshKey !== undefined) context?.statusStore.refresh({ scope: 'module', id: moduleId, name: moduleName }, refreshKey);
-  }, [context?.statusStore, moduleId, moduleName, refreshKey]);
+  }, [context?.statusStore, enabled, moduleId, moduleName, refreshKey]);
 
   const count = state.value?.total;
   return <span className="inline-flex items-center gap-1">
