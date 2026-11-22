@@ -20,5 +20,7 @@ from coach_api.dashboard_snapshot_scheduler import CoachDashboardSnapshotWSGI
 from engagement_api.review_feedback_scheduler import ReviewFeedbackWSGI
 from curriculum_api.session_sync_runtime import SessionSyncWSGI
 from learner_api.catchup_reminders import CatchupReminderWSGI
+from learner_api.monthly_actual_scheduler import MonthlyActualWSGI
 
-application = ReviewFeedbackWSGI(CountryCalendarWSGI(CoachDashboardSnapshotWSGI(CatchupReminderWSGI(SessionSyncWSGI(application)))))
+application = ReviewFeedbackWSGI(CountryCalendarWSGI(CoachDashboardSnapshotWSGI(
+    MonthlyActualWSGI(CatchupReminderWSGI(SessionSyncWSGI(application))))))

@@ -21,9 +21,13 @@ class Command(BaseCommand):
 
     def handle(self, *args, **options):
         database = router.db_for_write(LearnerProfile) or "default"
+        # Every sync path needs the additive reporting schema. Previously this
+        # preflight ran only with --replace-legacy, so ordinary scheduled syncs
+        # could fetch provider evidence but fail before publishing the canonical
+        # learner register.
+        ensure_teams_attendance_reporting_columns(database)
 
         if options["replace_legacy"]:
-            ensure_teams_attendance_reporting_columns(database)
             with transaction.atomic(using=database):
                 with connections[database].cursor() as cursor:
                     cursor.execute(

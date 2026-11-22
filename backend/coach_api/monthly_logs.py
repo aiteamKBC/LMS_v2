@@ -84,10 +84,8 @@ def year_activities(owner):
         if month:
             unallocated.pop(str(record.get('id')), None)
         row = by_month.setdefault(month, {'month': month, 'activities': 0, 'accepted_hours': 0})
-        # Native saves are already counted by SQL; standalone extras have no
-        # progress row and contribute one activity, including pending review.
-        if record.get('actual_basis') == 'extra_activity_input':
-            row['activities'] += 1
+        # Native Extra Activities are already counted by their linked Progress
+        # row in the grouped SQL above. Pending activities never enter hours.
         if record.get('accepted') is True:
             row['accepted_hours'] = float(row['accepted_hours']) + canonical.recorded_seconds(record) / 3600
     from learner_api.attendance_otjh import read_bulk, monthly_deltas

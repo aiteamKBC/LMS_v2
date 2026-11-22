@@ -21,6 +21,8 @@ class OverviewAttendanceTests(SimpleTestCase):
                                 side_effect=AssertionError('Do not recompute attendance')))
         self.enterContext(patch('learner_api.teams_attendance.fetch_verified_teams_attendance_rows',
                                 side_effect=AssertionError('Do not substitute raw Teams evidence')))
+        self.modules = self.enterContext(patch(
+            'learner_api.attendance_assignments.assigned_module_ids', return_value=['M1', 'M2']))
 
     def row(self, identity, day, status='present', **extra):
         return {'session_id': identity, 'session_date': date.fromisoformat(day),
@@ -79,6 +81,15 @@ class OverviewAttendanceTests(SimpleTestCase):
         self.assertEqual(self.read(live=[self.row('new', '2026-10-01', 'absent')]),
                          {'present': 0, 'sessions': 1, 'attendanceRate': 0})
 
+    def test_previous_plan_live_row_is_preserved_but_excluded_from_current_counter(self):
+        self.modules.return_value = ['CURRENT']
+        result = self.read(live=[
+            self.row('old', '2026-10-01', 'absent', module_catalogue_id='PREVIOUS'),
+            self.row('current-1', '2026-10-08', module_catalogue_id='CURRENT'),
+            self.row('current-2', '2026-10-15', module_catalogue_id='CURRENT'),
+        ])
+        self.assertEqual(result, {'present': 2, 'sessions': 2, 'attendanceRate': 100})
+
     def test_mismatched_profile_fails_before_reading_either_register(self):
         from old_otjh.service import ServiceError
         with patch('coach_api.bulk_register.register_rows') as saved:
@@ -127,6 +138,8 @@ class OverviewModuleAttendanceTests(SimpleTestCase):
         self.source = SimpleNamespace(id=265, pk=265)
         self.profile = SimpleNamespace(pk=17, enrolment_id=265)
         self.enterContext(django_timezone.override('Europe/London'))
+        self.enterContext(patch('learner_api.attendance_assignments.assigned_module_ids',
+                                return_value=['M1', 'OLD', 'NEW']))
 
     def module(self, ref='current:M1', module_id='M1', title='Module'):
         return {'id': ref, 'moduleId': module_id, 'title': title,
@@ -381,6 +394,7 @@ class OverviewProjectionTests(SimpleTestCase):
              patch.object(overview.schedule, 'read_dashboard') as legacy, \
              patch.object(dashboard_tabs, 'learning_projection', return_value=learning) as facts, \
              patch.object(learning_plan, '_effective_plan_ids', return_value=['M1']), \
+             patch('learner_api.attendance_assignments.assigned_module_ids', return_value=['M1']), \
              patch.object(overview_week, 'read_week', return_value={}) as weekly, \
              patch.object(attendance_lectures, 'lecture_register', side_effect=AssertionError('Overview must read saved registers only')), \
              patch.object(attendance, 'kbc_attendance_rows', return_value=[

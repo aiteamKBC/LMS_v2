@@ -36,6 +36,16 @@ def learner_journal_reads():
         _current.reset(token)
 
 
+@contextmanager
+def standard_monthly_reads():
+    """Pin the retained coach/source projection for background cache builds."""
+    token = _current.set(False)
+    try:
+        yield
+    finally:
+        _current.reset(token)
+
+
 def table(name):
     return TABLES[name] if enabled() else f'structured_manual_activities.{name}'
 

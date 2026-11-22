@@ -130,6 +130,11 @@ class PhaseCoverageTests(SimpleTestCase):
                 patch('learner_api.home_progress._group_dates',
                       return_value=(date(2026, 9, 1), date(2027, 9, 1), 'learner')), \
                 patch('learner_api.home_progress.lecture_register', return_value=list(REGISTER)), \
+                patch('learner_api.recorded_attendance.saved_delivery_mode', return_value=None), \
+                patch('learner_api.live_session_progress.protect_credit_hours',
+                      side_effect=lambda _source, credits: credits), \
+                patch('learner_api.attendance_learning.with_learning_requirements',
+                      side_effect=lambda _source, credits, **_kwargs: credits), \
                 patch('learner_api.module_progress._module_progress_facts', return_value={
                     'modules': [], 'nativeComponents': [],
                     'historicalComponents': 0, 'retainedComponents': 0,
@@ -143,7 +148,8 @@ class PhaseCoverageTests(SimpleTestCase):
     def test_home_progress_reports_every_card_phase_and_the_p1_reuse_decision(self):
         measurement, _ = self.read_home(scope=['M1', 'M2'])
         self.assertTrue({'programme_dates', 'submissions', 'attendance_register', 'card_aggregation',
-                         'canonical_hours', 'module_progress', 'live_credits'} <= stage_names(measurement))
+                         'canonical_hours'} <= stage_names(measurement))
+        self.assertNotIn('live_credits', stage_names(measurement))
         self.assertIn('module_credits_register_reused', measurement.operation_rows)
         self.assertNotIn('module_credits_register_built', measurement.operation_rows)
 

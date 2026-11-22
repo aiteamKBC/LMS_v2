@@ -134,21 +134,18 @@ class MonthlyLogsProjectionTests(SimpleTestCase):
         self.assertEqual([month['month'] for month in result['months']], ['2026-09'])
         self.assertEqual(result['summary']['acceptedOtjhHours'], .5)
 
-    def test_supplement_keeps_native_counts_and_excludes_hours_waiting_for_review(self):
+    def test_supplement_keeps_native_counts_and_excludes_native_extra_reflection_rows(self):
         records = [
-            {'id': 1, 'reporting_month': '2026-10', 'actual_seconds': 1800, 'accepted': True},
-            {'id': 2, 'reporting_month': '2026-10', 'actual_seconds': 7200, 'accepted': False},
-            {'id': 'reflection:1', 'reporting_month': '2026-10', 'actual_seconds': 900, 'accepted': True, 'actual_basis': 'extra_activity_input'},
-            {'id': 'reflection:2', 'reporting_month': '2026-10', 'actual_seconds': 3600, 'accepted': False, 'actual_basis': 'extra_activity_input'},
+            {'id': 2, 'reporting_month': '2026-10', 'actual_seconds': 900, 'accepted': True},
         ]
         with patch.object(logs, 'query', side_effect=[[{'month': '2026-10', 'activities': 3, 'accepted_hours': 1}], []]), \
              patch.object(logs, 'pending_hour_records', return_value={70: records}), \
              patch.object(canonical, 'targets_for', return_value={'2026-10': 10}), \
              patch.object(logs.timezone, 'localdate', return_value=date(2026, 10, 28)):
             result = logs.project_year(self.learner, 2026)
-        self.assertEqual(result['summary']['acceptedOtjhHours'], 1.75)
-        self.assertEqual(result['months'][0]['acceptedOtjhHours'], 1.75)
-        self.assertEqual(result['months'][0]['activities'], 5)
+        self.assertEqual(result['summary']['acceptedOtjhHours'], 1.25)
+        self.assertEqual(result['months'][0]['acceptedOtjhHours'], 1.25)
+        self.assertEqual(result['months'][0]['activities'], 3)
         self.assertEqual(result['summary']['trainingPlanHours'], 10)
 
     def test_year_endpoint_uses_existing_ownership_gate_and_one_projection(self):

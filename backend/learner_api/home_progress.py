@@ -177,9 +177,17 @@ def read_home_progress(
         cur.execute('''SELECT activity_type, activity_id, component_ref, status, actual_time_hours,
             full_submission->>'submissionOrigin' = 'imported_legacy' AS imported
             FROM "Learner".learning_reflection_submissions
-            WHERE learner_kind=%s AND learner_id=%s AND activity_type IN ('assignment','extra_activity')
+            WHERE learner_kind=%s AND learner_id=%s AND activity_type='assignment'
             ORDER BY submitted_at NULLS FIRST,id''', [kind, owner['id']])
         submissions = rows(cur)
+        cur.execute('''SELECT 'extra_activity' AS activity_type,'extra:' || id::text AS activity_id,
+            NULL::text AS component_ref,
+            CASE status WHEN 'pending' THEN 'submitted_for_tutor_review'
+                WHEN 'approved' THEN 'accepted' WHEN 'returned' THEN 'rejected' ELSE status END AS status,
+            (requested_minutes::numeric/60)::text AS actual_time_hours,FALSE AS imported
+            FROM "Learner".extra_activities WHERE learner_kind=%s AND learner_id=%s
+            ORDER BY submitted_at NULLS FIRST,id''', [kind, owner['id']])
+        submissions.extend(rows(cur))
         historical_hours = 0
     try:
         # A verified SSOT owner is the enrolment's single learner profile.
@@ -230,24 +238,10 @@ def read_home_progress(
                                 'total': sum(module['total'] for module in modules)}
         result['modules'] = counts(modules, lambda module: module['total'] > 0
                                    and module['completed'] == module['total'])
-    # Use the same verified live credit as My Learning. The register is already
-    # scoped to this learner; reuse it rather than fetching attendance twice.
-    # Top up only time absent from accepted records, preserving staff overrides.
-    from .live_session_progress import read_live_credits, supplement_module_hours
-    with projection_stage('live_credits'):
-        credits = read_live_credits(source, module_ids=[module for module, _ in assigned],
-                                   register=lectures) if lectures is not None else []
-    if credits and result['otjh']['actual'] is not None:
-        owner = owner or canonical_learning.require_profile(source.pk)
-        with projection_stage('canonical_hours'):
-            records = (canonical_records if canonical_records is not None
-                       else canonical_learning.entries_for(owner, lineage_only=True))
-        extra = supplement_module_hours(
-            {credit['moduleId']: {'hours': {'actual': 0}} for credit in credits}, records, credits)
-        actual = round(result['otjh']['actual'] + sum(item['hours']['actual'] for item in extra.values()), 4)
-        planned_hours = result['otjh']['planned']
-        result['otjh'].update(actual=actual, percent=round(actual / planned_hours * 100, 2)
-                              if planned_hours else None)
+    # Programme hours come only from canonical_learning. Verified live sessions
+    # enter that projection through the final learner attendance register; a
+    # second raw-provider top-up here would make Home disagree with Overview and
+    # Coach whenever the register sync is delayed or replayed.
     planned = (metrics.get('otjh') or {}).get('planned') if metrics else None
     result['otjh']['missingPlannedActivities'] = 0 if planned is not None else None
     return result
