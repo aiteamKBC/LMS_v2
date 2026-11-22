@@ -1617,6 +1617,45 @@ type AttachmentPreviewState =
   | { status: 'ready'; kind: 'text'; text: string }
   | { status: 'error'; message: string };
 
+const READING_PAGE_CHARACTER_LIMIT = 5000;
+const READING_CONTAINER_TAGS = new Set(['ARTICLE', 'DIV', 'MAIN', 'SECTION']);
+
+function readingBlockHtml(parent: Element): string[] {
+  const children = Array.from(parent.children);
+  if (!children.length) return parent.innerHTML.trim() ? [parent.innerHTML] : [];
+  return children.flatMap(child => {
+    if (READING_CONTAINER_TAGS.has(child.tagName) && child.children.length > 1) return readingBlockHtml(child);
+    return [child.outerHTML];
+  });
+}
+
+function paginateReadingHtml(html: string): string[] {
+  if (!html.trim() || typeof document === 'undefined') return html.trim() ? [html] : [];
+  const container = document.createElement('div');
+  container.innerHTML = html;
+  const savedPages = Array.from(container.children).filter(child => child.hasAttribute('data-reading-pagination-page'));
+  const blocks = savedPages.length ? savedPages.map(page => page.innerHTML) : readingBlockHtml(container);
+  if (blocks.length <= 1) return blocks.length ? blocks : [html];
+
+  const pages: string[] = [];
+  let current: string[] = [];
+  let currentCharacters = 0;
+  blocks.forEach(block => {
+    const measure = document.createElement('div');
+    measure.innerHTML = block;
+    const characters = (measure.textContent || '').trim().length;
+    if (current.length && currentCharacters + characters > READING_PAGE_CHARACTER_LIMIT) {
+      pages.push(current.join(''));
+      current = [];
+      currentCharacters = 0;
+    }
+    current.push(block);
+    currentCharacters += characters;
+  });
+  if (current.length) pages.push(current.join(''));
+  return pages;
+}
+
 /** What to tell the learner when a file request fails. The server's own
  * message ("Learning activities open on 1 October…", "This file is empty…")
  * says what to do; a bare status code does not. */
@@ -1724,10 +1763,11 @@ function AccessibleReadingMaterial({
     savedDocument.sourceHtml === sourceHtml && savedDocument.html ? savedDocument.html : sourceHtml,
     { openLinksInNewTab: true },
   ));
-  // React 19 re-applies innerHTML whenever this object's identity changes, so a
-  // fresh literal on every render (the parent re-renders each second for the
-  // activity timer) would tear down and recreate any embedded <video>/<iframe>.
-  const innerHtml = useMemo(() => ({ __html: html }), [html]);
+  const readingPages = useMemo(() => paginateReadingHtml(html), [html]);
+  const [readingPage, setReadingPage] = useState(0);
+  useEffect(() => {
+    setReadingPage(current => Math.min(current, Math.max(0, readingPages.length - 1)));
+  }, [readingPages.length]);
   const [preferences, setPreferences] = useState<ReadingPreferences>(() => readStoredJson(readingStorageKey(componentId, 'preferences'), DEFAULT_READING_PREFERENCES));
   const [saved, setSaved] = useState(true);
   const [saveError, setSaveError] = useState('');
@@ -1739,7 +1779,7 @@ function AccessibleReadingMaterial({
   }, []);
   const onAnnotationsDirty = useCallback(() => setSaved(false), []);
   const readingTools = useMemo(() => ({ preferences, register: registerAnnotations, onDirty: onAnnotationsDirty }), [preferences, registerAnnotations, onAnnotationsDirty]);
-  const narration = useReadingNarration(`${componentId}:${component.resourceUrl || ''}:${sourceHtml}`);
+  const narration = useReadingNarration(`${componentId}:${component.resourceUrl || ''}:${sourceHtml}:${readingPage}`);
   const { speaking, stop: stopNarration } = narration;
   const pdfReaders = useRef(new Map<string, PdfPageReader>());
   const registerPdfReader = useCallback((id: string, reader: PdfPageReader | null) => {
@@ -1890,9 +1930,19 @@ function AccessibleReadingMaterial({
             ref={contentRef}
             data-reading-text
             className="curriculum-html relative z-0 max-w-none [&_h1]:font-heading [&_h2]:font-heading [&_h3]:font-heading"
-            dangerouslySetInnerHTML={innerHtml}
-          />
+          >
+            {readingPages.map((page, index) => (
+              <div key={`${index}:${page.length}`} data-reading-pagination-page hidden={index !== readingPage} dangerouslySetInnerHTML={{ __html: page }} />
+            ))}
+          </div>
         </ReadingSurface>
+      )}
+      {readingPages.length > 1 && (
+        <nav aria-label="Reading pages" className="mt-3 flex items-center justify-between gap-3 rounded-xl border border-background-200 bg-background-50 px-3 py-2">
+          <button type="button" disabled={readingPage === 0} onClick={() => setReadingPage(current => Math.max(0, current - 1))} className="rounded-lg border border-background-300 bg-white px-3 py-1.5 text-xs font-bold text-foreground-700 disabled:cursor-not-allowed disabled:opacity-40">Previous page</button>
+          <span aria-live="polite" className="text-xs font-semibold text-foreground-600">Page {readingPage + 1} of {readingPages.length}</span>
+          <button type="button" disabled={readingPage === readingPages.length - 1} onClick={() => setReadingPage(current => Math.min(readingPages.length - 1, current + 1))} className="rounded-lg border border-background-300 bg-white px-3 py-1.5 text-xs font-bold text-foreground-700 disabled:cursor-not-allowed disabled:opacity-40">Next page</button>
+        </nav>
       )}
       {component.resourceUrl ? (
         <div className={component.contentHtml ? 'mt-4 border-t border-background-200 pt-4' : ''}>

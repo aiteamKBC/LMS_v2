@@ -76,6 +76,20 @@ it('keeps the reading tools visible while the material scrolls', () => {
   expect(screen.getByLabelText('Reading accessibility tools')).toHaveClass('sticky', 'top-0', 'z-30');
 });
 
+it('paginates long authored reading without splitting the reading blocks', () => {
+  const contentHtml = Array.from({ length: 8 }, (_, index) => `<p>Paragraph ${index + 1}. ${'Long reading content '.repeat(300)}</p>`).join('');
+  render(reading({ contentHtml }));
+
+  expect(screen.getByRole('navigation', { name: 'Reading pages' })).toBeVisible();
+  expect(screen.getByText('Page 1 of 8')).toBeVisible();
+  expect(screen.getByText('Paragraph 1.', { exact: false })).toBeVisible();
+  expect(screen.getByText('Paragraph 8.', { exact: false })).not.toBeVisible();
+  fireEvent.click(screen.getByRole('button', { name: 'Next page' }));
+  expect(screen.getByText('Page 2 of 8')).toBeVisible();
+  expect(screen.getByText('Paragraph 1.', { exact: false })).not.toBeVisible();
+  expect(screen.getByText('Paragraph 2.', { exact: false })).toBeVisible();
+});
+
 it('keeps the ruler relative to the reading area when the pointer moves over nested content', () => {
   render(reading());
   fireEvent.click(screen.getByRole('button', { name: 'Reading ruler' }));
