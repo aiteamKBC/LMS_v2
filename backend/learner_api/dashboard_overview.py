@@ -14,10 +14,11 @@ from .monthly_log_attendance import read_rows as saved_attendance_hours
 
 
 def saved_attendance_rows(source, profile, *, now):
-    """Read both saved registers once, excluding unfinished/unmarked sessions."""
+    """Read saved current-plan attendance, excluding unfinished/unmarked sessions."""
     from coach_api.bulk_register import register_rows
     from old_otjh.service import ServiceError
     from .attendance import kbc_attendance_rows
+    from .attendance_assignments import assigned_module_ids
     from .attendance_rules import attendance_outcome
 
     if profile is None or profile.enrolment_id != source.pk:
@@ -30,7 +31,14 @@ def saved_attendance_rows(source, profile, *, now):
 
     historical = counted(kbc_attendance_rows(source), 'kbc')
     live = register_rows([SimpleNamespace(id=profile.pk, _caseload_source=source)])
-    return historical, counted(live[str(profile.pk)], 'live')
+    current_modules = set(map(str, assigned_module_ids(source)))
+    # Historical KBC rows often have no stable curriculum id and remain visible.
+    # Final-register rows do have one, so exclude rows from a previous plan
+    # without deleting or rewriting the historical attendance record.
+    current_live = [row for row in live[str(profile.pk)]
+                    if not row.get('module_catalogue_id')
+                    or str(row['module_catalogue_id']) in current_modules]
+    return historical, counted(current_live, 'live')
 
 
 def attendance_to_date(source, profile, *, now=None, register=None):

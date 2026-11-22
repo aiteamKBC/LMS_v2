@@ -408,7 +408,7 @@ def weekly_hour_records(owner):
     if pending:
         submissions = query('''SELECT component_ref,status,actual_time_hours
             FROM "Learner".learning_reflection_submissions
-            WHERE learner_id=%s AND learner_kind=%s AND activity_type IN ('assignment','extra_activity')
+            WHERE learner_id=%s AND learner_kind=%s AND activity_type='assignment'
               AND component_ref=ANY(%s) ORDER BY submitted_at NULLS FIRST,id''',
             [owner['id'], owner.get('learner_type'), pending])
         markings = {str(row['component_ref']): row for row in submissions}
@@ -424,9 +424,9 @@ def progress_records_with_completion(records, current):
 
     Counts, acceptance, seconds and reporting months belong to progress entries.
     Newer attempts may still supply completion and scores for those same entries.
-    Standalone extra activities use their saved coach decision and entered time;
-    they have no curriculum plan or separate progress save. Other submissions
-    cannot introduce additional accepted-hour records on a read.
+    Native Extra Activities are already linked to stored Progress and cannot
+    introduce an additional accepted-hour record on a read. Other submissions
+    likewise cannot create accepted ledger rows here.
     Server-measured, persisted legacy attempts are separate timed evidence;
     their stable placement IDs prevent retries from duplicating those hours.
     Untimed persisted course completions also survive, but never become OTJ
@@ -1496,8 +1496,8 @@ def otjh_summary_bulk(learner_ids):
     """Profile OTJH facts in bounded reads, without content/KSB hydration.
 
     Accepted seconds belong to progress rows, not their source snapshots,
-    segments or assignment-only submissions. Standalone extra activities add
-    only their reviewed input hours. The plan uses the same scoped monthly
+    segments or assignment-only submissions. Native Extra Activities therefore
+    contribute only through their linked Progress row. The plan uses the same scoped monthly
     targets as Monthly Logs and the Coach Profile (not Created_users.Planned_hours).
     Invalid or ambiguous identities remain unavailable, just as in metrics().
     """

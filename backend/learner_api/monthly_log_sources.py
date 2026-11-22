@@ -158,6 +158,7 @@ def _reflections(learner, progress):
         return
     records = query('''SELECT to_jsonb(s) AS payload FROM "Learner".learning_reflection_submissions s
         WHERE s.learner_id=%s AND s.learner_kind=%s AND s.status <> 'draft'
+          AND s.activity_type <> 'extra_activity'
         ORDER BY s.submitted_at,s.id''', [owner['id'], owner['learner_type']])
     by_progress = {p['source_ref']: p for p in progress}
     for record in records:

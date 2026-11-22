@@ -82,7 +82,7 @@ class HomeProgressReuseTests(SimpleTestCase):
                                          credit_projection=True)
         self.assertEqual(native.call_args.args[1].enrolment_id, enrolment)
         self.assertTrue(native.call_args.kwargs['compact_content'])
-        self.assertEqual(live.call_count, 2)
+        self.assertEqual(live.call_count, 1)
         self.assertTrue(all(call.kwargs['register'] is lectures for call in live.call_args_list))
         self.assertEqual((records, lectures, detail, native_progress, metrics), before)
         return result
@@ -93,7 +93,7 @@ class HomeProgressReuseTests(SimpleTestCase):
                 result = self.read(kind, enrolment)
                 self.assertEqual(result['activities'], {'completed': 4, 'total': 6})
                 self.assertEqual(result['modules'], {'completed': 0, 'total': 2})
-                self.assertEqual(result['otjh']['actual'], 2.5)
+                self.assertEqual(result['otjh']['actual'], .5)
 
     def test_coach_perspective_never_reuses_coach_records_for_student_catalogue(self):
         result = self.read('commercial', 22, student=False)

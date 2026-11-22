@@ -183,7 +183,8 @@ def correct(learner, role, actor, month, progress_id, payload, *, authorize=None
             or any(part.get('reporting_month') not in {None, month} for part in segments)):
         raise ServiceError('This entry has several time allocations and needs a staff review.', 'allocation_review_required', 409)
     submissions = query('''SELECT * FROM "Learner".learning_reflection_submissions
-        WHERE progress_entry_id=%s AND learner_id=%s AND learner_kind=%s''' + lock,
+        WHERE progress_entry_id=%s AND learner_id=%s AND learner_kind=%s
+          AND activity_type<>'extra_activity' ''' + lock,
         [progress_id, owner['id'], owner['learner_type']])
     if len(submissions) > 1:
         raise ServiceError('The linked submissions need a staff review.', 'submission_review_required', 409)
@@ -192,7 +193,7 @@ def correct(learner, role, actor, month, progress_id, payload, *, authorize=None
     prepared = []
     for submission in submissions:
         if role == 'learner' and (submission['status'] in {'accepted', 'partial'} or (
-                submission['activity_type'] in {'assignment', 'extra_activity'} and submission['status'] == 'submitted_for_tutor_review')):
+                submission['activity_type'] == 'assignment' and submission['status'] == 'submitted_for_tutor_review')):
             raise ServiceError('This submission is under review or accepted. Ask your coach to correct its time.', 'review_required', 409)
         content = submission.get('full_submission') or {}
         try:
