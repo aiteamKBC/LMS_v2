@@ -21,7 +21,7 @@ const summary = {
   sourceFileName: '', sourceFileHash: '', sourceSheet: 'Created_users', sourceRow: 42,
   lmsLearnerId: '42', firstName: 'Synthetic', surname: 'Learner', fullName: 'Synthetic Learner',
   dateOfBirth: '', uln: '', qualification: '', level: '', startDate: '', practicalEndDate: '',
-  apprenticeshipEndDate: '', plannedGatewayDate: '', plannedEpaDate: '', observer: '',
+  apprenticeshipEndDate: '', plannedGatewayDate: '', plannedEpaDate: '', postcode: 'CT1 1AA', observer: '',
   reviewedBy: '', notes: '', operational: {}, raw: { email: 'learner@example.test', programme: 'Programme' },
   version: 1, updatedBy: '', reviewedAt: null, createdAt: null, updatedAt: null,
 } satisfies DeepDiveRecord;
@@ -56,4 +56,21 @@ it('keeps Deep Dive records visible when the separate learner directory fails', 
 
   expect(await screen.findByRole('button', { name: 'View details →' })).toBeVisible();
   expect(screen.getByRole('alert')).toHaveTextContent('Learner directory: Directory unavailable');
+});
+
+it('orders learners by postcode and puts missing postcodes last', async () => {
+  mocks.directory.mockReturnValue(new Promise(() => {}));
+  mocks.summaries.mockResolvedValue({ count: 3, records: [
+    { ...summary, id: '3', fullName: 'Missing Postcode', postcode: '' },
+    { ...summary, id: '2', fullName: 'Maidstone Learner', postcode: 'ME1 1AA' },
+    { ...summary, id: '1', fullName: 'Canterbury Learner', postcode: 'CT10 2BB' },
+  ] });
+
+  render(<DeepDivePage />);
+
+  const rows = await screen.findAllByRole('row');
+  const rowIndex = (name: string) => rows.findIndex((row) => row.textContent?.includes(name));
+  expect(screen.queryByText(/Postcode area/)).not.toBeInTheDocument();
+  expect(rowIndex('Canterbury Learner')).toBeLessThan(rowIndex('Maidstone Learner'));
+  expect(rowIndex('Maidstone Learner')).toBeLessThan(rowIndex('Missing Postcode'));
 });

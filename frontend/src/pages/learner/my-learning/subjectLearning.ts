@@ -7,6 +7,7 @@ import type { CertificateTemplateSummary } from '@/api/learnerCertificates';
 import { learnerHeaderPlan } from '@/pages/workspace/learner/learnerHeaderPlan';
 import { dateKey, weekKey } from '@/pages/learner/training-plan-timeline/model';
 import { hasComponentContent } from '@/utils/learnerJourney';
+import { subjectActivityHours } from '@/utils/activityPlan';
 import { orderSourceWeeks } from './sourceWeekOrder';
 import { deliveryDateKey, deliveryWeekEnd, sessionDeliveryDate } from '@/lib/deliveryWeek';
 
@@ -34,9 +35,11 @@ export function subjectLearningStatus(subject: Subject): 'Completed' | 'In progr
 }
 
 export function certificateEligible(subject: Subject, template: CertificateTemplateSummary | null) {
-  const total = subject.card?.activityCount ?? subject.activities.length;
-  const completed = subject.card?.completedActivityCount ?? subject.activities.filter(activity => activity.completed).length;
-  // Eligibility uses activity counts, never a saved aggregate, OTJ hours, or
+  const required = subject.activities.filter(activity => subjectActivityHours(activity) != null);
+  const total = subject.card?.requiredActivityCount ?? required.length;
+  const completed = subject.card?.completedRequiredActivityCount ?? required.filter(activity => activity.completed).length;
+  // Only Required activities count. Allocation selects them; each has one vote,
+  // independent of hours spent, optional work, a saved aggregate, or
   // a rounded display percentage that could unlock a certificate too early.
   return !!template && total > 0 && Number.isFinite(total) && Number.isFinite(completed)
     && !subject.demoProgress
