@@ -1013,6 +1013,7 @@ def _component_marking_statuses(source, learner_profile):
                        activity_id, status, coach_feedback, reviewed_by, reviewed_at
                   from "Learner"."learning_reflection_submissions"
                  where learner_id = %s and learner_kind = %s
+                   and activity_type = 'assignment'
                  order by activity_id, case when activity_type = 'assignment' then
                      case status when 'accepted' then 0 when 'partial' then 1 when 'submitted_for_tutor_review' then 2 when 'rejected' then 3 else 4 end else 0 end,
                      submitted_at desc nulls last

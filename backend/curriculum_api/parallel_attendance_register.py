@@ -140,9 +140,10 @@ def reconcile_parallel_attendance(occurrence_ids, *, database=None):
                   for value in (occurrence_id, f'{occurrence_id}:{module_id}')}
     source_ids.update(value for row in linked for value in (str(row['parallel_source_occurrence_id']),
         f"{row['parallel_source_occurrence_id']}:{row['parallel_source_module_id']}"))
-    decisions = {(row['learner_id'], str(row['source_id'])) for row in
+    decisions = {(row['learner_profile_id'], str(row['source_id'])) for row in
                  CoachAttendanceSourceAdjustment.objects.using(database).filter(
-                     source='microsoft-teams', source_id__in=source_ids).values('learner_id', 'source_id', 'status', 'is_deleted')
+                     source='microsoft-teams', source_id__in=source_ids).values(
+                         'learner_profile_id', 'source_id', 'status', 'is_deleted')
                  if row['is_deleted'] or row['status'] == 'absent'}
     for key in list(evidence):
         profile_id, occurrence_id, module_id = key
@@ -198,7 +199,7 @@ def reconcile_parallel_attendance(occurrence_ids, *, database=None):
                     ).exclude(occurrence_id=original_id, module_catalogue_id=original_module).exists():
                 continue
             decisions = CoachAttendanceSourceAdjustment.objects.using(database).filter(
-                learner_id=profile_id, source='microsoft-teams',
+                learner_profile_id=profile_id, source='microsoft-teams',
                 source_id__in=[original_id, f'{original_id}:{original_module}'])
             if any(row['is_deleted'] or row['status'] for row in decisions.values('is_deleted', 'status')):
                 continue

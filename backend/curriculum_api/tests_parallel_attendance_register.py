@@ -96,6 +96,11 @@ class ParallelAttendanceRegisterTests(SimpleTestCase):
                    return_value={'B': [{'id': 'A', 'moduleCatalogueId': 'MA'}]}):
             count = reconcile_parallel_attendance(['B'], database='default')
         self.assertEqual(count, 1)
+        decision_query = decisions.objects.using.return_value.filter
+        self.assertEqual(decision_query.call_args_list[0].kwargs['source'], 'microsoft-teams')
+        self.assertEqual(decisions.objects.using.return_value.filter.return_value.values.call_args_list[0].args,
+                         ('learner_profile_id', 'source_id', 'status', 'is_deleted'))
+        self.assertEqual(decision_query.call_args_list[-1].kwargs['learner_profile_id'], 10)
         # Membership comes from the normalized plan records, asked only about the
         # modules the choice compares: the attended guest module and its originals.
         membership.assert_called_once_with({10}, {'MB', 'MA'})

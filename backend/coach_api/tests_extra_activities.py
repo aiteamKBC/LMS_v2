@@ -1,4 +1,4 @@
-"""Read-only extra activity caseload and revoked coach-creation regression tests.
+"""Native Extra Activity caseload and permission boundary regression tests.
 
 List SQL runs only against private in-memory SQLite. Identity is mocked; no
 application database, file storage, mail or Microsoft service is contacted.
@@ -6,7 +6,6 @@ application database, file storage, mail or Microsoft service is contacted.
 import json
 import re
 import sqlite3
-from datetime import datetime, timezone as utc
 from inspect import unwrap
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
@@ -25,10 +24,14 @@ class CoachExtraActivitiesTests(SimpleTestCase):
         self.addCleanup(self.db.close)
         self.db.executescript("""ATTACH DATABASE ':memory:' AS Learner;
             ATTACH DATABASE ':memory:' AS enrolment;
+            ATTACH DATABASE ':memory:' AS curriculum;
             CREATE TABLE enrolment.Created_users(id INTEGER PRIMARY KEY,Email);
-            CREATE TABLE Learner.learners(id INTEGER PRIMARY KEY,enrolment_id,learner_type,full_name,programme,coach_email,email);
-            CREATE TABLE Learner.learning_reflection_submissions(id,learner_id INTEGER,learner_kind,learner_name,activity_title,
-                activity_type,status,actual_time_hours,reviewed_by,submitted_at,full_submission);
+            CREATE TABLE curriculum.programmes(programme_id TEXT PRIMARY KEY,name TEXT);
+            INSERT INTO curriculum.programmes VALUES('P1','Programme');
+            CREATE TABLE Learner.learners(id INTEGER PRIMARY KEY,enrolment_id,learner_type,full_name,programme_id,coach_email,email);
+            CREATE TABLE Learner.extra_activities(id,learner_id INTEGER,learner_kind,title,status,
+                requested_minutes INTEGER,approved_minutes INTEGER,reviewed_by,submitted_at,activity_date,
+                created_at,reflection_payload,progress_entry_id);
         """)
         self.owner = dict(id=70, enrolment_id=7, learner_type='apprenticeship', coach_email='coach@example.test')
         for pk, kind, coach in [(7, 'apprenticeship', 'coach@example.test'),
@@ -37,25 +40,30 @@ class CoachExtraActivitiesTests(SimpleTestCase):
             email = f'learner{pk}@example.test'
             self.db.execute('INSERT INTO enrolment.Created_users VALUES(?,?)', [pk, email])
             self.db.execute('INSERT INTO Learner.learners VALUES(?,?,?,?,?,?,?)',
-                            [pk * 10, pk, kind, 'Synthetic learner', 'Programme', coach, email])
+                            [pk * 10, pk, kind, 'Synthetic learner', 'P1', coach, email])
             origin = {'submissionOrigin': 'coach', 'coachCreation': {'name': 'Original Coach', 'actorId': '3'}} if pk == 7 else {}
-            self.seed(f'activity-{pk}', pk * 10, kind, 'accepted', origin)
+            self.seed(f'activity-{pk}', pk * 10, kind, 'approved', origin)
         self.seed('draft', 70, 'apprenticeship', 'draft')
-        self.seed('assignment', 70, 'apprenticeship', 'accepted', activity_type='assignment')
-        self.seed('pending', 70, 'apprenticeship', 'submitted_for_tutor_review')
+        self.seed('pending', 70, 'apprenticeship', 'pending')
         self.enterContext(patch.object(extras, 'query', side_effect=self.query))
-        self.enterContext(patch.object(extras, 'learner_coach_sql', return_value='l.coach_email'))
+        self.enterContext(patch.object(extras, '_coach_email_sql', return_value='l.coach_email'))
         self.request = RequestFactory().get('/coach/extra-activities')
         self.request.coach_email = 'coach@example.test'
 
-    def seed(self, sid, learner_id, kind, status, origin=None, activity_type='extra_activity'):
-        document = {'monthlyAssignment': {'month': '2026-10'}, **(origin or {})}
-        self.db.execute('INSERT INTO Learner.learning_reflection_submissions VALUES(?,?,?,?,?,?,?,?,?,?,?)',
-                        [sid, learner_id, kind, 'Synthetic learner', 'External training', activity_type,
-                         status, '2', 'Original Coach' if origin else None, '2026-10-14T12:00:00Z', json.dumps(document)])
+    def seed(self, sid, learner_id, kind, status, origin=None):
+        document = {'full_submission': {'monthlyAssignment': {'month': '2026-10'}, **(origin or {})}}
+        self.db.execute('INSERT INTO Learner.extra_activities VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)',
+                        [sid, learner_id, kind, 'External training', status, 120,
+                         120 if status == 'approved' else None,
+                         'Original Coach' if origin else '', '2026-10-14T12:00:00Z',
+                         '2026-10-14', '2026-10-14T12:00:00Z', json.dumps(document),
+                         100 if status == 'approved' else None])
 
     def query(self, sql, params=()):
         sql = re.sub(r'(\w+\.\w+)::text', r'CAST(\1 AS TEXT)', sql)
+        sql = sql.replace('(e.requested_minutes::numeric/60)::text',
+                          'CAST(e.requested_minutes / 60.0 AS TEXT)')
+        sql = sql.replace("to_char(e.activity_date,'YYYY-MM')", "substr(e.activity_date,1,7)")
         if '=ANY(%s)' in sql:
             index = sql[:sql.index('=ANY(%s)')].count('%s')
             values = params[index]
@@ -67,7 +75,7 @@ class CoachExtraActivitiesTests(SimpleTestCase):
         self.request.GET = RequestFactory().get('/', filters).GET
         return json.loads(unwrap(extras.activities)(self.request).content)
 
-    def test_caseload_excludes_other_coach_drafts_and_assignments_for_both_learner_kinds(self):
+    def test_caseload_excludes_other_coach_and_drafts_for_both_learner_kinds(self):
         data = self.list()
         self.assertEqual({row['id'] for row in data['items']}, {'activity-7', 'activity-8', 'pending'})
         self.assertEqual({row['learnerKind'] for row in data['items']}, {'commercial', 'apprenticeship'})
@@ -75,33 +83,30 @@ class CoachExtraActivitiesTests(SimpleTestCase):
         self.assertEqual({row['id'] for row in people}, {7, 8})
 
     def test_filters_and_historical_attribution_remain_without_mutating_saved_records(self):
-        before = self.query('SELECT * FROM Learner.learning_reflection_submissions')
+        before = self.query('SELECT * FROM Learner.extra_activities')
         data = self.list(month='2026-10', learner='7', status='accepted')
         self.assertEqual(data['total'], 1)
         self.assertEqual(data['items'][0]['addedBy'], 'Original Coach')
         self.assertEqual(data['items'][0]['reviewedBy'], 'Original Coach')
         self.assertEqual(self.list(month='2026-09')['total'], 0)
         self.assertEqual(self.list(status='pending')['items'][0]['id'], 'pending')
-        self.assertEqual(self.query('SELECT * FROM Learner.learning_reflection_submissions'), before)
+        self.assertEqual(self.query('SELECT * FROM Learner.extra_activities'), before)
 
     def test_pagination_preserves_other_learners(self):
         for index in range(26):
-            self.seed(f'more-{index}', 80, 'commercial', 'accepted')
+            self.seed(f'more-{index}', 80, 'commercial', 'approved')
         first = self.list(learner='8')
         second = self.list(learner='8', page='2')
         self.assertEqual((first['total'], len(first['items']), first['hasNext']), (27, 25, True))
         self.assertEqual((len(second['items']), second['hasNext']), (2, False))
         self.assertFalse({row['id'] for row in first['items']} & {row['id'] for row in second['items']})
 
-    def test_historical_accepted_coach_record_still_counts_without_a_learner_signature(self):
-        from learner_api import canonical_learning
-        record = {**self.query("SELECT * FROM Learner.learning_reflection_submissions WHERE id='activity-7'")[0],
-                  'profile_id': 70, 'activity_month': '2026-10', 'submitted_at': datetime(2026, 10, 14, tzinfo=utc.utc)}
-        with patch.object(canonical_learning, 'query', return_value=[record]):
-            rows = extra_activity_hour_records([self.owner])[70]
-        self.assertEqual(len(rows), 1)
-        self.assertTrue(rows[0]['accepted'])
-        self.assertEqual(rows[0]['actual_seconds'], 7200)
+    def test_legacy_extra_activity_projection_never_supplies_accepted_hours(self):
+        self.assertEqual(extra_activity_hour_records([self.owner])[70], [])
+
+    def test_generic_marking_queue_excludes_legacy_extra_activity_rows(self):
+        from .views import MARKING_QUEUE_EXCLUDE_DRAFTS_SQL
+        self.assertIn("activity_type <> 'extra_activity'", MARKING_QUEUE_EXCLUDE_DRAFTS_SQL)
 
 
 class CoachExtraActivitiesBoundaryTests(SimpleTestCase):
@@ -135,7 +140,8 @@ class CoachExtraActivitiesBoundaryTests(SimpleTestCase):
         self.assertEqual(extras.activities(request).status_code, 403)
 
     def test_coach_read_and_forged_owner_assertion(self):
-        with patch.object(extras, 'query', side_effect=[[{'count': 0}], []]):
+        with patch.object(extras, '_coach_email_sql', return_value='l.coach_email'), \
+             patch.object(extras, 'query', side_effect=[[{'count': 0}], []]):
             self.assertEqual(extras.activities(self.factory.get('/coach/extra-activities')).status_code, 200)
         request = self.factory.get('/coach/extra-activities', {'ownerEmail': 'other@example.test'})
         self.assertEqual(extras.activities(request).status_code, 403)

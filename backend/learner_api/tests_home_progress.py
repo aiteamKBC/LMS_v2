@@ -13,12 +13,12 @@ START, END = date(2026, 9, 3), date(2026, 9, 13)
 
 
 class HomeLiveHoursTests(SimpleTestCase):
-    def test_manual_attendance_adds_component_hours_to_home_once(self):
+    def test_home_does_not_add_live_credit_outside_canonical_metrics(self):
         credit = {'componentId': 'LIVE-1', 'moduleId': 'M1', 'hours': 2.5,
                   'timeTrackingSource': 'manual_attendance'}
         records = [{'component_ref': 'LIVE-1', 'accepted': True, 'actual_seconds': 7200}]
         result, _ = self.read(actual=2, records=records, credits=[credit])
-        self.assertEqual(result['otjh']['actual'], 2.5)
+        self.assertEqual(result['otjh']['actual'], 2)
         again, _ = self.read(actual=2, records=records, credits=[credit, credit])
         self.assertEqual(again['otjh'], result['otjh'])
 
@@ -45,34 +45,31 @@ class HomeLiveHoursTests(SimpleTestCase):
         self.assertEqual(catalogue.call_args.args[0], source)
         self.assertEqual(catalogue.call_args.args[1].enrolment_id, source.pk)
         self.assertEqual(catalogue.call_args.args[1].pk, 70)
-        if not unavailable:
-            read.assert_called_once_with(source, module_ids=['M1'], register=lectures)
-        else:
-            read.assert_not_called()
+        read.assert_not_called()
         self.assertEqual(metrics['otjh']['actual'], actual)
         return result, entries
 
-    def test_verified_live_hours_reach_home_actual_and_percentage(self):
+    def test_canonical_actual_reaches_home_without_a_second_ledger_read(self):
         result, entries = self.read()
-        self.assertEqual(result['otjh']['actual'], 4)
-        self.assertEqual(result['otjh']['percent'], 2.29)
+        self.assertEqual(result['otjh']['actual'], 0)
+        self.assertEqual(result['otjh']['percent'], 0)
         self.assertEqual(result['otjh']['submitted'], 0)
-        entries.assert_called_once_with({'id': 70}, lineage_only=True)
+        entries.assert_not_called()
 
-    def test_existing_hours_are_topped_up_once_and_other_work_is_preserved(self):
+    def test_existing_canonical_hours_are_preserved(self):
         records = [{'component_ref': 'LIVE-1', 'accepted': True, 'actual_seconds': 1800},
                    {'component_ref': 'LIVE-2', 'accepted': True, 'actual_seconds': 7200},
                    {'component_ref': 'READING', 'accepted': True, 'actual_seconds': 10800}]
         first, _ = self.read(actual=5.5, records=records)
         second, _ = self.read(actual=5.5, records=records)
-        self.assertEqual(first['otjh']['actual'], 7)
+        self.assertEqual(first['otjh']['actual'], 5.5)
         self.assertEqual(first, second)
 
-    def test_staff_zero_override_is_not_replaced_by_automatic_credit(self):
+    def test_staff_zero_override_is_not_replaced_by_home(self):
         records = [{'component_ref': 'LIVE-1', 'accepted': True, 'actual_seconds': 0,
                     'actual_basis': 'staff:module-progress'}]
         result, _ = self.read(records=records)
-        self.assertEqual(result['otjh']['actual'], 2)
+        self.assertEqual(result['otjh']['actual'], 0)
 
     def test_missing_metrics_or_attendance_does_not_fabricate_hours(self):
         result, entries = self.read(actual=None)
@@ -84,10 +81,10 @@ class HomeLiveHoursTests(SimpleTestCase):
         self.assertIsNone(result['lectures'])
         entries.assert_not_called()
 
-    def test_missing_plan_keeps_supplemented_actual_without_inventing_planned_hours(self):
+    def test_missing_plan_keeps_canonical_actual_without_inventing_planned_hours(self):
         result, _ = self.read(planned=None)
         self.assertEqual((result['otjh']['actual'], result['otjh']['planned'], result['otjh']['percent']),
-                         (4, None, None))
+                         (0, None, None))
 
     def test_activities_count_the_full_my_learning_catalogue_not_saved_records(self):
         result, _ = self.read(modules=[{'id': 'current:M1', 'completed': 2, 'total': 851},
@@ -299,7 +296,7 @@ class HomeProgressTests(SimpleTestCase):
     def test_repository_filters_submission_identity_and_tolerates_attendance_failure(self):
         connection = MagicMock()
         cursor = connection.cursor.return_value.__enter__.return_value
-        source = SimpleNamespace(pk=499, aptem_id=None)
+        source = SimpleNamespace(pk=499, aptem_id=None, _canonical_profile={'id': 499})
         with patch('learner_api.home_progress.connections', {'enrolment': connection}), \
              patch('learner_api.home_progress._group_dates', return_value=(START, END, 'learner')), \
              patch('learner_api.home_progress.rows', return_value=[]), \
@@ -308,21 +305,23 @@ class HomeProgressTests(SimpleTestCase):
                  'otjh': {'actual': 0, 'planned': 0},
              }):
             result = read_home_progress(source, 'apprenticeship', [], [], [], [], END)
-        self.assertEqual(cursor.execute.call_args.args[1], ['apprenticeship', '499'])
-        self.assertNotIn('structured_manual_activities', cursor.execute.call_args.args[0])
+        self.assertEqual(cursor.execute.call_args.args[1], ['apprenticeship', 499])
+        self.assertIn('extra_activities', cursor.execute.call_args.args[0])
+        self.assertTrue(any('learning_reflection_submissions' in call.args[0]
+                            and call.args[1] == ['apprenticeship', 499]
+                            for call in cursor.execute.call_args_list))
         self.assertIsNone(result['lectures'])
         self.assertEqual(result['otjh']['planned'], 0)
 
     def test_home_actual_uses_the_canonical_ssot_total_when_available(self):
         connection = MagicMock()
-        source = SimpleNamespace(pk=499, aptem_id=None)
+        source = SimpleNamespace(pk=499, aptem_id=None, _canonical_profile={'id': 499})
         canonical = {'otjh': {'actual': 12.5}}
         with patch('learner_api.home_progress.connections', {'enrolment': connection}), \
              patch('learner_api.home_progress._group_dates', return_value=(START, END, 'learner')), \
              patch('learner_api.home_progress.rows', return_value=[]), \
              patch('learner_api.home_progress.lecture_register', return_value=[]), \
              patch('learner_api.training_plan_dashboard.plan_planned_hours', return_value=None), \
-             patch('learner_api.home_progress.canonical_learning.profile', return_value=None), \
              patch('learner_api.home_progress.canonical_learning.metrics', return_value=canonical) as metrics:
             result = read_home_progress(source, 'commercial', [], [], [], [], END)
         self.assertEqual(result['otjh']['actual'], 12.5)

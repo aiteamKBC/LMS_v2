@@ -917,6 +917,7 @@ def _load_scoped_submission(request, submission_id):
                   from "Learner".learning_reflection_submissions
                  where id = %s and learner_id = any(%s)
                    and {MARKING_QUEUE_CANONICAL_OWNER_SQL}
+                   and activity_type <> 'extra_activity'
                 """,
                 [str(submission_id), allowed_learner_ids],
             )

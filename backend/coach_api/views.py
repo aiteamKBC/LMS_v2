@@ -366,7 +366,9 @@ MARKING_OVERDUE_DAYS = 7
 #: coach's to mark. Without this the queue's All tab listed drafts (rendered as
 #: "Pending" by the SPA's fallback label) that no status tab would ever show.
 #: ``is distinct from`` keeps any row with a NULL status, as before.
-MARKING_QUEUE_EXCLUDE_DRAFTS_SQL = "status is distinct from 'draft'"
+MARKING_QUEUE_EXCLUDE_DRAFTS_SQL = (
+    "activity_type <> 'extra_activity' and status is distinct from 'draft'"
+)
 
 #: Ceiling on coach feedback. Generous rather than tight: the stored column is
 #: unbounded text, and the AI-assisted draft alone runs to 6000-7500 characters

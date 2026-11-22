@@ -118,7 +118,8 @@ def read_accepted_ksb_rows(cursor, source, kind):
         LEFT JOIN "Learner".learner_progress_entries p
           ON p.learner_id=l.id AND r.source_ref='progress:' || p.id::text
         LEFT JOIN "Learner".learning_reflection_submissions s
-          ON s.learner_id=l.id AND s.learner_kind=%s AND r.source_ref='reflection:' || s.id::text
+          ON s.learner_id=l.id AND s.learner_kind=%s
+         AND s.activity_type<>'extra_activity' AND r.source_ref='reflection:' || s.id::text
         WHERE r.aptem_id=%s AND r.accepted=true AND r.deleted_at IS NULL''',
         [source.pk, kind, int(str(source.aptem_id).strip())])
     return rows(cursor)
@@ -717,6 +718,7 @@ def load_accepted_ksb_rows_bulk(keys):
             LEFT JOIN "Learner".learning_reflection_submissions s
               ON s.learner_id=l.id
              AND s.learner_kind=requested.learner_kind
+             AND s.activity_type<>'extra_activity'
              AND r.source_ref='reflection:' || s.id::text
             WHERE r.accepted=true AND r.deleted_at IS NULL''', params)
         for item in rows(cursor):

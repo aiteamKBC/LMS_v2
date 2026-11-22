@@ -781,10 +781,12 @@ def ensure_teams_attendance_reporting_columns(database: str = "default") -> None
             UPDATE {ATTENDANCE_REPORTING_TABLE} attendance
             SET module_catalogue_id = session.module_catalogue_id,
                 group_id = module.group_id,
-                group_name = module.group_name
+                group_name = delivery_group.group_name
             FROM curriculum.live_sessions session
             LEFT JOIN curriculum.modules module
                    ON module.module_catalogue_id = session.module_catalogue_id
+            LEFT JOIN curriculum.groups delivery_group
+                   ON delivery_group.group_id = module.group_id
             WHERE attendance.source = 'microsoft_teams'
               AND attendance.live_session_id = session.id
               AND (
