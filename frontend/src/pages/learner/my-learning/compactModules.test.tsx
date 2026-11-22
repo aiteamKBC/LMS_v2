@@ -57,11 +57,26 @@ beforeEach(() => {
 afterEach(() => { clearAllCachedResources(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
 describe('compact My Learning route', () => {
+  it.each(['commercial', 'apprenticeship'] as const)('keeps an existing certificate accessible below a newly published threshold (%s)', async kind => {
+    const catalogue = makeCatalogue(kind);
+    vi.mocked(fetch).mockImplementation(async input => String(input).includes('/certificates/')
+      ? reply({ template: { id: 2, version: 4, title: 'Updated design', minimumProgress: 100,
+        requireFinalTest: false, issuedModuleRefs: ['current:M1'] }, csrfToken: 'csrf' }) : reply(catalogue));
+    route(`/learner/my-learning/${kind}/7`);
+    const current = within((await screen.findByRole('heading', { name: 'One' })).closest('article')!);
+    expect(await current.findByRole('button', { name: 'View certificate' })).toBeVisible();
+    const other = within(screen.getByRole('heading', { name: 'Old' }).closest('article')!);
+    expect(other.queryByRole('button', { name: /certificate/i })).not.toBeInTheDocument();
+    expect(urls().filter(url => url.includes('/certificates/'))).toHaveLength(1);
+  });
+
   it.each(['commercial', 'apprenticeship'] as const)('shows certificates for an old course and inside an assigned builder free course (%s)', async kind => {
     const catalogue = makeCatalogue(kind);
-    catalogue.modules = [{ ...catalogue.modules[1], completedActivityCount: 3, progress: 100, status: 'Completed' }];
+    catalogue.modules = [{ ...catalogue.modules[1], completedActivityCount: 3, requiredActivityCount: 1, completedRequiredActivityCount: 1, progress: 100, status: 'Completed' }];
     const module = makeModule();
-    const completedModule = { ...module, detail: { ...module.detail, componentProgress: [{ componentId: 'C1', passed: true }] } };
+    const completedModule = { ...module, detail: { ...module.detail,
+      components: module.detail.components.map(component => ({ ...component, expectedOtjh: 1 })),
+      componentProgress: [{ componentId: 'C1', passed: true }] } };
     vi.mocked(fetch).mockImplementation(async input => {
       const url = String(input);
       if (url.includes('/certificates/')) return reply({ template: { id: 1, version: 2, title: 'Achievement', minimumProgress: 80, requireFinalTest: true }, csrfToken: 'csrf' });

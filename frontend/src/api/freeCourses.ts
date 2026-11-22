@@ -20,6 +20,8 @@ export interface FreeCourseActivity {
   componentId: string;
   title: string;
   type: string;                 // frontend component type, e.g. 'video' | 'reading'
+  /** Allocated curriculum time defines Required; it is not awarded OTJ time. */
+  expectedOtjh?: number | null;
   description?: string | null;
   videoUrl?: string | null;
   audioUrl?: string | null;

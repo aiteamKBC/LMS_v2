@@ -1,5 +1,6 @@
-"""Count completed course activities for certificates, independently of OTJ hours."""
+"""Count completed Required activities for certificates, independently of OTJ hours."""
 from math import floor
+from .activity_requirements import has_required_hours
 
 
 def course_progress(source, module_ref):
@@ -21,14 +22,14 @@ def course_progress(source, module_ref):
     card = next((card for card in cards if card['id'] == module_ref), None)
     if card is None:
         raise ValueError("Module not found in this learner's plan.")
-    # These scoped, deduplicated items precede saved transfer-summary overrides.
+    # These scoped, deduplicated Required counts precede transfer-summary overrides.
     # A historical percentage or activity-count snapshot must not award credit.
-    activities = card['_activityItems']
-    total, done = len(activities), sum(bool(item['completed']) for item in activities)
+    total, done = card['requiredActivityCount'], card['completedRequiredActivityCount']
     return {
         'moduleRef': module_ref, 'moduleTitle': card['title'],
         'progressPercent': floor(done / total * 10000 + 0.5) / 100 if total else 0,
         'trackableTotal': total, 'trackableDone': done,
+        'otjHours': card['_actualLearningHours'],
         'finalTestPassed': card.get('finalTestPassed', False),
         'demoProgress': bool(card.get('demoProgress')),
     }
@@ -53,12 +54,9 @@ def free_course_progress(source, module_ref):
         if str(component.get('free_module_id')) not in week_ids:
             continue
         activity = _activity(free_programme_component_response(component))
-        # Match FreeCoursesTab.hasContent: empty placeholders do not contribute
-        # to its denominator, and a quiz needs a linked quiz definition.
-        has_content = bool(activity['quizId']) if 'quiz' in activity['type'].lower() else any(
-            activity.get(key) for key in ('videoUrl', 'audioUrl', 'contentHtml', 'resourceUrl')
-        )
-        if has_content:
+        # Missing content cannot turn unfinished Required work into completion.
+        # Optional materials and related quizzes never enter the denominator.
+        if has_required_hours(activity.get('expectedOtjh')):
             activities[activity['componentId']] = activity
     total = len(activities)
     done = sum(ref in completed for ref in activities)
@@ -67,4 +65,6 @@ def free_course_progress(source, module_ref):
         'moduleTitle': (courses.get(course_id) or {}).get('course_name') or 'Free course',
         'progressPercent': floor(done / total * 10000 + 0.5) / 100 if total else 0,
         'trackableTotal': total, 'trackableDone': done, 'finalTestPassed': False,
+        # Standalone free-course completion does not award official OTJ hours.
+        'otjHours': None,
     }

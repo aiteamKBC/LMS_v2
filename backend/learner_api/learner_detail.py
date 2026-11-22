@@ -2123,7 +2123,8 @@ def _resolve_from_master(modules, weeks, components, assigned_modules=None, *, c
                 live_ids = {(_s(mid), _s(cid)) for cid, wid, mid, ctype, *_ in master_components
                             if (mid, wid) in valid and _s(ctype).lower().replace('-', '_') == 'live_session'}
                 out_components = []
-                for cid, wid, mid, ctype, title, _, settings, link, *_ in master_components:
+                for component_row in master_components:
+                    cid, wid, mid, ctype, title, _, settings, link, *_ = component_row
                     if (mid, wid) not in valid:
                         continue
                     if isinstance(settings, str):
@@ -2156,6 +2157,8 @@ def _resolve_from_master(modules, weeks, components, assigned_modules=None, *, c
                                          if _s(ctype).lower().replace('-', '_') == 'recording_placeholder'
                                          and linked_module == _s(mid) and (linked_module, linked_id) in live_ids else {})
                     out_components.append({**week, 'componentId': cid, 'isQuiz': bool(quiz),
+                                           **({'expectedOtjh': float(component_row[13]) if component_row[13] is not None else None}
+                                              if expected_otjh else {}),
                                            **presentation_link,
                                            'quizMeta': quiz, 'component': title, **point_projection(settings),
                                            **({'type': ctype, 'sessionDate': _s(settings.get('sessionDate')) or None,

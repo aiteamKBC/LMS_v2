@@ -285,7 +285,7 @@ def _sync_review_feedback(learner_id, *, source_review_id=None, employer=False, 
 
 
 def sync_completed_overlay(overlay):
-    """Post-commit fast path; scheduled/page/command reconciliation can retry."""
+    """Post-commit fast path; page or explicitly scoped commands can retry."""
     profile = LearnerProfile.objects.filter(pk=overlay.learner_profile_id).first()
     learner = enrolment_for_review_profile(profile)
     if learner is None:

@@ -29,6 +29,7 @@ from .learner_detail import SOURCE_MODELS
 from .learning_plan import (CANONICAL_TRAINING_PLAN_PREFETCH, effective_training_plan,
                             install_canonical_training_plan, request_preset_cache)
 from .progress_rules import progress_counts_as_achieved
+from .activity_requirements import has_required_hours
 from .projection_performance import projection_stage, local_catalogue_trace
 
 # Created_users stores placement ids only. The programme/cohort/group names are
@@ -432,6 +433,10 @@ def course_facts(owner, records, courses):
                 done.add(key)
             if course not in counted and is_actual:
                 hours[course] += actual_hours
+            # Same primary placement and sum as recorded_course_items: a linked
+            # quiz must not inherit its material's planned time/Required badge.
+            if course not in counted and record.get('journal_planned_hours') is not None:
+                definition['_planned_hours'] = definition.get('_planned_hours', 0) + float(record['journal_planned_hours'])
             counted.add(course)
     return definitions, done, started, hours, record_ids
 
@@ -511,6 +516,7 @@ def assemble_cards(native, current, courses, definitions, done, started, hours, 
         legacy[course].append({'activity_id': f'catalogue:{course}:{ref}', 'group_id': int(course),
             'source_activity_id': int(ident) if ident.isdigit() else 0, 'catalogue_kind': kind,
             'completed': (course, ref) in done, 'started': (course, ref) in started,
+            'required': has_required_hours(d.get('_planned_hours')),
             '_course_ref': course, 'title': d['source_activity_title'], 'section_title': d.get('source_section_title'),
             'schedule': display_schedule(d) or {}, 'position': d.get('position') or 0,
             'lastActivityAt': d.get('_last_activity_at')})
@@ -623,6 +629,8 @@ def assemble_cards(native, current, courses, definitions, done, started, hours, 
             cards.append({'id':subject['id'], '_matches':any(search in i['title'].lower() for i in items)})
             continue
         count, complete = len(items), sum(i['completed'] for i in items)
+        required_items = [item for item in items if item.get('required') is True
+                          or has_required_hours((item.get('component') or {}).get('expectedOtjh'))]
         module = modules.get(subject.get('moduleId'))
         imported = subject['source'] == 'legacy' and subject['id'] in metadata['imported_courses'].values()
         if imported:
@@ -638,11 +646,14 @@ def assemble_cards(native, current, courses, definitions, done, started, hours, 
         if historical is not None:
             subject['legacyProgressReference'] = historical
         subject.update(activityCount=count, completedActivityCount=complete, progress=percent(complete, count),
+            requiredActivityCount=len(required_items),
+            completedRequiredActivityCount=sum(item['completed'] for item in required_items),
             status='Completed' if count and complete == count else 'In progress' if any(i['completed'] or i.get('started') for i in items) else 'Upcoming',
             nextTitle=next_title(items, today),
             finalTestPassed=any(i.get('component', {}).get('isQuiz') and 'final' in i['title'].lower() and native_done({k:v for k,v in i['component'].items() if k not in ('previousLearning','attendanceCompleted')}, native) for i in items),
             planModule={k: module.get(k) for k in ('start_date','end_date','tutor_name','total_otjh','educational_session_count','programme_name','cohort_name','group_name')} if module else None,
             actualHours=subject.pop('_hours',None) if subject['source'] == 'legacy' or subject.get('replacementCourseRef') else progress.get(subject.get('moduleId'), {}).get('hours', {}).get('actual'))
+        actual_learning_hours = subject['actualHours']
         saved_at = max((i.get('lastActivityAt') or '' for i in items), default='')
         if saved_at:
             subject['lastActivityAt'] = saved_at
@@ -667,12 +678,16 @@ def assemble_cards(native, current, courses, definitions, done, started, hours, 
             native_records = [record for record in records if str(record['id']) not in previous_ids]
             native_hours = supplement_module_hours(_canonical_module_progress(native_records, module_list), native_records, credits)
             subject['actualHours'] = round(transfer['hours'] + (native_hours.get(subject.get('moduleId'), {}).get('hours', {}).get('actual') or 0), 6)
+            actual_learning_hours = subject['actualHours']
             # Keep the component-derived status, including a started native
             # attempt with no completed components yet (0% is not "Upcoming").
         if ksb_mappings is not None:
             from .my_learning_ksbs import card_ksb_progress
             subject['ksbProgress'] = card_ksb_progress(items, ksb_mappings)
         if include_activity_items:
+            # Recorded course hours, excluding pending transfer and demo summaries.
+            # Keep the ordinary card's presentation unchanged.
+            subject['_actualLearningHours'] = None if subject.get('demoProgress') else actual_learning_hours
             # Internal curriculum-directory projection of this exact population.
             # Bodies, evidence and resource URLs never leave the reader.
             subject['_activityItems'] = [dict(

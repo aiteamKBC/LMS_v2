@@ -254,24 +254,69 @@ describe('bound migrated review answers', () => {
     expect(api.submitMigratedReview).not.toHaveBeenCalled();
     expect(api.generateReviewMeetingSummary).not.toHaveBeenCalled();
     fireEvent.change(field, { target: { value: '' } });
-    expect(screen.queryByRole('button', { name: 'Check Session' })).not.toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Generate from Teams' })).toBeDisabled();
-    expect(screen.getByRole('button', { name: 'Upload Transcript' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Check Session' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: 'Generate from Teams' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: 'Upload Transcript' })).toBeEnabled();
     fireEvent.click(screen.getByRole('button', { name: 'Save draft' }));
     await waitFor(() => expect(api.saveReviewInstanceAnswers).toHaveBeenCalledWith(id,
       { recap: '', other: 'Existing other answer' }, { answerVersion: 'v2', editedFields: ['recap'] }));
   });
 
-  it('keeps unsaved text on a conflict and requires saving before Check Session', async () => {
+  it('keeps unsaved text on a save conflict and still allows Check Session', async () => {
     vi.mocked(api.saveReviewInstanceAnswers).mockRejectedValue(new Error('This review changed. Reopen it before saving.'));
     mount();
     const field = await screen.findByRole('textbox', { name: 'Discussion record' });
     fireEvent.change(field, { target: { value: 'Unsaved coach text' } });
-    expect(screen.queryByRole('button', { name: 'Check Session' })).not.toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: 'Check Session' })).toBeEnabled();
     fireEvent.click(screen.getByRole('button', { name: 'Save draft' }));
     expect(await screen.findByText(/This review changed/)).toBeVisible();
     expect(field).toHaveValue('Unsaved coach text');
     expect(api.fetchMigratedReviewIntelligence).toHaveBeenCalledTimes(1);
+    const check = await screen.findByRole('button', { name: 'Check Session' });
+    await waitFor(() => expect(check).toBeEnabled());
+    fireEvent.click(check);
+    await waitFor(() => expect(api.fetchMigratedReviewIntelligence).toHaveBeenCalledWith(id, undefined, { refresh: true }));
+    expect(field).toHaveValue('Unsaved coach text');
+  });
+
+  it.each([
+    ['aptem_mcm', 'teams'], ['aptem_mcm', 'upload'],
+    ['aptem_progress_review', 'teams'], ['aptem_progress_review', 'upload'],
+  ] as const)('keeps unsaved %s answers when generating from %s', async (reviewTypeCode, source) => {
+    const saved = definition();
+    saved.template.reviewTypeCode = reviewTypeCode;
+    vi.mocked(api.fetchReviewInstanceForm).mockResolvedValue(saved);
+    const generated: CoachMeetingArtifactsResponse = {
+      ...result({ fieldKey: 'recap', state: 'AI_POPULATED_UNEDITED', status: 'populated', generationStatus: 'ready' }),
+      answerVersion: 'v2', reviewAnswers: { recap: 'Generated answer', other: 'Existing other answer' },
+    };
+    vi.mocked(api.fetchMigratedReviewIntelligence).mockImplementation(async (_id, _signal, options) =>
+      options?.refresh ? generated : result());
+    vi.mocked(api.uploadMigratedSummaryTranscript).mockResolvedValue(generated);
+    mount();
+    const recap = await screen.findByRole('textbox', { name: 'Discussion record' });
+    const other = screen.getByDisplayValue('Existing other answer');
+    fireEvent.change(recap, { target: { value: 'Unsaved coach summary' } });
+    fireEvent.change(other, { target: { value: 'Unsaved other answer' } });
+    expect(screen.getByRole('button', { name: 'Generate from Teams' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: 'Upload Transcript' })).toBeEnabled();
+
+    if (source === 'teams') {
+      fireEvent.click(screen.getByRole('button', { name: 'Generate from Teams' }));
+      await waitFor(() => expect(api.fetchMigratedReviewIntelligence).toHaveBeenCalledWith(id, undefined,
+        { refresh: true, generateSummary: true }));
+    } else {
+      const file = new File(['Synthetic transcript'], 'meeting.txt', { type: 'text/plain' });
+      fireEvent.change(screen.getByLabelText('Select migrated review transcript'), { target: { files: [file] } });
+      await waitFor(() => expect(api.uploadMigratedSummaryTranscript).toHaveBeenCalledWith(id, file));
+    }
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Save draft' })).toBeEnabled());
+    expect(recap).toHaveValue('Unsaved coach summary');
+    expect(other).toHaveValue('Unsaved other answer');
+    fireEvent.click(screen.getByRole('button', { name: 'Save draft' }));
+    await waitFor(() => expect(api.saveReviewInstanceAnswers).toHaveBeenCalledWith(id,
+      { recap: 'Unsaved coach summary', other: 'Unsaved other answer' },
+      { answerVersion: 'v2', editedFields: expect.arrayContaining(['recap', 'other']) }));
   });
 
   it('freezes editing while checking and preserves server answers for unrelated fields', async () => {

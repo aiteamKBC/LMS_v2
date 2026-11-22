@@ -10,6 +10,7 @@ import { Panel } from '@/components/ui/Panel';
 import { EmptyState, EmptyStateAction } from '@/components/ui/EmptyState';
 import { Cover, SubjectCertificateAction } from './SubjectWorkspace';
 import styles from './SubjectWorkspace.module.css';
+import { allocatedActivityHours } from '@/utils/activityPlan';
 
 // Download the material players / quiz engine only when a learner opens an
 // activity, exactly as the ordinary module workspace does via DeferredStudentMaterial.
@@ -70,13 +71,22 @@ function FreeCourseCertificate({ course, isDone, certificate, kind, learnerId }:
   course: FreeCourse | FreeCourseSummary; isDone: (activity: FreeCourseActivity) => boolean;
   certificate: CertificateConfig; kind?: LearnerKind; learnerId?: string;
 }) {
-  if (course.moduleId) return null;
-  const progress = 'weeks' in course ? courseProgress(course, isDone) : {
+  if (course.moduleId) return null; // Builder courses use the normal module workspace action.
+  const hasFull = 'weeks' in course;
+  const progress = hasFull ? courseProgress(course, isDone) : {
     completable: course.activityCount, done: course.completedActivities, percent: course.activityCount ? Math.round(course.completedActivities / course.activityCount * 10000) / 100 : 0,
   };
+  // Count the Required badge, not the sidebar's navigation-only exceptions.
+  // Unavailable Required content stays unfinished rather than shrinking the total.
+  // Only available when the full course detail (with weeks) is loaded.
+  const required = hasFull ? [...new Map(course.weeks.flatMap(week => week.activities)
+    .filter(activity => allocatedActivityHours(activity.expectedOtjh) != null)
+    .map(activity => [activity.componentId, activity])).values()] : null;
   return <SubjectCertificateAction subject={{ id: `free:${course.freeCourseId}`, title: course.courseName, source: 'current', activities: [],
     card: { activityCount: progress.completable, completedActivityCount: progress.done, progress: progress.percent,
-      status: progress.completable > 0 && progress.done === progress.completable ? 'Completed' : 'In progress', finalTestPassed: false } }}
+      requiredActivityCount: required?.length,
+      completedRequiredActivityCount: required?.filter(isDone).length,
+      status: progress.percent === 100 ? 'Completed' : 'In progress', finalTestPassed: false } }}
     template={certificate.template} csrfToken={certificate.csrfToken} kind={kind} learnerId={learnerId} />;
 }
 

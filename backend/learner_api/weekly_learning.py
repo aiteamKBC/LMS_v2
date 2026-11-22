@@ -230,8 +230,11 @@ def build_learning_content_summary(source, pk, *, learning_summary=False, assign
     with projection_stage('native_content'):
         modules, weeks, components = _resolve_from_master(
             modules, weeks, components, assigned_modules=assigned, compact=True,
-            live_session_ids=False, expected_otjh=not identities_only,
-            **projection_options, **strict_options)
+            live_session_ids=False, expected_otjh=not identities_only or preserve_legacy, **projection_options, **strict_options)
+    if identities_only and preserve_legacy:
+        # Certificate counts need the same Required flag as the activity viewer.
+        # Master rows already carry it; only id-less snapshots need a lookup.
+        _annotate_otjh([c for c in components if "expectedOtjh" not in c])
     if not identities_only:
         components = _apply_programme_assignment_template(components, getattr(source, "programme", ""))
         _annotate_otjh([c for c in components if "expectedOtjh" not in c])
