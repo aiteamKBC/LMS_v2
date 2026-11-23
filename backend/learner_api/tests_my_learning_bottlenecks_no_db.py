@@ -22,6 +22,12 @@ class ReadSet:
     def only(self, *args):
         self.only_fields = args
         return self
+    def annotate(self, **kwargs):
+        self.annotations = kwargs
+        for row in self.rows:
+            for field in kwargs:
+                setattr(row, field, row.raw_data)
+        return self
     def order_by(self, *args): return self
     def values(self, *args): return []  # Unevaluated SQL subquery stand-in.
     def values_list(self, *args):
@@ -135,6 +141,16 @@ class BottleneckReadParityTests(SimpleTestCase):
         self.assertEqual(rows[0]['attendance_status'], 'present')
         self.assertNotIn('attendees', sets['series'].only_fields)
         self.assertIn('module_title', sets['series'].only_fields)
+
+    def test_progress_reader_projects_identity_without_loading_duplicate_raw_evidence(self):
+        rows, _, sets = self.attendance(True)
+        self.assertEqual(rows[0]['attendance_status'], 'present')
+        self.assertNotIn('raw_data', sets['evidence'].only_fields)
+        self.assertIn('intervals', sets['evidence'].only_fields)
+        self.assertIn('total_attendance_seconds', sets['evidence'].only_fields)
+        self.assertIn('_identity_raw_data', sets['evidence'].annotations)
+        _, _, full_sets = self.attendance(False)
+        self.assertIn('raw_data', full_sets['evidence'].only_fields)
 
     def test_same_module_occurrences_reuse_full_identity_roster_without_changing_presence(self):
         rows, _, sets = self.attendance(True, extra=True)

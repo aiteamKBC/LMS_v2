@@ -216,6 +216,8 @@ def build_learning_content_summary(source, pk, *, learning_summary=False, assign
     quiz_options = {"native_week_ids": True} if identities_only or week_ids is not None else {}
     if resolved_metadata is not None and 'quiz_modules' in resolved_metadata:
         quiz_options['resolved_metadata'] = resolved_metadata
+    if identities_only and preserve_legacy and not include_presentation:
+        quiz_options['reuse_loaded_quizzes'] = True
     with projection_stage('native_quizzes'):
         weeks, components = _append_week_quizzes(weeks, components, assigned_modules=assigned, **strict_options, **quiz_options)
 

@@ -133,18 +133,17 @@ def course_facts(owner, records, courses):
     membership exclusions. One canonical row contributes hours once per course.
     """
     from .course_catalogue_display import retain_learner_schedule
-    definitions = canonical.query('''SELECT a.source_activity_id,a.source_activity_title,a.source_activity_type,
+    from .catalogue_fact_encoding import COURSE_FIELDS, fact_sql, restore_fact
+    definitions = canonical.query(f'''SELECT a.source_activity_id,a.source_activity_title,a.source_activity_type,
         a.source_section_ref,a.source_section_title,a.source_position AS position,
         c.source_course_ref,
-        jsonb_build_object('quiz_id',a.source_payload->'quiz_id','activity_id',a.source_payload->'activity_id',
-            'parent_activity_id',a.source_payload->'parent_activity_id','section_title',a.source_payload->'section_title',
-            'section_order',coalesce(a.source_payload->'section_order',a.source_payload#>'{live_catalogue_recovery,section_order}'),
-            'component_order',coalesce(a.source_payload->'component_order',a.source_payload#>'{live_catalogue_recovery,component_order}'),
-            'created_at',a.source_payload->'created_at','created_at_utc',a.source_payload->'created_at_utc') AS source_payload
+        {fact_sql(COURSE_FIELDS, compact=True)} AS source_payload
         FROM curriculum.source_activities a
         JOIN curriculum.source_courses c ON c.id=a.source_course_id AND c.deleted_at IS NULL
         WHERE a.source_course_id=ANY(%s) AND a.deleted_at IS NULL AND a.source_system='old_lms'
         ORDER BY c.id,a.source_position NULLS LAST,a.id''', [[c['id'] for c in courses]]) if courses else []
+    definitions = [{**definition, 'source_payload': restore_fact(definition.get('source_payload'),
+        [name for name, _ in COURSE_FIELDS])} for definition in definitions]
     from .progress_demo import catalogue as demo_catalogue
     definitions = demo_catalogue(courses, [dict(d) for d in canonical.learner_course_catalogue(courses, definitions)])
     by_key = {(str(d['source_course_ref']), d['source_activity_id']): d for d in definitions}
@@ -430,7 +429,7 @@ def card_totals(cards):
             'subjectCount': sum(not c.get('previousLearningFor') for c in cards)}
 
 
-def load_context(source, owner, subject_id=None, *, purpose='catalogue', records_override=None, include_personal_replacements=False):
+def load_context(source, owner, subject_id=None, *, purpose='catalogue', records_override=None, include_personal_replacements=False, approved_replacements_only=False):
     """One request-local owner/assignment/ledger snapshot; no write-on-read path."""
     from .weekly_learning import build_learning_content_summary
     from .dashboard_tabs import install_request_caches
@@ -536,6 +535,12 @@ def load_context(source, owner, subject_id=None, *, purpose='catalogue', records
             {key[8:] for key in {**imports, **replacements} if key[8:] not in approved_modules}
             | matched_modules
         ) & set(ids))
+        if approved_replacements_only:
+            # Cards only revalidate saved approved matches. Transfer review
+            # still uses the default full provenance read to propose matches.
+            # Keep every component in a matched module for ambiguity checks,
+            # including approvals whose original course mapping was removed.
+            settings_modules = sorted(matched_modules & set(ids))
         settings_ids = list(dict.fromkeys(c['componentId']
             for c in [*native['components'], *native.get('retiredQuizComponents', [])]
             if c.get('componentId') and c.get('moduleId') in settings_modules))
@@ -567,7 +572,8 @@ def load_context(source, owner, subject_id=None, *, purpose='catalogue', records
 @schedule_read_scope()
 def read_catalogue(source, kind, owner, *, upcoming_only=False):
     from .subject_store import covers_for
-    assigned, ids, records, native, courses, definitions, done, started, hours, metadata, credits = load_context(source, owner)
+    assigned, ids, records, native, courses, definitions, done, started, hours, metadata, credits = load_context(
+        source, owner, approved_replacements_only=True)
     modules = metadata['modules']
     ksb_mappings = None
     if not upcoming_only:

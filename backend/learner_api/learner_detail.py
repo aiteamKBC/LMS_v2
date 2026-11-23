@@ -613,7 +613,7 @@ def _matching_module_ids_for_quiz_record(quiz_record, modules_by_id, explicit_mo
     return []
 
 
-def _append_week_quizzes(weeks, components, assigned_modules=None, *, strict=False, native_week_ids=False, resolved_metadata=None):
+def _append_week_quizzes(weeks, components, assigned_modules=None, *, strict=False, native_week_ids=False, resolved_metadata=None, reuse_loaded_quizzes=False):
     """Append published quizzes for the learner's weeks/modules.
 
     Visibility now honours explicit module assignments (curriculum.quiz_course_links)
@@ -743,6 +743,8 @@ def _append_week_quizzes(weeks, components, assigned_modules=None, *, strict=Fal
                     explicit_week_ids_by_quiz_module = {}
 
                 explicit_quiz_ids = sorted(explicit_module_ids_by_quiz)
+                if reuse_loaded_quizzes:
+                    explicit_quiz_ids = [qid for qid in explicit_quiz_ids if qid not in quiz_rows_by_id]
                 if explicit_quiz_ids:
                     cur.execute(
                         """
@@ -762,6 +764,7 @@ def _append_week_quizzes(weeks, components, assigned_modules=None, *, strict=Fal
                     if _normalise_quiz_scope_value(meta.get("module"))
                 })
                 if module_titles:
+                    already_loaded = sorted(quiz_rows_by_id) if reuse_loaded_quizzes else []
                     cur.execute(
                         """
                         SELECT id, week_id, title, questions, duration, time_unit,
@@ -769,8 +772,8 @@ def _append_week_quizzes(weeks, components, assigned_modules=None, *, strict=Fal
                         FROM curriculum.quizzes
                         WHERE lower(COALESCE(status, '')) = 'published'
                           AND lower(COALESCE(module, '')) = ANY(%s)
-                        """,
-                        [module_titles],
+                        """ + (' AND NOT (id = ANY(%s))' if already_loaded else ''),
+                        [module_titles, *([already_loaded] if already_loaded else [])],
                     )
                     store_quiz_rows(cur.fetchall())
             represented = {
