@@ -16,7 +16,7 @@ every level of the hierarchy:
 
 from unittest.mock import patch
 
-from django.test import SimpleTestCase
+from django.test import RequestFactory, SimpleTestCase
 
 from . import views
 
@@ -550,6 +550,31 @@ class ScopePlacementLineageTests(SimpleTestCase):
         self.assertEqual(lineage['cohortName'], 'September 2025')
         self.assertEqual(lineage['programmeId'], 'PROG-1')
         self.assertEqual(lineage['placementBasis'], 'group')
+
+    def test_module_roster_uses_stored_id_first_and_resolves_legacy_alias(self):
+        request = RequestFactory().get('/', {'learnerStatus': 'all'})
+        roster = [
+            {'id': 1, 'cohortId': 'COH-1', 'groupId': 'GRP-1'},
+            {'id': 2, 'cohortId': 'COH-1', 'groupId': 'GRP-2'},
+        ]
+
+        def module_rows(_table, _where, identifiers):
+            return [self.MODULE] if identifiers == ['MOD-1'] else []
+
+        with (
+            patch.object(views, 'authoring_fetch_all', side_effect=module_rows),
+            patch.object(views, 'resolve_authoring_catalogue_id', return_value='MOD-1') as resolve_alias,
+            patch.object(views, 'assigned_learners_for_programme', return_value=roster),
+        ):
+            direct = views._scope_learner_roster_payload_uncached(request, 'module', 'MOD-1')
+            resolve_alias.assert_not_called()
+
+            alias = views._scope_learner_roster_payload_uncached(request, 'module', 'training-module-1')
+            resolve_alias.assert_called_once_with('training-module-1')
+
+        self.assertEqual(direct['assignedLearners'], [roster[0]])
+        self.assertEqual(alias['assignedLearners'], direct['assignedLearners'])
+        self.assertEqual(alias['lineage']['moduleCatalogueId'], 'MOD-1')
 
     def test_a_module_with_no_group_falls_back_to_its_cohort(self):
         module = {**self.MODULE, 'group_id': '', 'group_name': ''}

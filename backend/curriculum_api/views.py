@@ -29469,18 +29469,26 @@ def authoring_scope_module_rows(scope='', identifier=''):
 
 
 @scoped_curriculum_read
-def authoring_scope_data(scope='', identifier='', *, stats_only=False):
+def authoring_scope_data(scope='', identifier='', *, stats_only=False, resolved_module_id=''):
     """Module/week/component/mapping rows for a scope.
 
     The component read excludes settings_json for every caller, deliberately:
     each one either feeds ksb_coverage.py (which never reads it) or only counts
     the rows. Programme summary statistics opt into grouped count/weight facts;
     full coverage callers keep their shared detailed column set.
+
+    A resolved module ID lets a single-module caller reuse the indexed read
+    that already populated its lineage.
     """
     if stats_only and scope != 'programme':
         raise ValueError('Stats-only authoring rows require a programme scope.')
     ensure_module_authoring_tables()
-    module_rows = authoring_scope_module_rows(scope, identifier)
+    if scope == 'module' and resolved_module_id:
+        module_rows = authoring_fetch_all(
+            AUTHORING_MODULES_TABLE, 'module_catalogue_id = %s', [resolved_module_id],
+        )
+    else:
+        module_rows = authoring_scope_module_rows(scope, identifier)
     ident = clean_str(identifier)
 
     module_ids = [clean_str(row.get('module_catalogue_id')) for row in module_rows if clean_str(row.get('module_catalogue_id'))]
@@ -30038,7 +30046,7 @@ def assigned_learners_for_programme(programme_id, lifecycle_status='', *, strict
 CURRICULUM_LEARNER_SCOPES = ('programme', 'cohort', 'group', 'module', 'week', 'component')
 
 
-def scope_placement_lineage(scope, identifier):
+def scope_placement_lineage(scope, identifier, *, prefer_stored_module_id=False):
     """Resolve any curriculum scope to its Programme -> Component lineage.
 
     Returns the ids *and* the names, because both are still needed to narrow a
@@ -30145,7 +30153,11 @@ def scope_placement_lineage(scope, identifier):
                 lineage['weekTitle'] = clean_str(rows[0].get('title'))
                 module_id = module_id or clean_str(rows[0].get('module_catalogue_id'))
         if scope == 'module':
-            module_id = resolve_authoring_catalogue_id(ident) or ident
+            resolve_module_id = (
+                resolve_stored_module_catalogue_id
+                if prefer_stored_module_id else resolve_authoring_catalogue_id
+            )
+            module_id = resolve_module_id(ident) or ident
         if module_id:
             rows = authoring_fetch_all(AUTHORING_MODULES_TABLE, 'module_catalogue_id = %s', [module_id])
             if rows:
@@ -32009,8 +32021,12 @@ def scope_learner_ksb_impact_payload(request, scope, identifier):
 def _scope_learner_ksb_impact_payload(request, scope, identifier):
     scope = clean_str(scope) or 'programme'
     identifier = clean_str(identifier)
-    lineage = scope_placement_lineage(scope, identifier)
-    module_rows, week_rows, component_rows, mapping_rows = authoring_scope_data(scope, identifier)
+    module_progress = scope == 'module' and request.GET.get('moduleProgress') == '1'
+    lineage = scope_placement_lineage(scope, identifier, prefer_stored_module_id=module_progress)
+    resolved_module_id = lineage['moduleCatalogueId'] if module_progress else ''
+    module_rows, week_rows, component_rows, mapping_rows = authoring_scope_data(
+        scope, identifier, resolved_module_id=resolved_module_id,
+    )
     if not lineage.get('found') and not module_rows:
         return None, json_error(f'{scope.title()} not found.', status=404)
     mapping_rows = mappings_with_inferred_sources(mapping_rows, module_rows)
@@ -32172,7 +32188,7 @@ def _scope_learner_roster_payload_uncached(request, scope, identifier):
     """
     scope = clean_str(scope) or 'programme'
     identifier = clean_str(identifier)
-    lineage = scope_placement_lineage(scope, identifier)
+    lineage = scope_placement_lineage(scope, identifier, prefer_stored_module_id=True)
     learner_status = clean_str(request.GET.get('learnerStatus') or request.GET.get('status'))
     learners = assigned_learners_for_scope(
         scope,

@@ -30,6 +30,60 @@ class AchievementDefinitionTests(SimpleTestCase):
                 self.assertEqual(actual, [{key: row[key] for key in fields} for row in full['items']])
 
 
+class ModuleProgressReadTests(SimpleTestCase):
+    def test_progress_reads_only_the_resolved_module_and_preserves_the_payload(self):
+        module = {'module_catalogue_id': 'MOD-1', 'title': 'Module', 'programme_id': 'PROG-1'}
+        week = {'id': 'W1', 'module_catalogue_id': 'MOD-1'}
+        component = {'id': 'C1', 'module_catalogue_id': 'MOD-1', 'week_id': 'W1', 'type': 'quiz'}
+        children_by_table = {
+            views.AUTHORING_WEEKS_TABLE: [week],
+            views.AUTHORING_COMPONENTS_TABLE: [component],
+            views.AUTHORING_KSB_MAPPINGS_TABLE: [],
+        }
+
+        def fetch_rows(table, condition='', ids=None):
+            self.assertEqual(table, views.AUTHORING_MODULES_TABLE)
+            return [module] if not condition or ids == ['MOD-1'] else []
+
+        def child_rows(table, module_ids, **options):
+            self.assertEqual(module_ids, ['MOD-1'])
+            return children_by_table[table]
+
+        with ExitStack() as stack:
+            fetch = stack.enter_context(patch.object(views, 'authoring_fetch_all', side_effect=fetch_rows))
+            resolve = stack.enter_context(patch.object(views, 'resolve_authoring_catalogue_id', return_value='MOD-1'))
+            stack.enter_context(patch.object(views, 'authoring_child_rows_for_modules', side_effect=child_rows))
+            enrich = stack.enter_context(patch('curriculum_api.learner_activity_status.enrich'))
+            for name, value in {
+                'ensure_module_authoring_tables': None,
+                'required_ksbs_for_request': [],
+                'assigned_learners_for_scope': [{'id': 7, 'name': 'Synthetic learner'}],
+                'learner_progress_ksb_consumption': ({}, [], []),
+                'reflection_submission_ksb_consumption': ({}, [], [], []),
+            }.items():
+                stack.enter_context(patch.object(views, name, return_value=value))
+
+            for identifier in ('MOD-1', 'training-module-1'):
+                with self.subTest(identifier=identifier):
+                    legacy = views.curriculum_module_learner_ksb_impact(RequestFactory().get('/'), identifier)
+                    fetch.reset_mock()
+                    resolve.reset_mock()
+                    enrich.reset_mock()
+                    request = RequestFactory().get('/', {'moduleProgress': '1'})
+                    response = views.curriculum_module_learner_ksb_impact(request, identifier)
+
+                    self.assertEqual(response.status_code, 200)
+                    self.assertEqual(response.content, legacy.content)
+                    fetch.assert_called()
+                    for call in fetch.call_args_list:
+                        self.assertEqual(call.args[:2], (views.AUTHORING_MODULES_TABLE, 'module_catalogue_id = %s'))
+                    if identifier == 'MOD-1':
+                        resolve.assert_not_called()
+                    else:
+                        resolve.assert_called_once_with(identifier)
+                    enrich.assert_called_once()
+
+
 class AchievementReadTests(SimpleTestCase):
     def setUp(self):
         self.factory = RequestFactory()
