@@ -16,6 +16,7 @@ from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET, require_POST
 
 from login.permissions import learner_self_only, learner_self_or_staff
+from login import permissions
 from login.errors import safe_sqlstate
 
 from curriculum_api import free_course_catalogue
@@ -39,6 +40,8 @@ from .free_course_selectors import VALID_LEARNER_KINDS, assigned_course_ids, can
 from .mappers import _s
 from .models import FREE_PROGRESS_ACTIVE, LearnerFreeCourseProgress, LearnerProfile
 from .free_course_progress import ACTIVITY_STATES, save_activity_state, save_completion
+from .free_course_hours import accepted_activity_seconds
+from . import free_course_attempts
 from .quizzes import _fetch_quiz, _grade_question, _scrub_answer_key
 from quiz_api.answer_keys import quiz_submission_error
 
@@ -189,6 +192,20 @@ def _resolve_source(kind, pk):
         return None, _error("Could not read the learner record.", 503)
 
 
+def _is_withdrawn(source):
+    return any(str(getattr(source, field, '') or '').strip().casefold() == 'withdrawn'
+               for field in ('lifecycle_status', 'programme_status'))
+
+
+def _withdrawn_access(request, source):
+    if not _is_withdrawn(source):
+        return None
+    account = permissions.authenticate_request(request)
+    if request.method == 'GET' and getattr(account, 'role', None) in {'staff', 'admin'}:
+        return None
+    return _error('Free Course access is unavailable while your learner status is withdrawn.', 403)
+
+
 def _in_clause(column, values):
     return f"{column} in ({', '.join(['%s'] * len(values))})", list(values)
 
@@ -233,7 +250,7 @@ def _scoped_rows(assigned_ids, *, include_component_settings=True):
     return courses_by_id, week_rows, component_rows
 
 
-def _course_detail(course_id, course_row, week_rows, component_rows, completed_refs, activity_states=None):
+def _course_detail(course_id, course_row, week_rows, component_rows, completed_refs, activity_states=None, accepted_seconds=None, activity_times=None):
     """Build one on-demand course tree in canonical curriculum order."""
     activities_by_week = {}
     for row in component_rows:
@@ -243,6 +260,10 @@ def _course_detail(course_id, course_row, week_rows, component_rows, completed_r
         activity["is_completed"] = activity["completed"]
         activity["activity_state"] = 'completed' if activity["completed"] else (
             (activity_states or {}).get(key, 'not_started'))
+        if key in (activity_times or {}):
+            activity["lastActivityAt"] = activity_times[key]
+        if key in (accepted_seconds or {}):
+            activity["acceptedActualSeconds"] = accepted_seconds[key]
         activities_by_week.setdefault(clean_str(row.get("free_module_id")), []).append(activity)
 
     weeks = []
@@ -271,6 +292,9 @@ def _course_detail(course_id, course_row, week_rows, component_rows, completed_r
         "description": clean_str(course_row.get("description")),
         "coverImageUrl": clean_str(course_row.get("cover_image_url")),
         "weeks": weeks,
+        **({"acceptedActualSeconds": sum(
+            activity.get("acceptedActualSeconds", 0)
+            for week in weeks for activity in week["activities"])} if accepted_seconds else {}),
     }
 
 
@@ -286,6 +310,9 @@ def free_courses(request, kind, pk):
     source, error = _resolve_source(kind, pk)
     if error is not None:
         return error
+    access_error = _withdrawn_access(request, source)
+    if access_error is not None:
+        return access_error
 
     try:
         assigned_ids = assigned_course_ids(source)
@@ -308,6 +335,8 @@ def free_courses(request, kind, pk):
     # not equivalent to having no progress and must remain visible to the caller.
     try:
         completed_refs = _completed_refs(source.pk, assigned_ids)
+        accepted_seconds = accepted_activity_seconds(source.pk, assigned_ids)
+        saved_times = free_course_attempts.activity_times(source.pk, assigned_ids)
     except DatabaseError:
         return _error("Could not read the learner's free course progress.", 503)
 
@@ -315,8 +344,13 @@ def free_courses(request, kind, pk):
         clean_str(week.get("id")): clean_str(week.get("course_id"))
         for week in week_rows
     }
+    course_times = {}
+    for (course_id, _component), at in saved_times.items():
+        course_times[course_id] = max(at, course_times.get(course_id, at))
+
     activity_totals = {}
     completed_totals = {}
+    accepted_totals = {}
     for row in component_rows:
         component_id = clean_str(row.get("id"))
         course_id = course_by_week.get(clean_str(row.get("free_module_id")))
@@ -325,6 +359,8 @@ def free_courses(request, kind, pk):
         activity_totals[course_id] = activity_totals.get(course_id, 0) + 1
         if (course_id, component_id) in completed_refs:
             completed_totals[course_id] = completed_totals.get(course_id, 0) + 1
+        if (course_id, component_id) in accepted_seconds:
+            accepted_totals[course_id] = accepted_totals.get(course_id, 0) + accepted_seconds[(course_id, component_id)]
 
     week_totals = {}
     for week in week_rows:
@@ -350,6 +386,8 @@ def free_courses(request, kind, pk):
             "activityCount": activity_count,
             "completedActivities": completed_count,
             "progressPercentage": round((completed_count / activity_count) * 100) if activity_count else 0,
+            **({"lastActivityAt": course_times[course_id]} if course_id in course_times else {}),
+            **({"acceptedActualSeconds": accepted_totals[course_id]} if course_id in accepted_totals else {}),
         })
 
     response = JsonResponse({"freeCourses": result})
@@ -364,6 +402,9 @@ def free_course_detail(request, kind, pk, course_id):
     source, error = _resolve_source(kind, pk)
     if error is not None:
         return error
+    access_error = _withdrawn_access(request, source)
+    if access_error is not None:
+        return access_error
 
     try:
         assigned_ids = set(assigned_course_ids(source))
@@ -384,11 +425,13 @@ def free_course_detail(request, kind, pk, course_id):
     try:
         completed_refs = _completed_refs(source.pk, [course_id])
         activity_states = _activity_states(source.pk, [course_id])
+        accepted_seconds = accepted_activity_seconds(source.pk, [course_id])
+        saved_times = free_course_attempts.activity_times(source.pk, [course_id])
     except DatabaseError:
         return _error("Could not read the learner's free course progress.", 503)
 
     response = JsonResponse({
-        "freeCourse": _course_detail(course_id, course, week_rows, component_rows, completed_refs, activity_states),
+        "freeCourse": _course_detail(course_id, course, week_rows, component_rows, completed_refs, activity_states, accepted_seconds, saved_times),
     })
     response["Cache-Control"] = "private, no-store"
     return response
@@ -408,6 +451,9 @@ def complete_free_course_activity(request, kind, pk):
     source, error = _resolve_source(kind, pk)
     if error is not None:
         return error
+    access_error = _withdrawn_access(request, source)
+    if access_error is not None:
+        return access_error
 
     try:
         payload = json.loads(request.body or b"{}")
@@ -458,11 +504,14 @@ def complete_free_course_activity(request, kind, pk):
         return _error("Activity not found.", 404)
 
     try:
-        recorded = (_record_completion(source.pk, component_id, free_course_ref)
-                    if activity_state == 'completed' else save_activity_state(
-                        source.pk, component_id, free_course_ref, activity_state))
-        completed = recorded and (activity_state == 'completed' or
-                                 (free_course_ref, component_id) in _completed_refs(source.pk, [free_course_ref]))
+        with free_course_attempts.active_learner_write(source.pk):
+            recorded = (_record_completion(source.pk, component_id, free_course_ref)
+                        if activity_state == 'completed' else save_activity_state(
+                            source.pk, component_id, free_course_ref, activity_state))
+            completed = recorded and (activity_state == 'completed' or
+                                     (free_course_ref, component_id) in _completed_refs(source.pk, [free_course_ref]))
+    except LookupError:
+        return _error('Free Course access is unavailable while your learner status is withdrawn.', 403)
     except DatabaseError:
         return _error("Could not save your progress. Please try again.", 503)
     if not recorded:
@@ -540,6 +589,28 @@ def free_course_quiz(request, kind, pk, component_id):
     source, error = _resolve_source(kind, pk)
     if error is not None:
         return error
+    access_error = _withdrawn_access(request, source)
+    if access_error is not None:
+        return access_error
+
+    # Staff history must survive an unpublished/unlinked current quiz. This
+    # branch is reachable only by staff: withdrawn learners were denied above.
+    if _is_withdrawn(source):
+        try:
+            assigned = assigned_course_ids(source)
+            _, _, components = _scoped_rows(assigned)
+            component = next((row for row in components if clean_str(row.get('id')) == component_id
+                              and 'quiz' in clean_str(row.get('type')).lower()), None)
+            if component is None:
+                return _error('Activity not found.', 404)
+            attempts = free_course_attempts.history(source.pk, component_id)
+        except DatabaseError:
+            return _error('Could not read historical quiz results.', 503)
+        response = JsonResponse({'id': 0, 'title': clean_str(component.get('title')),
+                                 'questions': [], 'passingGrade': 0, 'attempts': attempts,
+                                 'historyOnly': True})
+        response['Cache-Control'] = 'private, no-store'
+        return response
 
     try:
         quiz_id, _free_course_ref, error = _resolve_quiz_component(source, component_id)
@@ -555,7 +626,11 @@ def free_course_quiz(request, kind, pk, component_id):
     if quiz is None:
         return _error("Quiz not found.", 404)
 
-    response = JsonResponse(_scrub_answer_key(quiz))
+    try:
+        attempts = free_course_attempts.history(source.pk, component_id)
+    except DatabaseError:
+        return _error("Could not read your quiz history. Please try again.", 503)
+    response = JsonResponse({**_scrub_answer_key(quiz), "attempts": attempts})
     response["Cache-Control"] = "private, no-store"
     return response
 
@@ -566,14 +641,15 @@ def free_course_quiz(request, kind, pk, component_id):
 def submit_free_course_quiz(request, kind, pk, component_id):
     """Grade a free-course quiz and, on a pass, record its completion.
 
-    Reuses the ordinary quiz reader/grader (``_fetch_quiz`` + ``_grade_question``)
-    but writes NOTHING to the training-plan/KSB/OTJH stores — a pass records only
-    an isolated LearnerFreeCourseProgress row, exactly like any other free-course
-    completion.
+    Reuses the ordinary quiz reader/grader. Saves the canonical attempt and
+    passing completion atomically; neither write awards hours or programme progress.
     """
     source, error = _resolve_source(kind, pk)
     if error is not None:
         return error
+    access_error = _withdrawn_access(request, source)
+    if access_error is not None:
+        return access_error
 
     try:
         payload = json.loads(request.body or b"{}")
@@ -618,20 +694,24 @@ def submit_free_course_quiz(request, kind, pk, component_id):
     grade_pct = round((earned / possible) * 100, 1) if possible else 0.0
     passed = grade_pct >= (quiz["passingGrade"] or 0)
 
-    if passed:
-        try:
-            recorded = _record_completion(source.pk, component_id, free_course_ref)
-        except DatabaseError:
-            return _error("Your quiz was graded but could not be saved. Please try again.", 503)
-        if not recorded:
-            return _error(WITHDRAWN_COMPLETION, 409)
-
-    response = JsonResponse({
+    result = {
         "componentId": component_id,
         "grade": grade_pct,
         "passed": passed,
         "passingGrade": quiz["passingGrade"] or 0,
         "breakdown": breakdown,
-    })
+    }
+    try:
+        attempt_id = free_course_attempts.submission_id(
+            payload.get('submissionId'), source.pk, component_id, quiz_id, submitted)
+        result = free_course_attempts.save(
+            source.pk, free_course_ref, component_id, attempt_id, quiz, submitted, result)
+    except (ValueError, TypeError):
+        return _error("Invalid or conflicting submission identity. Start a new attempt.", 409)
+    except LookupError:
+        return _error(WITHDRAWN_COMPLETION, 409)
+    except DatabaseError:
+        return _error("Your quiz could not be saved. Please retry the same submission.", 503)
+    response = JsonResponse(result)
     response["Cache-Control"] = "private, no-store"
     return response

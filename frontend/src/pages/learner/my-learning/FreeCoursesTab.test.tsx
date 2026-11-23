@@ -56,6 +56,30 @@ beforeEach(() => {
 });
 
 describe('assigned Free Courses learner flow', () => {
+  it('shows previously accepted ledger time without awarding completion', async () => {
+    vi.mocked(fetchLearnerFreeCourse).mockResolvedValue({ ...detail, acceptedActualSeconds: 137310 });
+    mount();
+    fireEvent.click(await screen.findByRole('button', { name: /Canonical course/ }));
+    expect(await screen.findByText(/Previously accepted time: 137,310 seconds/)).toBeVisible();
+    expect(screen.getByText('0 of 2 completed')).toBeVisible();
+    expect(markFreeCourseActivityComplete).not.toHaveBeenCalled();
+  });
+  it('keeps existing completion separate from additional accepted time', async () => {
+    vi.mocked(fetchLearnerFreeCourses).mockResolvedValue([
+      { ...summary, completedActivities: 2, progressPercentage: 100, acceptedActualSeconds: 68427 },
+    ]);
+    vi.mocked(fetchLearnerFreeCourse).mockResolvedValue({
+      ...detail, acceptedActualSeconds: 68427,
+      weeks: detail.weeks.map(week => ({ ...week, activities: week.activities.map(activity => ({
+        ...activity, completed: true, is_completed: true,
+      })) })),
+    });
+    mount();
+    fireEvent.click(await screen.findByRole('button', { name: /Canonical course/ }));
+    expect(await screen.findByText(/Previously accepted time: 68,427 seconds/)).toBeVisible();
+    expect(screen.getByText('2 of 2 completed')).toBeVisible();
+    expect(markFreeCourseActivityComplete).not.toHaveBeenCalled();
+  });
   it.each(['commercial', 'apprenticeship'] as const)('loads cards first and %s details only after opening', async kind => {
     mount(kind);
     const card = await screen.findByRole('button', { name: /Canonical course/ });

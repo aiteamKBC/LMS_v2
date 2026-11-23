@@ -37,6 +37,7 @@ with patch.object(BaseDatabaseWrapper, 'ensure_connection', memory_only), \
     django.setup()
     with patch.object(socket.socket, 'connect', side_effect=AssertionError('Network forbidden')):
         suite = unittest.defaultTestLoader.loadTestsFromNames([
+            'learner_api.test_free_course_hours',
             'learner_api.tests_free_courses',
             'learner_api.tests_my_learning_no_db',
             'learner_api.test_free_course_flow_no_db',

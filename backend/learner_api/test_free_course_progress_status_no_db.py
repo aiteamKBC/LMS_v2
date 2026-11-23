@@ -83,6 +83,8 @@ class GuardedSideEffects(SimpleTestCase):
     """Every test also proves programme progress, OTJH and KSBs stay untouched."""
 
     def setUp(self):
+        self.enterContext(patch.object(view.free_course_attempts, "activity_times", return_value={}))
+        self.enterContext(patch.object(view, "accepted_activity_seconds", return_value={}))
         self.programme_progress = self.enterContext(patch("learner_api.models.LearnerProgressEntry.objects"))
         self.bump = self.enterContext(patch("learner_api.progress_cache.bump_learners"))
         self.enterContext(patch.object(view, "_resolve_source", return_value=(LEARNER, None)))
@@ -162,6 +164,10 @@ class ReadTests(GuardedSideEffects):
 
 class ActivityWriteTests(GuardedSideEffects):
     def setUp(self):
+        from .test_free_course_attempts_no_db import empty_attempt_storage
+        cursor = self.enterContext(empty_attempt_storage())
+        cursor.fetchone.side_effect = None
+        cursor.fetchone.return_value = (501,)
         super().setUp()
         self.enterContext(patch.dict("os.environ", {"LEARNER_API_REQUIRE_AUTH": "1"}))
 
@@ -227,6 +233,8 @@ class QuizWriteTests(GuardedSideEffects):
 
     def setUp(self):
         super().setUp()
+        from .test_free_course_attempts_no_db import empty_attempt_storage
+        self.enterContext(empty_attempt_storage())
         self.enterContext(patch.object(view, "_resolve_quiz_component", return_value=(7, "FREE-SAFE", None)))
         self.enterContext(patch.object(view, "_fetch_quiz", return_value=self.QUIZ))
 
@@ -243,7 +251,7 @@ class QuizWriteTests(GuardedSideEffects):
             self.assertTrue(json.loads(response.content)["passed"])
         self.assertEqual((store.created, store.rows[0].status), (1, "active"))
 
-    def test_fail_records_nothing(self):
+    def test_fail_records_no_completion(self):
         store = self.use(Store())
         response = self.submit(12)
         self.assertEqual(response.status_code, 200)

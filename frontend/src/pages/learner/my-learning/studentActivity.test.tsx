@@ -263,15 +263,16 @@ describe('explicit previous learning display groups', () => {
     componentId: 'CURRENT-1', component: 'Current lesson', type: 'reading', week: 'Week 1' }],
     componentProgress: [], quizAttempts: [] } as unknown as LearnerDetail;
 
-  it('shows one course with separate current and previous progress and preserves source filters', async () => {
+  it('counts separate current and historical cards and preserves source filters', async () => {
     vi.spyOn(api, 'subjectRequest').mockResolvedValue(metadata);
     render(<StudentActivityPanel data={data} real={real} kind="commercial" learnerId="132" loading={false} error={null} onRetry={vi.fn()} />);
-    const grouped = within(await screen.findByRole('region', { name: 'Current scheduling learning record' }));
-    expect(grouped.getByRole('heading', { name: 'Current learning plan' })).toBeVisible();
-    expect(grouped.getByRole('heading', { name: 'Previous learning' })).toBeVisible();
-    expect(grouped.getByRole('progressbar', { name: 'Current scheduling current plan activities progress' })).toHaveAttribute('aria-valuenow', '0');
-    expect(grouped.getByRole('progressbar', { name: 'Leadership previous learning activities progress' })).toHaveAttribute('aria-valuenow', '50');
-    expect(screen.getByText('1 subjects · 3 activities')).toBeVisible();
+    await screen.findByRole('heading', { name: 'Current scheduling' });
+    expect(screen.queryByRole('heading', { name: 'Training Plan' })).not.toBeInTheDocument();
+    expect(screen.getByRole('progressbar', { name: 'Current scheduling current plan activities progress' })).toHaveAttribute('aria-valuenow', '0');
+    expect(screen.getByRole('progressbar', { name: 'Leadership previous learning activities progress' })).toHaveAttribute('aria-valuenow', '50');
+    expect(screen.getAllByRole('heading', { name: 'Leadership' })).toHaveLength(1);
+    expect(screen.getAllByRole('heading', { name: 'Current scheduling' })).toHaveLength(1);
+    expect(screen.getByText('2 subjects · 3 activities')).toBeVisible();
     fireEvent.click(screen.getByRole('tab', { name: 'Old LMS' }));
     expect(screen.getByRole('heading', { name: 'Leadership' })).toBeVisible();
     expect(screen.queryByRole('heading', { name: 'Current scheduling' })).not.toBeInTheDocument();

@@ -37,27 +37,29 @@ describe('assigned Module Builder free courses', () => {
     const card = (await screen.findByRole('heading', { name: 'Standalone skills' })).closest('article')!;
     expect(within(card).getByText(/2 weeks.*4 activities/)).toBeVisible();
     expect(within(card).queryByText('No activities yet')).not.toBeInTheDocument();
-    expect(within(card).queryByRole('progressbar')).not.toBeInTheDocument();
+    expect(within(card).getByRole('progressbar')).toHaveAttribute('aria-valuenow', '0');
     expect(screen.getByRole('heading', { name: 'Legacy skills' })).toBeVisible();
     expect(screen.queryByText(/No hours or targets/)).not.toBeInTheDocument();
     expect(fetch).toHaveBeenCalledWith(`/learner_api/free-courses/${kind}/7/`, expect.anything());
   });
 
-  it('opens builder content through the normal module workspace to preserve progress and hours', async () => {
+  it('opens assigned content only through its canonical Free Course identity', async () => {
     renderCourses('commercial', '?mode=free&tab=quizzes&activity=stale&week=old');
     const card = (await screen.findByRole('heading', { name: 'Standalone skills' })).closest('article')!;
     fireEvent.click(within(card).getByRole('button'));
     const url = screen.getByLabelText('Learning location').textContent!;
     const query = new URLSearchParams(url.split('?')[1]);
-    expect(query.get('subject')).toBe('current:MOD-FREE');
-    expect(query.get('tab')).toBe('modules');
-    for (const key of ['mode', 'activity', 'course', 'week']) expect(query.has(key)).toBe(false);
+    expect(query.get('mode')).toBe('free');
+    expect(query.get('course')).toBe('FC-1');
+    for (const key of ['subject', 'module', 'activity', 'week']) expect(query.has(key)).toBe(false);
     expect(vi.mocked(fetch).mock.calls.every(([, init]) => !init?.method || init.method === 'GET')).toBe(true);
   });
 
-  it('resolves an existing course bookmark to the normal workspace', async () => {
+  it('keeps an existing assigned Free Course bookmark inside the Free Courses tab', async () => {
     renderCourses('apprenticeship', '?mode=free&course=FC-1');
-    await waitFor(() => expect(screen.getByLabelText('Learning location')).toHaveTextContent('subject=current%3AMOD-FREE'));
+    expect(await screen.findByRole('button', { name: 'All free courses' })).toBeVisible();
+    expect(screen.getByLabelText('Learning location')).toHaveTextContent('mode=free&course=FC-1');
+    expect(screen.getByLabelText('Learning location')).not.toHaveTextContent('subject=');
     expect(screen.queryByText('Course not available')).not.toBeInTheDocument();
   });
 

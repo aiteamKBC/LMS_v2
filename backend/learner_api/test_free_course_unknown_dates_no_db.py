@@ -41,6 +41,10 @@ def two_courses(activity_count=24):
 
 
 class UnknownDateProgressReadTests(SimpleTestCase):
+    def setUp(self):
+        self.enterContext(patch.object(view.free_course_attempts, "activity_times", return_value={}))
+        self.enterContext(patch.object(view, "accepted_activity_seconds", return_value={}))
+
     def summary(self, completed):
         with patch.object(view, "_resolve_source", return_value=(LEARNER, None)), \
              patch.object(view, "assigned_course_ids", return_value=["FREE-GDPR", "FREE-SRA"]), \
@@ -78,6 +82,12 @@ class UnknownDateProgressReadTests(SimpleTestCase):
 
 
 class CompletionWriteTests(SimpleTestCase):
+    def setUp(self):
+        from .test_free_course_attempts_no_db import empty_attempt_storage
+        cursor = self.enterContext(empty_attempt_storage())
+        cursor.fetchone.side_effect = None
+        cursor.fetchone.return_value = (501,)
+
     def complete(self, objects, component_id="GDPR-3"):
         request = RequestFactory().post("/", data=json.dumps({"componentId": component_id}),
                                         content_type="application/json")

@@ -188,9 +188,9 @@ class CataloguePerformanceTests(SimpleTestCase):
                 compact=True,identities_only=True,catalogue_facts=True,live_session_ids=False,resolved_metadata=resolved,strict=True)
         self.assertEqual(cur.execute.call_count,1)
         sql,params=cur.execute.call_args.args
-        self.assertIn('week_id = ANY(%s)',sql)
-        self.assertNotIn('EXISTS (SELECT 1 FROM curriculum.weeks',sql)
-        self.assertEqual(params,[['M1'],['W1']])
+        self.assertIn('module_catalogue_id = ANY(%s)',sql)
+        self.assertIn('visible_parent.module_catalogue_id=components.module_catalogue_id',sql)
+        self.assertEqual(params,[['M1']])
         self.assertEqual(components[0]['teamsLiveSessionId'],'EXTRA')
         self.assertEqual(resolved['live_credit_components'],[{'componentId':'L1','moduleId':'M1','title':'Lecture',
             'type':'live_session','teamsOccurrenceId':'OCC','teamsLiveSessionId':'SERIES','teamsSessionNumber':'2','sessionDate':'2026-01-01'}])

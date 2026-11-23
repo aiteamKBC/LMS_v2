@@ -1,5 +1,6 @@
 """Isolated in-memory SQLite checks for canonical assignment reconciliation."""
 from unittest import TestCase
+from unittest.mock import patch
 from datetime import datetime, timezone
 
 from django.db import connections
@@ -61,6 +62,9 @@ class IsolatedProgressWriteTests(TestCase):
     table_name = "isolated_free_course_progress"
 
     def setUp(self):
+        from . import free_courses_view as view
+        self.enterContext(patch.object(view, 'accepted_activity_seconds', return_value={}))
+        self.enterContext(patch.object(view.free_course_attempts, 'activity_times', return_value={}))
         database = connections["enrolment"]
         self.assertEqual(database.vendor, "sqlite")
         self.original_table = LearnerFreeCourseProgress._meta.db_table

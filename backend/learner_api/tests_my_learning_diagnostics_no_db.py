@@ -143,7 +143,8 @@ class SafeCatalogueReductionTests(SimpleTestCase):
     def load_replacement_context(self, transfers=None, components=None, *, transfer_review=False):
         from . import models,weekly_learning,subject_origins,previous_learning_groups,builder_activity_dates,teams_attendance
         from .tests_my_learning_no_db import native,component
-        source=SimpleNamespace(pk=7,id=7,aptem_id=7,programme='Programme',cohort='',group='')
+        source=SimpleNamespace(pk=7,id=7,aptem_id=7,programme='Programme',cohort='',group='',
+                               _canonical_training_plan=[{'moduleId':'M1'}])
         manager=MagicMock();manager.only.return_value.filter.return_value.first.return_value=SimpleNamespace(pk=9,enrolment_id=7)
         cur=MagicMock();cur.fetchall.return_value=[('C1',{'legacySettings':{'sourceLessonId':7,'sourceMaterialKey':'reading-7'}})]
         conn=MagicMock();conn.cursor.return_value.__enter__.return_value=cur

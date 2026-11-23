@@ -22,11 +22,11 @@ function LearningReadError({ message, onRetry }: { message: string; onRetry: () 
   return <LearnerLoadError error={message} onRetry={onRetry} title="Could not load your subjects" />;
 }
 
-export function CompactModules({ kind, id, catalogue: incomingCatalogue, loading, error, refresh, showReadOnlyNotice, view = 'catalogue', sectionTabs, canRequestTransfer = false }: {
+export function CompactModules({ kind, id, catalogue: incomingCatalogue, loading, error, refresh, showReadOnlyNotice, view = 'catalogue', planOnly = false, sectionTabs, canRequestTransfer = false }: {
   kind?: LearnerKind; id?: string; catalogue: MyLearningCatalogue | null; loading: boolean; error: string;
   refresh: () => void; showReadOnlyNotice?: boolean; view?: 'catalogue' | 'map';
   sectionTabs?: ReactNode;
-  canRequestTransfer?: boolean;
+  canRequestTransfer?: boolean; planOnly?: boolean;
 }) {
   const location = useLocation();
   const navigate = useNavigate();
@@ -36,9 +36,10 @@ export function CompactModules({ kind, id, catalogue: incomingCatalogue, loading
   const requestedWeek = params.get('week');
   const resume = params.get('resume') === '1';
   const selected = requested || (requestedActivity ? `activity:${requestedActivity}` : null);
-  const module = useMyLearningModule(kind, id, selected);
+  const module = useMyLearningModule(kind, id, selected, planOnly, params.get('planStatus') !== 'all');
+  const [teaching, setTeaching] = useState<'active' | 'all'>('active');
   const [search, setSearch] = useState('');
-  const activitySearch = useMyLearningSearch(kind,id,search,!selected && view === 'catalogue');
+  const activitySearch = useMyLearningSearch(kind,id,search,!selected && view === 'catalogue', planOnly);
   const [upcomingState, setUpcomingState] = useState<{ catalogue: MyLearningCatalogue; links: UpcomingLearningLink[] } | null>(null);
   const [upcomingError, setUpcomingError] = useState('');
   const [upcomingLoading, setUpcomingLoading] = useState(false);
@@ -93,6 +94,7 @@ export function CompactModules({ kind, id, catalogue: incomingCatalogue, loading
   const open = (subject: Subject, continuing = false) => {
     const next = new URLSearchParams(location.search);
     next.delete('activity'); next.delete('module'); next.delete('week'); next.delete('resume'); next.set('subject', subject.id);
+    if (planOnly) next.set('planStatus', teaching);
     if (continuing) next.set('week', 'current');
     navigate({ pathname: location.pathname, search: next.toString() });
   };
@@ -114,7 +116,7 @@ export function CompactModules({ kind, id, catalogue: incomingCatalogue, loading
   const loadUpcoming = () => {
     if (!kind || !id || !incomingCatalogue || upcomingLoading) return;
     setUpcomingLoading(true); setUpcomingError('');
-    void readMyLearningUpcoming(kind,id).then(result => {
+    void readMyLearningUpcoming(kind,id,planOnly).then(result => {
       if (upcomingOwner.current === incomingCatalogue) setUpcomingState({ catalogue: incomingCatalogue, links: result.upcoming });
     }).catch(() => {
       if (upcomingOwner.current === incomingCatalogue) setUpcomingError('Could not load upcoming learning. Close and reopen View all to try again.');
@@ -148,7 +150,7 @@ export function CompactModules({ kind, id, catalogue: incomingCatalogue, loading
     {upcomingLoading && <p ><LoadingSkeleton label="Loading upcoming learning…" variant="rows" /></p>}
     <p className="text-sm text-foreground-500">{catalogue.learner.name}</p>
     <LearningCatalogue summary={summary} search={search} onSearch={setSearch} current={current}
-      moduleActivity={catalogue.moduleActivity}
+      moduleActivity={catalogue.moduleActivity} onTeachingChange={planOnly ? setTeaching : undefined}
       sectionTabs={sectionTabs}
       transferAction={canRequestTransfer && kind && id ? <TransferProgress kind={kind} learnerId={id} onRequested={refresh} /> : undefined}
       total={summary.activityCount} done={summary.completedActivityCount} percent={summary.percent}

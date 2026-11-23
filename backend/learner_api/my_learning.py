@@ -729,24 +729,31 @@ def load_context(source, owner, subject_id=None, *, purpose='catalogue', records
     install_canonical_training_plan(source, profile)
     with projection_stage('assignments'):
         assigned = list(source._canonical_training_plan or [])
-    from .student_activity_access import student_activity_available
+        if getattr(source, '_learner_plan_only', False):
+            from .learner_plan_scope import read_scope, scoped_plan
+            with connections['enrolment'].cursor() as cur:
+                assigned = scoped_plan(assigned, read_scope(cur, owner['id'],
+                    active_only=subject_id is not None and getattr(source, '_learner_plan_active', True)))
+            source._canonical_training_plan = assigned
     with projection_stage('memberships'):
-        if student_activity_available(source.aptem_id):
-            courses = canonical.owned_source_courses(owner)
-        else:
-            from .progress_demo import courses_for
-            courses = courses_for(owner)
+        # Canonical membership ownership is sufficient. Legacy account access
+        # flags and demo catalogues must never create or hide enrollments here.
+        courses = [] if getattr(source, '_learner_plan_only', False) else canonical.owned_source_courses(owner)
     candidate_ids = [entry.get('moduleId') for entry in assigned
                      if isinstance(entry, dict)]
     legacy_candidates = [course.get('curriculum_module_ref') for course in courses]
     legacy_source_candidates = [course.get('source_course_ref') for course in courses]
     with projection_stage('free_course_separation'):
         with connections['enrolment'].cursor() as cur:
-            free_course_ids, legacy_free_course_refs = free_course_exclusions(
-                cur,
-                [*candidate_ids, *legacy_candidates],
-                legacy_source_candidates,
-            )
+            if getattr(source, '_learner_plan_only', False):
+                free_course_ids = free_course_representation_ids(cur, candidate_ids)
+                legacy_free_course_refs = set()
+            else:
+                free_course_ids, legacy_free_course_refs = free_course_exclusions(
+                    cur,
+                    [*candidate_ids, *legacy_candidates],
+                    legacy_source_candidates,
+                )
     assigned = without_free_course_plan_entries(assigned, free_course_ids)
     courses = without_free_course_legacy_courses(
         courses, free_course_ids, legacy_free_course_refs,
@@ -818,12 +825,12 @@ def load_context(source, owner, subject_id=None, *, purpose='catalogue', records
             covers, builder = _builder_subject_metadata(cur, [f'current:{mid}' for mid in ids])
         current = [builder[f'current:{mid}'] for mid in ids if f'current:{mid}' in builder]
         with projection_stage('subject_metadata'):
-            imports = resolved['imported_courses'] if resolved is not None and 'imported_courses' in resolved else read_imported_courses(cur, current)
+            imports = {} if getattr(source, '_learner_plan_only', False) else (resolved['imported_courses'] if resolved is not None and 'imported_courses' in resolved else read_imported_courses(cur, current))
             # A personal transfer link must not hide the native module or merge
             # its hours before approval. Only transfer review opts into it.
-            replacements = read_replacement_courses(cur, current, source.pk,
+            replacements = {} if getattr(source, '_learner_plan_only', False) else read_replacement_courses(cur, current, source.pk,
                 **({'include_personal': True} if include_personal_replacements else {}))
-            groups = read_previous_learning_groups(cur, source.pk, current) if purpose != 'search' else {}
+            groups = read_previous_learning_groups(cur, source.pk, current) if purpose != 'search' and not getattr(source, '_learner_plan_only', False) else {}
         settings = {}
         # Both imported modules and verified successors can receive a transfer.
         # Approved lineage belongs to its saved destination even if the current
@@ -1161,6 +1168,13 @@ def read_module(source, kind, owner, subject_id):
     # native_done caches sets while calculating transferred progress. They are
     # request-local lookup indexes, not part of the learner detail JSON contract.
     detail.pop('_completion', None)
+    if getattr(source, '_learner_plan_only', False):
+        owned_components = {str(component.get('componentId'))
+            for module in chosen_plan for week in module.get('weeks', [])
+            for component in week.get('components', []) if component.get('componentId')}
+        for bucket in ('components', 'retiredQuizComponents'):
+            detail[bucket] = [component for component in detail.get(bucket, [])
+                if str(component.get('componentId')) in owned_components]
     return dict(subjectId=subject_id,detail=detail,activity=activity,metadata=clean_metadata,
         schedule=dict(modules=list(modules.values()),moduleLinks=clean_metadata['builder_subjects'],generatedAt=datetime.now(timezone.utc).isoformat()),sessions=sessions)
 
@@ -1177,6 +1191,10 @@ def my_learning(request,kind,pk,subject_id=None,resource=None):
     try:
         with projection_stage('source'):
             source=model.all_learners.only(*SOURCE_FIELDS).get(pk=pk)
+            # Learner plan routes show normalized assignments, not historical
+            # course memberships. Ordinary My Learning keeps its history view.
+            source._learner_plan_only = request.GET.get('plan') == '1'
+            source._learner_plan_active = request.GET.get('planStatus') != 'all'
         with projection_stage('owner'):
             owner=canonical.require_profile(pk)
         if resource == 'search':

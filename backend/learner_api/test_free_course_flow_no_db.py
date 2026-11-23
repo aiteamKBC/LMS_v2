@@ -49,12 +49,41 @@ def catalogue_rows():
 class AssignedFreeCourseReadTests(SimpleTestCase):
     def setUp(self):
         self.enterContext(patch.object(view, "_activity_states", return_value={}))
+        self.enterContext(patch.object(view.free_course_attempts, "activity_times", return_value={}))
+        self.enterContext(patch.object(view, "accepted_activity_seconds", return_value={}))
         self.factory = RequestFactory()
         self.enterContext(patch.dict("os.environ", {"LEARNER_API_REQUIRE_AUTH": "1"}))
 
     def call(self, function, request, *, account=LEARNER, **kwargs):
         with patch.object(permissions, "authenticate_request", return_value=account):
             return function(request, **kwargs)
+
+    def test_hours_attribution_does_not_change_completion_or_add_to_other_courses(self):
+        with patch.object(view, '_resolve_source', return_value=(source(), None)), \
+             patch.object(view, 'assigned_course_ids', return_value=['FREE-1']), \
+             patch.object(view, '_scoped_rows', return_value=catalogue_rows()), \
+             patch.object(view, '_completed_refs', return_value=set()), \
+             patch.object(view, 'accepted_activity_seconds', return_value={('FREE-1','C-1'): 90, ('FREE-1','HIDDEN'): 1000}) as hours:
+            summary = self.call(view.free_courses, self.factory.get('/'), kind='commercial', pk=19)
+            detail = self.call(view.free_course_detail, self.factory.get('/'), kind='commercial', pk=19, course_id='FREE-1')
+        card = json.loads(summary.content)['freeCourses'][0]
+        course = json.loads(detail.content)['freeCourse']
+        self.assertEqual(card['acceptedActualSeconds'], 90)
+        self.assertEqual(card['completedActivities'], 0)
+        self.assertEqual(course['acceptedActualSeconds'], 90)
+        self.assertEqual(course['weeks'][0]['activities'][0]['acceptedActualSeconds'], 90)
+        self.assertFalse(course['weeks'][0]['activities'][0]['is_completed'])
+        self.assertNotIn('acceptedActualSeconds', course['weeks'][1]['activities'][0])
+        self.assertEqual(hours.call_args.args, (501, ['FREE-1']))
+
+    def test_hours_read_failure_is_visible(self):
+        with patch.object(view, '_resolve_source', return_value=(source(), None)), \
+             patch.object(view, 'assigned_course_ids', return_value=['FREE-1']), \
+             patch.object(view, '_scoped_rows', return_value=catalogue_rows()), \
+             patch.object(view, '_completed_refs', return_value=set()), \
+             patch.object(view, 'accepted_activity_seconds', side_effect=DatabaseError('Unavailable')):
+            response = self.call(view.free_courses, self.factory.get('/'), kind='commercial', pk=19)
+        self.assertEqual(response.status_code, 503)
 
     def test_summary_route_returns_only_current_assigned_courses_without_component_settings(self):
         courses, weeks, components = catalogue_rows()
@@ -622,6 +651,10 @@ class CanonicalAssignmentWriteProtectionTests(SimpleTestCase):
 
 class FreeCourseCompletionIsolationTests(SimpleTestCase):
     def setUp(self):
+        from .test_free_course_attempts_no_db import empty_attempt_storage
+        cursor = self.enterContext(empty_attempt_storage())
+        cursor.fetchone.side_effect = None
+        cursor.fetchone.return_value = (501,)
         self.factory = RequestFactory()
         self.enterContext(patch.dict("os.environ", {"LEARNER_API_REQUIRE_AUTH": "1"}))
 
