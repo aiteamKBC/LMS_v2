@@ -271,9 +271,7 @@ def student_activity(request, kind, pk):
             # verified the canonical owner and evidence successfully.
             payload['verification_status'] = 'verified'
             payload['replacement_hours'] = read_replacement_hours(pk, source, owner, records, payload)
-            allowed = {f"legacy:{item['id']}" for item in payload['subjects']}
-            covers = subject_store.covers_for(sorted(allowed)) if payload['aptem_id'] else {}
-            payload['covers'] = {key: _cover_url(value) for key, value in covers.items() if key in allowed}
+            payload['covers'] = _mapped_subject_covers(payload['subjects'])
             return _private(payload)
         except canonical_learning.ServiceError as error:
             return _error(str(error), error.status)
@@ -753,6 +751,21 @@ def _builder_subject_metadata(cursor, refs):
     return covers, links
 
 
+def _mapped_subject_covers(subjects):
+    """Canonical artwork for exact source-course module mappings only."""
+    mapped = {}
+    for subject in subjects:
+        module_id = str(subject.get('module_id') or '').strip()
+        if module_id:
+            mapped[f"legacy:{subject['id']}"] = f'current:{module_id}'
+    if not mapped:
+        return {}
+    with connections['enrolment'].cursor() as cur:
+        covers, _ = _builder_subject_metadata(cur, list(mapped.values()))
+    return {legacy_ref: covers[current_ref] for legacy_ref, current_ref in mapped.items()
+            if current_ref in covers}
+
+
 def builder_subject_links(cursor, source, refs, read=None):
     """``_builder_subject_metadata`` links, reading only refs this request has not resolved.
 
@@ -796,11 +809,7 @@ def subject_covers(request, pk):
         return _error('Invalid subject list.', 400)
     try:
         with connections['enrolment'].cursor() as cur:
-            available = subject_store.ready(cur)
             covers = {}
-            if available:
-                cur.execute(f'SELECT subject_ref,storage_path FROM {subject_store.COVERS} WHERE subject_ref=ANY(%s)', [refs])
-                covers = {key: _cover_url(path) for key, path in cur.fetchall()}
             current_subjects = _effective_current_subjects(cur, pk)
             builder_covers, builder_subjects = _builder_subject_metadata(
                 cur, list(dict.fromkeys(refs + [f"current:{subject['id']}" for subject in current_subjects])),

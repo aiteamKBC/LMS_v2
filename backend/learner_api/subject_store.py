@@ -1,4 +1,4 @@
-"""New learner attempts and subject covers; never modifies Last_audit.
+"""New learner attempts; never modifies Last_audit.
 
 Provisioning is owner-run SQL. There is deliberately no ensure/create helper.
 """
@@ -12,7 +12,6 @@ from .subject_content import grade_quiz
 
 ALIAS = 'enrolment'
 ATTEMPTS = '"Learner".subject_activity_attempts'
-COVERS = '"Learner".subject_covers'
 
 
 class StoreUnavailable(ValueError):
@@ -29,25 +28,9 @@ def _json(value):
 
 
 def ready(cursor):
-    cursor.execute('SELECT to_regclass(%s), to_regclass(%s)', [ATTEMPTS, COVERS])
+    cursor.execute('SELECT to_regclass(%s)', [ATTEMPTS])
     row = cursor.fetchone()
-    return bool(row and row[0] and row[1])
-
-
-def covers_for(subject_refs):
-    """Only owned catalogue covers; completion comes from the canonical ledger.
-
-    Unlike state(), this never aggregates attempts or reads every course cover.
-    Callers must resolve the allowed subject references before calling it.
-    """
-    refs = list(dict.fromkeys(subject_refs))
-    if not refs:
-        return {}
-    with connections[ALIAS].cursor() as cur:
-        if not ready(cur):
-            return {}
-        cur.execute(f'SELECT subject_ref,storage_path FROM {COVERS} WHERE subject_ref=ANY(%s)', [refs])
-        return dict(cur.fetchall())
+    return bool(row and row[0])
 
 
 def state(enrolment_id, aptem_id, activity_id=None, *, group_id=None, catalogue_kind='material'):
@@ -83,9 +66,9 @@ def state(enrolment_id, aptem_id, activity_id=None, *, group_id=None, catalogue_
                     'selected': [option['text'] for option in question['options'] if option['id'] in (row['answers'] or {}).get(question['id'], [])],
                     'correct': set((row['answers'] or {}).get(question['id'], [])) == set(question['solution_ids']),
                 } for question in questions]
-        cur.execute(f'SELECT subject_ref, storage_path FROM {COVERS}')
-        covers = dict(cur.fetchall())
-    return {'ready': True, 'progress': progress, 'history': history, 'covers': covers}
+    # ``covers`` remains in the response contract even though obsolete legacy
+    # cover storage no longer participates in attempt persistence.
+    return {'ready': True, 'progress': progress, 'history': history, 'covers': {}}
 
 
 def start(enrolment_id, aptem_id, group_id, activity_id, definition, *, attempt_id=None, timing_session=None):
@@ -178,16 +161,6 @@ def finish(enrolment_id, aptem_id, group_id, activity_id, attempt_id, answers, r
                 retakes.consume(cur, definition['retakeGrantId'], enrolment_id, aptem_id,
                                 group_id, activity_id, attempt_id)
     return result
-
-
-def save_cover(subject_ref, storage_path, account_id):
-    with connections[ALIAS].cursor() as cur:
-        if not ready(cur):
-            raise StoreUnavailable('Uploading subject covers is not enabled yet.')
-        cur.execute(f'''INSERT INTO {COVERS} (subject_ref,storage_path,updated_by)
-                        VALUES (%s,%s,%s) ON CONFLICT (subject_ref) DO UPDATE
-                        SET storage_path=EXCLUDED.storage_path,updated_by=EXCLUDED.updated_by,
-                            updated_at=CURRENT_TIMESTAMP''', [subject_ref, storage_path, account_id])
 
 
 def overlay_progress(items, progress):

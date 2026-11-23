@@ -48,6 +48,30 @@ def fake_connections():
 
 
 class MyLearningAggregateTests(SimpleTestCase):
+    def test_catalogue_uses_only_authoritative_module_cover_for_historical_cards(self):
+        from . import my_learning_activity, my_learning_ksbs
+        meta = metadata()
+        meta.update(modules={}, covers={'current:M1': 'https://assets.example.test/m1.webp'})
+        context = ([], [], [], native(), [], [], set(), set(), {}, meta, [])
+        cards = [
+            {'id': 'legacy:50', 'source': 'legacy', 'moduleId': 'M1'},
+            {'id': 'legacy:60', 'source': 'legacy', 'moduleId': None},
+        ]
+        source = SimpleNamespace(pk=7, cohort='', group='')
+        owner = {'name': 'Synthetic learner'}
+        with patch.object(learning, 'load_context', return_value=context), \
+             patch.object(learning, 'assemble_cards', return_value=(cards, {})), \
+             patch.object(my_learning_ksbs, 'read_card_ksb_mappings', return_value={}), \
+             patch.object(my_learning_activity, 'card_teaching_activity', return_value={}), \
+             patch.object(learning, 'journal_enabled', return_value=True), \
+             patch.object(canonical, 'programme_planned_hours', return_value=0), \
+             patch.object(learning, 'upcoming_links', return_value=[]):
+            result = learning.read_catalogue(source, 'commercial', owner)
+
+        by_id = {card['id']: card for card in result['modules']}
+        self.assertEqual(by_id['legacy:50']['cover'], 'https://assets.example.test/m1.webp')
+        self.assertIsNone(by_id['legacy:60']['cover'])
+
     def test_free_course_identity_query_uses_catalogue_relationships_and_preserves_module_collisions(self):
         cur = MagicMock()
         cur.fetchall.return_value = [('FREE-1',), ('FREEWEEK-1',)]
@@ -702,10 +726,11 @@ class MyLearningModuleTests(SimpleTestCase):
         full.assert_not_called()
 
     def test_legacy_detail_reads_one_owned_course_without_current_activity_content(self):
-        from . import weekly_learning, dashboard_training, training_plan_dashboard, live_session_progress, teams_attendance, builder_activity_dates, subject_store
+        from . import weekly_learning, dashboard_training, training_plan_dashboard, live_session_progress, teams_attendance, builder_activity_dates
         context=list(deepcopy(self.context))
         context[4]=[{'id':3,'source_course_ref':'50','source_course_title':'Old','curriculum_module_ref':'M1'},
                     {'id':4,'source_course_ref':'60','source_course_title':'Other'}]
+        context[9]['covers'] = {'current:M1': 'https://assets.example.test/m1.webp'}
         activity={'subjects':[{'id':50,'name':'Old'}], 'activities':[], 'progress_basis':'catalogue_activities'}
         with ExitStack() as stack:
             stack.enter_context(patch.object(learning,'load_context',return_value=tuple(context)))
@@ -717,7 +742,6 @@ class MyLearningModuleTests(SimpleTestCase):
             stack.enter_context(patch.object(live_session_progress,'read_live_credits',return_value=[]))
             stack.enter_context(patch.object(teams_attendance,'annotate_attendance_completion',side_effect=lambda rows,*args:rows))
             stack.enter_context(patch.object(builder_activity_dates,'read_builder_activity_dates',return_value={}))
-            stack.enter_context(patch.object(subject_store,'covers_for',return_value={}))
             result=learning.read_module(self.source,'apprenticeship',self.owner,'legacy:50')
         self.assertEqual(read.call_args.kwargs['assigned_modules'],[])
         self.assertEqual(full.call_args.kwargs['course_ids'],['50'])
@@ -725,6 +749,8 @@ class MyLearningModuleTests(SimpleTestCase):
         self.assertEqual(result['detail']['components'],[])
         self.assertNotIn('Other',json.dumps(result))
         self.assertEqual(result['metadata']['current_subjects'],[])
+        self.assertEqual(result['metadata']['covers']['legacy:50'],
+                         'https://assets.example.test/m1.webp')
 
     def test_invalid_module_fails_before_any_content_reader(self):
         from . import weekly_learning
@@ -825,7 +851,7 @@ class MyLearningEndpointTests(SimpleTestCase):
 
 def fixture_responses(*, standalone=False, kind='commercial'):
     """Execute both production projections over one synthetic, mocked source."""
-    from . import course_catalogue_display, training_plan_dashboard, weekly_learning, dashboard_training, teams_attendance, live_session_progress, builder_activity_dates, subject_store
+    from . import course_catalogue_display, training_plan_dashboard, weekly_learning, dashboard_training, teams_attendance, live_session_progress, builder_activity_dates
     source=SimpleNamespace(pk=7,id=7,email='synthetic@example.test',username='Synthetic learner',programme='Example programme',cohort='',group='',aptem_id=7,_case_file_profile=SimpleNamespace(pk=9))
     owner={'id':9,'name':'Synthetic learner','programme':'Example programme','programme_planned_hours':20,'aptem_id':7}
     modules={mid:{'id':mid,'title':title,'description':'','start_date':'2026-01-01','end_date':'2026-12-31','tutor_name':'Example tutor','coach_name':'','total_otjh':10,'educational_session_count':2}
@@ -869,7 +895,6 @@ def fixture_responses(*, standalone=False, kind='commercial'):
         stack.enter_context(patch.object(course_catalogue_display,'read_export_placements',return_value=[]))
         stack.enter_context(patch.object(training_plan_dashboard,'plan_sessions',return_value=[]))
         stack.enter_context(patch.object(dashboard_training,'module_rows',side_effect=lambda cur,ids,**kwargs:{mid:modules[mid] for mid in ids}))
-        stack.enter_context(patch.object(subject_store,'covers_for',return_value={}))
         stack.enter_context(patch.object(teams_attendance,'annotate_attendance_completion',side_effect=lambda rows,*args:rows))
         stack.enter_context(patch.object(live_session_progress,'read_live_credits',return_value=[]))
         stack.enter_context(patch.object(builder_activity_dates,'read_builder_activity_dates',return_value={}))
@@ -942,19 +967,18 @@ class MyLearningSearchTests(SimpleTestCase):
         for reader in forbidden:reader.assert_not_called()
 
     def test_upcoming_expansion_ignores_old_completion_hints_and_skips_unneeded_reads(self):
-        from . import subject_store,course_catalogue_display
+        from . import course_catalogue_display
         content=native([component('TASK',type='assignment',previousLearning={'completed':True})])
         meta=metadata();meta['modules']={'M1':{'id':'M1','title':'One'}}
         meta['activity_dates']={'TASK':{'due_timing':'End of week','week_end':'2099-01-02'}}
         context=([],[],[],content,[],[],set(),set(),{},meta,[])
         with patch.object(learning,'load_context',return_value=context), \
              patch.object(course_catalogue_display,'read_export_placements',return_value=[]), \
-             patch.object(subject_store,'covers_for') as covers, \
              patch.object(canonical,'programme_planned_hours') as planned:
             result=learning.read_catalogue(SimpleNamespace(pk=7),'commercial',{'id':9},upcoming_only=True)
         self.assertEqual(len(result['upcoming']),1)
         self.assertEqual(result['upcoming'][0]['href'],'/learner/component/commercial/7/TASK')
-        covers.assert_not_called();planned.assert_not_called()
+        planned.assert_not_called()
 
     def test_search_matches_each_title_and_preserves_owned_exclusions_without_full_historical_reads(self):
         courses=[{'id':3,'source_course_ref':'50','source_course_title':'Old',
