@@ -76,9 +76,11 @@ class SubjectAttemptScopeTests(SimpleTestCase):
              patch('learner_api.progress_transfer_store.assert_legacy_writable'), \
              patch('learner_api.subject_timing.completion_time', return_value=None):
             cursor.fetchone.return_value = (subject_store.ATTEMPTS,)
+            cursor.fetchall.return_value = [(501, 901)]
             attempt_id = subject_store.start(132, 4176, 50, 10, definition)
             self.assertIn('INSERT INTO "Learner".subject_activity_attempts',
                           cursor.execute.call_args_list[-1].args[0])
+            self.assertEqual(cursor.execute.call_args_list[-1].args[1][5:7], [501, 901])
 
             cursor.reset_mock()
             cursor.fetchone.side_effect = [
