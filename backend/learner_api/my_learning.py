@@ -572,8 +572,22 @@ def read_catalogue(source, kind, owner, *, upcoming_only=False):
     ksb_mappings = None
     if not upcoming_only:
         from .my_learning_ksbs import read_card_ksb_mappings
+        # Hidden Free courses still participate in global identity/lineage
+        # reconciliation above, but their card percentages are never returned.
+        # Keep every placement of a visible component ID in the mapping read.
+        free_ids = set(metadata.get('free_course_module_ids', []))
+        mapping_native = native
+        if free_ids:
+            # A hidden native import can contribute continuation activities to
+            # a visible historical card, so retain its mappings too.
+            hidden_only_ids = free_ids - {ref[8:] for ref in metadata['imported_courses']
+                if ref.startswith('current:')}
+            visible_ids = {str(c['componentId']) for bucket in ('components', 'retiredQuizComponents')
+                for c in native.get(bucket, []) if c.get('componentId') and c.get('moduleId') not in hidden_only_ids}
+            mapping_native = {**native, **{bucket: [c for c in native.get(bucket, [])
+                if str(c.get('componentId')) in visible_ids] for bucket in ('components', 'retiredQuizComponents')}}
         with projection_stage('card_ksbs'):
-            ksb_mappings = read_card_ksb_mappings(owner, native, metadata['record_ids'])
+            ksb_mappings = read_card_ksb_mappings(owner, mapping_native, metadata['record_ids'])
     with projection_stage('card_aggregation'):
         cards, summary = assemble_cards(native, metadata['current_subjects'], courses, definitions, done, started, hours, metadata, records, modules, credits,
                                        show_current_replacements=True, ksb_mappings=ksb_mappings)
@@ -877,7 +891,11 @@ def my_learning(request,kind,pk,subject_id=None,resource=None):
         return JsonResponse({'error':'Learner not found.'},status=404)
     try:
         with projection_stage('source'):
-            source=model.all_learners.only(*SOURCE_FIELDS).get(pk=pk)
+            if subject_id is None and resource in (None, 'upcoming'):
+                from .catalogue_source import read_catalogue_source
+                source = read_catalogue_source(model, pk, SOURCE_FIELDS)
+            else:
+                source=model.all_learners.only(*SOURCE_FIELDS).get(pk=pk)
         with projection_stage('owner'):
             owner=canonical.require_profile(pk)
         if resource == 'search':

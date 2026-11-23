@@ -12,9 +12,11 @@ const SHOW_WHILE_REFRESHING_MS = 5 * 60_000;
  * rules: a return to the tab re-reads only when the cached plan has expired,
  * a save removed it, or the last read failed.
  */
-export function useWeeklyLearning(kind: LearnerKind | null, learnerId: string | undefined, enabled = true, initialModuleId?: string | null, active = true) {
-  const identity = kind && learnerId && enabled ? `${kind}:${learnerId}:${initialModuleId || ''}` : null;
-  const traceKey = `${kind}:${learnerId}${initialModuleId ? `|${encodeURIComponent(initialModuleId)}` : ''}`;
+export function useWeeklyLearning(kind: LearnerKind | null, learnerId: string | undefined, enabled = true, initialModuleId?: string | null, active = true, moduleNavigation = false, preferCurrent = true) {
+  const identity = kind && learnerId && enabled ? `${kind}:${learnerId}:${initialModuleId || ''}${moduleNavigation ? `:module:${preferCurrent}` : ''}` : null;
+  const traceKey = moduleNavigation
+    ? `${kind}:${learnerId}|${initialModuleId ? encodeURIComponent(initialModuleId) : ''}|module|${preferCurrent ? '1' : '0'}`
+    : `${kind}:${learnerId}${initialModuleId ? `|${encodeURIComponent(initialModuleId)}` : ''}`;
   const [state, setState] = useState<{
     identity: string; real: WeeklyLearningDetail | null; loading: boolean; loadError: string | null;
   } | null>(null);
@@ -22,7 +24,7 @@ export function useWeeklyLearning(kind: LearnerKind | null, learnerId: string | 
   const refreshedIdentity = useRef<string | null>(null);
   const consumedRefresh = useRef(0);
   const acceptedIdentity = useRef<string | null>(null);
-  const hasSnapshot = !!(identity && kind && learnerId && peekWeeklyLearning(kind, learnerId, Number.POSITIVE_INFINITY, initialModuleId));
+  const hasSnapshot = !!(identity && kind && learnerId && peekWeeklyLearning(kind, learnerId, Number.POSITIVE_INFINITY, initialModuleId, moduleNavigation, preferCurrent));
   const hasLoadError = useRef(false);
   hasLoadError.current = !!(identity && state?.identity === identity && state.loadError);
   const requestRefresh = useCallback((reason: string) => { traceWeeklyLearning('refresh', traceKey, reason); refreshedIdentity.current = identity; setRefreshTick(tick => tick + 1); }, [identity, traceKey]);
@@ -35,13 +37,13 @@ export function useWeeklyLearning(kind: LearnerKind | null, learnerId: string | 
       traceWeeklyLearning('browser-event', traceKey, event.type);
       if (document.visibilityState !== 'visible' || Date.now() - lastRefresh < 1000) return;
       // A failed read is never cached, so an error always retries.
-      if (!hasLoadError.current && peekWeeklyLearning(kind, learnerId, 0, initialModuleId)) return;
+      if (!hasLoadError.current && peekWeeklyLearning(kind, learnerId, 0, initialModuleId, moduleNavigation, preferCurrent)) return;
       lastRefresh = Date.now();
       requestRefresh(event.type);
     };
     // Saves in this tab drop the shared entry. Unrelated saves leave it in place.
     const unsubscribe = subscribeLearnerReadInvalidation(() => {
-      if (!peekWeeklyLearning(kind, learnerId, SHOW_WHILE_REFRESHING_MS, initialModuleId)) requestRefresh('invalidation');
+      if (!peekWeeklyLearning(kind, learnerId, SHOW_WHILE_REFRESHING_MS, initialModuleId, moduleNavigation, preferCurrent)) requestRefresh('invalidation');
     });
     window.addEventListener('focus', onReturn);
     window.addEventListener('online', onReturn);
@@ -52,22 +54,22 @@ export function useWeeklyLearning(kind: LearnerKind | null, learnerId: string | 
       window.removeEventListener('online', onReturn);
       document.removeEventListener('visibilitychange', onReturn);
     };
-  }, [identity, kind, learnerId, requestRefresh, initialModuleId, traceKey, active]);
+  }, [identity, kind, learnerId, requestRefresh, initialModuleId, traceKey, active, moduleNavigation, preferCurrent]);
 
   useEffect(() => {
     if (!active || !identity || !kind || !learnerId) return;
-    if (hasSnapshot && peekWeeklyLearning(kind, learnerId, 0, initialModuleId) && acceptedIdentity.current === identity && consumedRefresh.current === refreshTick) return;
+    if (hasSnapshot && peekWeeklyLearning(kind, learnerId, 0, initialModuleId, moduleNavigation, preferCurrent) && acceptedIdentity.current === identity && consumedRefresh.current === refreshTick) return;
     traceWeeklyLearning('effect-start', traceKey);
     let cancelled = false;
-    const cached = peekWeeklyLearning(kind, learnerId, SHOW_WHILE_REFRESHING_MS, initialModuleId);
+    const cached = peekWeeklyLearning(kind, learnerId, SHOW_WHILE_REFRESHING_MS, initialModuleId, moduleNavigation, preferCurrent);
     setState(previous => {
       const real = previous?.identity === identity ? previous.real : cached ?? null;
       return { identity, real, loading: !real, loadError: null };
     });
     const revalidate = refreshTick !== consumedRefresh.current && refreshedIdentity.current === identity;
     consumedRefresh.current = refreshTick;
-    fetchWeeklyLearning(kind, learnerId, { revalidate, moduleId: initialModuleId })
-      .then(data => { if (!cancelled && peekWeeklyLearning(kind, learnerId, 0, initialModuleId) === data) { acceptedIdentity.current = identity; primeWeeklyLearningWeek(kind, learnerId, data); setState({ identity, real: data, loading: false, loadError: null }); } })
+    fetchWeeklyLearning(kind, learnerId, { revalidate, moduleId: initialModuleId, moduleNavigation, preferCurrent })
+      .then(data => { if (!cancelled && peekWeeklyLearning(kind, learnerId, 0, initialModuleId, moduleNavigation, preferCurrent) === data) { acceptedIdentity.current = identity; primeWeeklyLearningWeek(kind, learnerId, data); setState({ identity, real: data, loading: false, loadError: null }); } })
       .catch(error => {
         if (!cancelled) setState(previous => ({
           identity, real: previous?.identity === identity ? previous.real : null, loading: false,
@@ -75,14 +77,14 @@ export function useWeeklyLearning(kind: LearnerKind | null, learnerId: string | 
         }));
       });
     return () => { traceWeeklyLearning('effect-cleanup', traceKey); cancelled = true; };
-  }, [identity, kind, learnerId, refreshTick, initialModuleId, hasSnapshot, traceKey, active]);
+  }, [identity, kind, learnerId, refreshTick, initialModuleId, hasSnapshot, traceKey, active, moduleNavigation, preferCurrent]);
 
   // Hide the previous learner on the first render of a new identity.
   const current = identity && state?.identity === identity ? state : null;
   const cached = identity && kind && learnerId
-    ? peekWeeklyLearning(kind, learnerId, SHOW_WHILE_REFRESHING_MS, initialModuleId) : undefined;
+    ? peekWeeklyLearning(kind, learnerId, SHOW_WHILE_REFRESHING_MS, initialModuleId, moduleNavigation, preferCurrent) : undefined;
   const retained = identity && kind && learnerId
-    ? peekWeeklyLearning(kind, learnerId, Number.POSITIVE_INFINITY, initialModuleId) : undefined;
+    ? peekWeeklyLearning(kind, learnerId, Number.POSITIVE_INFINITY, initialModuleId, moduleNavigation, preferCurrent) : undefined;
   // Account resets remove the cache even when the requested learner is the
   // same. Never keep exposing a hook-owned copy across that boundary.
   const visible = current?.real && current.real === retained ? current.real : cached ?? null;

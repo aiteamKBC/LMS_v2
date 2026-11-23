@@ -115,9 +115,9 @@ class LocalProjectionDiagnosticsTests(SimpleTestCase):
                 if self.wrapper:self.wrapper(lambda *args:None,'SELECT sensitive', ['private@example.test'],False,{})
         connection=FakeConnection()
         model=Mock();model.DoesNotExist=type('Missing',(Exception,),{})
-        source=SimpleNamespace(pk=7)
+        source=SimpleNamespace(pk=7, _catalogue_training_plan=[], _catalogue_learning_plan=None)
         def read_source(**kwargs):connection.query();return source
-        model.all_learners.only.return_value.get.side_effect=read_source
+        model.all_learners.only.return_value.annotate.return_value.get.side_effect=read_source
         def read_owner(pk):connection.query();return {'id':9}
         def read_catalogue(*args):connection.query();return deepcopy(fixture)
         # Keep the real authorization decorator present; its deliberate bypass

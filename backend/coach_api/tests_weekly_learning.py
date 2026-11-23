@@ -121,7 +121,7 @@ class WeeklyLearningTests(SimpleTestCase):
         self.assertGreater(report['reductionPercent'], 90)
 
     def projection(self, selection='M1:1', kind='commercial', future_report=False, records=None, duration='60', reader_options=None, session_only=False, fallback_ksbs=None, live_evidence=None,
-                   display_policy=None, cohort_id='COHORT1', detail_week=None, empty_future=False):
+                   display_policy=None, cohort_id='COHORT1', detail_week=None, empty_future=False, second_module=False):
         context = MagicMock()
         context.source = SimpleNamespace(pk=201, email='learner@example.test', learner_type=kind, cohort_id=cohort_id)
         context.profile.progress_entries.filter.return_value.values.return_value = [
@@ -135,6 +135,8 @@ class WeeklyLearningTests(SimpleTestCase):
                  for index, day in ((1, '2026-10-05'), (2, '2026-10-12'))]
         def spine(_modules, by_id, _counts, _authored, **kwargs):
             by_id['M1']['curriculumSlots'] = slots
+            if second_module:
+                by_id['M2']['curriculumSlots'] = [{**slots[0], 'weekId': 'W9', 'date': '2027-01-04'}]
         if empty_future:
             slots.append({'slotNumber': 3, 'sessionNumber': 3, 'date': '2026-10-19',
                           'type': 'live-session', 'weekId': 'W3', 'weekTitle': 'Week 3'})
@@ -174,6 +176,13 @@ class WeeklyLearningTests(SimpleTestCase):
             datasets[4][0]['ksb_mappings'] = []
             datasets[4][0]['fallback_ksb_mappings'] = fallback_ksbs
         sessions = datasets.pop()
+        if second_module:
+            datasets[0].append({**module, 'id': 'M2', 'title': 'Another module',
+                               'start_date': date(2027, 1, 4), 'end_date': date(2027, 1, 10)})
+            datasets[2].append({'id': 'C9', 'week_id': 'W9', 'module_catalogue_id': 'M2',
+                               'type': 'reading', 'quiz_id': None, 'is_quiz': False, 'has_content': True})
+            if reader_options and reader_options.get('module_id') == 'M2' and reader_options.get('prefer_current') is False:
+                datasets[4][0].update(id='C9', title='Another reading')
         if sessions:
             session = sessions[0]
             start = session['scheduled_start'] or session['start_datetime']
@@ -181,8 +190,9 @@ class WeeklyLearningTests(SimpleTestCase):
                             'start': start, 'finish': session['scheduled_end'] or start + timedelta(minutes=session['duration_minutes'])}]
         context.profile.progress_entries.filter.return_value.filter.return_value = context.profile.progress_entries.filter.return_value
         with patch('coach_api.weekly_learning.connections') as connections, \
-             patch('coach_api.weekly_learning.read_weekly_live_evidence', return_value=live_evidence or ([], [])), \
-             patch('learner_api.learning_plan._effective_plan_ids', return_value=['M1']), \
+             patch('coach_api.weekly_learning.read_weekly_live_evidence', return_value=live_evidence or ([], [])) as evidence, \
+             patch('learner_api.attendance_lectures.read_native_occurrences', return_value=[]), \
+             patch('learner_api.learning_plan._effective_plan_ids', return_value=['M1', 'M2'] if second_module else ['M1']), \
              patch('learner_api.canonical_learning.require_profile', return_value={}), \
              patch('learner_api.canonical_learning.curriculum_module_ids_for', return_value=[]), \
              patch('learner_api.canonical_learning.entries_for', return_value=records if records is not None else [
@@ -193,7 +203,37 @@ class WeeklyLearningTests(SimpleTestCase):
              patch('learner_api.training_plan_dashboard.rows', side_effect=datasets):
             connections.__getitem__.return_value.cursor.return_value.__enter__.return_value = cursor
             payload = read_weekly_learning(context, selection, **(reader_options or {}))
+            context.evidence_call = evidence.call_args
         return payload, cursor, context
+
+    def test_module_navigation_keeps_picker_and_selected_facts_without_other_module_evidence(self):
+        for kind in ('commercial', 'apprenticeship'):
+            before, _, full = self.projection(kind=kind, second_module=True)
+            after, _, scoped = self.projection(kind=kind, second_module=True,
+                reader_options={'module_id': 'M1', 'module_navigation': True, 'prefer_current': False})
+            self.assertEqual(after, {**before, 'weeks': [week for week in before['weeks'] if week['moduleId'] == 'M1']})
+            self.assertEqual([module['id'] for module in after['modules']], ['M1', 'M2'])
+            self.assertEqual(scoped.evidence_call.args[2], ['M1'])
+            self.assertEqual(after['selectedWeek']['summary'], before['selectedWeek']['summary'])
+
+    def test_module_navigation_prefers_current_teaching_over_a_header_hint(self):
+        with patch('coach_api.weekly_learning.datetime', wraps=datetime) as clock:
+            clock.now.return_value = datetime(2026, 10, 7, 12, tzinfo=timezone.utc)
+            payload, _, context = self.projection(None, second_module=True,
+                reader_options={'module_id': 'M2', 'module_navigation': True})
+        self.assertEqual(payload['selectedWeek']['weekId'], 'M1:1')
+        self.assertEqual(context.evidence_call.args[2], ['M1'])
+        self.assertEqual({week['moduleId'] for week in payload['weeks']}, {'M1'})
+
+    def test_manual_module_choice_is_not_replaced_by_another_current_module(self):
+        with patch('coach_api.weekly_learning.datetime', wraps=datetime) as clock:
+            clock.now.return_value = datetime(2026, 10, 7, 12, tzinfo=timezone.utc)
+            payload, _, context = self.projection(None, second_module=True,
+                reader_options={'module_id': 'M2', 'module_navigation': True, 'prefer_current': False})
+        self.assertEqual(payload['selectedWeek']['weekId'], 'M2:1')
+        self.assertEqual(context.evidence_call.args[2], ['M2'])
+        self.assertEqual({week['moduleId'] for week in payload['weeks']}, {'M2'})
+        self.assertEqual(payload['selectedWeek']['activities'][0]['id'], 'C9')
 
     def test_source_display_opens_latest_content_and_omits_empty_authored_week(self):
         policy = {'version': 1, 'mode': 'available-content', 'moduleId': 'M1',
