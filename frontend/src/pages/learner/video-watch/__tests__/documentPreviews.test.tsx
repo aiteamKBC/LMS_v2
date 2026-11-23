@@ -13,6 +13,15 @@ function reading(contentHtml: string, resourceUrl?: string) {
 }
 
 describe('documents alongside reading text', () => {
+  it('does not embed authentication JSON as a PDF', async () => {
+    const request = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({ error: 'Authentication required.' }), {
+      status: 401, headers: { 'Content-Type': 'application/json' },
+    }));
+    render(<InlineAttachmentPreview url="https://files.example.test/protected.pdf" title="Protected brief" />);
+    expect(await screen.findByText('Authentication required.')).toBeVisible();
+    expect(screen.queryByTitle('Protected brief')).not.toBeInTheDocument();
+    request.mockRestore();
+  });
   it('falls back to the browser when an external PDF blocks cross-origin fetching', async () => {
     const request = vi.spyOn(globalThis, 'fetch').mockRejectedValue(new TypeError('Failed to fetch'));
     render(<InlineAttachmentPreview url="https://files.example.test/book.pdf" title="Course book" />);

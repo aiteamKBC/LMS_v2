@@ -584,8 +584,8 @@ export function AssignmentSubmissionForm({
             </div>
           )}
 
-          {/* The question stays in view on every step; learners can fold it away. */}
-          {!historicalContent && <details open className="mb-5 rounded-xl border border-background-200 bg-white p-4">
+          {/* The answer tab has a separate Instructions tab; retain other workflows. */}
+          {!historicalContent && !(onShowInstructions && step === 0) && <details open className="mb-5 rounded-xl border border-background-200 bg-white p-4">
             <summary className={`cursor-pointer ${briefLabelClass}`}>Assignment brief & instructions</summary>
             <div className="mt-3 space-y-4">
               <section aria-label="Assignment question">

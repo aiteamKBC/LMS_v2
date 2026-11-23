@@ -25,7 +25,7 @@ package.__path__ = [str(ROOT)]
 sys.modules['curriculum_api'] = package
 from curriculum_api.session_results_policy import (attendance_display_name, attendance_name_key, attendance_seconds, evidence_seconds, session_roster,
     attendance_csv, archive_prefix, transcript_text, instant, session_runs)
-from curriculum_api.attendance_link_policy import apply_reviewed_identities, identity_key, link_specs, record_key, unmatched_roster, attendance_bot
+from curriculum_api.attendance_link_policy import apply_reviewed_identities, identity_key, link_specs, record_key, unmatched_roster, attendance_bot, series_identity_emails
 from curriculum_api.session_graph import collection
 from curriculum_api.session_transfer_progress import byte_count
 from curriculum_api.session_media_policy import (hidden_artifact_ids, recordings_for_transcript,
@@ -378,6 +378,9 @@ class RegisterTests(unittest.TestCase):
     class Query(list):
         def using(self, *_args): return self
         def filter(self, *_args, **kwargs):
+            if kwargs.get('email_normalized__in') is not None:
+                allowed = set(kwargs['email_normalized__in'])
+                return type(self)(row for row in self if row.email.strip().casefold() in allowed)
             if kwargs.get('actual_end__isnull') is False:
                 return type(self)(row for row in self if row.actual_end is not None)
             if kwargs.get('pk__in') is not None:
@@ -390,21 +393,21 @@ class RegisterTests(unittest.TestCase):
         def values(self, *fields):
             # ORM subqueries now project module/series keys before roster reads.
             return [dict(zip(fields, row)) for row in self.values_list(*fields)]
-        def values_list(self, *fields, **_kwargs):
+        def values_list(self, *fields, **kwargs):
             def value(row, field):
                 for part in field.split('__'):
                     row = getattr(row, part)
                 return row
-            return [tuple(value(row, field) for field in fields) for row in self]
+            return [value(row, fields[0]) if kwargs.get('flat') else tuple(value(row, field) for field in fields) for row in self]
 
     class Q:
         def __init__(self, **kwargs): pass
         def __or__(self, other): return self
 
     def roster(self, records, *, assigned=True, invited=True, launched=False, complete=True, stored_attendees=None, recovery_guest=False,
-               display_name='Example Learner'):
+               display_name='Example Learner', role='attendee', protected=()):
         learner = types.SimpleNamespace(id=13, enrolment_id=7, full_name='Example Learner', email='a@example.invalid', coach_name='Coach')
-        session = types.SimpleNamespace(id='S', module_catalogue_id='M', module_title='Module', attendees=['a@example.invalid'] if invited else [])
+        session = types.SimpleNamespace(id='S', module_catalogue_id='M', module_title='Module', attendees=['a@example.invalid'] if invited else [], presenters=list(protected))
         if stored_attendees is not None:
             session.attendees = stored_attendees
         start, end = instant('2026-09-16T09:00Z'), instant('2026-09-16T10:00Z')
@@ -426,6 +429,7 @@ class RegisterTests(unittest.TestCase):
             'datetime_timezone': timezone, 'parse_datetime': instant, 'Q': self.Q,
             '_attendance_alias_rows': lambda *_args: [],
             'identity_rules': lambda *_args: [], 'apply_reviewed_identities': apply_reviewed_identities,
+            'series_identity_emails': series_identity_emails,
             '_attendance_identity_link_rows': lambda *_args: [], 'attendance_name_key': attendance_name_key,
             '_replaced_attendance_sources': lambda *_args: {},
             'attendance_display_name': attendance_display_name,
@@ -439,7 +443,7 @@ class RegisterTests(unittest.TestCase):
              'LiveSessionOccurrence': types.SimpleNamespace(objects=self.Query(occurrences)),
              'LiveSessionAttendanceAlias': types.SimpleNamespace(objects=self.Query([])),
              'LiveSessionAttendance': types.SimpleNamespace(objects=self.Query([types.SimpleNamespace(id=f'ROW-{i}', occurrence_id='O1', graph_record_id=str(i),
-                display_name=display_name, email=email, role='attendee', raw_data={}, intervals=intervals, total_attendance_seconds=0) for i, (email, intervals) in enumerate(records)])),
+                display_name=display_name, email=email, role=role, raw_data={}, intervals=intervals, total_attendance_seconds=0) for i, (email, intervals) in enumerate(records)])),
             'ModuleAuthoringModule': types.SimpleNamespace(objects=self.Query([types.SimpleNamespace(module_catalogue_id='M', group_id='G', group_name='Group')]))}
         functions(ROOT.parent / 'learner_api/teams_attendance.py', {'_email', '_canonical_attendance_email', '_assigned_learner_emails_by_module',
             '_module_expected_emails', '_unique_exact_name_email', '_local_datetime', '_graph_datetime', '_attendance_interval_bounds',
@@ -459,6 +463,17 @@ class RegisterTests(unittest.TestCase):
         self.assertEqual(rows[0]['attendance_status'], 'present')
         self.assertEqual((rows[0]['learner_profile_id'], rows[0]['enrolment_id']), (13, 7))
         self.assertEqual(rows[1]['attendance_status'], 'absent')
+
+    def test_different_email_presenter_uses_same_unique_part_policy_in_reporting(self):
+        rows = self.roster([('other@another.invalid', [visit('00:00', '03:01')])],
+                           display_name='Learner', role='Presenter')
+        self.assertEqual([row['attendance_status'] for row in rows], ['present', 'absent'])
+        self.assertEqual(rows[0]['attended_seconds'], 181)
+
+    def test_explicit_meeting_presenter_is_not_guessed_onto_learner(self):
+        rows = self.roster([('staff@another.invalid', [visit('00:00', '03:01')])],
+                           display_name='Learner', role='Presenter', protected=['staff@another.invalid'])
+        self.assertEqual([row['attendance_status'] for row in rows], ['absent', 'absent'])
 
     def test_stored_json_invitees_keep_verified_attendance_and_ignore_invalid_entries(self):
         rows = self.roster([('a@example.invalid', [visit('00:00', '03:01')])],
@@ -565,6 +580,7 @@ class EndpointTests(unittest.TestCase):
             'session_runs': session_runs, 'evidence_seconds': evidence_seconds, 'attendance_name_key': attendance_name_key,
             'attendance_display_name': attendance_display_name,
             'apply_reviewed_identities': apply_reviewed_identities, 'identity_key': identity_key,
+            'series_identity_emails': series_identity_emails,
             'record_key': record_key, 'link_specs': link_specs, 'unmatched_roster': unmatched_roster, 'attendance_bot': attendance_bot,
             'identity_rules': Mock(return_value=[]),
             'effective_module_register_rows': Mock(return_value=[]),
@@ -1045,7 +1061,7 @@ class EndpointTests(unittest.TestCase):
         own = self.ns['result_rows']({'id': 'S'}, session_number=1, email='learner@example.invalid', identity=True)
         self.assertNotIn('identityCheck', own[0])
 
-    def test_staff_sees_unknown_attendee_separately_from_module_roster(self):
+    def test_different_account_with_unique_name_now_matches_module_learner(self):
         self.ns['apply_recovery'] = lambda rows: None
         self.ns['read'].side_effect = [[{
             'id': 'O', 'session_number': 1, 'status': 'completed', 'attendance_report_id': 'R',
@@ -1063,8 +1079,12 @@ class EndpointTests(unittest.TestCase):
         rows = self.ns['result_rows']({'id': 'S', 'module_catalogue_id': 'M'}, session_number=1)
 
         self.assertEqual([person['email'] for person in rows[0]['attendance']], ['learner@example.invalid'])
-        self.assertEqual([person['email'] for person in rows[0]['unmatchedAttendance']], ['other@example.invalid'])
-        self.assertEqual(rows[0]['unmatchedAttendance'][0]['suggestedLearnerProfileId'], 7)
+        # Approved expansion: a different email no longer blocks unique name evidence.
+        self.assertEqual(rows[0]['unmatchedAttendance'], [])
+        self.assertEqual(rows[0]['attendance'][0]['status'], 'present')
+        self.assertEqual(rows[0]['attendance'][0]['seconds'], 600)
+        self.assertTrue(rows[0]['linkedIdentities'][0]['automatic'])
+        self.assertEqual(rows[0]['linkedIdentities'][0]['identityKind'], 'email')
         self.assertEqual(rows[0]['attendanceCandidates'][0]['learnerProfileId'], 7)
 
     def test_launch_expectations_are_scoped_to_the_clicked_occurrence(self):
