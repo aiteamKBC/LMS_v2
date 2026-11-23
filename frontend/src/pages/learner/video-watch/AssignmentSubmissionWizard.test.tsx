@@ -137,9 +137,12 @@ describe('monthly assignment drafts', () => {
     } as Awaited<ReturnType<typeof loadLearningReflectionSubmission>>);
     render(<AssignmentSubmissionWizard {...props} assignmentTopicId="2" questionText="A later edited question." onShowInstructions={vi.fn()} />);
     await screen.findByDisplayValue('The submitted topic answer.');
+    expect(screen.queryByRole('region', { name: 'Assignment question' })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: /Impact & employer benefit/ }));
     expect(within(screen.getByRole('region', { name: 'Assignment question' })).getByText('The original Topic 2 question.')).toBeVisible();
     expect(screen.queryByText('A later edited question.')).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: '1 Instructions' })).toBeEnabled();
+    fireEvent.click(screen.getByRole('button', { name: /2\s*Assignment answer/ }));
     expect(screen.getByLabelText(/Your answer \(/)).toBeDisabled();
     expect(screen.queryByRole('button', { name: 'Save draft' })).not.toBeInTheDocument();
     cleanup();
@@ -203,10 +206,15 @@ describe('monthly assignment drafts', () => {
     });
   });
 
-  it('keeps the question, instructions and resources in view on later steps and lets a draft reopen the instructions', async () => {
+  it('hides the repeated brief only on the answer tab and preserves instructions on later steps', async () => {
     const onShowInstructions = vi.fn();
     render(<AssignmentSubmissionWizard {...props} assignmentTopicId="1" instructionsHtml="<p>Use the <strong>STAR</strong> format.</p>"
       resourceLinks={[{ label: 'Reading list', url: 'https://example.test/reading' }]} onShowInstructions={onShowInstructions} />);
+    await screen.findByRole('button', { name: /2\s*Assignment answer/ });
+    expect(screen.queryByRole('region', { name: 'Assignment question' })).toBeNull();
+    expect(screen.queryByRole('region', { name: 'Instructions' })).toBeNull();
+    expect(screen.queryByRole('region', { name: 'Resources' })).toBeNull();
+    expect(screen.getByLabelText(/Your answer \(/)).toBeVisible();
     fireEvent.click(await screen.findByRole('button', { name: /Impact & employer benefit/ }));
     expect(screen.getByText(/Step 6 of 9/)).toBeVisible();
     const brief = screen.getByText('Assignment brief & instructions').closest('details')!;

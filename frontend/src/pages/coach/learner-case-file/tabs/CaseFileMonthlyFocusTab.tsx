@@ -1,5 +1,5 @@
 import { useSearchParams } from 'react-router-dom';
-import { ChevronLeft, ChevronRight, Clock3, Equal, GraduationCap, Target } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Clock3, Equal, GraduationCap, Target, TrendingDown, TrendingUp } from 'lucide-react';
 import { useCaseFileMonthFocus } from '@/features/coach/case-file/hooks/useCaseFileMonthFocus';
 import { RowsSkeleton } from '@/components/feature/Skeletons';
 import { State } from '@/pages/learner/training-plan-timeline/presentation';
@@ -34,7 +34,11 @@ export function CaseFileMonthlyFocusTab({ startDate, endDate }: {
   const cells = data ? [
     { label: 'Required hours', value: data.summary.requiredHours, icon: <Target size={20} /> },
     { label: 'Achieved hours', value: data.summary.achievedHours, icon: <Clock3 size={20} /> },
-    { label: 'Difference', value: data.summary.differenceHours, icon: <Equal size={20} /> },
+    { label: 'Difference', value: data.summary.differenceHours,
+      icon: data.summary.differenceHours == null ? <Equal size={20} data-testid="difference-equal" />
+        : data.summary.differenceHours < 0 ? <TrendingDown size={20} data-testid="difference-down" />
+          : data.summary.differenceHours > 0 ? <TrendingUp size={20} data-testid="difference-up" />
+            : <Equal size={20} data-testid="difference-equal" /> },
   ] : [];
   return <section className={board.root} aria-label="Monthly study plan">
     <div className={board.header}>
