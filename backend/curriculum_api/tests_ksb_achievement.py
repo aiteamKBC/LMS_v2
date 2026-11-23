@@ -54,12 +54,13 @@ class FakeConnection:
 
 
 PROGRESS_COLUMNS = (
-    'learner_id', 'progress_id', 'kind', 'component_ref', 'component_title',
-    'component_type', 'quiz_ref', 'module_title', 'week_title', 'submitted_at',
-    'reported_time', 'feedback', 'passed', 'programme_ref', 'cohort_ref',
-    'group_ref', 'module_ref', 'week_ref', 'progress_expected_otjh',
-    'component_expected_otjh', 'resolved_component_title', 'ksb_code', 'weight',
-    'weight_class',
+    'learner_id', 'progress_id', 'kind', 'component_ref', 'component_type',
+    'quiz_ref', 'submitted_at', 'reported_time', 'feedback', 'passed',
+    'programme_ref', 'cohort_ref', 'group_ref', 'module_ref', 'week_ref',
+    'progress_expected_otjh', 'component_expected_otjh',
+    'resolved_component_title', 'live_module_title', 'live_week_title',
+    'live_module_catalogue_id', 'module_found', 'module_deleted',
+    'ksb_codes', 'ksb_weights', 'ksb_classes',
 )
 
 
@@ -69,12 +70,15 @@ def progress_row(*, learner_id=19, progress_id=1, kind='component',
                  component_expected_otjh=3, programme_ref='PROG-1',
                  cohort_ref='COHORT-1', group_ref='GROUP-1',
                  module_ref='MOD-1', week_ref='WEEK-1'):
+    codes = [code] if code is not None else None
+    weights = [weight] if code is not None else None
+    classes = [weight_class] if code is not None else None
     return (
-        learner_id, progress_id, kind, component_ref, 'E2E activity',
-        'assignment', None, 'Module One', 'Week 1', None,
+        learner_id, progress_id, kind, component_ref, 'assignment', None, None,
         '2.5 hours', 'Reflection text', passed, programme_ref, cohort_ref,
         group_ref, module_ref, week_ref, progress_expected_otjh,
-        component_expected_otjh, 'E2E activity', code, weight, weight_class,
+        component_expected_otjh, 'E2E activity', 'Module One', 'Week 1',
+        module_ref, True, False, codes, weights, classes,
     )
 
 
@@ -398,7 +402,9 @@ class LearnerProgressOtjhVisibilityTests(SimpleTestCase):
                 views.learner_progress_ksb_consumption([19], ['K1'])
 
         sql = cursor.executed[0][0]
-        self.assertIn('left join "Learner"."learner_progress_ksbs"', sql)
+        self.assertIn('left join lateral (', sql)
+        self.assertIn('from "Learner"."learner_progress_ksbs" k', sql)
+        self.assertIn(') ksb on true', sql)
 
     def test_a_code_this_scope_never_authored_keeps_the_activity(self):
         """Filtering a KSB out must not take the activity's hours with it."""

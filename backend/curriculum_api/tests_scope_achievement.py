@@ -22,21 +22,27 @@ from . import views
 
 
 PROGRESS_COLUMNS = [
-    'learner_id', 'progress_id', 'kind', 'component_ref', 'component_title',
-    'component_type', 'quiz_ref', 'module_title', 'week_title', 'submitted_at',
-    'reported_time', 'feedback', 'passed', 'progress_expected_otjh',
-    'component_expected_otjh', 'resolved_component_title', 'ksb_code', 'weight',
-    'weight_class',
+    'learner_id', 'progress_id', 'kind', 'component_ref', 'component_type',
+    'quiz_ref', 'submitted_at', 'reported_time', 'feedback', 'passed',
+    'programme_ref', 'cohort_ref', 'group_ref', 'module_ref', 'week_ref',
+    'progress_expected_otjh', 'component_expected_otjh',
+    'resolved_component_title', 'live_module_title', 'live_week_title',
+    'live_module_catalogue_id', 'module_found', 'module_deleted',
+    'ksb_codes', 'ksb_weights', 'ksb_classes',
 ]
 
 
 def progress_row(*, learner_id=19, progress_id=100, component_ref='COMP-IN',
                  code='K1', weight=50, passed=True, expected_otjh=2):
+    codes = [code] if code is not None else None
+    weights = [weight] if code is not None else None
+    classes = ['hard'] if code is not None else None
     return (
-        learner_id, progress_id, 'assignment', component_ref, 'Activity',
-        'assignment', None, 'Module One', 'Week 1', None,
-        '2 hours', 'Reflection text', passed, expected_otjh,
-        expected_otjh, 'Activity', code, weight, 'hard',
+        learner_id, progress_id, 'assignment', component_ref, 'assignment',
+        None, None, '2 hours', 'Reflection text', passed, '', '', '',
+        'MOD-1', 'WEEK-1', expected_otjh, expected_otjh, 'Activity',
+        'Module One', 'Week 1', 'MOD-1' if component_ref else None,
+        bool(component_ref), False, codes, weights, classes,
     )
 
 
@@ -582,9 +588,12 @@ class ScopePlacementLineageTests(SimpleTestCase):
 
 class ScopedRosterTests(SimpleTestCase):
     ROSTER = [
-        {'id': 1, 'name': 'A', 'cohort': 'September 2025', 'group': 'A1'},
-        {'id': 2, 'name': 'B', 'cohort': 'September 2025', 'group': 'A2'},
-        {'id': 3, 'name': 'C', 'cohort': 'January 2026', 'group': 'B1'},
+        {'id': 1, 'name': 'A', 'cohortId': 'COH-SEP', 'cohort': 'September 2025',
+         'groupId': 'GRP-A1', 'group': 'A1'},
+        {'id': 2, 'name': 'B', 'cohortId': 'COH-SEP', 'cohort': 'September 2025',
+         'groupId': 'GRP-A2', 'group': 'A2'},
+        {'id': 3, 'name': 'C', 'cohortId': 'COH-JAN', 'cohort': 'January 2026',
+         'groupId': 'GRP-B1', 'group': 'B1'},
     ]
 
     def _run(self, lineage):
@@ -593,24 +602,42 @@ class ScopedRosterTests(SimpleTestCase):
 
     def test_a_cohort_gets_only_its_own_learners(self):
         learners = self._run({
-            'programmeId': 'PROG-1', 'cohortName': 'September 2025', 'groupName': '',
+            'programmeId': 'PROG-1', 'cohortId': 'COH-SEP',
+            'cohortName': 'September 2025', 'groupId': '', 'groupName': '',
         })
 
         self.assertEqual([row['id'] for row in learners], [1, 2])
 
     def test_a_group_gets_only_its_own_learners(self):
         learners = self._run({
-            'programmeId': 'PROG-1', 'cohortName': 'September 2025', 'groupName': 'A1',
+            'programmeId': 'PROG-1', 'cohortId': 'COH-SEP',
+            'cohortName': 'September 2025', 'groupId': 'GRP-A1', 'groupName': 'A1',
         })
 
         self.assertEqual([row['id'] for row in learners], [1])
 
-    def test_matching_ignores_case_and_spacing_because_placements_are_labels(self):
+    def test_stable_ids_match_even_when_labels_have_case_and_spacing_differences(self):
         learners = self._run({
-            'programmeId': 'PROG-1', 'cohortName': ' september  2025 ', 'groupName': 'a1',
+            'programmeId': 'PROG-1', 'cohortId': 'COH-SEP',
+            'cohortName': ' september  2025 ', 'groupId': 'GRP-A1', 'groupName': 'a1',
         })
 
         self.assertEqual([row['id'] for row in learners], [1])
+
+    def test_matching_labels_with_different_ids_cannot_match(self):
+        lineages = [
+            {
+                'programmeId': 'PROG-1', 'cohortId': 'COH-OTHER',
+                'cohortName': 'September 2025', 'groupId': '', 'groupName': '',
+            },
+            {
+                'programmeId': 'PROG-1', 'cohortId': 'COH-SEP',
+                'cohortName': 'September 2025', 'groupId': 'GRP-OTHER', 'groupName': 'A1',
+            },
+        ]
+        for lineage in lineages:
+            with self.subTest(lineage=lineage):
+                self.assertEqual(self._run(lineage), [])
 
     def test_a_scope_with_no_programme_returns_nothing_rather_than_everything(self):
         learners = self._run({'programmeId': '', 'programmeName': '', 'cohortName': 'x'})

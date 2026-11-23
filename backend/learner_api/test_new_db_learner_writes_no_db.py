@@ -91,10 +91,15 @@ class OfficialHoursPreservedTests(SimpleTestCase):
             stack.enter_context(patch.object(active_users.LearnerProfile.objects, "select_for_update",
                                              return_value=SimpleNamespace(get=lambda **kwargs: learner)))
             stack.enter_context(patch.object(active_users.LearnerProgressEntry.objects, "filter",
-                                             return_value=SimpleNamespace(aggregate=lambda **kwargs: {"value": 1})))
+                                             return_value=SimpleNamespace(aggregate=lambda **kwargs: {
+                                                 "value": 1, "total": 0, "highest": 0,
+                                             })))
             create = stack.enter_context(patch.object(active_users, "_create_progress_entry",
                                                       return_value=SimpleNamespace(pk=11)))
-            stack.enter_context(patch.object(active_users, "LearnerProgressKsb"))
+            self.ksb_model = stack.enter_context(patch.object(active_users, "LearnerProgressKsb"))
+            stack.enter_context(patch.object(
+                active_users, "assigned_definition_ids", return_value={(7, 'K1'): 501},
+            ))
             stack.enter_context(patch("learner_api.retake_timing.validate_activity_time"))
             stack.enter_context(patch("learner_api.activity_time_history.attendance_baseline", return_value=0))
             active_users.save_progress_record(learner, record)
@@ -117,6 +122,16 @@ class OfficialHoursPreservedTests(SimpleTestCase):
         self.assertEqual(learner.completed_hours, 38.30)
         learner.save.assert_not_called()
         self.assertEqual(float(create.call_args.kwargs["grade"]), 0.9)
+
+    def test_new_progress_ksb_uses_the_learner_profile_definition(self):
+        self.save({
+            "kind": "component", "componentId": "C1",
+            "ksbMappings": [{"code": "K1", "description": "Knowledge"}],
+            "submittedAt": "2026-10-02T10:00:00Z",
+        }, [])
+
+        self.ksb_model.assert_called_once()
+        self.assertEqual(self.ksb_model.call_args.kwargs['ksb_definition_id'], 501)
 
     def test_quiz_reading_no_longer_rewrites_the_total(self):
         source = inspect.getsource(quiz_reading.quiz_reading)
