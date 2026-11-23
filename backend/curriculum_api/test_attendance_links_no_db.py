@@ -250,6 +250,91 @@ class ShortNameMatchingTests(unittest.TestCase):
 class ReportedAccountMatchingTests(unittest.TestCase):
     learners = {'alex.morgan@example.invalid': {'name': 'Alexander Morgan', 'learnerProfileId': 7}}
 
+    def test_one_account_with_conflicting_rejoin_names_cannot_credit_two_learners(self):
+        learners = {**self.learners, 'noah.patel@example.invalid': {'name': 'Noah Patel', 'learnerProfileId': 8}}
+        rows = [record(name='Morgan'), record('R2', 'G1', 'Patel')]
+        mapped = apply_reviewed_identities(rows, learners=learners)
+        self.assertTrue(all(row['identityReviewRequired'] for row in mapped))
+        self.assertTrue(all(not row['email'] for row in mapped))
+        self.assertEqual([row['email'] for row in rows], ['', ''])
+
+    def test_direct_email_on_same_identity_blocks_conflicting_name_guess(self):
+        learners = {**self.learners, 'noah.patel@example.invalid': {'name': 'Noah Patel', 'learnerProfileId': 8}}
+        rows = [{**record(name='Morgan'), 'email': 'alex.morgan@example.invalid'}, record('R2', 'G1', 'Patel')]
+        mapped = apply_reviewed_identities(rows, learners=learners)
+        self.assertEqual(mapped[0]['email'], rows[0]['email'])
+        self.assertFalse(mapped[0]['identityReviewRequired'])
+        self.assertEqual(mapped[1]['email'], '')
+        self.assertTrue(mapped[1]['identityReviewRequired'])
+
+    def test_ambiguous_rejoin_prevents_same_accounts_unique_partial_guess(self):
+        learners = {**self.learners, 'alex.patel@example.invalid': {'name': 'Alex Patel', 'learnerProfileId': 8}}
+        rows = [record(name='Morgan'), record('R2', 'G1', 'Alex')]
+        mapped = apply_reviewed_identities(rows, learners=learners)
+        self.assertTrue(all(row['identityReviewRequired'] for row in mapped))
+        self.assertTrue(all(not row['email'] for row in mapped))
+
+    def test_email_ambiguity_is_retained_in_manual_review_rows(self):
+        learners = {**self.learners, 'noah.morgan@example.invalid': {'name': 'Noah Morgan', 'learnerProfileId': 8}}
+        rows = [{**record(name='Morgan'), 'email': 'unknown@another.invalid'}]
+        mapped = apply_reviewed_identities(rows, learners=learners)
+        person = unmatched_roster(mapped, complete=True)[0]
+        self.assertTrue(person.get('identityAmbiguous'))
+        self.assertIsNone(person.get('suggestedLearnerProfileId'))
+        self.assertEqual(person['email'], rows[0]['email'])
+        self.assertEqual(person['sourceRecordIds'], ['R1'])
+
+    def test_same_email_without_object_id_cannot_split_between_learners(self):
+        learners = {**self.learners, 'noah.patel@example.invalid': {'name': 'Noah Patel', 'learnerProfileId': 8}}
+        rows = [{**record(name='Morgan', guest=''), 'email': 'shared@another.invalid'},
+                {**record('R2', '', 'Patel'), 'email': 'shared@another.invalid'}]
+        mapped = apply_reviewed_identities(rows, learners=learners)
+        self.assertTrue(all(row['identityReviewRequired'] for row in mapped))
+        self.assertTrue(all(row['email'] == 'shared@another.invalid' for row in mapped))
+
+    def test_manual_decision_remains_and_blocks_conflicting_automatic_rejoin(self):
+        learners = {**self.learners, 'noah.patel@example.invalid': {'name': 'Noah Patel', 'learnerProfileId': 8}}
+        rows = [record(name='Morgan'), record('R2', 'G1', 'Patel')]
+        manual = rule(identity_kind='record', identity_value='O:R1',
+                      canonical_email='alex.morgan@example.invalid')
+        mapped = apply_reviewed_identities(rows, learners=learners, rules=[manual])
+        self.assertEqual(mapped[0]['email'], 'alex.morgan@example.invalid')
+        self.assertFalse(mapped[0]['identityReviewRequired'])
+        self.assertTrue(mapped[1]['identityReviewRequired'])
+
+    def test_revoked_match_cannot_be_bypassed_by_same_account_rejoining_with_new_name(self):
+        rows = [record(name='Morgan'), record('R2', 'G1', 'Alexander')]
+        mapped = apply_reviewed_identities(rows, learners=self.learners,
+            rules=[rule(identity_value='morgan', active=False)])
+        self.assertTrue(all(row['identityReviewRequired'] for row in mapped))
+        self.assertTrue(all(not row['email'] for row in mapped))
+
+    def test_rejoins_from_separate_tenants_do_not_share_account_identity(self):
+        learners = {**self.learners, 'noah.patel@example.invalid': {'name': 'Noah Patel', 'learnerProfileId': 8}}
+        rows = [record(name='Morgan'), record('R2', 'G1', 'Patel')]
+        for row, tenant in zip(rows, ('COLLEGE-A', 'COLLEGE-B')):
+            row['raw_data']['identity']['tenantId'] = tenant
+        mapped = apply_reviewed_identities(rows, learners=learners)
+        self.assertEqual([row['email'] for row in mapped], ['alex.morgan@example.invalid', 'noah.patel@example.invalid'])
+        self.assertFalse(any(row['identityReviewRequired'] for row in mapped))
+
+    def test_unique_match_is_accepted_with_same_different_or_missing_tenant(self):
+        # Tenant agreement may support identity review; disagreement or missing
+        # tenant evidence must never veto an otherwise unique learner match.
+        for tenant in ('COLLEGE', 'EXTERNAL-ORGANISATION', None):
+            for name, email in [('Morgan', 'different@personal.invalid'),
+                                ('Unknown Participant', 'alex@personal.invalid')]:
+                with self.subTest(tenant=tenant, name=name, email=email):
+                    raw = {**record(name=name), 'email': email, 'role': 'Presenter'}
+                    raw['raw_data']['identity']['tenantId'] = tenant
+                    mapped = apply_reviewed_identities([raw], learners=self.learners)[0]
+                    self.assertEqual(mapped['email'], 'alex.morgan@example.invalid')
+                    self.assertTrue(mapped['identityRule']['automatic'])
+                    self.assertFalse(mapped['identityReviewRequired'])
+                    attendance = session_roster(set(self.learners), [mapped], complete=True)[0]
+                    self.assertEqual((attendance['status'], attendance['seconds']), ('present', 600))
+                    self.assertEqual(raw['email'], email)
+
     def test_presenter_with_different_email_matches_unique_name_or_local_part(self):
         for name, email in [('Alex Morgan', 'alex.morgan@another.invalid'),
                             ('Unknown', 'alex@another.invalid'), ('Unknown', 'morgan@another.invalid'),

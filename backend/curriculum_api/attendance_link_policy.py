@@ -4,6 +4,7 @@ import json
 import re
 
 from .session_results_policy import attendance_display_name, attendance_identity, attendance_name_key, session_roster
+from .attendance_identity import teams_identity
 
 
 def attendance_bot(record):
@@ -21,6 +22,18 @@ def identity_key(record):
 
 def record_key(record):
     return 'record', str(record.get('occurrence_id') or '') + ':' + str(record.get('id') or '')
+
+
+def _source_identity_keys(record):
+    """Correlate rejoins using reported account evidence, never a display name."""
+    kind, object_id, tenant, _name = teams_identity(record)
+    keys = set()
+    if object_id:
+        keys.add(('account', kind, tenant.casefold(), object_id))
+    email = str(record.get('email') or '').strip().casefold()
+    if email:
+        keys.add(('email', email))
+    return keys or {record_key(record)}
 
 
 def series_identity_emails(series):
@@ -121,12 +134,15 @@ def apply_reviewed_identities(records, aliases=(), legacy_links=(), rules=(), *,
             alternatives.append((email, learner, _name_parts(name_key),
                                  _name_parts(local.split('+', 1)[0]) if separator else ()))
     result = []
-    expanded = []
+    automatic = []
     claims = defaultdict(set)
+    source_targets = defaultdict(set)
+    uncertain_sources = set()
     cached_candidates = {}
     for source in records:
         row = dict(source)
         key = identity_key(row)
+        source_keys = _source_identity_keys(source)
         specific = rules.get(record_key(row))
         rule = specific or rules.get(key)
         collision = key[0] == 'guest_name' and key[1] in ambiguous
@@ -168,23 +184,28 @@ def apply_reviewed_identities(records, aliases=(), legacy_links=(), rules=(), *,
                         'learner_profile_id': learner.get('learnerProfileId'),
                         'canonical_email': email, 'display_name': attendance_display_name(source),
                     }
-                    if extended:
-                        expanded.append((row, source.get('email') or ''))
+                    automatic.append((row, source.get('email') or '', source_keys, extended))
                 elif len(matches) > 1:
                     row['identityReviewRequired'] = True
                     row['identityAmbiguous'] = True
         if row.get('email') and not row['identityReviewRequired']:
-            _name, reported_id = attendance_identity(source)
-            participant = (('identity', reported_id) if reported_id else
-                           ('email', str(source['email']).strip().casefold()) if source.get('email') else
-                           record_key(source))
+            participant = next((key for key in source_keys if key[0] == 'account'),
+                               ('email', str(source['email']).strip().casefold()) if source.get('email') else record_key(source))
             claims[str(row['email']).strip().casefold()].add(participant)
+            if str(row['email']).strip().casefold() in (learners or {}):
+                for source_key in source_keys:
+                    source_targets[source_key].add(str(row['email']).strip().casefold())
+        if (row['identityReviewRequired'] or (rule is not None and not rule.get('active'))
+                or str(source.get('email') or '').strip().casefold() in protected):
+            uncertain_sources.update(source_keys)
         result.append(row)
     # Two distinct reported people must not collapse onto one learner just
     # because one used a first name and the other a surname/local part.
     # Keep explicit reviews and existing full-name/email decisions authoritative.
-    for row, original_email in expanded:
-        if len(claims[str(row['email']).strip().casefold()]) > 1:
+    for row, original_email, source_keys, extended in automatic:
+        conflicting_rejoin = bool(source_keys & uncertain_sources) or any(
+            len(source_targets[key]) > 1 for key in source_keys)
+        if conflicting_rejoin or (extended and len(claims[str(row['email']).strip().casefold()]) > 1):
             row.update(email=original_email, identityRule=None,
                        identityReviewRequired=True, identityAmbiguous=True)
     return result
@@ -206,6 +227,12 @@ def unmatched_roster(records, *, complete):
             person['identityAmbiguous'] = True
             person['suggestedLearnerProfileId'] = None
             result.append(person)
+    ambiguous_ids = {str(row.get('id') or row.get('graph_record_id') or '') for row in records
+                     if row.get('identityAmbiguous')}
+    for person in result:
+        if ambiguous_ids.intersection(person['sourceRecordIds']):
+            person['identityAmbiguous'] = True
+            person['suggestedLearnerProfileId'] = None
     return result
 
 
