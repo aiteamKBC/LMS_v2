@@ -88,7 +88,12 @@ export default function FeedbackPage() {
     </div>
     {assigning && <AssignmentDialog form={assigning} onClose={() => setAssigning(null)} onAssigned={() => { setAssigning(null); void refresh(); }} />}
     {recipientForm && (recipientForm.formType === 'post_mcm_review'
-      ? <Modal title={`Assigned learners — ${recipientForm.title}`} onClose={() => setRecipientForm(null)} wide><McmRecipients key={recipientForm.id} formId={recipientForm.id} /></Modal>
+      ? <Modal title={`Assigned learners — ${recipientForm.title}`} onClose={() => setRecipientForm(null)} hideClose wide>
+        <McmRecipients key={recipientForm.id} formId={recipientForm.id} />
+        <div className="sticky bottom-4 z-10 ml-auto mt-5 flex w-fit flex-wrap justify-end gap-3">
+          <button type="button" onClick={() => setRecipientForm(null)} className={`${button} primary-action bg-primary-600 text-white shadow-sm hover:bg-primary-700 disabled:opacity-50`}>Back</button>
+        </div>
+      </Modal>
       : <RecipientsDialog form={recipientForm} onClose={() => setRecipientForm(null)} />)}
     {versionForm && <VersionsDialog form={versionForm} onClose={() => setVersionForm(null)} onPreview={id => navigate(`/engagement/reports/feedback/forms/${id}/preview`)} />}
     {viewing && <ResponseDialog response={viewing} onClose={() => setViewing(null)} />}
@@ -250,7 +255,7 @@ function RecipientsDialog({ form, onClose }: { form: FeedbackForm; onClose: () =
   const isReview = isEmployer || form.formType === 'post_mcm_review' || form.formType === 'post_progress_review' || form.formType === 'post_epa_review';
   const contextHeading = isEvent ? 'Event' : form.formType === 'post_lecture' ? 'Lecture' : isReview ? 'Review' : ['mid_module', 'end_module'].includes(form.formType) ? 'Module' : 'Assignment';
   const recipientHeading = isEmployer ? 'Employer / Learner' : isEvent ? 'Attendee' : 'Learner';
-  return <Modal title={`${isEmployer ? 'Assigned employers' : isEvent ? 'Assigned attendees' : 'Assigned learners'} — ${form.title}`} onClose={onClose}>
+  return <Modal title={`${isEmployer ? 'Assigned employers' : isEvent ? 'Assigned attendees' : 'Assigned learners'} — ${form.title}`} onClose={onClose} hideClose>
     {isEmployer && <p className="mb-3 rounded-lg bg-amber-50 p-3 text-xs text-amber-800">Each employer answers separately from the learner. Pending link means the employer profile or account needs to be linked before the request appears in their portal. The related learner is shown with each review.</p>}
     {sources.length > 0 && sources.some(source => source.type !== 'manual') && <div className="mb-3 rounded-xl border border-primary-100 bg-primary-50/40 p-3"><label htmlFor="feedback-source-filter" className="mb-1.5 block text-xs font-semibold text-foreground-700">{contextHeading}</label>{contextHeading === 'Lecture'
       ? <GroupedLectureFilter sources={sources.filter(source => source.type === 'lecture')} value={sourceKey} onChange={value => { setSourceKey(value); setPage(1); }} />
@@ -259,6 +264,9 @@ function RecipientsDialog({ form, onClose }: { form: FeedbackForm; onClose: () =
     {error && <div role="alert" className="rounded-lg border border-red-200 bg-red-50 p-3 text-xs text-red-700">{error}</div>}
     {loading ? <p className="py-10 text-center text-sm text-foreground-400"><LoadingSkeleton label="Loading assignments…" variant="rows" /></p> : <div className="overflow-x-auto rounded-lg border"><table className="w-full min-w-[760px] text-left text-xs"><thead className="bg-background-100 text-foreground-500"><tr>{[recipientHeading, 'Programme', 'Assigned From', contextHeading, 'Assigned', 'Response'].map(label => <th key={label} className="px-3 py-2.5 font-semibold">{label}</th>)}</tr></thead><tbody className="divide-y">{recipients.map(recipient => <tr key={recipient.key}><td className="px-3 py-3"><span className="block font-semibold text-foreground-900">{recipient.learnerName}</span><span className="text-[10px] text-foreground-400">{recipient.email || `Learner ${recipient.learnerId}`}</span>{recipient.recipientType === 'guest' && <span className="ml-2 rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold text-amber-700">Guest</span>}</td><td className="px-3 py-3">{recipient.programme || '—'}</td><td className="px-3 py-3"><span className={`rounded-full px-2 py-1 text-[10px] font-semibold ${recipient.sourceType === 'lecture' ? 'bg-blue-100 text-blue-700' : recipient.sourceType === 'event' ? 'bg-emerald-100 text-emerald-700' : 'bg-purple-100 text-purple-700'}`}>{recipient.sourceLabel}</span></td><td className="px-3 py-3"><span className="block">{recipient.sourceTitle || '—'}</span>{recipient.sourceSubtitle && <span className="text-[10px] text-foreground-400">{recipient.sourceSubtitle}{recipient.sourceType === 'lecture' ? ` · v${recipient.formVersion}` : ''}</span>}{recipient.sourceStartsAt && <span className="block text-[10px] text-foreground-400">{formatSourceDate(recipient.sourceStartsAt)}</span>}</td><td className="px-3 py-3 text-foreground-500">{formatDate(recipient.assignedAt)}</td><td className="px-3 py-3"><Status status={recipient.responseStatus} /></td></tr>)}{!recipients.length && !error && <tr><td colSpan={6} className="p-10 text-center text-foreground-400">No assigned recipients found.</td></tr>}</tbody></table></div>}
     {total > pageSize && <div className="mt-4 flex items-center justify-between"><button type="button" disabled={page === 1} onClick={() => setPage(value => value - 1)} className={`${button} border disabled:opacity-40`}>Previous</button><span className="text-xs text-foreground-500">Page {page} of {pages}</span><button type="button" disabled={page >= pages} onClick={() => setPage(value => value + 1)} className={`${button} border disabled:opacity-40`}>Next</button></div>}
+    <div className="sticky bottom-4 z-10 ml-auto mt-5 flex w-fit flex-wrap justify-end gap-3">
+      <button type="button" onClick={onClose} className={`${button} primary-action bg-primary-600 text-white shadow-sm hover:bg-primary-700 disabled:opacity-50`}>Back</button>
+    </div>
   </Modal>;
 }
 
@@ -390,9 +398,9 @@ function ResponseDialog({ response, onClose }: { response: FeedbackResponse; onC
       <button ref={emailToggle} type="button" disabled={emailSending} aria-expanded={emailOpen} aria-controls={emailPanelId} onClick={() => {
         if (emailOpen) closeEmail();
         else { setEmailMounted(true); setEmailOpen(true); }
-      }} className={`${button} border border-primary-200 bg-white text-primary-700 disabled:opacity-50`}>{emailOpen ? 'Close email' : 'Email respondent'}</button>
+      }} className={`${button} primary-action bg-primary-600 text-white shadow-sm hover:bg-primary-700 disabled:opacity-50`}>{emailOpen ? 'Close email' : 'Email respondent'}</button>
       <button type="button" disabled={downloading} onClick={() => void download()} className={`${button} inline-flex items-center gap-1.5 bg-primary-600 text-white shadow-sm hover:bg-primary-700 disabled:opacity-50`}><i className="ri-download-2-line" aria-hidden="true" />{downloading ? 'Preparing PDF...' : 'Export PDF'}</button>
-      <button type="button" disabled={emailSending} onClick={close} className={`${button} border border-foreground-200 bg-white text-foreground-700 hover:bg-background-100 disabled:opacity-50`}>Back</button>
+      <button type="button" disabled={emailSending} onClick={close} className={`${button} primary-action bg-primary-600 text-white shadow-sm hover:bg-primary-700 disabled:opacity-50`}>Back</button>
     </div>
   </Modal>;
 }
