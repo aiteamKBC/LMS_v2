@@ -15,6 +15,7 @@ from learner_api import certificates
 
 class IssuedCertificateAdminTests(SimpleTestCase):
     def setUp(self):
+        self.owner_lookup = self.enterContext(patch.object(certificates, "_certificate_enrolment_id", return_value=7))
         self.factory = RequestFactory()
         self.account = SimpleNamespace(role='admin', email='admin@example.invalid')
         def authenticate(request):
@@ -33,7 +34,7 @@ class IssuedCertificateAdminTests(SimpleTestCase):
                              layoutConfig=dict(instructorName='Tutor', primaryColor='#112233', backgroundImageUrl='data:image/png;base64,AAAA'),
                              trackableDone=4, trackableTotal=5, minimumProgress=80, customField='keep')
         self.row = (11, 'KBC-TEST', 1, 3, 80, self.snapshot, self.at, 'old-pdf', 'stable-token', 'free:FC-1', 'Original course',
-                    'issued', 'commercial', 'Template title', 'Template body', {}, None, '', 7)
+                    'issued', 'commercial', 'Template title', 'Template body', {}, None, '', 107)
         self.cursor.fetchone.return_value = self.row
         self.cursor.fetchall.return_value = []
         self.source = self.enterContext(patch.object(certificates, '_load_source', return_value=SimpleNamespace(
@@ -81,6 +82,8 @@ class IssuedCertificateAdminTests(SimpleTestCase):
     def test_get_returns_original_copy_and_history_without_mutation(self):
         response = self.request(method='GET')
         cert = json.loads(response.content)['certificate']
+        self.owner_lookup.assert_called_once_with(self.cursor, 107)
+        self.source.assert_called_once_with('commercial', 7)
         self.assertEqual(cert['editable']['learnerName'], 'Original name')
         self.assertEqual(cert['revision'], 1)
         self.assertEqual(cert['verificationUrl'], '/verify-certificate/stable-token')

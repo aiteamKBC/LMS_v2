@@ -105,6 +105,27 @@ def _published_template(cursor):
     return cursor.fetchone()
 
 
+def _canonical_certificate_owner(cursor, kind, enrolment_id):
+    """Route IDs belong to Created_users; certificate ownership belongs to learners."""
+    if kind not in SOURCE_MODELS:
+        raise ValueError("Unknown learner type.")
+    cursor.execute('SELECT id FROM "Learner".learners WHERE enrolment_id=%s LIMIT 2',
+                   [enrolment_id])
+    owners = cursor.fetchall()
+    if len(owners) != 1:
+        raise ValueError("Learner identity is unavailable or ambiguous.")
+    return owners[0][0]
+
+
+def _certificate_enrolment_id(cursor, learner_id):
+    """Resolve a stored canonical owner without guessing from snapshots or ID equality."""
+    cursor.execute('SELECT enrolment_id FROM "Learner".learners WHERE id=%s', [learner_id])
+    owner = cursor.fetchone()
+    if not owner or owner[0] is None:
+        raise ValueError("Learner enrolment is unavailable.")
+    return owner[0]
+
+
 def _issued_certificate(cursor, kind, pk, template_id=None, template_version=None, module_ref=None):
     params = [kind, pk, CERTIFICATE_TYPE]
     version_clause = ""
@@ -373,7 +394,7 @@ def _certificate_overrides(cursor, certificate):
     return overrides
 
 
-def _current_certificate(cursor, certificate, kind, pk):
+def _current_certificate(cursor, certificate, kind, learner_id):
     """Read the current display, retaining the stored award and correction history."""
     overrides = _certificate_overrides(cursor, certificate)
     template = _template_dict(_published_template(cursor))
@@ -382,6 +403,7 @@ def _current_certificate(cursor, certificate, kind, pk):
         warnings.append('No published template is available. Showing the saved design.')
     learner, progress = None, None
     try:
+        pk = _certificate_enrolment_id(cursor, learner_id)
         source = _load_source(kind, pk)
     except SOURCE_DOES_NOT_EXIST + (ValueError, DatabaseError, ServiceError):
         warnings.append('Current learner and course details could not be loaded. Showing saved details.')
@@ -455,12 +477,15 @@ def learner_certificate_template(request, kind, pk):
         return JsonResponse({"error": "Method not allowed."}, status=405)
     try:
         with connections["enrolment"].cursor() as cursor:
+            learner_id = _canonical_certificate_owner(cursor, kind, pk)
             row = _published_template(cursor)
             cursor.execute('''SELECT DISTINCT lc.module_ref FROM "Learner".learner_certificates lc
                 JOIN "Learner".certificate_templates ct ON ct.id=lc.template_id
                 WHERE lc.learner_kind=%s AND lc.learner_id=%s AND lc.status='issued'
-                  AND ct.certificate_type=%s AND lc.module_ref<>'' ''', [kind, pk, CERTIFICATE_TYPE])
+                  AND ct.certificate_type=%s AND lc.module_ref<>'' ''', [kind, learner_id, CERTIFICATE_TYPE])
             issued_module_refs = [item[0] for item in cursor.fetchall()]
+    except ValueError as exc:
+        return _error(str(exc), 404)
     except DatabaseError:
         return JsonResponse({"template": None, "configured": False})
     if not row:
@@ -482,10 +507,11 @@ def learner_certificate_status(request, kind, pk):
         return _error("Method not allowed.", 405)
     try:
         with connections["enrolment"].cursor() as cursor:
+            learner_id = _canonical_certificate_owner(cursor, kind, pk)
             template = _template_dict(_published_template(cursor))
             if not template:
                 return JsonResponse({"configured": True, "template": None, "certificate": None})
-            certificate = _certificate_dict(_issued_certificate(cursor, kind, pk))
+            certificate = _certificate_dict(_issued_certificate(cursor, kind, learner_id))
         eligibility = _eligibility(kind, pk, template)
     except SOURCE_DOES_NOT_EXIST:
         return _error("Learner not found.", 404)
@@ -503,11 +529,12 @@ def issue_learner_certificate(request, kind, pk):
 
     try:
         with connections["enrolment"].cursor() as cursor:
+            learner_id = _canonical_certificate_owner(cursor, kind, pk)
             template = _template_dict(_published_template(cursor))
         if not template:
             return _error("No published certificate template has been configured.", 409)
         with connections["enrolment"].cursor() as cursor:
-            existing = _issued_certificate(cursor, kind, pk)
+            existing = _issued_certificate(cursor, kind, learner_id)
             if existing:
                 return JsonResponse({"certificate": _certificate_dict(existing), "template": template, "issued": False})
         eligibility = _eligibility(kind, pk, template)
@@ -529,8 +556,8 @@ def issue_learner_certificate(request, kind, pk):
         actor = _clean_text(getattr(getattr(request, "login_account", None), "email", "")) or "system"
         with transaction.atomic(using="enrolment"):
             with connections["enrolment"].cursor() as cursor:
-                _lock_certificate_scope(cursor, kind, pk)
-                existing = _issued_certificate(cursor, kind, pk)
+                _lock_certificate_scope(cursor, kind, learner_id)
+                existing = _issued_certificate(cursor, kind, learner_id)
                 if existing:
                     return JsonResponse({
                         "certificate": _certificate_dict(existing),
@@ -550,7 +577,7 @@ def issue_learner_certificate(request, kind, pk):
                     [
                         _new_certificate_number(),
                         kind,
-                        pk,
+                        learner_id,
                         template["id"],
                         template["version"],
                         "",
@@ -566,10 +593,10 @@ def issue_learner_certificate(request, kind, pk):
                         '''INSERT INTO "Learner".certificate_audit_logs
                            (actor_email,action,template_id,certificate_id,details)
                            VALUES (%s,%s,%s,%s,%s::jsonb)''',
-                        [actor, "certificate-issued", template["id"], row[0], json.dumps({"learnerKind": kind, "learnerId": pk})],
+                        [actor, "certificate-issued", template["id"], row[0], json.dumps({"learnerKind": kind, "learnerId": learner_id, "enrolmentId": pk})],
                     )
                 else:
-                    row = _issued_certificate(cursor, kind, pk)
+                    row = _issued_certificate(cursor, kind, learner_id)
                     if not row:
                         return _error("This certificate is no longer active. Contact an administrator.", 409)
     except SOURCE_DOES_NOT_EXIST:
@@ -590,10 +617,11 @@ def learner_module_certificate_status(request, kind, pk, module_ref):
     try:
         module_ref = _subject_ref(module_ref)
         with connections["enrolment"].cursor() as cursor:
+            learner_id = _canonical_certificate_owner(cursor, kind, pk)
             template = _template_dict(_published_template(cursor))
             if not template:
                 return JsonResponse({"configured": True, "template": None, "certificate": None})
-            certificate = _certificate_dict(_issued_certificate(cursor, kind, pk, module_ref=module_ref))
+            certificate = _certificate_dict(_issued_certificate(cursor, kind, learner_id, module_ref=module_ref))
         eligibility = _module_eligibility(kind, pk, module_ref, template)
     except ServiceError as exc:
         return _error(str(exc), exc.status)
@@ -615,11 +643,12 @@ def issue_learner_module_certificate(request, kind, pk, module_ref):
     try:
         module_ref = _subject_ref(module_ref)
         with connections["enrolment"].cursor() as cursor:
+            learner_id = _canonical_certificate_owner(cursor, kind, pk)
             template = _template_dict(_published_template(cursor))
         if not template:
             return _error("No published certificate template has been configured.", 409)
         with connections["enrolment"].cursor() as cursor:
-            existing = _issued_certificate(cursor, kind, pk, module_ref=module_ref)
+            existing = _issued_certificate(cursor, kind, learner_id, module_ref=module_ref)
             if existing:
                 return JsonResponse({
                     "certificate": _certificate_dict(existing),
@@ -648,8 +677,8 @@ def issue_learner_module_certificate(request, kind, pk, module_ref):
         actor = _clean_text(getattr(getattr(request, "login_account", None), "email", "")) or "system"
         with transaction.atomic(using="enrolment"):
             with connections["enrolment"].cursor() as cursor:
-                _lock_certificate_scope(cursor, kind, pk, module_ref)
-                existing = _issued_certificate(cursor, kind, pk, module_ref=module_ref)
+                _lock_certificate_scope(cursor, kind, learner_id, module_ref)
+                existing = _issued_certificate(cursor, kind, learner_id, module_ref=module_ref)
                 if existing:
                     # Another request may have issued and then corrected this
                     # certificate while eligibility was loading. Keep that copy.
@@ -671,7 +700,7 @@ def issue_learner_module_certificate(request, kind, pk, module_ref):
                     [
                         _new_certificate_number(),
                         kind,
-                        pk,
+                        learner_id,
                         template["id"],
                         template["version"],
                         module_ref,
@@ -687,10 +716,10 @@ def issue_learner_module_certificate(request, kind, pk, module_ref):
                         '''INSERT INTO "Learner".certificate_audit_logs
                            (actor_email,action,template_id,certificate_id,details)
                            VALUES (%s,%s,%s,%s,%s::jsonb)''',
-                        [actor, "module-certificate-issued", template["id"], row[0], json.dumps({"learnerKind": kind, "learnerId": pk, "moduleRef": module_ref})],
+                        [actor, "module-certificate-issued", template["id"], row[0], json.dumps({"learnerKind": kind, "learnerId": learner_id, "enrolmentId": pk, "moduleRef": module_ref})],
                     )
                 else:
-                    row = _issued_certificate(cursor, kind, pk, module_ref=module_ref)
+                    row = _issued_certificate(cursor, kind, learner_id, module_ref=module_ref)
                     if not row:
                         return _error("This certificate is no longer active. Contact an administrator.", 409)
     except ServiceError as exc:
