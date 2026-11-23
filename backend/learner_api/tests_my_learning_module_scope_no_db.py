@@ -133,7 +133,7 @@ class ModuleContextScopeTests(SimpleTestCase):
 class TransferredModuleOpenTests(SimpleTestCase):
     def open_module(self, kind, status, *, new_completion=False, http=False, overlap=False, duplicate=False):
         from . import (weekly_learning, dashboard_training, training_plan_dashboard, live_session_progress,
-                       teams_attendance, builder_activity_dates, subject_store)
+                       teams_attendance, builder_activity_dates)
         source = SimpleNamespace(pk=7, id=7, email='learner@example.test', programme='Programme',
             cohort='', group='', _case_file_profile=SimpleNamespace(pk=9))
         old = {'id': 3, 'source_course_ref': '50', 'source_course_title': 'Old'}
@@ -165,7 +165,6 @@ class TransferredModuleOpenTests(SimpleTestCase):
             stack.enter_context(patch.object(live_session_progress, 'read_live_credits', return_value=[]))
             stack.enter_context(patch.object(teams_attendance, 'annotate_attendance_completion', side_effect=lambda rows, *a: rows))
             stack.enter_context(patch.object(builder_activity_dates, 'read_builder_activity_dates', return_value={}))
-            stack.enter_context(patch.object(subject_store, 'covers_for', return_value={}))
             owner = {'id': 9, 'name': 'Synthetic'}
             if http:
                 model = Mock()

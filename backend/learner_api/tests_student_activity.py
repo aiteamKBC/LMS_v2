@@ -11,7 +11,8 @@ from django.test import RequestFactory, SimpleTestCase
 from learner_api.student_activity import (
     student_activity, subject_covers, upload_subject_cover,
     _builder_cover_url, _builder_subject_metadata, _material_response,
-    _effective_current_subjects, combined_recorded_otjh, _direct_progress_otjh,
+    _effective_current_subjects, _mapped_subject_covers,
+    combined_recorded_otjh, _direct_progress_otjh,
 )
 from learner_api.student_activity_data import (
     read_audit_hour_totals, read_student_activity, summarize_activities, read_student_material,
@@ -391,6 +392,24 @@ class SubjectScheduleTests(SimpleTestCase):
             self.assertTrue(schedule['date_needs_review'])
 
 class SubjectBuilderCoverTests(SimpleTestCase):
+    def test_historical_subject_uses_only_its_authoritative_module_cover(self):
+        cursor = MagicMock()
+        image = 'data:image/webp;base64,aGVsbG8='
+        cursor.fetchall.return_value = [('MOD-1', 'Canonical title', image)]
+        connection = MagicMock()
+        connection.cursor.return_value.__enter__.return_value = cursor
+        subjects = [
+            {'id': 42, 'name': 'A different historical title', 'module_id': 'MOD-1'},
+            {'id': 99, 'name': 'Canonical title', 'module_id': None},
+        ]
+
+        with patch('learner_api.student_activity.connections', {'enrolment': connection}):
+            covers = _mapped_subject_covers(subjects)
+
+        self.assertEqual(covers, {'legacy:42': image})
+        self.assertEqual(cursor.execute.call_args.args[1], [['MOD-1']])
+        self.assertNotIn('legacy:99', covers)
+
     def test_historical_cards_do_not_request_current_builder_metadata(self):
         # The current cards now use explicit current: IDs. Historical activity
         # lineage is no longer part of the cover response or a builder lookup.
@@ -481,11 +500,10 @@ class SubjectBuilderCoverTests(SimpleTestCase):
 
     @patch('login.permissions._auth_gate_enabled', return_value=True)
     @patch('login.permissions.authenticate_request')
-    def test_current_builder_cover_does_not_override_historical_subject_image(self, authenticate, _gate):
+    def test_metadata_endpoint_uses_canonical_cover_without_legacy_cover_table(self, authenticate, _gate):
         authenticate.return_value = SimpleNamespace(role='staff')
         cursor = MagicMock()
         cursor.fetchall.side_effect = [
-            [('legacy:42', '/media/curriculum_components/old.webp')],
             [('MOD-1', 'Renamed subject', '')],
             [('MOD-1', None, 1, '', '', '', None)],
             [('WEEK-1', 'MOD-1', 'Lecture 06/03/26')],
@@ -495,30 +513,31 @@ class SubjectBuilderCoverTests(SimpleTestCase):
         ]
         with patch('learner_api.progress_transfer.cover_transfer_metadata', return_value={}), \
              patch('learner_api.student_activity.connections') as connections, \
-             patch('learner_api.student_activity.subject_store.ready', return_value=True), \
              patch('learner_api.student_activity._effective_current_subjects', return_value=[
                  {'id': 'MOD-1', 'title': 'Renamed subject'},
              ]), \
              patch('learner_api.previous_learning_groups.read_previous_learning_groups', return_value={}), \
-             patch('learner_api.student_activity._cover_url', return_value='https://example.com/old.webp'):
+             patch('learner_api.student_activity._cover_url') as legacy_cover_url:
             connections.__getitem__.return_value.cursor.return_value.__enter__.return_value = cursor
             response = subject_covers(RequestFactory().get('/?refs=legacy:42'), pk=132)
         self.assertEqual(response.status_code, 200)
         payload = json.loads(response.content)
-        self.assertEqual(payload['covers'], {'legacy:42': 'https://example.com/old.webp', 'current:MOD-1': ''})
+        self.assertEqual(payload['covers'], {'current:MOD-1': ''})
         self.assertNotIn('legacy:42', payload['builder_subjects'])
         self.assertEqual(payload['builder_subjects']['current:MOD-1']['id'], 'MOD-1')
         self.assertEqual(payload['activity_dates']['COMP-1']['date'], '2026-03-06')
         self.assertEqual(payload['activity_dates']['COMP-1']['date_source'], 'builder_section_title')
         self.assertFalse(payload['activity_dates']['COMP-1']['date_needs_review'])
         self.assertNotIn('activity_sources', payload)
+        legacy_cover_url.assert_not_called()
+        sql = '\n'.join(call.args[0] for call in cursor.execute.call_args_list)
+        self.assertIn('curriculum.modules', sql)
+        self.assertNotIn('subject_covers', sql)
 
     @patch('login.permissions.authenticate_request')
     def test_old_upload_route_cannot_write_a_separate_cover(self, authenticate):
-        with patch.dict(os.environ, {'LEARNER_API_REQUIRE_AUTH': '1'}), \
-             patch('learner_api.student_activity.subject_store.save_cover') as save:
+        with patch.dict(os.environ, {'LEARNER_API_REQUIRE_AUTH': '1'}):
             for role, expected in [('learner', 403), ('staff', 409)]:
                 authenticate.return_value = SimpleNamespace(role=role, subject_id=132)
                 response = upload_subject_cover(RequestFactory().post('/'), subject_ref='legacy:42')
                 self.assertEqual(response.status_code, expected)
-            save.assert_not_called()

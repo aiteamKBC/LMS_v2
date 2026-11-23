@@ -87,7 +87,7 @@ class ImportedContinuationModuleTests(SimpleTestCase):
     def test_owned_old_route_reads_only_added_weeks_for_both_learner_types(self):
         from . import (my_learning as learning, canonical_learning as canonical,weekly_learning,
             dashboard_training,training_plan_dashboard,live_session_progress,teams_attendance,
-            builder_activity_dates,subject_store)
+            builder_activity_dates)
         for kind in ('commercial','apprenticeship'):
             source=SimpleNamespace(pk=7,id=7,email='learner@example.test',programme='Programme',cohort='',group='',
                 training_plan=[],learning_plan=[],_case_file_profile=SimpleNamespace(pk=9))
@@ -112,7 +112,6 @@ class ImportedContinuationModuleTests(SimpleTestCase):
                 stack.enter_context(patch.object(live_session_progress,'read_live_credits',return_value=[]))
                 stack.enter_context(patch.object(teams_attendance,'annotate_attendance_completion',side_effect=lambda rows,*args:rows))
                 stack.enter_context(patch.object(builder_activity_dates,'read_builder_activity_dates',return_value=dates))
-                stack.enter_context(patch.object(subject_store,'covers_for',return_value={}))
                 result=learning.read_module(source,kind,{'id':9,'name':'Synthetic'},'legacy:50')
             self.assertEqual(result['subjectId'],'legacy:50')
             self.assertEqual(result['activity']['activities'],before['activities'])

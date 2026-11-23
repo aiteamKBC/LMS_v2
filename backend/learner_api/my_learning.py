@@ -872,7 +872,6 @@ def load_context(source, owner, subject_id=None, *, purpose='catalogue', records
 
 
 def read_catalogue(source, kind, owner, *, upcoming_only=False):
-    from .subject_store import covers_for
     assigned, ids, records, native, courses, definitions, done, started, hours, metadata, credits = load_context(source, owner)
     modules = metadata['modules']
     ksb_mappings = None
@@ -897,11 +896,13 @@ def read_catalogue(source, kind, owner, *, upcoming_only=False):
     from .my_learning_activity import card_teaching_activity
     with projection_stage('teaching_activity'):
         module_activity = card_teaching_activity(cards)
-    from .student_activity import _cover_url
-    with projection_stage('covers'):
-        covers = {**metadata['covers'], **{ref:_cover_url(path) for ref,path in covers_for([c['id'] for c in cards if c['source']=='legacy']).items()}}
+    covers = metadata['covers']
     for card in cards:
-        card['cover'] = covers.get(card['id']) or None
+        # Historical courses reuse artwork only when their canonical source
+        # membership records an exact module identity. Never infer by title.
+        cover_ref = (f"current:{card['moduleId']}" if card['source'] == 'legacy'
+                     and card.get('moduleId') else card['id'])
+        card['cover'] = covers.get(cover_ref) or None
         # Native module identity is encoded by its stable navigation ID.
         if card['source'] == 'current':
             card.pop('moduleId', None)
@@ -1159,9 +1160,9 @@ def read_module(source, kind, owner, subject_id):
     with connections['enrolment'].cursor() as cur:
         dates = continuation_dates or read_builder_activity_dates(cur, scope_ids)
     clean_metadata['activity_dates']={key:value for key,value in dates.items() if key in component_set}
-    from .subject_store import covers_for
-    from .student_activity import _cover_url
-    clean_metadata['covers'].update({ref:_cover_url(path) for ref,path in covers_for([f'legacy:{ref}' for ref in course_refs]).items()})
+    canonical_cover_ref = f'current:{mid}' if mid else None
+    if subject_id.startswith('legacy:') and canonical_cover_ref in clean_metadata['covers']:
+        clean_metadata['covers'][subject_id] = clean_metadata['covers'][canonical_cover_ref]
     if activity:
         activity['verification_status']='verified'
         activity['replacement_hours']={}
