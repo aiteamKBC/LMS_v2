@@ -1,5 +1,6 @@
 """Reviewed and roster-scoped attendance matching; raw evidence is never edited."""
 from collections import defaultdict
+import json
 import re
 
 from .session_results_policy import attendance_display_name, attendance_identity, attendance_name_key, session_roster
@@ -20,6 +21,22 @@ def identity_key(record):
 
 def record_key(record):
     return 'record', str(record.get('occurrence_id') or '') + ':' + str(record.get('id') or '')
+
+
+def series_identity_emails(series):
+    """Explicit meeting staff, not the role assigned to an attendee by Teams."""
+    get = series.get if isinstance(series, dict) else lambda key: getattr(series, key, None)
+    values = [get('organizer_email')]
+    for key in ('presenters', 'co_organizers'):
+        people = get(key) or []
+        if isinstance(people, str):
+            try:
+                people = json.loads(people)
+            except (TypeError, ValueError):
+                people = [people]
+        if isinstance(people, list):
+            values.extend(people)
+    return {str(value).strip().casefold() for value in values if value}
 
 
 def ambiguous_guest_names(records):
@@ -59,51 +76,28 @@ def _one_typo(left, right):
     return short[index:] == long[index + 1:]
 
 
-def _parts_match(query, candidate, typo_budget):
-    """Match name parts in order, permitting initials alongside a real name."""
-    costs = {0: 0}
-    for part in candidate:
-        for used, cost in list(costs.items()):
-            if used == len(query):
-                continue
-            token = query[used]
-            if token == part or (len(token) == 1 and part.startswith(token)):
-                extra = 0
-            elif typo_budget and _one_typo(token, part):
-                extra = 1
-            else:
-                continue
-            if cost + extra <= typo_budget:
-                costs[used + 1] = min(costs.get(used + 1, 2), cost + extra)
-    return len(query) in costs
+def _partial_candidates(record, alternatives):
+    """One informative part is enough, but every similar candidate is retained.
 
-
-def _automatic_candidates(value, full_names, alternatives):
-    """Full names win; otherwise require one candidate across all evidence.
-
-    Check exact name parts, initials and email local parts before considering
-    one typo. Domains and plus-address tags never identify a learner.
+    Name and email evidence are combined, not tried in order: an exact part
+    must not hide another learner with a one-letter variation. Tenant/domain
+    membership is shared by learners and cannot resolve that ambiguity.
     """
-    if value in full_names:
-        return full_names[value], False
-    query = _name_parts(value)
-    if not query or not any(len(part) > 1 for part in query):
-        return {}, True
-    compact = ''.join(query)
-    for budget in (0, 1):
-        matches = {}
-        for email, learner, names, local in alternatives:
-            joined_local = ''.join(local)
-            if (_parts_match(query, names, budget) or (local and (
-                    _parts_match(query, local, budget) or compact == joined_local
-                    or (budget and _one_typo(compact, joined_local))))):
-                matches[email] = learner
-        if matches:
-            return matches, True
-    return {}, True
+    name = _name_parts(attendance_display_name(record))
+    local = str(record.get('email') or '').partition('@')[0].split('+', 1)[0]
+    local_parts = _name_parts(local)
+    queries = {part for part in (*name, *local_parts) if len(part) > 1}
+    queries.update(value for value in (''.join(name), ''.join(local_parts)) if len(value) > 1)
+    matches = {}
+    for email, learner, names, parts in alternatives:
+        targets = {part for part in (*names, *parts) if len(part) > 1}
+        targets.update(value for value in (''.join(names), ''.join(parts)) if len(value) > 1)
+        if any(left == right or _one_typo(left, right) for left in queries for right in targets):
+            matches[email] = learner
+    return matches
 
 
-def apply_reviewed_identities(records, aliases=(), legacy_links=(), rules=(), *, learners=None):
+def apply_reviewed_identities(records, aliases=(), legacy_links=(), rules=(), *, learners=None, protected_emails=()):
     """Resolve staff decisions consistently for the register and reporting.
 
     A revoked rule blocks older links and automatic name matching. A duplicate
@@ -115,6 +109,7 @@ def apply_reviewed_identities(records, aliases=(), legacy_links=(), rules=(), *,
     legacy = {(str(row['occurrence_id']), str(row['attendance_row_id'])): row for row in legacy_links}
     rules = {(row['identity_kind'], row['identity_value']): row for row in rules}
     ambiguous = ambiguous_guest_names(records)
+    protected = {str(email).strip().casefold() for email in protected_emails}
     candidates = defaultdict(dict)
     alternatives = []
     for email, learner in (learners or {}).items():
@@ -152,22 +147,29 @@ def apply_reviewed_identities(records, aliases=(), legacy_links=(), rules=(), *,
                 row['email'] = old['canonical_email']
                 row['identityRule'] = {**old, 'active': True, 'revision': 0,
                                        'identity_kind': key[0], 'identity_value': key[1]}
-            elif (key[0] == 'guest_name' and str(row.get('role') or '').strip().casefold() in {'', 'attendee'}
+            elif (str(row.get('email') or '').strip().casefold() not in (learners or {})
+                  and str(row.get('email') or '').strip().casefold() not in protected
+                  and str(row.get('role') or '').strip().casefold() in {'', 'attendee', 'presenter'}
                   and not attendance_bot(row)):
-                if key[1] not in cached_candidates:
-                    cached_candidates[key[1]] = _automatic_candidates(key[1], candidates, alternatives)
-                matches, extended = cached_candidates[key[1]]
+                cache_key = (attendance_name_key(attendance_display_name(row)), str(row.get('email') or '').casefold())
+                if cache_key not in cached_candidates:
+                    # Retain authoritative exact full-name guest matches. All
+                    # weaker evidence (including different accounts) is checked
+                    # together against the complete roster for ambiguity.
+                    exact = candidates.get(cache_key[0]) if key[0] == 'guest_name' else None
+                    cached_candidates[cache_key] = (exact, False) if exact else (_partial_candidates(row, alternatives), True)
+                matches, extended = cached_candidates[cache_key]
                 if len(matches) == 1:
                     email, learner = next(iter(matches.items()))
                     row['email'] = email
                     row['identityRule'] = {
                         'active': True, 'revision': 0, 'automatic': True,
-                        'identity_kind': 'guest_name', 'identity_value': key[1],
+                        'identity_kind': key[0], 'identity_value': key[1],
                         'learner_profile_id': learner.get('learnerProfileId'),
                         'canonical_email': email, 'display_name': attendance_display_name(source),
                     }
                     if extended:
-                        expanded.append(row)
+                        expanded.append((row, source.get('email') or ''))
                 elif len(matches) > 1:
                     row['identityReviewRequired'] = True
                     row['identityAmbiguous'] = True
@@ -181,9 +183,10 @@ def apply_reviewed_identities(records, aliases=(), legacy_links=(), rules=(), *,
     # Two distinct reported people must not collapse onto one learner just
     # because one used a first name and the other a surname/local part.
     # Keep explicit reviews and existing full-name/email decisions authoritative.
-    for row in expanded:
+    for row, original_email in expanded:
         if len(claims[str(row['email']).strip().casefold()]) > 1:
-            row.update(email='', identityRule=None, identityReviewRequired=True, identityAmbiguous=True)
+            row.update(email=original_email, identityRule=None,
+                       identityReviewRequired=True, identityAmbiguous=True)
     return result
 
 
