@@ -21,7 +21,7 @@ vi.mock('@/api/feedback', async importOriginal => {
     ...actual,
     feedbackApi: {
       ...actual.feedbackApi,
-      listForms: vi.fn(), responses: vi.fn(), response: vi.fn(), responseEmails: vi.fn(), sendResponseEmail: vi.fn(), analytics: vi.fn(), questionAnalytics: vi.fn(), insightsDashboard: vi.fn(), versions: vi.fn(), recipients: vi.fn(),
+      listForms: vi.fn(), responses: vi.fn(), response: vi.fn(), responseEmails: vi.fn(), sendResponseEmail: vi.fn(), analytics: vi.fn(), questionAnalytics: vi.fn(), insightsDashboard: vi.fn(), versions: vi.fn(), recipients: vi.fn(), recipientsByCoach: vi.fn(),
       createQualityTicket: vi.fn().mockResolvedValue({ ticket: { id: 'synthetic-quality-ticket', assignedTeam: 'Quality Team', status: 'Open' } }),
       qualityTicketStatus: vi.fn().mockResolvedValue({ ticket: { id: 'synthetic-quality-ticket', assignedTeam: 'Quality Team', status: 'Open' } }),
     },
@@ -436,6 +436,19 @@ describe('feedback form version history', () => {
 
     await user.click(screen.getByRole('option', { name: /Martech - Thur - Session 1.*12 assigned.*1 responses/ }));
     await waitFor(() => expect(feedbackApi.recipients).toHaveBeenCalledWith(20, '', 1, 50, 'lecture:31'));
+  });
+
+  it('uses current-coach grouping only for the MCM assigned learners dialog', async () => {
+    const mcm = { ...form, formType: 'post_mcm_review' as const, title: 'Monthly Coaching Meeting' };
+    vi.mocked(feedbackApi.listForms).mockResolvedValue({ forms: [mcm], summary: { totalForms: 1, publishedForms: 1, draftForms: 0, totalResponses: 3 } });
+    vi.mocked(feedbackApi.recipientsByCoach).mockResolvedValue({ coaches: [], coachKey: '', learners: [], totalLearners: 0, totalReviews: 0, totalCompleted: 0, page: 1, pageSize: 25, pages: 1 });
+    const user = userEvent.setup(); render(<MemoryRouter><FeedbackPage /></MemoryRouter>);
+    await user.click(await screen.findByRole('button', { name: 'Forms' }));
+    await user.click(screen.getByRole('button', { name: '22' }));
+    expect(await screen.findByText('No MCM feedback assignments yet.')).toBeVisible();
+    expect(feedbackApi.recipientsByCoach).toHaveBeenCalledWith(20, '', '', 1);
+    expect(feedbackApi.recipients).not.toHaveBeenCalled();
+    expect(screen.queryByRole('combobox', { name: 'Filter by review' })).not.toBeInTheDocument();
   });
 
   it('shows event attendees from the event assignment source', async () => {

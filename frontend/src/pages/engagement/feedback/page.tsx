@@ -5,6 +5,7 @@ import Swal from 'sweetalert2';
 import { feedbackApi, type FeedbackAnalyticsData, type FeedbackAssignmentSource, type FeedbackForm, type FeedbackFormVersion, type FeedbackLearnerOption, type FeedbackRecipient, type FeedbackResponse, type FeedbackResponseActivity } from '@/api/feedback';
 import { FeedbackDashboard } from '@/features/feedback/FeedbackDashboard';
 import { ResponseEmailPanel } from '@/features/feedback/ResponseEmailPanel';
+import { McmRecipients } from '@/features/feedback/McmRecipients';
 import { FEEDBACK_TYPE_LABELS } from '@/features/feedback/feedbackDashboardData';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { WorkspaceHeroBanner } from '@/components/feature/WorkspaceHeroBanner';
@@ -86,7 +87,9 @@ export default function FeedbackPage() {
       {insightsOpened && <div hidden={tab !== 'insights'}><FeedbackDashboard active={tab === 'insights'} revision={revision} onViewResponse={id => void openResponse({ id })} /></div>}
     </div>
     {assigning && <AssignmentDialog form={assigning} onClose={() => setAssigning(null)} onAssigned={() => { setAssigning(null); void refresh(); }} />}
-    {recipientForm && <RecipientsDialog form={recipientForm} onClose={() => setRecipientForm(null)} />}
+    {recipientForm && (recipientForm.formType === 'post_mcm_review'
+      ? <Modal title={`Assigned learners — ${recipientForm.title}`} onClose={() => setRecipientForm(null)} wide><McmRecipients key={recipientForm.id} formId={recipientForm.id} /></Modal>
+      : <RecipientsDialog form={recipientForm} onClose={() => setRecipientForm(null)} />)}
     {versionForm && <VersionsDialog form={versionForm} onClose={() => setVersionForm(null)} onPreview={id => navigate(`/engagement/reports/feedback/forms/${id}/preview`)} />}
     {viewing && <ResponseDialog response={viewing} onClose={() => setViewing(null)} />}
   </WorkspaceShell>;
@@ -393,7 +396,7 @@ function ResponseDialog({ response, onClose }: { response: FeedbackResponse; onC
     </div>
   </Modal>;
 }
-function Modal({ title, onClose, hideClose = false, children }: { title: string; onClose: () => void; hideClose?: boolean; children: React.ReactNode }) { return <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/40 p-4" role="dialog" aria-modal="true"><div className="max-h-[90vh] w-full max-w-3xl overflow-y-auto rounded-2xl bg-white p-5 shadow-xl"><div className="mb-4 flex items-center justify-between gap-3"><h2 className="font-heading text-lg font-bold">{title}</h2>{!hideClose && <button onClick={onClose} aria-label="Close" className="text-xl text-foreground-400">×</button>}</div>{children}</div></div>; }
+function Modal({ title, onClose, hideClose = false, wide = false, children }: { title: string; onClose: () => void; hideClose?: boolean; wide?: boolean; children: React.ReactNode }) { return <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/40 p-4" role="dialog" aria-modal="true"><div className={`max-h-[90vh] w-full ${wide ? 'max-w-5xl' : 'max-w-3xl'} overflow-y-auto rounded-2xl bg-white p-5 shadow-xl`}><div className="mb-4 flex items-center justify-between gap-3"><h2 className="font-heading text-lg font-bold">{title}</h2>{!hideClose && <button onClick={onClose} aria-label="Close" className="text-xl text-foreground-400">×</button>}</div>{children}</div></div>; }
 function Status({ status }: { status: string }) { const styles = status === 'published' || status === 'completed' ? 'bg-emerald-100 text-emerald-700' : status === 'draft' || status === 'in_progress' ? 'bg-amber-100 text-amber-700' : 'bg-background-200 text-foreground-600'; return <span className={`rounded-full px-2 py-1 text-[10px] font-semibold ${styles}`}>{status.replace('_', ' ').replace(/\b\w/g, x => x.toUpperCase())}</span>; }
 function formatDate(value: string | null) { return value ? new Date(value).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : '—'; }
 function formatDateTime(value: string) { return new Date(value).toLocaleString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }); }
