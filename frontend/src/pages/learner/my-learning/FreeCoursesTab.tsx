@@ -10,6 +10,7 @@ import { Panel } from '@/components/ui/Panel';
 import { EmptyState, EmptyStateAction } from '@/components/ui/EmptyState';
 import { Cover, SubjectCertificateAction } from './SubjectWorkspace';
 import styles from './SubjectWorkspace.module.css';
+import { allocatedActivityHours } from '@/utils/activityPlan';
 
 // Download the material players / quiz engine only when a learner opens an
 // activity, exactly as the ordinary module workspace does via DeferredStudentMaterial.
@@ -75,8 +76,14 @@ function FreeCourseCertificate({ course, isDone, certificate, kind, learnerId }:
 }) {
   if (course.moduleId) return null; // Builder courses use the normal module workspace action.
   const progress = courseProgress(course, isDone);
+  // Count the Required badge, not the sidebar's navigation-only exceptions.
+  // Unavailable Required content stays unfinished rather than shrinking the total.
+  const required = [...new Map(course.weeks.flatMap(week => week.activities)
+    .filter(activity => allocatedActivityHours(activity.expectedOtjh) != null)
+    .map(activity => [activity.componentId, activity])).values()];
   return <SubjectCertificateAction subject={{ id: `free:${course.freeCourseId}`, title: course.courseName, source: 'current', activities: [],
     card: { activityCount: progress.completable, completedActivityCount: progress.done, progress: progress.percent,
+      requiredActivityCount: required.length, completedRequiredActivityCount: required.filter(isDone).length,
       status: progress.percent === 100 ? 'Completed' : 'In progress', finalTestPassed: false } }}
     template={certificate.template} csrfToken={certificate.csrfToken} kind={kind} learnerId={learnerId} />;
 }

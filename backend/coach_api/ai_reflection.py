@@ -12,8 +12,8 @@ taken something usable from it.
 Running the assignment policy over a reflection produced a thousand words of
 portfolio assessment about a fifteen-minute video, which no coach would read.
 So the two have their own prompt documents (``AI_reflection_prompt.MD`` beside
-``AI_marking_prompt.MD``, both at the repository root for the training team to
-edit) and their own assembly.
+``AI_marking_prompt.MD``, both in ``coach_api/prompts/`` for the training team
+to edit) and their own assembly.
 
 What the model is given
 -----------------------

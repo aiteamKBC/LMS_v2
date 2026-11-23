@@ -27,9 +27,15 @@ ROOT = Path(__file__).parent
 spec = importlib.util.spec_from_file_location('personal_policy', ROOT / 'personal_learning_policy.py')
 policy = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(policy)
+requirement_spec = importlib.util.spec_from_file_location('activity_requirements', ROOT / 'activity_requirements.py')
+activity_requirements = importlib.util.module_from_spec(requirement_spec)
+requirement_spec.loader.exec_module(activity_requirements)
 feedback_spec = importlib.util.spec_from_file_location('review_feedback_format', ROOT.parent / 'coach_api' / 'feedback_format.py')
 feedback_format = importlib.util.module_from_spec(feedback_spec)
 feedback_spec.loader.exec_module(feedback_format)
+display_spec = importlib.util.spec_from_file_location('certificate_display', ROOT / 'certificate_display.py')
+certificate_display = importlib.util.module_from_spec(display_spec)
+display_spec.loader.exec_module(certificate_display)
 
 
 def functions(filename, namespace, names=None):
@@ -69,7 +75,7 @@ class PersonalLearningTests(unittest.TestCase):
         self.writes = 0
         self.now = datetime(2026, 9, 18, 10, tzinfo=timezone.utc)
         self.detail = {'id': self.context['id'], 'modules': ['Module A'], 'programme': 'Synthetic programme', 'ksbs': [],
-            'components': [{'componentId': 'C1', 'component': 'Reading', 'type': 'reading', 'moduleId': 'MOD-A', 'module': 'Module A', 'week': 'Week 1', 'reflectionRequired': False}],
+            'components': [{'componentId': 'C1', 'component': 'Reading', 'type': 'reading', 'expectedOtjh': 1, 'moduleId': 'MOD-A', 'module': 'Module A', 'week': 'Week 1', 'reflectionRequired': False}],
             'learningAccess': {'blocked': False, 'startDate': '2026-09-01'}, 'videoProgress': [], 'componentProgress': [], 'quizAttempts': []}
         self.store = types.ModuleType('learner_api.personal_learning_store')
         self.store.__dict__['json'] = json
@@ -87,7 +93,7 @@ class PersonalLearningTests(unittest.TestCase):
             'serverSessionSeconds': 30, 'startedAt': self.now, 'submittedAt': self.now, 'source': 'signed_session_capped_visible_page'})
         tracking.outside_uk_working_hours = lambda _: False
         certificates = types.ModuleType('learner_api.certificates')
-        certificates.__dict__.update(re=re)
+        certificates.__dict__.update(re=re, has_required_hours=activity_requirements.has_required_hours)
         functions('certificates.py', certificates.__dict__, {'_clean_text', '_progress_counts', '_component_activity_progress', '_subject_ref', '_module_components', '_module_progress'})
         self.template = {'id': 1, 'version': 1, 'title': 'Achievement', 'bodyText': 'Completed', 'minimumProgress': 100, 'requireFinalTest': False, 'layoutConfig': {}}
         certificates._published_template = lambda _: self.template
@@ -97,7 +103,8 @@ class PersonalLearningTests(unittest.TestCase):
             'answers': [{'id': 10, 'text': 'Correct', 'isCorrect': True}, {'id': 9, 'text': 'Wrong', 'isCorrect': False}]}]}
         self.quiz._grade_question = lambda q, answer: {'earned': int(answer == 10), 'possible': 1, 'correct': answer == 10}
         self.modules = {'learner_api': types.ModuleType('learner_api'), 'learner_api.personal_learning_store': self.store,
-            'learner_api.time_tracking': tracking, 'learner_api.certificates': certificates, 'learner_api.quizzes': self.quiz}
+            'learner_api.time_tracking': tracking, 'learner_api.certificates': certificates, 'learner_api.quizzes': self.quiz,
+            'learner_api.certificate_display': certificate_display}
         modules = patch.dict(sys.modules, self.modules)
         modules.start()
         self.addCleanup(modules.stop)
@@ -250,6 +257,58 @@ class PersonalLearningTests(unittest.TestCase):
         self.assertTrue(result['issued'])
         self.assertEqual(result['certificate']['progressPercent'], 100)
 
+    def test_published_template_changes_reuse_the_personal_award(self):
+        saved = {'certificateNumber': 'PL-TEST', 'templateId': 7, 'templateVersion': 3,
+                 'verificationToken': 'same-token', 'issuedAt': self.now.isoformat(), 'progressPercent': 80}
+        self.template.update(id=8, version=4)
+        self.cursor.fetchone.return_value = (saved,)
+        result = self.ns['certificate'](self.context, self.account, self.detail, self.request, issue=True)
+        self.assertFalse(result['issued'])
+        self.assertEqual(result['certificate'], saved)
+        sql, params = self.cursor.execute.call_args.args
+        self.assertNotIn('template_id=%s', sql)
+        self.assertEqual(params, [7, 'MOD-A'])
+        self.store.load.assert_called_once_with(7, 'MOD-A', lock=True)
+        self.assertTrue(all(call.args[0].startswith('SELECT') for call in self.cursor.execute.call_args_list))
+
+    def test_personal_template_includes_existing_award_without_lowering_the_current_threshold(self):
+        self.cursor.fetchone.return_value = (11,)
+        result = self.ns['certificate'](self.context, self.account, self.detail, self.request)
+        self.assertEqual(result['template']['issuedModuleRefs'], ['current:MOD-A'])
+        self.assertEqual(result['template']['minimumProgress'], 100)
+        self.assertEqual(self.cursor.execute.call_args.args[1], [7, 'MOD-A'])
+        self.assertEqual(self.writes, 0)
+
+    def test_reopening_personal_certificate_refreshes_profile_content_progress_and_design_read_only(self):
+        saved = {'certificateNumber': 'PL-TEST', 'templateId': 7, 'templateVersion': 3,
+                 'verificationToken': 'same-token', 'issuedAt': self.now.isoformat(), 'progressPercent': 80,
+                 'moduleRef': 'current:MOD-A', 'snapshot': {'learner': {'name': 'Old name'},
+                     'moduleTitle': 'Old module', 'bodyText': 'Old text'}}
+        original = copy.deepcopy(saved)
+        self.detail['components'][0]['module'] = 'Renamed module'
+        self.detail['componentProgress'] = [{'componentId': 'C1', 'passed': True}]
+        self.template.update(id=8, version=4, bodyText='Published text')
+        self.cursor.fetchone.return_value = (saved, 7, 'MOD-A')
+        model = types.SimpleNamespace(objects=Mock(), DoesNotExist=type('MissingAccount', (Exception,), {}))
+        model.objects.get.return_value = self.account
+        login_models = types.ModuleType('login.models'); login_models.LoginAccount = model
+        request = types.SimpleNamespace(method='GET')
+        with patch.dict(sys.modules, {'login.models': login_models}):
+            result = self.ns['verify_certificate'](request, 'same-token')
+        certificate = result['certificate']
+        self.assertEqual(certificate['snapshot']['learner']['name'], 'Synthetic Admin')
+        self.assertEqual(certificate['snapshot']['moduleTitle'], 'Renamed module')
+        self.assertEqual(certificate['snapshot']['bodyText'], 'Published text')
+        self.assertEqual((certificate['progressPercent'], certificate['progressAtIssue']), (100, 80))
+        self.assertIsNone(certificate['otjHours'])  # Personal study is outside official OTJ hours.
+        self.assertEqual((certificate['templateVersion'], certificate['displayTemplateVersion']), (3, 4))
+        for key in ('certificateNumber', 'verificationToken', 'issuedAt'):
+            self.assertEqual(certificate[key], original[key])
+        self.assertEqual(saved, original)
+        model.objects.get.assert_called_once_with(pk=7)
+        self.assertIn('no-store', result['Cache-Control'])
+        self.assertTrue(all(call.args[0].startswith('SELECT') for call in self.cursor.execute.call_args_list))
+
     def test_certificate_threshold_uses_completed_components_not_hours_or_rounded_percent(self):
         component = self.detail['components'][0]
         self.detail['components'] = [{**component, 'componentId': f'C{i}', 'expectedOtjh': 10} for i in range(200)]
@@ -263,6 +322,23 @@ class PersonalLearningTests(unittest.TestCase):
         result = self.ns['certificate'](self.context, self.account, self.detail, self.request, issue=True)
         self.assertTrue(result['issued'])
         self.assertEqual(result['certificate']['progressPercent'], 80)
+
+    def test_personal_certificate_counts_required_only_without_changing_general_course_progress(self):
+        self.detail['components'].append({**self.detail['components'][0], 'componentId': 'OPTIONAL', 'expectedOtjh': 0})
+        self.detail['componentProgress'] = [{'componentId': 'C1', 'passed': True}]
+        self.assertEqual(self.ns['progress'](self.detail, 'MOD-A')['progressPercent'], 50)
+        self.cursor.fetchone.side_effect = [None, (12,)]
+        result = self.ns['certificate'](self.context, self.account, self.detail, self.request, issue=True)
+        self.assertEqual(result['certificate']['progressPercent'], 100)
+        self.assertEqual(result['eligibility']['trackableTotal'], 1)
+
+    def test_personal_certificate_requires_a_nonempty_required_population(self):
+        self.detail['components'][0]['expectedOtjh'] = 0
+        self.detail['componentProgress'] = [{'componentId': 'C1', 'passed': True}]
+        self.template['minimumProgress'] = 0
+        self.cursor.fetchone.return_value = None
+        with self.assertRaises(PermissionError):
+            self.ns['certificate'](self.context, self.account, self.detail, self.request, issue=True)
 
     def test_gateway_does_not_dispatch_booking_or_sync(self):
         activity = types.ModuleType('learner_api.personal_learning_activities')

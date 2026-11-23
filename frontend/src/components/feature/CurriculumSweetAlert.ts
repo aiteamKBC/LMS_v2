@@ -25,6 +25,8 @@ type CurriculumConfirmOptions = {
   successTitle?: string;
   successText?: string;
   onConfirm: () => void | Promise<void>;
+  /** Replace the confirmation with a timed error alert when the action fails. */
+  onConfirmError?: (error: unknown) => CurriculumAlertOptions | null;
   /**
    * Optional third choice, for the case where cancelling and confirming are not
    * the only two sensible answers — "discard / keep my work / go back". Omit both
@@ -127,11 +129,13 @@ export async function showCurriculumConfirm({
   successTitle,
   successText,
   onConfirm,
+  onConfirmError,
   denyButtonText,
   onDeny,
   denyButtonTone = 'safe',
   denySuccess,
 }: CurriculumConfirmOptions) {
+  let confirmErrorAlert: CurriculumAlertOptions | null = null;
   const result = await Swal.fire({
     title,
     text,
@@ -165,6 +169,11 @@ export async function showCurriculumConfirm({
         await onConfirm();
         return true;
       } catch (err) {
+        confirmErrorAlert = onConfirmError?.(err) || null;
+        if (confirmErrorAlert) {
+          Swal.close();
+          return false;
+        }
         Swal.showValidationMessage(err instanceof Error ? err.message : 'Unable to complete this action.');
         return false;
       }
@@ -179,6 +188,11 @@ export async function showCurriculumConfirm({
       }
     },
   });
+
+  if (confirmErrorAlert) {
+    await showCurriculumAlert({ ...confirmErrorAlert, icon: 'error', timer: 6000, confirmButtonText: 'Done' });
+    return false;
+  }
 
   if (result.isConfirmed && successTitle) {
     await showCurriculumAlert({

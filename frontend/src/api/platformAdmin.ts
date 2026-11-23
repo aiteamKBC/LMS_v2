@@ -94,6 +94,7 @@ export interface CertificateTemplate {
     certifyText?: string;
     recognitionText?: string;
     progressPrefix?: string;
+    otjHoursLabel?: string;
     instructorLabel?: string;
     awardedLabel?: string;
     certificateNumberLabel?: string;
@@ -105,6 +106,7 @@ export interface CertificateTemplate {
     showFooter?: boolean;
     showWebsite?: boolean;
     showProgress?: boolean;
+    showOtjHours?: boolean;
     decorationSize?: number;
     logoSize?: number;
     titleSize?: number;

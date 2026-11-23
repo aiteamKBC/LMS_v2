@@ -19,20 +19,21 @@ export function ReadingAttachmentText({ sourceHtml, storageKey, preferences }: {
   useEffect(() => {
     register?.(id, {
       highlight: () => {
-        if (!highlightReadingSelection(root.current)) return false;
+        if (!highlightReadingSelection(root.current, tools?.highlightColour || preferences.highlightColour)) return false;
         setHtml(root.current!.innerHTML);
         onDirty?.();
         return true;
       },
       clear: () => {
-        if (!root.current) return;
-        clearReadingHighlights(root.current);
+        if (!root.current) return false;
+        if (!clearReadingHighlights(root.current)) return false;
         setHtml(root.current.innerHTML);
         onDirty?.();
+        return true;
       },
       save: () => window.localStorage.setItem(storageKey, JSON.stringify({ sourceHtml, html })),
     });
-  }, [register, id, sourceHtml, html, storageKey, onDirty]);
+  }, [register, id, sourceHtml, html, storageKey, onDirty, tools?.highlightColour, preferences.highlightColour]);
   useEffect(() => () => register?.(id, null), [register, id]);
 
   return <ReadingSurface preferences={preferences} label="Reading attachment text" className="max-h-[72vh] overflow-auto rounded-xl border border-background-300 p-6 shadow-sm">

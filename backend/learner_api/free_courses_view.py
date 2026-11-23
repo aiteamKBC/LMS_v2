@@ -73,7 +73,7 @@ def _activity(component):
     (``_video_url_from_settings`` / ``component_audio_url`` /
     ``_component_resource_url``), so a reading, video, podcast or slide deck
     opens on the free-course page exactly as it does on a normal module — but
-    with no hours/KSB/progress fields attached.
+    with curriculum allocation for Required guidance, but no awarded OTJ/KSBs.
     """
     settings = component.get("settings")
     if not isinstance(settings, dict):
@@ -93,6 +93,8 @@ def _activity(component):
         "componentId": _s(component.get("id")),
         "title": _s(component.get("title")),
         "type": ctype,
+        # Curriculum allocation defines Required; it does not award OTJ hours.
+        "expectedOtjh": component.get("expectedOtjh"),
         "description": _s(component.get("description")) or None,
         "videoUrl": _video_url_from_settings(settings),
         "audioUrl": component_audio_url(settings, ctype),

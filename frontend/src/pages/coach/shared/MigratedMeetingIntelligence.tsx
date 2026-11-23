@@ -37,6 +37,7 @@ function MigratedMeetingIntelligenceContent({
   meetingLink,
   bound = false,
   checkBlocked = false,
+  attendanceLinkBlocked = false,
   onCheckComplete,
   onCheckingChange,
   onAttendanceLinkChange,
@@ -51,6 +52,7 @@ function MigratedMeetingIntelligenceContent({
   meetingLink?: string | null;
   bound?: boolean;
   checkBlocked?: boolean;
+  attendanceLinkBlocked?: boolean;
   onCheckComplete?: (result: CoachMeetingArtifactsResponse) => void;
   onCheckingChange?: (checking: boolean) => void;
   onAttendanceLinkChange?: () => void;
@@ -140,7 +142,7 @@ function MigratedMeetingIntelligenceContent({
         <p className="text-xs text-foreground-500">The planned appointment end has passed. It does not confirm when the Teams call ended.</p>
       ) : null}
       {viewAs ? <p className="text-xs text-amber-800">Admin view-as is read-only. Session checks and summary edits are unavailable.</p> : null}
-      {checkBlocked && !viewAs && !readOnly ? <p className="text-xs text-foreground-500">Save your draft and wait for any current action to finish before checking the session.</p> : null}
+      {checkBlocked && !viewAs && !readOnly ? <p className="text-xs text-foreground-500">Wait for the current action to finish before checking the session.</p> : null}
       {binding?.status === 'no-binding' && <p className="text-xs text-foreground-500">This review has no AI Meeting Summary question. Session checks keep intelligence separate from form answers.</p>}
       {binding?.status === 'invalid-binding' && <p role="alert" className="text-xs text-amber-800">{binding.message}</p>}
       {mapped && <div role="status" className="text-xs text-foreground-600">
@@ -201,7 +203,7 @@ function MigratedMeetingIntelligenceContent({
         allowContentAccess={!viewAs}
         onArtifactsLoaded={onArtifactsLoaded}
         preserveResourcesOnRefreshError
-        attendanceLinkKey={!viewAs && !checkBlocked ? instanceId : undefined}
+        attendanceLinkKey={!viewAs && !checkBlocked && !attendanceLinkBlocked ? instanceId : undefined}
         onAttendanceLinkChange={onAttendanceLinkChange}
       />
     </section>

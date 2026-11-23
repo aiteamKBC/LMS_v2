@@ -8,6 +8,7 @@ import { fetchCurriculumDeliveryScope, fetchCurriculumOverview, fetchCurriculumT
 import { fetchAssignedLearners } from '@/api/assignedLearners';
 import { fetchModuleCatalogueActivity } from '@/api/moduleCatalogueActivity';
 import { clearAllCachedResources } from '@/api/cachedRequest';
+import { showCurriculumAlert, showCurriculumConfirm } from '@/components/feature/CurriculumSweetAlert';
 import Swal from 'sweetalert2';
 import catalogueStyles from '../ModuleCatalogue.module.css';
 vi.mock('@/api/moduleCatalogueActivity', () => ({ fetchModuleCatalogueActivity: vi.fn() }));
@@ -274,6 +275,9 @@ describe('Module Builder delivery catalogue', { timeout: 15000 }, () => {
     vi.mocked(fetchAssignedLearners).mockClear();
     vi.mocked(fetchCurriculumDeliveryScope).mockClear();
     vi.mocked(fetchCurriculumOverview).mockClear();
+    vi.mocked(fetchCurriculumTeamsMeetingSummaries).mockReset().mockResolvedValue([]);
+    vi.mocked(showCurriculumAlert).mockClear();
+    vi.mocked(showCurriculumConfirm).mockClear();
     fetchLearnerAssignments.mockReset().mockResolvedValue({
       target: { scope: 'module', id: 'MOD-1', name: 'Data Foundations', moduleCount: 1, programmeName: 'Data Analyst' },
       learners: [],
@@ -406,6 +410,27 @@ describe('Module Builder delivery catalogue', { timeout: 15000 }, () => {
     expect(cardFor('Data Foundations').getByTitle('Teams: 12 upcoming')).toBeInTheDocument();
     expect(cardFor('Network Basics').queryByText('12 upcoming')).not.toBeInTheDocument();
     expect(cardFor('Network Basics').getByText('Not created')).toBeInTheDocument();
+  });
+
+  it('shows the timed Teams archive error before opening the confirmation', async () => {
+    vi.mocked(fetchCurriculumTeamsMeetingSummaries).mockResolvedValueOnce([{
+      moduleCatalogueId: 'MOD-1', liveSessionId: 'SYNTHETIC-SERIES', status: 'scheduled',
+      joinUrl: '', webLink: '', organizerEmail: 'organizer@example.com', repeatPattern: 'weekly',
+      startDateTime: '2027-01-01T09:00:00Z', durationMinutes: 60, occurrenceCount: 20,
+      upcomingCount: 12, syncedCount: 20, nextOccurrence: '2027-01-01T09:00:00Z', updatedAt: '',
+    }]);
+    await renderCatalogue();
+    await screen.findByText('12 upcoming');
+
+    await userEvent.click(cardFor('Data Foundations').getByRole('button', { name: 'Archive module' }));
+
+    expect(showCurriculumAlert).toHaveBeenCalledWith(expect.objectContaining({
+      title: 'Module could not be archived',
+      text: 'This module has an active Teams calendar with future sessions. Cancel the Teams calendar before archiving the module.',
+      icon: 'error',
+      timer: 6000,
+    }));
+    expect(showCurriculumConfirm).not.toHaveBeenCalled();
   });
 
   it('opens the free course form from the button next to New module', async () => {
@@ -685,6 +710,16 @@ describe('Module Builder delivery catalogue', { timeout: 15000 }, () => {
     expect(cardFor('Data Foundations').getByRole('group', { name: '3 components' })).toBeInTheDocument();
     expect(cardFor('Data Foundations').getByRole('group', { name: '7h 30m OTJH' })).toBeInTheDocument();
     expect(cardFor('Data Foundations').getByRole('button', { name: 'Review module KSBs' })).toBeInTheDocument();
+  });
+
+  it('opens module KSB review as a body-level dialog', async () => {
+    await renderCatalogue();
+    await userEvent.click(cardFor('Data Foundations').getByRole('button', { name: 'Review module KSBs' }));
+
+    const dialog = await screen.findByRole('dialog', { name: 'Data Foundations' });
+    expect(dialog).toHaveAttribute('aria-modal', 'true');
+    expect(dialog.parentElement).toBe(document.body);
+    expect(within(dialog).getByText('KSB Coverage')).toBeInTheDocument();
   });
 
   // A reader who spots the wrong cohort or group here wants to correct it, and
