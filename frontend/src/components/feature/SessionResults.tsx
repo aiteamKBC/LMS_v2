@@ -268,7 +268,7 @@ export function SessionResults({ seriesId, sessionNumber, moduleId, displayTitle
             </button>
             {unmatchedOpen && <div className="space-y-3 border-t border-amber-200 p-4">
               <p className="text-sm text-amber-900">These Teams identities are not assigned to a learner in this module. Link only an identity you have verified.</p>
-              <p className="text-sm text-amber-900">A guest's full name is matched automatically when it identifies one learner in this module without a conflict. Your reviewed choices are remembered; similar or duplicate names need review.</p>
+              <p className="text-sm text-amber-900">A name or email username part can match a learner automatically when no other learner in this session has a similar part. A Teams Presenter role alone does not prevent matching. Your reviewed choices are remembered; conflicting or duplicate identities need review.</p>
               {!unmatchedPeople.length && <p>No unmatched participants match your search.</p>}
               {unmatchedPeople.map(person => { const key = identityKey(person); return <div key={key} className="grid gap-3 rounded-lg border bg-white p-3 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] md:items-center">
                 <div><p className="font-semibold">{person.name}</p><p className="text-xs text-foreground-500">{person.email || 'Unverified Teams identity'}</p><p className="mt-1 text-xs">{Math.floor(person.seconds / 60)}m {person.seconds % 60}s in Teams</p>
