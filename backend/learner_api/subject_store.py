@@ -89,6 +89,25 @@ def start(enrolment_id, aptem_id, group_id, activity_id, definition, *, attempt_
         assert_legacy_writable(cur, enrolment_id, group_id)
         if not ready(cur):
             raise StoreUnavailable('Saving activities is not enabled yet. Please contact your learning team.')
+        # Resolve canonical keys from the authenticated enrolment and exact
+        # owned catalogue placement, never from client-supplied profile IDs.
+        cur.execute('''SELECT l.id,a.id
+            FROM "Learner".learners l
+            JOIN "Learner".learner_source_course_memberships m
+              ON m.learner_id=l.id AND m.deleted_at IS NULL
+            JOIN curriculum.source_courses c ON c.id=m.source_course_id
+              AND c.source_system='old_lms' AND c.deleted_at IS NULL
+            JOIN curriculum.source_activities a ON a.source_course_id=c.id
+              AND a.source_system=c.source_system AND a.deleted_at IS NULL
+            WHERE l.enrolment_id=%s AND l.aptem_id=%s AND c.source_course_ref=%s
+              AND a.source_activity_kind=%s AND a.source_activity_id=%s
+            LIMIT 2 FOR SHARE OF l,m,c,a''',
+            [enrolment_id, aptem_id, str(group_id), snapshot['catalogue_kind'],
+             f"{snapshot['catalogue_kind']}:{activity_id}"])
+        identities = cur.fetchall()
+        if len(identities) != 1:
+            raise LookupError('Owned activity not found or identity is ambiguous.')
+        learner_id, source_activity_fk = identities[0]
         if definition.get('retakeRequired'):
             from . import legacy_quiz_retakes as retakes
             grant = retakes.available(cur, enrolment_id, aptem_id, group_id, activity_id)
@@ -97,9 +116,11 @@ def start(enrolment_id, aptem_id, group_id, activity_id, definition, *, attempt_
                 raise ServiceError('No additional attempt is available for this quiz.', 'quiz_retake_required', 409)
             snapshot['retakeGrantId'] = grant
         cur.execute(f'''INSERT INTO {ATTEMPTS}
-                        (id,enrolment_id,aptem_id,group_id,activity_id,kind,definition)
-                        VALUES (%s,%s,%s,%s,%s,%s,%s::jsonb)''',
+                        (id,enrolment_id,aptem_id,group_id,activity_id,learner_id,
+                         source_activity_fk,kind,definition)
+                        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb)''',
                     [attempt_id, enrolment_id, aptem_id, group_id, activity_id,
+                     learner_id, source_activity_fk,
                      'quiz' if definition.get('quiz') else 'activity', json.dumps(snapshot)])
     return attempt_id
 

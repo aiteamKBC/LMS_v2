@@ -12,14 +12,17 @@ from .free_course_hours import MAPPINGS_SQL
 
 HISTORY_SQL = '''SELECT a.id,a.score_percent,a.passed,a.completed,a.submitted_at
  FROM "Learner".subject_activity_attempts a
- WHERE a.learner_id=%s AND a.submitted_at IS NOT NULL AND
+ WHERE a.learner_id=%s AND (a.submitted_at IS NOT NULL OR (
+   a.free_component_ref IS NOT NULL AND a.kind='quiz' AND a.completed IS TRUE
+   AND a.definition->>'source_system'='old_lms'
+   AND a.definition->'historical_import'='true'::jsonb)) AND
  (a.free_component_ref=%s OR (a.free_component_ref IS NULL AND EXISTS (
    SELECT 1 FROM (''' + MAPPINGS_SQL + ''') m
    JOIN "Learner".learner_activity_sources s
      ON s.canonical_progress_id=m.old_progress_id AND s.learner_id=m.learner_id
    WHERE m.learner_id=a.learner_id AND m.free_component_id=%s
      AND s.source_catalog_activity_id=a.source_activity_fk)))
- ORDER BY a.submitted_at DESC,a.id DESC LIMIT 50'''
+ ORDER BY a.submitted_at DESC NULLS LAST,a.id DESC LIMIT 50'''
 
 
 def history(learner_id, component_id):

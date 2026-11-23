@@ -134,6 +134,7 @@ class TimedAttemptStoreTests(unittest.TestCase):
     session = LegacyTimingTests.session
     def setUp(self):
         self.cursor = MagicMock()
+        self.cursor.fetchall.return_value = [(501, 901)]
         connection = MagicMock()
         connection.cursor.side_effect = lambda: nullcontext(self.cursor)
         self.enterContext(patch.object(subject_store, 'connections', {'enrolment': connection}))
