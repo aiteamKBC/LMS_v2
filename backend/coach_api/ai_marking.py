@@ -32,7 +32,7 @@ The three inputs
    designed to evidence, and a coach reading a plausible claim has no easy way
    to see that the activity does not carry that KSB at all.
 
-3. The prompt. Loaded from AI_marking_prompt.MD at the repository root rather
+3. The prompt. Loaded from coach_api/prompts/AI_marking_prompt.MD rather
    than pasted in here, because it is the document the training team edits.
    Keeping one copy means their next revision takes effect without a code
    change, and there is no second version to drift out of date.
@@ -65,9 +65,15 @@ from .auth import authenticated_coach_email, coach_access_required, read_only_vi
 
 logger = logging.getLogger(__name__)
 
-#: The assignment marking policy, maintained by the training team. Repository
-#: root, so a revision takes effect without a code change.
-PROMPT_PATH = Path(settings.BASE_DIR).parent / "AI_marking_prompt.MD"
+#: The training team's prompt documents. Kept inside the backend package so
+#: they ship in the backend image: the image is built from ``backend/`` alone,
+#: so a file at the repository root never reached the deployed container and
+#: every draft ran with no saved prompt.
+PROMPT_DIR = Path(__file__).resolve().parent / "prompts"
+
+#: The assignment marking policy, maintained by the training team. Read from
+#: disk, so a revision takes effect without a code change.
+PROMPT_PATH = PROMPT_DIR / "AI_marking_prompt.MD"
 
 #: The reflection-validation policy. A separate document because it is a
 #: different job: an assignment is a work product assessed against the EPA plan
@@ -75,7 +81,7 @@ PROMPT_PATH = Path(settings.BASE_DIR).parent / "AI_marking_prompt.MD"
 #: about one activity, judged mainly on whether it genuinely engages with that
 #: activity. Running the assignment policy over a reflection produced a
 #: thousand words of portfolio assessment about a fifteen-minute video.
-REFLECTION_PROMPT_PATH = Path(settings.BASE_DIR).parent / "AI_reflection_prompt.MD"
+REFLECTION_PROMPT_PATH = PROMPT_DIR / "AI_reflection_prompt.MD"
 
 #: A reflection draft is 90-130 words, which is ~200 tokens of prose. The
 #: ceiling is well above that because this model spends completion tokens on

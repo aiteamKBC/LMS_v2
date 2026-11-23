@@ -6,8 +6,10 @@ it claims to be about. These cover what the model is handed, because the ways
 this goes wrong are all silent -- it will happily assess a video it was never
 told anything about, or name a KSB the activity does not carry.
 """
+from pathlib import Path
 from unittest.mock import patch
 
+from django.conf import settings
 from django.test import SimpleTestCase
 
 from .ai_marking import PROMPT_PATH, REFLECTION_PROMPT_PATH
@@ -24,6 +26,17 @@ class PromptSeparationTests(SimpleTestCase):
         # It degrades to an error rather than a bad draft if missing, so this
         # is the only place the file's presence is actually checked.
         self.assertTrue(REFLECTION_PROMPT_PATH.exists(), REFLECTION_PROMPT_PATH)
+
+    def test_both_prompts_ship_inside_the_backend_image(self):
+        # The deployed image is built from backend/ alone. Both prompts once
+        # lived at the repository root, so they existed locally and in tests but
+        # never in the container, and every coach saw "No saved prompt".
+        backend_dir = Path(settings.BASE_DIR).resolve()
+        for path in (PROMPT_PATH, REFLECTION_PROMPT_PATH):
+            with self.subTest(prompt=path.name):
+                self.assertTrue(path.exists(), path)
+                self.assertTrue(path.resolve().is_relative_to(backend_dir), path)
+                self.assertTrue(path.read_text(encoding="utf-8").strip(), path)
 
     def test_the_reflection_prompt_asks_for_a_very_short_draft(self):
         # A coach validating a queue reads these in seconds. The first version

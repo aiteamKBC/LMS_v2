@@ -31,6 +31,14 @@ it('keeps genuine zeroes and permits direct assignment for an empty module', asy
   await waitFor(() => expect(open).toHaveBeenCalledTimes(1));
 });
 
+it('shows zero without reading a roster for an unattached module', async () => {
+  const open = vi.fn().mockResolvedValue(0);
+  render(<LearnerDirectoryProvider><ModuleLearnerCount moduleId="MOD-1" moduleName="Module A" enabled={false} onOpen={open} /></LearnerDirectoryProvider>);
+
+  expect(await screen.findByRole('button', { name: 'Module A: 0 learners' })).toBeInTheDocument();
+  expect(fetchLearnerStatusCounts).not.toHaveBeenCalled();
+});
+
 it('does not turn a failed count into zero or block the assignment workflow', async () => {
   vi.mocked(fetchLearnerStatusCounts).mockRejectedValueOnce(new Error('Counts unavailable'));
   const open = vi.fn().mockResolvedValue(5);
