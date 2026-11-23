@@ -185,6 +185,10 @@ class FreeCourseCertificateProgressTests(SimpleTestCase):
 
 class CertificateIssuanceTests(SimpleTestCase):
     def setUp(self):
+        self.owner_lookup = certificates._canonical_certificate_owner
+        self.enrolment_lookup = certificates._certificate_enrolment_id
+        self.enterContext(patch.object(certificates, "_canonical_certificate_owner", return_value=107))
+        self.enterContext(patch.object(certificates, "_certificate_enrolment_id", return_value=7))
         self.enterContext(patch.dict(os.environ, LEARNER_API_REQUIRE_AUTH='1'))
         self.account = SimpleNamespace(role='learner', subject_id=7, email='synthetic@example.invalid')
         def authenticate(request):
@@ -212,6 +216,99 @@ class CertificateIssuanceTests(SimpleTestCase):
     def issue(self, kind='commercial', pk=7):
         return certificates.issue_learner_module_certificate(RequestFactory().post('/certificate/'), kind=kind, pk=pk, module_ref='free:FC-1')
 
+    def test_real_owner_resolution_precedes_insert_and_scopes_lock_and_audit(self):
+        self.cursor.fetchall.return_value = [(107,)]
+        with patch.object(certificates, '_canonical_certificate_owner', wraps=self.owner_lookup):
+            response = self.issue()
+        self.assertEqual(response.status_code, 200)
+        calls = self.cursor.execute.call_args_list
+        self.assertEqual(calls[0].args[1], [7])
+        self.assertIn('WHERE enrolment_id=%s', calls[0].args[0])
+        insert = next(c for c in calls if 'INSERT INTO "Learner".learner_certificates' in c.args[0])
+        self.assertEqual(insert.args[1][2], 107)
+        # Snapshot IDs retain the existing enrolment-based response contract.
+        self.assertEqual(json.loads(insert.args[1][8])['learner']['id'], '7')
+        lock = next(c for c in calls if 'pg_advisory_xact_lock' in c.args[0])
+        self.assertEqual(lock.args[1], ['certificate:commercial:107:free:FC-1'])
+        audit = next(c for c in calls if 'INSERT INTO "Learner".certificate_audit_logs' in c.args[0])
+        self.assertEqual(json.loads(audit.args[1][4])['learnerId'], 107)
+        self.assertEqual(json.loads(audit.args[1][4])['enrolmentId'], 7)
+
+    def test_missing_ambiguous_or_unknown_owner_never_looks_up_or_issues_award(self):
+        for owners in ([], [(107,), (207,)]):
+            self.cursor.fetchall.return_value = owners
+            with patch.object(certificates, '_canonical_certificate_owner', wraps=self.owner_lookup):
+                self.assertEqual(self.issue().status_code, 404)
+            self.existing.assert_not_called()
+            self.read.assert_not_called()
+        self.cursor.execute.reset_mock()
+        with patch.object(certificates, '_canonical_certificate_owner', wraps=self.owner_lookup):
+            self.assertEqual(self.issue(kind='unknown').status_code, 404)
+        self.cursor.execute.assert_not_called()
+
+    def test_programme_issue_and_both_status_routes_use_canonical_owner(self):
+        self.cursor.fetchall.return_value = [(107,)]
+        with patch.object(certificates, '_canonical_certificate_owner', wraps=self.owner_lookup), \
+             patch.object(certificates, '_eligibility', return_value=self.eligibility):
+            response = certificates.issue_learner_certificate(
+                RequestFactory().post('/'), kind='commercial', pk=7)
+            self.assertEqual(response.status_code, 200)
+            insert = next(c for c in self.cursor.execute.call_args_list
+                          if 'INSERT INTO "Learner".learner_certificates' in c.args[0])
+            self.assertEqual(insert.args[1][2], 107)
+            self.assertEqual(insert.args[1][5], '')
+            self.existing.return_value = self.row
+            for endpoint, extra in ((certificates.learner_certificate_status, {}),
+                    (certificates.learner_module_certificate_status, {'module_ref': 'free:FC-1'})):
+                self.existing.reset_mock()
+                response = endpoint(RequestFactory().get('/'), kind='commercial', pk=7, **extra)
+                self.assertEqual(response.status_code, 200)
+                self.assertEqual(self.existing.call_args.args[1:3], ('commercial', 107))
+                award = json.loads(response.content)['certificate']
+                self.assertEqual((award['certificateNumber'], award['verificationToken']), ('KBC-TEST', 'token'))
+
+    def test_token_resolves_canonical_owner_back_to_enrolment_without_rewriting_history(self):
+        saved = {'learner': {'id': '7', 'name': 'Historical'}, 'custom': 'preserve'}
+        old = list(self.row)
+        old[5] = deepcopy(saved)
+        token_row = (*old, 'commercial', 107, 'Achievement', 'Progress', {}, 'issued')
+        self.cursor.fetchone.side_effect = [token_row, (7,)]
+        with patch.object(certificates, '_certificate_enrolment_id', wraps=self.enrolment_lookup), \
+             patch.object(certificates, '_load_source', return_value=SimpleNamespace(pk=7)) as source, \
+             patch.object(certificates, 'course_progress', return_value=dict(
+                 progressPercent=100, trackableDone=5, trackableTotal=5)):
+            response = certificates.verify_certificate(RequestFactory().get('/'), 'token')
+        self.assertEqual(response.status_code, 200)
+        source.assert_called_once_with('commercial', 7)
+        award = json.loads(response.content)['certificate']
+        self.assertEqual((award['certificateNumber'], award['verificationToken']), ('KBC-TEST', 'token'))
+        self.assertEqual(old[5], saved)
+        owner_read = next(c for c in self.cursor.execute.call_args_list if 'WHERE id=%s' in c.args[0])
+        self.assertEqual(owner_read.args[1], [107])
+        self.assertTrue(all(c.args[0].lstrip().startswith('SELECT') for c in self.cursor.execute.call_args_list))
+
+    def test_token_missing_enrolment_keeps_saved_award_without_id_fallback(self):
+        for owner in (None, (None,)):
+            self.cursor.fetchone.side_effect = [(*self.row, 'commercial', 107, '', '', {}, 'issued'), owner]
+            with patch.object(certificates, '_certificate_enrolment_id', wraps=self.enrolment_lookup), \
+                 patch.object(certificates, '_load_source') as source:
+                response = certificates.verify_certificate(RequestFactory().get('/'), 'token')
+            source.assert_not_called()
+            self.assertEqual(response.status_code, 200)
+            award = json.loads(response.content)['certificate']
+            self.assertEqual(award['verificationToken'], 'token')
+            self.assertTrue(award['refreshWarnings'])
+
+    def test_module_unique_conflict_target_and_lookup_keep_distinct_modules(self):
+        self.issue()
+        insert = next(c for c in self.cursor.execute.call_args_list
+                      if 'INSERT INTO "Learner".learner_certificates' in c.args[0])
+        self.assertIn('ON CONFLICT (learner_kind, learner_id, template_id, template_version, module_ref) DO NOTHING', insert.args[0])
+        for ref in ('free:FC-1', 'current:M1'):
+            self.lookup(self.cursor, 'commercial', 107, module_ref=ref)
+            self.assertEqual(self.cursor.execute.call_args.args[1],
+                             ['commercial', 107, 'progress-achievement', ref])
+
     def test_issues_progress_certificate_and_retry_returns_same_record(self):
         for kind in ('commercial', 'apprenticeship'):
             with self.subTest(kind=kind):
@@ -222,7 +319,7 @@ class CertificateIssuanceTests(SimpleTestCase):
                 self.assertTrue(json.loads(response.content)['issued'])
                 inserts = [call for call in self.cursor.execute.call_args_list if 'INSERT INTO "Learner".learner_certificates' in call.args[0]]
                 self.assertEqual(len(inserts), 1)
-                self.assertEqual(inserts[0].args[1][1:3], [kind, 7])
+                self.assertEqual(inserts[0].args[1][1:3], [kind, 107])
                 self.assertEqual(inserts[0].args[1][5], 'free:FC-1')
                 self.assertIn('ON CONFLICT', inserts[0].args[0])
                 self.existing.return_value = self.row
@@ -258,7 +355,7 @@ class CertificateIssuanceTests(SimpleTestCase):
         self.assertEqual(payload['certificate']['revision'], 2)
         self.cursor.execute.assert_called_once()
         self.assertIn('pg_advisory_xact_lock', self.cursor.execute.call_args.args[0])
-        self.existing.assert_called_with(self.cursor, 'commercial', 7, module_ref='free:FC-1')
+        self.existing.assert_called_with(self.cursor, 'commercial', 107, module_ref='free:FC-1')
 
     def test_new_template_reuses_existing_award_before_rechecking_eligibility(self):
         old = list(self.row)
@@ -270,7 +367,7 @@ class CertificateIssuanceTests(SimpleTestCase):
         self.assertEqual(payload['certificate']['certificateNumber'], 'KBC-TEST')
         self.assertEqual(payload['certificate']['verificationToken'], 'token')
         self.read.assert_not_called()
-        self.existing.assert_called_once_with(self.cursor, 'commercial', 7, module_ref='free:FC-1')
+        self.existing.assert_called_once_with(self.cursor, 'commercial', 107, module_ref='free:FC-1')
         self.cursor.execute.assert_not_called()
 
     def test_catalogue_returns_only_scoped_active_certificate_references(self):
@@ -283,7 +380,7 @@ class CertificateIssuanceTests(SimpleTestCase):
         self.assertNotIn('layoutConfig', data['template'])
         sql, params = self.cursor.execute.call_args.args
         self.assertIn("lc.status='issued'", sql)
-        self.assertEqual(params, ['commercial', 7, 'progress-achievement'])
+        self.assertEqual(params, ['commercial', 107, 'progress-achievement'])
         self.cursor.execute.reset_mock()
         self.account.subject_id = 8
         self.assertEqual(certificates.learner_certificate_template(
@@ -291,11 +388,11 @@ class CertificateIssuanceTests(SimpleTestCase):
         self.cursor.execute.assert_not_called()
 
     def test_lookup_and_lock_are_scoped_to_the_learner_and_course_across_template_versions(self):
-        self.lookup(self.cursor, 'commercial', 7, module_ref='free:FC-1')
+        self.lookup(self.cursor, 'commercial', 107, module_ref='free:FC-1')
         sql, values = self.cursor.execute.call_args.args
         self.assertNotIn('lc.template_id=%s', sql)
         self.assertNotIn('lc.template_version=%s', sql)
-        self.assertEqual(values, ['commercial', 7, 'progress-achievement', 'free:FC-1'])
+        self.assertEqual(values, ['commercial', 107, 'progress-achievement', 'free:FC-1'])
 
     def test_revoked_unique_record_cannot_report_a_successful_reissue(self):
         self.cursor.fetchone.return_value = None
@@ -373,6 +470,7 @@ class CertificateIssuanceTests(SimpleTestCase):
 
 class CurrentCertificateDisplayTests(SimpleTestCase):
     def setUp(self):
+        self.enterContext(patch.object(certificates, "_certificate_enrolment_id", return_value=7))
         self.cursor = MagicMock()
         self.source = SimpleNamespace(pk=7, id=7, username='Current student', programme='Current programme')
         self.load = self.enterContext(patch.object(certificates, '_load_source', return_value=self.source))
