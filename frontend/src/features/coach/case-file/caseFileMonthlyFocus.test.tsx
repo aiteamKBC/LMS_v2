@@ -29,6 +29,7 @@ it.each(['apprenticeship', 'commercial'] as const)('loads one month request unde
   const summary = within(screen.getByRole('region', { name: 'Progress this month' }));
   // Deliberately different from 10 - 50: render the backend's final value.
   expect(summary.getByText('-123 hrs')).toBeInTheDocument();
+  expect(summary.getByTestId('difference-down')).toBeInTheDocument();
   expect(screen.getByText('Lecture 2026-12')).toBeInTheDocument();
   fireEvent.click(screen.getByRole('button', { name: 'Next month' }));
   await screen.findByText('Assignment 2027-01');

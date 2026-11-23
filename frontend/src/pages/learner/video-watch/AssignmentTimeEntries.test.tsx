@@ -2,10 +2,10 @@ import { useState } from 'react';
 import { afterEach, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { AssignmentTimeEntries } from './AssignmentTimeEntries';
-import { assignmentMonthBounds, assignmentTimeHours } from "./AssignmentTimeEntries.helpers";
+import { assignmentDateRestriction, assignmentMonthBounds, assignmentTimeHours } from "./AssignmentTimeEntries.helpers";
 afterEach(cleanup);
 vi.mock('@/api/learnerCalendar', () => ({ fetchLearnerCalendarEvents: vi.fn().mockResolvedValue({ bookingCalendar: {
-  coveredYears: [2026], bankHolidays: [{ date: '2026-12-25', title: 'Christmas Day' }, { date: '2026-12-28', title: 'Boxing Day (substitute day)' }],
+  today: '2026-12-31', coveredYears: [2026], bankHolidays: [{ date: '2026-12-25', title: 'Christmas Day' }, { date: '2026-12-28', title: 'Boxing Day (substitute day)' }],
 } }) }));
 it('removes the last topic without recreating a blank row and adds exactly one when requested', () => {
   function Form() {
@@ -28,12 +28,12 @@ it('does not turn the initial empty placeholder into two topics when Add topic i
   fireEvent.click(screen.getByRole('button', { name: 'Add topic' }));
   expect(change).toHaveBeenCalledWith([{ topic: '', hours: '', date: '' }]);
 });
-it('limits dates to the assignment month, including leap years', () => {
+it('calculates calendar month bounds, including leap years', () => {
   expect(assignmentMonthBounds('2028-02')).toEqual({ min: '2028-02-01', max: '2028-02-29' });
   expect(assignmentMonthBounds('2026-02')?.max).toBe('2026-02-28');
   expect(assignmentMonthBounds('2026-13')).toBeNull();
 });
-it('adds and removes topics, totals decimal hours, and restricts the calendar', async () => {
+it('adds and removes topics, totals decimal hours, and navigates previous months', async () => {
   function Form() {
     const [entries, setEntries] = useState([{ topic: 'Research', hours: '1.5', date: '2026-09-01' }]);
     return <AssignmentTimeEntries kind="commercial" learnerId="1" month="2026-09" entries={entries} onChange={setEntries} disabled={false} />;
@@ -43,7 +43,9 @@ it('adds and removes topics, totals decimal hours, and restricts the calendar', 
   fireEvent.click(screen.getByRole('button', { name: 'Date 1' }));
   expect(screen.getByRole('button', { name: '2026-09-05' })).toBeDisabled();
   expect(screen.getByRole('button', { name: '2026-09-06' })).toBeDisabled();
-  expect(screen.queryByRole('button', { name: '2026-10-01' })).toBeNull();
+  fireEvent.click(screen.getByRole('button', { name: 'Previous month' }));
+  expect(screen.getByRole('button', { name: '2026-08-31' })).toBeEnabled();
+  fireEvent.click(screen.getByRole('button', { name: 'Next month' }));
   fireEvent.click(screen.getByRole('button', { name: '2026-09-15' }));
   fireEvent.click(screen.getByText('Add topic'));
   fireEvent.change(screen.getByLabelText('Topic 2'), { target: { value: 'Writing' } });
@@ -54,6 +56,14 @@ it('adds and removes topics, totals decimal hours, and restricts the calendar', 
   fireEvent.click(screen.getByText('Remove topic 1'));
   expect(screen.getByLabelText('Topic 1')).toHaveValue('Writing');
   expect(screen.getByText('Total learning time: 2.25 hours')).toBeVisible();
+});
+
+it('does not expose future months or future dates', async () => {
+  render(<AssignmentTimeEntries kind="commercial" learnerId="1" month="2027-01" entries={[]} onChange={vi.fn()} disabled={false} />);
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Date 1' })).toBeEnabled());
+  fireEvent.click(screen.getByRole('button', { name: 'Date 1' }));
+  expect(screen.getByRole('button', { name: 'Next month' })).toBeDisabled();
+  expect(assignmentDateRestriction('2027-01-04', { division: 'england-and-wales', today: '2026-12-31', coveredYears: [2026, 2027], bankHolidays: [] })).toBe('Future dates unavailable');
 });
 it('disables bank holidays and substitute days in the month', async () => {
   const change = vi.fn();

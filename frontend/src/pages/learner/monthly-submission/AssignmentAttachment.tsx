@@ -18,6 +18,15 @@ function attachmentName(url: string, fileName?: string | null): string {
 export function AssignmentAttachment({ url, fileName, title, defaultExpanded = false, pdfTools = true }: {
   url: string; fileName?: string | null; title: string; defaultExpanded?: boolean; pdfTools?: boolean;
 }) {
+  // Authored LMS upload links can retain the production origin. Fetch them
+  // through this LMS instance so its session and storage serve the attachment.
+  try {
+    const parsed = new URL(url, window.location.origin);
+    if (parsed.origin === 'https://lms.kentbusinesscollege.org' &&
+        parsed.pathname.startsWith('/curriculum_api/curriculum/uploads/')) {
+      url = `${parsed.pathname}${parsed.search}${parsed.hash}`;
+    }
+  } catch { /* Keep invalid URLs available for the viewer's existing error state. */ }
   const [expanded, setExpanded] = useState(defaultExpanded);
   const previewId = useId();
   const name = attachmentName(url, fileName);
