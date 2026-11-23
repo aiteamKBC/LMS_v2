@@ -14,7 +14,7 @@ from django.views.decorators.http import require_GET, require_POST
 from login.permissions import require_role, learner_self_or_staff
 
 from .attendance_identity import identity_check, staff_roles
-from .attendance_link_policy import apply_reviewed_identities, identity_key, link_specs, record_key, unmatched_roster, attendance_bot
+from .attendance_link_policy import apply_reviewed_identities, identity_key, link_specs, record_key, unmatched_roster, attendance_bot, series_identity_emails
 from .attendance_link_store import identity_rules, save_rule
 from .session_results_policy import attendance_display_name, attendance_name_key, session_roster, attendance_csv, instant, session_runs
 from .session_media_policy import hidden_artifact_ids, recording_transcript_links, transcript_timing_ready, artifact_metadata
@@ -288,12 +288,12 @@ def result_rows(series, *, session_number=None, email=None, identity=False, modu
     identity_links = attendance_identity_link_rows(ids)
     rules = identity_rules([roster_module_id])
     # Shared meetings contain participants from other deliveries. They are not
-    # unresolved identities in this module. This only filters the review list;
-    # raw evidence, matching decisions and attendance totals stay untouched.
+    # unresolved identities in this module and must not be guessed onto one
+    # of its learners, including when the caller requests one learner only.
     known_emails = known_learner_emails(
         [row.get('email') for row in records]
         + [row.get('canonical_email') for row in (*aliases, *identity_links, *rules)]
-    ) if email is None else set()
+    ) if records or aliases or identity_links or rules else set()
     archive_ready = True
     try:
         artifacts = [] if attendance_only else read('''SELECT a.id,a.occurrence_id,a.artifact_type,a.created_datetime,a.end_datetime,
@@ -342,15 +342,7 @@ def result_rows(series, *, session_number=None, email=None, identity=False, modu
                 if artifact['artifact_type'] == 'recording' else [],
         })
     results = []
-    protected_emails = {
-        str(value or '').strip().casefold()
-        for key in ('organizer_email', 'presenters', 'co_organizers')
-        for value in (
-            json_value(series.get(key), [])
-            if key != 'organizer_email' else [series.get(key)]
-        )
-        if str(value or '').strip()
-    }
+    protected_emails = series_identity_emails(series)
     if identity and email is None:
         staff = staff_roles(series, module_tutor_emails(roster_module_id))
         home_tenant = college_tenant_id()
@@ -378,6 +370,7 @@ def result_rows(series, *, session_number=None, email=None, identity=False, modu
             attendance_by_id[item['id']], aliases, identity_links, rules,
             learners={key: {'name': row.get('learner_name'), 'learnerProfileId': row.get('learner_profile_id')}
                       for key, row in learner_by_email.items()},
+            protected_emails=protected_emails | (known_emails - expected),
         )
         # Do not let a stale saved absence hide a new match, or let a stale
         # positive name guess survive a duplicate that now requires review.
@@ -436,7 +429,7 @@ def result_rows(series, *, session_number=None, email=None, identity=False, modu
             and (str(row.get('email') or '').strip().casefold() not in known_emails
                  or str(row.get('email') or '').strip().casefold() in expected)
             and str(row.get('email') or '').strip().casefold() not in protected_emails
-            and str(row.get('role') or '').strip().casefold() not in {'organizer', 'presenter', 'coorganizer', 'co-organizer'}
+            and str(row.get('role') or '').strip().casefold() not in {'organizer', 'coorganizer', 'co-organizer'}
         ]
         unmatched = unmatched_roster(unmatched_records, complete=complete)
         for person in unmatched:
@@ -598,7 +591,7 @@ def link_attendance_alias(request, series_id, session_number):
     if action != 'link' and expected_learner <= 0:
         return JsonResponse({'error': 'Refresh the current link before correcting it.'}, status=409)
     try:
-        occurrences = read('''SELECT o.id,s.module_catalogue_id FROM curriculum.live_session_occurrences o
+        occurrences = read('''SELECT o.id,s.module_catalogue_id,s.organizer_email,s.presenters,s.co_organizers FROM curriculum.live_session_occurrences o
             JOIN curriculum.live_sessions s ON s.id=o.live_session_id
             WHERE s.id=%s AND o.session_number=%s''', [series_id, session_number])
         if not occurrences:
@@ -624,7 +617,9 @@ def link_attendance_alias(request, series_id, session_number):
         if not payload.get('identityKind') and (not selected or (not alias_email and
                 {str(row['id']) for row in selected} != set(source_ids))):
             return JsonResponse({'error': 'That identity is not present in this Teams attendance report.'}, status=404)
-        if any(str(row.get('role') or '').casefold() in {'organizer', 'presenter', 'coorganizer', 'co-organizer'} for row in selected):
+        protected = series_identity_emails(occurrence)
+        if any(str(row.get('role') or '').strip().casefold() in {'organizer', 'coorganizer', 'co-organizer'}
+               or str(row.get('email') or '').strip().casefold() in protected for row in selected):
             return JsonResponse({'error': 'Staff meeting identities cannot be linked to a learner.'}, status=400)
         actor = getattr(request, 'login_account', None)
         actor_label = str(getattr(actor, 'email', '') or getattr(actor, 'subject_id', '') or '')[:320]
