@@ -250,6 +250,19 @@ export interface FeedbackAssignmentSource {
   programmeId?: string; programmeName?: string; cohortId?: string; cohortName?: string;
   groupId?: string; groupName?: string; moduleCatalogueId?: string;
 }
+export interface FeedbackCoachGroup {
+  key: string; name: string; email: string; learnerCount: number;
+  reviewCount: number; completedCount: number; remainingCount: number;
+}
+export interface FeedbackCoachLearner {
+  learnerId: string; learnerName: string; email: string; programme: string; coachName: string;
+  reviewCount: number; completedCount: number; remainingCount: number; reviews: FeedbackRecipient[];
+}
+export interface FeedbackCoachRecipients {
+  coaches: FeedbackCoachGroup[]; coachKey: string; learners: FeedbackCoachLearner[];
+  totalLearners: number; totalReviews: number; totalCompleted: number;
+  page: number; pageSize: number; pages: number;
+}
 export interface FeedbackLectureOption {
   deliveryId: number; occurrenceKey: string; sessionTitle: string; moduleName: string;
   startsAt: string | null; assignedCount: number; responseCount: number;
@@ -331,6 +344,10 @@ export const feedbackApi = {
     const params = new URLSearchParams({ search, page: String(page), pageSize: String(pageSize) });
     if (sourceKey) params.set('source', sourceKey);
     return request<{ recipients: FeedbackRecipient[]; sources: FeedbackAssignmentSource[]; lectures: FeedbackLectureOption[]; total: number; page: number; pageSize: number }>(`/forms/${id}/recipients/?${params}`);
+  },
+  recipientsByCoach: (id: number, search = '', coach = '', page = 1) => {
+    const params = new URLSearchParams({ groupBy: 'coach', search, coach, page: String(page), pageSize: '25' });
+    return request<FeedbackCoachRecipients>(`/forms/${id}/recipients/?${params}`);
   },
   responses: (filters?: { formId?: number; status?: string; learner?: string; submittedFrom?: string; submittedTo?: string }) => {
     const params = new URLSearchParams();
