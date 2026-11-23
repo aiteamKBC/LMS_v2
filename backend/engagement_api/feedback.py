@@ -1021,10 +1021,10 @@ def ensure_quality_ticket_for_response(response, *, actor='Feedback automation')
     if 'assistant_conversations' not in connections.databases:
         raise support_tickets.TicketError('The technicalsupport database connection is not configured.', 503)
     try:
-        learner_id = int(str(response.learner_id))
+        enrolment_id = int(str(response.enrolment_id))
     except (TypeError, ValueError):
         raise support_tickets.TicketError('This response is not linked to a learner account.', 409) from None
-    learner_account = account_for_subject('learner', learner_id)
+    learner_account = account_for_subject('learner', enrolment_id)
     context = getattr(response.delivery, 'session_title', '') or getattr(response.delivery, 'module_name', '') or response.form.title
     ticket_id = _quality_ticket_id(response.id)
     ticket = {

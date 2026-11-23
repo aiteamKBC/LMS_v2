@@ -63,14 +63,14 @@ class CoachLmsTicketsTests(SimpleTestCase):
     def updates(self):
         return [call.args for call in self.cursor.execute.call_args_list if call.args[0].startswith('UPDATE')]
 
-    def test_list_uses_authenticated_coach_and_enrolment_bridge_for_both_learner_kinds(self):
-        self.cursor.fetchall.return_value = [(self.saved, 101), ({**self.saved, 'id': str(uuid4())}, 102)]
+    def test_list_uses_authenticated_coach_and_canonical_ids_for_both_learner_kinds(self):
+        self.cursor.fetchall.return_value = [(self.saved, 12), ({**self.saved, 'id': str(uuid4())}, 13)]
         response = self.call(query='?learnerId=999&offset=100')
         self.assertEqual(response.status_code, 200)
         self.caseload.assert_called_once_with('coach@example.invalid')
         sql, params = self.cursor.execute.call_args.args
-        self.assertIn('enrolment_id=ANY(%s)', sql)
-        self.assertEqual(params, [[101, 102], 100])
+        self.assertIn('learner_id=ANY(%s)', sql)
+        self.assertEqual(params, [[12, 13, 101], 100])
         payload = json.loads(response.content)
         self.assertEqual([row['learnerId'] for row in payload['tickets']], [12, 13])
         self.assertNotIn('secret-key', response.content.decode())
@@ -78,7 +78,7 @@ class CoachLmsTicketsTests(SimpleTestCase):
         self.assertEqual(response['Cache-Control'], 'private, no-store')
 
     def test_pagination_and_empty_caseload(self):
-        self.cursor.fetchall.return_value = [(self.saved, 101)] * 101
+        self.cursor.fetchall.return_value = [(self.saved, 12)] * 101
         payload = json.loads(self.call().content)
         self.assertEqual((len(payload['tickets']), payload['nextOffset']), (100, 100))
         self.learners = []
@@ -126,13 +126,13 @@ class CoachLmsTicketsTests(SimpleTestCase):
         for view, body in ((tickets.detail, None), (tickets.detail, self.reply_body()), (tickets.attachment, None)):
             self.assertEqual(self.call(view, body=body).status_code, 404)
             sql, params = self.cursor.execute.call_args.args
-            self.assertIn('enrolment_id=ANY(%s)', sql)
-            self.assertEqual(params, [str(self.key), [101, 102]])
+            self.assertIn('learner_id=ANY(%s)', sql)
+            self.assertEqual(params, [str(self.key), [12, 13, 101]])
         self.download.assert_not_called()
         self.assertEqual(self.updates(), [])
 
     def test_access_is_revoked_when_learner_moves_to_another_coach(self):
-        self.cursor.fetchone.return_value = (self.saved, 101)
+        self.cursor.fetchone.return_value = (self.saved, 12)
         self.assertEqual(self.call(tickets.detail).status_code, 200)
         self.learners = self.learners[1:]
         self.assertEqual(self.call(tickets.attachment).status_code, 404)
@@ -140,13 +140,14 @@ class CoachLmsTicketsTests(SimpleTestCase):
         self.download.assert_not_called()
 
     def test_reply_is_attributed_and_preserves_support_actions_and_files(self):
-        self.cursor.fetchone.return_value = (self.saved, 101)
+        self.cursor.fetchone.return_value = (self.saved, 12)
         body = self.reply_body()
         response = self.call(tickets.detail, body=body)
         self.assertEqual(response.status_code, 200)
         sql, params = self.updates()[0]
         saved = json.loads(params[0])
-        self.assertEqual(params[1:], [str(self.key), 101])
+        self.assertEqual(params[1:], [str(self.key), 12])
+        self.assertIn('learner_id=%s', sql)
         for field in ('status', 'assignedTo', 'assignedTeam', 'attachments', 'timeline'):
             self.assertEqual(saved[field], self.saved[field])
         self.assertEqual(saved['replies'][0]['accountId'], 7)
@@ -168,7 +169,7 @@ class CoachLmsTicketsTests(SimpleTestCase):
         self.cursor.execute.assert_not_called()
 
     def test_downloads_ticket_and_reply_attachments_only_after_scope_check(self):
-        self.cursor.fetchone.return_value = (self.saved, 101)
+        self.cursor.fetchone.return_value = (self.saved, 12)
         self.assertEqual(self.call(tickets.attachment).content, b'example')
         self.download.assert_called_with(self.file)
         self.saved['attachments'] = []
