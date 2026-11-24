@@ -140,3 +140,10 @@ class AccountDeletionEndpointTests(SimpleTestCase):
         response, _ = self.request_delete(failure=DatabaseError('blocked dependency'))
         self.assertEqual(response.status_code, 502)
         self.assertIn('Could not delete user account', json.loads(response.content)['error'])
+
+    def test_retained_history_returns_conflict_without_database_details(self):
+        from django.db import IntegrityError
+        response, _ = self.request_delete(failure=IntegrityError('private display_audit_learner_fk details'))
+        self.assertEqual(response.status_code, 409)
+        self.assertNotIn('private', response.content.decode())
+        self.assertIn('retained records', json.loads(response.content)['error'])

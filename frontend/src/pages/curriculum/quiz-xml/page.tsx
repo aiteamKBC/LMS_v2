@@ -13,10 +13,6 @@ import { roleNavMap } from '@/mocks/navigation';
 import { useToast } from "@/hooks/useToast";
 import { KnowledgeBookPicker, KnowledgeSourcesSummary, type KnowledgeSourcesMeta } from '@/features/knowledge-base/KnowledgeBookPicker';
 import { fetchWeeks, type WeekItem } from '@/api/curriculum';
-import { defaultQuizGradeSettings, type QuizGradeSettings } from '@/lib/quizGradeSettings';
-import { defaultQuizGeneralSettings, type QuizGeneralSettings } from '@/lib/quizGeneralSettings';
-import { saveQuizDefaults, useQuizDefaults } from '@/lib/quizDefaults';
-import { GradeSettingsModal, GradeSettingRow } from './GradeSettingsModal';
 import { convertAnswerTextForQuestionType, isPairAnswerComplete, parseQuizPairAnswer, serializeQuizPairAnswer } from '@/lib/quizPairAnswers';
 import { showCurriculumConfirm } from '@/components/feature/CurriculumSweetAlert';
 
@@ -425,113 +421,6 @@ function QuizRowActions({
   );
 }
 
-function GeneralQuizSettingsModal({
-  settings,
-  onChange,
-  onClose,
-  onSaved,
-  saving,
-  error,
-  onReload,
-}: {
-  settings: QuizGeneralSettings;
-  onChange: (settings: QuizGeneralSettings) => void;
-  onClose: () => void;
-  onSaved: () => void;
-  saving: boolean;
-  error: string;
-  onReload: () => void;
-}) {
-  const updateSettings = (patch: Partial<QuizGeneralSettings>) => onChange({ ...settings, ...patch });
-  const saveAndClose = () => {
-    onSaved();
-  };
-  const SettingSwitch = ({ checked, onToggle }: { checked: boolean; onToggle: (checked: boolean) => void }) => (
-    <button
-      type="button"
-      onClick={() => onToggle(!checked)}
-      className={`h-7 w-12 rounded-full p-1 transition-smooth flex items-center ${checked ? 'bg-primary-500' : 'bg-foreground-200'}`}
-      aria-pressed={checked}
-    >
-      <span className={`h-5 w-5 rounded-full bg-white shadow-sm transition-transform ${checked ? 'translate-x-5' : 'translate-x-0'}`} />
-    </button>
-  );
-
-  return (
-    <div className="fixed inset-0 z-[70] flex items-start justify-center overflow-y-auto bg-black/45 p-4 sm:p-6" onClick={onClose} onKeyDown={event => { if (event.key === 'Escape' && !saving) onClose(); }}>
-      <div role="dialog" aria-modal="true" aria-label="General quiz settings" className="w-full max-w-4xl rounded-2xl bg-background-50 p-5 sm:p-6 shadow-2xl border border-foreground-200/60" onClick={event => event.stopPropagation()}>
-        <div className="mb-6 flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-          <div>
-            <p className="text-xs font-bold uppercase tracking-wider text-primary-600 mb-1">General Quiz Settings</p>
-            <h3 className="text-2xl font-heading font-bold text-foreground-900">Quiz</h3>
-          </div>
-          <div className="flex flex-col sm:flex-row gap-2">
-            <button type="button" disabled={saving} onClick={saveAndClose} className="h-10 px-5 rounded-lg bg-primary-500 text-white text-sm font-bold hover:bg-primary-600 transition-smooth disabled:opacity-50">
-              {saving ? 'Saving...' : 'Save Settings'}
-            </button>
-            <button type="button" disabled={saving} onClick={onClose} className="h-10 px-4 text-sm">Close settings</button>
-          </div>
-        </div>
-
-        {error && <p role="alert" className="mb-3 text-sm text-red-700">{error}</p>}
-        {error && <button type="button" disabled={saving} onClick={onReload} className="mb-3 text-sm text-primary-700">Reload saved settings (discard changes)</button>}
-        <fieldset disabled={saving} className="space-y-3">
-          <GradeSettingRow title="Attempts to retake quizzes" subtitle="Choose limited or unlimited attempts for students to retake quizzes.">
-            <div className="grid grid-cols-1 sm:grid-cols-[1fr_120px] gap-2">
-              <ThemedSelect
-                value={settings.attemptMode}
-                options={[
-                  { value: 'unlimited', label: 'Unlimited attempts' },
-                  { value: 'limited', label: 'Limited attempts' },
-                ]}
-                onChange={attemptMode => updateSettings({ attemptMode })}
-                buttonClassName="h-10"
-              />
-              <input
-                type="number"
-                min="1"
-                max="20"
-                value={settings.attemptLimit}
-                onChange={event => updateSettings({ attemptLimit: Number(event.target.value || 1) })}
-                disabled={settings.attemptMode === 'unlimited'}
-                className="h-10 rounded-lg border border-foreground-200/70 bg-white px-3 text-sm outline-none focus:border-primary-400 focus:ring-2 focus:ring-primary-100 disabled:bg-background-100 disabled:text-foreground-300"
-                title="Attempt limit"
-              />
-            </div>
-          </GradeSettingRow>
-
-          <GradeSettingRow title="Quiz Attempt History" subtitle="Let students view their past quiz attempts in the course player.">
-            <div className="flex items-center gap-3">
-              <SettingSwitch checked={settings.attemptHistory} onToggle={attemptHistory => updateSettings({ attemptHistory })} />
-              <span className={`text-xs font-bold ${settings.attemptHistory ? 'text-primary-600' : 'text-foreground-400'}`}>{settings.attemptHistory ? 'On' : 'Off'}</span>
-            </div>
-          </GradeSettingRow>
-
-          <GradeSettingRow title="Retake After Passing" subtitle="Allow students to retake the quiz even after passing.">
-            <div className="flex items-center gap-3">
-              <SettingSwitch checked={settings.retakeAfterPass} onToggle={retakeAfterPass => updateSettings({ retakeAfterPass })} />
-              <span className={`text-xs font-bold ${settings.retakeAfterPass ? 'text-primary-600' : 'text-foreground-400'}`}>{settings.retakeAfterPass ? 'On' : 'Off'}</span>
-            </div>
-          </GradeSettingRow>
-
-          <GradeSettingRow title="Quiz style" subtitle="Choose how quizzes are shown to learners.">
-            <ThemedSelect
-              value={settings.quizStyle}
-              options={[
-                { value: 'default', label: 'Default' },
-                { value: 'pagination', label: 'Pagination' },
-                { value: 'global', label: 'Global' },
-              ]}
-              onChange={quizStyle => updateSettings({ quizStyle })}
-              buttonClassName="h-10"
-            />
-          </GradeSettingRow>
-        </fieldset>
-      </div>
-    </div>
-  );
-}
-
 const emptyGeneratorForm: AiGeneratorState = {
   title: '',
   topic: '',
@@ -680,41 +569,12 @@ export default function QuizXmlWorkspacePage() {
   const [error, setError] = useState('');
   const [showCreate, setShowCreate] = useState(false);
   const [showManualCreate, setShowManualCreate] = useState(false);
-  const [showGradeSettings, setShowGradeSettings] = useState(false);
-  const [showGeneralSettings, setShowGeneralSettings] = useState(false);
   const [form, setForm] = useState<QuizFormState>(emptyForm);
   const [savingQuiz, setSavingQuiz] = useState(false);
   const [savingManualQuiz, setSavingManualQuiz] = useState(false);
   const [readingQuestionImage, setReadingQuestionImage] = useState(false);
   const [manualQuestions, setManualQuestions] = useState<QuizPreviewQuestion[]>(() => [createManualQuestion(1)]);
   const [openManualQuestionId, setOpenManualQuestionId] = useState<number | null>(null);
-  const defaults = useQuizDefaults();
-  const [gradeSettings, setGradeSettings] = useState<QuizGradeSettings>(defaultQuizGradeSettings);
-  const [generalSettings, setGeneralSettings] = useState<QuizGeneralSettings>(defaultQuizGeneralSettings);
-  const [savingDefaults, setSavingDefaults] = useState(false);
-  const [defaultsError, setDefaultsError] = useState('');
-  useEffect(() => {
-    if (defaults.data) {
-      setGradeSettings(defaults.data.grades);
-      setGeneralSettings(defaults.data.general);
-    }
-  }, [defaults.data]);
-  const persistDefaults = async () => {
-    if (!defaults.data || defaults.loading || savingDefaults) return;
-    setSavingDefaults(true);
-    setDefaultsError('');
-    try {
-      const saved = await saveQuizDefaults({ general: generalSettings, grades: gradeSettings, revision: defaults.data.revision });
-      defaults.setData(saved);
-      setShowGradeSettings(false);
-      setShowGeneralSettings(false);
-      success('Quiz defaults saved', 'New quizzes use these shared settings. Existing quizzes keep their settings.');
-    } catch (reason) {
-      setDefaultsError(reason instanceof Error ? reason.message : 'Could not save quiz defaults.');
-    } finally {
-      setSavingDefaults(false);
-    }
-  };
   const [trainingPlanOptions, setTrainingPlanOptions] = useState<CurriculumModuleOptions>({ programmes: [], modulesByProgramme: {} });
   const [formWeeks, setFormWeeks] = useState<WeekItem[]>([]);
   const [formWeeksState, setFormWeeksState] = useState<WeekLoadState>('idle');
@@ -1754,28 +1614,6 @@ export default function QuizXmlWorkspacePage() {
                   <AppIcon className="ri-questionnaire-line"></AppIcon>
                   Question Bank
                 </Link>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setShowGradeSettings(true);
-                    setMoreMenuOpen(false);
-                  }}
-                  className="w-full h-10 px-3 rounded-lg text-sm font-semibold text-left text-[#5b2dbb] hover:bg-[#f7f3ff] flex items-center gap-2"
-                >
-                  <AppIcon className="ri-graduation-cap-line"></AppIcon>
-                  Grade Settings
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setShowGeneralSettings(true);
-                    setMoreMenuOpen(false);
-                  }}
-                  className="w-full h-10 px-3 rounded-lg text-sm font-semibold text-left text-[#5b2dbb] hover:bg-[#f7f3ff] flex items-center gap-2"
-                >
-                  <AppIcon className="ri-settings-3-line"></AppIcon>
-                  General Settings
-                </button>
               </div>
             )}
           </div>
@@ -2697,39 +2535,6 @@ export default function QuizXmlWorkspacePage() {
               </div>
             </div>
           </div>
-        )}
-
-        {(showGradeSettings || showGeneralSettings) && (defaults.loading || defaults.error) && (
-          <div role="alert" className="fixed inset-0 z-[75] grid place-items-center bg-black/40 p-4">
-            <div className="rounded-xl bg-white p-6 text-sm">
-              <p>{defaults.loading ? 'Loading shared quiz settings...' : defaults.error}</p>
-              <button type="button" onClick={defaults.reload} disabled={defaults.loading} className="mt-4 mr-4 text-primary-700">Retry</button>
-              <button type="button" onClick={() => { setShowGradeSettings(false); setShowGeneralSettings(false); }}>Close</button>
-            </div>
-          </div>
-        )}
-        {showGradeSettings && defaults.data && !defaults.loading && !defaults.error && (
-          <GradeSettingsModal
-            settings={gradeSettings}
-            onChange={setGradeSettings}
-            onClose={() => { if (!savingDefaults) { setShowGradeSettings(false); setGradeSettings(defaults.data!.grades); setDefaultsError(''); } }}
-            saving={savingDefaults}
-            error={defaultsError}
-            onReload={defaults.reload}
-            onSaved={() => void persistDefaults()}
-          />
-        )}
-
-        {showGeneralSettings && defaults.data && !defaults.loading && !defaults.error && (
-          <GeneralQuizSettingsModal
-            settings={generalSettings}
-            onChange={setGeneralSettings}
-            onClose={() => { if (!savingDefaults) { setShowGeneralSettings(false); setGeneralSettings(defaults.data!.general); setDefaultsError(''); } }}
-            saving={savingDefaults}
-            error={defaultsError}
-            onReload={defaults.reload}
-            onSaved={() => void persistDefaults()}
-          />
         )}
 
         {showManualCreate && (

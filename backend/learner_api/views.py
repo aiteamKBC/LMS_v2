@@ -952,6 +952,8 @@ def enrolment_user_detail(request, pk):
             return _error("User not found.", 404)
         except ValidationError as exc:
             return _error(str(exc), 400)
+        except IntegrityError:
+            return _error('This learner has retained records and cannot be deleted.', 409)
         except DatabaseError as exc:
             return _error(f"Could not delete user account: {exc}", 502)
         return JsonResponse({"deleted": True, "id": pk})

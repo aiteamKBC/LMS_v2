@@ -34,7 +34,7 @@ from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from urllib.parse import urlsplit
 
-from django.db import DEFAULT_DB_ALIAS, DatabaseError, connection, transaction
+from django.db import DEFAULT_DB_ALIAS, DatabaseError, connection, connections, transaction
 
 from . import schema_gate
 
@@ -1317,11 +1317,29 @@ def record_rows(table, rows, *, reason='', deleted=False, using=None, before_row
     try:
         entity_type = config['entity_type']
         key_column = config['key']
+        alias = using or config.get('using') or DEFAULT_DB_ALIAS
+        if entity_type == 'ksb_mapping':
+            # RETURNING carries the canonical FK, not the code used as the
+            # audit title. Resolve missing codes at capture time so history
+            # retains what the mapping named when it was written.
+            rows = list(rows)
+            standard_ids = {row.get('standard_ksb_id') for row in rows
+                            if row and row.get('standard_ksb_id') is not None
+                            and not clean(row.get('ksb_code'))}
+            if standard_ids:
+                with connections[alias].cursor() as cursor:
+                    placeholders = ','.join(['%s'] * len(standard_ids))
+                    cursor.execute(
+                        f'SELECT id, ksb_code FROM {qualified("ksb_standard_definitions")} '
+                        f'WHERE id IN ({placeholders})', list(standard_ids))
+                    codes = dict(cursor.fetchall())
+                rows = [{**row, 'ksb_code': codes.get(row.get('standard_ksb_id'))}
+                        if row and not clean(row.get('ksb_code'))
+                        and row.get('standard_ksb_id') in codes else row for row in rows]
         before_by_id = {
             clean(row.get(key_column)): build_snapshot(entity_type, row)
             for row in (before_rows or [])
         }
-        alias = using or config.get('using') or DEFAULT_DB_ALIAS
         buffer = pending_buffer(alias)
         # Taken here, not at flush time. The flush can run after the request has
         # finished -- it waits for the commit -- and by then the thread-locals
@@ -1821,6 +1839,7 @@ def insert_revisions(pending):
         }
 
 
+@transaction.atomic
 def pin_versions(entity_type, pending, inserted, actor):
     """Name the revisions the author declared a version of.
 
@@ -1845,6 +1864,18 @@ def pin_versions(entity_type, pending, inserted, actor):
         ))
     if not rows:
         return
+    # Validate imported/restored ID maps as well as IDs just returned by INSERT.
+    # Lock the referenced identities until the versions have been written.
+    ids = sorted({row[3] for row in rows})
+    with connection.cursor() as cursor:
+        cursor.execute(
+            f'select id, entity_type, entity_id from {qualified(REVISIONS_TABLE)} '
+            f'where id in ({", ".join(["%s"] * len(ids))})'
+            + (' for key share' if connection.vendor == 'postgresql' else ''), ids,
+        )
+        identities = {row[0]: (row[1], row[2]) for row in cursor.fetchall()}
+    if any(identities.get(row[3]) != (row[0], row[1]) for row in rows):
+        raise ValueError('A version must reference a revision of the same entity.')
     placeholder = '(%s, %s, %s, %s, %s, %s, %s)'
     query = (
         f'insert into {qualified(VERSIONS_TABLE)} '

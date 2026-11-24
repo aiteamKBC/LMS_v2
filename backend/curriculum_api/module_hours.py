@@ -3,15 +3,13 @@
 Only explicit account grants permit changing targets or delegating access.
 Super-admin/workspace grants deliberately confer neither of these powers.
 
-The current curriculum database has no module-hours tables (targets, access
-grants and their audit were not carried over). There, every read answers the
-empty state -- no target, no grant -- so the module form and the account
-console load normally and offer no edit; a write is refused with
-``module_hours_not_available`` and nothing is created.
+When module-hours storage is absent, reads answer the empty state and writes
+are refused with ``module_hours_not_available``. Runtime requests never create
+tables. The installed database owns the foreign keys and historical audit data.
 """
 import json
 
-from django.db import DatabaseError, connection, transaction
+from django.db import DatabaseError, IntegrityError, connection, transaction
 from django.http import JsonResponse
 from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
@@ -66,11 +64,12 @@ def read_target(module_id):
     return {'targetMinutes': row[0] if row else None, 'revision': row[1] if row else 0}
 
 
-def read_access(account_id):
+def read_access(account_id, *, for_update=False):
     if not available():
         return {'canMatch': False, 'canManage': False, 'revision': 0}
     with connection.cursor() as cursor:
-        cursor.execute(f'SELECT can_match, can_manage, revision FROM {table_name(connection, "module_hours_access")} WHERE account_id = %s', [account_id])
+        lock = ' FOR UPDATE' if for_update and connection.vendor == 'postgresql' else ''
+        cursor.execute(f'SELECT can_match, can_manage, revision FROM {table_name(connection, "module_hours_access")} WHERE account_id = %s{lock}', [account_id])
         row = cursor.fetchone()
     return {'canMatch': bool(row[0]) if row else False,
             'canManage': bool(row[1]) if row else False, 'revision': row[2] if row else 0}
@@ -186,7 +185,9 @@ def module_target(request, module_id):
                 programme_name=module.get('programme_name', ''))
             if archived is not None:
                 return archived
-            if not read_access(request.login_account.id)['canMatch']:
+            # Hold the grant through the target and audit writes. Revocation
+            # must serialize with this authorization check, not race it.
+            if not read_access(request.login_account.id, for_update=True)['canMatch']:
                 return response({'error': 'Match Module Hours permission is required.', 'code': 'forbidden'}, 403)
             result = write_target(identifier, target, payload['expectedRevision'], request.login_account.id)
         return response({'moduleId': identifier, **result, 'canMatch': True})
@@ -197,6 +198,9 @@ def module_target(request, module_id):
         return response({'error': str(exc), 'code': 'csrf'}, 403)
     except ValueError as exc:
         return response({'error': str(exc)}, 400)
+    except IntegrityError:
+        return response({'error': 'The module or account changed. Reload before saving.',
+                         'code': 'module_hours_reference_changed'}, 409)
     except DatabaseError:
         return unavailable()
 
@@ -248,5 +252,8 @@ def account_access(request, account_id):
         return response({'error': str(exc), 'code': 'csrf'}, 403)
     except ValueError as exc:
         return response({'error': str(exc)}, 400)
+    except IntegrityError:
+        return response({'error': 'The staff account changed. Reload before saving.',
+                         'code': 'module_hours_reference_changed'}, 409)
     except DatabaseError:
         return unavailable()

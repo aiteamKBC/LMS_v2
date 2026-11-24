@@ -1,6 +1,6 @@
 """Attribute existing ledger seconds; never award or copy Free Course hours.
 
-The reviewed migration tables are identity bridges, not hours authorities.
+The ledger's relational Free Course references identify historical attribution.
 The original ledger remains the sole source for acceptance and actual seconds.
 """
 from django.db import DatabaseError, connections
@@ -22,14 +22,12 @@ REMAINING_COURSES = frozenset({'FREECOURSE-MM-MOD-202608229EA79025AB55'})
 # Retained for historical audit tooling; runtime scopes to assigned canonical IDs.
 SUPPORTED_COURSES = INCLUSION_COURSES | ADDITIONAL_COURSES | REMAINING_COURSES
 
-MAPPINGS_SQL = '''SELECT old_progress_id,learner_id,free_course_id,free_component_id
-    FROM "Learner".free_course_hours_migration
-    UNION
-    SELECT old_progress_id,learner_id,free_course_id,free_component_id
-    FROM "Learner".free_course_hours_migration_additional
-    UNION
-    SELECT old_progress_id,learner_id,free_course_id,free_component_id
-    FROM "Learner".free_course_hours_migration_remaining'''
+# Keep every historical identity here, including deleted and unenrolled entries.
+# Each consumer retains its own eligibility rules (hours versus attempt history).
+MAPPINGS_SQL = '''SELECT id AS old_progress_id,learner_id,
+    free_course_ref AS free_course_id,free_component_ref AS free_component_id
+    FROM "Learner".learner_progress_entries
+    WHERE free_course_ref IS NOT NULL AND free_component_ref IS NOT NULL'''
 
 HOURS_SQL = f'''SELECT m.free_course_id,m.free_component_id,p.actual_seconds,p.id,m.identity_count
     FROM (
@@ -56,7 +54,7 @@ HOURS_SQL = f'''SELECT m.free_course_id,m.free_component_id,p.actual_seconds,p.i
 def accepted_activity_seconds(learner_id, course_ids):
     """Read assigned canonical activities once, independent of completion flags.
 
-    All assigned canonical courses are eligible for bridge attribution. Courses
+    All assigned canonical courses are eligible for ledger attribution. Courses
     without mapped ledger entries contribute no hours; no catalogue ID allowlist.
     """
     selected = sorted(set(course_ids))

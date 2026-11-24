@@ -1,17 +1,6 @@
-"""One Changes feed over two kinds of evidence: the revision log, and before it.
+"""Canonical revision feeds, with legacy timestamp rows as exclusion fixtures.
 
-Where the revision log exists it is the authority. Each record type began being
-recorded on a different day, and before that day the only history is the
-records' own timestamps. These tests guard the line between the two: a
-recovered event may only come from before its own record type's first revision
-(less ``derived.BOUNDARY_GUARD``), so the two readings can never show one save
-twice -- and everything a reader sees, the total, the counts, the order and
-every page, is taken from the combined set, never from either half.
-
-Every table is synthetic: the revision log is the test database's own, and the
-LMS tables live in in-memory schemas attached for this class alone. Revisions
-are inserted directly with the moment each test needs, so every boundary here
-is one the test set, not one the clock happened to produce.
+Retired contracts and replacements: persistence_contract_cleanup.md.
 """
 
 import json
@@ -165,44 +154,34 @@ class HybridFixtures(AuditHarness):
 
 
 class HybridTrailTests(HybridFixtures):
-    """The revision log, with the history before it recovered into one feed."""
+    """Only canonical revisions contribute events, actors, counts and start times."""
 
     # ------------------------------------------------------------ the boundary
 
-    def test_two_sources_in_one_workspace_keep_their_own_revision_start(self):
-        # Absence reports were recorded from 48 hours ago, meetings only from 24.
+    def test_each_type_reports_only_its_canonical_start(self):
         self.revision('absence_report', '90', self.at(hours=48))
         self.revision('coach_meeting', 'M-90', self.at(hours=24))
         self.absence(1, 'Before both', self.at(hours=60))
-        self.absence(2, 'After absence logging began', self.at(hours=36))
-        self.meeting('M-1', 'Before meetings were logged', self.at(hours=36))
-        self.meeting('M-2', 'After meetings were logged', self.at(hours=12))
+        self.absence(2, 'Between starts', self.at(hours=36))
+        self.meeting('M-1', 'Between starts', self.at(hours=36))
+        self.meeting('M-2', 'After both', self.at(hours=12))
+        payload = self.trail('?workspace=coach&days=7')
+        self.assertEqual(sorted(self.keyed(payload)), [
+            ('revision', 'absence_report', '90', 'updated'),
+            ('revision', 'coach_meeting', 'M-90', 'updated'),
+        ])
+        for entity, hours in [('absence_report', 48), ('coach_meeting', 24)]:
+            self.assertEqual(payload['revisionStartedAt'][entity].replace('T', ' ')[:19], self.at(hours=hours))
 
-        recovered = self.keyed(self.trail('?workspace=coach&days=7'), 'timestamps')
-
-        self.assertIn(('timestamps', 'absence_report', '1', 'created'), recovered)
-        self.assertIn(('timestamps', 'coach_meeting', 'M-1', 'created'), recovered)
-        # 36 hours ago is inside the absence log's coverage, and outside the
-        # meetings'. One global cutoff would have got one of these wrong.
-        self.assertNotIn(('timestamps', 'absence_report', '2', 'created'), recovered)
-        self.assertNotIn(('timestamps', 'coach_meeting', 'M-2', 'created'), recovered)
-
-    def test_a_recovered_event_just_before_the_boundary_is_shown(self):
+    def test_source_rows_on_either_side_of_the_old_guard_are_never_recovered(self):
         boundary = self.now - timedelta(hours=10)
         self.revision('absence_report', '90', boundary.strftime('%Y-%m-%d %H:%M:%S'))
-        just_before = (boundary - GUARD - timedelta(seconds=1)).strftime('%Y-%m-%d %H:%M:%S')
-        inside_guard = (boundary - timedelta(minutes=1)).strftime('%Y-%m-%d %H:%M:%S')
-        self.absence(1, 'Just before', just_before)
-        self.absence(2, 'Inside the guard', inside_guard)
-
+        self.absence(1, 'Before guard', (boundary - GUARD - timedelta(seconds=1)).strftime('%Y-%m-%d %H:%M:%S'))
+        self.absence(2, 'Inside guard', (boundary - timedelta(minutes=1)).strftime('%Y-%m-%d %H:%M:%S'))
+        self.absence(3, 'After start', self.at(hours=2))
         payload = self.trail('?workspace=coach&days=7')
-
-        recovered = {event['entityId']: event for event in payload['events'] if event['provenance'] == 'timestamps'}
-        self.assertIn('1', recovered)
-        self.assertEqual(recovered['1']['at'].replace('T', ' ')[:19], just_before)
-        # Within minutes of the log starting, a stamp may belong to the very
-        # save the log recorded; it is left to the log.
-        self.assertNotIn('2', recovered)
+        self.assertEqual(self.keyed(payload), [('revision', 'absence_report', '90', 'updated')])
+        self.assertEqual(payload['provenanceCounts'], {'revision': 1, 'timestamps': 0})
 
     def test_the_revision_at_the_boundary_is_in_the_feed(self):
         self.revision('absence_report', '1', self.at(hours=10), action='created', actor_email='coach@example.test')
@@ -233,100 +212,81 @@ class HybridTrailTests(HybridFixtures):
 
     # ------------------------------------------------------------ one feed
 
-    def test_deep_pages_cross_from_the_log_into_recovered_history(self):
-        self.revision('absence_report', '900', self.at(hours=40))
-        for number in range(7):
-            self.revision('absence_report', str(100 + number), self.at(hours=30 - number))
+    def test_deep_canonical_pages_ignore_source_only_history(self):
+        for number in range(14):
+            self.revision('absence_report', str(100 + number), self.at(hours=30 + number))
         for number in range(6):
-            self.absence(number + 1, f'Learner {number}', self.at(hours=50 + number))
-
+            self.absence(number + 1, f'Source {number}', self.at(hours=50 + number))
         first, events = self.every_page('?workspace=coach&days=7', 3)
-
-        self.assertEqual(first['total'], 14)
-        self.assertEqual(first['pages'], 5)
-        self.assertEqual(len(events), 14)
+        self.assertEqual((first['total'], first['pages'], len(events)), (14, 5, 14))
         self.assertEqual(len({event['id'] for event in events}), 14)
-        stamps = [event['at'].replace('T', ' ')[:19] for event in events]
+        stamps = [event['at'] for event in events]
         self.assertEqual(stamps, sorted(stamps, reverse=True))
-        kinds = [event['provenance'] for event in events]
-        # Newest first: the log, then -- once -- the history before it.
-        self.assertEqual(kinds, ['revision'] * 8 + ['timestamps'] * 6)
-        self.assertEqual(first['provenanceCounts'], {'revision': 8, 'timestamps': 6})
-        # Asked of a later page, the counts describe the same whole window.
+        self.assertEqual({event['provenance'] for event in events}, {'revision'})
+        self.assertEqual(first['provenanceCounts'], {'revision': 14, 'timestamps': 0})
         later = self.trail('?workspace=coach&days=7&limit=3&page=4')
         self.assertEqual(later['total'], 14)
         self.assertEqual(later['actionCounts'], first['actionCounts'])
 
-    def test_the_workspace_filter_applies_to_both_readings(self):
-        self.revision('absence_report', '90', self.at(hours=20))
-        self.revision('staff_record', '90', self.at(hours=20))
-        self.absence(1, 'Ahmed Ali', self.at(hours=30))
-        self.staff(1, 'Rachel Myers', self.at(hours=30), self.at(hours=30))
+    def test_workspace_filter_isolates_canonical_events_and_counts(self):
+        for entity in ('absence_report', 'staff_record'):
+            for ident in ('1', '90'):
+                self.revision(entity, ident, self.at(hours=20), action='created')
+        self.absence(2, 'Unlogged', self.at(hours=30))
+        self.staff(2, 'Unlogged', self.at(hours=30), self.at(hours=30))
+        for workspace, entity in [('coach', 'absence_report'), ('admin', 'staff_record')]:
+            payload = self.trail(f'?workspace={workspace}&days=7&limit=1')
+            self.assertEqual({event['entity'] for event in payload['events']}, {entity})
+            self.assertEqual(payload['entityCounts'], {entity: 2})
+            self.assertEqual(payload['total'], 2)
+            self.assertEqual(payload['provenanceCounts'], {'revision': 2, 'timestamps': 0})
 
-        coach = self.trail('?workspace=coach&days=7')
-        admin = self.trail('?workspace=admin&days=7')
-
-        self.assertEqual({event['entity'] for event in coach['events']}, {'absence_report'})
-        self.assertEqual({event['provenance'] for event in coach['events']}, {'revision', 'timestamps'})
-        self.assertEqual({event['entity'] for event in admin['events']}, {'staff_record'})
-        self.assertEqual({event['provenance'] for event in admin['events']}, {'revision', 'timestamps'})
-
-    def test_the_record_type_filter_applies_to_both_readings(self):
+    def test_record_type_filters_canonical_events_before_paging(self):
         self.revision('absence_report', '90', self.at(hours=20))
         self.revision('coach_meeting', 'M-90', self.at(hours=20))
-        self.absence(1, 'Ahmed Ali', self.at(hours=30))
-        self.meeting('M-1', 'Bea Lane', self.at(hours=30))
-
+        self.revision('coach_meeting', 'M-1', self.at(hours=30), action='created')
+        self.meeting('M-2', 'Unlogged', self.at(hours=10))
         payload = self.trail('?workspace=coach&days=7&entity=coach_meeting')
-
-        self.assertEqual({event['entity'] for event in payload['events']}, {'coach_meeting'})
         self.assertEqual(sorted(self.keyed(payload)), [
+            ('revision', 'coach_meeting', 'M-1', 'created'),
             ('revision', 'coach_meeting', 'M-90', 'updated'),
-            ('timestamps', 'coach_meeting', 'M-1', 'created'),
         ])
         self.assertEqual(payload['entityCounts'], {'coach_meeting': 2})
+        self.assertEqual(self.trail('?entity=coach_meeting&limit=1')['total'], 2)
 
-    def test_the_author_filter_applies_to_both_readings(self):
-        # Interventions have never been logged, so every one is recovered; the
-        # row itself records who raised it.
-        self.intervention(1, 'Ahmed Ali', self.at(hours=30), created_by='coach@example.test')
-        self.intervention(2, 'Bea Lane', self.at(hours=29), created_by='other@example.test')
+    def test_author_filter_and_options_use_only_saved_revision_actors(self):
+        self.revision('attendance_intervention', '1', self.at(hours=30), actor_email='coach@example.test')
+        self.revision('attendance_intervention', '2', self.at(hours=29), actor_email='other@example.test')
         self.revision('absence_report', '1', self.at(hours=5), actor_email='coach@example.test')
-
+        self.intervention(3, 'Unlogged', self.at(hours=1), created_by='raw@example.test')
         payload = self.trail('?days=7&actor=coach@example.test')
-
         self.assertEqual(sorted(self.keyed(payload)), [
             ('revision', 'absence_report', '1', 'updated'),
-            ('timestamps', 'attendance_intervention', '1', 'created'),
+            ('revision', 'attendance_intervention', '1', 'updated'),
         ])
         actors = {actor['email']: actor['changes'] for actor in payload['actors']}
-        self.assertEqual(actors['coach@example.test'], 2)
-        self.assertEqual(actors['other@example.test'], 1)
+        self.assertEqual(actors, {'coach@example.test': 2, 'other@example.test': 1})
 
-    def test_a_window_that_crosses_the_boundary_reads_both_sides_of_it(self):
-        self.revision('absence_report', '90', self.at(hours=48))
-        self.absence(1, 'Inside the window, before the log', self.at(hours=60))
-        self.absence(2, 'Outside the window', self.at(hours=80))
-
+    def test_date_window_uses_revision_events_not_source_timestamps(self):
+        for ident, hours in [('90', 48), ('1', 60), ('2', 80)]:
+            self.revision('absence_report', ident, self.at(hours=hours))
+        self.absence(3, 'Raw source inside window', self.at(hours=1))
         payload = self.trail('?workspace=coach&days=3')
-
         self.assertEqual(sorted(self.keyed(payload)), [
+            ('revision', 'absence_report', '1', 'updated'),
             ('revision', 'absence_report', '90', 'updated'),
-            ('timestamps', 'absence_report', '1', 'created'),
         ])
+        self.assertEqual(payload['revisionStartedAt']['absence_report'].replace('T', ' ')[:19], self.at(hours=80))
 
-    def test_a_record_type_never_logged_is_recovered_for_the_whole_window(self):
-        self.intervention(1, 'Ahmed Ali', self.at(hours=2))
-        self.intervention(2, 'Bea Lane', self.at(hours=100))
-
+    def test_unlogged_type_has_no_events_and_null_authoritative_start(self):
+        self.intervention(1, 'Recent source', self.at(hours=2))
+        self.intervention(2, 'Older source', self.at(hours=100))
         payload = self.trail('?workspace=engagement&days=7')
-
-        self.assertEqual(sorted(self.keyed(payload)), [
-            ('timestamps', 'attendance_intervention', '1', 'created'),
-            ('timestamps', 'attendance_intervention', '2', 'created'),
-        ])
+        self.assertEqual(payload['events'], [])
+        self.assertEqual(payload['total'], 0)
         self.assertIsNone(payload['revisionStartedAt']['attendance_intervention'])
-        self.assertIn('engagement', payload['derivedWorkspaces'])
+        self.assertEqual(payload['derivedWorkspaces'], [])
+        self.assertEqual(payload['actors'], [])
 
     def test_a_record_type_logged_since_before_the_window_recovers_nothing(self):
         # Staff saves have been logged since long before this two-day window
@@ -342,61 +302,39 @@ class HybridTrailTests(HybridFixtures):
 
     # ------------------------------------------------------------ what it may claim
 
-    def test_a_recovered_event_names_no_author_the_row_does_not_record(self):
-        self.revision('absence_report', '90', self.at(hours=10))
+    def test_canonical_blank_author_never_becomes_the_signed_in_reader(self):
+        self.revision('absence_report', '90', self.at(hours=10), actor_email='', actor_name='')
         self.sign_in('Somebody Reading', 'reader@example.test')
-        self.absence(1, 'Ahmed Ali', self.at(hours=30))
-
-        event = next(event for event in self.trail('?workspace=coach&days=7')['events']
-                     if event['provenance'] == 'timestamps')
-
+        event, = self.trail('?workspace=coach&days=7')['events']
         self.assertEqual(event['actorName'], '')
         self.assertEqual(event['actorEmail'], '')
-        self.assertEqual(event['changes'], [])
-        self.assertIsNone(event['snapshot'])
-        self.assertEqual(event['provenanceLabel'], 'Recovered from timestamps')
+        self.assertEqual(event['provenanceLabel'], 'Revision history')
+        self.assertEqual(len(event['changes']), 1)
 
-    def test_first_recorded_and_created_keep_their_meaning_before_the_log(self):
-        self.revision('staff_record', '90', self.at(hours=5))
-        # No creation stamp: present, origin unknown.
-        self.staff(1, 'Rachel Myers', None, self.at(hours=30))
-        # Written once: a creation, and not also an edit.
-        self.staff(2, 'Tom Price', self.at(hours=40), self.at(hours=40))
-        # Written twice: a creation and a later edit.
-        self.staff(3, 'Ana Ruiz', self.at(hours=60), self.at(hours=50))
-
-        recovered = sorted(self.keyed(self.trail('?workspace=admin&days=7'), 'timestamps'))
-
-        self.assertEqual(recovered, [
-            ('timestamps', 'staff_record', '1', 'recorded'),
-            ('timestamps', 'staff_record', '2', 'created'),
-            ('timestamps', 'staff_record', '3', 'created'),
-            ('timestamps', 'staff_record', '3', 'updated'),
+    def test_recorded_created_and_updated_keep_their_saved_meaning(self):
+        # Explicit canonical events, not inferred actions from source stamps.
+        for ident, action, hours in [('1', 'recorded', 30), ('2', 'created', 40),
+                                     ('3', 'created', 60), ('3', 'updated', 50)]:
+            self.revision('staff_record', ident, self.at(hours=hours), action=action)
+        self.staff(4, 'Unlogged', None, self.at(hours=10))
+        self.assertEqual(sorted(self.keyed(self.trail('?workspace=admin&days=7'))), [
+            ('revision', 'staff_record', '1', 'recorded'),
+            ('revision', 'staff_record', '2', 'created'),
+            ('revision', 'staff_record', '3', 'created'),
+            ('revision', 'staff_record', '3', 'updated'),
         ])
 
-    def test_identical_moments_are_ordered_the_same_way_every_time(self):
+    def test_identical_revision_moments_have_stable_id_order_across_pages(self):
         same = self.at(hours=30)
-        self.revision('coach_meeting', 'M-9', same)
-        self.revision('absence_report', '90', self.at(hours=20))
-        self.absence(1, 'Ahmed Ali', same)
-        self.absence(2, 'Bea Lane', same)
-
+        for ident in ('M-9', 'M-1', 'M-2'):
+            self.revision('coach_meeting', ident, same)
+        self.absence(1, 'Unlogged tie', same)
         reads = [self.keyed(self.trail('?workspace=coach&days=7&limit=50')) for _ in range(3)]
-        _, paged = self.every_page('?workspace=coach&days=7', 1)
-
         self.assertEqual(reads[0], reads[1])
         self.assertEqual(reads[1], reads[2])
-        tied = [key for key in reads[0] if key[0:3] != ('revision', 'absence_report', '90')]
-        # At one instant the log's event leads, then recovered ones by key.
-        self.assertEqual(tied, [
-            ('revision', 'coach_meeting', 'M-9', 'updated'),
-            ('timestamps', 'absence_report', '1', 'created'),
-            ('timestamps', 'absence_report', '2', 'created'),
-        ])
-        self.assertEqual(
-            [(event['provenance'], event['entity'], event['entityId'], event['action']) for event in paged],
-            reads[0],
-        )
+        self.assertEqual(reads[0], [('revision', 'coach_meeting', ident, 'updated') for ident in ('M-2', 'M-1', 'M-9')])
+        _, paged = self.every_page('?workspace=coach&days=7', 1)
+        self.assertEqual([(e['provenance'], e['entity'], e['entityId'], e['action']) for e in paged], reads[0])
 
     def test_a_filter_only_the_log_can_answer_reads_the_log_alone(self):
         self.revision('absence_report', '90', self.at(hours=10))
@@ -407,15 +345,17 @@ class HybridTrailTests(HybridFixtures):
         self.assertFalse(payload['recoveredHistory'])
         self.assertEqual(self.keyed(payload, 'timestamps'), [])
 
-    def test_coverage_names_each_kind_of_evidence(self):
-        payload = self.trail('?days=7')
-
-        self.assertIn('coach', payload['derivedWorkspaces'])
-        self.assertIn('admin', payload['derivedWorkspaces'])
-        self.assertTrue(set(payload['revisionWorkspaces']) <= set(payload['changeWorkspaces']))
-        self.assertTrue(set(payload['derivedWorkspaces']) <= set(payload['changeWorkspaces']))
+    def test_coverage_advertises_registered_revisions_never_timestamp_sources(self):
+        from unittest.mock import patch
+        from system_audit import writes
+        with patch.object(derived, 'resolve', side_effect=AssertionError('Retired source scan')):
+            payload = self.trail('?days=7')
+        self.assertEqual(payload['derivedWorkspaces'], [])
+        self.assertEqual(payload['revisionWorkspaces'], writes.change_workspaces())
+        self.assertEqual(payload['changeWorkspaces'], writes.change_workspaces())
         self.assertFalse(set(payload['uncoveredWorkspaces']) & set(payload['changeWorkspaces']))
-        self.assertTrue(payload['recoveredHistory'])
+        self.assertFalse(payload['recoveredHistory'])
+        self.assertEqual(payload['provenanceCounts']['timestamps'], 0)
 
 
 class HybridWindowTests(HybridFixtures):
@@ -441,42 +381,33 @@ class HybridWindowTests(HybridFixtures):
         return {writes.workspace_for_entity(event['entity'])
                 for event in payload['events'] if event['provenance'] == 'timestamps'}
 
-    def test_the_system_wide_30_day_feed_recovers_every_workspace(self):
-        self.seed_older_history(20)
-
+    def test_system_wide_30_days_includes_canonical_events_from_each_workspace(self):
+        for entity in ('absence_report', 'staff_record', 'attendance_intervention'):
+            self.revision(entity, '1', self.days_ago(20), action='created')
         payload = self.trail('?days=30&limit=200')
-
         self.assertEqual(payload['windowDays'], 30)
-        self.assertTrue({'coach', 'admin', 'engagement'} <= self.recovered_workspaces(payload))
+        self.assertEqual({e['workspace'] for e in payload['events']}, {'coach', 'admin', 'engagement'})
+        self.assertEqual(payload['total'], 3)
 
-    def test_the_system_wide_60_day_feed_recovers_every_workspace(self):
-        self.seed_older_history(50)
-
+    def test_system_wide_60_days_includes_canonical_events_outside_30_days(self):
+        for entity in ('absence_report', 'staff_record', 'attendance_intervention'):
+            self.revision(entity, '1', self.days_ago(50), action='created')
         thirty = self.trail('?days=30&limit=200')
         sixty = self.trail('?days=60&limit=200')
-
-        self.assertFalse({'coach', 'admin', 'engagement'} & self.recovered_workspaces(thirty))
+        self.assertEqual(thirty['events'], [])
         self.assertEqual(sixty['windowDays'], 60)
-        self.assertTrue({'coach', 'admin', 'engagement'} <= self.recovered_workspaces(sixty))
+        self.assertEqual({e['workspace'] for e in sixty['events']}, {'coach', 'admin', 'engagement'})
+        self.assertEqual(sixty['total'], 3)
 
-    def test_workspace_feeds_recover_their_own_history_at_30_and_60_days(self):
-        self.revision('absence_report', '90', self.days_ago(5))
-        self.revision('staff_record', '90', self.days_ago(5))
-        self.absence(1, 'Ahmed Ali', self.days_ago(20))
-        self.absence(2, 'Bea Lane', self.days_ago(45))
-        self.staff(1, 'Rachel Myers', self.days_ago(20), self.days_ago(20))
-        self.staff(2, 'Tom Price', self.days_ago(45), self.days_ago(45))
-        self.intervention(1, 'Ahmed Ali', self.days_ago(20))
-        self.intervention(2, 'Bea Lane', self.days_ago(45))
-        for workspace, entity in (('coach', 'absence_report'), ('admin', 'staff_record'),
-                                  ('engagement', 'attendance_intervention')):
+    def test_workspace_30_and_60_day_feeds_use_only_their_canonical_events(self):
+        for entity in ('absence_report', 'staff_record', 'attendance_intervention'):
+            for ident, days in [('1', 20), ('2', 45)]:
+                self.revision(entity, ident, self.days_ago(days), action='created')
+        for workspace, entity in [('coach', 'absence_report'), ('admin', 'staff_record'), ('engagement', 'attendance_intervention')]:
             thirty = self.trail(f'?workspace={workspace}&days=30')
             sixty = self.trail(f'?workspace={workspace}&days=60')
-            self.assertEqual(self.keyed(thirty, 'timestamps'), [('timestamps', entity, '1', 'created')], workspace)
-            self.assertEqual(sorted(self.keyed(sixty, 'timestamps')), [
-                ('timestamps', entity, '1', 'created'),
-                ('timestamps', entity, '2', 'created'),
-            ], workspace)
+            self.assertEqual(self.keyed(thirty), [('revision', entity, '1', 'created')])
+            self.assertEqual(sorted(self.keyed(sixty)), [('revision', entity, '1', 'created'), ('revision', entity, '2', 'created')])
             self.assertEqual((thirty['windowDays'], sixty['windowDays']), (30, 60))
 
     def test_seven_days_stays_the_default_and_reads_no_further(self):
@@ -491,21 +422,15 @@ class HybridWindowTests(HybridFixtures):
         self.assertEqual(self.trail('?workspace=coach&days=365')['windowDays'], 60)
         self.assertEqual(self.trail('?days=365')['windowDays'], 60)
 
-    def test_the_boundary_and_its_guard_hold_in_every_window(self):
+    def test_source_rows_never_duplicate_a_revision_in_any_window(self):
         boundary = self.now - timedelta(days=3)
         self.revision('absence_report', '1', boundary.strftime('%Y-%m-%d %H:%M:%S'), action='created')
-        # The same save, stamped a moment before the revision that logged it.
-        self.absence(1, 'Same save', (boundary - timedelta(seconds=2)).strftime('%Y-%m-%d %H:%M:%S'))
-        self.absence(2, 'Inside the guard', (boundary - timedelta(minutes=1)).strftime('%Y-%m-%d %H:%M:%S'))
-        self.absence(3, 'Before the guard', (boundary - GUARD - timedelta(seconds=1)).strftime('%Y-%m-%d %H:%M:%S'))
-
+        for ident, delta in [(1, timedelta(seconds=2)), (2, timedelta(minutes=1)), (3, GUARD + timedelta(seconds=1))]:
+            self.absence(ident, 'Source only', (boundary - delta).strftime('%Y-%m-%d %H:%M:%S'))
         for days in (7, 30, 60):
             payload = self.trail(f'?workspace=coach&days={days}')
-            self.assertEqual(sorted(self.keyed(payload)), [
-                ('revision', 'absence_report', '1', 'created'),
-                ('timestamps', 'absence_report', '3', 'created'),
-            ], days)
-            self.assertEqual(payload['total'], 2, days)
+            self.assertEqual(self.keyed(payload), [('revision', 'absence_report', '1', 'created')])
+            self.assertEqual(payload['total'], 1)
 
     def test_uncovered_workspaces_stay_uncovered_at_60_days(self):
         payload = self.trail('?days=60')

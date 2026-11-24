@@ -29,6 +29,25 @@ const material = { title: 'First reading', reading_html: '', media: [{ kind: 'em
 afterEach(() => { vi.restoreAllMocks(); vi.useRealTimers(); });
 
 describe('shared subject and week selection', () => {
+  it.each(['undated', '', '2026-00', '2026-13'])('keeps an authored week without a valid calendar month (%s)', month => {
+    const activity: SubjectEntry = { ...entry('reading', ''), week: 'Week 3',
+      native: { componentId: 'C1', moduleId: 'M1', weekId: 'W3', title: 'Reading', expectedOtjh: 2 },
+      schedule: { date: null, month } };
+    const subject: Subject = { id: 'current:M1', title: 'Module', source: 'current', activities: [activity] };
+    const [week] = subjectWeeks(subject);
+    expect(week).toMatchObject({ id: 'week:M1:W3', label: 'Week 3', start: null, end: null });
+    expect(week.month).toBeUndefined();
+    expect(week.activities).toEqual([activity]);
+  });
+
+  it('retains a valid month on an authored week without delivery dates', () => {
+    const subject: Subject = { id: 'current:M1', title: 'Module', source: 'current', activities: [{
+      ...entry('reading', ''), week: 'Week 3', schedule: { date: null, month: '2026-03' },
+      native: { componentId: 'C1', moduleId: 'M1', weekId: 'W3', title: 'Reading', expectedOtjh: 2 },
+    }] };
+    expect(subjectWeeks(subject)[0]).toMatchObject({ label: 'March 2026', month: '2026-03', start: null });
+  });
+
   it.each(['section_title', 'title', 'builder_session', 'builder_week'])('starts a teaching week on its Tuesday session (%s)', date_source => {
     const subject: Subject = { id: 'current:M1', title: 'Module', source: 'current', activities: [
       { ...entry('a', '2026-09-29'), schedule: { date: '2026-09-29', week_start: '2026-09-28', week_end: '2026-10-04', date_source } },

@@ -134,7 +134,7 @@ class ModuleContextScopeTests(SimpleTestCase):
 
 
 class TransferredModuleOpenTests(SimpleTestCase):
-    def open_module(self, kind, status, *, new_completion=False, http=False, overlap=False, duplicate=False):
+    def open_module(self, kind, status, *, new_completion=False, http=False, overlap=False, duplicate=False, records=None):
         from . import (weekly_learning, dashboard_training, training_plan_dashboard, live_session_progress,
                        teams_attendance, builder_activity_dates)
         source = SimpleNamespace(pk=7, id=7, email='learner@example.test', programme='Programme',
@@ -155,7 +155,7 @@ class TransferredModuleOpenTests(SimpleTestCase):
         meta = metadata()
         meta.update(imported_courses={'current:M1': 'legacy:50'}, progress_transfers=transfers['items'],
                     replacement_settings={'C0': {'legacySettings': {'sourceLessonId': 7}}})
-        context = ([{'moduleId': 'M1'}], ['M1'], [], content, [old], [], set(), set(), {}, meta, [])
+        context = ([{'moduleId': 'M1'}], ['M1'], records or [], content, [old], [], set(), set(), {}, meta, [])
         with ExitStack() as stack:
             stack.enter_context(patch.object(learning, 'load_context', return_value=context))
             stack.enter_context(patch.object(learning, 'connections', fake_connections()))
@@ -187,12 +187,22 @@ class TransferredModuleOpenTests(SimpleTestCase):
         return result, historical
 
     def test_current_progress_deduplicates_overlap_and_placements_but_keeps_old_snapshot(self):
+        # Snapshot hours describe the transfer; actual hours come from accepted
+        # canonical ledger records, allocated to its destination by recordIds.
+        records = [{'id': 1, 'learner_id': 9, 'accepted': True, 'actual_seconds': 7200}]
         for kind in ('commercial', 'apprenticeship'):
-            result, _ = self.open_module(kind, 'approved', new_completion=True, overlap=True, duplicate=True, http=True)
+            result, _ = self.open_module(kind, 'approved', new_completion=True, overlap=True, duplicate=True, http=True, records=records)
             credit = result['metadata']['module_credits']['current:M1']
             self.assertEqual((credit['progress'], credit['transferredProgress'], credit['actualHours']), (20, 40, 2))
             self.assertEqual(result['detail']['componentProgress'], [
                 {'componentId': 'C1', 'kind': 'component'}, {'componentId': 'C0', 'kind': 'component'}])
+
+    def test_transfer_snapshot_cannot_grant_actual_hours_without_accepted_ledger_evidence(self):
+        for kind in ('commercial', 'apprenticeship'):
+            for records in ([], [{'id': 1, 'learner_id': 9, 'accepted': False, 'actual_seconds': 7200}]):
+                with self.subTest(kind=kind, records=records):
+                    result, _ = self.open_module(kind, 'approved', records=records, http=True)
+                    self.assertEqual(result['metadata']['module_credits']['current:M1']['actualHours'], 0)
 
     def test_transferred_module_http_response_is_serializable_with_completion_credit(self):
         for kind in ('commercial', 'apprenticeship'):

@@ -112,7 +112,8 @@ function authoredWeekRanges(activities: SubjectEntry[]) {
     const start = (declared ? deliveryDateKey(declared.start) : '')
       || (live && (sessionDeliveryDate(live.native || {}) || deliveryDate(live)))
       || rows.filter(row => !row.native?.additionalMeeting).map(deliveryDate).find(Boolean) || null;
-    const months = [...new Set(rows.map(row => row.schedule.month).filter(Boolean))];
+    const months = [...new Set(rows.map(row => row.schedule.month)
+      .filter((month): month is string => /^\d{4}-(0[1-9]|1[0-2])$/.test(month || '')))];
     const lastDay = start ? deliveryWeekEnd(start) : null;
     const declaredEnd = deliveryDateKey(declared?.end);
     ranges.set(key, { start, end: start && lastDay && declaredEnd >= start && declaredEnd <= lastDay ? declaredEnd : lastDay,

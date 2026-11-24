@@ -1,4 +1,4 @@
-"""The Audit Trail keeps seven days of page activity and deletes the rest."""
+"""Audit read windows do not authorize deletion of retained history."""
 from unittest import mock
 
 from django.test import SimpleTestCase
@@ -60,40 +60,16 @@ class RetentionTests(SimpleTestCase):
             self.assertEqual(self.run_purge(cursor), 0)
             self.assertEqual(cursor.statements, [])
 
-    def test_deletes_only_page_activity_older_than_seven_days(self):
-        cursor = FakeCursor(batches=(3,))
-        self.assertEqual(self.run_purge(cursor), 3)
-        deletes = [(sql, params) for sql, params in cursor.statements if 'delete from' in sql]
-        self.assertEqual(len(deletes), 1)
-        sql, params = deletes[0]
-        self.assertIn('activity_events', sql)
-        self.assertNotIn('record_revisions', sql)
-        self.assertIn('occurred_at < %s', sql)
-        # Curriculum Studio's page activity is never deleted.
-        self.assertIn("coalesce(workspace, '') not in", sql)
-        self.assertEqual(params[1:], ['curriculum'])
-        cutoff = params[0]
-        now = activity.datetime.utcnow()
-        self.assertAlmostEqual((now - cutoff).total_seconds(), 7 * 86400, delta=60)
+    def test_all_workspaces_retain_history_without_database_access(self):
+        # The validated history contract supersedes automatic seven-day deletion.
+        for workspace in ('curriculum', 'learner', 'coach', ''):
+            with self.subTest(workspace=workspace):
+                cursor = FakeCursor(batches=(5000, 5000, 10))
+                self.assertEqual(self.run_purge(cursor), 0)
+                self.assertEqual(cursor.statements, [])
 
-    def test_a_large_backlog_is_deleted_in_bounded_batches(self):
-        full = activity.PURGE_BATCH
-        cursor = FakeCursor(batches=(full, full, 10))
-        self.assertEqual(self.run_purge(cursor), full * 2 + 10)
-
-    def test_runs_at_most_once_an_hour_per_process(self):
-        self.run_purge(FakeCursor(batches=(1,)))
-        second = FakeCursor(batches=(1,))
-        self.assertEqual(self.run_purge(second), 0)
-        self.assertEqual(second.statements, [])
-
-    def test_another_process_holding_the_lock_is_left_to_it(self):
-        cursor = FakeCursor(lock=False, batches=(5,))
-        self.assertEqual(self.run_purge(cursor), 0)
-        self.assertFalse(any('delete from' in sql for sql, _ in cursor.statements))
-
-    def test_a_failed_purge_never_breaks_the_request(self):
-        cursor = FakeCursor()
-        cursor.execute = mock.Mock(side_effect=RuntimeError('database gone'))
-        with self.assertLogs(activity.logger, level='WARNING'):
+    def test_repeated_recording_never_starts_a_purge(self):
+        cursor = FakeCursor(batches=(5,))
+        for _ in range(3):
             self.assertEqual(self.run_purge(cursor), 0)
+        self.assertEqual(cursor.statements, [])

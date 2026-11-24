@@ -766,24 +766,26 @@ class ActivityStatusTests(SimpleTestCase):
 
 
 class ActivityScopeTests(SimpleTestCase):
-    def run_resolution(self, assigned=1, canonical=1, component=True, coach='coach@example.com'):
-        actor=SimpleNamespace(email='coach@example.com')
+    def run_resolution(self, assigned=1, actor_exists=True, component=True, coach='coach@example.com'):
+        actor=SimpleNamespace(id=7,email='coach@example.com')
         owner={'id':1,'enrolment_id':91,'coach_email':coach}
         def read(sql, params=()):
             if 'learners' in sql: return [owner]
             if 'modules' in sql: return [{'module_catalogue_id':'MOD-1'}]
             if 'components' in sql: return [{'id':'c1','module_catalogue_id':'MOD-1'}] if component else []
+            if 'Login_accounts' in sql: return [{'id':7}] if actor_exists else []
             return []
         with patch('curriculum_api.views.assigned_learners_for_scope',return_value=[{'id':assigned}]), \
              patch.object(status,'query',side_effect=read), \
+             patch.object(status.curriculum_names,'attach',side_effect=lambda kind,rows: rows), \
              patch.object(status,'_accesses_of',return_value={'coach'}), \
-             patch('learner_api.canonical_learning.require_profile',return_value={'id':canonical}):
+             patch('learner_api.canonical_learning.require_profile',side_effect=AssertionError('Do not resolve by enrolment')):
             return status.resolve(actor,'MOD-1',1,'c1')
 
-    def test_owned_assigned_learner_and_real_bridge_are_allowed(self):
+    def test_owned_assigned_canonical_learner_is_allowed_without_enrolment_resolution(self):
         self.assertEqual(self.run_resolution()[0]['enrolment_id'],91)
 
-    def test_other_learner_component_bridge_and_owner_are_refused(self):
-        for options,code in [({'assigned':2},'not_found'),({'canonical':2},'identity_review_required'),({'component':False},'not_found'),({'coach':'other@example.com'},'forbidden')]:
+    def test_other_learner_component_actor_and_owner_are_refused(self):
+        for options,code in [({'assigned':2},'not_found'),({'actor_exists':False},'actor_not_found'),({'component':False},'not_found'),({'coach':'other@example.com'},'forbidden')]:
             with self.assertRaises(ServiceError) as error: self.run_resolution(**options)
             self.assertEqual(error.exception.code,code)

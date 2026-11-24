@@ -335,8 +335,11 @@ def bump_scopes(scopes):
     """
     if connection.vendor != 'postgresql' or not scope_table_available():
         return None
-    names = [BUMPS, *(sorted(scopes) if scopes else [UNSCOPED])]
     try:
+        if scopes and any(not isinstance(scope, str) or not scope.strip() or scope in {BUMPS, GLOBAL}
+                          for scope in scopes):
+            raise ValueError('Cache scopes must be nonblank, non-reserved names.')
+        names = [BUMPS, *(sorted(set(scopes)) if scopes else [UNSCOPED])]
         with transaction.atomic():
             return _views().fetch_all(
                 f'insert into {_scoped_table()} as t (scope, epoch) '

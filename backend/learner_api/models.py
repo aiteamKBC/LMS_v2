@@ -1391,6 +1391,11 @@ class LearnerProgressEntry(models.Model):
     # a plain CharField, not a ForeignKey.
     curriculum_component_ref = models.TextField(null=True, blank=True)
     curriculum_component_fk = models.CharField(max_length=128, null=True, blank=True)
+    # Manually installed, paired Free Course attribution; distinct from the
+    # ordinary curriculum component domain. Assign through free_course_identity
+    # so owner and component/course membership are checked under locks.
+    free_course_ref = models.CharField(max_length=128, null=True, blank=True)
+    free_component_ref = models.CharField(max_length=128, null=True, blank=True)
     # Soft-deleted progress remains as historical evidence but is excluded from
     # active learner progress, hours and KSB projections.
     deleted_at = models.DateTimeField(null=True, blank=True)

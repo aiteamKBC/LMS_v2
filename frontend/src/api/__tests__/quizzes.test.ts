@@ -28,7 +28,7 @@ describe('personal learning quiz transport', () => {
 
     const timing = await startTimeTracking('quiz', 7, 'commercial', learnerId, 'active_quiz');
     expect(timing).toEqual(session);
-    const submission = { answers: { '1': [10, 11] }, timeTakenSeconds: 33,
+    const submission = { componentId: 'PROGRAMME-Q1', answers: { '1': [10, 11] }, timeTakenSeconds: 33,
       startedAt: timing.startedAt, trackingToken: timing.trackingToken };
     await expect(submitQuizAttempt(7, 'commercial', learnerId, submission)).resolves.toEqual(result);
     expect(request).toHaveBeenCalledTimes(2);

@@ -2060,6 +2060,7 @@ export interface CurriculumAuditActor {
 }
 
 export interface CurriculumAuditTrail {
+  available?: true;
   workspaces?: { value: string; label: string }[];
   /** Every workspace this response can speak for, whichever reading covers it. */
   changeWorkspaces?: string[];
@@ -2075,7 +2076,8 @@ export interface CurriculumAuditTrail {
   recoveredHistory?: boolean;
   /** The recovered history could not be read this time; the log is shown alone. */
   recoveryFailed?: boolean;
-  /** Where each record type's revision history begins; null when it has none yet. */
+  /** Earliest canonical event timestamp per type, independent of paging/window;
+   * null when no authoritative timestamp exists. Never inferred from source rows. */
   revisionStartedAt?: Record<string, string | null>;
   generatedAt: string;
   windowDays: number;
@@ -4171,11 +4173,19 @@ export function fetchCurriculumRecordHistory(
   );
 }
 
-/**
- * Record activity across the curriculum authoring tables: what was created,
- * edited or archived, newest first. Derived from created_at/updated_at/
- * deleted_at on the records themselves - Quality owns no log of its own.
- */
+/** The store is unavailable; this is not an empty successful Changes feed. */
+export interface CurriculumAuditHistoryUnavailable {
+  available: false;
+  reason: string;
+  totalRevisions: 0;
+  totalNamedVersions: 0;
+  count: 0;
+  entities: [];
+  versions: [];
+  revisions: [];
+}
+
+/** Canonical revision events, newest first; explicitly unavailable without the log. */
 export function fetchCurriculumAuditTrail(
   options: {
     days?: number;
@@ -4206,7 +4216,7 @@ export function fetchCurriculumAuditTrail(
     skipCache?: boolean;
     revalidate?: boolean;
   } = {},
-): Promise<CurriculumAuditTrail> {
+): Promise<CurriculumAuditTrail | CurriculumAuditHistoryUnavailable> {
   const query = new URLSearchParams();
   if (options.days) query.set('days', String(options.days));
   if (options.limit) query.set('limit', String(options.limit));
@@ -4223,7 +4233,7 @@ export function fetchCurriculumAuditTrail(
     query.set('scopeId', options.scopeId);
   }
   const suffix = query.toString() ? `?${query.toString()}` : '';
-  return fetchJson<CurriculumAuditTrail>(`/curriculum/quality/audit-trail/${suffix}`, {
+  return fetchJson<CurriculumAuditTrail | CurriculumAuditHistoryUnavailable>(`/curriculum/quality/audit-trail/${suffix}`, {
     signal: options.signal,
     skipCache: options.skipCache,
     revalidate: options.revalidate,

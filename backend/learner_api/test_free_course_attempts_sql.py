@@ -22,10 +22,9 @@ class FreeCourseAttemptSQLTests(TestCase):
                 for i in (1,2,3)]
         tables = [
             ('"Learner".subject_activity_attempts',rows),
-            ('"Learner".free_course_hours_migration',[]),
-            ('"Learner".free_course_hours_migration_additional',[]),
-            ('"Learner".free_course_hours_migration_remaining',[
-                dict(old_progress_id=10,learner_id=501,free_course_id='FREE',free_component_id='COMP')]),
+            ('"Learner".learner_progress_entries',[
+                dict(id=10,learner_id=501,free_course_ref='FREE',free_component_ref='COMP',
+                     deleted_at='2026-01-01T00:00:00Z',accepted=False)]),
             ('"Learner".learner_activity_sources',[
                 dict(canonical_progress_id=10,learner_id=501,source_catalog_activity_id=91)]),
         ]
