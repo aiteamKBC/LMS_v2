@@ -10,6 +10,22 @@ from . import support_ticket_files as files
 from . import support_tickets as tickets
 
 
+class CanonicalLearnerIdentityTests(SimpleTestCase):
+    def test_resolves_only_the_canonical_profile_for_the_enrolment(self):
+        cursor = MagicMock()
+        cursor.fetchone.return_value = (248,)
+
+        self.assertEqual(tickets.canonical_learner_id(cursor, 101), 248)
+        cursor.execute.assert_called_once_with(
+            'SELECT id FROM "Learner".learners WHERE enrolment_id=%s', [101],
+        )
+
+        cursor.fetchone.return_value = None
+        with self.assertRaises(tickets.TicketError) as error:
+            tickets.canonical_learner_id(cursor, 999)
+        self.assertEqual(error.exception.status, 409)
+
+
 class SupportTicketsTests(SimpleTestCase):
     def setUp(self):
         self.factory = RequestFactory()
@@ -26,6 +42,8 @@ class SupportTicketsTests(SimpleTestCase):
         stub.start(); self.addCleanup(stub.stop)
         stub = patch.object(tickets.assistant_conversations, 'record_ticket')
         stub.start(); self.addCleanup(stub.stop)
+        stub = patch.object(tickets, 'canonical_learner_id', return_value=248)
+        self.canonical_learner_id = stub.start(); self.addCleanup(stub.stop)
         stub = patch.object(tickets.transaction, 'atomic', return_value=MagicMock())
         stub.start(); self.addCleanup(stub.stop)
 
@@ -88,9 +106,30 @@ class SupportTicketsTests(SimpleTestCase):
         self.assertEqual(len(inserts), 2)
         for sql, args in inserts:
             self.assertIn('ON CONFLICT(id) DO NOTHING', sql)
-            self.assertEqual(args[:3], [key, 10, 101])
+            self.assertIn('(id,owner_account_id,enrolment_id,learner_id,data)', sql)
+            self.assertEqual(args[:4], [key, 10, 101, 248])
+        self.assertEqual(self.canonical_learner_id.call_count, 2)
+        self.canonical_learner_id.assert_called_with(self.cursor, 101)
         response = self.call(tickets.learner_tickets, payload | {'title': 'Different content'})
         self.assertEqual(response.status_code, 409)
+
+    def test_staff_created_ticket_dual_writes_account_enrolment_and_canonical_learner(self):
+        key = str(uuid4())
+        saved = {'id': key, 'assignedTeam': 'Quality Team'}
+        self.cursor.fetchone.return_value = (saved,)
+
+        result = tickets.create_staff_ticket(
+            learner_account=self.account,
+            ticket={'id': key, 'title': 'Quality review', 'description': 'Details',
+                    'category': 'Learning Support', 'priority': 'high'},
+        )
+
+        self.assertEqual(result, saved)
+        insert = next(call.args for call in self.cursor.execute.call_args_list
+                      if call.args[0].startswith('INSERT'))
+        self.assertIn('(id,owner_account_id,enrolment_id,learner_id,data)', insert[0])
+        self.assertEqual(insert[1][:4], [key, 10, 101, 248])
+        self.canonical_learner_id.assert_called_once_with(self.cursor, 101)
 
     def test_other_owner_ticket_is_not_readable_or_replyable(self):
         self.cursor.fetchone.return_value = None

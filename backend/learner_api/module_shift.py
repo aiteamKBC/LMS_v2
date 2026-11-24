@@ -64,6 +64,7 @@ from .active_users import (
     validate_training_plan_relationships,
 )
 from .identity import learner_profile_for_source
+from .ksb_definition_links import assigned_definition_ids, attach_definition_ids
 from .learner_progression import advance_learner
 from .learning_plan import (
     _group_module_ids,
@@ -738,7 +739,7 @@ def _validate_mappings(mappings, from_id, to_id):
     return pairs, ""
 
 
-def _rewrite_ksbs(entry, context):
+def _rewrite_ksbs(entry, context, learner_id):
     """Re-map an entry's KSBs to the ones the component it moved to carries.
 
     A submission takes its KSBs from the component it was made against, so a
@@ -753,23 +754,47 @@ def _rewrite_ksbs(entry, context):
     ]
     if not mappings:
         return
-    LearnerProgressKsb.objects.filter(progress=entry).delete()
-    LearnerProgressKsb.objects.bulk_create([
-        LearnerProgressKsb(
-            progress=entry,
-            position=position,
-            ksb_code=_s(item.get("code") or item.get("ksbCode")).upper(),
-            ksb_description=_s(item.get("description") or item.get("ksbDescription")),
-            source_type=_s(item.get("sourceType") or item.get("source_type")),
-            source_id=_s(item.get("sourceId") or item.get("source_id")),
-            classification=_s(item.get("classification") or item.get("type")),
-            weight=_decimal(item.get("weight")),
-            weight_class=_normalise_weight_class(
+    existing = LearnerProgressKsb.objects.filter(progress=entry)
+    prepared = [
+        {
+            'position': position,
+            'ksb_code': _s(item.get("code") or item.get("ksbCode")).upper(),
+            'ksb_description': _s(item.get("description") or item.get("ksbDescription")),
+            'source_type': _s(item.get("sourceType") or item.get("source_type")),
+            'source_id': _s(item.get("sourceId") or item.get("source_id")),
+            'classification': _s(item.get("classification") or item.get("type")),
+            'weight': _decimal(item.get("weight")),
+            'weight_class': _normalise_weight_class(
                 item.get("weightClass") if "weightClass" in item else item.get("weight_class"),
                 item.get("classification") or item.get("type"),
             ),
-        )
+            **({'ksb_definition_id': item.get('ksb_definition_id')}
+               if 'ksb_definition_id' in item else {}),
+            **({'ksbDefinitionId': item.get('ksbDefinitionId')}
+               if 'ksbDefinitionId' in item else {}),
+        }
         for position, item in enumerate(mappings, 1)
+    ]
+    with connections['enrolment'].cursor() as cursor:
+        definition_ids = assigned_definition_ids(cursor, [learner_id], prepared)
+    prepared = attach_definition_ids(
+        prepared, learner_id, definition_ids, existing=list(existing),
+    )
+    existing.delete()
+    LearnerProgressKsb.objects.bulk_create([
+        LearnerProgressKsb(
+            progress=entry,
+            position=item['position'],
+            ksb_code=item['ksb_code'],
+            ksb_definition_id=item['ksb_definition_id'],
+            ksb_description=item['ksb_description'],
+            source_type=item['source_type'],
+            source_id=item['source_id'],
+            classification=item['classification'],
+            weight=item['weight'],
+            weight_class=item['weight_class'],
+        )
+        for item in prepared
     ])
 
 
@@ -904,7 +929,7 @@ def _repoint_progress(learner, profile, pairs, entries_by_component=None):
             entry.component_link_status = "resolved_to_current_component"
             entry.component_link_source = "direct"
             entry.save(update_fields=REPOINTED_FIELDS)
-            _rewrite_ksbs(entry, context)
+            _rewrite_ksbs(entry, context, profile.id)
             counts["entries"] += 1
             counts["entryIds"].append(getattr(entry, "pk", getattr(entry, "id", None)))
         moved_reviews, kept_reviews = _move_review(learner, source_id, target_id, context)

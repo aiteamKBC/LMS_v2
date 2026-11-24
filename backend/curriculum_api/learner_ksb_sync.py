@@ -10,6 +10,8 @@ from decimal import Decimal, InvalidOperation
 
 from django.db import connection
 
+from learner_api.ksb_definition_links import assigned_definition_ids, attach_definition_ids
+
 
 def _text(value):
     return str(value or '').strip()
@@ -40,7 +42,7 @@ def normalise_mappings(mappings):
         if identity in seen:
             continue
         seen.add(identity)
-        result.append({
+        row = {
             'position': len(result),
             'ksb_code': code,
             'ksb_description': _text(
@@ -51,7 +53,12 @@ def normalise_mappings(mappings):
             'classification': _text(mapping.get('classification') or mapping.get('type')).lower(),
             'weight': _weight(mapping.get('weight')),
             'weight_class': _text(mapping.get('weight_class') or mapping.get('weightClass')).lower(),
-        })
+        }
+        for key in ('ksb_definition_id', 'ksbDefinitionId'):
+            if key in mapping:
+                row[key] = mapping.get(key)
+                break
+        result.append(row)
     return result
 
 
@@ -80,7 +87,7 @@ def sync_progress_ksbs(mappings_by_component, *, actor='curriculum-ksb-sync'):
         cursor.execute('''
             SELECT p.id,p.learner_id,p.reporting_month,
                    coalesce(nullif(p.curriculum_component_ref,''),nullif(p.component_ref,'')) AS component_id,
-                   k.position,k.ksb_code,k.ksb_description,k.source_type,k.source_id,
+                   k.position,k.ksb_code,k.ksb_definition_id,k.ksb_description,k.source_type,k.source_id,
                    k.classification,k.weight,k.weight_class
             FROM "Learner".learner_progress_entries p
             LEFT JOIN "Learner".learner_progress_ksbs k ON k.progress_id=p.id
@@ -101,14 +108,24 @@ def sync_progress_ksbs(mappings_by_component, *, actor='curriculum-ksb-sync'):
             })
             if record['position'] is not None:
                 item['ksbs'].append({key: record.get(key) for key in (
-                    'position', 'ksb_code', 'ksb_description', 'source_type', 'source_id',
+                    'position', 'ksb_code', 'ksb_definition_id', 'ksb_description', 'source_type', 'source_id',
                     'classification', 'weight', 'weight_class',
                 )})
 
+        definition_ids = assigned_definition_ids(
+            cursor,
+            [item['learner_id'] for item in progress.values()],
+            [row for rows in desired.values() for row in rows],
+        )
         changed = []
         for progress_id, item in progress.items():
-            next_rows = desired.get(item['component_id'], [])
             current_rows = normalise_mappings(item['ksbs'])
+            next_rows = attach_definition_ids(
+                desired.get(item['component_id'], []),
+                item['learner_id'],
+                definition_ids,
+                existing=current_rows,
+            )
             if _snapshot(current_rows) != _snapshot(next_rows):
                 changed.append((progress_id, item, next_rows, current_rows))
 
@@ -135,11 +152,11 @@ def sync_progress_ksbs(mappings_by_component, *, actor='curriculum-ksb-sync'):
             if next_rows:
                 cursor.executemany('''
                     INSERT INTO "Learner".learner_progress_ksbs
-                        (progress_id,position,ksb_code,ksb_description,source_type,source_id,
+                        (progress_id,position,ksb_code,ksb_definition_id,ksb_description,source_type,source_id,
                          classification,weight,weight_class)
-                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
                 ''', [[
-                    progress_id, row['position'], row['ksb_code'], row['ksb_description'],
+                    progress_id, row['position'], row['ksb_code'], row['ksb_definition_id'], row['ksb_description'],
                     row['source_type'], row['source_id'], row['classification'],
                     row['weight'], row['weight_class'],
                 ] for row in next_rows])

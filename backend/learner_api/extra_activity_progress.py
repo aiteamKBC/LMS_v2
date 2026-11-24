@@ -6,6 +6,8 @@ from django.core.serializers.json import DjangoJSONEncoder
 
 from old_otjh.service import ServiceError
 
+from .ksb_definition_links import assigned_definition_ids, attach_definition_ids
+
 
 SOURCE_SYSTEM = 'extra_activities'
 
@@ -78,20 +80,43 @@ def _ksbs(document):
     return result
 
 
-def _sync_ksbs(cursor, progress_id, activity_id, document):
-    expected = _ksbs(document)
-    cursor.execute('''SELECT ksb_code,weight FROM "Learner".learner_progress_ksbs
+def _sync_ksbs(cursor, progress_id, activity_id, learner_id, document):
+    expected = [
+        {
+            'position': position,
+            'ksb_code': code,
+            'ksb_description': '',
+            'source_type': 'extra_activity',
+            'source_id': str(activity_id),
+            'classification': '',
+            'weight': weight,
+            'weight_class': '',
+        }
+        for position, (code, weight) in enumerate(_ksbs(document), 1)
+    ]
+    cursor.execute('''SELECT position,ksb_code,ksb_definition_id,ksb_description,
+            source_type,source_id,classification,weight,weight_class
+        FROM "Learner".learner_progress_ksbs
         WHERE progress_id=%s ORDER BY position''', [progress_id])
-    current = [(str(code), weight) for code, weight in cursor.fetchall()]
+    columns = ('position', 'ksb_code', 'ksb_definition_id', 'ksb_description',
+               'source_type', 'source_id', 'classification', 'weight', 'weight_class')
+    current = [dict(zip(columns, row)) for row in cursor.fetchall()]
+    definition_ids = assigned_definition_ids(cursor, [learner_id], expected)
+    expected = attach_definition_ids(
+        expected, learner_id, definition_ids, existing=current,
+    )
     if current == expected:
         return False
     cursor.execute('DELETE FROM "Learner".learner_progress_ksbs WHERE progress_id=%s', [progress_id])
-    for position, (code, weight) in enumerate(expected, 1):
+    for row in expected:
         cursor.execute('''INSERT INTO "Learner".learner_progress_ksbs
-            (progress_id,position,ksb_code,ksb_description,source_type,source_id,
+            (progress_id,position,ksb_code,ksb_definition_id,ksb_description,source_type,source_id,
              classification,weight,weight_class)
-            VALUES (%s,%s,%s,'','extra_activity',%s,'',%s,'')''',
-            [progress_id, position, code, str(activity_id), weight])
+            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)''', [
+                progress_id, row['position'], row['ksb_code'], row['ksb_definition_id'],
+                row['ksb_description'], row['source_type'], row['source_id'],
+                row['classification'], row['weight'], row['weight_class'],
+            ])
     return True
 
 
@@ -251,7 +276,7 @@ def sync_locked_activity(cursor, activity, owner):
     # not silently backfilled merely because a request was retried.
     sync_lineage = changed
     if approved and sync_lineage and _sync_ksbs(
-            cursor, progress_id, activity['id'], _activity_document(activity)):
+            cursor, progress_id, activity['id'], activity['learner_id'], _activity_document(activity)):
         changed = True
     if approved and sync_lineage and _sync_evidence(cursor, activity, progress_id):
         changed = True

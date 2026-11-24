@@ -36,10 +36,9 @@ def endpoint(view):
 
 
 def caseload(request):
-    # Ticket enrolment_id is the account's subject_id, not Learner.learners.id.
-    # Do not fall back to email or accept learner/coach identities from the body.
-    return {learner.enrolment_id: learner for learner in caseload_learners(authenticated_coach_email(request))
-            if learner.enrolment_id is not None}
+    # Ticket learner_id is the canonical Learner.learners.id. Do not fall back
+    # to email or accept learner/coach identities from the request body.
+    return {learner.id: learner for learner in caseload_learners(authenticated_coach_email(request))}
 
 
 def serialize(ticket, learner):
@@ -48,7 +47,7 @@ def serialize(ticket, learner):
 
 def read_ticket(cursor, ticket_id, learners, *, lock=False):
     cursor.execute(
-        f'SELECT data,enrolment_id FROM {lms.TABLE} WHERE id=%s AND enrolment_id=ANY(%s)'
+        f'SELECT data,learner_id FROM {lms.TABLE} WHERE id=%s AND learner_id=ANY(%s)'
         + (' FOR UPDATE' if lock else ''), [str(ticket_id), list(learners)],
     )
     row = cursor.fetchone()
@@ -67,7 +66,7 @@ def collection(request):
     if learners:
         with connections['enrolment'].cursor() as cursor:
             cursor.execute(
-                f'SELECT data,enrolment_id FROM {lms.TABLE} WHERE enrolment_id=ANY(%s) '
+                f'SELECT data,learner_id FROM {lms.TABLE} WHERE learner_id=ANY(%s) '
                 'ORDER BY created_at DESC,id LIMIT 101 OFFSET %s', [list(learners), offset],
             )
             rows = cursor.fetchall()
@@ -105,8 +104,8 @@ def detail(request, ticket_id):
                                               body=message, timestamp=now, attachments=[]))
                 ticket['messages'] = len(ticket['replies'])
                 ticket['lastUpdate'] = now
-                cursor.execute(f'UPDATE {lms.TABLE} SET data=%s::jsonb WHERE id=%s AND enrolment_id=%s',
-                               [json.dumps(ticket), str(ticket_id), learner.enrolment_id])
+                cursor.execute(f'UPDATE {lms.TABLE} SET data=%s::jsonb WHERE id=%s AND learner_id=%s',
+                               [json.dumps(ticket), str(ticket_id), learner.id])
     return {'ticket': serialize(ticket, learner)}
 
 

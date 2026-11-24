@@ -14,11 +14,11 @@ from . import quality_tickets
 class FeedbackTicketIdentityTests(SimpleTestCase):
     def test_closure_uses_only_the_response_identity_and_learner_from_storage(self):
         with patch.object(local, 'close_feedback_ticket', return_value='closed') as close:
-            response = SimpleNamespace(pk=41, learner_id='17')
+            response = SimpleNamespace(pk=41, enrolment_id='17')
             self.assertEqual(quality_tickets.close_response_ticket(response, actor_name='Staff'), 'closed')
-            close.assert_called_once_with(ticket_id=str(quality_tickets.quality_ticket_id(41)), learner_id=17, actor_name='Staff')
+            close.assert_called_once_with(ticket_id=str(quality_tickets.quality_ticket_id(41)), enrolment_id=17, actor_name='Staff')
             self.assertNotEqual(quality_tickets.quality_ticket_id(41), quality_tickets.quality_ticket_id(42))
-            response.learner_id = 'guest:4'
+            response.enrolment_id = 'guest:4'
             self.assertEqual(quality_tickets.close_response_ticket(response, actor_name='Staff'), 'not_required')
             close.assert_called_once()
 
@@ -30,14 +30,15 @@ class LocalTicketCloseTests(SimpleTestCase):
         self.db.cursor.return_value.__enter__.return_value = self.cursor
         self.saved = {'id': 'ticket-1', 'assignedTeam': 'Quality Team', 'status': 'open',
                       'timeline': [{'event': 'Opened'}], 'replies': [{'body': 'Preserve'}], 'priority': 'high'}
-        self.cursor.fetchone.side_effect = lambda: (json.dumps(self.saved), 17)
+        self.cursor.fetchone.side_effect = lambda: (json.dumps(self.saved), 27)
         for item in [patch.object(local, 'connections', {'enrolment': self.db}),
-                     patch.object(local.transaction, 'atomic', return_value=nullcontext())]:
+                     patch.object(local.transaction, 'atomic', return_value=nullcontext()),
+                     patch.object(local, 'canonical_learner_id', return_value=27)]:
             item.start(); self.addCleanup(item.stop)
         self.remote = self.enterContext(patch.object(portal, 'close_open_quality_ticket', return_value='Closed'))
 
     def close(self):
-        return local.close_feedback_ticket(ticket_id='ticket-1', learner_id=17, actor_name='Staff')
+        return local.close_feedback_ticket(ticket_id='ticket-1', enrolment_id=17, actor_name='Staff')
 
     def updates(self):
         return [call.args for call in self.cursor.execute.call_args_list if call.args[0].startswith('UPDATE')]
@@ -65,7 +66,7 @@ class LocalTicketCloseTests(SimpleTestCase):
         self.assertFalse(self.updates())
 
     def test_other_learner_or_team_is_rejected_without_changing_remote(self):
-        for row in [(self.saved, 99), ({**self.saved, 'assignedTeam': 'LMS Support'}, 17)]:
+        for row in [(self.saved, 99), ({**self.saved, 'assignedTeam': 'LMS Support'}, 27)]:
             self.cursor.fetchone.side_effect = None
             self.cursor.fetchone.return_value = row
             with self.assertRaises(local.TicketError):

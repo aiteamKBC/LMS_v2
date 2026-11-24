@@ -1449,6 +1449,14 @@ class LearnerProgressKsb(models.Model):
     progress = models.ForeignKey(LearnerProgressEntry, on_delete=models.CASCADE, related_name="ksb_links")
     position = models.PositiveIntegerField()
     ksb_code = models.CharField(max_length=100)
+    ksb_definition = models.ForeignKey(
+        KsbDefinition,
+        db_column="ksb_definition_id",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="progress_links",
+    )
     ksb_description = models.TextField(blank=True, default='')
     source_type = models.CharField(max_length=32, blank=True, default='')
     source_id = models.TextField(blank=True, default='')

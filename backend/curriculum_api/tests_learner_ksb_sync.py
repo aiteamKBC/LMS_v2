@@ -10,17 +10,19 @@ from . import learner_ksb_sync as sync
 class FakeCursor:
     description = [
         ('id',), ('learner_id',), ('reporting_month',), ('component_id',),
-        ('position',), ('ksb_code',), ('ksb_description',), ('source_type',),
+        ('position',), ('ksb_code',), ('ksb_definition_id',), ('ksb_description',), ('source_type',),
         ('source_id',), ('classification',), ('weight',), ('weight_class',),
     ]
 
     def __init__(self):
         self.executed = []
         self.executed_many = []
-        self.rows = [
-            (101, 11, '2026-07', 'COMP-1', 0, 'K1', 'Old text', 'standard', 'STD-1', 'knowledge', 1, 'hard'),
-            (102, 12, '2025-04', 'COMP-1', 0, 'K1', 'Old text', 'standard', 'STD-1', 'knowledge', 1, 'hard'),
+        self.progress_rows = [
+            (101, 11, '2026-07', 'COMP-1', 0, 'K1', 901, 'Old text', 'standard', 'STD-1', 'knowledge', 1, 'hard'),
+            (102, 12, '2025-04', 'COMP-1', 0, 'K1', 902, 'Old text', 'standard', 'STD-1', 'knowledge', 1, 'hard'),
         ]
+        self.definition_rows = [(11, 'K2', 201), (12, 'K2', 202)]
+        self.rows = self.progress_rows
 
     def __enter__(self):
         return self
@@ -30,6 +32,7 @@ class FakeCursor:
 
     def execute(self, sql, params=None):
         self.executed.append((sql, params or []))
+        self.rows = self.definition_rows if 'learner_ksb_assignments' in sql else self.progress_rows
 
     def executemany(self, sql, params):
         self.executed_many.append((sql, list(params)))
@@ -61,7 +64,31 @@ class LearnerKsbSyncTests(SimpleTestCase):
         self.assertEqual(len({params[3] for _, params in revisions}), 2)
         self.assertEqual(json.loads(revisions[0][1][4])['ksbs'][0]['ksb_code'], 'K1')
         self.assertEqual(json.loads(revisions[0][1][5])['ksbs'][0]['ksb_code'], 'K2')
+        self.assertEqual(json.loads(revisions[0][1][4])['ksbs'][0]['ksb_definition_id'], 901)
+        self.assertEqual(json.loads(revisions[0][1][5])['ksbs'][0]['ksb_definition_id'], 201)
         self.assertEqual(len(cursor.executed_many), 2)
+        self.assertEqual(cursor.executed_many[0][1][0][3], 201)
+        self.assertNotIn(
+            'learner_progress_ksb_exclusions',
+            '\n'.join(sql for sql, _params in cursor.executed),
+        )
+
+    def test_rebuilding_unchanged_rows_preserves_definition_ids_and_is_idempotent(self):
+        cursor = FakeCursor()
+        mappings = {'COMP-1': [{
+            'code': 'K1', 'description': 'Old text', 'sourceType': 'standard',
+            'sourceId': 'STD-1', 'classification': 'knowledge', 'weight': 1,
+            'weightClass': 'hard',
+        }]}
+
+        with patch.object(sync, 'connection', SimpleNamespace(vendor='postgresql', cursor=lambda: cursor)):
+            result = sync.sync_progress_ksbs(mappings)
+
+        self.assertEqual(result['progress_rows'], 0)
+        self.assertEqual(cursor.executed_many, [])
+        writes = '\n'.join(sql for sql, _params in cursor.executed)
+        self.assertNotIn('DELETE FROM "Learner".learner_progress_ksbs', writes)
+        self.assertNotIn('learner_progress_ksb_exclusions', writes)
 
     def test_normalisation_is_deterministic_and_deduplicates_mapping_identity(self):
         rows = sync.normalise_mappings([
@@ -72,3 +99,7 @@ class LearnerKsbSyncTests(SimpleTestCase):
         self.assertEqual([row['position'] for row in rows], [0, 1])
         self.assertEqual([row['ksb_code'] for row in rows], ['K1', 'S2'])
         self.assertEqual(str(rows[0]['weight']), '1.50')
+
+    def test_explicit_definition_identity_survives_normalisation(self):
+        rows = sync.normalise_mappings([{'code': 'K1', 'ksbDefinitionId': 44}])
+        self.assertEqual(rows[0]['ksbDefinitionId'], 44)

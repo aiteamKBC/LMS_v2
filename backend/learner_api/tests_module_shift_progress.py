@@ -533,7 +533,7 @@ class RepointTests(SimpleTestCase):
     def setUp(self):
         self.enterContext(patch('learner_api.module_shift._quiz_component_slots', return_value=[]))
 
-    def _repoint(self, entries, pairs=(("C-A3", "C-B3"),), context=None, review_rows=()):
+    def _repoint(self, entries, pairs=(("C-A3", "C-B3"),), context=None, review_rows=(), existing_ksbs=()):
         queryset = Mock()
         queryset.exclude.return_value = entries
         cursor = _review_cursor(review_rows)
@@ -541,9 +541,13 @@ class RepointTests(SimpleTestCase):
                    return_value=TARGET_CONTEXT if context is None else context), \
                 patch("learner_api.module_shift.connections",
                       {"enrolment": SimpleNamespace(cursor=lambda: cursor)}), \
+                patch("learner_api.module_shift.assigned_definition_ids",
+                      return_value={(211, 'K2'): 501}), \
                 patch("learner_api.module_shift.LearnerProgressEntry") as entry_model, \
                 patch("learner_api.module_shift.LearnerProgressKsb") as ksb_model:
             entry_model.objects.filter.return_value = queryset
+            ksb_queryset = ksb_model.objects.filter.return_value
+            ksb_queryset.__iter__.return_value = iter(existing_ksbs)
             counts = module_shift._repoint_progress(
                 SimpleNamespace(pk=62), SimpleNamespace(id=211), list(pairs),
             )
@@ -625,6 +629,17 @@ class RepointTests(SimpleTestCase):
         ksb_model.objects.filter.return_value.delete.assert_called_once()
         created = ksb_model.objects.bulk_create.call_args.args[0]
         self.assertEqual(len(created), 1)
+        self.assertEqual(ksb_model.call_args.kwargs['ksb_definition_id'], 501)
+
+    def test_unchanged_mapping_identity_keeps_its_historical_definition(self):
+        existing = SimpleNamespace(
+            position=1, ksb_code='K2', ksb_definition_id=707,
+            source_type='', source_id='',
+        )
+
+        _counts, ksb_model = self._repoint([_entry("C-A3")], existing_ksbs=[existing])
+
+        self.assertEqual(ksb_model.call_args.kwargs['ksb_definition_id'], 707)
 
     def test_a_target_with_no_ksbs_of_its_own_leaves_the_existing_links(self):
         context = {**TARGET_CONTEXT, "ksbMappings": []}
