@@ -218,7 +218,8 @@ jobs:
         run: |
           docker run --rm -u 0 -e DJANGO_SECRET_KEY=ci -e DJANGO_DEBUG=false \
             -e SHARD=${{ matrix.shard }} -e SHARDS=4 \
-            -v "$PWD/.github/ci:/ci:ro" -v "$PWD/frontend:/frontend:ro" \
+            -e LMS_TEST_FRONTEND_ROOT=/test-frontend \
+            -v "$PWD/.github/ci:/ci:ro" -v "$PWD/frontend:/test-frontend:ro" \
             --entrypoint sh lms-backend:ci /ci/no_db_tests.sh
 
   # --------------------------------------------------------------- frontend

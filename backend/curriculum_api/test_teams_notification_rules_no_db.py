@@ -21,6 +21,7 @@ not proof of it; that needs the live mailbox checks.
 import ast
 import copy
 import json
+import os
 import sys
 import types
 import unittest
@@ -36,6 +37,7 @@ else:
     import test_schedule_email_no_db as email_tests
 
 ROOT = Path(__file__).resolve().parent
+FRONTEND_ROOT = Path(os.environ.get('LMS_TEST_FRONTEND_ROOT') or ROOT.parents[1] / 'frontend')
 checks = checks_tests.checks
 SILENT = checks_tests.SILENT_INVITE
 TIMED_OUT = 'Microsoft Graph request failed: <urlopen error timed out>'
@@ -382,7 +384,7 @@ class RetiredRouteTests(Harness):
         self.assertEqual(self.calls, [])
 
     def test_the_browser_no_longer_carries_the_silent_helper(self):
-        source = (ROOT.parents[1] / 'frontend' / 'src' / 'pages' / 'curriculum' / 'module-builder'
+        source = (FRONTEND_ROOT / 'src' / 'pages' / 'curriculum' / 'module-builder'
                   / 'moduleAuthoringData.ts').read_text(encoding='utf-8')
         self.assertNotIn('export async function rescheduleTeamsOccurrence', source)
         self.assertNotIn('/occurrences/${sessionNumber}/schedule/', source)

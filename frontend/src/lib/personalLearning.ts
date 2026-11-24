@@ -94,9 +94,10 @@ export function personalLearningUrl(input: string, init?: globalThis.RequestInit
 export function learningFetch(input: string, init?: globalThis.RequestInit): Promise<Response> {
   const url = personalLearningUrl(input, init);
   if (url === input) return fetch(input, init);
-  return fetch(url, { ...init, credentials: 'include', headers: {
-    ...Object.fromEntries(new Headers(init?.headers).entries()), 'X-Requested-With': 'XMLHttpRequest',
-  } });
+  const headers = new Headers(init?.headers);
+  // Replace case-insensitively so Fetch cannot join duplicate values.
+  headers.set('X-Requested-With', 'XMLHttpRequest');
+  return fetch(url, { ...init, credentials: 'include', headers });
 }
 
 export async function personalLearningJson<T>(path: string, init?: globalThis.RequestInit): Promise<T> {

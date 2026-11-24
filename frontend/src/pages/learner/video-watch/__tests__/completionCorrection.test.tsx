@@ -40,10 +40,13 @@ vi.mock('@/components/feature/WorkspaceShell', () => ({
   WorkspaceShell: ({ children }: { children: ReactNode }) => <main>{children}</main>,
 }));
 vi.mock('../AssignmentSubmissionWizard', () => ({ AssignmentSubmissionWizard: () => null }));
+vi.mock('@/components/feature/SessionResults', () => ({ SessionResults: () => null }));
 
 // Mirrors completion.test.tsx: a live-session component renders the manual
 // "Minutes spent" field, which is the shortest route to a Finish click.
 const first = {
+  // The correction flow starts only after the server has opened time entry.
+  liveSessionAccess: { open: true, status: 'ready' as const, message: '' },
   componentId: 'C1', component: 'Live Session · Live Teams Session 1', type: 'live_session',
   module: 'Marketing', moduleId: 'M1', week: 'Marketing Week', weekId: 'W1',
   sessionDate: '2026-10-22', sessionTime: '12:00', durationMinutes: 60,
@@ -64,7 +67,9 @@ function mount(kind = 'apprenticeship') {
 
 async function pressFinish() {
   fireEvent.change(await screen.findByLabelText('Minutes spent'), { target: { value: '20' } });
-  fireEvent.click(screen.getByRole('button', { name: 'Finish' }));
+  const finish = screen.getByRole('button', { name: 'Finish' });
+  expect(finish).toBeEnabled();
+  fireEvent.click(finish);
   fireEvent.click(await screen.findByRole('button', { name: 'Confirm' }));
   fireEvent.click(await screen.findByRole('button', { name: 'Confirm time' }));
 }
