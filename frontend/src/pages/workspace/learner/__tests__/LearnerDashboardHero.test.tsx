@@ -63,9 +63,11 @@ describe('Learner dashboard hero', () => {
   it('preserves loading and unavailable states without inventing a module or positive status', () => {
     const { rerender } = render(<MemoryRouter><LearnerDashboardHero {...props} modules={[]} loading modulePlaceholder="Loading..." status="--" /></MemoryRouter>);
     expect(screen.getByRole('button', { name: 'Continue learning' })).toBeDisabled();
-    expect(screen.getByRole('status')).toHaveTextContent('Loading...');
+    const modules = within(screen.getByRole('region', { name: props.moduleLabel }));
+    // The skeleton exposes its loading label to assistive technology.
+    expect(modules.getByRole('status', { name: 'Loading...' })).toHaveAttribute('aria-busy', 'true');
     rerender(<MemoryRouter><LearnerDashboardHero {...props} modules={[]} modulePlaceholder="Unavailable" status="On break" /></MemoryRouter>);
-    expect(screen.getByRole('status')).toHaveTextContent('Unavailable');
+    expect(modules.getByRole('status')).toHaveTextContent('Unavailable');
     expect(screen.getByLabelText('Status: On break')).toBeVisible();
     expect(screen.queryByRole('list')).not.toBeInTheDocument();
     expect(screen.queryByLabelText('Status: Active')).not.toBeInTheDocument();

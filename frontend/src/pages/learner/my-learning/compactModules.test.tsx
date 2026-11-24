@@ -1,5 +1,5 @@
 import { StrictMode } from 'react';
-import { act, fireEvent, render, renderHook, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, renderHook, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter, Routes, Route, useLocation, useNavigate } from 'react-router-dom';
 import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
 import MyLearningPage from './page';
@@ -81,7 +81,7 @@ beforeEach(() => {
     throw new Error(`Unexpected API request: ${url}`);
   }));
 });
-afterEach(() => { clearAllCachedResources(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
+afterEach(() => { cleanup(); clearAllCachedResources(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
 describe('compact My Learning route', () => {
   it('opens Free Courses from a saved quiz-tab URL without loading programme details', async () => {
@@ -466,7 +466,7 @@ describe('compact activity search', () => {
     await act(async () => pending[0].finish(reply({matches:[{id:'current:FOREIGN'}],nextOffset:null})));
     expect(hook.result.current.ids).toEqual([]);
     await act(async () => pending[1].finish(reply({matches:[{id:'current:OWN'}],nextOffset:null})));
-    expect(hook.result.current.ids).toEqual(['current:OWN']);
+    await waitFor(() => expect(hook.result.current.ids).toEqual(['current:OWN']));
     hook.rerender({id:'8',query:''});
     expect(hook.result.current.ids).toEqual([]);
   });
@@ -476,7 +476,10 @@ describe('compact activity search', () => {
       ? { matches:[{id:'current:M1'}],nextOffset:50 } : { matches:[{id:'legacy:50'}],nextOffset:null }));
     const hook=renderHook(({ query }) => useMyLearningSearch('apprenticeship','7',query,true),{ initialProps:{query:'lesson'} });
     await waitFor(() => expect(hook.result.current.ids).toEqual(['current:M1','legacy:50']));
-    expect(fetch).toHaveBeenCalledTimes(2);
+    expect(urls()).toEqual([
+      '/learner_api/my-learning/apprenticeship/7/search/?q=lesson&offset=0',
+      '/learner_api/my-learning/apprenticeship/7/search/?q=lesson&offset=50',
+    ]);
     vi.mocked(fetch).mockResolvedValue(new Response('{}',{status:503}));
     hook.rerender({query:'different'});
     await waitFor(() => expect(hook.result.current.error).toMatch(/Could not search/));

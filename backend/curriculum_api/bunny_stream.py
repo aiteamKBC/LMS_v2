@@ -16,6 +16,14 @@ import requests
 class VideoImportError(Exception):
     """A safe, user-facing error (never an upstream body, URL or credential)."""
 
+    def __init__(self, message, *, status_code=None):
+        super().__init__(message)
+        self.status_code = status_code
+
+
+class MissingProgrammeCollection(VideoImportError):
+    """Discovery completed successfully, but the programme has no collection."""
+
 
 class VideoUploadConflict(VideoImportError):
     """The upload endpoint refuses a video identity that already received bytes."""
@@ -28,6 +36,14 @@ COLLECTION_NAMES = {
     'PROG-PCP-L6': ('Project Controls Professional Level 6', 'Project Control Professional Level 6'),
 }
 FREE_COURSE_COLLECTION = 'Free course'
+
+
+def programme_collection_name(programme_id, programme_name):
+    aliases = COLLECTION_NAMES.get(programme_id, ())
+    name = ' '.join(str(aliases[0] if aliases else programme_name or '').split())
+    if not str(programme_id or '').strip() or name.casefold() in ('', 'unassigned', 'unassigned programme', 'unassigned program'):
+        raise VideoImportError('A saved programme is required for its Bunny collection.')
+    return name
 
 
 def module_label(scope):
@@ -91,12 +107,12 @@ class BunnyStream:
             raise VideoImportError('Bunny could not be reached. Retry using the existing import.') from None
         try:
             if response.status_code in (401, 403):
-                raise VideoImportError('Bunny rejected the library API key or its permissions.')
+                raise VideoImportError('Bunny rejected the library API key or its permissions.', status_code=response.status_code)
             if (response.status_code == 400 and method.upper() == 'PUT'
                     and re.fullmatch(r'/videos/[0-9a-fA-F-]{36}', path)):
                 raise VideoUploadConflict('Bunny has already received an upload for this video. Retry the saved import.')
             if not 200 <= response.status_code < 300:
-                raise VideoImportError(f'Bunny returned HTTP {response.status_code}. The original video is unchanged.')
+                raise VideoImportError(f'Bunny returned HTTP {response.status_code}. The original video is unchanged.', status_code=response.status_code)
             try:
                 result = response.json()
             except ValueError:
@@ -108,19 +124,37 @@ class BunnyStream:
             response.close()
 
     def collection(self, programme_id, programme_name):
-        names = {x.casefold() for x in COLLECTION_NAMES.get(programme_id, ())}
+        programme_collection_name(programme_id, programme_name)
+        names = {' '.join(x.split()).casefold() for x in COLLECTION_NAMES.get(programme_id, ())}
         if programme_name:
-            names.add(programme_name.strip().casefold())
+            names.add(' '.join(programme_name.split()).casefold())
         matches = []
         for page in range(1, 101):
             result = self.request('GET', '/collections', params={'page': page, 'itemsPerPage': 100})
-            items = result.get('items', [])
-            matches.extend(item for item in items if str(item.get('name', '')).strip().casefold() in names)
+            items = result.get('items')
+            if not isinstance(items, list) or any(not isinstance(item, dict) for item in items):
+                raise VideoImportError('Bunny returned an unreadable collection list.')
+            matches.extend(item for item in items if ' '.join(str(item.get('name', '')).split()).casefold() in names)
             if len(items) < 100:
                 break
-        if len(matches) != 1:
+        else:
+            raise VideoImportError('The Bunny collection list is incomplete. Retry collection discovery.')
+        if not matches:
+            raise MissingProgrammeCollection('The programme has no collection in the Curriculum library.')
+        if len(matches) > 1:
             raise VideoImportError('The programme must match exactly one collection in the Curriculum library.')
-        return matches[0]['guid']
+        guid = matches[0].get('guid')
+        if not isinstance(guid, str) or not guid:
+            raise VideoImportError('Bunny returned an invalid collection identity.')
+        return guid
+
+    def create_programme_collection(self, programme_id, programme_name):
+        name = programme_collection_name(programme_id, programme_name)
+        result = self.request('POST', '/collections', json={'name': name})
+        guid = result.get('guid')
+        if not isinstance(guid, str) or not re.fullmatch(r'[0-9a-fA-F-]{36}', guid):
+            raise VideoImportError('Bunny has not confirmed the new programme collection identity.')
+        return guid
 
     def free_course_collection(self):
         """All standalone courses share the fixed Free course collection."""

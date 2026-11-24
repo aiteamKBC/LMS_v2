@@ -191,7 +191,8 @@ it('tells the applicant they are not eligible when the server rules them out by 
   choose(/not previously completed this programme/, 'Yes');
   fireEvent.click(screen.getByRole('button', { name: /Submit application/ }));
 
-  expect(await heading('You are not eligible')).toHaveFocus();
+  const resultHeading = await heading('You are not eligible');
+  await waitFor(() => expect(resultHeading).toHaveFocus());
   expect(screen.getByText(reasons[0])).toBeInTheDocument();
   expect(screen.queryByRole('heading', { name: 'Application submitted' })).not.toBeInTheDocument();
   expect(submitApprenticeshipApplication).toHaveBeenCalledTimes(1);
@@ -209,7 +210,8 @@ async function submitProgramme() {
 it('tells an eligible applicant their set-password invitation has been emailed', async () => {
   vi.mocked(submitApprenticeshipApplication).mockResolvedValue(ELIGIBLE);
   await submitProgramme();
-  expect(await heading('You are eligible')).toHaveFocus();
+  const resultHeading = await heading('You are eligible');
+  await waitFor(() => expect(resultHeading).toHaveFocus());
   expect(screen.getByText(/with a link to create your password/)).toBeInTheDocument();
   expect(screen.getByText('sam@employer.example')).toBeInTheDocument();
 });
