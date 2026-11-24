@@ -258,7 +258,7 @@ class EmployerPortalOverviewTests(SimpleTestCase):
                 self.assertEqual(response.status_code, 200 if required else 404)
                 if required:
                     self.assertTrue(json.loads(response.content)["event"]["employerSignatureRequired"])
-                overlays.assert_called_once_with(event_key=event["eventKey"], learner_id=55)
+                overlays.assert_called_once_with(event_key=event["eventKey"], learner_profile_id=55)
 
     def test_scheduled_progress_review_link_is_shared_for_owned_native_and_aptem_reviews(self):
         for kind in ("commercial", "apprenticeship"):
@@ -380,7 +380,7 @@ class EmployerPortalOverviewTests(SimpleTestCase):
                 mock.patch.object(employer_portal, "signature_states", return_value={"employer": {"signed": True, "required": True}}):
             lookup.return_value.first.return_value = SimpleNamespace(event_key=event["eventKey"])
             response = self.progress_reviews()
-        lookup.assert_called_once_with(event_key="imported-review:88", learner_id=55)
+        lookup.assert_called_once_with(event_key="imported-review:88", learner_profile_id=55)
         row = json.loads(response.content)["events"][0]
         self.assertTrue(row["employerSigned"])
         self.assertTrue(row["employerSignatureRequired"])
@@ -408,7 +408,7 @@ class EmployerPortalOverviewTests(SimpleTestCase):
                         self.assertEqual(rows[0]["meetingLink"], "")
                     detail = self.progress_reviews(kind=kind, event_key=event["eventKey"])
                     self.assertEqual(detail.status_code, 200 if required else 404)
-                    lookup.assert_called_with(event_key=event["eventKey"], learner_id=55)
+                    lookup.assert_called_with(event_key=event["eventKey"], learner_profile_id=55)
 
     def logs(self, method="get", employer_id=9, learner_id=101, **parts):
         request = getattr(self.factory, method)("/monthly-logs/")
