@@ -5188,3 +5188,60 @@ Follow-up: the remaining consumer reverse imports were closed by the 2026-11-22 
   retain cancellation protections and add behavior evidence before changing that
   audit. Separately resolve the migration-test restriction. Architecture V1
   release acceptance and G01-G05 remain OPEN; no commit, PR, merge or deployment.
+
+### 2026-11-24 - Pinned dev meeting acceptance; remaining curriculum contracts OPEN
+
+- Started on Architecture at 2d06b0de038955f7ce68f4c9abdc336731c82d78 with a clean
+  working tree. This batch changes test contracts, fixtures and the test bundle
+  only; application bodies, writers, endpoints and views.py (1,188 lines) remain
+  unchanged. No commit, push, PR, branch switch, migration or live provider call.
+- Added meetings/tests/approved_dev_contracts.py and fixtures/approved_dev_99f81.json.
+  Seven reference bodies are extracted from actual approved upstream revision
+  99f81ec8c661519da17225ac8a7a566447967487, with source/fixture hashes verified.
+  The only textual adaptation retains existing readable punctuation in one
+  additional-week error message. Historical snapshots are unchanged.
+- Meeting source/signature/capability and behavior tests now use those pinned
+  references for the approved changes. Historical whole-file reconstruction
+  removes exactly four reviewed compatibility imports; new tests reject changed
+  or duplicate imports and retain unknown additions. The source loader and
+  delivery/calendar contracts share this explicit reference selection.
+- The cancellation audit distinguishes explicit cancellation from the single
+  approved opted-in holiday-padding site. It checks the exact DELETE site,
+  creation/schedule callers and people-only prohibition. Added synthetic tests
+  for missing targets, no holidays, cancelled/non-holiday occurrences and an
+  unproven later candidate preventing ALL deletion. Existing identity, tracked
+  session, history, exception, pagination and partial-failure guards still pass.
+- Targeted verification: 222/222 PASS across eight suites. Full mocked meeting
+  verification: 1,042 executed cases, zero failures/errors/skips, 41 suites PASS
+  and two BLOCKED by the unchanged migration exclusions (runner exit 1).
+  These counts overlap. The third PostgreSQL migration test remains blocked too.
+- Re-ran all 68 historical standalone suites under import/network/write guards:
+  467 cases; 45 suites PASS, 23 FAIL, with no newly failing suite relative to the
+  earlier 35 PASS / 33 FAIL result. Remaining failures cover old bodies, signatures
+  and imports in catalogue authoring, scheduling, storage and composition. They
+  need individual review against approved dev; do not delete or regenerate their
+  expectations. Full list: evidence/remaining-standalone.json below.
+- Frontend test-only preparation loads the real lazy FreeCourseMaterial renderer
+  before the saved-URL assertion, avoiding cold transformation consuming its
+  one-second UI wait. No component mock or assertion was weakened. Type-check
+  and focused ESLint PASS; the changed UI test is NOT runtime-verified yet.
+- Frontend verification remains BLOCKED/PARTIAL: default forks and threads
+  repeatedly timed out starting workers, before executing tests. A diagnostic
+  VM run before the fixture preparation executed 43 cases: 42 PASS and one cold
+  lazy-render wait failure. The original extra-request case passed there, which
+  does not explain or resolve its previously observed intermittent failure.
+  The same 117-file broad selection under VM threads reported seven failures
+  across two 36-case files (moduleDeliveryCatalogue, programmeWorkspace) before
+  being stopped to reduce host memory pressure (91% observed). A single-worker
+  retry of all 117 paths with vmMemoryLimit=512MB produced no file result after
+  prolonged startup/import and was stopped. Neither attempt is an acceptance
+  pass; preserve their reported failures for diagnosis, without assuming the
+  resource pressure caused them. Final focused default-pool attempt also ended
+  with "Timeout waiting for worker to respond", zero tests executed.
+- Evidence and exact selected commands/logs:
+  D:/Temp/HP/lms-acceptance-20261124/. Mocked backend command:
+  python -I -B backend/phase1f_tests/image/run_meeting_checks.py.
+  No PostgreSQL or HTTP integration rerun is claimed for this test-only batch.
+- Curriculum/Architecture V1 release acceptance and G01-G05 remain OPEN.
+  Finish frontend request-count diagnosis and the 23 remaining historical
+  contracts before treating acceptance as green or proceeding to release.

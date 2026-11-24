@@ -10,6 +10,7 @@ import importlib
 import json
 from pathlib import Path
 from .policy_composition_oracle import EXPORTS as PURE_EXPORTS, SNAPSHOT as PURE_SNAPSHOT, actual as pure_actual
+from .approved_dev_contracts import DEV_PORTS, reference_source
 
 USE_ORIGINAL = False
 
@@ -23,13 +24,6 @@ ENTRIES = {**SNAPSHOT['functions'], **CALENDAR_SNAPSHOT['functions'], **DELIVERY
 
 # Approved dev additions: the old snapshot remains immutable. These ports now
 # belong to the current implementation and must use the fixture's capabilities.
-DEV_PORTS = {
-    'curriculum_teams_meeting': ('prune_study_week_fillers', 'teams_module_session_limit'),
-    'curriculum_teams_meeting_schedule': ('prune_study_week_fillers', 'teams_module_session_limit'),
-    'curriculum_teams_meeting_artifacts': ('teams_module_session_limit',),
-    'apply_teams_occurrence_shifts': ('read_calendar_instances',),
-    'teams_expanded_instances': ('read_calendar_instances',),
-}
 
 
 def _import(module, name):
@@ -76,7 +70,7 @@ def load_current_functions(names, namespace, tree=None):
         if name in ENTRIES:
             entry = ENTRIES[name]
             if USE_ORIGINAL:
-                exec(compile(entry['source'], '<frozen-meeting>', 'exec'), namespace)
+                exec(compile(reference_source(name, entry['source']), '<pinned-meeting-reference>', 'exec'), namespace)
                 continue
             if entry.get('ready_flag') or entry.get('composed'):
                 exec(compile(ast.Module(body=[existing[name]], type_ignores=[]), '<current-public-meeting>', 'exec'), namespace)

@@ -11,11 +11,34 @@ import unittest
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT.parent))
 from curriculum_api.meetings.tests.layout_oracle import restore_tree
+from curriculum_api.meetings.tests.approved_dev_contracts import (
+    COMPATIBILITY_IMPORTS, DEV_PORTS, REFERENCE, REFERENCE_PATH, reference_source,
+    restore_pre_dev_exports,
+)
 SNAPSHOT_PATH = Path(__file__).parent / 'fixtures/legacy_snapshot.json'
 SNAPSHOT = json.loads(SNAPSHOT_PATH.read_text(encoding='utf-8'))
 
 
 class BoundaryContracts(unittest.TestCase):
+    def test_approved_dev_reference_and_exact_compatibility_exports(self):
+        self.assertEqual(REFERENCE['revision'], '99f81ec8c661519da17225ac8a7a566447967487')
+        self.assertEqual(hashlib.sha256(REFERENCE_PATH.read_bytes()).hexdigest(),
+                         '3b7aca906de1eabae6f4a720e00ae5af324a1f9addad599b0aaa986fbb531088')
+        tree = ast.parse((ROOT / 'views.py').read_text(encoding='utf-8-sig'))
+        nodes = [ast.dump(node) for node in tree.body]
+        for source in COMPATIBILITY_IMPORTS:
+            self.assertEqual(nodes.count(ast.dump(ast.parse(source).body[0])), 1)
+
+    def test_historical_normalization_does_not_hide_unknown_or_changed_imports(self):
+        added = '\n'.join(COMPATIBILITY_IMPORTS)
+        tree = ast.parse(added + '\nfrom unexpected_source import unexpected_capability')
+        restored = restore_pre_dev_exports(tree, 'views.py')
+        self.assertEqual(ast.unparse(restored), 'from unexpected_source import unexpected_capability')
+        for changed in (added.replace('prune_study_week_fillers', 'different_capability'),
+                        added + '\n' + COMPATIBILITY_IMPORTS[0]):
+            with self.assertRaises(AssertionError):
+                restore_pre_dev_exports(ast.parse(changed), 'views.py')
+
     def test_frozen_source_and_unrelated_views_nodes_are_preserved(self):
         self.assertEqual(hashlib.sha256(SNAPSHOT_PATH.read_bytes()).hexdigest(),
             'e00146e80ef2d4e5826255511370c47174aff9480b7957fafddafb00460c12d1')
@@ -30,7 +53,7 @@ class BoundaryContracts(unittest.TestCase):
             def visit_Import(self, node):
                 return None
         for name, entry in SNAPSHOT['functions'].items():
-            old = ast.parse(entry['source']).body[0]
+            old = ast.parse(reference_source(name, entry['source'])).body[0]
             current = ast.parse((ROOT / (entry['owner'].replace('.', '/') + '.py')).read_text(encoding='utf-8')).body[-1]
             current = copy.deepcopy(current)
             current.args = copy.deepcopy(old.args)
@@ -49,11 +72,11 @@ class BoundaryContracts(unittest.TestCase):
         functions = {n.name:n for n in tree.body if isinstance(n,ast.FunctionDef)}
         for name, entry in SNAPSHOT['functions'].items():
             fn = functions[name]
-            old = ast.parse(entry['source']).body[0]
+            old = ast.parse(reference_source(name, entry['source'])).body[0]
             self.assertEqual(ast.dump(fn.args), ast.dump(old.args))
             self.assertEqual([ast.dump(n) for n in fn.decorator_list], [ast.dump(n) for n in old.decorator_list])
             call = fn.body[-1].value
-            expected = set(entry['capabilities']) | {a.arg for a in old.args.kwonlyargs}
+            expected = set(entry['capabilities']) | set(DEV_PORTS.get(name, ())) | {a.arg for a in old.args.kwonlyargs}
             self.assertEqual({k.arg for k in call.keywords}, expected)
             for kw in call.keywords:
                 if kw.arg not in ('schedule_request','teams_module_owner_id'):

@@ -92,6 +92,44 @@ class StudyWeekTeamsGuardTests(SimpleTestCase):
         self.assertTrue(warnings)
         self.assertFalse(any(method == 'DELETE' for method, _ in self.calls))
 
+    def test_missing_target_or_empty_plan_does_not_read_or_delete(self):
+        for variant in ('missing-module', 'missing-id', 'empty-targets', 'no-holidays'):
+            with self.subTest(variant=variant):
+                self.reset_transport()
+                self.module = None if variant == 'missing-module' else {'week_boundary_mode': 'calendar'}
+                if variant == 'empty-targets':
+                    self.targets = []
+                with patch('curriculum_api.views.module_session_plan_for_weeks', return_value={'weeks': []}):
+                    result = prune_study_week_fillers(self.graph, 'synthetic-owner', 'MASTER',
+                        '' if variant == 'missing-id' else 'MOD-SYNTHETIC', self.targets, {})
+                self.assertEqual(result, (set(), []))
+                self.assertEqual(self.calls, [])
+
+    def test_cancelled_or_nonholiday_occurrences_are_preserved(self):
+        for variant in ('cancelled', 'outside-holiday'):
+            with self.subTest(variant=variant):
+                self.reset_transport()
+                if variant == 'cancelled':
+                    self.events[0]['isCancelled'] = True
+                else:
+                    self.events[0]['start']['dateTime'] = '2027-03-15T09:00:00Z'
+                self.assertEqual(self.prune(), (set(), []))
+                self.assertEqual(len(self.events), 1)
+                self.assertFalse(any(method == 'DELETE' for method, _ in self.calls))
+
+    def test_unproven_later_candidate_prevents_deleting_any_earlier_candidate(self):
+        for field in ('id', 'seriesMasterId', 'type'):
+            with self.subTest(field=field):
+                self.reset_transport()
+                invalid = {**copy.deepcopy(self.events[0]), 'id': 'UNPROVEN'}
+                invalid.pop(field)
+                self.events.append(invalid)
+                removed, warnings = self.prune()
+                self.assertEqual(removed, set())
+                self.assertTrue(warnings)
+                self.assertEqual(len(self.events), 2)
+                self.assertFalse(any(method == 'DELETE' for method, _ in self.calls))
+
     def test_failed_deletion_can_retry_without_creating_or_replacing_the_master(self):
         self.fail_delete = True
         removed, warnings = self.prune()

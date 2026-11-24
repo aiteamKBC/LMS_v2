@@ -1,12 +1,17 @@
-"""Nothing automatic cancels a Teams meeting. Run directly with Python; no Django, DB or network.
+"""Protect module meetings and audit the approved holiday-padding exception.
+
+Run directly with Python; no Django, DB or network.
 
 Microsoft emails "Canceled: <module>" to everyone invited whenever an organizer
 deletes or cancels a meeting or one of its occurrences. So the rule pinned here
-is that the ONLY path to Graph's cancel/delete for a module calendar is the
-explicit Cancel a person presses and then confirms. A save (Create, Update),
+is that cancellation of a module session requires the explicit Cancel a person
+presses and then confirms. The approved dev study-week behavior adds one narrow
+exception: future, untracked, proven recurrence padding in opted-in holiday
+weeks. Its identity, history, incomplete-read and people-only guards are tested
+in test_study_week_teams_no_db. Outside that exception, a save (Create, Update),
 the status sync, a gap in the plan, an empty weekday, a week handed to its own
-additional meeting, or an extra occurrence on Teams never removes anything: it
-is left where it is and flagged for a person to review.
+additional meeting, or an extra occurrence on Teams leaves it in place and
+flags it for a person to review.
 
 The Main Module Calendar and an Additional Week Meeting are separate Microsoft
 events, and a write to one never reaches the other.
@@ -516,10 +521,10 @@ for _name in dir(actions_tests.PersistCancellationTests):
 
 
 class CancelPathAuditTests(unittest.TestCase):
-    """Every Graph delete/cancel in the backend sits behind an explicit Cancel.
+    """Every destructive site is explicit cancellation or reviewed padding.
 
-    Read from the source, so a new automatic cancellation anywhere fails here
-    until somebody decides, in review, that it is a person's explicit action.
+    Read from the source, so any new automatic cancellation outside the single
+    reviewed holiday-padding site fails here and requires an explicit decision.
     """
 
     #: (file, function) -> the explicit action that reaches it.
@@ -536,6 +541,9 @@ class CancelPathAuditTests(unittest.TestCase):
         # calendar: a coach or learner cancelling their own booking.
         ('coach_api/views.py', 'delete_calendar_event_from_graph_detailed'),
     }
+    # This is not general permission to cancel during saves. Keep the single
+    # approved dev site separate from explicit user cancellation paths.
+    HOLIDAY_PADDING = {('curriculum_api/study_week_teams.py', 'prune_study_week_fillers')}
 
     def destructive_sites(self):
         found = set()
@@ -563,11 +571,31 @@ class CancelPathAuditTests(unittest.TestCase):
                         found.add((relative, function.name))
         return found
 
-    def test_only_explicit_cancel_actions_reach_graph_delete_or_cancel(self):
+    def test_only_explicit_cancel_and_reviewed_padding_sites_reach_graph(self):
         sites = self.destructive_sites()
         # Nested helpers report their enclosing function as well; keep the innermost.
-        unexpected = {site for site in sites if site not in self.ALLOWED}
+        unexpected = sites - self.ALLOWED - self.HOLIDAY_PADDING
         self.assertEqual(unexpected, set(), f'automatic Teams cancellation path(s): {sorted(unexpected)}')
+        self.assertEqual(sites & self.HOLIDAY_PADDING, self.HOLIDAY_PADDING)
+
+    def test_padding_has_one_delete_site_and_only_creation_or_schedule_callers(self):
+        tree = ast.parse((ROOT / 'study_week_teams.py').read_text(encoding='utf-8'))
+        deletes = [n for n in ast.walk(tree) if isinstance(n, ast.Call)
+                   and any(isinstance(a, ast.Constant) and a.value == 'DELETE' for a in n.args)]
+        self.assertEqual([ast.unparse(n) for n in deletes],
+                         ["request('DELETE', f\"users/{owner}/events/{quote(identity, safe='')}\")"])
+        callers = set()
+        for path in ROOT.rglob('*.py'):
+            if 'tests' in path.parts or path.name.startswith('test'):
+                continue
+            tree = ast.parse(path.read_text(encoding='utf-8-sig'))
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Call) and getattr(node.func, 'id', '') == 'prune_study_week_fillers':
+                    callers.add(path.relative_to(ROOT).as_posix())
+                    if path.name == 'scheduling.py':
+                        self.assertEqual({k.arg: ast.unparse(k.value) for k in node.keywords},
+                                         {'allow_delete': 'not people_only'})
+        self.assertEqual(callers, {'meetings/api/creation.py', 'meetings/api/scheduling.py'})
 
     def test_send_cancellation_is_only_reached_from_a_confirmed_action(self):
         tree = ast.parse((ROOT / 'teams_calendar_actions.py').read_text(encoding='utf-8-sig'))

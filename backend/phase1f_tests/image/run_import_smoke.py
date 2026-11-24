@@ -411,6 +411,8 @@ def bundle():
         archive.add(BACKEND / fixture, arcname='phase1f/backend/' + fixture)
         fixture = 'curriculum_api/meetings/tests/fixtures/legacy_snapshot.json'
         archive.add(BACKEND / fixture, arcname='phase1f/backend/' + fixture)
+        fixture = 'curriculum_api/meetings/tests/fixtures/approved_dev_99f81.json'
+        archive.add(BACKEND / fixture, arcname='phase1f/backend/' + fixture)
         fixture = 'curriculum_api/catalogue/tests/fixtures/legacy_snapshots/session_editing_snapshot.json'
         archive.add(BACKEND / fixture, arcname='phase1f/backend/' + fixture)
         archive.add(BACKEND / 'phase1f_tests/image/holiday_boundary_postgresql.py',

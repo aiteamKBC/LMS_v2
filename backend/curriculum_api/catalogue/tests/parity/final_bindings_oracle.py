@@ -11,6 +11,8 @@ SNAPSHOT = json.loads(SNAPSHOT_PATH.read_text(encoding='utf-8'))
 
 
 def restore_tree(tree, relative):
+    from curriculum_api.meetings.tests.approved_dev_contracts import restore_pre_dev_exports
+    tree = restore_pre_dev_exports(tree, relative)
     entry = SNAPSHOT['source_changes'].get(relative)
     if entry is None or getattr(tree, '_final_bindings_restored', False):
         return tree

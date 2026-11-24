@@ -85,6 +85,9 @@ afterEach(() => { clearAllCachedResources(); vi.restoreAllMocks(); vi.unstubAllG
 
 describe('compact My Learning route', () => {
   it('opens Free Courses from a saved quiz-tab URL without loading programme details', async () => {
+    // Load the real lazy renderer before mounting: cold Vitest transformation
+    // must not consume the UI assertion's timeout. Keep all request assertions.
+    await import('./FreeCourseMaterial');
     vi.mocked(fetch).mockImplementation(async input => {
       const url = String(input);
       if (url.includes('/certificates/')) return reply({ template: null, csrfToken: '' });
