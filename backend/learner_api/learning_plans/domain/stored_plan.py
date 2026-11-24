@@ -9,6 +9,7 @@ def _s(value):
     """Coerce to a trimmed string ('' for None)."""
     return "" if value is None else str(value).strip()
 
+
 def _maybe_json(value):
     """A TEXT column that might hold JSON. Returns parsed value or None."""
     if value is None:
@@ -31,3 +32,9 @@ def stored_training_plan(source):
         if isinstance(plan, list):
             return [entry for entry in plan if isinstance(entry, dict)]
     return None
+
+
+# Supported names for callers outside the domain package. The original names
+# remain intact for frozen source parity and compatibility imports.
+clean_text = _s
+maybe_json = _maybe_json

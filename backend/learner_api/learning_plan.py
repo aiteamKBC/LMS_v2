@@ -80,7 +80,7 @@ from .training_plan_writes import (
     training_plan_snapshot,
 )
 
-from .learning_plans.infrastructure.assignment_reads import (
+from .learning_plans.composition import (
     _rows,
     GROUP_PRESET_SOURCE,
     GROUP_PRESET_SQL,

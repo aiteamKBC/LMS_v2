@@ -1,6 +1,7 @@
 # Learning Plan membership regression tests
 
-- `unit/`: 15 pure membership policy cases, including source-oracle comparisons.
+- `unit/`: pure membership, effective-plan policy and public-contract cases.
+- `architecture/`: static domain-first dependency and cross-domain import guards.
 - `parity/`: 26 standalone caller, writer-guard and read-boundary cases. The file
   named `test_membership_integration_standalone.py` exercises source contracts;
   it does not initialize Django or connect to a database.
@@ -13,9 +14,13 @@ From the repository root:
 
 ```powershell
 python -I -B backend/learner_api/learning_plans/tests/unit/test_membership_policy_standalone.py
+python -I -B backend/learner_api/learning_plans/tests/unit/test_effective_plan_policy_standalone.py
+python -I -B backend/learner_api/learning_plans/tests/unit/test_public_contract_standalone.py
+python -I -B backend/learner_api/learning_plans/tests/architecture/test_boundaries_standalone.py
 python -I -B backend/learner_api/learning_plans/tests/parity/test_membership_caller_parity_standalone.py
 python -I -B backend/learner_api/learning_plans/tests/parity/test_membership_integration_standalone.py
 python -I -B backend/learner_api/learning_plans/tests/parity/test_module_membership_standalone.py
+python -I -B backend/learner_api/learning_plans/tests/parity/test_effective_plan_extraction_standalone.py
 python -B backend/phase1f_tests/image/run_membership_runtime.py
 python -B backend/phase1f_tests/image/run_integration.py
 ```

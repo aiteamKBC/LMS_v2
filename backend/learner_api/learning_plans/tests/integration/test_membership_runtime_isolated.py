@@ -27,7 +27,7 @@ from contextlib import nullcontext
 from copy import deepcopy
 import importlib.abc
 import json
-import socket
+import re
 from types import ModuleType, SimpleNamespace
 import unittest
 from unittest.mock import patch
@@ -63,10 +63,12 @@ ALLOWED = {'learner_api.learning_plans.tests',
            'learner_api.learning_plans.tests.parity',
            'curriculum_api.directory', 'curriculum_api.directory.domain',
            'curriculum_api.directory.domain.placement',
+           'curriculum_api.directory.domain.membership_values',
            'curriculum_api.directory.application',
            'curriculum_api.directory.application.status_queries',
            'curriculum_api.directory.application.assignment_queries',
            'curriculum_api.directory.infrastructure',
+           'curriculum_api.directory.infrastructure.membership_runtime',
            'curriculum_api.directory.infrastructure.registration_reads',
            'learner_api.learning_plans.application',
            'learner_api.learning_plans.application.module_membership',
@@ -109,8 +111,12 @@ def pure_source_helpers(relative, names, env=None):
     return env
 
 
-strings = pure_source_helpers('learner_api/mappers.py', ['_s'])
-view_strings = pure_source_helpers('curriculum_api/views.py', ['clean_str'])
+strings = pure_source_helpers('learner_api/learning_plans/domain/stored_plan.py', ['_s'])
+view_strings = pure_source_helpers(
+    'curriculum_api/catalogue/domain/values.py',
+    ['clean_str', 'normalise'],
+    env={'re': re},
+)
 from curriculum_api.directory.domain.placement import scope_programme_identifier
 view_strings['scope_programme_identifier'] = lambda lineage: scope_programme_identifier(
     lineage, clean_str=view_strings['clean_str'])
@@ -131,6 +137,21 @@ views = stub('curriculum_api.views', clean_str=view_strings['clean_str'],
              programme_identity_candidates=lambda p: [p], AUTHORING_MODULES_TABLE='modules',
              curriculum_row_effectively_deleted=lambda row: row.get('status') in ('inactive', 'archived'),
              invalidate_curriculum_cache=deny)
+stub('curriculum_api.catalogue.infrastructure.database_reads',
+     AUTHORING_MODULES_TABLE='modules', column_names=deny,
+     learner_schema_columns=deny, learner_schema_table_exists=deny)
+stub('curriculum_api.catalogue.infrastructure.authoring_schema_runtime',
+     COHORT_AUTHORING_DETAILS_TABLE='cohorts', GROUPS_TABLE='groups')
+stub('curriculum_api.catalogue.infrastructure.authoring_runtime', authoring_fetch_all=deny)
+stub('curriculum_api.catalogue.domain.values', clean_str=view_strings['clean_str'],
+     normalise=view_strings['normalise'])
+stub('curriculum_api.catalogue.infrastructure.cache_runtime',
+     curriculum_read_scope=lambda **kw: nullcontext())
+stub('curriculum_api.catalogue.infrastructure.catalogue_resolution',
+     programme_identity_candidates=lambda value: [value], scope_placement_lineage=deny)
+stub('curriculum_api.catalogue.infrastructure.placement_runtime',
+     scope_programme_identifier=view_strings['scope_programme_identifier'])
+stub('curriculum_api.learner_assignment_counts_sql', bulk_assigned_learner_counts=deny)
 
 from django.conf import settings
 settings.configure(SECRET_KEY='synthetic-only', INSTALLED_APPS=[], MIDDLEWARE=[], DATABASE_ROUTERS=[],
@@ -149,6 +170,7 @@ import django
 django.setup()
 from django.http import HttpRequest, QueryDict
 from curriculum_api import learner_status_counts as counts
+from curriculum_api.directory.infrastructure import membership_runtime
 from curriculum_api import learner_assignments as assignments
 from learner_api.learning_plans.domain import membership_policy
 from learner_api.learning_plans.tests.parity import test_membership_integration_standalone as oracle
@@ -185,8 +207,10 @@ class RuntimeTests(unittest.TestCase):
         views.resolve_stored_module_catalogue_id = lambda identifier: 'M' if identifier in ('M', 'legacy') else None
         views.authoring_fetch_all = lambda table, where, params: ([dict(module_catalogue_id='M', title='Synthetic',
             status='active', programme_name='P', programme_id='P')] if self.present and params == ['M'] else [])
-        counts.placement_lineages = lambda scope, ids: {key: deepcopy(self.target) if self.present else {} for key in ids}
-        counts.learner_facts = lambda ids: deepcopy(self.facts)
+        membership_runtime.placement_lineages = lambda scope, ids: {
+            key: deepcopy(self.target) if self.present else {} for key in ids
+        }
+        membership_runtime.learner_facts = lambda ids: deepcopy(self.facts)
         assignments._plan_row_counts = lambda: {'101': 1}
         self.assertIs(counts.module_member_enrolment_ids, ACTUAL_READER)
 
@@ -211,7 +235,10 @@ class RuntimeTests(unittest.TestCase):
         return actual
 
     def test_real_import_invocation(self):
-        self.assertEqual(ACTUAL_READER.__module__, 'curriculum_api.learner_status_counts')
+        self.assertEqual(
+            ACTUAL_READER.__module__,
+            'curriculum_api.directory.infrastructure.membership_runtime',
+        )
         with patch.object(membership_policy, 'members_for_lineages', wraps=membership_policy.members_for_lineages) as spy:
             self.assertEqual(ACTUAL_READER('M'), {'101', '103'})
             spy.assert_called_once()

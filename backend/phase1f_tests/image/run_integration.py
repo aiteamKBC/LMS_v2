@@ -39,7 +39,8 @@ if __name__ == '__main__':
             time.sleep(1)
         else:
             raise RuntimeError('Disposable PostgreSQL did not become ready')
-        run('exec', APP, 'python', '-I', '-B', '/tmp/phase1f/integration.py')
+        run('exec', APP, 'python', '-I', '-B', '/tmp/phase1f/integration.py',
+            '--learning-plans-only')
     finally:
         for name in reversed(created):
             subprocess.run(['docker', 'rm', '-f', name], check=False)

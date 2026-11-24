@@ -13,6 +13,9 @@ from unittest.mock import Mock
 BACKEND = Path(__file__).resolve().parents[4]
 sys.path.insert(0, str(BACKEND))
 from learner_api.learning_plans.domain import stored_plan
+from learner_api.learning_plans.application.effective_plan import (
+    effective_module_ids as extracted_effective_module_ids,
+)
 
 SNAPSHOT_PATH = Path(__file__).resolve().parents[1] / 'fixtures/legacy_snapshots/assignment_reads_snapshot.json'
 SNAPSHOT = json.loads(SNAPSHOT_PATH.read_text(encoding='utf-8'))
@@ -34,7 +37,8 @@ def environment(current):
                projection_call=lambda label, function, *args: function(*args),
                projection_operation=lambda label: nullcontext(),
                placement_ids=lambda learner: {'group_id': getattr(learner, 'group_id', '')},
-               connections={}, read_sql=lambda sql, db: sql)
+               connections={}, read_sql=lambda sql, db: sql,
+               effective_module_ids=extracted_effective_module_ids)
     exec(compile(ast.Module(body=copy.deepcopy(declarations(current)), type_ignores=[]),
                  '<actual-extracted-read-source>' if current else '<frozen-before-extraction>', 'exec'), env)
     return env
@@ -50,13 +54,21 @@ def outcome(function, *args, **kwargs):
 
 class AssignmentReadParity(unittest.TestCase):
     def test_frozen_evidence_and_exact_function_constant_parity(self):
-        self.assertEqual(hashlib.sha256(SNAPSHOT_PATH.read_bytes()).hexdigest(),
+        evidence = SNAPSHOT_PATH.read_bytes().replace(b'\r\n', b'\n')
+        self.assertEqual(hashlib.sha256(evidence).hexdigest(),
                          '5e15bcdd1620dcf736de935feb646a9ac41883a0febd59a3d1d7d7237ec73113')
         old = {node.name if isinstance(node, ast.FunctionDef) else node.targets[0].id: ast.dump(node)
                for node in declarations(False)}
         new = {node.name if isinstance(node, ast.FunctionDef) else node.targets[0].id: ast.dump(node)
                for node in declarations(True)}
-        self.assertEqual(new, old)
+        # The effective-plan body now has its own frozen behavioral parity test;
+        # this compatibility function is intentionally only a delegate.
+        self.assertIn('_effective_plan_ids', old)
+        self.assertIn('_effective_plan_ids', new)
+        old.pop('_effective_plan_ids')
+        new.pop('_effective_plan_ids')
+        self.assertEqual(set(new) - set(old), {'clean_text', 'maybe_json'})
+        self.assertEqual({name: new[name] for name in old}, old)
         self.assertEqual((len(SNAPSHOT['functions']), len(SNAPSHOT['constants'])), (12, 4))
 
     def test_import_closure_is_explicit_and_does_not_include_http_or_writers(self):
@@ -65,6 +77,7 @@ class AssignmentReadParity(unittest.TestCase):
                    for node in tree.body if isinstance(node, (ast.Import, ast.ImportFrom))}
         self.assertEqual(imports, {'json', 'django.db', 'learner_api.placement_links',
             'learner_api.projection_performance', 'learner_api.learning_plans.domain.stored_plan',
+            'learner_api.learning_plans.application.effective_plan',
             'curriculum_api.catalogue.infrastructure.course_storage_reads'})
         domain = ast.parse(Path(stored_plan.__file__).read_text(encoding='utf-8'))
         self.assertEqual([n.names[0].name for n in ast.walk(domain) if isinstance(n, ast.Import)], ['json'])

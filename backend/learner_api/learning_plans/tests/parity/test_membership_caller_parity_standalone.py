@@ -12,7 +12,6 @@ from collections import Counter, defaultdict
 from contextlib import nullcontext
 from copy import deepcopy
 from pathlib import Path
-import re
 import sys
 from types import SimpleNamespace
 import unittest
@@ -37,7 +36,7 @@ SOURCES['learner_status_counts.py'] = ast.Module(body=[
 ], type_ignores=[])
 # Frozen before Phase 1C: never regenerate this oracle from integrated code.
 SNAPSHOT_BYTES = (Path(__file__).resolve().parents[1] / 'fixtures/legacy_snapshots/membership_preintegration_snapshot.json').read_bytes()
-assert hashlib.sha256(SNAPSHOT_BYTES).hexdigest() == '24c360f42bbc158624275b853222d2fe2476cdb201b89fe264bea6764c593e51'
+assert hashlib.sha256(SNAPSHOT_BYTES.replace(b'\r\n', b'\n')).hexdigest() == '24c360f42bbc158624275b853222d2fe2476cdb201b89fe264bea6764c593e51'
 SNAPSHOT = json.loads(SNAPSHOT_BYTES)
 SOURCES['preintegration'] = ast.parse('\n\n'.join(v['source'] for v in SNAPSHOT.values()))
 SAFE_BUILTINS = {name: getattr(builtins, name) for name in (

@@ -10,6 +10,7 @@ from django.db import connection, connections
 from curriculum_api.catalogue.infrastructure.course_storage_reads import read_sql
 from learner_api.placement_links import placement_ids
 from learner_api.projection_performance import projection_call, projection_operation
+from learner_api.learning_plans.application.effective_plan import effective_module_ids
 from learner_api.learning_plans.domain.stored_plan import _s, stored_training_plan
 
 
@@ -227,16 +228,10 @@ def _effective_plan_ids(learner, preset_cache, *, saved_plan=...):
     same way, so a module inherited from the group reads as assigned here too
     and the picker cannot contradict the modal.
     """
-    if saved_plan is ... and hasattr(learner, "_canonical_training_plan"):
-        saved = list(learner._canonical_training_plan or [])
-    else:
-        saved = stored_training_plan(learner) if saved_plan is ... else saved_plan
-    if saved is None:
-        return list(_preset_ids_for(learner, preset_cache))
-    ids = [_s(entry.get("moduleId")) for entry in saved if _s(entry.get("moduleId"))]
-    # An emptied plan stays empty, and is not re-filled from the group. Same
-    # rule as _serialize. Explicit curriculum selections also keep their scope.
-    if not ids or any(entry.get('assignmentMode') == 'explicit' for entry in saved):
-        return ids
-    planned = set(ids)
-    return ids + [i for i in _preset_ids_for(learner, preset_cache) if i not in planned]
+    return effective_module_ids(
+        learner,
+        preset_cache,
+        read_inherited_module_ids=_preset_ids_for,
+        read_stored_plan=stored_training_plan,
+        saved_plan=saved_plan,
+    )

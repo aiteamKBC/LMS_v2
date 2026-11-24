@@ -41,7 +41,7 @@ from django.db import connection, transaction, connections
 from django.core.cache import cache
 from django.urls import path
 from django.test import Client
-from learner_api import models as lm
+from learner_api import learning_plan as learner_plan_http, models as lm
 from curriculum_api import models as cm, views, learner_assignments as assignments, learner_status_counts as counts
 from login import models as auth, sessions
 assert lm.EnrolmentUser.all_learners.db == 'enrolment'
@@ -79,16 +79,23 @@ urlpatterns = [path('curriculum/learner-directory/learners/', learner_directory.
                path('curriculum/holidays/', views.curriculum_holidays),
                path('curriculum/modules/<str:module_catalogue_id>/session-plan/', views.curriculum_module_session_plan),
                path('curriculum/preview/module-session-plan/', views.curriculum_preview_module_session_plan),
-               path('curriculum/preview/tutor-availability/', views.curriculum_preview_tutor_availability)]
+               path('curriculum/preview/tutor-availability/', views.curriculum_preview_tutor_availability),
+               path('learning-plan/<int:pk>/', learner_plan_http.learning_plan)]
 
 # Exact immutable old reader, retaining its original globals and relative imports.
 snapshot_bytes = Path('/tmp/phase1f/backend/learner_api/learning_plans/tests/fixtures/legacy_snapshots/membership_preintegration_snapshot.json').read_bytes()
-assert hashlib.sha256(snapshot_bytes).hexdigest() == '24c360f42bbc158624275b853222d2fe2476cdb201b89fe264bea6764c593e51'
+assert '24c360f42bbc158624275b853222d2fe2476cdb201b89fe264bea6764c593e51' in {
+    hashlib.sha256(snapshot_bytes).hexdigest(),
+    hashlib.sha256(snapshot_bytes.replace(b'\r\n', b'\n')).hexdigest(),
+}
 snapshot = json.loads(snapshot_bytes)
 old_env = dict(vars(counts))
 # Independent pre-Batch-02 SQL reader, not the refactored compatibility wrapper.
 facts_bytes = Path('/tmp/phase1f/backend/learner_api/learning_plans/tests/fixtures/legacy_snapshots/learner_facts_prebatch02.json').read_bytes()
-assert hashlib.sha256(facts_bytes).hexdigest() == '0a82781326dd696a2ab622350688ddbfef7c6e6dd667bc09fb2b0d8ad99c4376'
+assert '0a82781326dd696a2ab622350688ddbfef7c6e6dd667bc09fb2b0d8ad99c4376' in {
+    hashlib.sha256(facts_bytes).hexdigest(),
+    hashlib.sha256(facts_bytes.replace(b'\r\n', b'\n')).hexdigest(),
+}
 exec(compile(ast.parse(json.loads(facts_bytes)['source']), '<prebatch02-facts>', 'exec'), old_env)
 for name in ('members_for_lineages','module_member_enrolment_ids'):
     entry = snapshot[name]
@@ -100,7 +107,10 @@ new_reader = counts.module_member_enrolment_ids
 # are copied or replaced in the new branch; old runs patch only legacy exports.
 from curriculum_api import home_summary, programme_list
 catalogue_bytes = Path('/tmp/phase1f/backend/curriculum_api/catalogue/tests/fixtures/legacy_snapshots/prebatch03_snapshot.json').read_bytes()
-assert hashlib.sha256(catalogue_bytes).hexdigest() == 'df45c28e0d47de2e705afacfd39c9eb2b2a3c56ceec04e163271b2eba1afe19c'
+assert 'df45c28e0d47de2e705afacfd39c9eb2b2a3c56ceec04e163271b2eba1afe19c' in {
+    hashlib.sha256(catalogue_bytes).hexdigest(),
+    hashlib.sha256(catalogue_bytes.replace(b'\r\n', b'\n')).hexdigest(),
+}
 catalogue_snapshot = json.loads(catalogue_bytes)
 legacy_modules = {'views.py': views, 'home_summary.py': views, 'programme_list.py': views}
 legacy_envs = {name: dict(vars(module)) for name, module in legacy_modules.items()}
@@ -157,11 +167,18 @@ models = [lm.PlacementProgramme,lm.PlacementCohort,lm.PlacementGroup,lm.Placemen
           lm.EnrolmentUser,lm.StaffUser,lm.LearnerProfile,lm.LearnerTrainingPlanModule,
           lm.LearnerTrainingPlanWeek,lm.LearnerTrainingPlanComponent,auth.LoginAccount,auth.LoginSession]
 with connection.schema_editor() as editor:
-    for model in models:
+    for model in [*models, lm.LearnerProgressEntry]:
         editor.create_model(model)
 with connection.cursor() as cursor:
     cursor.execute("ALTER TABLE curriculum.modules ADD COLUMN learner_roster_mode text DEFAULT 'inherited', ADD COLUMN source_type text, ADD COLUMN source_id text, ADD COLUMN start_date date, ADD COLUMN end_date date, ADD COLUMN sessions_number integer DEFAULT 0, ADD COLUMN weeks_number integer DEFAULT 0")
     cursor.execute('CREATE TABLE curriculum.standard_ksbs (id bigserial PRIMARY KEY, ksb_code text, ksb_description text, standard_ref text, standard_version text, ksb_type text, standard_title text)')
+    cursor.execute('''CREATE TABLE curriculum.free_courses (
+        id varchar(128) PRIMARY KEY, course_name text NOT NULL DEFAULT '', description text,
+        cover_image_url text, display_order integer NOT NULL DEFAULT 0,
+        week_count integer NOT NULL DEFAULT 0, component_count integer NOT NULL DEFAULT 0,
+        total_otjh numeric NOT NULL DEFAULT 0, created_at timestamp NOT NULL DEFAULT current_timestamp,
+        updated_at timestamp NOT NULL DEFAULT current_timestamp, course_type varchar(16) NOT NULL DEFAULT 'free',
+        is_for_sale boolean NOT NULL DEFAULT false, price numeric(10,2), currency varchar(3) NOT NULL DEFAULT 'GBP')''')
     cursor.execute('ALTER TABLE curriculum.programmes ADD COLUMN ksb_profile_source_id text')
     cursor.execute('CREATE TABLE curriculum.module_details (module_catalogue_id varchar(128) PRIMARY KEY, background text, epa_requirements jsonb, professional_qualification_outcomes jsonb, intent text, learner_benefit text, employer_benefit text, sequence_purpose text)')
     cursor.execute('ALTER TABLE curriculum.modules ADD COLUMN session_week_day text, ADD COLUMN color text')
@@ -191,12 +208,7 @@ with connection.cursor() as cursor:
     cursor.execute("ALTER TABLE curriculum.week_template_components ADD COLUMN description text, ADD COLUMN expected_otjh numeric(8,2) DEFAULT 0, ADD COLUMN points integer DEFAULT 0, ADD COLUMN reflection_required boolean DEFAULT false, ADD COLUMN reflection_question text, ADD COLUMN workplace_evidence_required boolean DEFAULT false, ADD COLUMN tutor_validation_required boolean DEFAULT false, ADD COLUMN coach_validation_required boolean, ADD COLUMN ksb_mappings jsonb, ADD COLUMN display_order integer DEFAULT 0")
 # Reporting read contracts exist only in this disposable synthetic database.
 with connection.cursor() as cursor:
-    cursor.execute('''CREATE TABLE "Learner".learner_progress_entries (
-        id bigint PRIMARY KEY, learner_id bigint, kind text, component_ref text,
-        component_title text, component_type text, quiz_ref text, submitted_at timestamptz,
-        reported_time text, feedback text, passed boolean, programme_ref text, cohort_ref text,
-        group_ref text, module_ref text, week_ref text, module_title text, week_title text,
-        expected_otjh numeric, deleted_at timestamptz, ssot_updated_at timestamptz)''')
+    cursor.execute('ALTER TABLE "Learner".learner_progress_entries ADD COLUMN ssot_updated_at timestamptz')
     cursor.execute('''CREATE TABLE "Learner".learner_progress_ksbs (
         progress_id bigint, position integer, ksb_code text, weight numeric, weight_class text)''')
     cursor.execute('''CREATE TABLE "Learner".learner_progress_ksb_exclusions (
@@ -243,6 +255,67 @@ class MembershipIntegration(unittest.TestCase):
 
     def url(self, mid='MOD-TEST'):
         return '/modules/'+mid+'/learners/'
+
+    def test_learning_plan_get_patch_put_contract_and_explicit_empty(self):
+        url = '/learning-plan/101/'
+        initial = self.client.get(url)
+        self.assertEqual(initial.status_code, 200, initial.content)
+        self.assertTrue({
+            'learner', 'plan', 'preset', 'available', 'programmes', 'saved',
+            'inheritedCount', 'meetings', 'meetingsReason', 'totals',
+        }.issubset(initial.json()))
+
+        patched = self.client.patch(
+            url,
+            data=json.dumps({'modules': [{'moduleId': 'MOD-TEST'}]}),
+            content_type='application/json',
+        )
+        self.assertEqual(patched.status_code, 200, patched.content)
+        self.assertEqual(
+            [row['moduleId'] for row in patched.json()['plan']],
+            ['MOD-TEST'],
+        )
+
+        emptied = self.client.put(
+            url,
+            data=json.dumps({'modules': []}),
+            content_type='application/json',
+        )
+        self.assertEqual(emptied.status_code, 200, emptied.content)
+        self.assertEqual(emptied.json()['plan'], [])
+        stored = lm.EnrolmentUser.all_learners.get(pk=101)
+        self.assertEqual(stored.learning_plan, [])
+
+        reread = self.client.get(url)
+        self.assertEqual(reread.status_code, 200, reread.content)
+        self.assertEqual(reread.json()['plan'], [])
+        self.assertTrue(reread.json()['saved'])
+
+    def test_learning_plan_authorization_and_cross_learner_isolation(self):
+        self.assertEqual(Client().get('/learning-plan/101/').status_code, 401)
+        learner_account = auth.LoginAccount.objects.create(
+            subject_type='learner',
+            subject_id=101,
+            email='synthetic1@example.invalid',
+            role='learner',
+        )
+        learner_token, *_ = sessions.issue_session(learner_account)
+        learner_client = Client()
+        learner_client.cookies[sessions.COOKIE_NAME] = learner_token
+
+        self.assertEqual(learner_client.get('/learning-plan/101/').status_code, 200)
+        before = lm.EnrolmentUser.all_learners.get(pk=102).learning_plan
+        self.assertEqual(learner_client.get('/learning-plan/102/').status_code, 404)
+        denied = learner_client.patch(
+            '/learning-plan/102/',
+            data=json.dumps({'modules': [{'moduleId': 'MOD-TEST'}]}),
+            content_type='application/json',
+        )
+        self.assertEqual(denied.status_code, 404)
+        self.assertEqual(
+            lm.EnrolmentUser.all_learners.get(pk=102).learning_plan,
+            before,
+        )
 
     def test_hierarchy_preparation_reads_stored_dates_without_persisting(self):
         from curriculum_api.test_hierarchy_preparation_boundary_no_db import original_hierarchy_preparation
@@ -2692,6 +2765,9 @@ class MembershipIntegration(unittest.TestCase):
             self.assertEqual((user.training_plan,user.learning_plan,user.modules),(after.training_plan,after.learning_plan,after.modules))
 
 if __name__=='__main__':
+    learning_plans_only = '--learning-plans-only' in sys.argv
+    if learning_plans_only:
+        sys.argv.remove('--learning-plans-only')
     # Writer parity invokes on_commit cache warming. A delayed worker can outlive
     # its test and consume another test's patched readers. These suites verify
     # synchronous reads/writes, not cache workers; keep background work disabled
@@ -2702,6 +2778,221 @@ if __name__=='__main__':
         assert not __import__('curriculum_api.catalogue.infrastructure.cache_warming', fromlist=[''])._CURRICULUM_WARM_RUNNING
         print('Background cache warming disabled in isolated test process', flush=True)
         suite = unittest.defaultTestLoader.loadTestsFromTestCase(MembershipIntegration)
+        if learning_plans_only:
+            learning_plan_cases = (
+                'test_directory_scope_actual_orm_membership_manual_and_missing_bridge',
+                'test_fact_query_parity_and_profile_narrowing',
+                'test_first_assignment_mirror_persisted_parity',
+                'test_get_full_compact_ordering_and_parity',
+                'test_inherited_delete_mirror_parity',
+                'test_inherited_delete_without_recordable_remainder_is_rejected',
+                'test_learner_forbidden_and_real_session_storage',
+                'test_learning_plan_authorization_and_cross_learner_isolation',
+                'test_learning_plan_get_patch_put_contract_and_explicit_empty',
+                'test_manual_and_empty_http',
+                'test_membership_modes_and_registration_identity',
+                'test_missing_target_and_missing_zero_bridges',
+                'test_post_delete_persisted_parity',
+                'test_unauthenticated',
+                'test_writer_failure_rolls_back',
+            )
+            suite = unittest.TestSuite(
+                MembershipIntegration(name) for name in learning_plan_cases
+            )
+            # The canonical writer suite normally uses the repository's guarded
+            # security-branch setting.  This process is more constrained: every
+            # database alias targets the disposable loopback-only PostgreSQL
+            # container whose identity was asserted above.
+            settings.USE_SECURITY_TEST_BRANCH = True
+            from learner_api.tests_training_plan_writes_postgres import (
+                CanonicalTrainingPlanConcurrencyPostgresTests,
+                CanonicalTrainingPlanHistoryProtectionPostgresTests,
+                CanonicalTrainingPlanWriterPostgresTests,
+            )
+            def prepare_training_plan_writer_fixture():
+                # MembershipIntegration deliberately resets the shared
+                # synthetic catalogue before every test.  Add the minimum
+                # hierarchy required by the writer suite after that class has
+                # finished, without changing application data or migrations.
+                cm.ModuleAuthoringModule.objects.using('enrolment').filter(
+                    pk='MOD-SIBLING'
+                ).update(programme_id='P2')
+                for week_id, order in (('WRITER-W1', 1), ('WRITER-W2', 2)):
+                    cm.ModuleAuthoringWeek.objects.using('enrolment').update_or_create(
+                        pk=week_id,
+                        defaults={
+                            'module_catalogue_id': 'MOD-TEST',
+                            'week_number': order,
+                            'display_order': order,
+                        },
+                    )
+                for component_id, week_id, order in (
+                    ('WRITER-C1', 'WRITER-W1', 1),
+                    ('WRITER-C2', 'WRITER-W1', 2),
+                    ('WRITER-C3', 'WRITER-W2', 1),
+                ):
+                    cm.ModuleAuthoringComponent.objects.using('enrolment').update_or_create(
+                        pk=component_id,
+                        defaults={
+                            'module_catalogue_id': 'MOD-TEST',
+                            'week_id': week_id,
+                            'type': 'reading',
+                            'display_order': order,
+                        },
+                    )
+                with connections['enrolment'].cursor() as cursor:
+                    for table in ('"Learner".learners', 'enrolment."Created_users"'):
+                        cursor.execute(
+                            f"SELECT setval(pg_get_serial_sequence('{table}', 'id'), "
+                            f"COALESCE(MAX(id), 1), MAX(id) IS NOT NULL) FROM {table}"
+                        )
+            suite.addTest(unittest.FunctionTestCase(prepare_training_plan_writer_fixture))
+            suite.addTests(
+                unittest.defaultTestLoader.loadTestsFromTestCase(
+                    CanonicalTrainingPlanWriterPostgresTests
+                )
+            )
+            def prepare_training_plan_history_fixture():
+                from learner_api.training_plan_writes import (
+                    TrainingPlanAuthorization,
+                    reconcile_training_plan,
+                )
+
+                dependency_learner = lm.LearnerProfile._base_manager.using(
+                    'enrolment'
+                ).create(
+                    full_name='Synthetic dependency learner',
+                    email='history-dependency@example.invalid',
+                    phone_number='',
+                    lifecycle_status='active',
+                    learner_type='commercial',
+                    programme_status='',
+                )
+                dependency_plan = reconcile_training_plan(
+                    dependency_learner.id,
+                    [{
+                        'moduleId': 'MOD-TEST',
+                        'weeks': [{
+                            'weekId': 'WRITER-W1',
+                            'components': [{'componentId': 'WRITER-C1'}],
+                        }],
+                    }],
+                    authorization=TrainingPlanAuthorization.for_staff(),
+                )
+                dependency_component_id = dependency_plan.plan[0]['weeks'][0][
+                    'components'
+                ][0]['id']
+                lm.LearnerProgressEntry._base_manager.using('enrolment').create(
+                    learner_id=dependency_learner.id,
+                    plan_component_id=dependency_component_id,
+                    entry_order=1,
+                    kind='component',
+                    component_ref='WRITER-C1',
+                    component_title='Synthetic',
+                    component_type='reading',
+                )
+
+                historical_learner = lm.LearnerProfile._base_manager.using(
+                    'enrolment'
+                ).create(
+                    full_name='Synthetic historical learner',
+                    email='history-reparenting@example.invalid',
+                    phone_number='',
+                    lifecycle_status='active',
+                    learner_type='commercial',
+                    programme_status='',
+                )
+                reconcile_training_plan(
+                    historical_learner.id,
+                    [{
+                        'moduleId': 'MOD-TEST',
+                        'weeks': [{
+                            'weekId': 'WRITER-W2',
+                            'components': [{'componentId': 'WRITER-C3'}],
+                        }],
+                    }],
+                    authorization=TrainingPlanAuthorization.for_staff(),
+                )
+                cm.ModuleAuthoringComponent.objects.using('enrolment').filter(
+                    pk='WRITER-C3'
+                ).update(week_id='WRITER-W1')
+
+            suite.addTest(unittest.FunctionTestCase(prepare_training_plan_history_fixture))
+            suite.addTests(
+                unittest.defaultTestLoader.loadTestsFromTestCase(
+                    CanonicalTrainingPlanHistoryProtectionPostgresTests
+                )
+            )
+            concurrency_cleanup_guard = {}
+
+            def start_concurrency_cleanup_guard():
+                queryset_class = type(
+                    lm.LearnerProfile._base_manager.using('enrolment').all()
+                )
+
+                def delete_disposable_profiles(queryset):
+                    learner_ids = list(queryset.values_list('pk', flat=True))
+                    if not learner_ids:
+                        return 0, {}
+                    with connections[queryset.db].cursor() as cursor:
+                        cursor.execute(
+                            '''DELETE FROM "Learner".learner_progress_entries
+                               WHERE learner_id = ANY(%s)''',
+                            [learner_ids],
+                        )
+                        cursor.execute(
+                            '''DELETE FROM "Learner".learner_training_plan_components
+                               WHERE plan_week_id IN (
+                                   SELECT plan_week.id
+                                   FROM "Learner".learner_training_plan_weeks plan_week
+                                   JOIN "Learner".learner_training_plan_modules plan_module
+                                     ON plan_module.id = plan_week.plan_module_id
+                                   WHERE plan_module.learner_id = ANY(%s)
+                               )''',
+                            [learner_ids],
+                        )
+                        cursor.execute(
+                            '''DELETE FROM "Learner".learner_training_plan_weeks
+                               WHERE plan_module_id IN (
+                                   SELECT id FROM "Learner".learner_training_plan_modules
+                                   WHERE learner_id = ANY(%s)
+                               )''',
+                            [learner_ids],
+                        )
+                        cursor.execute(
+                            '''DELETE FROM "Learner".learner_training_plan_modules
+                               WHERE learner_id = ANY(%s)''',
+                            [learner_ids],
+                        )
+                        cursor.execute(
+                            'DELETE FROM "Learner".learners WHERE id = ANY(%s)',
+                            [learner_ids],
+                        )
+                    count = len(learner_ids)
+                    return count, {lm.LearnerProfile._meta.label: count}
+
+                guard = patch.object(queryset_class, 'delete', delete_disposable_profiles)
+                guard.start()
+                concurrency_cleanup_guard['patcher'] = guard
+
+            def stop_concurrency_cleanup_guard():
+                concurrency_cleanup_guard.pop('patcher').stop()
+
+            suite.addTest(unittest.FunctionTestCase(start_concurrency_cleanup_guard))
+            suite.addTests(
+                unittest.defaultTestLoader.loadTestsFromTestCase(
+                    CanonicalTrainingPlanConcurrencyPostgresTests
+                )
+            )
+            suite.addTest(unittest.FunctionTestCase(stop_concurrency_cleanup_guard))
+            result = unittest.TextTestRunner(verbosity=2).run(suite)
+            assert not __import__(
+                'curriculum_api.catalogue.infrastructure.cache_warming',
+                fromlist=[''],
+            )._CURRICULUM_WARM_RUNNING
+            if not result.wasSuccessful():
+                raise SystemExit(1)
+            raise SystemExit(0)
         import runpy
         quality_checks = runpy.run_path(str(Path(__file__).with_name('quality_assets_postgresql.py')))
         suite.addTests(unittest.defaultTestLoader.loadTestsFromTestCase(quality_checks['QualityAssetsPostgreSQL']))

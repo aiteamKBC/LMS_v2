@@ -31,7 +31,11 @@ from .constants import (
 )
 
 
-from .learning_plans.domain.stored_plan import _s, _maybe_json, stored_training_plan
+from .learning_plans.public import (
+    clean_text as _s,
+    maybe_json as _maybe_json,
+    stored_training_plan,
+)
 
 
 # --------------------------------------------------------------------------- #

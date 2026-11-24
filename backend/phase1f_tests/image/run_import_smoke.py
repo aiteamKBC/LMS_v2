@@ -362,6 +362,13 @@ TARGETS += ['curriculum_api.' + name for name in (
 
 TARGETS += ['curriculum_api.test_read_consumer_imports_no_db', 'learner_api.test_assignment_read_boundary_no_db', 'learner_api.test_group_preset_relations_no_db']
 TARGETS += ['learner_api.learning_plans.tests.integration.test_assignment_reads_import_isolated']
+TARGETS += ['learner_api.tests_training_plan_writes_postgres']
+TARGETS += [
+    'learner_api.subject_cache',
+    'learner_api.read_model_signals',
+    'config.cache_versions',
+    'coach_api.review_sources',
+]
 
 def bundle():
     readers = ['curriculum_api.' + name for name in (
