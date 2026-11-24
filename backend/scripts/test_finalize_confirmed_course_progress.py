@@ -125,13 +125,24 @@ class ConfirmedCourseProgressTests(unittest.TestCase):
     def test_saved_reporting_month_respects_london_without_inventing_a_course_date(self):
         plan = repair.make_plan(self.state, self.args)
         self.assertEqual(plan['dates'][0]['fields']['reporting_month'], '2026-04')
-        # My Learning now uses curriculum/original-upload dates, not the ledger
-        # month. This fixture deliberately has neither for material:3.
+        # An undated catalogue retains this learner's saved completion instant.
+        # London is already on BST; this is evidence for April, not a guessed
+        # catalogue/upload date or additional accepted time.
         self.assertEqual(repair.monthly(plan['after'][1]), {
-            '2026-03': {'completed': 2, 'total': 2}, 'undated': {'completed': 1, 'total': 1}})
+            '2026-03': {'completed': 2, 'total': 2}, '2026-04': {'completed': 1, 'total': 1}})
+        self.assertEqual(plan['after'][1]['accepted_hours'], plan['before'][1]['accepted_hours'])
         after, _ = stored_result(self.state, self.args, plan)
         again = repair.make_plan(after, self.args)
         self.assertEqual([again[k] for k in ('archive', 'dates', 'confirm')], [[], [], []])
+
+    def test_missing_execution_evidence_remains_undated(self):
+        self.args.date_material_ids = []
+        self.state['progress'][-1]['submitted_at'] = None
+        plan = repair.make_plan(self.state, self.args)
+        self.assertEqual(repair.monthly(plan['after'][1]), {
+            '2026-03': {'completed': 2, 'total': 2}, 'undated': {'completed': 1, 'total': 1}})
+        self.assertEqual(plan['dates'], [])
+        self.assertEqual(plan['after'][1]['accepted_hours'], plan['before'][1]['accepted_hours'])
 
     def test_rejects_month_repair_for_accepted_timed_or_conflicting_records(self):
         for changes in ({'accepted': True}, {'actual_seconds': 30}, {'reporting_month': '2026-02'},
