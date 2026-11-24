@@ -169,6 +169,9 @@ def entries_for(owner, *, overview_only=False, entry_ids=None, lineage_only=Fals
     It never restricts the learner-wide reconciliation population by month.
     """
     from learner_api.projection_performance import projection_stage
+    from learner_api.catalogue_fact_encoding import (
+        PROGRESS_FIELDS, SOURCE_FIELDS, JOURNAL_FIELDS, HISTORICAL_FIELDS, fact_sql, restore_fact,
+    )
 
     # My Learning needs lineage/completion and canonical seconds, never KSB
     # metrics or reporting-history bodies. Presence of segments still gates
@@ -218,7 +221,7 @@ def entries_for(owner, *, overview_only=False, entry_ids=None, lineage_only=Fals
                 THEN jsonb_build_object('retakeTimeChoice',progress.source_payload->'retakeTimeChoice','original_source_ref',progress.source_payload->'original_source_ref')
                 ELSE progress.source_payload END AS source_payload,
                 progress.feed_kind,to_jsonb(progress)->'actual_basis' AS actual_basis"""
-            payload = 'to_jsonb(p)'
+            payload = fact_sql([(field, f'p.{field}') for field in PROGRESS_FIELDS], compact=True)
         elif training_summary or monthly_summary:
             if monthly_log_summary:
                 columns += ''',CASE WHEN jsonb_typeof(progress.source_payload)='object'
@@ -248,18 +251,13 @@ def entries_for(owner, *, overview_only=False, entry_ids=None, lineage_only=Fals
     historical_payload = ("jsonb_build_object('source_system',h.source_system,"
         "'source_course_ref',h.source_course_ref,'source_activity_id',h.source_activity_id)"
         if training_summary or monthly_log_summary else 'to_jsonb(h)')
-    source_payload = ('''jsonb_build_object(
-                'source_system',s.source_system,'source_activity_id',s.source_activity_id,
-                'completed',s.completed,'source_course_ref',c.source_course_ref,
-                'activity_status',s.activity_status)''' if monthly_log_summary else '''jsonb_build_object(
-                'source_id',s.id,'source_system',s.source_system,'source_activity_id',s.source_activity_id,
-                'completed',s.completed,
-                'source_course_ref',c.source_course_ref,'source_course_id',c.id,
-                'course_title',c.source_course_title,'catalogue_id',a.id,
-                'component_ref',coalesce(nullif(s.curriculum_component_ref,''),a.curriculum_component_ref),
-                'module_ref',c.curriculum_module_ref,'group_ref',c.curriculum_group_ref,
-                'activity_status',s.activity_status,
-                'source_activity_kind',a.source_activity_kind)''')
+    if catalogue_summary:
+        historical_payload = fact_sql(HISTORICAL_FIELDS, compact=True)
+    source_payload = ('''jsonb_build_object('source_system',s.source_system,
+        'source_activity_id',s.source_activity_id,'completed',s.completed,
+        'source_course_ref',c.source_course_ref,'activity_status',s.activity_status)'''
+        if monthly_log_summary else fact_sql(SOURCE_FIELDS, compact=catalogue_summary))
+    journal_payload = fact_sql(JOURNAL_FIELDS, compact=catalogue_summary)
     document_cte = ''' , activity_documents AS (
             SELECT d.progress_id,jsonb_agg(jsonb_build_object(
                 'id',d.id,'display_name',d.display_name,'content_type',d.content_type) ORDER BY d.id) AS payload
@@ -296,9 +294,7 @@ def entries_for(owner, *, overview_only=False, entry_ids=None, lineage_only=Fals
               {"AND coalesce(s.source_system,'') IN ('','old_lms')" if monthly_log_summary else ''}
             GROUP BY s.canonical_progress_id
         ), journal_routes AS (
-            SELECT j.progress_id,jsonb_agg(jsonb_build_object(
-                'group_id',j.group_id,'activity_id',j.activity_id,'source_ref',j.source_ref,
-                'source_system',s.source_system,'month',j.month,'activity_date',j.activity_date) ORDER BY j.id) AS payload,
+            SELECT j.progress_id,jsonb_agg({journal_payload} ORDER BY j.id) AS payload,
                 sum(j.planned_hours) AS planned
             FROM "Learner".learner_journal_rows j
             JOIN canonical p ON j.progress_id=p.id AND j.learner_id=p.learner_id
@@ -335,12 +331,19 @@ def entries_for(owner, *, overview_only=False, entry_ids=None, lineage_only=Fals
     journal_enabled = journal_sources.enabled()
     loaded = []
     for record in records:
-        item = {**decoded(record['payload'], {}), **{
+        facts = decoded(record['payload'], {})
+        if catalogue_summary:
+            facts = restore_fact(facts, PROGRESS_FIELDS)
+        item = {**facts, **{
             field: decoded(record.get(field), [])
             for field in ('ksbs', 'segments', 'sources', 'journal_routes', 'historical_components')}}
         if monthly_log_summary:
             item['_monthly_documents'] = decoded(record.get('activity_documents'), [])
             item['_monthly_documents_loaded'] = True
+        if catalogue_summary:
+            for field, schema in (('sources', SOURCE_FIELDS), ('journal_routes', JOURNAL_FIELDS),
+                                  ('historical_components', HISTORICAL_FIELDS)):
+                item[field] = [restore_fact(value, [name for name, _ in schema]) for value in item[field]]
         if journal_enabled and record.get('journal_planned_hours') is not None:
             item['expected_otjh'] = float(record['journal_planned_hours'])
             item['journal_planned_hours'] = float(record['journal_planned_hours'])

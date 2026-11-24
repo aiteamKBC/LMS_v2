@@ -1,5 +1,6 @@
 import { LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
 import { useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { useToast } from "@/hooks/useToast";
 import { reviewHandoverMessage } from '@/api/reviewHandover';
 import { fetchProgrammeOptions, fetchCohortOptions, fetchGroupOptions, type CurriculumItem } from '@/api/curriculum';
@@ -7,6 +8,8 @@ import { fetchCaseOwners } from '@/api/staffUsers';
 import {
   ATTENDANCE_TYPE_OPTIONS,
   createEnrolmentUser,
+  EnrolmentUserApiError,
+  type ExistingLearnerConflict,
   fetchEnrolmentUserFields,
   updateEnrolmentUser,
   PROGRAMME_STATUS_OPTIONS,
@@ -237,6 +240,8 @@ export function CreateUserModal({ onClose, onCreated, editing, onSaved }: {
   const { success, error, warning } = useToast();
   const phase: 'create' | 'edit' = editing ? 'edit' : 'create';
   const [formData, setFormData] = useState<Record<string, string>>(INITIAL);
+  const [initialFormData, setInitialFormData] = useState<Record<string, string>>({});
+  const [emailConflict, setEmailConflict] = useState<ExistingLearnerConflict | null>(null);
   // Commercial is the default kind on create. When editing, the record's own
   // kind replaces it once the fields load.
   const [kind, setKind] = useState<LearnerKind>('commercial');
@@ -264,7 +269,8 @@ export function CreateUserModal({ onClose, onCreated, editing, onSaved }: {
   const programme = formData.programmeId ?? '';
   const cohort = formData.cohortId ?? '';
 
-  const setField = (name: string, value: string) =>
+  const setField = (name: string, value: string) => {
+    if (name === 'email') setEmailConflict(null);
     setFormData((prev) => {
       const next = { ...prev, [name]: value };
       // Picking a new programme/cohort invalidates the levels below it.
@@ -281,6 +287,7 @@ export function CreateUserModal({ onClose, onCreated, editing, onSaved }: {
       }
       return next;
     });
+  };
 
   // Prefill from the record. Written straight into formData rather than through
   // setField, because setField's job is to clear a cohort when its programme
@@ -301,6 +308,7 @@ export function CreateUserModal({ onClose, onCreated, editing, onSaved }: {
           next[key] = typeof value === 'boolean' ? String(value) : String(value);
         }
         setFormData(next);
+        setInitialFormData(next);
         setKind(fields.learnerType === 'apprenticeship' ? 'apprenticeship' : 'commercial');
       })
       .catch((e: Error) => { if (!cancelled) setHydrateError(e.message); })
@@ -372,7 +380,12 @@ export function CreateUserModal({ onClose, onCreated, editing, onSaved }: {
 
   const handleSubmit = async (e?: React.FormEvent) => {
     e?.preventDefault();
-    const missing = visibleFields(kind, phase).filter((f) => f.required && !formData[f.name]?.trim());
+    // A partial edit must not require repairing unrelated, previously blank
+    // fields. Explicitly clearing a required field still fails validation.
+    const fieldsToValidate = visibleFields(kind, phase).filter((field) =>
+      !editing || (formData[field.name] ?? '') !== (initialFormData[field.name] ?? ''),
+    );
+    const missing = fieldsToValidate.filter((f) => f.required && !formData[f.name]?.trim());
     if (missing.length > 0) {
       error('Missing details', `Please complete: ${missing.map((f) => f.label).join(', ')}`);
       return;
@@ -380,7 +393,7 @@ export function CreateUserModal({ onClose, onCreated, editing, onSaved }: {
     // Typed fields must also be well-formed — `type="email"`/`type="tel"` don't
     // enforce anything on their own, so a single letter would otherwise be saved
     // as someone's email address.
-    const malformed = visibleFields(kind, phase)
+    const malformed = fieldsToValidate
       .map((f) => {
         const msg = f.type === 'email' || f.type === 'tel'
           ? formatError(f.type, formData[f.name] ?? '')
@@ -402,14 +415,14 @@ export function CreateUserModal({ onClose, onCreated, editing, onSaved }: {
     // booleans; the backend coerces and stores them in boolean columns.
     const shared = {
       username: name,
-      email: formData.email ?? '',
+      email: (formData.email ?? '').trim(),
       phone: formData.phone,
       dob: formData.dob,
       // Type and Status are no longer asked for on this form, so both are
       // stamped rather than left null: the directory reads Type for its
       // learner-vs-admin styling and the Learning-plan link, and Status for its
       // Subscription-status column and status filter.
-      type: formData.type || 'User',
+      type: editing ? (formData.type ?? '') : 'User',
       // Stamped on create, where asking would offer a choice that isn't real.
       // On edit the form owns both, so the record's own values are sent back.
       status: editing ? (formData.status ?? '') : 'FullUser',
@@ -451,12 +464,16 @@ export function CreateUserModal({ onClose, onCreated, editing, onSaved }: {
     };
 
     setSubmitting(true);
+    setEmailConflict(null);
     if (editing) {
       try {
         // learnerType is deliberately not sent: switching an apprenticeship
         // learner to commercial would drop their funded-ILR compliance trail,
         // which is not an edit to make from a details form.
-        const updated = await updateEnrolmentUser(editing.id, shared);
+        const patch = Object.fromEntries(Object.entries(shared).filter(
+          ([key]) => (formData[key] ?? '') !== (initialFormData[key] ?? ''),
+        ));
+        const updated = await updateEnrolmentUser(editing.id, patch);
         // The row repaints from what was just saved rather than from the board
         // the PATCH returns, which describes the programme rather than this
         // table's columns. The directory reloads behind the toast for anything
@@ -482,6 +499,7 @@ export function CreateUserModal({ onClose, onCreated, editing, onSaved }: {
         else success('Learner updated', `${name}'s record was saved.`);
         onClose();
       } catch (err) {
+        if (err instanceof EnrolmentUserApiError && err.existingUser) setEmailConflict(err.existingUser);
         error('Could not save changes', err instanceof Error ? err.message : 'Unexpected error');
       } finally {
         setSubmitting(false);
@@ -541,6 +559,7 @@ export function CreateUserModal({ onClose, onCreated, editing, onSaved }: {
       onCreated(row);
       onClose();
     } catch (err) {
+      if (err instanceof EnrolmentUserApiError && err.existingUser) setEmailConflict(err.existingUser);
       error('Could not create user', err instanceof Error ? err.message : 'Unexpected error');
     } finally {
       setSubmitting(false);
@@ -704,6 +723,17 @@ export function CreateUserModal({ onClose, onCreated, editing, onSaved }: {
         </>
       }
     >
+      {emailConflict && (
+        <div role="alert" className="mb-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-[12px] text-amber-900">
+          <p>This email belongs to {emailConflict.name || 'an existing learner'}{emailConflict.archived ? ' in the archive' : ''}.
+            {' '}{emailConflict.programme ? `Programme: ${emailConflict.programme}.` : 'No programme is assigned.'}
+            {' '}The record may be outside your current filters.</p>
+          <Link className="mt-2 inline-block font-semibold underline" target="_blank" rel="noopener noreferrer"
+            to={`/users/${encodeURIComponent(emailConflict.id)}${emailConflict.learnerType === 'commercial' ? '?source=commercial' : ''}`}>
+            Open existing learner
+          </Link>
+        </div>
+      )}
       {hydrateError && (
         <div className="mb-4 rounded-xl border border-red-200/70 bg-red-50 px-4 py-3">
           <p className="text-[12px] text-red-700">

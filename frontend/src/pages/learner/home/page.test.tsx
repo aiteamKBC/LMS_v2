@@ -9,6 +9,7 @@ import { homeSummary, upcomingSchedule, currentLearningWeek, type OverviewWeek, 
 import { feedbackApi, type LearnerFeedbackListItem } from '@/api/feedback';
 import { useLiveLearnerRead } from '@/hooks/useLiveLearnerRead';
 import { rememberSignedInLearner } from '@/hooks/useMyLearner';
+import * as learnerIdentity from '@/hooks/useMyLearner';
 import { resetFirstLoginDetailsRedirect } from '@/hooks/useFirstLoginDetailsRedirect';
 
 const state = vi.hoisted(() => ({ profileError: '', name: 'Alex Morgan', role: 'learner', learnerType: 'apprenticeship', firstLoginRequired: false, programmeStatus: 'Active', events: [] as UpcomingEvent[], scheduleError: '', refresh: vi.fn(), modules: [] as OverviewWeek['modules'] }));
@@ -43,6 +44,23 @@ function workspace(path: string) { return render(<MemoryRouter initialEntries={[
 beforeEach(() => { resetFirstLoginDetailsRedirect(); state.learnerType = 'apprenticeship'; state.firstLoginRequired = false; state.profileError = ''; state.role = 'learner'; state.programmeStatus = 'Active'; state.events = []; state.scheduleError = ''; state.modules = []; vi.mocked(feedbackApi.myForms).mockResolvedValue({ forms: [] }); rememberSignedInLearner(undefined, undefined); localStorage.clear(); });
 afterEach(() => { cleanup(); vi.useRealTimers(); vi.clearAllMocks(); localStorage.clear(); });
 describe('connected student home', () => {
+  it.each(['staff', 'admin'])('offers a workspace return when %s opens Student Home without a learner', role => {
+    state.role = role;
+    // The production resolver has no demo fallback for an unselected staff
+    // account. Supply that real missing-identity state in this test mode.
+    const resolve = vi.spyOn(learnerIdentity, 'useResolvedLearner').mockReturnValue({ kind: undefined, id: undefined });
+    try {
+      render(<MemoryRouter initialEntries={['/workspace/learner']}><StudentHome/><Location/></MemoryRouter>);
+      expect(screen.getByRole('heading', { name: 'No learner selected' })).toBeVisible();
+      expect(screen.getByRole('link', { name: 'Return to your workspace' })).toHaveAttribute('href', '/');
+      expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: 'Try again' })).not.toBeInTheDocument();
+      expect(useLearnerSummaryParam).not.toHaveBeenCalled();
+      expect(useLiveLearnerRead).not.toHaveBeenCalled();
+      expect(feedbackApi.myForms).not.toHaveBeenCalled();
+    } finally { resolve.mockRestore(); }
+  });
+
   it('resumes saved learning when the independent progress card times out', () => {
     vi.useFakeTimers({ toFake: ['Date'] });
     vi.setSystemTime(new Date('2026-09-09T12:00:00Z'));

@@ -59,6 +59,38 @@ class RecordingWatchTests(SimpleTestCase):
 
 
 class FullyWatchedTests(SimpleTestCase):
+    def test_shared_narrow_reads_preserve_transcripts_and_isolate_learner_watch_evidence(self):
+        artifacts = [self.recording('R1'), {
+            'id': 'T1', 'occurrence_id': 'TRANSCRIPT', 'artifact_type': 'transcript',
+            'metadata': None, 'archive_status': 'ready',
+        }]
+        views = [{'artifact_id': 'R1', 'occurrence_id': 'OCC-1',
+                  'learner_kind': 'commercial', 'learner_id': 101,
+                  'watched_seconds': 600, 'duration_seconds': 600}]
+        with patch.object(recording_views, 'read', side_effect=[artifacts, views]) as read:
+            with recording_views.shared_recording_reads():
+                first = recording_views.recording_completion_evidence('commercial', 101, ['OCC-1', 'TRANSCRIPT'])
+                second = recording_views.recording_completion_evidence('commercial', 102, ['OCC-1', 'TRANSCRIPT'])
+                other_kind = recording_views.recording_completion_evidence('apprenticeship', 101, ['OCC-1'])
+            self.assertEqual(read.call_count, 2)
+            statement = read.call_args_list[0].args[0]
+            self.assertNotIn('a.*', statement)
+            self.assertIn("CASE WHEN a.artifact_type='recording' THEN a.metadata ELSE NULL", statement)
+        self.assertTrue(first['OCC-1']['completed'])
+        self.assertFalse(second['OCC-1']['completed'])
+        self.assertFalse(other_kind['OCC-1']['completed'])
+        self.assertEqual(first['TRANSCRIPT'], second['TRANSCRIPT'])
+        self.assertFalse(first['TRANSCRIPT']['ready'])
+
+    def test_transcript_only_occurrence_stays_unready_without_its_body_or_metadata(self):
+        transcript = {'id': 'T1', 'occurrence_id': 'OCC-1', 'artifact_type': 'transcript',
+                      'metadata': None, 'created_at': None, 'scheduled_start': None,
+                      'archive_status': 'ready', 'archive_updated_at': None}
+        with patch.object(recording_views, 'read', side_effect=[[transcript], []]):
+            evidence = recording_views.recording_completion_evidence('commercial', 101, ['OCC-1'])
+        self.assertEqual(evidence, {'OCC-1': {'ready': False, 'completed': False,
+                                            'availableAt': None, 'completedAt': None}})
+
     def test_completion_evidence_separates_ready_recordings_from_completed_watching(self):
         available = datetime(2026, 11, 9, 12, tzinfo=timezone.utc)
         watched_at = datetime(2026, 11, 10, 12, tzinfo=timezone.utc)

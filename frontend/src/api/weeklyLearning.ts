@@ -60,13 +60,17 @@ export function primeWeeklyLearningWeek(kind: LearnerKind, id: string, data: Wee
 }
 
 const initialKeys = new Set<string>();
-const initialKey = (kind: LearnerKind, id: string, moduleId?: string | null) => `${kind}:${id}${moduleId ? `|${encodeURIComponent(moduleId)}` : ''}`;
+const initialPending = new Map<string, number>();
+const initialKey = (kind: LearnerKind, id: string, moduleId?: string | null, moduleNavigation = false, preferCurrent = true) => moduleNavigation
+  ? `${kind}:${id}|${moduleId ? encodeURIComponent(moduleId) : ''}|module|${preferCurrent ? '1' : '0'}`
+  : `${kind}:${id}${moduleId ? `|${encodeURIComponent(moduleId)}` : ''}`;
 const weeklyResource = createCachedResource<WeeklyLearningDetail>('learner-dashboard-weekly', async key => {
-  const [learner, moduleId] = key.split('|');
+  const [learner, moduleId, navigation, preferCurrent] = key.split('|');
   traceWeeklyLearning('request-start', key);
   let raw: WeeklyLearningResponse;
   try {
-    raw = await readLearnerJson<WeeklyLearningResponse>(`/learner_api/dashboard/${learner.replace(':', '/')}/weekly/plan/${moduleId ? `?moduleId=${moduleId}` : ''}`);
+    const query = [moduleId ? `moduleId=${moduleId}` : '', navigation === 'module' ? `navigation=module&preferCurrent=${preferCurrent}` : ''].filter(Boolean).join('&');
+    raw = await readLearnerJson<WeeklyLearningResponse>(`/learner_api/dashboard/${learner.replace(':', '/')}/weekly/plan/${query ? `?${query}` : ''}`);
     traceWeeklyLearning('request-success', key);
   } catch (error) {
     traceWeeklyLearning('request-error', key);
@@ -77,31 +81,51 @@ const weeklyResource = createCachedResource<WeeklyLearningDetail>('learner-dashb
   return data;
 });
 
-export function fetchWeeklyLearning(kind: LearnerKind, id: string, options: { revalidate?: boolean; moduleId?: string | null } = {}): Promise<WeeklyLearningDetail> {
-  const key = initialKey(kind, id, options.moduleId);
+export function fetchWeeklyLearning(kind: LearnerKind, id: string, options: { revalidate?: boolean; moduleId?: string | null; moduleNavigation?: boolean; preferCurrent?: boolean } = {}): Promise<WeeklyLearningDetail> {
+  const key = initialKey(kind, id, options.moduleId, options.moduleNavigation, options.preferCurrent);
   traceWeeklyLearning('read', key, `revalidate=${!!options.revalidate}; fresh=${!!weeklyResource.peek(key)}`);
   initialKeys.add(key);
+  initialPending.set(key, (initialPending.get(key) || 0) + 1);
   const previous = weeklyResource.peek(key, 5 * 60_000);
   return weeklyResource.read(key, { revalidate: options.revalidate }).then(data => {
     // Side effects belong only to the accepted read, never an invalidated one.
     if (weeklyResource.peek(key) !== data || previous === data) return data;
+    if (options.moduleNavigation && options.preferCurrent !== false) {
+      const selectedModule = selectedNavigation(data)?.moduleId;
+      if (selectedModule) {
+        const manualKey = initialKey(kind, id, selectedModule, true, false);
+        // The automatic response is also this module's initial manual rail.
+        // Update our own previous snapshot, never a pending or independently
+        // refreshed manual read, or the requested hint's different module.
+        const manual = weeklyResource.peek(manualKey);
+        if (!initialPending.has(manualKey) && (!manual || manual === previous)) {
+          initialKeys.add(manualKey);
+          weeklyResource.prime(manualKey, data);
+        }
+      }
+    }
     const navigation = new Map(data.weeks.map(week => [studentWeekId(week), week]));
     const before = new Map(previous?.weeks.map(week => [studentWeekId(week), week]));
     for (const detail of weekKeys) {
-      const [detailKind, detailId, , weekId] = JSON.parse(detail) as string[];
+      const [detailKind, detailId, detailModule, weekId] = JSON.parse(detail) as string[];
       if (`${detailKind}:${detailId}` !== `${kind}:${id}`) continue;
+      if (options.moduleNavigation && detailModule !== selectedNavigation(data)?.moduleId) continue;
       if (!navigation.has(weekId) || (before.has(weekId) && JSON.stringify(before.get(weekId)) !== JSON.stringify(navigation.get(weekId)))) {
         weekResource.invalidate(detail);
         weekKeys.delete(detail);
       }
     }
     return data;
+  }).finally(() => {
+    const pending = (initialPending.get(key) || 1) - 1;
+    if (pending) initialPending.set(key, pending);
+    else initialPending.delete(key);
   });
 }
 
 /** A live entry, or with `staleForMs` a recent one to show while revalidating. */
-export function peekWeeklyLearning(kind: LearnerKind, id: string, staleForMs = 0, moduleId?: string | null): WeeklyLearningDetail | undefined {
-  return weeklyResource.peek(initialKey(kind, id, moduleId), staleForMs);
+export function peekWeeklyLearning(kind: LearnerKind, id: string, staleForMs = 0, moduleId?: string | null, moduleNavigation = false, preferCurrent = true): WeeklyLearningDetail | undefined {
+  return weeklyResource.peek(initialKey(kind, id, moduleId, moduleNavigation, preferCurrent), staleForMs);
 }
 
 /** Called by invalidateLearnerDetailCache: the same saves change this plan. */

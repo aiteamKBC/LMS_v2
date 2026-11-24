@@ -28,8 +28,12 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import Mock, patch
 
-import test_calendar_checks_no_db as checks_tests
-import test_schedule_email_no_db as email_tests
+if __package__:
+    from . import test_calendar_checks_no_db as checks_tests
+    from . import test_schedule_email_no_db as email_tests
+else:
+    import test_calendar_checks_no_db as checks_tests
+    import test_schedule_email_no_db as email_tests
 
 ROOT = Path(__file__).resolve().parent
 checks = checks_tests.checks
@@ -471,7 +475,7 @@ class WeekMeetingEditTests(unittest.TestCase):
             active_component_rows=lambda rows: rows, component_builder_settings=lambda item: item['settings'],
             teams_schedule_settings=lambda settings, *_a, **_k: settings, teams_event_payload=event_payload,
             calendar_targets=lambda *a, **k: [], graph_timezone_iana=lambda _settings: 'Europe/London',
-            teams_non_delivery_reason=lambda *a: '', as_json_value=lambda value, fallback: value or fallback,
+            teams_non_delivery_reason=lambda *a, **kw: '', as_json_value=lambda value, fallback: value or fallback,
             apply_teams_meeting_options=lambda *a, **k: (True, {}, []),
             forward_teams_invitation=lambda request, owner, ids, people, comment='': (
                 [request('POST', f'users/{owner}/events/{ids[0]}/forward',
@@ -674,7 +678,8 @@ class OneEmailPerPersonTests(unittest.TestCase):
                              ({'resendKey': 'round-one-key', 'addedKey': 'first-readd-key'}, 400)):
             view = types.SimpleNamespace(json_body=lambda _, body=body: body)
             with patch.dict(sys.modules, {'curriculum_api.views': view}):
-                request = types.SimpleNamespace(account=types.SimpleNamespace(role='staff'), method='POST')
+                request = types.SimpleNamespace(account=types.SimpleNamespace(role='staff'), method='POST',
+                                                body=json.dumps(body).encode('utf-8'))
                 self.assertEqual(self.service['schedule_email'](request, 'LIVE-ONE').status_code, status, body)
         source = (ROOT / 'teams_schedule_delivery.py').read_text(encoding='utf-8')
         self.assertIn("f'{live_session_id}+{added_key}' if added_key", source)

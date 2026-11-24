@@ -30,6 +30,7 @@ from .training_plan_dashboard import rows as dict_rows
 from .replaced_teams_attendance import REPLACED_ATTENDANCE_LATERAL_SQL
 from .module_placement_sql import module_tutor_name_sql
 from .attendance_assignments import assigned_module_ids as effective_assigned_module_ids
+from .weekly_read_cache import reuse_weekly_read
 
 log = logging.getLogger(__name__)
 ATTENDANCE_SOURCE_FIELDS = ('id', 'username', 'email', 'aptem_id', 'employer_id', 'learner_type',
@@ -217,6 +218,7 @@ def shared_teams_sources(module_ids, *, cursor=None):
     return result
 
 
+@reuse_weekly_read
 def read_native_occurrences(source, *, module_ids=None, occurrence_ids=None):
     """Current assigned-module occurrences expected for, or attended by, the learner.
 

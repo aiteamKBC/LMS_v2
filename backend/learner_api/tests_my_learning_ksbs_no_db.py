@@ -90,3 +90,30 @@ class MyLearningKsbTests(SimpleTestCase):
         with patch.object(ksbs.canonical, 'query') as query:
             self.assertEqual(ksbs.read_card_ksb_mappings({'id': 9}, native(), {}), {})
         query.assert_not_called()
+
+    def test_canonical_codes_preserve_decoder_shapes_without_legacy_mapping_fallback(self):
+        # The canonical SQL reader owns mapping precedence. Its response decoder
+        # still accepts the supported code aliases and encoded JSON shapes.
+        rows = [
+            dict(component_id='ALIASES', normalized_mappings=[
+                {'code': '', 'ksbCode': ' k1 ', 'ksb_code': 'stale'},
+                {'code': 0, 'ksbCode': False, 'ksb_code': 's1'},
+                {'code': 'K1'}],
+                 inline_mappings=[{'code': 'STALE'}]),
+            dict(component_id='INVALID', normalized_mappings=[{'code': {'legacy': 'value'}}],
+                 inline_mappings=[{'code': 'STALE'}]),
+            dict(component_id='EMPTY', normalized_mappings=[],
+                 inline_mappings=[{'code': 'STALE'}]),
+            dict(component_id='ENCODED', normalized_mappings='[{"ksb_code":"k2"}]',
+                 inline_mappings=[{'code': 'STALE'}]),
+        ]
+        with patch.object(ksbs.canonical, 'query', return_value=rows) as query:
+            result = ksbs.read_card_ksb_mappings({'id': 9},
+                native([component(row['component_id']) for row in rows]), {})
+        self.assertEqual(result['ALIASES'], {'K1', 'S1'})
+        self.assertIsNone(result['INVALID'])
+        self.assertEqual(result['EMPTY'], set())
+        self.assertEqual(result['ENCODED'], {'K2'})
+        sql = query.call_args.args[0]
+        self.assertIn(ksbs.component_ksb_codes_sql('c'), sql)
+        self.assertNotIn('c.ksb_mappings', sql)

@@ -46,7 +46,7 @@ class LearnerEditSyncsAccountTests(SimpleTestCase):
         # The console's own API is staff-gated; these assert what the view does
         # once past that gate, which the documented switch turns off.
         with patch.dict('os.environ', {'LEARNER_API_REQUIRE_AUTH': '0'}),                 patch('learner_api.views.EnrolmentUser') as model, \
-                patch('learner_api.views.sync_account') as sync, \
+                patch('learner_api.views.save_learner_identity') as sync, \
                 patch('learner_api.views.mirror_learner_placement'), \
                 patch('learner_api.views.stamp_cohort_window'), \
                 patch('learner_api.views.advance_learner'), \
@@ -60,13 +60,13 @@ class LearnerEditSyncsAccountTests(SimpleTestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(learner.email, 'new@example.com')
-        sync.assert_called_once_with('learner', 124, subject=learner)
+        sync.assert_called_once_with(learner, {'email': 'new@example.com'})
 
     def test_a_renamed_learner_is_pushed_too(self):
         # The account carries the display name the invitation is addressed to.
         _response, sync, learner = self._patch({'username': 'Khaled Fouda'})
 
-        sync.assert_called_once_with('learner', 124, subject=learner)
+        sync.assert_called_once_with(learner, {'username': 'Khaled Fouda'})
 
     def test_an_edit_that_touches_no_identity_field_does_not_sync(self):
         _response, sync, _learner_row = self._patch({'phone': '0700 000 000'})
