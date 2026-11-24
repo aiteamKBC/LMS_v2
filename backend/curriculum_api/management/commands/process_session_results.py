@@ -159,6 +159,10 @@ class Command(BaseCommand):
         except Exception as caption_failure:
             logging.getLogger(__name__).warning('Pending caption check is unavailable (%s); existing session jobs are unchanged.',
                                                 type(caption_failure).__name__)
+        # Saved transcripts/attendance only. Durable retries are separate from
+        # Graph/archive jobs; old snapshots are excluded before calculation.
+        from curriculum_api.session_speaking import run_speaking_phase
+        run_speaking_phase(limit=options['limit'], series_ids=requested_ids)
         self.stdout.write(f'Processed {processed} session jobs; {failed} need retry.')
         if options['scheduled']:
             # Same serving/scheduler worker, same service as the manual button.
