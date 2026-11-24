@@ -363,3 +363,25 @@ host. Protected play-data requests use the signed iframe as their referrer;
 disabled MP4 fallback is reported explicitly, while staff original-file downloads
 continue through the authenticated Microsoft transport. Library DRM and domain
 restrictions are retained.
+
+### Worker storage checks and transaction pooling
+
+The session-results command validates archive configuration and resolves its
+S3 role credentials before scheduling or claiming any shared jobs. A machine
+without those credentials leaves the queue untouched. This is a configuration
+preflight, not a claim that all object-storage permissions have been verified.
+Startup, claims and completions log a runtime fingerprint, run ID and lease ID;
+failures name their phase, exception class and safe HTTP status. Provider text,
+credentials and learner rows are excluded. Correlate the persisted lease with
+these logs before attributing a failed run to a particular machine.
+
+Neon `-pooler` database aliases disable server-side cursors. Caption processing
+also materializes bounded keyset pages before writing its receipt or calling
+Bunny, so it does not keep a named cursor across transaction changes.
+
+An existing attendance object proves that an earlier export was stored; it does
+not by itself prove the latest queued attempt succeeded or that its content is
+current. Preserve the original attendance rows and retry state until the
+configured worker verifies a successful pass. A people-sync `lock_busy` is a
+separate concurrency result and does not fail the attendance/archive job. Do not
+terminate database sessions or discard locks based on that warning alone.

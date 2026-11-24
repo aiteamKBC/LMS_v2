@@ -2117,6 +2117,7 @@ class ArchiveWorkerTests(unittest.TestCase):
         self.views.curriculum_teams_meeting_artifacts = Mock(return_value=Response(json.dumps({'errors': ['partial'] if partial else []}), 207 if partial else 200))
         ns = {'BaseCommand': object, 'CommandError': RuntimeError, 'json': json, 'uuid': uuid, 'logging': logging,
             're': re,
+            'archive_runtime_preflight': Mock(return_value='synthetic:instance:1:s3'),
             'connections': {'default': types.SimpleNamespace(cursor=lambda: cursor)},
             'transaction': types.SimpleNamespace(atomic=nullcontext), 'archive_series': Mock(return_value=[]),
             'reconcile_component_links': Mock(return_value=0),
@@ -2133,6 +2134,20 @@ class ArchiveWorkerTests(unittest.TestCase):
         command.handle(limit=2, scheduled=False, provision_container=False)
         self.views.curriculum_teams_meeting_artifacts.assert_not_called()
         ns['archive_series'].assert_not_called()
+
+    def test_worker_failure_logs_origin_and_lease_without_private_exception_text(self):
+        command, ns, cursor = self.worker()
+        self.views.curriculum_teams_meeting_artifacts.side_effect = RuntimeError('private-token@example.invalid')
+        with self.assertLogs(level='INFO')as logs, self.assertRaisesRegex(RuntimeError,'Some session jobs need retry'):
+            command.handle(limit=1,scheduled=False,provision_container=False)
+        output='\n'.join(logs.output)
+        self.assertIn('runtime=synthetic:instance:1:s3',output)
+        self.assertIn('phase=graph_sync error_type=RuntimeError',output)
+        self.assertIn('lease=',output)
+        self.assertNotIn('private-token',output)
+        finish=next(call for call in cursor.execute.call_args_list if 'finished_at=now()'in call.args[0])
+        self.assertEqual(finish.args[1][0],'failed')
+        self.assertNotIn('private-token',str(finish.args[1]))
 
     def test_worker_claims_with_lock_and_finishes_only_owned_lease(self):
         command, ns, cursor = self.worker()

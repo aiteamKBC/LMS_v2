@@ -40,6 +40,7 @@ def main():
             'curriculum_api.test_video_uploads',
             'curriculum_api.test_session_bunny',
             'curriculum_api.test_session_captions',
+            'curriculum_api.test_session_worker_preflight',
             'curriculum_api.test_youtube_download',
             'curriculum_api.test_video_changes',
             'curriculum_api.tests_upload_storage.LocalBackendTests',

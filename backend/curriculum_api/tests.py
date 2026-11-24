@@ -1036,7 +1036,8 @@ class CurriculumTeamsMeetingTests(CurriculumTeamsRequestTestCase):
             )
         self.assertEqual(queued.status_code, 202, queued.content)
         dispatch.assert_called_once_with(live_session_id)
-        with patch('curriculum_api.management.commands.process_session_results.archive_series', return_value=[]):
+        with patch('curriculum_api.management.commands.process_session_results.archive_series', return_value=[]), \
+                patch('curriculum_api.management.commands.process_session_results.archive_runtime_preflight', return_value='synthetic:instance:1:s3'):
             call_command('process_session_results', limit=1, live_session_ids=[live_session_id], stdout=StringIO())
         response = self.client.get(f'/curriculum_api/curriculum/teams-meetings/{live_session_id}/artifacts/')
         self.assertEqual(response.status_code, 200, response.content)
