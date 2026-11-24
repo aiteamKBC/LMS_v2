@@ -220,10 +220,8 @@ def transfer_recording(asset, *, lease_id=None):
     if source != asset.source_at_start or source != asset.source_url:
         raise VideoImportError('The Microsoft recording identity changed; refresh the session before retrying.')
     client = BunnyStream(asset.library_id)
-    if not asset.collection_id:
-        from .bunny_programme_collections import programme_collection
-        asset.collection_id = programme_collection(asset, client)
-        asset.save(update_fields=['collection_id', 'updated_at'])
+    from .bunny_module_collections import recording_collection
+    recording_collection(asset, client)
     if not asset.video_id:
         recovered = _find_import(asset, client)
         if recovered:

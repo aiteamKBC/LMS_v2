@@ -35,6 +35,7 @@ def main():
         suite = unittest.defaultTestLoader.loadTestsFromNames([
             'curriculum_api.test_bunny_stream', 'curriculum_api.test_video_imports',
             'curriculum_api.test_bunny_programme_collections',
+            'curriculum_api.test_bunny_module_collections',
             'curriculum_api.test_video_uploads',
             'curriculum_api.test_session_bunny',
             'curriculum_api.test_session_captions',

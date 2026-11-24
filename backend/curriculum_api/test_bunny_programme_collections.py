@@ -106,3 +106,14 @@ class ProgrammeCollectionTests(TestCase):
             programme_collection(self.asset(programme=''), self.client)
         self.client.collection.assert_not_called()
         self.client.create_programme_collection.assert_not_called()
+
+    def test_materials_never_reuse_a_module_live_only_collection(self):
+        live = self.asset()
+        live.collection_id = 'LIVE-ONLY'
+        live.scope['bunny_live_collection_module'] = 'MODULE'
+        live.save()
+        container = self.asset(kind='live_collection')
+        container.collection_id = 'CONTAINER-ONLY'
+        container.save()
+        self.assertEqual(programme_collection(self.asset(kind='module'), self.client), COLLECTION)
+        self.client.create_programme_collection.assert_called_once()

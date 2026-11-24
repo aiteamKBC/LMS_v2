@@ -201,6 +201,21 @@ class BunnyStream:
             'title': video_title(import_id, title, scope),
         })
 
+    def move_to_collection(self, video_id, collection_id):
+        """Change only the folder; retain the encoded media and playback identity."""
+        before = self.video(video_id)
+        if before.get('guid') != video_id:
+            raise VideoImportError('The Bunny recording identity could not be verified.')
+        if before.get('collectionId') != collection_id:
+            self.request('POST', f'/videos/{video_id}', json={'collectionId': collection_id})
+        after = self.video(video_id)
+        if after.get('guid') != video_id or after.get('collectionId') != collection_id:
+            raise VideoImportError('Bunny has not confirmed the recording collection change.')
+        if before.get('status') == 4 and any(before.get(key) != after.get(key)
+                                             for key in ('status', 'length', 'storageSize')):
+            raise VideoImportError('The recording media changed during collection verification. Review the saved identity.')
+        return after
+
     def metadata(self, video_id, scope, title):
         tags = [{'property': 'lms.' + key, 'value': str(value or '')}
                 for key, value in {**scope, 'title': title}.items()]
