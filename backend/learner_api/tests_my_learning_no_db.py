@@ -422,7 +422,7 @@ class MyLearningAggregateTests(SimpleTestCase):
         course = dict(id=3, source_course_ref='50', source_course_title='Old')
         cards, _ = self.cards(native(), [course], hours={'50': 2.25}, meta=meta, include_activity_items=True)
         old = next(card for card in cards if card['id'] == 'legacy:50')
-        self.assertEqual(old['actualHours'], 99)  # Existing pending-preview contract.
+        self.assertEqual(old['actualHours'], 2.25)  # Current canonical hours, not the historical preview.
         self.assertEqual(old['_actualLearningHours'], 2.25)
 
     def test_certificate_hours_retain_approved_transfer_and_only_new_native_hours(self):

@@ -229,19 +229,22 @@ def with_planned_hours(context, items):
 def approve_request(request_id, account, decisions=None):
     from .my_learning import load_context, native_done
     with connections['enrolment'].cursor() as cursor:
-        cursor.execute(f'SELECT enrolment_id,learner_kind FROM {store.REQUESTS} WHERE id=%s', [request_id])
+        cursor.execute(f'SELECT enrolment_id,learner_kind,learner_id FROM {store.REQUESTS} WHERE id=%s', [request_id])
         row = cursor.fetchone()
     if not row:
         raise ServiceError('Transfer request not found.', 'not_found', 404)
-    pk, kind = row
+    pk, kind, saved_learner_id = row
     with store.lock_learner(pk) as cursor:
         state = store.read_state(pk)
         items = [item for item in state['items'] if item['requestId'] == str(request_id)]
         if not items:
             raise ServiceError('Transfer request not found.', 'not_found', 404)
+        source, owner = source_owner(kind, pk)
+        if owner['id'] != saved_learner_id:
+            raise ServiceError('The learner identity changed. Review it before approving this request.',
+                               'transfer_identity_changed', 409)
         if all(item['status'] == 'approved' for item in items):
             return request_summary(items)[0]
-        source, owner = source_owner(kind, pk)
         context = load_context(source, owner, include_personal_replacements=True)
         _, assigned, _, native, courses, _, done, _, _, metadata, _ = context
         pairs = eligible_pairs(metadata['imported_courses'], metadata['replacement_courses'],

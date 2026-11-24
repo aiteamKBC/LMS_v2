@@ -6,10 +6,10 @@ from zoneinfo import ZoneInfo
 from django.db import connections
 from curriculum_api.week_visibility import visible_child_sql
 from learner_api import canonical_learning
+from learner_api.dashboard_monthly import read_monthly
 from learner_api.dashboard_metrics import point_codes
 from learner_api.subject_content import clean_text
 from learner_api.training_plan_dashboard import rows
-from old_otjh.repository import query
 
 BUSINESS_ZONE = ZoneInfo('Europe/London')
 
@@ -145,19 +145,15 @@ def read_monthly_focus(context, month):
         raise LookupError('Learner enrolment is unavailable.')
     owner = canonical_learning.require_profile(context.source.pk)
     activities, assigned = read_month_activities(context, month)
-    targets = canonical_learning.targets_for(owner, month=month)
-    required = targets.get(month)
-    if required is None:
-        # Same final fallback as monthMetrics when no Training Plan target exists.
-        values = [canonical_learning.number(row['expected_hours']) if row.get('expected_hours') is not None else None
-                  for row in activities]
-        required = round(sum(values), 4) if values and all(value is not None for value in values) else None
-    # Monthly Logs counts persisted accepted seconds only. No completion overlay,
-    # historical rewrite, submissions, signatures or full hours history needed.
-    records = query('''SELECT actual_seconds,accepted FROM "Learner".learner_progress_entries
-        WHERE learner_id=%s AND reporting_month=%s AND deleted_at IS NULL''', [owner['id'], month])
-    actual = sum(canonical_learning.number(row.get('actual_seconds')) / 3600
-                 for row in records if canonical_learning.counts_as_actual(row))
+    # Keep the coach view on the same canonical monthly source as the learner
+    # dashboard. The previous local calculation only read accepted progress
+    # rows and therefore missed the learner dashboard's attendance and fallback
+    # reconciliation, making Achieved hours (and consequently Difference) drift
+    # between the two perspectives.
+    monthly = read_monthly(context.source, context.kind, owner, context.profile, context.request)
+    summary = monthly['summary']
+    required = summary.get('requiredHours')
+    actual = summary.get('achievedHours')
     active_profile = context.profile if context.profile.lifecycle_status == 'active' else None
     reviews = coaching_events_for_learner(context.source, active_profile, month=month)
     lectures = read_month_lectures(context, owner, assigned, month)

@@ -63,14 +63,17 @@ def _completion_date(record):
     return timezone.localdate().isoformat()
 
 
-def valid_time_entries(monthly, hours, *, daily_limit=False):
+def valid_time_entries(monthly, hours, *, daily_limit=False, today=None):
     # Older submissions retain their original aggregate time.
     if "timeEntries" not in monthly:
         return True
     entries = monthly.get("timeEntries")
-    start, end = month_bounds(monthly.get("month"))
+    start, _ = month_bounds(monthly.get("month"))
     if not start or not isinstance(entries, list) or not entries:
         return False
+    if today is None:
+        from django.utils import timezone
+        today = timezone.localdate()
     if daily_limit:
         from .assignment_hours import daily_limit_error
         if daily_limit_error(entries):
@@ -84,7 +87,7 @@ def valid_time_entries(monthly, hours, *, daily_limit=False):
             day = date.fromisoformat(text(entry.get("date")))
         except (ValueError, TypeError):
             return False
-        if not math.isfinite(duration) or not 0 < duration <= 8 or not start <= day <= end or booking_date_restriction(day, today=day):
+        if not math.isfinite(duration) or not 0 < duration <= 8 or day > today or booking_date_restriction(day, today=day):
             return False
         total += duration
     return math.isfinite(total) and math.isclose(total, hours, rel_tol=0, abs_tol=1 / 3600)
@@ -273,7 +276,7 @@ def available_ksb_codes(payload):
     return set(component_ksb_codes(payload.get("activityId"))) | {k["code"] for k in (programme_items or (profile.ksbs if profile else []))}
 
 
-def assignment_checks(payload, *, evidence_ids=None, meeting_booked=None, allowed_ksbs=None, claimed_hours=None):
+def assignment_checks(payload, *, evidence_ids=None, meeting_booked=None, allowed_ksbs=None, claimed_hours=None, today=None):
     """Dependencies are injectable for schema-free tests; production verifies DB ownership."""
     monthly = mapping(payload.get("monthlyAssignment"))
     evidence = [mapping(e) for e in items(monthly.get("evidence"))]
@@ -316,7 +319,7 @@ def assignment_checks(payload, *, evidence_ids=None, meeting_booked=None, allowe
         hours_error = daily_limit_error(monthly["timeEntries"], claimed_hours)
     hours_label = ("Record positive hours with a maximum of 8 per day across all assignments, including saved drafts"
                    if daily_limit else "Record each topic with positive hours (maximum 8 per topic)")
-    hours_label += " and a working date in the assignment month (no weekends or bank holidays)"
+    hours_label += " and a working date on or before today (no weekends or bank holidays)"
     checks = [
         ("answer", "Assignment answer: at least 120 words", words(payload.get("assignmentAnswer")) >= 120),
         ("learning", "Learned, understood and gained skills: at least 20 words each", all(words(v) >= 20 for v in [payload.get("whatYouLearned"), monthly.get("understood"), monthly.get("gainedSkills")])),
@@ -324,7 +327,7 @@ def assignment_checks(payload, *, evidence_ids=None, meeting_booked=None, allowe
         ("ksbs", "Every claimed programme KSB has a 20-word explanation; evidence links are optional and must be valid if selected", bool(claims) and len(set(claimed_codes)) == len(claimed_codes) and set(claimed_codes) <= allowed and all(words(c.get("explanation")) >= 20 and set(str(e) for e in items(c.get("evidenceIds"))) <= linked_ids for c in claims)),
         ("planned", "Planned hours and KSBs reviewed", monthly.get("plannedReviewed") is True),
         ("declarations", "New learning, skills and employer evidence-sharing declarations confirmed", all(monthly.get(k) is True for k in ["newKnowledge", "newSkills", "sharingConsent"])),
-        ("hours", hours_error or hours_label, math.isfinite(hours) and hours > 0 and valid_time_entries(monthly, hours, daily_limit=daily_limit) and not hours_error),
+        ("hours", hours_error or hours_label, math.isfinite(hours) and hours > 0 and valid_time_entries(monthly, hours, daily_limit=daily_limit, today=today) and not hours_error),
         ("reflection", "Monthly LMS reflection and integrated understanding: at least 20 words each", all(words(monthly.get(k)) >= 20 for k in ["lmsReflection", "integratedReflection"])),
         ("benefit", "Employer benefit confirmed and measurable outcomes described (20 words)", monthly.get("employerBenefit") is True and words(payload.get("businessImpact")) >= 20),
         ("impact", "Career, job and employer impacts: at least 20 words each", all(words(monthly.get(k)) >= 20 for k in ["careerImpact", "jobImpact", "employerImpact"])),

@@ -14,11 +14,12 @@ from django.db.backends.base.base import BaseDatabaseWrapper
 
 assert all(db['ENGINE']=='django.db.backends.sqlite3' for db in settings.DATABASES.values())
 names=sys.argv[1:] or [
-    'learner_api.tests_progress_transfer_no_db', 'learner_api.tests_my_learning_no_db',
+    'learner_api.tests_progress_transfer_no_db', 'learner_api.tests_transfer_hours_no_db',
+    'learner_api.tests_my_learning_no_db',
     'learner_api.tests_my_learning_performance_no_db', 'learner_api.tests_replacement_learning',
     'learner_api.test_canonical_learning_no_db', 'learner_api.test_canonical_metrics_bulk_no_db',
     'learner_api.test_subject_origins_no_db', 'learner_api.test_previous_learning_groups_no_db',
-    'learner_api.tests_student_activity.SubjectBuilderCoverTests.test_current_builder_cover_does_not_override_historical_subject_image',
+    'learner_api.tests_student_activity.SubjectBuilderCoverTests.test_historical_subject_uses_only_its_authoritative_module_cover',
 ]
 with patch.object(BaseDatabaseWrapper,'ensure_connection',side_effect=AssertionError('Database forbidden')), \
      patch('psycopg.connect',side_effect=AssertionError('Direct database forbidden')), \

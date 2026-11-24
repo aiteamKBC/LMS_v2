@@ -25,6 +25,7 @@ from curriculum_api.week_visibility import visible_child_sql, visible_week_sql
 from curriculum_api.catalogue.infrastructure.course_storage_reads import read_sql
 
 from .retake_timing import attempt_order, selected_attempt
+from .ksb_definition_links import assigned_definition_ids, attach_definition_ids
 from .mappers import ValidationError, get_training_plan, training_plan_field
 from .models import (
     EnrolmentUser,
@@ -1339,12 +1340,16 @@ def save_progress_record(learner, record, activity=None, *, monthly_assignment=F
                         **({'retakeTimeReason': record['retakeTimeReason'].strip()} if record.get('retakeTimeReason') else {})}), progress.pk, learner.pk])
             from .progress_cache import bump_learners
             bump_learners([learner.pk])
+        with connections["enrolment"].cursor() as cursor:
+            definition_ids = assigned_definition_ids(cursor, [learner.pk], ksb_items)
+        ksb_items = attach_definition_ids(ksb_items, learner.pk, definition_ids)
         LearnerProgressKsb.objects.bulk_create(
             [
                 LearnerProgressKsb(
                     progress=progress,
                     position=position,
                     ksb_code=_s(item.get("code") or item.get("ksbCode")).upper(),
+                    ksb_definition_id=item["ksb_definition_id"],
                     ksb_description=_s(item.get("description") or item.get("ksbDescription")),
                     source_type=_s(item.get("sourceType") or item.get("source_type")),
                     source_id=_s(item.get("sourceId") or item.get("source_id")),

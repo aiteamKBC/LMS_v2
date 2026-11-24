@@ -45,10 +45,13 @@ def record_courses(record):
 
 
 def frozen_records(records, state, *, entry_ids=None):
-    """Keep the request's old facts even when a later import changes the source.
+    """Retain completion evidence after canonical hours have been reconciled.
 
-    Current-LMS rows and other courses are untouched. Snapshots retain their
-    original record identity, reporting dates and seconds; no credit row is added.
+    Snapshots are not a new approval/time source. Current rows (including
+    authoritative timers and attendance) retain every allocation field. Missing
+    history remains completion evidence; any eligible hours for that activity
+    must already have been supplied and deduplicated by the canonical reader.
+    The stored snapshots are never mutated.
     """
     courses = {item['courseRef'].removeprefix('legacy:') for item in state.get('items', [])}
     snapshots = {str(record['id']): record for record in state.get('records', [])}
@@ -57,15 +60,40 @@ def frozen_records(records, state, *, entry_ids=None):
     for record in records:
         key = str(record['id'])
         if key in snapshots:
-            result.append(deepcopy(snapshots[key]))
+            snapshot = snapshots[key]
+            # Keep the current record's timing, acceptance, allocation dates,
+            # source payload and evidence links. Only learning facts are frozen.
+            result.append({**record, **{field: deepcopy(snapshot[field])
+                for field in ('completed', 'achieved_score', 'total_score') if field in snapshot}})
             seen.add(key)
         elif is_old_record(record) and record_courses(record) & courses:
-            continue
+            # Later accepted allocations still count, without awarding new
+            # historical completion to a previously frozen transfer.
+            result.append({**record, 'hours_only': True})
         else:
             result.append(record)
-    result.extend(deepcopy(record) for key, record in snapshots.items()
-                  if key not in seen and (allowed is None or key in allowed))
+    for key, snapshot in snapshots.items():
+        if key in seen or (allowed is not None and key not in allowed):
+            continue
+        record = deepcopy(snapshot)
+        record.update(completed=snapshot.get('completed', snapshot.get('accepted')) is True,
+                      accepted=False, actual_seconds=None, actual_basis=None,
+                      segments=[], completion_only=True)
+        result.append(record)
     return result
+
+
+def transfer_hour_records(records, item):
+    """Attribute existing reconciled rows to the transfer's destination once.
+
+    This changes module attribution only; the shared canonical allocator still
+    owns acceptance, durations, attendance supplements and totals.
+    """
+    ids = set(map(str, item.get('recordIds', [])))
+    course = item['courseRef'].removeprefix('legacy:')
+    return [{**record, 'module_ref': item['moduleId']}
+            if str(record['id']) in ids or course in record_courses(record) else record
+            for record in records]
 
 
 def public_item(item):

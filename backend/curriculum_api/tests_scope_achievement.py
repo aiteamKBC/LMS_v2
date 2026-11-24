@@ -23,22 +23,27 @@ from . import views
 
 
 PROGRESS_COLUMNS = [
-    'learner_id', 'progress_id', 'kind', 'component_ref', 'component_title',
-    'component_type', 'quiz_ref', 'module_title', 'week_title', 'submitted_at',
-    'reported_time', 'feedback', 'passed', 'progress_expected_otjh',
-    'component_expected_otjh', 'resolved_component_title', 'ksb_codes', 'ksb_weights',
-    'ksb_classes',
+    'learner_id', 'progress_id', 'kind', 'component_ref', 'component_type',
+    'quiz_ref', 'submitted_at', 'reported_time', 'feedback', 'passed',
+    'programme_ref', 'cohort_ref', 'group_ref', 'module_ref', 'week_ref',
+    'progress_expected_otjh', 'component_expected_otjh',
+    'resolved_component_title', 'live_module_title', 'live_week_title',
+    'live_module_catalogue_id', 'module_found', 'module_deleted',
+    'ksb_codes', 'ksb_weights', 'ksb_classes',
 ]
 
 
 def progress_row(*, learner_id=19, progress_id=100, component_ref='COMP-IN',
                  code='K1', weight=50, passed=True, expected_otjh=2):
+    codes = [code] if code is not None else None
+    weights = [weight] if code is not None else None
+    classes = ['hard'] if code is not None else None
     return (
-        learner_id, progress_id, 'assignment', component_ref, 'Activity',
-        'assignment', None, 'Module One', 'Week 1', None,
-        '2 hours', 'Reflection text', passed, expected_otjh,
-        expected_otjh, 'Activity', [code] if code is not None else None,
-        [weight] if code is not None else None, ['hard'] if code is not None else None,
+        learner_id, progress_id, 'assignment', component_ref, 'assignment',
+        None, None, '2 hours', 'Reflection text', passed, '', '', '',
+        'MOD-1', 'WEEK-1', expected_otjh, expected_otjh, 'Activity',
+        'Module One', 'Week 1', 'MOD-1' if component_ref else None,
+        bool(component_ref), False, codes, weights, classes,
     )
 
 
@@ -635,6 +640,22 @@ class ScopedRosterTests(SimpleTestCase):
 
     def test_unrestricted_programme_keeps_all_members_in_original_order(self):
         self.assertEqual(self._run({'programmeId':'PROG-1'}), self.ROSTER)
+
+    def test_matching_labels_with_different_ids_cannot_match(self):
+        lineages = [
+            {
+                'programmeId': 'PROG-1', 'cohortId': 'COH-OTHER',
+                'cohortName': 'September 2025', 'groupId': '', 'groupName': '',
+            },
+            {
+                'programmeId': 'PROG-1', 'cohortId': 'COH-1',
+                'cohortName': 'September 2025', 'groupId': 'GRP-OTHER', 'groupName': 'A1',
+            },
+        ]
+        for lineage in lineages:
+            with self.subTest(lineage=lineage):
+                self.assertEqual(self._run(lineage), [])
+
 
     def test_a_scope_with_no_programme_returns_nothing_rather_than_everything(self):
         learners = self._run({'programmeId':'','programmeName':'','cohortName':'x'})

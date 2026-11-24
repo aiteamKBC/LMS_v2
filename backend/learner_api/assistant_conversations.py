@@ -82,6 +82,9 @@ def _ensure_portal_learner(cursor, account, ticket_id: str) -> int:
             'The learner email is required for the Ticketing system copy.'
         )
     display_name = str(getattr(account, 'display_name', '') or '').strip() or 'Learner'
+    # The external Ticketing system contract intentionally keeps the login
+    # account's legacy enrolment/subject identifier here. This is not the
+    # canonical Learner.learners.id used by Learner.support_tickets.learner_id.
     external_id = str(getattr(account, 'subject_id', '') or '').strip() or ticket_id
     cursor.execute(
         f'''INSERT INTO {PORTAL_LEARNERS}
