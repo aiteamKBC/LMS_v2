@@ -24,7 +24,8 @@ vi.mock('./FreeCourseMaterial', () => ({
 vi.mock('./FreeCourseQuiz', () => ({
   FreeCourseQuiz: ({ readOnly }: { readOnly?: boolean }) => <div>{readOnly ? 'Read-only quiz preview' : 'Interactive quiz'}</div>,
 }));
-vi.mock('./SubjectWorkspace', () => ({ Cover: ({ title }: { title: string }) => <div>Cover {title}</div> }));
+vi.mock('./SubjectWorkspace', async importOriginal => ({ ...await importOriginal<typeof import('./SubjectWorkspace')>(), Cover: ({ title }: { title: string }) => <div>Cover {title}</div> }));
+vi.mock('@/api/learnerCertificates', () => ({ fetchLearnerCertificateTemplate: vi.fn(async () => ({ template: null, csrfToken: '' })) }));
 
 const summary: FreeCourseSummary = {
   freeCourseId: 'FREE-1', courseName: 'Canonical course', description: 'Description', coverImageUrl: '',
@@ -55,6 +56,30 @@ beforeEach(() => {
 });
 
 describe('assigned Free Courses learner flow', () => {
+  it('shows previously accepted ledger time without awarding completion', async () => {
+    vi.mocked(fetchLearnerFreeCourse).mockResolvedValue({ ...detail, acceptedActualSeconds: 137310 });
+    mount();
+    fireEvent.click(await screen.findByRole('button', { name: /Canonical course/ }));
+    expect(await screen.findByText(/Previously accepted time: 137,310 seconds/)).toBeVisible();
+    expect(screen.getByText('0 of 2 completed')).toBeVisible();
+    expect(markFreeCourseActivityComplete).not.toHaveBeenCalled();
+  });
+  it('keeps existing completion separate from additional accepted time', async () => {
+    vi.mocked(fetchLearnerFreeCourses).mockResolvedValue([
+      { ...summary, completedActivities: 2, progressPercentage: 100, acceptedActualSeconds: 68427 },
+    ]);
+    vi.mocked(fetchLearnerFreeCourse).mockResolvedValue({
+      ...detail, acceptedActualSeconds: 68427,
+      weeks: detail.weeks.map(week => ({ ...week, activities: week.activities.map(activity => ({
+        ...activity, completed: true, is_completed: true,
+      })) })),
+    });
+    mount();
+    fireEvent.click(await screen.findByRole('button', { name: /Canonical course/ }));
+    expect(await screen.findByText(/Previously accepted time: 68,427 seconds/)).toBeVisible();
+    expect(screen.getByText('2 of 2 completed')).toBeVisible();
+    expect(markFreeCourseActivityComplete).not.toHaveBeenCalled();
+  });
   it.each(['commercial', 'apprenticeship'] as const)('loads cards first and %s details only after opening', async kind => {
     mount(kind);
     const card = await screen.findByRole('button', { name: /Canonical course/ });
@@ -92,3 +117,22 @@ describe('assigned Free Courses learner flow', () => {
   });
 });
 
+
+describe('migrated activity states', () => {
+  it('counts a completion without a date and resumes the viewed incomplete reading', async () => {
+    vi.mocked(fetchLearnerFreeCourse).mockResolvedValue({ ...detail, weeks: [
+      { ...detail.weeks[0], activities: [
+        { ...detail.weeks[0].activities[0], completed: false, is_completed: true,
+          activity_state: 'completed', completed_at: null },
+        { componentId: 'READ-2', title: 'Read next', type: 'reading', contentHtml: '<p>Next</p>',
+          is_completed: false, activity_state: 'reading_viewed' },
+      ] },
+    ] });
+    mount();
+    fireEvent.click(await screen.findByRole('button', { name: /Canonical course/ }));
+    expect(await screen.findByText('Material: Read next')).toBeVisible();
+    expect(screen.getByText('1 of 2 completed')).toBeVisible();
+    expect(screen.getByText(/Viewed/)).toBeVisible();
+    expect(markFreeCourseActivityComplete).not.toHaveBeenCalled();
+  });
+});

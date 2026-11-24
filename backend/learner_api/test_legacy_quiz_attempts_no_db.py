@@ -29,6 +29,7 @@ def definition():
 class StoredQuizAttemptTests(unittest.TestCase):
     def setUp(self):
         self.cursor = MagicMock()
+        self.cursor.fetchall.return_value = [(501, 901)]
         connection = MagicMock()
         connection.cursor.return_value = nullcontext(self.cursor)
         self.enterContext(patch.object(subject_store, 'connections', {'enrolment': connection}))

@@ -1,0 +1,527 @@
+{
+  "curriculum_build_lock": {
+    "source": "def curriculum_build_lock(key):\n    \"\"\"The lock that serialises rebuilds of one cache key.\n\n    Kept in its own map rather than reusing ``_CURRICULUM_CACHE_LOCK`` so a build\n    holds only its own key: reads of other keys, and cache hits on this one, stay\n    lock-free. The map is bounded by the number of payload keys (visibility x\n    compact), so nothing is ever evicted from it.\n    \"\"\"\n    with _CURRICULUM_CACHE_LOCK:\n        lock = _CURRICULUM_BUILD_LOCKS.get(key)\n        if lock is None:\n            lock = threading.Lock()\n            _CURRICULUM_BUILD_LOCKS[key] = lock\n        return lock\n",
+    "decorators": [],
+    "owner": "curriculum_api.catalogue.infrastructure.payload_cache",
+    "dependencies": [
+      "_CURRICULUM_BUILD_LOCKS",
+      "_CURRICULUM_CACHE_LOCK",
+      "threading"
+    ],
+    "transforms": {}
+  },
+  "cached_curriculum_value": {
+    "source": "def cached_curriculum_value(key, factory, force=False, ttl=None, shared=True, scope=None, fingerprint=None, compress=False):\n    \"\"\"The cached payload for ``key``, rebuilding it when it is not there.\n\n    ``force`` skips both cache layers and rebuilds from the database, then stores\n    the result the same way a normal miss does. It is for a caller that has just\n    written and is asking for the state it wrote: the invalidation on the write\n    path only reaches the process that handled it, and the shared epoch it bumps\n    lives in Django's cache -- which is per-process LocMemCache unless a Redis\n    ``CACHE_URL`` is configured. Under more than one worker that left every other\n    worker serving its own pre-write payload for the rest of the TTL, which is a\n    new group or programme that does not appear until the page is reloaded enough\n    times to land on the worker that took the write.\n\n    ``shared=False`` keeps a value in this process only. The shared epoch is\n    still honoured, so a write elsewhere still invalidates it.\n\n    ``compress`` stores the shared copy zlib-compressed (the process copy stays\n    as built), for a large value such as the raw curriculum rows.\n\n    ``scope`` is a programme id for a payload about that programme alone. Its\n    generation is then the programme's own counter plus the unscoped one (see\n    cache_scope), so a save to another programme leaves it cached. Without the\n    scope table, or for an identifier that is not exactly a programme id, the\n    global epoch applies as before.\n\n    ``fingerprint`` is for a payload whose short ``ttl`` stands in for data no\n    epoch covers (learner counts, say). It is a callable returning a value that\n    changes whenever that data does; it is called in the caller's read scope\n    just before the factory, so the stored entry is exactly the data its\n    fingerprint describes. An entry past its ``ttl`` whose generation still\n    matches is then checked rather than rebuilt: the fingerprint is taken again\n    and, if equal, the entry is served for another ``ttl``. A rebuild costs the\n    whole payload; the check costs only what the fingerprint reads. Entries\n    taken from the shared cache carry no fingerprint and expire as before.\n    \"\"\"\n    ttl = CURRICULUM_CACHE_TTL_SECONDS if ttl is None else ttl\n    # When this call began. A force caller may take a value whose build started\n    # later than this: every read that build made came after anything the\n    # caller had committed before asking (see the build-lock re-check below).\n    requested_at = time.monotonic()\n    # Not for a caller that has written in this request: its writes may still\n    # be uncommitted, invisible to a build on another thread.\n    shares_forced_builds = (\n        not getattr(_CURRICULUM_EPOCH_BUMP, 'pending', False)\n        and not connection.in_atomic_block\n    )\n    scoped = scope is not None and programme_cache_generation(scope) is not None\n    if scoped and getattr(_CURRICULUM_EPOCH_BUMP, 'pending', False):\n        # This request has written and its bump is still owed: read its own\n        # writes rather than a scoped entry that bump has yet to retire.\n        force = True\n\n    def generation():\n        if scoped:\n            value = programme_cache_generation(scope)\n            if value is not None:\n                return value\n        return shared_curriculum_epoch()\n\n    now = datetime.now().timestamp()\n    shared_epoch = generation()\n    with _CURRICULUM_CACHE_LOCK:\n        entry = _CURRICULUM_CACHE.get(key)\n        if not force and entry and entry['expires_at'] > now and entry.get('shared_epoch') == shared_epoch:\n            return entry['value']\n    if (\n        not force and fingerprint is not None and entry\n        and entry.get('shared_epoch') == shared_epoch and 'fingerprint' in entry\n    ):\n        # Past its ttl but of the current generation: ask whether the data the\n        # ttl stands in for has moved before paying for a rebuild.\n        current = fingerprint()\n        if current == entry['fingerprint']:\n            with _CURRICULUM_CACHE_LOCK:\n                if _CURRICULUM_CACHE.get(key) is entry:\n                    entry['expires_at'] = datetime.now().timestamp() + ttl\n            return entry['value']\n\n    shared_key = shared_curriculum_cache_key(key, shared_epoch)\n    try:\n        shared_value = None if (force or not shared) else cache.get(shared_key)\n        if shared_value is not None and compress:\n            shared_value = _unpack_shared(shared_value)\n    except Exception:\n        logger.warning('Unable to read shared curriculum payload cache.', exc_info=True)\n        shared_value = None\n    if shared_value is not None:\n        with _CURRICULUM_CACHE_LOCK:\n            _CURRICULUM_CACHE[key] = {\n                'expires_at': now + ttl,\n                'shared_epoch': shared_epoch,\n                'value': shared_value,\n                'scoped': scoped,\n            }\n        return shared_value\n\n    # One build per key at a time. Several endpoints read the same payload \u2014\n    # programmes/ and ksb-sets/ both key overview:<visibility>:compact \u2014 and a page\n    # that mounts them together used to hit a cold cache in parallel, so each\n    # request ran the whole multi-table rebuild while the others waited on the same\n    # Neon connections. The lock is per key, not the cache lock, so a build still\n    # never blocks a cached read or a different key.\n    with curriculum_build_lock(key):\n        now = datetime.now().timestamp()\n        shared_epoch = generation()\n        # Whoever held this lock has just published its result, so the requests\n        # queued behind it cost a cache read rather than another rebuild. A force\n        # caller has written and is asking for its own state back, so it skips the\n        # re-check: the value waiting here may predate that write.\n        with _CURRICULUM_CACHE_LOCK:\n            entry = _CURRICULUM_CACHE.get(key)\n            if entry and entry['expires_at'] > now and entry.get('shared_epoch') == shared_epoch and (\n                not force\n                # Several forced reads queued on one key -- a save's reload\n                # and a Refresh, two tabs -- take the first build that began\n                # after they asked instead of each paying for its own.\n                or (shares_forced_builds and entry.get('build_started', float('-inf')) >= requested_at)\n            ):\n                return entry['value']\n\n        # The lock above covers this process only. When the shared cache is\n        # really shared (Redis), another worker may already be running this\n        # exact build; wait for its result rather than run a second copy\n        # against the database. See shared_build for every way this falls back\n        # to building here. A force caller has just written and wants its own\n        # state back, so it never waits on a build that may predate the write.\n        shared_key = shared_curriculum_cache_key(key, shared_epoch)\n        build_token = None\n        if shared and not force:\n            for _attempt in range(2):\n                acquired, build_token = shared_build.try_acquire(cache, shared_key)\n                if acquired:\n                    break\n                waited, holder_gone = shared_build.wait_for_value(cache, shared_key)\n                if waited is not None and compress:\n                    try:\n                        waited = _unpack_shared(waited)\n                    except Exception:\n                        logger.warning('Discarding an unreadable shared curriculum payload.', exc_info=True)\n                        waited, holder_gone = None, True\n                if waited is not None:\n                    with _CURRICULUM_CACHE_LOCK:\n                        _CURRICULUM_CACHE[key] = {\n                            'expires_at': datetime.now().timestamp() + ttl,\n                            'shared_epoch': shared_epoch,\n                            'value': waited,\n                            'scoped': scoped,\n                        }\n                    return waited\n                if not holder_gone:\n                    # Waited the full window: build here, without the lock.\n                    break\n\n        try:\n            with _CURRICULUM_CACHE_LOCK:\n                epoch = _CURRICULUM_CACHE_EPOCH\n            build_started = time.monotonic()\n\n            # Taken before the factory and in the same read scope, so the\n            # factory's own reads of that data are the ones fingerprinted.\n            built_fingerprint = fingerprint() if fingerprint is not None else None\n            # An exception propagates without storing anything, so failures are never\n            # cached.\n            value = factory()\n\n            # Network I/O must not hold the global cache lock: a slow epoch\n            # read or shared-cache write would stall hits for unrelated keys.\n            current_shared_epoch = generation()\n            with _CURRICULUM_CACHE_LOCK:\n                # Only publish if no write invalidated the cache while we were building.\n                publish = epoch == _CURRICULUM_CACHE_EPOCH and shared_epoch == current_shared_epoch\n                if publish:\n                    _CURRICULUM_CACHE[key] = {\n                        'expires_at': datetime.now().timestamp() + ttl,\n                        'shared_epoch': shared_epoch,\n                        'value': value,\n                        'scoped': scoped,\n                        'build_started': build_started,\n                        **({'fingerprint': built_fingerprint} if fingerprint is not None else {}),\n                    }\n            if publish and shared:\n                # This key includes the generation: a concurrent invalidation\n                # retires it even if this network write finishes afterwards.\n                try:\n                    cache.set(shared_key, _pack_shared(value) if compress else value,\n                              timeout=min(ttl, CURRICULUM_SHARED_TTL_SECONDS))\n                except Exception:\n                    logger.warning('Unable to populate shared curriculum payload cache.', exc_info=True)\n        finally:\n            # After publishing, so a waiter that sees the lock gone finds the\n            # value already there.\n            shared_build.release(cache, shared_key, build_token)\n    return value\n",
+    "decorators": [],
+    "owner": "curriculum_api.catalogue.infrastructure.payload_cache",
+    "dependencies": [
+      "CURRICULUM_CACHE_TTL_SECONDS",
+      "CURRICULUM_SHARED_TTL_SECONDS",
+      "_CURRICULUM_CACHE",
+      "_CURRICULUM_CACHE_LOCK",
+      "_CURRICULUM_EPOCH_BUMP",
+      "_pack_shared",
+      "_unpack_shared",
+      "cache",
+      "connection",
+      "curriculum_build_lock",
+      "datetime",
+      "logger",
+      "programme_cache_generation",
+      "shared_build",
+      "shared_curriculum_cache_key",
+      "shared_curriculum_epoch",
+      "time",
+      "read_local_epoch"
+    ],
+    "transforms": {
+      "_CURRICULUM_CACHE_EPOCH": "read_local_epoch()"
+    }
+  },
+  "_pack_shared": {
+    "source": "def _pack_shared(value):\n    import pickle\n    import zlib\n    return zlib.compress(pickle.dumps(value, protocol=pickle.HIGHEST_PROTOCOL), 1)\n",
+    "decorators": [],
+    "owner": "curriculum_api.catalogue.infrastructure.payload_cache",
+    "dependencies": [],
+    "transforms": {}
+  },
+  "_unpack_shared": {
+    "source": "def _unpack_shared(blob):\n    import pickle\n    import zlib\n    return pickle.loads(zlib.decompress(blob))\n",
+    "decorators": [],
+    "owner": "curriculum_api.catalogue.infrastructure.payload_cache",
+    "dependencies": [],
+    "transforms": {}
+  },
+  "structure_payloads_cache_key": {
+    "source": "def structure_payloads_cache_key(module_catalogue_ids, **options):\n    \"\"\"Cache key covering every input that can change get_authoring_structure_payloads().\n\n    The identifier list is cleaned and sorted first, so two requests naming the same\n    modules in a different order (or with duplicates, or with surrounding whitespace)\n    share one entry \u2014 the function's own result is keyed by catalogue id, so order in\n    never affects the mapping out.\n\n    Every shaping option is rendered into the key from its actual value rather than\n    being summarised by a hand-written label. A caller that adds an option, or flips\n    one, gets a different key automatically; there is no constant left to forget to\n    update, which is what makes two semantically different requests unable to collide.\n    \"\"\"\n    catalogue_ids = sorted(unique([clean_str(value) for value in (module_catalogue_ids or []) if clean_str(value)]))\n    flags = ','.join(f'{name}={bool(value)}' for name, value in sorted(options.items()))\n    # Hash the identifier list: a resolve request can name hundreds of modules, and an\n    # unbounded key would sit in the process cache dict for the whole TTL. The joiner is\n    # a separator that cannot occur in a cleaned identifier, so [MOD-A, B] and [MOD-AB]\n    # cannot hash alike.\n    ids_digest = hashlib.sha256('\u001f'.join(catalogue_ids).encode()).hexdigest()[:32]\n    return f'module-structure-payloads:{flags}:{len(catalogue_ids)}:{ids_digest}'\n",
+    "decorators": [],
+    "owner": "curriculum_api.catalogue.infrastructure.payload_cache",
+    "dependencies": [
+      "clean_str",
+      "hashlib",
+      "unique"
+    ],
+    "transforms": {}
+  },
+  "curriculum_read_scope": {
+    "source": "def curriculum_read_scope(targeted_child_reads=False):\n    \"\"\"Deduplicate repeated whole-table curriculum reads inside one build.\n\n    Reentrant: a nested ``with`` reuses the outermost scope, which owns the\n    lifetime, so a payload build called from inside another one still sees a\n    single set of reads.\n\n    ``targeted_child_reads`` is for a build that answers about one scope rather\n    than looping over every programme. It keeps weeks/components/mappings on the\n    ``module_catalogue_id in (...)`` query instead of the shared full read that\n    only pays off across many programmes \u2014 see authoring_child_rows_for_modules.\n    Dedup of the parent tables (modules, programmes, cohorts, groups) is\n    unaffected, and both read paths are memoised, so nothing is read twice\n    either way. Set on the outermost scope; a nested one inherits it.\n    \"\"\"\n    if getattr(_CURRICULUM_READ_SCOPE, 'memo', None) is not None:\n        yield\n        return\n    _CURRICULUM_READ_SCOPE.memo = {}\n    _CURRICULUM_READ_SCOPE.targeted_child_reads = bool(targeted_child_reads)\n    try:\n        yield\n    finally:\n        _CURRICULUM_READ_SCOPE.memo = None\n        _CURRICULUM_READ_SCOPE.targeted_child_reads = False\n",
+    "decorators": [
+      "contextlib.contextmanager"
+    ],
+    "owner": "curriculum_api.catalogue.infrastructure.read_scope",
+    "dependencies": [
+      "read_scope_state"
+    ],
+    "transforms": {
+      "_CURRICULUM_READ_SCOPE": "read_scope_state()"
+    }
+  },
+  "_scope_memo_key": {
+    "source": "def _scope_memo_key(value):\n    \"\"\"Hashable stand-in for a call argument (query params arrive as lists).\"\"\"\n    if isinstance(value, (list, tuple)):\n        return tuple(_scope_memo_key(item) for item in value)\n    if isinstance(value, (set, frozenset)):\n        return frozenset(_scope_memo_key(item) for item in value)\n    if isinstance(value, dict):\n        return tuple(sorted((key, _scope_memo_key(item)) for key, item in value.items()))\n    return value\n",
+    "decorators": [],
+    "owner": "curriculum_api.catalogue.infrastructure.read_scope",
+    "dependencies": [],
+    "transforms": {}
+  },
+  "scoped_curriculum_read": {
+    "source": "def scoped_curriculum_read(fn):\n    \"\"\"Memoise a read-only helper for the current curriculum_read_scope().\n\n    Outside a scope the call passes straight through, so nothing changes for\n    write paths or for callers that have not opted in. An argument that cannot\n    be reduced to a hashable key also passes straight through rather than\n    failing the request.\n\n    Arguments are bound to the signature before keying, so a caller that spells\n    out a default (``ensure_tables=True``) shares the memo with one that leaves\n    it off. Without that, two reads of curriculum.modules that differ only in\n    how they were written cost two round trips.\n    \"\"\"\n    signature = inspect.signature(fn)\n\n    def memo_key(*args, **kwargs):\n        bound = signature.bind(*args, **kwargs)\n        bound.apply_defaults()\n        key = (\n            fn.__qualname__,\n            native_only(),\n            _scope_memo_key(tuple(bound.arguments.items())),\n        )\n        hash(key)\n        return key\n\n    @functools.wraps(fn)\n    def wrapped(*args, **kwargs):\n        memo = getattr(_CURRICULUM_READ_SCOPE, 'memo', None)\n        if memo is None:\n            return fn(*args, **kwargs)\n        try:\n            key = memo_key(*args, **kwargs)\n        except (TypeError, ValueError):\n            return fn(*args, **kwargs)\n        if key not in memo:\n            memo[key] = fn(*args, **kwargs)\n        return memo[key]\n    # The key a call would be memoised under, for prefetch_authoring_reads().\n    wrapped.memo_key = memo_key\n    return wrapped\n",
+    "decorators": [],
+    "owner": "curriculum_api.catalogue.infrastructure.read_scope",
+    "dependencies": [
+      "_scope_memo_key",
+      "functools",
+      "inspect",
+      "native_only",
+      "read_scope_state"
+    ],
+    "transforms": {
+      "_CURRICULUM_READ_SCOPE": "read_scope_state()"
+    }
+  },
+  "request_bypasses_curriculum_cache": {
+    "source": "def request_bypasses_curriculum_cache(request):\n    cache_control = clean_str(request.headers.get('Cache-Control')).lower()\n    pragma = clean_str(request.headers.get('Pragma')).lower()\n    return (\n        'no-cache' in cache_control\n        or 'no-store' in cache_control\n        or 'no-cache' in pragma\n        or truthy(request.GET.get('skipCache'))\n        or clean_str(request.GET.get('_ts'))\n    )\n",
+    "decorators": [],
+    "owner": "curriculum_api.catalogue.api.read_responses",
+    "dependencies": [
+      "clean_str",
+      "truthy"
+    ],
+    "transforms": {}
+  },
+  "reference_json_response": {
+    "source": "def reference_json_response(request, payload):\n    \"\"\"JSON response with a validating ETag, for reference data only.\n\n    Suitable for endpoints whose body depends on nothing but the reference tables:\n    no per-user, per-role or per-programme variation. The ETag is derived from the\n    serialised body, so it changes exactly when the content does \u2014 there is no TTL\n    to tune and no way to serve content that is newer than its validator.\n\n    ``Cache-Control: private, no-cache`` makes the browser revalidate every time\n    and keeps the payload out of shared caches; a match then costs a 304 with no\n    body instead of the full response. Deliberately not ``public``: these endpoints\n    sit behind authentication, so a shared cache must not retain them.\n    \"\"\"\n    body = json.dumps(payload, cls=DjangoJSONEncoder)\n    etag = f'\"{hashlib.sha256(body.encode()).hexdigest()[:32]}\"'\n    if_none_match = clean_str(request.headers.get('If-None-Match'))\n    if if_none_match and etag in [value.strip() for value in if_none_match.split(',')]:\n        response = HttpResponseNotModified()\n    else:\n        response = HttpResponse(body, content_type='application/json')\n    response['ETag'] = etag\n    response['Cache-Control'] = 'private, no-cache'\n    return response\n",
+    "decorators": [],
+    "owner": "curriculum_api.catalogue.api.read_responses",
+    "dependencies": [
+      "DjangoJSONEncoder",
+      "HttpResponse",
+      "HttpResponseNotModified",
+      "clean_str",
+      "hashlib",
+      "json"
+    ],
+    "transforms": {}
+  },
+  "paginate_curriculum_results": {
+    "source": "def paginate_curriculum_results(request, results, max_page_size=250):\n    \"\"\"Apply opt-in pagination while preserving legacy unpaginated clients.\"\"\"\n    raw_page = clean_str(request.GET.get('page'))\n    raw_page_size = clean_str(request.GET.get('page_size') or request.GET.get('pageSize'))\n    if not raw_page and not raw_page_size:\n        return results, None\n    page = max(1, parse_int(raw_page, 1))\n    page_size = min(max_page_size, max(1, parse_int(raw_page_size, 50)))\n    total = len(results)\n    start = (page - 1) * page_size\n    return results[start:start + page_size], {\n        'count': total,\n        'page': page,\n        'pageSize': page_size,\n        'pages': (total + page_size - 1) // page_size,\n        'hasNext': start + page_size < total,\n        'hasPrevious': page > 1,\n    }\n",
+    "decorators": [],
+    "owner": "curriculum_api.catalogue.api.read_responses",
+    "dependencies": [
+      "clean_str",
+      "parse_int"
+    ],
+    "transforms": {}
+  },
+  "curriculum_collection_response": {
+    "source": "def curriculum_collection_response(payload, key, results=None, request=None):\n    results = payload[key] if results is None else results\n    page_meta = None\n    if request is not None:\n        results, page_meta = paginate_curriculum_results(request, results)\n    response = {\n        'schema': payload['schema'],\n        'count': page_meta['count'] if page_meta else len(results),\n        'results': results,\n    }\n    if page_meta:\n        response.update({key: value for key, value in page_meta.items() if key != 'count'})\n    return JsonResponse(response)\n",
+    "decorators": [],
+    "owner": "curriculum_api.catalogue.api.read_responses",
+    "dependencies": [
+      "JsonResponse",
+      "paginate_curriculum_results"
+    ],
+    "transforms": {}
+  },
+  "curriculum_results_response": {
+    "source": "def curriculum_results_response(results, request=None):\n    page_meta = None\n    if request is not None:\n        results, page_meta = paginate_curriculum_results(request, results)\n    response = {\n        'schema': CURRICULUM_SCHEMA,\n        'count': page_meta['count'] if page_meta else len(results),\n        'results': results,\n    }\n    if page_meta:\n        response.update({key: value for key, value in page_meta.items() if key != 'count'})\n    return JsonResponse(response)\n",
+    "decorators": [],
+    "owner": "curriculum_api.catalogue.api.read_responses",
+    "dependencies": [
+      "CURRICULUM_SCHEMA",
+      "JsonResponse",
+      "paginate_curriculum_results"
+    ],
+    "transforms": {}
+  },
+  "learner_schema_table_exists": {
+    "source": "def learner_schema_table_exists(table):\n    if connection.vendor != 'postgresql':\n        return False\n    if table in _LEARNER_TABLES_PRESENT:\n        return True\n    try:\n        with connection.cursor() as cursor:\n            cursor.execute(\n                '''\n                select 1\n                from information_schema.tables\n                where table_schema = 'Learner' and table_name = %s\n                limit 1\n                ''',\n                [table],\n            )\n            exists = bool(cursor.fetchone())\n    except Exception:\n        return False\n    if exists:\n        with _LEARNER_SCHEMA_LOCK:\n            _LEARNER_TABLES_PRESENT.add(table)\n    return exists\n",
+    "decorators": [
+      "scoped_curriculum_read"
+    ],
+    "owner": "curriculum_api.catalogue.infrastructure.schema_reads",
+    "dependencies": [
+      "_LEARNER_SCHEMA_LOCK",
+      "_LEARNER_TABLES_PRESENT",
+      "connection"
+    ],
+    "transforms": {}
+  },
+  "learner_relation_exists": {
+    "source": "def learner_relation_exists(table):\n    \"\"\"``to_regclass('\"Learner\".\"<table>\"') is not null``, remembered once true.\n\n    The same question the learner counts used to ask inline on every call; a\n    failed probe raises to the caller exactly as the inline one did.\n    \"\"\"\n    if table in _LEARNER_RELATIONS_PRESENT:\n        return True\n    with connection.cursor() as cursor:\n        cursor.execute('select to_regclass(%s)', [f'\"Learner\".\"{table}\"'])\n        exists = bool(cursor.fetchone()[0])\n    if exists:\n        with _LEARNER_SCHEMA_LOCK:\n            _LEARNER_RELATIONS_PRESENT.add(table)\n    return exists\n",
+    "decorators": [],
+    "owner": "curriculum_api.catalogue.infrastructure.schema_reads",
+    "dependencies": [
+      "_LEARNER_RELATIONS_PRESENT",
+      "_LEARNER_SCHEMA_LOCK",
+      "connection"
+    ],
+    "transforms": {}
+  },
+  "learner_schema_columns": {
+    "source": "def learner_schema_columns(table):\n    if connection.vendor != 'postgresql':\n        return set()\n    cached = _LEARNER_SCHEMA_COLUMNS.get(table)\n    if cached and time.monotonic() - cached[0] < LEARNER_SCHEMA_COLUMNS_TTL_SECONDS:\n        return set(cached[1])\n    try:\n        with connection.cursor() as cursor:\n            cursor.execute(\n                '''\n                select column_name\n                from information_schema.columns\n                where table_schema = 'Learner' and table_name = %s\n                ''',\n                [table],\n            )\n            columns = {row[0] for row in cursor.fetchall()}\n    except Exception:\n        return set()\n    # An empty answer is a missing table (or no privilege); ask again next time.\n    if columns:\n        with _LEARNER_SCHEMA_LOCK:\n            _LEARNER_SCHEMA_COLUMNS[table] = (time.monotonic(), frozenset(columns))\n    return columns\n",
+    "decorators": [
+      "scoped_curriculum_read"
+    ],
+    "owner": "curriculum_api.catalogue.infrastructure.schema_reads",
+    "dependencies": [
+      "LEARNER_SCHEMA_COLUMNS_TTL_SECONDS",
+      "_LEARNER_SCHEMA_COLUMNS",
+      "_LEARNER_SCHEMA_LOCK",
+      "connection",
+      "time"
+    ],
+    "transforms": {}
+  },
+  "table_exists": {
+    "source": "def table_exists(table):\n    # Cached because this runs on hot read paths and the schema does not change\n    # under us; invalidate_curriculum_cache() clears it, as does a process restart.\n    # A failed probe is deliberately not cached, so a transient error does not\n    # pin a table to \"missing\" for the life of the process.\n    cache_key = f'{CURRICULUM_SCHEMA}.{table}'\n    if cache_key in _TABLE_EXISTS_CACHE:\n        return _TABLE_EXISTS_CACHE[cache_key]\n    try:\n        # schema_gate owns the probe, so the gate and these read paths share one\n        # answer instead of each asking information_schema the same question.\n        # The first call there lists the schema once; after it, a table that\n        # exists is answered without touching the database at all.\n        exists = schema_gate.table_exists(table)\n        _TABLE_EXISTS_CACHE[cache_key] = exists\n        return exists\n    except (Exception, AssertionError):\n        logger.debug('Could not check whether table %s exists.', table, exc_info=True)\n        return False\n",
+    "decorators": [],
+    "owner": "curriculum_api.catalogue.infrastructure.schema_reads",
+    "dependencies": [
+      "CURRICULUM_SCHEMA",
+      "_TABLE_EXISTS_CACHE",
+      "logger",
+      "schema_gate"
+    ],
+    "transforms": {}
+  },
+  "archived_authoring_rows": {
+    "source": "def archived_authoring_rows(table):\n    \"\"\"Every archived row in one authoring table, most recent archive first.\n\n    Sorted on the *formatted* stamp rather than the column itself: ``deleted_at``\n    comes back tz-aware from Postgres and naive from sqlite, and comparing the\n    two kinds raises. ISO text orders identically either way.\n    \"\"\"\n    rows = [dict(row) for row in authoring_fetch_all(table) if curriculum_row_is_archived(row)]\n    if archive_state.uses_status(table):\n        # When, why and with which parent: history's record of the archive.\n        archive_state.annotate(table, rows, key_column=LIFECYCLE_KEY_COLUMNS[table])\n    rows.sort(key=lambda row: format_created_at(row.get('deleted_at')), reverse=True)\n    return rows\n",
+    "decorators": [],
+    "owner": "curriculum_api.catalogue.infrastructure.archive_reads",
+    "dependencies": [
+      "LIFECYCLE_KEY_COLUMNS",
+      "archive_state",
+      "authoring_fetch_all",
+      "curriculum_row_is_archived",
+      "format_created_at"
+    ],
+    "transforms": {}
+  },
+  "archived_module_rows": {
+    "source": "def archived_module_rows():\n    \"\"\"Every archived module row, most recent archive first.\n\n    ``curriculum_row_effectively_deleted`` rather than the cohort/group\n    ``curriculum_row_is_archived``: a module's ``status`` is authoring state\n    ('draft', 'published'), and a legacy row carrying status 'archived' is still\n    listed by the catalogue. Reading that as archived here would put one module\n    in both lists at once.\n    \"\"\"\n    rows = [dict(row) for row in safe_authoring_module_rows() if curriculum_row_effectively_deleted(row)]\n    archive_state.annotate(AUTHORING_MODULES_TABLE, rows, key_column='module_catalogue_id')\n    rows.sort(key=lambda row: format_created_at(row.get('deleted_at')), reverse=True)\n    return rows\n",
+    "decorators": [],
+    "owner": "curriculum_api.catalogue.infrastructure.archive_reads",
+    "dependencies": [
+      "AUTHORING_MODULES_TABLE",
+      "archive_state",
+      "curriculum_row_effectively_deleted",
+      "format_created_at",
+      "safe_authoring_module_rows"
+    ],
+    "transforms": {}
+  },
+  "archived_module_component_counts": {
+    "source": "def archived_module_component_counts(module_catalogue_ids=None):\n    \"\"\"Component rows per module, counted by the database.\n\n    ``module_catalogue_ids`` limits the count to those modules -- the archived\n    ones are all the archive asks about -- and on Postgres the counting is a\n    ``group by`` rather than shipping one row per component (~18k) to be\n    counted here. A module absent from the result has no component rows.\n\n    ``columns`` is not an optimisation here so much as the difference between an\n    answer and a timeout: curriculum.components is the largest table in the\n    schema and most of its bytes are ``settings_json``, which a count never looks\n    at. Every row is counted, deleted or not -- an archived module's components\n    are all soft-deleted with it, and the question this answers is how much\n    authoring is sitting inside.\n    \"\"\"\n    counts = defaultdict(int)\n    ids = None if module_catalogue_ids is None else sorted({\n        clean_str(value) for value in module_catalogue_ids if clean_str(value)\n    })\n    if ids is not None and not ids:\n        return counts\n    try:\n        if connection.vendor == 'postgresql':\n            ensure_module_authoring_tables()\n            where = f' where module_catalogue_id in ({\", \".join([\"%s\"] * len(ids))})' if ids else ''\n            with connection.cursor() as cursor:\n                cursor.execute(\n                    f'select module_catalogue_id, count(*)'\n                    f' from {authoring_table_name(AUTHORING_COMPONENTS_TABLE)}{where}'\n                    ' group by module_catalogue_id',\n                    ids or [],\n                )\n                for module_id, total in cursor.fetchall():\n                    key = clean_str(module_id)\n                    if key:\n                        counts[key] += int(total)\n            return counts\n        rows = authoring_fetch_all(AUTHORING_COMPONENTS_TABLE, columns=['module_catalogue_id'])\n    except (Exception, AssertionError):\n        logger.debug('Unable to count components for the module archive.', exc_info=True)\n        return counts\n    for row in rows:\n        key = clean_str(row.get('module_catalogue_id'))\n        if key:\n            counts[key] += 1\n    return counts\n",
+    "decorators": [],
+    "owner": "curriculum_api.catalogue.infrastructure.archive_reads",
+    "dependencies": [
+      "AUTHORING_COMPONENTS_TABLE",
+      "authoring_fetch_all",
+      "authoring_table_name",
+      "clean_str",
+      "connection",
+      "defaultdict",
+      "ensure_module_authoring_tables",
+      "logger"
+    ],
+    "transforms": {}
+  },
+  "archived_cohort_learners": {
+    "source": "def archived_cohort_learners(cohort_row, counts=None):\n    \"\"\"Live learners still placed in an archived cohort, by id or by name.\"\"\"\n    if counts is None:\n        counts, _group_counts = active_learner_delivery_counts()\n    return delivery_learner_count(counts, clean_str(cohort_row.get('cohort_id')), (\n        normalise(cohort_row.get('programme_name')),\n        normalise(cohort_row.get('cohort_name')),\n    ))\n",
+    "decorators": [],
+    "owner": "curriculum_api.catalogue.application.archive_queries",
+    "dependencies": [
+      "active_learner_delivery_counts",
+      "clean_str",
+      "delivery_learner_count",
+      "normalise"
+    ],
+    "transforms": {}
+  },
+  "archived_group_learners": {
+    "source": "def archived_group_learners(group_row, counts=None):\n    \"\"\"Live learners still placed in an archived group, by id or by name.\"\"\"\n    if counts is None:\n        _cohort_counts, counts = active_learner_delivery_counts()\n    return delivery_learner_count(counts, clean_str(group_row.get('group_id')), (\n        normalise(group_row.get('programme_name')),\n        normalise(group_row.get('cohort_name')),\n        normalise(group_row.get('group_name')),\n    ))\n",
+    "decorators": [],
+    "owner": "curriculum_api.catalogue.application.archive_queries",
+    "dependencies": [
+      "active_learner_delivery_counts",
+      "clean_str",
+      "delivery_learner_count",
+      "normalise"
+    ],
+    "transforms": {}
+  },
+  "archived_cohort_payload": {
+    "source": "def archived_cohort_payload(row, archived_group_rows, cohort_learner_counts, holiday_rows=None):\n    # ``holiday_rows`` is the calendar read once for the whole list. Left out,\n    # each cohort reads both holiday tables again -- two round trips per row,\n    # ~33 s of a 40 s archive read with 47 archived cohorts.\n    detail = serialize_cohort_authoring_detail(row, holiday_rows)\n    cohort_id = clean_str(row.get('cohort_id'))\n    return {\n        'id': cohort_id,\n        'name': clean_str(row.get('cohort_name')),\n        'programme': clean_str(row.get('programme_name')),\n        'programmeId': clean_str(row.get('programme_id')),\n        'startDate': detail['startDate'],\n        'endDate': detail['endDate'],\n        'practicalEndDate': detail['practicalEndDate'],\n        'apprenticeshipEndDate': detail['apprenticeshipEndDate'],\n        'epaMonths': detail['epaMonths'],\n        'durationMonths': detail['durationMonths'],\n        'color': detail['color'],\n        'status': 'archived',\n        # Archived groups only. These are the rows a restore would bring back\n        # and a permanent delete would remove, so they are the ones worth\n        # counting in front of either button.\n        'groups': len([\n            group for group in archived_group_rows\n            if clean_str(group.get('cohort_id')) == cohort_id\n        ]),\n        'learners': archived_cohort_learners(row, cohort_learner_counts),\n        **archive_stamp_fields(row),\n    }\n",
+    "decorators": [],
+    "owner": "curriculum_api.catalogue.application.archive_queries",
+    "dependencies": [
+      "archive_stamp_fields",
+      "archived_cohort_learners",
+      "clean_str",
+      "serialize_cohort_authoring_detail"
+    ],
+    "transforms": {}
+  },
+  "archived_group_payload": {
+    "source": "def archived_group_payload(row, cohort_rows_by_id, group_learner_counts):\n    detail = serialize_group_authoring_detail(row)\n    group_id = clean_str(row.get('group_id'))\n    cohort_id = clean_str(row.get('cohort_id'))\n    parent = cohort_rows_by_id.get(cohort_id)\n    return {\n        'id': group_id,\n        'name': clean_str(row.get('group_name')),\n        'cohortId': cohort_id,\n        'cohort': clean_str(row.get('cohort_name')),\n        'programmeId': clean_str(row.get('programme_id')),\n        'programme': clean_str(row.get('programme_name')),\n        'coach': detail['coach'],\n        'weekDays': detail['weekDays'],\n        'startTime': detail['startTime'],\n        'endTime': detail['endTime'],\n        'schedule': detail['schedule'],\n        'color': detail['color'],\n        'status': 'archived',\n        'learners': archived_group_learners(row, group_learner_counts),\n        # Whether the parent cohort is itself archived decides what a restore\n        # can do here: a group cannot come back into a cohort that is not in the\n        # list. A group with no cohort at all has nothing to wait for.\n        'cohortArchived': bool(cohort_id) and (\n            parent is None or curriculum_row_is_archived(parent)\n        ),\n        **archive_stamp_fields(row),\n    }\n",
+    "decorators": [],
+    "owner": "curriculum_api.catalogue.application.archive_queries",
+    "dependencies": [
+      "archive_stamp_fields",
+      "archived_group_learners",
+      "clean_str",
+      "curriculum_row_is_archived",
+      "serialize_group_authoring_detail"
+    ],
+    "transforms": {}
+  },
+  "archived_module_payload": {
+    "source": "def archived_module_payload(row, component_counts):\n    \"\"\"One archived module, with what a restore or a delete would move.\"\"\"\n    catalogue_id = clean_str(row.get('module_catalogue_id'))\n    programme_id = clean_str(row.get('programme_id'))\n    return {\n        'id': catalogue_id,\n        'catalogueId': catalogue_id,\n        'title': clean_str(row.get('title')),\n        'programmeId': programme_id,\n        'programme': clean_str(row.get('programme_name')),\n        'cohortId': clean_str(row.get('cohort_id')),\n        'cohort': clean_str(row.get('cohort_name')),\n        'groupId': clean_str(row.get('group_id')),\n        'group': clean_str(row.get('group_name')),\n        'tutor': clean_str(row.get('tutor_name')),\n        'weeks': module_stored_week_count(row),\n        'sessions': parse_int(row.get('sessions_number'), 0),\n        'components': component_counts.get(catalogue_id, 0),\n        'status': 'archived',\n        # The catalogue is scoped by programme, so a module restored under an\n        # archived programme comes back invisible. The view disables its Restore\n        # on this rather than letting the endpoint refuse after the click.\n        'programmeArchived': bool(archived_parent_programme(programme_id)),\n        **archive_stamp_fields(row),\n    }\n",
+    "decorators": [],
+    "owner": "curriculum_api.catalogue.application.archive_queries",
+    "dependencies": [
+      "archive_stamp_fields",
+      "archived_parent_programme",
+      "clean_str",
+      "module_stored_week_count",
+      "parse_int"
+    ],
+    "transforms": {}
+  },
+  "archive_stamp_fields": {
+    "source": "def archive_stamp_fields(row):\n    \"\"\"How a row came to be archived, in the shape the archive view reads.\"\"\"\n    return {\n        'archivedAt': format_created_at(row.get('deleted_at')),\n        # 'cohort-delete' / 'group-delete' / 'programme-delete' -- the write\n        # handler that archived it, never a person: no authoring table records\n        # who made the request.\n        'archivedBy': clean_str(row.get('deleted_by')),\n        # Set only where a parent's archive took this row down with it, and then\n        # it holds that parent's id -- which is the record that has to be\n        # restored to bring this one back.\n        'archivedViaParent': clean_str(row.get('deleted_via_parent')),\n    }\n",
+    "decorators": [],
+    "owner": "curriculum_api.catalogue.application.archive_queries",
+    "dependencies": [
+      "clean_str",
+      "format_created_at"
+    ],
+    "transforms": {}
+  },
+  "curriculum_archived_cohorts": {
+    "source": "def curriculum_archived_cohorts(request):\n    \"\"\"Archived cohorts, each with what a restore or a delete would move.\"\"\"\n    archived_groups = archived_authoring_rows(GROUPS_TABLE)\n    cohort_learner_counts, _group_learner_counts = active_learner_delivery_counts()\n    # What serialize_cohort_authoring_detail() reads per row when given none.\n    holiday_rows = get_holiday_rows_safe()\n    results = [\n        archived_cohort_payload(row, archived_groups, cohort_learner_counts, holiday_rows)\n        for row in archived_authoring_rows(COHORT_AUTHORING_DETAILS_TABLE)\n        if clean_str(row.get('cohort_id'))\n    ]\n    return JsonResponse({'schema': CURRICULUM_SCHEMA, 'count': len(results), 'results': results})\n",
+    "decorators": [
+      "require_GET"
+    ],
+    "owner": "curriculum_api.catalogue.api.archive_reads",
+    "dependencies": [
+      "COHORT_AUTHORING_DETAILS_TABLE",
+      "CURRICULUM_SCHEMA",
+      "GROUPS_TABLE",
+      "JsonResponse",
+      "active_learner_delivery_counts",
+      "archived_authoring_rows",
+      "archived_cohort_payload",
+      "clean_str",
+      "get_holiday_rows_safe"
+    ],
+    "transforms": {}
+  },
+  "curriculum_archived_groups": {
+    "source": "def curriculum_archived_groups(request):\n    \"\"\"Archived groups, each with what a restore or a delete would move.\"\"\"\n    cohort_rows_by_id = {\n        clean_str(row.get('cohort_id')): row\n        for row in authoring_fetch_all(COHORT_AUTHORING_DETAILS_TABLE)\n        if clean_str(row.get('cohort_id'))\n    }\n    _cohort_learner_counts, group_learner_counts = active_learner_delivery_counts()\n    results = [\n        archived_group_payload(row, cohort_rows_by_id, group_learner_counts)\n        for row in archived_authoring_rows(GROUPS_TABLE)\n        if clean_str(row.get('group_id'))\n    ]\n    return JsonResponse({'schema': CURRICULUM_SCHEMA, 'count': len(results), 'results': results})\n",
+    "decorators": [
+      "require_GET"
+    ],
+    "owner": "curriculum_api.catalogue.api.archive_reads",
+    "dependencies": [
+      "COHORT_AUTHORING_DETAILS_TABLE",
+      "CURRICULUM_SCHEMA",
+      "GROUPS_TABLE",
+      "JsonResponse",
+      "active_learner_delivery_counts",
+      "archived_authoring_rows",
+      "archived_group_payload",
+      "authoring_fetch_all",
+      "clean_str"
+    ],
+    "transforms": {}
+  },
+  "curriculum_archived_modules": {
+    "source": "def curriculum_archived_modules(request):\n    \"\"\"Archived modules, each with what a restore or a delete would move.\"\"\"\n    with curriculum_read_scope():\n        rows = [row for row in archived_module_rows() if clean_str(row.get('module_catalogue_id'))]\n        component_counts = archived_module_component_counts(\n            [row.get('module_catalogue_id') for row in rows],\n        )\n        results = [archived_module_payload(row, component_counts) for row in rows]\n    return JsonResponse({'schema': CURRICULUM_SCHEMA, 'count': len(results), 'results': results})\n",
+    "decorators": [
+      "require_GET"
+    ],
+    "owner": "curriculum_api.catalogue.api.archive_reads",
+    "dependencies": [
+      "CURRICULUM_SCHEMA",
+      "JsonResponse",
+      "archived_module_component_counts",
+      "archived_module_payload",
+      "archived_module_rows",
+      "clean_str",
+      "curriculum_read_scope"
+    ],
+    "transforms": {}
+  },
+  "curriculum_archived_module_structure": {
+    "source": "def curriculum_archived_module_structure(request, module_catalogue_id):\n    \"\"\"One archived module's weeks and the components inside them.\n\n    The archive is the only place an archived module can be looked at. Every\n    workspace in the app reads the curriculum overview payload, which excludes\n    archived rows, and the live structure endpoint next to this one filters its\n    children through ``active_*`` -- correct for a live read, and the reason an\n    archived module read through it comes back with an empty week list.\n\n    Read-only by design: an archived module is restored or removed, never edited,\n    so there is no PATCH here. Uncached for the same reason the archive lists are\n    revalidated -- this is opened in order to act on it, and the very next thing\n    the reader does is restore or delete the module it belongs to.\n    \"\"\"\n    identifier = clean_str(module_catalogue_id)\n    catalogue_id = resolve_stored_module_catalogue_id(identifier)\n    module_row = authoring_module_exists(catalogue_id) if catalogue_id else None\n    if not module_row:\n        return json_error('Module not found.', status=404)\n    if not curriculum_row_effectively_deleted(module_row):\n        # The live endpoint is this module's door, and it is the one that can\n        # serve an editable structure. Saying so is better than quietly serving a\n        # second, read-only copy of a module that is not in the archive at all.\n        return json_error(\n            'Module is not archived.', status=409,\n            reason='module-not-archived', id=catalogue_id,\n        )\n    try:\n        with curriculum_read_scope(targeted_child_reads=True):\n            payload = get_authoring_structure_payload(catalogue_id, include_archived=True)\n    except Exception:\n        logger.exception('Unable to load archived module structure for %s.', identifier)\n        return json_error('Unable to load archived module structure.', status=500)\n    if not payload:\n        return json_error('Module authoring structure not found.', status=404)\n    return JsonResponse({**payload, **archive_stamp_fields(module_row), 'status': 'archived'})\n",
+    "decorators": [
+      "require_GET"
+    ],
+    "owner": "curriculum_api.catalogue.api.archive_reads",
+    "dependencies": [
+      "JsonResponse",
+      "archive_stamp_fields",
+      "authoring_module_exists",
+      "clean_str",
+      "curriculum_read_scope",
+      "curriculum_row_effectively_deleted",
+      "get_authoring_structure_payload",
+      "json_error",
+      "logger",
+      "resolve_stored_module_catalogue_id"
+    ],
+    "transforms": {}
+  },
+  "scope_placement_lineage": {
+    "source": "def scope_placement_lineage(scope, identifier):\n    \"\"\"Resolve any curriculum scope to its Programme -> Component lineage.\n\n    Returns the ids *and* the names, because both are still needed to narrow a\n    roster: ``\"Learner\".\"learners\"`` now carries ``cohort_id``/``group_id``\n    beside the cohort/group text, but only where the name resolved to exactly one\n    record, so ``assigned_learners_for_scope`` matches on the id where there is\n    one and falls back to the label where there is not. ``found`` says whether\n    the scope record itself exists \u2014 an empty scope (a cohort with no modules\n    yet) is not a missing one, and the callers need to tell them apart.\n\n    A module/week/component has no roster of its own: the learners who meet it\n    are the learners enrolment placed in the group that delivers it. That is what\n    ``placementBasis`` names, so no consumer has to infer it.\n    \"\"\"\n    scope = clean_str(scope) or 'programme'\n    ident = clean_str(identifier)\n    lineage = {\n        'scope': scope,\n        'identifier': ident,\n        'found': False,\n        'programmeId': '',\n        'programmeName': '',\n        'cohortId': '',\n        'cohortName': '',\n        'groupId': '',\n        'groupName': '',\n        'learnerRosterMode': 'inherited',\n        'moduleCatalogueId': '',\n        'moduleTitle': '',\n        'weekId': '',\n        'weekTitle': '',\n        'componentId': '',\n        'componentTitle': '',\n        'programmeConfigId': '',\n        'placementBasis': 'programme',\n    }\n    if not ident:\n        return lineage\n\n    def apply_module_row(row):\n        lineage['moduleCatalogueId'] = clean_str(row.get('module_catalogue_id'))\n        lineage['moduleTitle'] = clean_str(row.get('title'))\n        lineage['programmeId'] = lineage['programmeId'] or clean_str(row.get('programme_id'))\n        lineage['programmeName'] = lineage['programmeName'] or clean_str(row.get('programme_name'))\n        lineage['cohortId'] = lineage['cohortId'] or clean_str(row.get('cohort_id'))\n        lineage['cohortName'] = lineage['cohortName'] or clean_str(row.get('cohort_name'))\n        lineage['groupId'] = lineage['groupId'] or clean_str(row.get('group_id'))\n        lineage['groupName'] = lineage['groupName'] or clean_str(row.get('group_name'))\n        lineage['learnerRosterMode'] = clean_str(row.get('learner_roster_mode') or 'inherited').lower() or 'inherited'\n\n    if scope == 'programme':\n        config = programme_config_by_identifier(ident)\n        lineage['found'] = bool(config)\n        # The identifier as given, deliberately: `assigned_learners_for_programme`\n        # compares it against `Learner.learners.programme_id`, and swapping in the\n        # canonical config id would change which learners a programme claims.\n        lineage['programmeId'] = ident\n        lineage['programmeConfigId'] = clean_str(programme_config_identity(config)) if config else ''\n        lineage['programmeName'] = clean_str(config.get('name')) if config else ''\n        lineage['placementBasis'] = 'programme'\n        return lineage\n\n    if scope == 'cohort':\n        row = resolve_cohort_row(ident)\n        if row:\n            lineage['found'] = True\n            lineage['cohortId'] = clean_str(row.get('cohort_id'))\n            lineage['cohortName'] = clean_str(row.get('cohort_name'))\n            lineage['programmeId'] = clean_str(row.get('programme_id'))\n            lineage['programmeName'] = clean_str(row.get('programme_name'))\n        lineage['placementBasis'] = 'cohort'\n        return lineage\n\n    if scope == 'group':\n        row = resolve_group_row(ident)\n        if row:\n            lineage['found'] = True\n            lineage['groupId'] = clean_str(row.get('group_id'))\n            lineage['groupName'] = clean_str(row.get('group_name'))\n            lineage['cohortId'] = clean_str(row.get('cohort_id'))\n            lineage['cohortName'] = clean_str(row.get('cohort_name'))\n            lineage['programmeId'] = clean_str(row.get('programme_id'))\n            lineage['programmeName'] = clean_str(row.get('programme_name'))\n        lineage['placementBasis'] = 'group'\n        return lineage\n\n    if scope in {'module', 'week', 'component'}:\n        module_id = ''\n        if scope == 'component':\n            rows = authoring_fetch_all(\n                AUTHORING_COMPONENTS_TABLE, 'id = %s', [ident],\n                exclude_columns=COMPONENT_HEAVY_COLUMNS,\n            )\n            if rows:\n                lineage['componentId'] = clean_str(rows[0].get('id'))\n                lineage['componentTitle'] = clean_str(rows[0].get('title'))\n                lineage['weekId'] = clean_str(rows[0].get('week_id'))\n                module_id = clean_str(rows[0].get('module_catalogue_id'))\n        if scope == 'week' or (scope == 'component' and lineage['weekId']):\n            week_ident = ident if scope == 'week' else lineage['weekId']\n            rows = authoring_fetch_all(AUTHORING_WEEKS_TABLE, 'id = %s', [week_ident])\n            if rows:\n                lineage['weekId'] = clean_str(rows[0].get('id'))\n                lineage['weekTitle'] = clean_str(rows[0].get('title'))\n                module_id = module_id or clean_str(rows[0].get('module_catalogue_id'))\n        if scope == 'module':\n            module_id = resolve_authoring_catalogue_id(ident) or ident\n        if module_id:\n            rows = authoring_fetch_all(AUTHORING_MODULES_TABLE, 'module_catalogue_id = %s', [module_id])\n            if rows:\n                lineage['found'] = True\n                apply_module_row(rows[0])\n        # A group is the level enrolment places learners into, so that is the\n        # roster a module/week/component inherits. Without one, the cohort \u2014 and\n        # failing that the programme \u2014 is the widest honest answer.\n        lineage['placementBasis'] = (\n            'group' if lineage['groupName'] else ('cohort' if lineage['cohortName'] else 'programme')\n        )\n        return lineage\n\n    return lineage\n",
+    "decorators": [],
+    "owner": "curriculum_api.catalogue.application.placement_lineage",
+    "dependencies": [
+      "AUTHORING_COMPONENTS_TABLE",
+      "AUTHORING_MODULES_TABLE",
+      "AUTHORING_WEEKS_TABLE",
+      "COMPONENT_HEAVY_COLUMNS",
+      "authoring_fetch_all",
+      "clean_str",
+      "programme_config_by_identifier",
+      "programme_config_identity",
+      "resolve_authoring_catalogue_id",
+      "resolve_cohort_row",
+      "resolve_group_row"
+    ],
+    "transforms": {}
+  },
+  "programme_identity_candidates": {
+    "source": "def programme_identity_candidates(programme_id):\n    candidates = unique([programme_id])\n    configs = get_program_config_rows()\n    config = next(\n        (row for row in configs if programme_config_identity(row) == clean_str(programme_id)),\n        None,\n    )\n    if config:\n        candidates.extend(unique([config.get('name'), config.get('sub'), config.get('standard')]))\n    # Only the modules' programme names are wanted here, so the module rows are\n    # read without the weeks, components and mappings authoring_scope_data()\n    # would fetch beneath them. Its signature dedupe is not needed either: the\n    # signature includes the normalised programme name, and callers only ever\n    # compare normalise(candidate), so the set of names that can match is the\n    # same. Rows without a catalogue id are skipped, as authoring_scope_data()\n    # returns none for them.\n    module_rows = [\n        row for row in authoring_scope_module_rows('programme', programme_id)\n        if clean_str(row.get('module_catalogue_id'))\n    ]\n    candidates.extend(unique(row.get('programme_name') for row in module_rows))\n    return [value for value in unique(candidates) if value]\n",
+    "decorators": [],
+    "owner": "curriculum_api.catalogue.application.placement_lineage",
+    "dependencies": [
+      "authoring_scope_module_rows",
+      "clean_str",
+      "get_program_config_rows",
+      "programme_config_identity",
+      "unique"
+    ],
+    "transforms": {}
+  },
+  "get_cached_curriculum_rows": {
+    "source": "def get_cached_curriculum_rows(compact=False, force=False):\n    \"\"\"The raw curriculum rows, read once and shared by both visibilities.\n\n    Nothing downstream mutates these dicts -- the payload builders only read\n    them and emit new ones -- so the two visibility builds can hold the same\n    lists. ``force`` reaches here from a caller that has just written and is\n    asking for its own state back; it must not be answered from rows read\n    before that write.\n    \"\"\"\n    return cached_curriculum_value(\n        f'rows:{\"compact\" if compact else \"full\"}',\n        lambda: get_curriculum_rows(compact=compact),\n        force=force,\n        ttl=CURRICULUM_ROWS_CACHE_TTL_SECONDS,\n        shared=True,\n        compress=True,\n    )\n",
+    "decorators": [],
+    "owner": "curriculum_api.catalogue.application.cached_reads",
+    "dependencies": [
+      "CURRICULUM_ROWS_CACHE_TTL_SECONDS",
+      "cached_curriculum_value",
+      "get_curriculum_rows"
+    ],
+    "transforms": {}
+  },
+  "build_curriculum_payload": {
+    "source": "def build_curriculum_payload(visibility='operational', compact=False, force=False, *, learner_profiles=False):\n    logger.info('build_curriculum_payload: running DB build for visibility=%s compact=%s', visibility, compact)\n    with curriculum_read_scope():\n        rows = get_cached_curriculum_rows(compact=compact, force=force)\n        identity_options = {'learner_profiles': True} if learner_profiles else {}\n        return build_curriculum_payload_from_rows(rows, visibility, compact=compact, **identity_options)\n",
+    "decorators": [],
+    "owner": "curriculum_api.catalogue.application.cached_reads",
+    "dependencies": [
+      "build_curriculum_payload_from_rows",
+      "curriculum_read_scope",
+      "get_cached_curriculum_rows",
+      "logger"
+    ],
+    "transforms": {}
+  },
+  "cached_programme_detail_section": {
+    "source": "def cached_programme_detail_section(identifier, visibility, section, workspace_view, *, force=False):\n    # One read scope for the fingerprint and the build, so the two see the same\n    # learner rows (see programme_shell_learner_fingerprint).\n    with curriculum_read_scope(targeted_child_reads=True):\n        return cached_curriculum_value(\n            f'programme-detail-{section}-response:authored-v3:{visibility}:{clean_str(identifier)}'\n            + (':workspace-v1' if workspace_view else ''),\n            lambda: programme_detail_section_entry(identifier, visibility, section, workspace_view),\n            force=force,\n            # The shell carries learner counts; the modules section none. Past\n            # the 60s the shell is re-checked against the learner rows rather\n            # than rebuilt, and rebuilt only when they have moved.\n            ttl=CURRICULUM_LEARNER_DATA_TTL_SECONDS if section == 'shell' else None,\n            scope=clean_str(identifier),\n            fingerprint=programme_shell_learner_fingerprint if section == 'shell' else None,\n        )\n",
+    "decorators": [],
+    "owner": "curriculum_api.catalogue.application.cached_reads",
+    "dependencies": [
+      "CURRICULUM_LEARNER_DATA_TTL_SECONDS",
+      "cached_curriculum_value",
+      "clean_str",
+      "curriculum_read_scope",
+      "programme_detail_section_entry",
+      "programme_shell_learner_fingerprint"
+    ],
+    "transforms": {}
+  },
+  "get_cached_sessions": {
+    "source": "def get_cached_sessions(request):\n    visibility = curriculum_visibility(request)\n    force = request_bypasses_curriculum_cache(request)\n    return cached_curriculum_value(\n        f'sessions:authored-v2:{visibility}',\n        lambda: build_curriculum_sessions(visibility, force=force),\n        force=force,\n    )\n",
+    "decorators": [],
+    "owner": "curriculum_api.catalogue.api.cached_reads",
+    "dependencies": [
+      "build_curriculum_sessions",
+      "cached_curriculum_value",
+      "curriculum_visibility",
+      "request_bypasses_curriculum_cache"
+    ],
+    "transforms": {}
+  },
+  "get_cached_payload": {
+    "source": "def get_cached_payload(request, compact=False):\n    visibility = curriculum_visibility(request)\n    cache_key = f'overview:{visibility}:{\"compact\" if compact else \"full\"}'\n    force = request_bypasses_curriculum_cache(request)\n    return cached_curriculum_value(\n        cache_key,\n        lambda: build_curriculum_payload(visibility, compact=compact, force=force),\n        force=force,\n    )\n",
+    "decorators": [],
+    "owner": "curriculum_api.catalogue.api.cached_reads",
+    "dependencies": [
+      "build_curriculum_payload",
+      "cached_curriculum_value",
+      "curriculum_visibility",
+      "request_bypasses_curriculum_cache"
+    ],
+    "transforms": {}
+  },
+  "free_programme_component_response": {
+    "source": "def free_programme_component_response(row, week=None):\n    \"\"\"Return a component with canonical and compatibility week identities.\n\n    ``freeCourseWeekId`` owns the relationship. ``weekId`` is retained only as\n    the optional legacy source-week provenance expected by older consumers.\n    \"\"\"\n    week = week or {}\n    # Canonical rows do not contain ``week_id``.  The fallback exists only for\n    # old import/export payloads that explicitly carried the source week.\n    provenance = (week.get('legacy_copied_from_week_id')\n                  or row.get('legacy_copied_from_week_id')\n                  or row.get('week_id')\n                  or '')\n    return {\n        'id': row.get('id'),\n        'moduleId': row.get('free_module_id'),\n        'freeCourseWeekId': row.get('free_module_id') or '',\n        'weekId': provenance,\n        'legacyCopiedFromWeekId': provenance or None,\n        'type': frontend_component_type(row.get('type')),\n        'title': row.get('title') or '',\n        'description': row.get('description') or '',\n        'expectedOtjh': parse_float(row.get('expected_otjh'), 0),\n        'points': parse_int(row.get('points'), 0),\n        'reflectionRequired': bool(row.get('reflection_required')),\n        'workplaceEvidenceRequired': bool(row.get('workplace_evidence_required')),\n        'tutorValidationRequired': bool(row.get('tutor_validation_required')),\n        'displayOrder': parse_int(row.get('display_order'), 0),\n        'settings': as_json_value(row.get('settings_json'), {}),\n    }\n",
+    "decorators": [],
+    "owner": "curriculum_api.catalogue.application.free_course_projection",
+    "dependencies": [
+      "as_json_value",
+      "frontend_component_type",
+      "parse_float",
+      "parse_int"
+    ],
+    "transforms": {}
+  },
+  "free_programme_module_response": {
+    "source": "def free_programme_module_response(row, components, course=None):\n    \"\"\"Return one canonical Free Course week without joining normal weeks.\n\n    ``id`` and ``freeCourseWeekId`` identify the Free Course week. ``weekId``\n    remains a backwards-compatible provenance alias and may be empty.\n    \"\"\"\n    module_id = row.get('id')\n    course = course or {}\n    identity = free_course_catalogue.week_api_identity(row)\n    # Old import/export payloads used ``week_id`` for the same provenance role.\n    if not identity['weekId'] and row.get('week_id'):\n        identity['weekId'] = row.get('week_id')\n        identity['legacyCopiedFromWeekId'] = row.get('week_id')\n    module_components = [\n        free_programme_component_response(component, row)\n        for component in components\n        if clean_str(component.get('free_module_id')) == clean_str(module_id)\n        and not is_retired_component_type(component.get('type'))\n    ]\n    return {\n        'id': module_id,\n        'courseId': row.get('course_id') or course.get('id') or module_id,\n        **identity,\n        'weekNumber': parse_int(row.get('week_number'), 1),\n        'weekTitle': row.get('title') or row.get('week_title') or '',\n        'weekSummary': row.get('summary') or '',\n        'summary': row.get('summary') or '',\n        'status': row.get('status') or '',\n        'learningOutcomes': as_json_value(row.get('learning_outcomes'), []),\n        'holidayNoteEnabled': bool(row.get('holiday_note_enabled')),\n        'holidayNote': row.get('holiday_note') or '',\n        'courseName': course.get('course_name') or row.get('course_name') or '',\n        'title': course.get('course_name') or row.get('course_name') or '',\n        'description': course.get('description') if course.get('description') is not None else row.get('description') or '',\n        'coverImageUrl': course.get('cover_image_url') if course.get('cover_image_url') is not None else row.get('cover_image_url') or '',\n        'weekBuilderWeekIds': as_json_value(course.get('week_builder_week_ids'), []),\n        # The course's own sale metadata (curriculum.free_courses owns it).\n        **pricing_payload(course),\n        'displayOrder': parse_int(row.get('display_order'), 0),\n        'componentCount': len(module_components),\n        'totalOtjh': parse_float(row.get('total_otjh'), 0),\n        'components': module_components,\n    }\n",
+    "decorators": [],
+    "owner": "curriculum_api.catalogue.application.free_course_projection",
+    "dependencies": [
+      "as_json_value",
+      "clean_str",
+      "free_course_catalogue",
+      "free_programme_component_response",
+      "is_retired_component_type",
+      "parse_float",
+      "parse_int",
+      "pricing_payload"
+    ],
+    "transforms": {}
+  },
+  "curriculum_row_is_archived": {
+    "source": "def curriculum_row_is_archived(row):\n    \"\"\"Is this cohort/group row one the active lists leave out?\n\n    Deliberately the exact complement of what ``build_cohorts_and_groups`` skips:\n    the soft-delete stamps ``curriculum_row_effectively_deleted`` already covers,\n    plus a legacy row carrying only ``status = 'archived'``. Anything the live\n    list hides has to be reachable from the archive or it is invisible in both,\n    which is the state this whole section exists to end.\n    \"\"\"\n    return curriculum_row_effectively_deleted(row) or clean_str((row or {}).get('status')).lower() == 'archived'\n",
+    "decorators": [],
+    "owner": "curriculum_api.catalogue.domain.archive_visibility",
+    "dependencies": [
+      "clean_str",
+      "curriculum_row_effectively_deleted"
+    ],
+    "transforms": {}
+  }
+}

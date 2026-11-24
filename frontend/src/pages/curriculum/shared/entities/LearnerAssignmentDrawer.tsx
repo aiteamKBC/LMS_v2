@@ -1,12 +1,15 @@
+import { assignmentOptions, assignmentCohortOptions, assignmentFilter, toggleIn, type Tab } from '@/features/curriculum/learner-assignments/selection';
+import { LearnerRows } from '@/features/curriculum/learner-assignments/LearnerRows';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   applyCurriculumLearnerAssignments, fetchLearnerAssignments,
-  type AssignmentLearner, type LearnerAssignmentApplyResult,
+  type LearnerAssignmentApplyResult,
   type LearnerAssignmentDirectory, type LearnerAssignmentProgress,
   type LearnerAssignmentTarget,
 } from '@/api/curriculumLearnerAssignments';
 import { AppIcon } from '@/components/feature/AppIcon';
 import { EntityDrawer } from './ui';
+import { LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
 
 const inputClass = 'w-full rounded-lg border border-foreground-200 bg-background-50 px-3 py-2 text-[12px] text-foreground-900 focus:border-primary-500';
 
@@ -17,8 +20,6 @@ export interface LearnerAssignmentOutcome {
   moduleCount: number;
   learnerCount: number;
 }
-
-type Tab = 'available' | 'assigned';
 
 export function LearnerAssignmentDrawer({ target, onClose, onAssigned }: {
   target: LearnerAssignmentTarget | null;
@@ -68,27 +69,12 @@ function AssignmentForm({ target, onClose, onAssigned }: {
   const learners = useMemo(() => data?.learners || [], [data]);
   const byId = useMemo(() => new Map(learners.map(learner => [learner.id, learner])), [learners]);
 
-  const options = useMemo(() => {
-    const values = (key: 'programme' | 'company' | 'programmeStatus') =>
-      [...new Set(learners.map(learner => learner[key]).filter(Boolean))].sort((a, b) => a.localeCompare(b));
-    return { programmes: values('programme'), companies: values('company'), statuses: values('programmeStatus') };
-  }, [learners]);
+  const options = useMemo(() => assignmentOptions(learners), [learners]);
 
-  const cohortOptions = useMemo(() => [...new Set(learners
-    .filter(learner => !programme || learner.programme === programme)
-    .map(learner => learner.cohort).filter(Boolean))].sort((a, b) => a.localeCompare(b)), [learners, programme]);
+  const cohortOptions = useMemo(() => assignmentCohortOptions(learners, programme), [learners, programme]);
   const changeProgramme = (value: string) => { setProgramme(value); setCohort(''); };
 
-  const matchesFilters = useMemo(() => {
-    const terms = query.trim().toLocaleLowerCase().split(/\s+/).filter(Boolean);
-    return (learner: AssignmentLearner) => {
-      const name = `${learner.name} ${learner.email}`.toLocaleLowerCase();
-      return terms.every(term => name.includes(term))
-        && (!programme || learner.programme === programme)
-        && (target.scope === 'module' ? (!cohort || learner.cohort === cohort) : (!company || learner.company === company))
-        && (!status || learner.programmeStatus === status);
-    };
-  }, [query, programme, company, cohort, status, target.scope]);
+  const matchesFilters = useMemo(() => assignmentFilter({ query, programme, company, cohort, status, target: { scope: target.scope } }), [query, programme, company, cohort, status, target.scope]);
 
   const available = useMemo(() => learners.filter(learner => !learner.assigned), [learners]);
   const assigned = useMemo(() => learners.filter(learner => learner.assigned), [learners]);
@@ -99,11 +85,6 @@ function AssignmentForm({ target, onClose, onAssigned }: {
   const allVisibleAdded = visibleAvailable.length > 0 && visibleAvailable.every(learner => toAdd.has(learner.id));
   const allVisibleRemoved = visibleAssigned.length > 0 && visibleAssigned.every(learner => toRemove.has(learner.id));
 
-  const toggleIn = (set: Set<string>, id: string) => {
-    const next = new Set(set);
-    if (next.has(id)) next.delete(id); else next.add(id);
-    return next;
-  };
   const toggleAdd = (id: string) => setToAdd(previous => toggleIn(previous, id));
   const toggleRemove = (id: string) => { if (canUnassign) setToRemove(previous => toggleIn(previous, id)); };
   const toggleAllVisible = () => {
@@ -279,7 +260,7 @@ function AssignmentForm({ target, onClose, onAssigned }: {
         </div>
       )}
 
-      {loading ? <p role="status" className="py-10 text-center text-[13px] text-foreground-500">Loading learners…</p>
+      {loading ? <p  className="py-10 text-center text-[13px] text-foreground-500"><LoadingSkeleton label="Loading learners…" variant="rows" /></p>
         : !data ? <button type="button" onClick={() => setRetry(value => value + 1)} className="text-[12px] font-bold text-primary-700">Try again</button>
           : <div className="overflow-hidden rounded-xl border border-foreground-200">
             {tab === 'available' ? (
@@ -300,50 +281,7 @@ function AssignmentForm({ target, onClose, onAssigned }: {
                 Cohort membership is not removed here. Open the module a learner should leave.
               </p>
             )}
-            <div className="max-h-[42vh] overflow-auto">
-              {visible.length === 0 ? (
-                <p className="p-8 text-center text-[12px] text-foreground-500">
-                  {tab === 'available'
-                    ? 'No unassigned learners match these filters.'
-                    : 'No assigned learners match these filters.'}
-                </p>
-              ) : visible.map(learner => {
-                const marked = tab === 'available' ? toAdd.has(learner.id) : toRemove.has(learner.id);
-                const facts = [learner.programme, learner.company, learner.programmeStatus].filter(Boolean).join(' · ') || 'No programme or company recorded';
-                if (tab === 'assigned') {
-                  return (
-                    <div key={learner.id} className={`flex items-start gap-3 border-b border-foreground-100 p-4 last:border-0 ${marked ? 'bg-rose-50/60' : ''}`}>
-                      <span className="min-w-0 flex-1 text-[12px]">
-                        <span className="block font-bold text-foreground-900">{learner.name}</span>
-                        <span className="block break-all text-foreground-500">{learner.email}</span>
-                        <span className="mt-1 block text-foreground-600">{facts}</span>
-                      </span>
-                      {marked && <span className="shrink-0 rounded-full bg-rose-50 px-2 py-1 text-[10px] font-bold text-rose-700"><AppIcon className="ri-close-line mr-1" />Will be removed</span>}
-                      {canUnassign && (
-                        <button type="button" disabled={saving} onClick={() => toggleRemove(learner.id)}
-                          className={`shrink-0 rounded-lg border px-3 py-1 text-[11px] font-bold ${marked
-                            ? 'border-foreground-300 text-foreground-700'
-                            : 'border-rose-300 text-rose-700 hover:bg-rose-50'}`}>
-                          {marked ? `Keep ${learner.name.split(' ')[0] || 'learner'}` : 'Remove'}
-                        </button>
-                      )}
-                    </div>
-                  );
-                }
-                return (
-                  <label key={learner.id} className={`flex items-start gap-3 border-b border-foreground-100 p-4 last:border-0 ${marked ? 'bg-primary-50/50' : 'hover:bg-primary-50/40'}`}>
-                    <input className="mt-1" type="checkbox" aria-label={`Select ${learner.name}`}
-                      checked={marked} disabled={saving} onChange={() => toggleAdd(learner.id)} />
-                    <span className="min-w-0 flex-1 text-[12px]">
-                      <span className="block font-bold text-foreground-900">{learner.name}</span>
-                      <span className="block break-all text-foreground-500">{learner.email}</span>
-                      <span className="mt-1 block text-foreground-600">{facts}</span>
-                    </span>
-                    {marked && <span className="shrink-0 rounded-full bg-primary-50 px-2 py-1 text-[10px] font-bold text-primary-800"><AppIcon className="ri-check-line mr-1" />Will be added</span>}
-                  </label>
-                );
-              })}
-            </div>
+            <LearnerRows visible={visible} tab={tab} toAdd={toAdd} toRemove={toRemove} canUnassign={canUnassign} saving={saving} toggleRemove={toggleRemove} toggleAdd={toggleAdd} />
           </div>}
     </EntityDrawer>
   );

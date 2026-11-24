@@ -1,3 +1,4 @@
+from curriculum_api.catalogue.tests.parity.composition_test_support import composition_fixture
 from collections import Counter
 from unittest.mock import patch
 
@@ -29,9 +30,10 @@ class CoverageSummaryTests(SimpleTestCase):
         cache = LocMemCache('coverage-summary-regression', {})
         cache.clear()
         factory = RequestFactory()
-        with patch.object(views, '_CURRICULUM_CACHE', {}), patch.object(views, 'cache', cache), \
-                patch.object(views, 'shared_curriculum_epoch', return_value=1) as epoch, \
-                patch.object(views, '_coverage_response_uncached', side_effect=lambda request, *args: views.JsonResponse({'view': request.GET.get('view', 'full')})) as build:
+        with patch.object(views.cache_state, '_CURRICULUM_CACHE', {}), composition_fixture(views, 'cache', cache), \
+                composition_fixture(views, 'shared_curriculum_epoch', return_value=1) as epoch, \
+                composition_fixture(views, 'component_source_inputs_fingerprint', return_value=('synthetic-source',)), \
+                composition_fixture(views, '_coverage_response_uncached', side_effect=lambda request, *args: views.JsonResponse({'view': request.GET.get('view', 'full')})) as build:
             summary = factory.get('/?view=summary')
             full = factory.get('/')
             first = views.coverage_endpoint_response(summary, 'programme', 'P1')
@@ -43,4 +45,3 @@ class CoverageSummaryTests(SimpleTestCase):
             epoch.return_value = 2
             views.coverage_endpoint_response(summary, 'programme', 'P1')
             self.assertEqual(build.call_count, 3)
-

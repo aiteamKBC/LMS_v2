@@ -3,7 +3,7 @@ import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { LearningCatalogue } from './LearningCatalogue';
 import type { Subject, UnifiedLearningSummary } from './learningSummary';
-import { moduleTeachingActive } from './teachingActivity';
+import { moduleTeachingActive, type TeachingActivities } from './teachingActivity';
 import { learningToday } from './subjectLearning';
 
 const subject = (id: string, source: Subject['source'], progress = 0): Subject => ({ id, title: id, source, activities: [],
@@ -12,7 +12,7 @@ const subjects = [subject('active-new', 'current', 100), subject('active-old', '
 const moduleActivity = { 'active-new': { startDate: '2026-09-01', lastLiveDate: '2026-11-05' },
   'active-old': { startDate: '2026-11-05', lastLiveDate: '2026-12-01' },
   past: { startDate: '2026-01-01', lastLiveDate: '2026-11-04' }, future: { startDate: '2026-11-06', lastLiveDate: '2027-01-01' } };
-function catalogue(rows = subjects, activity = moduleActivity) {
+function catalogue(rows = subjects, activity: TeachingActivities = moduleActivity) {
   const summary: UnifiedLearningSummary = { subjects: rows, subjectCount: rows.length, activityCount: 5, completedActivityCount: 1, percent: 20 };
   return render(<MemoryRouter><LearningCatalogue summary={summary} search="" onSearch={vi.fn()} total={5} done={1} percent={20}
     moduleStartDate={() => null} moduleActivity={activity} onContinue={vi.fn()} renderCard={row => <article key={row.id}><h3>{row.title}</h3></article>} /></MemoryRouter>);
@@ -39,18 +39,36 @@ describe('active teaching in My Learning', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Active modules' }));
     expect(screen.getByRole('button', { name: 'Active modules' })).toHaveAttribute('aria-pressed', 'true');
     expect(screen.queryByRole('heading', { name: 'undated' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: 'past' })).not.toBeInTheDocument();
   });
   it('offers All instead of silently hiding undated or finished subjects', () => {
-    catalogue([subjects[2], subjects[4]]);
+    catalogue([subjects[2]]);
     expect(screen.getByText('No active modules match your filters.')).toBeVisible();
     fireEvent.click(screen.getByRole('button', { name: 'View all modules' }));
     expect(screen.getByRole('heading', { name: 'past' })).toBeVisible();
-    expect(screen.getByRole('heading', { name: 'undated' })).toBeVisible();
   });
-  it('keeps grouped previous learning with its active current module', () => {
+  it('does not let an active current module make its inactive history active', () => {
     catalogue([subjects[0], { ...subjects[2], source: 'legacy', previousLearningFor: 'active-new' }]);
     expect(screen.getByRole('heading', { name: 'active-new' })).toBeVisible();
+    expect(screen.queryByRole('heading', { name: 'past' })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'All modules' }));
     expect(screen.getByRole('heading', { name: 'past' })).toBeVisible();
+  });
+  it('deduplicates stable card identities without merging equal titles across sources', () => {
+    const current = { ...subject('current:ONE', 'current'), title: 'Shared title', importedCourseRef: 'legacy:OLD' };
+    const old = { ...subject('legacy:OLD', 'legacy'), title: 'Shared title', previousLearningFor: 'current:ONE' };
+    catalogue([current, old, { ...old }], {
+      'current:ONE': { startDate: '2026-01-01', lastLiveDate: '2026-12-31' },
+    });
+    expect(screen.getAllByRole('heading', { name: 'Shared title' })).toHaveLength(1);
+    expect(screen.queryByRole('heading', { name: 'Training Plan' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: 'Old LMS Courses' })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'All modules' }));
+    expect(screen.getAllByRole('heading', { name: 'Shared title' })).toHaveLength(2);
+    expect(screen.getByText('2 subjects · 2 activities')).toBeVisible();
+    fireEvent.click(screen.getByRole('tab', { name: 'New LMS' }));
+    expect(screen.getAllByRole('heading', { name: 'Shared title' })).toHaveLength(1);
+    expect(screen.queryByRole('region', { name: 'Old LMS Courses' })).not.toBeInTheDocument();
   });
   it('uses inclusive curriculum boundaries and the UK day across daylight saving', () => {
     for (const today of ['2026-09-01','2026-10-25','2026-11-05']) expect(moduleTeachingActive(moduleActivity['active-new'],today)).toBe(true);

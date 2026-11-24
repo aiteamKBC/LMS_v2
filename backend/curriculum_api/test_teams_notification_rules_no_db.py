@@ -19,6 +19,7 @@ under ``Prefer: outlook.send-invitations="none"`` is a request for silence,
 not proof of it; that needs the live mailbox checks.
 """
 import ast
+from curriculum_api.catalogue.tests.parity.current_entry_source import current_entry_tree
 import copy
 import json
 import sys
@@ -471,7 +472,7 @@ class WeekMeetingEditTests(unittest.TestCase):
             active_component_rows=lambda rows: rows, component_builder_settings=lambda item: item['settings'],
             teams_schedule_settings=lambda settings, *_a, **_k: settings, teams_event_payload=event_payload,
             calendar_targets=lambda *a, **k: [], graph_timezone_iana=lambda _settings: 'Europe/London',
-            teams_non_delivery_reason=lambda *a: '', as_json_value=lambda value, fallback: value or fallback,
+            teams_non_delivery_reason=lambda *a, module_catalogue_id=None: '', as_json_value=lambda value, fallback: value or fallback,
             apply_teams_meeting_options=lambda *a, **k: (True, {}, []),
             forward_teams_invitation=lambda request, owner, ids, people, comment='': (
                 [request('POST', f'users/{owner}/events/{ids[0]}/forward',
@@ -704,7 +705,7 @@ class ArchiveGuardTests(unittest.TestCase):
               'logger': types.SimpleNamespace(warning=lambda *a: None),
               'json_error': lambda message, status=400, **kw: email_tests.Response({'error': message, **kw}, status)}
         email_tests.definitions(ROOT / 'views.py', ns, {'module_future_teams_sessions', 'module_teams_calendar_block_response'})
-        tree = ast.parse((ROOT / 'views.py').read_text(encoding='utf-8'))
+        tree = current_entry_tree()
         for node in tree.body:
             if isinstance(node, ast.Assign) and getattr(node.targets[0], 'id', '') == 'MODULE_TEAMS_CALENDAR_BLOCKS_ARCHIVE':
                 ns['MODULE_TEAMS_CALENDAR_BLOCKS_ARCHIVE'] = ast.literal_eval(node.value)
@@ -748,8 +749,17 @@ class ArchiveGuardTests(unittest.TestCase):
         self.assertEqual(ns['module_teams_calendar_block_response']('MOD-1').status_code, 503)
 
     def test_archive_permanent_delete_and_move_all_check_before_removing_anything(self):
-        tree = ast.parse((ROOT / 'views.py').read_text(encoding='utf-8'))
+        tree = current_entry_tree()
         functions = {node.name: node for node in tree.body if isinstance(node, ast.FunctionDef)}
+        # Inspect the actual current owners, not their compatibility wrappers.
+        for symbol, relative in {
+                'curriculum_module_detail': 'catalogue/api/module_commands.py',
+                'permanent_module_delete_response': 'catalogue/api/lifecycle_commands.py',
+                'convert_module_to_free_course': 'catalogue/application/free_programme_commands.py',
+                'module_future_teams_sessions': 'meetings/infrastructure/lifecycle_reads.py',
+                'module_teams_calendar_block_response': 'meetings/api/lifecycle.py'}.items():
+            owner = ast.parse((ROOT / relative).read_text(encoding='utf-8'))
+            functions[symbol] = next(n for n in owner.body if isinstance(n, ast.FunctionDef) and n.name == symbol)
 
         def first_line(fn, name):
             return min(node.lineno for node in ast.walk(functions[fn])
@@ -774,7 +784,14 @@ class NothingNewCancelsTests(unittest.TestCase):
             source = (ROOT / name).read_text(encoding='utf-8')
             self.assertNotIn("'DELETE'", source, name)
             self.assertNotIn('/cancel', source, name)
-        tree = ast.parse((ROOT / 'views.py').read_text(encoding='utf-8'))
+        tree = current_entry_tree()
+        owner = ast.parse((ROOT / 'meetings/api/scheduling.py').read_text(encoding='utf-8'))
+        tree.body.extend(owner.body)
+        options = ast.parse((ROOT / 'meetings/application/meeting_options.py').read_text(encoding='utf-8'))
+        tree.body.extend(options.body)
+        for relative in ('meetings/api/lifecycle.py', 'meetings/infrastructure/lifecycle_reads.py',
+                         'meetings/api/change_notifications.py'):
+            tree.body.extend(ast.parse((ROOT / relative).read_text(encoding='utf-8')).body)
         for node in tree.body:
             if isinstance(node, ast.FunctionDef) and node.name in {
                     'curriculum_teams_meeting_schedule', 'refresh_standalone_occurrence_options',

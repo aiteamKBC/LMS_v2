@@ -1,4 +1,5 @@
 """Achievement parity and bounded work; all data sources are synthetic."""
+from curriculum_api.catalogue.tests.parity.composition_test_support import composition_fixture
 from contextlib import ExitStack, nullcontext
 from unittest.mock import patch
 
@@ -58,19 +59,19 @@ class AchievementReadTests(SimpleTestCase):
             'programme_row_ksb_source': ('standard', 'STD'),
             'source_display_metadata': {'sourceLabel': 'Synthetic standard'},
         }.items():
-            mock = stack.enter_context(patch.object(views, name, return_value=value))
+            mock = stack.enter_context(composition_fixture(views, name, return_value=value))
             setattr(self, name, mock)
-        stack.enter_context(patch.object(views, 'mappings_with_inferred_sources', side_effect=lambda rows, modules: rows))
+        stack.enter_context(composition_fixture(views, 'mappings_with_inferred_sources', side_effect=lambda rows, modules: rows))
         # Every read builds: the cache layer is exercised by AchievementInputsCacheTests.
         self.cache_calls = []
 
         def build_now(key, build, **options):
             self.cache_calls.append((key, options))
             return build()
-        stack.enter_context(patch.object(views, 'cached_curriculum_value', side_effect=build_now))
+        stack.enter_context(composition_fixture(views, 'cached_curriculum_value', side_effect=build_now))
         for name in ('scope_learner_ksb_impact_payload', 'build_coverage', 'reflection_submission_ksb_consumption',
                      'progress_evidence_index', 'learner_activity_plan', 'scope_otjh_summary'):
-            stack.enter_context(patch.object(views, name, side_effect=AssertionError(f'Unneeded work: {name}')))
+            stack.enter_context(composition_fixture(views, name, side_effect=AssertionError(f'Unneeded work: {name}')))
 
     def test_achievement_preserves_legacy_projection_filters_and_pagination(self):
         full_coverage = build_coverage(self.required, [], self.modules, [], self.components, include_mapping_only=False)
@@ -82,7 +83,7 @@ class AchievementReadTests(SimpleTestCase):
             request = self.factory.get('/achievement/' + query)
             with self.subTest(query=query):
                 actual, error = views._achievement_projection(request, 'P1')
-                with patch.object(views, 'programme_achievement_inputs', return_value=(legacy, None)):
+                with composition_fixture(views, 'programme_achievement_inputs', return_value=(legacy, None)):
                     expected, _ = views._achievement_projection(request, 'P1')
                 self.assertIsNone(error)
                 self.assertEqual(actual, expected)
@@ -152,7 +153,7 @@ class AchievementInputsFingerprintTests(SimpleTestCase):
         from django.db import DatabaseError
         connection = MagicMock()
         connection.cursor.side_effect = DatabaseError('down')
-        with patch.object(views, 'connection', connection), self.assertLogs('curriculum_api.views', 'WARNING'):
+        with composition_fixture(views, 'connection', connection), self.assertLogs('curriculum_api.views', 'WARNING'):
             first = views.achievement_inputs_fingerprint('P1', 'k')
             second = views.achievement_inputs_fingerprint('P1', 'k')
         self.assertNotEqual(first, second)
@@ -165,8 +166,8 @@ class AchievementInputsFingerprintTests(SimpleTestCase):
         connection.cursor.return_value.__enter__.return_value = cursor
         views._ACHIEVEMENT_LEARNER_IDS['k'] = {'12', '7'}
         try:
-            with patch.object(views, 'connection', connection), \
-                 patch.object(views, 'component_source_inputs_fingerprint', return_value=('standards',)):
+            with composition_fixture(views, 'connection', connection), \
+                 composition_fixture(views, 'component_source_inputs_fingerprint', return_value=('standards',)):
                 value = views.achievement_inputs_fingerprint('P1', 'k')
         finally:
             views._ACHIEVEMENT_LEARNER_IDS.pop('k', None)

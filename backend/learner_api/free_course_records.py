@@ -33,10 +33,7 @@ def profile_progress_enabled(database=None):
 
 
 def progress_owner(source):
-    """Read old installations safely until their identity migration commits."""
-
-    if not profile_progress_enabled():
-        return source.pk
+    """Resolve canonical learner identity; never fall back to an enrolment id."""
 
     from .identity import learner_profile_for_source
 

@@ -12,6 +12,7 @@ ROOT = Path(__file__).resolve().parent
 package = types.ModuleType('curriculum_api')
 package.__path__ = [str(ROOT)]
 sys.modules.setdefault('curriculum_api', package)
+from curriculum_api.meetings.tests.source_loader import load_current_functions
 from curriculum_api.teams_presenter_roles import presenter_co_organizers, roles_changed
 from curriculum_api.teams_meeting_options_policy import meeting_options_patch
 
@@ -56,8 +57,6 @@ class EventPayloadTests(unittest.TestCase):
         """Exercise the actual payload builder without importing the Django application."""
         source = ast.parse((ROOT / 'views.py').read_text(encoding='utf-8'))
         names = {'teams_event_payload', 'teams_attendee_emails'}
-        module = ast.Module(body=[node for node in source.body if isinstance(node, ast.FunctionDef)
-                                  and node.name in names], type_ignores=[])
         scope = {
             '__name__': 'curriculum_api.views', '__package__': 'curriculum_api',
             'datetime': datetime, 'timezone': timezone, 're': re,
@@ -66,12 +65,12 @@ class EventPayloadTests(unittest.TestCase):
             'teams_meeting_default_organizer': lambda: 'owner@example.invalid',
             'graph_timezone_iana': lambda settings: 'Europe/London', 'calendar_zone': ZoneInfo,
             'TEAMS_REPEAT_VALUES': {'none', 'weekly'},
-            'calendar_targets': lambda payload, start, duration, repeat, count, zone: [{'start': start, 'end': start}],
+            'calendar_targets': lambda payload, start, duration, repeat, count, zone, *, max_sessions=52: [{'start': start, 'end': start}],
             'graph_calendar_time': lambda instant, zone, graph_zone: {'dateTime': instant.isoformat(), 'timeZone': graph_zone},
             'teams_event_body_html': lambda title, details: title,
-            'local_calendar_recurrence': lambda *args: None,
+            'local_calendar_recurrence': lambda *args, **kwargs: None,
         }
-        exec(compile(module, str(ROOT / 'views.py'), 'exec'), scope)
+        load_current_functions(names, scope, source)
         return scope['teams_event_payload']
 
     def test_new_meeting_stores_both_roles_and_keeps_attendees_private(self):

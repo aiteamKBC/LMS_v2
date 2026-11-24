@@ -111,6 +111,8 @@ class CanonicalFreeCourseCatalogueTests(SimpleTestCase):
 class CanonicalLearnerFreeCourseListTests(SimpleTestCase):
 
     def setUp(self):
+        self.enterContext(patch.object(view, 'accepted_activity_seconds', return_value={}))
+        self.enterContext(patch.object(view.free_course_attempts, 'activity_times', return_value={}))
 
         self.source = SimpleNamespace(
 

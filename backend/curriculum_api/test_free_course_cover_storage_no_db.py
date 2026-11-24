@@ -27,11 +27,11 @@ ROOT = Path(__file__).resolve().parent
 
 
 def save_function():
-    tree = ast.parse((ROOT / 'views.py').read_text(encoding='utf-8-sig'))
+    tree = ast.parse((ROOT / 'catalogue/application/free_programme_commands.py').read_text(encoding='utf-8-sig'))
     for node in ast.walk(tree):
         if isinstance(node, ast.FunctionDef) and node.name == 'save_free_programme_modules':
             return node
-    raise AssertionError('save_free_programme_modules is not defined in views.py')
+    raise AssertionError('save_free_programme_modules is not defined in its application owner')
 
 
 class FreeCourseCoverStorageTests(unittest.TestCase):

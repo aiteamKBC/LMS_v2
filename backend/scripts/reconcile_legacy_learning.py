@@ -103,15 +103,11 @@ def target_fingerprint(conn):
 def read_owners(cur):
     rows = cur.execute('''SELECT l.id,l.enrolment_id,l.programme_id,l.aptem_id,
         lower(trim(l.email)) AS canonical_email,lower(trim(e."Email")) AS account_email,
-        e.aptem_id::text AS account_aptem_id,i.id AS identity_id,i.source_learner_id,
-        coalesce(nullif(i.source_payload->>'source_email',''),
-                 i.source_payload->>'learner_email') AS source_email,
-        coalesce((i.source_payload#>>'{legacy_alias,is_primary}')::boolean,
-                 i.source_payload ? 'record_id') AS is_primary
+        e.aptem_id::text AS account_aptem_id,i.lms_learner_id AS identity_id,
+        i.lms_learner_id AS source_learner_id,i.lms_email AS source_email,i.is_primary
         FROM "Learner".learners l JOIN enrolment."Created_users" e ON e.id=l.enrolment_id
-        JOIN "Learner".learner_external_identities i ON i.learner_id=l.id
-        WHERE i.source_system='old_lms' AND i.deleted_at IS NULL
-        ORDER BY l.id,i.id''').fetchall()
+        JOIN "Last_audit".learner_lms_aliases i ON i.learner_profile_id=l.id AND i.aptem_id=l.aptem_id
+        ORDER BY l.id,i.lms_learner_id''').fetchall()
     owners, source_owners, enrolment_owners = {}, defaultdict(set), defaultdict(set)
     invalid = set()
     for row in rows:

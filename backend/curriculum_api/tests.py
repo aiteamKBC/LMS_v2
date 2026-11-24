@@ -1,3 +1,4 @@
+from curriculum_api.catalogue.tests.parity.composition_test_support import composition_fixture
 import json
 import os
 import threading
@@ -678,7 +679,7 @@ class CurriculumTeamsMeetingTests(CurriculumTeamsRequestTestCase):
             verification_boundaries.append(graph_request.call_count)
             return event
 
-        verifier = patch.object(views, 'verify_teams_calendar_with_standalones', side_effect=verified_calendar)
+        verifier = composition_fixture(views, 'verify_teams_calendar_with_standalones', side_effect=verified_calendar)
         verifier.start()
         self.addCleanup(verifier.stop)
         response = self.client.post(
@@ -880,7 +881,7 @@ class CurriculumTeamsMeetingTests(CurriculumTeamsRequestTestCase):
         series_before = views.authoring_fetch_all(views.LIVE_SESSIONS_TABLE, 'id = %s', [live_session_id])[0]
         # These previously delivered slots are history, not future sessions being cancelled.
         dropped_sessions = views.sessions_a_rewrite_would_drop
-        clock = patch.object(views, 'sessions_a_rewrite_would_drop', side_effect=lambda *args, **kwargs:
+        clock = composition_fixture(views, 'sessions_a_rewrite_would_drop', side_effect=lambda *args, **kwargs:
             dropped_sessions(*args, **kwargs, now=datetime(2026, 11, 1, tzinfo=timezone.utc)))
         clock.start()
         self.addCleanup(clock.stop)
@@ -1099,7 +1100,7 @@ class CurriculumTeamsMeetingTests(CurriculumTeamsRequestTestCase):
             verification_boundaries.append(graph_request.call_count)
             return event
 
-        verifier = patch.object(views, 'verify_teams_calendar_with_standalones', side_effect=verified_calendar)
+        verifier = composition_fixture(views, 'verify_teams_calendar_with_standalones', side_effect=verified_calendar)
         verifier.start()
         self.addCleanup(verifier.stop)
         with patch.dict(os.environ, {'MICROSOFT_TEAMS_ORGANIZER_EMAIL': 'organizer@example.com'}):
@@ -1636,7 +1637,7 @@ class CurriculumTeamsMeetingTests(CurriculumTeamsRequestTestCase):
                 'status': 'scheduled',
             })
 
-    @patch('curriculum_api.views.get_holiday_rows', return_value=CURRICULUM_HOLIDAY_ROWS)
+    @patch('curriculum_api.catalogue.infrastructure.cohort_calendar_composition.get_holiday_rows', return_value=CURRICULUM_HOLIDAY_ROWS)
     def test_structure_payload_dates_every_week_from_the_module_plan(self, _holidays):
         # The weeks are a timetable, not just a running count: each one carries
         # the day it actually runs.
@@ -1659,7 +1660,7 @@ class CurriculumTeamsMeetingTests(CurriculumTeamsRequestTestCase):
         self.assertEqual(payload['weekStructure'][0]['sessionStartTime'], '09:00')
         self.assertEqual(payload['weekStructure'][0]['sessionDurationMinutes'], 120)
 
-    @patch('curriculum_api.views.get_holiday_rows', return_value=CURRICULUM_HOLIDAY_ROWS)
+    @patch('curriculum_api.catalogue.infrastructure.cohort_calendar_composition.get_holiday_rows', return_value=CURRICULUM_HOLIDAY_ROWS)
     def test_restore_can_give_every_week_its_own_live_session(self, _holidays):
         # Re-attaching is the one action that finishes the job: a created series
         # is only in front of the learner once every week has a session to open,
@@ -1713,7 +1714,7 @@ class CurriculumTeamsMeetingTests(CurriculumTeamsRequestTestCase):
         # model.
         self.assertNotIn(created['title'], {'Week 2', ''})
 
-    @patch('curriculum_api.views.get_holiday_rows', return_value=CURRICULUM_HOLIDAY_ROWS)
+    @patch('curriculum_api.catalogue.infrastructure.cohort_calendar_composition.get_holiday_rows', return_value=CURRICULUM_HOLIDAY_ROWS)
     def test_session_plan_dates_a_week_that_is_not_saved_yet(self, _holidays):
         # Module Builder adds a week before anything is written, and week N is
         # session N -- so a seventh week on a stored six-week module has to be
@@ -1746,7 +1747,7 @@ class CurriculumTeamsMeetingTests(CurriculumTeamsRequestTestCase):
         self.assertEqual(views.get_authoring_structure_payload('MOD-WEEKS')['weekStructure'], stored_weeks)
         self.assertEqual(views.authoring_fetch_all(views.AUTHORING_MODULES_TABLE, 'module_catalogue_id = %s', ['MOD-WEEKS'])[0], stored_module)
 
-    @patch('curriculum_api.views.get_holiday_rows', return_value=CURRICULUM_HOLIDAY_ROWS)
+    @patch('curriculum_api.catalogue.infrastructure.cohort_calendar_composition.get_holiday_rows', return_value=CURRICULUM_HOLIDAY_ROWS)
     def test_session_plan_keeps_an_added_week_on_its_own_saturday(self, _holidays):
         # An added week runs on its own delivery day, ticked holiday or not: the
         # fourteenth Saturday of this module is 13 March 2027, which is nowhere
@@ -1767,7 +1768,7 @@ class CurriculumTeamsMeetingTests(CurriculumTeamsRequestTestCase):
         self.assertEqual(plan['sessions'][1]['skippedHolidays'], ['2026-12-19'])
         self.assertEqual(plan['finalEndDate'], '2027-03-13')
 
-    @patch('curriculum_api.views.get_holiday_rows', return_value=CURRICULUM_HOLIDAY_ROWS)
+    @patch('curriculum_api.catalogue.infrastructure.cohort_calendar_composition.get_holiday_rows', return_value=CURRICULUM_HOLIDAY_ROWS)
     def test_session_plan_falls_back_to_the_stored_session_count(self, _holidays):
         self._module_with_six_saturday_weeks()
         stored_weeks = views.get_authoring_structure_payload('MOD-WEEKS')['weekStructure']
@@ -1801,7 +1802,7 @@ class CurriculumTeamsMeetingTests(CurriculumTeamsRequestTestCase):
 
         self.assertEqual(response.status_code, 404, response.content)
 
-    @patch('curriculum_api.views.get_holiday_rows', return_value=CURRICULUM_HOLIDAY_ROWS)
+    @patch('curriculum_api.catalogue.infrastructure.cohort_calendar_composition.get_holiday_rows', return_value=CURRICULUM_HOLIDAY_ROWS)
     def test_restore_without_the_flag_authors_nothing(self, _holidays):
         # The Module Builder calls this endpoint silently when it opens a module
         # whose join link went missing. Opening a module must never write
@@ -1893,7 +1894,7 @@ class CurriculumTeamsMeetingTests(CurriculumTeamsRequestTestCase):
             @classmethod
             def utcnow(cls):
                 return cls(2026, 9, 1)
-        clock = patch.object(views, 'datetime', BeforeSeptember)
+        clock = composition_fixture(views, 'datetime', BeforeSeptember)
         clock.start()
         self.addCleanup(clock.stop)
         views.ensure_live_session_tracking_tables()
@@ -2038,7 +2039,7 @@ class TeamsCalendarSyncVerdictTests(CurriculumTeamsRequestTestCase):
             for start in starts
         ]
 
-    @patch('curriculum_api.views.get_holiday_rows', return_value=CURRICULUM_HOLIDAY_ROWS)
+    @patch('curriculum_api.catalogue.infrastructure.cohort_calendar_composition.get_holiday_rows', return_value=CURRICULUM_HOLIDAY_ROWS)
     def test_exact_match_is_in_sync(self, _holidays):
         module = self._module('MOD-SYNC-1', sessions_number=2)  # Mondays 07, 14 Sept
         verdict = views.teams_calendar_sync_verdict(
@@ -2047,7 +2048,7 @@ class TeamsCalendarSyncVerdictTests(CurriculumTeamsRequestTestCase):
         self.assertEqual(verdict['syncState'], 'in-sync')
         self.assertEqual(verdict['differingOccurrences'], 0)
 
-    @patch('curriculum_api.views.get_holiday_rows', return_value=CURRICULUM_HOLIDAY_ROWS)
+    @patch('curriculum_api.catalogue.infrastructure.cohort_calendar_composition.get_holiday_rows', return_value=CURRICULUM_HOLIDAY_ROWS)
     def test_extra_teams_weekday_is_out_of_sync(self, _holidays):
         # Plan is Monday only; Teams also holds a Thursday nobody authored.
         module = self._module('MOD-SYNC-2', sessions_number=1, session_week_day='Monday')
@@ -2058,7 +2059,7 @@ class TeamsCalendarSyncVerdictTests(CurriculumTeamsRequestTestCase):
         self.assertIn('extra_in_teams', verdict['syncReasons'])
         self.assertEqual(verdict['differingOccurrences'], 1)
 
-    @patch('curriculum_api.views.get_holiday_rows', return_value=CURRICULUM_HOLIDAY_ROWS)
+    @patch('curriculum_api.catalogue.infrastructure.cohort_calendar_composition.get_holiday_rows', return_value=CURRICULUM_HOLIDAY_ROWS)
     def test_missing_teams_weekday_is_out_of_sync(self, _holidays):
         # Plan is Monday + Thursday; Teams only ever got the Monday.
         module = self._module('MOD-SYNC-3', sessions_number=2, session_week_day='Monday,Thursday')
@@ -2069,7 +2070,7 @@ class TeamsCalendarSyncVerdictTests(CurriculumTeamsRequestTestCase):
         self.assertIn('missing_from_teams', verdict['syncReasons'])
         self.assertEqual(verdict['differingOccurrences'], 1)
 
-    @patch('curriculum_api.views.get_holiday_rows', return_value=CURRICULUM_HOLIDAY_ROWS)
+    @patch('curriculum_api.catalogue.infrastructure.cohort_calendar_composition.get_holiday_rows', return_value=CURRICULUM_HOLIDAY_ROWS)
     def test_reordered_dates_are_still_in_sync(self, _holidays):
         module = self._module('MOD-SYNC-4', sessions_number=2)  # Mondays 07, 14 Sept
         verdict = views.teams_calendar_sync_verdict(
@@ -2077,7 +2078,7 @@ class TeamsCalendarSyncVerdictTests(CurriculumTeamsRequestTestCase):
         )
         self.assertEqual(verdict['syncState'], 'in-sync')
 
-    @patch('curriculum_api.views.get_holiday_rows', return_value=CURRICULUM_HOLIDAY_ROWS)
+    @patch('curriculum_api.catalogue.infrastructure.cohort_calendar_composition.get_holiday_rows', return_value=CURRICULUM_HOLIDAY_ROWS)
     def test_holiday_keeps_authored_date_and_matching_teams_is_in_sync(self, _holidays):
         # Case A: a holiday annotates the authored date without moving it.
         self._cohort('COHORT-SYNC-5', holiday_ids=['1080'])
@@ -2100,7 +2101,7 @@ class TeamsCalendarSyncVerdictTests(CurriculumTeamsRequestTestCase):
         self.assertFalse(any(session.get('rescheduled') for session in plan['sessions']))
         self.assertFalse(views.session_overrides(module))
 
-    @patch('curriculum_api.views.get_holiday_rows', return_value=CURRICULUM_HOLIDAY_ROWS)
+    @patch('curriculum_api.catalogue.infrastructure.cohort_calendar_composition.get_holiday_rows', return_value=CURRICULUM_HOLIDAY_ROWS)
     def test_explicit_session_move_requires_teams_to_match_effective_date(self, _holidays):
         self._cohort('COHORT-SYNC-6', holiday_ids=['1080'])
         module = self._module(
@@ -2141,7 +2142,7 @@ class TeamsCalendarSyncVerdictTests(CurriculumTeamsRequestTestCase):
         self.assertEqual(verdict['missingFromTeams'], ['2027-01-04T09:00:00Z'])
         self.assertEqual(verdict['extraInTeams'], ['2026-12-21T09:00:00Z'])
 
-    @patch('curriculum_api.views.get_holiday_rows', return_value=CURRICULUM_HOLIDAY_ROWS)
+    @patch('curriculum_api.catalogue.infrastructure.cohort_calendar_composition.get_holiday_rows', return_value=CURRICULUM_HOLIDAY_ROWS)
     def test_changed_start_date_is_out_of_sync(self, _holidays):
         # Teams holds the dates from the module's old start date; the module
         # was since moved a week later.
@@ -2153,7 +2154,7 @@ class TeamsCalendarSyncVerdictTests(CurriculumTeamsRequestTestCase):
         self.assertIn('extra_in_teams', verdict['syncReasons'])
         self.assertIn('missing_from_teams', verdict['syncReasons'])
 
-    @patch('curriculum_api.views.get_holiday_rows', return_value=CURRICULUM_HOLIDAY_ROWS)
+    @patch('curriculum_api.catalogue.infrastructure.cohort_calendar_composition.get_holiday_rows', return_value=CURRICULUM_HOLIDAY_ROWS)
     def test_cohorts_are_read_once_for_every_module_that_shares_one(self, _holidays):
         # Three modules, one cohort: the holiday selection is the same for all
         # three, so the grouped comparison must read the cohort table once, not
@@ -2177,8 +2178,8 @@ class TeamsCalendarSyncVerdictTests(CurriculumTeamsRequestTestCase):
                 cohort_reads.append((args, kwargs))
             return original_fetch_all(table, *args, **kwargs)
 
-        with patch('curriculum_api.views.authoring_fetch_all', side_effect=counting_fetch_all), \
-             patch.object(views, 'teams_calendar_sync_verdict', wraps=views.teams_calendar_sync_verdict) as compare:
+        with composition_fixture(views, 'authoring_fetch_all', side_effect=counting_fetch_all), \
+             composition_fixture(views, 'teams_calendar_sync_verdict', wraps=views.teams_calendar_sync_verdict) as compare:
             verdicts = views.teams_calendar_sync_verdicts(
                 ['MOD-SYNC-8A', 'MOD-SYNC-8B', 'MOD-SYNC-8C'], occurrences_by_module,
             )
@@ -2221,7 +2222,7 @@ class TeamsCalendarSyncVerdictTests(CurriculumTeamsRequestTestCase):
         nothing_tracked = views.teams_calendar_sync_verdict(module, [])
         self.assertEqual(nothing_tracked['syncState'], 'unverified')
 
-    @patch('curriculum_api.views.get_holiday_rows', return_value=CURRICULUM_HOLIDAY_ROWS)
+    @patch('curriculum_api.catalogue.infrastructure.cohort_calendar_composition.get_holiday_rows', return_value=CURRICULUM_HOLIDAY_ROWS)
     def test_summary_endpoint_reports_a_correctly_synced_module_as_in_sync(self, _holidays):
         module = self._module('MOD-SYNC-10', sessions_number=2)
         views.authoring_upsert(views.LIVE_SESSIONS_TABLE, ['id'], {
@@ -3531,7 +3532,7 @@ class CurriculumCacheTests(SimpleTestCase):
             views.cached_curriculum_value('k', boom)
         # A failure must not be memoised, otherwise one transient DB error would
         # serve an error (or a hole) for the whole TTL.
-        self.assertNotIn('k', views._CURRICULUM_CACHE)
+        self.assertNotIn('k', views.cache_state._CURRICULUM_CACHE)
         self.assertEqual(views.cached_curriculum_value('k', lambda: 'recovered'), 'recovered')
 
     def test_slow_build_does_not_block_other_keys(self):
@@ -3578,7 +3579,7 @@ class CurriculumCacheTests(SimpleTestCase):
             release.set()
             builder.join(5)
 
-        self.assertNotIn('race', views._CURRICULUM_CACHE)
+        self.assertNotIn('race', views.cache_state._CURRICULUM_CACHE)
         self.assertEqual(views.cached_curriculum_value('race', lambda: 'post-write rows'), 'post-write rows')
 
     def test_invalidation_is_global_so_every_write_clears_every_key(self):
@@ -3594,11 +3595,11 @@ class CurriculumCacheTests(SimpleTestCase):
             views.structure_payloads_cache_key(['MOD-A'], include_staff=False),
             lambda: 'pre-write',
         )
-        self.assertNotEqual(views._CURRICULUM_CACHE, {})
+        self.assertNotEqual(views.cache_state._CURRICULUM_CACHE, {})
 
         views.invalidate_curriculum_cache()
 
-        self.assertEqual(views._CURRICULUM_CACHE, {})
+        self.assertEqual(views.cache_state._CURRICULUM_CACHE, {})
 
     def test_invalidation_forgets_missing_tables_but_keeps_known_ones(self):
         """A curriculum write is not DDL.
@@ -3627,11 +3628,11 @@ class CurriculumPayloadPerformanceTests(SimpleTestCase):
             'coaches': [],
             'tutor_modules': [],
         }
-        with patch.object(views, 'build_sessions', side_effect=AssertionError('must stay lazy')), \
-             patch.object(views, 'build_sessions_from_authoring_modules', side_effect=AssertionError('must stay lazy')), \
-             patch.object(views, 'build_programmes', return_value=[]), \
-             patch.object(views, 'build_cohorts_and_groups', return_value=([], [])), \
-             patch.object(views, 'build_ksb_data', return_value=([], [])):
+        with composition_fixture(views, 'build_sessions', side_effect=AssertionError('must stay lazy')), \
+             composition_fixture(views, 'build_sessions_from_authoring_modules', side_effect=AssertionError('must stay lazy')), \
+             composition_fixture(views, 'build_programmes', return_value=[]), \
+             composition_fixture(views, 'build_cohorts_and_groups', return_value=([], [])), \
+             composition_fixture(views, 'build_ksb_data', return_value=([], [])):
             payload = views.build_curriculum_payload_from_rows(rows, compact=True)
         self.assertEqual(payload['sessions'], [])
 
@@ -3698,11 +3699,11 @@ class CurriculumPayloadPerformanceTests(SimpleTestCase):
             {'id': 'MOD-ARCHIVED', 'moduleCatalogueId': 'MOD-ARCHIVED', 'catalogueId': 'MOD-ARCHIVED'},
             {'id': 'MOD-LIVE', 'moduleCatalogueId': 'MOD-LIVE', 'catalogueId': 'MOD-LIVE'},
         ]
-        with patch.object(views, 'build_modules', return_value=delivery_rows), \
-             patch.object(views, 'build_programmes', return_value=[]), \
-             patch.object(views, 'build_cohorts_and_groups', return_value=([], [])), \
-             patch.object(views, 'build_ksb_data', return_value=([], [])), \
-             patch.object(views, 'attach_module_assignment_counts'):
+        with composition_fixture(views, 'build_modules', return_value=delivery_rows), \
+             composition_fixture(views, 'build_programmes', return_value=[]), \
+             composition_fixture(views, 'build_cohorts_and_groups', return_value=([], [])), \
+             composition_fixture(views, 'build_ksb_data', return_value=([], [])), \
+             composition_fixture(views, 'attach_module_assignment_counts'):
             payload = views.build_curriculum_payload_from_rows(rows, compact=True)
 
         self.assertEqual(
@@ -3830,10 +3831,10 @@ class CurriculumPayloadPerformanceTests(SimpleTestCase):
         scopes = []
 
         def probe(identifier, visibility):
-            scopes.append(getattr(views._CURRICULUM_READ_SCOPE, 'memo', None) is not None)
+            scopes.append(getattr(views.cache_state._CURRICULUM_READ_SCOPE, 'memo', None) is not None)
             return None
 
-        with patch.object(views, '_build_curriculum_programme_tree_detail_payload', probe):
+        with composition_fixture(views, '_build_curriculum_programme_tree_detail_payload', probe):
             views.build_curriculum_programme_tree_detail_payload('PROG-1', 'all')
 
         self.assertEqual(scopes, [True])
@@ -3918,14 +3919,14 @@ class ProgrammePermanentDeleteTests(SimpleTestCase):
         # The content check and the unhook read rows this SimpleTestCase has no
         # database for. They have DB-backed cover in tests_content_library; here
         # only the ordering of the deletes matters.
-        with patch.object(views, 'table_exists', lambda table: True), \
-                patch.object(views, 'delete_rows', record), \
-                patch.object(views, 'refuse_if_programme_owns_content', lambda plan: None), \
+        with composition_fixture(views, 'table_exists', lambda table: True), \
+                composition_fixture(views, 'delete_rows', record), \
+                composition_fixture(views, 'refuse_if_programme_owns_content', lambda plan: None), \
                 patch.object(
                     views, 'unhook_programme_reusables',
                     lambda plan, removed: unhooks.append(plan),
                 ), \
-                patch.object(views, 'invalidate_curriculum_cache', lambda: None):
+                composition_fixture(views, 'invalidate_curriculum_cache', lambda: None):
             removed = views.permanently_delete_programme_structure(plan)
         return deletes, unhooks, removed
 
@@ -3970,7 +3971,7 @@ class ProgrammePermanentDeleteTests(SimpleTestCase):
             'candidates': ['PROG-1'],
             'childIds': {'moduleIds': ['MOD-1'], 'weekIds': ['WEEK-1'], 'componentIds': ['COMP-1']},
         }
-        with patch.object(views, 'table_exists', lambda table: True), \
+        with composition_fixture(views, 'table_exists', lambda table: True), \
                 patch.object(
                     views, 'delete_rows',
                     lambda table, where_sql, params: order.append(('delete', table)) or [{'id': 'row'}],
@@ -3983,7 +3984,7 @@ class ProgrammePermanentDeleteTests(SimpleTestCase):
                     views, 'unhook_programme_reusables',
                     lambda plan, removed: order.append(('unhook', None)),
                 ), \
-                patch.object(views, 'invalidate_curriculum_cache', lambda: None):
+                composition_fixture(views, 'invalidate_curriculum_cache', lambda: None):
             views.permanently_delete_programme_structure(plan)
 
         self.assertEqual(order[:2], [('check', None), ('unhook', None)])
@@ -3998,17 +3999,17 @@ class ProgrammePermanentDeleteTests(SimpleTestCase):
         def refuse(plan):
             raise views.ProgrammeContentRetained(views.PROGRAMME_CONTENT_RETAINED_MESSAGE)
 
-        with patch.object(views, 'table_exists', lambda table: True), \
-                patch.object(views, 'delete_rows', lambda table, where_sql, params: deletes.append(table) or []), \
-                patch.object(views, 'refuse_if_programme_owns_content', refuse), \
-                patch.object(views, 'invalidate_curriculum_cache', lambda: None):
+        with composition_fixture(views, 'table_exists', lambda table: True), \
+                composition_fixture(views, 'delete_rows', lambda table, where_sql, params: deletes.append(table) or []), \
+                composition_fixture(views, 'refuse_if_programme_owns_content', refuse), \
+                composition_fixture(views, 'invalidate_curriculum_cache', lambda: None):
             with self.assertRaises(views.ProgrammeContentRetained):
                 views.permanently_delete_programme_structure(plan)
         self.assertEqual(deletes, [])
 
     def test_nothing_is_deleted_without_a_programme_id(self):
         deletes = []
-        with patch.object(views, 'table_exists', lambda table: True),              patch.object(views, 'delete_rows', lambda *args: deletes.append(args)):
+        with composition_fixture(views, 'table_exists', lambda table: True),              composition_fixture(views, 'delete_rows', lambda *args: deletes.append(args)):
             removed = views.permanently_delete_programme_structure({'candidates': [], 'childIds': {}})
         self.assertEqual(deletes, [])
         self.assertEqual(removed, {})
@@ -4083,7 +4084,7 @@ class KsbFrameworkLibraryVisibilityTests(SimpleTestCase):
             'coaches': [],
             'tutor_modules': [],
         }
-        with patch.object(views, 'build_programmes', return_value=programmes),              patch.object(views, 'build_modules', return_value=[]),              patch.object(views, 'build_cohorts_and_groups', return_value=([], [])):
+        with composition_fixture(views, 'build_programmes', return_value=programmes),              composition_fixture(views, 'build_modules', return_value=[]),              composition_fixture(views, 'build_cohorts_and_groups', return_value=([], [])):
             return views.build_curriculum_payload_from_rows(rows, compact=True)
 
     def test_a_framework_no_live_programme_points_at_is_still_listed(self):
@@ -4124,7 +4125,7 @@ class KsbFrameworkLibraryVisibilityTests(SimpleTestCase):
             'coaches': [],
             'tutor_modules': [],
         }
-        with patch.object(views, 'build_programmes', return_value=[]),              patch.object(views, 'build_modules', return_value=[]),              patch.object(views, 'build_cohorts_and_groups', return_value=([], [])):
+        with composition_fixture(views, 'build_programmes', return_value=[]),              composition_fixture(views, 'build_modules', return_value=[]),              composition_fixture(views, 'build_cohorts_and_groups', return_value=([], [])):
             payload = views.build_curriculum_payload_from_rows(rows, visibility='all', compact=True)
         self.assertEqual([item['name'] for item in payload['ksbFrameworks']], ['Retired standard'])
 

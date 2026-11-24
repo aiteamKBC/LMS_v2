@@ -1,3 +1,5 @@
+import { LoadingControl, LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
+import { AppIcon } from '@/components/feature/AppIcon';
 import { useEffect, useMemo, useState } from 'react';
 import { DndContext, KeyboardSensor, PointerSensor, closestCenter, useSensor, useSensors, type DragEndEvent } from '@dnd-kit/core';
 import { SortableContext, arrayMove, sortableKeyboardCoordinates, useSortable, verticalListSortingStrategy } from '@dnd-kit/sortable';
@@ -1385,10 +1387,7 @@ export function FreeCoursesWorkspace({ embedded = false, addRequest = 0, search 
                         {expandedWeekIds.has(template.id) && (
                           <div className="mt-3 rounded-lg border border-background-200 bg-white">
                             {openingWeekId === template.id && !weekDetails[template.id] ? (
-                              <div className="flex items-center gap-2 px-3 py-3 text-xs font-semibold text-foreground-500">
-                                <AppIcon name="ri-loader-4-line" className="animate-spin" size={14} />
-                                Loading components
-                              </div>
+                              <div className="flex items-center gap-2 px-3 py-3 text-xs font-semibold text-foreground-500"><LoadingSkeleton label="Loading components" variant="rows" /></div>
                             ) : (
                               <div className="divide-y divide-background-100">
                                 {(weekDetails[template.id]?.components || template.components || []).length ? (
@@ -1545,7 +1544,7 @@ export function FreeCoursesWorkspace({ embedded = false, addRequest = 0, search 
 
                   <label className="block">
                     <span className="mb-1.5 block text-xs font-bold uppercase tracking-wide text-foreground-500">Programme</span>
-                    <select
+                    {<LoadingControl loading={(convertProgrammesLoading)}><select
                       value={convertProgrammeId}
                       onChange={event => { setConvertProgrammeId(event.target.value); setConvertCohortId(''); setConvertGroupId(''); }}
                       disabled={converting || convertProgrammesLoading}
@@ -1555,13 +1554,13 @@ export function FreeCoursesWorkspace({ embedded = false, addRequest = 0, search 
                       {convertProgrammeOptions.map(programme => (
                         <option key={programme.sourceId || programme.id} value={programme.sourceId || programme.id}>{programme.name}</option>
                       ))}
-                    </select>
+                    </select></LoadingControl>}
                   </label>
 
                   <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                     <label className="block">
                       <span className="mb-1.5 block text-xs font-bold uppercase tracking-wide text-foreground-500">Cohort</span>
-                      <select
+                      {<LoadingControl loading={(convertDetailLoading)}><select
                         value={convertCohortId}
                         onChange={event => { setConvertCohortId(event.target.value); setConvertGroupId(''); }}
                         disabled={converting || !convertProgrammeId || convertDetailLoading}
@@ -1571,7 +1570,7 @@ export function FreeCoursesWorkspace({ embedded = false, addRequest = 0, search 
                         {convertCohorts.map(cohort => (
                           <option key={cohort.id} value={cohort.id}>{cohort.name}</option>
                         ))}
-                      </select>
+                      </select></LoadingControl>}
                     </label>
                     <label className="block">
                       <span className="mb-1.5 block text-xs font-bold uppercase tracking-wide text-foreground-500">Group</span>
@@ -1653,7 +1652,7 @@ export function FreeCoursesWorkspace({ embedded = false, addRequest = 0, search 
                 <div className="space-y-3 border-b border-background-200 px-5 py-3">
                   <label className="block">
                     <span className="mb-1.5 block text-xs font-bold uppercase tracking-wide text-foreground-500">Programme</span>
-                    <select
+                    {<LoadingControl loading={(convertProgrammesLoading)}><select
                       value={importProgrammeId}
                       onChange={event => { setImportProgrammeId(event.target.value); setImportCohortId(''); setImportGroupId(''); }}
                       disabled={convertProgrammesLoading}
@@ -1663,13 +1662,13 @@ export function FreeCoursesWorkspace({ embedded = false, addRequest = 0, search 
                       {convertProgrammeOptions.map(programme => (
                         <option key={programme.sourceId || programme.id} value={programme.sourceId || programme.id}>{programme.name}</option>
                       ))}
-                    </select>
+                    </select></LoadingControl>}
                   </label>
 
                   <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                     <label className="block">
                       <span className="mb-1.5 block text-xs font-bold uppercase tracking-wide text-foreground-500">Cohort</span>
-                      <select
+                      {<LoadingControl loading={(importLoading)}><select
                         value={importCohortId}
                         onChange={event => { setImportCohortId(event.target.value); setImportGroupId(''); }}
                         disabled={!importDetail || !importCohorts.length}
@@ -1679,7 +1678,7 @@ export function FreeCoursesWorkspace({ embedded = false, addRequest = 0, search 
                         {importCohorts.map(cohort => (
                           <option key={cohort.id} value={cohort.id}>{cohort.name}</option>
                         ))}
-                      </select>
+                      </select></LoadingControl>}
                     </label>
                     <label className="block">
                       <span className="mb-1.5 block text-xs font-bold uppercase tracking-wide text-foreground-500">Group</span>
@@ -1698,7 +1697,7 @@ export function FreeCoursesWorkspace({ embedded = false, addRequest = 0, search 
                   </div>
 
                   <div className="flex gap-2">
-                    <div className="flex h-10 min-w-0 flex-1 items-center gap-2 rounded-lg border border-background-300 px-3 focus-within:border-primary-400 focus-within:ring-2 focus-within:ring-primary-100">
+                    <div data-search-field className="flex h-10 min-w-0 flex-1 items-center gap-2 rounded-lg border border-background-300 px-3 focus-within:border-primary-400 focus-within:ring-2 focus-within:ring-primary-100">
                       <AppIcon name="ri-search-line" size={16} className="text-foreground-400" />
                       <input
                         type="text"
@@ -1765,7 +1764,7 @@ export function FreeCoursesWorkspace({ embedded = false, addRequest = 0, search 
                   {!importProgrammeId ? (
                     <p className="px-3 py-6 text-center text-sm text-foreground-500">Select a programme to see its modules.</p>
                   ) : importLoading ? (
-                    <p className="flex items-center gap-2 px-3 py-6 text-sm text-foreground-500"><AppIcon name="ri-loader-4-line" className="animate-spin" size={16} />Loading modules…</p>
+                    <p className="flex items-center gap-2 px-3 py-6 text-sm text-foreground-500"><LoadingSkeleton label="Loading modules…" variant="rows" /></p>
                   ) : importFiltered.length === 0 ? (
                     <p className="px-3 py-6 text-center text-sm text-foreground-500">{importOptions.length === 0 ? 'No modules are available to import here.' : 'No modules match your search.'}</p>
                   ) : (
@@ -1903,7 +1902,15 @@ export function FreeCoursesWorkspace({ embedded = false, addRequest = 0, search 
 }
 
 function groupSavedFreeCourses(modules: FreeProgrammeModule[], documents: Record<string, FreeCourseAuthoringDocument>): SavedFreeCourseCard[] {
-  const groups = new Map<string, SavedFreeCourseCard>();
+  // A saved course exists independently of its weeks. Seed from the canonical
+  // documents so an empty course remains visible and editable without fake rows.
+  const groups = new Map<string, SavedFreeCourseCard>(Object.values(documents).map(document => [document.course.courseId, {
+    key: document.course.courseId, courseId: document.course.courseId,
+    title: document.course.courseName, description: document.course.description,
+    coverImageUrl: document.course.coverImageUrl, isForSale: document.course.isForSale,
+    price: document.course.price ?? '', weeks: [], componentCount: 0, totalOtjh: 0,
+    revision: document.revision,
+  }]));
   modules.forEach(module => {
     const title = module.courseName || module.title || 'Untitled free course';
     const description = module.description || '';
@@ -1976,6 +1983,9 @@ function SavedFreeCourseCardView({ card, onEdit, onDelete, onConvert }: { card: 
       <div className="flex flex-1 flex-col p-5">
         <div className="min-h-[96px]">
           <h3 className="line-clamp-2 font-heading text-base font-bold leading-6 text-foreground-950">{card.title}</h3>
+          {card.isForSale && <p className="mt-1 text-xs font-semibold text-primary-700">
+            For sale · {new Intl.NumberFormat('en-GB', { style: 'currency', currency: 'GBP' }).format(Number(card.price))}
+          </p>}
           <p className="mt-1.5 line-clamp-2 text-xs leading-5 text-foreground-500">{card.description || 'No description added yet.'}</p>
         </div>
 

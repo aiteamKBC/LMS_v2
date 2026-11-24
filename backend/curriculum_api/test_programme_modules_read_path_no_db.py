@@ -1,4 +1,7 @@
 """The programme modules section's read path: shared forced builds, read-after-write, prefetch, warm."""
+from curriculum_api.catalogue.tests.parity.composition_test_support import composition_fixture
+from .catalogue.tests.parity.read_dependency_test_support import authoring_read_fixture
+from .catalogue.tests.parity.read_dependency_test_support import database_read_fixture
 from unittest.mock import MagicMock, patch
 
 from django.core.cache.backends.locmem import LocMemCache
@@ -11,11 +14,11 @@ class ForcedReadSharingTests(SimpleTestCase):
     def setUp(self):
         cache = LocMemCache('modules-read-path', {})
         cache.clear()
-        for target, value in (('_CURRICULUM_CACHE', {}), ('cache', cache)):
-            patcher = patch.object(views, target, value)
+        for owner, target, value in ((views.cache_state, '_CURRICULUM_CACHE', {}), (views, 'cache', cache)):
+            patcher = composition_fixture(owner, target, value)
             patcher.start()
             self.addCleanup(patcher.stop)
-        patcher = patch.object(views, 'shared_curriculum_epoch', return_value=1)
+        patcher = composition_fixture(views, 'shared_curriculum_epoch', return_value=1)
         patcher.start()
         self.addCleanup(patcher.stop)
 
@@ -35,19 +38,19 @@ class ForcedReadSharingTests(SimpleTestCase):
 
     def test_a_request_that_has_written_never_shares(self):
         views.cached_curriculum_value('k', lambda: 'old')
-        entry = views._CURRICULUM_CACHE['k']
+        entry = views.cache_state._CURRICULUM_CACHE['k']
         entry['build_started'] = float('inf')  # as if built after this call began
-        with patch.object(views._CURRICULUM_EPOCH_BUMP, 'pending', True, create=True):
+        with patch.object(views.cache_state._CURRICULUM_EPOCH_BUMP, 'pending', True, create=True):
             self.assertEqual(views.cached_curriculum_value('k', lambda: 'mine', force=True), 'mine')
 
 
 class ReadAfterWriteTests(SimpleTestCase):
     def call(self, **headers):
         request = RequestFactory().get('/curriculum/programmes/P1/detail/modules/?visibility=all&view=workspace', **headers)
-        with patch.object(views, 'repair_curriculum_parent_links'), \
-                patch.object(views, 'refresh_curriculum_generations') as refresh, \
-                patch.object(views, 'cached_programme_detail_section', return_value=views.encode_json_entry({'flat': {}})) as section, \
-                patch.object(views, 'note_programme_section_read'):
+        with composition_fixture(views, 'repair_curriculum_parent_links'), \
+                composition_fixture(views, 'refresh_curriculum_generations') as refresh, \
+                composition_fixture(views, 'cached_programme_detail_section', return_value=views.encode_json_entry({'flat': {}})) as section, \
+                composition_fixture(views, 'note_programme_section_read'):
             views.curriculum_programme_detail_section(request, 'P1', 'modules')
         return refresh, section
 
@@ -65,20 +68,18 @@ class ReadAfterWriteTests(SimpleTestCase):
         self.assertFalse(section.call_args.kwargs['force'])
 
     def test_epoch_noted_by_the_scope_poll_only_moves_forward(self):
-        with patch.dict(views._SHARED_EPOCH_STATE, {'value': 5, 'checked_at': 0.0}):
+        with patch.dict(views.cache_state._SHARED_EPOCH_STATE, {'value': 5, 'checked_at': 0.0}):
             views.note_read_shared_curriculum_epoch(4)
-            self.assertEqual(views._SHARED_EPOCH_STATE['value'], 5)
-            self.assertEqual(views._SHARED_EPOCH_STATE['checked_at'], 0.0)
+            self.assertEqual(views.cache_state._SHARED_EPOCH_STATE['value'], 5)
+            self.assertEqual(views.cache_state._SHARED_EPOCH_STATE['checked_at'], 0.0)
             views.note_read_shared_curriculum_epoch(7)
-            self.assertEqual(views._SHARED_EPOCH_STATE['value'], 7)
-            self.assertGreater(views._SHARED_EPOCH_STATE['checked_at'], 0.0)
+            self.assertEqual(views.cache_state._SHARED_EPOCH_STATE['value'], 7)
+            self.assertGreater(views.cache_state._SHARED_EPOCH_STATE['checked_at'], 0.0)
 
 
 class PrefetchTests(SimpleTestCase):
     def setUp(self):
-        patcher = patch.object(views, 'CURRICULUM_BATCHED_READS', True)
-        patcher.start()
-        self.addCleanup(patcher.stop)
+        self.enterContext(authoring_read_fixture('CURRICULUM_BATCHED_READS', True))
 
     def fake_connection(self, rows_by_sql, *, in_atomic_block=False, fail=False):
         sent = []
@@ -115,7 +116,7 @@ class PrefetchTests(SimpleTestCase):
     def test_results_land_under_the_keys_the_real_calls_use(self):
         rows = {}
         connection, sent = self.fake_connection(rows)
-        with patch.object(views, 'connection', connection), views.curriculum_read_scope():
+        with database_read_fixture('connection', connection), views.curriculum_read_scope():
             rows[views.authoring_select_sql('modules', 'module_catalogue_id in (%s)', ensure_tables=False)] = [('M1',)]
             rows[views.authoring_select_sql('weeks', 'module_catalogue_id in (%s)', 'display_order, id', ensure_tables=False)] = [('W1',)]
             views.prefetch_authoring_reads([
@@ -132,24 +133,24 @@ class PrefetchTests(SimpleTestCase):
 
     def test_a_failed_batch_leaves_every_read_to_its_call(self):
         connection, sent = self.fake_connection({}, fail=True)
-        with patch.object(views, 'connection', connection), views.curriculum_read_scope():
+        with database_read_fixture('connection', connection), views.curriculum_read_scope():
             views.prefetch_authoring_reads([(('modules',), {'ensure_tables': False}), (('weeks',), {'ensure_tables': False})])
             self.assertEqual(len(sent), 1)
-            self.assertEqual(views._CURRICULUM_READ_SCOPE.memo, {})
+            self.assertEqual(views.cache_state._CURRICULUM_READ_SCOPE.memo, {})
 
     def test_nothing_is_sent_inside_a_transaction_or_outside_a_read_scope(self):
         calls = [(('modules',), {'ensure_tables': False}), (('weeks',), {'ensure_tables': False})]
         connection, sent = self.fake_connection({}, in_atomic_block=True)
-        with patch.object(views, 'connection', connection), views.curriculum_read_scope():
+        with database_read_fixture('connection', connection), views.curriculum_read_scope():
             views.prefetch_authoring_reads(calls)
         connection, sent_outside = self.fake_connection({})
-        with patch.object(views, 'connection', connection):
+        with database_read_fixture('connection', connection):
             views.prefetch_authoring_reads(calls)
         self.assertEqual(sent + sent_outside, [])
 
     def test_nothing_is_sent_while_switched_off(self):
         connection, sent = self.fake_connection({})
-        with patch.object(views, 'CURRICULUM_BATCHED_READS', False),                 patch.object(views, 'connection', connection), views.curriculum_read_scope():
+        with authoring_read_fixture('CURRICULUM_BATCHED_READS', False),                 database_read_fixture('connection', connection), views.curriculum_read_scope():
             views.prefetch_authoring_reads([(('modules',), {'ensure_tables': False}), (('weeks',), {'ensure_tables': False})])
         self.assertEqual(sent, [])
 
@@ -164,7 +165,7 @@ class PrefetchMatchesTheReadsTests(SimpleTestCase):
         real = views.authoring_fetch_all
         made, prefetched = [], []
         recorder = MagicMock(side_effect=lambda *args, **kwargs: made.append((args, kwargs)) or [])
-        with patch.object(views, 'authoring_fetch_all', recorder),                 patch.object(views, 'prefetch_authoring_reads', side_effect=prefetched.extend):
+        with authoring_read_fixture('authoring_fetch_all', recorder),                 authoring_read_fixture('prefetch_authoring_reads', side_effect=prefetched.extend):
             recorder.memo_key = real.memo_key
             views.authoring_modules_as_training_rows()
         self.assertEqual(len(made), 3)
@@ -172,15 +173,15 @@ class PrefetchMatchesTheReadsTests(SimpleTestCase):
 
     def test_rows_already_supplied_are_not_prefetched(self):
         prefetched = []
-        with patch.object(views, 'authoring_fetch_all', return_value=[]),                 patch.object(views, 'prefetch_authoring_reads', side_effect=prefetched.extend):
+        with authoring_read_fixture('authoring_fetch_all', return_value=[]),                 authoring_read_fixture('prefetch_authoring_reads', side_effect=prefetched.extend):
             views.authoring_modules_as_training_rows(module_rows=[], cohort_rows=[])
         self.assertEqual([args[0] for args, _ in prefetched], [views.GROUPS_TABLE])
 
 
 class WarmTargetTests(SimpleTestCase):
     def test_only_the_most_recent_sections_are_warmed(self):
-        with patch.object(views, '_PROGRAMME_SECTION_WARM_TARGETS', views.OrderedDict()), \
-                patch.object(views, 'cached_programme_detail_section') as section:
+        with composition_fixture(views, '_PROGRAMME_SECTION_WARM_TARGETS', views.OrderedDict()), \
+                composition_fixture(views, 'cached_programme_detail_section') as section:
             for identifier in ('P1', 'P2', 'P3', 'P4', 'P2'):
                 views.note_programme_section_read(identifier, 'all', True)
             views.warm_programme_detail_sections()

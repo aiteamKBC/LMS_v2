@@ -7,8 +7,8 @@ from learner_api.models import LearnerProfile
 
 class Command(BaseCommand):
     help = (
-        'Find multi-email LMS identities and consolidate their identities, '
-        'course memberships, and completion-only activity lineage into Learner SSOT.'
+        'Verify multi-email LMS identities against canonical course memberships '
+        'and reconcile completion-only activity lineage into Learner SSOT.'
     )
 
     def add_arguments(self, parser):

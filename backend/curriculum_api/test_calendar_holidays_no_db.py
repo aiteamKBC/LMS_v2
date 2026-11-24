@@ -8,6 +8,7 @@ from unittest import mock
 from django.test import SimpleTestCase
 
 from curriculum_api import calendar_holidays as ch
+from curriculum_api.catalogue.infrastructure import placement_reads
 
 
 class Cursor:
@@ -97,7 +98,7 @@ class CohortChoiceTests(SimpleTestCase):
         cursor = Cursor()
         rows = [{'cohort_id': 'C-1'}, {'cohort_id': 'C-2'}]
         found = {'cohort_holidays': {'C-1': {'selected': ['1113'], 'excluded': ['1101']}}}
-        with patched(cursor), mock.patch.object(ch, 'in_use', return_value=True),                 mock.patch.object(curriculum_names, 'lookups', return_value=found):
+        with patched(cursor), mock.patch.object(placement_reads, 'calendar_in_use', return_value=True),                 mock.patch.object(placement_reads, 'lookups', return_value=found):
             ch.attach_cohort_choices(rows)
         self.assertEqual((rows[0]['holiday_ids'], rows[0]['excluded_holiday_ids']), (['1113'], ['1101']))
         self.assertEqual((rows[1]['holiday_ids'], rows[1]['excluded_holiday_ids']), ([], []))
@@ -106,7 +107,7 @@ class CohortChoiceTests(SimpleTestCase):
     def test_off_the_calendar_table_nothing_is_read(self):
         cursor = Cursor()
         rows = [{'cohort_id': 'C-1'}]
-        with patched(cursor), mock.patch.object(ch, 'in_use', return_value=False):
+        with patched(cursor), mock.patch.object(placement_reads, 'calendar_in_use', return_value=False):
             ch.attach_cohort_choices(rows)
         self.assertNotIn('holiday_ids', rows[0])
         self.assertEqual(cursor.statements, [])

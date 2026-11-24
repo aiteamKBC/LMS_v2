@@ -1,0 +1,211 @@
+{
+  "first_clean_payload_value": {
+    "source": "def first_clean_payload_value(payload, *keys):\n    for key in keys:\n        value = clean_str(payload.get(key))\n        if value:\n            return value\n    return ''",
+    "owner": "curriculum_api.catalogue.domain.attachment_content",
+    "dependencies": [
+      "clean_str"
+    ]
+  },
+  "identity_values_match_context": {
+    "source": "def identity_values_match_context(left_values, context_values):\n    left = {normalise(value) for value in left_values if normalise(value)}\n    context = {normalise(value) for value in context_values if normalise(value)}\n    if context and not left:\n        return False\n    if left and context:\n        return bool(left & context)\n    return True",
+    "owner": "curriculum_api.catalogue.domain.attachment_content",
+    "dependencies": [
+      "normalise"
+    ]
+  },
+  "identity_ids_conflict": {
+    "source": "def identity_ids_conflict(left_id, context_ids):\n    \"\"\"True when both sides name a canonical id and none of them agree.\n\n    ``identity_values_match_context`` pools ids and display names into one set,\n    so a shared name (two cohorts each with a group called \"G1-Wed\") satisfies\n    the match even when the ids point at different rows. Callers that hold a\n    canonical id on both sides use this to reject that cross-row collision\n    before it silently reuses another group's module.\n    \"\"\"\n    # normalise(None) returns the string 'none', which is truthy, so None must be\n    # discarded before normalising or a missing id becomes a bogus candidate that\n    # every real id \"conflicts\" with.\n    left = normalise(left_id) if left_id is not None else ''\n    if not left:\n        return False\n    candidates = {\n        normalise(value)\n        for value in context_ids\n        if value is not None and normalise(value)\n    }\n    if not candidates:\n        return False\n    return left not in candidates",
+    "owner": "curriculum_api.catalogue.domain.attachment_content",
+    "dependencies": [
+      "normalise"
+    ]
+  },
+  "attachment_week_count": {
+    "source": "def attachment_week_count(item, session_count, schedule):\n    \"\"\"The authored week count for an attachment, given its session count.\n\n    An explicit scalar `weeks` on the item wins. Otherwise the count is derived\n    back out of the sessions using the group's delivery days, so a Mon+Thu group\n    asked for 10 sessions is recorded as 5 authored weeks rather than 10.\n    \"\"\"\n    weeks_field = item.get('weeksNumber') if 'weeksNumber' in item else item.get('weeks')\n    explicit = 0 if isinstance(weeks_field, (list, tuple, dict)) else parse_int(weeks_field, 0)\n    if explicit > 0:\n        return explicit\n    authored = len(payload_week_list(item.get('weekStructure')) or payload_week_list(item.get('weeks')))\n    if authored:\n        return authored\n    sessions = max(0, parse_int(session_count, 0))\n    if not sessions:\n        return 0\n    return max(1, sessions // delivery_days_per_week({'session_week_day': schedule}))",
+    "owner": "curriculum_api.catalogue.domain.attachment_content",
+    "dependencies": [
+      "delivery_days_per_week",
+      "parse_int",
+      "payload_week_list"
+    ]
+  },
+  "payload_week_list": {
+    "source": "def payload_week_list(value):\n    \"\"\"Return value only when it is a usable list of authored weeks.\n\n    Attachment payloads overload `weeks`: the module catalogue shape carries an\n    integer session count, while authored payloads carry a list of week dicts.\n    Returning [] for anything that is not a list of dicts keeps an integer from\n    being treated as a week structure (which would silently drop every week).\n    \"\"\"\n    if not isinstance(value, list):\n        return []\n    return value if all(isinstance(item, dict) for item in value) else []",
+    "owner": "curriculum_api.catalogue.domain.attachment_content",
+    "dependencies": []
+  },
+  "empty_authoring_week": {
+    "source": "def empty_authoring_week(week_number):\n    \"\"\"An unauthored week shell, in the shape save_module_authoring_structure expects.\"\"\"\n    return {\n        'weekNumber': week_number,\n        'title': f'Week {week_number}',\n        'summary': '',\n        'learningOutcomes': [],\n        'components': [],\n        'ksbMappings': [],\n    }",
+    "owner": "curriculum_api.catalogue.domain.attachment_content",
+    "dependencies": []
+  },
+  "resize_authoring_week_structure": {
+    "source": "def resize_authoring_week_structure(weeks, target_count):\n    \"\"\"Grow or shrink an authored week list to a new count without touching what is built.\n\n    Growing appends empty weeks after the last one; shrinking drops from the\n    end -- the most recently added weeks -- so a person changing the weeks\n    count on a module that already has authored content never has an earlier,\n    already-built week rewritten or removed out from under them.\n    \"\"\"\n    weeks = list(weeks or [])\n    target = max(0, parse_int(target_count, len(weeks)))\n    if target == len(weeks):\n        return weeks\n    if target > len(weeks):\n        return weeks + [empty_authoring_week(index + 1) for index in range(len(weeks), target)]\n    return weeks[:target]",
+    "owner": "curriculum_api.catalogue.domain.attachment_content",
+    "dependencies": [
+      "empty_authoring_week",
+      "parse_int"
+    ]
+  },
+  "week_holds_authored_content": {
+    "source": "def week_holds_authored_content(week):\n    \"\"\"Whether a week holds anything somebody actually put there.\n\n    An untouched week shell -- the thing a week-count change creates -- is a\n    default title and nothing else. Everything past that is authored work.\n    \"\"\"\n    if not isinstance(week, dict):\n        return False\n    if week.get('components') or week.get('ksbMappings') or week.get('learningOutcomes'):\n        return True\n    if clean_str(week.get('summary')):\n        return True\n    title = clean_str(week.get('title'))\n    if not title:\n        return False\n    week_number = parse_int(week.get('weekNumber') or week.get('week_number'), 0)\n    return normalise(title) != normalise(f'Week {week_number}')",
+    "owner": "curriculum_api.catalogue.domain.attachment_content",
+    "dependencies": [
+      "clean_str",
+      "normalise",
+      "parse_int"
+    ]
+  },
+  "resize_authoring_week_structure_preserving_content": {
+    "source": "def resize_authoring_week_structure_preserving_content(weeks, target_count):\n    \"\"\"Resize a week list from a scalar count, but never delete authored weeks.\n\n    The module PATCH carries the week *count* and never the week *list* -- the\n    list belongs to the Module Builder. Shrinking straight to that number let a\n    single scalar delete whole weeks and every component in them while the\n    response still said ``updated: True``: the drawer seeds its Weeks box from\n    the module's stored count and falls back to 1 when the module has none, so\n    simply opening an imported module and pressing Save could cut it down to one\n    week. Trailing shells hold nothing and are safe to drop; a week with\n    authored content stops the shrink where it is, and the stored count is\n    re-derived from what survived so the number and the rows never disagree.\n    \"\"\"\n    weeks = list(weeks or [])\n    target = max(0, parse_int(target_count, len(weeks)))\n    if target >= len(weeks):\n        return resize_authoring_week_structure(weeks, target)\n    kept = list(weeks)\n    while len(kept) > target and not week_holds_authored_content(kept[-1]):\n        kept.pop()\n    return kept",
+    "owner": "curriculum_api.catalogue.domain.attachment_content",
+    "dependencies": [
+      "parse_int",
+      "resize_authoring_week_structure",
+      "week_holds_authored_content"
+    ]
+  },
+  "attachment_session_count": {
+    "source": "def attachment_session_count(item, weeks=None):\n    \"\"\"Resolve the session count for an attachment payload.\n\n    `weeks` may arrive as an integer count or as a list of authored weeks, so the\n    count is taken from sessionsNumber first, then an integer `weeks`, then the\n    length of the resolved week structure.\n    \"\"\"\n    item = item or {}\n    explicit = parse_int(item.get('sessionsNumber'), 0)\n    if explicit:\n        return explicit\n    weekly = module_weekly_schedule(item)\n    if weekly:\n        count = parse_int(item.get('weeks') or item.get('weeksNumber'), 0) or len(weeks or payload_week_list(item.get('weekStructure') or item.get('weeks')))\n        return max(1, count) * len(weekly)\n    raw_weeks = item.get('weeks')\n    if not isinstance(raw_weeks, (list, tuple, dict)):\n        counted = parse_int(raw_weeks, 0)\n        if counted:\n            return counted\n    return len(weeks or payload_week_list(raw_weeks))",
+    "owner": "curriculum_api.catalogue.domain.attachment_content",
+    "dependencies": [
+      "module_weekly_schedule",
+      "parse_int",
+      "payload_week_list"
+    ]
+  },
+  "module_structure_component_count": {
+    "source": "def module_structure_component_count(structure):\n    return sum(len(week.get('components') or []) for week in ((structure or {}).get('weekStructure') or []))",
+    "owner": "curriculum_api.catalogue.domain.attachment_content",
+    "dependencies": []
+  },
+  "module_cohort_date_error": {
+    "source": "def module_cohort_date_error(module_name, start_value, end_value, cohort):\n    \"\"\"Refuse a module whose dates fall outside its cohort's delivery window.\n\n    Three ways out of the window, one message each: starting before the allowed\n    soft-start month, starting after it has finished, and -- the case a\n    generated session plan reaches on its own -- running past the end. Returns\n    ``(message, field)`` or ``None``.\n    \"\"\"\n    cohort_start, cohort_end = cohort_delivery_window(cohort)\n    soft_start = module_soft_start_date(cohort_start) or cohort_start\n    module_start = parse_date(start_value)\n    module_end = parse_date(end_value)\n    label = f'Module \"{clean_str(module_name)}\"' if clean_str(module_name) else 'The module'\n\n    if module_start and soft_start and module_start < soft_start:\n        return (\n            f'{label} cannot start more than one month before the cohort start date ({format_date(cohort_start)}).',\n            'startDate',\n        )\n    if module_start and cohort_end and module_start > cohort_end:\n        return (\n            f'{label} cannot start after the cohort end date ({format_date(cohort_end)}).',\n            'startDate',\n        )\n    if module_end and cohort_end and module_end > cohort_end:\n        return (\n            f'{label} cannot finish after the cohort end date ({format_date(cohort_end)}). '\n            f'It currently finishes {format_date(module_end)} -- move the start date earlier '\n            f'or reduce the number of sessions.',\n            'endDate',\n        )\n    return None",
+    "owner": "curriculum_api.catalogue.domain.attachment_content",
+    "dependencies": [
+      "clean_str",
+      "cohort_delivery_window",
+      "format_date",
+      "module_soft_start_date",
+      "parse_date"
+    ]
+  },
+  "merge_partial_module_structure": {
+    "source": "def merge_partial_module_structure(stored, payload):\n    \"\"\"Rebuild the whole module a full save would have sent, from a partial one.\n\n    Module fields come from the payload alone -- as in a full save, where they\n    come from the client and nowhere else. Weeks and components the author\n    changed come from ``structureDelta``; everything else is the stored copy.\n    The delta carries the order of every week and component, so moves,\n    reorders and removals need no rows of their own.\n    \"\"\"\n    delta = payload.get('structureDelta')\n    if not isinstance(delta, dict):\n        raise ModuleAuthoringValidationError([{'path': 'structureDelta', 'message': 'A partial save needs its changes.'}])\n    stored_weeks = {clean_str(week.get('id')): week for week in (stored.get('weekStructure') or [])}\n    stored_components = {\n        clean_str(component.get('id')): component\n        for week in stored_weeks.values()\n        for component in (week.get('components') or [])\n    }\n    changed_weeks = delta.get('weeks') if isinstance(delta.get('weeks'), dict) else {}\n    changed_components = delta.get('components') if isinstance(delta.get('components'), dict) else {}\n    component_order = delta.get('componentOrder') if isinstance(delta.get('componentOrder'), dict) else {}\n    week_order = delta.get('weekOrder') if isinstance(delta.get('weekOrder'), list) else []\n    weeks = []\n    for raw_week_id in week_order:\n        week_id = clean_str(raw_week_id)\n        source = changed_weeks.get(week_id) or stored_weeks.get(week_id)\n        if not isinstance(source, dict):\n            raise ModuleStructureDeltaConflict(f'Week {week_id} is not in the saved module.')\n        components = []\n        for raw_component_id in component_order.get(week_id) or []:\n            component_id = clean_str(raw_component_id)\n            component = changed_components.get(component_id) or stored_components.get(component_id)\n            if not isinstance(component, dict):\n                raise ModuleStructureDeltaConflict(f'Component {component_id} is not in the saved module.')\n            components.append(component)\n        weeks.append({**{key: value for key, value in source.items() if key != 'components'}, 'components': components})\n    module_fields = {\n        key: value for key, value in payload.items()\n        if key not in {'saveMode', 'structureDelta', 'expectedRevision', 'expected_revision', 'weekStructure', 'weeks'}\n    }\n    return {**module_fields, 'weekStructure': weeks}",
+    "owner": "curriculum_api.catalogue.domain.structure_changes",
+    "dependencies": [
+      "ModuleAuthoringValidationError",
+      "ModuleStructureDeltaConflict",
+      "clean_str"
+    ]
+  },
+  "component_assurance_flag": {
+    "source": "def component_assurance_flag(component, stored_row, camel_key, column, default):\n    \"\"\"One assurance flag, resolved without inventing an answer.\n\n    The three flags - reflection, tutor validation, coach validation - are\n    authored on one screen and written by two different save paths, and the\n    module-structure save rewrites every component in the module whether or not\n    the author touched it. So the only safe reading of a payload that does not\n    mention a flag is \"not supplied\", and the only safe response is to keep what\n    the row already held.\n\n    It used to read ``bool_payload(component.get('reflectionRequired'))``, which\n    cannot tell an explicit ``false`` from an absent key and answered ``False``\n    to both, while coach validation defaulted the other way and answered\n    ``True``. A component object that had lost the two keys therefore came back\n    from a save with reflection cleared and coach validation switched on -- and\n    because the two defaults point in opposite directions, the pair flipped\n    together in opposite directions, over and over, as the author moved between\n    a screen that carried the flags and one that did not. It is visible in the\n    revision log as ~1,100 paired flips across 600 components.\n\n    The schema default is used only when there is no stored row to preserve,\n    which is to say only when this component is being created.\n    \"\"\"\n    for key in (camel_key, column):\n        if key in component:\n            return bool_payload(component.get(key))\n    if stored_row is None:\n        return default\n    stored = stored_row.get(column)\n    # A row written before the column existed reports None, and that means\n    # \"nobody ever set this\", not \"off\" - the same reading component_coach_validation\n    # applies to a narrowed read.\n    return default if stored is None else bool_payload(stored)",
+    "owner": "curriculum_api.catalogue.domain.structure_changes",
+    "dependencies": [
+      "bool_payload"
+    ]
+  },
+  "find_existing_authoring_catalogue_id_for_payload": {
+    "source": "def find_existing_authoring_catalogue_id_for_payload(payload):\n    requested_catalogue_id = first_clean_payload_value(payload, 'catalogueId', 'moduleCatalogueId', 'module_catalogue_id')\n    if requested_catalogue_id:\n        resolved = resolve_authoring_catalogue_id(requested_catalogue_id)\n        if resolved:\n            return resolved\n\n    # Standalone courses have no placement to disambiguate a shared title.\n    # Only an explicit existing id can identify an existing free course.\n    if payload.get('isFreeCourse') is True:\n        return ''\n\n    try:\n        ensure_module_authoring_tables()\n        title = first_clean_payload_value(payload, 'title', 'name')\n        if not title:\n            return ''\n\n        programme_values = [\n            payload.get('programmeId'),\n            payload.get('programme_id'),\n            payload.get('programmeName'),\n            payload.get('programme'),\n        ]\n        cohort_values = [\n            payload.get('cohortId'),\n            payload.get('cohort_id'),\n            payload.get('cohortName'),\n            payload.get('cohort'),\n        ]\n        group_values = [\n            payload.get('groupId'),\n            payload.get('group_id'),\n            payload.get('groupName'),\n            payload.get('group'),\n        ]\n        component_counts = authoring_component_counts_by_catalogue()\n        rows = sorted(\n            authoring_fetch_all(AUTHORING_MODULES_TABLE, order_sql='updated_at desc, module_catalogue_id'),\n            key=lambda row: (component_counts.get(clean_str(row.get('module_catalogue_id')), 0), row.get('updated_at') or ''),\n            reverse=True,\n        )\n        for row in rows:\n            if normalise(row.get('title')) != normalise(title):\n                continue\n            # A standalone course and an unplaced module may share a title.\n            # Creation must never adopt the other kind's content or identity.\n            if (row.get('source_type') == 'free_course') != (payload.get('isFreeCourse') is True):\n                continue\n            # An archived module is not \"the same module\" a create is asking\n            # for. Adopting it handed a fresh copy the archived row's id, the\n            # next save cleared the archive on the module row alone, and the\n            # weeks archived with it stayed stamped with that id -- so the\n            # module then ran with two sets of weeks.\n            if module_withdrawn_on_its_own(row):\n                continue\n            if not identity_values_match_context([row.get('programme_id'), row.get('programme_name')], programme_values):\n                continue\n            if not identity_values_match_context([row.get('cohort_id'), row.get('cohort_name')], cohort_values):\n                continue\n            if not identity_values_match_context([row.get('group_id'), row.get('group_name')], group_values):\n                continue\n            return clean_str(row.get('module_catalogue_id'))\n    except Exception:\n        logger.debug('Unable to find existing authoring module for payload.', exc_info=True)\n    return ''",
+    "owner": "curriculum_api.catalogue.application.attachment_preparation",
+    "dependencies": [
+      "AUTHORING_MODULES_TABLE",
+      "authoring_component_counts_by_catalogue",
+      "authoring_fetch_all",
+      "clean_str",
+      "ensure_module_authoring_tables",
+      "first_clean_payload_value",
+      "identity_values_match_context",
+      "logger",
+      "module_withdrawn_on_its_own",
+      "normalise",
+      "resolve_authoring_catalogue_id"
+    ]
+  },
+  "contentful_catalogue_id_for_attachment": {
+    "source": "def contentful_catalogue_id_for_attachment(item, group, cohort, module_name, current_catalogue_id=''):\n    title_key = normalise(module_name)\n    candidate_id = ''\n    try:\n        component_counts = authoring_component_counts_by_catalogue()\n        programme_values = [\n            item.get('programmeId'),\n            item.get('programme_id'),\n            item.get('programme'),\n            group.get('programmeId'),\n            group.get('programme_id'),\n            group.get('programme'),\n            cohort.get('programmeId') if cohort else '',\n            cohort.get('programme_id') if cohort else '',\n            cohort.get('programme') if cohort else '',\n        ]\n        cohort_values = [\n            item.get('cohortId'),\n            item.get('cohort_id'),\n            item.get('cohort'),\n            group.get('cohortId'),\n            group.get('cohort_id'),\n            cohort.get('id') if cohort else '',\n            cohort.get('cohortId') if cohort else '',\n            cohort.get('name') if cohort else '',\n        ]\n        group_values = [\n            item.get('groupId'),\n            item.get('group_id'),\n            item.get('group'),\n            group.get('id'),\n            group.get('groupId'),\n            group.get('name'),\n        ]\n        # Canonical-id-only views of the context. A group name is not unique\n        # across cohorts (each cohort may hold its own \"G1-Wed\"), so matching on\n        # the pooled id+name sets alone would reuse a different cohort's module\n        # row and strand the target group with no modules, no tutor and no\n        # delivery window. When both sides carry an id, it has to agree.\n        cohort_context_ids = [item.get('cohortId'), item.get('cohort_id'), group.get('cohortId'), group.get('cohort_id')]\n        if cohort:\n            cohort_context_ids += [cohort.get('id'), cohort.get('cohortId')]\n        group_context_ids = [item.get('groupId'), item.get('group_id'), group.get('id'), group.get('groupId')]\n        candidates = [\n            row for row in authoring_fetch_all(AUTHORING_MODULES_TABLE)\n            if normalise(row.get('title')) == title_key\n            and identity_values_match_context([row.get('programme_id'), row.get('programme_name')], programme_values)\n            and identity_values_match_context([row.get('cohort_id'), row.get('cohort_name')], cohort_values)\n            and identity_values_match_context([row.get('group_id'), row.get('group_name')], group_values)\n            and not identity_ids_conflict(row.get('cohort_id'), cohort_context_ids)\n            and not identity_ids_conflict(row.get('group_id'), group_context_ids)\n        ]\n        candidates.sort(\n            key=lambda row: (component_counts.get(clean_str(row.get('module_catalogue_id')), 0), row.get('updated_at') or ''),\n            reverse=True,\n        )\n        if candidates:\n            candidate_id = clean_str(candidates[0].get('module_catalogue_id'))\n    except Exception:\n        logger.debug('Unable to resolve contentful catalogue attachment for %s.', module_name, exc_info=True)\n    if not candidate_id or candidate_id == current_catalogue_id:\n        return current_catalogue_id\n    if not current_catalogue_id:\n        return candidate_id\n    current_structure = get_authoring_structure_payload(current_catalogue_id) if authoring_module_exists(current_catalogue_id) else None\n    candidate_structure = get_authoring_structure_payload(candidate_id) if authoring_module_exists(candidate_id) else None\n    if module_structure_component_count(candidate_structure) > module_structure_component_count(current_structure):\n        return candidate_id\n    return current_catalogue_id",
+    "owner": "curriculum_api.catalogue.application.attachment_preparation",
+    "dependencies": [
+      "AUTHORING_MODULES_TABLE",
+      "authoring_component_counts_by_catalogue",
+      "authoring_fetch_all",
+      "authoring_module_exists",
+      "clean_str",
+      "get_authoring_structure_payload",
+      "identity_ids_conflict",
+      "identity_values_match_context",
+      "logger",
+      "module_structure_component_count",
+      "normalise"
+    ]
+  },
+  "module_attachment_authoring_payload": {
+    "source": "def module_attachment_authoring_payload(item, group, cohort, catalogue_id, module_name, session_count, start_date, end_date, current_structure=None, source_type='module_authoring', source_id=''):\n    current_structure = current_structure or {}\n    weekly = merged_weekly_schedule(item, current_structure)\n    week_starts_on = merged_week_starts_on(item, current_structure)\n    if item.get('scheduleMode', current_structure.get('scheduleMode')) == 'custom' and len(weekly) > 1 and (week_starts_on or not current_structure):\n        week_starts_on = first_weekly_session_day(start_date, weekly)\n    item = {**item, 'weekStartsOn': week_starts_on, 'startDate': start_date, 'endDate': end_date}\n    schedule = ', '.join(slot['day'] for slot in weekly) or clean_str(item.get('weekDays') or item.get('deliveryDays') or group.get('weekDays') or group.get('schedule'))\n    has_explicit_tutor = 'tutor' in item or 'tutorName' in item or 'tutor_name' in item\n    explicit_tutor = clean_str(item.get('tutor') or item.get('tutorName') or item.get('tutor_name'))\n    group_tutor = '' if is_blank_staff_assignment(group.get('tutor')) else clean_str(group.get('tutor'))\n    tutor = ''\n    if has_explicit_tutor:\n        tutor = '' if is_blank_staff_assignment(explicit_tutor) else explicit_tutor\n    else:\n        tutor = group_tutor\n    return {\n        **current_structure,\n        'catalogueId': catalogue_id,\n        'programmeId': clean_str(item.get('programmeId') or item.get('programme_id') or cohort.get('programmeId') or group.get('programmeId') or ''),\n        'programmeName': cohort.get('programme') or group.get('programme') or 'Unassigned programme',\n        'cohortId': cohort['id'],\n        'cohortName': cohort.get('name') or '',\n        'groupId': group['id'],\n        'groupName': group.get('name') or '',\n        'tutor': tutor,\n        'title': module_name,\n        'description': visible_notes(item.get('notes') or current_structure.get('description') or ''),\n        'color': item.get('color') or current_structure.get('color') or '',\n        'coverImage': item.get('coverImage') if 'coverImage' in item else current_structure.get('coverImage') or '',\n        'status': item.get('status') or current_structure.get('status') or 'draft',\n        'sessionsNumber': session_count,\n        # The authored week count travels apart from the calendar session count:\n        # a group delivering twice a week runs `session_count` sessions across\n        # half that many weeks.\n        'weeksNumber': attachment_week_count(item, session_count, schedule),\n        'startDate': start_date,\n        'endDate': end_date,\n        'weeklySchedule': merged_weekly_schedule(item, current_structure),\n        'scheduleMode': item.get('scheduleMode', current_structure.get('scheduleMode') or 'group'),\n        'weekStartsOn': merged_week_starts_on(item, current_structure),\n        'calendarPolicy': item['calendarPolicy'] if 'calendarPolicy' in item else current_structure.get('calendarPolicy'),\n        'weekDays': schedule,\n        'startTime': item.get('startTime') or group.get('startTime') or '',\n        'endTime': item.get('endTime') or group.get('endTime') or '',\n        # Prefer a structure the caller authored; fall back to what is stored, or\n        # pre-create the resolved week count so a metadata-only reattachment\n        # never blanks existing weeks/components and a fresh attachment holds\n        # the weeks it was asked for rather than none.\n        'weekStructure': attachment_week_structure(item, current_structure, session_count=session_count, schedule=schedule),\n        'moduleKsbMappings': item.get('moduleKsbMappings') or item.get('ksbMappings') or current_structure.get('moduleKsbMappings') or [],\n        'completionCriteria': current_structure.get('completionCriteria') or default_completion_payload(),\n        'advancedDetails': current_structure.get('advancedDetails') or {},\n        'background': current_structure.get('background') or '',\n        'epaRequirements': current_structure.get('epaRequirements') or [],\n        'qualificationOutcomes': current_structure.get('qualificationOutcomes') or [],\n        'sourceType': source_type,\n        'sourceId': clean_str(source_id or item.get('sourceId') or catalogue_id),\n        'ksbProfileSourceId': normalise_ksb_profile_source_value(item.get('ksbProfileSourceId') if 'ksbProfileSourceId' in item else item.get('ksb_profile_source_id') if 'ksb_profile_source_id' in item else current_structure.get('ksbProfileSourceId') or ''),\n    }",
+    "owner": "curriculum_api.catalogue.application.attachment_preparation",
+    "dependencies": [
+      "attachment_week_count",
+      "attachment_week_structure",
+      "clean_str",
+      "default_completion_payload",
+      "first_weekly_session_day",
+      "is_blank_staff_assignment",
+      "merged_week_starts_on",
+      "merged_weekly_schedule",
+      "normalise_ksb_profile_source_value",
+      "visible_notes"
+    ]
+  },
+  "attachment_week_structure": {
+    "source": "def attachment_week_structure(item, current_structure=None, week_count=None, session_count=0, schedule=''):\n    \"\"\"Pick the authored week structure for a module attachment.\n\n    Prefers an explicitly supplied structure, then the legacy `weeks` list form,\n    then whatever is already stored. Only once none of those exist does it\n    pre-create weeks (with dated live slots for Custom), to the resolved count: a module attached with\n    \"10 weeks\" has to actually hold 10 week rows, or a page that reads the\n    structure straight from storage (rather than going through a client-side\n    \"fill in a default structure\" fallback) sees none of them.\n    \"\"\"\n    for candidate in (\n        (item or {}).get('weekStructure'),\n        (item or {}).get('weeks'),\n        (current_structure or {}).get('weekStructure'),\n    ):\n        weeks = payload_week_list(candidate)\n        if weeks:\n            return weeks\n    target = week_count if week_count is not None else attachment_week_count(item, session_count, schedule)\n    weeks = [empty_authoring_week(index + 1) for index in range(max(0, target))]\n    weekly = module_weekly_schedule(item)\n    # A fresh custom delivery authors actual sessions inside each calendar week.\n    # Existing structures above, including reading weeks and bookings, stay intact.\n    if item.get('scheduleMode') == 'custom' and len(weekly) > 1:\n        row = {\n            'schedule_mode': 'custom',\n            'week_starts_on': module_week_starts_on(item)\n            or (first_weekly_session_day(item.get('startDate'), weekly) if not current_structure else None),\n            'end_date': item.get('endDate'),\n            'weekly_schedule': weekly,\n            'session_week_day': ', '.join(slot['day'] for slot in weekly),\n            'session_start_time': weekly[0]['startTime'],\n            'session_end_time': weekly[0]['endTime'],\n        }\n        plan = module_delivery_session_plan(row, 0, parse_date(item.get('startDate')), week_count=target)\n        for session in plan.get('sessions') or []:\n            week_index = parse_int(session.get('weekNumber'), 1) - 1\n            if not 0 <= week_index < len(weeks):\n                continue\n            weeks[week_index]['components'].append({\n                'type': 'live-session',\n                'title': f\"Live session {len(weeks[week_index]['components']) + 1}\",\n                'expectedOtjh': (session.get('durationMinutes') or 60) / 60,\n                'settings': {\n                    'sessionDate': session['date'],\n                    'sessionTime': session.get('startTime') or '',\n                    'durationMinutes': session.get('durationMinutes') or 60,\n                    'completionRule': 'Attend or watch recording',\n                },\n            })\n    return weeks",
+    "owner": "curriculum_api.catalogue.application.attachment_preparation",
+    "dependencies": [
+      "attachment_week_count",
+      "empty_authoring_week",
+      "first_weekly_session_day",
+      "module_delivery_session_plan",
+      "module_week_starts_on",
+      "module_weekly_schedule",
+      "parse_date",
+      "parse_int",
+      "payload_week_list"
+    ]
+  },
+  "build_free_course_week_structure": {
+    "source": "def build_free_course_week_structure(source_rows):\n    \"\"\"Map one free course's week-rows into a module ``weekStructure``.\n\n    One free week -> one module week, one free component -> one normal component.\n    ``settings`` is carried verbatim so a linked quiz / media / manualUnlock\n    survives; KSB mappings start empty and hours carry the free component's own\n    value -- the author adds the apprentice-specific KSBs/hours afterwards. No\n    free ids are carried, so fresh WEEK-/COMP- ids mint and the copy is fully\n    independent of the free-course rows.\n    \"\"\"\n    ordered = sorted(\n        source_rows,\n        key=lambda row: (parse_int(row.get('displayOrder'), 0), parse_int(row.get('weekNumber'), 0)),\n    )\n    week_structure = []\n    for index, week in enumerate(ordered):\n        components = []\n        for component in week.get('components') or []:\n            components.append({\n                'type': component.get('type'),\n                'title': component.get('title') or '',\n                'description': component.get('description') or '',\n                'expectedOtjh': component.get('expectedOtjh'),\n                'points': component.get('points'),\n                'reflectionRequired': component.get('reflectionRequired'),\n                'tutorValidationRequired': component.get('tutorValidationRequired'),\n                'ksbMappings': [],\n                'settings': component.get('settings') if isinstance(component.get('settings'), dict) else {},\n            })\n        week_structure.append({\n            'weekNumber': parse_int(week.get('weekNumber'), index + 1),\n            'title': clean_str(week.get('weekTitle')) or f'Week {index + 1}',\n            'summary': '',\n            'components': components,\n            'ksbMappings': [],\n        })\n    return week_structure",
+    "owner": "curriculum_api.catalogue.application.course_conversion",
+    "dependencies": [
+      "clean_str",
+      "parse_int"
+    ]
+  },
+  "build_module_free_course_weeks": {
+    "source": "def build_module_free_course_weeks(structure, course_id):\n    \"\"\"Inverse of build_free_course_week_structure: a module's authored\n    weekStructure -> free-course ``modules[]`` week entries, all sharing one\n    ``course_id`` so they group into a single free course. Component ``settings``\n    (linked quiz / media / manualUnlock) copy verbatim; KSB mappings and hours\n    are not carried (free courses have neither). No week/component ids are set,\n    so fresh FREEWEEK-/FREECOMP- ids mint on save.\n    \"\"\"\n    course_id = clean_str(course_id)\n    course_title = clean_str(structure.get('title')) or 'Untitled course'\n    description = clean_str(structure.get('description'))\n    cover = clean_str(structure.get('coverImage'))\n    weeks = []\n    for index, week in enumerate(structure.get('weekStructure') or []):\n        components = []\n        for component in week.get('components') or []:\n            components.append({\n                'type': component.get('type'),\n                'title': component.get('title') or '',\n                'description': component.get('description') or '',\n                'expectedOtjh': component.get('expectedOtjh'),\n                'points': component.get('points'),\n                'reflectionRequired': component.get('reflectionRequired'),\n                'workplaceEvidenceRequired': component.get('workplaceEvidenceRequired'),\n                'tutorValidationRequired': component.get('tutorValidationRequired'),\n                'settings': component.get('settings') if isinstance(component.get('settings'), dict) else {},\n            })\n        weeks.append({\n            'courseId': course_id,\n            'courseName': course_title,\n            'description': description,\n            'coverImageUrl': cover,\n            'weekNumber': parse_int(week.get('weekNumber'), index + 1),\n            'weekTitle': clean_str(week.get('title')) or f'Week {index + 1}',\n            'components': components,\n        })\n    return weeks",
+    "owner": "curriculum_api.catalogue.application.course_conversion",
+    "dependencies": [
+      "clean_str",
+      "parse_int"
+    ]
+  },
+  "_free_module_response_to_input": {
+    "source": "def _free_module_response_to_input(module):\n    \"\"\"Map one get_free_programme_modules_payload output row back to the\n    save-input shape, so existing free courses can be re-sent unchanged through\n    the full-replace save (mirrors the frontend savedModuleInput).\"\"\"\n    course_name = module.get('courseName') or module.get('title') or ''\n    return {\n        'id': module.get('id'),\n        'courseId': module.get('courseId'),\n        'weekId': module.get('weekId'),\n        'weekNumber': module.get('weekNumber'),\n        'weekTitle': module.get('weekTitle'),\n        'courseName': course_name,\n        'title': course_name,\n        'description': module.get('description') or '',\n        'coverImageUrl': module.get('coverImageUrl') or '',\n        'components': [\n            {\n                'id': component.get('id'),\n                'weekId': component.get('weekId'),\n                'displayOrder': component.get('displayOrder'),\n                'type': component.get('type'),\n                'title': component.get('title'),\n                'description': component.get('description'),\n                'expectedOtjh': component.get('expectedOtjh'),\n                'points': component.get('points'),\n                'reflectionRequired': component.get('reflectionRequired'),\n                'workplaceEvidenceRequired': component.get('workplaceEvidenceRequired'),\n                'tutorValidationRequired': component.get('tutorValidationRequired'),\n                'settings': component.get('settings') if isinstance(component.get('settings'), dict) else {},\n            }\n            for component in module.get('components') or []\n        ],\n    }",
+    "owner": "curriculum_api.catalogue.application.course_conversion",
+    "dependencies": []
+  },
+  "authoring_component_counts_by_catalogue": {
+    "source": "def authoring_component_counts_by_catalogue():\n    \"\"\"How many live components each module has, counted in the database.\n\n    This used to read every column of every component row - 39 MB and ~175 s\n    against the remote database - and then throw all of it away except the\n    module id. The predicate below is the SQL form of ``active_component_rows``:\n    not soft-deleted, not detached into the library, and not a retired type.\n    \"\"\"\n    counts = Counter()\n    try:\n        ensure_module_authoring_tables()\n        clauses = [f\"coalesce({quote_ident('module_catalogue_id')}, '') <> ''\"]\n        params = []\n        deleted = deleted_sql_condition(AUTHORING_COMPONENTS_TABLE)\n        if deleted != 'false':\n            clauses.append(f'not ({deleted})')\n        retired = sorted(RETIRED_COMPONENT_TYPES)\n        if retired:\n            placeholders = ', '.join(['%s'] * len(retired))\n            clauses.append(f'type not in ({placeholders})')\n            params.extend(retired)\n        rows = fetch_all(\n            f'select {quote_ident(\"module_catalogue_id\")} as catalogue_id, count(*) as total '\n            f'from {learning_read_table(AUTHORING_COMPONENTS_TABLE)} '\n            f'where {\" and \".join(clauses)} '\n            f'group by {quote_ident(\"module_catalogue_id\")}',\n            params,\n        )\n        for row in rows:\n            catalogue_id = clean_str(row.get('catalogue_id'))\n            if catalogue_id:\n                counts[catalogue_id] = parse_int(row.get('total'), 0)\n    except Exception:\n        logger.debug('Unable to count authoring components by module.', exc_info=True)\n    return counts",
+    "owner": "curriculum_api.catalogue.infrastructure.attachment_reads",
+    "dependencies": [
+      "AUTHORING_COMPONENTS_TABLE",
+      "RETIRED_COMPONENT_TYPES",
+      "clean_str",
+      "deleted_sql_condition",
+      "ensure_module_authoring_tables",
+      "fetch_all",
+      "learning_read_table",
+      "logger",
+      "parse_int",
+      "quote_ident"
+    ]
+  }
+}

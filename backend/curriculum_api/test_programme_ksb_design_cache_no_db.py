@@ -2,6 +2,7 @@
 
 Synthetic rows only; nothing here reaches a database.
 """
+from curriculum_api.catalogue.tests.parity.composition_test_support import composition_fixture
 from contextlib import ExitStack
 from unittest.mock import patch
 
@@ -14,9 +15,9 @@ from . import cache_scope, views
 class ProgrammeKsbDesignCacheTests(SimpleTestCase):
     def setUp(self):
         cache.clear()
-        views._CURRICULUM_CACHE.clear()
+        views.cache_state._CURRICULUM_CACHE.clear()
         self.addCleanup(cache.clear)
-        self.addCleanup(views._CURRICULUM_CACHE.clear)
+        self.addCleanup(views.cache_state._CURRICULUM_CACHE.clear)
         self.epochs = {'#global': 7, '#bumps': 2, '*': 1, 'P1': 1}
         self.modules = [{'module_catalogue_id': 'M1'}]
         self.mappings = [
@@ -30,18 +31,18 @@ class ProgrammeKsbDesignCacheTests(SimpleTestCase):
             self.scope_reads.append(args)
             return self.modules, [], [], self.mappings
 
-        self.scope = stack.enter_context(patch.object(views, 'authoring_scope_data', side_effect=scope))
+        self.scope = stack.enter_context(composition_fixture(views, 'authoring_scope_data', side_effect=scope))
         for name, value in (
             ('infer_source_from_scope', ('', '', '')),
             ('required_ksbs_for_resolved_source', []),
             ('assigned_learners_for_programme', [{'id': 1}]),
         ):
-            stack.enter_context(patch.object(views, name, return_value=value))
-        stack.enter_context(patch.object(views, 'mappings_with_inferred_sources', side_effect=lambda rows, modules: rows))
-        self.progress = stack.enter_context(patch.object(views, 'learner_progress_ksb_totals', return_value={1: {'K1': 10}}))
-        stack.enter_context(patch.object(views, 'shared_curriculum_epoch', return_value=7))
-        stack.enter_context(patch.object(cache_scope, 'scope_epochs', side_effect=lambda: dict(self.epochs)))
-        stack.enter_context(patch.object(cache_scope, 'programme_ids', return_value=frozenset({'P1'})))
+            stack.enter_context(composition_fixture(views, name, return_value=value))
+        stack.enter_context(composition_fixture(views, 'mappings_with_inferred_sources', side_effect=lambda rows, modules: rows))
+        self.progress = stack.enter_context(composition_fixture(views, 'learner_progress_ksb_totals', return_value={1: {'K1': 10}}))
+        stack.enter_context(composition_fixture(views, 'shared_curriculum_epoch', return_value=7))
+        stack.enter_context(composition_fixture(cache_scope, 'scope_epochs', side_effect=lambda: dict(self.epochs)))
+        stack.enter_context(composition_fixture(cache_scope, 'programme_ids', return_value=frozenset({'P1'})))
 
     def test_learner_progress_is_recomputed_while_the_design_is_read_once(self):
         first = views.programme_learner_ksb_progress('P1')
@@ -56,7 +57,7 @@ class ProgrammeKsbDesignCacheTests(SimpleTestCase):
         self.assertEqual(len(self.scope_reads), 2)
 
     def test_declared_ksb_counts_once_per_learner_and_code(self):
-        with patch.object(views, 'learner_declared_ksb_codes', return_value={1: {'K1', 'K2'}}):
+        with composition_fixture(views, 'learner_declared_ksb_codes', return_value={1: {'K1', 'K2'}}):
             result = views.programme_learner_ksb_progress('P1')
         self.assertEqual(result['learnerKsbAchievedCount'], 2)
         self.assertEqual(result['learnerKsbTargetCount'], 2)
@@ -94,7 +95,7 @@ class ProgrammeKsbDesignCacheTests(SimpleTestCase):
         self.assertEqual(views.programme_learner_ksb_progress('P1')['learnerKsbCodesTotal'], 2)
 
     def test_a_coverage_failure_keeps_its_own_message_and_is_not_cached(self):
-        with patch.object(views, 'build_coverage', side_effect=RuntimeError('bad coverage')), \
+        with composition_fixture(views, 'build_coverage', side_effect=RuntimeError('bad coverage')), \
                 self.assertLogs('curriculum_api.views', level='WARNING') as logs:
             self.assertEqual(views.programme_learner_ksb_progress('P1')['learnerKsbCodesTotal'], 0)
         self.assertTrue(any('Could not build coverage for programme KSB progress' in line for line in logs.output))
@@ -108,7 +109,7 @@ class ProgrammeKsbDesignCacheTests(SimpleTestCase):
                 **views.programme_learner_ksb_progress('P1'),
             }
 
-        with patch.object(views, 'build_programme_ksb_stats', side_effect=stats):
+        with composition_fixture(views, 'build_programme_ksb_stats', side_effect=stats):
             with patch.object(views.time, 'monotonic', return_value=100.0):
                 views.curriculum_programme_ksb_stats(RequestFactory().get('/ksb-stats/'), 'P1')
             self.assertEqual(len(self.scope_reads), 2)

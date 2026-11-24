@@ -1,4 +1,5 @@
 """Exercise the real rename endpoints with isolated storage and no network/DB."""
+from curriculum_api.catalogue.tests.parity.composition_test_support import composition_fixture
 import copy
 import json
 from contextlib import nullcontext
@@ -18,7 +19,7 @@ class EntityRenameTests(SimpleTestCase):
         self.stub('lock_record_row')
 
     def stub(self, name, **kwargs):
-        return self.enterContext(patch.object(views, name, **kwargs))
+        return self.enterContext(composition_fixture(views, name, **kwargs))
 
     def request(self, payload=None):
         return self.factory.patch('/synthetic/', json.dumps(payload or {'name': 'New name'}),

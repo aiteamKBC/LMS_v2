@@ -4,6 +4,7 @@
 both models read the cohort name through them, so a rename is visible to
 learner readers without any learner or enrolment row being written.
 """
+from curriculum_api.catalogue.tests.parity.composition_test_support import composition_fixture
 import json
 from datetime import date
 from unittest.mock import patch
@@ -72,7 +73,7 @@ class CohortRenameTests(TestCase):
     def test_failed_child_write_rolls_back_and_queues_no_refresh(self):
         with patch('learner_api.read_model.enqueue_learner_home_refresh') as refresh, \
                 self.assertRaises(RuntimeError), transaction.atomic():
-            with patch.object(views, 'update_authoring_rows', side_effect=RuntimeError('synthetic failure')):
+            with composition_fixture(views, 'update_authoring_rows', side_effect=RuntimeError('synthetic failure')):
                 propagate_cohort_name(self.cohort, 'New name')
         refresh.assert_not_called()
         self.assertEqual(views.fetch_cohort_row(self.cohort['cohort_id'])['cohort_name'], 'Old name')

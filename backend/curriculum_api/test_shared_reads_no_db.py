@@ -4,6 +4,9 @@ Each of these was a database round trip repeated on every cache rebuild of the
 list and programme-detail payloads. What is pinned here is both halves of each
 change: the repeat is gone, and the answer is what it was.
 """
+from curriculum_api.catalogue.application.read_errors import CatalogueReadUnavailable
+from curriculum_api.catalogue.tests.parity.composition_test_support import composition_fixture
+from curriculum_api.catalogue.tests.parity.read_dependency_test_support import database_read_fixture
 import json
 from unittest.mock import MagicMock, patch
 
@@ -35,21 +38,21 @@ class LearnerSchemaCacheTests(SimpleTestCase):
 
     def test_a_table_that_exists_is_asked_about_once(self):
         connection, cursor = fake_connection([[(1,)]])
-        with patch.object(views, 'connection', connection):
+        with database_read_fixture('connection', connection):
             self.assertTrue(views.learner_schema_table_exists('learners'))
             self.assertTrue(views.learner_schema_table_exists('learners'))
         self.assertEqual(cursor.execute.call_count, 1)
 
     def test_a_missing_table_is_asked_about_again(self):
         connection, cursor = fake_connection([[], [(1,)]])
-        with patch.object(views, 'connection', connection):
+        with database_read_fixture('connection', connection):
             self.assertFalse(views.learner_schema_table_exists('learners'))
             self.assertTrue(views.learner_schema_table_exists('learners'))
         self.assertEqual(cursor.execute.call_count, 2)
 
     def test_relation_probe_is_remembered_once_true_and_raises_like_the_inline_one(self):
         connection, cursor = fake_connection([[(None,)], [('Learner.learners',)]])
-        with patch.object(views, 'connection', connection):
+        with database_read_fixture('connection', connection):
             self.assertFalse(views.learner_relation_exists('learners'))
             self.assertTrue(views.learner_relation_exists('learners'))
             self.assertTrue(views.learner_relation_exists('learners'))
@@ -57,13 +60,13 @@ class LearnerSchemaCacheTests(SimpleTestCase):
         broken = MagicMock(vendor='postgresql')
         broken.cursor.side_effect = RuntimeError('connection lost')
         views.reset_learner_schema_cache()
-        with patch.object(views, 'connection', broken), self.assertRaises(RuntimeError):
+        with database_read_fixture('connection', broken), self.assertRaises(RuntimeError):
             views.learner_relation_exists('learners')
 
     def test_columns_are_remembered_for_a_while_and_an_empty_answer_never(self):
         connection, cursor = fake_connection([[], [('programme_id',), ('cohort_id',)], [('programme_id',), ('cohort_id',), ('group_id',)]])
         clock = [1000.0]
-        with patch.object(views, 'connection', connection), patch.object(views.time, 'monotonic', lambda: clock[0]):
+        with database_read_fixture('connection', connection), patch.object(views.time, 'monotonic', lambda: clock[0]):
             self.assertEqual(views.learner_schema_columns('learners'), set())
             self.assertEqual(views.learner_schema_columns('learners'), {'programme_id', 'cohort_id'})
             clock[0] += views.LEARNER_SCHEMA_COLUMNS_TTL_SECONDS - 1
@@ -76,7 +79,7 @@ class LearnerSchemaCacheTests(SimpleTestCase):
 
     def test_a_caller_cannot_change_the_cached_columns(self):
         connection, _cursor = fake_connection([[('programme_id',)]])
-        with patch.object(views, 'connection', connection):
+        with database_read_fixture('connection', connection):
             first = views.learner_schema_columns('learners')
             first.add('injected')
             self.assertEqual(views.learner_schema_columns('learners'), {'programme_id'})
@@ -85,9 +88,9 @@ class LearnerSchemaCacheTests(SimpleTestCase):
 class LearnerProgrammeCountTests(SimpleTestCase):
     def test_counts_are_grouped_by_the_database_into_the_same_buckets(self):
         connection, cursor = fake_connection([[('Data Analyst', 'PROG-1', 3), ('Data  analyst ', '', 2), ('Leadership', '', 4), ('', '', 9)]])
-        with patch.object(views, 'connection', connection), \
-                patch.object(views, 'learner_relation_exists', return_value=True), \
-                patch.object(views, 'learners_link_programme_by_id', return_value=True):
+        with database_read_fixture('connection', connection), \
+                composition_fixture(views, 'learner_relation_exists', return_value=True), \
+                composition_fixture(views, 'learners_link_programme_by_id', return_value=True):
             by_id, by_name = views.active_learner_programme_counts()
         self.assertEqual(by_id, {'PROG-1': 3})
         self.assertEqual(by_name, {views.normalise('Data  analyst '): 2, views.normalise('Leadership'): 4})
@@ -97,7 +100,7 @@ class LearnerProgrammeCountTests(SimpleTestCase):
 
     def test_no_learner_table_counts_nothing(self):
         connection, cursor = fake_connection([])
-        with patch.object(views, 'connection', connection), patch.object(views, 'learner_relation_exists', return_value=False):
+        with database_read_fixture('connection', connection), composition_fixture(views, 'learner_relation_exists', return_value=False):
             self.assertEqual(views.active_learner_programme_counts(), ({}, {}))
         cursor.execute.assert_not_called()
 
@@ -113,9 +116,9 @@ class HolidayReadScopeTests(SimpleTestCase):
 
     def test_one_read_per_scope_and_each_caller_gets_its_own_list(self):
         fetch = self.reads()
-        with patch.object(views, 'fetch_all', fetch), \
-                patch.object(views, 'table_exists', return_value=True), \
-                patch.object(views, 'authored_holiday_table_name', return_value='holidays'):
+        with database_read_fixture('fetch_all', fetch), \
+                composition_fixture(views, 'table_exists', return_value=True), \
+                composition_fixture(views, 'authored_holiday_table_name', return_value='holidays'):
             with views.curriculum_read_scope():
                 first = views.get_holiday_rows()
                 second = views.get_holiday_rows()
@@ -131,9 +134,9 @@ class HolidayReadScopeTests(SimpleTestCase):
 
     def test_archived_and_live_calendars_are_separate_reads(self):
         fetch = self.reads()
-        with patch.object(views, 'fetch_all', fetch), \
-                patch.object(views, 'table_exists', return_value=True), \
-                patch.object(views, 'authored_holiday_table_name', return_value='holidays'), \
+        with database_read_fixture('fetch_all', fetch), \
+                composition_fixture(views, 'table_exists', return_value=True), \
+                composition_fixture(views, 'authored_holiday_table_name', return_value='holidays'), \
                 views.curriculum_read_scope():
             views.get_holiday_rows()
             views.get_holiday_rows(include_archived=True)
@@ -148,9 +151,9 @@ class SharedWeekIndexTests(SimpleTestCase):
             calls.append((table, where_sql, params, order_sql, kwargs))
             return []
 
-        with patch.object(views, 'authoring_fetch_all', side_effect=record), \
-                patch.object(views, 'safe_authoring_module_rows', return_value=[]), \
-                patch.object(views, 'authoring_module_content_counts', return_value=({}, {})):
+        with composition_fixture(views, 'authoring_fetch_all', side_effect=record), \
+                composition_fixture(views, 'safe_authoring_module_rows', return_value=[]), \
+                composition_fixture(views, 'authoring_module_content_counts', return_value=({}, {})):
             views.authoring_modules_as_catalogue_rows(module_rows=[])
             views.authoring_programme_structure_counts()
             views.authoring_catalogue_summaries(include_content=False)
@@ -223,11 +226,11 @@ class SharedParentReadTests(SimpleTestCase):
 
     def run_readers(self):
         reads = RecordedReads(self.TABLES)
-        with patch.object(views, 'authoring_fetch_all', side_effect=reads), \
-                patch.object(views, 'serialize_group_authoring_detail', side_effect=lambda row: {'id': row['group_id']}), \
-                patch.object(views, 'serialize_cohort_authoring_detail', side_effect=lambda row, holidays=None: {'id': row['cohort_id']}), \
-                patch.object(views, 'get_holiday_rows', return_value=[]), \
-                patch.object(views, 'get_holiday_rows_safe', return_value=[]), \
+        with composition_fixture(views, 'authoring_fetch_all', side_effect=reads), \
+                composition_fixture(views, 'serialize_group_authoring_detail', side_effect=lambda row: {'id': row['group_id']}), \
+                composition_fixture(views, 'serialize_cohort_authoring_detail', side_effect=lambda row, holidays=None: {'id': row['cohort_id']}), \
+                composition_fixture(views, 'get_holiday_rows', return_value=[]), \
+                composition_fixture(views, 'get_holiday_rows_safe', return_value=[]), \
                 views.curriculum_read_scope():
             views.authoring_modules_as_training_rows()
             views.authoring_modules_as_catalogue_rows(week_rows=[])
@@ -260,7 +263,7 @@ class SharedParentReadTests(SimpleTestCase):
 
     def test_outside_a_scope_the_lookup_is_the_targeted_read(self):
         reads = RecordedReads(self.TABLES)
-        with patch.object(views, 'authoring_fetch_all', side_effect=reads):
+        with composition_fixture(views, 'authoring_fetch_all', side_effect=reads):
             views.authoring_rows_by_id(views.GROUPS_TABLE, 'group_id', ['G2', 'G1', ''], views.GROUP_ROWS_ORDER)
             self.assertEqual(views.authoring_rows_by_id(views.GROUPS_TABLE, 'group_id', [''], views.GROUP_ROWS_ORDER), [])
         self.assertEqual(len(reads.calls), 1)
@@ -268,25 +271,23 @@ class SharedParentReadTests(SimpleTestCase):
         self.assertIn('group_id', where_sql)
         self.assertEqual(sorted(params), ['G1', 'G2'])
 
-    def test_a_failed_module_read_still_answers_the_groups(self):
+    def test_a_failed_module_read_refuses_partial_group_details(self):
         reads = RecordedReads(self.TABLES)
-
         def flaky(table, *args, **kwargs):
             if table == views.AUTHORING_MODULES_TABLE:
                 raise RuntimeError('timeout')
             return reads(table, *args, **kwargs)
-
-        with patch.object(views, 'authoring_fetch_all', side_effect=flaky), \
-                patch.object(views, 'serialize_group_authoring_detail', side_effect=lambda row: {'id': row['group_id']}):
-            groups = views.group_authoring_detail_rows()
-        self.assertEqual({group['id'] for group in groups}, {'G1', 'G2'})
-        self.assertEqual(groups[0]['startDate'], '')
+        with composition_fixture(views, 'authoring_fetch_all', side_effect=flaky), \
+             composition_fixture(views, 'serialize_group_authoring_detail') as serialize:
+            with self.assertRaises(CatalogueReadUnavailable):
+                views.group_authoring_detail_rows()
+            serialize.assert_not_called()
 
 
 class KsbSetsTests(SimpleTestCase):
     def get(self, query, profiles, payload=None):
-        with patch.object(views, 'get_ksb_profile_rows', return_value=profiles), \
-                patch.object(views, 'get_cached_payload', return_value=payload or {'schema': 'curriculum', 'ksbSets': [{'frameworkId': 'F1'}]}) as build:
+        with composition_fixture(views, 'get_ksb_profile_rows', return_value=profiles), \
+                composition_fixture(views, 'get_cached_payload', return_value=payload or {'schema': 'curriculum', 'ksbSets': [{'frameworkId': 'F1'}]}) as build:
             response = views.curriculum_ksb_sets(RequestFactory().get('/curriculum/ksb-sets/' + query))
         return json.loads(response.content), build
 

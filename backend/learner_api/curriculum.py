@@ -28,7 +28,7 @@ from django.http import JsonResponse
 
 from curriculum_api.programme_name_sql import programme_name_sql
 from curriculum_api.week_visibility import visible_child_sql, visible_week_sql
-from curriculum_api.learning_storage import read_sql
+from curriculum_api.catalogue.infrastructure.course_storage_reads import read_sql
 
 from .ksb_sources import PROFILE, STANDARD, parse_source, resolve_source
 

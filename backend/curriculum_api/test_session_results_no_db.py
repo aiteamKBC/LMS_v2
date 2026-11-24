@@ -31,9 +31,14 @@ from curriculum_api.session_transfer_progress import byte_count
 from curriculum_api.session_media_policy import (hidden_artifact_ids, recordings_for_transcript,
     recording_transcript_links, transcript_timing_ready, artifact_metadata)
 from curriculum_api.canonical_read_sql import current_status_sql
+from curriculum_api.week_visibility import visible_child_sql, visible_week_sql
 
 
 def functions(path, names, namespace):
+    if path == ROOT / 'views.py':
+        from curriculum_api.meetings.tests.source_loader import load_current_functions
+        load_current_functions(names, namespace)
+        return
     tree = ast.parse(path.read_text(encoding='utf-8-sig'))
     nodes = [node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name in names]
     assert len(nodes) == len(names), (path, names)
@@ -167,17 +172,11 @@ def visit(start, end):
 
 class AuthoringIdentityTests(unittest.TestCase):
     def setUp(self):
-        self.ns = {'json': json}
-        functions(ROOT / 'session_results.py', {'json_value'}, self.ns)
-        self.ns['as_json_value'] = self.ns['json_value']
-        tree = ast.parse((ROOT / 'views.py').read_text(encoding='utf-8-sig'))
-        names = {'BASE_COMPONENT_SETTINGS', 'COMPONENT_SETTINGS_SCHEMA', 'LEGACY_SETTING_KEYS',
-                 'LIVE_SESSION_TRACKING_SETTING_KEYS', 'RECORDING_SOURCE_SETTING_KEYS'}
-        nodes = [node for node in tree.body if isinstance(node, ast.Assign)
-                 and any(isinstance(target, ast.Name) and target.id in names for target in node.targets)]
-        exec(compile(ast.Module(body=nodes, type_ignores=[]), 'authoring-settings', 'exec'), self.ns)
-        functions(ROOT / 'views.py', {'frontend_component_type', 'component_settings_defaults',
-            'allowed_component_setting_keys', 'normalise_component_settings_payload'}, self.ns)
+        import importlib.util
+        spec = importlib.util.spec_from_file_location('settings_parity_support', Path(__file__).parent / 'catalogue/tests/parity/test_component_settings_standalone.py')
+        support = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(support)
+        self.ns = support.contract()
         self.normalize = self.ns['normalise_component_settings_payload']
         self.tracking = {'teamsLiveSessionId': 'S1', 'teamsOccurrenceId': 'O6', 'teamsSessionNumber': 6,
             'teamsOnlineMeetingId': 'MEETING-1', 'teamsMeetingUrl': 'https://teams.microsoft.com/meet/example',
@@ -436,7 +435,7 @@ class RegisterTests(unittest.TestCase):
                 localtime=lambda value: value, now=lambda: end), 'router': types.SimpleNamespace(db_for_read=lambda model: 'default'),
             'LearnerProfile': types.SimpleNamespace(objects=self.Query([learner])),
             'LearnerTrainingPlanModule': types.SimpleNamespace(objects=self.Query([
-                types.SimpleNamespace(module_ref='M', learner=learner),
+                types.SimpleNamespace(curriculum_module_id='M', learner=learner),
             ] if assigned else [])),
              'LiveSession': types.SimpleNamespace(objects=self.Query([session])),
              'LiveSessionOccurrence': types.SimpleNamespace(objects=self.Query(occurrences)),
@@ -1548,6 +1547,12 @@ class EndpointTests(unittest.TestCase):
                 self.assertIsNotNone(learner)
                 self.assertEqual(found, {**series, 'learner_shared_module_ids': ['ALIAS'],
                                        'linked_session_numbers': {1}, 'additional_meeting_access': True})
+                sql = self.ns['read'].call_args.args[0]
+                self.assertIn(visible_child_sql('c'), sql)
+                self.assertIn(current_status_sql('m'), sql)
+                self.assertIn(visible_week_sql('w'), sql)
+                for column in ('deleted_at', 'is_programme_deleted', 'deleted_via_parent'):
+                    self.assertNotIn(column, sql)
         self.assertEqual(self.learner_series(['OTHER'], {}, series)[0], (None, None))
         regular = {**series, 'status': 'active', 'meeting_type': 'linked-external'}
         self.assertEqual(self.learner_series(['ALIAS'], {}, regular, additional=['ALIAS'])[0], (None, None))

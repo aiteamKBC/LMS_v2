@@ -13,6 +13,7 @@ Pinned here, against the real tables (PostgreSQL only):
 2. a save that claims an archived module is live is refused, untouched;
 3. a Restore, and the archive view, take only the rows that archive stamped.
 """
+from curriculum_api.catalogue.tests.parity.composition_test_support import composition_fixture
 import json
 from datetime import datetime, timedelta
 from unittest import skipUnless
@@ -68,7 +69,7 @@ class ModuleArchiveGhostTests(TestCase):
         # production that repair trips over unrelated rows (it detaches a group
         # by writing programme_id = '', which the foreign key refuses), and it
         # is not what these tests are about.
-        repair = patch.object(views, 'repair_curriculum_parent_links', lambda *args, **kwargs: None)
+        repair = composition_fixture(views, 'repair_curriculum_parent_links', lambda *args, **kwargs: None)
         repair.start()
         self.addCleanup(repair.stop)
         # login.middleware releases the connection after every request. Inside

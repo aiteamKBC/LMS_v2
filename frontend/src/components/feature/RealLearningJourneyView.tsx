@@ -1,3 +1,4 @@
+import { LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
 import { isVideoComponent, buildStations, type StationStatus, type WeekDot, type ModuleStation } from './RealLearningJourneyView.helpers';
 export type { StationStatus, ModuleStation } from './RealLearningJourneyView.helpers';
 import { useEffect, useMemo, useRef, useState } from 'react';
@@ -1273,7 +1274,7 @@ export function RealLearningJourneyView({
       roleLabel={learnerNav.label}
       navItems={learnerNav.items}
       workspaceLabel={learnerNav.workspaceLabel}
-      pageTitle={loading ? 'Loading learner…' : (real?.name || 'Learner')}
+      pageTitle={loading ? <LoadingSkeleton label={'Loading learner…'} /> : (real?.name || 'Learner')}
       pageSubtitle={subtitle}
       userName={real?.name || 'Learner'}
       userRole={real?.programme ? `${real.programme} Learner` : 'Learner'}

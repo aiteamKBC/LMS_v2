@@ -43,6 +43,8 @@ def counts_as_actual(record):
 
 def is_time_estimated(record):
     """Return whether a reporting allocation is provisional and needs approval."""
+    if record.get('actual_basis') == 'live_attendance_credit' and record.get('attendance_occurrence_id'):
+        return False
     if record.get('reporting_estimated') is True or record.get('actual_estimated') is True:
         return True
     payload = source_payload_metadata(record.get('source_payload'))
@@ -299,7 +301,7 @@ def entries_for(owner, *, overview_only=False, entry_ids=None, lineage_only=Fals
                 'source_system',s.source_system,'month',j.month,'activity_date',j.activity_date) ORDER BY j.id) AS payload,
                 sum(j.planned_hours) AS planned
             FROM "Learner".learner_journal_rows j
-            JOIN canonical p ON j.progress_id=p.id AND j.canonical_learner_id=p.learner_id
+            JOIN canonical p ON j.progress_id=p.id AND j.learner_id=p.learner_id
             JOIN "Learner".learner_activity_sources s ON s.id=j.source_id
               AND s.learner_id=p.learner_id AND s.canonical_progress_id=p.id AND s.deleted_at IS NULL
             WHERE j.deleted_at IS NULL
@@ -361,6 +363,13 @@ def entries_for(owner, *, overview_only=False, entry_ids=None, lineage_only=Fals
                 record['completed'] = counts_as_completed(record)
     if transfer_state is not None:
         result = frozen_records(result, transfer_state, entry_ids=entry_ids)
+    if entry_ids is None:
+        from learner_api.attendance_otjh import apply
+        # A transfer freezes its historical records, not this learner's new
+        # attendance. Keep both in the shared ledger so every hours view agrees.
+        result = apply(owner, result, query, **({'preserved_record_ids': [
+            record['id'] for record in transfer_state.get('records', [])
+        ]} if transfer_state is not None else {}))
     return result
 
 
@@ -399,14 +408,15 @@ def weekly_hour_records(owner):
     if pending:
         submissions = query('''SELECT component_ref,status,actual_time_hours
             FROM "Learner".learning_reflection_submissions
-            WHERE learner_id=%s AND learner_kind=%s AND activity_type IN ('assignment','extra_activity')
+            WHERE learner_id=%s AND learner_kind=%s AND activity_type='assignment'
               AND component_ref=ANY(%s) ORDER BY submitted_at NULLS FIRST,id''',
-            [str(owner['enrolment_id']), owner.get('learner_type'), pending])
+            [owner['id'], owner.get('learner_type'), pending])
         markings = {str(row['component_ref']): row for row in submissions}
     projected = project_current(records, markings)
     projected = merge_attempts(projected, subject_attempt_rows(owner, timed_only=True))
     projected.extend(extra_activity_hour_records([owner])[owner['id']])
-    return progress_records_with_completion(records, projected)
+    from learner_api.attendance_otjh import apply
+    return apply(owner, progress_records_with_completion(records, projected), query)
 
 
 def progress_records_with_completion(records, current):
@@ -414,9 +424,9 @@ def progress_records_with_completion(records, current):
 
     Counts, acceptance, seconds and reporting months belong to progress entries.
     Newer attempts may still supply completion and scores for those same entries.
-    Standalone extra activities use their saved coach decision and entered time;
-    they have no curriculum plan or separate progress save. Other submissions
-    cannot introduce additional accepted-hour records on a read.
+    Native Extra Activities are already linked to stored Progress and cannot
+    introduce an additional accepted-hour record on a read. Other submissions
+    likewise cannot create accepted ledger rows here.
     Server-measured, persisted legacy attempts are separate timed evidence;
     their stable placement IDs prevent retries from duplicating those hours.
     Untimed persisted course completions also survive, but never become OTJ
@@ -475,6 +485,8 @@ def allocations(entry):
     """
     if entry.get('completion_only'):
         return []
+    if entry.get('attendance_occurrence_id') or entry.get('attendance_row'):
+        return [entry]
     if entry.get('retake_timing_applied'):
         return [entry]
     submitted = completion_reporting_instant(entry.get('submitted_at'))
@@ -560,6 +572,21 @@ def input_activity_date(entry):
     return value if parsed.strftime('%Y-%m-%d') == value and value[:7] == entry.get('reporting_month') else None
 
 
+def assignment_activity_date(entry):
+    """Use the saved assignment date for display without moving its hours."""
+    category = str(entry.get('component_type') or entry.get('kind') or '').strip().casefold()
+    if category != 'assignment':
+        return None
+    value = source_payload_metadata(entry.get('source_payload')).get('activity_date')
+    if not isinstance(value, str) or not re.fullmatch(r'\d{4}-\d{2}-\d{2}', value):
+        return None
+    try:
+        datetime.strptime(value, '%Y-%m-%d')
+    except ValueError:
+        return None
+    return value
+
+
 def rows_for(owner, records=None):
     records = list(records if records is not None else entries_for(owner))
     recovered_titles = {}
@@ -578,6 +605,9 @@ def rows_for(owner, records=None):
     # contribute no allocations/hours to metrics or the monthly charts.
     for entry in (part for record in record_set
                   for part in ([record] if record.get('completion_only') else allocations(record))):
+        if entry.get('attendance_row'):
+            result.append(dict(entry['attendance_row']))
+            continue
         source = source_payload_metadata(entry.get('source_payload'))
         at = local_instant(entry.get('reporting_started_at') or entry.get('reporting_ended_at'))
         ref = f"canonical:{entry['id']}"
@@ -599,6 +629,9 @@ def rows_for(owner, records=None):
             item['activity_date'] = declared_date
         if entry.get('completion_reporting_date'):
             item['activity_date'] = entry['completion_reporting_date']
+        saved_assignment_date = assignment_activity_date(entry)
+        if saved_assignment_date:
+            item['activity_date'] = saved_assignment_date
         # Translate the historical system label for display without rewriting the ledger.
         if timestamp_label == '\u062a\u0642\u062f\u064a\u0631\u064a \u2014 \u064a\u062d\u062a\u0627\u062c \u0627\u0639\u062a\u0645\u0627\u062f':
             timestamp_label = 'Estimated — approval required'
@@ -618,12 +651,15 @@ def rows_for(owner, records=None):
                 'url': f"/learner_api/monthly-logs/{owner['enrolment_id']}/canonical-documents/{document['id']}/"
                     if owner.get('enrolment_id') else None,
             } for document in entry.get('_monthly_documents') or []]
+        if entry.get('attendance_occurrence_id'):
+            item['attendance_occurrence_id'] = entry['attendance_occurrence_id']
         result.append(item)
     if documents_loaded:
         return result
     by_id = {}
     for item in result:
-        by_id.setdefault(item['progress_id'], []).append(item)
+        if item.get('progress_id') is not None:
+            by_id.setdefault(item['progress_id'], []).append(item)
     documents = query('''SELECT id,progress_id,display_name,content_type
         FROM "Learner".learner_activity_documents
         WHERE learner_id=%s AND deleted_at IS NULL ORDER BY id''', [owner['id']])
@@ -643,21 +679,19 @@ def targets(learner_id):
 
 
 def targets_for(owner, *, month=None):
-    """Return one exact Training Plan target per month for this enrolment."""
+    """Return one exact Training Plan target per month for this learner profile."""
     month_filter = ' AND report_month=%s' if month else ''
     return {record['report_month']: float(record['target_hours']) for record in query(f'''
         SELECT DISTINCT ON (report_month) report_month,target_hours
         FROM "Learner".learner_monthly_targets
         WHERE learner_id=%s
           AND coalesce(programme_profile_id,'')=''
-          AND (enrolment_id IS NULL OR enrolment_id IS NOT DISTINCT FROM %s)
           AND (programme_id IS NULL OR programme_id IS NOT DISTINCT FROM %s) {month_filter}
         ORDER BY report_month,
-          (enrolment_id IS NOT DISTINCT FROM %s) DESC,
           (programme_id IS NOT DISTINCT FROM %s) DESC,
           updated_at DESC,id DESC''', [
-            owner['id'], owner.get('enrolment_id'), owner.get('programme_id'),
-            *([month] if month else []), owner.get('enrolment_id'), owner.get('programme_id'),
+            owner['id'], owner.get('programme_id'),
+            *([month] if month else []), owner.get('programme_id'),
         ]) if record['target_hours'] is not None}
 
 
@@ -727,7 +761,7 @@ def content_row(owner, month, row_id):
                  if r['id'] == row_id and str(r.get('reporting_month')) == month), None)
     if item is None:
         raise ServiceError('Activity not found.', 'not_found', 404)
-    record = next(r for r in records if r['id'] == item['progress_id'])
+    record = next(r for r in records if r['id'] == item.get('progress_id', item.get('source_ref')))
     return item, record
 
 
@@ -914,13 +948,13 @@ def source_quiz_parts(item, owner, record):
         SELECT c.id,a.source_activity_id
         FROM "Learner".learner_journal_rows j
         JOIN "Learner".learner_activity_sources s ON s.id=j.source_id
-          AND s.canonical_progress_id=j.progress_id AND s.learner_id=j.canonical_learner_id AND s.deleted_at IS NULL
+          AND s.canonical_progress_id=j.progress_id AND s.learner_id=j.learner_id AND s.deleted_at IS NULL
         JOIN curriculum.source_courses c ON c.source_course_ref=j.group_id::text
           AND c.source_system='old_lms' AND c.deleted_at IS NULL
         JOIN curriculum.source_activities a ON a.source_course_id=c.id
           AND a.source_activity_id='quiz:'||j.activity_id::text AND a.source_activity_kind='quiz'
           AND a.source_system=c.source_system AND a.deleted_at IS NULL
-        WHERE j.progress_id=%s AND j.canonical_learner_id=%s AND j.deleted_at IS NULL
+        WHERE j.progress_id=%s AND j.learner_id=%s AND j.deleted_at IS NULL
           AND j.source_ref='la:'||j.group_id::text||':'||j.activity_id::text)
         SELECT DISTINCT m.id,m.payload
         FROM routes r
@@ -946,6 +980,10 @@ def source_quiz_parts(item, owner, record):
 def content(item, owner=None, record=None):
     if owner is not None and record is None:
         record = next((r for r in entries_for(owner) if str(r['id']) == str(item.get('progress_id'))), None)
+    if record is not None and record.get('attendance_row'):
+        return {'id': item['id'], 'parts': [{'id': item['id'], 'title': item['title'],
+            'category': item['category'], 'url': None, 'quiz': None,
+            'html': f"<p>{escape(item.get('completion_note') or 'Verified live attendance.')}</p>"}]}
     if record is not None and record.get('completion_only'):
         # These owned attempt projections have no numeric progress ID. Do not
         # send their synthetic IDs to the historical-progress SQL readers.
@@ -1394,7 +1432,7 @@ def metrics_from_records(records, monthly_targets, *, include_ksb_points=False):
     for item in counted:
         for code in set(item.get('ksbs') or []):
             counts = codes.setdefault(code, [0, 0])
-            counts[0] += item.get('accepted') is True
+            counts[0] += item.get('ksb_evidence_accepted', item.get('accepted')) is True
             counts[1] += 1
     actual = round(sum(recorded_seconds(item) for item in accepted) / 3600, 4)
     from learner_api import journal_sources
@@ -1415,29 +1453,31 @@ def metrics_from_records(records, monthly_targets, *, include_ksb_points=False):
         result['ksb']['points'] = [
             {'activityId': str(item['id']), 'code': code,
              **ksb_point_definition(item, code),
-             'completed': item.get('accepted') is True,
+             'completed': item.get('ksb_evidence_accepted', item.get('accepted')) is True,
              'title': item.get('component_title') or None,
              'type': item.get('component_type') or item.get('kind') or None,
              'module': item.get('module_title') or None,
              'status': item.get('activity_status') or None,
              'source': item.get('source_system') or None,
              'completedAt': (item.get('submitted_at') or item.get('reporting_ended_at'))
-                 if item.get('accepted') is True else None,
+                 if item.get('ksb_evidence_accepted', item.get('accepted')) is True else None,
              'componentId': item.get('component_ref') or None}
             for item in counted for code in sorted(set(item.get('ksbs') or []))
         ]
     return result
 
 
-def metrics(learner_id, *, owner=None):
+def metrics(learner_id, *, owner=None, records=None):
     """Return verified canonical dashboard metrics for one learner.
 
     ``owner`` is this learner's already-verified ``require_profile`` row.
+    ``records`` may reuse that owner's ledger in the same request/perspective.
     """
     owner = require_profile(learner_id) if owner is None else owner
     from learner_api import journal_sources
     # Only counts and hours leave here, so raw evidence bodies are not loaded.
-    result = metrics_from_records(entries_for(owner, lineage_only=True), targets_for(owner))
+    records = entries_for(owner, lineage_only=True) if records is None else records
+    result = metrics_from_records(records, targets_for(owner))
     if journal_sources.enabled():
         planned = programme_planned_hours(learner_id, owner=owner)
         result['otjh']['planned'] = planned
@@ -1456,8 +1496,8 @@ def otjh_summary_bulk(learner_ids):
     """Profile OTJH facts in bounded reads, without content/KSB hydration.
 
     Accepted seconds belong to progress rows, not their source snapshots,
-    segments or assignment-only submissions. Standalone extra activities add
-    only their reviewed input hours. The plan uses the same scoped monthly
+    segments or assignment-only submissions. Native Extra Activities therefore
+    contribute only through their linked Progress row. The plan uses the same scoped monthly
     targets as Monthly Logs and the Coach Profile (not Created_users.Planned_hours).
     Invalid or ambiguous identities remain unavailable, just as in metrics().
     """
@@ -1505,18 +1545,27 @@ def otjh_summary_bulk(learner_ids):
         WHERE learner_id=ANY(%s) AND deleted_at IS NULL AND accepted IS TRUE
         GROUP BY learner_id''', [profile_ids]):
         records[int(item['learner_id'])].append({**item, 'accepted': True})
-    for profile_id, pending in pending_hour_records(owners.values()).items():
+    pending_by_owner = pending_hour_records(owners.values())
+    for profile_id, pending in pending_by_owner.items():
         records[profile_id].extend(pending)
+    from learner_api.attendance_otjh import read_bulk, aggregate_delta
+    attendance = read_bulk([owner for owner in owners.values() if int(owner['id']) not in projected_profiles], query)
+    for profile_id, facts in attendance.items():
+        if profile_id in projected_profiles:
+            continue
+        delta = aggregate_delta(facts, pending_by_owner.get(profile_id, []))
+        if delta:
+            # This total already contains the replaced saved/pending allocation.
+            total = sum(recorded_seconds(record) for record in records[profile_id] if counts_as_actual(record))
+            records[profile_id] = [{'actual_seconds': max(0, total + delta), 'accepted': True}]
     targets = {profile_id: {} for profile_id in profile_ids}
     for item in query('''SELECT DISTINCT ON (t.learner_id,t.report_month)
         t.learner_id,t.report_month,t.target_hours
         FROM "Learner".learner_monthly_targets t
         JOIN "Learner".learners l ON l.id=t.learner_id
         WHERE t.learner_id=ANY(%s) AND coalesce(t.programme_profile_id,'')=''
-          AND (t.enrolment_id IS NULL OR t.enrolment_id IS NOT DISTINCT FROM l.enrolment_id)
           AND (t.programme_id IS NULL OR t.programme_id IS NOT DISTINCT FROM l.programme_id)
         ORDER BY t.learner_id,t.report_month,
-          (t.enrolment_id IS NOT DISTINCT FROM l.enrolment_id) DESC,
           (t.programme_id IS NOT DISTINCT FROM l.programme_id) DESC,
           t.updated_at DESC,t.id DESC''', [profile_ids]):
         if item['target_hours'] is not None:
@@ -1651,15 +1700,15 @@ def metrics_bulk(learner_ids, *, learner_workspace=False, include_ksb_points=Fal
                 record['historical_components'].append(decoded(item['payload'], {}))
 
     current_by_enrolment = current_records_bulk(valid_owners.values(), records_by_learner)
+    from learner_api.attendance_otjh import read_bulk, projection
+    attendance = read_bulk(valid_owners.values(), query, now=as_of)
     target_rows = query('''SELECT DISTINCT ON (t.learner_id,t.report_month)
         t.learner_id,t.report_month,t.target_hours
         FROM "Learner".learner_monthly_targets t
         JOIN "Learner".learners l ON l.id=t.learner_id
         WHERE t.learner_id=ANY(%s) AND coalesce(t.programme_profile_id,'')=''
-          AND (t.enrolment_id IS NULL OR t.enrolment_id IS NOT DISTINCT FROM l.enrolment_id)
           AND (t.programme_id IS NULL OR t.programme_id IS NOT DISTINCT FROM l.programme_id)
         ORDER BY t.learner_id,t.report_month,
-          (t.enrolment_id IS NOT DISTINCT FROM l.enrolment_id) DESC,
           (t.programme_id IS NOT DISTINCT FROM l.programme_id) DESC,
           t.updated_at DESC,t.id DESC''', [learner_profile_ids])
     targets_by_learner = {profile_id: {} for profile_id in learner_profile_ids}
@@ -1681,6 +1730,8 @@ def metrics_bulk(learner_ids, *, learner_workspace=False, include_ksb_points=Fal
                     for source in record.get('sources') or [])
         if owner.get('progress_transfer_active'):
             records = entries_for(owner, lineage_only=True)
+        else:
+            records = projection(records, attendance[int(owner['id'])])
         if as_of is not None:
             from .progress_cutoff import records_as_of
             records = records_as_of(records, as_of)

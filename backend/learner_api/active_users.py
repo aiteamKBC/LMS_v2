@@ -14,7 +14,7 @@ from datetime import timedelta
 from decimal import Decimal, InvalidOperation
 
 from django.db import DatabaseError, IntegrityError, connections, transaction
-from django.db.models import Max
+from django.db.models import Count, Max
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 
@@ -22,7 +22,7 @@ from curriculum_api.canonical_read_sql import component_ksb_mappings_sql, curren
 from curriculum_api.programme_name_sql import programme_name_sql
 from curriculum_api.schema_compat import inactive_condition
 from curriculum_api.week_visibility import visible_child_sql, visible_week_sql
-from curriculum_api.learning_storage import read_sql
+from curriculum_api.catalogue.infrastructure.course_storage_reads import read_sql
 
 from .retake_timing import attempt_order, selected_attempt
 from .mappers import ValidationError, get_training_plan, training_plan_field
@@ -872,7 +872,7 @@ def hydrate_training_plan(plan, *, strict=False):
         try:
             # Use the exact delivery dates used by Module Builder/Calendar,
             # including authored delivery days and selected cohort holidays.
-            from curriculum_api.views import module_session_plan_for_count
+            from curriculum_api.catalogue.infrastructure.session_plan_composition import module_session_plan_for_count
             dated_sessions = module_session_plan_for_count(module_schedules.get(module_id, {}), len(resolved_weeks)).get("sessions") or []
         except Exception:
             dated_sessions = []
@@ -1000,7 +1000,7 @@ def refresh_saved_session_dates(plan):
         modules = {str(row[0]['module_catalogue_id']): row[0] for row in cursor.fetchall()}
     if not modules:
         return plan
-    from curriculum_api.views import apply_module_session_plan_to_weeks
+    from curriculum_api.catalogue.infrastructure.session_plan_persistence import apply_module_session_plan_to_weeks
     result = copy.deepcopy(plan)
     for item in result:
         module = modules.get(_s(item.get('moduleId') or item.get('moduleCatalogueId')))
@@ -1170,7 +1170,7 @@ def _create_progress_entry(**fields):
     return LearnerProgressEntry.objects.create(**fields)
 
 
-def save_progress_record(learner, record, activity=None, *, monthly_assignment=False):
+def save_progress_record(learner, record, activity=None, *, monthly_assignment=False, enforce_quiz_policy=False):
     """Store progress, quiz detail, KSB links, and feed presentation atomically."""
     if learner is None:
         return None
@@ -1217,6 +1217,17 @@ def save_progress_record(learner, record, activity=None, *, monthly_assignment=F
                 lock = ' FOR UPDATE' if connections['enrolment'].vendor == 'postgresql' else ''
                 cursor.execute('SELECT id FROM enrolment."Created_users" WHERE id=%s' + lock, [learner.enrolment_id])
         learner = LearnerProfile.objects.select_for_update().get(pk=learner.pk)
+        if record.get("kind") == "quiz" and record.get("quizId") is not None:
+            # Read persisted rows only after taking the learner lock. Keep the
+            # count-based ordinal, but never reuse a higher historical number
+            # (including retained/deleted attempts). No history is rewritten.
+            prior = LearnerProgressEntry.objects.filter(
+                learner=learner, kind="quiz", quiz_ref=str(record["quizId"]),
+            ).aggregate(total=Count("id"), highest=Max("attempt"))
+            record["attempt"] = max(prior["total"], prior["highest"] or 0) + 1
+            if enforce_quiz_policy:
+                from quiz_api.policy import check_locked_attempt
+                check_locked_attempt(learner, record['quizId'], record)
         from .retake_timing import validate_activity_time
         from .activity_time_history import attendance_baseline
         authoritative_record = {**record, 'componentType': component_context.get('componentType') or record.get('componentType')}
@@ -1938,7 +1949,7 @@ def _fetch_ksb_items_from_profile_source(profile_source_id):
     if not profile_source_id:
         return []
     if profile_source_id.lower().startswith("standard:"):
-        from curriculum_api.views import standard_required_ksbs
+        from curriculum_api.reporting.infrastructure.source_catalogue_runtime import standard_required_ksbs
         return _coerce_ksb_items(standard_required_ksbs(profile_source_id.split(":", 1)[1]))
     try:
         # Savepointed: see the note above _fetch_ksb_items_for_programme.

@@ -56,6 +56,9 @@ class RecordedComponentQueryTests(SimpleTestCase):
 
 
 class RecordedSessionProgressTests(SimpleTestCase):
+    def setUp(self):
+        self.enterContext(patch('learner_api.live_session_progress.protect_credit_hours', side_effect=lambda source, credits: credits))
+
     def project(self, *, components=None, register=None, saved=None, attended=True, **kwargs):
         return project_recorded_credits([live(), recording()] if components is None else components,
             [row()] if register is None else register, evidence() if saved is None else saved,
@@ -76,6 +79,19 @@ class RecordedSessionProgressTests(SimpleTestCase):
     def test_live_attendance_waits_for_recording_availability(self):
         for saved in ({}, evidence(ready=False)):
             self.assertEqual(self.project(saved=saved), [])
+
+    def test_recording_completion_keeps_entered_time_instead_of_authored_live_hours(self):
+        with patch('learner_api.recorded_attendance.saved_delivery_mode', return_value='lazy'), \
+             patch('learner_api.recorded_session_progress.read_components', return_value=[live(), recording()]), \
+             patch('curriculum_api.recording_views.recording_completion_evidence', return_value=evidence(completed=True)), \
+             patch('learner_api.live_session_progress.read_manual_live_credits', return_value=({}, [])), \
+             patch('learner_api.live_session_progress.timezone.now', return_value=NOW):
+            credits = read_live_credits(SimpleNamespace(id=7, learner_type='commercial'),
+                components=[live(), recording()], register=[row(attendance_status='absent', attended_seconds=0)])
+        self.assertEqual(sum(credit['hours'] for credit in credits), 0)
+        records = [{'component_ref': 'REC', 'actual_seconds': 4517, 'accepted': True}]
+        metrics = {'M1': {'hours': {'actual': 4517 / 3600}}}
+        self.assertEqual(supplement_module_hours(metrics, records, credits), metrics)
         result = self.project()[0]
         self.assertEqual((result['componentId'], result['hours']), ('REC', 2.5))
         self.assertEqual(result['submittedAt'], (NOW-timedelta(hours=1)).isoformat())
@@ -116,14 +132,14 @@ class RecordedSessionProgressTests(SimpleTestCase):
                     records = [{'component_ref': identity, 'actual_seconds': hours*3600, 'accepted': True}]
                     metrics = {'M1': {'hours': {'actual': hours+3}}}
                     updated = supplement_module_hours(metrics, records, result)
-                    self.assertEqual(updated['M1']['hours']['actual'], max(hours, 2.5)+3)
+                    self.assertEqual(updated['M1']['hours']['actual'], 5.5)
                     self.assertEqual(metrics['M1']['hours']['actual'], hours+3)
 
     def test_explicit_staff_hours_and_absence_remain_authoritative(self):
         self.assertEqual(self.project(states={('LIVE', 'M1'): (False, NOW)}), [])
         records = [{'component_ref': 'LIVE', 'actual_seconds': 0, 'accepted': True, 'actual_basis': 'staff:module-progress'}]
         metrics = {'M1': {'hours': {'actual': 0}}}
-        self.assertEqual(supplement_module_hours(metrics, records, self.project()), metrics)
+        self.assertEqual(supplement_module_hours(metrics, records, self.project()), {'M1': {'hours': {'actual': 2.5}}})
 
     def test_recording_hours_never_replace_unrelated_or_invalid_allocations(self):
         for hours in (-1, float('nan'), float('inf'), 'invalid'):

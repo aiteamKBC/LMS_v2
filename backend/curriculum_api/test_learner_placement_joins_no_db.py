@@ -13,6 +13,7 @@ from unittest.mock import patch
 
 import curriculum_api
 from . import learner_status_counts as counts
+from .directory.infrastructure import membership_runtime
 
 
 class PlacementJoinTests(unittest.TestCase):
@@ -32,6 +33,9 @@ class PlacementJoinTests(unittest.TestCase):
         self.views.normalise = lambda value: str(value or '').strip().lower()
         self.enterContext(patch.dict(sys.modules, {'curriculum_api.views': self.views}))
         self.enterContext(patch.object(curriculum_api, 'views', self.views, create=True))
+        # The same synthetic query-only connection now reaches the concrete reader.
+        for name in ('connection', 'learner_schema_table_exists', 'learner_schema_columns'):
+            self.enterContext(patch.object(membership_runtime, name, getattr(self.views, name)))
 
     def cursor(self):
         owner = self

@@ -1,0 +1,29 @@
+{
+  "functions": {
+    "programme_config_identity": "def programme_config_identity(config):\n    \"\"\"The canonical id of a programme config row.\n\n    curriculum.programmes keys on `programme_id`; `program_id` and `id` are\n    legacy aliases that no longer exist as columns. Reading only the aliases\n    yields '' for every row, which previously let the dedup routine delete a\n    row without first reassigning its children.\n    \"\"\"\n    return clean_str(\n        (config or {}).get('programme_id')\n        or (config or {}).get('program_id')\n        or (config or {}).get('id')\n    )\n",
+    "programme_identity": "def programme_identity(row, program_configs_by_id):\n    meta = row.get('_meta', {})\n    program_id = meta.get('program_id')\n    row_name = row.get('Program') or 'Unassigned Programme'\n    if program_id:\n        config = program_configs_by_id.get(str(program_id))\n        name = (config or {}).get('name') or row_name\n        canonical_config = config or program_configs_by_id.get(normalise(name))\n        canonical_source_id = programme_config_identity(canonical_config) or program_id\n        return {\n            'key': f'id:{clean_str(canonical_source_id)}' if clean_str(canonical_source_id) else f'name:{normalise(name)}',\n            'sourceId': canonical_source_id,\n            'name': (canonical_config or {}).get('name') or name,\n            'config': canonical_config,\n        }\n\n    name = row_name\n    config = program_configs_by_id.get(normalise(name))\n    return {\n        'key': f'name:{normalise(config.get(\"name\") if config else name)}',\n        'sourceId': config.get('program_id') if config and config.get('program_id') else slugify(name),\n        'name': config.get('name') if config and config.get('name') else name,\n        'config': config,\n    }\n",
+    "program_config_preference": "def program_config_preference(config):\n    if not config:\n        return (-1, 0, 0)\n    updated = config.get('updated_at') or config.get('created_at')\n    try:\n        if hasattr(updated, 'timestamp'):\n            timestamp = updated.timestamp()\n        else:\n            updated_text = clean_str(updated)\n            if updated_text.endswith('Z'):\n                updated_text = f'{updated_text[:-1]}+00:00'\n            timestamp = datetime.fromisoformat(updated_text).timestamp() if updated_text else 0\n    except Exception:\n        timestamp = 0\n    return (\n        0 if is_archived_program_config(config) else 1,\n        timestamp,\n        parse_int(config.get('id'), 0),\n    )\n",
+    "unique_program_configs_for_display": "def unique_program_configs_for_display(program_configs):\n    active = []\n    active_names = set()\n    archived_by_name = {}\n    archived_unnamed = []\n    for config in program_configs:\n        if not is_archived_program_config(config):\n            active.append(config)\n            active_name = normalise(config.get('name'))\n            active_names.add(active_name)\n            archived_by_name.pop(active_name, None)\n            continue\n        name_key = normalise(config.get('name'))\n        if not name_key:\n            archived_unnamed.append(config)\n            continue\n        if name_key in active_names:\n            continue\n        current = archived_by_name.get(name_key)\n        if not current or program_config_preference(config) > program_config_preference(current):\n            archived_by_name[name_key] = config\n    return [*active, *archived_by_name.values(), *archived_unnamed]\n"
+  },
+  "dependencies": {
+    "programme_config_identity": [
+      "clean_str"
+    ],
+    "programme_identity": [
+      "clean_str",
+      "normalise",
+      "slugify"
+    ],
+    "program_config_preference": [
+      "clean_str",
+      "parse_int",
+      "is_archived_program_config"
+    ],
+    "unique_program_configs_for_display": [
+      "normalise",
+      "clean_str",
+      "parse_int",
+      "is_archived_program_config"
+    ]
+  }
+}

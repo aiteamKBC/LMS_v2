@@ -15,9 +15,10 @@ def retained_live_component_ids(stored):
     if (not source_id or stored.get('source_type') != FREE_COURSE_SOURCE
             or stored.get('module_catalogue_id') != adopted_id('MOD', source_id, source_id)):
         return set()
-    from . import views
-    return {row['id'] for row in views.authoring_fetch_all(
-        views.AUTHORING_COMPONENTS_TABLE,
+    from curriculum_api.catalogue.infrastructure.authoring_runtime import authoring_fetch_all
+    from curriculum_api.catalogue.infrastructure.database_reads import AUTHORING_COMPONENTS_TABLE
+    return {row['id'] for row in authoring_fetch_all(
+        AUTHORING_COMPONENTS_TABLE,
         "module_catalogue_id = %s and type = 'live_session' and lower(btrim(coalesce(status, ''))) <> 'inactive'",
         [stored['module_catalogue_id']], columns=['id'],
     )}

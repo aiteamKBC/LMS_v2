@@ -1,4 +1,5 @@
 """Standalone courses retain the ordinary module storage and hours contracts."""
+from curriculum_api.catalogue.tests.parity.composition_test_support import composition_fixture
 from unittest.mock import patch
 
 from . import views
@@ -33,7 +34,7 @@ class StandaloneCourseTests(CurriculumPersistenceHarness):
         return views.save_module_authoring_structure('MOD-FREE', payload or self.payload(), repair_links=False)
 
     def test_course_uses_normal_content_and_hours_without_placement_or_teams(self):
-        with patch.object(views, 'link_live_session_series_to_module') as link:
+        with composition_fixture(views, 'link_live_session_series_to_module') as link:
             course = self.save()
         link.assert_not_called()
         row = views.authoring_module_exists('MOD-FREE')

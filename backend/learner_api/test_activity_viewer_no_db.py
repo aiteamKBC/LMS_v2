@@ -228,6 +228,63 @@ class ActivityViewerProjectionTests(SimpleTestCase):
         content_reads = [call.args for call in cursor.execute.call_args_list if 'AS settings_json' in call.args[0]]
         self.assertEqual([params for _, params in content_reads], [[['M2']], [['M1']]])
 
+    def test_shared_projection_uses_exact_plan_components_and_saved_historical_placement(self):
+        connection = MagicMock()
+        cursor = connection.cursor.return_value.__enter__.return_value
+        assigned = [{'moduleId': 'M1', 'moduleTitle': 'Assigned module', 'weeks': [
+            {'weekId': 'W-OLD', 'weekTitle': 'Saved week', 'components': [
+                {'componentId': 'C-OWNED'}, {'componentId': 'C-MOVED'},
+            ]},
+        ]}]
+        component_rows = [
+            ('C-OWNED', 'W-CURRENT', 'M1', 'reading', 'Owned', '', {}, None,
+             1, None, False, None, False),
+            # Curriculum currently places this activity under another module;
+            # the learner's saved placement must still win.
+            ('C-MOVED', 'W-NEW', 'M2', 'quiz', 'Moved', '', {}, None,
+             2, None, False, None, False),
+        ]
+
+        def fetch_rows():
+            sql, params = cursor.execute.call_args.args
+            if 'SELECT m.module_catalogue_id, m.title' in sql:
+                return [('M1', 'Assigned module')]
+            if 'FROM curriculum.weeks WHERE' in sql:
+                return [('W-OLD', 'M1', 'Current saved-week title', 1, 1)]
+            if 'FROM curriculum.components WHERE' in sql:
+                self.assertEqual(params, [['C-OWNED', 'C-MOVED']])
+                return component_rows
+            if 'FROM curriculum.quiz_component_links link' in sql:
+                self.assertEqual(params, [['C-OWNED', 'C-MOVED']])
+                return [('C-MOVED', 7)]
+            if 'FROM curriculum.quizzes' in sql:
+                return [(7, 'Quiz', [], 10, 'minutes')]
+            if 'FROM curriculum.ksb_mappings mapping' in sql:
+                self.assertEqual(params, [['C-OWNED', 'C-MOVED']])
+                return [('C-MOVED', 'K1', 'Knowledge', 'knowledge', 1, None)]
+            return []
+
+        cursor.fetchall.side_effect = fetch_rows
+        with patch.object(reader, 'connections', {'enrolment': connection}), \
+             patch.object(reader, 'read_sql', side_effect=lambda sql, *_args: sql):
+            modules, weeks, components = reader._resolve_from_master(
+                [], [], [], assigned_modules=assigned, compact=True, strict=True,
+                plan_owned_only=True,
+            )
+
+        self.assertEqual(modules, ['Assigned module'])
+        self.assertEqual([(row['moduleId'], row['weekId'], row['week']) for row in weeks],
+                         [('M1', 'W-OLD', 'Saved week')])
+        self.assertEqual(
+            [(row['componentId'], row['moduleId'], row['weekId']) for row in components],
+            [('C-OWNED', 'M1', 'W-OLD'), ('C-MOVED', 'M1', 'W-OLD')],
+        )
+        self.assertEqual(components[1]['ksbMappings'][0]['code'], 'K1')
+        component_sql = next(call.args[0] for call in cursor.execute.call_args_list
+                             if 'FROM curriculum.components WHERE' in call.args[0])
+        self.assertIn('id = ANY(%s)', component_sql)
+        self.assertNotIn('module_catalogue_id = ANY(%s)', component_sql)
+
     def test_unknown_component_is_not_replaced_with_another_activity(self):
         with self.assertRaises(ServiceError) as caught:
             self.project('MISSING')

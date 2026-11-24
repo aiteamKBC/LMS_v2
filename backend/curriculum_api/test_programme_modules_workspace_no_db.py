@@ -1,4 +1,5 @@
 """Workspace projections use synthetic rows; no database or external calls."""
+from curriculum_api.catalogue.tests.parity.composition_test_support import composition_fixture
 import copy
 import gzip
 import json
@@ -62,9 +63,9 @@ class ProgrammeModulesWorkspaceTests(SimpleTestCase):
         self.assertTrue({'sessionNames', 'moduleKsbMappings', 'deliveryMetadata'}.isdisjoint(small['flat']['modules'][0]))
 
     def get(self, query='', **headers):
-        with patch.object(views, 'repair_curriculum_parent_links') as repair, \
-                patch.object(views, 'build_curriculum_programme_tree_detail_payload', return_value=document()), \
-                patch.object(views, 'cached_curriculum_value', side_effect=lambda key, build, **kw: build()) as cached:
+        with composition_fixture(views, 'repair_curriculum_parent_links') as repair, \
+                composition_fixture(views, 'build_curriculum_programme_tree_detail_payload', return_value=document()), \
+                composition_fixture(views, 'cached_curriculum_value', side_effect=lambda key, build, **kw: build()) as cached:
             request = RequestFactory().get('/curriculum/programmes/PROG-1/detail/modules/' + query, **headers)
             response = views.curriculum_programme_detail_section(request, 'PROG-1', 'modules')
         repair.assert_called_once_with('PROG-1', allow_writes=False)

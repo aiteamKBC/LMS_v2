@@ -5,6 +5,7 @@ the server: achieved weight from progress rows only, reflections annotating
 existing lines, declared weight beside achieved weight, labels sent once, and
 the plain response left untouched when ``view=summary`` is not asked for.
 """
+from curriculum_api.catalogue.tests.parity.composition_test_support import composition_fixture
 import json
 import math
 from unittest import mock
@@ -86,7 +87,7 @@ class LearnerKsbAchievementTests(SimpleTestCase):
 class ProgrammeImpactViewTests(SimpleTestCase):
     def _get(self, **params):
         request = RequestFactory().get('/x', params)
-        with mock.patch.object(views, 'scope_learner_ksb_impact_payload', return_value=(dict(PAYLOAD), None)):
+        with composition_fixture(views, 'scope_learner_ksb_impact_payload', return_value=(dict(PAYLOAD), None)):
             return json.loads(views.curriculum_programme_learner_ksb_impact(request, 'PROG-1').content)
 
     def test_plain_request_is_unchanged(self):
@@ -99,6 +100,6 @@ class ProgrammeImpactViewTests(SimpleTestCase):
 
     def test_errors_pass_through(self):
         error = views.json_error('Programme not found.', status=404)
-        with mock.patch.object(views, 'scope_learner_ksb_impact_payload', return_value=(None, error)):
+        with composition_fixture(views, 'scope_learner_ksb_impact_payload', return_value=(None, error)):
             response = views.curriculum_programme_learner_ksb_impact(RequestFactory().get('/x', {'view': 'summary'}), 'P')
         self.assertEqual(response.status_code, 404)

@@ -1,8 +1,10 @@
 from django.urls import path
 
 from . import views
+from .defaults_views import quiz_defaults
 
 urlpatterns = [
+    path("defaults/", quiz_defaults, name="quiz-defaults"),
     path("ai/generate-questions/", views.generate_ai_questions, name="generate-ai-questions"),
     path("training-plan-options/", views.training_plan_options, name="training-plan-options"),
     path("question-bank/", views.question_bank, name="question-bank"),

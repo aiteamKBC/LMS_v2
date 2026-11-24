@@ -17,113 +17,58 @@ from django.views.decorators.cache import never_cache
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET
 
-from . import views as curriculum_views
+from curriculum_api.catalogue.api.programme_detail_composition import build_curriculum_programme_tree_detail_payload
 
 logger = logging.getLogger(__name__)
 
-PROGRAMME_AUDIT_SCHEMA = 'programme_audit'
-PROGRAMME_AUDIT_TABLE = 'assets'
-UPLOAD_URL_PREFIX = '/curriculum_api/curriculum/uploads/'
+from .catalogue.domain.asset_contracts import PROGRAMME_AUDIT_SCHEMA
+from .catalogue.domain.asset_contracts import PROGRAMME_AUDIT_TABLE
+from .catalogue.domain.asset_contracts import UPLOAD_URL_PREFIX
 
-JSON_COLUMNS = {'ksb_mappings', 'settings', 'raw_component', 'raw_payload'}
+from .catalogue.domain.asset_contracts import JSON_COLUMNS
 
-UI_MATERIAL_TABLES = {
-    'impact-planning': {'table': 'impact_planning', 'name': 'Impact Planning', 'programme': 'ME'},
-    'social-media': {'table': 'social_media', 'name': 'Social Media', 'programme': 'ME'},
-    'marketing-technology': {'table': 'marketing_technology', 'name': 'Marketing Technology', 'programme': 'ME'},
-    'strategy-planning': {'table': 'strategy_planning', 'name': 'Strategy Planning', 'programme': 'MM'},
-    'customer-journey': {'table': 'customer_journey', 'name': 'Customer Journey', 'programme': 'MM'},
-    'commercial-intelligence': {'table': 'commercial_intelligence', 'name': 'Commercial Intelligence', 'programme': 'MM'},
-    'ai-in-marketing': {'table': 'ai_in_marketing', 'name': 'AI in Marketing', 'programme': 'MM'},
-    'project-management-professional': {'table': 'project_management_professional', 'name': 'Project Management Professional', 'programme': 'PCP'},
-    'msp-scheduling-professional': {'table': 'managing_successful_programmes_scheduling_professional', 'name': 'Managing Successful Programmes / Scheduling Professional', 'programme': 'PCP'},
-    'risk-management': {'table': 'risk_management', 'name': 'Risk Management', 'programme': 'PCP'},
-    'evm-portfolio-management': {'table': 'earned_value_management_portfolio_management', 'name': 'Earned Value Management / Portfolio Management', 'programme': 'PCP'},
-    'ppc-pmo': {'table': 'project_planning_control_project_management_office', 'name': 'Project Planning Control / Project Management Office', 'programme': 'PCP'},
-}
+from .catalogue.domain.asset_contracts import UI_MATERIAL_TABLES
 
 class ProgrammeAuditNotFound(ValueError):
     pass
 
-ASSET_COLUMNS = (
-    'id',
-    'programme_id',
-    'programme_source_id',
-    'programme_name',
-    'module_catalogue_id',
-    'module_title',
-    'week_id',
-    'week_number',
-    'week_title',
-    'component_id',
-    'component_type',
-    'content_kind',
-    'title',
-    'description',
-    'source_url',
-    'embed_url',
-    'embed_code',
-    'render_mode',
-    'file_name',
-    'content_type',
-    'file_size',
-    'duration_minutes',
-    'expected_otjh',
-    'points',
-    'status',
-    'ksb_mappings',
-    'settings',
-    'raw_component',
-    'raw_payload',
-    'imported_from',
-    'source_key',
-    'imported_at',
-    'updated_at',
-)
+from .catalogue.domain.asset_contracts import ASSET_COLUMNS
 
 
 def clean(value, fallback=''):
-    text = str(value if value is not None else '').strip()
-    return text or fallback
+    from .catalogue.domain.asset_values import clean as implementation
+    return implementation(
+        value, fallback,
+    )
 
 
 def normalise(value):
-    return clean(value).lower().replace('_', '-').strip()
+    from .catalogue.domain.asset_values import normalise as implementation
+    return implementation(
+        value, clean=clean,
+    )
 
 
 def scope_assets_to_ui_material(material, source_assets):
-    """Label authored-module assets with their learner-facing material name."""
-    assets = []
-    for source_asset in source_assets:
-        asset = dict(source_asset)
-        settings = dict(read_json_value(asset.get('settings'), {}))
-        settings.setdefault('sourceModuleTitle', clean(asset.get('module_title')))
-        asset['programme_source_id'] = clean(
-            source_asset.get('programme_source_id'),
-            clean(source_asset.get('programme_id')),
-        )
-        asset['programme_id'] = clean(material.get('programme_id'))
-        asset['programme_name'] = clean(material.get('programme_name'))
-        asset['module_title'] = clean(material.get('name'))
-        asset['settings'] = settings
-        asset['raw_payload'] = {
-            'uiMaterialKey': clean(material.get('key')),
-            'uiMaterialName': clean(material.get('name')),
-            'sourceModuleId': clean(asset.get('module_catalogue_id')),
-            'sourceModuleTitle': settings.get('sourceModuleTitle', ''),
-        }
-        assets.append(asset)
-    return assets
+    from .catalogue.application.audit_assets import scope_assets_to_ui_material as implementation
+    return implementation(
+        material, source_assets, clean=clean, read_json_value=read_json_value,
+    )
 
 
 def quote_ident(value):
-    return '"' + str(value).replace('"', '""') + '"'
+    from .catalogue.infrastructure.audit_asset_reads import quote_ident as implementation
+    return implementation(
+        value,
+    )
 
 
 def asset_table_name():
-    if connection.vendor == 'postgresql':
-        return f'{quote_ident(PROGRAMME_AUDIT_SCHEMA)}.{quote_ident(PROGRAMME_AUDIT_TABLE)}'
-    return quote_ident('programme_audit_assets')
+    from .catalogue.infrastructure.audit_asset_reads import asset_table_name as implementation
+    return implementation(
+        PROGRAMME_AUDIT_SCHEMA=PROGRAMME_AUDIT_SCHEMA, PROGRAMME_AUDIT_TABLE=PROGRAMME_AUDIT_TABLE,
+        connection=connection, quote_ident=quote_ident,
+    )
 
 
 def json_db_value(value):
@@ -131,107 +76,42 @@ def json_db_value(value):
 
 
 def read_json_value(value, fallback):
-    if value is None:
-        return fallback
-    if isinstance(value, (dict, list)):
-        return value
-    if isinstance(value, str):
-        try:
-            loaded = json.loads(value)
-        except ValueError:
-            return fallback
-        return loaded
-    return fallback
+    from .catalogue.domain.asset_values import read_json_value as implementation
+    return implementation(
+        value, fallback, json=json,
+    )
 
 
 def rows_as_dicts(cursor):
-    columns = [column[0] for column in cursor.description]
-    return [dict(zip(columns, row)) for row in cursor.fetchall()]
+    from .catalogue.infrastructure.audit_asset_reads import rows_as_dicts as implementation
+    return implementation(
+        cursor,
+    )
 
 
 def ui_material_table_exists(table):
-    if connection.vendor != 'postgresql':
-        return False
-    with connection.cursor() as cursor:
-        cursor.execute(
-            'SELECT 1 FROM information_schema.tables '
-            'WHERE table_schema = %s AND table_name = %s LIMIT 1',
-            [PROGRAMME_AUDIT_SCHEMA, table],
-        )
-        return cursor.fetchone() is not None
+    from .catalogue.infrastructure.audit_asset_reads import ui_material_table_exists as implementation
+    return implementation(
+        table, PROGRAMME_AUDIT_SCHEMA=PROGRAMME_AUDIT_SCHEMA, connection=connection,
+    )
 
 
 def fetch_ui_material(key, include_results=False):
-    definition = UI_MATERIAL_TABLES.get(clean(key))
-    if not definition:
-        raise ProgrammeAuditNotFound('Material not found.')
-    table_ident = definition['table']
-    if not ui_material_table_exists(table_ident):
-        return {**definition, 'key': key, 'ready': False, 'count': 0, 'expectedMinutes': 0, 'firstWeekTitle': '', 'results': []}
-
-    table = f'{quote_ident(PROGRAMME_AUDIT_SCHEMA)}.{quote_ident(table_ident)}'
-    with connection.cursor() as cursor:
-        cursor.execute(
-            f'''SELECT count(*),
-                       coalesce(sum(
-                           CASE WHEN expected_otjh IS NOT NULL AND expected_otjh > 0
-                                THEN expected_otjh * 60
-                                ELSE coalesce(duration_minutes, 0) END
-                       ), 0)
-                FROM {table}'''
-        )
-        count, expected_minutes = cursor.fetchone()
-        cursor.execute(
-            f'''SELECT week_title FROM {table}
-                WHERE coalesce(week_title, '') <> ''
-                ORDER BY week_number NULLS LAST, week_title, title LIMIT 1'''
-        )
-        first_week = cursor.fetchone()
-        results = []
-        if include_results:
-            columns = (
-                'id', 'module_catalogue_id', 'module_title', 'week_id', 'week_number',
-                'week_title', 'component_id', 'component_type', 'content_kind',
-                'title', 'description', 'source_url', 'embed_url', 'render_mode',
-                'duration_minutes', 'expected_otjh', 'points', 'status',
-            )
-            cursor.execute(
-                f'''SELECT {", ".join(quote_ident(column) for column in columns)}
-                    FROM {table}
-                    ORDER BY week_number NULLS LAST, week_title, title, id'''
-            )
-            results = rows_as_dicts(cursor)
-            for row in results:
-                if row.get('expected_otjh') is not None:
-                    row['expected_otjh'] = float(row['expected_otjh'])
-    return {
-        **definition,
-        'key': key,
-        'ready': True,
-        'count': int(count),
-        'expectedMinutes': int(round(float(expected_minutes or 0))),
-        'firstWeekTitle': first_week[0] if first_week else '',
-        'results': results,
-    }
+    from .catalogue.infrastructure.audit_asset_reads import fetch_ui_material as implementation
+    return implementation(
+        key, include_results, PROGRAMME_AUDIT_SCHEMA=PROGRAMME_AUDIT_SCHEMA,
+        ProgrammeAuditNotFound=ProgrammeAuditNotFound, UI_MATERIAL_TABLES=UI_MATERIAL_TABLES,
+        clean=clean, connection=connection, quote_ident=quote_ident, rows_as_dicts=rows_as_dicts,
+        ui_material_table_exists=ui_material_table_exists,
+    )
 
 
 def table_exists():
-    try:
-        with connection.cursor() as cursor:
-            if connection.vendor == 'postgresql':
-                cursor.execute(
-                    'select 1 from information_schema.tables where table_schema = %s and table_name = %s limit 1',
-                    [PROGRAMME_AUDIT_SCHEMA, PROGRAMME_AUDIT_TABLE],
-                )
-            else:
-                cursor.execute(
-                    "select 1 from sqlite_master where type='table' and name = %s limit 1",
-                    ['programme_audit_assets'],
-                )
-            return cursor.fetchone() is not None
-    except Exception:
-        logger.debug('Could not verify programme audit table.', exc_info=True)
-        return False
+    from .catalogue.infrastructure.audit_asset_reads import table_exists as implementation
+    return implementation(
+        PROGRAMME_AUDIT_SCHEMA=PROGRAMME_AUDIT_SCHEMA, PROGRAMME_AUDIT_TABLE=PROGRAMME_AUDIT_TABLE,
+        connection=connection, logger=logger,
+    )
 
 
 def provision_programme_audit_table():
@@ -300,386 +180,186 @@ def require_programme_audit_table():
 
 
 def parse_int(value, default=None):
-    if value in (None, ''):
-        return default
-    try:
-        return int(float(value))
-    except (TypeError, ValueError):
-        return default
+    from .catalogue.domain.asset_values import parse_int as implementation
+    return implementation(
+        value, default,
+    )
 
 
 def parse_float(value, default=None):
-    if value in (None, ''):
-        return default
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return default
+    from .catalogue.domain.asset_values import parse_float as implementation
+    return implementation(
+        value, default,
+    )
 
 
 def first_value(mapping, *keys, fallback=''):
-    if not isinstance(mapping, dict):
-        return fallback
-    for key in keys:
-        value = mapping.get(key)
-        if value not in (None, ''):
-            return value
-    return fallback
+    from .catalogue.domain.asset_values import first_value as implementation
+    return implementation(
+        mapping, *keys, fallback=fallback,
+    )
 
 
 def first_clean(mapping, *keys, fallback=''):
-    return clean(first_value(mapping, *keys, fallback=fallback), fallback)
+    from .catalogue.domain.asset_values import first_clean as implementation
+    return implementation(
+        mapping, *keys, fallback=fallback, clean=clean, first_value=first_value,
+    )
 
 
 def iframe_src(value):
-    text = clean(value)
-    if '<' not in text:
-        return ''
-    match = re.search(r'\bsrc\s*=\s*["\']([^"\']+)["\']', text, re.I)
-    if not match:
-        return ''
-    return match.group(1).replace('&amp;', '&').strip()
+    from .catalogue.domain.asset_values import iframe_src as implementation
+    return implementation(
+        value, clean=clean, re=re,
+    )
 
 
 def is_http_url(value):
-    parsed = urlparse(clean(value))
-    return parsed.scheme in {'http', 'https'} and bool(parsed.netloc)
+    from .catalogue.domain.asset_values import is_http_url as implementation
+    return implementation(
+        value, clean=clean, urlparse=urlparse,
+    )
 
 
 def youtube_embed_url(url):
-    parsed = urlparse(clean(url))
-    host = (parsed.hostname or '').lower()
-    video_id = ''
-    if host.endswith('youtu.be'):
-        video_id = parsed.path.strip('/').split('/')[0]
-    elif host.endswith('youtube.com') or host.endswith('youtube-nocookie.com'):
-        if parsed.path.startswith('/embed/'):
-            return clean(url)
-        video_id = parse_qs(parsed.query).get('v', [''])[0]
-        if not video_id and parsed.path.startswith('/shorts/'):
-            video_id = parsed.path.split('/shorts/', 1)[1].split('/')[0]
-    return f'https://www.youtube.com/embed/{video_id}' if video_id else ''
+    from .catalogue.domain.asset_values import youtube_embed_url as implementation
+    return implementation(
+        url, clean=clean, parse_qs=parse_qs, urlparse=urlparse,
+    )
 
 
 def vimeo_embed_url(url):
-    parsed = urlparse(clean(url))
-    host = (parsed.hostname or '').lower()
-    if not host.endswith('vimeo.com'):
-        return ''
-    if parsed.path.startswith('/video/'):
-        return clean(url)
-    match = re.search(r'/(\d+)', parsed.path)
-    return f'https://player.vimeo.com/video/{match.group(1)}' if match else ''
+    from .catalogue.domain.asset_values import vimeo_embed_url as implementation
+    return implementation(
+        url, clean=clean, re=re, urlparse=urlparse,
+    )
 
 
 def google_embed_url(url):
-    text = clean(url)
-    slides = re.search(r'docs\.google\.com/presentation/d/([^/?#]+)', text)
-    if slides:
-        return f'https://docs.google.com/presentation/d/{slides.group(1)}/embed'
-    docs = re.search(r'docs\.google\.com/document/d/([^/?#]+)', text)
-    if docs:
-        return f'https://docs.google.com/document/d/{docs.group(1)}/preview'
-    return ''
+    from .catalogue.domain.asset_values import google_embed_url as implementation
+    return implementation(
+        url, clean=clean, re=re,
+    )
 
 
 def file_extension(url):
-    path = urlparse(clean(url)).path
-    if '.' not in path:
-        return ''
-    return path.rsplit('.', 1)[1].lower()
+    from .catalogue.domain.asset_values import file_extension as implementation
+    return implementation(
+        url, clean=clean, urlparse=urlparse,
+    )
 
 
 def render_target(source_url='', embed_code='', content_kind=''):
-    embedded = iframe_src(embed_code)
-    if embedded:
-        return embedded, 'iframe'
-
-    source_url = clean(source_url)
-    if not source_url:
-        return '', 'lms_native'
-
-    google = google_embed_url(source_url)
-    if google:
-        return google, 'iframe'
-    youtube = youtube_embed_url(source_url)
-    if youtube:
-        return youtube, 'iframe'
-    vimeo = vimeo_embed_url(source_url)
-    if vimeo:
-        return vimeo, 'iframe'
-
-    extension = file_extension(source_url)
-    if source_url.startswith(UPLOAD_URL_PREFIX):
-        return source_url, 'same_origin'
-    if extension == 'pdf':
-        return source_url, 'iframe'
-    if extension in {'doc', 'docx', 'ppt', 'pptx', 'pps', 'ppsx', 'xls', 'xlsx'} and is_http_url(source_url):
-        return f'https://view.officeapps.live.com/op/embed.aspx?src={urlencode({"": source_url})[1:]}', 'office'
-    if content_kind in {'audio', 'video'}:
-        return source_url, 'media'
-    if is_http_url(source_url):
-        return source_url, 'link'
-    return source_url, 'link'
+    from .catalogue.domain.asset_values import render_target as implementation
+    return implementation(
+        source_url, embed_code, content_kind, UPLOAD_URL_PREFIX=UPLOAD_URL_PREFIX, clean=clean,
+        file_extension=file_extension, google_embed_url=google_embed_url, iframe_src=iframe_src,
+        is_http_url=is_http_url, urlencode=urlencode, vimeo_embed_url=vimeo_embed_url,
+        youtube_embed_url=youtube_embed_url,
+    )
 
 
 def content_kind_for_component(component_type):
-    component_type = normalise(component_type)
-    if component_type == 'podcast':
-        return 'audio'
-    if component_type == 'powerpoint':
-        return 'presentation'
-    if component_type == 'recording-placeholder':
-        return 'recording'
-    if component_type == 'live-session':
-        return 'live_session'
-    return component_type or 'activity'
+    from .catalogue.domain.asset_values import content_kind_for_component as implementation
+    return implementation(
+        component_type, normalise=normalise,
+    )
 
 
 def component_settings(component):
-    settings = first_value(component, 'settings', 'settings_json', fallback={})
-    settings = read_json_value(settings, {})
-    return settings if isinstance(settings, dict) else {}
+    from .catalogue.domain.asset_values import component_settings as implementation
+    return implementation(
+        component, first_value=first_value, read_json_value=read_json_value,
+    )
 
 
 def normalised_component_type(component):
-    raw_type = first_clean(component, 'componentType', 'component_type', 'type', 'activityType', fallback='activity')
-    component_type = normalise(raw_type)
-    if component_type not in {'self-study', 'self study', 'activity'}:
-        return component_type
-    settings = component_settings(component)
-    if any(clean(settings.get(key)) for key in ('videoUrl', 'videoURL')) or clean(settings.get('sourceType')):
-        return 'video'
-    if any(clean(settings.get(key)) for key in ('podcastUrl', 'podcastEmbedCode')) or clean(settings.get('podcastSource')):
-        return 'podcast'
-    if any(clean(settings.get(key)) for key in ('presentationUrl', 'fileName', 'slideRange')):
-        return 'powerpoint'
-    if any(clean(settings.get(key)) for key in ('readingContent', 'resourceUrl', 'readingSource', 'estimatedReadingTime')):
-        return 'reading'
-    if any(clean(settings.get(key)) for key in ('minimumWordCount', 'learnerGuidance', 'tutorReviewGuidance')):
-        return 'reflection'
-    return component_type
+    from .catalogue.domain.asset_values import normalised_component_type as implementation
+    return implementation(
+        component, clean=clean, component_settings=component_settings, first_clean=first_clean,
+        normalise=normalise,
+    )
 
 
 def base_asset(component, context, raw_payload, imported_from):
-    settings = component_settings(component)
-    programme = context.get('programme') if isinstance(context.get('programme'), dict) else {}
-    module = context.get('module') if isinstance(context.get('module'), dict) else {}
-    week = context.get('week') if isinstance(context.get('week'), dict) else {}
-    component_type = normalised_component_type(component)
-    programme_id = clean(
-        first_value(programme, 'id', 'sourceId', 'source_id', 'programmeId', 'programme_id')
-        or context.get('programme_id')
-        or first_value(component, 'programmeId', 'programme_id')
-        or first_value(module, 'programmeId', 'programme_id')
-        or first_value(component, 'programme', 'programmeName', 'programme_name')
-        or first_value(module, 'programme', 'programmeName', 'programme_name'),
-        'unassigned-programme',
+    from .catalogue.application.audit_assets import base_asset as implementation
+    return implementation(
+        component, context, raw_payload, imported_from, clean=clean,
+        component_settings=component_settings, content_kind_for_component=content_kind_for_component,
+        first_clean=first_clean, first_value=first_value,
+        normalised_component_type=normalised_component_type, parse_float=parse_float,
+        parse_int=parse_int, read_json_value=read_json_value,
     )
-    programme_name = clean(
-        first_value(programme, 'name', 'programme', 'programmeName', 'programme_name')
-        or context.get('programme_name')
-        or first_value(component, 'programme', 'programmeName', 'programme_name')
-        or first_value(module, 'programme', 'programmeName', 'programme_name'),
-        programme_id,
-    )
-    return {
-        'programme_id': programme_id,
-        'programme_source_id': clean(first_value(programme, 'sourceId', 'source_id'), programme_id),
-        'programme_name': programme_name,
-        'module_catalogue_id': clean(
-            first_value(component, 'moduleCatalogueId', 'module_catalogue_id', 'moduleId', 'module_id')
-            or first_value(module, 'moduleCatalogueId', 'module_catalogue_id', 'catalogueId', 'id')
-            or context.get('module_catalogue_id')
-        ),
-        'module_title': clean(
-            first_value(component, 'module', 'moduleTitle', 'module_title')
-            or first_value(module, 'name', 'title', 'moduleTitle', 'module_title')
-            or context.get('module_title')
-        ),
-        'week_id': clean(first_value(component, 'weekId', 'week_id') or first_value(week, 'id', 'weekId', 'week_id') or context.get('week_id')),
-        'week_number': parse_int(first_value(component, 'weekNumber', 'week_number') or first_value(week, 'weekNumber', 'week_number')),
-        'week_title': clean(
-            first_value(component, 'weekTitle', 'week_title', 'week')
-            or first_value(week, 'title', 'weekTitle', 'week_title', 'week')
-            or context.get('week_title')
-        ),
-        'component_id': clean(first_value(component, 'id', 'componentId', 'component_id')),
-        'component_type': component_type,
-        'title': first_clean(component, 'title', 'name', 'componentTitle', fallback=content_kind_for_component(component_type).replace('_', ' ').title()),
-        'description': first_clean(component, 'description', 'summary', 'shortDescription'),
-        'file_name': first_clean(settings, 'uploadedFileName', 'fileName', 'assignmentFileName'),
-        'content_type': first_clean(settings, 'uploadedFileContentType', 'contentType', 'mimeType'),
-        'file_size': parse_int(first_value(settings, 'uploadedFileSize', 'fileSize', 'size')),
-        'duration_minutes': parse_int(first_value(settings, 'durationMinutes', 'estimatedReadingTime')),
-        'expected_otjh': parse_float(first_value(component, 'expectedOtjh', 'expected_otjh')),
-        'points': parse_int(first_value(component, 'points')),
-        'status': first_clean(settings, 'contentStatus', 'componentBuilderStatus') or first_clean(component, 'status'),
-        'ksb_mappings': read_json_value(first_value(component, 'ksbMappings', 'ksb_mappings', fallback=[]), []),
-        'settings': settings,
-        'raw_component': component,
-        'raw_payload': raw_payload if isinstance(raw_payload, dict) else {'payload': raw_payload},
-        'imported_from': imported_from,
-    }
 
 
 def primary_source_for_component(component, settings, component_type):
-    if component_type == 'video':
-        return first_clean(settings, 'videoUrl', 'uploadedFileUrl', 'resourceUrl'), first_clean(settings, 'embedCode')
-    if component_type == 'podcast':
-        return first_clean(settings, 'podcastUrl', 'uploadedFileUrl'), first_clean(settings, 'embedCode', 'podcastEmbedCode')
-    if component_type == 'reading':
-        return first_clean(settings, 'resourceUrl', 'uploadedFileUrl'), ''
-    if component_type == 'powerpoint':
-        return first_clean(settings, 'presentationUrl', 'uploadedFileUrl'), ''
-    if component_type == 'assignment':
-        return first_clean(settings, 'assignmentFileUrl', 'uploadedFileUrl'), ''
-    if component_type == 'live-session':
-        return first_clean(settings, 'liveSessionUrl', 'teamsMeetingUrl'), ''
-    if component_type == 'recording-placeholder':
-        return first_clean(settings, 'recordingUrl'), ''
-    return first_clean(settings, 'resourceUrl', 'uploadedFileUrl', 'url', 'link'), first_clean(settings, 'embedCode')
+    from .catalogue.domain.asset_values import primary_source_for_component as implementation
+    return implementation(
+        component, settings, component_type, first_clean=first_clean,
+    )
 
 
 def component_assets(component, context, raw_payload, imported_from='curriculum'):
-    settings = component_settings(component)
-    component_type = normalised_component_type(component)
-    kind = content_kind_for_component(component_type)
-    source_url, embed_code = primary_source_for_component(component, settings, component_type)
-    base = base_asset(component, context, raw_payload, imported_from)
-    embed_url, render_mode = render_target(source_url, embed_code, kind)
-    assets = [{
-        **base,
-        'content_kind': kind,
-        'source_url': source_url,
-        'embed_url': embed_url,
-        'embed_code': embed_code,
-        'render_mode': render_mode,
-    }]
-    audio_url = first_clean(settings, 'audioUrl')
-    if component_type == 'reading' and audio_url:
-        audio_embed_url, audio_render_mode = render_target(audio_url, '', 'audio')
-        assets.append({
-            **base,
-            'content_kind': 'audio',
-            'title': f'{base["title"]} audio',
-            'source_url': audio_url,
-            'embed_url': audio_embed_url,
-            'embed_code': '',
-            'render_mode': audio_render_mode,
-        })
-    return [stamp_asset(asset) for asset in assets]
+    from .catalogue.application.audit_assets import component_assets as implementation
+    return implementation(
+        component, context, raw_payload, imported_from, base_asset=base_asset,
+        component_settings=component_settings, content_kind_for_component=content_kind_for_component,
+        first_clean=first_clean, normalised_component_type=normalised_component_type,
+        primary_source_for_component=primary_source_for_component, render_target=render_target,
+        stamp_asset=stamp_asset,
+    )
 
 
 def stable_asset_id(asset):
-    source = '|'.join([
-        clean(asset.get('programme_id')),
-        clean(asset.get('component_id')),
-        clean(asset.get('content_kind')),
-        clean(asset.get('source_url') or asset.get('embed_url') or asset.get('title')),
-    ])
-    return hashlib.sha256(source.encode('utf-8')).hexdigest()
+    from .catalogue.domain.asset_values import stable_asset_id as implementation
+    return implementation(
+        asset, clean=clean, hashlib=hashlib,
+    )
 
 
 def stamp_asset(asset):
-    source_key = stable_asset_id(asset)
-    now = timezone.now()
-    return {
-        **asset,
-        'id': source_key,
-        'source_key': source_key,
-        'imported_at': now,
-        'updated_at': now,
-    }
+    from .catalogue.application.audit_assets import stamp_asset as implementation
+    return implementation(
+        asset, stable_asset_id=stable_asset_id, timezone=timezone,
+    )
 
 
 def is_component_like(value):
-    if not isinstance(value, dict):
-        return False
-    has_title = any(clean(value.get(key)) for key in ('title', 'name', 'componentTitle'))
-    has_type = any(clean(value.get(key)) for key in ('type', 'componentType', 'component_type', 'activityType'))
-    has_component_id = any(clean(value.get(key)) for key in ('componentId', 'component_id'))
-    return has_type and (has_title or has_component_id)
+    from .catalogue.domain.asset_values import is_component_like as implementation
+    return implementation(
+        value, clean=clean,
+    )
 
 
 def context_with(context, key, value):
-    updated = dict(context)
-    if isinstance(value, dict):
-        updated[key] = value
-    return updated
+    from .catalogue.domain.asset_values import context_with as implementation
+    return implementation(
+        context, key, value,
+    )
 
 
 def iter_components(payload, context=None):
-    context = context or {}
-    if isinstance(payload, list):
-        for item in payload:
-            yield from iter_components(item, context)
-        return
-    if not isinstance(payload, dict):
-        return
-
-    if isinstance(payload.get('programme'), dict):
-        context = context_with(context, 'programme', payload['programme'])
-    elif any(payload.get(key) for key in ('programmeId', 'programme_id', 'programmeName', 'programme_name')):
-        context = {
-            **context,
-            'programme_id': first_clean(payload, 'programmeId', 'programme_id'),
-            'programme_name': first_clean(payload, 'programmeName', 'programme_name', 'programme'),
-        }
-
-    if isinstance(payload.get('module'), dict):
-        context = context_with(context, 'module', payload['module'])
-    if isinstance(payload.get('week'), dict):
-        context = context_with(context, 'week', payload['week'])
-
-    flat = payload.get('flat')
-    if isinstance(flat, dict) and isinstance(flat.get('components'), list):
-        modules_by_id = {}
-        for module in flat.get('modules') or []:
-            module_id = clean(first_value(module, 'moduleCatalogueId', 'catalogueId', 'moduleId', 'id'))
-            if module_id:
-                modules_by_id[module_id] = module
-        for component in flat['components']:
-            module_id = clean(first_value(component, 'moduleCatalogueId', 'moduleId', 'module_catalogue_id'))
-            item_context = context_with(context, 'module', modules_by_id.get(module_id, {}))
-            yield component, item_context
-        return
-
-    if is_component_like(payload):
-        yield payload, context
-
-    child_context = context
-    if any(clean(payload.get(key)) for key in ('moduleCatalogueId', 'catalogueId', 'moduleId', 'module_catalogue_id')):
-        child_context = context_with(child_context, 'module', payload)
-    if any(clean(payload.get(key)) for key in ('weekId', 'week_id', 'weekNumber', 'week_number')) and not is_component_like(payload):
-        child_context = context_with(child_context, 'week', payload)
-
-    for key in ('components', 'items', 'activities', 'lessons', 'resources'):
-        if isinstance(payload.get(key), list):
-            for child in payload[key]:
-                yield from iter_components(child, child_context)
-    for key in ('modules', 'courses', 'weeks', 'weekStructure', 'data', 'results', 'programmeStructure'):
-        if isinstance(payload.get(key), (list, dict)):
-            yield from iter_components(payload[key], child_context)
+    from .catalogue.application.audit_assets import iter_components as implementation
+    yield from implementation(
+        payload, context, clean=clean, context_with=context_with, first_clean=first_clean,
+        first_value=first_value, is_component_like=is_component_like, iter_components=iter_components,
+    )
 
 
 def assets_from_payload(payload, imported_from='payload'):
-    assets = []
-    seen = set()
-    for component, context in iter_components(payload):
-        for asset in component_assets(component, context, payload, imported_from):
-            if asset['id'] in seen:
-                continue
-            seen.add(asset['id'])
-            assets.append(asset)
-    return assets
+    from .catalogue.application.audit_assets import assets_from_payload as implementation
+    return implementation(
+        payload, imported_from, component_assets=component_assets, iter_components=iter_components,
+    )
 
 
 def assets_from_curriculum_programme(programme_identifier):
-    payload = curriculum_views.build_curriculum_programme_tree_detail_payload(programme_identifier, 'all')
-    if not payload:
-        raise ProgrammeAuditNotFound('Programme not found.')
-    return assets_from_payload(payload, imported_from='curriculum'), payload
+    from .catalogue.application.audit_assets import assets_from_curriculum_programme as implementation
+    return implementation(
+        programme_identifier, ProgrammeAuditNotFound=ProgrammeAuditNotFound,
+        assets_from_payload=assets_from_payload,
+        curriculum_views_build_curriculum_programme_tree_detail_payload=build_curriculum_programme_tree_detail_payload,
+    )
 
 
 def fetch_external_payload(url, query=None):
@@ -699,80 +379,16 @@ def fetch_external_payload(url, query=None):
         return json.loads(response.read().decode('utf-8-sig'))
 
 
-KBC_WORDPRESS_SCHEMA_URL = 'https://kentbusinesscollege.org/wp-json/kbc-lms/v1/all-students-schema'
+from .catalogue.domain.asset_contracts import KBC_WORDPRESS_SCHEMA_URL
 
 
 def kbc_wordpress_activity_asset(group, activity):
-    """Map one WordPress KBC-LMS ``groups[].activities[]`` entry to an asset row.
-
-    The source endpoint is paginated by student (not by programme/material), so
-    every activity payload it returns is plain course-material data with no
-    student identifiers in it - see ``sync_kbc_wordpress_all_programmes``.
-    """
-    activity_type = normalise(clean(activity.get('activity_type')))
-    video = activity.get('video') if isinstance(activity.get('video'), dict) else None
-    audio = activity.get('audio') if isinstance(activity.get('audio'), dict) else None
-    reading = activity.get('reading') if isinstance(activity.get('reading'), dict) else None
-    quiz = activity.get('quiz') if isinstance(activity.get('quiz'), dict) else None
-
-    if video is not None:
-        kind = 'video'
-        source_url = clean(video.get('iframe_url'))
-        duration = parse_float(video.get('configured_duration_min'))
-    elif audio is not None:
-        kind = 'audio'
-        source_url = clean(audio.get('iframe_url'))
-        duration = parse_float(audio.get('configured_duration_min'))
-    elif reading is not None:
-        kind = 'reading'
-        source_url = clean(reading.get('iframe_url'))
-        duration = None
-    elif quiz is not None:
-        kind = 'quiz'
-        source_url = ''
-        duration = None
-    else:
-        kind = activity_type or 'activity'
-        source_url = ''
-        duration = None
-
-    embed_url, render_mode = render_target(source_url, '', kind)
-    programme_id = clean(group.get('group_id'))
-    programme_name = clean(group.get('group_name'), programme_id)
-    component_id = clean(activity.get('activity_id'))
-
-    asset = {
-        'programme_id': programme_id,
-        'programme_source_id': programme_id,
-        'programme_name': programme_name,
-        'module_catalogue_id': '',
-        'module_title': '',
-        'week_id': '',
-        'week_number': None,
-        'week_title': '',
-        'component_id': component_id,
-        'component_type': clean(activity.get('activity_type')),
-        'content_kind': kind,
-        'title': first_clean(activity, 'title', fallback=kind.title()),
-        'description': '',
-        'source_url': source_url,
-        'embed_url': embed_url,
-        'embed_code': '',
-        'render_mode': render_mode,
-        'file_name': '',
-        'content_type': '',
-        'file_size': None,
-        'duration_minutes': parse_int(duration),
-        'expected_otjh': None,
-        'points': parse_int((quiz or {}).get('maximum_score')),
-        'status': '',
-        'ksb_mappings': [],
-        'settings': {'activity_date': clean(activity.get('activity_date'))},
-        'raw_component': activity,
-        'raw_payload': {'group_id': group.get('group_id'), 'group_name': group.get('group_name')},
-        'imported_from': 'kbc-wordpress',
-    }
-    return stamp_asset(asset)
+    from .catalogue.application.audit_assets import kbc_wordpress_activity_asset as implementation
+    return implementation(
+        group, activity, clean=clean, first_clean=first_clean, normalise=normalise,
+        parse_float=parse_float, parse_int=parse_int, render_target=render_target,
+        stamp_asset=stamp_asset,
+    )
 
 
 def fetch_kbc_wordpress_page(page, per_page=25):
@@ -986,51 +602,20 @@ def upsert_assets_per_programme_tables(assets, on_programme=None):
 
 
 def serialise_asset_row(row):
-    for column in JSON_COLUMNS:
-        row[column] = read_json_value(row.get(column), [] if column == 'ksb_mappings' else {})
-    for column in ('imported_at', 'updated_at'):
-        if row.get(column) is not None and hasattr(row[column], 'isoformat'):
-            row[column] = row[column].isoformat()
-    if row.get('expected_otjh') is not None:
-        row['expected_otjh'] = float(row['expected_otjh'])
-    return row
+    from .catalogue.application.audit_assets import serialise_asset_row as implementation
+    return implementation(
+        row, JSON_COLUMNS=JSON_COLUMNS, read_json_value=read_json_value,
+    )
 
 
 def fetch_assets(programme_id, kind=''):
-    require_programme_audit_table()
-    where = ['programme_id = %s']
-    params = [programme_id]
-    if kind:
-        where.append('content_kind = %s')
-        params.append(kind)
-    kind_order = """
-        case content_kind
-            when 'live_session' then 1
-            when 'recording' then 2
-            when 'video' then 3
-            when 'presentation' then 4
-            when 'reading' then 5
-            when 'audio' then 6
-            when 'quiz' then 7
-            when 'reflection' then 8
-            else 99
-        end
-    """
-    if connection.vendor == 'postgresql':
-        sql = (
-            f'select {", ".join(quote_ident(column) for column in ASSET_COLUMNS)} '
-            f'from {asset_table_name()} where {" and ".join(where)} '
-            f'order by module_title, week_number nulls last, week_title, {kind_order}, title'
-        )
-    else:
-        sql = (
-            f'select {", ".join(quote_ident(column) for column in ASSET_COLUMNS)} '
-            f'from {asset_table_name()} where {" and ".join(where)} '
-            f'order by module_title, week_number, week_title, {kind_order}, title'
-        )
-    with connection.cursor() as cursor:
-        cursor.execute(sql, params)
-        return [serialise_asset_row(row) for row in rows_as_dicts(cursor)]
+    from .catalogue.infrastructure.audit_asset_reads import fetch_assets as implementation
+    return implementation(
+        programme_id, kind, ASSET_COLUMNS=ASSET_COLUMNS, asset_table_name=asset_table_name,
+        connection=connection, quote_ident=quote_ident,
+        require_programme_audit_table=require_programme_audit_table, rows_as_dicts=rows_as_dicts,
+        serialise_asset_row=serialise_asset_row,
+    )
 
 
 def sync_from_options(*, programme_identifier='', payload=None, source_url='', replace=False):
@@ -1115,39 +700,28 @@ def programme_audit_assets(request, programme_id):
 
 @require_GET
 def programme_audit_status(request):
-    exists = table_exists()
-    return JsonResponse({
-        'schema': PROGRAMME_AUDIT_SCHEMA,
-        'table': PROGRAMME_AUDIT_TABLE,
-        'ready': exists,
-    })
+    from .catalogue.api.audit_assets import programme_audit_status as implementation
+    return implementation(
+        request, JsonResponse=JsonResponse, PROGRAMME_AUDIT_SCHEMA=PROGRAMME_AUDIT_SCHEMA,
+        PROGRAMME_AUDIT_TABLE=PROGRAMME_AUDIT_TABLE, table_exists=table_exists,
+    )
 
 
 @require_GET
 @never_cache
 def programme_audit_materials(request):
-    programme = clean(request.GET.get('programme')).upper()
-    account = getattr(request, 'login_account', None)
-    if account is not None and clean(getattr(account, 'role', '')).lower() == 'learner':
-        return JsonResponse({'error': 'Programme audit materials are not available to learners.'}, status=403)
-    keys = [
-        key for key, definition in UI_MATERIAL_TABLES.items()
-        if not programme or definition['programme'] == programme
-    ]
-    results = [fetch_ui_material(key, include_results=False) for key in keys]
-    return JsonResponse({'programme': programme, 'count': len(results), 'results': results})
+    from .catalogue.api.audit_assets import programme_audit_materials as implementation
+    return implementation(
+        request, JsonResponse=JsonResponse, UI_MATERIAL_TABLES=UI_MATERIAL_TABLES, clean=clean,
+        fetch_ui_material=fetch_ui_material,
+    )
 
 
 @require_GET
 @never_cache
 def programme_audit_material(request, material_key):
-    account = getattr(request, 'login_account', None)
-    if account is not None and clean(getattr(account, 'role', '')).lower() == 'learner':
-        return JsonResponse({'error': 'Programme audit materials are not available to learners.'}, status=403)
-    try:
-        material = fetch_ui_material(material_key, include_results=True)
-    except ProgrammeAuditNotFound as exc:
-        return JsonResponse({'error': str(exc)}, status=404)
-    if not material['ready']:
-        return JsonResponse({'error': 'Material table is not available.'}, status=404)
-    return JsonResponse(material)
+    from .catalogue.api.audit_assets import programme_audit_material as implementation
+    return implementation(
+        request, material_key, JsonResponse=JsonResponse, ProgrammeAuditNotFound=ProgrammeAuditNotFound,
+        clean=clean, fetch_ui_material=fetch_ui_material,
+    )

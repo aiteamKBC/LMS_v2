@@ -12,7 +12,7 @@ from unittest.mock import patch
 from django.db.models import Model
 from django.test import SimpleTestCase
 
-from curriculum_api.models import ModuleAuthoringModule
+from curriculum_api.models import ModuleAuthoringComponent, ModuleAuthoringModule
 
 from .manual_attendance_completion import read_manual_completion
 from .tests_manual_attendance_completion import NOW, adjustment, component, occurrence
@@ -24,7 +24,7 @@ class Query:
     """Records one ORM chain and answers with fixture rows."""
 
     def __init__(self, rows):
-        self.rows, self.filters, self.fields = rows, {}, ()
+        self.rows, self.filters, self.exclusions, self.fields = rows, {}, {}, ()
 
     def using(self, alias):
         self.alias = alias
@@ -32,6 +32,10 @@ class Query:
 
     def filter(self, **kwargs):
         self.filters.update(kwargs)
+        return self
+
+    def exclude(self, **kwargs):
+        self.exclusions.update(kwargs)
         return self
 
     def values_list(self, *fields):
@@ -42,14 +46,19 @@ class Query:
     def values(self, *fields):
         self.fields = fields
         wanted = set(self.filters.get('module_catalogue_id__in') or [])
-        return [row for row in self.rows if row['module_catalogue_id'] in wanted]
+        rows = [row for row in self.rows if row['module_catalogue_id'] in wanted]
+        inactive = self.exclusions.get('status__iexact')
+        if inactive is not None:
+            rows = [row for row in rows if str(row.get('status') or '').casefold() != inactive.casefold()]
+        return rows
 
 
 class ManualCompletionModuleQueryTests(SimpleTestCase):
     def setUp(self):
         self.enterContext(patch.object(Model, 'save', side_effect=AssertionError('write during an attendance read')))
 
-    def read(self, module_rows, component_rows, adjustments=None, candidates=None, occurrences=None):
+    def read(self, module_rows, component_rows, adjustments=None, candidates=None, occurrences=None,
+             learner_type='commercial'):
         self.modules, self.cards = Query(module_rows), Query(component_rows)
         occurrence_rows = [occurrence()] if occurrences is None else occurrences
         with patch('coach_api.models.CoachAttendanceSourceAdjustment.objects') as corrections, \
@@ -62,7 +71,9 @@ class ManualCompletionModuleQueryTests(SimpleTestCase):
             corrections.filter.return_value = [adjustment()] if adjustments is None else adjustments
             records.filter.return_value = []
             result = read_manual_completion(candidates or [{'componentId': 'C1', 'moduleId': 'M1'}],
-                                            SimpleNamespace(pk=7, enrolment_id=70, email='synthetic@example.invalid'))
+                                            SimpleNamespace(pk=7, enrolment_id=70,
+                                                            email='synthetic@example.invalid',
+                                                            learner_type=learner_type))
         self.native = native
         return result
 
@@ -86,17 +97,41 @@ class ManualCompletionModuleQueryTests(SimpleTestCase):
     def test_completion_results_and_card_mapping_are_unchanged(self):
         result = self.read([('M1', 'Module one')], [component()])
         self.assertEqual(result, {('C1', 'M1'): (True, NOW)})
-        # The component query and its own deletion filters are not changed here.
+        # Components use the normalized status field directly, without asking
+        # the legacy lifecycle manager to translate removed deletion fields.
         self.assertEqual(self.cards.filters, {
-            'module_catalogue_id__in': {'M1': 'Module one'}, 'type__in': ['live_session', 'live-session'],
-            'deleted_at__isnull': True, 'is_programme_deleted': False})
+            'module_catalogue_id__in': {'M1': 'Module one'}, 'type__in': ['live_session', 'live-session']})
+        self.assertEqual(self.cards.exclusions, {'status__iexact': 'inactive'})
         self.native.assert_called_once()
         self.assertEqual(self.native.call_args.kwargs, {'module_ids': ['M1']})
+
+    def test_the_component_query_uses_only_normalized_physical_columns(self):
+        self.read([('M1', 'Module one')], [component()])
+        query = ModuleAuthoringComponent._meta.base_manager.filter(
+            **self.cards.filters).exclude(**self.cards.exclusions).values(*self.cards.fields)
+        sql = str(query.query)
+        for column in REMOVED:
+            self.assertNotIn(column, sql)
+            self.assertNotIn(f'"{column}"', sql)
+        self.assertIn('"status"', sql)
 
     def test_absence_and_ambiguous_cards_keep_their_existing_results(self):
         self.assertEqual(self.read([('M1', 'Module one')], [component()], adjustments=[adjustment(status='absent')]),
                          {('C1', 'M1'): (False, NOW)})
         self.assertEqual(self.read([('M1', 'Module one')], [component(), component(id='C2')]), {})
+
+    def test_inactive_components_are_not_accepted_as_manual_attendance(self):
+        inactive = component(id='C2')
+        inactive['status'] = 'inactive'
+        result = self.read([('M1', 'Module one')], [component(), inactive])
+        self.assertEqual(result, {('C1', 'M1'): (True, NOW)})
+
+    def test_the_normalized_component_query_is_shared_by_both_learner_kinds(self):
+        for learner_type in ('commercial', 'apprenticeship'):
+            with self.subTest(learner_type=learner_type):
+                result = self.read([('M1', 'Module one')], [component()], learner_type=learner_type)
+                self.assertEqual(result, {('C1', 'M1'): (True, NOW)})
+                self.assertEqual(self.cards.exclusions, {'status__iexact': 'inactive'})
 
     def test_a_missing_module_contributes_no_cards_or_occurrences(self):
         # M2 is requested but has no curriculum row: only M1 is read further.

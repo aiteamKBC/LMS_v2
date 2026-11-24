@@ -51,7 +51,10 @@ def learners(email, search):
 
 def first_evidence_date(learner_id):
     return query('''SELECT min(uploaded_at)::date AS first_date FROM "Learner".evidence_files
-                    WHERE learner_id=%s AND status='approved' ''', [str(learner_id)])[0]['first_date']
+                    WHERE learner_profile_id=(
+                        SELECT min(id) FROM "Learner".learners
+                        WHERE enrolment_id=%s HAVING count(*)=1
+                    ) AND status='approved' ''', [learner_id])[0]['first_date']
 
 
 def monthly_target(learner, month):
@@ -150,8 +153,13 @@ def _attempts(learner):
 
 
 def _reflections(learner, progress):
+    owner = learner.get('_profile') or profile(learner['id'])
+    if not owner:
+        return
     records = query('''SELECT to_jsonb(s) AS payload FROM "Learner".learning_reflection_submissions s
-        WHERE s.learner_id=%s AND s.status <> 'draft' ORDER BY s.submitted_at,s.id''', [str(learner['id'])])
+        WHERE s.learner_id=%s AND s.learner_kind=%s AND s.status <> 'draft'
+          AND s.activity_type <> 'extra_activity'
+        ORDER BY s.submitted_at,s.id''', [owner['id'], owner['learner_type']])
     by_progress = {p['source_ref']: p for p in progress}
     for record in records:
         s = decoded(record['payload'], {})
@@ -169,8 +177,9 @@ def _reflections(learner, progress):
 
 def _documents(learner, rows):
     records = query('''SELECT id,original_filename,content_type,component_ref,progress_entry_id,section_ref
-        FROM "Learner".evidence_files WHERE learner_id=%s AND status='approved'
-        ORDER BY uploaded_at,id''', [str(learner['id'])])
+        FROM "Learner".evidence_files WHERE learner_profile_id=(
+            SELECT min(id) FROM "Learner".learners WHERE enrolment_id=%s HAVING count(*)=1
+        ) AND status='approved' ORDER BY uploaded_at,id''', [learner['id']])
     for doc in records:
         for item in rows:
             matches = item['source_ref'] == f"progress:{doc.get('progress_entry_id')}"

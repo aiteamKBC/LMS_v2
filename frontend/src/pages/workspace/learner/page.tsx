@@ -1,3 +1,4 @@
+import { LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
 import { learnerRecordedDates } from '@/lib/learnerRecordedDates';
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
@@ -165,11 +166,11 @@ export default function LearnerOverview() {
     ?? tabData.overview.payload?.programmeEndDate
     ?? real?.learnerEndDate;
   const recordedDates = learnerRecordedDates(real);
-  const startDateDisplay = formatProgrammeStartDate(recordedDates.start) || (loading ? 'Loading…' : EMPTY_VALUE);
-  const plannedEndDisplay = formatProgrammeStartDate(recordedDates.end) || (loading ? 'Loading…' : EMPTY_VALUE);
+  const startDateDisplay = formatProgrammeStartDate(recordedDates.start) || (loading ? <LoadingSkeleton label={'Loading…'} /> : EMPTY_VALUE);
+  const plannedEndDisplay = formatProgrammeStartDate(recordedDates.end) || (loading ? <LoadingSkeleton label={'Loading…'} /> : EMPTY_VALUE);
   const plan = { label: headerRead.data?.moduleLabel || 'Module', modules: headerRead.data?.modules || [] };
   const initialWeeklyModuleId = headerRead.data?.initialWeeklyModuleId || undefined;
-  const planPlaceholder = scheduleRead.loading ? 'Loading...' : scheduleRead.error ? 'Unavailable' : EMPTY_VALUE;
+  const planPlaceholder = scheduleRead.loading ? <LoadingSkeleton label={'Loading...'} /> : scheduleRead.error ? 'Unavailable' : EMPTY_VALUE;
   const moduleHref = (moduleId?: string) => learnerModuleHref(kind, id, moduleId, undefined,
     headerRead.data?.modules.find(module => module.id === moduleId)?.subjectId);
   const continueLearningHref = moduleHref(plan.modules[0]?.id);
@@ -249,12 +250,12 @@ export default function LearnerOverview() {
     },
     {
       title: 'Next live session',
-      subtitle: nextLecture.date ? nextLecture.title : scheduleRead.loading ? 'Loading…' : 'No upcoming session',
+      subtitle: nextLecture.date ? nextLecture.title : scheduleRead.loading ? <LoadingSkeleton label={'Loading…'} /> : 'No upcoming session',
       description: nextLecture.date
         ? `${formatProgrammeStartDate(nextLecture.date)} · ${formatSessionTime(nextLecture.date)}`
-        : scheduleRead.loading ? 'Loading…' : 'Check back once your next session is scheduled.',
+        : scheduleRead.loading ? <LoadingSkeleton label={'Loading…'} /> : 'Check back once your next session is scheduled.',
       cta: nextLecture.date ? 'Attend' : 'View schedule',
-      status: nextLecture.date ? 'Scheduled' : scheduleRead.loading ? 'Loading…' : 'No session scheduled',
+      status: nextLecture.date ? 'Scheduled' : scheduleRead.loading ? <LoadingSkeleton label={'Loading…'} /> : 'No session scheduled',
       icon: Monitor,
       variant: 'session',
       href: nextLecture.date ? nextLectureActivityHref : nextLecture.href,
@@ -263,11 +264,11 @@ export default function LearnerOverview() {
     },
     {
       title: 'Due soon',
-      subtitle: nextAssignment.date ? nextAssignment.title : weekRead.loading ? 'Loading…' : 'No upcoming assignment',
+      subtitle: nextAssignment.date ? nextAssignment.title : weekRead.loading ? <LoadingSkeleton label={'Loading…'} /> : 'No upcoming assignment',
       description: nextAssignment.date ? `Due ${formatProgrammeStartDate(nextAssignment.date)}`
-        : weekRead.loading ? 'Loading…' : 'You’re all caught up — nothing due soon.',
+        : weekRead.loading ? <LoadingSkeleton label={'Loading…'} /> : 'You’re all caught up — nothing due soon.',
       cta: nextAssignment.date ? 'Open assignment' : 'View assignments',
-      status: nextAssignment.date ? 'Pending' : weekRead.loading ? 'Loading…' : 'Nothing due',
+      status: nextAssignment.date ? 'Pending' : weekRead.loading ? <LoadingSkeleton label={'Loading…'} /> : 'Nothing due',
       icon: ClipboardList,
       variant: 'due',
       href: nextAssignment.href,

@@ -1,5 +1,6 @@
 """Run directly with Python. No Django imports, DB setup, credentials or network."""
 import ast
+from curriculum_api.catalogue.tests.parity.current_entry_source import current_entry_tree
 import copy
 import hashlib
 import importlib.util
@@ -17,6 +18,8 @@ from urllib import parse as urllib_parse
 from zoneinfo import ZoneInfo
 from config.time_zones import calendar_zone, local_clock_to_utc
 from coach_api.graph_transport import GraphRequestError
+from curriculum_api.study_week_teams import prune_study_week_fillers
+from curriculum_api.weekly_schedule import module_week_boundary_mode
 
 ROOT = Path(__file__).parent
 spec = importlib.util.spec_from_file_location('calendar_checks', ROOT / 'teams_calendar_checks.py')
@@ -88,6 +91,9 @@ class CalendarChecksTests(unittest.TestCase):
                               CalendarMismatch=checks.CalendarMismatch, safe_teams_join_url=checks.safe_teams_join_url,
                               utc_datetime=checks.utc_datetime, graph_calendar_time=checks.graph_calendar_time,
                               verify_calendar=checks.verify_calendar, publish_attendees=checks.publish_attendees,
+                              read_calendar_instances=checks.read_calendar_instances,
+                              prune_study_week_fillers=prune_study_week_fillers,
+                              module_week_boundary_mode=module_week_boundary_mode,
                               remove_attendees_silently=checks.remove_attendees_silently,
                               attendee_differences=checks.attendee_differences,
                               attendees_already_match=checks.attendees_already_match,
@@ -119,7 +125,7 @@ class CalendarChecksTests(unittest.TestCase):
                               # no-op here rather than real seconds on every short series.
                               time=types.SimpleNamespace(sleep=lambda _seconds: None))
         names = {'clean_str', 'parse_graph_datetime', 'teams_attendee_emails', 'teams_event_body_html',
-                 'teams_event_payload', 'teams_single_occurrence_payload', 'teams_calendar_minute_key',
+                 'teams_event_payload', 'teams_module_session_limit', 'teams_single_occurrence_payload', 'teams_calendar_minute_key',
                  'teams_shifted_occurrence_targets', 'teams_expanded_instances',
                  'teams_standalone_occurrence_meeting',
                  'apply_teams_occurrence_shifts', 'curriculum_teams_meeting', 'curriculum_teams_meeting_schedule', 'external_teams_calendar_refusal',
@@ -131,13 +137,12 @@ class CalendarChecksTests(unittest.TestCase):
                  'reschedule_single_live_session_occurrence', 'saved_live_session_occurrences',
                  'teams_schedule_settings', 'refresh_standalone_occurrence_options',
                  'curriculum_teams_meeting_occurrence_schedule'}
-        tree = ast.parse((ROOT / 'views.py').read_text(encoding='utf-8-sig'))
+        tree = current_entry_tree()
         for node in tree.body:
             if isinstance(node, ast.Assign) and any(isinstance(target, ast.Name) and target.id == 'GRAPH_SILENT_INVITE_HEADERS' for target in node.targets):
                 self.v.GRAPH_SILENT_INVITE_HEADERS = ast.literal_eval(node.value)
-        nodes = [node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name in names]
-        self.assertEqual(len(nodes), len(names))
-        exec(compile(ast.Module(body=nodes, type_ignores=[]), str(ROOT / 'views.py'), 'exec'), self.v.__dict__)
+        from curriculum_api.meetings.tests.source_loader import load_current_functions
+        load_current_functions(names, self.v.__dict__, tree)
         transport = types.ModuleType('coach_api.views')
         transport.microsoft_graph_request = self.graph
         transport.has_graph_credentials = lambda: True
@@ -153,6 +158,13 @@ class CalendarChecksTests(unittest.TestCase):
                                                 'curriculum_api.teams_original_calendar': original})
         self.modules.start()
         self.addCleanup(self.modules.stop)
+        # This suite models an unprovisioned integrity log. When run beside
+        # PostgreSQL integration suites, their real table must not turn this
+        # no-database fixture into a durable log or leak one case into another.
+        from curriculum_api import teams_calendar_integrity
+        self.integrity_available = patch.object(teams_calendar_integrity, 'events_available', return_value=False)
+        self.integrity_available.start()
+        self.addCleanup(self.integrity_available.stop)
         # The retry guard's ledger: in memory, so its claims can be read back.
         # A test that wants the guard switched off replaces it with one whose
         # check() raises, as an unprovisioned database does.
@@ -638,6 +650,7 @@ class CalendarChecksTests(unittest.TestCase):
                      'quote': urllib_parse.quote, 'urlencode': urllib_parse.urlencode, 'ZoneInfo': ZoneInfo, 'uuid': uuid,
                      'JsonResponse': Response, 'calendar_targets': checks.calendar_targets,
                      'verify_calendar': checks.verify_calendar, 'publish_attendees': checks.publish_attendees,
+                     'read_calendar_instances': checks.read_calendar_instances,
                      'remove_attendees_silently': checks.remove_attendees_silently,
                      'CalendarMismatch': checks.CalendarMismatch,
                      'sessions_a_rewrite_would_drop': checks.sessions_a_rewrite_would_drop,

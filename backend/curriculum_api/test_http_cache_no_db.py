@@ -4,6 +4,7 @@ No database: the encoded-response helpers are pure, the single-flight helpers
 take the cache as an argument, and the paged reader is driven through a stub
 of authoring_fetch_all.
 """
+from curriculum_api.catalogue.tests.parity.composition_test_support import composition_fixture
 
 import gzip
 import json
@@ -176,16 +177,16 @@ class CachedValueSingleFlightTests(SimpleTestCase):
     def setUp(self):
         self.cache = FakeSharedCache()
         patches = [
-            mock.patch.object(views, 'cache', self.cache),
-            mock.patch.object(views, 'shared_curriculum_epoch', return_value=7),
+            composition_fixture(views, 'cache', self.cache),
+            composition_fixture(views, 'shared_curriculum_epoch', return_value=7),
             mock.patch.object(shared_build, 'POLL_SECONDS', 0.001),
         ]
         for patcher in patches:
             patcher.start()
             self.addCleanup(patcher.stop)
-        with views._CURRICULUM_CACHE_LOCK:
-            views._CURRICULUM_CACHE.clear()
-        self.addCleanup(views._CURRICULUM_CACHE.clear)
+        with views.cache_state._CURRICULUM_CACHE_LOCK:
+            views.cache_state._CURRICULUM_CACHE.clear()
+        self.addCleanup(views.cache_state._CURRICULUM_CACHE.clear)
         self.shared_key = views.shared_curriculum_cache_key('single-flight-key', 7)
 
     def test_a_build_running_on_another_worker_is_awaited_not_repeated(self):
@@ -248,8 +249,8 @@ class PagedComponentReadTests(SimpleTestCase):
             limit, offset = (int(part) for part in limit_part.split(' offset '))
             return rows[offset:offset + limit]
 
-        with mock.patch.object(views, 'authoring_fetch_all', side_effect=fake_fetch), \
-                mock.patch.object(views, 'COMPONENT_FULL_READ_PAGE_ROWS', page_rows):
+        with composition_fixture(views, 'authoring_fetch_all', side_effect=fake_fetch), \
+                composition_fixture(views, 'COMPONENT_FULL_READ_PAGE_ROWS', page_rows):
             result = views.live_component_rows_paged(['M2', 'M1', 'M2'], 'display_order, id')
         return result, calls
 
@@ -267,7 +268,7 @@ class PagedComponentReadTests(SimpleTestCase):
         self.assertEqual([row['id'] for row in result], ['a', 'b', 'c'])
 
     def test_no_ids_means_no_read(self):
-        with mock.patch.object(views, 'authoring_fetch_all') as fetch:
+        with composition_fixture(views, 'authoring_fetch_all') as fetch:
             self.assertEqual(views.live_component_rows_paged([], 'display_order, id'), [])
         fetch.assert_not_called()
 
@@ -385,7 +386,7 @@ class PartialReadSaveGuardTests(SimpleTestCase):
         self.assertFalse([error for error in errors if 'Reload it before saving' in error['message']])
 
     def test_component_endpoint_refuses_a_trimmed_component_before_reading_the_database(self):
-        with mock.patch.object(views, 'authoring_fetch_all', side_effect=AssertionError('database read')):
+        with composition_fixture(views, 'authoring_fetch_all', side_effect=AssertionError('database read')):
             with self.assertRaises(views.ModuleAuthoringValidationError) as raised:
                 views.save_component_builder_payload({
                     'id': 'C1', 'title': 'Reading', 'module': 'MOD-1', 'type': 'Reading Material',

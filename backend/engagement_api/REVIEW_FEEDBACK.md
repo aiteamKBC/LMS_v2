@@ -59,14 +59,32 @@ Rollback produces no Feedback. The existing learner Feedback release flags are
 respected. A failed database callback emits a pending warning; committed Review
 state remains available for reconciliation.
 
-The learner Feedback list reconciles both persisted sources when opened. There
-is no direct live Aptem request or assumed webhook. The codebase contains
-readers of the imported rows but no identified writer for the Aptem status/date
-import, so this change does not install an import hook or periodic job. Aptem
-changes become eligible only after the import reaches `Learner.reviews`, then
-the next Feedback page read or explicitly scheduled/scoped command discovers
-them. Post-commit callbacks alone are not a guaranteed background delivery
-system; the durable Review rows plus reconciliation are the recovery path.
+The learner Feedback list still reconciles both persisted sources when opened.
+On 21 November 2026 the automatic full sweep and global discovery helper
+were removed, including their modules and both ASGI/WSGI startup hooks,
+because periodic scans multiply Neon queries across all serving workers even
+when no source review changed. HTTP startup no longer launches Review feedback
+polling. No interval, opt-in schedule or deployment environment setting enables
+the removed scheduler.
+
+The Aptem Review status/date writer was not found in this repository. The Aptem
+learner-sync workflow updates learner details, not `Learner.reviews`, and the
+Advanced Admin Review sync reads imported rows to fetch PDFs. Its external
+writer's actual location remains unidentified. Automatic handling of its SQL/bulk
+imports is therefore still pending integration. The intended replacement is an
+after-commit call for only the changed source Review IDs, using the existing
+scoped service/command and a durable retry in the actual import workflow. Do not
+claim that integration exists until the real writer calls it. Existing LMS
+completion callbacks and page/explicit-command retry paths are preserved.
+
+`--discover` and `--batch-size` were removed from the command; invoking either
+is rejected before any service/database work. An explicit `--learner-id` is
+required. Use `--source-review-id` as well for exact-review recovery.
+Existing unique constraints continue protecting assignments, original forms and
+responses. Removing the polling code does not remove or rewrite assignments
+already created, including the separately authorized MCM recovery batch.
+
+See [the investigation, checks and recovery plan](REVIEW_FEEDBACK_DISCOVERY_2026-11-19.md).
 
 For an import pipeline or recovery run, after verifying the target environment:
 
@@ -76,8 +94,12 @@ For an import pipeline or recovery run, after verifying the target environment:
 ```
 
 The command prints counts only (`created`, `existing`, `incomplete`,
-`historical`, `undated`, `future`, `unlinked`, `identityConflicts`). It requires
-explicit learner IDs and never sends notifications, invitations or mail.
+`historical`, `undated`, `future`, `unlinked`, `identityConflicts`, and independent
+employer counts). It requires explicit learner IDs; there is no global-discovery option.
+`--dry-run` adds `wouldCreate`/`employerWouldCreate` without creating assignments
+or resolving employer links. `--source-review-id` narrows recovery to exact
+source reviews with one enrolment learner ID. It never sends notifications,
+invitations or mail.
 MCM/PR use the existing reviewed Feedback Review schema and its unique
 source_review_id constraint. EPA additionally requires migration
 `0012_epa_review_feedback` to permit its form type. Do not

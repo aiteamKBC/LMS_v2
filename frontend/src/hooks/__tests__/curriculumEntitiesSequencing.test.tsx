@@ -93,7 +93,7 @@ describe('curriculum entity reads', () => {
     expect(result.current.programmes).toHaveLength(1);
   });
 
-  it('keeps the optional collections when one of them fails', async () => {
+  it('reports staff failures while keeping independent collections', async () => {
     api.fetchCurriculumTutors.mockRejectedValue(new Error('directory down'));
     const { result } = renderHook(() => useCurriculumEntities({ includeStaff: true }));
 
@@ -101,7 +101,7 @@ describe('curriculum entity reads', () => {
     releaseOverview({ ...EMPTY_OVERVIEW, groups: [{ id: 'G1' }] } as never);
 
     await waitFor(() => expect(result.current.loaded).toBe(true));
-    expect(result.current.error).toBeNull();
+    await waitFor(() => expect(result.current.error).toContain('Unable to load tutors'));
     expect(result.current.groups).toHaveLength(1);
     expect(result.current.tutors).toEqual([]);
   });

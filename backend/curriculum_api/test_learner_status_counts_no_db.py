@@ -1,3 +1,4 @@
+from curriculum_api.catalogue.tests.parity.composition_test_support import composition_patch, composition_fixture
 import json
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -63,9 +64,9 @@ class LearnerStatusReductionTests(SimpleTestCase):
         self.assertEqual(result['manual'], {'total': 0, 'statuses': {}})
 
     def test_a_batch_reads_learner_facts_once_and_resolves_programme_candidates_once(self):
-        with patch.object(counts, 'placement_lineages', side_effect=lambda scope, ids: {ident: lineage(groupId=ident) for ident in ids}), \
-             patch('curriculum_api.views.programme_identity_candidates', return_value=['Programme']) as candidates, \
-             patch.object(counts, 'learner_facts', return_value=[fact(1)]) as facts:
+        with composition_fixture(counts, 'placement_lineages', side_effect=lambda scope, ids: {ident: lineage(groupId=ident) for ident in ids}), \
+             composition_patch('curriculum_api.views.programme_identity_candidates', return_value=['Programme']) as candidates, \
+             composition_fixture(counts, 'learner_facts', return_value=[fact(1)]) as facts:
             result = counts.status_counts('group', ['G1', 'G2'])
         facts.assert_called_once_with(set())
         candidates.assert_called_once_with('P1')
@@ -80,27 +81,27 @@ class LearnerStatusEndpointTests(SimpleTestCase):
 
     def test_bound_read_only_batch_returns_counts_only_and_deduplicates_requested_ids(self):
         values = {'G1': {'total': 2, 'statuses': {'active': 1, 'withdrawn': 1}}, 'gone': None}
-        with patch.object(counts, 'status_counts', return_value=values) as read:
+        with composition_fixture(counts, 'status_counts', return_value=values) as read:
             response = learner_directory.counts(self.factory.get('/', {'scope': 'group', 'ids': 'G1,G1,gone'}))
         read.assert_called_once_with('group', ['G1', 'gone'])
         self.assertEqual(json.loads(response.content), {'counts': values})
         self.assertIn('no-store', response['Cache-Control'])
 
     def test_invalid_or_over_limit_requests_do_not_read(self):
-        with patch.object(counts, 'status_counts') as read:
+        with composition_fixture(counts, 'status_counts') as read:
             for params in [{'scope': 'bad', 'ids': 'G1'}, {'scope': 'group', 'ids': ''},
                            {'scope': 'group', 'ids': ','.join(str(i) for i in range(101))}, {'scope': 'group', 'ids': 'x' * 201}]:
                 self.assertEqual(learner_directory.counts(self.factory.get('/', params)).status_code, 400)
         read.assert_not_called()
 
     def test_failures_are_visible_and_never_fabricated_zero_counts(self):
-        with patch.object(counts, 'status_counts', side_effect=DatabaseError('private detail')):
+        with composition_fixture(counts, 'status_counts', side_effect=DatabaseError('private detail')):
             response = learner_directory.counts(self.factory.get('/', {'scope': 'programme', 'ids': 'P1'}))
         self.assertEqual(response.status_code, 503)
         self.assertNotIn('private detail', response.content.decode())
 
     def test_staff_authorization_and_get_only_are_preserved(self):
-        with patch.object(counts, 'status_counts') as read:
+        with composition_fixture(counts, 'status_counts') as read:
             for account, status in [(None, 401), (SimpleNamespace(role='learner'), 403), (SimpleNamespace(role='employer'), 403)]:
                 with patch('login.permissions.authenticate_request', return_value=account):
                     self.assertEqual(learner_directory.counts(self.factory.get('/', {'scope': 'group', 'ids': 'G1'})).status_code, status)
@@ -123,7 +124,7 @@ class LearnerStatusEndpointTests(SimpleTestCase):
                 {'id': 3, 'lifecycleStatus': 'withdrawn', 'programmeStatus': 'active'},
                 {'id': 4, 'lifecycleStatus': '', 'programmeStatus': ''},
                 {'id': 5, 'lifecycleStatus': ' ', 'programmeStatus': 'Active'}]
-        with patch('curriculum_api.views.scope_placement_lineage', return_value=lineage()), \
+        with composition_patch('curriculum_api.views.scope_placement_lineage', return_value=lineage()), \
              patch('curriculum_api.views.assigned_learners_for_scope', return_value=rows) as read:
             result = learner_directory.roster('programme', 'P1', 'active')
         read.assert_called_once_with('programme', 'P1', '', lineage=lineage(), strict=True)

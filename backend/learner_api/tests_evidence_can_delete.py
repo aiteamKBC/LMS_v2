@@ -33,34 +33,39 @@ class EvidenceLineageOwnershipTests(SimpleTestCase):
         cursor.fetchone.side_effect = [(1,), (902,)]
         connection = patch("learner_api.evidence._conn").start()
         connection.return_value.cursor.return_value.__enter__.return_value = cursor
-        patch(
-            "learner_api.evidence._learner_profile_ids_for_source",
-            return_value=["248"],
-        ).start()
+        patch("learner_api.evidence.profile_id_for_source", return_value=248).start()
+        patch("learner_api.evidence.plan_component_id", return_value=77).start()
         self.addCleanup(patch.stopall)
 
         lineage = _evidence_lineage("commercial", "56", "COMP-1")
 
-        self.assertEqual(lineage, {"component_ref": "COMP-1", "progress_entry_id": 902})
+        self.assertEqual(lineage, {
+            "learner_profile_id": 248,
+            "plan_component_id": 77,
+            "component_ref": "COMP-1",
+            "progress_entry_id": 902,
+        })
         progress_sql, progress_params = cursor.execute.call_args_list[1].args
-        self.assertIn("p.learner_id::text = any(%s)", progress_sql)
-        self.assertEqual(progress_params, ["COMP-1", ["248"]])
+        self.assertIn("p.learner_id = any(%s::bigint[])", progress_sql)
+        self.assertEqual(progress_params, ["COMP-1", [248]])
 
     def test_missing_target_profile_cannot_attach_any_progress_entry(self):
         cursor = MagicMock()
         cursor.fetchone.return_value = (1,)
         connection = patch("learner_api.evidence._conn").start()
         connection.return_value.cursor.return_value.__enter__.return_value = cursor
-        patch(
-            "learner_api.evidence._learner_profile_ids_for_source",
-            return_value=[],
-        ).start()
+        patch("learner_api.evidence.profile_id_for_source", return_value=None).start()
         self.addCleanup(patch.stopall)
 
         lineage = _evidence_lineage("commercial", "56", "COMP-1")
 
-        self.assertEqual(lineage, {"component_ref": "COMP-1", "progress_entry_id": None})
-        self.assertEqual(cursor.execute.call_count, 1)
+        self.assertEqual(lineage, {
+            "learner_profile_id": None,
+            "plan_component_id": None,
+            "component_ref": None,
+            "progress_entry_id": None,
+        })
+        self.assertEqual(cursor.execute.call_count, 0)
 
 
 class EvidenceUploadDeleteTests(SimpleTestCase):
@@ -69,20 +74,28 @@ class EvidenceUploadDeleteTests(SimpleTestCase):
     def setUp(self):
         self.factory = RequestFactory()
 
-    def test_upload_saves_the_server_resolved_progress_lineage(self):
+    def test_upload_uses_only_canonical_owner_while_legacy_column_can_remain(self):
         cursor = MagicMock()
+        audit_row = tuple(range(len(evidence.EVIDENCE_AUDIT_COLUMNS)))
+        cursor.fetchone.return_value = audit_row
         connection = self.enterContext(patch.object(evidence, "_conn"))
         connection.return_value.cursor.return_value.__enter__.return_value = cursor
         self.enterContext(patch.object(evidence, "azure_configured", return_value=True))
-        self.enterContext(patch.object(evidence, "ensure_evidence_tables"))
+        self.enterContext(patch.object(evidence, "ensure_evidence_write_tables"))
         self.enterContext(patch.object(evidence, "upload_to_quarantine"))
         self.enterContext(patch.object(evidence, "move_blob"))
         self.enterContext(patch.object(evidence, "blob_url", return_value="https://files.example.test/evidence"))
         self.enterContext(patch.object(evidence, "_record_approved_evidence"))
+        record_evidence_file = self.enterContext(patch.object(evidence, "_record_evidence_file"))
         self.enterContext(patch.object(
             evidence,
             "_evidence_lineage",
-            return_value={"component_ref": "COMP-1", "progress_entry_id": 902},
+            return_value={
+                "learner_profile_id": 248,
+                "plan_component_id": 77,
+                "component_ref": "COMP-1",
+                "progress_entry_id": 902,
+            },
         ))
         uploaded = SimpleUploadedFile("report.pdf", b"evidence", content_type="application/pdf")
         request = self.factory.post("/upload/", {"section_ref": "COMP-1", "file": uploaded})
@@ -91,14 +104,19 @@ class EvidenceUploadDeleteTests(SimpleTestCase):
 
         self.assertEqual(response.status_code, 201)
         insert_call = next(call for call in cursor.execute.call_args_list if "insert into" in call.args[0].lower())
-        self.assertEqual(insert_call.args[1][-2:], ["COMP-1", 902])
+        self.assertIn("learner_profile_id", insert_call.args[0])
+        self.assertNotIn("created_user_id", insert_call.args[0])
+        self.assertEqual(insert_call.args[1][2:4], [248, "COMP-1"])
+        self.assertEqual(insert_call.args[1][-3:], [77, "COMP-1", 902])
+        record_evidence_file.assert_called_once_with(audit_row)
 
     def test_delete_of_another_learners_file_is_not_found(self):
         cursor = MagicMock()
         cursor.fetchone.return_value = None
         connection = self.enterContext(patch.object(evidence, "_conn"))
         connection.return_value.cursor.return_value.__enter__.return_value = cursor
-        self.enterContext(patch.object(evidence, "ensure_evidence_tables"))
+        self.enterContext(patch.object(evidence, "ensure_evidence_write_tables"))
+        self.enterContext(patch.object(evidence, "profile_id_for_source", return_value=248))
         delete_blob = self.enterContext(patch.object(evidence, "delete_blob"))
         request = self.factory.delete("/evidence/file-id/")
 
@@ -111,21 +129,25 @@ class EvidenceUploadDeleteTests(SimpleTestCase):
 
         self.assertEqual(response.status_code, 404)
         lookup_sql, lookup_params = cursor.execute.call_args.args
-        self.assertIn("learner_kind = %s and learner_id = %s", lookup_sql)
-        self.assertEqual(lookup_params, ["file-id", "commercial", "56"])
+        self.assertIn("learner_kind = %s and learner_profile_id = %s", lookup_sql)
+        self.assertEqual(lookup_params, ["file-id", "commercial", 248])
         delete_blob.assert_not_called()
         self.assertEqual(cursor.execute.call_count, 2)
         self.assertIn('pg_advisory_xact_lock', cursor.execute.call_args_list[0].args[0])
 
     def test_owner_can_delete_an_unsubmitted_file_with_scoped_queries(self):
         cursor = MagicMock()
-        cursor.fetchone.return_value = ("commercial/56/COMP-1/file.pdf", "approved", "COMP-1", None, "file.pdf")
+        lookup_row = ("commercial/56/COMP-1/file.pdf", "approved", "COMP-1", None, "file.pdf")
+        audit_row = tuple(range(len(evidence.EVIDENCE_AUDIT_COLUMNS)))
+        cursor.fetchone.side_effect = [lookup_row, audit_row]
         connection = self.enterContext(patch.object(evidence, "_conn"))
         connection.return_value.cursor.return_value.__enter__.return_value = cursor
-        self.enterContext(patch.object(evidence, "ensure_evidence_tables"))
+        self.enterContext(patch.object(evidence, "ensure_evidence_write_tables"))
+        self.enterContext(patch.object(evidence, "profile_id_for_source", return_value=248))
         self.enterContext(patch.object(evidence, "_is_submitted_for_marking", return_value=False))
         self.enterContext(patch.object(evidence, "_evidence_submissions", return_value=[]))
         self.enterContext(patch.object(evidence, "azure_configured", return_value=False))
+        record_evidence_file = self.enterContext(patch.object(evidence, "_record_evidence_file"))
         request = self.factory.delete("/evidence/file-id/")
 
         response = inspect.unwrap(evidence.delete_evidence)(
@@ -141,7 +163,8 @@ class EvidenceUploadDeleteTests(SimpleTestCase):
             if call.args[0].strip().lower().startswith("delete from")
             and "evidence_files" in call.args[0]
         )
-        self.assertEqual(delete_call.args[1], ["file-id", "commercial", "56"])
+        self.assertEqual(delete_call.args[1], ["file-id", "commercial", 248])
+        record_evidence_file.assert_called_once_with(audit_row, deleted=True)
 
 
 class SubmittedForMarkingTests(SimpleTestCase):
@@ -200,8 +223,8 @@ class SubmittedForMarkingTests(SimpleTestCase):
         _is_submitted_for_marking("commercial", "101", "COMP-1")
 
         candidates = cursor.execute.call_args[0][1][2]
-        self.assertIn("101", candidates)
-        self.assertIn("248", candidates)
+        self.assertIn(101, candidates)
+        self.assertIn(248, candidates)
 
 
 class CanDeleteContractTests(SimpleTestCase):

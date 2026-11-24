@@ -1,0 +1,112 @@
+.dashboard-theme .workspace-main .quiz-workspace-page {
+  container: quiz-workspace / inline-size;
+  overflow-x: visible;
+}
+
+.dashboard-theme .workspace-main .quiz-workspace-page .curriculum-library-hero .workspace-hero-banner__content {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 1rem;
+}
+
+.dashboard-theme .workspace-main .quiz-workspace-page .curriculum-library-hero .workspace-hero-banner__stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 11rem), 1fr));
+  width: 100%;
+  align-items: stretch;
+}
+
+.dashboard-theme .workspace-main .quiz-workspace-page .curriculum-library-hero .workspace-hero-metric--leading-icon {
+  width: auto;
+  height: auto;
+}
+
+.dashboard-theme .workspace-main .quiz-workspace-page .curriculum-library-hero .workspace-hero-metric__label {
+  white-space: normal;
+  overflow: visible;
+}
+
+.quiz-workspace-bulk {
+  flex: 1 1 20rem;
+}
+
+.quiz-workspace-status,
+.quiz-workspace-date-filter {
+  flex: 1 1 12rem;
+}
+
+.quiz-workspace-search {
+  flex: 2 1 14rem;
+}
+
+/* Position within the toolbar so the calendar stays inside the page even
+   when its trigger wraps to another row. */
+.quiz-workspace-date-popover {
+  right: 0.75rem;
+  margin-top: 0.5rem;
+  width: min(26rem, calc(100% - 1.5rem));
+  max-height: calc(100dvh - 2rem);
+  overflow-y: auto;
+}
+
+.quiz-workspace-date-layout {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.quiz-workspace-date-presets {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  border-bottom-width: 1px;
+}
+
+.quiz-workspace-card-details {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 13rem), 1fr));
+}
+
+.quiz-workspace-card-details > * {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.quiz-workspace-row-actions > * {
+  flex-shrink: 0;
+}
+
+.quiz-workspace-page .quiz-workspace-table-view {
+  display: none;
+}
+
+.quiz-workspace-page .quiz-workspace-table td:nth-child(5) > div {
+  width: 100%;
+  min-width: 0;
+}
+
+@container quiz-workspace (min-width: 32rem) {
+  .quiz-workspace-date-layout {
+    grid-template-columns: 8rem minmax(0, 1fr);
+  }
+
+  .quiz-workspace-date-presets {
+    display: block;
+    border-bottom-width: 0;
+    border-right-width: 1px;
+  }
+}
+
+@container quiz-workspace (min-width: 70rem) {
+  .dashboard-theme .workspace-main .quiz-workspace-page .curriculum-library-hero .workspace-hero-banner__content {
+    grid-template-columns: minmax(18rem, 1fr) minmax(34rem, 1.3fr);
+  }
+}
+
+/* The sidebar consumes viewport space; only show all table columns when the
+   actual workspace is wide enough. Cards retain the same controls below it. */
+@container quiz-workspace (min-width: 90rem) {
+  .quiz-workspace-page .quiz-workspace-cards {
+    display: none;
+  }
+
+  .quiz-workspace-page .quiz-workspace-table-view {
+    display: block;
+  }
+}

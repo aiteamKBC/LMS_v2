@@ -1,4 +1,5 @@
 """Physical upload writes on isolated SQLite tables; storage/Bunny are mocked."""
+from curriculum_api.catalogue.tests.parity.composition_test_support import composition_fixture
 import io
 import json
 from contextlib import nullcontext
@@ -88,7 +89,7 @@ class VideoUploadStorageTests(TestCase):
             row_has_deleted_at=row_has_deleted_at, invalidate_curriculum_cache=Mock(),
         )
         self.enterContext(patch.object(imports, '_views', return_value=self.views))
-        self.owner = self.enterContext(patch.object(storage, 'course', side_effect=course))
+        self.owner = self.enterContext(composition_fixture(storage, 'course', side_effect=course))
         self.enterContext(patch.object(uploads.upload_storage, 'exists', return_value=False))
         self.store = self.enterContext(patch.object(uploads.upload_storage, 'store', side_effect=lambda _file, path, _type: path))
 

@@ -54,7 +54,7 @@ class ReplacementVisibilityTests(SimpleTestCase):
     @contextmanager
     def readers(self, context):
         from . import (builder_activity_dates, course_catalogue_display, dashboard_training,
-                       live_session_progress, my_learning_activity, subject_store,
+                       live_session_progress, my_learning_activity,
                        teams_attendance, training_plan_dashboard, weekly_learning)
         source = SimpleNamespace(pk=7, id=7, email='learner@example.test', cohort='', group='',
                                  _case_file_profile=SimpleNamespace(pk=9))
@@ -68,7 +68,6 @@ class ReplacementVisibilityTests(SimpleTestCase):
             stack.enter_context(patch.object(canonical, 'query', return_value=[]))
             stack.enter_context(patch.object(canonical, 'programme_planned_hours', return_value=10))
             stack.enter_context(patch.object(course_catalogue_display, 'read_export_placements', return_value=[]))
-            stack.enter_context(patch.object(subject_store, 'covers_for', return_value={}))
             stack.enter_context(patch.object(my_learning_activity, 'card_teaching_activity', return_value={}))
             stack.enter_context(patch.object(training_plan_dashboard, '_canonical_module_progress',
                                             return_value={'M1': {'hours': {'actual': .5}}}))

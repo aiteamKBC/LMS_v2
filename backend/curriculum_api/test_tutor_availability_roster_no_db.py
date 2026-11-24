@@ -7,6 +7,7 @@ name reached the picker with no verdict, was shown as free, and the save then
 refused it. What is pinned here is that the roster covers both kinds and agrees
 with the save-time check, which is the authority.
 """
+from curriculum_api.catalogue.tests.parity.composition_test_support import composition_fixture
 import json
 from contextlib import nullcontext
 from unittest.mock import patch
@@ -14,6 +15,7 @@ from unittest.mock import patch
 from django.test import RequestFactory, SimpleTestCase
 
 from . import views
+from .catalogue.infrastructure import tutor_reads
 
 
 SLOT = {
@@ -52,12 +54,12 @@ class TutorAvailabilityRosterTests(SimpleTestCase):
             data=json.dumps({**SLOT, **overrides}),
             content_type='application/json',
         )
-        with patch.object(views, 'curriculum_read_scope', lambda *a, **k: nullcontext()), \
-                patch.object(views, 'safe_authoring_module_rows', return_value=modules), \
-                patch.object(views, 'get_tutor_rows', return_value=directory), \
-                patch.object(views, 'safe_group_delivery_rows', return_value={}), \
-                patch.object(views, 'module_schedule_holidays', return_value=[]), \
-                patch.object(views, 'resolve_stored_module_catalogue_id', side_effect=lambda value: value or ''):
+        with composition_fixture(views, 'curriculum_read_scope', lambda *a, **k: nullcontext()), \
+                patch.object(tutor_reads, 'read_module_rows', return_value=modules), \
+                patch.object(tutor_reads, 'read_tutor_rows', return_value=directory), \
+                patch.object(tutor_reads, 'read_group_rows', return_value={}), \
+                composition_fixture(views, 'module_schedule_holidays', return_value=[]), \
+                composition_fixture(views, 'resolve_stored_module_catalogue_id', side_effect=lambda value: value or ''):
             response = views.curriculum_preview_tutor_availability(request)
         self.assertEqual(response.status_code, 200, response.content)
         return json.loads(response.content)
@@ -129,8 +131,8 @@ class TutorAvailabilityRosterTests(SimpleTestCase):
             module_row('MOD-A', 'Module A', 'Tutor Busy', start_time='09:00', end_time='11:30'),
         ]
         body = self.preview(modules)
-        with patch.object(views, 'safe_group_delivery_rows', return_value={}), \
-                patch.object(views, 'module_schedule_holidays', return_value=[]):
+        with composition_fixture(views, 'safe_group_delivery_rows', return_value={}), \
+                composition_fixture(views, 'module_schedule_holidays', return_value=[]):
             candidate = views.module_schedule_view(SLOT)
             for item in body['results']:
                 conflicts = views.find_tutor_schedule_conflicts(

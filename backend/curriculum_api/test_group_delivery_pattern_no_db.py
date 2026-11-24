@@ -9,10 +9,12 @@ module's own stored pattern answers only where its group states none.
 import ast
 import importlib.util
 import unittest
+import sys
 from datetime import date, datetime
 from pathlib import Path
 
 ROOT = Path(__file__).parent
+sys.path.insert(0, str(ROOT.parent))
 NAMES = {'clean_str', 'parse_date', 'schedule_time_parts', 'schedule_day_part', 'parse_clock_minutes',
          'json_db_value', 'module_delivery_row', 'module_session_clock', 'module_live_session_clock'}
 
@@ -29,6 +31,7 @@ def load():
     weekly = standalone('weekly_schedule')
     overrides = standalone('session_overrides')
     namespace = {
+        '__package__': 'curriculum_api', '__name__': 'curriculum_api.views',
         'date': date, 'datetime': datetime, 're': __import__('re'), 'json': __import__('json'),
         'DEFAULT_SESSION_START_TIME': '09:00', 'DEFAULT_SESSION_END_TIME': '10:00',
         'module_weekly_schedule': weekly.module_weekly_schedule,

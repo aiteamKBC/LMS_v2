@@ -3,6 +3,8 @@
 No database: cursors are fakes that record what they were asked, and the cache
 is the test LocMemCache (or a stand-in that fails, for the Valkey-down cases).
 """
+from curriculum_api.catalogue.tests.parity.composition_test_support import composition_patch
+from curriculum_api.catalogue.tests.parity.composition_test_support import composition_fixture
 import pickle
 import threading
 import time
@@ -10,6 +12,7 @@ import zlib
 from unittest.mock import patch
 
 from django.core.cache import cache
+from django.db import connections
 from django.test import SimpleTestCase, override_settings
 
 from curriculum_api import apps as curriculum_apps
@@ -150,8 +153,8 @@ class ModuleRowsTests(CacheTestCase):
 
     def test_retire_all_and_the_curriculum_epoch(self):
         content_cache.module_rows(FakeCursor(), 'comp', SQL, ['MOD-A', 'MOD-B'], 2)
-        with patch.object(views, 'bump_shared_curriculum_epoch'), patch.object(views, 'schedule_curriculum_warm'), \
-                patch('curriculum_api.read_model.enqueue_all_curriculum_home_refreshes'):
+        with composition_fixture(views, 'bump_shared_curriculum_epoch'), composition_fixture(views, 'schedule_curriculum_warm'), \
+                composition_patch('curriculum_api.read_model.enqueue_all_curriculum_home_refreshes'):
             views.invalidate_curriculum_cache()  # a non-content write: learner content stays
             cursor = FakeCursor()
             content_cache.module_rows(cursor, 'comp', SQL, ['MOD-A', 'MOD-B'], 2)
@@ -305,17 +308,17 @@ class ExpectedOtjhTests(CacheTestCase):
 class SharedRowsCacheTests(SimpleTestCase):
     def setUp(self):
         cache.clear()
-        views._CURRICULUM_CACHE.clear()
-        self.addCleanup(views._CURRICULUM_CACHE.clear)
-        epoch = patch.object(views, 'shared_curriculum_epoch', return_value=11)
+        views.cache_state._CURRICULUM_CACHE.clear()
+        self.addCleanup(views.cache_state._CURRICULUM_CACHE.clear)
+        epoch = composition_fixture(views, 'shared_curriculum_epoch', return_value=11)
         epoch.start()
         self.addCleanup(epoch.stop)
 
     def test_rows_are_shared_compressed_and_survive_a_new_process(self):
         rows = {'training': [{'id': 1}], 'modules': [{'id': 'MOD-A'}]}
-        with patch.object(views, 'get_curriculum_rows', return_value=rows) as read:
+        with composition_fixture(views, 'get_curriculum_rows', return_value=rows) as read:
             self.assertEqual(views.get_cached_curriculum_rows(compact=True), rows)
-            views._CURRICULUM_CACHE.clear()  # another worker: nothing in process memory
+            views.cache_state._CURRICULUM_CACHE.clear()  # another worker: nothing in process memory
             self.assertEqual(views.get_cached_curriculum_rows(compact=True), rows)
         self.assertEqual(read.call_count, 1)
         stored = cache.get(views.shared_curriculum_cache_key('rows:compact', 11))
@@ -324,15 +327,15 @@ class SharedRowsCacheTests(SimpleTestCase):
 
     def test_rows_follow_the_epoch_and_use_the_payload_ttl(self):
         self.assertEqual(views.CURRICULUM_ROWS_CACHE_TTL_SECONDS, 300)
-        with patch.object(views, 'get_curriculum_rows', side_effect=[{'v': 1}, {'v': 2}]):
+        with composition_fixture(views, 'get_curriculum_rows', side_effect=[{'v': 1}, {'v': 2}]):
             self.assertEqual(views.get_cached_curriculum_rows(), {'v': 1})
             views.shared_curriculum_epoch.return_value = 12
             self.assertEqual(views.get_cached_curriculum_rows(), {'v': 2})
 
     def test_valkey_down_still_builds(self):
-        with patch.object(views, 'cache', BrokenCache()), \
+        with composition_fixture(views, 'cache', BrokenCache()), \
                 patch.object(views.shared_build, 'cache_is_shared', return_value=False), \
-                patch.object(views, 'get_curriculum_rows', return_value={'v': 3}):
+                composition_fixture(views, 'get_curriculum_rows', return_value={'v': 3}):
             self.assertEqual(views.get_cached_curriculum_rows(), {'v': 3})
 
 
@@ -376,7 +379,7 @@ class WarmAllowListTests(SimpleTestCase):
                     patch('curriculum_api.read_model.register_curriculum_home_read_model'), \
                     patch.object(curriculum_apps, 'reconciliation_command', return_value=False), \
                     patch.object(curriculum_apps.settings, 'CURRICULUM_HOME_SHARED_READ_MODEL_ENABLED', False), \
-                    patch.object(views, 'schedule_curriculum_warm') as schedule:
+                    composition_fixture(views, 'schedule_curriculum_warm') as schedule:
                 config.ready()
                 self.assertEqual(schedule.called, expected)
 
@@ -418,22 +421,22 @@ class SharedTtlCapTests(SimpleTestCase):
     """Retired generations must not pile up in Valkey for the payload's full TTL."""
 
     def setUp(self):
-        views._CURRICULUM_CACHE.clear()
-        self.addCleanup(views._CURRICULUM_CACHE.clear)
+        views.cache_state._CURRICULUM_CACHE.clear()
+        self.addCleanup(views.cache_state._CURRICULUM_CACHE.clear)
 
     def test_shared_copy_is_capped_but_the_process_copy_keeps_its_ttl(self):
-        with patch.object(views, 'shared_curriculum_epoch', return_value=21), \
+        with composition_fixture(views, 'shared_curriculum_epoch', return_value=21), \
                 patch.object(views.cache, 'set', wraps=views.cache.set) as shared_set:
             views.cached_curriculum_value('cap-check', lambda: {'v': 1}, ttl=1800)
         self.assertEqual(shared_set.call_args.kwargs['timeout'], views.CURRICULUM_SHARED_TTL_SECONDS)
         self.assertEqual(views.CURRICULUM_SHARED_TTL_SECONDS, 300)
-        entry = views._CURRICULUM_CACHE['cap-check']
+        entry = views.cache_state._CURRICULUM_CACHE['cap-check']
         import time as _time
         from datetime import datetime
         self.assertGreater(entry['expires_at'] - datetime.now().timestamp(), 1700)
 
     def test_a_shorter_ttl_is_not_raised(self):
-        with patch.object(views, 'shared_curriculum_epoch', return_value=22), \
+        with composition_fixture(views, 'shared_curriculum_epoch', return_value=22), \
                 patch.object(views.cache, 'set', wraps=views.cache.set) as shared_set:
             views.cached_curriculum_value('short-check', lambda: {'v': 1}, ttl=60)
         self.assertEqual(shared_set.call_args.kwargs['timeout'], 60)
@@ -443,8 +446,10 @@ class MovePreReadTests(SimpleTestCase):
     """A write that can move rows between modules retires the modules they leave."""
 
     def run_pre_read(self, table, payloads, **kwargs):
-        with patch.object(views.connection, 'vendor', 'postgresql'), \
-                patch.object(views, 'fetch_all', return_value=[{'module_catalogue_id': 'MOD-OLD'}]) as read, \
+        # Patch the actual wrapper: deleting an override on ConnectionProxy
+        # can discard the enclosing fixture's vendor instead of restoring it.
+        with patch.object(connections['default'], 'vendor', 'postgresql'), \
+                composition_fixture(views, 'fetch_all', return_value=[{'module_catalogue_id': 'MOD-OLD'}]) as read, \
                 patch.object(content_cache, 'note_modules') as noted, \
                 patch.object(content_cache, 'retire_all') as retired:
             views.note_previous_content_modules(table, payloads=payloads, **kwargs)
@@ -476,12 +481,18 @@ class MovePreReadTests(SimpleTestCase):
         _read, _noted, retired = self.run_pre_read('ksb_mappings', [{'module_catalogue_id': 'M'}],
                                                    key_columns=['component_id', 'ksb_code'])
         retired.assert_called_once()
-        with patch.object(views.connection, 'vendor', 'postgresql'), \
-                patch.object(views, 'fetch_all', side_effect=RuntimeError('down')), \
+        with patch.object(connections['default'], 'vendor', 'postgresql'), \
+                composition_fixture(views, 'fetch_all', side_effect=RuntimeError('down')), \
                 patch.object(content_cache, 'retire_all') as retired:
             views.note_previous_content_modules('components', payloads=[{'module_catalogue_id': 'M'}],
                                                 where_sql='id = %s', where_params=['c'])
         retired.assert_called_once()
+
+    def test_vendor_override_is_restored_for_next_fixture(self):
+        with patch.object(connections['default'], 'vendor', 'sqlite'):
+            self.run_pre_read('components', [{'module_catalogue_id': 'M'}],
+                              where_sql='id = %s', where_params=['C'])
+            self.assertEqual(connections['default'].vendor, 'sqlite')
 
     def test_every_helper_reports_its_rows(self):
         """note_live_rows feeds content_cache.note_rows for every write helper."""

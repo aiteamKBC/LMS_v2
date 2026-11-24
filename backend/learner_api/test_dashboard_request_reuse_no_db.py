@@ -46,11 +46,12 @@ class PresetCacheTests(SimpleTestCase):
         self.assertIs(plan.call_args.args[1], cache)
 
     def test_tab_dispatch_installs_a_fresh_cache_for_each_request(self):
-        from . import dashboard_tabs, dashboard_monthly, identity
+        from . import dashboard_tabs, dashboard_monthly, identity, learning_plan
         source = SimpleNamespace(pk=265, _plan_preset_cache={('stale', 'G1'): ['OLD']},
                                  _builder_link_cache={'current:OLD': {'id': 'OLD', 'title': 'Stale'}})
         with patch.object(dashboard_tabs.canonical, 'require_profile', return_value={'id': 17}), \
              patch.object(identity, 'learner_profile_for_source', return_value=SimpleNamespace(pk=17, enrolment_id=265)), \
+             patch.object(learning_plan, 'install_canonical_training_plan_modules', return_value=[]), \
              patch.object(dashboard_monthly, 'read_monthly',
                           side_effect=lambda s, *a: [dict(s._plan_preset_cache), dict(s._builder_link_cache)]) as read:
             self.assertEqual(dashboard_tabs.read_tab(source, 'commercial', 'monthly', object()), [{}, {}])
@@ -261,7 +262,7 @@ class TrainingTitleReuseTests(SimpleTestCase):
 
     def test_selected_module_endpoint_installs_fresh_request_caches(self):
         import os
-        from . import dashboard_training as training, identity, case_file_sources
+        from . import dashboard_training as training, identity, case_file_sources, learning_plan
         from login import permissions
         source = SimpleNamespace(pk=265, _plan_preset_cache={('stale', 'G'): ['OLD']}, _builder_link_cache={'current:OLD': {}})
         seen = []
@@ -269,6 +270,10 @@ class TrainingTitleReuseTests(SimpleTestCase):
              patch.object(permissions, 'authenticate_request', return_value=SimpleNamespace(role='learner', subject_id=265)), \
              patch.object(case_file_sources, 'source_for_case_file', return_value=source), \
              patch.object(identity, 'learner_profile_for_source', return_value=SimpleNamespace(pk=8, enrolment_id=265)), \
+             patch.object(learning_plan, 'install_canonical_training_plan_modules',
+                          side_effect=lambda selected_source, _profile: (
+                              setattr(selected_source, '_canonical_training_plan', []) or []
+                          )), \
              patch.object(training.canonical, 'require_profile', return_value={'id': 8}), \
              patch.object(training, 'read_training', side_effect=lambda s, *a: seen.append(
                  (dict(s._plan_preset_cache), dict(s._builder_link_cache))) or {'id': 'current:M1'}):

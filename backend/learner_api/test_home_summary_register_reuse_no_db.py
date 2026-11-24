@@ -177,7 +177,7 @@ class HomeCallerTests(SimpleTestCase):
         src = source()
         metrics = {'otjh': {'actual': 3.0, 'planned': 175.0},
                    'programme': {'completed': 0, 'total': 0, 'status': 'ready'}}
-        # Home's own Actual top-up (unchanged by P1) finds no live components here.
+        # Programme Actual is canonical; module completion still projects live cards.
         top_up = MagicMock()
         top_up.cursor.return_value.__enter__.return_value.fetchall.return_value = []
         with Harness() as h, \

@@ -90,8 +90,9 @@ export default function MyLearningPage({ view = 'catalogue' }: { view?: 'catalog
   const requestedMode = new URLSearchParams(location.search).get('mode');
   const mode = view === 'map' ? 'courses' : requestedMode === 'free' ? 'free' : 'courses';
   const courseParams = new URLSearchParams(location.search);
-  const { isRealMode, real, loading, loadError, refresh } = useLearnerDetailParam(kind, id, false, isInitialized && tab !== 'modules');
-  const catalogue = useMyLearningCatalogue(kind as LearnerKind | undefined, id, isInitialized && tab === 'modules' && mode === 'courses');
+  const { isRealMode, real, loading, loadError, refresh } = useLearnerDetailParam(kind, id, false, isInitialized && mode === 'courses' && tab !== 'modules');
+  const planOnly = view === 'map' || location.pathname.startsWith('/learner/training-plan');
+  const catalogue = useMyLearningCatalogue(kind as LearnerKind | undefined, id, isInitialized && tab === 'modules' && mode === 'courses', planOnly);
   const subjectOpen = view === 'catalogue' && mode === 'courses' && tab === 'modules'
     && !!(courseParams.get('subject') || courseParams.get('module') || courseParams.get('activity'));
   useEffect(() => {
@@ -107,6 +108,7 @@ export default function MyLearningPage({ view = 'catalogue' }: { view?: 'catalog
   const setMode = (next: string) => {
     if (next === mode) return;
     const params = new URLSearchParams(location.search);
+    for (const key of ['course', 'subject', 'module', 'week', 'activity', 'resume']) params.delete(key);
     if (next === 'free') params.set('mode', next); else params.delete('mode');
     navigate({ pathname: location.pathname, search: params.toString() });
   };
@@ -166,7 +168,7 @@ export default function MyLearningPage({ view = 'catalogue' }: { view?: 'catalog
               {(tab !== 'modules' || !catalogue.data) && sectionTabs}
 
               {tab === 'modules' ? (
-                <CompactModules key={`${kind}:${id}`} kind={kind as LearnerKind | undefined} id={id} catalogue={catalogue.data} loading={catalogue.loading} error={catalogue.error} refresh={catalogue.refresh} showReadOnlyNotice={showReadOnlyNotice} view={view} sectionTabs={sectionTabs} canRequestTransfer={auth.account?.role === 'learner' && String(auth.account.subjectId) === id} />
+                <CompactModules key={`${kind}:${id}`} kind={kind as LearnerKind | undefined} id={id} catalogue={catalogue.data} loading={catalogue.loading} error={catalogue.error} refresh={catalogue.refresh} showReadOnlyNotice={showReadOnlyNotice} view={view} planOnly={planOnly} sectionTabs={sectionTabs} canRequestTransfer={auth.account?.role === 'learner' && String(auth.account.subjectId) === id} />
               ) : (
                 tab === 'assignments' ? <AssignmentsTab key={`${kind}:${id}`} kind={kind} id={id} real={real} loading={loading} loadError={loadError} onRetry={refresh} canTake={canTake} /> :
                 <QuizzesTab real={real} loading={loading} loadError={loadError} kind={kind} id={id} canTake={canTake} navigate={navigate} onRetry={refresh} />

@@ -1,78 +1,54 @@
-"""Idempotent creation of the evidence tables on the Neon (`enrolment`) DB.
+"""Read-only compatibility check for the normalized evidence schema.
 
-Two tables, both created with `CREATE TABLE IF NOT EXISTS` so they are safe to
-call on every request path (mirrors curriculum_api.ensure_module_authoring_tables).
-The Neon schemas are authored/owned outside Django, so we manage these with raw
-SQL rather than Django migrations — consistent with the rest of learner_api.
-
-  curriculum.evidence_files
-      Full upload lifecycle record (quarantine -> approved/rejected). Adapted to
-      this project: learners are addressed by (learner_kind, learner_id), NOT the
-      Django auth_user the generic spec assumes.
-          Training_plan_details  json snapshot of the training-plan context the
-          file was uploaded against (module/week/component identity+titles), so
-          an evidence row is still traceable back to its assignment even if the
-          curriculum is later restructured.
-
-  "Learner"."Evidence"
-      The learner-facing index requested for approved evidence: a row is inserted
-      the moment a blob lands in AZURE_APPROVED_CONTAINER.
-          id            identity PK
-          Azure_id      the blob name / identifier in Azure
-          Evidence_name the original filename
-          Evidence_path the approved-container blob URL
+Schema provisioning belongs to migrations/deployment, never learner GET paths.
+This guard deliberately performs catalog reads only and fails visibly when the
+deployed schema is incompatible.
 """
-from django.db import connections
+from django.db import ProgrammingError, connections
 
 _READY = False
+_WRITE_READY = False
+
+REQUIRED_COLUMNS = frozenset({
+    "id", "learner_kind", "section_ref", "blob_name", "original_filename",
+    "content_type", "size_bytes", "status", "scan_result", "uploaded_by",
+    "uploaded_at", "reviewed_at", "Training_plan_details", "progress_entry_id",
+    "learner_profile_id", "plan_component_id", "component_ref",
+})
 
 
 def ensure_evidence_tables():
+    """Verify the deployed normalized table without creating or altering it."""
     global _READY
     if _READY:
         return
     with connections["enrolment"].cursor() as cur:
-        # Lifecycle table (own metadata + status). Kept in the curriculum schema
-        # alongside the other app-owned Neon tables.
-        cur.execute("create schema if not exists \"Learner\"")
         cur.execute(
-            """
-            create table if not exists "Learner"."evidence_files" (
-                id                uuid primary key,
-                learner_kind      varchar(32)  not null,
-                learner_id        varchar(128) not null,
-                azure_oid         varchar(128),
-                section_ref       varchar(255) not null,
-                container         varchar(128) not null,
-                blob_name         varchar(1024) not null unique,
-                original_filename varchar(512) not null,
-                content_type      varchar(255) not null,
-                size_bytes        bigint not null,
-                status            varchar(16) not null default 'pending',
-                scan_result       varchar(32),
-                uploaded_by       varchar(255),
-                uploaded_at       timestamptz not null default now(),
-                reviewed_at       timestamptz,
-                "Training_plan_details" json
-            )
-            """
+            "select column_name from information_schema.columns "
+            "where table_schema='Learner' and table_name='evidence_files'"
         )
-        cur.execute('alter table "Learner"."evidence_files" add column if not exists "Training_plan_details" json')
-        cur.execute('alter table "Learner"."evidence_files" add column if not exists component_ref text')
-        cur.execute('alter table "Learner"."evidence_files" add column if not exists progress_entry_id bigint')
-        cur.execute("create index if not exists idx_evidence_files_learner on \"Learner\".evidence_files (learner_kind, learner_id)")
-        cur.execute("create index if not exists idx_evidence_files_section on \"Learner\".evidence_files (section_ref)")
-        cur.execute("create index if not exists idx_evidence_files_status  on \"Learner\".evidence_files (status)")
-        cur.execute(
-            'create index if not exists idx_evidence_files_component_ref '
-            'on "Learner"."evidence_files" (component_ref) where component_ref is not null'
+        columns = {row[0] for row in cur.fetchall()}
+    missing = sorted(REQUIRED_COLUMNS - columns)
+    if missing:
+        raise ProgrammingError(
+            'The normalized Learner.evidence_files schema is unavailable; '
+            f'missing columns: {", ".join(missing)}'
         )
-        cur.execute(
-            'create index if not exists idx_evidence_files_progress_entry '
-            'on "Learner"."evidence_files" (progress_entry_id) where progress_entry_id is not null'
-        )
+    _READY = True
 
-        # The requested approved-evidence index in the "Learner" schema.
+
+def ensure_evidence_write_tables():
+    """Preserve the legacy approved-file index for mutating workflows only.
+
+    Evidence GET paths must never call this function. The lifecycle table is
+    validated, not repaired; only the separate approved-file index retained by
+    upload/delete is provisioned as it was before normalized-schema support.
+    """
+    global _WRITE_READY
+    ensure_evidence_tables()
+    if _WRITE_READY:
+        return
+    with connections["enrolment"].cursor() as cur:
         cur.execute('create schema if not exists "Learner"')
         cur.execute(
             '''
@@ -84,4 +60,4 @@ def ensure_evidence_tables():
             )
             '''
         )
-    _READY = True
+    _WRITE_READY = True

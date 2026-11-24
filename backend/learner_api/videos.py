@@ -9,7 +9,7 @@ The record mirrors the quiz-attempt shape (learner_api.quizzes) so the unified
 progress log stays consistent; there is no grading — a video is either watched
 and reflected on, or not.
 """
-from curriculum_api.learning_storage import read_sql
+from curriculum_api.catalogue.infrastructure.course_storage_reads import read_sql
 import json
 
 from django.db import DatabaseError, IntegrityError, connections
@@ -126,6 +126,10 @@ def submit_video_progress(request, component_id):
     except (DatabaseError, ValueError) as exc:
         return _error(f"Database error: {exc}", 502)
 
+    from .live_session_access import access_refusal
+    refused = access_refusal(kind, learner_id, component_id, source=source)
+    if refused is not None:
+        return refused
     try:
         active = learner_profile_for_source(source, learner_id, active_only=True)
         if active is None:

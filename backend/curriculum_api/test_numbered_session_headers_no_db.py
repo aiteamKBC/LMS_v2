@@ -1,19 +1,30 @@
 """Exercise the real planner with synthetic rows; no Django, database or network."""
 import ast
+import sys
 import unittest
+import sys
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from curriculum_api.weekly_schedule import module_week_boundary_mode  # noqa: E402
 
 
 class NumberedSessionHeaderTests(unittest.TestCase):
     def setUp(self):
-        tree = ast.parse(Path(__file__).with_name('views.py').read_text(encoding='utf-8'))
+        tree = ast.parse((Path(__file__).parent / 'catalogue/infrastructure/session_plan_persistence.py').read_text(encoding='utf-8'))
         function = next(node for node in tree.body if isinstance(node, ast.FunctionDef)
                         and node.name == 'apply_module_session_plan_to_weeks')
         self.sessions = [
             {'sessionNumber': 1, 'date': '2026-10-03', 'day': 'Saturday'},
             {'sessionNumber': 2, 'date': '2026-10-10', 'day': 'Saturday'},
         ]
+        sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+        self.addCleanup(lambda: sys.path.pop(0))
         context = {
+            '__package__': 'curriculum_api',
+            'module_week_boundary_mode': module_week_boundary_mode,
+            'module_delivery_row': lambda module, group: module,
+            'module_session_plan_for_weeks': lambda *args, **kwargs: self.fail('Legacy fixture must not use calendar-week planning'),
             'module_week_delivery_slots': lambda *args, **kwargs: (
                 [[self.sessions[0]], [self.sessions[1]]], self.sessions),
             'module_session_clock': lambda *args: ('09:00', '11:00', 120),

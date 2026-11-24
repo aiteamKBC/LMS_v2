@@ -72,6 +72,7 @@ class LearnerKsbSourceTests(SimpleTestCase):
 class LegacyLearnerKsbAdapterTests(SimpleTestCase):
     def connection(self, rows=None, failure=None):
         cursor = MagicMock()
+        cursor.fetchone.return_value = (["learner_id", "category", "code", "title", "level"],)
         cursor.fetchall.return_value = list(rows or [])
         if failure is not None:
             cursor.execute.side_effect = failure
@@ -88,6 +89,18 @@ class LegacyLearnerKsbAdapterTests(SimpleTestCase):
     def test_missing_legacy_rows_are_an_empty_list(self):
         result, _ = self.read([])
         self.assertEqual(result, [])
+
+    def test_missing_legacy_relation_is_an_empty_snapshot(self):
+        connection, cursor = self.connection()
+        cursor.fetchone.return_value = (None,)
+        with patch.dict("learner_api.legacy_ksbs.connections", {"enrolment": connection}):
+            result = read_legacy_learner_ksbs(41)
+
+        self.assertEqual(result, [])
+        self.assertEqual(cursor.execute.call_count, 1)
+        sql, params = cursor.execute.call_args.args
+        self.assertIn("to_regclass", sql)
+        self.assertEqual(params, ['"Learner".learner_ksbs'])
 
     def test_multiple_rows_preserve_contract_and_assessment_level(self):
         result, _ = self.read([

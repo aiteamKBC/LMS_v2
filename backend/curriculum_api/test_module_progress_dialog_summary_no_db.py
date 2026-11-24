@@ -1,3 +1,4 @@
+from curriculum_api.catalogue.tests.parity.composition_test_support import composition_fixture
 import json
 from unittest import mock
 
@@ -43,7 +44,7 @@ class ModuleProgressDialogSummaryTests(SimpleTestCase):
             'consumptionSources': {'progress': [{'progressId': 99}]},
         }
         request = RequestFactory().get('/x', {'moduleProgress': '1', 'view': 'summary'})
-        with mock.patch.object(views, 'scope_learner_ksb_impact_payload', return_value=(payload, None)), \
+        with composition_fixture(views, 'scope_learner_ksb_impact_payload', return_value=(payload, None)), \
              mock.patch('curriculum_api.learner_activity_status.enrich') as enrich:
             response = views.curriculum_module_learner_ksb_impact(request, 'MOD-1')
 

@@ -125,8 +125,14 @@ def read_weekly_learning(context, selection=None, *, module_id=None, include_wee
     if source is None:
         raise LookupError('Learner enrolment is unavailable.')
     owner = getattr(source, '_canonical_profile', None) or canonical_learning.require_profile(source.pk)
-    assigned_ids = _effective_plan_ids(source, {})
-    ids = list(dict.fromkeys([*assigned_ids, *canonical_learning.curriculum_module_ids_for(owner)]))
+    canonical_only = bool(owner.get('_canonical_plan_only'))
+    canonical_plan = list(getattr(source, '_canonical_training_plan', None) or [])
+    assigned_ids = (list(dict.fromkeys(
+        str(entry.get('moduleId')) for entry in canonical_plan
+        if isinstance(entry, dict) and entry.get('moduleId')
+    )) if canonical_only else _effective_plan_ids(source, {}))
+    ids = (assigned_ids if canonical_only else
+           list(dict.fromkeys([*assigned_ids, *canonical_learning.curriculum_module_ids_for(owner)])))
     if module_id is not None and str(module_id) not in set(map(str, ids)):
         raise LookupError('Module not found in this learner plan.')
     if module_id is not None:
@@ -162,9 +168,23 @@ def read_weekly_learning(context, selection=None, *, module_id=None, include_wee
         if any(row.get('source_weekly_display') for row in modules):
             from learner_api.placement_links import placement_ids
             policies = display_policies(modules, placement_ids(source)['cohort_id'])
-        cur.execute(f'''SELECT id,module_catalogue_id,week_number,title,holiday_note_enabled,holiday_note,display_order
-            FROM curriculum.weeks WHERE module_catalogue_id=ANY(%s) AND {VISIBLE_WEEK}
-            ORDER BY display_order,week_number,id''', [schedule_ids])
+        if canonical_only:
+            cur.execute('''SELECT plan_week.curriculum_week_id AS id,
+                module.curriculum_module_id AS module_catalogue_id,
+                coalesce(authored.week_number,plan_week.position) AS week_number,
+                authored.title,authored.holiday_note_enabled,authored.holiday_note,
+                plan_week.position AS display_order
+                FROM "Learner".learner_training_plan_modules module
+                JOIN "Learner".learner_training_plan_weeks plan_week
+                  ON plan_week.plan_module_id=module.id
+                JOIN curriculum.weeks authored ON authored.id=plan_week.curriculum_week_id
+                WHERE module.learner_id=%s AND module.curriculum_module_id=ANY(%s)
+                ORDER BY module.position,module.id,plan_week.position,plan_week.id''',
+                [owner['id'], schedule_ids])
+        else:
+            cur.execute(f'''SELECT id,module_catalogue_id,week_number,title,holiday_note_enabled,holiday_note,display_order
+                FROM curriculum.weeks WHERE module_catalogue_id=ANY(%s) AND {VISIBLE_WEEK}
+                ORDER BY display_order,week_number,id''', [schedule_ids])
         counts, authored = defaultdict(int), {}
         authored_rows = rows(cur)
         for row in authored_rows:
@@ -190,6 +210,9 @@ def read_weekly_learning(context, selection=None, *, module_id=None, include_wee
                       key=lambda row: (str(row['end_date']), row['id']), reverse=True)
         default_module = module_id or (active or future or past or default_candidates or [{}])[0].get('id')
         weeks = week_rows([spine[row['id']] for row in modules], today)
+        if canonical_only:
+            owned_week_ids = {str(row['id']) for row in authored_rows}
+            weeks = [week for week in weeks if str(week.get('weekId') or '') in owned_week_ids]
         default_weeks = [week for week in weeks if week['moduleId'] == default_module]
         selected = next((week for week in weeks if week['id'] == selection), None) if selection else (
             next((week for week in default_weeks if week['status'] == 'current'), None) or
@@ -212,7 +235,29 @@ def read_weekly_learning(context, selection=None, *, module_id=None, include_wee
             detail_filter = ''' AND (c.week_id=%s OR l.quiz_id IS NOT NULL
                 OR c.settings_json->>'linkedQuizId' ~ '^[0-9]+$')'''
             detail_params.append(selected['weekId'])
-        cur.execute(f'''SELECT c.id,c.week_id,c.module_catalogue_id,c.type,
+        ownership_cte = '''WITH owned AS (
+            SELECT plan_component.curriculum_component_id AS component_id,
+                   min(plan_week.curriculum_week_id) AS week_id,
+                   min(plan_module.curriculum_module_id) AS module_id
+            FROM "Learner".learner_training_plan_modules plan_module
+            JOIN "Learner".learner_training_plan_weeks plan_week
+              ON plan_week.plan_module_id=plan_module.id
+            JOIN "Learner".learner_training_plan_components plan_component
+              ON plan_component.plan_week_id=plan_week.id
+            WHERE plan_module.learner_id=%s AND plan_module.curriculum_module_id=ANY(%s)
+            GROUP BY plan_component.curriculum_component_id
+            HAVING count(*)=1
+        ) ''' if canonical_only else ''
+        component_from = ('''FROM owned JOIN curriculum.components c ON c.id=owned.component_id
+            LEFT JOIN curriculum.quiz_component_links l ON l.component_id=c.id
+            JOIN curriculum.modules cm ON cm.module_catalogue_id=owned.module_id'''
+            if canonical_only else '''FROM curriculum.components c
+            LEFT JOIN curriculum.quiz_component_links l ON l.component_id=c.id
+            JOIN curriculum.modules cm ON cm.module_catalogue_id=c.module_catalogue_id''')
+        component_week = 'owned.week_id' if canonical_only else 'c.week_id'
+        component_module = 'owned.module_id' if canonical_only else 'c.module_catalogue_id'
+        detail_filter = detail_filter.replace('c.week_id=%s', f'{component_week}=%s')
+        cur.execute(ownership_cte + f'''SELECT c.id,{component_week} AS week_id,{component_module} AS module_catalogue_id,c.type,
             coalesce(l.quiz_id, CASE WHEN c.settings_json->>'linkedQuizId' ~ '^[0-9]+$'
                 THEN (c.settings_json->>'linkedQuizId')::bigint END) AS quiz_id,
             EXISTS(SELECT 1 FROM curriculum.quizzes q WHERE q.id=coalesce(l.quiz_id,
@@ -221,12 +266,12 @@ def read_weekly_learning(context, selection=None, *, module_id=None, include_wee
             CASE WHEN lower(replace(c.type,'-','_')) <> 'video' THEN true ELSE
               {content_presence} OR coalesce(c.settings_json->>'embedCode','') ~* '<iframe[^>]+src=["'']([^"'']+)["'']' OR
               coalesce(btrim(c.live_sessions_link),'') <> '' END AS has_content
-            FROM curriculum.components c LEFT JOIN curriculum.quiz_component_links l ON l.component_id=c.id
-            JOIN curriculum.modules cm ON cm.module_catalogue_id=c.module_catalogue_id
-            WHERE c.module_catalogue_id=ANY(%s) AND {visible_child_sql('c')}
+            {component_from}
+            WHERE {component_module}=ANY(%s) AND {visible_child_sql('c')}
             AND coalesce(btrim(cm.title),'') <> ''
             {detail_filter}
-            ORDER BY c.week_id,c.display_order,c.id''', detail_params)
+            ORDER BY {component_week},c.display_order,c.id''',
+            ([owner['id'], sorted(content_ids), *detail_params] if canonical_only else detail_params))
         components = [row for row in rows(cur) if row['has_content'] or row['is_quiz']]
         register, live_credits = read_weekly_live_evidence(source, owner, schedule_ids, sorted(content_ids))
         credits_by_component = {credit['componentId']: credit for credit in live_credits}
@@ -242,6 +287,9 @@ def read_weekly_learning(context, selection=None, *, module_id=None, include_wee
         def completion_for_week(component, week):
             credit = credits_by_component.get(str(component['id']))
             if credit is not None and credit_in_week(credit, week):
+                learning = credit.get('liveSessionLearning')
+                if learning and learning['status'] != 'completed':
+                    return False, 'in-progress'
                 return True, 'completed'
             return completion_by_id[component['id']]
         by_week = defaultdict(list)
@@ -364,6 +412,9 @@ def read_weekly_learning(context, selection=None, *, module_id=None, include_wee
                                'durationMinutes': duration, 'quizDuration': quiz_duration, 'quizTimeUnit': row['quiz_time_unit'],
                                'ksbCodes': sorted({str(item['code']).strip().upper() for item in mappings.get(row['id'], []) if item.get('code')})})
         for activity in activities:
+            credit = credits_by_component.get(activity['id'])
+            if credit and credit_in_week(credit, selected) and credit.get('liveSessionLearning'):
+                activity['liveSessionLearning'] = credit['liveSessionLearning']
             if activity['isQuiz']:
                 activity['quizId'] = selected_by_id[activity['id']]['quiz_id']
         live = None

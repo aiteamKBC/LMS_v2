@@ -3,6 +3,7 @@
 Nothing here opens a connection: the connection, the column lookups and the row
 reads are patched.
 """
+from curriculum_api.catalogue.tests.parity.composition_test_support import composition_fixture
 from unittest import mock
 
 from django.test import SimpleTestCase
@@ -52,10 +53,10 @@ class StructureRevisionTests(SimpleTestCase):
         return [{**row, **self.DERIVED.get(table, {})} for row in self.RAW[table]]
 
     def test_fresh_read_and_editor_source_rows_agree(self):
-        with mock.patch.object(views, 'connection', mock.Mock(vendor='sqlite')), \
-                mock.patch.object(views, 'ensure_module_authoring_tables'), \
-                mock.patch.object(views, 'column_names', side_effect=lambda table: self.STORED[table]), \
-                mock.patch.object(views, 'authoring_fetch_all', side_effect=self.fetch_with_derived_keys):
+        with composition_fixture(views, 'connection', mock.Mock(vendor='sqlite')), \
+                composition_fixture(views, 'ensure_module_authoring_tables'), \
+                composition_fixture(views, 'column_names', side_effect=lambda table: self.STORED[table]), \
+                composition_fixture(views, 'authoring_fetch_all', side_effect=self.fetch_with_derived_keys):
             fresh = views.module_structure_revision('MOD-1')
             from_source = views.module_structure_revision('MOD-1', source_rows=self.RAW)
         self.assertTrue(fresh)
@@ -64,9 +65,9 @@ class StructureRevisionTests(SimpleTestCase):
     def test_a_stored_change_still_changes_the_revision(self):
         changed = {**self.RAW, views.AUTHORING_COMPONENTS_TABLE: [
             {**self.RAW[views.AUTHORING_COMPONENTS_TABLE][0], 'title': 'C2'}]}
-        with mock.patch.object(views, 'connection', mock.Mock(vendor='sqlite')), \
-                mock.patch.object(views, 'ensure_module_authoring_tables'), \
-                mock.patch.object(views, 'column_names', side_effect=lambda table: self.STORED[table]):
+        with composition_fixture(views, 'connection', mock.Mock(vendor='sqlite')), \
+                composition_fixture(views, 'ensure_module_authoring_tables'), \
+                composition_fixture(views, 'column_names', side_effect=lambda table: self.STORED[table]):
             before = views.module_structure_revision('MOD-1', source_rows=self.RAW)
             after = views.module_structure_revision('MOD-1', source_rows=changed)
         self.assertNotEqual(before, after)
@@ -96,14 +97,14 @@ class TeamsArtifactsReadTests(SimpleTestCase):
 
         from curriculum_api import teams_calendar_integrity
         with mock.patch.object(views.schema_gate, 'require_tables'), \
-                mock.patch.object(views, 'authoring_fetch_all', side_effect=fetch), \
+                composition_fixture(views, 'authoring_fetch_all', side_effect=fetch), \
                 mock.patch.object(teams_calendar_integrity, 'read_events', return_value=[]), \
                 mock.patch.object(teams_calendar_integrity, 'off_schedule_runs', return_value=[]), \
-                mock.patch.object(views, 'attendance_report_rosters', side_effect=lambda series, rows, **kw: rows), \
-                mock.patch.object(views, 'stamp_live_session_instants', side_effect=lambda row: row), \
-                mock.patch.object(views, 'teams_schedule_settings', return_value={}), \
-                mock.patch.object(views, 'graph_timezone_iana', return_value='Europe/London'), \
-                mock.patch.object(views, 'stored_leftover_slots', return_value=[]):
+                composition_fixture(views, 'attendance_report_rosters', side_effect=lambda series, rows, **kw: rows), \
+                composition_fixture(views, 'stamp_live_session_instants', side_effect=lambda row: row), \
+                composition_fixture(views, 'teams_schedule_settings', return_value={}), \
+                composition_fixture(views, 'graph_timezone_iana', return_value='Europe/London'), \
+                composition_fixture(views, 'stored_leftover_slots', return_value=[]):
             response = views.curriculum_teams_meeting_artifacts(RequestFactory().get('/x/'), 'LIVE-1')
         self.assertEqual(response.status_code, 200)
         import json
@@ -126,7 +127,7 @@ class ProgressConsumptionRowsTests(SimpleTestCase):
     def run_reader(self, entries, *args, **kwargs):
         cursor = mock.MagicMock()
         cursor.__enter__.return_value = cursor
-        with mock.patch.object(views, 'connection', mock.Mock(cursor=mock.Mock(return_value=cursor))),                 mock.patch.object(views, 'and_not_excluded', return_value=''),                 mock.patch.object(views, 'rows_as_dicts', return_value=entries):
+        with composition_fixture(views, 'connection', mock.Mock(cursor=mock.Mock(return_value=cursor))),                 composition_fixture(views, 'and_not_excluded', return_value=''),                 composition_fixture(views, 'rows_as_dicts', return_value=entries):
             rows = views.progress_consumption_rows(*args, **kwargs)
         return rows, cursor
 
@@ -155,7 +156,7 @@ class ProgressConsumptionRowsTests(SimpleTestCase):
         cursor = mock.MagicMock()
         cursor.__enter__.return_value = cursor
         cursor.fetchall.return_value = [('quiz', True), ('quiz', False), ('activity', None)]
-        with mock.patch.object(views, 'connection', mock.Mock(cursor=mock.Mock(return_value=cursor))),                 mock.patch.object(views, 'and_not_excluded', return_value=''),                 mock.patch.object(views, 'rows_as_dicts', return_value=[]):
+        with composition_fixture(views, 'connection', mock.Mock(cursor=mock.Mock(return_value=cursor))),                 composition_fixture(views, 'and_not_excluded', return_value=''),                 composition_fixture(views, 'rows_as_dicts', return_value=[]):
             views.progress_consumption_rows([7], ['K1'], achieved_only=True)
         sql, params = cursor.execute.call_args[0]
         self.assertNotIn('p.feedback', sql)
@@ -167,7 +168,7 @@ class ProgressConsumptionRowsTests(SimpleTestCase):
         cursor = mock.MagicMock()
         cursor.__enter__.return_value = cursor
         cursor.fetchall.return_value = [('quiz', False)]
-        with mock.patch.object(views, 'connection', mock.Mock(cursor=mock.Mock(return_value=cursor))),                 mock.patch.object(views, 'and_not_excluded', return_value=''):
+        with composition_fixture(views, 'connection', mock.Mock(cursor=mock.Mock(return_value=cursor))),                 composition_fixture(views, 'and_not_excluded', return_value=''):
             self.assertEqual(views.progress_consumption_rows([7], ['K1'], achieved_only=True), [])
         self.assertEqual(cursor.execute.call_count, 1)
 
@@ -225,9 +226,9 @@ class LearnerProgressUnavailableTests(SimpleTestCase):
 
     def test_reader_raises_instead_of_returning_empty_totals(self):
         from curriculum_api.progress_errors import LearnerProgressUnavailable
-        with mock.patch.object(views, 'connection', mock.Mock(vendor='postgresql')), \
-                mock.patch.object(views, 'learner_schema_table_exists', return_value=True), \
-                mock.patch.object(views, 'progress_consumption_rows', side_effect=RuntimeError('statement timeout')):
+        with composition_fixture(views, 'connection', mock.Mock(vendor='postgresql')), \
+                composition_fixture(views, 'learner_schema_table_exists', return_value=True), \
+                composition_fixture(views, 'progress_consumption_rows', side_effect=RuntimeError('statement timeout')):
             with self.assertRaises(LearnerProgressUnavailable):
                 views.learner_progress_ksb_consumption([7], ['K1'])
 
@@ -249,7 +250,7 @@ class NamesCacheTests(SimpleTestCase):
     """Names are re-read only when a name table is written, and held for one request."""
 
     def setUp(self):
-        from curriculum_api import curriculum_names
+        from curriculum_api.catalogue.infrastructure import placement_reads as curriculum_names
         self.names = curriculum_names
         curriculum_names.invalidate()
         curriculum_names.end_request()

@@ -17,7 +17,7 @@ class BuilderActivityDatesTests(SimpleTestCase):
             [(component_id, 'MOD-1', week_id, title, kind, settings)
              for component_id, week_id, title, kind, settings in components],
         ]
-        with patch('curriculum_api.views.cohort_selected_holidays_by_cohort',
+        with patch('curriculum_api.catalogue.infrastructure.cohort_calendar_composition.cohort_selected_holidays_by_cohort',
                    return_value={'COHORT-1': holidays or []}) as read_holidays, \
              patch('curriculum_api.views.ensure_module_authoring_tables') as ensure_tables:
             result = read_builder_activity_dates(self.cursor, ['MOD-1'])
@@ -36,7 +36,8 @@ class BuilderActivityDatesTests(SimpleTestCase):
         self.assertNotRegex(query, r'(?i)\bc\s*\.\s*coalesce\s*\(')
         # The shared rule qualifies the column by the caller's alias; the
         # canonical schema has no module deletion marker to consult.
-        self.assertIn('(c.deleted_at IS NULL)', query)
+        self.assertIn("(lower(btrim(coalesce(c.status, ''))) <> 'inactive')", query)
+        self.assertNotIn('c.deleted_at', query)
         self.assertNotIn('deleted_via_parent', query)
 
     def test_all_345_components_follow_the_full_future_plan(self):
@@ -147,7 +148,7 @@ class BuilderActivityDatesTests(SimpleTestCase):
                      for component_id, week_id, title, kind, settings in components]
         # A component of a module the Builder does not list (e.g. deleted) is ignored.
         preloaded.append(('OTHER', 'MOD-DELETED', 'W1', 'Other', 'reading', {}))
-        with patch('curriculum_api.views.cohort_selected_holidays_by_cohort', return_value={'COHORT-1': []}):
+        with patch('curriculum_api.catalogue.infrastructure.cohort_calendar_composition.cohort_selected_holidays_by_cohort', return_value={'COHORT-1': []}):
             result = read_builder_activity_dates(cursor, ['MOD-1'], components=preloaded)
         self.assertEqual(result, expected)
         self.assertEqual(cursor.execute.call_count, 2)

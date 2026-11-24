@@ -22,7 +22,8 @@
 --
 -- `id` on progress_review_runs is an application-generated uuid4 hex string
 -- (a `text` column, not Postgres `uuid`), so the same id format works
--- unchanged under the SQLite test backend used by `manage.py test`.
+-- unchanged across application environments. `learner_id` is the canonical
+-- `"Learner".learners.id`, not enrolment."Created_users".id.
 
 BEGIN;
 
@@ -31,7 +32,7 @@ CREATE SCHEMA IF NOT EXISTS "Learner";
 CREATE TABLE IF NOT EXISTS "Learner"."progress_review_runs" (
     id                   text         PRIMARY KEY,
     learner_kind         varchar(32)  NOT NULL,
-    learner_id           bigint       NOT NULL,
+    learner_id           bigint       NOT NULL REFERENCES "Learner"."learners" (id),
     review_number        integer,
     review_date          date         NOT NULL,
     review_period_start  date         NOT NULL,

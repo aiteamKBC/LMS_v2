@@ -6,6 +6,7 @@ that it answers exactly what that read answered: the same rows survive the
 same filters, land in the same week buckets, and carry the same counts,
 published counts and per-component-rounded Expected OTJH minutes.
 """
+from curriculum_api.catalogue.tests.parity.composition_test_support import composition_fixture
 import gzip
 import json
 from collections import Counter, defaultdict
@@ -30,7 +31,7 @@ WEEKS = [
     {'id': 'W-1', 'module_catalogue_id': 'MOD-1', 'week_number': 1, 'title': 'Orientation'},
     {'id': 'W-2', 'module_catalogue_id': 'MOD-1', 'week_number': 2, 'title': ''},
     {'id': 'W-3', 'module_catalogue_id': 'MOD-2', 'week_number': 1, 'title': 'Kick-off'},
-    # Archived week: its components fall back to "Week 1" exactly as the full read does.
+    # Archived week: the read keeps its ID without inventing a Week 1 label.
     {'id': 'W-OLD', 'module_catalogue_id': 'MOD-2', 'week_number': 5, 'title': 'Gone', 'status': 'inactive'},
 ]
 
@@ -82,9 +83,9 @@ def fake_fetch(table, where_sql='', params=None, order_sql='', **kwargs):
 
 def expected_buckets():
     """The figures, aggregated from what components/ itself returns for these rows."""
-    with patch.object(views, 'authoring_fetch_all', side_effect=fake_fetch), \
-            patch.object(views, 'ensure_module_authoring_tables'), \
-            patch.object(views, 'mappings_with_inferred_sources', side_effect=lambda rows, modules: rows):
+    with composition_fixture(views, 'authoring_fetch_all', side_effect=fake_fetch), \
+            composition_fixture(views, 'ensure_module_authoring_tables'), \
+            composition_fixture(views, 'mappings_with_inferred_sources', side_effect=lambda rows, modules: rows):
         full = views._component_builder_rows(IDS, [dict(row) for row in COMPONENTS])
     buckets = defaultdict(lambda: {'count': 0, 'publishedCount': 0, 'otjhMinutes': 0})
     for item in full:
@@ -135,12 +136,15 @@ def grouped_like_postgres(sql, params=None):
 
 class ComponentSummaryTests(SimpleTestCase):
     def summary(self, vendor):
+        # This fixture models the two component-count queries only. KSB SQL and
+        # bucket attachment have their own ComponentSummaryKsbCodesTests.
         connection = MagicMock(vendor=vendor)
-        with patch.object(views, 'connection', connection), \
-                patch.object(views, 'column_names', return_value=COLUMNS), \
-                patch.object(views, 'authoring_fetch_all', side_effect=fake_fetch), \
-                patch.object(views, 'ensure_module_authoring_tables'), \
-                patch.object(views, 'fetch_all', side_effect=grouped_like_postgres) as fetch_all:
+        with composition_fixture(views, 'connection', connection), \
+                composition_fixture(views, 'column_names', return_value=COLUMNS), \
+                composition_fixture(views, 'authoring_fetch_all', side_effect=fake_fetch), \
+                composition_fixture(views, 'ensure_module_authoring_tables'), \
+                composition_fixture(views, 'component_summary_ksb_codes', return_value=None), \
+                composition_fixture(views, 'fetch_all', side_effect=grouped_like_postgres) as fetch_all:
             rows = views.component_summary_rows(IDS)
         return rows, fetch_all
 
@@ -158,7 +162,7 @@ class ComponentSummaryTests(SimpleTestCase):
         # 15 + 2 + 6 + 0 + 0 + 90 + 30 + 120 + 60 + 45
         self.assertEqual(sum(row['otjhMinutes'] for row in rows), 368)
         stale_week = next(row for row in rows if row['weekId'] == 'W-OLD')
-        self.assertEqual((stale_week['week'], stale_week['weekTitle']), ('Week 1', 'Week 1'))
+        self.assertEqual((stale_week['week'], stale_week['weekTitle']), ('', ''))
         orphan = next(row for row in rows if row['moduleCatalogueId'] == 'MOD-3')
         self.assertEqual(orphan['programme'], 'Unassigned programme')
 
@@ -180,7 +184,7 @@ class ComponentSummaryTests(SimpleTestCase):
             self.assertIn('"status" not in', statement)
 
     def test_no_ids_reads_nothing(self):
-        with patch.object(views, 'fetch_all') as fetch_all, patch.object(views, 'authoring_fetch_all') as fetch:
+        with composition_fixture(views, 'fetch_all') as fetch_all, composition_fixture(views, 'authoring_fetch_all') as fetch:
             self.assertEqual(views.component_summary_rows([]), [])
         fetch_all.assert_not_called()
         fetch.assert_not_called()
@@ -194,8 +198,8 @@ class ComponentSummaryTests(SimpleTestCase):
 
 class ComponentSummaryViewTests(SimpleTestCase):
     def get(self, query, **headers):
-        with patch.object(views, 'component_summary_rows', return_value=[{'count': 1}]) as rows, \
-                patch.object(views, 'cached_curriculum_value', side_effect=lambda key, build, **kw: build()) as cached:
+        with composition_fixture(views, 'component_summary_rows', return_value=[{'count': 1}]) as rows, \
+                composition_fixture(views, 'cached_curriculum_value', side_effect=lambda key, build, **kw: build()) as cached:
             request = RequestFactory().get('/curriculum/components/summary/' + query, **headers)
             response = views.curriculum_component_summary(request)
         return response, rows, cached
@@ -233,9 +237,9 @@ class ArchivedCohortsTests(SimpleTestCase):
         def archived(table):
             return cohorts if table == views.COHORT_AUTHORING_DETAILS_TABLE else []
 
-        with patch.object(views, 'archived_authoring_rows', side_effect=archived), \
-                patch.object(views, 'active_learner_delivery_counts', return_value=({}, {})), \
-                patch.object(views, 'get_holiday_rows_safe', return_value=holidays) as read_holidays:
+        with composition_fixture(views, 'archived_authoring_rows', side_effect=archived), \
+                composition_fixture(views, 'active_learner_delivery_counts', return_value=({}, {})), \
+                composition_fixture(views, 'get_holiday_rows_safe', return_value=holidays) as read_holidays:
             response = views.curriculum_archived_cohorts(RequestFactory().get('/curriculum/cohorts/archived/'))
             per_row = [views.archived_cohort_payload(row, [], {}) for row in cohorts]
         self.assertEqual(response.status_code, 200)
@@ -250,7 +254,7 @@ class ArchivedModuleComponentCountTests(SimpleTestCase):
         cursor.fetchall.return_value = [('MOD-A', 3), ('MOD-B', 1)]
         connection = MagicMock(vendor='postgresql')
         connection.cursor.return_value.__enter__.return_value = cursor
-        with patch.object(views, 'connection', connection), patch.object(views, 'ensure_module_authoring_tables'):
+        with composition_fixture(views, 'connection', connection), composition_fixture(views, 'ensure_module_authoring_tables'):
             counts = views.archived_module_component_counts(['MOD-B', 'MOD-A', 'MOD-A'])
         sql, params = cursor.execute.call_args.args
         self.assertIn('group by module_catalogue_id', sql)
@@ -260,14 +264,14 @@ class ArchivedModuleComponentCountTests(SimpleTestCase):
 
     def test_no_archived_modules_reads_nothing(self):
         connection = MagicMock(vendor='postgresql')
-        with patch.object(views, 'connection', connection):
+        with composition_fixture(views, 'connection', connection):
             self.assertEqual(dict(views.archived_module_component_counts([])), {})
         connection.cursor.assert_not_called()
 
     def test_other_databases_count_every_row_as_before(self):
         rows = [{'module_catalogue_id': key} for key in ['M1', 'M1', 'M2', '', None]]
-        with patch.object(views, 'connection', MagicMock(vendor='sqlite')), \
-                patch.object(views, 'authoring_fetch_all', return_value=rows):
+        with composition_fixture(views, 'connection', MagicMock(vendor='sqlite')), \
+                composition_fixture(views, 'authoring_fetch_all', return_value=rows):
             counts = views.archived_module_component_counts(['M1'])
         self.assertEqual(dict(counts), dict(Counter({'M1': 2, 'M2': 1})))
 
@@ -276,9 +280,9 @@ class ArchivedModuleComponentCountTests(SimpleTestCase):
             {'module_catalogue_id': 'MOD-A', 'title': 'A', 'deleted_at': '2026-01-01'},
             {'module_catalogue_id': '', 'title': 'blank'},
         ]
-        with patch.object(views, 'archived_module_rows', return_value=rows), \
-                patch.object(views, 'archived_module_component_counts', return_value={'MOD-A': 7}) as counts, \
-                patch.object(views, 'archived_parent_programme', return_value=None):
+        with composition_fixture(views, 'archived_module_rows', return_value=rows), \
+                composition_fixture(views, 'archived_module_component_counts', return_value={'MOD-A': 7}) as counts, \
+                composition_fixture(views, 'archived_parent_programme', return_value=None):
             response = views.curriculum_archived_modules(RequestFactory().get('/curriculum/modules/archived/'))
         counts.assert_called_once_with(['MOD-A'])
         results = json.loads(response.content)['results']

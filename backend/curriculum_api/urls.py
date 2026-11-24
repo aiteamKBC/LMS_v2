@@ -52,7 +52,7 @@ from .teams_week_meeting import (
 from . import recordings_library, session_results, tutor_notifications, recordings_day, recordings_calendar, recordings_external
 from .attendance_corrections import session_attendance_correction
 from .learner_activity_status import activity_status
-from .home_summary import curriculum_home_attention, curriculum_home_summary
+from .views import curriculum_home_attention, curriculum_home_summary
 from .teaching_quality import teaching_review
 from .recordings_transcript_pdf import lecture_transcript
 from .module_hours import module_target

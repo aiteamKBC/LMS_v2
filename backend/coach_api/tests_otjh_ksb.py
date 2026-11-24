@@ -12,6 +12,14 @@ from . import otjh_ksb as projection
 
 
 class OtjhKsbProjectionTests(SimpleTestCase):
+    def setUp(self):
+        # These aggregate fixtures contain neither reconciled retakes nor
+        # attendance. Their integration is covered by AttendanceOtjhTests and
+        # the cross-consumer correction test in tests_monthly_logs.
+        self.enterContext(patch.object(projection, 'full_hour_projection_ids', return_value=set()))
+        self.enterContext(patch('learner_api.attendance_otjh.read_bulk', side_effect=lambda owners, read:
+            {int(owner['id']): {'lectures': [], 'protected': {}, 'frozen_rows': []} for owner in owners}))
+
     def context(self, kind='apprenticeship'):
         return SimpleNamespace(learner_id=101,
             profile=SimpleNamespace(id=101, enrolment_id=201, learner_type=kind, start_date=None, end_date=None),

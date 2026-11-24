@@ -1,7 +1,7 @@
 """Free Course progress after the data migration (unknown completion dates).
 
 The migrated store holds completions whose original date could not be verified
-(``completed_at`` NULL). A row is a completion whatever its date; these tests pin
+(``completed_at`` NULL). An explicitly completed row counts whatever its date; these tests pin
 that, and that reading or recording completions never rewrites a date or
 touches programme progress, OTJH, KSBs or the training plan.
 """
@@ -41,6 +41,10 @@ def two_courses(activity_count=24):
 
 
 class UnknownDateProgressReadTests(SimpleTestCase):
+    def setUp(self):
+        self.enterContext(patch.object(view.free_course_attempts, "activity_times", return_value={}))
+        self.enterContext(patch.object(view, "accepted_activity_seconds", return_value={}))
+
     def summary(self, completed):
         with patch.object(view, "_resolve_source", return_value=(LEARNER, None)), \
              patch.object(view, "assigned_course_ids", return_value=["FREE-GDPR", "FREE-SRA"]), \
@@ -78,6 +82,12 @@ class UnknownDateProgressReadTests(SimpleTestCase):
 
 
 class CompletionWriteTests(SimpleTestCase):
+    def setUp(self):
+        from .test_free_course_attempts_no_db import empty_attempt_storage
+        cursor = self.enterContext(empty_attempt_storage())
+        cursor.fetchone.side_effect = None
+        cursor.fetchone.return_value = (501,)
+
     def complete(self, objects, component_id="GDPR-3"):
         request = RequestFactory().post("/", data=json.dumps({"componentId": component_id}),
                                         content_type="application/json")
@@ -102,7 +112,8 @@ class CompletionWriteTests(SimpleTestCase):
         self.assertEqual(response.status_code, 200)
         objects.get_or_create.assert_called_once_with(
             learner_id=497, component_ref="GDPR-3",
-            defaults={"free_course_ref": "FREE-GDPR", "completed_at": now, "status": "active"},
+            defaults={"free_course_ref": "FREE-GDPR", "completed_at": now, "status": "active",
+                      "is_completed": True, "activity_state": "completed"},
         )
 
     def test_repeat_completion_is_idempotent_and_keeps_the_existing_date(self):
@@ -110,7 +121,8 @@ class CompletionWriteTests(SimpleTestCase):
         # either way a repeat only looks it up and never rewrites it.
         for existing_date in (datetime(2026, 9, 23, tzinfo=dt_timezone.utc), None):
             with self.subTest(existing_date=existing_date):
-                existing = SimpleNamespace(completed_at=existing_date, status="active")
+                existing = SimpleNamespace(completed_at=existing_date, status="active", deleted_at=None,
+                                           free_course_ref="FREE-GDPR", is_completed=True)
                 objects = Mock()
                 objects.get_or_create.return_value = (existing, False)
                 first = self.complete(objects)

@@ -1,3 +1,4 @@
+import { LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { curriculumNavItems } from '@/mocks/navigation';
 import {
@@ -416,7 +417,7 @@ function RevisionCard({ revision, versionLabel, snapshotOpen, snapshot, onToggle
               {JSON.stringify(snapshot.content, null, 2)}
             </pre>
           ) : (
-            <p className="text-[11px] text-foreground-400">Loading the stored content…</p>
+            <p className="text-[11px] text-foreground-400"><LoadingSkeleton label="Loading the stored content…" variant="rows" /></p>
           )}
         </div>
       )}

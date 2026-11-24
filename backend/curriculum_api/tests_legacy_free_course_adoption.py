@@ -1,4 +1,5 @@
 """Transactional adoption and editing regressions on the isolated PG runner."""
+from curriculum_api.catalogue.tests.parity.composition_test_support import composition_fixture
 import json
 from datetime import datetime, timezone
 from unittest.mock import patch
@@ -60,8 +61,8 @@ class LegacyFreeCourseAdoptionTests(CurriculumPersistenceTransactionHarness):
     def test_adoption_keeps_source_rows_and_live_identity_without_touching_teams(self):
         snapshot = self.snapshot()
         payload = snapshot['payloads'][0]
-        with patch.object(views, 'link_live_session_series_to_module') as link, \
-                patch.object(views, 'attach_teams_meeting_to_module_weeks') as attach:
+        with composition_fixture(views, 'link_live_session_series_to_module') as link, \
+                composition_fixture(views, 'attach_teams_meeting_to_module_weeks') as attach:
             self.assertTrue(adopt_course(payload))
         link.assert_not_called()
         attach.assert_not_called()

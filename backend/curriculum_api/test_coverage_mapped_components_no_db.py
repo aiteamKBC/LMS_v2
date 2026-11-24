@@ -6,6 +6,7 @@ So coverage reads the mapped components' rows and counts the rest in SQL
 (3,196 rows instead of 27,483 for the largest programme). Other callers of
 authoring_scope_data keep every component.
 """
+from curriculum_api.catalogue.tests.parity.composition_test_support import composition_fixture
 from collections import Counter
 from unittest import mock
 
@@ -35,13 +36,13 @@ class MappedComponentsTests(SimpleTestCase):
                     views.AUTHORING_COMPONENTS_TABLE: MAPPED_COMPONENTS}[table]
 
         patches = [
-            mock.patch.object(views, 'ensure_module_authoring_tables'),
-            mock.patch.object(views, 'authoring_scope_module_rows', return_value=MODULES),
-            mock.patch.object(views, 'authoring_child_rows_for_modules', side_effect=child_rows),
-            mock.patch.object(views, 'authoring_fetch_all', return_value=MAPPED_COMPONENTS),
+            composition_fixture(views, 'ensure_module_authoring_tables'),
+            composition_fixture(views, 'authoring_scope_module_rows', return_value=MODULES),
+            composition_fixture(views, 'authoring_child_rows_for_modules', side_effect=child_rows),
+            composition_fixture(views, 'authoring_fetch_all', return_value=MAPPED_COMPONENTS),
             mock.patch('curriculum_api.ksb_stats_reads.grouped_component_counts', return_value=Counter({'MOD-A': 40, 'MOD-B': 3})),
-            mock.patch.object(views, 'dedupe_authoring_module_rows', side_effect=lambda rows, *a, **k: rows),
-            mock.patch.object(views, 'connection', mock.Mock(vendor='postgresql')),
+            composition_fixture(views, 'dedupe_authoring_module_rows', side_effect=lambda rows, *a, **k: rows),
+            composition_fixture(views, 'connection', mock.Mock(vendor='postgresql')),
         ]
         for patcher in patches:
             self.addCleanup(patcher.stop)
@@ -79,7 +80,7 @@ class CoverageAsksForMappedComponentsTests(SimpleTestCase):
             calls.append(kwargs)
             return [], [], [], []
 
-        with mock.patch.object(views, 'authoring_scope_data', side_effect=scope_data):
+        with composition_fixture(views, 'authoring_scope_data', side_effect=scope_data):
             views._coverage_response_uncached(RequestFactory().get('/x'), 'programme', 'P')
             views._coverage_response_uncached(RequestFactory().get('/x', {'view': 'summary'}), 'programme', 'P')
         self.assertEqual(calls, [{'mapped_components_only': True}, {'stats_only': True}])

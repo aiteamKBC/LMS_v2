@@ -44,46 +44,49 @@ function validModule(result: MyLearningModule | null | undefined, learner: strin
 }
 
 export const myLearningCatalogue = {
-  read: async (kind: LearnerKind, id: string, signal?: AbortSignal, fresh = false) => {
-    const result = await readLearnerJson<MyLearningCatalogue>(cataloguePath(kind, id), { signal, revalidate: fresh, ttlMs: 30_000 });
+  read: async (kind: LearnerKind, id: string, signal?: AbortSignal, fresh = false, planOnly = false) => {
+    const result = await readLearnerJson<MyLearningCatalogue>(cataloguePath(kind, id) + (planOnly ? '?plan=1' : ''), { signal, revalidate: fresh, ttlMs: 30_000 });
     if (!validCatalogue(result, kind, id)) {
       throw new Error('Could not load your subjects. Please try again.');
     }
     return result;
   },
-  peek: (kind: LearnerKind, id: string) => {
-    const result = peekLearnerJson<MyLearningCatalogue>(cataloguePath(kind, id));
+  peek: (kind: LearnerKind, id: string, planOnly = false) => {
+    const result = peekLearnerJson<MyLearningCatalogue>(cataloguePath(kind, id) + (planOnly ? '?plan=1' : ''));
     return validCatalogue(result, kind, id) ? result : undefined;
   },
 };
 
-export function useMyLearningCatalogue(kind?: LearnerKind, id?: string, enabled = true) {
-  return useLiveLearnerRead(kind, id, enabled, myLearningCatalogue.read, myLearningCatalogue.peek);
+export function useMyLearningCatalogue(kind?: LearnerKind, id?: string, enabled = true, planOnly = false) {
+  const identity = id && planOnly ? JSON.stringify([id, 'plan']) : id;
+  const read = useCallback((kind: LearnerKind, identity: string, signal?: AbortSignal, fresh = false) => myLearningCatalogue.read(kind, planOnly ? JSON.parse(identity)[0] : identity, signal, fresh, planOnly), [planOnly]);
+  const peek = useCallback((kind: LearnerKind, identity: string) => myLearningCatalogue.peek(kind, planOnly ? JSON.parse(identity)[0] : identity, planOnly), [planOnly]);
+  return useLiveLearnerRead(kind, identity, enabled, read, peek);
 }
 
 /** Include the selected subject in both hook state and transport cache identity. */
-export function useMyLearningModule(kind?: LearnerKind, id?: string, subject?: string | null) {
-  const key = id && subject ? JSON.stringify([id, subject]) : undefined;
+export function useMyLearningModule(kind?: LearnerKind, id?: string, subject?: string | null, planOnly = false, activeOnly = true) {
+  const key = id && subject ? JSON.stringify([id, subject, planOnly, activeOnly]) : undefined;
   const read = useCallback(async (readKind: LearnerKind, identity: string, signal?: AbortSignal, fresh = false) => {
-    const [learner, selected] = JSON.parse(identity) as [string, string];
-    const result = await readLearnerJson<MyLearningModule>(modulePath(readKind, learner, selected), { signal, revalidate: fresh, ttlMs: 30_000 });
-    if (!validModule(result, learner)) {
+    const [learner, selected, planOnly, activeOnly] = JSON.parse(identity) as [string, string, boolean, boolean];
+    const result = await readLearnerJson<MyLearningModule>(modulePath(readKind, learner, selected) + (planOnly ? `?plan=1&planStatus=${activeOnly ? 'active' : 'all'}` : ''), { signal, revalidate: fresh, ttlMs: 30_000 });
+    if (!validModule(result, learner) || (planOnly && !selected.startsWith('activity:') && result.subjectId !== (selected.startsWith('current:') ? selected : `current:${selected}`))) {
       throw new Error('Could not load this subject. Please try again.');
     }
     return result;
   }, []);
   const peek = useCallback((readKind: LearnerKind, identity: string) => {
-    const [learner, selected] = JSON.parse(identity) as [string, string];
-    const result = peekLearnerJson<MyLearningModule>(modulePath(readKind, learner, selected));
-    return validModule(result, learner) ? result : undefined;
+    const [learner, selected, planOnly, activeOnly] = JSON.parse(identity) as [string, string, boolean, boolean];
+    const result = peekLearnerJson<MyLearningModule>(modulePath(readKind, learner, selected) + (planOnly ? `?plan=1&planStatus=${activeOnly ? 'active' : 'all'}` : ''));
+    return validModule(result, learner) && (!planOnly || selected.startsWith('activity:') || result.subjectId === (selected.startsWith('current:') ? selected : `current:${selected}`)) ? result : undefined;
   }, []);
   return useLiveLearnerRead(kind, key, !!key, read, peek);
 }
 
 /** Debounce activity search, abort superseded requests and hide stale identities. */
-export function useMyLearningSearch(kind: LearnerKind | undefined, id: string | undefined, query: string, enabled: boolean) {
+export function useMyLearningSearch(kind: LearnerKind | undefined, id: string | undefined, query: string, enabled: boolean, planOnly = false) {
   const term = query.trim();
-  const key = JSON.stringify([kind,id,term]);
+  const key = JSON.stringify([kind,id,term,planOnly]);
   const [attempt, setAttempt] = useState(0);
   const [state, setState] = useState<{ key: string; ids: string[]; error: string; loading: boolean }>({ key: '', ids: [], error: '', loading: false });
   useEffect(() => {
@@ -95,7 +98,7 @@ export function useMyLearningSearch(kind: LearnerKind | undefined, id: string | 
         const ids: string[] = [];
         let offset: number | null = 0;
         do {
-          const response = await learningFetch(`${cataloguePath(kind,id)}search/?q=${encodeURIComponent(term)}&offset=${offset}`, { signal: controller.signal });
+          const response = await learningFetch(`${cataloguePath(kind,id)}search/?q=${encodeURIComponent(term)}&offset=${offset}${planOnly ? '&plan=1' : ''}`, { signal: controller.signal });
           if (!response.ok) throw new Error('Could not search activities. Please try again.');
           const result = await response.json() as { matches: { id: string }[]; nextOffset: number | null };
           ids.push(...result.matches.map(match => match.id));
@@ -108,10 +111,10 @@ export function useMyLearningSearch(kind: LearnerKind | undefined, id: string | 
       });
     }, 300);
     return () => { clearTimeout(timer); controller.abort(); };
-  }, [kind,id,term,key,enabled,attempt]);
+  }, [kind,id,term,key,enabled,attempt,planOnly]);
   return { ...(state.key === key ? state : { ids: [], error: '', loading: !!term && enabled }), retry: () => setAttempt(value => value+1) };
 }
 
-export async function readMyLearningUpcoming(kind: LearnerKind, id: string) {
-  return readLearnerJson<{ upcoming: UpcomingLearningLink[] }>(`${cataloguePath(kind,id)}upcoming/`, { ttlMs: 30_000 });
+export async function readMyLearningUpcoming(kind: LearnerKind, id: string, planOnly = false) {
+  return readLearnerJson<{ upcoming: UpcomingLearningLink[] }>(`${cataloguePath(kind,id)}upcoming/${planOnly ? '?plan=1' : ''}`, { ttlMs: 30_000 });
 }

@@ -1,4 +1,5 @@
 """Cache concurrency regressions; all database and shared-cache I/O is mocked."""
+from curriculum_api.catalogue.tests.parity.composition_test_support import composition_fixture
 
 import threading
 from concurrent.futures import ThreadPoolExecutor
@@ -12,22 +13,22 @@ from . import views
 class EpochReadTests(SimpleTestCase):
     def setUp(self):
         for patcher in (
-            patch.dict(views._SHARED_EPOCH_STATE, {'value': None, 'checked_at': 0.0}, clear=True),
-            patch.object(views, 'ensure_curriculum_epoch_table', return_value=True),
-            patch.object(views, 'connection', in_atomic_block=False),
+            patch.dict(views.cache_state._SHARED_EPOCH_STATE, {'value': None, 'checked_at': 0.0}, clear=True),
+            composition_fixture(views, 'ensure_curriculum_epoch_table', return_value=True),
+            composition_fixture(views, 'connection', in_atomic_block=False),
         ):
             patcher.start()
             self.addCleanup(patcher.stop)
         views.connection.get_autocommit.return_value = True
 
     def test_standalone_read_avoids_transaction_but_nested_read_keeps_savepoint(self):
-        with patch.object(views, 'read_shared_curriculum_epoch_row', return_value=7) as read, \
+        with composition_fixture(views, 'read_shared_curriculum_epoch_row', return_value=7) as read, \
              patch.object(views.transaction, 'atomic') as atomic:
             self.assertEqual(views.shared_curriculum_epoch(), 7)
             self.assertEqual(views.shared_curriculum_epoch(), 7)
             read.assert_called_once()
             atomic.assert_not_called()
-            views._SHARED_EPOCH_STATE['checked_at'] = 0.0
+            views.cache_state._SHARED_EPOCH_STATE['checked_at'] = 0.0
             views.connection.in_atomic_block = True
             self.assertEqual(views.shared_curriculum_epoch(), 7)
             atomic.assert_called_once()
@@ -35,7 +36,7 @@ class EpochReadTests(SimpleTestCase):
 
     def test_manually_opened_transaction_also_keeps_savepoint(self):
         views.connection.get_autocommit.return_value = False
-        with patch.object(views, 'read_shared_curriculum_epoch_row', return_value=7), \
+        with composition_fixture(views, 'read_shared_curriculum_epoch_row', return_value=7), \
              patch.object(views.transaction, 'atomic') as atomic:
             self.assertEqual(views.shared_curriculum_epoch(), 7)
         atomic.return_value.__enter__.assert_called_once()
@@ -61,8 +62,8 @@ class EpochReadTests(SimpleTestCase):
                 raise AssertionError('Test did not release epoch read')
             return 7
 
-        with patch.object(views, '_SHARED_EPOCH_REFRESH_LOCK', ObservedRefreshLock()), \
-             patch.object(views, 'read_shared_curriculum_epoch_row', side_effect=read_epoch) as read, \
+        with patch.object(views.cache_state, '_SHARED_EPOCH_REFRESH_LOCK', ObservedRefreshLock()), \
+             composition_fixture(views, 'read_shared_curriculum_epoch_row', side_effect=read_epoch) as read, \
              ThreadPoolExecutor(max_workers=2) as pool:
             first = pool.submit(views.shared_curriculum_epoch)
             try:
@@ -81,17 +82,17 @@ class EpochReadTests(SimpleTestCase):
             views.remember_shared_curriculum_epoch(8)
             return 7
 
-        with patch.object(views, 'read_shared_curriculum_epoch_row', side_effect=read_epoch):
+        with composition_fixture(views, 'read_shared_curriculum_epoch_row', side_effect=read_epoch):
             self.assertEqual(views.shared_curriculum_epoch(), 8)
-        self.assertEqual(views._SHARED_EPOCH_STATE['value'], 8)
+        self.assertEqual(views.cache_state._SHARED_EPOCH_STATE['value'], 8)
 
     def test_failed_read_preserves_last_epoch_without_caching_the_failure(self):
-        views._SHARED_EPOCH_STATE['value'] = 7
-        with patch.object(views, 'read_shared_curriculum_epoch_row', side_effect=RuntimeError('offline')), \
+        views.cache_state._SHARED_EPOCH_STATE['value'] = 7
+        with composition_fixture(views, 'read_shared_curriculum_epoch_row', side_effect=RuntimeError('offline')), \
              patch.object(views.logger, 'warning'):
             self.assertEqual(views.shared_curriculum_epoch(), 7)
-        self.assertEqual(views._SHARED_EPOCH_STATE['checked_at'], 0.0)
-        with patch.object(views, 'read_shared_curriculum_epoch_row', return_value=8):
+        self.assertEqual(views.cache_state._SHARED_EPOCH_STATE['checked_at'], 0.0)
+        with composition_fixture(views, 'read_shared_curriculum_epoch_row', return_value=8):
             self.assertEqual(views.shared_curriculum_epoch(), 8)
 
 
@@ -101,10 +102,10 @@ class CachePublicationTests(SimpleTestCase):
         self.cache = Mock()
         self.cache.get.return_value = None
         for patcher in (
-            patch.dict(views._CURRICULUM_CACHE, {}, clear=True),
-            patch.object(views, '_CURRICULUM_CACHE_EPOCH', 0),
-            patch.object(views, 'shared_curriculum_epoch', self.epoch),
-            patch.object(views, 'cache', self.cache),
+            patch.dict(views.cache_state._CURRICULUM_CACHE, {}, clear=True),
+            patch.object(views.cache_state, '_CURRICULUM_CACHE_EPOCH', 0),
+            composition_fixture(views, 'shared_curriculum_epoch', self.epoch),
+            composition_fixture(views, 'cache', self.cache),
             patch.object(views.shared_build, 'try_acquire', return_value=(True, None)),
             patch.object(views.shared_build, 'release'),
         ):
@@ -124,9 +125,9 @@ class CachePublicationTests(SimpleTestCase):
         def invalidate():
             # Model the local invalidation and shared epoch bump, without its
             # production outbox/warm-up side effects.
-            with views._CURRICULUM_CACHE_LOCK:
-                views._CURRICULUM_CACHE.clear()
-                views._CURRICULUM_CACHE_EPOCH += 1
+            with views.cache_state._CURRICULUM_CACHE_LOCK:
+                views.cache_state._CURRICULUM_CACHE.clear()
+                views.cache_state._CURRICULUM_CACHE_EPOCH += 1
             self.epoch.return_value = 8
 
         self.cache.set.side_effect = slow_set
@@ -141,17 +142,17 @@ class CachePublicationTests(SimpleTestCase):
             finally:
                 release.set()
             self.assertEqual(writer.result(timeout=3), 'old')
-        self.assertEqual(views._CURRICULUM_CACHE, {})
+        self.assertEqual(views.cache_state._CURRICULUM_CACHE, {})
         self.cache.set.side_effect = None
         self.assertEqual(views.cached_curriculum_value('building', lambda: 'new'), 'new')
         self.assertEqual(self.cache.set.call_args.args[0], views.shared_curriculum_cache_key('building', 8))
 
     def test_epoch_recheck_does_not_hold_global_cache_lock(self):
         def check_epoch():
-            acquired = views._CURRICULUM_CACHE_LOCK.acquire(blocking=False)
+            acquired = views.cache_state._CURRICULUM_CACHE_LOCK.acquire(blocking=False)
             self.assertTrue(acquired, 'Epoch I/O held the global cache lock')
             if acquired:
-                views._CURRICULUM_CACHE_LOCK.release()
+                views.cache_state._CURRICULUM_CACHE_LOCK.release()
             return 7
 
         self.epoch.side_effect = check_epoch
@@ -166,11 +167,11 @@ class CachePublicationTests(SimpleTestCase):
                     if remote:
                         self.epoch.return_value += 1
                     else:
-                        views._CURRICULUM_CACHE_EPOCH += 1
+                        views.cache_state._CURRICULUM_CACHE_EPOCH += 1
                     return 'old'
 
                 self.assertEqual(views.cached_curriculum_value('building', build), 'old')
-                self.assertNotIn('building', views._CURRICULUM_CACHE)
+                self.assertNotIn('building', views.cache_state._CURRICULUM_CACHE)
                 self.cache.set.assert_not_called()
 
     def test_shared_cache_failure_keeps_local_result_available(self):

@@ -112,15 +112,17 @@ describe('original imported course identity', () => {
     expect(screen.queryByText('Imported copy 1')).not.toBeInTheDocument();
   });
 
-  it('labels an assigned import without an old record as Old LMS and retains its current activities', async () => {
+  it('keeps assigned import cards while retaining Old LMS provenance', async () => {
     vi.spyOn(api, 'subjectRequest').mockResolvedValue(metadata);
     render(<MemoryRouter><StudentActivityPanel data={null} real={real} kind="commercial" learnerId="12"
       loading={false} error={null} onRetry={vi.fn()} /></MemoryRouter>);
     expect(await screen.findByText('Old LMS · Current learning plan')).toBeVisible();
-    fireEvent.click(screen.getByRole('tab', { name: 'Old LMS' }));
+    fireEvent.click(screen.getByRole('tab', { name: 'New LMS' }));
     const card = within(screen.getByRole('button', { name: /Old LMS.*Open subject/ }));
     expect(card.getByText('0 of 2 completed')).toBeVisible();
-    expect(screen.queryByRole('button', { name: /New LMS.*Open subject/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: 'Training Plan' })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('tab', { name: 'Old LMS' }));
+    expect(screen.queryByRole('button', { name: /Old LMS.*Open subject/ })).not.toBeInTheDocument();
   });
 
   it('keeps old components and hours until approval for a verified replacement', () => {

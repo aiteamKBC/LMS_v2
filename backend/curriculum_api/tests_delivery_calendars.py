@@ -1,4 +1,5 @@
 """Disposable-database checks: cache isolation, real saves and custom calendars."""
+from curriculum_api.catalogue.tests.parity.composition_test_support import composition_fixture
 import copy
 import importlib
 import json
@@ -32,7 +33,7 @@ class DeliveryCalendarPersistenceTests(CurriculumPersistenceTransactionHarness):
         views.invalidate_curriculum_cache()
 
     def test_repeated_selection_reads_one_country_year_and_preserves_other_country(self):
-        with patch.object(country_calendars, 'fetch_holidays', side_effect=lambda country, year: [official(country)]) as fetch:
+        with composition_fixture(country_calendars, 'fetch_holidays', side_effect=lambda country, year: [official(country)]) as fetch:
             first = country_calendars.ensure_calendar('SA', 2026)
             second = country_calendars.ensure_calendar('SA', 2026)
             country_calendars.ensure_calendar('EG', 2026)
@@ -42,10 +43,10 @@ class DeliveryCalendarPersistenceTests(CurriculumPersistenceTransactionHarness):
         self.assertEqual([item['country'] for item in country_calendars.holidays_for_period('SA', '2026-01-01', '2026-12-31')], ['SA'])
 
     def test_sync_updates_cached_dates_without_duplicates_or_writing_manual_data(self):
-        with patch.object(country_calendars, 'fetch_holidays', return_value=[official()]):
+        with composition_fixture(country_calendars, 'fetch_holidays', return_value=[official()]):
             country_calendars.ensure_calendar('SA', 2026)
         manual_before = copy.deepcopy(views.get_holiday_rows())
-        with patch.object(country_calendars, 'fetch_holidays', return_value=[official(day='2026-09-24')]):
+        with composition_fixture(country_calendars, 'fetch_holidays', return_value=[official(day='2026-09-24')]):
             result = country_calendars.sync_saved()
         self.assertEqual(result[0]['status'], 'ok')
         self.assertEqual(len(country_calendars.saved_calendars()), 1)
@@ -53,11 +54,11 @@ class DeliveryCalendarPersistenceTests(CurriculumPersistenceTransactionHarness):
         self.assertEqual(views.get_holiday_rows(), manual_before)
 
     def test_failed_sync_is_visible_and_expired_provider_data_is_purged(self):
-        with patch.object(country_calendars, 'fetch_holidays', return_value=[official()]):
+        with composition_fixture(country_calendars, 'fetch_holidays', return_value=[official()]):
             country_calendars.ensure_calendar('SA', 2026)
         with connection.cursor() as cursor:
             cursor.execute(f'update {views.table_name(country_calendars.TABLE)} set fetched_at=%s', [datetime.now(timezone.utc) - timedelta(days=31)])
-        with patch.object(country_calendars, 'fetch_holidays', side_effect=country_calendars.CalendarUnavailable('Synthetic provider outage')):
+        with composition_fixture(country_calendars, 'fetch_holidays', side_effect=country_calendars.CalendarUnavailable('Synthetic provider outage')):
             result = country_calendars.sync_saved()
         self.assertEqual(result[0]['status'], 'error')
         saved = country_calendars.saved_calendars()[0]
@@ -112,13 +113,13 @@ class DeliveryCalendarPersistenceTests(CurriculumPersistenceTransactionHarness):
         target = [{'start': datetime(2026, 9, 19, 10, tzinfo=timezone.utc), 'session_number': 1}]
         self.assertIn('Monday to Friday', views.teams_non_delivery_reason(target, holiday_rows=[]))
         mba = normalise_policy({'weekendDays': ['Sunday']})
-        with patch.object(views, 'authoring_module_exists', return_value={'calendar_policy': mba}):
+        with composition_fixture(views, 'authoring_module_exists', return_value={'calendar_policy': mba}):
             self.assertEqual(views.teams_non_delivery_reason(target, holiday_rows=[], module_catalogue_id='MBA'), '')
         self.assertIn('Monday to Friday', views.teams_non_delivery_reason(target, holiday_rows=[]))
 
     def test_staff_only_import_endpoint_does_not_spend_quota_for_other_roles(self):
         request = RequestFactory().post('/curriculum_api/curriculum/country-calendars/', json.dumps(dict(country='SA', startDate='2026-01-01', endDate='2026-12-31')), content_type='application/json')
-        with patch('login.permissions.authenticate_request', return_value=SimpleNamespace(role='learner')), patch.object(country_calendars, 'fetch_holidays') as fetch:
+        with patch('login.permissions.authenticate_request', return_value=SimpleNamespace(role='learner')), composition_fixture(country_calendars, 'fetch_holidays') as fetch:
             self.assertEqual(calendar_endpoints.country_calendars(request).status_code, 403)
             fetch.assert_not_called()
         with patch('login.permissions.authenticate_request', return_value=None):
@@ -159,13 +160,13 @@ class DeliveryCalendarPersistenceTests(CurriculumPersistenceTransactionHarness):
         self.assertEqual(weeks[0]['components'], before)
         self.assertIn('Sync SA', weeks[0]['calendarError'])
         target = [{'start': datetime(2026, 9, 1, 10, tzinfo=timezone.utc)}]
-        with patch.object(views, 'authoring_module_exists', return_value=module):
+        with composition_fixture(views, 'authoring_module_exists', return_value=module):
             with self.assertRaises(country_calendars.CalendarUnavailable):
                 views.teams_non_delivery_reason(target, holiday_rows=[], module_catalogue_id='SA')
 
     def test_invalid_sync_payload_cannot_trigger_provider_writes(self):
         with patch('curriculum_api.england_holidays.run_sync', return_value={'status': 'ok'}) as england, \
-                patch.object(country_calendars, 'sync_saved', return_value=[]) as countries:
+                composition_fixture(country_calendars, 'sync_saved', return_value=[]) as countries:
             for payload in (None, [], ['SA'], 'SA'):
                 with self.subTest(payload=payload):
                     response = self.post_json('/curriculum_api/curriculum/country-calendars/sync/', payload)

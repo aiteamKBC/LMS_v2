@@ -1,0 +1,84 @@
+{
+  "get_week_template_rows": {
+    "source": "def get_week_template_rows(where_sql='', params=None, *, include_deleted=False):\n    \"\"\"Week template rows, archived ones excluded unless asked for.\n\n    This is the single read funnel for the table, so filtering here is what\n    keeps an archived template out of every list and picker at once. DELETE is\n    a soft archive, so without this a deleted template would keep showing up.\n    \"\"\"\n    ensure_week_template_tables()\n    query = f'select * from {table_name(WEEK_TEMPLATES_TABLE)}'\n    if where_sql:\n        query += f' where {where_sql}'\n    query += ' order by updated_at desc'\n    rows = fetch_all(query, params or [])\n    if include_deleted:\n        return rows\n    return [row for row in rows if not curriculum_row_effectively_deleted(row)]\n",
+    "decorators": [],
+    "module": "curriculum_api.catalogue.infrastructure.week_templates",
+    "deps": [
+      "ensure_week_template_tables",
+      "table_name",
+      "WEEK_TEMPLATES_TABLE",
+      "fetch_all",
+      "curriculum_row_effectively_deleted"
+    ]
+  },
+  "get_week_template_row": {
+    "source": "def get_week_template_row(template_id, *, include_deleted=False):\n    rows = get_week_template_rows('id = %s', [template_id], include_deleted=include_deleted)\n    return rows[0] if rows else None\n",
+    "decorators": [],
+    "module": "curriculum_api.catalogue.infrastructure.week_templates",
+    "deps": [
+      "get_week_template_rows"
+    ]
+  },
+  "get_week_template_component_rows": {
+    "source": "def get_week_template_component_rows(template_id):\n    ensure_week_template_tables()\n    return fetch_all(\n        f'select * from {table_name(WEEK_TEMPLATE_COMPONENTS_TABLE)} '\n        f'where week_template_id = %s order by display_order asc',\n        [template_id],\n    )\n",
+    "decorators": [],
+    "module": "curriculum_api.catalogue.infrastructure.week_templates",
+    "deps": [
+      "ensure_week_template_tables",
+      "fetch_all",
+      "table_name",
+      "WEEK_TEMPLATE_COMPONENTS_TABLE"
+    ]
+  },
+  "week_template_component_payload": {
+    "source": "def week_template_component_payload(row):\n    settings = as_json_value(row.get('settings_json'), {})\n    settings = settings if isinstance(settings, dict) else {}\n    return {\n        'id': row.get('id'),\n        'weekTemplateId': row.get('week_template_id'),\n        'type': row.get('type'),\n        'title': row.get('title') or '',\n        'description': row.get('description') or '',\n        'expectedOtjh': week_template_number(row.get('expected_otjh')),\n        'points': parse_int(row.get('points'), 0),\n        'reflectionRequired': bool(row.get('reflection_required')),\n        'reflectionQuestion': (\n            clean_str(row.get(WEEK_TEMPLATE_REFLECTION_QUESTION_COLUMN))\n            or clean_str(settings.get(LEGACY_REFLECTION_QUESTION_SETTING))\n        ),\n        'workplaceEvidenceRequired': bool(row.get('workplace_evidence_required')),\n        'tutorValidationRequired': bool(row.get('tutor_validation_required')),\n        'coachValidationRequired': component_coach_validation(row),\n        'ksbMappings': as_json_value(row.get('ksb_mappings'), []),\n        'settings': settings,\n        'displayOrder': parse_int(row.get('display_order'), 0),\n    }\n",
+    "decorators": [],
+    "module": "curriculum_api.catalogue.application.week_templates",
+    "deps": [
+      "as_json_value",
+      "week_template_number",
+      "parse_int",
+      "clean_str",
+      "WEEK_TEMPLATE_REFLECTION_QUESTION_COLUMN",
+      "LEGACY_REFLECTION_QUESTION_SETTING",
+      "component_coach_validation"
+    ]
+  },
+  "week_template_payload": {
+    "source": "def week_template_payload(row, components=None):\n    return {\n        'id': row.get('id'),\n        'title': row.get('title') or '',\n        'summary': row.get('summary') or '',\n        'learningOutcomes': as_json_value(row.get('learning_outcomes'), []),\n        'courseType': row.get('course_type') or 'paid',\n        'programmeId': row.get('programme_id') or '',\n        'programmeName': row.get('programme_name') or '',\n        'moduleCatalogueId': row.get('module_catalogue_id') or '',\n        'groupId': row.get('group_id') or '',\n        'groupName': row.get('group_name') or '',\n        'status': row.get('status') or 'draft',\n        'ksbMappings': as_json_value(row.get('ksb_mappings'), []),\n        'totalOtjh': week_template_number(row.get('total_otjh')),\n        'points': parse_int(row.get('points'), 0),\n        'componentCount': parse_int(row.get('component_count'), 0),\n        'author': row.get('author') or '',\n        'createdAt': row.get('created_at'),\n        'updatedAt': row.get('updated_at'),\n        'components': [week_template_component_payload(component) for component in (components or [])],\n    }\n",
+    "decorators": [],
+    "module": "curriculum_api.catalogue.application.week_templates",
+    "deps": [
+      "as_json_value",
+      "week_template_number",
+      "parse_int",
+      "week_template_component_payload"
+    ]
+  },
+  "week_template_record": {
+    "source": "def week_template_record(template_id, *, after_write=False):\n    \"\"\"A week template with the revision the editor sends back on save.\n\n    The order of the two reads is the whole point, and it differs by caller --\n    the reasoning is spelled out in ``structure_payload_with_revision`` and\n    ``stamp_revision_after_write``, which this mirrors.\n\n    Reading: revision first. These reads run in autocommit, so whichever is read\n    second describes the later state, and a payload carrying a revision it\n    predates would certify a stale save as current. Revision first means the\n    pair is either exactly consistent or provably stale, and a stale one is\n    refused rather than performed.\n\n    ``after_write``: revision last, for a caller that has just written this\n    template itself and needs the revision of its own write.\n    \"\"\"\n    if after_write:\n        row = get_week_template_row(template_id)\n        if not row:\n            return None\n        components = get_week_template_component_rows(template_id)\n        revision = week_template_revision(template_id) or STRUCTURE_REVISION_UNAVAILABLE\n        return {**week_template_payload(row, components), 'revision': revision}\n    revision = week_template_revision(template_id) or STRUCTURE_REVISION_UNAVAILABLE\n    row = get_week_template_row(template_id)\n    if not row:\n        return None\n    return {\n        **week_template_payload(row, get_week_template_component_rows(template_id)),\n        'revision': revision,\n    }\n",
+    "decorators": [],
+    "module": "curriculum_api.catalogue.application.week_templates",
+    "deps": [
+      "get_week_template_row",
+      "get_week_template_component_rows",
+      "week_template_revision",
+      "STRUCTURE_REVISION_UNAVAILABLE",
+      "week_template_payload"
+    ]
+  },
+  "curriculum_week_template_collection": {
+    "source": "def curriculum_week_template_collection(request):\n    ensure_week_template_tables()\n    if request.method == 'GET':\n        conditions = []\n        params = []\n        course_type = clean_str(request.GET.get('courseType')).lower()\n        if course_type in WEEK_TEMPLATE_COURSE_TYPES:\n            conditions.append('course_type = %s')\n            params.append(course_type)\n        for column, param in (\n            ('programme_id', 'programmeId'),\n            ('module_catalogue_id', 'moduleCatalogueId'),\n            ('group_id', 'groupId'),\n            ('status', 'status'),\n        ):\n            value = clean_str(request.GET.get(param))\n            if value:\n                conditions.append(f'{column} = %s')\n                params.append(value)\n        rows = get_week_template_rows(' and '.join(conditions), params)\n        search = clean_str(request.GET.get('search')).lower()\n        if search:\n            rows = [row for row in rows if search in clean_str(row.get('title')).lower()]\n        results = [week_template_payload(row) for row in rows]\n        return curriculum_results_response(results)\n\n    if request.method != 'POST':\n        return json_error('Method not allowed.', status=405)\n\n    payload = json_body(request)\n    if payload is None:\n        return json_error('Invalid JSON body.')\n\n    course_type = clean_str(payload.get('courseType')).lower() or 'paid'\n    if course_type not in WEEK_TEMPLATE_COURSE_TYPES:\n        return json_error('courseType must be \"paid\" or \"free\".', fields=['courseType'])\n    if not clean_str(payload.get('title')):\n        return json_error('Missing required fields.', fields=['title'])\n    # Scope is optional. A week template used to be required to name a\n    # programme, module and group up front, which forced that decision before\n    # the author had written anything -- and it is not a decision the template\n    # needs: the library lists every template regardless, and scope only drives\n    # the group lock in the editor. Templates that carry it keep it; one saved\n    # without it is a perfectly good template that has not been pointed at a\n    # module yet.\n\n    components = payload.get('components') if isinstance(payload.get('components'), list) else []\n    total_otjh, points, component_count = week_template_component_metrics(components)\n    existing_ids = [row.get('id') for row in get_week_template_rows()]\n    template_id = unique_prefixed_id('WT', payload.get('id'), existing_ids)\n\n    insert_row(WEEK_TEMPLATES_TABLE, {\n        'id': template_id,\n        'title': clean_str(payload.get('title')),\n        'summary': clean_str(payload.get('summary')),\n        'learning_outcomes': json_db_value(payload.get('learningOutcomes') or []),\n        'course_type': course_type,\n        **week_template_scope_fields(payload, course_type),\n        'status': clean_str(payload.get('status')) or 'draft',\n        'ksb_mappings': json_db_value(payload.get('ksbMappings') or []),\n        'total_otjh': total_otjh,\n        'points': points,\n        'component_count': component_count,\n        'author': clean_str(payload.get('author')),\n        'created_at': datetime.utcnow(),\n        'updated_at': datetime.utcnow(),\n    })\n    if components:\n        save_week_template_components(template_id, components)\n    invalidate_curriculum_cache()\n    return week_template_detail_response(template_id, after_write=True, created=True)\n",
+    "decorators": [
+      "csrf_exempt"
+    ],
+    "module": "curriculum_api.catalogue.application.week_templates",
+    "new_name": "list_week_template_payloads",
+    "deps": [
+      "clean_str",
+      "WEEK_TEMPLATE_COURSE_TYPES",
+      "get_week_template_rows",
+      "week_template_payload"
+    ]
+  }
+}

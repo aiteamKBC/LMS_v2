@@ -6,6 +6,7 @@ carry only the fields the pages read, that both are cut in one build without
 the full document being encoded or cached, and that a plain request is
 unchanged.
 """
+from curriculum_api.catalogue.tests.parity.composition_test_support import composition_fixture
 import json
 from unittest import mock
 
@@ -73,8 +74,8 @@ class CoverageEntryTests(SimpleTestCase):
             self.builds.append(request.GET.get('view'))
             return json.loads(json.dumps(FULL))
 
-        for patcher in (mock.patch.object(views, 'cached_curriculum_value', side_effect=cached),
-                        mock.patch.object(views, '_coverage_payload_uncached', side_effect=uncached)):
+        for patcher in (composition_fixture(views, 'cached_curriculum_value', side_effect=cached),
+                        composition_fixture(views, '_coverage_payload_uncached', side_effect=uncached)):
             patcher.start()
             self.addCleanup(patcher.stop)
 
@@ -102,7 +103,7 @@ class CoverageEntryTests(SimpleTestCase):
             seen.append((ttl, kwargs.get('fingerprint')))
             return build()
 
-        with mock.patch.object(views, 'cached_curriculum_value', side_effect=cached):
+        with composition_fixture(views, 'cached_curriculum_value', side_effect=cached):
             self._get(view='heatmap')
             self._get()
         self.assertEqual(seen, [(60, views.component_source_inputs_fingerprint)] * 2)
@@ -111,7 +112,7 @@ class CoverageEntryTests(SimpleTestCase):
         self.assertEqual(self._get(scope='module', view='heatmap'), FULL)
 
     def test_an_error_build_is_passed_through(self):
-        with mock.patch.object(views, '_coverage_payload_uncached',
+        with composition_fixture(views, '_coverage_payload_uncached',
                                return_value=views.json_error('Programme not found.', status=404)):
             for view in views.COVERAGE_PART_VIEWS:
                 response = views.coverage_response(RequestFactory().get('/x', {'view': view}), 'programme', 'NOPE')

@@ -15,6 +15,7 @@ Pinned here:
    filter keeps;
 3. the programmes endpoint returns what a full enrichment would have given.
 """
+from curriculum_api.catalogue.tests.parity.composition_test_support import composition_fixture
 import json
 
 from django.core.serializers.json import DjangoJSONEncoder
@@ -250,7 +251,7 @@ class ProgrammeModuleCountTests(TestCase):
 
     # Learner assignment counts come from the enrolment database and play no part
     # in counting modules; both sides of the comparison skip them alike.
-    @patch.object(views, 'attach_module_assignment_counts', lambda modules: None)
+    @composition_fixture(views, 'attach_module_assignment_counts', lambda modules: None)
     def test_programmes_endpoint_matches_a_full_enrichment(self):
         self._seed()
         factory = RequestFactory()

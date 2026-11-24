@@ -20,7 +20,7 @@ from login.permissions import learner_self_or_staff
 from old_otjh.service import ServiceError
 from curriculum_api.week_visibility import visible_child_sql, visible_week_sql
 from curriculum_api.canonical_read_sql import module_expected_otjh_sql
-from curriculum_api.learning_storage import read_sql
+from curriculum_api.catalogue.infrastructure.course_storage_reads import read_sql
 
 from .response_cache import cached_learner_read
 from . import canonical_learning as canonical
@@ -29,6 +29,7 @@ from .learner_detail import SOURCE_MODELS
 from .learning_plan import (CANONICAL_TRAINING_PLAN_PREFETCH, effective_training_plan,
                             install_canonical_training_plan, request_preset_cache)
 from .progress_rules import progress_counts_as_achieved
+from .activity_requirements import has_required_hours
 from .projection_performance import projection_stage, local_catalogue_trace
 
 # Created_users stores placement ids only. The programme/cohort/group names are
@@ -236,6 +237,7 @@ def catalogue_module_rows(cur, ids, *, identity_metadata):
     from .training_plan_dashboard import rows, plan_module
     from .student_activity import _builder_cover_url
     from .subject_origins import imported_course_links
+    from .builder_activity_dates import STUDY_WEEK_SCHEDULE_SQL
     # curriculum.modules no longer stores placement names or a deletion
     # marker: names come through the ids, and every requested module resolves.
     cur.execute(f'''WITH requested AS (
@@ -279,7 +281,8 @@ def catalogue_module_rows(cur, ids, *, identity_metadata):
         coalesce(group_names.name,'') AS group_name,
         {module_expected_otjh_sql('m')} AS total_otjh,m.sessions_number,m.source_type,m.source_id,
         m.session_week_day,m.session_start_time,m.session_end_time,m.cohort_id,
-        to_jsonb(m)->'session_overrides' AS session_overrides
+        to_jsonb(m)->'session_overrides' AS session_overrides,
+        {STUDY_WEEK_SCHEDULE_SQL} AS study_schedule
         FROM requested m
         LEFT JOIN programme_names ON programme_names.programme_id=m.programme_id
         LEFT JOIN cohort_names ON cohort_names.cohort_id=m.cohort_id
@@ -430,6 +433,10 @@ def course_facts(owner, records, courses):
                 done.add(key)
             if course not in counted and is_actual:
                 hours[course] += actual_hours
+            # Same primary placement and sum as recorded_course_items: a linked
+            # quiz must not inherit its material's planned time/Required badge.
+            if course not in counted and record.get('journal_planned_hours') is not None:
+                definition['_planned_hours'] = definition.get('_planned_hours', 0) + float(record['journal_planned_hours'])
             counted.add(course)
     return definitions, done, started, hours, record_ids
 
@@ -509,6 +516,7 @@ def assemble_cards(native, current, courses, definitions, done, started, hours, 
         legacy[course].append({'activity_id': f'catalogue:{course}:{ref}', 'group_id': int(course),
             'source_activity_id': int(ident) if ident.isdigit() else 0, 'catalogue_kind': kind,
             'completed': (course, ref) in done, 'started': (course, ref) in started,
+            'required': has_required_hours(d.get('_planned_hours')),
             '_course_ref': course, 'title': d['source_activity_title'], 'section_title': d.get('source_section_title'),
             'schedule': display_schedule(d) or {}, 'position': d.get('position') or 0,
             'lastActivityAt': d.get('_last_activity_at')})
@@ -621,6 +629,8 @@ def assemble_cards(native, current, courses, definitions, done, started, hours, 
             cards.append({'id':subject['id'], '_matches':any(search in i['title'].lower() for i in items)})
             continue
         count, complete = len(items), sum(i['completed'] for i in items)
+        required_items = [item for item in items if item.get('required') is True
+                          or has_required_hours((item.get('component') or {}).get('expectedOtjh'))]
         module = modules.get(subject.get('moduleId'))
         imported = subject['source'] == 'legacy' and subject['id'] in metadata['imported_courses'].values()
         if imported:
@@ -636,11 +646,14 @@ def assemble_cards(native, current, courses, definitions, done, started, hours, 
         if historical is not None:
             subject['legacyProgressReference'] = historical
         subject.update(activityCount=count, completedActivityCount=complete, progress=percent(complete, count),
+            requiredActivityCount=len(required_items),
+            completedRequiredActivityCount=sum(item['completed'] for item in required_items),
             status='Completed' if count and complete == count else 'In progress' if any(i['completed'] or i.get('started') for i in items) else 'Upcoming',
             nextTitle=next_title(items, today),
             finalTestPassed=any(i.get('component', {}).get('isQuiz') and 'final' in i['title'].lower() and native_done({k:v for k,v in i['component'].items() if k not in ('previousLearning','attendanceCompleted')}, native) for i in items),
             planModule={k: module.get(k) for k in ('start_date','end_date','tutor_name','total_otjh','educational_session_count','programme_name','cohort_name','group_name')} if module else None,
             actualHours=subject.pop('_hours',None) if subject['source'] == 'legacy' or subject.get('replacementCourseRef') else progress.get(subject.get('moduleId'), {}).get('hours', {}).get('actual'))
+        actual_learning_hours = subject['actualHours']
         saved_at = max((i.get('lastActivityAt') or '' for i in items), default='')
         if saved_at:
             subject['lastActivityAt'] = saved_at
@@ -665,12 +678,16 @@ def assemble_cards(native, current, courses, definitions, done, started, hours, 
             native_records = [record for record in records if str(record['id']) not in previous_ids]
             native_hours = supplement_module_hours(_canonical_module_progress(native_records, module_list), native_records, credits)
             subject['actualHours'] = round(transfer['hours'] + (native_hours.get(subject.get('moduleId'), {}).get('hours', {}).get('actual') or 0), 6)
+            actual_learning_hours = subject['actualHours']
             # Keep the component-derived status, including a started native
             # attempt with no completed components yet (0% is not "Upcoming").
         if ksb_mappings is not None:
             from .my_learning_ksbs import card_ksb_progress
             subject['ksbProgress'] = card_ksb_progress(items, ksb_mappings)
         if include_activity_items:
+            # Recorded course hours, excluding pending transfer and demo summaries.
+            # Keep the ordinary card's presentation unchanged.
+            subject['_actualLearningHours'] = None if subject.get('demoProgress') else actual_learning_hours
             # Internal curriculum-directory projection of this exact population.
             # Bodies, evidence and resource URLs never leave the reader.
             subject['_activityItems'] = [dict(
@@ -711,25 +728,32 @@ def load_context(source, owner, subject_id=None, *, purpose='catalogue', records
     source._case_file_profile = profile
     install_canonical_training_plan(source, profile)
     with projection_stage('assignments'):
-        assigned = effective_training_plan(source, request_preset_cache(source))
-    from .student_activity_access import student_activity_available
+        assigned = list(source._canonical_training_plan or [])
+        if getattr(source, '_learner_plan_only', False):
+            from .learner_plan_scope import read_scope, scoped_plan
+            with connections['enrolment'].cursor() as cur:
+                assigned = scoped_plan(assigned, read_scope(cur, owner['id'],
+                    active_only=subject_id is not None and getattr(source, '_learner_plan_active', True)))
+            source._canonical_training_plan = assigned
     with projection_stage('memberships'):
-        if student_activity_available(source.aptem_id):
-            courses = canonical.owned_source_courses(owner)
-        else:
-            from .progress_demo import courses_for
-            courses = courses_for(owner)
+        # Canonical membership ownership is sufficient. Legacy account access
+        # flags and demo catalogues must never create or hide enrollments here.
+        courses = [] if getattr(source, '_learner_plan_only', False) else canonical.owned_source_courses(owner)
     candidate_ids = [entry.get('moduleId') for entry in assigned
                      if isinstance(entry, dict)]
     legacy_candidates = [course.get('curriculum_module_ref') for course in courses]
     legacy_source_candidates = [course.get('source_course_ref') for course in courses]
     with projection_stage('free_course_separation'):
         with connections['enrolment'].cursor() as cur:
-            free_course_ids, legacy_free_course_refs = free_course_exclusions(
-                cur,
-                [*candidate_ids, *legacy_candidates],
-                legacy_source_candidates,
-            )
+            if getattr(source, '_learner_plan_only', False):
+                free_course_ids = free_course_representation_ids(cur, candidate_ids)
+                legacy_free_course_refs = set()
+            else:
+                free_course_ids, legacy_free_course_refs = free_course_exclusions(
+                    cur,
+                    [*candidate_ids, *legacy_candidates],
+                    legacy_source_candidates,
+                )
     assigned = without_free_course_plan_entries(assigned, free_course_ids)
     courses = without_free_course_legacy_courses(
         courses, free_course_ids, legacy_free_course_refs,
@@ -801,12 +825,12 @@ def load_context(source, owner, subject_id=None, *, purpose='catalogue', records
             covers, builder = _builder_subject_metadata(cur, [f'current:{mid}' for mid in ids])
         current = [builder[f'current:{mid}'] for mid in ids if f'current:{mid}' in builder]
         with projection_stage('subject_metadata'):
-            imports = resolved['imported_courses'] if resolved is not None and 'imported_courses' in resolved else read_imported_courses(cur, current)
+            imports = {} if getattr(source, '_learner_plan_only', False) else (resolved['imported_courses'] if resolved is not None and 'imported_courses' in resolved else read_imported_courses(cur, current))
             # A personal transfer link must not hide the native module or merge
             # its hours before approval. Only transfer review opts into it.
-            replacements = read_replacement_courses(cur, current, source.pk,
+            replacements = {} if getattr(source, '_learner_plan_only', False) else read_replacement_courses(cur, current, source.pk,
                 **({'include_personal': True} if include_personal_replacements else {}))
-            groups = read_previous_learning_groups(cur, source.pk, current) if purpose != 'search' else {}
+            groups = read_previous_learning_groups(cur, source.pk, current) if purpose != 'search' and not getattr(source, '_learner_plan_only', False) else {}
         settings = {}
         # Both imported modules and verified successors can receive a transfer.
         # Approved lineage belongs to its saved destination even if the current
@@ -848,7 +872,6 @@ def load_context(source, owner, subject_id=None, *, purpose='catalogue', records
 
 
 def read_catalogue(source, kind, owner, *, upcoming_only=False):
-    from .subject_store import covers_for
     assigned, ids, records, native, courses, definitions, done, started, hours, metadata, credits = load_context(source, owner)
     modules = metadata['modules']
     ksb_mappings = None
@@ -873,11 +896,13 @@ def read_catalogue(source, kind, owner, *, upcoming_only=False):
     from .my_learning_activity import card_teaching_activity
     with projection_stage('teaching_activity'):
         module_activity = card_teaching_activity(cards)
-    from .student_activity import _cover_url
-    with projection_stage('covers'):
-        covers = {**metadata['covers'], **{ref:_cover_url(path) for ref,path in covers_for([c['id'] for c in cards if c['source']=='legacy']).items()}}
+    covers = metadata['covers']
     for card in cards:
-        card['cover'] = covers.get(card['id']) or None
+        # Historical courses reuse artwork only when their canonical source
+        # membership records an exact module identity. Never infer by title.
+        cover_ref = (f"current:{card['moduleId']}" if card['source'] == 'legacy'
+                     and card.get('moduleId') else card['id'])
+        card['cover'] = covers.get(cover_ref) or None
         # Native module identity is encoded by its stable navigation ID.
         if card['source'] == 'current':
             card.pop('moduleId', None)
@@ -1135,15 +1160,22 @@ def read_module(source, kind, owner, subject_id):
     with connections['enrolment'].cursor() as cur:
         dates = continuation_dates or read_builder_activity_dates(cur, scope_ids)
     clean_metadata['activity_dates']={key:value for key,value in dates.items() if key in component_set}
-    from .subject_store import covers_for
-    from .student_activity import _cover_url
-    clean_metadata['covers'].update({ref:_cover_url(path) for ref,path in covers_for([f'legacy:{ref}' for ref in course_refs]).items()})
+    canonical_cover_ref = f'current:{mid}' if mid else None
+    if subject_id.startswith('legacy:') and canonical_cover_ref in clean_metadata['covers']:
+        clean_metadata['covers'][subject_id] = clean_metadata['covers'][canonical_cover_ref]
     if activity:
         activity['verification_status']='verified'
         activity['replacement_hours']={}
     # native_done caches sets while calculating transferred progress. They are
     # request-local lookup indexes, not part of the learner detail JSON contract.
     detail.pop('_completion', None)
+    if getattr(source, '_learner_plan_only', False):
+        owned_components = {str(component.get('componentId'))
+            for module in chosen_plan for week in module.get('weeks', [])
+            for component in week.get('components', []) if component.get('componentId')}
+        for bucket in ('components', 'retiredQuizComponents'):
+            detail[bucket] = [component for component in detail.get(bucket, [])
+                if str(component.get('componentId')) in owned_components]
     return dict(subjectId=subject_id,detail=detail,activity=activity,metadata=clean_metadata,
         schedule=dict(modules=list(modules.values()),moduleLinks=clean_metadata['builder_subjects'],generatedAt=datetime.now(timezone.utc).isoformat()),sessions=sessions)
 
@@ -1160,6 +1192,10 @@ def my_learning(request,kind,pk,subject_id=None,resource=None):
     try:
         with projection_stage('source'):
             source=model.all_learners.only(*SOURCE_FIELDS).get(pk=pk)
+            # Learner plan routes show normalized assignments, not historical
+            # course memberships. Ordinary My Learning keeps its history view.
+            source._learner_plan_only = request.GET.get('plan') == '1'
+            source._learner_plan_active = request.GET.get('planStatus') != 'all'
         with projection_stage('owner'):
             owner=canonical.require_profile(pk)
         if resource == 'search':

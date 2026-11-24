@@ -4,6 +4,9 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import type { JourneyComponent } from '@/utils/learnerJourney';
 import { StrictMode } from 'react';
 import { ComponentBody, InlineAttachmentPreview } from './page';
+import { extractScannedPage } from './readingOcr';
+
+vi.mock('./readingOcr', () => ({ extractScannedPage: vi.fn() }));
 
 const pdfText = vi.hoisted(() => vi.fn());
 vi.mock('pdfjs-dist', () => ({
@@ -44,6 +47,7 @@ beforeEach(() => {
     new Response(new Uint8Array([String(input).includes('guide') ? 2 : 1]), { status: 200 })));
   vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue({ clearRect: vi.fn() } as unknown as CanvasRenderingContext2D);
   pdfText.mockImplementation(async (file: number, page: number) => textContent(`Document ${file} page ${page}.`));
+  vi.mocked(extractScannedPage).mockRejectedValue(new Error('OCR unavailable'));
   vi.stubGlobal('speechSynthesis', { speak, cancel });
   vi.stubGlobal('SpeechSynthesisUtterance', class {
     text: string;
@@ -211,40 +215,31 @@ it('keeps the PDF-only button independent and prevents overlap with activity nar
   expect(cancel).toHaveBeenCalledTimes(2);
 });
 
-it('explains when the open PDF page has no extractable text', async () => {
+it('keeps authored narration working when the open PDF has no extractable text', async () => {
   pdfText.mockResolvedValue({ items: [] });
   render(reading());
   await screen.findByText('Page 1 of 3');
   await startReading();
-  expect(await screen.findByRole('alert')).toHaveTextContent('No readable text was found on the open PDF page');
-  expect(speak).not.toHaveBeenCalled();
-  expect(screen.getByRole('button', { name: 'Read aloud' })).toHaveAttribute('aria-pressed', 'false');
+  await waitForSpeechCalls(1);
+  expect(speak.mock.calls[0][0].text).toBe('Activity introduction.');
 });
 
-it('reports a PDF that is still loading instead of silently skipping it', async () => {
+it('keeps authored narration working while a PDF is still loading', async () => {
   let resolveFile!: (response: Response) => void;
   vi.mocked(fetch).mockReturnValue(new Promise(resolve => { resolveFile = resolve; }));
   render(reading());
   await startReading();
-  expect(await screen.findByRole('alert')).toHaveTextContent('The PDF is still loading');
-  expect(speak).not.toHaveBeenCalled();
+  await waitForSpeechCalls(1);
+  expect(speak.mock.calls[0][0].text).toBe('Activity introduction.');
   await act(async () => resolveFile(new Response(new Uint8Array([1]), { status: 200 })));
   await screen.findByText('Page 1 of 3');
-  await startReading();
-  await waitForSpeechCalls(1);
-  expect(screen.queryByRole('alert')).not.toBeInTheDocument();
-  expect(speak).toHaveBeenCalledOnce();
 });
 
-it('reports PDF text extraction errors and allows a retry', async () => {
+it('reports a PDF extraction error when there is no other readable content', async () => {
   pdfText.mockRejectedValueOnce(new Error('Synthetic extraction failure'));
-  render(reading());
+  render(reading({ contentHtml: '' }));
   await screen.findByText('Page 1 of 3');
   await startReading();
-  expect(await screen.findByRole('alert')).toHaveTextContent('Could not read this content aloud');
+  expect(await screen.findByRole('alert')).toHaveTextContent('Synthetic extraction failure');
   expect(speak).not.toHaveBeenCalled();
-  await startReading();
-  await waitForSpeechCalls(1);
-  expect(screen.queryByRole('alert')).not.toBeInTheDocument();
-  expect(speak).toHaveBeenCalledOnce();
 });

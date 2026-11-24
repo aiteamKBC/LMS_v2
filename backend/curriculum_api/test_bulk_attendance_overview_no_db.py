@@ -1,4 +1,6 @@
 """Bulk filter counts use canonical learner membership and isolated cache keys."""
+from curriculum_api.catalogue.tests.parity.composition_test_support import composition_patch
+from curriculum_api.catalogue.tests.parity.composition_test_support import composition_fixture
 import json
 from unittest.mock import patch
 
@@ -14,25 +16,26 @@ class BulkOverviewTests(SimpleTestCase):
     def setUp(self):
         self.rows = {key: [] for key in ('training', 'modules', 'authoring_modules', 'ksb_profiles',
                                         'program_configs', 'holidays', 'tutors', 'coaches', 'tutor_modules')}
-        self.enterContext(patch.object(views, 'get_cached_curriculum_rows', return_value=self.rows))
-        self.enterContext(patch.object(views, 'build_modules', side_effect=lambda *a, **kw: [
+        self.enterContext(composition_fixture(views, 'get_cached_curriculum_rows', return_value=self.rows))
+        self.enterContext(composition_fixture(views, 'get_required_curriculum_rows', return_value=self.rows))
+        self.enterContext(composition_fixture(views, 'build_modules', side_effect=lambda *a, **kw: [
             {'id': 'delivery-1', 'moduleCatalogueId': 'M1', 'name': 'One'},
             {'id': 'delivery-2', 'moduleCatalogueId': 'M2', 'name': 'Two'},
         ]))
-        self.enterContext(patch.object(views, 'build_programmes', return_value=[{'id': 'P1'}]))
-        self.enterContext(patch.object(views, 'build_cohorts_and_groups', return_value=(
+        self.enterContext(composition_fixture(views, 'build_programmes', return_value=[{'id': 'P1'}]))
+        self.enterContext(composition_fixture(views, 'build_cohorts_and_groups', return_value=(
             [{'id': 'C1'}], [{'id': 'G1', 'sessions': 2}])))
-        self.enterContext(patch.object(views, 'build_ksb_data', return_value=([], [])))
-        self.enterContext(patch.object(views, 'enrich_modules_with_authoring', side_effect=lambda modules, **kw: modules))
+        self.enterContext(composition_fixture(views, 'build_ksb_data', return_value=([], [])))
+        self.enterContext(composition_fixture(views, 'enrich_modules_with_authoring', side_effect=lambda modules, **kw: modules))
         for name in ('cohort_authoring_detail_rows', 'group_authoring_detail_rows', 'build_staff_profiles'):
-            self.enterContext(patch.object(views, name, return_value=[]))
-        self.enterContext(patch.object(views, 'curriculum_sessions_from_rows', return_value=[{'id': 'lecture-1'}]))
+            self.enterContext(composition_fixture(views, name, return_value=[]))
+        self.enterContext(composition_fixture(views, 'curriculum_sessions_from_rows', return_value=[{'id': 'lecture-1'}]))
         module = lineage(cohortId='C1', groupId='G1', moduleCatalogueId='M1')
-        self.enterContext(patch.object(counts, 'placement_lineages', return_value={
+        self.enterContext(composition_fixture(counts, 'placement_lineages', return_value={
             'M1': module, 'M2': {**module, 'moduleCatalogueId': 'M2', 'learnerRosterMode': 'manual'},
         }))
-        self.enterContext(patch.object(views, 'programme_identity_candidates', return_value=['P1']))
-        self.facts = self.enterContext(patch.object(counts, 'learner_facts', return_value=[
+        self.enterContext(composition_fixture(views, 'programme_identity_candidates', return_value=['P1']))
+        self.facts = self.enterContext(composition_fixture(counts, 'learner_facts', return_value=[
             fact(1), fact(2, explicit=True, modules=['M2']),
             fact(3, programme_id='P2', explicit=True, modules=['M1']),
             fact(4, programme_id='P2'),
@@ -68,9 +71,9 @@ class BulkOverviewTests(SimpleTestCase):
         self.legacy.side_effect = None
         self.legacy.return_value = {'M1': 9, 'M2': 8}
         with self.settings(CURRICULUM_HOME_SHARED_READ_MODEL_ENABLED=True), \
-             patch.object(views, 'cached_curriculum_value', side_effect=cache), \
-             patch('curriculum_api.read_model.get_curriculum_home', return_value=None) as shared, \
-             patch('curriculum_api.read_model.enqueue_curriculum_home_refresh') as refresh:
+             composition_fixture(views, 'cached_curriculum_value', side_effect=cache), \
+             composition_patch('curriculum_api.read_model.get_curriculum_home', return_value=None) as shared, \
+             composition_patch('curriculum_api.read_model.enqueue_curriculum_home_refresh') as refresh:
             factory = RequestFactory()
             old = views.curriculum_overview(factory.get('/overview/?visibility=all&compact=true'))
             self.assertEqual(json.loads(old.content)['modules'][0]['assignments'], 9)
@@ -83,8 +86,9 @@ class BulkOverviewTests(SimpleTestCase):
                     self.assertEqual(json.loads(response.content)['modules'][0]['assignments'], 2)
             shared.assert_not_called()
             refresh.assert_not_called()
-        self.assertEqual(set(saved), {'overview:all:compact', 'overview:all:compact:learner-profiles',
-                                      'overview:all:full:learner-profiles'})
+        self.assertEqual(set(saved), {'overview-required:v2:all:compact', 'overview-required:v2:all:compact:learner-profiles',
+                                      'overview-required:v2:all:full:learner-profiles',
+                                      'rows-required:v2:compact', 'rows-required:v2:full'})
 
     def test_profile_read_errors_do_not_fall_back_to_created_users(self):
         from django.db import DatabaseError

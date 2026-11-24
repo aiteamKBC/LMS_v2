@@ -42,7 +42,8 @@ def monthly_hours(owner, records, targets, *, signed_months=(), current_month=No
         if month <= current:
             months[month]
     attendance_hours = 0
-    for entry in attendance:
+    from learner_api.attendance_otjh import additional_rows
+    for entry in additional_rows(records, attendance):
         month = entry.get('reporting_month')
         if entry.get('accepted') is True and month and month <= current:
             value = number(entry.get('actual_hours'))
@@ -62,17 +63,75 @@ def monthly_hours(owner, records, targets, *, signed_months=(), current_month=No
 
 
 def learning_projection(source, owner, records, *, compact_content=False, monthly_assignments=False, progress=None,
-                        required_activities=False, include_activity_dates=True):
+                        required_activities=False, include_activity_dates=True,
+                        monthly_month=None, active_module_ids=None):
     from .weekly_learning import build_learning_content_summary
     from .student_activity_access import student_activity_available
     from .student_activity_data import summarize_activities
-    from .builder_activity_dates import read_builder_activity_dates
+    from .builder_activity_dates import read_builder_activity_dates, read_schedule_components
     from .student_activity import builder_subject_links
 
+    monthly_context = getattr(source, '_monthly_learning_context', None)
+    resolved_metadata = monthly_context.get('metadata') if monthly_context else None
+    from .learning_plan import _effective_plan_ids, request_preset_cache
+    ids = (monthly_context['ids'] if monthly_context is not None
+           else _effective_plan_ids(source, request_preset_cache(source)))
+    dates = None
+    component_modules = {}
+    selected_component_ids = None
+    active_modules = set(active_module_ids or [])
+    if monthly_month and resolved_metadata is not None:
+        schedule_ids = list(active_modules) if active_module_ids is not None else ids
+        with connections['enrolment'].cursor() as cur:
+            schedule_components = read_schedule_components(cur, schedule_ids) if schedule_ids else []
+            resolved_metadata['schedule_components'] = schedule_components
+            dates = read_builder_activity_dates(
+                cur, schedule_ids, components=schedule_components,
+                resolved_metadata=resolved_metadata,
+            ) if schedule_ids else {}
+        source._dashboard_activity_dates = (set(schedule_ids), dates)
+        component_modules = {
+            str(row[0]): str(row[1]) for row in schedule_components
+        }
+        active_modules.update(
+            component_modules.get(str(component_id))
+            for component_id, placement in dates.items()
+            if str(placement.get('date') or '').startswith(monthly_month)
+        )
+        for module_id, row in resolved_metadata.get('schedule_modules', {}).items():
+            start = str(row.get('start_date') or '')[:7]
+            end = str(row.get('end_date') or '')[:7]
+            if start and start <= monthly_month <= (end or monthly_month):
+                active_modules.add(str(module_id))
+        active_modules.discard(None)
     options = {'compact_content': True} if compact_content else {}
     if progress is not None:
         options['progress'] = progress
-    weekly = build_learning_content_summary(source, source.pk, learning_summary=True, **options)
+    if resolved_metadata is not None:
+        options.update(resolved_metadata=resolved_metadata, monthly_content=True,
+                       schedule_metadata=monthly_month is not None,
+                       standalone_quizzes=monthly_month is None,
+                       retained_quizzes=monthly_month is None)
+    assigned_modules = ([
+        entry for entry in (getattr(source, '_canonical_training_plan', None) or [
+            {'moduleId': module_id} for module_id in ids
+        ])
+        if str(entry.get('moduleId') or '') in active_modules
+    ] if monthly_month is not None else None)
+    weekly = build_learning_content_summary(source, source.pk, learning_summary=True,
+        **({'assigned_modules': assigned_modules} if assigned_modules is not None else {}), **options)
+    if monthly_month is not None:
+        schedule_components = resolved_metadata.get('schedule_components', [])
+        selected_component_ids = [row[0] for row in schedule_components]
+        selected = set(selected_component_ids)
+        weekly['components'] = [
+            item for item in weekly.get('components', [])
+            if item.get('componentId') in selected
+        ]
+        weekly['retiredQuizComponents'] = [
+            item for item in weekly.get('retiredQuizComponents', [])
+            if item.get('componentId') in selected
+        ]
     detail = {key: weekly.get(key, []) for key in (
         'modules', 'components', 'retiredQuizComponents', 'quizAttempts', 'videoProgress', 'componentProgress')}
     # Catalogue membership is intentional: a recorded-only projection changes
@@ -91,8 +150,6 @@ def learning_projection(source, owner, records, *, compact_content=False, monthl
             'quiz_score', 'quiz_maximum_score', *(('planned',) if monthly_assignments else ()),
             *(('planned', 'planned_hours_mapped') if required_activities else ())) if key in item}
             for item in activity['activities']]
-    from .learning_plan import _effective_plan_ids, request_preset_cache
-    ids = _effective_plan_ids(source, request_preset_cache(source))
     refs = [f'current:{module_id}' for module_id in ids]
     refs.extend(f"current:{item['moduleId']}" for item in detail['components'] if item.get('moduleId'))
     with connections['enrolment'].cursor() as cur:
@@ -102,13 +159,27 @@ def learning_projection(source, owner, records, *, compact_content=False, monthl
             # Counts use catalogue identities and completion, never deadlines.
             # Do not cache this empty map: a later scheduled read still needs dates.
             dates = {}
-        elif cached_dates is not None and cached_dates[0] == set(ids):
+        elif cached_dates is not None and cached_dates[0] in (set(ids), set(active_modules)):
             dates = cached_dates[1]
         else:
-            dates = read_builder_activity_dates(cur, ids)
+            dates = read_builder_activity_dates(
+                cur, ids, resolved_metadata=resolved_metadata,
+            )
             # Monthly's future-month fallback reads the same module set's dates.
             source._dashboard_activity_dates = (set(ids), dates)
+    module_dates = defaultdict(list)
+    if resolved_metadata is not None:
+        component_modules = component_modules or {
+            str(row[0]): str(row[1])
+            for row in resolved_metadata.get('schedule_components', [])
+        }
+        for component_id, placement in (dates or {}).items():
+            value = str(placement.get('date') or '')
+            module_id = component_modules.get(str(component_id))
+            if module_id and value:
+                module_dates[module_id].append(value)
     metadata = {'covers': {}, 'activity_dates': dates,
+                'module_activity_dates': dict(module_dates),
                 'current_subjects': [builder[ref] for ref in refs[:len(ids)] if ref in builder],
                 'builder_subjects': builder}
     return {'activity': activity, 'detail': detail, 'metadata': metadata}
@@ -135,8 +206,12 @@ def read_tab(source, kind, tab, request, *, canonical_contract=False):
     if profile is None or profile.pk != owner['id'] or profile.enrolment_id != source.pk:
         raise ServiceError('The consolidated learner identity needs review.', 'identity_review_required', 409)
     source._case_file_profile = profile
-    from .learning_plan import install_canonical_training_plan
-    install_canonical_training_plan(source, profile)
+    if tab == 'monthly':
+        from .learning_plan import install_canonical_training_plan_modules
+        install_canonical_training_plan_modules(source, profile)
+    else:
+        from .learning_plan import install_canonical_training_plan
+        install_canonical_training_plan(source, profile)
     install_request_caches(source)
     if tab == 'training':
         from .dashboard_training import read_training

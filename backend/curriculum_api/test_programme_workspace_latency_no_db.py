@@ -1,4 +1,6 @@
 """Execute the shared read SQL on synthetic data, never the application DB."""
+from curriculum_api.catalogue.tests.parity.composition_test_support import composition_fixture
+from .catalogue.tests.parity.read_dependency_test_support import authoring_read_fixture
 import copy
 import sqlite3
 from contextlib import ExitStack
@@ -62,9 +64,9 @@ class ProgrammeWorkspaceReadTests(SimpleTestCase):
             return [copy.deepcopy(r) for r in rows if not params or r.get('module_catalogue_id') in params]
 
         stack = self.enterContext(ExitStack())
-        stack.enter_context(patch.object(views, 'connection', vendor='sqlite'))
-        stack.enter_context(patch.object(views, 'has_column', side_effect=lambda table, col: col in columns.get(table, set())))
-        stack.enter_context(patch.object(views, 'authoring_fetch_all', side_effect=read))
+        stack.enter_context(composition_fixture(views, 'connection', vendor='sqlite'))
+        stack.enter_context(composition_fixture(views, 'has_column', side_effect=lambda table, col: col in columns.get(table, set())))
+        stack.enter_context(authoring_read_fixture('authoring_fetch_all', side_effect=read))
 
     def test_shared_rows_preserve_scope_order_deletion_counts_and_complete_payload(self):
         options = dict(include_extra=False, include_quality=False, include_staff=False, component_columns=views.CATALOGUE_SUMMARY_COMPONENT_COLUMNS)
@@ -94,10 +96,10 @@ class ProgrammeWorkspaceReadTests(SimpleTestCase):
         cache.clear()
         factory = RequestFactory()
         path = '/curriculum/programmes/P1/detail/modules/?visibility=all&view=workspace'
-        with patch.object(views, '_CURRICULUM_CACHE', {}), patch.object(views, 'cache', cache), \
-                patch.object(views, 'shared_curriculum_epoch', return_value=1) as epoch, \
-                patch.object(views, 'repair_curriculum_parent_links'), \
-                patch.object(views, 'build_curriculum_programme_tree_detail_payload', return_value=payload) as build:
+        with patch.object(views.cache_state, '_CURRICULUM_CACHE', {}), composition_fixture(views, 'cache', cache), \
+                composition_fixture(views, 'shared_curriculum_epoch', return_value=1) as epoch, \
+                composition_fixture(views, 'repair_curriculum_parent_links'), \
+                composition_fixture(views, 'build_curriculum_programme_tree_detail_payload', return_value=payload) as build:
             first = views.curriculum_programme_detail_section(factory.get(path), 'P1', 'modules')
             second = views.curriculum_programme_detail_section(factory.get(path, HTTP_IF_NONE_MATCH=first['ETag']), 'P1', 'modules')
             self.assertEqual(first.status_code, 200)

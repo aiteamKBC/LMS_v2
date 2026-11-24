@@ -11,7 +11,7 @@ import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).parent
-spec = importlib.util.spec_from_file_location('module_merge', ROOT / 'module_merge.py')
+spec = importlib.util.spec_from_file_location('module_merge', ROOT / 'catalogue/domain/module_merge.py')
 merge = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(merge)
 

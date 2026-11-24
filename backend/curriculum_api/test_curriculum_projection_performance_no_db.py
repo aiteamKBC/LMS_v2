@@ -1,3 +1,4 @@
+from curriculum_api.catalogue.tests.parity.composition_test_support import composition_fixture
 from contextlib import contextmanager
 from unittest.mock import patch
 
@@ -10,8 +11,7 @@ class CurriculumProjectionPerformanceTests(SimpleTestCase):
     def test_programme_detail_enrichment_omits_heavy_component_content(self):
         module = {'moduleCatalogueId': 'MOD-1', 'name': 'Module'}
 
-        with patch.object(
-            views,
+        with composition_fixture(views,
             'get_authoring_structure_payloads',
             return_value={},
         ) as structures:
@@ -38,9 +38,8 @@ class CurriculumProjectionPerformanceTests(SimpleTestCase):
             'programme_name': 'Programme',
         }
 
-        with patch.object(views, 'safe_module_index_rows', return_value=[module_row]), \
-             patch.object(
-                 views,
+        with composition_fixture(views, 'safe_module_index_rows', return_value=[module_row]), \
+             composition_fixture(views,
                  'get_authoring_structure_payloads',
                  return_value={},
              ) as structures:
@@ -68,10 +67,10 @@ class CurriculumProjectionPerformanceTests(SimpleTestCase):
                 }]
             return []
 
-        with patch.object(views, 'ensure_module_authoring_tables'), \
-             patch.object(views, 'authoring_fetch_all', return_value=[module]), \
-             patch.object(views, 'resolve_authoring_catalogue_id', return_value='MOD-1'), \
-             patch.object(views, 'authoring_child_rows_for_modules', side_effect=child_rows) as children:
+        with composition_fixture(views, 'ensure_module_authoring_tables'), \
+             composition_fixture(views, 'authoring_fetch_all', return_value=[module]), \
+             composition_fixture(views, 'resolve_authoring_catalogue_id', return_value='MOD-1'), \
+             composition_fixture(views, 'authoring_child_rows_for_modules', side_effect=child_rows) as children:
             modules, weeks, components, mappings = views.authoring_scope_data('module', 'MOD-1')
 
         self.assertEqual(modules, [module])
@@ -124,9 +123,9 @@ class CurriculumProjectionPerformanceTests(SimpleTestCase):
             },
         ]
 
-        with patch.object(views, 'connection', PostgresConnection()), \
-             patch.object(views, 'learner_schema_table_exists', return_value=True), \
-             patch.object(views, 'rows_as_dicts', return_value=rows):
+        with composition_fixture(views, 'connection', PostgresConnection()), \
+             composition_fixture(views, 'learner_schema_table_exists', return_value=True), \
+             composition_fixture(views, 'rows_as_dicts', return_value=rows):
             totals = views.learner_progress_ksb_totals([1, 2], ['k2', 'K1', 'K1'])
 
         self.assertEqual(totals, {1: {'K1': 20.0}, 2: {'K2': 15.0}})

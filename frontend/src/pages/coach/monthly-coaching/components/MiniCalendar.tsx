@@ -15,7 +15,7 @@ export function MiniCalendar({ month, events, onMonthChange }: {
   const today = todayKey();
 
   return (
-    <section aria-label={`Meeting calendar for ${formatMonthYear(month)}`} className="rounded-[20px] border border-primary-100 bg-white p-4 shadow-[0_10px_30px_-18px_rgb(76_29_149/0.35)]">
+    <section aria-label={`Meeting calendar for ${formatMonthYear(month)}`} className="rounded-2xl border border-primary-100 bg-white p-4 shadow-[0_10px_30px_-18px_rgb(76_29_149/0.35)]">
       <div className="mb-3 flex items-center justify-between">
         <h3 className="text-[14px] font-bold text-primary-900">{formatMonthYear(month)}</h3>
         <div className="flex gap-1.5">

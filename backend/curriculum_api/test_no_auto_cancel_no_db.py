@@ -206,7 +206,8 @@ class AdditionalUpdateLeavesMainTests(unittest.TestCase):
                 {'subject': 'Guest panel', 'body': {}, 'start': {}, 'end': {}, 'responseRequested': True,
                  'allowNewTimeProposals': True, 'attendees': []}, [], [], [], [], start, 60, 'none', 1),
             calendar_targets=lambda *a, **k: [{'session_number': 1, 'start': start, 'end': start + timedelta(hours=1)}],
-            graph_timezone_iana=lambda _settings: 'Europe/London', teams_non_delivery_reason=lambda *a: '',
+            graph_timezone_iana=lambda _settings: 'Europe/London',
+            teams_non_delivery_reason=lambda targets, time_zone='Europe/London', holiday_rows=None, module_catalogue_id=None: '',
             as_json_value=lambda value, fallback: value or fallback, publish_attendees=lambda *a, **k: False,
             apply_teams_meeting_options=lambda *a, **k: (True, {}, []), forward_teams_invitation=lambda *a, **k: [],
             update_authoring_rows=lambda table, where, params, values: week.writes.append((table, params)),
@@ -526,6 +527,9 @@ class CancelPathAuditTests(unittest.TestCase):
         # Cancel series / Cancel session / Cancel on Teams: review, then confirm
         # with acknowledgeNotifications (teams_calendar_actions.confirm_action).
         ('curriculum_api/teams_cancel.py', 'send_cancellation'),
+        # Verified group calendar cancellation uses DELETE inside the same
+        # confirmed action. Its exact nested guards are checked below.
+        ('curriculum_api/teams_calendar_actions.py', 'graph_action'),
         # "Yes, cancel it and tell the people invited" on an additional meeting.
         ('curriculum_api/teams_week_meeting.py', 'cancel_week_meeting'),
         # One-to-one coach/learner bookings -- a separate feature, not a module
@@ -577,6 +581,27 @@ class CancelPathAuditTests(unittest.TestCase):
         confirm = next(fn for fn in tree.body if isinstance(fn, ast.FunctionDef) and fn.name == 'confirm_action')
         self.assertIn(sending[0], list(ast.walk(confirm)))
         self.assertIn('acknowledgeNotifications', ast.unparse(confirm))
+
+    def test_group_calendar_delete_is_confined_to_the_explicit_cancel_branch(self):
+        tree = ast.parse((ROOT / 'teams_calendar_actions.py').read_text(encoding='utf-8-sig'))
+        function = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == 'graph_action')
+        mutations = []
+        for node in ast.walk(function):
+            if not isinstance(node, ast.Call):
+                continue
+            callee = node.func.attr if isinstance(node.func, ast.Attribute) else getattr(node.func, 'id', '')
+            literal = [a.value for a in node.args if isinstance(a, ast.Constant) and isinstance(a.value, str)]
+            text = ast.unparse(node)
+            graphish = 'graph' in callee.lower() or callee in ('request', 'delete', 'post')
+            if graphish and ('DELETE' in literal or "'/cancel'" in text or '"/cancel"' in text
+                             or (callee == 'delete' and 'client' in text)):
+                mutations.append(node)
+        self.assertEqual([ast.unparse(n) for n in mutations], ['client.delete(path)'])
+        cancel = next(n for n in ast.walk(function) if isinstance(n, ast.If)
+                      and ast.unparse(n.test) == "command['action'] == 'cancel'")
+        group = next(n for n in cancel.body if isinstance(n, ast.If)
+                     and ast.unparse(n.test) == "original and original.original_prefix.startswith('groups/')")
+        self.assertIn(mutations[0], list(ast.walk(ast.Module(body=group.body, type_ignores=[]))))
 
     def test_the_status_sweep_and_saves_have_no_delete(self):
         for name in ('teams_calendar_state.py', 'teams_cancellation_checks.py', 'teams_weekly_calendar.py',

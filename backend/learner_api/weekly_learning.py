@@ -54,12 +54,16 @@ def component_content_available(c):
     Kept in step by frontend/src/utils/__tests__/componentContentCases.json,
     which both this module's tests and the frontend's run.
     """
+    ctype = c.get("type") if isinstance(c.get("type"), str) else ""
+    ctype = _TYPE_SPACE.sub("_", _js_trim(ctype).lower())
+    if ctype == "live_session":
+        return (isinstance(c.get('liveSessionAccess'), dict) or _has_url(c.get('liveSessionUrl'))
+                or _has_text(c.get('sessionDateTimeUtc')) or _has_text(c.get('sessionDate'))
+                or bool(c.get('teamsLiveSessionId')) or _has_text(c.get('description')))
     if c.get("isQuiz"):
         meta = c.get("quizMeta") or {}
         questions = meta.get("questions")
         return meta.get("quizId") is not None and (questions if questions is not None else 0) > 0
-    ctype = c.get("type") if isinstance(c.get("type"), str) else ""
-    ctype = _TYPE_SPACE.sub("_", _js_trim(ctype).lower())
     if ctype == "quiz":
         return False
     has_description = _has_text(c.get("description"))
@@ -79,9 +83,6 @@ def component_content_available(c):
         return _has_url(c.get("resourceUrl")) or has_description
     if ctype == "reflection":
         return True
-    if ctype == "live_session":
-        return (_has_url(c.get("liveSessionUrl")) or _has_text(c.get("sessionDateTimeUtc"))
-                or _has_text(c.get("sessionDate")) or bool(c.get("teamsLiveSessionId")) or has_description)
     if ctype == "assignment":
         return (any(_topic_has_content(topic) for topic in c.get("assignmentTopics") or [])
                 or _has_text(c.get("assignmentBrief")) or _has_text(c.get("assignmentBriefHtml"))
@@ -129,6 +130,7 @@ def _weekly_component(c):
         # its authored activity by these dates (liveSessionRoute.ts).
         row["sessionDate"] = c.get("sessionDate")
         row["sessionDateTimeUtc"] = c.get("sessionDateTimeUtc")
+        row['liveSessionAccess'] = c.get('liveSessionAccess')
         if c.get("additionalMeeting") is True:
             row["additionalMeeting"] = True
     # As learner-detail's compact mode: omitted means null to every consumer.
@@ -173,14 +175,29 @@ def _progress(profile, *, active_only=False, include_activity_times=False):
     return quizzes, list(videos.values()), list(components.values())
 
 
-def build_learning_content_summary(source, pk, *, learning_summary=False, assigned_modules=None, strict=False, week_ids=None, identities_only=False, progress=None, compact_content=False, preserve_legacy=False, include_component_details=False, resolved_metadata=None):
+def build_learning_content_summary(source, pk, *, learning_summary=False, assigned_modules=None, strict=False, week_ids=None, identities_only=False, progress=None, compact_content=False, preserve_legacy=False, include_component_details=False, resolved_metadata=None, schedule_metadata=False, monthly_content=False, selected_component_ids=None, standalone_quizzes=True, retained_quizzes=True):
     from learner_api.projection_performance import projection_stage
 
     # Same readers as build_learner_detail, without its write-on-read repairs.
     from .learner_detail import (_annotate_otjh, _append_week_quizzes,
                                  _apply_programme_assignment_template, _resolve_from_master)
 
-    assigned = effective_training_plan(source, request_preset_cache(source)) if assigned_modules is None else assigned_modules
+    canonical_plan = (list(getattr(source, '_canonical_training_plan') or [])
+                      if hasattr(source, '_canonical_training_plan') else None)
+    if assigned_modules is None:
+        assigned = canonical_plan if canonical_plan is not None else effective_training_plan(
+            source, request_preset_cache(source))
+    elif canonical_plan is not None:
+        requested_ids = {
+            str(entry.get('moduleId')) for entry in assigned_modules
+            if isinstance(entry, dict) and entry.get('moduleId')
+        }
+        assigned = [
+            entry for entry in canonical_plan
+            if isinstance(entry, dict) and str(entry.get('moduleId') or '') in requested_ids
+        ]
+    else:
+        assigned = assigned_modules
     if (identities_only and not preserve_legacy) or week_ids is not None:
         modules, weeks, components = [], [], []
     else:
@@ -200,12 +217,24 @@ def build_learning_content_summary(source, pk, *, learning_summary=False, assign
         projection_options['compact_content'] = True
     if resolved_metadata is not None:
         projection_options['resolved_metadata'] = resolved_metadata
+    if schedule_metadata:
+        projection_options['schedule_metadata'] = True
+    if monthly_content:
+        projection_options['monthly_content'] = True
+    if selected_component_ids is not None:
+        projection_options['selected_component_ids'] = selected_component_ids
+    if canonical_plan is not None:
+        projection_options['plan_owned_only'] = True
     if identities_only and preserve_legacy:
         projection_options['catalogue_facts'] = True
     with projection_stage('native_content'):
         modules, weeks, components = _resolve_from_master(
             modules, weeks, components, assigned_modules=assigned, compact=True,
-            live_session_ids=False, expected_otjh=not identities_only, **projection_options, **strict_options)
+            live_session_ids=False, expected_otjh=not identities_only or preserve_legacy, **projection_options, **strict_options)
+    if identities_only and preserve_legacy:
+        # Certificate counts need the same Required flag as the activity viewer.
+        # Master rows already carry it; only id-less snapshots need a lookup.
+        _annotate_otjh([c for c in components if "expectedOtjh" not in c])
     if not identities_only:
         components = _apply_programme_assignment_template(components, getattr(source, "programme", ""))
         _annotate_otjh([c for c in components if "expectedOtjh" not in c])
@@ -214,8 +243,17 @@ def build_learning_content_summary(source, pk, *, learning_summary=False, assign
         quiz_options['catalogue_facts'] = True
     if resolved_metadata is not None and 'quiz_modules' in resolved_metadata:
         quiz_options['resolved_metadata'] = resolved_metadata
-    with projection_stage('native_quizzes'):
-        weeks, components = _append_week_quizzes(weeks, components, assigned_modules=assigned, **strict_options, **quiz_options)
+    if standalone_quizzes:
+        with projection_stage('native_quizzes'):
+            weeks, components = _append_week_quizzes(weeks, components, assigned_modules=assigned, **strict_options, **quiz_options)
+    owned_component_ids = None
+    if canonical_plan is not None:
+        from .learner_detail import _plan_owned_placements
+        owned_component_ids = set(_plan_owned_placements(assigned)[0])
+        components = [
+            component for component in components
+            if not component.get('moduleId') or _s(component.get('componentId')) in owned_component_ids
+        ]
 
     # heal=False: this GET must never write, not even the identity self-heal.
     owned_profile = getattr(source, '_case_file_profile', None) if learning_summary or strict else None
@@ -225,11 +263,19 @@ def build_learning_content_summary(source, pk, *, learning_summary=False, assign
             profile, **({'active_only': True, 'include_activity_times': True} if preserve_legacy else {}))
     detail = {"components": components, "quizAttempts": quiz_attempts}
     # Compact projections need completed credit only, as learner-detail's summary.
-    if progress is None:
+    if progress is None and retained_quizzes:
         with projection_stage('retained_quizzes'):
             retain_quiz_progress(detail, completed_only=True, **strict_options)
+        if owned_component_ids is not None:
+            detail['retiredQuizComponents'] = [
+                component for component in detail.get('retiredQuizComponents', [])
+                if not component.get('moduleId') or _s(component.get('componentId')) in owned_component_ids
+            ]
     if week_ids is not None:
         components = [c for c in components if str(c.get("weekId")) in set(map(str, week_ids))]
+    if not identities_only or preserve_legacy:
+        from .live_session_access import annotate_access
+        components = annotate_access(source, components)
     result = {
         "id": str(source.id),
         # learnerHeaderPlan matches the learner's placement to choose the module.

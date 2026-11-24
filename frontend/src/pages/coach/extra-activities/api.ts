@@ -12,6 +12,13 @@ export async function readExtraActivities(query: URLSearchParams, signal?: Abort
   if (!response.ok) throw new Error(data.detail || 'Could not load extra activities.');
   return data as { items: CoachExtraActivity[]; total: number; hasNext: boolean };
 }
+export async function readExtraActivityDetail<T>(activityId: string): Promise<T | null> {
+  if (!activityId) return null;
+  const response = await coachFetch(`/coach_api/coach/extra-activities/${encodeURIComponent(activityId)}`);
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || 'Could not load the Extra Activity.');
+  return (data.item ?? null) as T | null;
+}
 export async function readExtraLearners(signal?: AbortSignal): Promise<ExtraLearner[]> {
   const response = await coachFetch('/coach_api/coach/extra-activities/learners', { signal });
   const data = await response.json();

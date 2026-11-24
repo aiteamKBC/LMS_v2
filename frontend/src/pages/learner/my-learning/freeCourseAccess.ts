@@ -42,3 +42,8 @@ export function computeLocks(activities: FreeCourseActivity[]): Map<string, Lock
   }
   return map;
 }
+
+/** Canonical state takes precedence over the compatibility completion alias. */
+export function isFreeCourseActivityCompleted(activity: FreeCourseActivity): boolean {
+  return activity.is_completed ?? Boolean(activity.completed);
+}

@@ -88,13 +88,10 @@ class Command(BaseCommand):
                 row['enrolment_id'] is None for row in rows):
             raise CommandError('The workbook learners do not have 211 unique LMS links.')
         with connections['enrolment'].cursor() as cursor:
-            cursor.execute('''SELECT l.aptem_id,i.source_learner_id,
-                coalesce(nullif(i.source_payload->>'source_email',''),i.source_payload->>'learner_email'),
-                coalesce((i.source_payload#>>'{legacy_alias,is_primary}')::boolean,
-                         i.source_payload ? 'record_id') AS is_primary
+            cursor.execute('''SELECT l.aptem_id,i.lms_learner_id,i.lms_email,i.is_primary
                 FROM "Learner".learners l
-                JOIN "Learner".learner_external_identities i
-                  ON i.learner_id=l.id AND i.source_system='old_lms' AND i.deleted_at IS NULL
+                JOIN "Last_audit".learner_lms_aliases i
+                  ON i.learner_profile_id=l.id AND i.aptem_id=l.aptem_id
                 WHERE l.aptem_id=ANY(%s)''', [ids])
             identities = cursor.fetchall()
         try:

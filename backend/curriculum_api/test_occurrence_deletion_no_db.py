@@ -15,6 +15,7 @@ makes no Microsoft call at all: only the explicit Cancel on that slot may send
 the cancellation Exchange emails to everyone invited.
 """
 import ast
+import sys
 import types
 import unittest
 import urllib.parse as urllib_parse
@@ -23,6 +24,10 @@ from pathlib import Path
 from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parent
+sys.path.insert(0, str(ROOT.parent))
+from curriculum_api.meetings.tests.source_loader import load_current_functions
+
+from curriculum_api.teams_calendar_checks import read_calendar_instances  # noqa: E402
 
 #: Real implementations under test, plus the small pure helpers they lean on.
 NAMES = {
@@ -42,6 +47,7 @@ def load():
         time=types.SimpleNamespace(sleep=lambda _seconds: None),
         # Identity: the fake transport already answers in Graph's own shape.
         graph_event_utc=lambda item: item,
+        read_calendar_instances=read_calendar_instances,
         # Only reached when a target has no instance at all; no test here does that.
         teams_single_occurrence_payload=lambda *a, **k: {},
         teams_standalone_occurrence_meeting=lambda *a, **k: {'warnings': []},
@@ -51,9 +57,8 @@ def load():
             isinstance(target, ast.Name) and target.id == 'GRAPH_SILENT_INVITE_HEADERS' for target in node.targets
         ):
             namespace.GRAPH_SILENT_INVITE_HEADERS = ast.literal_eval(node.value)
-    nodes = [node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name in NAMES]
-    assert len(nodes) == len(NAMES), sorted(NAMES - {node.name for node in nodes})
-    exec(compile(ast.Module(body=nodes, type_ignores=[]), str(ROOT / 'views.py'), 'exec'), namespace.__dict__)
+    load_current_functions(NAMES, namespace.__dict__, tree)
+    assert all(callable(getattr(namespace, name)) for name in NAMES)
     return namespace
 
 

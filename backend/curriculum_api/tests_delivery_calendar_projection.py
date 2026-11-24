@@ -4,12 +4,14 @@ Django SimpleTestCase forbids database access. All I/O providers use synthetic
 rows; the serializers, holiday/date/clock rules and session builders are real.
 Run through a verified isolated test runner, never the application database.
 """
+from curriculum_api.catalogue.tests.parity.composition_test_support import composition_fixture
 import copy
 import json
 from contextlib import ExitStack
 from unittest.mock import patch
 from django.test import SimpleTestCase, override_settings
 from . import views, delivery_dashboard, learner_assignment_counts_sql
+from .catalogue.infrastructure import database_reads
 
 def module(mid='M1', group='G1', cohort='C1', status='published'):
     return dict(module_catalogue_id=mid, title='Example '+mid, group_id=group, group_name=group,
@@ -31,6 +33,7 @@ class DeliveryCalendarProjectionTests(SimpleTestCase):
         self.holidays=[]
         self.reads=[]
         self.source_authoring_reader = views.get_authoring_module_rows
+        self.source_index_reader = views.module_index_rows
         patches={
             'authoring_fetch_all':self.fetch, 'get_holiday_rows':lambda:copy.deepcopy(self.holidays),
             'get_holiday_rows_safe':lambda:copy.deepcopy(self.holidays), 'ensure_module_authoring_tables':lambda:None,
@@ -44,7 +47,9 @@ class DeliveryCalendarProjectionTests(SimpleTestCase):
             'build_ksb_data':lambda *a,**kw:([],[]),
         }
         for name,value in patches.items():
-            p=patch.object(views,name,value); p.start(); self.addCleanup(p.stop)
+            p=composition_fixture(views,name,value); p.start(); self.addCleanup(p.stop)
+            if name == "column_names":
+                p=patch.object(database_reads,name,value); p.start(); self.addCleanup(p.stop)
         p=patch.object(learner_assignment_counts_sql,'bulk_assigned_learner_counts_sql',lambda *a,**kw:{})
         p.start(); self.addCleanup(p.stop)
     def source_rows(self, table):
@@ -57,6 +62,7 @@ class DeliveryCalendarProjectionTests(SimpleTestCase):
         rows=copy.deepcopy(self.source_rows(table)); params=params or []
         if where_sql and params:
             if 'module_catalogue_id' in where_sql: rows=[r for r in rows if r.get('module_catalogue_id') in params]
+            elif 'programme_id' in where_sql: rows=[r for r in rows if r.get('programme_id') in params]
             elif 'group_id' in where_sql: rows=[r for r in rows if r.get('group_id') in params]
             elif 'cohort_id' in where_sql: rows=[r for r in rows if r.get('cohort_id') in params]
         if table==views.AUTHORING_COMPONENTS_TABLE and where_sql: rows=[r for r in rows if r['type']=='live_session']
@@ -85,16 +91,14 @@ class DeliveryCalendarProjectionTests(SimpleTestCase):
         """Use the actual main row reader, not an invented legacy training input.
 
         get_training_rows() currently projects the normalized authoring tables.
-        The older prefer_authoring_module_sessions() compatibility contract can
-        accept unmatched training rows, but that is not an independent source
-        read by the live endpoint. Keep this boundary covered before adding a
-        legacy fallback that would change main's data source or read cost.
+        Both the overview and focused calendar must use authored components;
+        unmatched training rows must never introduce generated sessions.
         """
         with ExitStack() as sources:
-            sources.enter_context(patch.object(views, 'table_exists', return_value=False))
+            sources.enter_context(composition_fixture(views, 'table_exists', return_value=False))
             for name in ('get_ksb_profile_rows', 'get_program_config_rows', 'get_tutor_rows',
                          'get_coach_rows', 'get_tutor_module_rows'):
-                sources.enter_context(patch.object(views, name, return_value=[]))
+                sources.enter_context(composition_fixture(views, name, return_value=[]))
             rows = views.get_curriculum_rows(compact=False)
         original = views.build_curriculum_payload_from_rows(rows, compact=False)
         from django.test import RequestFactory
@@ -103,8 +107,8 @@ class DeliveryCalendarProjectionTests(SimpleTestCase):
         while hasattr(endpoint, '__wrapped__'):
             endpoint = endpoint.__wrapped__
         self.reads.clear()
-        with patch.object(views, 'cached_curriculum_value', side_effect=lambda key, build, **kw: build()), \
-             patch.object(views, 'get_cached_payload', side_effect=AssertionError('Full overview must not be loaded')):
+        with composition_fixture(views, 'cached_curriculum_value', side_effect=lambda key, build, **kw: build()), \
+             composition_fixture(views, 'get_cached_payload', side_effect=AssertionError('Full overview must not be loaded')):
             response = endpoint(request)
         self.assertEqual(response.status_code, 200)
         payload = json.loads(response.content)
@@ -144,7 +148,8 @@ class DeliveryCalendarProjectionTests(SimpleTestCase):
             week_id='W-'+row['module_catalogue_id'], type='live_session', display_order=0,
             settings_json={'sessionDate':'2030-09-04', 'sessionTime':'09:30', 'durationMinutes':90,
                 'extraTeamsMeetingUrl':'https://example.invalid/meeting'}) for row in self.modules]
-        with patch.object(views, 'get_authoring_module_rows', self.source_authoring_reader):
+        with composition_fixture(views, 'get_authoring_module_rows', self.source_authoring_reader), \
+             composition_fixture(views, 'module_index_rows', self.source_index_reader):
             _, payload = self.production_reader_parity()
             self.modules.reverse()
             _, rebuilt = self.production_reader_parity()
@@ -203,8 +208,8 @@ class DeliveryCalendarProjectionTests(SimpleTestCase):
         }
         self.compare()
 
-    def test_deleted_and_detached_rows_never_reappear_on_the_calendar(self):
-        self.weeks[0]['library_state'] = views.LIBRARY_STATE_DETACHED
+    def test_inactive_weeks_and_deleted_components_never_reappear_on_the_calendar(self):
+        self.weeks[0]['status'] = 'inactive'
         self.components[1]['deleted_at'] = '2030-09-01'
         _, _, calendar = self.compare()
         self.assertEqual(calendar, [])
@@ -250,16 +255,17 @@ class DeliveryCalendarProjectionTests(SimpleTestCase):
         self.assertEqual(payload, {'sessions': [], 'undatedSessionCount': 2})
         self.compare()
 
-    def test_undated_warning_uses_the_existing_archived_deleted_and_detached_scope(self):
+    def test_undated_warning_uses_normalized_inactive_and_deleted_scope(self):
         self.weeks.extend([
             dict(id='WA', module_catalogue_id='ARCH', week_number=1, display_order=0),
             dict(id='WD', module_catalogue_id='M1', week_number=3, display_order=3,
-                 library_state=views.LIBRARY_STATE_DETACHED),
+                 status='inactive'),
         ])
         for identifier, mid, week, extra in [
             ('missing', 'M1', 'W1', {}),
             ('archived', 'ARCH', 'WA', {}),
-            ('detached', 'M1', 'WD', {}),
+            ('inactive-week', 'M1', 'WD', {}),
+            ('inactive-component', 'M1', 'W1', {'status': 'inactive'}),
             ('deleted', 'M1', 'W1', {'deleted_at': '2030-09-01'}),
         ]:
             self.components.append(dict(id=identifier, module_catalogue_id=mid, week_id=week,
@@ -273,11 +279,11 @@ class DeliveryCalendarProjectionTests(SimpleTestCase):
         from django.test import RequestFactory
         request = RequestFactory().get('/curriculum/sessions/')
         generation = [1001]
-        key = 'delivery-calendar:v3'
-        views._CURRICULUM_CACHE.pop(key, None)
-        self.addCleanup(views._CURRICULUM_CACHE.pop, key, None)
-        with patch.object(views, 'shared_curriculum_epoch', side_effect=lambda: generation[0]), \
-             patch.object(delivery_dashboard, 'build_calendar_snapshot', side_effect=[
+        key = 'delivery-calendar:v4'
+        views.cache_state._CURRICULUM_CACHE.pop(key, None)
+        self.addCleanup(views.cache_state._CURRICULUM_CACHE.pop, key, None)
+        with composition_fixture(views, 'shared_curriculum_epoch', side_effect=lambda: generation[0]), \
+             composition_fixture(delivery_dashboard, 'build_calendar_snapshot', side_effect=[
                  {'sessions': [{'id': 'one'}], 'undatedSessionCount': 2},
                  {'sessions': [{'id': 'two'}], 'undatedSessionCount': 0},
              ]) as builder:

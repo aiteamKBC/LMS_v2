@@ -1,5 +1,6 @@
 import json
 from unittest.mock import patch
+from curriculum_api.catalogue.tests.parity.composition_test_support import composition_fixtures
 
 from django.test import RequestFactory, SimpleTestCase
 
@@ -25,7 +26,7 @@ class ProgrammeDetailSectionTests(SimpleTestCase):
 
     def build(self, section, build_modules=lambda *args, **kwargs: [dict(MODULE)]):
         rows = {'training': [], 'ksb_profiles': [], 'program_configs': [], 'modules': []}
-        with patch.multiple(
+        with composition_fixtures(
             views,
             get_cached_curriculum_rows=lambda compact=True: rows,
             build_programmes=lambda *args, **kwargs: [dict(PROGRAMME)],
@@ -33,11 +34,12 @@ class ProgrammeDetailSectionTests(SimpleTestCase):
             build_cohorts_and_groups=lambda *args, **kwargs: ([dict(COHORT)], [dict(GROUP)]),
             build_modules=build_modules,
             enrich_curriculum_modules_with_authoring_details=lambda modules: modules,
+            programme_module_candidates=lambda modules, *args, **kwargs: modules,
             programme_authoring_modules=lambda *args, **kwargs: [],
             programme_config_modules=lambda *args, **kwargs: [],
             get_holiday_rows=lambda *args, **kwargs: [],
             cohort_selected_holidays_by_id=lambda *args, **kwargs: {},
-            build_sessions_basic=lambda *args, **kwargs: [{'id': 'S-1'}],
+            read_programme_sessions=lambda *args, **kwargs: [{'id': 'S-1'}],
             component_builder_rows=lambda *args, **kwargs: self.fail('no section reads components'),
         ):
             return views.build_curriculum_programme_tree_detail_payload(
@@ -85,7 +87,7 @@ class ProgrammeDetailSectionViewTests(SimpleTestCase):
             return {'schema': 'test', 'flat': {}}
 
         request = RequestFactory().get(f'/curriculum/programmes/PROG-1/detail/{section}/{query}')
-        with patch.multiple(
+        with composition_fixtures(
             views,
             build_curriculum_programme_tree_detail_payload=build,
             cached_curriculum_value=lambda key, factory, **kwargs: factory(),

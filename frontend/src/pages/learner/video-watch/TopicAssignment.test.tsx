@@ -5,7 +5,7 @@ import { loadAssignmentTopicStates, selectAssignmentTopic } from '@/api/assignme
 import { assignmentTopics } from '@/lib/assignmentTopics';
 
 vi.mock('@/api/assignmentTopics', () => ({ loadAssignmentTopicStates: vi.fn(), selectAssignmentTopic: vi.fn() }));
-vi.mock('./AssignmentSubmissionWizard', () => ({ AssignmentSubmissionForm: (props: {
+vi.mock('./AssignmentSubmissionForm', () => ({ AssignmentSubmissionForm: (props: {
   title: string; assignmentTopicId: string; questionText: string; onTopicSubmitted?: () => void;
   onManualDraftSaved?: () => void; onSubmitProgress: (answers: unknown) => Promise<void>;
   instructionsHtml?: string; questionFiles?: { url: string }[];

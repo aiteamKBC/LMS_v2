@@ -13,6 +13,7 @@ from tempfile import TemporaryDirectory
 from threading import Barrier, local
 from types import SimpleNamespace
 from unittest import TestCase, mock
+import json
 
 from django.core.management import call_command
 from django.db import DatabaseError, connections, transaction
@@ -38,7 +39,8 @@ def source_row(**changes):
 
 def overlay(**changes):
     return SimpleNamespace(**{
-        'pk': 31, 'source_review_id': 9001, 'learner_id': 17,
+        'pk': 31, 'source_review_id': 9001, 'learner_profile_id': 17,
+        'learner_id': changes.get('learner_profile_id', 17),
         'event_key': 'imported-review:SYNTHETIC-9001',
         'status': 'completed', 'completed_at': COMPLETED,
         'meeting_intelligence': {}, **changes,
@@ -135,7 +137,7 @@ class ReviewFeedbackSyncTests(SimpleTestCase):
         self.profile_lookup.assert_called_once_with(self.learner)
         self.rows.assert_called_once_with(17, None)
         defaults = self.create.call_args.kwargs['defaults']
-        self.assertEqual(defaults['learner_id'], '71')
+        self.assertEqual(defaults['enrolment_id'], '71')
         self.assertEqual(defaults['completed_at'], COMPLETED)
 
     def test_aptem_completion_with_no_local_overlay_or_an_incomplete_overlay(self):
@@ -281,12 +283,12 @@ class ReviewFeedbackSyncTests(SimpleTestCase):
     def test_existing_delivery_survives_later_aptem_completion_and_new_template(self):
         self.rows.return_value = [source_row(status='Completed', completed_date=COMPLETED)]
         self.overlays.return_value = [overlay()]
-        self.existing.return_value = [SimpleNamespace(source_review_id=9001, learner_id='71', form_id=1)]
+        self.existing.return_value = [SimpleNamespace(source_review_id=9001, enrolment_id='71', form_id=1)]
         self.assertEqual(self.sync()['existing'], 1)
         self.create.assert_not_called()
 
     def test_reopened_review_with_delivery_is_never_sent_again(self):
-        self.existing.return_value = [SimpleNamespace(source_review_id=9001, learner_id='71')]
+        self.existing.return_value = [SimpleNamespace(source_review_id=9001, enrolment_id='71')]
         for status in ('in-progress', 'completed'):
             self.overlays.return_value = [overlay(status=status)]
             self.assertEqual(self.sync()['existing'], 1)
@@ -307,7 +309,7 @@ class ReviewFeedbackSyncTests(SimpleTestCase):
         self.assertEqual((result['created'], result['unlinked']), (0, 1))
 
     def test_ambiguous_legacy_and_cross_learner_links_are_reported(self):
-        for overlays in ([overlay(learner_id=99)], [overlay(), overlay(pk=32, source_review_id=None)]):
+        for overlays in ([overlay(learner_profile_id=99)], [overlay(), overlay(pk=32, source_review_id=None)]):
             with self.subTest(overlays=len(overlays)):
                 self.overlays.return_value = overlays
                 self.assertEqual(self.sync()['identityConflicts'], 1)
@@ -324,7 +326,7 @@ class ReviewFeedbackSyncTests(SimpleTestCase):
                                              review_data={'aptem_learner_id': 999})]
         self.assertEqual(self.sync()['identityConflicts'], 1)
         self.rows.return_value = [source_row(completed_date=COMPLETED)]
-        self.existing.return_value = [SimpleNamespace(source_review_id=9001, learner_id='17')]
+        self.existing.return_value = [SimpleNamespace(source_review_id=9001, enrolment_id='17')]
         self.assertEqual(self.sync()['identityConflicts'], 1)
         self.create.assert_not_called()
 
@@ -454,6 +456,70 @@ class IsolatedDeliveryTransactionTests(TestCase):
         connections[self.alias].close()
         del connections[self.alias]
         connections.databases.pop(self.alias, None)
+
+    def imported_source_recovery(self):
+        """Actual committed source rows in this test's verified temporary DB."""
+
+        db = connections[self.alias]
+        with db.cursor() as cursor:
+            cursor.execute('CREATE TABLE feedback_test_imports (id INTEGER PRIMARY KEY, learner_id INTEGER, '
+                           'status TEXT, completed_date TEXT)')
+
+        def rows(profile_id, source_id=None):
+            with db.cursor() as cursor:
+                cursor.execute('SELECT id, learner_id, status, completed_date FROM feedback_test_imports '
+                               'WHERE learner_id=%s', [profile_id])
+                return [source_row(id=row[0], learner_id=row[1], status=row[2], completed_date=row[3])
+                        for row in cursor.fetchall() if source_id is None or source_id == row[0]]
+
+        reviews._source_rows.side_effect = rows
+
+        def recover():
+            output = StringIO()
+            call_command('sync_review_feedback', '--learner-id=71', stdout=output)
+            return json.loads(output.getvalue())
+
+        return recover, db
+
+    def test_scoped_command_recovers_insert_update_late_date_and_reimport_without_a_page_read(self):
+        recover, db = self.imported_source_recovery()
+        with db.cursor() as cursor:
+            cursor.execute('INSERT INTO feedback_test_imports VALUES (9001,17,%s,NULL)', ['Not Scheduled'])
+        self.assertEqual(recover()['incomplete'], 1)
+        with db.cursor() as cursor:
+            cursor.execute('UPDATE feedback_test_imports SET status=%s', ['Completed'])
+        self.assertEqual(recover()['undated'], 1)
+        with db.cursor() as cursor:
+            cursor.execute('UPDATE feedback_test_imports SET completed_date=%s', [COMPLETED.isoformat()])
+            cursor.execute('INSERT INTO feedback_test_imports VALUES (9002,17,%s,%s)',
+                           ['Completed', COMPLETED.isoformat()])
+        self.assertEqual(recover()['created'], 2)
+        with db.cursor() as cursor:
+            cursor.execute('UPDATE feedback_test_imports SET status=%s', ['Finished'])
+        self.assertEqual(recover()['existing'], 2)
+        self.assertEqual(self.deliveries.count(), 2)
+
+    def test_import_rollback_never_assigns_and_committed_completed_insert_is_retried(self):
+        recover, db = self.imported_source_recovery()
+        with self.assertRaises(ValueError):
+            with transaction.atomic(using=self.alias):
+                with db.cursor() as cursor:
+                    cursor.execute('INSERT INTO feedback_test_imports VALUES (9001,17,%s,%s)',
+                                   ['Completed', COMPLETED.isoformat()])
+                self.assertEqual(recover()['created'], 1)
+                raise ValueError('Synthetic import rollback')
+        self.assertEqual(recover()['created'], 0)
+        self.assertEqual(self.deliveries.count(), 0)
+        with transaction.atomic(using=self.alias):
+            with db.cursor() as cursor:
+                cursor.execute('INSERT INTO feedback_test_imports VALUES (9001,17,%s,%s)',
+                               ['Completed', COMPLETED.isoformat()])
+        with mock.patch.object(reviews.FeedbackReviewDelivery.objects, 'get_or_create',
+                               side_effect=DatabaseError('Synthetic outage')), self.assertRaises(DatabaseError):
+            recover()
+        self.assertEqual(self.deliveries.count(), 0)
+        self.assertEqual(recover()['created'], 1)
+        self.assertEqual(self.deliveries.get().enrolment_id, '71')
 
     def test_retry_and_recompletion_preserve_one_delivery_and_original_template(self):
         self.assertEqual(reviews.sync_review_feedback(71)['created'], 1)

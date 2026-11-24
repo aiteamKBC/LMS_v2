@@ -19,6 +19,28 @@ beforeEach(() => { clearAllCachedResources(); vi.stubGlobal('fetch', vi.fn()); }
 afterEach(() => { cleanup(); clearAllCachedResources(); vi.unstubAllGlobals(); });
 
 describe('My Learning rejects invalid transport-cache snapshots', () => {
+  it('keeps normalized plan catalogues separate from ordinary learning history', async () => {
+    vi.mocked(fetch).mockImplementation(async () => response(catalogue()));
+    await myLearningCatalogue.read('commercial', '125');
+    expect(myLearningCatalogue.peek('commercial', '125', true)).toBeUndefined();
+    await myLearningCatalogue.read('commercial', '125', undefined, false, true);
+    expect(vi.mocked(fetch).mock.calls.map(([url]) => String(url))).toEqual([
+      '/learner_api/my-learning/commercial/125/', '/learner_api/my-learning/commercial/125/?plan=1',
+    ]);
+  });
+
+  it('isolates Active and All module reads and rejects a different selected module', async () => {
+    vi.mocked(fetch).mockImplementation(async () => response(subject()));
+    const { result, rerender } = renderHook(({ active, selected }) => useMyLearningModule('commercial', '125', selected, true, active),
+      { initialProps: { active: true, selected: 'current:M1' } });
+    await waitFor(() => expect(result.current.data?.subjectId).toBe('current:M1'));
+    rerender({ active: false, selected: 'current:M1' });
+    await waitFor(() => expect(vi.mocked(fetch).mock.calls.some(([url]) => String(url).endsWith('?plan=1&planStatus=all'))).toBe(true));
+    rerender({ active: false, selected: 'current:M2' });
+    await waitFor(() => expect(result.current.error).toBe('Could not load this subject. Please try again.'));
+    expect(result.current.data).toBeNull();
+  });
+
   it.each([
     ['missing learner', {}],
     ['another learner', catalogue('126')],

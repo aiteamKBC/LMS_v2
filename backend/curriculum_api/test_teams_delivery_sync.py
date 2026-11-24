@@ -7,6 +7,7 @@ saved and uploaded it twice. Every test also proves the sync only reads Teams.
 
 Run: ``DJANGO_USE_SQLITE=true python manage.py test curriculum_api.test_teams_delivery_sync``
 """
+from curriculum_api.catalogue.tests.parity.composition_test_support import composition_fixture
 import os
 from datetime import datetime
 from unittest.mock import MagicMock, patch
@@ -219,12 +220,12 @@ class RecordingDeliveryWindowTests(SimpleTestCase):
             return {'value': [artifact] if path.endswith('/recordings') and artifact is not None else []}
 
         with patch.object(views.schema_gate, 'require_tables'), \
-                patch.object(views, 'authoring_fetch_all', side_effect=self.rows), \
-                patch.object(views, 'upsert_live_session_artifact', return_value=True) as save, \
-                patch.object(views, 'remove_artifact_from_wrong_occurrences'), \
-                patch.object(views, 'update_authoring_rows') as update, \
-                patch.object(views, 'authoring_delete', side_effect=AssertionError('Existing evidence must be kept')), \
-                patch.object(views, 'resolve_directory_accounts', return_value={'resolved': 0, 'notFound': 0, 'denied': 0}), \
+                composition_fixture(views, 'authoring_fetch_all', side_effect=self.rows), \
+                composition_fixture(views, 'upsert_live_session_artifact', return_value=True) as save, \
+                composition_fixture(views, 'remove_artifact_from_wrong_occurrences'), \
+                composition_fixture(views, 'update_authoring_rows') as update, \
+                composition_fixture(views, 'authoring_delete', side_effect=AssertionError('Existing evidence must be kept')), \
+                composition_fixture(views, 'resolve_directory_accounts', return_value={'resolved': 0, 'notFound': 0, 'denied': 0}), \
                 patch('curriculum_api.teams_dial_in.remember_teams_dial_in'), \
                 patch('coach_api.views.microsoft_graph_request', side_effect=graph), \
                 patch('coach_api.views.has_graph_credentials', return_value=True), \

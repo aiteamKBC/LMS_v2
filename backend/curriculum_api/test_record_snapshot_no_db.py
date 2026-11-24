@@ -9,6 +9,7 @@ import json
 import sys
 import types
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
 ROOT = Path(__file__).parent
@@ -29,7 +30,7 @@ def install_stubs(views):
     package = types.ModuleType('snapshot_pkg')
     package.__path__ = []
     package.views = views
-    sys.modules.update({
+    stubs = {
         'django': django,
         'django.http': http,
         'django.views': types.ModuleType('django.views'),
@@ -37,10 +38,28 @@ def install_stubs(views):
         'django.views.decorators.http': decorators,
         'snapshot_pkg': package,
         'snapshot_pkg.views': views,
-    })
+    }
+    # The same synthetic readers are bound at their concrete import owners.
+    owners = {
+        'catalogue.domain.values': ('clean_str',),
+        'catalogue.infrastructure.placement_runtime': ('cohort_conflict_record', 'group_conflict_record'),
+        'catalogue.application.module_projection': ('curriculum_module_from_authoring_payload',),
+        'catalogue.infrastructure.revision_runtime': ('curriculum_record_revision',),
+        'catalogue.api.structure_composition': ('get_authoring_structure_payload',),
+        'catalogue.api.responses': ('json_error',),
+        'catalogue.infrastructure.hierarchy_composition': ('programme_conflict_record',),
+        'catalogue.infrastructure.catalogue_resolution': ('resolve_stored_module_catalogue_id',),
+    }
+    for owner, names in owners.items():
+        name = 'curriculum_api.' + owner
+        module = types.ModuleType(name)
+        for attribute in names:
+            setattr(module, attribute, getattr(views, attribute))
+        stubs[name] = module
     spec = importlib.util.spec_from_file_location('snapshot_pkg.record_snapshots', ROOT / 'record_snapshots.py')
     module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+    with patch.dict(sys.modules, stubs):
+        spec.loader.exec_module(module)
     return module
 
 

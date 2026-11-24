@@ -10,6 +10,8 @@ from unittest.mock import MagicMock, Mock, patch
 from datetime import datetime
 
 ROOT = Path(__file__).parent
+sys.path.insert(0, str(ROOT.parent))
+from curriculum_api.meetings.tests.source_loader import load_current_functions
 
 
 class RuntimeTests(unittest.TestCase):
@@ -336,10 +338,9 @@ class OccurrenceBindingTests(unittest.TestCase):
         # excluding all Django imports, decorators, fixtures and schema setup.
         tree = ast.parse((ROOT / 'views.py').read_text(encoding='utf-8-sig'))
         names = {'clean_str', 'parse_graph_datetime', 'closest_live_occurrence', 'launch_linked_live_occurrence'}
-        nodes = [node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name in names]
-        self.assertEqual(len(nodes), len(names))
         namespace = {'datetime': datetime}
-        exec(compile(ast.Module(body=nodes, type_ignores=[]), '<occurrence-resolver>', 'exec'), namespace)
+        load_current_functions(names, namespace, tree)
+        self.assertEqual({name for name in names if callable(namespace.get(name))}, names)
         tests = ast.parse((ROOT / 'tests.py').read_text(encoding='utf-8-sig'))
         cls = next(node for node in tests.body if isinstance(node, ast.ClassDef) and node.name == 'TeamsAttendanceRosterTests')
         selected = {'test_join_launches_override_closest_scheduled_week', 'test_existing_report_launch_binding_wins_on_resync'}

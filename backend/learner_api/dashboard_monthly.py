@@ -198,27 +198,42 @@ def read_monthly(source, kind, owner, profile, request, *, canonical_contract=Fa
     now = timezone.now().astimezone(UK)
     requested = validate_month(request.GET.get('month'))
     from .monthly_log_attendance import read_rows as saved_attendance_hours
-    recorded_attendance = saved_attendance_hours(owner, now=now)
+    from .attendance_otjh import additional_rows
     current = timezone.localdate(timezone=UK).strftime('%Y-%m')
     # Retain lineage context for direct-save replacement and manual corrections.
     records = canonical.entries_for(owner, lineage_only=True, dashboard_metadata=True, monthly_summary=True)
+    recorded_attendance = additional_rows(records, saved_attendance_hours(owner, now=now))
     targets = canonical.targets_for(owner)
-    learning = learning_projection(source, owner, records, compact_content=True,
-                                   **({'monthly_assignments': True} if v2 else {}))
     spine = schedule.read_dashboard(source, section='overview', targets=targets,
-                                    dashboard_tab='monthly', compact_monthly=True)
-    subjects = display_subjects(learning)
+                                    dashboard_tab='monthly', compact_monthly=True,
+                                    monthly_month=requested or current)
     modules = {m['id']: m for m in spine['modules']}
     ids = list(modules)
     email = str(source.email or '').strip().casefold()
     with connections['enrolment'].cursor() as cur:
         bounds = schedule._plan_session_rows(cur, email, ids, rail_only=True, navigation_only=True) if ids else []
     session_bounds = {row['module_id']: row for row in bounds}
+    projection_month = requested or current
+    active_module_ids = []
+    for module_id, module in modules.items():
+        session_months = (session_bounds.get(module_id) or {}).get('session_months') or []
+        start_month = day(module.get('start_date'))[:7]
+        end_month = day(module.get('end_date'))[:7]
+        if (projection_month in session_months
+                or start_month and start_month <= projection_month <= (end_month or projection_month)
+                or not start_month and not end_month):
+            active_module_ids.append(module_id)
+    learning = learning_projection(source, owner, records, compact_content=True,
+                                   monthly_month=projection_month,
+                                   active_module_ids=active_module_ids,
+                                   **({'monthly_assignments': True} if v2 else {}))
+    subjects = display_subjects(learning)
     for subject in subjects:
         module_id = (spine['moduleLinks'].get(subject['id']) or {}).get('id') or subject.get('moduleId') or (subject['id'][8:] if subject['id'].startswith('current:') else None)
         subject['moduleId'] = module_id
         module = modules.get(module_id) or {}
         dates = [a['date'] for a in subject['activities'] if a['date'] and not a.get('needsReview')]
+        dates.extend((learning.get('metadata') or {}).get('module_activity_dates', {}).get(module_id, []))
         bound = session_bounds.get(module_id) or {}
         dates.extend(day(bound.get(key)) for key in ('first_start', 'last_start') if bound.get(key))
         subject['dates'] = dates
@@ -273,9 +288,14 @@ def read_monthly(source, kind, owner, profile, request, *, canonical_contract=Fa
     # history. None of it is consumed when this board has no rendered sessions.
     if v2:
         unique_sessions = dict(list(unique_sessions.items())[:3])
-    attendance_options = {'monthly': month}
+    attendance_options = {
+        'monthly': month,
+        'module_ids': ids,
+        'learner_profile_id': owner['id'],
+    }
     if v2:
         attendance_options['monthly_occurrences'] = {(f"teams:{s['id']}", session_day(s['start'])) for s in unique_sessions.values()}
+        attendance_options['occurrence_ids'] = list(unique_sessions)
     attendance = read_workspace(source, kind, **attendance_options)['lectures'] if unique_sessions else []
     attendance_by_occurrence = {}
     for lecture in attendance:

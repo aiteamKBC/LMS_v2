@@ -11,6 +11,7 @@ from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 
 from login.permissions import learner_self_or_admin, learner_self_or_staff
+from old_otjh.service import ServiceError
 from .assignment_attempts import HISTORY_KEY, preserve_attempts, submission_attempts
 from .submission_audit import SUBMISSION_AUDIT_SQL, record_submission_row
 
@@ -50,7 +51,7 @@ def _component_ksb_weights(component_ref):
         return {}
     try:
         with connections["enrolment"].cursor() as cur:
-            from curriculum_api.learning_storage import read_table
+            from curriculum_api.catalogue.infrastructure.learning_read_routes import read_table
             cur.execute(f"select ksb_mappings from {read_table('components', cur.db)} where id = %s limit 1", [component_ref])
             row = cur.fetchone()
     except DatabaseError:
@@ -76,42 +77,28 @@ def _component_ksb_weights(component_ref):
     return weights
 
 
-def _learner_profile_ids_for_source(cur, learner_id):
+def _learner_profile_ids_for_source(cur, learner_id, learner_kind=None):
+    """Resolve an enrolment route id to its exact canonical profile owner."""
     learner_id = _text(learner_id)
     if not learner_id:
         return []
-
-    cur.execute('select id::text from "Learner".learners where enrolment_id::text = %s', [learner_id])
-    linked = [_text(row[0]) for row in cur.fetchall() if row and _text(row[0])]
-    if linked:
-        return sorted(set(linked))
-    email = ""
-    cur.execute('select "Email" from enrolment."Created_users" where id::text = %s limit 1', [learner_id])
-    row = cur.fetchone()
-    if row:
-        email = _text(row[0])
-
-    if email:
-        cur.execute(
-            """
-            select id::text
-              from "Learner".learners
-             where enrolment_id is null
-               and lower(email) = lower(%s)
-               and not exists (
-                   select 1 from enrolment."Created_users" other
-                    where other.id::text <> %s and lower(other."Email") = lower(%s)
-               )
-            """,
-            [email, learner_id, email],
-        )
-    else:
-        cur.execute('select id::text from "Learner".learners where id::text = %s and enrolment_id is null', [learner_id])
-    ids = {_text(row[0]) for row in cur.fetchall() if row and _text(row[0])}
+    try:
+        params = [int(learner_id)]
+    except (TypeError, ValueError):
+        return []
+    kind_sql = ""
+    if learner_kind is not None:
+        kind_sql = " and learner_type = %s"
+        params.append(_text(learner_kind))
+    cur.execute(
+        'select id from "Learner".learners where enrolment_id = %s' + kind_sql,
+        params,
+    )
+    ids = {int(row[0]) for row in cur.fetchall() if row and row[0] is not None}
     return sorted(ids) if len(ids) == 1 else []
 
 
-def _reflection_lineage(learner_id, activity_id):
+def _reflection_lineage(learner_id, activity_id, learner_kind=None):
     component_ref = _text(activity_id)
     lineage = {
         "progress_entry_id": None,
@@ -126,11 +113,11 @@ def _reflection_lineage(learner_id, activity_id):
         return lineage
     try:
         with connections["enrolment"].cursor() as cur:
-            from curriculum_api.learning_storage import read_table
+            from curriculum_api.catalogue.infrastructure.learning_read_routes import read_table
             cur.execute(f"select id from {read_table('components', cur.db)} where id = %s limit 1", [component_ref])
             if cur.fetchone():
                 lineage["component_ref"] = component_ref
-            learner_ids = _learner_profile_ids_for_source(cur, learner_id)
+            learner_ids = _learner_profile_ids_for_source(cur, learner_id, learner_kind)
             if not learner_ids:
                 return lineage
             cur.execute(
@@ -205,13 +192,20 @@ def _submit_reflection(request):
         if refused is not None:
             return refused
     is_extra_activity = activity_type == "extra_activity"
-    is_assignment_form = activity_type.lower() in ("assignment", "extra_activity")
+    is_assignment_form = activity_type.lower() == "assignment"
     if is_extra_activity:
         from .extra_activities import prepare_extra_activity
         try:
             payload = prepare_extra_activity(payload)
+            from .extra_activity_store import save_response
+            return save_response(payload)
         except ValueError as exc:
             return _error(str(exc))
+        except ServiceError as exc:
+            return _error(str(exc), exc.status)
+        except DatabaseError:
+            logger.exception("Could not save learner Extra Activity.")
+            return _error("Could not save the Extra Activity for review.", 502)
     assignment_answer = _text(payload.get("assignmentAnswer"))
     what_you_learned = _text(payload.get("whatYouLearned"))
     business_impact = _text(payload.get("businessImpact"))
@@ -231,7 +225,7 @@ def _submit_reflection(request):
                 missing.append("assignmentAnswer")
             if not what_you_learned:
                 missing.append("whatYouLearned")
-            if not business_impact and not is_extra_activity:
+            if not business_impact:
                 missing.append("businessImpact")
             if missing:
                 return _error("Complete all assignment sections before submitting: " + ", ".join(missing) + ".")
@@ -243,13 +237,6 @@ def _submit_reflection(request):
     # versioned monthly payload in full_submission and use the learning answer here.
     if is_assignment_form:
         learning_reflection = what_you_learned or assignment_answer
-        if is_extra_activity:
-            monthly = _dict(payload.get('monthlyAssignment'))
-            learning_reflection = "\n\n".join([
-                "Activity answer:\n" + assignment_answer, "What I learned:\n" + what_you_learned,
-                "What I understood:\n" + _text(monthly.get('understood')),
-                "Skills I gained:\n" + _text(monthly.get('gainedSkills')),
-            ])
     submission_status = "draft" if submission_mode == "draft" else "submitted_for_tutor_review"
 
     raw_date = _text(payload.get("dateCompleted"))
@@ -285,7 +272,13 @@ def _submit_reflection(request):
     # The receipt for credited lecture time is server-owned, including on drafts.
     full_submission.pop('lectureReflectionTime', None)
     full_submission.pop("selectAssignmentTopic", None)
-    lineage = _reflection_lineage(learner_id, activity_id)
+    from .live_session_access import access_refusal
+    refused = access_refusal(learner_kind, learner_id, activity_id)
+    time_locked = refused is not None and refused.status_code == 409
+    requested_time = payload.get('additionalReflectionSeconds') not in (None, 0) or payload.get('reflectionTimeOperation') is not None
+    if refused is not None and (not time_locked or requested_time):
+        return refused
+    lineage = _reflection_lineage(learner_id, activity_id, learner_kind)
     if assignment_topic and submission_mode == "draft":
         # An optional draft must never claim the previous topic\'s progress entry.
         lineage["progress_entry_id"] = None
@@ -400,11 +393,7 @@ def _submit_reflection(request):
 
                 if is_assignment_form and submission_mode == "submit":
                     from .monthly_assignment import assignment_checks
-                    if is_extra_activity:
-                        from .extra_activities import extra_activity_checks
-                        checks = extra_activity_checks(payload)
-                    else:
-                        checks = assignment_checks(payload)
+                    checks = assignment_checks(payload)
                     missing_checks = [check["label"] for check in checks if not check["passed"]]
                     if missing_checks:
                         return JsonResponse({"error": "Complete the outstanding submission requirements. Your draft is saved.", "checks": checks}, status=400)
@@ -412,6 +401,14 @@ def _submit_reflection(request):
                     full_submission["qualityScore"] = quality_score
                     full_submission["qualityChecks"] = checks
 
+                if time_locked:
+                    # Text-only reflections may be saved before the recording.
+                    # Their read-only time snapshot cannot introduce or replace
+                    # hours, including from an old tab or a forged request.
+                    payload['actualTimeHours'] = _text(stored.get('actualTimeHours'))
+                    full_submission['actualTimeHours'] = payload['actualTimeHours']
+                    payload.pop('additionalReflectionSeconds', None)
+                    full_submission.pop('additionalReflectionSeconds', None)
                 from .lecture_reflection_time import add_reflection_time
                 time_receipt = add_reflection_time(payload, stored, submission_mode=submission_mode)
                 preserve_time_history(full_submission, stored, time_receipt,
@@ -487,9 +484,9 @@ def _submit_reflection(request):
                     group_ref = excluded.group_ref,
                     module_ref = excluded.module_ref,
                     week_ref = excluded.week_ref,
-                    coach_feedback = CASE WHEN excluded.activity_type IN ('assignment', 'extra_activity') THEN NULL ELSE learning_reflection_submissions.coach_feedback END,
-                    reviewed_by = CASE WHEN excluded.activity_type IN ('assignment', 'extra_activity') THEN NULL ELSE learning_reflection_submissions.reviewed_by END,
-                    reviewed_at = CASE WHEN excluded.activity_type IN ('assignment', 'extra_activity') THEN NULL ELSE learning_reflection_submissions.reviewed_at END,
+                    coach_feedback = CASE WHEN excluded.activity_type = 'assignment' THEN NULL ELSE learning_reflection_submissions.coach_feedback END,
+                    reviewed_by = CASE WHEN excluded.activity_type = 'assignment' THEN NULL ELSE learning_reflection_submissions.reviewed_by END,
+                    reviewed_at = CASE WHEN excluded.activity_type = 'assignment' THEN NULL ELSE learning_reflection_submissions.reviewed_at END,
                     submitted_at = now()
                 returning """ + SUBMISSION_AUDIT_SQL + """
                 """,
@@ -574,6 +571,15 @@ def get_reflection_submission(request):
         return _error("learnerId is required.")
     if bool(activity_type) != bool(activity_id):
         return _error("activityType and activityId must be provided together.")
+    if activity_type == 'extra_activity':
+        try:
+            from .extra_activity_store import get_response
+            return get_response(learner_id, learner_kind, activity_id)
+        except ServiceError as exc:
+            return _error(str(exc), exc.status)
+        except DatabaseError:
+            logger.exception("Could not load learner Extra Activity.")
+            return _error("Could not load the saved Extra Activity.", 502)
 
     from .assignment_topics import topic_id, aggregate_statuses
     from .submission_visibility import VISIBLE_SUBMISSION_SQL
@@ -588,12 +594,16 @@ def get_reflection_submission(request):
             from .legacy_assignments import classified_response
             return classified_response(learner_kind, learner_id, activity_id)
         with connections["enrolment"].cursor() as cur:
+            owner_ids = _learner_profile_ids_for_source(cur, learner_id, learner_kind)
+            if len(owner_ids) != 1:
+                return _error("The canonical learner identity could not be verified.", 409)
+            owner_id = owner_ids[0]
             if activity_type == "assignment" and request.GET.get("view") == "topics":
                 cur.execute(f'''SELECT assignment_topic_id, status, full_submission, submitted_at
                     FROM "Learner".learning_reflection_submissions AS submission
                     WHERE learner_kind=%s AND learner_id=%s AND activity_type=\'assignment\' AND activity_id=%s
                       AND {VISIBLE_SUBMISSION_SQL}
-                    ORDER BY assignment_topic_id''', [learner_kind, learner_id, activity_id])
+                    ORDER BY assignment_topic_id''', [learner_kind, owner_id, activity_id])
                 states = []
                 for identity, status, content, submitted_at in cur.fetchall():
                     content = json.loads(content) if isinstance(content, str) else content or {}
@@ -609,9 +619,10 @@ def get_reflection_submission(request):
                            full_submission -> 'assignmentAttemptHistory'
                     from "Learner"."learning_reflection_submissions" AS submission
                     where learner_kind = %s and learner_id = %s
+                      and activity_type <> 'extra_activity'
                       and {VISIBLE_SUBMISSION_SQL}
                     """,
-                    [learner_kind, learner_id],
+                    [learner_kind, owner_id],
                 )
                 return JsonResponse(
                     {
@@ -633,7 +644,7 @@ def get_reflection_submission(request):
                 order by case status when \'accepted\' then 0 when \'submitted_for_tutor_review\' then 1 else 2 end, submitted_at desc
                 limit 1
                 """,
-                [learner_kind, learner_id, activity_type, activity_id,
+                [learner_kind, owner_id, activity_type, activity_id,
                  selected_topic if "assignmentTopicId" in request.GET else None, selected_topic],
             )
             row = cur.fetchone()
@@ -667,7 +678,7 @@ def get_reflection_submission(request):
         {
             "submission": {
                 **{key: value for key, value in full_submission.items() if key != HISTORY_KEY},
-                "submissionAttempts": submission_attempts(full_submission, row[1], row[6], row[3], row[4], row[5]) if activity_type in ("assignment", "extra_activity") else [],
+                "submissionAttempts": submission_attempts(full_submission, row[1], row[6], row[3], row[4], row[5]) if activity_type == "assignment" else [],
                 "id": str(row[0]),
                 "status": row[1],
                 "coachFeedback": row[3],

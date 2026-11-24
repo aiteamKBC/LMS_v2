@@ -1,3 +1,4 @@
+import { LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
 import { useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
@@ -29,7 +30,7 @@ export function EmployerLearningOverview({ employerId, kind, learnerId }: Identi
   const base = `/employers/${employerId}/learner/${kind}/${learnerId}`;
   return <div className={`${overviewStyles.overview} ${layout.embeddedLearnerTheme} learner-dashboard employer-learner-dashboard`}><div className={overviewStyles.dashboardTabContent}>
     {query.error && <p role="alert">{query.error.message} <button onClick={() => void query.refetch()}>Retry overview</button></p>}
-    {!payload && query.isPending && <p role="status">Loading learner progress…</p>}
+    {!payload && query.isPending && <p ><LoadingSkeleton label="Loading learner progress…" variant="rows" /></p>}
     {payload && <>
       <div className={`${overviewStyles.metrics} ${overviewStyles.metricsInline}`} style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 16rem), 1fr))' }}>
         <DashboardProgressStat href={base} label="Attendance" value={payload.attendance?.present.toLocaleString('en-GB') ?? '—'}
@@ -74,7 +75,7 @@ export function EmployerTrainingPlan({ employerId, kind, learnerId }: Identity) 
   }), [payload, start, end]);
   return <div className={`${styles.root} ${layout.root} ${layout.embeddedLearnerTheme} learner-dashboard`}>
     {query.error && <p role="alert">{query.error.message} <button onClick={() => void query.refetch()}>Retry training plan</button></p>}
-    {!payload && query.isPending && <p role="status">Loading training plan…</p>}
+    {!payload && query.isPending && <p ><LoadingSkeleton label="Loading training plan…" variant="rows" /></p>}
     {payload && <section aria-label="Monthly learning and coaching">
       <div className={layout.toolbar}><div className={layout.title}><h2>Training plan</h2></div></div>
       <div className={`${layout.cards} ${layout.trainingCards}`}>

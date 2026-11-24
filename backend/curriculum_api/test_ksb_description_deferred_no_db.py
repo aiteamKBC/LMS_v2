@@ -6,6 +6,7 @@ defer it and project_rows() fills it from a cached standard_ksbs lookup;
 hand-written SQL through the relation still gets the column. Nothing here
 opens a connection.
 """
+from .catalogue.tests.parity.read_dependency_test_support import database_read_fixture
 from unittest import mock
 
 from django.test import SimpleTestCase
@@ -54,7 +55,7 @@ class DeferredRelationTests(SimpleTestCase):
 
     def test_curriculum_select_defers_it_and_keeps_the_key_it_is_looked_up_by(self):
         with PostgresVendor(), \
-             mock.patch.object(views, 'column_names', return_value=NORMALISED_KSB), \
+             database_read_fixture('column_names', return_value=NORMALISED_KSB), \
              mock.patch.object(views.archive_state, 'uses_status', return_value=True):
             narrow = views.authoring_select_sql('ksb_mappings', 'component_id = %s', columns=['id', 'ksb_description'],
                                                 ensure_tables=False)

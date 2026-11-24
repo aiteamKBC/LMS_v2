@@ -4,7 +4,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { coachViewAs } from '@/lib/coachViewAs';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { CoachMonthList, MonthIndexSkeleton } from '@/features/monthly-logs/MonthList';
-import { MonthlyLog } from '@/features/monthly-logs/page';
+import { MonthlyLog } from '@/features/monthly-logs/MonthlyLog';
 import { coachLogQueryOptions, getCoachLogYear, getCoachLogDetail, type CoachLogYear, type CoachLogDetail } from '../api/monthlyLogsApi';
 
 export function CoachLearnerLogs({ id, month }: { id: string; month?: string }) {

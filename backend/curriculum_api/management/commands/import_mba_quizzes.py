@@ -26,7 +26,7 @@ hand in the builder is never overwritten.
 from __future__ import annotations
 
 from django.core.management.base import BaseCommand, CommandError
-from django.db import OperationalError, connection, transaction
+from django.db import IntegrityError, OperationalError, connection, transaction
 
 from curriculum_api import views
 from curriculum_api.management.commands.import_mba_curriculum import (
@@ -34,6 +34,8 @@ from curriculum_api.management.commands.import_mba_curriculum import (
 )
 from quiz_api.views import AI_GENERATION_QUESTION_TYPES, _normalise_question_type
 from quiz_api.answer_keys import quiz_publication_error
+from quiz_api.history import is_question_reference_violation, referenced_question_ids
+from quiz_api.models import QuizPackage, QuizQuestion
 
 #: Marks the quizzes this importer owns, so a re-run only replaces its own.
 AUTHOR = 'MBA legacy import'
@@ -110,7 +112,7 @@ class Command(BaseCommand):
         self.stats = {
             'quizzes': 0, 'updated': 0, 'questions': 0, 'answers': 0,
             'no_component': 0, 'no_questions': 0, 'foreign_quiz': 0, 'already_done': 0,
-            'connection_failures': 0,
+            'connection_failures': 0, 'historical_quiz': 0,
             'questions_without_a_correct_option': 0, 'questions_without_options': 0,
         }
         self.problems = []
@@ -142,7 +144,7 @@ class Command(BaseCommand):
             f'{self.stats["questions"]} questions, {self.stats["answers"]} answer options'
         ))
         for key in ('already_done', 'no_component', 'no_questions', 'foreign_quiz',
-                    'connection_failures',
+                    'connection_failures', 'historical_quiz',
                     'questions_without_options', 'questions_without_a_correct_option'):
             if self.stats[key]:
                 self.stdout.write(f'  {key.replace("_", " ")}: {self.stats[key]}')
@@ -159,8 +161,15 @@ class Command(BaseCommand):
         every remaining course waits for somebody to restart it.
         """
         for attempt in range(1, CONNECTION_ATTEMPTS + 1):
+            before = dict(self.stats)
             try:
                 self.import_one(material, module_id, module_title, programme_name)
+                return
+            except IntegrityError as error:
+                if not is_question_reference_violation(error):
+                    raise
+                self.stats = before
+                self._retain_historical_quiz(material.get('component_id'))
                 return
             except OperationalError as error:
                 connection.close()  # force a fresh one on the next query
@@ -209,6 +218,10 @@ class Command(BaseCommand):
 
     # -- one quiz -----------------------------------------------------------
 
+    def _retain_historical_quiz(self, component_id):
+        self.stats['historical_quiz'] = self.stats.get('historical_quiz', 0) + 1
+        self.problems.append(f'quiz on {component_id} has learner answers — left unchanged')
+
     def import_one(self, material, module_id, module_title, programme_name):
         component_id = views.clean_str(material.get('component_id'))
         definition = material.get('quiz_definition') or {}
@@ -249,6 +262,9 @@ class Command(BaseCommand):
             self.problems.append(f'not imported: {title[:60]} / {error}')
             return
         if self.dry_run:
+            if existing and referenced_question_ids(QuizQuestion.objects.filter(quiz_id=existing[0])):
+                self._retain_historical_quiz(component_id)
+                return
             self.stats['updated' if existing else 'quizzes'] += 1
             self.stats['questions'] += len(prepared)
             self.stats['answers'] += sum(len(options) for _text, _type, options in prepared)
@@ -256,6 +272,11 @@ class Command(BaseCommand):
 
         with transaction.atomic():
             quiz_id = existing[0] if existing else None
+            if quiz_id:
+                QuizPackage.objects.select_for_update().get(pk=quiz_id)
+                if referenced_question_ids(QuizQuestion.objects.filter(quiz_id=quiz_id), lock=True):
+                    self._retain_historical_quiz(component_id)
+                    return
             with connection.cursor() as cursor:
                 fields = {
                     'title': title[:255],

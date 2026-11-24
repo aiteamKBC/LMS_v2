@@ -23,7 +23,6 @@ class LegacyQuizRetakeStorageTests(SimpleTestCase):
         for obj, name, value in (
             (retakes, 'GRANTS', 'pg_temp.retake_grants'),
             (subject_store, 'ATTEMPTS', 'pg_temp.retake_attempts'),
-            (subject_store, 'COVERS', 'pg_temp.retake_covers'),
             (progress_transfer_store, 'ITEMS', 'pg_temp.retake_transfers'),
         ):
             self.enterContext(patch.object(obj, name, value))
@@ -43,7 +42,6 @@ class LegacyQuizRetakeStorageTests(SimpleTestCase):
                 kind text,definition jsonb,answers jsonb,score_percent numeric,passed boolean,
                 completed boolean DEFAULT false,reading_confirmed boolean DEFAULT false,
                 started_at timestamptz DEFAULT now(),submitted_at timestamptz)''')
-            cur.execute('CREATE TEMP TABLE retake_covers (subject_ref text,storage_path text)')
             cur.execute('CREATE TEMP TABLE retake_transfers (enrolment_id bigint,course_ref text)')
             sql = import_module('learner_api.migrations.0025_legacy_quiz_retake_grants').SQL
             sql = (sql.replace('CREATE TABLE', 'CREATE TEMP TABLE')
@@ -60,7 +58,7 @@ class LegacyQuizRetakeStorageTests(SimpleTestCase):
 
     def drop_tables(self):
         with self.db.cursor() as cur:
-            for name in ('grants', 'attempts', 'users', 'covers', 'transfers'):
+            for name in ('grants', 'attempts', 'users', 'transfers'):
                 cur.execute('DROP TABLE IF EXISTS pg_temp.retake_' + name)
 
     def test_only_exact_learner_identity_course_and_quiz_receive_permission(self):

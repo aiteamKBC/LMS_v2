@@ -44,6 +44,8 @@ import { ActivityRetakeTimeDialog, ActivityTimeLimitNotice } from '@/components/
 import { countedActivityTime, activityTimeIssue, type ActivityTimeChoice } from '@/lib/activityTimeDecision';
 import { CompletionValidationError, type WorkingRuleReason } from '@/lib/completionValidation';
 import { ActivityTimeConflictError } from '@/lib/activityTimeConflict';
+import { formatQuizResult } from '@/lib/quizDefaults';
+import { formatQuizGradeRange, type QuizGradeSettings } from '@/lib/quizGradeSettings';
 
 const learnerNav = roleNavMap.learner;
 
@@ -350,6 +352,7 @@ export default function QuizTakePage() {
   const [timeLimitIssue, setTimeLimitIssue] = useState('');
   const previousQuizSeconds = result?.attempt?.countedSeconds ?? countedActivityTime((detail?.quizAttempts || []).filter(row => String(row.quizId) === String(quizId)));
   const startQuiz = () => {
+    if (quiz?.quizPolicy?.canAttempt === false) return;
     if (latestAttempt || result) { setRetakeTimeOpen(true); return; }
     retakeTimeChoice.current = undefined;
     retakePrevious.current = 0; retakeReason.current = '';
@@ -393,6 +396,7 @@ export default function QuizTakePage() {
 
   const viewLatestResult = () => {
     if (!quiz || !latestAttempt) return;
+    if (quiz.policyEnabled && quiz.attemptHistory === false) return;
     setResult(resultFromStoredAttempt(quiz, latestAttempt));
     setRewardNotice('');
     setPhase('results');
@@ -477,6 +481,10 @@ export default function QuizTakePage() {
       });
       setReflectionChoiceOpen(false);
       setResult(res);
+      if (res.quizPolicy) setQuiz(current => current ? {
+        ...current, quizPolicy: res.quizPolicy,
+        unavailableReason: res.quizPolicy?.unavailableReason ?? null,
+      } : current);
       setRewardNotice(rewardsUnavailable ? REWARDS_UNAVAILABLE_NOTICE : '');
       clearRewardObservations(tracking);
       setPhase('results');
@@ -693,6 +701,14 @@ function IntroScreen({ quiz, allocatedHours, totalPoints, latestAttempt, onStart
   onViewResult: () => void;
   onBack: () => void;
 }) {
+  const [gradeTab, setGradeTab] = useState(false);
+  const grades = quiz.policyEnabled ? quiz.gradeSettings : null;
+  if (gradeTab && grades?.coursePageDisplay === 'separate_tab') return (
+    <div className="rounded-2xl border bg-background-50 p-6">
+      <button type="button" onClick={() => setGradeTab(false)} className="mb-4 text-sm font-semibold text-primary-700">Back to quiz overview</button>
+      <LearnerGradeTable settings={grades} />
+    </div>
+  );
   return (
     <div className="bg-background-50 rounded-2xl border border-foreground-200/60 p-6 md:p-8 card-premium">
       <div className="flex items-center gap-3 mb-4">
@@ -713,6 +729,15 @@ function IntroScreen({ quiz, allocatedHours, totalPoints, latestAttempt, onStart
         <StatTile icon="ri-medal-line" label="Total points" value={String(totalPoints)} />
       </div>
 
+      {grades?.coursePageDisplay === 'separate_tab' && <button type="button" onClick={() => setGradeTab(true)} className="mb-4 text-sm font-semibold text-primary-700">View grading scale</button>}
+      {grades?.coursePageDisplay === 'inside_quiz' && <details className="mb-4 rounded-lg border p-3">
+        <summary className="cursor-pointer text-sm font-semibold">Grading scale</summary>
+        <LearnerGradeTable settings={grades} />
+      </details>}
+      {quiz.quizPolicy && <p className="mb-4 text-sm text-foreground-600">
+        Attempts used: {quiz.quizPolicy.attemptsUsed}{quiz.quizPolicy.attemptLimit != null ? ` / ${quiz.quizPolicy.attemptLimit}` : ' (unlimited)'}.
+        {quiz.quizPolicy.bestGrade != null && <> Highest score: <strong>{formatQuizResult(quiz.quizPolicy.bestGrade, quiz.policyEnabled ? quiz.gradeSettings : null)}</strong>.</>}
+      </p>}
       {latestAttempt ? (
         <div className="grid gap-3 sm:grid-cols-2 mb-6">
           <div className={`rounded-xl border p-4 ${latestAttempt.passed ? 'border-emerald-200 bg-emerald-50/60' : 'border-red-200 bg-red-50/60'}`}>
@@ -734,9 +759,9 @@ function IntroScreen({ quiz, allocatedHours, totalPoints, latestAttempt, onStart
                 <AppIcon className={latestAttempt.passed ? 'ri-trophy-line' : 'ri-close-circle-line'} />
               </span>
             </div>
-            <button type="button" onClick={onViewResult} className="mt-4 inline-flex w-full items-center justify-center gap-2 rounded-lg border border-foreground-200 bg-background-50 px-4 py-2.5 text-sm font-semibold text-foreground-800 transition-colors hover:bg-background-100">
+            {(!quiz.policyEnabled || quiz.attemptHistory !== false) && <button type="button" onClick={onViewResult} className="mt-4 inline-flex w-full items-center justify-center gap-2 rounded-lg border border-foreground-200 bg-background-50 px-4 py-2.5 text-sm font-semibold text-foreground-800 transition-colors hover:bg-background-100">
               <AppIcon className="ri-file-list-3-line" /> View Result Details
-            </button>
+            </button>}
           </div>
 
           <div className="rounded-xl border border-primary-200 bg-primary-50/60 p-4">
@@ -799,7 +824,8 @@ function QuizScreen({
   onSubmit: () => void;
 }) {
   const question = quiz.questions[current];
-  const isLast = current === quiz.questions.length - 1;
+  const showAll = quiz.policyEnabled && (quiz.quizStyle === 'default' || quiz.quizStyle === 'global');
+  const isLast = showAll || current === quiz.questions.length - 1;
   const answeredCount = quiz.questions.filter((q) => isAnswered(answers[String(q.id)])).length;
 
   const timeLimitSeconds = quiz.duration ? quiz.duration * (quiz.timeUnit === 'seconds' ? 1 : 60) : null;
@@ -832,7 +858,10 @@ function QuizScreen({
         {quiz.questions.map((q, i) => (
           <button
             key={q.id}
-            onClick={() => onJump(i)}
+            onClick={() => {
+              onJump(i);
+              if (showAll) document.getElementById(`quiz-question-${quiz.questions[i].id}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            }}
             aria-current={i === current ? 'step' : undefined}
             className={`w-8 h-8 rounded-lg text-xs font-semibold transition-colors cursor-pointer ${
               i === current
@@ -847,17 +876,17 @@ function QuizScreen({
         ))}
       </div>
 
-      {/* Active question */}
-      <div className="bg-background-50 rounded-2xl border border-foreground-200/60 p-5 md:p-6 card-premium">
+      {/* Authored layout; inputs retain the same answer map in every style. */}
+      {(showAll ? quiz.questions : [question]).map((item, index) => <div key={item.id} id={`quiz-question-${item.id}`} className="bg-background-50 rounded-2xl border border-foreground-200/60 p-5 md:p-6 card-premium">
         <div className="flex items-center gap-2 mb-3">
-          <span className="text-[11px] font-semibold uppercase tracking-wider text-foreground-400">Question {current + 1} of {quiz.questions.length}</span>
-          <span className="text-[11px] text-foreground-400">· {question.points} {question.points === 1 ? 'point' : 'points'}</span>
+          <span className="text-[11px] font-semibold uppercase tracking-wider text-foreground-400">Question {(showAll ? index : current) + 1} of {quiz.questions.length}</span>
+          <span className="text-[11px] text-foreground-400">· {item.points} {item.points === 1 ? 'point' : 'points'}</span>
         </div>
-        <p className="text-base font-semibold text-foreground-900 mb-5">{question.text}</p>
-        <QuizQuestionImage imageUrl={question.imageUrl} />
+        <p className="text-base font-semibold text-foreground-900 mb-5">{item.text}</p>
+        <QuizQuestionImage imageUrl={item.imageUrl} />
 
-        <QuestionInput question={question} value={answers[String(question.id)]} onChange={(v) => onAnswer(question.id, v)} />
-      </div>
+        <QuestionInput question={item} value={answers[String(item.id)]} onChange={(v) => onAnswer(item.id, v)} />
+      </div>)}
 
       {submitError && (
         <div className="bg-red-50 border border-red-200 rounded-xl px-4 py-3 text-sm text-red-700">{submitError}</div>
@@ -867,7 +896,7 @@ function QuizScreen({
       <div className="flex items-center gap-3">
         <button
           onClick={onPrev}
-          disabled={current === 0}
+          disabled={showAll || current === 0}
           className="px-4 py-2.5 rounded-xl text-sm font-medium text-foreground-600 hover:bg-background-100 transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
         >
           Previous
@@ -1138,6 +1167,18 @@ function MatchingInputRich({ question, value, onChange }: {
 /* ═══════════════════════════════════════════════════════
    RESULTS
    ═══════════════════════════════════════════════════════ */
+function LearnerGradeTable({ settings }: { settings: QuizGradeSettings }) {
+  return <div className="overflow-x-auto">
+    <table className="w-full text-left text-sm">
+      <caption className="py-3 text-left font-semibold">Grading scale</caption>
+      <thead><tr><th className="p-2">Grade</th><th className="p-2">Percentage</th><th className="p-2">Grade points</th></tr></thead>
+      <tbody>{settings.rows.map((row, index) => <tr key={row.grade}>
+        <th className="p-2">{row.grade}</th><td className="p-2">{formatQuizGradeRange(settings.rows, index)}</td><td className="p-2">{row.point}</td>
+      </tr>)}</tbody>
+    </table>
+  </div>;
+}
+
 function ResultsScreen({ quiz, result, kind, learnerId, onRetake }: {
   quiz: Quiz;
   result: QuizAttemptResult;
@@ -1156,12 +1197,15 @@ function ResultsScreen({ quiz, result, kind, learnerId, onRetake }: {
         <p className="text-sm text-foreground-400 mb-6">{quiz.title}</p>
 
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-6">
-          <StatTile icon="ri-percent-line" label="Grade" value={`${Math.round((result.grade ?? attempt.grade) * 100)}%`} />
-          <StatTile icon="ri-check-double-line" label="Score" value={`${result.achievedScore ?? attempt.achievedScore}/${result.totalScore ?? attempt.totalScore}`} />
+          <StatTile icon="ri-percent-line" label="This attempt" value={formatQuizResult(result.grade ?? attempt.grade, quiz.policyEnabled ? quiz.gradeSettings : null)} />
+          <StatTile icon="ri-check-double-line" label="Score" value={`${result.achievedScore ?? attempt.achievedScore}${quiz.policyEnabled ? quiz.gradeSettings?.scoreSeparator ?? '/' : '/'}${result.totalScore ?? attempt.totalScore}`} />
           <StatTile icon="ri-medal-line" label="Points" value={`${result.earned}/${result.possible}`} />
           <StatTile icon="ri-timer-line" label="Time taken" value={attempt.timeTaken} />
         </div>
 
+        {quiz.quizPolicy?.bestGrade != null && <p className="mb-4 text-sm text-foreground-700">
+          Highest score kept: <strong>{formatQuizResult(quiz.quizPolicy.bestGrade, quiz.policyEnabled ? quiz.gradeSettings : null)}</strong>. All attempts remain recorded.
+        </p>}
         <div className="flex flex-col justify-center gap-3 sm:flex-row">
           <button
             onClick={onRetake}
@@ -1208,7 +1252,7 @@ function ResultsScreen({ quiz, result, kind, learnerId, onRetake }: {
                   <span className="font-medium text-foreground-500">Your answer: </span>
                   {q.chosenAnswer || <span className="italic text-foreground-400">No answer</span>}
                 </p>
-                {!q.correct && q.correctAnswer && (
+                {(!quiz.policyEnabled || quiz.showCorrectAnswer !== false) && !q.correct && q.correctAnswer && (
                   <p className="text-xs text-emerald-700">
                     <span className="font-medium">Correct answer: </span>{q.correctAnswer}
                   </p>

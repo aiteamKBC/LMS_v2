@@ -21,6 +21,7 @@ class DashboardMetricsTests(SimpleTestCase):
         # Legacy calculation helpers are retained only for migration comparison;
         # the live read_metrics entry point is covered separately as SSOT-only.
         self.enterContext(patch('learner_api.dashboard_metrics.canonical_learning.enabled', return_value=False))
+        self.enterContext(patch('learner_api.dashboard_metrics.canonical_learning.profile', return_value={'id': 70}))
 
     def test_authored_snake_case_ksb_mapping_counts_after_completion(self):
         native = [{'id': 'reading', 'ksb_mappings': json.dumps([{'ksb_code': 'K1.1', 'weight': 1}])}]
@@ -194,7 +195,8 @@ class DashboardMetricsTests(SimpleTestCase):
                 # Keep only the parent's matching archive event, including the
                 # nested KSB read; an arbitrary parent stamp can expose ghosts.
                 self.assertIn(visible_child_sql('c'), query)
-                self.assertIn(visible_child_sql('k'), query)
+                self.assertIn("lower(btrim(coalesce(mapping.status, ''))) <> 'inactive'", query)
+                self.assertIn('JOIN curriculum.standard_ksbs', query)
                 self.assertEqual(params, [['module-one', 'module-two']])
 
     def test_migrated_metrics_keep_audited_inventory_and_refresh_saved_progress(self):

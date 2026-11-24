@@ -7,19 +7,23 @@ import type { Quiz } from './quizzes';
 // ============================================================================
 // Learner-facing free-courses API client.
 //
-// Reads the free courses assigned to a learner from the learner-gated endpoint
-// /learner_api/free-courses/<kind>/<pk>/. Free courses carry no hours, KSBs or
-// progress by design, so the list is deliberately a lightweight summary. The
-// authored week/activity tree is fetched only after a learner opens one course.
-// Builder courses carry a moduleId and open the normal learning workspace; only
-// legacy courses use the tree and isolated completion endpoints in this client.
+// Reads canonical assignments and isolated progress through learner-gated APIs.
+// The list is a lightweight summary; the canonical week/activity tree loads
+// when a course is opened. Completion is independent of programme OTJH/KSBs.
 // ============================================================================
+
+export type FreeCourseActivityState = 'not_started' | 'reading_viewed' | 'completed';
 
 /** One openable activity inside a free-course week. */
 export interface FreeCourseActivity {
+  lastActivityAt?: string | null;
+  /** Existing accepted ledger time; never additional awarded hours. */
+  acceptedActualSeconds?: number;
   componentId: string;
   title: string;
   type: string;                 // frontend component type, e.g. 'video' | 'reading'
+  /** Allocated curriculum time defines Required; it is not awarded OTJ time. */
+  expectedOtjh?: number | null;
   description?: string | null;
   videoUrl?: string | null;
   audioUrl?: string | null;
@@ -38,7 +42,10 @@ export interface FreeCourseActivity {
   manualUnlock?: boolean;
   /** This learner's own completion of the activity. Its own store — never part
    *  of programme OTJH/KSBs or the overall progress figure. */
-  completed?: boolean;
+  completed?: boolean; // Compatibility alias supplied by the backend.
+  is_completed?: boolean;
+  activity_state?: FreeCourseActivityState;
+  completed_at?: string | null; // Optional historical timestamp, never a completion flag.
 }
 
 export interface FreeCourseWeek {
@@ -50,12 +57,13 @@ export interface FreeCourseWeek {
 }
 
 export interface FreeCourse {
+  acceptedActualSeconds?: number;
   freeCourseId: string;
   courseName: string;
   description: string;
   coverImageUrl: string;
   weeks: FreeCourseWeek[];
-  /** Normal plan identity: use the module workspace for progress and hours. */
+  /** Compatibility metadata; navigation always uses freeCourseId. */
   moduleId?: string;
   weekCount?: number;
   activityCount?: number;
@@ -63,6 +71,8 @@ export interface FreeCourse {
 }
 
 export interface FreeCourseSummary {
+  lastActivityAt?: string | null;
+  acceptedActualSeconds?: number;
   freeCourseId: string;
   courseName: string;
   description: string;
@@ -71,7 +81,7 @@ export interface FreeCourseSummary {
   activityCount: number;
   completedActivities: number;
   progressPercentage: number;
-  /** Builder courses open the normal module workspace rather than the free-course detail view. */
+  /** Compatibility metadata; navigation always uses freeCourseId. */
   moduleId?: string;
 }
 
@@ -115,12 +125,18 @@ export function fetchLearnerFreeCourse(
 /** Record that the learner finished one free-course activity. Its completion is
  *  stored in an isolated table and never affects overall progress/OTJH/KSBs. */
 export async function markFreeCourseActivityComplete(kind: LearnerKind, id: string, componentId: string): Promise<void> {
+  await saveFreeCourseActivityState(kind, id, componentId, 'completed');
+}
+
+export async function saveFreeCourseActivityState(
+  kind: LearnerKind, id: string, componentId: string, activityState: FreeCourseActivityState,
+): Promise<void> {
   let res: Response;
   try {
     res = await learningFetch(`${BASE}/${kind}/${id}/complete/`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ componentId }),
+      body: JSON.stringify(activityState === 'completed' ? { componentId } : { componentId, activityState }),
     });
   } catch {
     throw new Error('Could not reach the server. Please try again.');
@@ -139,11 +155,21 @@ export async function markFreeCourseActivityComplete(kind: LearnerKind, id: stri
 /** Load a quiz through its assigned Free Course component. The server derives
  * the quiz id from that component after checking learner ownership, the current
  * Learning Plan assignment and the canonical course/week/component links. */
-export function fetchFreeCourseQuiz(kind: LearnerKind, id: string, componentId: string): Promise<Quiz> {
-  return readLearnerJson<Quiz>(`${BASE}/${kind}/${id}/quiz/${encodeURIComponent(componentId)}/`);
+export function fetchFreeCourseQuiz(kind: LearnerKind, id: string, componentId: string): Promise<FreeCourseQuizData> {
+  return readLearnerJson<FreeCourseQuizData>(`${BASE}/${kind}/${id}/quiz/${encodeURIComponent(componentId)}/`);
 }
 
+export interface FreeCourseQuizAttempt {
+  attemptId: string;
+  grade: number | null;
+  passed: boolean | null;
+  completed: boolean;
+  submittedAt: string | null;
+}
+export type FreeCourseQuizData = Quiz & { attempts?: FreeCourseQuizAttempt[]; historyOnly?: boolean };
+
 export interface FreeCourseQuizResult {
+  attemptId?: string;
   componentId: string;
   grade: number;        // percentage, e.g. 80
   passed: boolean;
@@ -155,14 +181,14 @@ export interface FreeCourseQuizResult {
  *  isolated free-course store (never OTJH/KSBs). `answers` is keyed by question
  *  id, in the same shape the shared quiz grader expects. */
 export async function submitFreeCourseQuiz(
-  kind: LearnerKind, id: string, componentId: string, answers: Record<string, unknown>,
+  kind: LearnerKind, id: string, componentId: string, answers: Record<string, unknown>, submissionId?: string,
 ): Promise<FreeCourseQuizResult> {
   let res: Response;
   try {
     res = await learningFetch(`${BASE}/${kind}/${id}/quiz/${encodeURIComponent(componentId)}/submit/`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ answers }),
+      body: JSON.stringify({ answers, ...(submissionId ? { submissionId } : {}) }),
     });
   } catch {
     throw new Error('Could not reach the server. Please try again.');
@@ -170,7 +196,7 @@ export async function submitFreeCourseQuiz(
   const text = await res.text();
   const data = text ? JSON.parse(text) : null;
   if (!res.ok) throw new Error((data && data.error) || `Request failed (${res.status}).`);
-  if (data?.passed) {
+  if (res.ok) {
     freeCoursesResource.invalidate(`${kind}:${id}`);
     freeCourseDetailResource.invalidate();
   }

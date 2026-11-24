@@ -187,7 +187,7 @@ class MonthlyLogsTests(SimpleTestCase):
              patch.object(logs.canonical, '_ksb_not_excluded', return_value='true'):
             logs.canonical.entries_for({'id': 70}, monthly_summary=True)
 
-        sql, params = query.call_args.args
+        sql, params = next(call.args for call in query.call_args_list if 'WITH canonical AS' in call.args[0])
         self.assertEqual(params, [70])
         self.assertNotIn('SELECT progress.*', sql)
         for field in ('feedback', 'group_title', 'reporting_timestamp_label'):
@@ -583,7 +583,7 @@ class MonthlyLogsTests(SimpleTestCase):
                       'learning_reflection': 'My reflection', 'actual_time_hours': '1', 'ksb_codes': ['K1']}
         rows = [deepcopy(self.row)]
         with patch.object(sources, 'query', return_value=[{'payload': reflection}]):
-            sources._reflections(self.learner, rows)
+            sources._reflections({**self.learner, '_profile': {'id': 70, 'learner_type': 'apprenticeship'}}, rows)
         self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0]['completion_note'], 'My reflection')
         self.assertEqual(rows[0]['ksb_codes'], ['K1'])

@@ -2,6 +2,8 @@
 
 Nothing here opens a connection: the schema shape and the writers are patched.
 """
+from curriculum_api.catalogue.tests.parity.composition_test_support import composition_fixture
+from curriculum_api.catalogue.tests.parity.read_dependency_test_support import database_read_fixture, ksb_read_fixture
 from unittest import mock
 
 from django.test import SimpleTestCase
@@ -12,7 +14,7 @@ from curriculum_api import views
 
 class WhereTests(SimpleTestCase):
     def where(self, *args, **kwargs):
-        with mock.patch.object(views, 'authoring_table_name', return_value='"curriculum"."components"'):
+        with database_read_fixture('authoring_table_name', return_value='"curriculum"."components"'):
             return placement.where(*args, **kwargs)
 
     def test_mappings_are_scoped_through_their_component(self):
@@ -41,7 +43,7 @@ class StoreComponentMappingsTests(SimpleTestCase):
         # it would answer the mappings stored before this write.
         component = {'id': 'COMP-1', 'module_catalogue_id': 'MOD-1', 'week_id': 'WEEK-1', 'ksb_mappings': [{'code': 'K1'}]}
         items = [{'code': 'K1'}, {'code': 'S2'}]
-        with mock.patch.object(views, 'sync_component_ksb_projection', return_value=items) as sync:
+        with composition_fixture(views, 'sync_component_ksb_projection', return_value=items) as sync:
             views.store_component_ksb_mappings(component, items, deleted_by='component-ksb-post')
         sync.assert_called_once()
         args, kwargs = sync.call_args
@@ -51,7 +53,7 @@ class StoreComponentMappingsTests(SimpleTestCase):
         self.assertEqual(component['ksb_mappings'], [{'code': 'K1'}])  # caller's row untouched
 
     def test_removing_the_last_mapping_passes_an_empty_list(self):
-        with mock.patch.object(views, 'sync_component_ksb_projection') as sync:
+        with composition_fixture(views, 'sync_component_ksb_projection') as sync:
             views.store_component_ksb_mappings({'id': 'COMP-1'}, [], deleted_by='ksb-mapping-delete')
         self.assertEqual(sync.call_args.kwargs['component_row']['ksb_mappings'], [])
 
@@ -67,10 +69,10 @@ class StatsReadTests(SimpleTestCase):
             views.AUTHORING_KSB_MAPPINGS_TABLE: {'component_id', 'source_type', 'source_id', 'weight', 'status'},
         }
         statements = []
-        with mock.patch.object(views, 'has_column', side_effect=lambda table, column: column in real[table]), \
-                mock.patch.object(placement, 'relation', return_value='(mapping relation) as "ksb_mappings"'), \
-                mock.patch.object(views, 'authoring_table_name', side_effect=lambda table: table), \
-                mock.patch.object(views, 'fetch_all', side_effect=lambda sql, params: statements.append(sql) or []):
+        with database_read_fixture('has_column', side_effect=lambda table, column: column in real[table]), \
+                ksb_read_fixture('relation', return_value='(mapping relation) as "ksb_mappings"'), \
+                database_read_fixture('authoring_table_name', side_effect=lambda table: table), \
+                database_read_fixture('fetch_all', side_effect=lambda sql, params: statements.append(sql) or []):
             ksb_stats_reads.grouped_scope_rows(['MOD-1'])
         weeks, components, mappings = statements
         self.assertIn('from (mapping relation) as "ksb_mappings"', mappings)

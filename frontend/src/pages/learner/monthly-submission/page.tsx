@@ -1,3 +1,4 @@
+import { LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
 import { useMemo } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { ArrowUpRight, CalendarDays, CheckCircle2, FileText } from 'lucide-react';
@@ -100,7 +101,7 @@ export default function MonthlySubmissionPage() {
         <p>Your assignments, organised by Training Plan month. Review the brief, continue your work or arrange support.</p></div>
         {!busy && groups.length > 0 && <span className={styles.total}><FileText size={16} aria-hidden="true" />{groups.reduce((total, item) => total + item.assignments.length, 0)} assignments</span>}
       </header>
-      {busy ? <div className={styles.loading} role="status">Loading your monthly assignments…</div>
+      {busy ? <div className={styles.loading} ><LoadingSkeleton label="Loading your monthly assignments…" variant="rows" /></div>
         : loadError ? <div role="alert" className={styles.error}><p>{loadError}</p><button type="button" onClick={refresh}>Retry assignments</button></div>
         : <>
           {plan.errors.length > 0 && <div role="alert" className={styles.error}>{plan.errors.map(error => <p key={error}>{error}</p>)}<button type="button" onClick={plan.retry}>Retry plan details</button></div>}
@@ -166,10 +167,10 @@ export default function MonthlySubmissionPage() {
                     {option === 'extras' ? 'Extra activities' : option === 'month' ? 'This month' : 'Overdue'}
                   </button>)}
                 </div>
-                <span className={styles.assignmentCount}>{view === 'extras' ? (extras.loading ? 'Loading extra activities…' : extras.error ? 'Extra activities unavailable' : `${visibleExtras.length} extra ${visibleExtras.length === 1 ? 'activity' : 'activities'} submitted`) : view === 'overdue' ? `${visibleAssignments.length} overdue assignments` : `${visibleAssignments.length} of ${group.assignments.length} assignments${acceptedExtras.length > 0 ? ` · ${visibleExtras.length} of ${acceptedExtras.length} extra activities` : ''}`}</span>
+                <span className={styles.assignmentCount}>{view === 'extras' ? (extras.loading ? <LoadingSkeleton label="Loading extra activities…" variant="text" /> : extras.error ? 'Extra activities unavailable' : `${visibleExtras.length} extra ${visibleExtras.length === 1 ? 'activity' : 'activities'} submitted`) : view === 'overdue' ? `${visibleAssignments.length} overdue assignments` : `${visibleAssignments.length} of ${group.assignments.length} assignments${acceptedExtras.length > 0 ? ` · ${visibleExtras.length} of ${acceptedExtras.length} extra activities` : ''}`}</span>
               </div>
               {view === 'month' && !group.month && <p className={styles.unscheduled}>These assignments do not have a confirmed Training Plan date yet.</p>}
-              {view === 'extras' && extras.loading && <p role="status">Loading extra activities…</p>}
+              {view === 'extras' && extras.loading && <p ><LoadingSkeleton label="Loading extra activities…" variant="rows" /></p>}
               {!visibleAssignments.length && !visibleExtras.length && !(view === 'extras' && (extras.loading || extras.error)) && <p className={styles.filterEmpty} role="status">{view === 'extras' ? 'No extra activities submitted this month.' : view === 'overdue' ? 'No overdue assignments with a confirmed due date.' : 'No assignments for this month. Choose another month or check Overdue.'}</p>}
               <div className={styles.assignmentGrid}>{visibleAssignments.map(({ row, sourceGroup }) => <button type="button" key={row.id}
                 className={styles.assignment} aria-pressed={row.id === assignment?.id} onClick={() => view === 'overdue' ? selectOverdueAssignment(row.id) : select(sourceGroup.month, row.id)}>

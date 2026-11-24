@@ -18,6 +18,7 @@ the rule is pinned without a database, a migration or a Graph call. The stub
 also asserts that the live-session filter runs in SQL, because reading every
 component's ``settings_json`` is the 24 MB read this code has to avoid.
 """
+from curriculum_api.catalogue.tests.parity.composition_test_support import composition_fixture
 from django.test import SimpleTestCase
 
 from . import views
@@ -287,46 +288,28 @@ class AuthoredLiveSessionSourceTests(SimpleTestCase):
         self.assertEqual([key[:10] for key in keys], [session['date'] for session in self.sessions()])
 
 
-class PreferAuthoringModuleSessionsTests(SimpleTestCase):
-    """A module with zero authored live sessions still belongs to the authoring system.
+class AuthoredSourceOnlyTests(SimpleTestCase):
+    """Generated training sessions no longer participate in any calendar merge."""
 
-    Found live in the Teams Meetings page: a module with no live-session
-    components at all showed a full generated calendar -- 14 sessions dated from
-    ``sessions_number``, one per delivery day. `authoring_sessions` for that
-    module is `[]`, and the merge used to read the module's authoring id from
-    *that* list, so an empty list meant "the authoring system has no opinion
-    here" and let the legacy training-row generator (`build_sessions`, which
-    still reads `sessions_number`) fill the gap instead of leaving it empty.
-    """
+    def test_training_count_cannot_fill_an_empty_or_missing_authored_module(self):
+        from unittest.mock import patch
+        for modules in ([], [{'module_catalogue_id': 'MOD-1', 'sessions_number': 99}]):
+            with composition_fixture(views, 'authoring_session_links_by_catalogue', return_value={}):
+                self.assertEqual(views.curriculum_sessions_from_rows({},
+                    [{'id': 'legacy', 'sessions_number': 99}], modules, [], [], []), [])
 
-    TRAINING_SESSION = {'moduleCatalogueId': 'MOD-1', 'date': '2026-08-06', 'sessionNumber': 1}
+    def test_authored_session_identity_survives_without_merging_legacy_copies(self):
+        from unittest.mock import patch
+        module = {'module_catalogue_id': 'MOD-1'}
+        links = {'MOD-1': [{'date': '2028-01-03', 'componentId': 'COMP-1'}]}
+        with composition_fixture(views, 'authoring_session_links_by_catalogue', return_value=links):
+            result = views.curriculum_sessions_from_rows({}, [{'sessions_number': 99}], [module], [], [], [])
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0]['componentId'], 'COMP-1')
 
-    def test_a_catalogue_module_with_no_live_sessions_still_suppresses_the_legacy_ones(self):
-        sessions = views.prefer_authoring_module_sessions(
-            [self.TRAINING_SESSION], [], authoring_catalogue_ids=['MOD-1'],
-        )
-        self.assertEqual(sessions, [])
-
-    def test_a_training_row_with_no_matching_authoring_module_is_left_alone(self):
-        # A module never migrated into the authoring system: still legacy, still legitimate.
-        sessions = views.prefer_authoring_module_sessions(
-            [self.TRAINING_SESSION], [], authoring_catalogue_ids=['MOD-OTHER'],
-        )
-        self.assertEqual(sessions, [self.TRAINING_SESSION])
-
-    def test_an_authored_session_still_wins_over_its_own_training_row(self):
-        authored = {'moduleCatalogueId': 'MOD-1', 'date': '2026-09-17', 'componentId': 'COMP-1'}
-        sessions = views.prefer_authoring_module_sessions(
-            [self.TRAINING_SESSION], [authored], authoring_catalogue_ids=['MOD-1'],
-        )
-        self.assertEqual(sessions, [authored])
-
-    def test_omitting_the_catalogue_ids_falls_back_to_the_old_behaviour(self):
-        # Callers that do not yet know every authoring module id (there are
-        # none left in this codebase, but the parameter is optional) keep the
-        # previous behaviour rather than breaking outright.
-        sessions = views.prefer_authoring_module_sessions([self.TRAINING_SESSION], [])
-        self.assertEqual(sessions, [self.TRAINING_SESSION])
+    def test_generator_and_merge_exports_are_retired(self):
+        for name in ('build_sessions', 'build_sessions_basic', 'prefer_authoring_module_sessions'):
+            self.assertFalse(hasattr(views, name))
 
 
 class LiveSessionFollowsItsWeekTests(SimpleTestCase):

@@ -16,6 +16,13 @@ spec.loader.exec_module(gate)
 
 
 class SchemaPolicyTests(unittest.TestCase):
+    def test_candidate_uses_its_own_reviewed_schema_including_rollback_images(self):
+        previous = ('curriculum_api', '0090_delivery_calendars')
+        self.assertEqual(gate.candidate_target({previous, gate.LATEST_TARGET}), gate.LATEST_TARGET)
+        self.assertEqual(gate.candidate_target({previous}), previous)
+        with self.assertRaisesRegex(gate.GateError, 'candidate_calendar_migration_missing'):
+            gate.candidate_target({('curriculum_api', '0092_unrelated')})
+
     def setUp(self):
         self.config = {'ENGINE': 'django.db.backends.postgresql', 'NAME': 'neondb',
                        'HOST': 'ep-example-pooler.eu-west-2.aws.neon.tech',
@@ -71,7 +78,8 @@ class SchemaPolicyTests(unittest.TestCase):
         return executor
 
     def test_only_reviewed_forward_migrations_are_allowed(self):
-        names = [('curriculum_api', '0089_module_week_starts_on', False), (*gate.TARGET, False)]
+        names = [('curriculum_api', '0089_module_week_starts_on', False),
+                 ('curriculum_api', '0090_delivery_calendars', False), (*gate.TARGET, False)]
         self.assertEqual(gate.checked_plan(self.executor(names), 'apply'),
                          [(app, name) for app, name, _ in names])
 
@@ -162,6 +170,7 @@ class MigrationTransactionTests(unittest.TestCase):
     def test_cache_requires_each_read_insert_update_permission(self):
         # Valid columns and column rights, existing cache, SELECT=yes INSERT=no.
         self.cursor.fetchone.side_effect = [('character varying', 'YES'), (True, True),
+                                           ('character varying', 'YES'), (True, True),
                                            ('jsonb', 'YES'), (True, True), ('jsonb', 'YES'), (True, True),
                                            ('curriculum.country_holiday_calendars',), (True,), (False,)]
         with self.assertRaisesRegex(gate.GateError, 'calendar_cache_permissions_missing'):

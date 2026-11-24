@@ -1,3 +1,5 @@
+from curriculum_api.catalogue.tests.parity.composition_test_support import composition_patch
+from curriculum_api.catalogue.tests.parity.composition_test_support import composition_fixture
 import json
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -14,7 +16,7 @@ class AssignedLearnerDirectoryTests(SimpleTestCase):
             patch('login.permissions.authenticate_request', return_value=SimpleNamespace(role='staff')),
         ):
             context.start(); self.addCleanup(context.stop)
-        self.lineage = self.enterContext(patch('curriculum_api.views.scope_placement_lineage', return_value={'found': True}))
+        self.lineage = self.enterContext(composition_patch('curriculum_api.views.scope_placement_lineage', return_value={'found': True}))
         self.members = self.enterContext(patch('curriculum_api.views.assigned_learners_for_scope'))
         self.cache = self.enterContext(patch('curriculum_api.views.cached_curriculum_value', side_effect=lambda key, load, **kwargs: load()))
         self.members.side_effect = lambda scope, identifier, status, **kwargs: [
@@ -67,15 +69,15 @@ class AssignedLearnerDirectoryTests(SimpleTestCase):
 
     def test_one_programme_roster_read_is_shared_across_a_batch_but_not_requests(self):
         from . import views
-        with patch.object(views, 'programme_identity_candidates', return_value=[]) as identity, \
-             patch.object(views, 'learner_schema_table_exists', return_value=False):
+        with composition_fixture(views, 'connection', SimpleNamespace(vendor='postgresql')), \
+             composition_fixture(views, 'learner_schema_table_exists', return_value=False) as probe:
             with views.curriculum_read_scope():
                 views.assigned_learners_for_programme('P-A', 'active')
                 views.assigned_learners_for_programme('P-A', 'active')
                 views.assigned_learners_for_programme('P-A', '')
-                self.assertEqual(identity.call_count, 2)
+                self.assertEqual(probe.call_count, 2)
             views.assigned_learners_for_programme('P-A', 'active')
-            self.assertEqual(identity.call_count, 3)
+            self.assertEqual(probe.call_count, 3)
 
     def test_database_failure_is_not_reported_as_zero_or_an_empty_list(self):
         self.members.side_effect = DatabaseError('Private database detail')

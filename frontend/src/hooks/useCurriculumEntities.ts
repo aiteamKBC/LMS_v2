@@ -14,6 +14,7 @@ import {
   type CurriculumTeamsMeetingSummary,
 } from '@/lib/curriculumApi';
 import { useLiveRefresh } from '@/hooks/useRefreshOnReturn';
+import { curriculumStaffReadError } from './curriculumStaffReads';
 
 /**
  * The entity pages (Programmes / Cohorts / Groups / Modules) all read the same
@@ -72,7 +73,10 @@ export function useCurriculumEntities(options: CurriculumEntitiesOptions = {}) {
   const [refreshing, setRefreshing] = useState(false);
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [staffError, setStaffError] = useState<string | null>(null);
   const requestIdRef = useRef(0);
+  const entitiesRef = useRef(entities);
+  entitiesRef.current = entities;
 
   const load = useCallback(async (signal?: AbortSignal, loadOptions: LoadOptions = {}) => {
     const requestId = requestIdRef.current + 1;
@@ -92,11 +96,13 @@ export function useCurriculumEntities(options: CurriculumEntitiesOptions = {}) {
         revalidate: loadOptions.revalidate,
       });
       const tutorsPending = includeStaff && includeTutors
-        ? fetchCurriculumTutors(signal, { skipCache: loadOptions.skipCache, revalidate: loadOptions.revalidate }).catch(() => [])
+        ? fetchCurriculumTutors(signal, { skipCache: loadOptions.skipCache, revalidate: loadOptions.revalidate })
         : Promise.resolve([]);
       const coachesPending = includeStaff
-        ? fetchCurriculumCoaches(signal, { skipCache: loadOptions.skipCache, revalidate: loadOptions.revalidate }).catch(() => [])
+        ? fetchCurriculumCoaches(signal, { skipCache: loadOptions.skipCache, revalidate: loadOptions.revalidate })
         : Promise.resolve([]);
+      // Attach rejection handlers immediately, even if the overview fails first.
+      const staffPending = Promise.allSettled([tutorsPending, coachesPending]);
       const holidaysPending = includeHolidays
         ? fetchCurriculumHolidays(signal, { skipCache: loadOptions.skipCache, revalidate: loadOptions.revalidate }).catch(() => [])
         : Promise.resolve([]);
@@ -131,12 +137,19 @@ export function useCurriculumEntities(options: CurriculumEntitiesOptions = {}) {
       // collections below are additive and must not keep the bar running.
       setRefreshing(false);
 
-      const [tutors, coaches, holidays, teamsMeetings] = await Promise.all([
-        tutorsPending, coachesPending, holidaysPending, teamsPending,
+      const [[tutors, coaches], holidays, teamsMeetings] = await Promise.all([
+        staffPending, holidaysPending, teamsPending,
       ]);
       if (signal?.aborted || requestId !== requestIdRef.current) return null;
 
-      const next: CurriculumEntities = { ...base, tutors, coaches, holidays, teamsMeetings };
+      setStaffError(curriculumStaffReadError(tutors, coaches));
+      const next: CurriculumEntities = {
+        ...base,
+        tutors: tutors.status === 'fulfilled' ? tutors.value : entitiesRef.current.tutors,
+        coaches: coaches.status === 'fulfilled' ? coaches.value : entitiesRef.current.coaches,
+        holidays,
+        teamsMeetings,
+      };
       setEntities(next);
       return next;
     } catch (err) {
@@ -184,7 +197,8 @@ export function useCurriculumEntities(options: CurriculumEntitiesOptions = {}) {
     applyLocal,
     /** True once a structure payload has landed — used to tell "empty" from "not here yet". */
     loaded,
-    error,
+    error: error || staffError,
+    staffError,
     reload: (loadOptions?: LoadOptions) => load(undefined, { skipCache: true, ...loadOptions }),
   };
 }

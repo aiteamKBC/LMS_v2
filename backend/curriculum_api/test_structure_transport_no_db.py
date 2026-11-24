@@ -1,3 +1,6 @@
+from curriculum_api.catalogue.tests.parity.composition_test_support import composition_fixture
+from .catalogue.tests.parity.read_dependency_test_support import authoring_read_fixture
+from curriculum_api.catalogue.tests.parity.read_dependency_test_support import database_read_fixture
 import copy
 from unittest.mock import patch
 
@@ -17,10 +20,10 @@ class StructureTransportTests(SimpleTestCase):
         def read(table, *args, **kwargs):
             return [{k: copy.deepcopy(v) for k, v in row.items() if k not in kwargs.get('exclude_columns', ())}
                     for row in rows[table]]
-        with patch.object(views, 'ensure_module_authoring_tables'), \
-                patch.object(views, 'authoring_fetch_all', side_effect=read), \
-                patch('curriculum_api.authoring_read_transport.compact_authoring_rows', side_effect=read) as verified, \
-                patch.object(views, 'connection', vendor='sqlite'):
+        with authoring_read_fixture('ensure_module_authoring_tables'), \
+                authoring_read_fixture('authoring_fetch_all', side_effect=read), \
+                authoring_read_fixture('compact_authoring_rows', side_effect=read) as verified, \
+                database_read_fixture('connection', vendor='sqlite'):
             expected = views.module_structure_revision('M1')
             views.connection.vendor = 'postgresql'
             self.assertEqual(views.module_structure_revision('M1'), expected)
@@ -45,11 +48,11 @@ class StructureTransportTests(SimpleTestCase):
             calls.append(table)
             return [{k: copy.deepcopy(v) for k, v in row.items() if k not in kwargs.get('exclude_columns', ())}
                     for row in rows.get(table, [])]
-        with patch.object(views, 'ensure_module_authoring_tables'), \
-                patch.object(views, 'connection', vendor='sqlite'), \
-                patch.object(views, 'authoring_fetch_all', side_effect=read), \
-                patch.object(views, 'apply_module_session_plan_to_weeks'), \
-                patch.object(views, 'teams_delivery_metadata_from_live_session', return_value={}):
+        with authoring_read_fixture('ensure_module_authoring_tables'), \
+                database_read_fixture('connection', vendor='sqlite'), \
+                authoring_read_fixture('authoring_fetch_all', side_effect=read), \
+                composition_fixture(views, 'apply_module_session_plan_to_weeks'), \
+                composition_fixture(views, 'teams_delivery_metadata_from_live_session', return_value={}):
             # The editor's read also carries the per-item fingerprints its
             # partial saves are merged by, computed from that same payload.
             expected = views.with_item_fingerprints(
@@ -71,11 +74,11 @@ class StructureTransportTests(SimpleTestCase):
             {'id': '3', 'description': None, 'settings_json': None, '__text_rank_0': 3, '__text_rank_1': 3},
             {'id': '4', 'description': '  ', 'settings_json': 'raw JSON text', '__text_rank_0': 4, '__text_rank_1': 4},
         ]
-        with patch.object(views, 'connection', vendor='postgresql'), \
-                patch.object(views, 'ensure_module_authoring_tables'), \
-                patch.object(views, 'column_names', return_value={'id', 'description', 'settings_json'}), \
-                patch.object(views, 'authoring_table_name', return_value='synthetic'), \
-                patch.object(views, 'rows_as_dicts', return_value=copy.deepcopy(wire_rows)):
+        with database_read_fixture('connection', vendor='postgresql'), \
+                authoring_read_fixture('ensure_module_authoring_tables'), \
+                database_read_fixture('column_names', return_value={'id', 'description', 'settings_json'}), \
+                database_read_fixture('authoring_table_name', return_value='synthetic'), \
+                database_read_fixture('rows_as_dicts', return_value=copy.deepcopy(wire_rows)):
             result = compact_authoring_rows('components', 'id = %s', ['1'], 'id')
         self.assertEqual(result[1]['description'], '')
         self.assertIsNone(result[2]['description'])

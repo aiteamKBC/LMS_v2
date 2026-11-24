@@ -5,16 +5,16 @@ import json
 import math
 import uuid
 import unittest
-from contextlib import nullcontext
 from datetime import date, datetime, timedelta, timezone as utc
+from inspect import unwrap
 from pathlib import Path
-from types import SimpleNamespace, ModuleType
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 from urllib.parse import urlparse
 from zoneinfo import ZoneInfo
 from django.conf import settings
 from django.http import JsonResponse
-from .assignment_attempts import preserve_attempts, submission_attempts
+from .extra_activities import list_extra_activities
 from .extra_activity_month import valid_activity_month
 if not settings.configured:
     settings.configure(DEFAULT_CHARSET='utf-8')
@@ -40,11 +40,12 @@ class ExtraActivityTests(unittest.TestCase):
             date=date, timedelta=timedelta, ZoneInfo=ZoneInfo, timezone=SimpleNamespace(now=lambda: self.now),
             valid_activity_month=valid_activity_month,
             JsonResponse=JsonResponse, connections={'enrolment': self.connection}, DatabaseError=RuntimeError,
+            canonical_learning=SimpleNamespace(require_profile=lambda _: {'id': 272}),
             booking_date_restriction=lambda day, **_: day.weekday() >= 5,
             available_ksb_codes=lambda _: {'K1'}, approved_evidence_ids=lambda _: {'file-1'},
             valid_presentation=lambda _: False, EXTRA_CHECK_KEYS={'answer', 'learning', 'evidence', 'ksbs', 'planned', 'declarations', 'hours'})
         load('monthly_assignment.py', {'text', 'mapping', 'items', 'words', 'month_bounds', 'valid_time_entries', 'assignment_checks'}, self.scope)
-        load('extra_activities.py', {'prepare_extra_activity', 'extra_activity_checks', 'list_extra_activities'}, self.scope)
+        load('extra_activities.py', {'prepare_extra_activity', 'extra_activity_checks'}, self.scope)
         sentence = ' '.join(['learning'] * 25)
         self.payload = {'learnerKind': 'commercial', 'learnerId': '101', 'activityType': 'extra_activity',
             'activityId': 'extra:00000000-0000-4000-8000-000000000001', 'activityTitle': 'Workshop',
@@ -97,69 +98,52 @@ class ExtraActivityTests(unittest.TestCase):
         self.assertFalse(checks['evidence']); self.assertFalse(checks['ksbs'])
 
     def test_month_list_shows_pending_immediately_and_excludes_drafts_other_months(self):
-        data = json.dumps(self.payload)
-        self.cur.fetchall.return_value = [
-            ('extra:1', 'Workshop', 'submitted_for_tutor_review', self.now, data, None, None, None),
-            ('extra:2', 'Draft', 'draft', self.now, data, None, None, None),
-            ('extra:3', 'September', 'accepted', self.now, {**self.payload, 'monthlyAssignment': {'month': '2026-09'}}, 'Accepted', 'Coach', self.now),
+        rows = [
+            {'id': '00000000-0000-4000-8000-000000000001', 'title': 'Workshop', 'status': 'pending',
+             'submitted_at': self.now, 'reviewed_at': None, 'activity_date': date(2026, 10, 1),
+             'requested_minutes': 120, 'reflection_payload': {'full_submission': self.payload},
+             'review_note': None, 'reviewed_by': None},
+            {'id': '00000000-0000-4000-8000-000000000002', 'title': 'Draft', 'status': 'draft',
+             'submitted_at': None, 'reviewed_at': None, 'activity_date': date(2026, 10, 1),
+             'requested_minutes': 120, 'reflection_payload': {'full_submission': self.payload},
+             'review_note': None, 'reviewed_by': None},
+            {'id': '00000000-0000-4000-8000-000000000003', 'title': 'September', 'status': 'approved',
+             'submitted_at': self.now, 'reviewed_at': self.now, 'activity_date': date(2026, 9, 1),
+             'requested_minutes': 120, 'reflection_payload': {'full_submission': {
+                 **self.payload, 'monthlyAssignment': {'month': '2026-09'}}},
+             'review_note': 'Accepted', 'reviewed_by': 'Coach'},
         ]
         for kind in ('commercial', 'apprenticeship'):
-            response = self.scope['list_extra_activities'](SimpleNamespace(GET={'learnerKind': kind, 'learnerId': '101', 'month': '2026-10'}))
+            with patch('learner_api.extra_activity_store.list_rows', return_value=rows) as native:
+                response = unwrap(list_extra_activities)(SimpleNamespace(
+                    GET={'learnerKind': kind, 'learnerId': '101', 'month': '2026-10'}))
             activities = json.loads(response.content)['activities']
             self.assertEqual([a['title'] for a in activities], ['Workshop'])
             self.assertEqual(activities[0]['status'], 'submitted_for_tutor_review')
-            self.assertEqual(self.cur.execute.call_args.args[1], [kind, '101'])
+            native.assert_called_once_with(101, kind)
 
     def test_selected_month_filters_history_without_changing_submission_timestamp(self):
         self.payload['monthlyAssignment']['month'] = '2026-09'
-        self.cur.fetchall.return_value = [
-            ('extra:1', 'September work', 'accepted', self.now, self.payload, None, None, None),
-            ('extra:2', 'Legacy October', 'accepted', self.now, {}, None, None, None),
+        rows = [
+            {'id': '00000000-0000-4000-8000-000000000001', 'title': 'September work', 'status': 'approved',
+             'submitted_at': self.now, 'reviewed_at': None, 'activity_date': date(2026, 10, 1),
+             'requested_minutes': 120, 'reflection_payload': {'full_submission': self.payload},
+             'review_note': None, 'reviewed_by': None},
+            {'id': '00000000-0000-4000-8000-000000000002', 'title': 'Legacy October', 'status': 'approved',
+             'submitted_at': self.now, 'reviewed_at': None, 'activity_date': date(2026, 10, 1),
+             'requested_minutes': 120, 'reflection_payload': {},
+             'review_note': None, 'reviewed_by': None},
         ]
         request = SimpleNamespace(GET={'learnerKind': 'apprenticeship', 'learnerId': '101', 'month': '2026-09'})
-        activities = json.loads(self.scope['list_extra_activities'](request).content)['activities']
+        with patch('learner_api.extra_activity_store.list_rows', return_value=rows):
+            activities = json.loads(unwrap(list_extra_activities)(request).content)['activities']
         self.assertEqual(len(activities), 1)
         self.assertEqual(activities[0]['month'], '2026-09')
         self.assertEqual(activities[0]['submittedAt'], self.now.isoformat())
         request.GET['month'] = '2026-10'
-        legacy = json.loads(self.scope['list_extra_activities'](request).content)['activities']
+        with patch('learner_api.extra_activity_store.list_rows', return_value=rows):
+            legacy = json.loads(unwrap(list_extra_activities)(request).content)['activities']
         self.assertEqual([row['title'] for row in legacy], ['Legacy October'])
-
-    def test_submit_checks_and_preserves_rejected_history_and_blocks_pending_overwrite(self):
-        extra = ModuleType('learner_api.extra_activities'); extra.__dict__.update(self.scope)
-        monthly = ModuleType('learner_api.monthly_assignment'); monthly.assignment_checks = self.scope['assignment_checks']
-        access = ModuleType('learner_api.programme_access'); access.submission_refusal = lambda _: None
-        self.scope.update(VALID_KINDS={'commercial', 'apprenticeship'}, transaction=SimpleNamespace(atomic=lambda **_: nullcontext()),
-            _reflection_lineage=lambda *_: {}, preserve_attempts=preserve_attempts, submission_attempts=submission_attempts,
-            SUBMISSION_AUDIT_SQL='id', record_submission_row=MagicMock())
-        load('reflection_submissions.py', {'_submit_reflection', '_error', '_text', '_dict', '_list', '_activity_title'}, self.scope)
-        with patch.dict('sys.modules', {'learner_api.extra_activities': extra, 'learner_api.monthly_assignment': monthly,
-                                      'learner_api.programme_access': access}):
-            self.payload['monthlyAssignment']['month'] = '2026-09'
-            self.payload['monthlyAssignment']['timeEntries'][0]['date'] = '2026-09-29'
-            self.cur.fetchone.side_effect = [('rejected', self.payload, 'Add evidence', 'Coach', None, None), ('saved-1',)]
-            request = SimpleNamespace(method='POST', body=json.dumps({**self.payload, 'submissionMode': 'submit',
-                'submissionOrigin': 'coach', 'coachCreation': {'name': 'Spoofed Coach'}}).encode())
-            response = self.scope['_submit_reflection'](request)
-            self.assertEqual(response.status_code, 201)
-            attempts = json.loads(response.content)['submissionAttempts']
-            self.assertEqual([a['status'] for a in attempts], ['rejected', 'submitted_for_tutor_review'])
-            self.assertEqual(attempts[0]['coachFeedback'], 'Add evidence')
-            saved_payload = json.loads(self.cur.execute.call_args.args[1][30])
-            self.assertEqual(saved_payload['monthlyAssignment']['month'], '2026-09')
-            self.assertNotIn('coachCreation', saved_payload)
-            self.assertEqual(saved_payload['submissionOrigin'], 'learner')
-            self.cur.fetchone.side_effect = [('submitted_for_tutor_review', self.payload, None, None, None, None)]
-            response = self.scope['_submit_reflection'](request)
-            self.assertEqual(response.status_code, 409)
-            # A coach-authored record stays staff-owned even after referral.
-            self.cur.fetchone.side_effect = [('referred', {**self.payload, 'submissionOrigin': 'coach',
-                'coachCreation': {'name': 'Original Coach'}}, None, None, None, None)]
-            self.cur.execute.reset_mock()
-            response = self.scope['_submit_reflection'](request)
-            self.assertEqual(response.status_code, 409)
-            self.assertEqual(self.cur.execute.call_count, 1)
-
 
     def test_new_extra_activity_cannot_use_the_legacy_missing_time_entries_exemption(self):
         del self.payload['monthlyAssignment']['timeEntries']

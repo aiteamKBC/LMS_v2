@@ -212,7 +212,7 @@ class StudentActivityViewTests(SimpleTestCase):
                                       return_value=SimpleNamespace(pk=pk, aptem_id=7101, email='learner@example.test')))
             stack.enter_context(patch.object(canonical_learning, 'entries_for', return_value=list(RECORDS)))
             stack.enter_context(patch('learner_api.replacement_hours.read_replacement_hours', return_value={}))
-            stack.enter_context(patch.object(student_activity.subject_store, 'covers_for', return_value={}))
+            stack.enter_context(patch.object(student_activity, '_mapped_subject_covers', return_value={}))
             stack.enter_context(patch.object(student_activity, 'summarize_activities', side_effect=summarize))
             response = view(request, kind=kind, pk=pk)
         return response, json.loads(response.content), calls

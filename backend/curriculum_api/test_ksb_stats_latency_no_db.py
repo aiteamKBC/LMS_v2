@@ -1,8 +1,10 @@
 """KSB summary equivalence and business-rule boundaries without a database."""
+from curriculum_api.catalogue.tests.parity.composition_test_support import composition_fixture
 from contextlib import ExitStack
 from decimal import Decimal
 import sqlite3
 from unittest.mock import patch
+from .catalogue.tests.parity.read_dependency_test_support import database_read_fixture
 
 from django.test import SimpleTestCase, RequestFactory
 
@@ -75,13 +77,13 @@ class StatsScopeTests(SimpleTestCase):
             source = mappings if table == 'ksb_mappings' else f'select * from {table}'
             return [{k:v for k,v in dict(row).items() if not fields or k in fields or k == 'status'}
                     for row in db.execute(source) if row['module_catalogue_id'] in ids]
-        with patch.object(views, 'connection', vendor='postgresql'), \
-             patch.object(views, 'ensure_module_authoring_tables'), \
-             patch.object(views, 'authoring_scope_module_rows', return_value=modules), \
-             patch.object(views, 'authoring_child_rows_for_modules', side_effect=full_children), \
-             patch.object(views, 'has_column', side_effect=lambda table,col: col in columns[table]), \
-             patch.object(views, 'authoring_table_name', side_effect=lambda table: table), \
-             patch.object(views, 'fetch_all', side_effect=lambda sql, params: [dict(row) for row in db.execute(sql.replace('%s','?'), params)]):
+        with composition_fixture(views, 'connection', vendor='postgresql'), \
+             composition_fixture(views, 'ensure_module_authoring_tables'), \
+             composition_fixture(views, 'authoring_scope_module_rows', return_value=modules), \
+             composition_fixture(views, 'authoring_child_rows_for_modules', side_effect=full_children), \
+             database_read_fixture('has_column', side_effect=lambda table,col: col in columns[table]), \
+             database_read_fixture('authoring_table_name', side_effect=lambda table: table), \
+             database_read_fixture('fetch_all', side_effect=lambda sql, params: [dict(row) for row in db.execute(sql.replace('%s','?'), params)]):
             full = views.authoring_scope_data('programme', 'P1')
             grouped = views.authoring_scope_data('programme', 'P1', stats_only=True)
         self.assertEqual(grouped[0], full[0])
@@ -122,9 +124,9 @@ class StatsScopeTests(SimpleTestCase):
             columns = kwargs.get('columns')
             return [{key:value for key,value in row.items() if columns is None or key in columns}
                     for row in children[table] if row['module_catalogue_id'] in ids]
-        with patch.object(views, 'ensure_module_authoring_tables'), \
-             patch.object(views, 'authoring_scope_module_rows', return_value=modules), \
-             patch.object(views, 'authoring_child_rows_for_modules', side_effect=fetch):
+        with composition_fixture(views, 'ensure_module_authoring_tables'), \
+             composition_fixture(views, 'authoring_scope_module_rows', return_value=modules), \
+             composition_fixture(views, 'authoring_child_rows_for_modules', side_effect=fetch):
             full = views.authoring_scope_data('programme', 'P1')
             slim = views.authoring_scope_data('programme', 'P1', stats_only=True)
         self.assertEqual(slim[0], full[0])
@@ -142,8 +144,8 @@ class LearnerProgressStatsTests(SimpleTestCase):
             {'learner_id': 1, 'ksb_code': 'K1', 'weights': [Decimal('.125'), Decimal('.135')]},
             {'learner_id': 2, 'ksb_code': 'K1', 'weights': [Decimal('1e16'), 1, Decimal('-1e16')]},
         ]
-        with patch.object(views, 'fetch_all', side_effect=[outcomes, rows]) as fetch, \
-             patch.object(views, 'and_not_excluded', return_value=''):
+        with database_read_fixture('fetch_all', side_effect=[outcomes, rows]) as fetch, \
+             composition_fixture(views, 'and_not_excluded', return_value=''):
             result = ksb_stats_reads.progress_totals([1, 2], ['K1'])
         self.assertEqual(result, {1: {'K1': .26}, 2: {'K1': 0.0}})
         params = fetch.call_args.args[1]
@@ -152,7 +154,7 @@ class LearnerProgressStatsTests(SimpleTestCase):
         self.assertEqual(params[-2:], [[1, 2], ['K1']])
 
     def test_no_eligible_attempts_need_no_weight_query(self):
-        with patch.object(views, 'fetch_all', return_value=[{'kind': 'quiz', 'passed': None}]) as fetch:
+        with database_read_fixture('fetch_all', return_value=[{'kind': 'quiz', 'passed': None}]) as fetch:
             self.assertEqual(ksb_stats_reads.progress_totals([1], ['K1']), {})
         self.assertEqual(fetch.call_count, 1)
 
@@ -168,8 +170,9 @@ class LearnerProgressStatsTests(SimpleTestCase):
                 ('mappings_with_inferred_sources', mappings),
                 ('assigned_learners_for_programme', [{'id': i} for i in learners]),
                 ('learner_progress_ksb_totals', {1: {'K1': 30, 'K2': 10}, 2: {'K1': -2, 'K2': 30}}),
+                ('learner_declared_ksb_codes', {}),
             ):
-                stack.enter_context(patch.object(views, name, return_value=value))
+                stack.enter_context(composition_fixture(views, name, return_value=value))
             return views.programme_learner_ksb_progress('P1')
 
     def test_capping_is_per_learner_and_code_with_existing_denominator(self):
@@ -178,6 +181,7 @@ class LearnerProgressStatsTests(SimpleTestCase):
             'learnerKsbProgressPercentage': 67, 'learnerKsbConsumedWeight': 40,
             'learnerKsbExpectedWeight': 60, 'learnerKsbLearnerCount': 2,
             'learnerKsbCodesStarted': 2, 'learnerKsbCodesComplete': 2, 'learnerKsbCodesTotal': 2,
+            'learnerKsbAchievedCount': 3, 'learnerKsbTargetCount': 4, 'learnerKsbAchievementPercentage': 75,
         })
 
     def test_no_learners_keep_design_weight_with_zero_progress(self):
@@ -191,11 +195,11 @@ class KsbStatsResponseTests(SimpleTestCase):
     def test_conditional_response_uses_cached_body_without_rebuilding(self):
         from django.core.cache import cache
         cache.clear()
-        views._CURRICULUM_CACHE.clear()
+        views.cache_state._CURRICULUM_CACHE.clear()
         self.addCleanup(cache.clear)
-        self.addCleanup(views._CURRICULUM_CACHE.clear)
-        with patch.object(views, 'shared_curriculum_epoch', return_value=123), \
-             patch.object(views, 'build_programme_ksb_stats', return_value={'programmeId': 'P1', 'ksbMapped': 3}) as build:
+        self.addCleanup(views.cache_state._CURRICULUM_CACHE.clear)
+        with composition_fixture(views, 'shared_curriculum_epoch', return_value=123), \
+             composition_fixture(views, 'build_programme_ksb_stats', return_value={'programmeId': 'P1', 'ksbMapped': 3}) as build:
             initial = views.curriculum_programme_ksb_stats(RequestFactory().get('/ksb-stats/'), 'P1')
             repeated = views.curriculum_programme_ksb_stats(RequestFactory().get('/ksb-stats/', HTTP_IF_NONE_MATCH=initial['ETag']), 'P1')
         self.assertEqual(initial.status_code, 200)

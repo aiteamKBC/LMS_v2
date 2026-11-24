@@ -7,6 +7,10 @@ interface VerificationCertificate {
   certificateNumber: string;
   templateVersion: number;
   progressPercent: number;
+  otjHours?: number | null;
+  refreshWarnings?: string[];
+  revision?: number;
+  correctedAt?: string | null;
   snapshot?: {
     certificateTitle?: string;
     bodyText?: string;
@@ -31,6 +35,11 @@ interface VerificationResponse {
   certificate: VerificationCertificate;
 }
 
+interface VerificationFailure {
+  message: string;
+  unavailable: boolean;
+}
+
 function formatDate(value?: string | null) {
   if (!value) return 'Not recorded';
   const date = new Date(value);
@@ -50,7 +59,8 @@ function FieldCard({ label, value }: { label: string; value: string | number }) 
 export default function CertificateVerificationPage({ personal = false }: { personal?: boolean }) {
   const { token = '' } = useParams();
   const [data, setData] = useState<VerificationResponse | null>(null);
-  const [error, setError] = useState('');
+  const [error, setError] = useState<VerificationFailure | null>(null);
+  const [retryCount, setRetryCount] = useState(0);
   const [loading, setLoading] = useState(true);
   const [pdfBusy, setPdfBusy] = useState(false);
   const [pdfError, setPdfError] = useState('');
@@ -58,14 +68,20 @@ export default function CertificateVerificationPage({ personal = false }: { pers
 
   useEffect(() => {
     let cancelled = false;
+    let responseStatus = 0;
     setLoading(true);
-    setError('');
-    fetch(`/learner_api/${personal ? 'personal-learning' : 'certificates'}/verify/${encodeURIComponent(token)}/`, { credentials: 'omit' })
+    setError(null);
+    setData(null);
+    fetch(`/learner_api/${personal ? 'personal-learning' : 'certificates'}/verify/${encodeURIComponent(token)}/`, { credentials: 'omit', cache: 'no-store' })
       .then(async (response) => {
+        responseStatus = response.status;
         const text = await response.text();
         const payload = text ? JSON.parse(text) : null;
         if (!response.ok) {
           throw new Error((payload && payload.error) || `Verification failed (${response.status})`);
+        }
+        if (payload?.valid !== true || !payload.certificate) {
+          throw new Error('Unexpected certificate verification response.');
         }
         return payload as VerificationResponse;
       })
@@ -73,7 +89,15 @@ export default function CertificateVerificationPage({ personal = false }: { pers
         if (!cancelled) setData(payload);
       })
       .catch((err) => {
-        if (!cancelled) setError(err instanceof Error ? err.message : 'Certificate could not be verified.');
+        if (!cancelled) {
+          const unavailable = responseStatus !== 404 && responseStatus !== 410;
+          setError({
+            unavailable,
+            message: unavailable
+              ? 'Certificate verification is temporarily unavailable. Please try again in a moment.'
+              : err instanceof Error ? err.message : 'Certificate could not be verified.',
+          });
+        }
       })
       .finally(() => {
         if (!cancelled) setLoading(false);
@@ -81,9 +105,11 @@ export default function CertificateVerificationPage({ personal = false }: { pers
     return () => {
       cancelled = true;
     };
-  }, [token, personal]);
+  }, [token, personal, retryCount]);
 
-  const certificate = data?.certificate;
+  const certificate = !loading && !error ? data?.certificate : undefined;
+  const revisionLabel = certificate && (certificate.revision || 1) > 1
+    ? `Corrected copy · Revision ${certificate.revision} · Corrected ${formatDate(certificate.correctedAt)}` : undefined;
   const learner = certificate?.snapshot?.learner;
   const title = certificate?.snapshot?.certificateTitle || 'Certificate of Achievement';
   const bodyText = certificate?.snapshot?.bodyText || 'has successfully completed the requirements and passed the LMS final examination for';
@@ -102,11 +128,15 @@ export default function CertificateVerificationPage({ personal = false }: { pers
     setPdfBusy(true);
     setPdfError('');
     try {
+      const source = pdfSourceRef.current;
+      if (layoutConfig.showQr !== false && !source.querySelector('svg[data-certificate-qr="ready"]')) {
+        throw new Error('The verification QR code is unavailable. Please reload the certificate and try again.');
+      }
       const [{ toPng }, { jsPDF }] = await Promise.all([
         import('html-to-image'),
         import('jspdf'),
       ]);
-      const image = await toPng(pdfSourceRef.current, {
+      const image = await toPng(source, {
         backgroundColor: '#ffffff',
         cacheBust: true,
         pixelRatio: 2,
@@ -185,7 +215,17 @@ export default function CertificateVerificationPage({ personal = false }: { pers
 
           @media screen {
             #certificate-print-area {
-              display: none !important;
+              position: fixed;
+              top: 0;
+              left: -10000px;
+              width: 1024px;
+              pointer-events: none;
+            }
+
+            #certificate-print-area .certificate-print-document {
+              border: 0;
+              border-radius: 0;
+              box-shadow: none;
             }
           }
 
@@ -199,7 +239,7 @@ export default function CertificateVerificationPage({ personal = false }: { pers
             }
 
             .certificate-verify-panel {
-              border-radius: 1.25rem !important;
+              border-radius: var(--lms-radius, 16px) !important;
             }
 
             .certificate-verify-hero,
@@ -209,7 +249,7 @@ export default function CertificateVerificationPage({ personal = false }: { pers
 
             .certificate-preview-card {
               padding: 0.75rem !important;
-              border-radius: 1.25rem !important;
+              border-radius: var(--lms-radius, 16px) !important;
             }
 
             .certificate-preview-shell {
@@ -230,10 +270,10 @@ export default function CertificateVerificationPage({ personal = false }: { pers
           </span>
         </div>
 
-        <section className="certificate-verify-panel overflow-hidden rounded-[2rem] border border-slate-200 bg-white shadow-2xl">
+        <section className="certificate-verify-panel overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl">
           <div className="certificate-verify-hero bg-gradient-to-r from-primary-900 via-primary-700 to-primary-300 p-8 text-white">
             <p className="text-xs font-black uppercase tracking-[0.24em] text-white/70">Verification result</p>
-            <h1 className="mt-3 text-3xl font-black text-white sm:text-4xl">{loading ? 'Checking certificate...' : error ? 'Certificate not verified' : 'Certificate verified'}</h1>
+            <h1 className="mt-3 text-3xl font-black text-white sm:text-4xl">{loading ? 'Checking certificate...' : error?.unavailable ? 'Verification temporarily unavailable' : error ? 'Certificate not verified' : 'Certificate verified'}</h1>
             <p className="mt-3 max-w-2xl text-sm font-semibold text-white/80">
               This page confirms whether a certificate was issued by Kent Business College through the LMS certificate system.
             </p>
@@ -246,12 +286,16 @@ export default function CertificateVerificationPage({ personal = false }: { pers
                 <p className="mt-4 text-sm font-bold text-slate-600">Checking the verification token…</p>
               </div>
             ) : error ? (
-              <div className="rounded-3xl border border-red-100 bg-red-50 p-8 text-center">
-                <div className="mx-auto grid h-16 w-16 place-items-center rounded-full bg-red-100 text-3xl text-red-600">
+              <div role="alert" className={`rounded-3xl border p-8 text-center ${error.unavailable ? 'border-amber-200 bg-amber-50' : 'border-red-100 bg-red-50'}`}>
+                <div className={`mx-auto grid h-16 w-16 place-items-center rounded-full text-3xl ${error.unavailable ? 'bg-amber-100 text-amber-700' : 'bg-red-100 text-red-600'}`}>
                   !
                 </div>
-                <h2 className="mt-4 text-2xl font-black text-red-900">We could not verify this certificate</h2>
-                <p className="mt-2 text-sm font-semibold text-red-700">{error}</p>
+                <h2 className={`mt-4 text-2xl font-black ${error.unavailable ? 'text-amber-950' : 'text-red-900'}`}>{error.unavailable ? 'Verification could not be completed' : 'We could not verify this certificate'}</h2>
+                <p className={`mt-2 text-sm font-semibold ${error.unavailable ? 'text-amber-900' : 'text-red-700'}`}>{error.message}</p>
+                {error.unavailable && <button type="button" onClick={() => setRetryCount(count => count + 1)}
+                  className="mt-5 rounded-xl bg-primary-700 px-5 py-3 text-sm font-bold text-white shadow-sm focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-700">
+                  Try again
+                </button>}
               </div>
             ) : certificate ? (
               <div className="space-y-6">
@@ -267,6 +311,8 @@ export default function CertificateVerificationPage({ personal = false }: { pers
                   </div>
                 </div>
 
+                {revisionLabel && <p role="status" className="rounded-xl bg-blue-50 p-4 text-sm font-semibold text-blue-900">{revisionLabel}. The original award date is retained. Download this copy to replace an earlier PDF.</p>}
+                {!!certificate.refreshWarnings?.length && <div role="alert" className="rounded-xl bg-amber-50 p-4 text-sm text-amber-900">{certificate.refreshWarnings.map(warning => <p key={warning}>{warning}</p>)}</div>}
                 <div className="grid gap-4 md:grid-cols-2">
                   <FieldCard label={awardTargetLabel} value={awardTarget} />
                   <FieldCard label="Certificate number" value={certificate.certificateNumber} />
@@ -278,7 +324,7 @@ export default function CertificateVerificationPage({ personal = false }: { pers
                   <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
                     <div>
                       <p className="text-xs font-black uppercase tracking-[0.18em] text-slate-500">Official certificate</p>
-                      <p className="mt-1 text-sm font-semibold text-slate-600">Rendered from the certificate record awarded by the LMS.</p>
+                      <p className="mt-1 text-sm font-semibold text-slate-600">This copy uses the latest available details and published design, with any saved corrections. Download a new PDF after changes.</p>
                     </div>
                     <button
                       type="button"
@@ -289,14 +335,15 @@ export default function CertificateVerificationPage({ personal = false }: { pers
                       {pdfBusy ? 'Preparing PDF...' : 'Download PDF'}
                     </button>
                   </div>
-                  {pdfError ? <p className="mb-4 rounded-xl bg-red-50 px-4 py-3 text-sm font-bold text-red-700">{pdfError}</p> : null}
-                  <div ref={pdfSourceRef} className="certificate-preview-shell">
+                  {pdfError ? <p role="alert" className="mb-4 rounded-xl bg-red-50 px-4 py-3 text-sm font-bold text-red-700">{pdfError}</p> : null}
+                  <div className="certificate-preview-shell">
                     <CertificateDocument
                       title={title}
                       bodyText={bodyText}
                       learnerName={learner?.name || 'Learner'}
                       programmeName={awardTarget}
                       progressLabel={`${certificate.progressPercent}%`}
+                      otjHours={certificate.otjHours}
                       certificateNumber={certificate.certificateNumber}
                       awardedOn={formatDate(certificate.issuedAt)}
                       verificationUrl={verificationUrl}
@@ -312,18 +359,22 @@ export default function CertificateVerificationPage({ personal = false }: { pers
       </div>
       {certificate ? (
         <div id="certificate-print-area" aria-hidden="true">
-          <CertificateDocument
-            className="certificate-print-document"
-            title={title}
-            bodyText={bodyText}
-            learnerName={learner?.name || 'Learner'}
-            programmeName={awardTarget}
-            progressLabel={`${certificate.progressPercent}%`}
-            certificateNumber={certificate.certificateNumber}
-            awardedOn={formatDate(certificate.issuedAt)}
-            verificationUrl={verificationUrl}
-            layoutConfig={layoutConfig}
-          />
+          {/* Export at a fixed width so small mobile previews cannot reduce QR resolution. */}
+          <div ref={pdfSourceRef} className="w-full">
+            <CertificateDocument
+              className="certificate-print-document"
+              title={title}
+              bodyText={bodyText}
+              learnerName={learner?.name || 'Learner'}
+              programmeName={awardTarget}
+              progressLabel={`${certificate.progressPercent}%`}
+              otjHours={certificate.otjHours}
+              certificateNumber={certificate.certificateNumber}
+              awardedOn={formatDate(certificate.issuedAt)}
+              verificationUrl={verificationUrl}
+              layoutConfig={layoutConfig}
+            />
+          </div>
         </div>
       ) : null}
     </main>

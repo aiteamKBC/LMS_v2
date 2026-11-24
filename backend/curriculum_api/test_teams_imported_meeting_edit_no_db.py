@@ -96,6 +96,7 @@ class OriginalMeetingEditTests(unittest.TestCase):
         self.v.parse_json_value = lambda value, default: value or default
         self.v.holiday_date_set = lambda _: set()
         package = types.ModuleType('curriculum_api')
+        package.__path__ = [str(Path(__file__).parent)]
         package.views = self.v
         module_patch = patch.dict(sys.modules, {'curriculum_api': package, 'curriculum_api.views': self.v})
         module_patch.start()

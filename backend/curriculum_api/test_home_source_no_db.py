@@ -1,4 +1,7 @@
 """Home source reuse must preserve the former summary, not just its shape."""
+from curriculum_api.catalogue.tests.parity.composition_test_support import composition_fixture
+from curriculum_api.catalogue.tests.parity.read_dependency_test_support import placement_read_fixture
+from curriculum_api.catalogue.tests.parity.read_dependency_test_support import database_read_fixture
 import json
 from collections import Counter
 from contextlib import ExitStack
@@ -81,18 +84,18 @@ class HomeSourceTests(SimpleTestCase):
 
         stack = self.enterContext(ExitStack())
         for patcher in (
-            patch.object(views, 'authoring_fetch_all', side_effect=fetch),
-            patch.object(views, 'get_program_config_rows', return_value=self.programmes),
-            patch.object(views, 'get_ksb_profile_rows', return_value=[]),
-            patch.object(views, 'table_exists', return_value=False),
-            patch.object(views, 'get_holiday_rows_safe', return_value=[]),
-            patch.object(views, 'authoring_module_content_counts', return_value=({}, {})),
+            composition_fixture(views, 'authoring_fetch_all', side_effect=fetch),
+            composition_fixture(views, 'get_program_config_rows', return_value=self.programmes),
+            composition_fixture(views, 'get_ksb_profile_rows', return_value=[]),
+            composition_fixture(views, 'table_exists', return_value=False),
+            composition_fixture(views, 'get_holiday_rows_safe', return_value=[]),
+            composition_fixture(views, 'authoring_module_content_counts', return_value=({}, {})),
             # Force non-PostgreSQL path in home_relationship_rows() so authoring_fetch_all
             # (mocked above) is used instead of the jsonb_agg PostgreSQL branch.
-            patch.object(views, 'connection', vendor='sqlite'),
+            database_read_fixture('connection', vendor='sqlite'),
             # curriculum_names.attach() is a no-op on SQLite; replicate that here so
             # home_source_rows() doesn't attempt DB lookups in the test environment.
-            patch.object(curriculum_names, 'attach', return_value=None),
+            placement_read_fixture('attach', return_value=None),
         ):
             stack.enter_context(patcher)
 
@@ -100,7 +103,7 @@ class HomeSourceTests(SimpleTestCase):
         for visibility in ('operational', 'all'):
             with self.subTest(visibility=visibility):
                 expected = previous_summary(visibility)
-                actual = home_summary.build_home_summary(visibility)
+                actual = views.build_home_summary(visibility)
                 self.assertEqual(actual, expected)
                 self.assertGreater(actual['stats']['programmes'], 0)
                 self.assertGreater(actual['stats']['groups'], 0)
@@ -111,7 +114,7 @@ class HomeSourceTests(SimpleTestCase):
         for visibility in ('operational', 'all'):
             with self.subTest(visibility=visibility):
                 expected = previous_summary(visibility)
-                actual = home_summary.build_home_summary(visibility)
+                actual = views.build_home_summary(visibility)
                 self.assertEqual(actual, expected)
                 self.assertIn('P4', [item['programme']['id'] for item in actual['programmeFocus']])
 
@@ -119,23 +122,23 @@ class HomeSourceTests(SimpleTestCase):
         # The guard remains conservative about archived names too: include the
         # programme in the visible list to exercise the common fast path.
         self.programmes[1].update(status='published')
-        with patch.object(views, 'enrich_modules_with_authoring', side_effect=AssertionError('Unused content read')), \
-             patch.object(views, 'get_holiday_rows_safe', side_effect=AssertionError('Unused holiday read')):
-            result = home_summary.build_home_summary('operational')
+        with composition_fixture(views, 'enrich_modules_with_authoring', side_effect=AssertionError('Unused content read')), \
+             composition_fixture(views, 'get_holiday_rows_safe', side_effect=AssertionError('Unused holiday read')):
+            result = views.build_home_summary('operational')
         self.assertGreater(result['stats']['programmes'], 0)
         self.assertEqual(Counter(table for table, _ in self.calls), {
             views.AUTHORING_MODULES_TABLE: 1, views.GROUPS_TABLE: 1, views.COHORT_AUTHORING_DETAILS_TABLE: 1,
         })
 
     def test_all_visibility_preserves_distinct_title_fallback_for_unused_modules(self):
-        rows, _ = home_summary.home_source_rows('all')
+        rows, _ = views.home_source_rows('all')
         unused = next(row for row in rows['modules'] if row['Module ID'] == 'MOD-C')
         self.assertEqual(unused['Number of sessions'], 2)
         week_calls = [kwargs for table, kwargs in self.calls if table == views.AUTHORING_WEEKS_TABLE]
         self.assertEqual(week_calls, [{'columns': ('module_catalogue_id', 'display_order', 'week_number', 'title')}])
 
     def test_empty_provided_sources_do_not_trigger_fallback_database_reads(self):
-        with patch.object(views, 'authoring_fetch_all', side_effect=AssertionError('Unexpected read')):
+        with composition_fixture(views, 'authoring_fetch_all', side_effect=AssertionError('Unexpected read')):
             self.assertEqual(views.authoring_modules_as_training_rows(module_rows=[], group_rows=[], cohort_rows=[]), [])
             self.assertEqual(views.authoring_modules_as_catalogue_rows(module_rows=[], week_rows=[]), [])
             self.assertEqual(views.build_cohorts_and_groups(
@@ -143,9 +146,9 @@ class HomeSourceTests(SimpleTestCase):
             ), ([], []))
 
     def test_source_failure_is_not_reported_as_an_empty_success(self):
-        with patch.object(views, 'authoring_fetch_all', side_effect=RuntimeError('Source unavailable')):
+        with composition_fixture(views, 'authoring_fetch_all', side_effect=RuntimeError('Source unavailable')):
             with self.assertRaisesMessage(RuntimeError, 'Source unavailable'):
-                home_summary.build_home_summary('operational')
+                views.build_home_summary('operational')
 
     def test_explicit_archive_and_parent_deletion_survive_narrow_projection(self):
         self.modules[0]['status'] = 'inactive'
@@ -153,15 +156,15 @@ class HomeSourceTests(SimpleTestCase):
         self.cohorts[0]['status'] = 'inactive'
         for visibility in ('operational', 'all'):
             with self.subTest(visibility=visibility):
-                self.assertEqual(home_summary.build_home_summary(visibility), previous_summary(visibility))
+                self.assertEqual(views.build_home_summary(visibility), previous_summary(visibility))
 
     def test_postgres_batches_relationship_tables_and_binds_column_allowlists(self):
         relationship_rows = {'modules': self.modules, 'groups': self.groups, 'cohorts': self.cohorts,
                              'program_configs': self.programmes, 'ksb_profiles': []}
-        with patch.object(views, 'connection', vendor='postgresql'), \
-             patch.object(views, 'ensure_module_authoring_tables') as ensure, \
-             patch.object(views, 'fetch_all', return_value=[relationship_rows]) as fetch:
-            self.assertEqual(home_summary.home_relationship_rows(), relationship_rows)
+        with database_read_fixture('connection', vendor='postgresql'), \
+             composition_fixture(views, 'ensure_module_authoring_tables') as ensure, \
+             database_read_fixture('fetch_all', return_value=[relationship_rows]) as fetch:
+            self.assertEqual(views.home_relationship_rows(), relationship_rows)
         ensure.assert_called_once()
         fetch.assert_called_once()
         sql, params = fetch.call_args.args
@@ -177,19 +180,19 @@ class HomeSourceTests(SimpleTestCase):
         self.assertNotIn('selected_holidays', params[2])
 
     def test_postgres_source_error_propagates(self):
-        with patch.object(views, 'connection', vendor='postgresql'), \
-             patch.object(views, 'ensure_module_authoring_tables'), \
-             patch.object(views, 'fetch_all', side_effect=RuntimeError('Unavailable')):
+        with database_read_fixture('connection', vendor='postgresql'), \
+             composition_fixture(views, 'ensure_module_authoring_tables'), \
+             database_read_fixture('fetch_all', side_effect=RuntimeError('Unavailable')):
             with self.assertRaisesMessage(RuntimeError, 'Unavailable'):
-                home_summary.home_relationship_rows()
+                views.home_relationship_rows()
 
     def test_postgres_raw_json_is_decoded_and_malformed_json_is_not_hidden(self):
         source = {'modules': self.modules, 'groups': self.groups, 'cohorts': self.cohorts,
                   'program_configs': self.programmes, 'ksb_profiles': []}
-        with patch.object(views, 'connection', vendor='postgresql'), \
-             patch.object(views, 'ensure_module_authoring_tables'), \
-             patch.object(views, 'fetch_all', return_value=[{key: json.dumps(value) for key, value in source.items()}]) as fetch:
-            self.assertEqual(home_summary.home_relationship_rows(), source)
+        with database_read_fixture('connection', vendor='postgresql'), \
+             composition_fixture(views, 'ensure_module_authoring_tables'), \
+             database_read_fixture('fetch_all', return_value=[{key: json.dumps(value) for key, value in source.items()}]) as fetch:
+            self.assertEqual(views.home_relationship_rows(), source)
             fetch.return_value = [{'modules': 'invalid'}]
             with self.assertRaises(json.JSONDecodeError):
-                home_summary.home_relationship_rows()
+                views.home_relationship_rows()

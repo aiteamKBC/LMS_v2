@@ -1,0 +1,491 @@
+{
+  "views_ast_sha256": "7e4e29e8a13ba360b24494db577cace959df9b2fc064cf7c12437cefd1fb86a4",
+  "functions": {
+    "safe_upload_segment": {
+      "source": "def safe_upload_segment(value, fallback):\n    text = get_valid_filename(clean_str(value)).strip('._-')\n    return text[:96] or fallback",
+      "decorators": [],
+      "owner": "curriculum_api.catalogue.infrastructure.content_uploads",
+      "deps": [
+        "clean_str",
+        "get_valid_filename"
+      ],
+      "callbacks": {}
+    },
+    "component_upload_metadata": {
+      "source": "def component_upload_metadata(\n    module_catalogue_id, component_id, component_type, uploaded_file,\n    allowed_extensions=None,\n):\n    \"\"\"Store one authoring upload and describe where it landed.\n\n    ``allowed_extensions`` overrides the per-component-type list for uploads that\n    are not a week component at all -- the module's AI material book is stored\n    through the same container, path shape and serving route, but its own file\n    types have nothing to do with a component type.\n    \"\"\"\n    module_catalogue_id = safe_upload_segment(module_catalogue_id, 'module')\n    component_id = safe_upload_segment(component_id, 'component')\n    component_type = frontend_component_type(component_type)\n    original_name = get_valid_filename(uploaded_file.name or 'upload')\n    suffix = Path(original_name).suffix.lower()\n    allowed = set(allowed_extensions) if allowed_extensions else COMPONENT_UPLOAD_EXTENSIONS.get(component_type, set())\n    if suffix not in allowed:\n        return None, f'{component_type} uploads must use one of: {\", \".join(sorted(allowed))}.'\n    if uploaded_file.size > COMPONENT_UPLOAD_MAX_BYTES:\n        return None, 'File is too large. Maximum upload size is 300 MB.'\n\n    # Microseconds make the path unique even when the same component retries or\n    # replaces a same-named resource within one second.\n    timestamp = datetime.utcnow().strftime('%Y%m%d%H%M%S%f')\n    stem = safe_upload_segment(Path(original_name).stem, 'resource')\n    stored_name = f'{stem}-{timestamp}{suffix}'\n    relative_path = f'{COMPONENT_UPLOAD_ROOT}/{module_catalogue_id}/{component_id}/{stored_name}'\n    # Azure when it is configured, local disk when it is not — see upload_storage.\n    saved_path = upload_storage.store(\n        uploaded_file, relative_path, uploaded_file.content_type or '',\n    )\n    public_path = saved_path.removeprefix(f'{COMPONENT_UPLOAD_ROOT}/')\n    return {\n        'fileName': original_name,\n        'storedPath': saved_path,\n        'url': f'/curriculum_api/curriculum/uploads/{public_path}',\n        'size': uploaded_file.size,\n        'contentType': uploaded_file.content_type or '',\n        'componentType': component_type,\n    }, ''",
+      "decorators": [],
+      "owner": "curriculum_api.catalogue.infrastructure.content_uploads",
+      "deps": [
+        "COMPONENT_UPLOAD_EXTENSIONS",
+        "COMPONENT_UPLOAD_MAX_BYTES",
+        "COMPONENT_UPLOAD_ROOT",
+        "Path",
+        "datetime",
+        "frontend_component_type",
+        "get_valid_filename",
+        "safe_upload_segment",
+        "upload_storage"
+      ],
+      "callbacks": {}
+    },
+    "update_component_upload_settings": {
+      "source": "def update_component_upload_settings(component_id, component_type, metadata):\n    # The row is rewritten whole below, so it is read under a row lock in the\n    # same transaction as the write: read first and written later, a structure\n    # save landing in between had its component content written back over.\n    with transaction.atomic():\n        if connection.vendor == 'postgresql':\n            with connection.cursor() as cursor:\n                cursor.execute(\n                    f'select 1 from {authoring_table_name(AUTHORING_COMPONENTS_TABLE)} where id = %s for update',\n                    [component_id],\n                )\n                cursor.fetchall()\n        return _update_component_upload_settings(component_id, component_type, metadata)",
+      "decorators": [],
+      "owner": "curriculum_api.catalogue.infrastructure.content_uploads",
+      "deps": [
+        "AUTHORING_COMPONENTS_TABLE",
+        "_update_component_upload_settings",
+        "authoring_table_name",
+        "connection",
+        "transaction"
+      ],
+      "callbacks": {}
+    },
+    "ai_material_record": {
+      "source": "def ai_material_record(module_catalogue_id):\n    \"\"\"The AI Material book stored against a module, or ``None``.\n\n    The metadata is a JSON blob on ``curriculum.module_details`` rather than its\n    own table: a module has at most one book, the row is already keyed by\n    ``module_catalogue_id``, and the module save writes that row with a partial\n    payload -- so a column it never names survives every save untouched.\n    \"\"\"\n    rows = authoring_fetch_all(\n        AUTHORING_ADVANCED_TABLE, 'module_catalogue_id = %s', [module_catalogue_id],\n    )\n    if not rows:\n        return None\n    stored = parse_json_value(rows[0].get(AI_MATERIAL_COLUMN), None)\n    if not isinstance(stored, dict) or not clean_str(stored.get('storedPath')):\n        return None\n    return stored",
+      "decorators": [],
+      "owner": "curriculum_api.catalogue.infrastructure.content_uploads",
+      "deps": [
+        "AI_MATERIAL_COLUMN",
+        "AUTHORING_ADVANCED_TABLE",
+        "authoring_fetch_all",
+        "clean_str",
+        "parse_json_value"
+      ],
+      "callbacks": {}
+    },
+    "set_programme_modules_ksb_source": {
+      "source": "def set_programme_modules_ksb_source(programme_values, source_value):\n    raw_targets = unique([clean_str(value) for value in programme_values if clean_str(value)])\n    targets = {normalise(value) for value in raw_targets if normalise(value)}\n    source_value = normalise_ksb_profile_source_value(source_value)\n    if not raw_targets:\n        return 0\n    ensure_module_authoring_tables()\n    if connection.vendor == 'postgresql':\n        placeholders = ', '.join(['%s'] * len(raw_targets))\n        params = [source_value, datetime.utcnow(), *raw_targets]\n        with connection.cursor() as cursor:\n            cursor.execute(\n                f'''\n                update {authoring_table_name(AUTHORING_MODULES_TABLE)}\n                set ksb_profile_source_id = %s, updated_at = %s\n                where programme_id in ({placeholders})\n                   or programme_id in (\n                       select programme_id from {table_name('programmes')} where name in ({placeholders}))\n                ''',\n                [*params, *raw_targets],\n            )\n            # Raw SQL across a programme's modules: no helper reported it.\n            # Rare, so retiring every module's learner content costs little.\n            from . import content_cache\n            content_cache.retire_all()\n            return cursor.rowcount\n    updated = 0\n    for module in authoring_fetch_all(AUTHORING_MODULES_TABLE):\n        module_programme_values = [\n            module.get('programme_id'),\n            module.get('programme_name'),\n        ]\n        if not any(normalise(value) in targets for value in module_programme_values):\n            continue\n        module_id = clean_str(module.get('module_catalogue_id'))\n        if not module_id:\n            continue\n        update_authoring_rows(AUTHORING_MODULES_TABLE, 'module_catalogue_id = %s', [module_id], {\n            'ksb_profile_source_id': source_value,\n            'updated_at': datetime.utcnow(),\n        })\n        updated += 1\n    return updated",
+      "decorators": [],
+      "owner": "curriculum_api.catalogue.infrastructure.content_source_writes",
+      "deps": [
+        "AUTHORING_MODULES_TABLE",
+        "authoring_fetch_all",
+        "authoring_table_name",
+        "clean_str",
+        "connection",
+        "datetime",
+        "ensure_module_authoring_tables",
+        "load_content_cache",
+        "normalise",
+        "normalise_ksb_profile_source_value",
+        "table_name",
+        "unique",
+        "update_authoring_rows"
+      ],
+      "callbacks": {
+        "load_content_cache": {
+          "module": null,
+          "name": "content_cache",
+          "loader": true
+        }
+      }
+    },
+    "component_source_inputs_fingerprint": {
+      "source": "def component_source_inputs_fingerprint():\n    \"\"\"What a mapping's inferred KSB source depends on beyond the curriculum epoch.\n\n    The component reads infer a mapping's source from the Skills England KSBs\n    (``standard_ksbs``). It is not written through a curriculum handler, so no\n    epoch bump retires a cached read when it changes. This is its row count and\n    newest stamp: one round trip, taken when a cached entry passes its ttl, so\n    the entry is rebuilt only when it has moved (see cached_curriculum_value's\n    ``fingerprint``).\n    \"\"\"\n    parts = []\n    for table in ('standard_ksbs',):\n        if not table_exists(table):\n            parts.append((table, None))\n            continue\n        stamps = [column for column in ('updated_at', 'date_updated') if column in column_names(table)]\n        stamp_sql = ', '.join(f'max({quote_ident(column)})::text' for column in stamps) or 'null'\n        with connection.cursor() as cursor:\n            cursor.execute(f'select count(*), {stamp_sql} from {authoring_table_name(table)}')\n            parts.append((table, tuple(cursor.fetchone())))\n    return tuple(parts)",
+      "decorators": [],
+      "owner": "curriculum_api.catalogue.infrastructure.content_source_writes",
+      "deps": [
+        "authoring_table_name",
+        "column_names",
+        "connection",
+        "quote_ident",
+        "table_exists"
+      ],
+      "callbacks": {}
+    },
+    "lock_module_structure_row": {
+      "source": "def lock_module_structure_row(module_catalogue_id):\n    \"\"\"Hold this module's row for the rest of the transaction.\n\n    Without it the revision check is a read followed by a write, and two saves\n    that both read revision 41 both pass it -- the second overwriting the first\n    with the very payload the check exists to refuse. The lock makes\n    check-and-write one operation: the second save blocks here until the first\n    commits, then reads the revision the first one produced and is refused.\n\n    SQLite (the test runner) has no row locks and needs none: a write\n    transaction takes the whole database.\n    \"\"\"\n    if connection.vendor != 'postgresql':\n        return\n    from .learning_storage import course\n    if course(clean_str(module_catalogue_id), lock=True):\n        return\n    with connection.cursor() as cursor:\n        cursor.execute(\n            'select 1 from %s where %s = %%s for update'\n            % (\n                authoring_table_name(AUTHORING_MODULES_TABLE),\n                quote_ident('module_catalogue_id'),\n            ),\n            [clean_str(module_catalogue_id)],\n        )\n        cursor.fetchall()",
+      "decorators": [],
+      "owner": "curriculum_api.catalogue.infrastructure.content_source_writes",
+      "deps": [
+        "AUTHORING_MODULES_TABLE",
+        "authoring_table_name",
+        "clean_str",
+        "connection",
+        "course",
+        "quote_ident"
+      ],
+      "callbacks": {
+        "course": {
+          "module": "learning_storage",
+          "name": "course",
+          "loader": false
+        }
+      }
+    },
+    "_scrub_free_course_learner_assignments": {
+      "source": "def _scrub_free_course_learner_assignments(course_id):\n    \"\"\"Remove a moved free course from every learner it was assigned to.\n\n    ``free_course_ref`` is a plain reference with no FK cascade, so deleting the\n    course would otherwise leave orphans. ``default`` and ``enrolment`` are the\n    same physical Neon database, so this raw cross-schema SQL runs on the\n    curriculum connection and stays inside the convert transaction (the ORM would\n    use the ``enrolment`` alias — a separate connection, a separate transaction).\n    \"\"\"\n    course_id = clean_str(course_id)\n    if not course_id:\n        return\n    marker = json.dumps([{'freeCourseId': course_id}])\n    with connection.cursor() as cursor:\n        # Enrolment source of truth: drop the matching element from each learner's\n        # Free_courses JSONB. `is distinct from` keeps non-matching and malformed\n        # (null-key) elements rather than silently dropping them.\n        cursor.execute(\n            '''\n            update \"enrolment\".\"Created_users\"\n               set \"Free_courses\" = coalesce((\n                     select jsonb_agg(elem)\n                       from jsonb_array_elements(\"Free_courses\"::jsonb) elem\n                      where elem->>'freeCourseId' is distinct from %s\n                   ), '[]'::jsonb)\n             where \"Free_courses\"::jsonb @> %s::jsonb\n            ''',\n            [course_id, marker],\n        )\n        # Relational mirror kept by the learner-side sync.\n        cursor.execute(\n            'delete from \"Learner\".\"learner_free_courses\" where free_course_ref = %s',\n            [course_id],\n        )",
+      "decorators": [],
+      "owner": "curriculum_api.catalogue.infrastructure.content_source_writes",
+      "deps": [
+        "clean_str",
+        "connection",
+        "json"
+      ],
+      "callbacks": {}
+    },
+    "_update_component_upload_settings": {
+      "source": "def _update_component_upload_settings(component_id, component_type, metadata):\n    rows = authoring_fetch_all(AUTHORING_COMPONENTS_TABLE, 'id = %s', [component_id])\n    if not rows:\n        return False\n    row = rows[0]\n    settings_payload = normalise_component_settings_payload(component_type, parse_json_value(row.get('settings'), {}))\n    updates = {\n        'uploadedFileName': metadata['fileName'],\n        'uploadedFileUrl': metadata['url'],\n        'uploadedFileSize': metadata['size'],\n        'uploadedFileContentType': metadata['contentType'],\n        'uploadSource': 'Device upload',\n    }\n    if component_type == 'podcast':\n        updates.update({'podcastSource': 'Device upload', 'podcastUrl': metadata['url']})\n    if component_type == 'powerpoint':\n        updates.update({'fileName': metadata['fileName'], 'presentationUrl': metadata['url']})\n    if component_type == 'reading':\n        updates.update({'readingSource': 'LMS resource', 'resourceUrl': metadata['url']})\n    if component_type == 'assignment':\n        updates.update({'assignmentFileName': metadata['fileName'], 'assignmentFileUrl': metadata['url']})\n    authoring_upsert(AUTHORING_COMPONENTS_TABLE, ['id'], {\n        **row,\n        'settings': json_db_value({**settings_payload, **updates}),\n    })\n    invalidate_curriculum_cache()\n    return True",
+      "decorators": [],
+      "owner": "curriculum_api.catalogue.application.component_resources",
+      "deps": [
+        "AUTHORING_COMPONENTS_TABLE",
+        "authoring_fetch_all",
+        "authoring_upsert",
+        "invalidate_curriculum_cache",
+        "json_db_value",
+        "normalise_component_settings_payload",
+        "parse_json_value"
+      ],
+      "callbacks": {}
+    },
+    "store_component_ksb_mappings": {
+      "source": "def store_component_ksb_mappings(component, items, deleted_by):\n    \"\"\"Make ``items`` (JSON mapping items) the component's KSB mappings.\n\n    The list is handed to the projection directly. Re-reading the component\n    for it would answer the mappings stored before this write: the normalised\n    schema keeps no JSON copy on the component, so the copy written first is\n    not there to read back.\n    \"\"\"\n    component_id = clean_str((component or {}).get('id'))\n    return sync_component_ksb_projection(\n        component_id, component_row={**(component or {}), 'ksb_mappings': list(items or [])}, deleted_by=deleted_by,\n    )",
+      "decorators": [],
+      "owner": "curriculum_api.catalogue.application.component_resources",
+      "deps": [
+        "clean_str",
+        "sync_component_ksb_projection"
+      ],
+      "callbacks": {}
+    },
+    "sync_component_ksb_projection": {
+      "source": "def sync_component_ksb_projection(component_id, component_row=None, module_row=None, week_id=None, deleted_by='component-ksb-sync'):\n    component_id = clean_str(component_id)\n    if not component_id:\n        return []\n    rows = [component_row] if component_row else authoring_fetch_all(AUTHORING_COMPONENTS_TABLE, 'id = %s', [component_id])\n    if not rows:\n        return []\n    component = rows[0]\n    module_catalogue_id = clean_str(component.get('module_catalogue_id'))\n    week_id = clean_str(week_id or component.get('week_id'))\n    module_row = module_row or (authoring_fetch_all(AUTHORING_MODULES_TABLE, 'module_catalogue_id = %s', [module_catalogue_id]) or [{}])[0]\n    mappings = component_ksb_mappings_from_row(component)\n    json_items, projection_payloads = normalise_component_ksb_mappings(\n        module_catalogue_id,\n        mappings,\n        week_id=week_id,\n        component_id=component_id,\n        module_row=module_row,\n        enforce_unique=False,\n    )\n    if has_column(AUTHORING_COMPONENTS_TABLE, 'ksb_mappings'):\n        # The component's JSON copy, where the schema still keeps one; the\n        # ksb_mappings rows below are the record.\n        update_authoring_rows(AUTHORING_COMPONENTS_TABLE, 'id = %s', [component_id], {'ksb_mappings': json_db_value(json_items)})\n    authoring_soft_delete(AUTHORING_KSB_MAPPINGS_TABLE, 'component_id = %s', [component_id], deleted_by=deleted_by)\n    authoring_bulk_upsert(AUTHORING_KSB_MAPPINGS_TABLE, ['id'], projection_payloads)\n    sync_progress_ksbs({component_id: json_items}, actor=deleted_by)\n    return json_items",
+      "decorators": [],
+      "owner": "curriculum_api.catalogue.application.component_resources",
+      "deps": [
+        "AUTHORING_COMPONENTS_TABLE",
+        "AUTHORING_KSB_MAPPINGS_TABLE",
+        "AUTHORING_MODULES_TABLE",
+        "authoring_bulk_upsert",
+        "authoring_fetch_all",
+        "authoring_soft_delete",
+        "clean_str",
+        "component_ksb_mappings_from_row",
+        "has_column",
+        "json_db_value",
+        "normalise_component_ksb_mappings",
+        "sync_progress_ksbs",
+        "update_authoring_rows"
+      ],
+      "callbacks": {}
+    },
+    "_delete_single_free_course_rows": {
+      "source": "def _delete_single_free_course_rows(course_id):\n    \"\"\"Delete ONE free course's own rows + its authoring-week mirror.\n\n    Scoped by course_id / free_module_id, so it removes only this course and\n    never the rest of the FREE-COURSES catalogue (the programme-wide\n    ``delete_free_programme_data`` would). Mirrors the authoring-week cleanup the\n    free-course save performs (``save_free_programme_modules``).\n    \"\"\"\n    course_id = clean_str(course_id)\n    if not course_id:\n        return\n    from . import free_course_catalogue_store as catalogue_store\n    if catalogue_store.applies():\n        # New database: no curriculum.weeks mirror, RESTRICT keys throughout.\n        catalogue_store.delete_course(course_id)\n        return\n    week_rows = free_programme_fetch_all(\n        FREE_PROGRAMME_MODULES_TABLE, 'course_id = %s', [course_id], columns=['id', 'week_id'],\n    )\n    free_week_ids = [clean_str(row.get('id')) for row in week_rows if clean_str(row.get('id'))]\n    # The authoring_weeks mirror is keyed on both the free week row id and the\n    # authoring week_id it was written under, plus the course id — same predicate\n    # save_free_programme_modules deletes by, scoped to this one course.\n    mirror_ids = set(free_week_ids)\n    for row in week_rows:\n        if clean_str(row.get('week_id')):\n            mirror_ids.add(clean_str(row.get('week_id')))\n    mirror_ids.add(course_id)\n    if free_week_ids:\n        placeholders = ', '.join(['%s'] * len(free_week_ids))\n        free_programme_delete(FREE_PROGRAMME_COMPONENTS_TABLE, f'free_module_id in ({placeholders})', free_week_ids)\n    mirror_list = [value for value in mirror_ids if value]\n    if mirror_list:\n        placeholders = ', '.join(['%s'] * len(mirror_list))\n        authoring_delete(\n            AUTHORING_WEEKS_TABLE,\n            f'module_catalogue_id in ({placeholders}) or id in ({placeholders})',\n            [*mirror_list, *mirror_list],\n        )\n    free_programme_delete(FREE_PROGRAMME_MODULES_TABLE, 'course_id = %s', [course_id])\n    free_programme_delete(FREE_COURSES_TABLE, 'id = %s', [course_id])",
+      "decorators": [],
+      "owner": "curriculum_api.catalogue.application.free_programme_commands",
+      "deps": [
+        "AUTHORING_WEEKS_TABLE",
+        "FREE_COURSES_TABLE",
+        "FREE_PROGRAMME_COMPONENTS_TABLE",
+        "FREE_PROGRAMME_MODULES_TABLE",
+        "authoring_delete",
+        "clean_str",
+        "free_programme_delete",
+        "free_programme_fetch_all",
+        "load_free_course_catalogue_store"
+      ],
+      "callbacks": {
+        "load_free_course_catalogue_store": {
+          "module": null,
+          "name": "free_course_catalogue_store",
+          "loader": true
+        }
+      }
+    },
+    "convert_module_to_free_course": {
+      "source": "def convert_module_to_free_course(module_catalogue_id, *, free_programme_id='FREE-COURSES', mode='clone'):\n    \"\"\"Copy one programme module into a NEW free course (appended to the existing\n    catalogue). ``mode='move'`` additionally archives the source module. Whole\n    body is one transaction so a failure rolls the copy and the archive back\n    together.\n    \"\"\"\n    module_catalogue_id = clean_str(module_catalogue_id)\n    if not module_catalogue_id:\n        raise ValueError('A module id is required.')\n    mode = clean_str(mode).lower() or 'clone'\n    if mode not in {'clone', 'move'}:\n        raise ValueError('mode must be \"clone\" or \"move\".')\n\n    structure = get_authoring_structure_payload(module_catalogue_id)\n    if not structure:\n        raise LookupError('Module not found.')\n    course_title = clean_str(structure.get('title')) or 'Untitled course'\n    if mode == 'move' and module_future_teams_sessions(module_catalogue_id):\n        # Moving archives the source module, and an archive never leaves a\n        # running Teams calendar behind it (see module_teams_calendar_block_response).\n        raise ValueError(MODULE_TEAMS_CALENDAR_BLOCKS_ARCHIVE)\n\n    free_programme_id = clean_str(free_programme_id) or 'FREE-COURSES'\n    with transaction.atomic(), versioning.source('module-to-free-course'):\n        existing_modules = get_free_programme_modules_payload(free_programme_id)\n        existing_ids = {clean_str(row.get('courseId')) for row in existing_modules if clean_str(row.get('courseId'))}\n        course_id = unique_timestamp_prefixed_id('FREECOURSE', existing_ids)\n        new_weeks = build_module_free_course_weeks(structure, course_id)\n        if not new_weeks:\n            raise ValueError('This module has no weeks to convert.')\n        modules_input = [_free_module_response_to_input(row) for row in existing_modules] + new_weeks\n        saved = save_free_programme_modules(free_programme_id, {'programmeName': 'Free Courses', 'modules': modules_input})\n\n        if mode == 'move':\n            delete_module_authoring_structure(module_catalogue_id)\n\n        invalidate_curriculum_cache()\n\n    return {\n        'mode': mode,\n        'freeCourseId': course_id,\n        'courseName': course_title,\n        'moduleCatalogueId': module_catalogue_id,\n        'modules': saved,\n    }",
+      "decorators": [],
+      "owner": "curriculum_api.catalogue.application.free_programme_commands",
+      "deps": [
+        "MODULE_TEAMS_CALENDAR_BLOCKS_ARCHIVE",
+        "_free_module_response_to_input",
+        "build_module_free_course_weeks",
+        "clean_str",
+        "delete_module_authoring_structure",
+        "get_authoring_structure_payload",
+        "get_free_programme_modules_payload",
+        "invalidate_curriculum_cache",
+        "module_future_teams_sessions",
+        "save_free_programme_modules",
+        "transaction",
+        "unique_timestamp_prefixed_id",
+        "versioning"
+      ],
+      "callbacks": {}
+    },
+    "curriculum_module_settings": {
+      "source": "def curriculum_module_settings(request, module_catalogue_id):\n    if request.method != 'PATCH':\n        return json_error('Method not allowed.', status=405)\n    payload = json_body(request)\n    if payload is None:\n        return json_error('Invalid JSON body.')\n    # Resolved the same way every other module write resolves its target. Reading\n    # the raw identifier meant a legacy or aliased id found nothing, and the\n    # blank shell below was then saved as a brand new module: the real one kept\n    # its old settings while a titleless ghost appeared in the catalogue.\n    module_catalogue_id = resolve_stored_module_catalogue_id(module_catalogue_id) or clean_str(module_catalogue_id)\n    if not authoring_module_exists(module_catalogue_id):\n        # This endpoint only ever edits settings on a module that exists. A\n        # missing one is a 404, never a create -- saving a shell here would\n        # blank the weeks and components of whatever the id was meant to name.\n        return json_error('Module not found.', status=404)\n    try:\n        with transaction.atomic():\n            # Legacy endpoint with no screen of its own: it may only write\n            # against the version it was made from, read under the lock, so it\n            # can neither replace a newer title nor write back weeks it read\n            # before somebody else's save.\n            refused = refuse_stale_module_write(request, payload, module_catalogue_id)\n            if refused is not None:\n                return refused\n            existing = get_authoring_structure_payload(module_catalogue_id)\n            updates = {\n                **existing,\n                'programmeId': payload.get('programmeId') or existing.get('programmeId'),\n                'programmeName': payload.get('programmeName') or payload.get('programme') or existing.get('programmeName'),\n                'title': payload.get('title') or payload.get('name') or existing.get('title'),\n                'description': payload.get('description') if 'description' in payload else existing.get('description'),\n                'status': payload.get('status') or existing.get('status'),\n                'declaredTotalOtjh': payload.get('totalOtjh') if 'totalOtjh' in payload else existing.get('declaredTotalOtjh'),\n            }\n            result = save_module_authoring_structure(module_catalogue_id, updates)\n    except CoverImageError as exc:\n        return json_error(str(exc), status=400)\n    except Exception as exc:\n        logger.exception('Unable to update module authoring settings for %s.', module_catalogue_id)\n        return json_error('Unable to update module settings.', status=500, detail=str(exc))\n    return JsonResponse({'updated': True, 'module': result, 'revision': module_structure_revision(module_catalogue_id)})",
+      "decorators": [
+        "csrf_exempt"
+      ],
+      "owner": "curriculum_api.catalogue.api.content_commands",
+      "deps": [
+        "CoverImageError",
+        "JsonResponse",
+        "authoring_module_exists",
+        "clean_str",
+        "get_authoring_structure_payload",
+        "json_body",
+        "json_error",
+        "logger",
+        "module_structure_revision",
+        "refuse_stale_module_write",
+        "resolve_stored_module_catalogue_id",
+        "save_module_authoring_structure",
+        "transaction"
+      ],
+      "callbacks": {}
+    },
+    "refuse_stale_module_write": {
+      "source": "def refuse_stale_module_write(request, payload, module_catalogue_id):\n    \"\"\"Lock a module and refuse a write not made against its current version.\n\n    For the legacy single-item endpoints (settings, a component, a week, a KSB\n    mapping) that no screen calls any more but that still write a module's\n    rows. Each one used to write blind, so a script or an old client holding a\n    copy from an hour ago could replace whatever had been authored since --\n    the overwrite the Module Builder's revision exists to stop. They now need\n    the same ``expectedRevision`` (or ``If-Match``) the structure save sends:\n    428 without one, 409 with a stale one. Call inside ``transaction.atomic()``\n    and write before it ends. Returns the refusal, or None to proceed.\n    \"\"\"\n    expected_revision = requested_expected_revision(request, payload if isinstance(payload, dict) else {})\n    if not expected_revision:\n        return json_error(\n            'This change needs the saved version of the module it was made against '\n            '(expectedRevision). Open the module again and repeat the change.',\n            status=428,\n            conflict=True,\n        )\n    lock_module_structure_row(module_catalogue_id)\n    current_revision = module_structure_revision(module_catalogue_id)\n    if current_revision != expected_revision:\n        return record_conflict_response(expected_revision, current_revision)\n    return None",
+      "decorators": [],
+      "owner": "curriculum_api.catalogue.api.content_commands",
+      "deps": [
+        "json_error",
+        "lock_module_structure_row",
+        "module_structure_revision",
+        "record_conflict_response",
+        "requested_expected_revision"
+      ],
+      "callbacks": {}
+    },
+    "guarded_module_item_write": {
+      "source": "def guarded_module_item_write(request, module_catalogue_id, write):\n    \"\"\"Run a legacy single-item write under its module's lock and version check.\n\n    ``write`` is the original handler; its own atomic blocks become savepoints\n    inside this one, so the lock taken here is held until everything it wrote\n    commits. Rows that belong to no module (library content) are not guarded.\n    \"\"\"\n    module_catalogue_id = clean_str(module_catalogue_id)\n    if not module_catalogue_id:\n        return write()\n    payload = json_body(request) if request.body else {}\n    with transaction.atomic():\n        refused = refuse_stale_module_write(request, payload or {}, module_catalogue_id)\n        if refused is not None:\n            return refused\n        return write()",
+      "decorators": [],
+      "owner": "curriculum_api.catalogue.api.content_commands",
+      "deps": [
+        "clean_str",
+        "json_body",
+        "refuse_stale_module_write",
+        "transaction"
+      ],
+      "callbacks": {}
+    },
+    "curriculum_component_collection": {
+      "source": "def curriculum_component_collection(request):\n    if request.method == 'GET':\n        try:\n            raw_ids = request.GET.get('module_catalogue_ids') or request.GET.get('moduleCatalogueIds') or ''\n            module_catalogue_ids = [clean_str(value) for value in raw_ids.split(',') if clean_str(value)]\n            # ``omit=content``: see component_rows_without_content. Opt-in; any\n            # other caller still gets every setting.\n            omit_content = 'content' in query_list(request, 'omit')\n            # ``fields=programme``: the programme page's projection, see\n            # component_rows_for_programme_page. Opt-in like ``omit=content``.\n            programme_view = 'programme' in query_list(request, 'fields')\n            project = (\n                component_rows_for_programme_page if programme_view\n                else component_rows_without_content if omit_content else (lambda rows: rows)\n            )\n            if module_catalogue_ids:\n                if query_value(request, 'page') or query_value(request, 'pageSize'):\n                    return curriculum_results_response(component_builder_rows(\n                        module_catalogue_ids, omit_content=omit_content, programme_view=programme_view,\n                    ), request=request)\n                # The programme page reads every component of the programme\n                # here on each open -- ~17k rows with their settings for the\n                # largest programme -- and nothing cached it. The rows are\n                # authoring data, written only through curriculum handlers\n                # that bump the epoch, so any edit retires this at once. The\n                # one input that bumps nothing is the Skills England list a\n                # mapping's source is inferred from (standard_ksbs, changed by\n                # manual import), hence the same 60s bound coverage keeps.\n                # Keyed on the sorted, de-duped id set: order never changes\n                # the rows.\n                ids = sorted({value for value in module_catalogue_ids})\n                digest = hashlib.sha256('\\x1f'.join(ids).encode()).hexdigest()[:32]\n                variant = 'programme' if programme_view else 'nocontent' if omit_content else 'full'\n                entry = cached_curriculum_value(\n                    f'components-response:{variant}:{len(ids)}:{digest}',\n                    lambda: encode_json_bytes(\n                        curriculum_results_response(component_builder_rows(\n                            module_catalogue_ids, omit_content=omit_content, programme_view=programme_view,\n                        )).content,\n                    ),\n                    ttl=60,\n                    # The programme read is the ~20k-row one: past its 60s it\n                    # is re-checked against the KSB sources rather than rebuilt.\n                    **({'fingerprint': component_source_inputs_fingerprint} if programme_view else {}),\n                )\n                return conditional_json_response(request, entry)\n            return curriculum_results_response(\n                project(cached_curriculum_value('components:builder', component_builder_rows)),\n                request=request,\n            )\n        except Exception:\n            logger.exception('Unable to load component builder rows.')\n            return json_error('Unable to load component builder rows.', status=500)\n\n    if request.method != 'POST':\n        return json_error('Method not allowed.', status=405)\n    payload = json_body(request)\n    if payload is None:\n        return json_error('Invalid JSON body.')\n    missing = require_fields(payload, ['title', 'module'])\n    if missing:\n        return json_error('Missing required fields.', fields=missing)\n    try:\n        component = save_component_builder_payload(payload)\n    except ModuleAuthoringValidationError as exc:\n        return json_error('Invalid component payload.', status=400, errors=exc.errors)\n    except Exception as exc:\n        logger.exception('Unable to create component builder component.')\n        return json_error('Unable to create component.', status=500, detail=str(exc))\n    return JsonResponse({'created': True, 'component': component}, status=201)",
+      "decorators": [
+        "csrf_exempt"
+      ],
+      "owner": "curriculum_api.catalogue.api.content_commands",
+      "deps": [
+        "JsonResponse",
+        "ModuleAuthoringValidationError",
+        "cached_curriculum_value",
+        "clean_str",
+        "component_builder_rows",
+        "component_rows_for_programme_page",
+        "component_rows_without_content",
+        "component_source_inputs_fingerprint",
+        "conditional_json_response",
+        "curriculum_results_response",
+        "encode_json_bytes",
+        "hashlib",
+        "json_body",
+        "json_error",
+        "logger",
+        "query_list",
+        "query_value",
+        "require_fields",
+        "save_component_builder_payload"
+      ],
+      "callbacks": {}
+    },
+    "curriculum_component_summary": {
+      "source": "def curriculum_component_summary(request):\n    \"\"\"The programme page's component figures without the components.\n\n    Takes the same ``module_catalogue_ids`` the programme page sends to\n    ``components/`` and answers with component_summary_rows(): one row per\n    module/week bucket carrying counts and Expected OTJH minutes, instead of\n    every component with its settings and KSB mappings. Cached and invalidated\n    exactly as that read is -- the same epoch, and the same 60s bound for the\n    one input no curriculum write bumps -- so the two can never disagree for\n    longer than ``components/`` could already disagree with itself.\n    \"\"\"\n    raw_ids = request.GET.get('module_catalogue_ids') or request.GET.get('moduleCatalogueIds') or ''\n    ids = sorted({clean_str(value) for value in raw_ids.split(',') if clean_str(value)})\n    if not ids:\n        return json_error('module_catalogue_ids is required.', status=400)\n    digest = hashlib.sha256('\\x1f'.join(ids).encode()).hexdigest()[:32]\n    try:\n        entry = cached_curriculum_value(\n            f'components-summary-response:{len(ids)}:{digest}',\n            lambda: encode_json_entry({\n                'schema': CURRICULUM_SCHEMA,\n                'results': component_summary_rows(ids),\n            }),\n            force=request_bypasses_curriculum_cache(request),\n            ttl=60,\n            fingerprint=component_source_inputs_fingerprint,\n        )\n    except Exception:\n        logger.exception('Unable to summarise components.')\n        return json_error('Unable to summarise components.', status=500)\n    return conditional_json_response(request, entry)",
+      "decorators": [
+        "require_GET"
+      ],
+      "owner": "curriculum_api.catalogue.api.content_commands",
+      "deps": [
+        "CURRICULUM_SCHEMA",
+        "cached_curriculum_value",
+        "clean_str",
+        "component_source_inputs_fingerprint",
+        "component_summary_rows",
+        "conditional_json_response",
+        "encode_json_entry",
+        "hashlib",
+        "json_error",
+        "logger",
+        "request_bypasses_curriculum_cache"
+      ],
+      "callbacks": {}
+    },
+    "curriculum_component_detail": {
+      "source": "def curriculum_component_detail(request, component_id):\n    component_id = clean_str(component_id)\n    if request.method not in {'PATCH', 'DELETE'}:\n        return json_error('Method not allowed.', status=405)\n    existing = authoring_fetch_all(AUTHORING_COMPONENTS_TABLE, 'id = %s', [component_id])\n    if not existing:\n        return json_error('Component not found.', status=404)\n    module_id = clean_str(existing[0].get('module_catalogue_id'))\n    payload = json_body(request) if request.body else {}\n    if payload is None:\n        return json_error('Invalid JSON body.')\n\n    if request.method == 'DELETE':\n        with transaction.atomic():\n            if module_id:\n                refused = refuse_stale_module_write(request, payload, module_id)\n                if refused is not None:\n                    return refused\n            authoring_soft_delete(AUTHORING_KSB_MAPPINGS_TABLE, 'component_id = %s', [component_id], via_parent=component_id, deleted_by='component-delete')\n            authoring_soft_delete(AUTHORING_COMPONENTS_TABLE, 'id = %s', [component_id], deleted_by='component-delete')\n        invalidate_curriculum_cache()\n        return JsonResponse({'deleted': True, 'permanent': False, 'id': component_id})\n\n    try:\n        with transaction.atomic():\n            if module_id:\n                refused = refuse_stale_module_write(request, payload, module_id)\n                if refused is not None:\n                    return refused\n            # Read under the lock, so the fields this PATCH does not name come\n            # from the stored component rather than from before the lock.\n            current = next((item for item in component_builder_rows([module_id] if module_id else None) if item['id'] == component_id), None)\n            merged = {\n                **(current or component_builder_response(existing[0])),\n                **{key: value for key, value in payload.items() if key not in ('expectedRevision', 'expected_revision')},\n                'id': component_id,\n            }\n            component = save_component_builder_payload(merged, component_id)\n    except ModuleAuthoringValidationError as exc:\n        return json_error('Invalid component payload.', status=400, errors=exc.errors)\n    except Exception as exc:\n        logger.exception('Unable to update component builder component %s.', component_id)\n        return json_error('Unable to update component.', status=500, detail=str(exc))\n    return JsonResponse({'updated': True, 'component': component})",
+      "decorators": [
+        "csrf_exempt"
+      ],
+      "owner": "curriculum_api.catalogue.api.content_commands",
+      "deps": [
+        "AUTHORING_COMPONENTS_TABLE",
+        "AUTHORING_KSB_MAPPINGS_TABLE",
+        "JsonResponse",
+        "ModuleAuthoringValidationError",
+        "authoring_fetch_all",
+        "authoring_soft_delete",
+        "clean_str",
+        "component_builder_response",
+        "component_builder_rows",
+        "invalidate_curriculum_cache",
+        "json_body",
+        "json_error",
+        "logger",
+        "refuse_stale_module_write",
+        "save_component_builder_payload",
+        "transaction"
+      ],
+      "callbacks": {}
+    },
+    "curriculum_ksb_mapping_detail": {
+      "source": "def curriculum_ksb_mapping_detail(request, mapping_id):\n    if request.method in {'PATCH', 'DELETE'}:\n        owner = authoring_fetch_all(AUTHORING_KSB_MAPPINGS_TABLE, 'id = %s', [clean_str(mapping_id)], columns=['module_catalogue_id'])\n        if owner:\n            return guarded_module_item_write(\n                request, owner[0].get('module_catalogue_id'),\n                lambda: _curriculum_ksb_mapping_detail(request, mapping_id),\n            )\n    return _curriculum_ksb_mapping_detail(request, mapping_id)",
+      "decorators": [
+        "csrf_exempt"
+      ],
+      "owner": "curriculum_api.catalogue.api.content_commands",
+      "deps": [
+        "AUTHORING_KSB_MAPPINGS_TABLE",
+        "_curriculum_ksb_mapping_detail",
+        "authoring_fetch_all",
+        "clean_str",
+        "guarded_module_item_write"
+      ],
+      "callbacks": {}
+    },
+    "_curriculum_ksb_mapping_detail": {
+      "source": "def _curriculum_ksb_mapping_detail(request, mapping_id):\n    mapping_id = clean_str(mapping_id)\n    rows = authoring_fetch_all(AUTHORING_KSB_MAPPINGS_TABLE, 'id = %s', [mapping_id])\n    if not rows:\n        return json_error('KSB mapping not found.', status=404)\n    existing = rows[0]\n    if request.method == 'DELETE':\n        component_id = clean_str(existing.get('component_id'))\n        if component_id:\n            component_rows = authoring_fetch_all(AUTHORING_COMPONENTS_TABLE, 'id = %s', [component_id])\n            if component_rows:\n                component = component_rows[0]\n                current_mappings = component_ksb_mappings_from_row(\n                    component,\n                    active_mapping_rows(authoring_fetch_all(AUTHORING_KSB_MAPPINGS_TABLE, 'component_id = %s', [component_id], 'created_at, id')),\n                )\n                next_mappings = [mapping for mapping in current_mappings if clean_str(mapping.get('id')) != mapping_id]\n                with transaction.atomic():\n                    store_component_ksb_mappings(component, next_mappings, deleted_by='ksb-mapping-delete')\n            else:\n                authoring_soft_delete(AUTHORING_KSB_MAPPINGS_TABLE, 'id = %s', [mapping_id], deleted_by='ksb-mapping-delete')\n        else:\n            authoring_soft_delete(AUTHORING_KSB_MAPPINGS_TABLE, 'id = %s', [mapping_id], deleted_by='ksb-mapping-delete')\n        invalidate_curriculum_cache()\n        return JsonResponse({'deleted': True, 'permanent': False, 'id': mapping_id})\n    if request.method != 'PATCH':\n        return json_error('Method not allowed.', status=405)\n    payload = json_body(request)\n    if payload is None:\n        return json_error('Invalid JSON body.')\n    merged = {\n        'id': mapping_id,\n        'code': payload.get('code') or existing.get('ksb_code'),\n        'ksbId': payload.get('ksbId') or existing.get('ksb_id'),\n        'description': payload.get('description') if 'description' in payload else existing.get('ksb_description'),\n        'sourceType': payload.get('sourceType') if 'sourceType' in payload else existing.get('source_type'),\n        'sourceId': payload.get('sourceId') if 'sourceId' in payload else existing.get('source_id'),\n        'classification': payload.get('classification') or payload.get('type') or existing.get('classification'),\n        'weight': payload.get('weight') if 'weight' in payload else existing.get('weight'),\n        'weightClass': payload.get('weightClass') if 'weightClass' in payload else payload.get('weight_class') if 'weight_class' in payload else existing.get('weight_class'),\n    }\n    if not merged.get('sourceType') or not merged.get('sourceId'):\n        module_rows = authoring_fetch_all(AUTHORING_MODULES_TABLE, 'module_catalogue_id = %s', [existing.get('module_catalogue_id')])\n        source_type, source_id = infer_mapping_source_from_module(module_rows[0] if module_rows else {}, merged.get('code'))\n        merged['sourceType'] = merged.get('sourceType') or source_type\n        merged['sourceId'] = merged.get('sourceId') or source_id\n    errors = validate_ksb_mapping_payload(merged, 'mapping', {})\n    if errors:\n        return json_error('KSB mapping validation failed.', status=400, validationErrors=errors)\n    source_type, source_id = source_payload_from_mapping(merged)\n    try:\n        component_id = clean_str(existing.get('component_id'))\n        if component_id:\n            component_rows = authoring_fetch_all(AUTHORING_COMPONENTS_TABLE, 'id = %s', [component_id])\n            if not component_rows:\n                return json_error('Component not found.', status=404)\n            component = component_rows[0]\n            module_rows = authoring_fetch_all(AUTHORING_MODULES_TABLE, 'module_catalogue_id = %s', [component.get('module_catalogue_id')])\n            current_mappings = component_ksb_mappings_from_row(\n                component,\n                active_mapping_rows(authoring_fetch_all(AUTHORING_KSB_MAPPINGS_TABLE, 'component_id = %s', [component_id], 'created_at, id')),\n            )\n            next_mappings = [\n                {\n                    **mapping,\n                    **merged,\n                    'id': mapping_id,\n                    'sourceType': source_type,\n                    'sourceId': source_id,\n                    'classification': normalise_ksb_classification(merged.get('classification')),\n                    'type': normalise_ksb_classification(merged.get('classification')),\n                    'weight': normalise_ksb_weight(merged.get('weight')),\n                    'weightClass': normalise_ksb_weight_class(merged.get('weightClass')),\n                    'weight_class': normalise_ksb_weight_class(merged.get('weightClass')),\n                } if clean_str(mapping.get('id')) == mapping_id else mapping\n                for mapping in current_mappings\n            ]\n            json_items, _ = normalise_component_ksb_mappings(\n                component.get('module_catalogue_id'),\n                next_mappings,\n                week_id=component.get('week_id'),\n                component_id=component_id,\n                module_row=module_rows[0] if module_rows else {},\n                enforce_unique=False,\n            )\n            with transaction.atomic():\n                store_component_ksb_mappings(component, json_items, deleted_by='ksb-mapping-patch')\n            updated = (authoring_fetch_all(AUTHORING_KSB_MAPPINGS_TABLE, 'id = %s', [mapping_id]) or [{}])[0]\n        else:\n            updated = authoring_upsert(AUTHORING_KSB_MAPPINGS_TABLE, ['id'], {\n                **existing,\n                'id': mapping_id,\n                'module_catalogue_id': existing.get('module_catalogue_id'),\n                'week_id': existing.get('week_id'),\n                'component_id': existing.get('component_id'),\n                'ksb_id': merged.get('ksbId'),\n                'ksb_code': coverage_normalise_code(merged.get('code')),\n                'ksb_description': merged.get('description'),\n                'source_type': source_type,\n                'source_id': source_id,\n                'classification': normalise_ksb_classification(merged.get('classification')),\n                'weight': normalise_ksb_weight(merged.get('weight')),\n                'weight_class': normalise_ksb_weight_class(merged.get('weightClass')),\n                'updated_at': datetime.utcnow(),\n            })\n    except (IntegrityError, ValueError):\n        return json_error('This KSB is already mapped to this component.', status=409)\n    invalidate_curriculum_cache()\n    return JsonResponse({'updated': True, 'mapping': updated})",
+      "decorators": [],
+      "owner": "curriculum_api.catalogue.api.content_commands",
+      "deps": [
+        "AUTHORING_COMPONENTS_TABLE",
+        "AUTHORING_KSB_MAPPINGS_TABLE",
+        "AUTHORING_MODULES_TABLE",
+        "IntegrityError",
+        "JsonResponse",
+        "active_mapping_rows",
+        "authoring_fetch_all",
+        "authoring_soft_delete",
+        "authoring_upsert",
+        "clean_str",
+        "component_ksb_mappings_from_row",
+        "coverage_normalise_code",
+        "datetime",
+        "infer_mapping_source_from_module",
+        "invalidate_curriculum_cache",
+        "json_body",
+        "json_error",
+        "normalise_component_ksb_mappings",
+        "normalise_ksb_classification",
+        "normalise_ksb_weight",
+        "normalise_ksb_weight_class",
+        "source_payload_from_mapping",
+        "store_component_ksb_mappings",
+        "transaction",
+        "validate_ksb_mapping_payload"
+      ],
+      "callbacks": {}
+    },
+    "curriculum_component_upload": {
+      "source": "def curriculum_component_upload(request, component_id):\n    if request.method != 'POST':\n        return json_error('Method not allowed.', status=405)\n\n    component_id = clean_str(component_id)\n    uploaded_file = request.FILES.get('file')\n    if not uploaded_file:\n        return json_error('No file was uploaded.', status=400)\n\n    component_type = frontend_component_type(request.POST.get('componentType') or request.POST.get('type'))\n    if component_type not in COMPONENT_UPLOAD_EXTENSIONS:\n        return json_error('Uploads are only supported for reading, podcast, PowerPoint and assignment components.', status=400)\n\n    module_catalogue_id = clean_str(request.POST.get('moduleCatalogueId') or request.POST.get('moduleId') or 'module')\n    try:\n        metadata, error = component_upload_metadata(module_catalogue_id, component_id, component_type, uploaded_file)\n    except Exception:\n        logger.exception('Unable to store upload for curriculum component %s.', component_id)\n        return json_error(\n            'The file could not be stored. Please retry the upload.',\n            status=503,\n        )\n    if error:\n        return json_error(error, status=400)\n\n    # Topic uploads are attached by the editor on Save, preserving other resources.\n    saved_to_component = False if component_type == 'assignment' and request.POST.get('topicResource') == 'true' else update_component_upload_settings(component_id, component_type, metadata)\n    return JsonResponse({\n        'uploaded': True,\n        'savedToComponent': saved_to_component,\n        'componentId': component_id,\n        'moduleCatalogueId': module_catalogue_id,\n        'file': metadata,\n    }, status=201)",
+      "decorators": [
+        "csrf_exempt"
+      ],
+      "owner": "curriculum_api.catalogue.api.content_uploads",
+      "deps": [
+        "COMPONENT_UPLOAD_EXTENSIONS",
+        "JsonResponse",
+        "clean_str",
+        "component_upload_metadata",
+        "frontend_component_type",
+        "json_error",
+        "logger",
+        "update_component_upload_settings"
+      ],
+      "callbacks": {}
+    },
+    "curriculum_week_component_upload": {
+      "source": "def curriculum_week_component_upload(request, component_id):\n    if request.method != 'POST':\n        return json_error('Method not allowed.', status=405)\n\n    component_id = clean_str(component_id)\n    uploaded_file = request.FILES.get('file')\n    if not uploaded_file:\n        return json_error('No file was uploaded.', status=400)\n\n    component_type = frontend_component_type(request.POST.get('componentType') or request.POST.get('type')) or 'reading'\n    if component_type not in COMPONENT_UPLOAD_EXTENSIONS:\n        return json_error('Uploads are only supported for reading, podcast, PowerPoint and assignment components.', status=400)\n\n    # Week template components live in their own table (not the module builder's\n    # `components` table), and are saved wholesale on the next Save rather than\n    # patched row-by-row — so this just stores the file and hands back its\n    # metadata; the frontend writes it into the component's own settings and\n    # persists it the normal way.\n    try:\n        metadata, error = component_upload_metadata('week-template', component_id, component_type, uploaded_file)\n    except Exception:\n        logger.exception('Unable to store upload for week component %s.', component_id)\n        return json_error(\n            'The file could not be stored. Please retry the upload.',\n            status=503,\n        )\n    if error:\n        return json_error(error, status=400)\n\n    return JsonResponse({'uploaded': True, 'componentId': component_id, 'file': metadata}, status=201)",
+      "decorators": [
+        "csrf_exempt"
+      ],
+      "owner": "curriculum_api.catalogue.api.content_uploads",
+      "deps": [
+        "COMPONENT_UPLOAD_EXTENSIONS",
+        "JsonResponse",
+        "clean_str",
+        "component_upload_metadata",
+        "frontend_component_type",
+        "json_error",
+        "logger"
+      ],
+      "callbacks": {}
+    },
+    "ai_material_response": {
+      "source": "def ai_material_response(module_catalogue_id, record, **extra):\n    return JsonResponse({\n        'moduleCatalogueId': module_catalogue_id,\n        'hasMaterial': bool(record),\n        'material': record,\n        **extra,\n    })",
+      "decorators": [],
+      "owner": "curriculum_api.catalogue.api.content_uploads",
+      "deps": [
+        "JsonResponse"
+      ],
+      "callbacks": {}
+    },
+    "curriculum_module_ai_material": {
+      "source": "def curriculum_module_ai_material(request, module_catalogue_id):\n    \"\"\"Read, upload/replace or remove a module's AI Material book.\n\n    The bytes go through ``upload_storage`` exactly like a component upload, so\n    they land in the curriculum container in Azure and are served back by the\n    existing ``/curriculum_api/curriculum/uploads/...`` route -- which already\n    streams byte ranges for the PDF viewer and frames Office files through the\n    Office Online viewer. Nothing here talks to Azure directly.\n\n    A replace deletes the blob it replaced only *after* the new one is stored and\n    recorded, so a failed upload leaves the previous book intact and readable.\n    \"\"\"\n    module_catalogue_id = clean_str(module_catalogue_id)\n    if not module_catalogue_id:\n        return json_error('A module is required.', status=400)\n\n    # authoring_upsert drops any key that is not a column, so without this the\n    # book would upload, report success and be forgotten. Say so instead.\n    ensure_module_authoring_tables()\n    if not has_column(AUTHORING_ADVANCED_TABLE, AI_MATERIAL_COLUMN):\n        return json_error(\n            'AI Material storage is not set up on this database yet. '\n            'Add the ai_material column to curriculum.module_details and retry.',\n            status=503,\n        )\n\n    if request.method == 'GET':\n        return ai_material_response(module_catalogue_id, ai_material_record(module_catalogue_id))\n\n    if request.method == 'DELETE':\n        previous = ai_material_record(module_catalogue_id)\n        if not previous:\n            return ai_material_response(module_catalogue_id, None, removed=False)\n        authoring_upsert(AUTHORING_ADVANCED_TABLE, ['module_catalogue_id'], {\n            'module_catalogue_id': module_catalogue_id,\n            AI_MATERIAL_COLUMN: json_db_value({}),\n        })\n        try:\n            upload_storage.delete(previous.get('storedPath'))\n        except Exception:\n            logger.warning(\n                'Removed the AI material record for %s but its blob could not be deleted.',\n                module_catalogue_id, exc_info=True,\n            )\n        invalidate_curriculum_cache()\n        return ai_material_response(module_catalogue_id, None, removed=True)\n\n    if request.method != 'POST':\n        return json_error('Method not allowed.', status=405)\n\n    uploaded_file = request.FILES.get('file')\n    if not uploaded_file:\n        return json_error('No file was uploaded.', status=400)\n\n    previous = ai_material_record(module_catalogue_id)\n    try:\n        metadata, error = component_upload_metadata(\n            module_catalogue_id,\n            AI_MATERIAL_UPLOAD_SLOT,\n            'AI material',\n            uploaded_file,\n            allowed_extensions=AI_MATERIAL_UPLOAD_EXTENSIONS,\n        )\n    except Exception:\n        logger.exception('Unable to store the AI material book for module %s.', module_catalogue_id)\n        return json_error('The book could not be stored. Please retry the upload.', status=503)\n    if error:\n        return json_error(error, status=400)\n\n    record = {\n        'fileName': metadata['fileName'],\n        'storedPath': metadata['storedPath'],\n        'url': metadata['url'],\n        'size': metadata['size'],\n        'contentType': metadata['contentType'] or mimetypes.guess_type(metadata['fileName'])[0] or '',\n        'uploadedAt': datetime.utcnow().isoformat(timespec='seconds') + 'Z',\n    }\n    try:\n        authoring_upsert(AUTHORING_ADVANCED_TABLE, ['module_catalogue_id'], {\n            'module_catalogue_id': module_catalogue_id,\n            AI_MATERIAL_COLUMN: json_db_value(record),\n        })\n    except Exception:\n        # The bytes are in the container but nothing points at them. Drop them\n        # rather than leave an orphan, and keep the book that is still recorded.\n        logger.exception('Unable to record the AI material book for module %s.', module_catalogue_id)\n        try:\n            upload_storage.delete(metadata['storedPath'])\n        except Exception:\n            logger.warning('Could not clean up the unrecorded AI material blob for %s.', module_catalogue_id)\n        return json_error('The book was uploaded but could not be saved to the module. Please retry.', status=503)\n\n    replaced = bool(previous and previous.get('storedPath') != record['storedPath'])\n    if replaced:\n        try:\n            upload_storage.delete(previous.get('storedPath'))\n        except Exception:\n            logger.warning(\n                'Stored a replacement AI material book for %s but the old blob remains.',\n                module_catalogue_id, exc_info=True,\n            )\n    invalidate_curriculum_cache()\n    return ai_material_response(\n        module_catalogue_id, record, replaced=replaced, uploaded=True,\n    )",
+      "decorators": [
+        "csrf_exempt"
+      ],
+      "owner": "curriculum_api.catalogue.api.content_uploads",
+      "deps": [
+        "AI_MATERIAL_COLUMN",
+        "AI_MATERIAL_UPLOAD_EXTENSIONS",
+        "AI_MATERIAL_UPLOAD_SLOT",
+        "AUTHORING_ADVANCED_TABLE",
+        "ai_material_record",
+        "ai_material_response",
+        "authoring_upsert",
+        "clean_str",
+        "component_upload_metadata",
+        "datetime",
+        "ensure_module_authoring_tables",
+        "has_column",
+        "invalidate_curriculum_cache",
+        "json_db_value",
+        "json_error",
+        "logger",
+        "mimetypes",
+        "upload_storage"
+      ],
+      "callbacks": {}
+    }
+  },
+  "removed": {
+    "catalogue_for_training_row": {
+      "source": "def catalogue_for_training_row(row):\n    catalogue_id = training_row_module_catalogue_id(row)\n    module_name = normalise(row.get('module_name'))\n    for module in get_module_rows():\n        if catalogue_id and clean_str(module.get('Module ID')) == catalogue_id:\n            return module\n        if module_name and normalise(module.get('Module_name')) == module_name:\n            return module\n    return None",
+      "index": 757
+    },
+    "authoring_row_for_training_source": {
+      "source": "def authoring_row_for_training_source(training_id):\n    return None",
+      "index": 758
+    },
+    "attach_training_source_metadata": {
+      "source": "def attach_training_source_metadata(module_row, training_id):\n    return",
+      "index": 759
+    },
+    "ksb_mappings_from_codes": {
+      "source": "def ksb_mappings_from_codes(codes, scope):\n    return [\n        {\n            'id': canonical_authoring_id('KSBMAP'),\n            'ksbId': code,\n            'code': code,\n            'description': f'Mapped KSB {code}',\n            'type': 'main' if index < 3 else 'secondary',\n            'weight': 40 if index < 3 else 20,\n        }\n        for index, code in enumerate(sorted(codes))\n    ]",
+      "index": 760
+    },
+    "imported_training_module_payload": {
+      "source": "def imported_training_module_payload(row):\n    training_id = clean_str(row.get('id'))\n    meta = row.get('_meta') or extract_notes_meta(row.get('notes'))\n    catalogue = catalogue_for_training_row(row)\n    session_count = max(parse_int(row.get('sessions_number'), parse_int((catalogue or {}).get('Number of sessions'), 1)), 1)\n    session_names = get_module_session_names(catalogue or {})\n    ksb_codes = codes_from_session_ksb(row.get('session_ksb_json')) or codes_from_session_ksb((catalogue or {}).get('session_ksb_json'))\n    module_mappings = ksb_mappings_from_codes(ksb_codes, training_module_identifier(training_id))\n    week_structure = []\n    module_catalogue_id = unique_module_catalogue_id(training_row_module_catalogue_id(row))\n    for index in range(session_count):\n        week_id = canonical_authoring_id('WEEK')\n        title = session_names[index] if index < len(session_names) else f'Week {index + 1}'\n        component_mappings = module_mappings[:2]\n        week_structure.append({\n            'id': week_id,\n            'moduleId': module_catalogue_id,\n            'weekNumber': index + 1,\n            'title': title or f'Week {index + 1}',\n            'summary': '',\n            'learningOutcomes': [],\n            'ksbMappings': [],\n            'components': [\n                {\n                    'id': canonical_authoring_id('COMP'),\n                    'weekId': week_id,\n                    'type': 'live-session',\n                    'title': title or f'{row.get(\"module_name\") or \"Session\"} #{index + 1}',\n                    'description': 'Placeholder lesson derived from the existing delivery module.',\n                    'expectedOtjh': 2,\n                    'points': 10,\n                    'reflectionRequired': False,\n                    'workplaceEvidenceRequired': False,\n                    'tutorValidationRequired': False,\n                    'ksbMappings': component_mappings,\n                    'settings': {'recordingExpected': True},\n                }\n            ],\n        })\n\n    try:\n        programme_name = canonical_programme_name(row, program_config_by_id(get_program_config_rows()))\n    except Exception:\n        programme_name = row.get('Program') or 'Unassigned programme'\n    cohort_identity = actual_cohort_identity(row, programme_name)\n    group_identity = actual_group_identity(row, cohort_identity['id']) if cohort_identity else None\n\n    return {\n        'catalogueId': module_catalogue_id,\n        'programmeId': row.get('Program') or programme_name,\n        'programmeName': programme_name,\n        'cohortId': (cohort_identity or {}).get('id') or '',\n        'cohortName': (cohort_identity or {}).get('name') or '',\n        'groupId': (group_identity or {}).get('id') or '',\n        'groupName': (group_identity or {}).get('name') or '',\n        'title': row.get('module_name') or (catalogue or {}).get('Module_name') or f'Module {training_id}',\n        'description': visible_notes(row.get('notes') or (catalogue or {}).get('Notes') or ''),\n        'status': 'published',\n        'sessionsNumber': session_count,\n        'startDate': row.get('start_date') or '',\n        'endDate': row.get('end_date') or '',\n        'declaredTotalOtjh': 0,\n        'moduleKsbMappings': module_mappings,\n        'completionCriteria': default_completion_payload(),\n        'advancedDetails': {},\n        'background': '',\n        'epaRequirements': [],\n        'qualificationOutcomes': [],\n        'weekStructure': week_structure,\n        'deliveryStatus': delivery_status_for_training_row(row),\n        'deliveryMetadata': {\n            'cohortId': (cohort_identity or {}).get('id') or '',\n            'cohort': (cohort_identity or {}).get('name') or row.get('Cohort_name') or '',\n            'groupId': (group_identity or {}).get('id') or '',\n            'group': (group_identity or {}).get('name') or row.get('group_name') or meta.get('group_name') or '',\n            'tutor': row.get('Tutor_name') or '',\n            'coach': row.get('coach_name') or '',\n        },\n    }",
+      "index": 761
+    },
+    "ensure_training_module_authoring_structure": {
+      "source": "def ensure_training_module_authoring_structure(module_identifier):\n    if not clean_str(module_identifier).startswith('training-module-'):\n        return None\n    training_id = clean_str(module_identifier).replace('training-module-', '', 1)\n    row = training_row_by_id(training_id)\n    if not row:\n        return None\n\n    source_row = authoring_row_for_training_source(training_id)\n    if source_row:\n        return get_authoring_structure_payload(source_row.get('module_catalogue_id'))\n\n    existing_catalogue_id = resolve_authoring_catalogue_id(module_identifier)\n    if existing_catalogue_id:\n        return get_authoring_structure_payload(existing_catalogue_id)\n\n    payload = imported_training_module_payload(row)\n    return save_module_authoring_structure(payload['catalogueId'], payload)",
+      "index": 763
+    }
+  },
+  "structure_wrapper": "def curriculum_module_structure(request, module_catalogue_id):\n    from .catalogue.api.module_structure import curriculum_module_structure as implementation\n    def collaboration_enabled(*args, **kwargs):\n        from .module_collaboration import enabled as operation\n        return operation(*args, **kwargs)\n    def check_structure_save(*args, **kwargs):\n        from .module_collaboration import check_structure_save as operation\n        return operation(*args, **kwargs)\n    def announce_saved(*args, **kwargs):\n        from .module_collaboration import announce_saved as operation\n        return operation(*args, **kwargs)\n    def creation_unavailable_response(*args, **kwargs):\n        from .learning_storage import creation_unavailable_response as operation\n        return operation(*args, **kwargs)\n    def module_merge_bindings():\n        from .module_merge import ModuleMergeConflicts, ModuleMergeUnavailable, candidate_new_ids, merge_partial_save, restore_conflicts\n        return ModuleMergeConflicts, ModuleMergeUnavailable, candidate_new_ids, merge_partial_save, restore_conflicts\n    return implementation(\n        request, module_catalogue_id,\n        JsonResponse=JsonResponse,\n        ModuleAuthoringValidationError=ModuleAuthoringValidationError,\n        ModuleStructureDeltaConflict=ModuleStructureDeltaConflict,\n        announce_saved=announce_saved,\n        archived_programme_module_edit_error=archived_programme_module_edit_error,\n        authoring_module_exists=authoring_module_exists,\n        cached_curriculum_value=cached_curriculum_value,\n        check_structure_save=check_structure_save,\n        clean_str=clean_str,\n        collaboration_enabled=collaboration_enabled,\n        creation_unavailable_response=creation_unavailable_response,\n        curriculum_read_scope=curriculum_read_scope,\n        ensure_training_module_authoring_structure=ensure_training_module_authoring_structure,\n        get_authoring_structure_payload=get_authoring_structure_payload,\n        is_canonical_module_catalogue_id=is_canonical_module_catalogue_id,\n        json_body=json_body,\n        json_error=json_error,\n        link_training_row_to_catalogue=link_training_row_to_catalogue,\n        lock_module_structure_row=lock_module_structure_row,\n        logger=logger,\n        merge_partial_module_structure=merge_partial_module_structure,\n        module_merge_bindings=module_merge_bindings,\n        module_merge_conflict_response=module_merge_conflict_response,\n        module_structure_revision=module_structure_revision,\n        module_structure_source_rows=module_structure_source_rows,\n        module_week_starts_on=module_week_starts_on,\n        module_weekly_schedule=module_weekly_schedule,\n        read_module_structure_with_revision=read_module_structure_with_revision,\n        request_bypasses_curriculum_cache=request_bypasses_curriculum_cache,\n        resolve_stored_module_catalogue_id=resolve_stored_module_catalogue_id,\n        save_module_authoring_structure=save_module_authoring_structure,\n        soft_deleted_structure_ids=soft_deleted_structure_ids,\n        stamp_revision_after_write=stamp_revision_after_write,\n        structure_payload_with_revision=structure_payload_with_revision,\n        transaction=transaction,\n        with_item_fingerprints=with_item_fingerprints,\n    )",
+  "structure_api": "\"\"\"Module structure HTTP contracts, optimistic concurrency, partial merge and response construction.\n\nNamed capabilities are supplied by the existing composition seam during migration.\nNo application settings, legacy views or provider runtime is imported here.\n\"\"\"\n\n\ndef curriculum_module_structure(\n    request,\n    module_catalogue_id,\n    *,\n    JsonResponse,\n    ModuleAuthoringValidationError,\n    ModuleStructureDeltaConflict,\n    announce_saved,\n    archived_programme_module_edit_error,\n    authoring_module_exists,\n    cached_curriculum_value,\n    check_structure_save,\n    clean_str,\n    collaboration_enabled,\n    creation_unavailable_response,\n    curriculum_read_scope,\n    ensure_training_module_authoring_structure,\n    get_authoring_structure_payload,\n    is_canonical_module_catalogue_id,\n    json_body,\n    json_error,\n    link_training_row_to_catalogue,\n    lock_module_structure_row,\n    logger,\n    merge_partial_module_structure,\n    module_merge_bindings,\n    module_merge_conflict_response,\n    module_structure_revision,\n    module_structure_source_rows,\n    module_week_starts_on,\n    module_weekly_schedule,\n    read_module_structure_with_revision,\n    request_bypasses_curriculum_cache,\n    resolve_stored_module_catalogue_id,\n    save_module_authoring_structure,\n    soft_deleted_structure_ids,\n    stamp_revision_after_write,\n    structure_payload_with_revision,\n    transaction,\n    with_item_fingerprints,\n):\n    module_catalogue_id = clean_str(module_catalogue_id)\n    # Existence-first, so a request for a stored module does not summarise every\n    # module in the database to learn that its own id was the answer. See\n    # resolve_stored_module_catalogue_id.\n    stored_catalogue_id = resolve_stored_module_catalogue_id(module_catalogue_id)\n    resolved_catalogue_id = stored_catalogue_id or module_catalogue_id\n    if request.method == 'GET':\n        is_training_alias = module_catalogue_id.startswith('training-module-')\n        bypass_cache = request_bypasses_curriculum_cache(request)\n        if not is_training_alias:\n            from .module_reads import module_structure_response\n            from ..application.structure_payloads import load_stored_module_structure\n            return module_structure_response(\n                module_catalogue_id,\n                load_structure=lambda: load_stored_module_structure(\n                    stored_catalogue_id, resolved_catalogue_id, force=bypass_cache,\n                    curriculum_read_scope=curriculum_read_scope,\n                    cached_curriculum_value=cached_curriculum_value,\n                    read_module_structure_with_revision=read_module_structure_with_revision,\n                    structure_payload_with_revision=structure_payload_with_revision,\n                    get_authoring_structure_payload=get_authoring_structure_payload,\n                ),\n                JsonResponse=JsonResponse, json_error=json_error, logger=logger,\n            )\n        try:\n            # One read scope for the whole payload. The KSB source inference\n            # inside it (mappings_with_inferred_sources) asks whether a code\n            # exists in a standard or a profile once per mapping row that has no\n            # stored source, and each of those questions is a whole-table read of\n            # standard_ksbs or ksb_profiles. Memoised for the scope, a module\n            # with thirty unsourced mappings costs two reads instead of ninety.\n            with curriculum_read_scope(targeted_child_reads=True):\n                payload = (\n                    structure_payload_with_revision(\n                        lambda: get_authoring_structure_payload(resolved_catalogue_id),\n                        resolved_catalogue_id,\n                    )\n                    if resolved_catalogue_id != module_catalogue_id\n                    else stamp_revision_after_write(\n                        ensure_training_module_authoring_structure(module_catalogue_id),\n                        resolved_catalogue_id,\n                    )\n                )\n            # Outside the read scope on purpose: this is a write, and the scope\n            # above memoises reads for the request. A write that read a memoised\n            # row would be deciding from a snapshot taken earlier in the request.\n            if payload and is_training_alias:\n                link_training_row_to_catalogue(\n                    module_catalogue_id.replace('training-module-', '', 1),\n                    payload.get('catalogueId') or resolved_catalogue_id,\n                )\n        except Exception:\n            logger.exception('Unable to load module authoring structure for %s.', module_catalogue_id)\n            return json_error('Unable to load module authoring structure.', status=500)\n        if not payload:\n            return json_error('Module authoring structure not found.', status=404)\n        return JsonResponse(payload)\n\n    if request.method != 'PATCH':\n        return json_error('Method not allowed.', status=405)\n    payload = json_body(request)\n    if payload is None:\n        return json_error('Invalid JSON body.')\n    if not stored_catalogue_id:\n        # The Builder can create its first saved draft through this PATCH as\n        # well as through the collection POST. Guard both before any write.\n        storage_error = creation_unavailable_response(payload)\n        if storage_error is not None:\n            return storage_error\n    try:\n        module_week_starts_on(payload)\n    except ValueError as exc:\n        return json_error(str(exc), fields=['weekStartsOn'])\n    try:\n        module_weekly_schedule(payload)\n    except ValueError as exc:\n        return json_error(str(exc), fields=['weeklySchedule'])\n    # An identifier that names an existing module but did not resolve to one must\n    # not fall through to the save: ``unique_module_catalogue_id`` mints a fresh\n    # MOD id for anything it cannot recognise, so the whole structure would be\n    # written to a brand new ghost module while the one the person was editing\n    # kept its old content -- the save reports success and the work is nowhere.\n    # A fresh canonical MOD id (the builder's own local draft) and a training\n    # alias are the two cases that legitimately provision on write.\n    if (\n        not stored_catalogue_id\n        and not module_catalogue_id.startswith('training-module-')\n        and not is_canonical_module_catalogue_id(module_catalogue_id)\n    ):\n        return json_error('Module not found.', status=404)\n    # The same archived-programme rule the drawer PATCH applies, checked before\n    # anything is written. Without it the Builder saved the structure happily\n    # and the module stayed hidden, because the save re-derived\n    # `is_programme_deleted` from the archived programme underneath it: blocked\n    # in the drawer, saved-and-vanished in the Builder, for the same edit.\n    #\n    # Only for a module that already exists -- a fresh canonical draft and a\n    # training alias provision on write, so there is nothing yet to withdraw.\n    # The programme is resolved the way save_module_authoring_structure resolves\n    # it, so the row the guard judges is the row the save would attach.\n    existing_structure_row = authoring_module_exists(resolved_catalogue_id) if stored_catalogue_id else None\n    if existing_structure_row:\n        archived_error = archived_programme_module_edit_error(\n            existing_structure_row,\n            title=payload.get('title') or payload.get('name') or existing_structure_row.get('title'),\n            programme_id=(\n                payload.get('programmeId')\n                or payload.get('programme_id')\n                or existing_structure_row.get('programme_id')\n            ),\n            programme_name=(\n                payload.get('programmeName')\n                or payload.get('programme')\n                or existing_structure_row.get('programme_name')\n            ),\n        )\n        if archived_error:\n            return archived_error\n    # Optimistic concurrency. A caller that read the structure sends the\n    # revision it read back as ``expectedRevision`` (or an ``If-Match`` header),\n    # and this save is refused unless the stored material is still exactly that.\n    #\n    # Opt-in rather than compulsory, because the callers that write here without\n    # ever having read a revision are legitimate and must keep working: the\n    # programme tree save, the structure wizard, the Excel import, the duplicate\n    # and a module's first save. What the check protects is the one caller that\n    # holds the whole structure open in a browser for an hour and then writes all\n    # of it back -- and the Module Builder always sends it.\n    expected_revision = clean_str(\n        payload.get('expectedRevision')\n        or payload.get('expected_revision')\n        or request.headers.get('If-Match')\n    )\n    # A partial save only says what changed relative to one stored version, so\n    # it is only meaningful against that version: it needs the revision, and a\n    # module that is already stored.\n    partial_save = clean_str(payload.get('saveMode')) == 'partial'\n    if partial_save and (not expected_revision or not stored_catalogue_id):\n        return json_error('A partial save needs the saved version it was made against. Save the whole module instead.')\n    if partial_save:\n        # The programme's status belongs to the programme drawer. The Builder\n        # echoes back the status it loaded, and the module revision does not\n        # cover the programmes table, so a tab opened before a programme was\n        # archived could otherwise reactivate it with a component edit.\n        payload = {key: value for key, value in payload.items() if key not in ('programmeStatus', 'programme_status')}\n    try:\n        if module_catalogue_id.startswith('training-module-'):\n            training_id = module_catalogue_id.replace('training-module-', '', 1)\n            payload = {\n                **payload,\n                'sourceType': payload.get('sourceType') or 'training_plan',\n                'sourceId': payload.get('sourceId') or training_id,\n            }\n        # One transaction around the check and the write. See\n        # lock_module_structure_row: read-then-write would let two saves that\n        # read the same revision both pass.\n        #\n        # A partial save that carries the copy it was made against\n        # (``structureBase``) is not refused just because someone else saved\n        # first: it is merged item by item under this lock (module_merge), and\n        # refused only for a real conflict -- the same field, or an item\n        # deleted on one side and edited on the other.\n        source_rows = None\n        current_revision = ''\n        merge_summary = None\n        item_merge = partial_save and isinstance(payload.get('structureBase'), dict)\n        with transaction.atomic():\n            if expected_revision or collaboration_enabled(resolved_catalogue_id):\n                lock_module_structure_row(resolved_catalogue_id)\n            if expected_revision:\n                if partial_save:\n                    # Read once, under the lock, for both the guard and the\n                    # merge: the revision and the stored structure then\n                    # describe the same moment.\n                    source_rows = module_structure_source_rows(resolved_catalogue_id)\n                    current_revision = module_structure_revision(resolved_catalogue_id, source_rows=source_rows)\n                else:\n                    current_revision = module_structure_revision(resolved_catalogue_id)\n                if not current_revision:\n                    # Fail closed. '' here means the fingerprint could not be\n                    # read at all, never that the module is empty -- an empty\n                    # module still hashes to a real value. Carrying on would run\n                    # this save unchecked, which is the silent overwrite the\n                    # caller asked to be protected from by sending a revision in\n                    # the first place. No module travels with this refusal:\n                    # nothing was compared, so there is no other version to show.\n                    logger.warning(\n                        'Refusing a guarded structure save for %s: the current revision could not be read.',\n                        resolved_catalogue_id,\n                    )\n                    return json_error(\n                        'This module could not be checked against the saved version, so nothing was '\n                        'written. Your changes are still here - try again in a moment.',\n                        status=409,\n                        conflict=True,\n                        expectedRevision=expected_revision,\n                        currentRevision='',\n                    )\n                if current_revision != expected_revision and not item_merge:\n                    # Deliberately NOT a merge and NOT a retry. The payload\n                    # waiting here replaces every week and component in the\n                    # module, so applying it would destroy whatever the other\n                    # writer authored; the caller keeps its edits in memory and\n                    # is told to re-read. The current structure travels with the\n                    # refusal so it can show what changed without a second call.\n                    return json_error(\n                        'This module changed after you opened it. Your changes have not been '\n                        'overwritten. Reload the latest version before saving again.',\n                        status=409,\n                        conflict=True,\n                        expectedRevision=expected_revision,\n                        currentRevision=current_revision,\n                        module=structure_payload_with_revision(\n                            lambda: get_authoring_structure_payload(resolved_catalogue_id),\n                            resolved_catalogue_id,\n                        ),\n                    )\n            if partial_save:\n                stored_structure = get_authoring_structure_payload(resolved_catalogue_id, source_rows=source_rows)\n                if not stored_structure:\n                    return json_error('Module not found.', status=404)\n                ModuleMergeConflicts, ModuleMergeUnavailable, candidate_new_ids, merge_partial_save, restore_conflicts = module_merge_bindings()\n                delta = payload.get('structureDelta') if isinstance(payload.get('structureDelta'), dict) else {}\n                deleted_ids = soft_deleted_structure_ids(candidate_new_ids(delta, stored_structure))\n                try:\n                    if current_revision == expected_revision:\n                        # Nobody else has written since this copy was read, so\n                        # the delta applies as it stands -- except that it may\n                        # not quietly bring back a row that was deleted.\n                        refused = restore_conflicts(delta, stored_structure, deleted_ids, payload.get('restoreIds'))\n                        if refused:\n                            raise ModuleMergeConflicts(refused)\n                        full_payload = merge_partial_module_structure(stored_structure, payload)\n                    else:\n                        full_payload, merge_summary = merge_partial_save(\n                            stored_structure, payload, deleted_ids=deleted_ids,\n                        )\n                except ModuleMergeConflicts as exc:\n                    return module_merge_conflict_response(expected_revision, current_revision, exc.conflicts)\n                except (ModuleStructureDeltaConflict, ModuleMergeUnavailable):\n                    # The changes were made against a version of the module that\n                    # no longer matches what is stored. Answered exactly like a\n                    # revision mismatch, so the Builder merges and tries again.\n                    return json_error(\n                        'This module changed after you opened it. Your changes have not been '\n                        'overwritten. Reload the latest version before saving again.',\n                        status=409,\n                        conflict=True,\n                        expectedRevision=expected_revision,\n                        currentRevision=module_structure_revision(resolved_catalogue_id),\n                        module=stamp_revision_after_write(stored_structure, resolved_catalogue_id),\n                    )\n                lease_error = check_structure_save(request, resolved_catalogue_id, stored_structure, full_payload, payload)\n                if lease_error is not None:\n                    return lease_error\n                result = save_module_authoring_structure(\n                    resolved_catalogue_id, full_payload, write_changed_only=True,\n                    light=source_rows is not None, stored_rows=source_rows,\n                    stored_structure=stored_structure, build_result=False,\n                )\n            else:\n                if collaboration_enabled(resolved_catalogue_id):\n                    stored_guard = get_authoring_structure_payload(resolved_catalogue_id) or {}\n                    lease_error = check_structure_save(request, resolved_catalogue_id, stored_guard, payload, payload)\n                    if lease_error is not None:\n                        return lease_error\n                result = save_module_authoring_structure(resolved_catalogue_id, payload)\n            if module_catalogue_id.startswith('training-module-'):\n                link_training_row_to_catalogue(\n                    module_catalogue_id.replace('training-module-', '', 1),\n                    result.get('catalogueId') or resolved_catalogue_id,\n                )\n            saved_catalogue_id = result.get('catalogueId') or resolved_catalogue_id\n            announce_saved(saved_catalogue_id)\n    except ModuleAuthoringValidationError as exc:\n        return json_error('Module authoring validation failed.', status=400, validationErrors=exc.errors)\n    except Exception as exc:\n        logger.exception('Unable to save module authoring structure for %s.', module_catalogue_id)\n        return json_error('Unable to save module authoring structure.', status=500, detail=str(exc))\n    # Read after the transaction has committed, so the revision handed back is\n    # the one a reader would fingerprint now. Inside the block it would describe\n    # rows that a rollback could still take away.\n    if partial_save:\n        # One read for the saved module, its revision and its item\n        # fingerprints, instead of a payload read inside the lock and a\n        # revision read after it.\n        saved = read_module_structure_with_revision(saved_catalogue_id) or {}\n        if result.get('qualityChecklist') is not None:\n            saved['qualityChecklist'] = result['qualityChecklist']\n        if merge_summary:\n            saved['merged'] = merge_summary\n        return JsonResponse(saved)\n    result['structureRevision'] = module_structure_revision(saved_catalogue_id)\n    return JsonResponse(with_item_fingerprints(result))\n"
+}

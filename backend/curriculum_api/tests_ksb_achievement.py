@@ -12,6 +12,7 @@ covered without needing PostgreSQL. The reader is where the rule has to hold:
 the Curriculum impact endpoint, the Coach dashboard and the Learner page all
 consume its output.
 """
+from curriculum_api.catalogue.tests.parity.composition_test_support import composition_fixture
 from unittest.mock import patch
 
 from django.test import SimpleTestCase
@@ -58,8 +59,8 @@ PROGRESS_COLUMNS = (
     'component_type', 'quiz_ref', 'module_title', 'week_title', 'submitted_at',
     'reported_time', 'feedback', 'passed', 'programme_ref', 'cohort_ref',
     'group_ref', 'module_ref', 'week_ref', 'progress_expected_otjh',
-    'component_expected_otjh', 'resolved_component_title', 'ksb_code', 'weight',
-    'weight_class',
+    'component_expected_otjh', 'resolved_component_title', 'ksb_codes', 'ksb_weights',
+    'ksb_classes',
 )
 
 
@@ -74,15 +75,18 @@ def progress_row(*, learner_id=19, progress_id=1, kind='component',
         'assignment', None, 'Module One', 'Week 1', None,
         '2.5 hours', 'Reflection text', passed, programme_ref, cohort_ref,
         group_ref, module_ref, week_ref, progress_expected_otjh,
-        component_expected_otjh, 'E2E activity', code, weight, weight_class,
+        component_expected_otjh, 'E2E activity',
+        [code] if code is not None else None,
+        [weight] if code is not None else None,
+        [weight_class] if code is not None else None,
     )
 
 
 class LearnerProgressKsbAchievementGateTests(SimpleTestCase):
     def _run(self, rows, codes=('K1', 'S2', 'B1')):
         cursor = FakeCursor(PROGRESS_COLUMNS, rows)
-        with patch.object(views, 'connection', FakeConnection(cursor)):
-            with patch.object(views, 'learner_schema_table_exists', return_value=True):
+        with composition_fixture(views, 'connection', FakeConnection(cursor)):
+            with composition_fixture(views, 'learner_schema_table_exists', return_value=True):
                 return views.learner_progress_ksb_consumption([19], list(codes))
 
     def test_a_completed_component_is_credited_in_full(self):
@@ -156,8 +160,8 @@ class LearnerProgressKsbAchievementGateTests(SimpleTestCase):
 
     def test_the_reader_selects_the_columns_the_rule_needs(self):
         cursor = FakeCursor(PROGRESS_COLUMNS, [progress_row()])
-        with patch.object(views, 'connection', FakeConnection(cursor)):
-            with patch.object(views, 'learner_schema_table_exists', return_value=True):
+        with composition_fixture(views, 'connection', FakeConnection(cursor)):
+            with composition_fixture(views, 'learner_schema_table_exists', return_value=True):
                 views.learner_progress_ksb_consumption([19], ['K1'])
 
         sql = cursor.executed[0][0]
@@ -233,9 +237,9 @@ class ReflectionProgressResolutionTests(SimpleTestCase):
     def _run(self, rows, *, columns=None, component_ids=('COMP-20260816E2E',)):
         available = set(columns) if columns is not None else set(REFLECTION_TABLE_COLUMNS)
         cursor = FakeCursor(REFLECTION_COLUMNS, rows)
-        with patch.object(views, 'connection', FakeConnection(cursor)):
-            with patch.object(views, 'learner_schema_table_exists', return_value=True):
-                with patch.object(views, 'learner_schema_columns', return_value=available):
+        with composition_fixture(views, 'connection', FakeConnection(cursor)):
+            with composition_fixture(views, 'learner_schema_table_exists', return_value=True):
+                with composition_fixture(views, 'learner_schema_columns', return_value=available):
                     return (
                         *views.reflection_submission_ksb_consumption(
                             self.LEARNERS, ['K1'], list(component_ids),
@@ -374,8 +378,8 @@ class LearnerProgressOtjhVisibilityTests(SimpleTestCase):
 
     def _run(self, rows, codes=('K1', 'S2', 'B1'), **kwargs):
         cursor = FakeCursor(PROGRESS_COLUMNS, rows)
-        with patch.object(views, 'connection', FakeConnection(cursor)):
-            with patch.object(views, 'learner_schema_table_exists', return_value=True):
+        with composition_fixture(views, 'connection', FakeConnection(cursor)):
+            with composition_fixture(views, 'learner_schema_table_exists', return_value=True):
                 return views.learner_progress_ksb_consumption([19], list(codes), **kwargs)
 
     def test_an_activity_with_no_ksb_snapshot_still_reports_its_hours(self):
@@ -393,12 +397,14 @@ class LearnerProgressOtjhVisibilityTests(SimpleTestCase):
 
     def test_the_reader_left_joins_the_ksb_snapshot(self):
         cursor = FakeCursor(PROGRESS_COLUMNS, [progress_row()])
-        with patch.object(views, 'connection', FakeConnection(cursor)):
-            with patch.object(views, 'learner_schema_table_exists', return_value=True):
+        with composition_fixture(views, 'connection', FakeConnection(cursor)):
+            with composition_fixture(views, 'learner_schema_table_exists', return_value=True):
                 views.learner_progress_ksb_consumption([19], ['K1'])
 
         sql = cursor.executed[0][0]
-        self.assertIn('left join "Learner"."learner_progress_ksbs"', sql)
+        self.assertIn('left join lateral (', sql)
+        self.assertIn('from "Learner"."learner_progress_ksbs" k', sql)
+        self.assertIn(') ksb on true', sql)
 
     def test_a_code_this_scope_never_authored_keeps_the_activity(self):
         """Filtering a KSB out must not take the activity's hours with it."""

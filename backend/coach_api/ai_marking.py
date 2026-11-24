@@ -32,7 +32,7 @@ The three inputs
    designed to evidence, and a coach reading a plausible claim has no easy way
    to see that the activity does not carry that KSB at all.
 
-3. The prompt. Loaded from AI_marking_prompt.MD at the repository root rather
+3. The prompt. Loaded from coach_api/prompts/AI_marking_prompt.MD rather
    than pasted in here, because it is the document the training team edits.
    Keeping one copy means their next revision takes effect without a code
    change, and there is no second version to drift out of date.
@@ -65,9 +65,15 @@ from .auth import authenticated_coach_email, coach_access_required, read_only_vi
 
 logger = logging.getLogger(__name__)
 
-#: The assignment marking policy, maintained by the training team. Repository
-#: root, so a revision takes effect without a code change.
-PROMPT_PATH = Path(settings.BASE_DIR).parent / "AI_marking_prompt.MD"
+#: The training team's prompt documents. Kept inside the backend package so
+#: they ship in the backend image: the image is built from ``backend/`` alone,
+#: so a file at the repository root never reached the deployed container and
+#: every draft ran with no saved prompt.
+PROMPT_DIR = Path(__file__).resolve().parent / "prompts"
+
+#: The assignment marking policy, maintained by the training team. Read from
+#: disk, so a revision takes effect without a code change.
+PROMPT_PATH = PROMPT_DIR / "AI_marking_prompt.MD"
 
 #: The reflection-validation policy. A separate document because it is a
 #: different job: an assignment is a work product assessed against the EPA plan
@@ -75,7 +81,7 @@ PROMPT_PATH = Path(settings.BASE_DIR).parent / "AI_marking_prompt.MD"
 #: about one activity, judged mainly on whether it genuinely engages with that
 #: activity. Running the assignment policy over a reflection produced a
 #: thousand words of portfolio assessment about a fifteen-minute video.
-REFLECTION_PROMPT_PATH = Path(settings.BASE_DIR).parent / "AI_reflection_prompt.MD"
+REFLECTION_PROMPT_PATH = PROMPT_DIR / "AI_reflection_prompt.MD"
 
 #: A reflection draft is 90-130 words, which is ~200 tokens of prose. The
 #: ceiling is well above that because this model spends completion tokens on
@@ -246,29 +252,33 @@ def collect_evidence_files(learner_kind, learner_id, activity_id, selected_file_
     before it has would defeat the point of the quarantine.
     """
     files = []
-    params = [_s(learner_kind), _s(learner_id)]
+    selection_params = []
     if selected_file_ids is None:
         selection = 'AND section_ref = %s'
-        params.append(_s(activity_id))
+        selection_params.append(_s(activity_id))
     else:
         ids = sorted(set(str(value) for value in selected_file_ids if value))
         if not ids:
             return []
         selection = 'AND cast(id as text) IN (' + ', '.join(['%s'] * len(ids)) + ')'
-        params.extend(ids)
+        selection_params.extend(ids)
     try:
         with connections["enrolment"].cursor() as cur:
+            from learner_api.evidence_ownership import profile_id_for_source
+            learner_profile_id = profile_id_for_source(cur, learner_kind, learner_id)
+            if learner_profile_id is None:
+                return []
             cur.execute(
                 f"""
-                SELECT container, blob_name, original_filename, content_type, size_bytes
+                SELECT blob_name, original_filename, content_type, size_bytes
                   FROM "Learner"."evidence_files"
                  WHERE learner_kind = %s
-                   AND learner_id = %s
+                   AND learner_profile_id = %s
                    {selection}
                    AND status = 'approved'
                  ORDER BY uploaded_at
                 """,
-                params,
+                [_s(learner_kind), learner_profile_id, *selection_params],
             )
             rows = cur.fetchall()
     except DatabaseError as exc:
@@ -277,11 +287,11 @@ def collect_evidence_files(learner_kind, learner_id, activity_id, selected_file_
 
     from learner_api.evidence_storage import download_blob_bytes
 
-    for container, blob_name, filename, content_type, size_bytes in rows:
+    for blob_name, filename, content_type, size_bytes in rows:
         entry = {"filename": filename, "contentType": content_type, "size": size_bytes, "text": ""}
         if _evidence_file_format(content_type, filename):
             try:
-                data = download_blob_bytes(container, blob_name)
+                data = download_blob_bytes(settings.AZURE_APPROVED_CONTAINER, blob_name)
                 entry["text"] = extract_file_text(content_type, filename, data)[:MAX_FILE_CHARS]
             except Exception:  # noqa: BLE001 - storage is best-effort here
                 logger.warning("Could not download an evidence file for AI feedback.")
@@ -876,9 +886,7 @@ def _load_scoped_submission(request, submission_id):
 
     Scoped exactly as the read endpoint is: the submission text is the
     learner's personal writing, and generating a draft -- or reading the prompt
-    that would mark it -- is still a read of it. Matching on ``enrolment_id``
-    rather than the profile pk for the reason given in ``coach_marking_queue``:
-    the two are disjoint.
+    that would mark it -- is still a read of it.
 
     Shared by the prompt and draft endpoints so they cannot drift apart on who
     is allowed to see whose work.
@@ -888,6 +896,7 @@ def _load_scoped_submission(request, submission_id):
     from learner_api.models import LearnerProfile
 
     from .views import (
+        MARKING_QUEUE_CANONICAL_OWNER_SQL,
         MARKING_QUEUE_COLUMNS,
         normalize_email,
         serialize_marking_submission,
@@ -895,11 +904,11 @@ def _load_scoped_submission(request, submission_id):
 
     owner_email = authenticated_coach_email(request)
     allowed_learner_ids = [
-        str(learner_id)
+        learner_id
         for learner_id in (
             LearnerProfile.objects.annotate(coach_email_key=Lower(Trim("coach_email")))
             .filter(coach_email_key=normalize_email(owner_email))
-            .values_list("enrolment_id", flat=True)
+            .values_list("id", flat=True)
         )
         if learner_id is not None
     ]
@@ -913,6 +922,8 @@ def _load_scoped_submission(request, submission_id):
                 select {MARKING_QUEUE_COLUMNS}
                   from "Learner".learning_reflection_submissions
                  where id = %s and learner_id = any(%s)
+                   and {MARKING_QUEUE_CANONICAL_OWNER_SQL}
+                   and activity_type <> 'extra_activity'
                 """,
                 [str(submission_id), allowed_learner_ids],
             )

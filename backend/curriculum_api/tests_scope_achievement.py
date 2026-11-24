@@ -13,6 +13,7 @@ every level of the hierarchy:
 * achieved KSB weight is capped per learner against the authored weight, so a
   percentage cannot exceed 100 while the uncapped sum stays visible.
 """
+from curriculum_api.catalogue.tests.parity.composition_test_support import composition_fixture
 
 from unittest.mock import patch
 
@@ -25,8 +26,8 @@ PROGRESS_COLUMNS = [
     'learner_id', 'progress_id', 'kind', 'component_ref', 'component_title',
     'component_type', 'quiz_ref', 'module_title', 'week_title', 'submitted_at',
     'reported_time', 'feedback', 'passed', 'progress_expected_otjh',
-    'component_expected_otjh', 'resolved_component_title', 'ksb_code', 'weight',
-    'weight_class',
+    'component_expected_otjh', 'resolved_component_title', 'ksb_codes', 'ksb_weights',
+    'ksb_classes',
 ]
 
 
@@ -36,7 +37,8 @@ def progress_row(*, learner_id=19, progress_id=100, component_ref='COMP-IN',
         learner_id, progress_id, 'assignment', component_ref, 'Activity',
         'assignment', None, 'Module One', 'Week 1', None,
         '2 hours', 'Reflection text', passed, expected_otjh,
-        expected_otjh, 'Activity', code, weight, 'hard',
+        expected_otjh, 'Activity', [code] if code is not None else None,
+        [weight] if code is not None else None, ['hard'] if code is not None else None,
     )
 
 
@@ -75,8 +77,8 @@ class ProgressScopeFilterTests(SimpleTestCase):
     def _run(self, rows, component_ids=(), include_unattributed=True, restrict=None):
         restrict = (not include_unattributed) if restrict is None else restrict
         cursor = FakeCursor(PROGRESS_COLUMNS, rows)
-        with patch.object(views, 'connection', FakeConnection(cursor)):
-            with patch.object(views, 'learner_schema_table_exists', return_value=True):
+        with composition_fixture(views, 'connection', FakeConnection(cursor)):
+            with composition_fixture(views, 'learner_schema_table_exists', return_value=True):
                 return views.learner_progress_ksb_consumption(
                     [19], ['K1'], list(component_ids), include_unattributed,
                     restrict_to_components=restrict,
@@ -541,8 +543,8 @@ class ScopePlacementLineageTests(SimpleTestCase):
     }
 
     def test_a_module_resolves_to_its_group(self):
-        with patch.object(views, 'resolve_authoring_catalogue_id', return_value='MOD-1'):
-            with patch.object(views, 'authoring_fetch_all', return_value=[self.MODULE]):
+        with composition_fixture(views, 'resolve_authoring_catalogue_id', return_value='MOD-1'):
+            with composition_fixture(views, 'authoring_fetch_all', return_value=[self.MODULE]):
                 lineage = views.scope_placement_lineage('module', 'MOD-1')
 
         self.assertTrue(lineage['found'])
@@ -553,8 +555,8 @@ class ScopePlacementLineageTests(SimpleTestCase):
 
     def test_a_module_with_no_group_falls_back_to_its_cohort(self):
         module = {**self.MODULE, 'group_id': '', 'group_name': ''}
-        with patch.object(views, 'resolve_authoring_catalogue_id', return_value='MOD-1'):
-            with patch.object(views, 'authoring_fetch_all', return_value=[module]):
+        with composition_fixture(views, 'resolve_authoring_catalogue_id', return_value='MOD-1'):
+            with composition_fixture(views, 'authoring_fetch_all', return_value=[module]):
                 lineage = views.scope_placement_lineage('module', 'MOD-1')
 
         self.assertEqual(lineage['placementBasis'], 'cohort')
@@ -565,7 +567,7 @@ class ScopePlacementLineageTests(SimpleTestCase):
             'cohort_id': 'COH-1', 'cohort_name': 'September 2025',
             'programme_id': 'PROG-1', 'programme_name': 'Digital Marketer',
         }
-        with patch.object(views, 'resolve_group_row', return_value=row):
+        with composition_fixture(views, 'resolve_group_row', return_value=row):
             lineage = views.scope_placement_lineage('group', 'GRP-1')
 
         self.assertTrue(lineage['found'])
@@ -573,7 +575,7 @@ class ScopePlacementLineageTests(SimpleTestCase):
         self.assertEqual(lineage['groupName'], 'A1')
 
     def test_an_unknown_scope_record_is_reported_as_not_found(self):
-        with patch.object(views, 'resolve_cohort_row', return_value=None):
+        with composition_fixture(views, 'resolve_cohort_row', return_value=None):
             lineage = views.scope_placement_lineage('cohort', 'nope')
 
         self.assertFalse(lineage['found'])
@@ -581,38 +583,59 @@ class ScopePlacementLineageTests(SimpleTestCase):
 
 
 class ScopedRosterTests(SimpleTestCase):
+    """Membership is narrowed by stable placement IDs, never display labels."""
     ROSTER = [
-        {'id': 1, 'name': 'A', 'cohort': 'September 2025', 'group': 'A1'},
-        {'id': 2, 'name': 'B', 'cohort': 'September 2025', 'group': 'A2'},
-        {'id': 3, 'name': 'C', 'cohort': 'January 2026', 'group': 'B1'},
+        {'id': 1, 'name': 'A', 'cohortId': 'COH-1', 'groupId': 'GRP-1', 'cohort': 'September 2025', 'group': 'A1'},
+        {'id': 2, 'name': 'B', 'cohortId': 'COH-1', 'groupId': 'GRP-2', 'cohort': 'September 2025', 'group': 'A2'},
+        {'id': 3, 'name': 'C', 'cohortId': 'COH-2', 'groupId': 'GRP-3', 'cohort': 'January 2026', 'group': 'B1'},
     ]
 
-    def _run(self, lineage):
-        with patch.object(views, 'assigned_learners_for_programme', return_value=self.ROSTER):
+    def _run(self, lineage, rows=None):
+        with composition_fixture(views, 'assigned_learners_for_programme', return_value=self.ROSTER if rows is None else rows):
             return views.assigned_learners_for_scope('', '', lineage=lineage)
 
     def test_a_cohort_gets_only_its_own_learners(self):
-        learners = self._run({
-            'programmeId': 'PROG-1', 'cohortName': 'September 2025', 'groupName': '',
-        })
-
-        self.assertEqual([row['id'] for row in learners], [1, 2])
+        learners = self._run({'programmeId':'PROG-1', 'cohortId':'COH-1',
+                             'cohortName':'September 2025', 'groupName':''})
+        self.assertEqual([row['id'] for row in learners], [1,2])
 
     def test_a_group_gets_only_its_own_learners(self):
-        learners = self._run({
-            'programmeId': 'PROG-1', 'cohortName': 'September 2025', 'groupName': 'A1',
-        })
-
+        learners = self._run({'programmeId':'PROG-1', 'cohortId':'COH-1', 'groupId':'GRP-1',
+                             'cohortName':'September 2025', 'groupName':'A1'})
         self.assertEqual([row['id'] for row in learners], [1])
 
-    def test_matching_ignores_case_and_spacing_because_placements_are_labels(self):
-        learners = self._run({
-            'programmeId': 'PROG-1', 'cohortName': ' september  2025 ', 'groupName': 'a1',
-        })
-
+    def test_display_label_changes_do_not_change_id_membership(self):
+        learners = self._run({'programmeId':'PROG-1', 'cohortId':'COH-1', 'groupId':'GRP-1',
+                             'cohortName':' RENAMED cohort ', 'groupName':'renamed group'})
         self.assertEqual([row['id'] for row in learners], [1])
+
+    def test_duplicate_labels_do_not_add_learners_from_other_ids(self):
+        rows = [{**row,'cohort':'Same cohort','group':'Same group'} for row in self.ROSTER]
+        learners = self._run({'programmeId':'PROG-1','cohortId':'COH-1','groupId':'GRP-1',
+                             'cohortName':'Same cohort','groupName':'Same group'}, rows)
+        self.assertEqual([row['id'] for row in learners], [1])
+
+    def test_named_scope_without_its_id_does_not_guess_membership(self):
+        for lineage in (
+            {'programmeId':'PROG-1','cohortName':'September 2025'},
+            {'programmeId':'PROG-1','cohortId':'COH-1','groupName':'A1'},
+        ):
+            with self.subTest(lineage=lineage):
+                self.assertEqual(self._run(lineage), [])
+
+    def test_missing_profile_placement_ids_do_not_match_by_label(self):
+        rows = [{**row,'cohortId':'','groupId':''} for row in self.ROSTER]
+        self.assertEqual(self._run({'programmeId':'PROG-1','cohortId':'COH-1','groupId':'GRP-1',
+                                  'cohortName':'September 2025','groupName':'A1'}, rows), [])
+
+    def test_ids_trim_whitespace_but_remain_case_sensitive(self):
+        learners = self._run({'programmeId':'PROG-1','cohortId':' COH-1 ','groupId':' GRP-1 '})
+        self.assertEqual([row['id'] for row in learners], [1])
+        self.assertEqual(self._run({'programmeId':'PROG-1','cohortId':'coh-1','groupId':'GRP-1'}), [])
+
+    def test_unrestricted_programme_keeps_all_members_in_original_order(self):
+        self.assertEqual(self._run({'programmeId':'PROG-1'}), self.ROSTER)
 
     def test_a_scope_with_no_programme_returns_nothing_rather_than_everything(self):
-        learners = self._run({'programmeId': '', 'programmeName': '', 'cohortName': 'x'})
-
+        learners = self._run({'programmeId':'','programmeName':'','cohortName':'x'})
         self.assertEqual(learners, [])

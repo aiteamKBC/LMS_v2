@@ -8,7 +8,11 @@ import { ImageMatchingPairFields } from '@/components/feature/ImageMatchingPairF
 import { roleNavMap } from '@/mocks/navigation';
 import { useToast } from "@/hooks/useToast";
 import { fetchWeeks, type WeekItem } from '@/api/curriculum';
-import { getQuizGeneralSettings } from '@/lib/quizGeneralSettings';
+import { defaultQuizGeneralSettings, type QuizGeneralSettings } from '@/lib/quizGeneralSettings';
+import { type QuizGradeSettings } from '@/lib/quizGradeSettings';
+import { useQuizDefaults } from '@/lib/quizDefaults';
+import { GradeSettingsModal } from '../GradeSettingsModal';
+import { createQuizWithQuestions } from '../createQuizWithQuestions';
 import { convertAnswerTextForQuestionType, isPairAnswerComplete, parseQuizPairAnswer, serializeQuizPairAnswer } from '@/lib/quizPairAnswers';
 
 const curriculumNav = roleNavMap.curriculum;
@@ -70,7 +74,6 @@ interface ManualQuizForm {
   weekId: string;
   version: string;
   status: QuizStatus;
-  author: string;
   linkedCourses: string;
 }
 
@@ -87,7 +90,8 @@ interface ManualSettings {
   retakeAfterPass: boolean;
   limitAttempts: boolean;
   passingGrade: number;
-  retakePointsCut: number;
+  attemptLimit: number;
+  gradeSettings?: QuizGradeSettings;
 }
 
 interface ManualQuestion {
@@ -112,12 +116,10 @@ const emptyForm: ManualQuizForm = {
   weekId: '',
   version: 'v1.0',
   status: 'draft',
-  author: 'Curriculum Team',
   linkedCourses: '1',
 };
 
-function createDefaultSettings(): ManualSettings {
-  const generalSettings = getQuizGeneralSettings();
+function createDefaultSettings(generalSettings: QuizGeneralSettings = defaultQuizGeneralSettings): ManualSettings {
   return {
     shortDescription: '',
     lessonContent: '',
@@ -131,7 +133,7 @@ function createDefaultSettings(): ManualSettings {
     retakeAfterPass: generalSettings.retakeAfterPass,
     limitAttempts: generalSettings.attemptMode === 'limited',
     passingGrade: 65,
-    retakePointsCut: 5,
+    attemptLimit: generalSettings.attemptLimit,
   };
 }
 
@@ -213,6 +215,11 @@ export default function ManualQuizPage() {
   const [activeTab, setActiveTab] = useState<ManualTab>('questions');
   const [form, setForm] = useState<ManualQuizForm>(emptyForm);
   const [settings, setSettings] = useState<ManualSettings>(() => createDefaultSettings());
+  const defaults = useQuizDefaults();
+  const [showGrades, setShowGrades] = useState(false);
+  useEffect(() => {
+    if (defaults.data) setSettings({ ...createDefaultSettings(defaults.data.general), gradeSettings: defaults.data.grades });
+  }, [defaults.data]);
   const [questions, setQuestions] = useState<ManualQuestion[]>([firstQuestion]);
   const [activeQuestionId, setActiveQuestionId] = useState(firstQuestion.id);
   const [trainingPlanOptions, setTrainingPlanOptions] = useState<TrainingPlanOptions>({ programmes: [], modulesByProgramme: {} });
@@ -375,7 +382,7 @@ export default function ManualQuizPage() {
 
   const saveManualQuiz = async (event?: FormEvent) => {
     event?.preventDefault();
-    if (saving || readingQuestionImage) return;
+    if (saving || readingQuestionImage || !defaults.data || defaults.loading || defaults.error) return;
     const validationMessage = validateQuiz();
     if (validationMessage) {
       setPageError(validationMessage);
@@ -385,30 +392,13 @@ export default function ManualQuizPage() {
     setSaving(true);
     setPageError('');
     try {
-      const createResponse = await fetch('/quiz_api/quizzes/', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          ...form,
-          ...settings,
-          title: form.title,
-          questions: questions.length,
-          questionType: questions[0]?.questionType || 'single_choice',
-          linkedCourses: Number(form.linkedCourses || (form.programmeId ? 1 : 0)),
-          packageType: 'xml',
-          schemaValid: true,
-        }),
+      await createQuizWithQuestions({
+        ...form, ...settings, title: form.title,
+        initialQuestions: questions,
+        questionType: questions[0]?.questionType || 'single_choice',
+        linkedCourses: Number(form.linkedCourses || (form.programmeId ? 1 : 0)),
+        packageType: 'xml', schemaValid: true,
       });
-      const created = await createResponse.json().catch(() => null);
-      if (!createResponse.ok) throw new Error(created?.error || 'Could not create manual quiz');
-
-      const saveResponse = await fetch(`/quiz_api/quizzes/${created.id}/questions/`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ questions, removeMissing: true }),
-      });
-      const saved = await saveResponse.json().catch(() => null);
-      if (!saveResponse.ok) throw new Error(saved?.error || 'Could not save manual questions');
 
       success('Manual quiz saved', 'Questions and settings were saved.');
       navigate('/curriculum/quiz-xml');
@@ -436,19 +426,24 @@ export default function ManualQuizPage() {
             <button type="button" onClick={addQuestion} className="h-10 px-4 rounded-lg bg-white border border-primary-200 text-primary-700 text-sm font-semibold hover:bg-primary-50">
               <AppIcon className="ri-add-line mr-1"></AppIcon>Add question
             </button>
-            <button type="submit" disabled={saving || readingQuestionImage} className="h-10 px-5 rounded-lg bg-[#5b2dbb] text-white text-sm font-semibold hover:bg-[#4c1d95] disabled:opacity-60 disabled:cursor-wait">
+            <button type="submit" disabled={saving || readingQuestionImage || defaults.loading || !defaults.data || Boolean(defaults.error)} className="h-10 px-5 rounded-lg bg-[#5b2dbb] text-white text-sm font-semibold hover:bg-[#4c1d95] disabled:opacity-60 disabled:cursor-wait">
               {saving ? 'Saving...' : 'Save Manual Quiz'}
             </button>
           </div>
         </div>
 
+        {(defaults.loading || defaults.error) && <div role="alert" className="rounded-lg border bg-white p-4 text-sm">
+          {defaults.loading ? 'Loading shared quiz defaults...' : defaults.error}
+          {defaults.error && <button type="button" onClick={defaults.reload} className="ml-4 text-primary-700">Retry defaults</button>}
+        </div>}
+        <fieldset disabled={defaults.loading || Boolean(defaults.error)} className="contents">
         {pageError && <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{pageError}</div>}
 
         <section className="rounded-2xl border border-[#ded8e8] bg-white p-5 shadow-sm space-y-4">
           <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
             <input required value={form.title} onChange={event => setForm({ ...form, title: event.target.value })} placeholder="Quiz title" className="sm:col-span-2 h-11 rounded-lg border border-[#d8dde6] px-3 text-sm outline-none focus:border-[#8b5cf6] focus:ring-2 focus:ring-[#ede9fe]" />
             <input value={form.version} onChange={event => setForm({ ...form, version: event.target.value })} placeholder="Version" className="h-11 rounded-lg border border-[#d8dde6] px-3 text-sm outline-none focus:border-[#8b5cf6] focus:ring-2 focus:ring-[#ede9fe]" />
-            <input value={form.author} onChange={event => setForm({ ...form, author: event.target.value })} placeholder="Author" className="h-11 rounded-lg border border-[#d8dde6] px-3 text-sm outline-none focus:border-[#8b5cf6] focus:ring-2 focus:ring-[#ede9fe]" />
+            <p className="self-center text-xs text-[#647083]">Your account will be recorded as the author.</p>
             <ThemedSelect value={form.programme} options={programmeOptions} onChange={programme => setForm({ ...form, programme, module: '', programmeId: '', week: '', weekId: '' })} menuClassName="max-h-56" buttonClassName="h-11" />
             <ThemedSelect
               value={form.module}
@@ -522,7 +517,7 @@ export default function ManualQuizPage() {
 
                   <QuizQuestionImageField key={activeQuestion.id} imageUrl={activeQuestion.imageUrl}
                     onChange={imageUrl => updateQuestion(activeQuestion.id, { imageUrl })}
-                    disabled={saving || readingQuestionImage} onBusyChange={setReadingQuestionImage} />
+                    disabled={saving || readingQuestionImage || defaults.loading || !defaults.data || Boolean(defaults.error)} onBusyChange={setReadingQuestionImage} />
 
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                     <div>
@@ -633,9 +628,11 @@ export default function ManualQuizPage() {
                 <Field label="Passing grade (%)">
                   <input type="number" min="0" max="100" value={settings.passingGrade} onChange={event => setSettings({ ...settings, passingGrade: Number(event.target.value || 0) })} className="h-11 w-full rounded-lg border border-[#d8dde6] bg-white px-3 text-sm outline-none focus:border-[#8b5cf6] focus:ring-2 focus:ring-[#ede9fe]" />
                 </Field>
-                <Field label="Points cut after retake (%)">
-                  <input type="number" min="0" max="100" value={settings.retakePointsCut} onChange={event => setSettings({ ...settings, retakePointsCut: Number(event.target.value || 0) })} className="h-11 w-full rounded-lg border border-[#d8dde6] bg-white px-3 text-sm outline-none focus:border-[#8b5cf6] focus:ring-2 focus:ring-[#ede9fe]" />
-                </Field>
+                {settings.limitAttempts && <Field label="Maximum attempts (including the first)">
+                  <input aria-label="Maximum attempts" type="number" min="1" max="20" value={settings.attemptLimit} onChange={event => setSettings({ ...settings, attemptLimit: Number(event.target.value) })} className="h-11 w-full rounded-lg border px-3" />
+                </Field>}
+                <p className="text-sm text-foreground-600">The highest score is kept. Retakes do not deduct marks.</p>
+                <button type="button" onClick={() => setShowGrades(true)} className="text-sm text-primary-700">Customise grades for this quiz</button>
               </div>
 
               <div className="rounded-xl bg-[#f3f6fb] border border-[#e2e8f0] p-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
@@ -666,12 +663,16 @@ export default function ManualQuizPage() {
             <button type="button" onClick={addQuestion} className="px-4 py-2 rounded-lg bg-white border border-primary-200 text-primary-700 text-sm font-semibold hover:bg-primary-50">
               <AppIcon className="ri-add-line mr-1"></AppIcon>Add question
             </button>
-            <button type="submit" disabled={saving || readingQuestionImage} className="px-5 py-2 rounded-lg bg-[#5b2dbb] text-white text-sm font-semibold hover:bg-[#4c1d95] disabled:opacity-60 disabled:cursor-wait">
+            <button type="submit" disabled={saving || readingQuestionImage || defaults.loading || !defaults.data || Boolean(defaults.error)} className="px-5 py-2 rounded-lg bg-[#5b2dbb] text-white text-sm font-semibold hover:bg-[#4c1d95] disabled:opacity-60 disabled:cursor-wait">
               {saving ? 'Saving...' : 'Save Manual Quiz'}
             </button>
           </div>
         </div>
+        </fieldset>
       </form>
+      {showGrades && settings.gradeSettings && <GradeSettingsModal settings={settings.gradeSettings}
+        onChange={gradeSettings => setSettings({ ...settings, gradeSettings })}
+        onClose={() => setShowGrades(false)} onSaved={() => setShowGrades(false)} />}
     </WorkspaceShell>
   );
 }

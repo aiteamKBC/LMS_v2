@@ -13,6 +13,7 @@ on another. Auto-save makes that ordinary rather than exotic: a second tab, or a
 colleague, now saves while a first tab is still holding a copy it read minutes
 ago. The revision check is what refuses that write instead of performing it.
 """
+from curriculum_api.catalogue.tests.parity.composition_test_support import composition_fixture
 import hashlib
 import json
 from unittest import mock
@@ -303,7 +304,7 @@ class ModuleStructureRevisionTests(CurriculumPersistenceHarness):
                 })
             return original_read(module_catalogue_id, *args, **kwargs)
 
-        with mock.patch.object(views, 'get_authoring_structure_payload', read_with_a_concurrent_save):
+        with composition_fixture(views, 'get_authoring_structure_payload', read_with_a_concurrent_save):
             module = self.read_structure()
         self.assertTrue(landed, 'the concurrent save never ran, so this proves nothing')
 
@@ -322,7 +323,7 @@ class ModuleStructureRevisionTests(CurriculumPersistenceHarness):
         module = self.read_structure()
         module['weekStructure'][0]['title'] = 'Written while the fingerprint was unreadable'
 
-        with mock.patch.object(views, 'module_structure_revision', return_value=''):
+        with composition_fixture(views, 'module_structure_revision', return_value=''):
             response = self.save_structure(module, expectedRevision=module['structureRevision'])
 
         self.assertEqual(response.status_code, 409, response.content)

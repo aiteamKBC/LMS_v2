@@ -94,7 +94,7 @@ class KsbProgressTests(SimpleTestCase):
             'version': '1.0',
             'level': 'Level 6',
         }
-        with patch('curriculum_api.views.find_skills_england_standard', return_value=standard):
+        with patch('curriculum_api.reporting.infrastructure.source_catalogue_runtime.find_skills_england_standard', return_value=standard):
             result = self.calculate([], [])
         self.assertEqual(
             result['title'],

@@ -24,6 +24,11 @@ def functions(path, names, namespace):
     namespace.setdefault('__package__', 'curriculum_api')
     namespace.setdefault('__name__', 'curriculum_api.isolated_tests')
     tree = ast.parse(path.read_text(encoding='utf-8-sig'))
+    if path == ROOT / 'views.py':
+        from curriculum_api.meetings.tests.source_loader import load_current_functions
+        load_current_functions(names, namespace, tree)
+        assert all(callable(namespace[name]) for name in names)
+        return
     nodes = [node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name in names]
     assert len(nodes) == len(names)
     exec(compile(ast.Module(body=nodes, type_ignores=[]), str(path), 'exec'), namespace)

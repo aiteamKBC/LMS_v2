@@ -7,10 +7,12 @@ itself -- which clashes survive into the refusal -- and nothing else.
 """
 import ast
 import types
+import sys
 import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
+sys.path.insert(0, str(ROOT.parent))
 
 
 def clash(module_id, name, *dates):
@@ -21,6 +23,7 @@ def clash(module_id, name, *dates):
 class TutorConflictScopeTests(unittest.TestCase):
     def setUp(self):
         self.v = types.ModuleType('curriculum_api.views')
+        self.v.__package__ = 'curriculum_api'
         self.v.clean_str = lambda value: str(value if value is not None else '').strip()
         self.v.staff_assignment_key = lambda value: str(value if value is not None else '').strip().lower()
         self.v.tutor_conflict_context = lambda rows=None: {'stored': [], 'holidays': {}}

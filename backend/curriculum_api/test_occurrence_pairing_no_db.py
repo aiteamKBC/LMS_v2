@@ -5,12 +5,15 @@ the real UNIQUE (live_session_id, session_number) key, no Django or database.
 """
 import ast
 import contextlib
+import sys
 import unittest
 import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 ROOT = Path(__file__).parent
+sys.path.insert(0, str(ROOT.parent))
+from curriculum_api.meetings.tests.source_loader import load_current_functions
 NAMES = {'clean_str', 'parse_graph_datetime', 'teams_calendar_minute_key', 'occurrence_session_number',
          'pair_planned_occurrences', 'scheduled_live_session_occurrences', 'replace_live_session_occurrences'}
 
@@ -44,8 +47,8 @@ def load(table):
                  'authoring_fetch_all': table.fetch, 'update_authoring_rows': table.update, 'authoring_upsert': table.upsert,
                  'transaction': type('T', (), {'atomic': staticmethod(contextlib.nullcontext)})}
     tree = ast.parse((ROOT / 'views.py').read_text(encoding='utf-8-sig'))
-    nodes = [node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name in NAMES]
-    exec(compile(ast.Module(body=nodes, type_ignores=[]), 'views.py', 'exec'), namespace)
+    load_current_functions(NAMES, namespace, tree)
+    assert all(callable(namespace[name]) for name in NAMES)
     return namespace
 
 

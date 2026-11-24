@@ -85,95 +85,34 @@ def _assigned(learner, target, cache):
 
 
 def _plan_row_counts():
-    """Saved plan rows per enrolment id: the drawers' "N modules" figure."""
+    from curriculum_api.directory.infrastructure.assignment_reads import _plan_row_counts as implementation
     from . import views
-    with views.connection.cursor() as cursor:
-        cursor.execute("""
-            SELECT l.enrolment_id, count(t.id)
-            FROM "Learner".learners l
-            JOIN "Learner".learner_training_plan_modules t ON t.learner_id = l.id
-            WHERE l.enrolment_id IS NOT NULL
-            GROUP BY l.enrolment_id
-        """)
-        return {str(enrolment_id): count for enrolment_id, count in cursor.fetchall()}
+    return implementation(connection=views.connection)
 
 
 def _payload(target, learners):
-    """The "Assign learners" directory, with membership from the normalized records.
-
-    `assigned` and `moduleCount` use the same source as the module card and the
-    module drawer, so a learner assigned in Module Builder shows as assigned here.
-    """
-    if target['scope'] == 'module':
-        return _module_payload(target, learners)
-    cache = {}
-    module_counts = _plan_row_counts()
-    rows = [_row(learner, _assigned(learner, target, cache), module_counts.get(str(learner.pk), 0))
-            for learner in learners]
-    return {
-        'target': {**{key: target[key] for key in ('id', 'name', 'scope', 'programmeName')},
-                   'moduleCount': len(target['moduleIds'])},
-        'learners': rows,
-        'totals': {'learnerCount': len(rows), 'assignedCount': sum(row['assigned'] for row in rows)},
-    }
+    from curriculum_api.directory.application.assignment_queries import _payload as implementation
+    return implementation(target, learners, _module_payload=_module_payload, _plan_row_counts=_plan_row_counts, _row=_row, _assigned=_assigned)
 
 
 def _row(learner, assigned, module_count):
-    # The module card buckets by the profile's lifecycle status. Keep the
-    # drawer on that same canonical status instead of re-labelling the legacy
-    # programme status as lifecycle status in the browser.
-    profile = placement_profile(learner)
-    return {
-        'id': str(learner.pk), 'name': plans._s(learner.username) or plans._s(learner.email),
-        'email': plans._s(learner.email), 'programme': plans._s(learner.programme),
-        'company': plans._s(learner.employer) or plans._s(learner.organization),
-        'cohort': plans._s(learner.cohort), 'group': plans._s(learner.group),
-        'programmeStatus': plans._s(learner.programme_status),
-        'lifecycleStatus': plans._s(getattr(profile, 'lifecycle_status', '')),
-        'learnerType': plans._s(learner.learner_type) or 'apprenticeship',
-        'assigned': assigned, 'moduleCount': module_count,
-    }
+    from curriculum_api.directory.infrastructure.registration_reads import _row as implementation
+    return implementation(learner, assigned, module_count, placement_profile=placement_profile, clean_str=plans._s)
 
 
 def _module_payload(target, learners):
-    """Module drawer: assigned learners are exactly the ones the card counts.
-
-    Membership comes from `"Learner".learners` and
-    `learner_training_plan_modules` through the card's own rule
-    (`learner_status_counts.module_member_enrolment_ids`), not from the legacy
-    JSON plan, so the drawer and the "N learners" figure share one source.
-    """
-    from . import views
+    from curriculum_api.directory.application.assignment_queries import _module_payload as implementation
     from .learner_status_counts import module_member_enrolment_ids
-
-    members = module_member_enrolment_ids(target['id']) or set()
-    module_counts = _plan_row_counts()
-    rows = [_row(learner, str(learner.pk) in members, module_counts.get(str(learner.pk), 0))
-            for learner in learners]
-    return {
-        'target': {**{key: target[key] for key in ('id', 'name', 'scope', 'programmeName')},
-                   'moduleCount': len(target['moduleIds'])},
-        'learners': rows,
-        'totals': {'learnerCount': len(rows), 'assignedCount': sum(row['assigned'] for row in rows)},
-    }
+    return implementation(target, learners, module_member_enrolment_ids=module_member_enrolment_ids, _plan_row_counts=_plan_row_counts, _row=_row)
 
 
 def _module_assigned_payload(target):
-    """Compact membership read for the progress dialog, not its edit drawer."""
+    from curriculum_api.directory.application.assignment_queries import _module_assigned_payload as implementation
     from .learner_status_counts import module_member_enrolment_ids
-
-    members = module_member_enrolment_ids(target['id']) or set()
-    learners = with_placements(EnrolmentUser.all_learners.filter(pk__in=members).only(
-        'id', 'username', 'email', 'programme_id', 'cohort_id', 'group_id',
-        'employer', 'organization', 'programme_status', 'learner_type',
-    ).order_by('username', 'id'))
-    rows = [_row(learner, True, 0) for learner in learners]
-    return {
-        'target': {**{key: target[key] for key in ('id', 'name', 'scope', 'programmeName')},
-                   'moduleCount': len(target['moduleIds'])},
-        'learners': rows,
-        'totals': {'learnerCount': len(rows), 'assignedCount': len(rows)},
-    }
+    from .directory.infrastructure.registration_reads import assigned_sources
+    def read(members):
+        return assigned_sources(members, EnrolmentUser=EnrolmentUser, with_placements=with_placements)
+    return implementation(target, module_member_enrolment_ids=module_member_enrolment_ids, read_sources=read, _row=_row)
 
 
 def _save_legacy_plan(learner, plan):
@@ -439,65 +378,13 @@ def module_learner_assignments(request, identifier):
 
 
 def module_assignment_roster(module_id, placement_learners, lifecycle_status=''):
-    """Include direct module membership without broadening programme/cohort rosters."""
-    placed = {str(row['id']): row for row in placement_learners}
-    profiles = LearnerProfile.objects.select_related(*RELATIONS).filter(
-        Q(pk__in=list(placed)) | Q(plan_modules__curriculum_module_id=module_id)
-    ).prefetch_related('plan_modules').distinct()
-    if lifecycle_status:
-        profiles = profiles.filter(lifecycle_status__iexact=lifecycle_status)
-    result = dict(placed)
-    for profile in profiles:
-        module_refs = {
-            str(module.module_ref) for module in profile.plan_modules.all()
-            if module.module_ref
-        }
-        explicit = bool(module_refs)
-        assigned = module_id in module_refs
-        key = str(profile.pk)
-        if explicit and not assigned:
-            result.pop(key, None)
-            continue
-        if key in result or not assigned:
-            continue
-        result[key] = {
-            'id': profile.pk, 'sourceId': profile.pk, 'sourceKind': 'learner',
-            'enrolmentId': profile.enrolment_id,
-            'assignmentBasis': 'module',
-            'name': profile.full_name or '', 'email': profile.email or '',
-            'programme': profile.programme or '', 'programmeStatus': profile.programme_status or '',
-            'cohort': profile.cohort or '', 'cohortId': profile.cohort_id or '',
-            'group': profile.group_name or '', 'groupId': profile.group_id or '',
-            'lifecycleStatus': profile.lifecycle_status or '',
-            'coachName': profile.coach_name or '', 'coachEmail': profile.coach_email or '',
-            **{out: float(getattr(profile, field, 0) or 0) for out, field in (
-                ('completedHours', 'completed_hours'), ('plannedHours', 'planned_hours'),
-                ('targetHours', 'target_hours'), ('progressHours', 'progress_hours'),
-            )},
-            'progressVariance': profile.progress_variance, 'otjhStatus': profile.otjh_status or '',
-        }
-    return sorted(result.values(), key=lambda row: (row.get('name', '').casefold(), str(row['id'])))
+    from curriculum_api.directory.application.assignment_queries import module_assignment_roster as implementation
+    from .directory.infrastructure.assignment_reads import module_roster_facts
+    def read(module_id, placed_ids, lifecycle_status):
+        return module_roster_facts(
+            module_id, placed_ids, lifecycle_status, LearnerProfile=LearnerProfile, RELATIONS=RELATIONS, Q=Q,
+        )
+    return implementation(module_id, placement_learners, lifecycle_status, read_facts=read)
 
 
-def bulk_assigned_learner_counts(module_ids):
-    """Assigned-learner counts for many modules in one pass over all learners.
-
-    The module list shows a "Learners (N)" figure on every card, and computing
-    it the way `_assigned()` does -- one query and one effective-plan
-    computation per module -- would mean one query per card. This runs that
-    same computation (saved plan, or the learner's group preset when nothing is
-    saved) once per learner instead, with the group-preset lookup cached and
-    shared across learners exactly as `_payload` already shares it across a
-    single module's request.
-    """
-    wanted = {plans._s(module_id) for module_id in module_ids if plans._s(module_id)}
-    if not wanted:
-        return {}
-    counts = {module_id: 0 for module_id in wanted}
-    cache = {}
-    learners = with_placements(EnrolmentUser.all_learners.only('id', 'learning_plan', 'training_plan'))
-    for learner in learners:
-        for module_id in set(plans._effective_plan_ids(learner, cache)):
-            if module_id in wanted:
-                counts[module_id] += 1
-    return counts
+from .learner_assignment_counts_sql import bulk_assigned_learner_counts

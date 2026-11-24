@@ -84,11 +84,26 @@ class DashboardReadTests(unittest.TestCase):
         )
         class ReadError(Exception): pass
         self.ReadError = ReadError
-        projection = dict(views=self.views)
-        functions(root / 'calendar_read_rows.py', projection, assignments=True)
-        self.n = dict(views=self.views, live_rows=projection['live_rows'], JsonResponse=JsonResponse, DatabaseError=ReadError,
+        from curriculum_api.catalogue.application.overview import CurriculumOverviewUnavailable
+        from curriculum_api.catalogue.application.session_calendar import calendar_snapshot_from_rows
+        self.views.authored_calendar_snapshot = lambda modules, cohorts, groups, holidays, **options: calendar_snapshot_from_rows(
+            modules, cohorts, groups, holidays, **options,
+            read_links=self.views.authoring_session_links_by_catalogue,
+            select_holidays=self.views.cohort_selected_holidays_by_id,
+            build_authored_sessions=self.views.build_sessions_from_authoring_modules,
+            clean_str=self.views.clean_str, parse_date=self.views.parse_date)
+        self.views.fetch_all = Mock(side_effect=AssertionError('No SQL in fixture'))
+        self.views.learning_read_table = lambda table: table
+        self.views.quote_ident = lambda name: name
+        # Execute the actual relocated definitions with the same mutable fixture
+        # ports. Updating self.views also updates these functions' global ports.
+        self.n = vars(self.views)
+        self.n.update(__package__='curriculum_api', CurriculumOverviewUnavailable=CurriculumOverviewUnavailable,
+                      JsonResponse=JsonResponse, DatabaseError=ReadError,
                       require_GET=require_GET, require_access=auth['require_access'])
-        functions(root / 'delivery_dashboard.py', self.n, assignments=True)
+        functions(root / 'catalogue/infrastructure/calendar_row_runtime.py', self.n, assignments=True)
+        functions(root / 'catalogue/api/delivery_dashboard.py', self.n, assignments=True)
+        functions(root / 'delivery_dashboard.py', self.n)
 
     def fetch(self, table, *args, **kwargs):
         self.reads.append((table, kwargs))
@@ -161,7 +176,7 @@ class DashboardReadTests(unittest.TestCase):
         self.views.cached_curriculum_value = Mock(side_effect=lambda key, factory, **kwargs: factory())
         self.request(); self.request('sessions')
         calls = self.views.cached_curriculum_value.call_args_list
-        self.assertEqual([call.args[0] for call in calls], ['delivery-dashboard:v3:overview', 'delivery-calendar:v3'])
+        self.assertEqual([call.args[0] for call in calls], ['delivery-dashboard:v3:overview', 'delivery-calendar:v4'])
         self.assertTrue(all(call.kwargs == {'force': False, 'ttl': 30} for call in calls))
 
     def test_chart_and_calendar_share_one_build_and_keep_the_existing_collection_contract(self):

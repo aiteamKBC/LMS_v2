@@ -17,14 +17,15 @@ their pre-change values for the same reason.
 
 What is remapped, and what is deliberately left alone
 -----------------------------------------------------
-Remapped: the columns that hold ``learners.id`` -- the three FK children, the
-two attendance tables, and ``reviews``. The attendance tables carry no FK, so
-they were confirmed by their own ``learner_name`` column matching
-``learners.full_name`` rather than ``Created_users."Username"``.
+Remapped: the columns that hold ``learners.id`` -- the FK children, the
+attendance tables, ``reviews``, and Progress Review runs. The attendance tables
+carry no FK, so they were confirmed by their own ``learner_name`` column
+matching ``learners.full_name`` rather than ``Created_users."Username"``.
 
-Left alone: ``evidence_files``, ``learner_monthly_reports``,
-``learning_reflection_submissions``, ``progress_review_runs`` and
-``calendar_connections``. Those already hold the *enrolment* id -- they are the
+``evidence_files.learner_profile_id`` is a canonical ``learners.id`` child and
+is remapped with the other child keys. Left alone: ``learner_monthly_reports``,
+``learning_reflection_submissions`` and ``calendar_connections``. Those hold the
+*enrolment* id -- they are the
 ``(learner_kind, learner_id)`` pair taken from the URL. They need no change, and
 after this run they read correctly in both spaces at once.
 
@@ -44,6 +45,7 @@ ORPHAN_OFFSET = 1_000_000
 
 #: Columns holding ``"Learner".learners.id`` that do NOT cascade on update.
 CHILD_COLUMNS = [
+    ("Learner", "evidence_files", "learner_profile_id"),
     ("Learner", "learner_progress_entries", "learner_id"),
     ("Learner", "learner_training_plan_modules", "learner_id"),
     ("Learner", "learner_ksb_assignments", "learner_id"),
@@ -52,6 +54,7 @@ CHILD_COLUMNS = [
     ("Learner", "learner_attendance_details", "learner_profile_id"),
     ("Learner", "verified_teams_attendance", "learner_id"),
     ("Learner", "verified_teams_attendance", "learner_profile_id"),
+    ("Learner", "progress_review_runs", "learner_id"),
 ]
 
 #: Made deferrable so the parking pass cannot trip them mid-transaction. They

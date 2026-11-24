@@ -1,0 +1,71 @@
+{
+  "module_structure_revision": {
+    "source": "def module_structure_revision(module_catalogue_id, *, source_rows=None):\n    \"\"\"Fingerprint of everything a structure PATCH would replace.\n\n    Six indexed single-module reads, or the exact source rows already read for\n    an editor GET. PATCH always uses fresh reads. A module that is not stored\n    fingerprints as the empty structure, so a fresh draft is never a conflict.\n\n    Rows are sorted by their own key rather than trusted in database order: a\n    fingerprint that depended on which order Postgres happened to return the\n    components in would refuse saves at random.\n    \"\"\"\n    catalogue_id = clean_str(module_catalogue_id)\n    if not catalogue_id:\n        return ''\n    ensure_module_authoring_tables()\n    material = []\n    # Match the payload reader's queries, including ordering, so its read scope\n    # reuses these rows. Excluding timestamps in SQL gave the revision a separate\n    # memo key and downloaded all component content twice on every fresh open.\n    payload_order = {\n        'weeks': 'display_order, week_number, id',\n        'components': 'display_order, id',\n        'mappings': 'created_at, id',\n    }\n    for label, table, keep, sort_column in STRUCTURE_REVISION_SOURCES:\n        try:\n            if source_rows is not None:\n                rows = source_rows[table]\n            elif connection.vendor == 'postgresql' and table in (AUTHORING_COMPONENTS_TABLE, AUTHORING_KSB_MAPPINGS_TABLE):\n                from .authoring_read_transport import compact_authoring_rows\n                # Verify every current row in SQL, sharing only unchanged raw\n                # content with the editor read. This remains a fresh revision,\n                # including external writes that never bump the response epoch.\n                rows = compact_authoring_rows(\n                    table, 'module_catalogue_id = %s', [catalogue_id],\n                    'display_order, id' if table == AUTHORING_COMPONENTS_TABLE else 'created_at, id',\n                    reuse_unchanged=True,\n                )\n            else:\n                rows = authoring_fetch_all(\n                    table,\n                    'module_catalogue_id = %s',\n                    [catalogue_id],\n                    order_sql=payload_order.get(label, ''),\n                )\n        except Exception:\n            # A table that cannot be read must not fail the request it was asked\n            # about. Returning '' turns the guard off for this save rather than\n            # refusing it, which matches how every other optional protection in\n            # this module degrades -- and the caller only enforces a non-empty\n            # revision.\n            logger.warning('Unable to fingerprint %s for module %s.', table, catalogue_id, exc_info=True)\n            return ''\n        if keep:\n            rows = keep(rows)\n        # Only what the table stores is fingerprinted. On the normalised schema\n        # authoring_fetch_all adds derived keys (programme_name, tutor_name,\n        # deleted_at ...) that the editor GET's source rows do\n        # not carry, so the fresh read and the GET hashed different material\n        # and every full save was refused as a conflict. Derived keys follow\n        # from stored ones, so dropping them loses no change.\n        try:\n            stored = column_names(table)\n        except Exception:\n            stored = set()\n        # Copy rather than mutate: the payload still needs the complete rows.\n        # The fingerprint's material remains identical to the previous SQL\n        # projection, including columns introduced by future migrations.\n        rows = [\n            {key: value for key, value in row.items()\n             if key not in STRUCTURE_REVISION_VOLATILE_COLUMNS and (not stored or key in stored)}\n            for row in rows\n        ]\n        material.append([\n            label,\n            sorted(rows, key=lambda row: clean_str(row.get(sort_column))),\n        ])\n    return hashlib.sha256(\n        json.dumps(material, sort_keys=True, default=str).encode()\n    ).hexdigest()[:32]\n",
+    "decorators": [
+      "with_course_storage"
+    ],
+    "module": "curriculum_api.catalogue.application.structure_revisions",
+    "deps": [
+      "clean_str",
+      "ensure_module_authoring_tables",
+      "STRUCTURE_REVISION_SOURCES",
+      "connection_vendor",
+      "AUTHORING_COMPONENTS_TABLE",
+      "AUTHORING_KSB_MAPPINGS_TABLE",
+      "compact_authoring_rows",
+      "authoring_fetch_all",
+      "logger",
+      "column_names",
+      "STRUCTURE_REVISION_VOLATILE_COLUMNS"
+    ],
+    "bindings": {
+      "connection_vendor": "lambda: connection.vendor"
+    }
+  },
+  "structure_payload_with_revision": {
+    "source": "def structure_payload_with_revision(build_payload, module_catalogue_id, *, source_rows=None):\n    \"\"\"Build a structure payload and stamp the revision it was built from.\n\n    The revision is read BEFORE the payload, and that order is the whole point.\n    These reads run in autocommit, so each statement sees its own snapshot and\n    another writer can commit in the middle of the build. Whichever of the two\n    is read second describes the later state:\n\n    - payload first, revision second (how this used to work): pre-write weeks\n      carrying the post-write fingerprint. The caller saves its stale structure,\n      the revision matches, the guard lets it through, and the other writer's\n      work is gone with no error raised anywhere. That is precisely the silent\n      overwrite this mechanism exists to make impossible.\n    - revision first: a payload that may contain a write the revision predates.\n      The revision is then already superseded, so the save built on it is\n      refused with 409 and the caller reloads. Wrong in the harmless direction.\n\n    So the pair is never certified as a snapshot it is not. It is either exactly\n    consistent, or provably stale and fails closed.\n\n    ``build_payload`` is a callable rather than an already-built payload so that\n    the ordering cannot be quietly undone at a call site. A caller that has just\n    written the structure itself and needs the revision of its own write uses\n    ``stamp_revision_after_write``.\n    \"\"\"\n    revision = module_structure_revision(\n        module_catalogue_id, **({'source_rows': source_rows} if source_rows is not None else {}),\n    ) or STRUCTURE_REVISION_UNAVAILABLE\n    payload = build_payload()\n    if not payload:\n        return payload\n    return {**payload, 'structureRevision': revision}\n",
+    "decorators": [],
+    "module": "curriculum_api.catalogue.application.structure_revisions",
+    "deps": [
+      "module_structure_revision",
+      "STRUCTURE_REVISION_UNAVAILABLE"
+    ],
+    "bindings": {}
+  },
+  "read_module_structure_with_revision": {
+    "source": "def read_module_structure_with_revision(module_catalogue_id):\n    \"\"\"Read each owned row once for both the editable payload and its guard.\n\n    A revision and payload assembled from the same rows cannot certify newer\n    data than the editor received. PATCH still fingerprints fresh database rows\n    before accepting a save. Reused raw rows are verified against their current\n    SQL fingerprints on every rebuild, independently of response-cache epochs.\n    \"\"\"\n    source_rows = module_structure_source_rows(module_catalogue_id)\n    payload = structure_payload_with_revision(\n        lambda: get_authoring_structure_payload(module_catalogue_id, source_rows=source_rows),\n        module_catalogue_id, source_rows=source_rows,\n    )\n    return with_item_fingerprints(payload)\n",
+    "decorators": [
+      "with_course_storage"
+    ],
+    "module": "curriculum_api.catalogue.application.structure_revisions",
+    "deps": [
+      "module_structure_source_rows",
+      "structure_payload_with_revision",
+      "get_authoring_structure_payload",
+      "with_item_fingerprints"
+    ],
+    "bindings": {}
+  },
+  "module_structure_source_rows": {
+    "source": "def module_structure_source_rows(module_catalogue_id):\n    \"\"\"Every row one module's structure is built from, one read per table.\n\n    The rows a structure payload and its revision are both computed from, so\n    the two describe the same moment. The structure GET, the changes feed and\n    the item-merging save all read through this.\n    \"\"\"\n    from .authoring_read_transport import compact_authoring_rows\n    orders = {\n        AUTHORING_WEEKS_TABLE: 'display_order, week_number, id',\n        AUTHORING_COMPONENTS_TABLE: 'display_order, id',\n        AUTHORING_KSB_MAPPINGS_TABLE: 'created_at, id',\n    }\n    return {\n        table: compact_authoring_rows(\n            table, 'module_catalogue_id = %s', [module_catalogue_id], orders.get(table, sort_column),\n            reuse_unchanged=table in (AUTHORING_COMPONENTS_TABLE, AUTHORING_KSB_MAPPINGS_TABLE),\n        ) for _label, table, _keep, sort_column in STRUCTURE_REVISION_SOURCES\n    }\n",
+    "decorators": [],
+    "module": "curriculum_api.catalogue.infrastructure.structure_sources",
+    "deps": [
+      "compact_authoring_rows",
+      "AUTHORING_WEEKS_TABLE",
+      "AUTHORING_COMPONENTS_TABLE",
+      "AUTHORING_KSB_MAPPINGS_TABLE",
+      "STRUCTURE_REVISION_SOURCES"
+    ],
+    "bindings": {}
+  },
+  "with_item_fingerprints": {
+    "source": "def with_item_fingerprints(payload):\n    \"\"\"Stamp the per-week and per-component fingerprints the editor merges by.\n\n    Kept beside the content rather than computed in the browser: the browser\n    normalises what it reads, and a fingerprint has to describe the server's\n    copy exactly for \"has anyone changed this since I read it?\" to be exact.\n    See module_merge.\n    \"\"\"\n    if not payload:\n        return payload\n    from .module_merge import structure_fingerprints\n    return {**payload, 'itemFingerprints': structure_fingerprints(payload)}\n",
+    "decorators": [],
+    "module": "curriculum_api.catalogue.application.structure_revisions",
+    "deps": [
+      "structure_fingerprints"
+    ],
+    "bindings": {}
+  }
+}

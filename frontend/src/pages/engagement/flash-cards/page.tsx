@@ -31,11 +31,12 @@ const STATUS_FILTERS: { value: DeckStatus | 'all'; label: string }[] = [
 
 const DECK_TABLE_BUTTON_BASE = 'inline-flex h-9 items-center justify-center gap-1.5 rounded-lg px-3 text-[13px] font-semibold transition-smooth cursor-pointer whitespace-nowrap focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-300 focus-visible:ring-offset-1';
 const DECK_TOP_BUTTON_BASE = 'inline-flex h-10 items-center justify-center gap-1.5 rounded-lg px-4 text-[13px] font-semibold transition-smooth cursor-pointer whitespace-nowrap focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-300 focus-visible:ring-offset-1';
-const DECK_PRIMARY_BUTTON = 'bg-[#B27715] text-white shadow-sm hover:bg-[#986511] active:bg-[#80540E]';
+const DECK_EDIT_BUTTON = 'border border-[#E6DDCD] bg-[#F7F2E9] text-[#73552F] shadow-none hover:bg-[#EEE5D5] active:bg-[#E7DCC8] [html[data-theme=dark]_&]:border-[#5C5140] [html[data-theme=dark]_&]:bg-[#373128] [html[data-theme=dark]_&]:text-[#DDC9A7] [html[data-theme=dark]_&]:hover:bg-[#453C2F] [html[data-theme=dark]_&]:active:bg-[#504535]';
+const DECK_PRIMARY_BUTTON = DECK_EDIT_BUTTON;
 const DECK_SECONDARY_BUTTON = 'border border-[#E5E7EB] bg-white text-foreground-700 shadow-sm hover:border-[#D8C9F2] hover:bg-[#F5F0FF] hover:text-[#541EA0] active:bg-[#EDE4FC]';
-const DECK_SUCCESS_BUTTON = 'bg-[#10B981] text-white shadow-sm hover:bg-[#059669] active:bg-[#047857]';
-const DECK_WARNING_BUTTON = 'bg-[#F59E0B] text-white shadow-sm hover:bg-[#D97706] active:bg-[#B45309]';
-const DECK_DANGER_BUTTON = 'bg-[#EF4444] text-white shadow-sm hover:bg-[#DC2626] active:bg-[#B91C1C]';
+const DECK_SUCCESS_BUTTON = 'border border-[#D5E4DB] bg-[#EDF4EF] text-[#345B43] shadow-none hover:bg-[#DFECE3] active:bg-[#D3E4D9] [html[data-theme=dark]_&]:border-[#405448] [html[data-theme=dark]_&]:bg-[#26362D] [html[data-theme=dark]_&]:text-[#BDD7C5] [html[data-theme=dark]_&]:hover:bg-[#304337] [html[data-theme=dark]_&]:active:bg-[#374C3E]';
+const DECK_WARNING_BUTTON = DECK_EDIT_BUTTON;
+const DECK_DANGER_BUTTON = 'border border-[#E9D8D8] bg-[#F8EEEE] text-[#874848] shadow-none hover:bg-[#F0DFDF] active:bg-[#EAD3D3] [html[data-theme=dark]_&]:border-[#64464D] [html[data-theme=dark]_&]:bg-[#3C2B30] [html[data-theme=dark]_&]:text-[#E4BBBB] [html[data-theme=dark]_&]:hover:bg-[#4A333A] [html[data-theme=dark]_&]:active:bg-[#563B43]';
 
 // The core prompt lives in the backend; this editable text is the author's
 // instructions, sent as `customInstructions` to augment (not override) it.
@@ -449,7 +450,7 @@ export default function FlashCardsPage() {
                           <button onClick={() => { setPreviewDeck(deck); setShowPicker(true); }} title="Preview the learner game" className={`${DECK_TABLE_BUTTON_BASE} ${DECK_SECONDARY_BUTTON}`}>
                             <AppIcon className="ri-eye-line text-sm"></AppIcon> Preview
                           </button>
-                          <button onClick={() => openEditDeck(deck)} title="Edit title and targeting" className={`${DECK_TABLE_BUTTON_BASE} ${DECK_PRIMARY_BUTTON}`}>
+                          <button onClick={() => openEditDeck(deck)} title="Edit title and targeting" className={`${DECK_TABLE_BUTTON_BASE} ${DECK_EDIT_BUTTON}`}>
                             <AppIcon className="ri-edit-line text-sm"></AppIcon> Edit
                           </button>
                           <button onClick={() => togglePublish(deck)} title={deck.status === 'published' ? 'Move back to draft' : 'Publish to learners'} className={`${DECK_TABLE_BUTTON_BASE} ${deck.status === 'published' ? DECK_WARNING_BUTTON : DECK_SUCCESS_BUTTON}`}>

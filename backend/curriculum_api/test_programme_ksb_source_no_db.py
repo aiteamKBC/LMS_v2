@@ -7,6 +7,7 @@ profile", and the programme card/header read that name while Coverage and
 Achievement measured ST0845. These tests pin the stored source first, active
 manual profiles still honoured, and archived ones never speaking for a programme.
 """
+from curriculum_api.catalogue.tests.parity.composition_test_support import composition_fixture
 from contextlib import ExitStack
 from unittest.mock import patch
 
@@ -57,8 +58,8 @@ def build(configs, profiles=PROFILES):
             ('programme_component_ksb_mapping_count', 0),
             ('authoring_programme_structure_counts', ({}, {})),
         ):
-            stack.enter_context(patch.object(views, name, return_value=value))
-        stack.enter_context(patch.object(views, 'find_skills_england_standard', side_effect=find_standard))
+            stack.enter_context(composition_fixture(views, name, return_value=value))
+        stack.enter_context(composition_fixture(views, 'find_skills_england_standard', side_effect=find_standard))
         return {item['sourceId']: item for item in views.build_programmes([], configs, profiles)}
 
 
@@ -72,7 +73,7 @@ class StoredSourceReaderTests(SimpleTestCase):
 
     def test_row_reader_delegates_to_it(self):
         rows = [config('PROG-PCP-L6', 'Project Controls Professional Level 6', 'standard:st0845-v1-1')]
-        with patch.object(views, 'get_program_config_rows', return_value=rows):
+        with composition_fixture(views, 'get_program_config_rows', return_value=rows):
             self.assertEqual(views.programme_row_ksb_source('PROG-PCP-L6'), ('standard', 'st0845-v1-1'))
             self.assertEqual(views.programme_row_ksb_source('Project Controls Professional Level 6'), ('standard', 'st0845-v1-1'))
             self.assertEqual(views.programme_row_ksb_source('PROG-UNKNOWN'), ('', ''))
@@ -152,9 +153,9 @@ class ProgrammeCardLabelTests(SimpleTestCase):
 class CoverageSourceTests(SimpleTestCase):
     def infer(self, stored, profiles, programme_name):
         module_rows = [{'programme_name': programme_name, 'programme_id': 'PROG-X'}]
-        with patch.object(views, 'programme_row_ksb_source', return_value=stored), \
-             patch.object(views, 'get_ksb_profile_rows', return_value=profiles), \
-             patch.object(views, 'build_skills_england_standards', return_value=[]):
+        with composition_fixture(views, 'programme_row_ksb_source', return_value=stored), \
+             composition_fixture(views, 'get_ksb_profile_rows', return_value=profiles), \
+             composition_fixture(views, 'build_skills_england_standards', return_value=[]):
             return views.infer_source_from_scope(module_rows, 'programme', 'PROG-X')
 
     def test_the_stored_standard_decides_coverage(self):
@@ -177,10 +178,10 @@ class AchievementSourceTests(SimpleTestCase):
     def projection(self, stored, items):
         payload = {'coverage': {'items': items, 'components': [], 'modules': []}, 'assignedLearners': [], 'consumptionSources': {'progress': []}}
         request = RequestFactory().get('/curriculum_api/curriculum/programmes/PROG-PCP-L6/ksb-achievement/')
-        with patch.object(views, 'programme_achievement_inputs', return_value=(payload, None)), \
-             patch.object(views, 'programme_row_ksb_source', return_value=stored), \
-             patch.object(views, 'find_skills_england_standard', side_effect=find_standard), \
-             patch.object(views, 'get_ksb_profile_rows', return_value=PROFILES):
+        with composition_fixture(views, 'programme_achievement_inputs', return_value=(payload, None)), \
+             composition_fixture(views, 'programme_row_ksb_source', return_value=stored), \
+             composition_fixture(views, 'find_skills_england_standard', side_effect=find_standard), \
+             composition_fixture(views, 'get_ksb_profile_rows', return_value=PROFILES):
             projection, error = views._achievement_projection(request, 'PROG-PCP-L6')
         self.assertIsNone(error)
         return projection['appliedSource']

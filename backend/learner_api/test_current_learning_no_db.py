@@ -90,11 +90,11 @@ class CurrentLearningTests(unittest.TestCase):
         accepted = self.project([p], {'C1': {'status': 'accepted', 'actual_time_hours': '11:00'}})[0]
         self.assertEqual(accepted['actual_seconds'], 11 * 60)
 
-    def test_extra_activity_accepts_legacy_clock_duration(self):
+    def test_legacy_extra_activity_clock_duration_is_not_projected(self):
         submission = dict(id='legacy', submitted_at=self.native['submitted_at'],
             activity_type='extra_activity', status='accepted', actual_time_hours='02:30', ksb_codes=[])
         merged = self.scope['merge_submissions']([], [submission])
-        self.assertEqual(merged[0]['actual_seconds'], 150)
+        self.assertEqual(merged, [])
 
     def test_retries_do_not_add_hours_or_remove_previous_pass(self):
         rows = self.project([self.native, {**self.native, 'id': 2, 'claimed_seconds': 2400},
@@ -204,62 +204,58 @@ class CurrentLearningTests(unittest.TestCase):
         self.assertTrue(rows[1]['completed'])
         self.assertIsNone(rows[1]['actual_seconds'])
 
-    def test_accepted_extra_activity_once_and_no_drafts(self):
+    def test_legacy_extra_activity_never_enters_current_projection(self):
         s = dict(id='extra1', submitted_at=self.native['submitted_at'], activity_type='extra_activity',
                  status='accepted', actual_time_hours=1, ksb_codes=['K1'])
         merge = self.scope['merge_submissions']
-        rows = merge([], [s])
-        self.assertEqual(rows[0]['actual_seconds'], 3600)
-        self.assertTrue(rows[0]['accepted'])
-        self.assertEqual(merge(rows, [s]), rows)
-        self.assertEqual(merge([], [{**s, 'status': 'draft'}]), [])
+        for status in ('draft', 'submitted_for_tutor_review', 'accepted', 'partial', 'referred'):
+            with self.subTest(status=status):
+                self.assertEqual(merge([], [{**s, 'status': status}]), [])
 
-    def test_extra_activity_accepts_clock_duration(self):
+    def test_legacy_extra_activity_extended_clock_is_not_projected(self):
         submission = dict(id='extra-clock', submitted_at=self.native['submitted_at'],
                           activity_type='extra_activity', status='accepted',
                           actual_time_hours='02:00:00', ksb_codes=[])
-        rows = self.scope['merge_submissions']([], [submission])
-        self.assertEqual(rows[0]['actual_seconds'], 7200)
+        self.assertEqual(self.scope['merge_submissions']([], [submission]), [])
 
-    def test_extra_activity_uses_selected_month_and_keeps_submission_instant(self):
+    def test_legacy_extra_activity_selected_month_is_not_projected(self):
         submission = dict(id='extra-month', submitted_at='2026-10-23T13:00:00Z',
                           activity_type='extra_activity', status='accepted', actual_time_hours='1.25', ksb_codes=[])
         for month in ('2026-09', '2026-11'):
             with self.subTest(month=month):
-                row = self.scope['merge_submissions']([], [{**submission, 'activity_month': month}])[0]
-                self.assertEqual(row['reporting_month'], month)
-                self.assertEqual(row['actual_seconds'], 4500)
-                self.assertEqual(row['reporting_started_at'].isoformat(), '2026-10-23T14:00:00+01:00')
-                self.assertTrue(row['accepted'])
+                self.assertEqual(
+                    self.scope['merge_submissions']([], [{**submission, 'activity_month': month}]),
+                    [],
+                )
         assignment = self.scope['merge_submissions']([], [{**submission, 'activity_type': 'assignment', 'activity_month': '2026-09'}])[0]
         self.assertEqual(assignment['reporting_month'], '2026-10')
-        legacy = self.scope['merge_submissions']([], [{**submission, 'activity_month': 'invalid'}])[0]
-        self.assertEqual(legacy['reporting_month'], '2026-10')
+        self.assertEqual(self.scope['merge_submissions']([], [{**submission, 'activity_month': 'invalid'}]), [])
 
     def test_selected_month_readers_preserve_learner_scope_and_bulk_parity(self):
         owners = [{'id': 1, 'enrolment_id': 123, 'learner_type': 'commercial'},
                   {'id': 2, 'enrolment_id': 124, 'learner_type': 'apprenticeship'}]
-        saved = dict(id='extra-month', submitted_at='2026-10-23T13:00:00Z', activity_type='extra_activity',
-                     status='submitted_for_tutor_review', actual_time_hours='1', ksb_codes=[], activity_month='2026-09')
+        saved = dict(id='assignment-month', submitted_at='2026-10-23T13:00:00Z', activity_type='assignment',
+                     component_ref='component-1', status='submitted_for_tutor_review',
+                     actual_time_hours='1', ksb_codes=[])
         query = Mock(return_value=[saved])
         self.scope['query'] = query
         single = self.scope['current_records'](owners[0], [])
-        self.assertIn("full_submission #>> '{monthlyAssignment,month}' AS activity_month", query.call_args.args[0])
-        self.assertEqual(query.call_args.args[1], ['123', 'commercial'])
-        query.return_value = [{**saved, 'learner_id': '123', 'learner_kind': 'commercial'}]
+        self.assertIn("activity_type='assignment'", query.call_args.args[0])
+        self.assertEqual(query.call_args.args[1], [1, 'commercial'])
+        query.return_value = [{**saved, 'learner_id': 1, 'learner_kind': 'commercial'}]
         bulk = self.scope['current_records_bulk'](owners, {1: [], 2: []})
         self.assertEqual(bulk[123], single)
         self.assertEqual(bulk[124], [])
         self.assertFalse(single[0]['accepted'])
-        self.assertEqual(single[0]['reporting_month'], '2026-09')
-        self.assertIn("full_submission #>> '{monthlyAssignment,month}' AS activity_month", query.call_args.args[0])
+        self.assertEqual(single[0]['reporting_month'], '2026-10')
+        self.assertIn("activity_type='assignment'", query.call_args.args[0])
 
     def test_reads_are_scoped_to_both_account_and_aptem(self):
         query = Mock(side_effect=[[], [{'name': 'exists'}], [self.attempt()]])
         self.scope['query'] = query
-        rows = self.scope['current_records']({'enrolment_id': 123, 'aptem_id': 789,
+        rows = self.scope['current_records']({'id': 1, 'enrolment_id': 123, 'aptem_id': 789,
                                               'learner_type': 'commercial'}, [self.native])
-        self.assertEqual(query.call_args_list[0].args[1], ['123', 'commercial'])
+        self.assertEqual(query.call_args_list[0].args[1], [1, 'commercial'])
         self.assertEqual(query.call_args_list[2].args[1], [123, 789])
         self.assertEqual(len(rows), 2)
 

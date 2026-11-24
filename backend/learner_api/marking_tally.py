@@ -41,21 +41,14 @@ TALLY_COLUMNS = (
 )
 
 
-def _learner_ids_for_profile(cur, profile_id):
-    """Every id a learner's submissions might be filed under.
-
-    Submissions are keyed on the enrolment id the learner page uses, but older
-    rows carry the profile id, so both are searched -- otherwise a learner's
-    earlier marked work would not be counted.
-    """
+def _learner_owner(cur, profile_id):
+    """Return the canonical reflection owner identity for one profile."""
     cur.execute(
-        'select id::text, enrolment_id::text from "Learner".learners where id = %s',
+        'select id, learner_type from "Learner".learners where id = %s',
         [profile_id],
     )
     row = cur.fetchone()
-    if not row:
-        return []
-    return sorted({value for value in row if value})
+    return row if row and row[0] is not None and row[1] else None
 
 
 def compute_tally(profile_id):
@@ -67,8 +60,8 @@ def compute_tally(profile_id):
     """
     try:
         with connections["enrolment"].cursor() as cur:
-            learner_ids = _learner_ids_for_profile(cur, profile_id)
-            if not learner_ids:
+            owner = _learner_owner(cur, profile_id)
+            if not owner:
                 return None
 
             cur.execute(
@@ -78,10 +71,10 @@ def compute_tally(profile_id):
                        count(*)
                   from "Learner"."learning_reflection_submissions" s
                   left join curriculum.components c on c.id = s.activity_id
-                 where s.learner_id::text = any(%s)
+                 where s.learner_id = %s and s.learner_kind = %s
                  group by 1, 2
                 """,
-                [learner_ids],
+                [owner[0], owner[1]],
             )
             rows = cur.fetchall()
     except DatabaseError as exc:
@@ -128,19 +121,12 @@ def refresh_tally(profile_id):
 
 
 def refresh_tally_for_submission(learner_kind, learner_id):
-    """Recompute for whichever profile a submission's learner_id refers to.
-
-    The marking queue holds the id the submission was filed under, which may be
-    an enrolment id; the counters live on the profile, so it is resolved here
-    rather than at each call site.
-    """
+    """Recompute the canonical profile named by a submission owner."""
     try:
         with connections["enrolment"].cursor() as cur:
             cur.execute(
-                'select id from "Learner".learners '
-                "where id::text = %s or enrolment_id::text = %s "
-                "order by id limit 1",
-                [str(learner_id), str(learner_id)],
+                'select id from "Learner".learners where id = %s and learner_type = %s',
+                [learner_id, learner_kind],
             )
             row = cur.fetchone()
     except DatabaseError as exc:

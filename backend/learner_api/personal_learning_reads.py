@@ -7,12 +7,14 @@ from django.http import JsonResponse
 from django.utils import timezone
 from curriculum_api.week_visibility import visible_week_sql
 from .module_placement_sql import current_module_sql
-from curriculum_api.learning_storage import read_sql
+from curriculum_api.catalogue.infrastructure.course_storage_reads import read_sql
 
 
 def learning_schedule(context):
     from .training_plan_dashboard import plan_module, rows
-    from curriculum_api.views import cohort_selected_holidays_by_cohort, module_session_plan_for_count, module_stored_session_count
+    from curriculum_api.catalogue.infrastructure.cohort_calendar_composition import cohort_selected_holidays_by_cohort
+    from curriculum_api.catalogue.infrastructure.session_plan_composition import module_session_plan_for_count
+    from curriculum_api.catalogue.domain.delivery_values import module_stored_session_count
     mid = context['module_id']
     with connections['enrolment'].cursor() as cursor:
         cursor.execute(read_sql('''SELECT m.*, m.module_catalogue_id AS id,

@@ -1,0 +1,381 @@
+{
+  "views.py:archived_programme_keys": {
+    "source": "def archived_programme_keys():\n    \"\"\"Identity keys of every explicitly archived programme.\n\n    build_programmes() already drops archived programmes from the operational\n    list, but the module-only reconstruction below would rebuild a card for any\n    programme whose modules/cohorts/groups still exist. Archiving deliberately\n    leaves those children in place, so the reconstruction has to be told to skip\n    them or an archived programme reappears on the next refresh.\n    \"\"\"\n    keys = set()\n    try:\n        for config in get_program_config_rows():\n            if not is_archived_program_config(config):\n                continue\n            for value in (config.get('programme_id'), config.get('program_id'),\n                          config.get('id'), config.get('name')):\n                key = normalise(value)\n                if key:\n                    keys.add(key)\n    except Exception:\n        logger.warning('Could not resolve archived programme keys.', exc_info=True)\n    return keys\n",
+    "module": "curriculum_api.catalogue.application.programme_enrichment",
+    "deps": [
+      "get_program_config_rows",
+      "is_archived_program_config",
+      "logger",
+      "normalise"
+    ],
+    "view_attrs": [],
+    "removed_imports": [],
+    "internal": []
+  },
+  "views.py:enrich_programmes_with_module_counts": {
+    "source": "def enrich_programmes_with_module_counts(programmes, modules, modules_enriched=False, include_archived=False, *, include_structure_counts=True):\n    all_modules = modules if modules_enriched else enrich_modules_with_authoring(modules)\n    live_modules = [module for module in all_modules if not is_archived_module_summary(module)]\n    # `include_archived` is what keeps archived PROGRAMMES in the list, for the\n    # archive view. It must not put archived MODULES into a live programme's\n    # count: a module archived on its own has left that programme's module list,\n    # and the workspace shows it gone \u2014 while the card went on counting it, so\n    # the same programme read \"3 modules\" on the list and \"No modules yet\" on its\n    # own page. An archived programme still counts its own, because everything\n    # beneath it was archived with it and a card reading 0 would say that\n    # deleting it removes nothing.\n    enriched_modules = all_modules if include_archived else live_modules\n    archived_keys = set() if include_archived else archived_programme_keys()\n    structure_counts_by_id, structure_counts_by_name = (\n        authoring_programme_structure_counts() if include_structure_counts else ({}, {})\n    )\n    enriched_programmes = []\n    existing_programme_keys = set()\n    for programme in programmes:\n        existing_programme_keys.update({\n            normalise(programme.get('id')),\n            normalise(programme.get('sourceId')),\n            normalise(programme.get('name')),\n            normalise(programme.get('standard')),\n        })\n        # A programme with authoring rows of its own arrives already counted from\n        # curriculum.cohorts/groups/modules -- the very rows its workspace lists\n        # -- so nothing derived from the module list can improve on those figures,\n        # and anything it derives differently is a card that disagrees with the\n        # page. The arithmetic below still answers for a legacy programme that\n        # has no authoring rows, whose count arrives as len(delivery_rows).\n        if not include_structure_counts or programme_structure_counts(programme, structure_counts_by_id, structure_counts_by_name):\n            enriched_programmes.append(programme)\n            continue\n        countable_modules = all_modules if programme_summary_is_archived(programme) else live_modules\n        free_programme_modules = [module for module in countable_modules if module_matches_programme(programme, module)]\n        if clean_str(programme.get('structureType')).lower() == 'free':\n            enriched_programmes.append(programme)\n            continue\n        if not free_programme_modules:\n            # No module of its own left, so the card says none. The count it\n            # arrives with was `len(delivery_rows)` -- the legacy training rows,\n            # which outlive the module they were created for and are not what the\n            # programme's own page lists. Leaving that number in place is what\n            # made one programme read \"3 modules\" on its card and \"No modules\n            # yet\" on its page. Cohorts, groups and learners are left alone:\n            # those are counted from their own rows, not from a module.\n            enriched_programmes.append({**programme, 'modules': 0})\n            continue\n\n        cohort_keys = {\n            normalise(module.get('cohortId') or module.get('cohort'))\n            for module in free_programme_modules\n            if normalise(module.get('cohortId') or module.get('cohort'))\n        }\n        group_keys = {\n            normalise(module.get('groupId') or module.get('group'))\n            for module in free_programme_modules\n            if normalise(module.get('groupId') or module.get('group'))\n        }\n        enriched_programmes.append({\n            **programme,\n            'modules': len(free_programme_modules),\n            'cohorts': max(parse_int(programme.get('cohorts'), 0), len(cohort_keys)),\n            'groups': max(parse_int(programme.get('groups'), 0), len(group_keys)),\n            # Weeks come from the same modules the count above is taken from, the\n            # way the module-only reconstruction below already does it. Reading\n            # them off the delivery rows instead is what left an archived\n            # programme's card saying \"0 weeks\" beside a page listing twenty.\n            'weeks': (\n                sum(parse_int(module.get('weeks') or module.get('sessionsNumber'), 0) for module in free_programme_modules)\n                or parse_int(programme.get('weeks'), 0)\n            ),\n        })\n\n    module_only_programmes = {}\n    for module in enriched_modules:\n        programme_name = clean_str(module.get('programme') or module.get('programmeName'))\n        if not programme_name or normalise(programme_name) in {'unassignedprogramme', 'unassigned'}:\n            continue\n        module_programme_id = clean_str(module.get('programmeId') or module.get('programme_id'))\n        module_keys = {normalise(programme_name), normalise(module_programme_id)}\n        if existing_programme_keys.intersection(module_keys):\n            continue\n        # Never resurrect an archived programme from its surviving children.\n        if archived_keys.intersection(module_keys):\n            continue\n        key = normalise(module_programme_id) or normalise(programme_name)\n        module_only_programmes.setdefault(key, {\n            'name': programme_name,\n            'sourceId': module_programme_id or programme_name,\n            'modules': [],\n        })['modules'].append(module)\n\n    for item in module_only_programmes.values():\n        free_programme_modules = item['modules']\n        source_id = item['sourceId']\n        programme_name = item['name']\n        cohort_keys = {\n            normalise(module.get('cohortId') or module.get('cohort'))\n            for module in free_programme_modules\n            if normalise(module.get('cohortId') or module.get('cohort'))\n        }\n        group_keys = {\n            normalise(module.get('groupId') or module.get('group'))\n            for module in free_programme_modules\n            if normalise(module.get('groupId') or module.get('group'))\n        }\n        session_count = sum(parse_int(module.get('weeks') or module.get('sessionsNumber') or module.get('sessions'), 0) for module in free_programme_modules)\n        enriched_programmes.append({\n            'id': source_id,\n            'sourceId': source_id,\n            'name': programme_name,\n            'standard': programme_name,\n            'level': infer_level(programme_name),\n            'status': 'planned',\n            'modules': len(free_programme_modules),\n            'groups': len(group_keys),\n            'weeks': session_count,\n            'ksbMapped': 0,\n            'ksbTotal': 0,\n            # A planned programme has no authoring rows and no roster yet, so\n            # learner-consumed progress is genuinely zero rather than unknown.\n            # The keys are still emitted so every programme card reads one shape.\n            'learnerKsbProgressPercentage': 0,\n            'learnerKsbConsumedWeight': 0.0,\n            'learnerKsbExpectedWeight': 0.0,\n            'learnerKsbLearnerCount': 0,\n            'learnerKsbCodesStarted': 0,\n            'learnerKsbCodesComplete': 0,\n            'learnerKsbCodesTotal': 0,\n            'learnerKsbAchievedCount': 0,\n            'learnerKsbTargetCount': 0,\n            'learnerKsbAchievementPercentage': 0,\n            'learners': 0,\n            'cohorts': len(cohort_keys),\n            'lastUpdated': max([clean_str(module.get('lastUpdated')) for module in free_programme_modules] or ['']),\n            'owner': '',\n            'color': clean_str(free_programme_modules[0].get('color')) or '#6941c6',\n            'description': '',\n            'structureType': 'scheduled',\n            'freeComponents': 0,\n        })\n    return enriched_programmes\n",
+    "module": "curriculum_api.catalogue.application.programme_enrichment",
+    "deps": [
+      "archived_programme_keys",
+      "authoring_programme_structure_counts",
+      "clean_str",
+      "enrich_modules_with_authoring",
+      "infer_level",
+      "is_archived_module_summary",
+      "module_matches_programme",
+      "normalise",
+      "parse_int",
+      "programme_structure_counts",
+      "programme_summary_is_archived"
+    ],
+    "view_attrs": [],
+    "removed_imports": [],
+    "internal": []
+  },
+  "programme_list.py:programme_list_needs_module_enrichment": {
+    "source": "def programme_list_needs_module_enrichment(programmes, source, counts, *, include_archived):\n    # Programmes represented only by unattached modules retain the existing\n    # ranking, deduplication and reconstruction. (The legacy curriculum.\"Modules\"\n    # catalogue no longer exists, so it is not a reason to take this path.)\n    known = {\n        views.normalise(programme.get(key)) for programme in programmes\n        for key in ('id', 'sourceId', 'name', 'standard')\n    }\n    if not include_archived:\n        known.update(\n            views.normalise(config.get(key)) for config in source['program_configs']\n            if views.is_archived_program_config(config)\n            for key in ('programme_id', 'program_id', 'id', 'name')\n        )\n    if any(\n        views.normalise(row.get('programme_name')) not in known | {'', 'unassigned', 'unassignedprogramme'}\n        for row in source['modules']\n    ):\n        return True\n    for programme in programmes:\n        if views.programme_structure_counts(programme, *counts):\n            continue\n        # Enrichment leaves authoritative counts alone. A truly empty programme\n        # also stays empty; ambiguous/archived ownership keeps the full path.\n        if programme['modules'] or any(\n            views.module_matches_programme(programme, {\n                'programmeId': row.get('programme_id'), 'programme': row.get('programme_name'),\n            }) for row in source['modules']\n        ):\n            return True\n    return False\n",
+    "module": "curriculum_api.catalogue.application.programme_enrichment",
+    "deps": [
+      "is_archived_program_config",
+      "module_matches_programme",
+      "normalise",
+      "programme_structure_counts"
+    ],
+    "view_attrs": [
+      "is_archived_program_config",
+      "module_matches_programme",
+      "normalise",
+      "programme_structure_counts"
+    ],
+    "removed_imports": [],
+    "internal": []
+  },
+  "home_summary.py:home_programmes_need_enrichment": {
+    "source": "def home_programmes_need_enrichment(overview, authoring_rows, program_configs, *, include_archived=False):\n    \"\"\"Conservatively detect whether enrichment can introduce a programme.\n\n    Existing programme counts are not Home inputs. If every possible programme\n    name is already represented, the content-count queries used to rank module\n    matches cannot affect the projected result. Unknown names keep the complete\n    matching/archive logic, including programmes that exist only through modules.\n    \"\"\"\n    known = {\n        views.normalise(programme.get(field))\n        for programme in overview['programmes']\n        for field in ('id', 'sourceId', 'name', 'standard')\n    }\n    if not include_archived:\n        # Enrichment cannot resurrect programmes explicitly archived by staff.\n        known.update(\n            views.normalise(config.get(field))\n            for config in program_configs if views.is_archived_program_config(config)\n            for field in ('programme_id', 'program_id', 'id', 'name')\n        )\n    names = [module.get('programme') or module.get('programmeName') for module in overview['modules']]\n    names.extend(row.get('programme_name') for row in authoring_rows)\n    return any(\n        views.normalise(name) not in known | {'', 'unassigned', 'unassignedprogramme'}\n        for name in names\n    )\n",
+    "module": "curriculum_api.catalogue.application.programme_enrichment",
+    "deps": [
+      "is_archived_program_config",
+      "normalise"
+    ],
+    "view_attrs": [
+      "is_archived_program_config",
+      "normalise"
+    ],
+    "removed_imports": [],
+    "internal": []
+  },
+  "views.py:build_programme_ksb_stats": {
+    "source": "def build_programme_ksb_stats(identifier, visibility):\n    # Scoped to the one programme asked for, end to end.\n    #\n    # It used to resolve the identifier through the whole list payload\n    # (overview:<visibility>:compact) -- every programme, module, cohort and\n    # group in the system, ~10s cold -- and then compute the stats inside a\n    # plain read scope, where authoring_child_rows_for_modules() deliberately\n    # reads weeks, components and KSB mappings for EVERY programme (the shared\n    # read that pays off for a list build). For one programme that was ~80s\n    # against the remote database: the whole ksb_mappings table, every\n    # component, to count one programme's codes.\n    #\n    # Now the identifier is resolved by the same no-stats build_programmes()\n    # call the list payload makes (same rows, same visibility filters, so\n    # find_programme() lands on the same programme), and the stats run in a\n    # targeted scope: child rows are read for this programme's modules only.\n    # Both build_programmes() calls share one memo. Only programme identity,\n    # visibility and KSB definitions are needed; module/week catalogues and\n    # programme structure/learner counts cannot affect these statistics.\n    with curriculum_read_scope(targeted_child_reads=True):\n        training_rows = get_training_rows()\n        ksb_profiles = get_ksb_profile_rows()\n        program_configs = get_program_config_rows()\n        training_rows = training_rows if visibility == 'all' else [\n            row for row in training_rows\n            if is_operational_training_row(row)\n        ]\n        ksb_profiles = ksb_profiles if visibility == 'all' else [\n            profile for profile in ksb_profiles\n            if profile.get('is_active')\n        ]\n        resolved = find_programme({'programmes': build_programmes(\n            training_rows, program_configs, ksb_profiles,\n            include_config_only=visibility == 'all',\n            only_stats_for_ids=frozenset(),\n            include_learner_counts=False,\n            include_structure_counts=False,\n        )}, identifier)\n        if not resolved:\n            return None\n        programmes = build_programmes(\n            training_rows, program_configs, ksb_profiles,\n            include_config_only=visibility == 'all',\n            only_stats_for_ids={clean_str(resolved.get('sourceId'))},\n            include_learner_counts=False,\n            include_structure_counts=False,\n        )\n    programme = find_programme({'programmes': programmes}, identifier)\n    if not programme:\n        return None\n    return {\n        'programmeId': clean_str(programme.get('sourceId') or programme.get('id')),\n        **{field: programme.get(field, 0) for field in PROGRAMME_KSB_STAT_FIELDS},\n    }\n",
+    "module": "curriculum_api.catalogue.application.programme_detail",
+    "deps": [
+      "PROGRAMME_KSB_STAT_FIELDS",
+      "build_programmes",
+      "clean_str",
+      "curriculum_read_scope",
+      "find_programme",
+      "get_ksb_profile_rows",
+      "get_program_config_rows",
+      "get_training_rows",
+      "is_operational_training_row"
+    ],
+    "view_attrs": [],
+    "removed_imports": [],
+    "internal": []
+  },
+  "views.py:programme_modules_workspace_payload": {
+    "source": "def programme_modules_workspace_payload(payload):\n    \"\"\"Opt-in display/edit metadata, leaving the full detail contract intact.\n\n    Project after duplicate selection and all calculations, so removing rich\n    authoring fields cannot change which module wins or any displayed counts.\n    Planned sessions stay intact: the workspace uses their dates and warnings.\n    \"\"\"\n    modules = []\n    for module in payload['flat']['modules']:\n        item = {key: value for key, value in module.items() if key in PROGRAMME_WORKSPACE_MODULE_FIELDS}\n        if isinstance(module.get('weekStructure'), list):\n            item['weekStructure'] = [\n                {**{key: value for key, value in week.items() if key in PROGRAMME_WORKSPACE_WEEK_FIELDS},\n                 WEEK_OUTLINE_WEEK_FLAG: True}\n                if isinstance(week, dict) else week\n                for week in module['weekStructure']\n            ]\n            item[WEEK_OUTLINE_MODULE_FLAG] = True\n        modules.append(item)\n    return {**payload, 'flat': {**payload['flat'], 'modules': modules}}\n",
+    "module": "curriculum_api.catalogue.application.programme_detail",
+    "deps": [
+      "PROGRAMME_WORKSPACE_MODULE_FIELDS",
+      "PROGRAMME_WORKSPACE_WEEK_FIELDS",
+      "WEEK_OUTLINE_MODULE_FLAG",
+      "WEEK_OUTLINE_WEEK_FLAG"
+    ],
+    "view_attrs": [],
+    "removed_imports": [],
+    "internal": []
+  },
+  "views.py:programme_workspace_module_candidates": {
+    "source": "def programme_workspace_module_candidates(modules, programme, config):\n    \"\"\"Both representations of each module, for the workspace view's selection.\n\n    Both builders share their raw child rows, not their differently-shaped\n    payloads, so the chosen module and every schedule/count stay exactly as\n    before. The workspace sends a week outline, so component text never leaves\n    this build; it is read only when it could change which representation of a\n    module wins (see component_text_cancels). Config-stored modules carry their\n    own text, so a programme with any keeps the full read.\n    \"\"\"\n    from .programme_workspace_reads import component_text_cancels, programme_structure_child_rows\n    authoring_rows = programme_authoring_module_rows(programme, config)\n    child_module_ids = [\n        *[clean_str(module.get('moduleCatalogueId') or module.get('catalogueId') or module.get('moduleId') or module.get('structureId')) for module in modules],\n        *[clean_str(row.get('module_catalogue_id')) for row in authoring_rows],\n    ]\n\n    def module_candidates(child_rows):\n        return [\n            *enrich_curriculum_modules_with_authoring_details(modules, child_rows=child_rows),\n            *programme_authoring_modules(programme, config, module_rows=authoring_rows, child_rows=child_rows),\n            *programme_config_modules(config),\n        ]\n\n    if not programme_config_json_list(config, 'modules'):\n        candidates = module_candidates(programme_structure_child_rows(child_module_ids, component_text=False))\n        if component_text_cancels(candidates, PROGRAMME_MODULE_IDENTITY_FIELDS):\n            return candidates\n        logger.info('Programme workspace modules: component text decides a selection; reading it.')\n    return module_candidates(programme_structure_child_rows(child_module_ids))\n",
+    "module": "curriculum_api.catalogue.application.programme_detail",
+    "deps": [
+      "PROGRAMME_MODULE_IDENTITY_FIELDS",
+      "clean_str",
+      "component_text_cancels",
+      "enrich_curriculum_modules_with_authoring_details",
+      "logger",
+      "programme_authoring_module_rows",
+      "programme_authoring_modules",
+      "programme_config_json_list",
+      "programme_config_modules",
+      "programme_structure_child_rows"
+    ],
+    "view_attrs": [],
+    "removed_imports": [
+      "    from .programme_workspace_reads import component_text_cancels, programme_structure_child_rows\n"
+    ],
+    "internal": []
+  },
+  "views.py:_build_curriculum_programme_tree_detail_payload": {
+    "source": "def _build_curriculum_programme_tree_detail_payload(identifier, visibility, include_stats=True, include_components=True, include_tree=True, include_week_components=True, section=None, *, workspace_view=False):\n    # The process-wide rows cache the list payloads share (epoch-checked, 60s\n    # TTL) rather than a fresh read of every table: opening a programme straight\n    # after the programme list no longer reads the same rows a second time.\n    # Nothing below mutates them -- the builders only read rows and emit new\n    # dicts, exactly as the list payload relies on.\n    curriculum_rows = get_cached_curriculum_rows(compact=True)\n    training_rows = curriculum_rows['training'] if visibility == 'all' else [\n        row for row in curriculum_rows['training']\n        if is_operational_training_row(row)\n    ]\n    ksb_profiles = curriculum_rows['ksb_profiles'] if visibility == 'all' else [\n        profile for profile in curriculum_rows['ksb_profiles']\n        if profile.get('is_active')\n    ]\n    # build_programmes() computes ksbMapped/learner-progress only for the ids it\n    # is given, and here only one programme is ever returned. The first pass\n    # skips every programme's stats (cheap: no extra reads) just to resolve which\n    # one this identifier means, using the\n    # same matching find_programme always applies; the second pass computes the\n    # real numbers only for that resolved programme. See _programme_ksb_stats.\n    #\n    # The modules section answers with modules and sessions alone. The\n    # programme's learner and structure counts are never part of it, and\n    # find_programme() matches on id, sourceId and name only, so it skips the\n    # learner tally and the whole-table cohort/group/module/week count reads.\n    modules_section = section == 'modules'\n    cheap_programmes = build_programmes(\n        training_rows,\n        curriculum_rows['program_configs'],\n        ksb_profiles,\n        include_config_only=visibility == 'all',\n        only_stats_for_ids=frozenset(),\n        **({'include_learner_counts': False, 'include_structure_counts': False} if modules_section else {}),\n    )\n    resolved_programme = find_programme({'programmes': cheap_programmes}, identifier)\n    if not resolved_programme:\n        return None\n    # Without stats the second pass is the first pass again -- the same call\n    # with the same arguments -- so its result is reused instead of rebuilt.\n    programmes = build_programmes(\n        training_rows,\n        curriculum_rows['program_configs'],\n        ksb_profiles,\n        include_config_only=visibility == 'all',\n        only_stats_for_ids={clean_str(resolved_programme.get('sourceId'))},\n    ) if include_stats else cheap_programmes\n    programme = find_programme({'programmes': programmes}, identifier)\n    if not programme:\n        return None\n    repair_curriculum_parent_links(\n        clean_str(programme.get('id') or programme.get('sourceId')), allow_writes=False\n    )\n\n    program_configs = curriculum_rows['program_configs']\n    config = programme_config_for_programme(program_configs, programme)\n    configs_by_id = program_config_by_id(program_configs)\n    programme_training_rows = [\n        row for row in training_rows\n        if (\n            clean_str(programme_identity(row, configs_by_id)['sourceId']) == clean_str(programme.get('sourceId'))\n            or clean_str(programme_identity(row, configs_by_id)['name']) == clean_str(programme.get('name'))\n        )\n    ]\n    # ``build_cohorts_and_groups`` intentionally reads the normalized tables as\n    # its source of truth and therefore returns rows for every programme.  A\n    # detail response must scope those rows again; otherwise opening one\n    # programme can expose unrelated cohorts/groups and inflate every UI count.\n    config_cohort_items = [item for item in programme_config_json_list(config, 'cohorts') if isinstance(item, dict)]\n    all_cohorts, all_groups = build_cohorts_and_groups(\n        programme_training_rows,\n        program_configs,\n        include_archived=visibility == 'all',\n        # The modules section reads its cohorts for their holidays alone. Their\n        # learner counts reach it only through unique_curriculum_items' richness\n        # when a config-stored cohort shares an id, so they are skipped only\n        # when the config stores none.\n        **({'include_learner_counts': False} if modules_section and not config_cohort_items else {}),\n    )\n    programme_ids = [value for value in unique([\n        programme.get('id'),\n        programme.get('sourceId'),\n        programme_config_identity(config),\n        f'program-{slugify(programme.get(\"sourceId\"))}',\n    ]) if clean_str(value)]\n    programme_names = [value for value in unique([programme.get('name')]) if clean_str(value)]\n\n    known_programme_ids = {\n        programme_config_identity(item)\n        for item in program_configs\n        if programme_config_identity(item)\n    }\n\n    def belongs_to_selected_programme(item):\n        item_programme_id = clean_str(item.get('programmeId'))\n        if any(matches_curriculum_identifier(item_programme_id, candidate) for candidate in programme_ids):\n            return True\n        if item_programme_id in known_programme_ids:\n            return False\n        return any(matches_curriculum_identifier(item.get('programme'), candidate) for candidate in programme_names)\n\n    config_cohorts = [\n        normalise_programme_config_cohort(item, programme)\n        for item in programme_config_json_list(config, 'cohorts')\n        if isinstance(item, dict)\n    ]\n    config_groups = [\n        normalise_programme_config_group(item, programme)\n        for item in programme_config_json_list(config, 'groups')\n        if isinstance(item, dict)\n    ]\n    config_week_templates = [\n        item for item in programme_config_json_list(config, 'week_templates')\n        if isinstance(item, dict)\n    ]\n\n    cohorts = unique_curriculum_items(\n        [cohort for cohort in all_cohorts if belongs_to_selected_programme(cohort)] + config_cohorts,\n        ['id', 'cohortId', 'cohort_id'],\n    )\n    cohort_ids = {cohort.get('id') for cohort in cohorts if cohort.get('id')}\n    groups = unique_curriculum_items([\n        group for group in all_groups\n        if group.get('cohortId') in cohort_ids and belongs_to_selected_programme(group)\n    ] + config_groups, ['id', 'groupId', 'group_id'])\n    group_ids = {group.get('id') for group in groups if group.get('id')}\n    if section == 'shell':\n        return {\n            'schema': CURRICULUM_SCHEMA,\n            'programme': programme,\n            'flat': {\n                'cohorts': cohorts,\n                'groups': groups,\n                'groupIds': sorted(group_ids, key=str),\n                'weekTemplates': config_week_templates,\n            },\n        }\n\n    modules = build_modules(\n        curriculum_rows['modules'],\n        programme_training_rows,\n        program_configs,\n        include_unused=False,\n    )\n    # Both representations participate in the existing richness-based selection.\n    if workspace_view:\n        candidates = programme_workspace_module_candidates(modules, programme, config)\n    else:\n        candidates = [\n            *enrich_curriculum_modules_with_authoring_details(modules),\n            *programme_authoring_modules(programme, config),\n            *programme_config_modules(config),\n        ]\n    modules = unique_curriculum_items(candidates, PROGRAMME_MODULE_IDENTITY_FIELDS)\n    # `get_curriculum_rows(compact=True)` deliberately returns no holidays, to\n    # save the read. The session dates below are holiday-shifted, so this one\n    # read is bought back deliberately: without it the detail payload dates\n    # disagree with the overview's, which is the same programme's own calendar.\n    # Keyed by cohort once, not read per module, for the same reason\n    # `cohort_selected_holidays_by_id` exists at all.\n    session_holiday_rows = get_holiday_rows()\n    sessions = build_sessions_basic(\n        programme_training_rows,\n        curriculum_rows['modules'],\n        program_configs,\n        session_holiday_rows,\n        cohort_selected_holidays_by_id(cohorts, session_holiday_rows),\n    )\n    module_catalogue_ids = unique([\n        module.get('moduleCatalogueId')\n        or module.get('catalogueId')\n        or module.get('moduleId')\n        or module.get('id')\n        for module in modules\n        if (\n            module.get('moduleCatalogueId')\n            or module.get('catalogueId')\n            or module.get('moduleId')\n            or module.get('id')\n        )\n    ])\n    components = component_builder_rows(module_catalogue_ids) if include_components else None\n    # After every count above is derived from the full structure: the outline\n    # changes what is sent, never what is computed.\n    if not include_week_components:\n        modules = module_rows_with_week_outline(modules)\n    if section == 'modules':\n        return {\n            'schema': CURRICULUM_SCHEMA,\n            'flat': {\n                'modules': modules,\n                'sessions': sessions,\n            },\n        }\n\n    nested_cohorts = []\n    for cohort in (cohorts if include_tree else []):\n        nested_groups = []\n        for group in [item for item in groups if item.get('cohortId') == cohort['id']]:\n            group_modules = [\n                module for module in modules\n                if module_belongs_to_group(module, group)\n            ]\n            nested_groups.append({**group, 'modules': group_modules})\n        nested_cohorts.append({**cohort, 'groups': nested_groups})\n\n    return {\n        'schema': CURRICULUM_SCHEMA,\n        'programme': programme,\n        **({'cohorts': nested_cohorts} if include_tree else {}),\n        'flat': {\n            'cohorts': cohorts,\n            'groups': groups,\n            # Sorted: a set's iteration order differs between worker processes,\n            # which gave the same document a different ETag on each worker.\n            'groupIds': sorted(group_ids, key=str),\n            'modules': modules,\n            'sessions': sessions,\n            **({'components': components} if include_components else {}),\n            'weekTemplates': config_week_templates,\n        },\n    }\n",
+    "module": "curriculum_api.catalogue.application.programme_detail",
+    "deps": [
+      "CURRICULUM_SCHEMA",
+      "PROGRAMME_MODULE_IDENTITY_FIELDS",
+      "build_cohorts_and_groups",
+      "build_modules",
+      "build_programmes",
+      "build_sessions_basic",
+      "clean_str",
+      "cohort_selected_holidays_by_id",
+      "component_builder_rows",
+      "enrich_curriculum_modules_with_authoring_details",
+      "find_programme",
+      "get_cached_curriculum_rows",
+      "get_holiday_rows",
+      "is_operational_training_row",
+      "matches_curriculum_identifier",
+      "module_belongs_to_group",
+      "module_rows_with_week_outline",
+      "normalise_programme_config_cohort",
+      "normalise_programme_config_group",
+      "program_config_by_id",
+      "programme_authoring_modules",
+      "programme_config_for_programme",
+      "programme_config_identity",
+      "programme_config_json_list",
+      "programme_config_modules",
+      "programme_identity",
+      "programme_workspace_module_candidates",
+      "repair_curriculum_parent_links",
+      "slugify",
+      "unique",
+      "unique_curriculum_items"
+    ],
+    "view_attrs": [],
+    "removed_imports": [],
+    "internal": []
+  },
+  "home_summary.py:_clean": {
+    "source": "def _clean(value):\n    return str(value if value is not None else '').strip()\n",
+    "module": "curriculum_api.catalogue.application.home_projection",
+    "deps": [],
+    "view_attrs": [],
+    "removed_imports": [],
+    "internal": [
+      "_clean",
+      "_date_value",
+      "_key",
+      "_missing",
+      "_zero",
+      "project_home",
+      "project_home_summary",
+      "summary_only"
+    ]
+  },
+  "home_summary.py:_key": {
+    "source": "def _key(value):\n    # Match Home's former JS trim().toLowerCase(), not the curriculum identifier\n    # normaliser, which also removes punctuation and spaces.\n    return _clean(value).lower()\n",
+    "module": "curriculum_api.catalogue.application.home_projection",
+    "deps": [],
+    "view_attrs": [],
+    "removed_imports": [],
+    "internal": [
+      "_clean",
+      "_date_value",
+      "_key",
+      "_missing",
+      "_zero",
+      "project_home",
+      "project_home_summary",
+      "summary_only"
+    ]
+  },
+  "home_summary.py:_missing": {
+    "source": "def _missing(value):\n    return _key(value) in {'', 'unassigned', 'not assigned', 'tbc'}\n",
+    "module": "curriculum_api.catalogue.application.home_projection",
+    "deps": [],
+    "view_attrs": [],
+    "removed_imports": [],
+    "internal": [
+      "_clean",
+      "_date_value",
+      "_key",
+      "_missing",
+      "_zero",
+      "project_home",
+      "project_home_summary",
+      "summary_only"
+    ]
+  },
+  "home_summary.py:_zero": {
+    "source": "def _zero(value):\n    try:\n        return float(value or 0) == 0\n    except (TypeError, ValueError):\n        return False\n",
+    "module": "curriculum_api.catalogue.application.home_projection",
+    "deps": [],
+    "view_attrs": [],
+    "removed_imports": [],
+    "internal": [
+      "_clean",
+      "_date_value",
+      "_key",
+      "_missing",
+      "_zero",
+      "project_home",
+      "project_home_summary",
+      "summary_only"
+    ]
+  },
+  "home_summary.py:_date_value": {
+    "source": "def _date_value(value):\n    try:\n        parsed = datetime.fromisoformat(_clean(value).replace('Z', '+00:00'))\n        return parsed.replace(tzinfo=timezone.utc).timestamp() if parsed.tzinfo is None else parsed.timestamp()\n    except (ValueError, OverflowError):\n        return 0\n",
+    "module": "curriculum_api.catalogue.application.home_projection",
+    "deps": [],
+    "view_attrs": [],
+    "removed_imports": [],
+    "internal": [
+      "_clean",
+      "_date_value",
+      "_key",
+      "_missing",
+      "_zero",
+      "project_home",
+      "project_home_summary",
+      "summary_only"
+    ]
+  },
+  "home_summary.py:project_home_summary": {
+    "source": "def project_home_summary(overview, programmes):\n    \"\"\"Preserve Home's existing counting, matching, ordering and link identities.\n\n    Only five module cards and six programme cards leave the server. No source\n    rows, learner counts, KSB definitions or authoring content are exposed.\n    \"\"\"\n    return summary_only(project_home(overview, programmes))\n",
+    "module": "curriculum_api.catalogue.application.home_projection",
+    "deps": [],
+    "view_attrs": [],
+    "removed_imports": [],
+    "internal": [
+      "_clean",
+      "_date_value",
+      "_key",
+      "_missing",
+      "_zero",
+      "project_home",
+      "project_home_summary",
+      "summary_only"
+    ]
+  },
+  "home_summary.py:summary_only": {
+    "source": "def summary_only(projection):\n    return {key: value for key, value in projection.items() if key not in _DETAIL_KEYS}\n",
+    "module": "curriculum_api.catalogue.application.home_projection",
+    "deps": [],
+    "view_attrs": [],
+    "removed_imports": [],
+    "internal": [
+      "_clean",
+      "_date_value",
+      "_key",
+      "_missing",
+      "_zero",
+      "project_home",
+      "project_home_summary",
+      "summary_only"
+    ]
+  },
+  "home_summary.py:project_home": {
+    "source": "def project_home(overview, programmes):\n    \"\"\"The summary plus the affected records each modal lists, built in one pass.\n\n    The records stay in the server cache; Home reads them per issue or per\n    programme only when a modal opens.\n    \"\"\"\n    modules = overview.get('modules') or []\n    cohorts = overview.get('cohorts') or []\n    groups = overview.get('groups') or []\n\n    def needs_source(programme):\n        return _zero(programme.get('ksbTotal')) and not _clean(programme.get('ksbProfileSourceId'))\n\n    counts = {\n        'programme-ksb-source': sum(needs_source(programme) for programme in programmes),\n        'module-mapping': sum(_zero(module.get('ksbCount')) for module in modules),\n        'group-coach': sum(_missing(group.get('coach')) for group in groups),\n        'module-tutor': sum(_missing(module.get('tutor')) for module in modules),\n    }\n\n    def _module_id(module):\n        return _clean(module.get('moduleCatalogueId') or module.get('catalogueId') or module.get('id') or module.get('sourceId') or module.get('name'))\n\n    def _context(row):\n        # 'Unassigned' is the overview's placeholder for no programme, not a name.\n        programme = _clean(row.get('programme') or row.get('programmeName'))\n        return {\n            'programme': '' if _missing(programme) else programme,\n            'cohort': _clean(row.get('cohort') or row.get('cohortName')),\n            'group': _clean(row.get('group') or row.get('groupName')),\n        }\n\n    def _module_rec(m):\n        return {'id': _module_id(m), 'name': _clean(m.get('name')), **_context(m)}\n\n    def _group_rec(g):\n        return {\n            'id': _clean(g.get('id') or g.get('sourceId') or g.get('groupId') or g.get('name')),\n            **_context(g),\n            'name': _clean(g.get('name') or g.get('groupName')),\n            'group': '',\n        }\n\n    attention_records = {\n        'programme-ksb-source': [\n            {'id': _clean(p.get('sourceId') or p.get('id') or p.get('name')), 'name': _clean(p.get('name')),\n             'programme': '', 'cohort': '', 'group': ''}\n            for p in programmes if needs_source(p)\n        ],\n        'module-mapping': [_module_rec(m) for m in modules if _zero(m.get('ksbCount'))],\n        'group-coach': [_group_rec(g) for g in groups if _missing(g.get('coach'))],\n        'module-tutor': [_module_rec(m) for m in modules if _missing(m.get('tutor'))],\n    }\n\n    focus = []\n    programme_details = {}\n    for programme in programmes:\n        keys = {_key(programme.get(field)) for field in ('id', 'sourceId', 'name')} - {''}\n\n        def belongs(row):\n            return _key(row.get('programmeId')) in keys or _key(row.get('programme')) in keys\n\n        programme_modules = [module for module in modules if belongs(module)]\n        programme_cohorts = [cohort for cohort in cohorts if belongs(cohort)]\n        cohort_ids = {_key(cohort.get('id')) for cohort in programme_cohorts}\n        programme_groups = [group for group in groups if belongs(group) or _key(group.get('cohortId')) in cohort_ids]\n        issues = []\n        if needs_source(programme):\n            issues.append('No KSB source')\n        if not programme_modules:\n            issues.append('No modules')\n        if not programme_cohorts:\n            issues.append('No delivery setup')\n        mapping_gaps = sum(_zero(module.get('ksbCount')) for module in programme_modules)\n        tutor_gaps = sum(_missing(module.get('tutor')) for module in programme_modules)\n        coach_gaps = sum(_missing(group.get('coach')) for group in programme_groups)\n        if mapping_gaps:\n            issues.append(f'{mapping_gaps} mapping {\"gap\" if mapping_gaps == 1 else \"gaps\"}')\n        if tutor_gaps:\n            issues.append(f'{tutor_gaps} without tutor')\n        if coach_gaps:\n            issues.append(f'{coach_gaps} without coach')\n        if issues:\n            programme_id = _clean(programme.get('sourceId') or programme.get('id') or programme.get('name'))\n            focus.append({\n                'programme': {'id': programme_id, 'name': programme.get('name') or ''},\n                'issues': issues,\n                'issueCount': len(issues),\n            })\n            # Same membership as the counts above, so each section lists exactly\n            # the records its card counted.\n            sections = [\n                {'key': 'programme-ksb-source', 'count': int(needs_source(programme)), 'records': []},\n                {'key': 'no-modules', 'count': int(not programme_modules), 'records': []},\n                {'key': 'no-delivery', 'count': int(not programme_cohorts), 'records': []},\n                {'key': 'module-mapping', 'count': mapping_gaps,\n                 'records': [_module_rec(m) for m in programme_modules if _zero(m.get('ksbCount'))]},\n                {'key': 'module-tutor', 'count': tutor_gaps,\n                 'records': [_module_rec(m) for m in programme_modules if _missing(m.get('tutor'))]},\n                {'key': 'group-coach', 'count': coach_gaps,\n                 'records': [_group_rec(g) for g in programme_groups if _missing(g.get('coach'))]},\n            ]\n            programme_details[programme_id] = {\n                'programme': {'id': programme_id, 'name': programme.get('name') or ''},\n                'sections': [section for section in sections if section['count']],\n            }\n    focus.sort(key=lambda item: -item['issueCount'])\n    focus = focus[:6]\n    shown = {item['programme']['id'] for item in focus}\n    # The database has no draft/published state (a module is active or\n    # archived), so Continue working is simply the most recently edited modules.\n    recent = sorted(modules, key=lambda module: -_date_value(module.get('lastUpdated')))[:5]\n    return {\n        'stats': {\n            'programmes': len(programmes),\n            'activeCohorts': sum(_key(cohort.get('status')) == 'active' for cohort in cohorts),\n            'groups': len(groups),\n            'openIssues': sum(counts.values()),\n        },\n        'attentionCounts': counts,\n        'continueModules': [{\n            'id': _clean(module.get('moduleCatalogueId') or module.get('catalogueId') or module.get('id') or module.get('sourceId') or module.get('name')),\n            'name': module.get('name') or '',\n            'programme': module.get('programme') or '',\n            'weeks': module.get('weeks') or 0,\n            'lastUpdated': _clean(module.get('lastUpdated')),\n        } for module in recent],\n        'programmeFocus': focus,\n        'attentionRecords': attention_records,\n        'programmeDetails': {key: value for key, value in programme_details.items() if key in shown},\n    }\n",
+    "module": "curriculum_api.catalogue.application.home_projection",
+    "deps": [],
+    "view_attrs": [],
+    "removed_imports": [],
+    "internal": [
+      "_clean",
+      "_date_value",
+      "_key",
+      "_missing",
+      "_zero",
+      "project_home",
+      "project_home_summary",
+      "summary_only"
+    ]
+  },
+  "views.py:active_learner_programme_counts": {
+    "source": "def active_learner_programme_counts():\n    \"\"\"Count learners per programme from the canonical learner table.\n\n    Returns ``(by_programme_id, by_name_for_unlinked)``. A learner carrying an\n    explicit ``programme_id`` counts only toward that one programme; a learner\n    without one still counts by name so rows predating the link do not vanish\n    from the card. Keeping the two apart is what stops two programmes sharing a\n    name -- an archived one and its replacement -- from both claiming the same\n    learner.\n    \"\"\"\n    by_id = Counter()\n    by_name = Counter()\n    if connection.vendor != 'postgresql':\n        return dict(by_id), dict(by_name)\n    try:\n        if learner_relation_exists('learners'):\n            has_programme_id = learners_link_programme_by_id()\n            id_column = 'programme_id' if has_programme_id else \"''\"\n            # The normalised Learner.learners keeps only programme_id: there a\n            # learner counts by id alone (the name bucket below stays empty).\n            # Unknown columns keep the original statement.\n            learner_columns = schema_compat.columns_of('Learner', 'learners')\n            with connection.cursor() as cursor:\n                if learner_columns and 'programme' not in learner_columns:\n                    cursor.execute(\n                        f\"select '', coalesce({id_column}, ''), count(*) \"\n                        'from \"Learner\".\"learners\" '\n                        f\"where coalesce(btrim({id_column}), '') <> '' \"\n                        f\"group by coalesce({id_column}, '')\"\n                    )\n                else:\n                    # Counted by the database, one row per distinct pair, rather\n                    # than one row per learner; the buckets below are unchanged.\n                    cursor.execute(\n                        f'select programme, coalesce({id_column}, \\'\\'), count(*) '\n                        'from \"Learner\".\"learners\" '\n                        \"where coalesce(btrim(programme), '') <> '' \"\n                        f'group by programme, coalesce({id_column}, \\'\\')'\n                    )\n                for programme_name, programme_id, learner_count in cursor.fetchall():\n                    linked_id = clean_str(programme_id)\n                    if linked_id:\n                        by_id[linked_id] += learner_count\n                        continue\n                    programme_key = normalise(programme_name)\n                    if not programme_key:\n                        continue\n                    by_name[programme_key] += learner_count\n    except Exception as exc:\n        logger.warning('Could not count active learners by programme: %s', exc)\n    return dict(by_id), dict(by_name)\n",
+    "module": "curriculum_api.catalogue.infrastructure.programme_reads",
+    "deps": [
+      "clean_str",
+      "connection",
+      "learner_relation_exists",
+      "learners_link_programme_by_id",
+      "logger",
+      "normalise",
+      "schema_compat"
+    ],
+    "view_attrs": [],
+    "removed_imports": [],
+    "internal": []
+  },
+  "programme_list.py:programme_list_learner_counts": {
+    "source": "def programme_list_learner_counts(source):\n    if 'has_learner_table' not in source:\n        return views.active_learner_programme_counts()\n    if not source['has_learner_table']:\n        return {}, {}\n    # By programme_id only: the normalised Learner.learners has no programme name\n    # column, so there is no by-name bucket to fill. Like the rule it replaced,\n    # this does not filter lifecycle_status. Grouped in SQL so no rows travel.\n    rows = views.fetch_all('''\n        select coalesce(programme_id::text, '') as programme_id, count(*) as learner_count\n        from \"Learner\".\"learners\" learner\n        where btrim(coalesce(programme_id::text, '')) <> ''\n        group by 1\n    ''')\n    by_id = Counter()\n    for row in rows:\n        programme_id = views.clean_str(row['programme_id'])\n        if programme_id:\n            by_id[programme_id] += row['learner_count']\n    return dict(by_id), {}\n",
+    "module": "curriculum_api.catalogue.infrastructure.programme_reads",
+    "deps": [
+      "active_learner_programme_counts",
+      "clean_str",
+      "fetch_all"
+    ],
+    "view_attrs": [
+      "active_learner_programme_counts",
+      "clean_str",
+      "fetch_all"
+    ],
+    "removed_imports": [],
+    "internal": []
+  },
+  "home_summary.py:home_source_rows": {
+    "source": "def home_source_rows(visibility):\n    \"\"\"Read each relationship table once; Home needs no holiday/schedule detail.\n\n    The ordinary overview keeps its full source path. Use the same serializers\n    and grouping rules here, but pass already-read rows instead of asking them\n    to read the same tables again under different SQL orderings.\n    \"\"\"\n    relationships = home_relationship_rows(include_weeks=visibility == 'all')\n    modules, groups, cohorts = (relationships[key] for key in ('modules', 'groups', 'cohorts'))\n    # The raw jsonb_agg path bypasses authoring_fetch_all's curriculum_names.attach(),\n    # which resolves tutor_name (modules.tutor_id -> tutors) and coach_name\n    # (group_coaches -> coaches) in the normalised schema. Apply before training\n    # rows are built, as those read tutor_name and coach_name from these rows.\n    curriculum_names.attach('modules', modules)\n    curriculum_names.attach('groups', groups)\n    training = views.authoring_modules_as_training_rows(\n        module_rows=modules, group_rows=groups, cohort_rows=cohorts,\n    )\n    # Operational delivery rows already carry a numeric sessions_number,\n    # including zero. Only unused catalogue modules fall back to week titles.\n    weeks = relationships.get('weeks', [])\n    catalogue = views.authoring_modules_as_catalogue_rows(module_rows=modules, week_rows=weeks)\n    rows = {\n        'training': training, 'modules': catalogue, 'authoring_modules': modules,\n        'ksb_profiles': relationships['ksb_profiles'], 'program_configs': relationships['program_configs'],\n        'holidays': [], 'tutors': [], 'coaches': [], 'tutor_modules': [],\n        'ksb_counts': decode_counts(relationships.get('ksb_counts')),\n    }\n    delivery = {\n        'modules': modules,\n        'cohorts': [views.serialize_cohort_authoring_detail(row, []) for row in cohorts],\n        'groups': [views.serialize_group_authoring_detail(row) for row in groups],\n    }\n    return rows, delivery\n",
+    "module": "curriculum_api.catalogue.infrastructure.programme_reads",
+    "deps": [
+      "authoring_modules_as_catalogue_rows",
+      "authoring_modules_as_training_rows",
+      "curriculum_names",
+      "decode_counts",
+      "home_relationship_rows",
+      "serialize_cohort_authoring_detail",
+      "serialize_group_authoring_detail"
+    ],
+    "view_attrs": [
+      "authoring_modules_as_catalogue_rows",
+      "authoring_modules_as_training_rows",
+      "serialize_cohort_authoring_detail",
+      "serialize_group_authoring_detail"
+    ],
+    "removed_imports": [],
+    "internal": []
+  },
+  "programme_workspace_reads.py:programme_structure_child_rows": {
+    "source": "def programme_structure_child_rows(module_ids, *, component_text=True):\n    \"\"\"The child rows both module builders read, for the union of their ids.\n\n    ``component_text=False`` reads the components without their title,\n    description and reflection question -- on a large programme the bulk of\n    what the read moves -- and gives every row the same empty value for each.\n    Only a caller that has checked component_text_cancels() on what it built\n    may keep the result; see there.\n    \"\"\"\n    from . import views\n    from .authoring_read_transport import compact_authoring_rows\n\n    ids = sorted({views.clean_str(value) for value in module_ids if views.clean_str(value)})\n    if not ids:\n        return {'components': [], 'mappings': [], 'modules': [], 'weeks': []}\n    scope = f'module_catalogue_id in ({\", \".join([\"%s\"] * len(ids))})'\n\n    def read(table, order, columns=None):\n        # These SQL filters exclude only rows the existing active_* predicates\n        # already reject. Keep those Python predicates in the builders as well.\n        live, params = views.live_authoring_rows_sql(table)\n        where = f'({scope}) and ({live})' if live else scope\n        return compact_authoring_rows(table, where, [*ids, *params], order, columns=columns, reuse_unchanged=True)\n\n    # The module and week reads at the end, sent together in one round trip.\n    views.prefetch_authoring_reads([\n        ((views.AUTHORING_MODULES_TABLE, scope, ids), {}),\n        ((views.AUTHORING_WEEKS_TABLE, scope, ids, 'display_order, week_number, id'), {}),\n    ])\n    component_columns = views.CATALOGUE_SUMMARY_COMPONENT_COLUMNS\n    if not component_text:\n        text = workspace_component_text_columns()\n        component_columns = tuple(column for column in component_columns if column not in text)\n    components = read(views.AUTHORING_COMPONENTS_TABLE, 'display_order, id', component_columns)\n    if not component_text:\n        for row in components:\n            for column in workspace_component_text_columns():\n                row[column] = ''\n\n    return {\n        'components': components,\n        'mappings': read(views.AUTHORING_KSB_MAPPINGS_TABLE, 'created_at, id'),\n        # Both builders read these too, each for its own overlapping id list:\n        # two module reads and two week reads of the same programme. Read once\n        # for the union, unfiltered, exactly as get_authoring_structure_payloads\n        # reads them; it takes its own ids from here. Weeks are in a total order\n        # (id is unique), so each caller's slice is the sequence it read before.\n        'modules': views.authoring_fetch_all(views.AUTHORING_MODULES_TABLE, scope, ids),\n        'weeks': views.authoring_fetch_all(views.AUTHORING_WEEKS_TABLE, scope, ids, 'display_order, week_number, id'),\n    }\n",
+    "module": "curriculum_api.catalogue.infrastructure.programme_reads",
+    "deps": [
+      "AUTHORING_COMPONENTS_TABLE",
+      "AUTHORING_KSB_MAPPINGS_TABLE",
+      "AUTHORING_MODULES_TABLE",
+      "AUTHORING_WEEKS_TABLE",
+      "CATALOGUE_SUMMARY_COMPONENT_COLUMNS",
+      "authoring_fetch_all",
+      "clean_str",
+      "compact_authoring_rows",
+      "live_authoring_rows_sql",
+      "prefetch_authoring_reads",
+      "workspace_component_text_columns"
+    ],
+    "view_attrs": [
+      "AUTHORING_COMPONENTS_TABLE",
+      "AUTHORING_KSB_MAPPINGS_TABLE",
+      "AUTHORING_MODULES_TABLE",
+      "AUTHORING_WEEKS_TABLE",
+      "CATALOGUE_SUMMARY_COMPONENT_COLUMNS",
+      "authoring_fetch_all",
+      "clean_str",
+      "live_authoring_rows_sql",
+      "prefetch_authoring_reads"
+    ],
+    "removed_imports": [
+      "    from . import views\n",
+      "    from .authoring_read_transport import compact_authoring_rows\n"
+    ],
+    "internal": []
+  }
+}

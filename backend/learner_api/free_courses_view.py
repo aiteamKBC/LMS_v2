@@ -1,20 +1,9 @@
-"""Learner-scoped read of legacy and Module Builder free-course assignments.
+"""Owned canonical Free Course catalogue, activity state and quiz completion.
 
-Free courses are authored in the canonical curriculum tables and assigned to a
-canonical ``Learner.learners`` identity through ``Learner.learner_free_courses``.
-The legacy ``enrolment.Created_users.Free_courses`` JSON is not an entitlement
-source.
-
-Module Builder courses are assigned through the normal training plan. Their
-cards link to the normal module workspace so hours and progress retain the
-same rules as other modules. Only legacy assignments use the week/activity tree
-below. Completion is stored separately from Programme progress, hours and KSBs.
-
-Identity is resolved SERVER-SIDE and never trusted from the client (same gate as
-``learner_detail``/``training_plan``): the caller supplies only the
-ownership-gated learner record id. The curriculum catalogue is staff-gated, so a
-learner session cannot fetch it directly — the enrichment therefore happens
-here, in-process, and only the learner's *assigned* courses are ever returned.
+Assignments and progress belong to Learner.learners, independently of normal
+programme progress, hours and KSBs. The learner/session URL is resolved to that
+canonical identity server-side; legacy memberships and enrolment JSON never
+provide Free Course entitlement. Staff preview remains read-only.
 """
 
 import json
@@ -27,18 +16,15 @@ from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET, require_POST
 
 from login.permissions import learner_self_only, learner_self_or_staff
+from login import permissions
 from login.errors import safe_sqlstate
 
 from curriculum_api import free_course_catalogue
-from curriculum_api.views import (
-    active_component_rows,
-    active_week_rows,
-    authoring_table_name,
-    clean_str,
-    free_programme_component_response,
-    programme_deleted_row,
-    truthy,
-)
+from curriculum_api.catalogue.domain.content_values import active_component_rows
+from curriculum_api.catalogue.domain.archive_policy import active_week_rows, programme_deleted_row
+from curriculum_api.catalogue.infrastructure.database_reads import authoring_table_name
+from curriculum_api.catalogue.domain.values import clean_str, truthy
+from curriculum_api.catalogue.application.free_course_projection import free_programme_component_response
 
 from .learner_detail import (
     _component_files,
@@ -49,6 +35,9 @@ from .learner_detail import (
 from .free_course_selectors import VALID_LEARNER_KINDS, assigned_course_ids, canonical_learner
 from .mappers import _s
 from .models import FREE_PROGRESS_ACTIVE, LearnerFreeCourseProgress, LearnerProfile
+from .free_course_progress import ACTIVITY_STATES, save_activity_state, save_completion
+from .free_course_hours import accepted_activity_seconds
+from . import free_course_attempts
 from .quizzes import _fetch_quiz, _grade_question, _scrub_answer_key
 from quiz_api.answer_keys import quiz_submission_error
 
@@ -111,13 +100,14 @@ def _catalogue_batch(reads):
 def _completed_refs(learner_id, course_ids):
     """Canonical ``(course, component)`` completion keys for this learner.
 
-    Only active rows are completions; an inactive (withdrawn) row is history.
+    Only explicitly completed, active, non-deleted rows count; archives remain history.
     ``completed_at`` is not consulted, so an active row with an unknown date
     still counts.
     """
     return set(
         LearnerFreeCourseProgress.objects
-        .filter(learner_id=learner_id, free_course_ref__in=course_ids, status=FREE_PROGRESS_ACTIVE)
+        .filter(learner_id=learner_id, free_course_ref__in=course_ids,
+                status=FREE_PROGRESS_ACTIVE, deleted_at__isnull=True, is_completed=True)
         .values_list("free_course_ref", "component_ref")
     )
 
@@ -129,22 +119,16 @@ WITHDRAWN_COMPLETION = (
 
 
 def _record_completion(learner_id, component_id, free_course_ref):
-    """Record one completion; False when a withdrawn (inactive) row already exists.
+    """Use the same monotonic, archive-safe writer for quizzes and materials."""
+    return save_completion(learner_id, component_id, free_course_ref, timezone.now())
 
-    Keyed on (learner, component_ref), so a repeat never adds a second row. An
-    existing row is returned untouched: an active one stays as it is, and an
-    inactive one is never reactivated.
-    """
-    row, created = LearnerFreeCourseProgress.objects.get_or_create(
-        learner_id=learner_id,
-        component_ref=component_id,
-        defaults={
-            "free_course_ref": free_course_ref,
-            "completed_at": timezone.now(),
-            "status": FREE_PROGRESS_ACTIVE,
-        },
-    )
-    return created or row.status == FREE_PROGRESS_ACTIVE
+
+def _activity_states(learner_id, course_ids):
+    return {(course, component): state for course, component, state in
+            LearnerFreeCourseProgress.objects.filter(
+                learner_id=learner_id, free_course_ref__in=course_ids,
+                status=FREE_PROGRESS_ACTIVE, deleted_at__isnull=True
+            ).values_list('free_course_ref', 'component_ref', 'activity_state')}
 
 
 def _activity(component):
@@ -154,7 +138,7 @@ def _activity(component):
     (``_video_url_from_settings`` / ``component_audio_url`` /
     ``_component_resource_url``), so a reading, video, podcast or slide deck
     opens on the free-course page exactly as it does on a normal module — but
-    with no hours/KSB/progress fields attached.
+    with curriculum allocation for Required guidance, but no awarded OTJ/KSBs.
     """
     settings = component.get("settings")
     if not isinstance(settings, dict):
@@ -174,6 +158,8 @@ def _activity(component):
         "componentId": _s(component.get("id")),
         "title": _s(component.get("title")),
         "type": ctype,
+        # Curriculum allocation defines Required; it does not award OTJ hours.
+        "expectedOtjh": component.get("expectedOtjh"),
         "description": _s(component.get("description")) or None,
         "videoUrl": _video_url_from_settings(settings),
         "audioUrl": component_audio_url(settings, ctype),
@@ -200,6 +186,20 @@ def _resolve_source(kind, pk):
         return None, _error("Learner not found.", 404)
     except DatabaseError:
         return None, _error("Could not read the learner record.", 503)
+
+
+def _is_withdrawn(source):
+    return any(str(getattr(source, field, '') or '').strip().casefold() == 'withdrawn'
+               for field in ('lifecycle_status', 'programme_status'))
+
+
+def _withdrawn_access(request, source):
+    if not _is_withdrawn(source):
+        return None
+    account = permissions.authenticate_request(request)
+    if request.method == 'GET' and getattr(account, 'role', None) in {'staff', 'admin'}:
+        return None
+    return _error('Free Course access is unavailable while your learner status is withdrawn.', 403)
 
 
 def _in_clause(column, values):
@@ -246,12 +246,20 @@ def _scoped_rows(assigned_ids, *, include_component_settings=True):
     return courses_by_id, week_rows, component_rows
 
 
-def _course_detail(course_id, course_row, week_rows, component_rows, completed_refs):
+def _course_detail(course_id, course_row, week_rows, component_rows, completed_refs, activity_states=None, accepted_seconds=None, activity_times=None):
     """Build one on-demand course tree in canonical curriculum order."""
     activities_by_week = {}
     for row in component_rows:
         activity = _activity(free_programme_component_response(row))
-        activity["completed"] = (course_id, activity["componentId"]) in completed_refs
+        key = (course_id, activity["componentId"])
+        activity["completed"] = key in completed_refs
+        activity["is_completed"] = activity["completed"]
+        activity["activity_state"] = 'completed' if activity["completed"] else (
+            (activity_states or {}).get(key, 'not_started'))
+        if key in (activity_times or {}):
+            activity["lastActivityAt"] = activity_times[key]
+        if key in (accepted_seconds or {}):
+            activity["acceptedActualSeconds"] = accepted_seconds[key]
         activities_by_week.setdefault(clean_str(row.get("free_module_id")), []).append(activity)
 
     weeks = []
@@ -280,6 +288,9 @@ def _course_detail(course_id, course_row, week_rows, component_rows, completed_r
         "description": clean_str(course_row.get("description")),
         "coverImageUrl": clean_str(course_row.get("cover_image_url")),
         "weeks": weeks,
+        **({"acceptedActualSeconds": sum(
+            activity.get("acceptedActualSeconds", 0)
+            for week in weeks for activity in week["activities"])} if accepted_seconds else {}),
     }
 
 
@@ -295,6 +306,9 @@ def free_courses(request, kind, pk):
     source, error = _resolve_source(kind, pk)
     if error is not None:
         return error
+    access_error = _withdrawn_access(request, source)
+    if access_error is not None:
+        return access_error
 
     try:
         assigned_ids = assigned_course_ids(source)
@@ -317,6 +331,8 @@ def free_courses(request, kind, pk):
     # not equivalent to having no progress and must remain visible to the caller.
     try:
         completed_refs = _completed_refs(source.pk, assigned_ids)
+        accepted_seconds = accepted_activity_seconds(source.pk, assigned_ids)
+        saved_times = free_course_attempts.activity_times(source.pk, assigned_ids)
     except DatabaseError:
         return _error("Could not read the learner's free course progress.", 503)
 
@@ -324,8 +340,13 @@ def free_courses(request, kind, pk):
         clean_str(week.get("id")): clean_str(week.get("course_id"))
         for week in week_rows
     }
+    course_times = {}
+    for (course_id, _component), at in saved_times.items():
+        course_times[course_id] = max(at, course_times.get(course_id, at))
+
     activity_totals = {}
     completed_totals = {}
+    accepted_totals = {}
     for row in component_rows:
         component_id = clean_str(row.get("id"))
         course_id = course_by_week.get(clean_str(row.get("free_module_id")))
@@ -334,6 +355,8 @@ def free_courses(request, kind, pk):
         activity_totals[course_id] = activity_totals.get(course_id, 0) + 1
         if (course_id, component_id) in completed_refs:
             completed_totals[course_id] = completed_totals.get(course_id, 0) + 1
+        if (course_id, component_id) in accepted_seconds:
+            accepted_totals[course_id] = accepted_totals.get(course_id, 0) + accepted_seconds[(course_id, component_id)]
 
     week_totals = {}
     for week in week_rows:
@@ -359,6 +382,8 @@ def free_courses(request, kind, pk):
             "activityCount": activity_count,
             "completedActivities": completed_count,
             "progressPercentage": round((completed_count / activity_count) * 100) if activity_count else 0,
+            **({"lastActivityAt": course_times[course_id]} if course_id in course_times else {}),
+            **({"acceptedActualSeconds": accepted_totals[course_id]} if course_id in accepted_totals else {}),
         })
 
     response = JsonResponse({"freeCourses": result})
@@ -373,6 +398,9 @@ def free_course_detail(request, kind, pk, course_id):
     source, error = _resolve_source(kind, pk)
     if error is not None:
         return error
+    access_error = _withdrawn_access(request, source)
+    if access_error is not None:
+        return access_error
 
     try:
         assigned_ids = set(assigned_course_ids(source))
@@ -392,11 +420,14 @@ def free_course_detail(request, kind, pk, course_id):
 
     try:
         completed_refs = _completed_refs(source.pk, [course_id])
+        activity_states = _activity_states(source.pk, [course_id])
+        accepted_seconds = accepted_activity_seconds(source.pk, [course_id])
+        saved_times = free_course_attempts.activity_times(source.pk, [course_id])
     except DatabaseError:
         return _error("Could not read the learner's free course progress.", 503)
 
     response = JsonResponse({
-        "freeCourse": _course_detail(course_id, course, week_rows, component_rows, completed_refs),
+        "freeCourse": _course_detail(course_id, course, week_rows, component_rows, completed_refs, activity_states, accepted_seconds, saved_times),
     })
     response["Cache-Control"] = "private, no-store"
     return response
@@ -416,6 +447,9 @@ def complete_free_course_activity(request, kind, pk):
     source, error = _resolve_source(kind, pk)
     if error is not None:
         return error
+    access_error = _withdrawn_access(request, source)
+    if access_error is not None:
+        return access_error
 
     try:
         payload = json.loads(request.body or b"{}")
@@ -424,6 +458,9 @@ def complete_free_course_activity(request, kind, pk):
     component_id = _s(payload.get("componentId")) if isinstance(payload, dict) else ""
     if not component_id:
         return _error("componentId is required.", 400)
+    activity_state = payload.get('activityState', 'completed')
+    if not isinstance(activity_state, str) or activity_state not in ACTIVITY_STATES:
+        return _error("Invalid activityState.", 400)
 
     try:
         assigned_ids = assigned_course_ids(source)
@@ -454,6 +491,8 @@ def complete_free_course_activity(request, kind, pk):
                     "Quiz activities can only be completed by passing the quiz.",
                     409,
                 )
+            if activity_state == 'reading_viewed' and clean_str(row.get('type')).lower() != 'reading':
+                return _error("Only reading activities can be marked viewed.", 400)
             free_course_ref = course_by_week.get(clean_str(row.get("free_module_id")))
             found = bool(free_course_ref and free_course_ref in courses)
             break
@@ -461,13 +500,20 @@ def complete_free_course_activity(request, kind, pk):
         return _error("Activity not found.", 404)
 
     try:
-        recorded = _record_completion(source.pk, component_id, free_course_ref)
+        with free_course_attempts.active_learner_write(source.pk):
+            recorded = (_record_completion(source.pk, component_id, free_course_ref)
+                        if activity_state == 'completed' else save_activity_state(
+                            source.pk, component_id, free_course_ref, activity_state))
+            completed = recorded and (activity_state == 'completed' or
+                                     (free_course_ref, component_id) in _completed_refs(source.pk, [free_course_ref]))
+    except LookupError:
+        return _error('Free Course access is unavailable while your learner status is withdrawn.', 403)
     except DatabaseError:
         return _error("Could not save your progress. Please try again.", 503)
     if not recorded:
         return _error(WITHDRAWN_COMPLETION, 409)
 
-    response = JsonResponse({"componentId": component_id, "completed": True})
+    response = JsonResponse({"componentId": component_id, "completed": completed})
     response["Cache-Control"] = "private, no-store"
     return response
 
@@ -539,6 +585,28 @@ def free_course_quiz(request, kind, pk, component_id):
     source, error = _resolve_source(kind, pk)
     if error is not None:
         return error
+    access_error = _withdrawn_access(request, source)
+    if access_error is not None:
+        return access_error
+
+    # Staff history must survive an unpublished/unlinked current quiz. This
+    # branch is reachable only by staff: withdrawn learners were denied above.
+    if _is_withdrawn(source):
+        try:
+            assigned = assigned_course_ids(source)
+            _, _, components = _scoped_rows(assigned)
+            component = next((row for row in components if clean_str(row.get('id')) == component_id
+                              and 'quiz' in clean_str(row.get('type')).lower()), None)
+            if component is None:
+                return _error('Activity not found.', 404)
+            attempts = free_course_attempts.history(source.pk, component_id)
+        except DatabaseError:
+            return _error('Could not read historical quiz results.', 503)
+        response = JsonResponse({'id': 0, 'title': clean_str(component.get('title')),
+                                 'questions': [], 'passingGrade': 0, 'attempts': attempts,
+                                 'historyOnly': True})
+        response['Cache-Control'] = 'private, no-store'
+        return response
 
     try:
         quiz_id, _free_course_ref, error = _resolve_quiz_component(source, component_id)
@@ -554,7 +622,11 @@ def free_course_quiz(request, kind, pk, component_id):
     if quiz is None:
         return _error("Quiz not found.", 404)
 
-    response = JsonResponse(_scrub_answer_key(quiz))
+    try:
+        attempts = free_course_attempts.history(source.pk, component_id)
+    except DatabaseError:
+        return _error("Could not read your quiz history. Please try again.", 503)
+    response = JsonResponse({**_scrub_answer_key(quiz), "attempts": attempts})
     response["Cache-Control"] = "private, no-store"
     return response
 
@@ -565,14 +637,15 @@ def free_course_quiz(request, kind, pk, component_id):
 def submit_free_course_quiz(request, kind, pk, component_id):
     """Grade a free-course quiz and, on a pass, record its completion.
 
-    Reuses the ordinary quiz reader/grader (``_fetch_quiz`` + ``_grade_question``)
-    but writes NOTHING to the training-plan/KSB/OTJH stores — a pass records only
-    an isolated LearnerFreeCourseProgress row, exactly like any other free-course
-    completion.
+    Reuses the ordinary quiz reader/grader. Saves the canonical attempt and
+    passing completion atomically; neither write awards hours or programme progress.
     """
     source, error = _resolve_source(kind, pk)
     if error is not None:
         return error
+    access_error = _withdrawn_access(request, source)
+    if access_error is not None:
+        return access_error
 
     try:
         payload = json.loads(request.body or b"{}")
@@ -617,20 +690,24 @@ def submit_free_course_quiz(request, kind, pk, component_id):
     grade_pct = round((earned / possible) * 100, 1) if possible else 0.0
     passed = grade_pct >= (quiz["passingGrade"] or 0)
 
-    if passed:
-        try:
-            recorded = _record_completion(source.pk, component_id, free_course_ref)
-        except DatabaseError:
-            return _error("Your quiz was graded but could not be saved. Please try again.", 503)
-        if not recorded:
-            return _error(WITHDRAWN_COMPLETION, 409)
-
-    response = JsonResponse({
+    result = {
         "componentId": component_id,
         "grade": grade_pct,
         "passed": passed,
         "passingGrade": quiz["passingGrade"] or 0,
         "breakdown": breakdown,
-    })
+    }
+    try:
+        attempt_id = free_course_attempts.submission_id(
+            payload.get('submissionId'), source.pk, component_id, quiz_id, submitted)
+        result = free_course_attempts.save(
+            source.pk, free_course_ref, component_id, attempt_id, quiz, submitted, result)
+    except (ValueError, TypeError):
+        return _error("Invalid or conflicting submission identity. Start a new attempt.", 409)
+    except LookupError:
+        return _error(WITHDRAWN_COMPLETION, 409)
+    except DatabaseError:
+        return _error("Your quiz could not be saved. Please retry the same submission.", 503)
+    response = JsonResponse(result)
     response["Cache-Control"] = "private, no-store"
     return response

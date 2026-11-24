@@ -14,13 +14,24 @@ class ParallelAttendanceRegisterTests(SimpleTestCase):
         register.objects.using.return_value.filter.return_value.exclude.return_value.values.return_value = [{
             'learner_profile_id': 10, 'occurrence_id': 'A', 'module_catalogue_id': 'MA',
             'parallel_source_occurrence_id': 'B', 'parallel_source_module_id': 'MB'}]
-        modules.objects.using.return_value.filter.return_value.values_list.return_value = [('MB', 'Group B')]
+        module_query = modules.objects.using.return_value.filter.return_value
+        module_query.exclude.return_value.exclude.return_value.values_list.return_value = [('MB', 'GB')]
+        connections = MagicMock()
+        cursor = connections.__getitem__.return_value.cursor.return_value.__enter__.return_value
+        cursor.fetchall.return_value = [('GB', 'Group B')]
         occurrences.objects.using.return_value.filter.return_value.values_list.return_value = [
             ('A', datetime(2026, 10, 1, tzinfo=timezone.utc))]
         with patch('curriculum_api.parallel_attendance_register.LiveSessionLearnerAttendance', register), \
              patch('curriculum_api.parallel_attendance_register.ModuleAuthoringModule', modules), \
-             patch('curriculum_api.parallel_attendance_register.LiveSessionOccurrence', occurrences):
+             patch('curriculum_api.parallel_attendance_register.LiveSessionOccurrence', occurrences), \
+             patch('curriculum_api.parallel_attendance_register.connections', connections):
             originals, guests = saved_parallel_links([{'learner_profile_id': 10}], database='default')
+        module_query.exclude.assert_called_once_with(status='inactive')
+        module_query.exclude.return_value.exclude.assert_called_once_with(group_id__isnull=True)
+        module_query.exclude.return_value.exclude.return_value.values_list.assert_called_once_with(
+            'module_catalogue_id', 'group_id')
+        cursor.execute.assert_called_once_with(
+            'SELECT group_id, group_name FROM curriculum.groups WHERE group_id = ANY(%s)', [['GB']])
         self.assertEqual(originals[(10, 'A', 'MA')], {'recoveryOccurrenceId': 'B', 'recoveryGroup': 'Group B'})
         self.assertFalse(guests[(10, 'B', 'MB')]['countsAsSession'])
 
@@ -96,6 +107,11 @@ class ParallelAttendanceRegisterTests(SimpleTestCase):
                    return_value={'B': [{'id': 'A', 'moduleCatalogueId': 'MA'}]}):
             count = reconcile_parallel_attendance(['B'], database='default')
         self.assertEqual(count, 1)
+        decision_query = decisions.objects.using.return_value.filter
+        self.assertEqual(decision_query.call_args_list[0].kwargs['source'], 'microsoft-teams')
+        self.assertEqual(decisions.objects.using.return_value.filter.return_value.values.call_args_list[0].args,
+                         ('learner_profile_id', 'source_id', 'status', 'is_deleted'))
+        self.assertEqual(decision_query.call_args_list[-1].kwargs['learner_profile_id'], 10)
         # Membership comes from the normalized plan records, asked only about the
         # modules the choice compares: the attended guest module and its originals.
         membership.assert_called_once_with({10}, {'MB', 'MA'})

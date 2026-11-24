@@ -94,7 +94,7 @@ it('ignores a late response after switching learners and after closing', async (
   let resolveFirst!: (value: unknown) => void;
   mocks.native.mockReturnValueOnce(new Promise(resolve => { resolveFirst = resolve; }));
   const view = render(<EmployerDocumentPreview employerId="9" target={target} onClose={vi.fn()} />);
-  expect(screen.getByRole('status')).toHaveTextContent('Loading preview');
+  expect(screen.getByRole('status')).toHaveAccessibleName(expect.stringContaining('Loading preview'));
   view.rerender(<EmployerDocumentPreview employerId="9" target={{ ...target, learnerId: '102' }} onClose={vi.fn()} />);
   await screen.findByText('Saved review answers');
   view.unmount();

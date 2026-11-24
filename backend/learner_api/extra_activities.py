@@ -1,11 +1,12 @@
-"""Extra activities use the existing owned submission and coach-review records."""
-import json
+"""Learner Extra Activity validation and native-store listing."""
+from decimal import Decimal
 from uuid import UUID
 from zoneinfo import ZoneInfo
 from django.utils import timezone
-from django.db import connections, DatabaseError
+from django.db import DatabaseError
 from django.http import JsonResponse
 from login.permissions import learner_self_or_staff
+from old_otjh.service import ServiceError
 from .monthly_assignment import assignment_checks, mapping, text
 from .extra_activity_month import valid_activity_month
 
@@ -42,27 +43,29 @@ def list_extra_activities(request):
     if kind not in ('commercial', 'apprenticeship') or not str(learner_id or '').isdigit():
         return JsonResponse({'error': 'A valid learner is required.'}, status=400)
     try:
-        with connections['enrolment'].cursor() as cur:
-            cur.execute('''SELECT activity_id, activity_title, status, submitted_at, full_submission,
-                coach_feedback, reviewed_by, reviewed_at FROM "Learner".learning_reflection_submissions
-                WHERE learner_kind=%s AND learner_id=%s AND activity_type='extra_activity'
-                ORDER BY submitted_at DESC, id''', [kind, learner_id])
-            rows = cur.fetchall()
+        from .extra_activity_store import API_STATUS, document, list_rows
+        rows = list_rows(int(learner_id), kind)
+    except ServiceError as exc:
+        return JsonResponse({'error': str(exc)}, status=exc.status)
     except DatabaseError:
         return JsonResponse({'error': 'Could not load extra activities. Please retry.'}, status=503)
     result = []
-    for identifier, title, status, submitted, raw, feedback, reviewer, reviewed in rows:
-        data = json.loads(raw) if isinstance(raw, str) else mapping(raw)
+    for row in rows:
+        data = document(row)
+        submitted, reviewed = row.get('submitted_at'), row.get('reviewed_at')
         selected_month = mapping(data.get('monthlyAssignment')).get('month')
         month = (selected_month if valid_activity_month(selected_month) else
-                 submitted.astimezone(ZoneInfo('Europe/London')).strftime('%Y-%m') if submitted else '')
-        if request.GET.get('month') and (status == 'draft' or month != request.GET['month']):
+                 row['activity_date'].strftime('%Y-%m'))
+        if request.GET.get('month') and (row['status'] == 'draft' or month != request.GET['month']):
             continue
-        result.append({'activityId': identifier, 'title': title, 'status': status,
+        result.append({'activityId': f"extra:{row['id']}", 'title': row['title'],
+                       'status': API_STATUS.get(row['status'], row['status']),
                        'submittedAt': submitted.isoformat() if submitted else None, 'month': month,
                        'answer': data.get('assignmentAnswer', ''), 'reflection': data.get('whatYouLearned', ''),
-                       'ksbs': data.get('ksbCodes', []), 'hours': data.get('actualTimeHours', ''),
-                       'coachFeedback': feedback, 'reviewedBy': reviewer,
+                       'ksbs': data.get('ksbCodes', []),
+                       'hours': str(Decimal(row['requested_minutes']) / Decimal(60)),
+                       'coachFeedback': row.get('review_note') or '',
+                       'reviewedBy': row.get('reviewed_by') or '',
                        'addedBy': mapping(data.get('coachCreation')).get('name') if data.get('submissionOrigin') == 'coach' else None,
                        'reviewedAt': reviewed.isoformat() if reviewed else None})
     return JsonResponse({'activities': result})

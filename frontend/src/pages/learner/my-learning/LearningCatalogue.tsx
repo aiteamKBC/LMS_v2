@@ -61,7 +61,7 @@ export function LearningHero({ map = false }: { map?: boolean }) {
   </header>;
 }
 
-export function LearningCatalogue({ summary, search, onSearch, current, renderCard, onContinue, moduleStartDate, kind, learnerId, total, done, percent, deadlines = [], covers = {}, upcomingSessions = [], reviewMode = false, activityMatches = [], upcomingLinks, hasMoreUpcoming = false, onLoadUpcoming, transferAction, moduleActivity, sectionTabs }: {
+export function LearningCatalogue({ summary, search, onSearch, current, renderCard, onContinue, moduleStartDate, kind, learnerId, total, done, percent, deadlines = [], covers = {}, upcomingSessions = [], reviewMode = false, activityMatches = [], upcomingLinks, hasMoreUpcoming = false, onLoadUpcoming, transferAction, moduleActivity, sectionTabs, onTeachingChange }: {
   summary: UnifiedLearningSummary; search: string; onSearch: (value: string) => void; current?: Subject;
   renderCard: (subject: Subject) => ReactNode; onContinue: (subject: Subject) => void;
   moduleStartDate: (subject: Subject) => string | null | undefined; kind?: string; learnerId?: string;
@@ -71,9 +71,11 @@ export function LearningCatalogue({ summary, search, onSearch, current, renderCa
   transferAction?: ReactNode;
   moduleActivity?: TeachingActivities;
   sectionTabs?: ReactNode;
+  onTeachingChange?: (value: 'active' | 'all') => void;
 }) {
   const [filter, setFilter] = useState('all');
   const [teaching, setTeaching] = useState<'active' | 'all'>('active');
+  useEffect(() => { onTeachingChange?.(teaching); }, [teaching, onTeachingChange]);
   const [today, setToday] = useState(learningToday);
   useEffect(() => {
     const timer = window.setInterval(() => setToday(learningToday()), 60_000);
@@ -84,12 +86,13 @@ export function LearningCatalogue({ summary, search, onSearch, current, renderCa
   const [layout, setLayout] = useState('list');
   const [showAllUpcoming, setShowAllUpcoming] = useState(false);
   const term = search.trim().toLocaleLowerCase();
-  const visible = summary.subjects.filter(subject => {
+  // Stable source identities drive both cards and catalogue counts.
+  const uniqueSubjects = [...new globalThis.Map(summary.subjects.map(subject => [subject.id, subject])).values()];
+  const displayed = uniqueSubjects.filter(subject => {
     const progress = subjectPercent(subject);
     return (!term || subject.title.toLocaleLowerCase().includes(term) || activityMatches.includes(subject.id) || subject.activities.some(a => a.title.toLocaleLowerCase().includes(term)))
-      && (!moduleActivity || teaching === 'all' || moduleTeachingActive(moduleActivity[
-        sourceFilter === 'all' && subject.previousLearningFor ? subject.previousLearningFor : subject.id], today))
-      && (sourceFilter === 'all' || (subject.importedCourseRef || subject.replacementCourseRef ? 'legacy' : subject.source) === sourceFilter)
+      && (!moduleActivity || teaching === 'all' || moduleTeachingActive(moduleActivity[subject.id], today))
+      && (sourceFilter === 'all' || subject.source === sourceFilter)
       && (filter === 'all' || (filter === 'complete' ? progress === 100 : filter === 'new' ? progress === 0 : progress > 0 && progress < 100));
   }).sort((a, b) => {
     if (sort === 'name') return a.title.localeCompare(b.title);
@@ -101,12 +104,7 @@ export function LearningCatalogue({ summary, search, onSearch, current, renderCa
     if (bStart) return 1;
     return a.title.localeCompare(b.title);
   });
-  // Other explicitly grouped courses still retain their independent history.
-  const displayed = [...new globalThis.Map(visible.map(subject => {
-    const group = sourceFilter === 'all' && subject.previousLearningFor;
-    const target = group && summary.subjects.find(item => item.id === group);
-    return target ? [target.id, target] as const : [subject.id, subject] as const;
-  })).values()];
+  const subjectCount = uniqueSubjects.length;
   const upcoming = upcomingLinks?.map(item => ({ ...item, detail: item.type === 'session' ? 'Live session' : item.type === 'assignment' ? 'Assignment due' : 'Checkpoint' })) ?? [
     ...deadlines.filter(item => item.date >= today).map(item => ({
       id: `deadline:${item.id}`, title: item.title, detail: item.type === 'assignment' ? 'Assignment due' : 'Checkpoint',
@@ -121,7 +119,7 @@ export function LearningCatalogue({ summary, search, onSearch, current, renderCa
   ].sort((a, b) => a.sortDate - b.sortDate);
   const currentSubjects = summary.subjects.filter(subject => subject.source === 'current');
   const previous = summary.previousLearning;
-  const listedTotal = summary.subjects.reduce((sum, subject) => sum + (subject.card?.activityCount ?? subject.activities.length), 0);
+  const listedTotal = uniqueSubjects.reduce((sum, subject) => sum + (subject.card?.activityCount ?? subject.activities.length), 0);
   const activeSubjects = moduleActivity ? summary.subjects.filter(subject => moduleTeachingActive(moduleActivity[subject.id], today)) : summary.subjects;
   const activeCurrent = activeSubjects.filter(subject => subject.source === 'current');
   const learningSubjects = activeCurrent.length ? activeCurrent : activeSubjects;
@@ -163,21 +161,13 @@ export function LearningCatalogue({ summary, search, onSearch, current, renderCa
           </div>}
         </div>
         {transferAction}
-        <label className={styles.search}><Search size={18} aria-hidden="true" /><input aria-label="Search modules or activities" placeholder="Search subjects or activities…" value={search} onChange={e => onSearch(e.target.value)} /></label>
+        <label data-search-field className={styles.search}><Search size={18} aria-hidden="true" /><input aria-label="Search modules or activities" placeholder="Search subjects or activities…" value={search} onChange={e => onSearch(e.target.value)} /></label>
         <label className={styles.selectLabel}>Status<select value={filter} onChange={e => setFilter(e.target.value)}><option value="all">All modules</option><option value="started">In progress</option><option value="new">Not started</option><option value="complete">Completed</option></select></label>
         <label className={styles.selectLabel}>Sort by<select value={sort} onChange={e => setSort(e.target.value)}><option value="start">Module start date</option><option value="name">Subject name</option><option value="progress">Highest progress</option></select></label>
         <div className={styles.viewToggle} role="group" aria-label="Subject layout"><button type="button" aria-pressed={layout === 'list'} onClick={() => setLayout('list')}><List size={16} />List</button><button type="button" aria-pressed={layout === 'grid'} onClick={() => setLayout('grid')}><LayoutGrid size={16} />Grid</button></div>
       </div>
-      <div className={styles.subjectHeading}><h2>Your subjects</h2><span>{summary.subjectCount} subjects · {listedTotal} activities{displayed.length !== summary.subjectCount ? ` · ${displayed.length} shown` : ''}</span></div>
-      {displayed.length ? <div className={layout === 'grid' ? styles.grid : styles.list}>{displayed.map(subject => {
-        const previous = sourceFilter === 'all' ? summary.subjects.filter(item => item.previousLearningFor === subject.id) : [];
-        return previous.length ? <section key={subject.id} aria-label={`${subject.title} learning record`} className="space-y-3 rounded-2xl border border-foreground-200 bg-white p-3">
-          <h3 className="text-sm font-semibold text-primary-700">Current learning plan</h3>{renderCard(subject)}
-          <h3 className="text-sm font-semibold text-primary-700">Previous learning</h3>
-          <p className="text-xs text-foreground-500">Your previous progress and hours are retained separately from the current plan.</p>
-          {previous.map(renderCard)}
-        </section> : renderCard(subject);
-      })}</div>
+      <div className={styles.subjectHeading}><h2>Your subjects</h2><span>{subjectCount} subjects · {listedTotal} activities{displayed.length !== subjectCount ? ` · ${displayed.length} shown` : ''}</span></div>
+      {displayed.length ? <div className={layout === 'grid' ? styles.grid : styles.list}>{displayed.map(renderCard)}</div>
         : <div className={styles.empty}><BookOpen size={30} /><p>{summary.subjectCount ? moduleActivity && teaching === 'active' ? 'No active modules match your filters.' : 'No subjects or activities match your filters.' : 'Your subjects will appear here when they are assigned.'}</p>{moduleActivity && teaching === 'active' && summary.subjectCount > 0 && <button type="button" onClick={() => setTeaching('all')}>View all modules</button>}{summary.subjectCount > 0 && <button onClick={() => { onSearch(''); setSourceFilter('all'); setFilter('all'); setTeaching('all'); }}>Clear filters</button>}</div>}
     </div>
     <aside className={styles.catalogueAside} aria-label="Learning shortcuts">

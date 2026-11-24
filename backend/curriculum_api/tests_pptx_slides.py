@@ -232,7 +232,8 @@ class RenderCacheTests(SimpleTestCase):
                 pptx_slides.deck_model_for_stamp(self.relative, blob_stamp)
             )
             # A newer renderer must not be handed the older model.
-            with patch.object(pptx_slides, 'MODEL_VERSION', pptx_slides.MODEL_VERSION + 1):
+            from .catalogue.infrastructure import presentation_cache
+            with patch.object(presentation_cache, 'MODEL_VERSION', pptx_slides.MODEL_VERSION + 1):
                 self.assertIsNone(
                     pptx_slides.deck_model_for_stamp(self.relative, blob_stamp)
                 )

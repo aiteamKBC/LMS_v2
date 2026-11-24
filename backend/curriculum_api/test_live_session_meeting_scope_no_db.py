@@ -10,15 +10,14 @@ NAMES = {'clean_str', 'parse_int', 'live_session_booked_on_module_calendar', 'mo
 
 def load_functions():
     tree = ast.parse(Path(__file__).with_name('views.py').read_text(encoding='utf-8-sig'))
-    nodes = [node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name in NAMES]
-    assert len(nodes) == len(NAMES)
     namespace = {
         'LIVE_SESSION_MEETING_SCOPE_KEY': 'teamsMeetingScope',
         'LIVE_SESSION_MEETING_SCOPES': ('main', 'additional'),
         'ADDITIONAL_MEETING_SETTING_KEYS': ('extraTeamsMeetingUrl', 'extraTeamsSubject'),
         'component_builder_settings': lambda row: row['settings_json'],
     }
-    exec(compile(ast.Module(body=nodes, type_ignores=[]), 'scope-functions', 'exec'), namespace)
+    from curriculum_api.meetings.tests.source_loader import load_current_functions
+    load_current_functions(NAMES, namespace, tree)
     return namespace
 
 

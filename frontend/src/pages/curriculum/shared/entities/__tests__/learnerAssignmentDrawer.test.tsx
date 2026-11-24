@@ -18,7 +18,7 @@ const learners = [
   { id: '2', name: 'Mona Hassan', email: 'mona@example.com', programme: 'Business', company: 'Al Fanar', programmeStatus: 'Delivery', assigned: false },
   { id: '3', name: 'Sara Omar', email: 'sara@example.com', programme: 'Data', company: 'Acme', programmeStatus: 'Active', assigned: false },
   { id: '4', name: 'Already Enrolled', email: 'enrolled@example.com', programme: 'Business', company: 'Al Fanar', programmeStatus: 'Active', assigned: true },
-].map(row => ({ ...row, cohort: '', group: '', learnerType: 'commercial', moduleCount: 0 }));
+].map(row => ({ ...row, cohort: '', group: '', lifecycleStatus: 'Active', learnerType: 'commercial', moduleCount: 0 }));
 const directory: LearnerAssignmentDirectory = {
   target: { ...target, programmeName: 'Business', moduleCount: 3 }, learners,
   totals: { learnerCount: 4, assignedCount: 1 },

@@ -108,8 +108,19 @@ class CataloguePerformanceTests(SimpleTestCase):
     def test_catalogue_ledger_skips_ksb_registry_and_wide_history_but_keeps_source_gates(self):
         with patch.object(canonical,'query',return_value=[]) as query,patch.object(canonical,'current_records',return_value=[]),patch.object(canonical,'_ksb_not_excluded',side_effect=AssertionError('Unused KSB lookup')):
             self.assertEqual(canonical.entries_for({'id':9},lineage_only=True,monthly_summary=True,catalogue_summary=True),[])
-        self.assertEqual(query.call_count,1)
-        sql,params=query.call_args.args
+        ledger_calls=[call for call in query.call_args_list if 'WITH canonical AS' in call.args[0]]
+        self.assertEqual(len(ledger_calls),1)
+        # Keep the ledger's one-read budget and check the added attendance reads separately.
+        for table, expected in (
+            ('learner_monthly_signatures', [9]),
+            ('learner_monthly_locks', [9, 9, 9]),
+            ('live_session_learner_attendance', [9]),
+        ):
+            calls=[call for call in query.call_args_list if table in call.args[0]]
+            self.assertEqual(len(calls),1)
+            self.assertEqual(calls[0].args[1],expected)
+        self.assertEqual(query.call_count,4)
+        sql,params=ledger_calls[0].args
         self.assertEqual(params,[9])
         self.assertNotIn('learner_progress_ksbs',sql)
         self.assertNotIn('to_jsonb(s)',sql);self.assertNotIn('to_jsonb(h)',sql)
@@ -177,9 +188,9 @@ class CataloguePerformanceTests(SimpleTestCase):
                 compact=True,identities_only=True,catalogue_facts=True,live_session_ids=False,resolved_metadata=resolved,strict=True)
         self.assertEqual(cur.execute.call_count,1)
         sql,params=cur.execute.call_args.args
-        self.assertIn('week_id = ANY(%s)',sql)
-        self.assertNotIn('EXISTS (SELECT 1 FROM curriculum.weeks',sql)
-        self.assertEqual(params,[['M1'],['W1']])
+        self.assertIn('module_catalogue_id = ANY(%s)',sql)
+        self.assertIn('visible_parent.module_catalogue_id=components.module_catalogue_id',sql)
+        self.assertEqual(params,[['M1']])
         self.assertEqual(components[0]['teamsLiveSessionId'],'EXTRA')
         self.assertEqual(resolved['live_credit_components'],[{'componentId':'L1','moduleId':'M1','title':'Lecture',
             'type':'live_session','teamsOccurrenceId':'OCC','teamsLiveSessionId':'SERIES','teamsSessionNumber':'2','sessionDate':'2026-01-01'}])

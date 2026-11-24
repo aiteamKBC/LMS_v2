@@ -1,3 +1,5 @@
+from curriculum_api.catalogue.tests.parity.composition_test_support import composition_patch
+from curriculum_api.catalogue.tests.parity.composition_test_support import composition_fixture
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -13,11 +15,11 @@ class CurriculumHomeReadModelTests(SimpleTestCase):
             'modules': [{'id': 'MOD-1', 'sessionNames': ['One']}],
             'programmes': [{'id': 'PROG-1'}],
         }
-        with patch.object(views, 'curriculum_read_scope') as scope, \
-             patch.object(views, 'build_curriculum_payload', return_value=overview) as build, \
-             patch.object(views, 'compact_module_rows', return_value=[{'id': 'MOD-1'}]), \
-             patch.object(views, 'enrich_modules_with_authoring', return_value=[{'id': 'MOD-1'}]), \
-             patch.object(views, 'enrich_programmes_with_module_counts', return_value=[{'id': 'PROG-1', 'moduleCount': 1}]):
+        with composition_fixture(views, 'curriculum_read_scope') as scope, \
+             composition_fixture(views, 'build_curriculum_payload', return_value=overview) as build, \
+             composition_fixture(views, 'compact_module_rows', return_value=[{'id': 'MOD-1'}]), \
+             composition_fixture(views, 'enrich_modules_with_authoring', return_value=[{'id': 'MOD-1'}]), \
+             composition_fixture(views, 'enrich_programmes_with_module_counts', return_value=[{'id': 'PROG-1', 'moduleCount': 1}]):
             payload = read_model.build_curriculum_home('operational')
 
         scope.assert_called_once_with()
@@ -32,8 +34,8 @@ class CurriculumHomeReadModelTests(SimpleTestCase):
             stale=False,
         )
         request = RequestFactory().get('/curriculum/overview/?compact=true')
-        with patch('curriculum_api.read_model.get_curriculum_home', return_value=value), \
-             patch.object(views, 'cached_curriculum_value') as live:
+        with composition_patch('curriculum_api.read_model.get_curriculum_home', return_value=value), \
+             composition_fixture(views, 'cached_curriculum_value') as live:
             response = views.curriculum_overview(request)
 
         self.assertEqual(response['X-LMS-Cache'], 'READ-MODEL-HIT')
@@ -50,9 +52,9 @@ class CurriculumHomeReadModelTests(SimpleTestCase):
             stale=True,
         )
         request = RequestFactory().get('/curriculum/programmes/')
-        with patch('curriculum_api.read_model.get_curriculum_home', return_value=value), \
-             patch('curriculum_api.read_model.enqueue_curriculum_home_refresh') as enqueue, \
-             patch.object(views, 'cached_curriculum_value') as live:
+        with composition_patch('curriculum_api.read_model.get_curriculum_home', return_value=value), \
+             composition_patch('curriculum_api.read_model.enqueue_curriculum_home_refresh') as enqueue, \
+             composition_fixture(views, 'cached_curriculum_value') as live:
             response = views.curriculum_programmes(request)
 
         self.assertEqual(response['X-LMS-Cache'], 'READ-MODEL-STALE')
@@ -65,11 +67,11 @@ class CurriculumHomeReadModelTests(SimpleTestCase):
 
     @override_settings(CURRICULUM_HOME_SHARED_READ_MODEL_ENABLED=True)
     def test_overview_miss_preserves_live_response_and_enqueues_refresh(self):
-        live_payload = {'schema': 'curriculum', 'modules': [], 'programmes': []}
+        live_payload = {'schema': 'curriculum', 'modules': [], 'programmes': [], 'ksbSets': []}
         request = RequestFactory().get('/curriculum/overview/?compact=true')
-        with patch('curriculum_api.read_model.get_curriculum_home', return_value=None), \
-             patch('curriculum_api.read_model.enqueue_curriculum_home_refresh') as enqueue, \
-             patch.object(views, 'cached_curriculum_value', return_value=live_payload):
+        with composition_patch('curriculum_api.read_model.get_curriculum_home', return_value=None), \
+             composition_patch('curriculum_api.read_model.enqueue_curriculum_home_refresh') as enqueue, \
+             composition_fixture(views, 'cached_curriculum_value', return_value=live_payload):
             response = views.curriculum_overview(request)
 
         self.assertEqual(response['X-LMS-Cache'], 'READ-MODEL-MISS')
@@ -78,9 +80,9 @@ class CurriculumHomeReadModelTests(SimpleTestCase):
 
     @override_settings(READ_MODEL_OUTBOX_ENABLED=True)
     def test_request_scope_queues_one_refresh_pair_for_many_invalidations(self):
-        with patch('curriculum_api.read_model.enqueue_all_curriculum_home_refreshes') as enqueue, \
-             patch.object(views, 'bump_shared_curriculum_epoch'), \
-             patch.object(views, 'write_shared_curriculum_epoch_bump'), \
+        with composition_patch('curriculum_api.read_model.enqueue_all_curriculum_home_refreshes') as enqueue, \
+             composition_fixture(views, 'bump_shared_curriculum_epoch'), \
+             composition_fixture(views, 'write_shared_curriculum_epoch_bump'), \
              patch.object(views.transaction, 'on_commit'):
             views.begin_curriculum_write_scope()
             try:

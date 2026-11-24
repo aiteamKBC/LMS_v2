@@ -89,6 +89,8 @@ from .views import (
 
 urlpatterns = [
     path('coach/extra-activities', extra_activities.activities, name='coach-extra-activities'),
+    path('coach/extra-activities/<uuid:activity_id>', extra_activities.activity_detail,
+         name='coach-extra-activity-detail'),
     path('coach/extra-activities/learners', extra_activities.learners, name='coach-extra-activities-learners'),
     path('coach/completion-notifications', completion_notifications, name='coach-completion-notifications'),
     path('coaching-recordings/meetings/<str:identity>', coaching_linked_meeting, name='coaching-linked-meeting'),

@@ -18,7 +18,7 @@
 .surface [data-reading-text] a { text-decoration: underline; }
 .surface [data-reading-text] mark[data-learner-highlight],
 .surface [data-reading-text] mark[data-learner-highlight] * {
-  background-color: #fde047 !important;
+  background-color: var(--reading-highlight-color, #fde047) !important;
   color: #111827 !important;
 }
 .surface:focus-visible { outline: 2px solid #6366f1; outline-offset: 2px; }

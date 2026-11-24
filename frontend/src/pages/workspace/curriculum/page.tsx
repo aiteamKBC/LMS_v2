@@ -36,7 +36,7 @@ export default function CurriculumStudio() {
   return (
     <WorkspaceShell role="curriculum" roleLabel="Curriculum Designer" navItems={curriculumNavItems} workspaceLabel="Curriculum Studio" pageTitle="Curriculum Home" pageSubtitle="Your next curriculum actions, in priority order" userName="Rachel Myers" userRole="Curriculum Designer">
       <PageContainer className="curriculum-home-page">
-        <div className="mx-auto max-w-[1560px] space-y-4">
+        <div className="w-full min-w-0 space-y-4">
           <WorkspaceHeroBanner
             eyebrow="Curriculum"
             title="What needs your attention?"

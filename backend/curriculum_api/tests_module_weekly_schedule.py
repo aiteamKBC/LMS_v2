@@ -1,3 +1,4 @@
+from curriculum_api.catalogue.tests.parity.composition_test_support import composition_fixture, composition_patch
 import copy
 import json
 from datetime import datetime, timedelta, timezone
@@ -160,10 +161,14 @@ class ModuleWeeklyScheduleTests(CurriculumPersistenceTransactionHarness):
         module_id = self.create_module()
         row = self.row(views.AUTHORING_MODULES_TABLE, 'module_catalogue_id', module_id)
         self.assertEqual(views.module_weekly_schedule(row), SLOTS)
-        self.assertEqual(row['weeks_number'], 2)
+        # Current authoring owns weeks in live child rows, not the stale scalar.
+        self.assertEqual(len(views.active_week_rows(views.authoring_fetch_all(
+            views.AUTHORING_WEEKS_TABLE, 'module_catalogue_id = %s', [module_id],
+        ))), 2)
         self.assertEqual(row['session_week_day'], 'Monday, Thursday')
         structure = views.get_authoring_structure_payload(module_id)
         self.assertEqual(structure['weeklySchedule'], SLOTS)
+        self.assertEqual(structure['weeksNumber'], 2)
         catalogue = views.authoring_summary_catalogue_item(views.authoring_catalogue_summaries()[module_id])
         self.assertEqual(catalogue['weeklySchedule'], SLOTS)
         plan = views.module_session_plan_for_count(row, 4)
@@ -192,7 +197,7 @@ class ModuleWeeklyScheduleTests(CurriculumPersistenceTransactionHarness):
         self.assertEqual(response.status_code, 200, response.content)
         module = self.row(views.AUTHORING_MODULES_TABLE, 'module_catalogue_id', response.json()['created'][0]['catalogueId'])
         self.assertEqual(module['sessions_number'], 8)
-        self.assertEqual(module['weeks_number'], 4)
+        self.assertEqual(views.get_authoring_structure_payload(module['module_catalogue_id'])['weeksNumber'], 4)
         self.assertEqual(views.module_weekly_schedule(module), SLOTS)
         self.assertEqual(self.row(views.GROUPS_TABLE, 'group_id', 'GROUP-DATA-1')['session_week_day'], 'Wednesday')
 
@@ -213,7 +218,7 @@ class ModuleWeeklyScheduleTests(CurriculumPersistenceTransactionHarness):
                 return False
             return has_column(table, column)
 
-        with patch.object(views, 'has_column', side_effect=column_available):
+        with composition_fixture(views, 'has_column', side_effect=column_available):
             response = self.post_json('/curriculum_api/curriculum/groups/GROUP-DATA-1/modules/', {
                 'modules': [
                     {'moduleName': 'Earlier batch attachment', 'startDate': '2026-10-07', 'weeks': 1},
@@ -266,7 +271,7 @@ class TeamsWeekdaySeriesTests(CurriculumPersistenceTransactionHarness):
             ('coach_api.views.get_graph_settings', {'return_value': GRAPH_SETTINGS}),
             ('curriculum_api.views.apply_teams_meeting_options', {'side_effect': lambda organizer, join_url, **kw: (True, {'id': 'meeting-' + join_url.rsplit('/', 1)[-1]}, [])}),
         ):
-            mocked = patch(target, **kwargs)
+            mocked = composition_patch(target, **kwargs)
             mocked.start()
             self.addCleanup(mocked.stop)
         self.module_id = self.create_module()
@@ -306,7 +311,7 @@ class TeamsWeekdaySeriesTests(CurriculumPersistenceTransactionHarness):
             [component for week in before_restore['weekStructure'] for component in week['components'] if component['type'] == 'live-session'],
             [],
         )
-        with patch.object(views, 'teams_meeting_base_path', side_effect=lambda organizer, meeting_id, join_url='': meeting_id):
+        with composition_fixture(views, 'teams_meeting_base_path', side_effect=lambda organizer, meeting_id, join_url='': meeting_id):
             groups = views.live_session_meeting_groups(series, occurrences)
         self.assertEqual([[item['session_number'] for item in group] for _, group in groups], [[1, 3], [2, 4]])
         restore = self.post_json(f'/curriculum_api/curriculum/modules/{self.module_id}/teams-meetings/restore/', {'createMissingComponents': True})
@@ -419,6 +424,6 @@ class TeamsWeekdaySeriesTests(CurriculumPersistenceTransactionHarness):
     def test_unresolved_second_meeting_never_uses_the_first_meetings_attendance(self):
         series = {'organizer_email': 'tutor@example.com', 'online_meeting_id': 'meeting-1', 'join_url': 'https://teams.example/first'}
         rows = [{'session_number': 1, 'join_url': series['join_url']}, {'session_number': 2, 'join_url': 'https://teams.example/second'}]
-        with patch.object(views, 'teams_meeting_base_path', return_value='meeting-1'):
+        with composition_fixture(views, 'teams_meeting_base_path', return_value='meeting-1'):
             groups = views.live_session_meeting_groups(series, rows)
         self.assertEqual([[row['session_number'] for row in group] for _, group in groups], [[1]])

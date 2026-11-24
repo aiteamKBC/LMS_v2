@@ -15,6 +15,7 @@ first.
 """
 import ast
 import unittest
+import sys
 from pathlib import Path
 from unittest.mock import patch
 
@@ -35,7 +36,10 @@ def load_functions():
     assert len(nodes) == len(wanted_functions) + len(wanted_constants), [
         getattr(node, 'name', None) for node in nodes
     ]
-    namespace = {}
+    # Package initializers contain only docstrings; the extracted application
+    # module imports only the pure revision policy (hashlib/json).
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+    namespace = {'__name__': 'curriculum_api.revision_test', '__package__': 'curriculum_api'}
     exec(compile(ast.Module(body=nodes, type_ignores=[]), 'revision-functions', 'exec'), namespace)
     return namespace
 

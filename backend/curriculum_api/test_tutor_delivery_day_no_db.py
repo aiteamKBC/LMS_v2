@@ -13,9 +13,11 @@ the module's own stored day must not stand in for the day its group lacks.
 """
 import ast
 import unittest
+import sys
 from pathlib import Path
 
 ROOT = Path(__file__).parent
+sys.path.insert(0, str(ROOT.parent))
 NAMES = {'clean_str', 'schedule_day_part', 'schedule_time_parts',
          'module_delivery_day_gap', 'tutor_assignment_delivery_day_error',
          'tutor_delivery_schedule'}
@@ -23,6 +25,7 @@ NAMES = {'clean_str', 'schedule_day_part', 'schedule_time_parts',
 
 def load():
     namespace = {
+        '__package__': 'curriculum_api', '__name__': 'curriculum_api.views',
         're': __import__('re'),
         'staff_assignment_key': lambda value: (
             '' if str(value or '').strip().lower() in ('', 'unassigned')

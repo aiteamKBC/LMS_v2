@@ -1,3 +1,4 @@
+import { LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
 import { useEffect, useState, type FormEvent } from 'react';
 import {
   advancedAdminAssignmentUploads, advancedAdminAssignmentUploadUrl,
@@ -67,7 +68,7 @@ export default function AdvancedAdminAssignmentUploads({ learnerId, readOnly }: 
         <p className="text-sm text-[#52619a]">Private to Advanced Admin. Recorded by month; exact activity dates are not supplied.</p></div>
       <strong className="text-lg">{Number(total.toFixed(2))}h recorded</strong>
     </div>
-    {loading && <p role="status" className="mt-4">Loading assignment records…</p>}
+    {loading && <p  className="mt-4"><LoadingSkeleton label="Loading assignment records…" variant="rows" /></p>}
     {error && <p role="alert" className="mt-4 rounded-lg bg-red-50 p-3 text-red-700">{error}</p>}
     {!loading && items.length === 0 && <p className="mt-4 text-sm text-[#52619a]">No Advanced Admin assignments recorded.</p>}
     {items.length > 0 && <ul className="mt-4 space-y-2">{items.map(item => <li key={item.id} className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-[#e1e8f5] p-3">

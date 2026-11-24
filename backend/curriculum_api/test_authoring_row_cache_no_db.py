@@ -1,4 +1,5 @@
 """Native row reuse and concurrent changes, without any application database."""
+from curriculum_api.catalogue.tests.parity.composition_test_support import composition_fixture
 import copy
 import hashlib
 from contextlib import ExitStack
@@ -8,7 +9,8 @@ from unittest.mock import MagicMock, patch
 
 from django.test import SimpleTestCase
 
-from . import authoring_read_transport, authoring_row_cache as cache, views
+from . import authoring_row_cache, views
+from .catalogue.infrastructure import authoring_row_snapshots as cache, authoring_transport
 
 
 class VerifiedAuthoringRowsTests(SimpleTestCase):
@@ -17,8 +19,9 @@ class VerifiedAuthoringRowsTests(SimpleTestCase):
         self.addCleanup(self.stack.close)
         self.stack.enter_context(patch.dict(cache._SNAPSHOTS, clear=True))
         self.db = MagicMock(vendor='postgresql', settings_dict={'NAME': 'isolated', 'HOST': 'local'})
-        self.stack.enter_context(patch.object(views, 'connection', self.db))
-        self.stack.enter_context(patch.object(views, 'authoring_table_name', return_value='synthetic'))
+        self.stack.enter_context(patch('django.db.connection', self.db))
+        self.stack.enter_context(composition_fixture(views, 'connection', self.db))
+        self.stack.enter_context(composition_fixture(views, 'authoring_table_name', return_value='synthetic'))
         self.rows = [
             {'id': '1', 'description': '', 'settings_json': {'body': 'عربي 🙂'}, 'points': Decimal('1.20'),
              'created_at': datetime(2026, 10, 17, tzinfo=timezone.utc), cache._FINGERPRINT: 'first'},
@@ -26,13 +29,13 @@ class VerifiedAuthoringRowsTests(SimpleTestCase):
         ]
         self.cursor = self.db.cursor.return_value.__enter__.return_value
         self.cursor.fetchone.side_effect = lambda: (hashlib.sha256(''.join(row[cache._FINGERPRINT] for row in self.rows).encode()).hexdigest(),)
-        self.fetch = self.stack.enter_context(patch.object(authoring_read_transport, '_compact_rows', side_effect=lambda *a, **kw: copy.deepcopy(self.rows)))
-        self.headers = self.stack.enter_context(patch.object(views, 'rows_as_dicts', side_effect=lambda c: [
+        self.fetch = self.stack.enter_context(patch.object(authoring_transport, '_compact_rows', side_effect=lambda *a, **kw: copy.deepcopy(self.rows)))
+        self.headers = self.stack.enter_context(composition_fixture(views, 'rows_as_dicts', side_effect=lambda c: [
             {'id': row['id'], cache._FINGERPRINT: row[cache._FINGERPRINT]} for row in self.rows
         ]))
 
     def read(self, scope='module_catalogue_id = %s', params=None, columns=None):
-        return cache.read_verified_rows('components', scope, params or ['M1'], 'id', columns or ['id', 'description', 'settings_json'])
+        return authoring_row_cache.read_verified_rows('components', scope, params or ['M1'], 'id', columns or ['id', 'description', 'settings_json'])
 
     def test_unchanged_rows_still_check_database_but_do_not_transfer_content(self):
         first = self.read()

@@ -31,12 +31,12 @@ from .constants import (
 )
 
 
+from .learning_plans.domain.stored_plan import _s, _maybe_json, stored_training_plan
+
+
 # --------------------------------------------------------------------------- #
 # small defensive helpers                                                      #
 # --------------------------------------------------------------------------- #
-def _s(value):
-    """Coerce to a trimmed string ('' for None)."""
-    return "" if value is None else str(value).strip()
 
 
 def _as_list(value):
@@ -55,20 +55,6 @@ def _pick(d, *keys, default=""):
     return default
 
 
-def _maybe_json(value):
-    """A TEXT column that might hold JSON. Returns parsed value or None."""
-    if value is None:
-        return None
-    if isinstance(value, (list, dict)):
-        return value
-    if isinstance(value, str):
-        import json
-
-        try:
-            return json.loads(value)
-        except (ValueError, TypeError):
-            return None
-    return None
 
 
 # --------------------------------------------------------------------------- #
@@ -104,6 +90,16 @@ def to_list_row(u):
         # "Add" vs "Edit" without fetching every learner's plan.
         "hasLearningPlan": has_plan,
         "programmeStatus": programme_status(u),
+        # Lightweight progression fields for staff dashboards. These are
+        # already stored on Created_users; exposing them here keeps the
+        # directory-backed Deep Dive view on one bounded collection request.
+        "learnerStartDate": _s(getattr(u, "learner_start_date", None)),
+        "learnerEndDate": _s(getattr(u, "learner_end_date", None)),
+        "startDate": _s(getattr(u, "start_date", None)),
+        "endDate": _s(getattr(u, "apprenticeship_end_date", None)) or _s(getattr(u, "end_date", None)),
+        "coachName": _s(getattr(u, "coach_name", None)),
+        "coachEmail": _s(getattr(u, "coach_email", None)),
+        "referenceNumber": _s(getattr(u, "reference_number", None)),
         # The programme itself, not just its status — the directory shows both.
         # Staff and employer rows have no programme, so their mappers leave it
         # absent and the table renders a dash.
@@ -614,13 +610,6 @@ def training_plan_field(source):
     return "training_plan" if isinstance(_maybe_json(getattr(source, "training_plan", None)), list) else "learning_plan"
 
 
-def stored_training_plan(source):
-    """None means unsaved; an empty array is an explicitly cleared assignment."""
-    for field in ("training_plan", "learning_plan"):
-        plan = _maybe_json(getattr(source, field, None))
-        if isinstance(plan, list):
-            return [entry for entry in plan if isinstance(entry, dict)]
-    return None
 
 
 def get_training_plan(source):
@@ -985,18 +974,14 @@ def _component_marking_statuses(source, learner_profile):
     """Coach decision per component id, for this learner's submissions.
 
     Read straight from ``learning_reflection_submissions`` because that is where
-    a coach's decision lands. Matched on both the enrolment id the learner page
-    uses and the profile id older rows carry, so earlier submissions are not
-    missed.
+    a coach's decision lands. The table is owned by the canonical learner
+    profile id and learner kind; the enrolment id is never a submission owner.
     """
     from django.db import DatabaseError, connections
 
-    candidates = {str(getattr(source, "id", "") or "")}
-    if learner_profile is not None:
-        candidates.add(str(getattr(learner_profile, "id", "") or ""))
-        candidates.add(str(getattr(learner_profile, "enrolment_id", "") or ""))
-    candidates.discard("")
-    if not candidates:
+    profile_id = getattr(learner_profile, "id", None)
+    learner_kind = getattr(learner_profile, "learner_type", None) or getattr(source, "learner_type", None)
+    if profile_id is None or not learner_kind:
         return {}
 
     try:
@@ -1006,12 +991,13 @@ def _component_marking_statuses(source, learner_profile):
                 select distinct on (activity_id)
                        activity_id, status, coach_feedback, reviewed_by, reviewed_at
                   from "Learner"."learning_reflection_submissions"
-                 where learner_id::text = any(%s)
+                 where learner_id = %s and learner_kind = %s
+                   and activity_type = 'assignment'
                  order by activity_id, case when activity_type = 'assignment' then
                      case status when 'accepted' then 0 when 'partial' then 1 when 'submitted_for_tutor_review' then 2 when 'rejected' then 3 else 4 end else 0 end,
                      submitted_at desc nulls last
                 """,
-                [sorted(candidates)],
+                [profile_id, learner_kind],
             )
             return {
                 str(row[0]): {

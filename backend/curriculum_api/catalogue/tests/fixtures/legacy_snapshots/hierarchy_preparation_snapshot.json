@@ -1,0 +1,1236 @@
+{
+  "format_created_at": {
+    "source": "def format_created_at(value):\n    \"\"\"A created-at stamp as a sortable ISO string, keeping the time of day.\n\n    `format_date` would do for a display date, but \"recently added\" is read on a\n    day when several records were added: dropping the time makes every one of\n    them a tie, and the list stops answering the question it was sorted for.\n    Non-datetime values fall through to the date-only answer, and anything\n    unreadable to '' -- which sorts last, never first.\n    \"\"\"\n    if isinstance(value, datetime):\n        return value.isoformat()\n    text = clean_str(value)\n    if not text:\n        return ''\n    # Already an ISO-ish timestamp from the driver: kept as it is, since it\n    # compares correctly as text.\n    if re.match(r'^\\d{4}-\\d{2}-\\d{2}[T ]\\d{2}:\\d{2}', text):\n        return text.replace(' ', 'T', 1)\n    return format_date(text)",
+    "owner": "curriculum_api.catalogue.domain.hierarchy_dates",
+    "dependencies": [
+      "clean_str",
+      "datetime",
+      "format_date",
+      "re"
+    ],
+    "local_ports": {},
+    "decorators": []
+  },
+  "calculate_cohort_end_date": {
+    "source": "def calculate_cohort_end_date(start_value, duration_months):\n    start = parse_date(start_value)\n    months = parse_int(duration_months, 0)\n    if not start or months <= 0:\n        return None\n\n    # Curriculum convention: a 24 month cohort starting 2026-09-01 ends 2028-08-31.\n    month_index = start.month - 1 + months\n    year = start.year + month_index // 12\n    month = month_index % 12 + 1\n    day = min(start.day, calendar.monthrange(year, month)[1])\n    return date(year, month, day) - timedelta(days=1)",
+    "owner": "curriculum_api.catalogue.domain.hierarchy_dates",
+    "dependencies": [
+      "calendar",
+      "date",
+      "parse_date",
+      "parse_int",
+      "timedelta"
+    ],
+    "local_ports": {},
+    "decorators": []
+  },
+  "holiday_extension_days": {
+    "source": "def holiday_extension_days(holidays, period_start, period_end):\n    \"\"\"Count the selected holiday days inside a delivery period.\n\n    Only the part of a holiday that falls inside ``period_start``..``period_end``\n    counts. Weekends are counted too because module session plans work in\n    calendar dates: a two week holiday blocks fourteen possible calendar days,\n    even if only some of those dates are normal delivery days.\n    \"\"\"\n    start = parse_date(period_start)\n    end = parse_date(period_end)\n    if not start or not end:\n        return 0\n\n    days = {day for day in holiday_date_set(holidays) if start <= day <= end}\n    return len(days)",
+    "owner": "curriculum_api.catalogue.domain.hierarchy_dates",
+    "dependencies": [
+      "holiday_date_set",
+      "parse_date"
+    ],
+    "local_ports": {},
+    "decorators": []
+  },
+  "holiday_extension_breakdown": {
+    "source": "def holiday_extension_breakdown(holidays, period_start, period_end):\n    \"\"\"Per-holiday account of what each one takes out of a delivery period.\n\n    The total on its own (\"+37 days\") is not something a human can check. This\n    names each holiday and the days of it that actually landed inside the\n    period, so a schedule preview can explain exactly what was skipped.\n\n    Days are attributed to the first holiday that claims them, so overlapping\n    holidays add up to the same total the date arithmetic uses rather than\n    double-counting the shared days.\n    \"\"\"\n    start = parse_date(period_start)\n    end = parse_date(period_end)\n    if not start or not end:\n        return []\n\n    claimed = set()\n    breakdown = []\n    for item in holidays or []:\n        days = sorted(\n            day for day in holiday_date_set([item])\n            if start <= day <= end and day not in claimed\n        )\n        if not days:\n            continue\n        claimed.update(days)\n        label = ''\n        if isinstance(item, dict):\n            label = clean_str(item.get('label') or item.get('name') or item.get('title'))\n        breakdown.append({\n            'label': label,\n            'startDate': format_date(days[0]),\n            'endDate': format_date(days[-1]),\n            'days': len(days),\n        })\n    return breakdown",
+    "owner": "curriculum_api.catalogue.domain.hierarchy_dates",
+    "dependencies": [
+      "clean_str",
+      "format_date",
+      "holiday_date_set",
+      "parse_date"
+    ],
+    "local_ports": {},
+    "decorators": []
+  },
+  "cohort_practical_end_date": {
+    "source": "def cohort_practical_end_date(start_value, duration_months, holiday_ids=None, holiday_rows=None):\n    \"\"\"A cohort's contracted practical end date.\n\n    Cohort dates are signed contract dates, so selected holidays do not move\n    them. Holiday ids are still stored on the cohort because module schedules use\n    that selection to skip clashing sessions and extend the affected module plan.\n    ``holiday_ids`` and ``holiday_rows`` stay in the signature for older callers.\n    \"\"\"\n    return calculate_cohort_end_date(start_value, duration_months)",
+    "owner": "curriculum_api.catalogue.domain.hierarchy_dates",
+    "dependencies": [
+      "calculate_cohort_end_date"
+    ],
+    "local_ports": {},
+    "decorators": []
+  },
+  "parse_epa_months": {
+    "source": "def parse_epa_months(value):\n    \"\"\"Read an End Point Assessment period in whole months.\n\n    None means \"no EPA period recorded\", which is not the same as zero: a\n    cohort with no EPA period has no apprenticeship end date to show, whereas\n    an explicit 0 means the apprenticeship ends when the practical period does.\n    \"\"\"\n    if value in (None, ''):\n        return None\n    months = parse_int(value, -1)\n    return months if months >= 0 else None",
+    "owner": "curriculum_api.catalogue.domain.hierarchy_dates",
+    "dependencies": [
+      "parse_int"
+    ],
+    "local_ports": {},
+    "decorators": []
+  },
+  "payload_epa_months": {
+    "source": "def payload_epa_months(payload, existing=None):\n    \"\"\"Resolve the EPA period for a write, leaving it untouched when unsent.\n\n    An explicit blank clears the period; an absent key keeps whatever the stored\n    row already has, so a partial save cannot drop an authored period.\n    \"\"\"\n    for key in ('epaMonths', 'epa_months'):\n        if key in (payload or {}):\n            return parse_epa_months((payload or {}).get(key))\n    return parse_epa_months((existing or {}).get('epa_months'))",
+    "owner": "curriculum_api.catalogue.domain.hierarchy_dates",
+    "dependencies": [
+      "parse_epa_months"
+    ],
+    "local_ports": {},
+    "decorators": []
+  },
+  "parse_apprenticeship_end_override": {
+    "source": "def parse_apprenticeship_end_override(value):\n    \"\"\"Read a manually authored apprenticeship end date.\n\n    None means \"no override\": the calculated date stands. An unparseable value\n    is treated the same way rather than raising, so a bad string cannot wedge a\n    save \u2014 the cohort simply keeps its calculated date.\n    \"\"\"\n    if value in (None, ''):\n        return None\n    return parse_date(value)",
+    "owner": "curriculum_api.catalogue.domain.hierarchy_dates",
+    "dependencies": [
+      "parse_date"
+    ],
+    "local_ports": {},
+    "decorators": []
+  },
+  "payload_apprenticeship_end_override": {
+    "source": "def payload_apprenticeship_end_override(payload, existing=None):\n    \"\"\"Resolve the override for a write, leaving it untouched when unsent.\n\n    Mirrors ``payload_epa_months``: an explicit blank clears the override and\n    hands the date back to the EPA calculation, while an absent key keeps\n    whatever the stored row already has so a partial save cannot drop an\n    authored date.\n    \"\"\"\n    # The explicit override keys are read first so a payload that round-trips a\n    # serialized cohort -- which carries the *effective* apprenticeshipEndDate\n    # alongside the authored apprenticeshipEndOverride -- cannot promote a\n    # calculated date into an authored one.\n    for key in ('apprenticeshipEndOverride', 'apprenticeship_end_override', 'apprenticeshipEndDate', 'apprenticeship_end_date'):\n        if key in (payload or {}):\n            return parse_apprenticeship_end_override((payload or {}).get(key))\n    return parse_apprenticeship_end_override((existing or {}).get('apprenticeship_end_override'))",
+    "owner": "curriculum_api.catalogue.domain.hierarchy_dates",
+    "dependencies": [
+      "parse_apprenticeship_end_override"
+    ],
+    "local_ports": {},
+    "decorators": []
+  },
+  "apprenticeship_end_override_sent": {
+    "source": "def apprenticeship_end_override_sent(payload, meta=None):\n    \"\"\"Whether this write carries an apprenticeship end date at all.\"\"\"\n    keys = ('apprenticeshipEndDate', 'apprenticeship_end_date', 'apprenticeshipEndOverride', 'apprenticeship_end_override')\n    return any(key in (payload or {}) for key in keys) or 'apprenticeship_end_override' in (meta or {})",
+    "owner": "curriculum_api.catalogue.domain.hierarchy_dates",
+    "dependencies": [],
+    "local_ports": {},
+    "decorators": []
+  },
+  "calculate_apprenticeship_end_date": {
+    "source": "def calculate_apprenticeship_end_date(practical_end_value, epa_months):\n    \"\"\"The apprenticeship end date: the practical end date plus the EPA period.\n\n    Unlike ``calculate_cohort_end_date`` this keeps the same day of the month\n    and does not subtract a day \u2014 the practical period already ended, and the\n    EPA window is counted forward from that date. A practical period ending\n    2027-03-04 with a 5 month EPA period ends 2027-08-04.\n    \"\"\"\n    practical_end = parse_date(practical_end_value)\n    months = parse_epa_months(epa_months)\n    if not practical_end or not months:\n        return None\n\n    month_index = practical_end.month - 1 + months\n    year = practical_end.year + month_index // 12\n    month = month_index % 12 + 1\n    day = min(practical_end.day, calendar.monthrange(year, month)[1])\n    return date(year, month, day)",
+    "owner": "curriculum_api.catalogue.domain.hierarchy_dates",
+    "dependencies": [
+      "calendar",
+      "date",
+      "parse_date",
+      "parse_epa_months"
+    ],
+    "local_ports": {},
+    "decorators": []
+  },
+  "cohort_apprenticeship_end_date": {
+    "source": "def cohort_apprenticeship_end_date(practical_end_value, epa_months, override=None):\n    \"\"\"The date a cohort's apprenticeship actually ends.\n\n    An authored override wins outright \u2014 it is the date the delivery team was\n    given, and no whole number of EPA months need land on it. With no override\n    the date is calculated from the practical end date plus the EPA period.\n    \"\"\"\n    manual = parse_apprenticeship_end_override(override)\n    if manual:\n        return manual\n    return calculate_apprenticeship_end_date(practical_end_value, epa_months)",
+    "owner": "curriculum_api.catalogue.domain.hierarchy_dates",
+    "dependencies": [
+      "calculate_apprenticeship_end_date",
+      "parse_apprenticeship_end_override"
+    ],
+    "local_ports": {},
+    "decorators": []
+  },
+  "cohort_epa_dates": {
+    "source": "def cohort_epa_dates(practical_end_value, epa_months, override=None):\n    \"\"\"Resolve the pair of end dates a cohort exposes, as ISO strings.\n\n    The apprenticeship end date is always resolved here rather than read back\n    from its ``apprenticeship_end_date`` column: that column is a cache for SQL\n    consumers (the enrolment backfill joins on it), and serving the cache would\n    surface a stale date whenever the practical end date moved without the EPA\n    period being resent. The override column is the authored input and *is* read\n    back, which is exactly why the two are kept apart.\n    \"\"\"\n    practical_end = format_date(practical_end_value)\n    return practical_end, format_date(cohort_apprenticeship_end_date(practical_end, epa_months, override))",
+    "owner": "curriculum_api.catalogue.domain.hierarchy_dates",
+    "dependencies": [
+      "cohort_apprenticeship_end_date",
+      "format_date"
+    ],
+    "local_ports": {},
+    "decorators": []
+  },
+  "module_calendar_end_date": {
+    "source": "def module_calendar_end_date(start_value, week_count):\n    \"\"\"The module's End Date field: the calendar span of its authored weeks,\n    counted from the start date.\n\n    Deliberately independent of delivery days, holidays and the generated\n    session plan -- a module authored for N weeks always finishes N weeks\n    after it starts, even when its only live session lands on day one.\n    ``build_module_session_plan``'s ``finalEndDate`` answers a different\n    question (where does the last session land) and must not be read as this\n    field; this is the one server-side callers use whenever a module payload\n    arrives with no explicit ``endDate`` to fall back on.\n    \"\"\"\n    start = parse_date(start_value)\n    weeks = max(0, parse_int(week_count, 0))\n    if not start or weeks <= 0:\n        return ''\n    return (start + timedelta(days=weeks * 7 - 1)).isoformat()",
+    "owner": "curriculum_api.catalogue.domain.hierarchy_dates",
+    "dependencies": [
+      "parse_date",
+      "parse_int",
+      "timedelta"
+    ],
+    "local_ports": {},
+    "decorators": []
+  },
+  "cohort_delivery_window": {
+    "source": "def cohort_delivery_window(cohort):\n    \"\"\"The dates a module placed in ``cohort`` has to fit inside.\n\n    The practical end date is the boundary, not the apprenticeship end: the EPA\n    period that follows it carries no delivery. It already has any ticked\n    holidays folded in, so a plan that skips them still lands inside the window.\n    \"\"\"\n    cohort = cohort or {}\n    start = parse_date(cohort.get('startDate') or cohort.get('start_date'))\n    end = parse_date(\n        cohort.get('practicalEndDate')\n        or cohort.get('practical_end_date')\n        or cohort.get('endDate')\n        or cohort.get('end_date')\n    )\n    return start, end",
+    "owner": "curriculum_api.catalogue.domain.hierarchy_dates",
+    "dependencies": [
+      "parse_date"
+    ],
+    "local_ports": {},
+    "decorators": []
+  },
+  "shift_date_by_months": {
+    "source": "def shift_date_by_months(value, delta_months):\n    parsed = parse_date(value)\n    if not parsed:\n        return None\n    month_index = parsed.month - 1 + delta_months\n    year = parsed.year + month_index // 12\n    month = month_index % 12 + 1\n    day = min(parsed.day, calendar.monthrange(year, month)[1])\n    return date(year, month, day)",
+    "owner": "curriculum_api.catalogue.domain.hierarchy_dates",
+    "dependencies": [
+      "calendar",
+      "date",
+      "parse_date"
+    ],
+    "local_ports": {},
+    "decorators": []
+  },
+  "infer_duration_months": {
+    "source": "def infer_duration_months(start_value, end_value, fallback=0):\n    \"\"\"Read a contracted duration back off a start/end pair.\n\n    The exact inverse of ``calculate_cohort_end_date``: that rule stores the end\n    date as the day *before* the corresponding date, so the month count is taken\n    against ``end + 1 day`` rather than against the end date itself. Counting off\n    the end date only works for cohorts starting on the 1st -- there the end\n    lands in the previous month, so it needs a month adding back, while a cohort\n    starting mid-month ends in the same month as its corresponding date and does\n    not. Anchoring removes that split.\n\n    Authored end dates that do not follow the rule are counted down to whole\n    months: an anchor short of the corresponding day has not completed its final\n    month, unless it is the last day of its month and the day was clamped there.\n    \"\"\"\n    explicit = parse_int(fallback, 0)\n    if explicit > 0:\n        return explicit\n    start = parse_date(start_value)\n    end = parse_date(end_value)\n    if not start or not end or end < start:\n        return 0\n    anchor = end + timedelta(days=1)\n    months = (anchor.year - start.year) * 12 + (anchor.month - start.month)\n    clamped = anchor.day == calendar.monthrange(anchor.year, anchor.month)[1]\n    if anchor.day < start.day and not clamped:\n        months -= 1\n    return max(1, months)",
+    "owner": "curriculum_api.catalogue.domain.hierarchy_dates",
+    "dependencies": [
+      "calendar",
+      "parse_date",
+      "parse_int",
+      "timedelta"
+    ],
+    "local_ports": {},
+    "decorators": []
+  },
+  "append_notes_meta": {
+    "source": "def append_notes_meta(notes, meta):\n    existing = []\n    keys = set(meta)\n    for line in str(notes or '').splitlines():\n        if line.startswith('__') and ':' in line:\n            key = line.split(':', 1)[0].strip('_')\n            if key in keys:\n                continue\n        existing.append(line)\n    for key, value in meta.items():\n        existing.append(f'__{key}: {value}')\n    return '\\n'.join(line for line in existing if line != '').strip()",
+    "owner": "curriculum_api.catalogue.domain.hierarchy_values",
+    "dependencies": [],
+    "local_ports": {},
+    "decorators": []
+  },
+  "remove_notes_meta": {
+    "source": "def remove_notes_meta(notes, keys):\n    blocked = set(keys)\n    lines = []\n    for line in str(notes or '').splitlines():\n        if line.startswith('__') and ':' in line:\n            key = line.split(':', 1)[0].strip('_')\n            if key in blocked:\n                continue\n        lines.append(line)\n    return '\\n'.join(line for line in lines if line != '').strip()",
+    "owner": "curriculum_api.catalogue.domain.hierarchy_values",
+    "dependencies": [],
+    "local_ports": {},
+    "decorators": []
+  },
+  "parse_required_otjh": {
+    "source": "def parse_required_otjh(value):\n    \"\"\"Off-the-job hours a learner must complete for the programme.\n\n    Returns None for a blank or unparseable entry so the column stays NULL: the\n    review step distinguishes \"no target set\" from a target of zero hours, and\n    treating a cleared field as 0 would report every programme as already met.\n    \"\"\"\n    text = clean_str(value)\n    if not text:\n        return None\n    hours = parse_float(text, -1)\n    if hours < 0:\n        return None\n    return round(hours, 2)",
+    "owner": "curriculum_api.catalogue.domain.hierarchy_values",
+    "dependencies": [
+      "clean_str",
+      "parse_float"
+    ],
+    "local_ports": {},
+    "decorators": []
+  },
+  "payload_required_otjh": {
+    "source": "def payload_required_otjh(payload, existing=None):\n    \"\"\"Resolve required_otjh for a write, leaving it untouched when unsent.\n\n    An absent key must not wipe a stored target, so callers that pass this into\n    update_rows also pass allow_null_columns=['required_otjh'] \u2014 that lets an\n    explicitly emptied field clear the column while an omitted one is dropped.\n    \"\"\"\n    payload = payload or {}\n    for key in ('requiredOtjh', 'required_otjh'):\n        if key in payload:\n            return parse_required_otjh(payload.get(key))\n    if existing is None:\n        return None\n    return parse_required_otjh((existing or {}).get('required_otjh'))",
+    "owner": "curriculum_api.catalogue.domain.hierarchy_values",
+    "dependencies": [
+      "parse_required_otjh"
+    ],
+    "local_ports": {},
+    "decorators": []
+  },
+  "curriculum_row_effectively_deleted": {
+    "source": "def curriculum_row_effectively_deleted(row):\n    \"\"\"Is this curriculum row archived -- directly, or through an ancestor?\n\n    ``status`` is the archive record. Parent-driven archiving needs no join: the\n    cascade sets the child row's own status (and history records the ancestor),\n    so a row archived with its programme reads as archived here too.\n\n    This is the predicate the parent-link repair uses to decide what it may\n    touch and what it may point at. It never *changes* archive state --\n    restoring is a separate, explicit operation (``restore_soft_delete_payload``).\n    \"\"\"\n    return programme_deleted_row(row)",
+    "owner": "curriculum_api.catalogue.domain.hierarchy_values",
+    "dependencies": [
+      "programme_deleted_row"
+    ],
+    "local_ports": {},
+    "decorators": []
+  },
+  "is_operational_training_row": {
+    "source": "def is_operational_training_row(row):\n    if programme_deleted_row(row):\n        return False\n\n    meta = row.get('_meta', {})\n    for key in ('hidden', 'is_hidden', 'deleted', 'is_deleted', 'is_programme_deleted', 'archived', 'is_archived', 'inactive', 'disabled'):\n        if key in meta and truthy(meta.get(key)):\n            return False\n\n    for key in ('active', 'is_active', 'visible', 'is_visible', 'operational', 'is_operational'):\n        if key in meta and falsey(meta.get(key)):\n            return False\n\n    return True",
+    "owner": "curriculum_api.catalogue.domain.hierarchy_values",
+    "dependencies": [
+      "falsey",
+      "programme_deleted_row",
+      "truthy"
+    ],
+    "local_ports": {},
+    "decorators": []
+  },
+  "title_case_status": {
+    "source": "def title_case_status(is_archived, start_value, end_value):\n    if is_archived:\n        return 'archived'\n\n    today = date.today()\n    start = parse_date(start_value)\n    end = parse_date(end_value)\n    if start and start > today:\n        return 'planned'\n    if end and end < today:\n        return 'completed'\n    return 'active'",
+    "owner": "curriculum_api.catalogue.domain.hierarchy_values",
+    "dependencies": [
+      "date",
+      "parse_date"
+    ],
+    "local_ports": {},
+    "decorators": []
+  },
+  "delivery_status_for_training_row": {
+    "source": "def delivery_status_for_training_row(row):\n    row = row or {}\n    if '_meta' not in row:\n        row = {**row, '_meta': extract_notes_meta(row.get('notes'))}\n    if not is_operational_training_row(row):\n        return 'archived'\n\n    today = date.today()\n    start = parse_date(row.get('start_date') or row.get('Starting_date_lable'))\n    end = parse_date(row.get('end_date'))\n    if start and today < start:\n        return 'not_started'\n    if start and end:\n        if start <= today <= end:\n            return 'active'\n        if today > end:\n            return 'completed'\n    return 'unknown'",
+    "owner": "curriculum_api.catalogue.domain.hierarchy_values",
+    "dependencies": [
+      "date",
+      "extract_notes_meta",
+      "is_operational_training_row",
+      "parse_date"
+    ],
+    "local_ports": {},
+    "decorators": []
+  },
+  "get_module_session_names": {
+    "source": "def get_module_session_names(module_row):\n    json_names = parse_json_value(module_row.get('session_names_json'), None)\n    if isinstance(json_names, list):\n        names = [str(name).strip() for name in json_names if str(name).strip()]\n        if names:\n            return names\n\n    names = []\n    for index in range(1, 31):\n        value = module_row.get(f'session_name_{index}')\n        if value:\n            names.append(str(value).strip())\n    return names",
+    "owner": "curriculum_api.catalogue.domain.hierarchy_values",
+    "dependencies": [
+      "parse_json_value"
+    ],
+    "local_ports": {},
+    "decorators": []
+  },
+  "program_config_by_id": {
+    "source": "def program_config_by_id(program_configs):\n    configs = {}\n    configs_by_name = {}\n    for config in program_configs:\n        config_id = programme_config_id(config)\n        if config_id:\n            configs[config_id] = config\n        if config.get('name'):\n            name_key = normalise(config.get('name'))\n            current = configs_by_name.get(name_key)\n            if not current or program_config_preference(config) > program_config_preference(current):\n                configs_by_name[name_key] = config\n    configs.update(configs_by_name)\n    return configs",
+    "owner": "curriculum_api.catalogue.domain.hierarchy_values",
+    "dependencies": [
+      "normalise",
+      "program_config_preference",
+      "programme_config_id"
+    ],
+    "local_ports": {},
+    "decorators": []
+  },
+  "programme_config_for_programme": {
+    "source": "def programme_config_for_programme(program_configs, programme):\n    programme_ids = {\n        clean_str(programme.get('id')),\n        clean_str(programme.get('sourceId')),\n    }\n    programme_ids = {value for value in programme_ids if value}\n    programme_name = normalise(programme.get('name'))\n    for config in program_configs or []:\n        if programme_config_identity(config) in programme_ids:\n            return config\n    if programme_name:\n        return preferred_program_config_by_name(program_configs or [], programme.get('name'))\n    return None",
+    "owner": "curriculum_api.catalogue.domain.hierarchy_values",
+    "dependencies": [
+      "clean_str",
+      "normalise",
+      "preferred_program_config_by_name",
+      "programme_config_identity"
+    ],
+    "local_ports": {},
+    "decorators": []
+  },
+  "is_placeholder_programme_id": {
+    "source": "def is_placeholder_programme_id(value):\n    \"\"\"True when `value` is a client placeholder rather than a real programme id.\"\"\"\n    candidate = clean_str(value).lower()\n    if not candidate:\n        return True\n    if candidate in PLACEHOLDER_PROGRAMME_IDS:\n        return True\n    # The display placeholder arrives spaced and capitalised (\"Unassigned\n    # programme\"); compare on the normalised form so it is recognised too.\n    if normalise(candidate) in PLACEHOLDER_PROGRAMME_IDS:\n        return True\n    return candidate.startswith('local-')",
+    "owner": "curriculum_api.catalogue.domain.hierarchy_values",
+    "dependencies": [
+      "PLACEHOLDER_PROGRAMME_IDS",
+      "clean_str",
+      "normalise"
+    ],
+    "local_ports": {},
+    "decorators": []
+  },
+  "module_row_belongs_to_group": {
+    "source": "def module_row_belongs_to_group(row, group):\n    group_id = clean_str(group.get('id') or group.get('groupId') or group.get('group_id'))\n    cohort_id = clean_str(group.get('cohortId') or group.get('cohort_id'))\n    group_name = normalise(group.get('name') or group.get('groupName') or group.get('group_name'))\n    row_group_id = clean_str(row.get('group_id'))\n    row_cohort_id = clean_str(row.get('cohort_id'))\n    if group_id and row_group_id == group_id:\n        return True\n    if group_name and normalise(row.get('group_name')) == group_name:\n        return not cohort_id or not row_cohort_id or row_cohort_id == cohort_id\n    return False",
+    "owner": "curriculum_api.catalogue.domain.hierarchy_values",
+    "dependencies": [
+      "clean_str",
+      "normalise"
+    ],
+    "local_ports": {},
+    "decorators": []
+  },
+  "group_tutor_from_module_names": {
+    "source": "def group_tutor_from_module_names(names):\n    \"\"\"Collapse the tutor names on a group's modules into one group-level label.\n\n    A group is normally taught by one tutor, so a single distinct name is\n    reported as-is. When modules disagree the group is genuinely split, so\n    surface that rather than silently picking the first name.\n    \"\"\"\n    distinct = unique([clean_str(name) for name in (names or []) if clean_str(name)])\n    if not distinct:\n        return 'Unassigned'\n    if len(distinct) == 1:\n        return distinct[0]\n    return f'{distinct[0]} +{len(distinct) - 1}'",
+    "owner": "curriculum_api.catalogue.domain.hierarchy_values",
+    "dependencies": [
+      "clean_str",
+      "unique"
+    ],
+    "local_ports": {},
+    "decorators": []
+  },
+  "curriculum_identifier_candidates": {
+    "source": "def curriculum_identifier_candidates(value):\n    text = clean_str(value)\n    candidates = {\n        text,\n        slugify(text),\n    }\n    if text:\n        candidates.add(f'program-{slugify(text)}')\n    return {candidate for candidate in candidates if candidate}",
+    "owner": "curriculum_api.catalogue.domain.hierarchy_values",
+    "dependencies": [
+      "clean_str",
+      "slugify"
+    ],
+    "local_ports": {},
+    "decorators": []
+  },
+  "compact_module_list_rows": {
+    "source": "def compact_module_list_rows(modules):\n    \"\"\"Project module dicts onto COMPACT_MODULE_LIST_FIELDS.\n\n    Whitelist-driven: the key set above is the contract, and a field added to a\n    module row later stays out of this response until somebody puts it in that\n    set deliberately.\n\n    Copies rather than edits: full consumers can share the source dictionaries.\n    The compact endpoint also has its own list-only builder/cache, which avoids\n    constructing component edit payloads while retaining this exact contract.\n    \"\"\"\n    return [\n        {\n            **{\n                key: value for key, value in module.items()\n                if key in COMPACT_MODULE_LIST_FIELDS\n            },\n            'sessionNamesCount': len(module.get('sessionNames') or []),\n        }\n        for module in modules\n    ]",
+    "owner": "curriculum_api.catalogue.domain.hierarchy_values",
+    "dependencies": [
+      "COMPACT_MODULE_LIST_FIELDS"
+    ],
+    "local_ports": {},
+    "decorators": []
+  },
+  "find_programme": {
+    "source": "def find_programme(payload, identifier):\n    ident = clean_str(identifier)\n    fallback = None\n    for programme in payload['programmes']:\n        exact_candidates = {\n            clean_str(programme.get('id')),\n            clean_str(programme.get('sourceId')),\n            f'program-{slugify(programme.get(\"sourceId\"))}',\n        }\n        name_candidates = {\n            slugify(programme.get('sourceId')),\n            slugify(programme.get('name')),\n            f'program-{slugify(programme.get(\"name\"))}',\n        }\n        if ident in exact_candidates:\n            return programme\n        if not fallback and ident in name_candidates:\n            fallback = programme\n    return fallback",
+    "owner": "curriculum_api.catalogue.domain.hierarchy_values",
+    "dependencies": [
+      "clean_str",
+      "slugify"
+    ],
+    "local_ports": {},
+    "decorators": []
+  },
+  "programme_identifier_candidates": {
+    "source": "def programme_identifier_candidates(identifier, programme=None, config=None):\n    \"\"\"Every id a child row may legitimately carry for this programme.\"\"\"\n    values = {\n        clean_str(identifier),\n        clean_str(programme_config_identity(config)),\n        clean_str((programme or {}).get('sourceId')),\n        clean_str((programme or {}).get('id')),\n    }\n    return sorted(value for value in values if value)",
+    "owner": "curriculum_api.catalogue.domain.hierarchy_values",
+    "dependencies": [
+      "clean_str",
+      "programme_config_identity"
+    ],
+    "local_ports": {},
+    "decorators": []
+  },
+  "module_archive_parent_markers": {
+    "source": "def module_archive_parent_markers(module_row, module_catalogue_id):\n    \"\"\"Which ``deleted_via_parent`` markers belong to this module's archive.\n\n    A module archived on its own stamps its children with its own catalogue id,\n    which is what ``restore_rows_via_parent`` matches. A module that came here on\n    a programme's cascade did not stamp anything: that cascade wrote the\n    *programme* id onto the module and onto every week and component under it, so\n    matching on the catalogue id alone would report an archived programme's\n    modules as empty. Whatever marker the module itself carries is therefore\n    accepted alongside its own id.\n    \"\"\"\n    markers = {clean_str(module_catalogue_id)}\n    via_parent = clean_str((module_row or {}).get('deleted_via_parent'))\n    if via_parent:\n        markers.add(via_parent)\n    return {marker for marker in markers if marker}",
+    "owner": "curriculum_api.catalogue.domain.hierarchy_values",
+    "dependencies": [
+      "clean_str"
+    ],
+    "local_ports": {},
+    "decorators": []
+  },
+  "stamp_datetime": {
+    "source": "def stamp_datetime(value):\n    \"\"\"A stored ``deleted_at`` as a datetime, or None when it is not one.\"\"\"\n    if isinstance(value, datetime):\n        return value\n    text = clean_str(value)\n    if not text:\n        return None\n    try:\n        return datetime.fromisoformat(text.replace('Z', '+00:00'))\n    except ValueError:\n        return None",
+    "owner": "curriculum_api.catalogue.domain.hierarchy_values",
+    "dependencies": [
+      "clean_str",
+      "datetime"
+    ],
+    "local_ports": {},
+    "decorators": []
+  },
+  "row_in_module_archive": {
+    "source": "def row_in_module_archive(row, markers, bounds=None):\n    \"\"\"Would restoring this module bring this child row back?\n\n    A live row is kept -- the caller is reading an archived module, but a child\n    that was never soft-deleted is still part of it. A deleted one is kept only\n    when its ``deleted_via_parent`` marker is one of this module's, so a\n    component deleted by hand before the module was archived stays out: reading\n    an archived module must show what a restore returns, not everything the table\n    has ever held under that id.\n\n    ``bounds`` (``module_archive_event_bounds``) also requires the row to have\n    been archived in the same moment as the module. A module once archived and\n    then brought back by a save keeps the children of that earlier archive\n    stamped with its id; they belong to no archive the module is in now.\n    \"\"\"\n    if not curriculum_row_effectively_deleted(row):\n        return True\n    if clean_str(row.get('deleted_via_parent')) not in markers:\n        return False\n    if bounds is None:\n        return True\n    deleted_at = stamp_datetime(row.get('deleted_at'))\n    if deleted_at is None:\n        return True\n    try:\n        return bounds[0] <= deleted_at <= bounds[1]\n    except TypeError:\n        # Naive against aware: the two stamps came from different writers.\n        # Fall back to the marker rather than guess an offset.\n        return True",
+    "owner": "curriculum_api.catalogue.domain.hierarchy_values",
+    "dependencies": [
+      "clean_str",
+      "curriculum_row_effectively_deleted",
+      "stamp_datetime"
+    ],
+    "local_ports": {},
+    "decorators": []
+  },
+  "is_archived_module_summary": {
+    "source": "def is_archived_module_summary(module):\n    \"\"\"Is this module out of the active lists?\n\n    The status fields are the delivery side of the answer; the row's own archive\n    state (programme_deleted_row) is the authoring side, and it has to be read\n    here too: `authoring_catalogue_summaries` reads the module rows without an\n    archive filter (the weeks, components and mappings beside it are filtered).\n    Without this an archived module went on being counted for its programme's\n    card while the programme's own page -- which reads the surviving rows --\n    showed none: \"3 modules\" on the card, \"No modules yet\" one click later.\n    \"\"\"\n    return (\n        clean_str((module or {}).get('status')).lower() == 'archived'\n        or clean_str((module or {}).get('authoringStatus')).lower() == 'archived'\n        or clean_str((module or {}).get('deliveryStatus')).lower() == 'archived'\n        or truthy((module or {}).get('isArchived'))\n        or programme_deleted_row(module)\n    )",
+    "owner": "curriculum_api.catalogue.domain.hierarchy_values",
+    "dependencies": [
+      "clean_str",
+      "programme_deleted_row",
+      "truthy"
+    ],
+    "local_ports": {},
+    "decorators": []
+  },
+  "cohort_authoring_payload": {
+    "source": "def cohort_authoring_payload(cohort, rows=None, groups=None, holiday_rows=None, extra=None):\n    cohort = cohort or {}\n    calendar_update = {}\n    if 'calendarPolicy' in cohort or 'calendar_policy' in cohort:\n        from curriculum_api.delivery_calendar import policy_write\n        calendar_update = policy_write(cohort, None, COHORT_AUTHORING_DETAILS_TABLE)\n    rows = rows or []\n    groups = groups or []\n    meta = {}\n    for row in rows:\n        meta.update(row.get('_meta') or extract_notes_meta(row.get('notes')))\n    start_date = format_date(cohort.get('startDate') or next((row.get('Starting_date_lable') or row.get('start_date') for row in rows if row), ''))\n    end_date = format_date(cohort.get('endDate') or cohort.get('practicalEndDate') or meta.get('cohort_end_date') or next((row.get('end_date') for row in rows if row), ''))\n    # The EPA period is only written when the caller actually carries one, so\n    # the sync/repair paths that rebuild a cohort from training-plan rows cannot\n    # blank an authored period by simply not knowing about it. The authored\n    # apprenticeship end date is guarded the same way, for the same reason.\n    epa_sent = 'epaMonths' in cohort or 'epa_months' in cohort or 'epa_months' in meta\n    epa_months = payload_epa_months(cohort, {'epa_months': meta.get('epa_months')}) if epa_sent else None\n    override_sent = apprenticeship_end_override_sent(cohort, meta)\n    apprenticeship_end_override = format_date(payload_apprenticeship_end_override(\n        cohort,\n        {'apprenticeship_end_override': meta.get('apprenticeship_end_override')},\n    )) if override_sent else ''\n    # apprenticeship_end_date caches whichever of the two inputs applies, so it\n    # has to be recomputed from *both* even when only one was sent \u2014 a write that\n    # clears the override has to hand the cache back to the stored EPA period,\n    # and one that only sets the period must not lose an authored date.\n    stored_cohort = {}\n    if epa_sent != override_sent:\n        stored_cohort = fetch_cohort_row(clean_str(cohort.get('id') or meta.get('cohort_id'))) or {}\n    cached_epa_months = epa_months if epa_sent else parse_epa_months(stored_cohort.get('epa_months'))\n    cached_override = apprenticeship_end_override if override_sent else format_date(stored_cohort.get('apprenticeship_end_override'))\n    _, apprenticeship_end_date = cohort_epa_dates(end_date, cached_epa_months, cached_override)\n    # Holidays are overlapped against the cohort's contracted period -- start\n    # date plus duration. They do not move the cohort end date; the selection is\n    # stored so module session planning can skip clashing dates.\n    holiday_period_months = infer_duration_months(\n        start_date,\n        end_date,\n        cohort.get('durationMonths') or cohort.get('duration_months') or meta.get('duration_months'),\n    )\n    holiday_period_end = format_date(\n        calculate_cohort_end_date(start_date, holiday_period_months) or end_date\n    )\n    # excludedHolidayIds is the one holiday input that IS honoured -- it is a\n    # human's own choice in the cohort drawer, not derived data. Unsent keeps\n    # whatever is already stored, the same guard as epa_months/override above:\n    # a sync/repair rebuild from training-plan rows carries no opinion on which\n    # holidays were unticked, and must not silently restore them all.\n    excluded_holiday_ids_sent = (\n        'excludedHolidayIds' in cohort or 'excluded_holiday_ids' in cohort or 'excluded_holiday_ids' in meta\n    )\n    if excluded_holiday_ids_sent:\n        excluded_holiday_ids = (\n            cohort.get('excludedHolidayIds') if 'excludedHolidayIds' in cohort\n            else cohort.get('excluded_holiday_ids') if 'excluded_holiday_ids' in cohort\n            else meta.get('excluded_holiday_ids')\n        )\n    else:\n        if not stored_cohort:\n            stored_cohort = fetch_cohort_row(clean_str(cohort.get('id') or meta.get('cohort_id'))) or {}\n        excluded_holiday_ids = parse_json_value(stored_cohort.get('excluded_holiday_ids'), [])\n    calendar_rows = holiday_rows or []\n    calendar_value = calendar_update.get('calendar_policy')\n    if not calendar_update:\n        stored_cohort = stored_cohort or fetch_cohort_row(clean_str(cohort.get('id') or meta.get('cohort_id'))) or {}\n        calendar_value = stored_cohort.get('calendar_policy')\n    if calendar_value:\n        from curriculum_api.calendar_policy import read_policy\n        from curriculum_api.delivery_calendar import policy_holidays\n        calendar_rows = policy_holidays(read_policy({'calendar_policy': calendar_value}), start_date, holiday_period_end, calendar_rows)\n    holiday_info = cohort_holiday_details(\n        calendar_rows,\n        excluded_holiday_ids,\n        start_date,\n        holiday_period_end,\n    )\n    training_plan_ids = [clean_str(row.get('id')) for row in rows if row.get('id') not in (None, '')]\n    programme_name = clean_str(cohort.get('programme') or next((row.get('Program') for row in rows if row), ''))\n    programme_source_id = canonical_programme_id(meta.get('program_id') or meta.get('programme_id') or cohort.get('programmeId'), programme_name)\n    if (not programme_source_id or programme_source_id.lower().startswith('program-')) and rows:\n        try:\n            programme_source_id = canonical_programme_id(programme_identity(rows[0], program_config_by_id(get_program_config_rows())).get('sourceId'), programme_name)\n        except (Exception, AssertionError):\n            pass\n    payload = {\n        'cohort_id': clean_str(cohort.get('id') or meta.get('cohort_id')),\n        'cohort_name': clean_str(cohort.get('name') or next((row.get('Cohort_name') for row in rows if row), '')),\n        'programme_id': programme_source_id or clean_str(cohort.get('programmeId')),\n        'start_date': start_date or None,\n        'end_date': end_date or None,\n        'duration_months': holiday_period_months,\n        'color': cohort.get('color') or meta.get('cohort_color') or '',\n        'status': cohort.get('status') or 'planned',\n        # A cohort's holiday choices are stored in cohort_calendar_holidays\n        # (calendar_holidays.store_cohort_choices).\n        'holiday_ids': json_db_value(holiday_info['holidayIds']),\n        'excluded_holiday_ids': json_db_value(holiday_info['excludedHolidayIds']),\n        'notes': next((clean_str(row.get('notes')) for row in rows if clean_str(row.get('notes'))), ''),\n        'source_type': 'curriculum_authoring',\n        'source_id': training_plan_ids[0] if training_plan_ids else '',\n    }\n    if epa_sent:\n        payload['epa_months'] = epa_months\n    if override_sent:\n        payload['apprenticeship_end_override'] = apprenticeship_end_override or None\n    if epa_sent or override_sent:\n        payload['apprenticeship_end_date'] = apprenticeship_end_date or None\n    payload.update(calendar_update)\n    payload.update(extra or {})\n    return payload",
+    "owner": "curriculum_api.catalogue.application.hierarchy_preparation",
+    "dependencies": [
+      "COHORT_AUTHORING_DETAILS_TABLE",
+      "apprenticeship_end_override_sent",
+      "calculate_cohort_end_date",
+      "canonical_programme_id",
+      "clean_str",
+      "cohort_epa_dates",
+      "cohort_holiday_details",
+      "extract_notes_meta",
+      "fetch_cohort_row",
+      "format_date",
+      "get_program_config_rows",
+      "infer_duration_months",
+      "json_db_value",
+      "parse_epa_months",
+      "parse_json_value",
+      "payload_apprenticeship_end_override",
+      "payload_epa_months",
+      "policy_holidays",
+      "policy_write",
+      "program_config_by_id",
+      "programme_identity",
+      "read_policy"
+    ],
+    "local_ports": {
+      "policy_write": "curriculum_api.delivery_calendar",
+      "read_policy": "curriculum_api.calendar_policy",
+      "policy_holidays": "curriculum_api.delivery_calendar"
+    },
+    "decorators": []
+  },
+  "group_authoring_payload": {
+    "source": "def group_authoring_payload(group, rows=None, module_rows=None, extra=None):\n    group = with_group_coaches(group)\n    rows = rows or []\n    module_rows = [\n        row for row in surviving_authoring_module_rows(module_rows or [])\n        if module_row_belongs_to_group(row, group)\n    ]\n    first_row = rows[0] if rows else {}\n    meta = extract_notes_meta(first_row.get('notes')) if first_row else {}\n    group_id = clean_str(group.get('id') or group.get('groupId') or group.get('group_id') or meta.get('group_id'))\n    if not group_id:\n        return {}\n    existing_group = fetch_group_row(group_id) or {}\n    group_name = clean_str(group.get('name') or group.get('groupName') or group.get('group_name') or meta.get('group_name') or group_id)\n    cohort_id = clean_str(group.get('cohortId') or group.get('cohort_id') or meta.get('cohort_id'))\n    programme_name = clean_str(group.get('programme') or group.get('programmeName') or group.get('programme_name') or first_row.get('Program'))\n    programme_id = canonical_programme_id(\n        meta.get('program_id') or meta.get('programme_id') or group.get('programmeId') or group.get('programme_id'),\n        programme_name,\n    )\n    if (not programme_id or programme_id.lower().startswith('program-')) and rows:\n        try:\n            programme_id = canonical_programme_id(programme_identity(rows[0], program_config_by_id(get_program_config_rows())).get('sourceId'), programme_name)\n        except (Exception, AssertionError):\n            pass\n    source_ids = unique([\n        *[row.get('id') for row in rows if row.get('id') not in (None, '')],\n        *[row.get('source_id') for row in module_rows if row.get('source_id')],\n    ])\n    payload = {\n        'group_id': group_id,\n        'group_name': group_name,\n        'cohort_id': cohort_id,\n        'programme_id': programme_id or clean_str(group.get('programmeId') or group.get('programme_id')),\n        'coach_name': canonical_group_coaches(group.get('coach') or group.get('coachName') or first_row.get('coach_name') or existing_group.get('coach_name')),\n        'session_week_day': clean_str(group.get('weekDays') or group.get('deliveryDays') or group.get('sessionWeekDay') or group.get('session_week_day') or schedule_day_part(group.get('schedule')) or existing_group.get('session_week_day') or schedule_day_part(existing_group.get('schedule'))),\n        'session_start_time': clean_str(group.get('startTime') or group.get('start_time') or group.get('sessionStartTime') or group.get('session_start_time') or existing_group.get('session_start_time') or schedule_time_parts(group.get('schedule') or existing_group.get('schedule'))[0]),\n        'session_end_time': clean_str(group.get('endTime') or group.get('end_time') or group.get('sessionEndTime') or group.get('session_end_time') or existing_group.get('session_end_time') or schedule_time_parts(group.get('schedule') or existing_group.get('schedule'))[1]),\n        'color': clean_str(group.get('color') or existing_group.get('color')),\n        'status': clean_str(group.get('status') or existing_group.get('status')) or 'planned',\n        'notes': clean_str(first_row.get('notes') or group.get('notes')),\n        'source_type': 'curriculum_authoring',\n        'source_id': source_ids[0] if source_ids else '',\n    }\n    payload.update(extra or {})\n    return payload",
+    "owner": "curriculum_api.catalogue.application.hierarchy_preparation",
+    "dependencies": [
+      "canonical_group_coaches",
+      "canonical_programme_id",
+      "clean_str",
+      "extract_notes_meta",
+      "fetch_group_row",
+      "get_program_config_rows",
+      "module_row_belongs_to_group",
+      "program_config_by_id",
+      "programme_identity",
+      "schedule_day_part",
+      "schedule_time_parts",
+      "surviving_authoring_module_rows",
+      "unique",
+      "with_group_coaches"
+    ],
+    "local_ports": {},
+    "decorators": []
+  },
+  "canonical_group_coaches": {
+    "source": "def canonical_group_coaches(value):\n    \"\"\"A group's coaches as the one ``coach_name`` string: each name canonical.\n\n    A group may have several coaches (``curriculum.group_coaches``). They travel\n    as a list (``coaches``) or joined in one string (``coach``); each is matched\n    against the staff directory the way a single coach always was.\n    \"\"\"\n    names = group_coaches.split_names(value)\n    return group_coaches.join_names([canonical_staff_assignment_name('coach', name) for name in names])",
+    "owner": "curriculum_api.catalogue.application.hierarchy_preparation",
+    "dependencies": [
+      "canonical_staff_assignment_name",
+      "group_coaches"
+    ],
+    "local_ports": {},
+    "decorators": []
+  },
+  "canonical_programme_id": {
+    "source": "def canonical_programme_id(value='', programme_name=''):\n    candidate = clean_str(value)\n    if candidate.lower().startswith('program-prog-'):\n        return candidate[len('program-'):].upper()\n    if re.match(r'^PROG-[A-Z0-9][A-Z0-9_-]*$', candidate, re.I):\n        return candidate.upper()\n    try:\n        configs = get_program_config_rows()\n    except (Exception, AssertionError):\n        configs = []\n    candidate_keys = {candidate, slugify(candidate)}\n    if candidate:\n        candidate_keys.add(f'program-{slugify(candidate)}')\n    programme_key = normalise(programme_name)\n    for config in configs:\n        config_id = programme_config_id(config)\n        if not config_id:\n            continue\n        config_candidates = {\n            config_id,\n            slugify(config_id),\n            f'program-{slugify(config_id)}',\n        }\n        if candidate and candidate_keys.intersection(config_candidates):\n            return config_id\n        if programme_key and programme_key in {normalise(config.get('name')), normalise(config.get('sub'))}:\n            return config_id\n    return candidate",
+    "owner": "curriculum_api.catalogue.application.hierarchy_preparation",
+    "dependencies": [
+      "clean_str",
+      "get_program_config_rows",
+      "normalise",
+      "programme_config_id",
+      "re",
+      "slugify"
+    ],
+    "local_ports": {},
+    "decorators": []
+  },
+  "persistable_programme_id": {
+    "source": "def persistable_programme_id(value):\n    \"\"\"A programme id that exists in programmes, or '' when it does not.\n\n    programme_id is a foreign key (modules_programme_id_fkey and its siblings),\n    so a programme *name*, a placeholder or an id whose row has since gone must\n    be stored as NULL. Writing it verbatim made the database reject the insert.\n    \"\"\"\n    identifier = sanitised_programme_id(value)\n    if not identifier:\n        return ''\n    try:\n        configs = get_program_config_rows()\n    except Exception:\n        logger.debug('Unable to verify programme %s against programmes.', identifier, exc_info=True)\n        return identifier\n    return identifier if any(\n        programme_config_identity(config) == identifier for config in configs\n    ) else ''",
+    "owner": "curriculum_api.catalogue.application.hierarchy_preparation",
+    "dependencies": [
+      "get_program_config_rows",
+      "logger",
+      "programme_config_identity",
+      "sanitised_programme_id"
+    ],
+    "local_ports": {},
+    "decorators": []
+  },
+  "cohort_applied_holidays": {
+    "source": "def cohort_applied_holidays(holiday_ids, holiday_rows, period_start, period_end):\n    \"\"\"The holidays that apply to a cohort over its base period.\n\n    Every bank holiday that falls inside ``period_start``..``period_end``, and\n    nothing else. A cohort's holidays are its dates: picking the start and end\n    date picks the holidays, so there is no ticking and no cohort that runs\n    through Christmas Day because nobody remembered to tick it.\n\n    ``holiday_ids`` is ignored and kept only so the stored ids on older cohort\n    rows -- numeric keys into the authored table that is no longer read -- cannot\n    change the answer. ``holiday_rows`` may be omitted, in which case the bank\n    holidays are read.\n    \"\"\"\n    if holiday_rows is None:\n        try:\n            holiday_rows = [] if not holiday_table_name() else get_holiday_rows()\n        except (Exception, AssertionError):\n            holiday_rows = []\n\n    return holidays_within_period(holiday_rows, period_start, period_end)",
+    "owner": "curriculum_api.catalogue.application.hierarchy_preparation",
+    "dependencies": [
+      "get_holiday_rows",
+      "holiday_table_name",
+      "holidays_within_period"
+    ],
+    "local_ports": {},
+    "decorators": []
+  },
+  "module_parent_cohort": {
+    "source": "def module_parent_cohort(cohort_id, group_id=''):\n    \"\"\"The cohort a module is placed in, read from the normalized tables.\n\n    A module carries its own cohort id, but a placement that only names the\n    group still has a parent cohort -- the group's own.\n    \"\"\"\n    row = resolve_cohort_row(cohort_id) if clean_str(cohort_id) else None\n    if not row and clean_str(group_id):\n        group_row = resolve_group_row(group_id)\n        if group_row:\n            row = resolve_cohort_row(group_row.get('cohort_id'))\n    if not row:\n        return None\n    return curriculum_cohort_from_authoring_detail(serialize_cohort_authoring_detail(row))",
+    "owner": "curriculum_api.catalogue.application.hierarchy_preparation",
+    "dependencies": [
+      "clean_str",
+      "curriculum_cohort_from_authoring_detail",
+      "resolve_cohort_row",
+      "resolve_group_row",
+      "serialize_cohort_authoring_detail"
+    ],
+    "local_ports": {},
+    "decorators": []
+  },
+  "rows_for_programme": {
+    "source": "def rows_for_programme(identifier, visibility='all'):\n    with curriculum_read_scope():\n        curriculum_rows = get_curriculum_rows()\n        payload = build_curriculum_payload_from_rows(curriculum_rows, visibility)\n        programme = find_programme(payload, identifier)\n        if not programme:\n            return None, []\n        rows = []\n        configs_by_id = program_config_by_id(curriculum_rows['program_configs'])\n        for row in curriculum_rows['training']:\n            identity = programme_identity(row, configs_by_id)\n            if (\n                clean_str(identity['sourceId']) == clean_str(programme['sourceId'])\n                or clean_str(identity['name']) == clean_str(programme['name'])\n            ):\n                rows.append(row)\n        return programme, rows",
+    "owner": "curriculum_api.catalogue.application.hierarchy_queries",
+    "dependencies": [
+      "build_curriculum_payload_from_rows",
+      "clean_str",
+      "curriculum_read_scope",
+      "find_programme",
+      "get_curriculum_rows",
+      "program_config_by_id",
+      "programme_identity"
+    ],
+    "local_ports": {},
+    "decorators": []
+  },
+  "find_training_rows_by_cohort": {
+    "source": "def find_training_rows_by_cohort(cohort_id):\n    rows = get_training_rows()\n    program_configs = get_program_config_rows()\n    cohorts, _ = build_cohorts_and_groups(rows, program_configs)\n    cohort = next((item for item in cohorts if clean_str(item['id']) == clean_str(cohort_id)), None)\n    if not cohort:\n        return None, []\n    matches = []\n    configs_by_id = program_config_by_id(program_configs)\n    for row in rows:\n        identity = programme_identity(row, configs_by_id)\n        candidate = actual_cohort_identity(row, identity['name'])\n        if candidate and candidate['id'] == cohort['id']:\n            matches.append(row)\n    return cohort, matches",
+    "owner": "curriculum_api.catalogue.application.hierarchy_queries",
+    "dependencies": [
+      "actual_cohort_identity",
+      "build_cohorts_and_groups",
+      "clean_str",
+      "get_program_config_rows",
+      "get_training_rows",
+      "program_config_by_id",
+      "programme_identity"
+    ],
+    "local_ports": {},
+    "decorators": []
+  },
+  "find_group_with_parent": {
+    "source": "def find_group_with_parent(group_id):\n    rows = get_training_rows()\n    program_configs = get_program_config_rows()\n    cohorts, groups = build_cohorts_and_groups(rows, program_configs)\n    group = next((item for item in groups if clean_str(item['id']) == clean_str(group_id)), None)\n    if not group:\n        return None, None, []\n    cohort = next((item for item in cohorts if item['id'] == group['cohortId']), None)\n    configs_by_id = program_config_by_id(program_configs)\n    training_rows = []\n    for row in rows:\n        identity = programme_identity(row, configs_by_id)\n        row_cohort = actual_cohort_identity(row, identity['name'])\n        candidate = actual_group_identity(row, row_cohort['id']) if row_cohort else None\n        if candidate and candidate['id'] == group['id']:\n            training_rows.append(row)\n    return group, cohort, training_rows",
+    "owner": "curriculum_api.catalogue.application.hierarchy_queries",
+    "dependencies": [
+      "actual_cohort_identity",
+      "actual_group_identity",
+      "build_cohorts_and_groups",
+      "clean_str",
+      "get_program_config_rows",
+      "get_training_rows",
+      "program_config_by_id",
+      "programme_identity"
+    ],
+    "local_ports": {},
+    "decorators": []
+  },
+  "programme_config_by_identifier": {
+    "source": "def programme_config_by_identifier(identifier):\n    ident = clean_str(identifier)\n    fallback = None\n    for config in get_program_config_rows():\n        config_id = programme_config_id(config)\n        exact_candidates = {\n            config_id,\n            clean_str(config.get('programme_id')),\n            clean_str(config.get('program_id')),\n            clean_str(config.get('id')),\n            f'program-{slugify(config_id)}',\n        }\n        name_candidates = {\n            slugify(config_id),\n            slugify(config.get('programme_id')),\n            slugify(config.get('program_id')),\n            slugify(config.get('name')),\n            f'program-{slugify(config.get(\"name\"))}',\n        }\n        if ident in exact_candidates:\n            return config\n        if not fallback and ident in name_candidates:\n            fallback = config\n    return fallback",
+    "owner": "curriculum_api.catalogue.application.hierarchy_queries",
+    "dependencies": [
+      "clean_str",
+      "get_program_config_rows",
+      "programme_config_id",
+      "slugify"
+    ],
+    "local_ports": {},
+    "decorators": []
+  },
+  "first_programme_response": {
+    "source": "def first_programme_response(*identifiers):\n    \"\"\"First programme matching any of ``identifiers``, from a single payload build.\n\n    ``programme_response(a) or programme_response(b)`` assembled the whole\n    curriculum payload once per identifier tried; the fallbacks only ever differ\n    in what they look up, never in the data they look it up in.\n    \"\"\"\n    wanted = [clean_str(identifier) for identifier in identifiers if clean_str(identifier)]\n    if not wanted:\n        return None\n    payload = build_curriculum_payload('all', force=True)\n    for identifier in wanted:\n        programme = find_programme(payload, identifier)\n        if programme:\n            return programme\n    return None",
+    "owner": "curriculum_api.catalogue.application.hierarchy_queries",
+    "dependencies": [
+      "build_curriculum_payload",
+      "clean_str",
+      "find_programme"
+    ],
+    "local_ports": {},
+    "decorators": []
+  },
+  "programme_shell_learner_fingerprint": {
+    "source": "def programme_shell_learner_fingerprint():\n    \"\"\"The learner data the shell's 60s ttl stands in for, as it stands now.\n\n    Every learner figure in the shell -- the programme's own count and each\n    cohort's and group's -- is folded from these two grouped reads and nothing\n    else (build_programmes, build_cohorts_and_groups). Both are memoised in the\n    read scope, so the build that follows this call reads exactly these rows.\n    The rest of the shell is curriculum data, retired by the programme's cache\n    generation like the modules section's.\n    \"\"\"\n    def ordered(counts):\n        return tuple(sorted(counts.items(), key=repr))\n\n    by_id, by_name = active_learner_programme_counts()\n    cohort_counts, group_counts = active_learner_delivery_counts()\n    return tuple(ordered(counts) for counts in (by_id, by_name, cohort_counts, group_counts))",
+    "owner": "curriculum_api.catalogue.application.hierarchy_queries",
+    "dependencies": [
+      "active_learner_delivery_counts",
+      "active_learner_programme_counts"
+    ],
+    "local_ports": {},
+    "decorators": []
+  },
+  "programme_permanent_delete_plan": {
+    "source": "def programme_permanent_delete_plan(identifier, programme=None, config=None):\n    \"\"\"Read-only plan for a permanent delete: what would go, and what blocks it.\n\n    Children are resolved through their own parents as well as through\n    ``programme_id``. A group whose programme_id was never stamped, or a module\n    attached only to a group, still belongs to the programme and must not survive\n    it - those are precisely the orphans migration 0038 was added to stop.\n    \"\"\"\n    candidates = programme_identifier_candidates(identifier, programme, config)\n    programme_name = clean_str((programme or {}).get('name') or (config or {}).get('name'))\n    plan = {\n        'candidates': candidates,\n        'childIds': {\n            'cohortIds': [],\n            'groupIds': [],\n            'moduleIds': [],\n            'weekIds': [],\n            'componentIds': [],\n            'weekTemplateIds': [],\n        },\n        'blockers': {},\n        'learners': 0,\n    }\n    if not candidates:\n        return plan\n\n    programme_clause = curriculum_in_clause('programme_id', candidates)\n    child = plan['childIds']\n    child['cohortIds'] = curriculum_ids_matching(\n        COHORT_AUTHORING_DETAILS_TABLE, 'cohort_id', [\n            programme_clause,\n            orphan_programme_name_clause(COHORT_AUTHORING_DETAILS_TABLE, programme_name),\n        ],\n    )\n    child['groupIds'] = curriculum_ids_matching(GROUPS_TABLE, 'group_id', [\n        programme_clause,\n        curriculum_in_clause('cohort_id', child['cohortIds']),\n        orphan_programme_name_clause(GROUPS_TABLE, programme_name),\n    ])\n    child['moduleIds'] = curriculum_ids_matching(AUTHORING_MODULES_TABLE, 'module_catalogue_id', [\n        programme_clause,\n        curriculum_in_clause('cohort_id', child['cohortIds']),\n        curriculum_in_clause('group_id', child['groupIds']),\n    ])\n    child['weekIds'] = curriculum_ids_matching(AUTHORING_WEEKS_TABLE, 'id', [\n        curriculum_in_clause('module_catalogue_id', child['moduleIds']),\n    ])\n    child['componentIds'] = curriculum_ids_matching(AUTHORING_COMPONENTS_TABLE, 'id', [\n        curriculum_in_clause('module_catalogue_id', child['moduleIds']),\n        curriculum_in_clause('week_id', child['weekIds']),\n    ])\n    child['weekTemplateIds'] = curriculum_ids_matching(WEEK_TEMPLATES_TABLE, 'id', [\n        programme_clause,\n        curriculum_in_clause('group_id', child['groupIds']),\n        curriculum_in_clause('module_catalogue_id', child['moduleIds']),\n    ])\n    plan['blockers'] = programme_permanent_delete_blockers(child)\n    plan['learners'] = parse_int(programme_dependency_counts(identifier, config).get('learners'), 0)\n    return plan",
+    "owner": "curriculum_api.catalogue.application.lifecycle_checks",
+    "dependencies": [
+      "AUTHORING_COMPONENTS_TABLE",
+      "AUTHORING_MODULES_TABLE",
+      "AUTHORING_WEEKS_TABLE",
+      "COHORT_AUTHORING_DETAILS_TABLE",
+      "GROUPS_TABLE",
+      "WEEK_TEMPLATES_TABLE",
+      "clean_str",
+      "curriculum_ids_matching",
+      "curriculum_in_clause",
+      "orphan_programme_name_clause",
+      "parse_int",
+      "programme_dependency_counts",
+      "programme_identifier_candidates",
+      "programme_permanent_delete_blockers"
+    ],
+    "local_ports": {},
+    "decorators": []
+  },
+  "archived_authoring_ids": {
+    "source": "def archived_authoring_ids(table, id_column):\n    \"\"\"Ids of the soft-deleted rows in an authoring table.\n\n    Archiving stamps ``deleted_at`` and leaves the row where it is, and the\n    ``*_authoring_detail_rows`` readers deliberately return every row so archive\n    views can still show withdrawn curriculum. Anything that matches a *new*\n    record against the stored ones has to skip these ids first: treating an\n    archived row as a duplicate turns \"create it again\" into an update of a\n    tombstone, so the write lands on a row nothing lists and the caller is told\n    the record already exists while no record appears.\n    \"\"\"\n    ident = clean_str(id_column)\n    try:\n        rows = authoring_fetch_all(\n            table,\n            columns=[ident, 'status'],\n        )\n    except (Exception, AssertionError) as exc:\n        logger.warning('Could not read archived ids for %s: %s', table, exc)\n        return set()\n    return {\n        clean_str(row.get(ident))\n        for row in rows\n        if clean_str(row.get(ident)) and curriculum_row_effectively_deleted(row)\n    }",
+    "owner": "curriculum_api.catalogue.application.lifecycle_checks",
+    "dependencies": [
+      "authoring_fetch_all",
+      "clean_str",
+      "curriculum_row_effectively_deleted",
+      "logger"
+    ],
+    "local_ports": {},
+    "decorators": []
+  },
+  "programme_archived_for_authoring": {
+    "source": "def programme_archived_for_authoring(programme_id):\n    \"\"\"Is the programme a module is being saved against archived or deleted?\n\n    Used to re-derive ``modules.is_programme_deleted`` on save instead of\n    trusting the flag already on the row: the flag records *the programme's*\n    state, so a module moved onto a live programme has to lose it.\n    \"\"\"\n    identifier = clean_str(programme_id)\n    if not identifier:\n        return False\n    try:\n        config = program_config_by_id(get_program_config_rows()).get(identifier)\n    except (Exception, AssertionError):\n        logger.debug('Unable to resolve programme %s for delete-flag derivation.', identifier, exc_info=True)\n        return False\n    return bool(config) and is_archived_program_config(config)",
+    "owner": "curriculum_api.catalogue.application.lifecycle_checks",
+    "dependencies": [
+      "clean_str",
+      "get_program_config_rows",
+      "is_archived_program_config",
+      "logger",
+      "program_config_by_id"
+    ],
+    "local_ports": {},
+    "decorators": []
+  },
+  "module_withdrawn_on_its_own": {
+    "source": "def module_withdrawn_on_its_own(row):\n    \"\"\"Was this module withdrawn by the module DELETE, rather than by a parent?\n\n    A programme or group archive stamps its children with ``deleted_via_parent``\n    (and ``deleted_by='programme-delete'``); a module archived on its own\n    carries neither. The difference matters because the two are undone\n    differently: a parent's children come back with the parent, while a module\n    withdrawn deliberately stays withdrawn until someone restores it.\n    \"\"\"\n    if not row_has_deleted_at(row):\n        return False\n    row = dict(row)\n    if archive_state.row_inactive(row) and not row.get('deleted_by'):\n        # Normalised schema: the reason and parent are history's record.\n        archive_state.annotate(AUTHORING_MODULES_TABLE, [row], key_column='module_catalogue_id')\n    return (\n        not clean_str(row.get('deleted_via_parent'))\n        and clean_str(row.get('deleted_by')) == 'module-delete'\n    )",
+    "owner": "curriculum_api.catalogue.application.lifecycle_checks",
+    "dependencies": [
+      "AUTHORING_MODULES_TABLE",
+      "archive_state",
+      "clean_str",
+      "row_has_deleted_at"
+    ],
+    "local_ports": {},
+    "decorators": []
+  },
+  "module_recovered_by_move_to_live": {
+    "source": "def module_recovered_by_move_to_live(existing_module_row, programme_id):\n    \"\"\"Is this save moving an already-withdrawn module onto a live programme?\n\n    That move is the recovery route, and the backend owns its outcome rather\n    than reading it back off the payload. The drawer PATCH rebuilds its body\n    from ``get_authoring_structure_payload``, which reports\n    ``isProgrammeDeleted``, so a module being rescued sent its own stale\n    ``true`` straight back and pinned itself withdrawn: ``programme_id`` moved\n    to the live programme and the module stayed hidden from every list. The\n    Builder's structure PATCH sends the same key from the same source, so both\n    paths carried the same stale flag -- derived here, once, they recover a\n    module identically.\n\n    Not for a module withdrawn on its own: restoring that stays an explicit\n    operation, and re-parenting it must not quietly undo it.\n    \"\"\"\n    if not programme_deleted_row(existing_module_row):\n        return False\n    target = clean_str(programme_id)\n    # Only a real move. Saving a withdrawn module where it already sits changes\n    # nothing about why it was withdrawn -- under an archived programme it must\n    # stay withdrawn, which is what keeps it editable there without reviving it.\n    if not target or target == clean_str((existing_module_row or {}).get('programme_id')):\n        return False\n    if programme_archived_for_authoring(target):\n        return False\n    return not module_withdrawn_on_its_own(existing_module_row)",
+    "owner": "curriculum_api.catalogue.application.lifecycle_checks",
+    "dependencies": [
+      "clean_str",
+      "module_withdrawn_on_its_own",
+      "programme_archived_for_authoring",
+      "programme_deleted_row"
+    ],
+    "local_ports": {},
+    "decorators": []
+  },
+  "authoring_programme_config_for_save": {
+    "source": "def authoring_programme_config_for_save(programme_id, programme_name=''):\n    \"\"\"The programme row a module save would attach the module to.\n\n    Mirrors how ``ensure_programme_config_for_authoring`` picks its row -- id\n    first, then name -- minus the write. A payload that carries only a programme\n    *name* (an id that no longer resolves, or a module left unassigned) is still\n    attached by name on save, so anything judging that save has to resolve it\n    the same way or it judges a different programme than the one written.\n    \"\"\"\n    identifier = persistable_programme_id(programme_id)\n    name = clean_str(programme_name)\n    try:\n        configs = get_program_config_rows()\n    except (Exception, AssertionError):\n        logger.debug('Unable to resolve the programme a module save would attach to.', exc_info=True)\n        return None\n    if identifier:\n        match = next((\n            config for config in configs if programme_config_identity(config) == identifier\n        ), None)\n        if match:\n            return match\n    if name and normalise(name) not in {'unassignedprogramme', 'unassigned'}:\n        return next((\n            config for config in configs if normalise(config.get('name')) == normalise(name)\n        ), None)\n    return None",
+    "owner": "curriculum_api.catalogue.application.lifecycle_checks",
+    "dependencies": [
+      "clean_str",
+      "get_program_config_rows",
+      "logger",
+      "normalise",
+      "persistable_programme_id",
+      "programme_config_identity"
+    ],
+    "local_ports": {},
+    "decorators": []
+  },
+  "module_archive_event_bounds": {
+    "source": "def module_archive_event_bounds(module_row):\n    \"\"\"The (earliest, latest) ``deleted_at`` a child of this archive can carry.\n\n    None when the module carries no usable stamp, which leaves the marker as the\n    only test -- exactly the behaviour before the window existed.\n    \"\"\"\n    module_row = dict(module_row or {})\n    if archive_state.row_inactive(module_row) and not module_row.get('deleted_by'):\n        # Normalised schema: the archive moment is history's, not a column.\n        archive_state.annotate(AUTHORING_MODULES_TABLE, [module_row], key_column='module_catalogue_id')\n    archived_at = stamp_datetime(module_row.get('deleted_at'))\n    if archived_at is None:\n        return None\n    return archived_at - MODULE_ARCHIVE_EVENT_WINDOW, archived_at + MODULE_ARCHIVE_EVENT_WINDOW",
+    "owner": "curriculum_api.catalogue.application.lifecycle_checks",
+    "dependencies": [
+      "AUTHORING_MODULES_TABLE",
+      "MODULE_ARCHIVE_EVENT_WINDOW",
+      "archive_state",
+      "stamp_datetime"
+    ],
+    "local_ports": {},
+    "decorators": []
+  },
+  "archived_parent_programme": {
+    "source": "def archived_parent_programme(programme_id):\n    \"\"\"The programme config for ``programme_id``, but only while it is archived.\n\n    Used to refuse a restore that would produce an orphan: every cohort list is\n    scoped by programme, so a cohort restored under an archived programme comes\n    back invisible.\n    \"\"\"\n    identifier = clean_str(programme_id)\n    if not identifier:\n        return None\n    try:\n        ensure_program_config_archive_columns()\n        config = programme_config_by_identifier(identifier)\n    except Exception:\n        logger.warning('Could not read programme %s while checking the archive.', identifier, exc_info=True)\n        return None\n    return config if config and is_archived_program_config(config) else None",
+    "owner": "curriculum_api.catalogue.application.lifecycle_checks",
+    "dependencies": [
+      "clean_str",
+      "ensure_program_config_archive_columns",
+      "is_archived_program_config",
+      "logger",
+      "programme_config_by_identifier"
+    ],
+    "local_ports": {},
+    "decorators": []
+  },
+  "surviving_authoring_module_rows": {
+    "source": "def surviving_authoring_module_rows(module_rows=None):\n    \"\"\"Module rows that are not soft-deleted, directly or through a parent.\n\n    ``safe_authoring_module_rows`` deliberately reads every row so archive views\n    can still show withdrawn curriculum. Anything that rebuilds a *surviving*\n    parent's denormalized child list has to filter first, otherwise an archived\n    module keeps being written back into it.\n    \"\"\"\n    rows = module_rows if module_rows is not None else safe_authoring_module_rows()\n    return [row for row in rows if row and not curriculum_row_effectively_deleted(row)]",
+    "owner": "curriculum_api.catalogue.application.lifecycle_checks",
+    "dependencies": [
+      "curriculum_row_effectively_deleted",
+      "safe_authoring_module_rows"
+    ],
+    "local_ports": {},
+    "decorators": []
+  },
+  "soft_deleted_structure_ids": {
+    "source": "def soft_deleted_structure_ids(candidates):\n    \"\"\"Which of these week/component ids exist as withdrawn rows.\n\n    A save that sends an id the live module does not hold is either creating it\n    or bringing back a deleted row, and only the second needs the caller's\n    explicit say-so (``restoreIds``). One indexed read per table, and none at\n    all for a save that creates nothing.\n    \"\"\"\n    found = set()\n    for table, wanted in (\n        (AUTHORING_WEEKS_TABLE, (candidates or {}).get('weeks') or []),\n        (AUTHORING_COMPONENTS_TABLE, (candidates or {}).get('components') or []),\n    ):\n        if not wanted:\n            continue\n        placeholders = ', '.join(['%s'] * len(wanted))\n        rows = authoring_fetch_all(\n            table, f'id in ({placeholders})', list(wanted),\n            columns=['id', 'status'],\n        )\n        found.update(clean_str(row.get('id')) for row in rows if not authoring_row_is_active(row))\n    return found",
+    "owner": "curriculum_api.catalogue.application.lifecycle_checks",
+    "dependencies": [
+      "AUTHORING_COMPONENTS_TABLE",
+      "AUTHORING_WEEKS_TABLE",
+      "authoring_fetch_all",
+      "authoring_row_is_active",
+      "clean_str"
+    ],
+    "local_ports": {},
+    "decorators": []
+  },
+  "programme_dependency_counts": {
+    "source": "def programme_dependency_counts(identifier, config=None):\n    \"\"\"Count the children that would be orphaned by hard-deleting a programme.\n\n    curriculum.programmes has NO inbound foreign keys, so the database will\n    happily delete a programme row and leave its cohorts/groups/modules\n    dangling. This is the application-level guard that replaces the protection\n    a FK would normally provide.\n    \"\"\"\n    candidates = {clean_str(identifier), programme_config_identity(config)}\n    candidates = {value for value in candidates if value}\n    names = {\n        clean_str((config or {}).get('name')),\n        clean_str((config or {}).get('standard')),\n    }\n    names = {value for value in names if value}\n    counts = {}\n    if not candidates:\n        return counts\n    placeholders = ', '.join(['%s'] * len(candidates))\n    params = list(candidates)\n    for table in (\n        COHORT_AUTHORING_DETAILS_TABLE,\n        GROUPS_TABLE,\n        AUTHORING_MODULES_TABLE,\n        'week_templates',\n        'quizzes',\n        FREE_PROGRAMME_COMPONENTS_TABLE,\n    ):\n        try:\n            if not table_exists(table) or not has_column(table, 'programme_id'):\n                continue\n            rows = fetch_all(\n                f'select count(*) as total from {table_name(table)} '\n                f'where {quote_ident(\"programme_id\")} in ({placeholders})',\n                params,\n            )\n            total = int((rows[0] or {}).get('total') or 0) if rows else 0\n            if total:\n                counts[table] = total\n        except Exception:\n            logger.debug('Could not count %s rows for programme %s.', table, identifier, exc_info=True)\n    if connection.vendor == 'postgresql':\n        try:\n            learner_columns = schema_compat.columns_of('Learner', 'learners')\n            with connection.cursor() as cursor:\n                if 'programme_id' in learner_columns:\n                    # Normalised schema: the learner names its programme by id\n                    # (the programme name column was dropped).\n                    cursor.execute(\n                        f'select count(*) from \"Learner\".\"learners\" where programme_id in ({placeholders})',\n                        params,\n                    )\n                elif names and 'programme' in learner_columns:\n                    name_placeholders = ', '.join(['%s'] * len(names))\n                    cursor.execute(\n                        f'select count(*) from \"Learner\".\"learners\" where programme in ({name_placeholders})',\n                        list(names),\n                    )\n                else:\n                    cursor.execute('select 0')\n                total = int(cursor.fetchone()[0] or 0)\n                if total:\n                    counts['learners'] = total\n        except Exception:\n            logger.debug('Could not count learners for programme %s.', identifier, exc_info=True)\n    return counts",
+    "owner": "curriculum_api.catalogue.infrastructure.lifecycle_reads",
+    "dependencies": [
+      "AUTHORING_MODULES_TABLE",
+      "COHORT_AUTHORING_DETAILS_TABLE",
+      "FREE_PROGRAMME_COMPONENTS_TABLE",
+      "GROUPS_TABLE",
+      "clean_str",
+      "connection",
+      "fetch_all",
+      "has_column",
+      "logger",
+      "programme_config_identity",
+      "quote_ident",
+      "schema_compat",
+      "table_exists",
+      "table_name"
+    ],
+    "local_ports": {},
+    "decorators": []
+  },
+  "archived_rows_under": {
+    "source": "def archived_rows_under(table, parent_id):\n    \"\"\"Archived rows of ``table`` that sit anywhere under ``parent_id``.\n\n    The parent may be a programme, cohort, module, week or component; every\n    placement column the table has is tried, plus a programme's modules for\n    module content and a component's own parents for KSB mappings. Only the\n    candidates: ``archive_state.archived_with`` decides which of them went with\n    the parent.\n    \"\"\"\n    columns = column_names(table)\n    key = LIFECYCLE_KEY_COLUMNS[table]\n    modules = authoring_table_name(AUTHORING_MODULES_TABLE)\n    components = authoring_table_name(AUTHORING_COMPONENTS_TABLE)\n    clauses, params = [], []\n    for column in ('programme_id', 'cohort_id', 'module_catalogue_id', 'week_id', 'component_id'):\n        if column in columns:\n            clauses.append(f'{quote_ident(column)} = %s')\n            params.append(parent_id)\n    if 'module_catalogue_id' in columns:\n        clauses.append(f'module_catalogue_id in (select module_catalogue_id from {modules} where programme_id = %s)')\n        params.append(parent_id)\n    if table == AUTHORING_KSB_MAPPINGS_TABLE:\n        clauses.append(\n            f'component_id in (select id from {components} where module_catalogue_id = %s or week_id = %s '\n            f'or module_catalogue_id in (select module_catalogue_id from {modules} where programme_id = %s))'\n        )\n        params += [parent_id, parent_id, parent_id]\n    if not clauses:\n        return []\n    wanted = [key, 'status', 'created_at', 'updated_at'] + [\n        column for column in ('programme_id', 'cohort_id', 'module_catalogue_id', 'week_id', 'component_id')\n        if column in columns and column != key\n    ]\n    return fetch_all(\n        f'select {\", \".join(quote_ident(column) for column in dict.fromkeys(wanted))} '\n        f'from {authoring_table_name(table)} where {archive_state.inactive_sql()} and ({\" or \".join(clauses)})',\n        params,\n    )",
+    "owner": "curriculum_api.catalogue.infrastructure.lifecycle_reads",
+    "dependencies": [
+      "AUTHORING_COMPONENTS_TABLE",
+      "AUTHORING_KSB_MAPPINGS_TABLE",
+      "AUTHORING_MODULES_TABLE",
+      "LIFECYCLE_KEY_COLUMNS",
+      "archive_state",
+      "authoring_table_name",
+      "column_names",
+      "fetch_all",
+      "quote_ident"
+    ],
+    "local_ports": {},
+    "decorators": []
+  },
+  "curriculum_where_any": {
+    "source": "def curriculum_where_any(clauses):\n    \"\"\"OR the non-empty clauses together, or return no SQL at all.\n\n    An empty id list must never widen into ``where true``: on a delete that is\n    the whole table. Callers therefore skip the statement entirely when this\n    returns an empty ``where`` rather than falling back to a default predicate.\n    \"\"\"\n    usable = [(sql, params) for sql, params in clauses if sql and params]\n    if not usable:\n        return '', []\n    return (\n        ' or '.join(sql for sql, _ in usable),\n        [value for _, values in usable for value in values],\n    )",
+    "owner": "curriculum_api.catalogue.infrastructure.lifecycle_reads",
+    "dependencies": [],
+    "local_ports": {},
+    "decorators": []
+  },
+  "curriculum_ids_matching": {
+    "source": "def curriculum_ids_matching(table, column, clauses):\n    where_sql, params = curriculum_where_any(clauses)\n    if not where_sql or not table_exists(table):\n        return []\n    rows = fetch_all(\n        f'select distinct {quote_ident(column)} as value from {table_name(table)} where {where_sql}',\n        params,\n    )\n    return [clean_str(row.get('value')) for row in rows if clean_str(row.get('value'))]",
+    "owner": "curriculum_api.catalogue.infrastructure.lifecycle_reads",
+    "dependencies": [
+      "clean_str",
+      "curriculum_where_any",
+      "fetch_all",
+      "quote_ident",
+      "table_exists",
+      "table_name"
+    ],
+    "local_ports": {},
+    "decorators": []
+  },
+  "orphan_programme_name_clause": {
+    "source": "def orphan_programme_name_clause(table, programme_name):\n    \"\"\"Rows that name this programme but carry no programme id at all.\n\n    A child saved while its parent id had not resolved yet keeps only the\n    denormalised ``programme_name``. Every id-based sweep - the archive cascade\n    and the permanent delete alike - misses it, and ``build_programmes`` then\n    rebuilds a card out of the leftover row: a discarded run that reads as if it\n    had been saved. Only rows with an empty ``programme_id`` are matched, so a\n    row belonging to a different programme of the same name is never touched.\n    \"\"\"\n    name = clean_str(programme_name)\n    if not name:\n        return '', []\n    try:\n        if not has_column(table, 'programme_id') or not has_column(table, 'programme_name'):\n            return '', []\n    except Exception:\n        return '', []\n    return (\n        \"(coalesce(programme_id, '') = '' and lower(trim(programme_name)) = lower(trim(%s)))\",\n        [name],\n    )",
+    "owner": "curriculum_api.catalogue.infrastructure.lifecycle_reads",
+    "dependencies": [
+      "clean_str",
+      "has_column"
+    ],
+    "local_ports": {},
+    "decorators": []
+  },
+  "programme_permanent_delete_blockers": {
+    "source": "def programme_permanent_delete_blockers(child_ids):\n    \"\"\"Learner rows the database itself refuses to orphan.\n\n    ``Learner.learner_training_plan_{modules,weeks,components}`` reference\n    curriculum modules, weeks and components with ON DELETE RESTRICT. A learner's\n    training plan is their delivery record, so content they hold is not something\n    a programme delete may remove; it is reported and the delete is refused.\n    \"\"\"\n    blockers = {}\n    if connection.vendor != 'postgresql':\n        return blockers\n    for table, column, key in PROGRAMME_PERMANENT_DELETE_LEARNER_LINKS:\n        values = [value for value in (child_ids.get(key) or []) if clean_str(value)]\n        if not values:\n            continue\n        try:\n            with connection.cursor() as cursor:\n                cursor.execute('select to_regclass(%s)', [f'\"Learner\".\"{table}\"'])\n                if not cursor.fetchone()[0]:\n                    continue\n                placeholders = ', '.join(['%s'] * len(values))\n                cursor.execute(\n                    f'select count(*) from \"Learner\".{quote_ident(table)} '\n                    f'where {quote_ident(column)} in ({placeholders})',\n                    values,\n                )\n                total = int(cursor.fetchone()[0] or 0)\n        except Exception:\n            # A count we cannot run is not a green light: the RESTRICT foreign key\n            # still refuses the delete, and the caller turns that into the same 409.\n            logger.warning('Could not count %s rows for a permanent programme delete.', table, exc_info=True)\n            continue\n        if total:\n            blockers[table] = total\n    return blockers",
+    "owner": "curriculum_api.catalogue.infrastructure.lifecycle_reads",
+    "dependencies": [
+      "PROGRAMME_PERMANENT_DELETE_LEARNER_LINKS",
+      "clean_str",
+      "connection",
+      "logger",
+      "quote_ident"
+    ],
+    "local_ports": {},
+    "decorators": []
+  },
+  "refuse_if_programme_owns_content": {
+    "source": "def refuse_if_programme_owns_content(plan):\n    \"\"\"Stop a permanent delete, before anything is written, if content would be lost.\n\n    Weeks and components are the reusable output of Curriculum Studio. Every week\n    belongs to a module and every component to a week (NOT NULL, RESTRICT), so\n    they cannot outlive the programme being deleted.\n    \"\"\"\n    child = plan.get('childIds') or {}\n    for table, ids in ((AUTHORING_WEEKS_TABLE, child.get('weekIds')),\n                       (AUTHORING_COMPONENTS_TABLE, child.get('componentIds'))):\n        where_sql, params = curriculum_where_any([curriculum_in_clause('id', ids or [])])\n        if where_sql and table_exists(table) and fetch_all(\n            f'select 1 from {table_name(table)} where {where_sql} limit 1', params,\n        ):\n            raise ProgrammeContentRetained(PROGRAMME_CONTENT_RETAINED_MESSAGE)",
+    "owner": "curriculum_api.catalogue.infrastructure.lifecycle_reads",
+    "dependencies": [
+      "AUTHORING_COMPONENTS_TABLE",
+      "AUTHORING_WEEKS_TABLE",
+      "PROGRAMME_CONTENT_RETAINED_MESSAGE",
+      "ProgrammeContentRetained",
+      "curriculum_in_clause",
+      "curriculum_where_any",
+      "fetch_all",
+      "table_exists",
+      "table_name"
+    ],
+    "local_ports": {},
+    "decorators": []
+  },
+  "programme_config_rows_remaining": {
+    "source": "def programme_config_rows_remaining(candidates):\n    \"\"\"Programme rows still in the table for these ids, read straight from it.\n\n    Deliberately not ``programme_config_by_identifier``: that reads the cached\n    config rows and matches on name as a fallback, so it can answer for a row\n    that is gone, or for a different programme that shares the name.\n    \"\"\"\n    clause, params = curriculum_in_clause(programme_config_key_column(), candidates)\n    if not clause or not table_exists('programmes'):\n        return 0\n    return len(fetch_all(f'select 1 from {table_name(\"programmes\")} where {clause}', params))",
+    "owner": "curriculum_api.catalogue.infrastructure.lifecycle_reads",
+    "dependencies": [
+      "curriculum_in_clause",
+      "fetch_all",
+      "programme_config_key_column",
+      "table_exists",
+      "table_name"
+    ],
+    "local_ports": {},
+    "decorators": []
+  },
+  "permanent_delete_reference_blockers": {
+    "source": "def permanent_delete_reference_blockers(kind, identifier):\n    \"\"\"``{key: count}`` of retained records that reference this row. Read-only.\n\n    Only references whose table and column exist are counted, so the legacy\n    schema (no such keys) answers {} and keeps its existing behaviour. A count\n    that cannot be run is skipped: the database still refuses the delete, and\n    the caller turns that into its generic 409.\n    \"\"\"\n    blockers = {}\n    ident = clean_str(identifier)\n    if not ident or connection.vendor != 'postgresql':\n        return blockers\n    for schema, table, column, key, subquery in PERMANENT_DELETE_REFERENCES.get(kind, ()):\n        try:\n            if column not in schema_compat.columns_of(schema, table):\n                continue\n            condition = f'{quote_ident(column)} in ({subquery})' if subquery else f'{quote_ident(column)} = %s'\n            with transaction.atomic(), connection.cursor() as cursor:\n                cursor.execute(\n                    f'select count(*) from {quote_ident(schema)}.{quote_ident(table)} where {condition}', [ident],\n                )\n                total = int(cursor.fetchone()[0] or 0)\n        except Exception:\n            logger.warning('Could not count %s.%s rows before a permanent %s delete.', schema, table, kind,\n                           exc_info=True)\n            continue\n        if total:\n            blockers[key] = total\n    return blockers",
+    "owner": "curriculum_api.catalogue.infrastructure.lifecycle_reads",
+    "dependencies": [
+      "PERMANENT_DELETE_REFERENCES",
+      "clean_str",
+      "connection",
+      "logger",
+      "quote_ident",
+      "schema_compat",
+      "transaction"
+    ],
+    "local_ports": {},
+    "decorators": []
+  },
+  "archive_payload": {
+    "source": "def archive_payload(table, existing_notes=None):\n    payload = {}\n    if has_column(table, 'status'):\n        payload['status'] = archive_state.INACTIVE if archive_state.uses_status(table) else 'archived'\n    if has_column(table, 'is_archived'):\n        payload['is_archived'] = True\n    if has_column(table, 'is_active'):\n        payload['is_active'] = False\n    notes_column = 'notes' if has_column(table, 'notes') else ('Notes' if has_column(table, 'Notes') else None)\n    if notes_column:\n        payload[notes_column] = append_notes_meta(existing_notes, {'archived': 'true', 'archived_at': now_iso()})\n    return payload",
+    "owner": "curriculum_api.catalogue.infrastructure.lifecycle_reads",
+    "dependencies": [
+      "append_notes_meta",
+      "archive_state",
+      "has_column",
+      "now_iso"
+    ],
+    "local_ports": {},
+    "decorators": []
+  },
+  "restore_payload": {
+    "source": "def restore_payload(table, existing_notes=None):\n    payload = {}\n    if has_column(table, 'status'):\n        payload['status'] = 'active'\n    if has_column(table, 'is_archived'):\n        payload['is_archived'] = False\n    if has_column(table, 'is_active'):\n        payload['is_active'] = True\n    notes_column = 'notes' if has_column(table, 'notes') else ('Notes' if has_column(table, 'Notes') else None)\n    if notes_column:\n        payload[notes_column] = remove_notes_meta(existing_notes, {'archived', 'archived_at'})\n    return payload",
+    "owner": "curriculum_api.catalogue.infrastructure.lifecycle_reads",
+    "dependencies": [
+      "has_column",
+      "remove_notes_meta"
+    ],
+    "local_ports": {},
+    "decorators": []
+  },
+  "archived_programme_module_edit_error": {
+    "source": "def archived_programme_module_edit_error(existing_module_row, *, title, programme_id, programme_name=''):\n    \"\"\"The one archived-programme rule, shared by both module edit paths.\n\n    Saving re-derives ``modules.is_programme_deleted`` from the programme the\n    module is attached to, so a module sitting under an archived programme is\n    flagged as deleted the moment anything about it is saved -- and it\n    disappears from every list while the response still reads ``updated: True``.\n    That is the \"I edited it and it vanished\" report. Refused outright rather\n    than saved-and-warned: the edit is not what the person wanted if its effect\n    is to withdraw the module.\n\n    Applied identically by the drawer PATCH (``curriculum_module_detail``) and\n    the Module Builder's structure PATCH (``curriculum_module_structure``), so\n    the two cannot drift into two slightly different rules -- the Builder used\n    to save happily and leave the module hidden.\n\n    Only for a module that is still visible. One already withdrawn is left\n    editable on purpose -- moving it onto a live programme is how it is brought\n    back, and blocking that would strand it.\n\n    Returns a ready-to-send 400 response, or ``None`` when the save may proceed.\n    \"\"\"\n    if programme_deleted_row(existing_module_row):\n        return None\n    target_programme = authoring_programme_config_for_save(programme_id, programme_name)\n    if not target_programme or not is_archived_program_config(target_programme):\n        return None\n    name = clean_str(title)\n    label = f'\"{name}\"' if name else 'This module'\n    return json_error(\n        f'{label} belongs to an archived programme, so saving it '\n        'would withdraw it from every list. Restore the programme, or move the module to a live '\n        'one, before editing it.',\n        fields=['programmeId'],\n        status=400,\n    )",
+    "owner": "curriculum_api.catalogue.api.authoring_guards",
+    "dependencies": [
+      "authoring_programme_config_for_save",
+      "clean_str",
+      "is_archived_program_config",
+      "json_error",
+      "programme_deleted_row"
+    ],
+    "local_ports": {},
+    "decorators": []
+  },
+  "permanent_delete_reference_refusal": {
+    "source": "def permanent_delete_reference_refusal(kind, identifier):\n    \"\"\"409 naming the retained records that hold this row, or None.\"\"\"\n    blockers = permanent_delete_reference_blockers(kind, identifier)\n    if not blockers:\n        return None\n    labels = {\n        'learners': 'learner records', 'enrolmentAccounts': 'enrolment accounts',\n        'progressEntries': 'learner progress entries', 'attendance': 'live-session attendance records',\n        'attendanceAliases': 'attendance name links', 'attendanceIdentityRules': 'attendance identity rules',\n        'teamsShares': 'modules sharing its Teams calendar', 'trainingPlanModules': 'training-plan modules',\n        'trainingPlanWeeks': 'training-plan weeks', 'trainingPlanComponents': 'training-plan activities',\n    }\n    held = ', '.join(f'{count} {labels.get(key, key)}' for key, count in blockers.items())\n    return json_error(\n        f'This {kind} cannot be deleted permanently because {held} still reference it. '\n        'Those records are kept as history, so it stays archived.',\n        status=409, reason=f'{kind}-has-retained-records', deleted=False, permanent=False,\n        id=clean_str(identifier), blockers=blockers,\n    )",
+    "owner": "curriculum_api.catalogue.api.authoring_guards",
+    "dependencies": [
+      "clean_str",
+      "json_error",
+      "permanent_delete_reference_blockers"
+    ],
+    "local_ports": {},
+    "decorators": []
+  },
+  "tutor_assignment_delivery_day_error": {
+    "source": "def tutor_assignment_delivery_day_error(candidate, before=None, groups=None):\n    \"\"\"Refuse to put a tutor against a module whose group states no day.\n\n    Only when the save actually assigns or changes the tutor. A module already\n    carrying one is not frozen -- it can still be renamed, re-dated or authored\n    -- for the same reason ``module_schedule_assignment_changed`` exists: the\n    rule is that a booking may not be *made* here, not that the module is stuck.\n\n    The day belongs to the group, not to this module, so the message says which\n    group to go and set it on. Saying \"set a delivery day\" without naming where\n    would send the author to the module drawer's own weekday control, which a\n    grouped module does not save through.\n    \"\"\"\n    next_key = staff_assignment_key((candidate or {}).get('tutor_name'))\n    if not next_key or next_key == staff_assignment_key((before or {}).get('tutor_name')):\n        return None\n    schedule = candidate or {}\n    if not clean_str(schedule.get('group_id')) and clean_str((before or {}).get('group_id')):\n        schedule = {**schedule, 'group_id': clean_str(before.get('group_id'))}\n    group = module_delivery_day_gap(schedule, groups)\n    if not group:\n        return None\n    group_name = clean_str(group.get('group_name')) or 'this module\u2019s group'\n    subject = clean_str(schedule.get('title')) or 'this module'\n    return json_error(\n        f'\"{group_name}\" has no delivery day, so {subject} has no sessions to place a tutor on and '\n        f'nobody can be checked for a clash. Choose the delivery day on \"{group_name}\", then assign the tutor.',\n        status=409,\n        code='missing_delivery_day',\n        fields=['tutor'],\n        groupId=clean_str(group.get('group_id')),\n        groupName=group_name,\n        moduleName=clean_str(schedule.get('title')),\n        tutor=clean_str(schedule.get('tutor_name')),\n    )",
+    "owner": "curriculum_api.catalogue.api.authoring_guards",
+    "dependencies": [
+      "clean_str",
+      "json_error",
+      "module_delivery_day_gap",
+      "staff_assignment_key"
+    ],
+    "local_ports": {},
+    "decorators": []
+  },
+  "group_tutor_assignment_delivery_day_error": {
+    "source": "def group_tutor_assignment_delivery_day_error(group_id, tutor_name, module_rows=None, next_week_day=None):\n    \"\"\"``tutor_assignment_delivery_day_error`` for a whole group at once.\n\n    The group PATCH and the staffing screen set one name against every module in\n    the group, so the group's own missing delivery day refuses the assignment\n    before any of them is written. Modules that already carry the name are not\n    being assigned and do not refuse -- only a name that is actually changing.\n\n    ``next_week_day`` is the day the same request is setting. One PATCH can give\n    the group its delivery day *and* its tutor, and refusing that would be\n    telling the author to do something the request is already doing.\n    \"\"\"\n    group_key = clean_str(group_id)\n    next_key = staff_assignment_key(tutor_name)\n    if not group_key or not next_key or clean_str(next_week_day):\n        return None\n    groups = safe_group_delivery_rows()\n    if not module_delivery_day_gap({'group_id': group_key}, groups):\n        return None\n    module_rows = safe_authoring_module_rows() if module_rows is None else module_rows\n    for row in surviving_authoring_module_rows(module_rows):\n        if clean_str(row.get('group_id')) != group_key:\n            continue\n        error = tutor_assignment_delivery_day_error(\n            module_schedule_view(row, tutor_name=tutor_name),\n            before=module_schedule_view(row),\n            groups=groups,\n        )\n        if error:\n            return error\n    return None",
+    "owner": "curriculum_api.catalogue.api.authoring_guards",
+    "dependencies": [
+      "clean_str",
+      "module_delivery_day_gap",
+      "module_schedule_view",
+      "safe_authoring_module_rows",
+      "safe_group_delivery_rows",
+      "staff_assignment_key",
+      "surviving_authoring_module_rows",
+      "tutor_assignment_delivery_day_error"
+    ],
+    "local_ports": {},
+    "decorators": []
+  },
+  "holiday_date_payload": {
+    "source": "def holiday_date_payload(payload, existing=None):\n    \"\"\"The start/end pair to store, or the 400 explaining why there is not one.\n\n    An end date is optional -- most closures are a single day -- and an omitted\n    one is stored as the start date rather than as null, so a holiday is always\n    a period and never a special case. An end before the start is rejected here\n    rather than silently swapped: a fortnight typed backwards is a typo, and\n    quietly reinterpreting it would close the wrong fortnight.\n    \"\"\"\n    existing = existing or {}\n    start = format_date(payload.get('startDate')) or format_date(existing.get('start_date'))\n    if not start:\n        return json_error('Give the holiday a start date.')\n    if 'endDate' in payload:\n        end = format_date(payload.get('endDate')) or start\n    else:\n        end = format_date(existing.get('end_date')) or start\n    if end < start:\n        return json_error('The end date cannot be before the start date.')\n    return {'start': start, 'end': end}",
+    "owner": "curriculum_api.catalogue.api.authoring_guards",
+    "dependencies": [
+      "format_date",
+      "json_error"
+    ],
+    "local_ports": {},
+    "decorators": []
+  },
+  "requested_expected_revision": {
+    "source": "def requested_expected_revision(request, payload):\n    \"\"\"The revision this caller is asking to be checked against, if any.\n\n    Absent means \"do not check me\", which is what every unguarded caller sends:\n    the Excel import, the structure wizard, the programme tree save, a record's\n    first save. Only a caller that read a token and sent it back is refused on\n    a mismatch -- the same opt-in the structure endpoint uses, and for the same\n    reason: the callers that write here without ever having read a revision are\n    legitimate and have to keep working.\n    \"\"\"\n    payload = payload if isinstance(payload, dict) else {}\n    return clean_str(\n        payload.get('expectedRevision')\n        or payload.get('expected_revision')\n        or request.headers.get('If-Match')\n    )",
+    "owner": "curriculum_api.catalogue.api.authoring_guards",
+    "dependencies": [
+      "clean_str"
+    ],
+    "local_ports": {},
+    "decorators": []
+  },
+  "authoring_mapping_payload": {
+    "source": "def authoring_mapping_payload(module_catalogue_id, mapping, week_id=None, component_id=None, module_row=None, source_cache=None, enforce_unique=True):\n    mapping_id = canonical_authoring_id('KSBMAP', mapping.get('id'))\n    source_type, source_id = source_payload_from_mapping(mapping)\n    code = coverage_normalise_code(mapping.get('code') or mapping.get('ksbCode') or mapping.get('ksb_code') or '')\n    if (not source_type or not source_id) and code:\n        if module_row is not None:\n            source_type, source_id = infer_mapping_source_from_module(module_row, code, source_cache)\n        else:\n            source_type, source_id = infer_mapping_source_for_code(module_catalogue_id, code)\n    if component_id and enforce_unique:\n        ensure_authoring_mapping_unique(component_id, {**mapping, 'sourceType': source_type, 'sourceId': source_id}, mapping_id=mapping_id)\n    return {\n        'id': mapping_id,\n        'module_catalogue_id': module_catalogue_id,\n        'week_id': week_id,\n        'component_id': component_id,\n        'ksb_id': mapping.get('ksbId') or mapping.get('ksb_id') or mapping.get('code') or mapping.get('ksb_code'),\n        'ksb_code': code,\n        'ksb_description': mapping.get('description') or mapping.get('ksbDescription') or '',\n        'source_type': source_type,\n        'source_id': source_id,\n        'classification': normalise_ksb_classification(mapping.get('type') or mapping.get('classification')),\n        'weight': normalise_ksb_weight(mapping.get('weight')),\n        'weight_class': normalise_ksb_weight_class(\n            mapping.get('weight_class') if 'weight_class' in mapping else mapping.get('weightClass'),\n            legacy_weight_class_from_classification(mapping.get('type') or mapping.get('classification')),\n        ),\n        'status': archive_state.ACTIVE,\n    }",
+    "owner": "curriculum_api.catalogue.application.content_preparation",
+    "dependencies": [
+      "archive_state",
+      "canonical_authoring_id",
+      "coverage_normalise_code",
+      "ensure_authoring_mapping_unique",
+      "infer_mapping_source_for_code",
+      "infer_mapping_source_from_module",
+      "legacy_weight_class_from_classification",
+      "normalise_ksb_classification",
+      "normalise_ksb_weight",
+      "normalise_ksb_weight_class",
+      "source_payload_from_mapping"
+    ],
+    "local_ports": {},
+    "decorators": []
+  },
+  "normalise_component_ksb_mappings": {
+    "source": "def normalise_component_ksb_mappings(module_catalogue_id, mappings, week_id=None, component_id=None, module_row=None, source_cache=None, enforce_unique=False):\n    json_items = []\n    projection_payloads = []\n    seen = set()\n    source_cache = source_cache if source_cache is not None else {}\n    for mapping in mappings or []:\n        if not isinstance(mapping, dict):\n            continue\n        payload = authoring_mapping_payload(\n            module_catalogue_id,\n            mapping,\n            week_id=week_id,\n            component_id=component_id,\n            module_row=module_row,\n            source_cache=source_cache,\n            enforce_unique=enforce_unique,\n        )\n        key = (\n            clean_str(payload.get('component_id')),\n            coverage_normalise_code(payload.get('ksb_code')),\n            clean_str(payload.get('source_type')),\n            clean_str(payload.get('source_id')),\n        )\n        if not key[1] or key in seen:\n            continue\n        seen.add(key)\n        json_items.append(component_ksb_mapping_json_item(payload))\n        projection_payloads.append(payload)\n    return json_items, projection_payloads",
+    "owner": "curriculum_api.catalogue.application.content_preparation",
+    "dependencies": [
+      "authoring_mapping_payload",
+      "clean_str",
+      "component_ksb_mapping_json_item",
+      "coverage_normalise_code"
+    ],
+    "local_ports": {},
+    "decorators": []
+  },
+  "free_course_sale_values": {
+    "source": "def free_course_sale_values(payload, module_row, is_free_course):\n    \"\"\"The sale values a module save may store, or a validation error.\n\n    A free course's omitted values keep its stored price (free_course_pricing);\n    any other module is never for sale -- asking to sell one is refused rather\n    than silently dropped.\n    \"\"\"\n    if not is_free_course:\n        if payload.get('isForSale') is True:\n            raise ModuleAuthoringValidationError([{'path': 'isForSale', 'message': 'Only a free course can be for sale.'}])\n        return {'is_for_sale': False, 'price': None, 'currency': 'GBP'}\n    try:\n        return pricing_values(payload, free_course_pricing.stored(module_row))\n    except ValueError as error:\n        raise ModuleAuthoringValidationError([{'path': error.args[0], 'message': error.args[1]}]) from error",
+    "owner": "curriculum_api.catalogue.application.content_preparation",
+    "dependencies": [
+      "ModuleAuthoringValidationError",
+      "free_course_pricing",
+      "pricing_values"
+    ],
+    "local_ports": {},
+    "decorators": []
+  },
+  "free_programme_module_id": {
+    "source": "def free_programme_module_id(programme_id, module, index):\n    requested = clean_str(module.get('id') or module.get('moduleId') or module.get('catalogueId'))\n    if re.match(r'^(FREECOURSE|FREEWEEK)-[0-9]{20}$', requested):\n        return requested\n    existing = [\n        row.get('id')\n        for row in free_programme_fetch_all(FREE_PROGRAMME_MODULES_TABLE, columns=['id'])\n    ]\n    return unique_timestamp_prefixed_id('FREEWEEK', existing)",
+    "owner": "curriculum_api.catalogue.application.content_preparation",
+    "dependencies": [
+      "FREE_PROGRAMME_MODULES_TABLE",
+      "clean_str",
+      "free_programme_fetch_all",
+      "re",
+      "unique_timestamp_prefixed_id"
+    ],
+    "local_ports": {},
+    "decorators": []
+  },
+  "free_programme_week_payload": {
+    "source": "def free_programme_week_payload(course_id, module, index):\n    week = None\n    week_structure = module.get('weekStructure') if isinstance(module.get('weekStructure'), list) else module.get('weeks')\n    if isinstance(week_structure, list) and week_structure:\n        week = next((item for item in week_structure if isinstance(item, dict)), None)\n    week = week or {}\n    week_number = parse_int(module.get('weekNumber') or module.get('week_number') or week.get('weekNumber') or week.get('week_number'), index + 1)\n    course_name = clean_str(module.get('courseName') or module.get('course_name') or module.get('title') or module.get('name'))\n    week_title = clean_str(module.get('weekTitle') or module.get('week_title') or week.get('title') or course_name or f'Week {week_number}')\n    requested_week_id = clean_str(module.get('weekId') or module.get('week_id') or week.get('id'))\n    week_id = requested_week_id or unique_timestamp_prefixed_id('WEEK')\n    return {\n        'id': week_id,\n        'module_catalogue_id': course_id,\n        'week_number': week_number,\n        'title': week_title,\n        'summary': clean_str(week.get('summary') or module.get('description') or ''),\n        'learning_outcomes': json_db_value(week.get('learningOutcomes') or week.get('learning_outcomes') or []),\n        'display_order': parse_int(module.get('displayOrder') or module.get('display_order'), index),\n    }",
+    "owner": "curriculum_api.catalogue.application.content_preparation",
+    "dependencies": [
+      "clean_str",
+      "json_db_value",
+      "parse_int",
+      "unique_timestamp_prefixed_id"
+    ],
+    "local_ports": {},
+    "decorators": []
+  },
+  "free_programme_component_payload": {
+    "source": "def free_programme_component_payload(component, index):\n    if is_retired_component_type(component.get('type')):\n        return None\n    requested_display_order = component.get('displayOrder')\n    if requested_display_order in (None, ''):\n        requested_display_order = component.get('display_order')\n    return {\n        'id': canonical_authoring_id('FREECOMP', component.get('id')),\n        'type': normalise_component_type(component.get('type')),\n        'title': component.get('title') or '',\n        'description': component.get('description') or '',\n        'expected_otjh': component_expected_otjh(component),\n        'points': parse_int(component.get('points'), 0),\n        'reflection_required': bool_payload(component.get('reflectionRequired') or component.get('reflection_required')),\n        'workplace_evidence_required': bool_payload(component.get('workplaceEvidenceRequired') or component.get('workplace_evidence_required')),\n        'tutor_validation_required': bool_payload(component.get('tutorValidationRequired') or component.get('tutor_validation_required')),\n        'display_order': parse_int(requested_display_order, index),\n        'settings_json': json_db_value(component.get('settings') or {}),\n    }",
+    "owner": "curriculum_api.catalogue.application.content_preparation",
+    "dependencies": [
+      "bool_payload",
+      "canonical_authoring_id",
+      "component_expected_otjh",
+      "is_retired_component_type",
+      "json_db_value",
+      "normalise_component_type",
+      "parse_int"
+    ],
+    "local_ports": {},
+    "decorators": []
+  },
+  "get_free_programme_modules_payload": {
+    "source": "def get_free_programme_modules_payload(programme_id):\n    programme_id = clean_str(programme_id)\n    # One round trip for the three reads (free_course_catalogue.fetch_many).\n    course_rows, week_rows, component_rows = free_course_catalogue.fetch_many([\n        (FREE_COURSES_TABLE, '', [], 'display_order, course_name, id', None),\n        (FREE_PROGRAMME_MODULES_TABLE, '', [], 'display_order, week_number, id', None),\n        (FREE_PROGRAMME_COMPONENTS_TABLE, 'programme_id = %s', [programme_id], 'display_order, title, id', None),\n    ])\n    courses = {clean_str(course.get('id')): course for course in course_rows}\n    # Staff consumers retain inactive weeks and their explicit status.\n    # Learner reads apply visibility separately; never erase historical weeks.\n    modules = week_rows\n    components_by_week = {}\n    for component in active_component_rows(component_rows):\n        components_by_week.setdefault(clean_str(component.get('free_module_id')), []).append(component)\n    from .legacy_free_course_adoption import adopted_courses\n    adopted = adopted_courses()\n    return [free_programme_module_response(module, components_by_week.get(clean_str(module.get('id')), []),\n                                           courses.get(clean_str(module.get('course_id'))))\n            for module in modules if clean_str(module.get('course_id')) not in adopted]",
+    "owner": "curriculum_api.catalogue.application.content_preparation",
+    "dependencies": [
+      "FREE_COURSES_TABLE",
+      "FREE_PROGRAMME_COMPONENTS_TABLE",
+      "FREE_PROGRAMME_MODULES_TABLE",
+      "active_component_rows",
+      "adopted_courses",
+      "clean_str",
+      "free_course_catalogue",
+      "free_programme_module_response"
+    ],
+    "local_ports": {
+      "adopted_courses": "curriculum_api.legacy_free_course_adoption"
+    },
+    "decorators": []
+  },
+  "free_programme_owned_ids": {
+    "source": "def free_programme_owned_ids(programme_id):\n    \"\"\"Free course + week ids that belong to `programme_id`.\n\n    curriculum.free_courses and curriculum.free_course_weeks carry no\n    programme_id column of their own \u2014 ownership is only expressed through\n    curriculum.free_programme_components.programme_id, which points at both a\n    free_module_id (a free_course_weeks row) and a week_id. Resolving through\n    the components table is therefore the ONLY way to scope a delete to one\n    programme. Deleting these tables unconditionally wipes every programme's\n    free courses, which is what previously happened here.\n    \"\"\"\n    programme_id = clean_str(programme_id)\n    if not programme_id:\n        return set(), set()\n    components = free_programme_fetch_all(\n        FREE_PROGRAMME_COMPONENTS_TABLE, 'programme_id = %s', [programme_id],\n    )\n    week_ids = {\n        clean_str(row.get('free_module_id'))\n        for row in components\n        if clean_str(row.get('free_module_id'))\n    }\n    course_ids = set()\n    if week_ids:\n        placeholders = ', '.join(['%s'] * len(week_ids))\n        for row in free_programme_fetch_all(\n            FREE_PROGRAMME_MODULES_TABLE, f'id in ({placeholders})', list(week_ids),\n            columns=['id', 'course_id'],\n        ):\n            course_id = clean_str(row.get('course_id'))\n            if course_id:\n                course_ids.add(course_id)\n    # Only drop a course when this programme owns every one of its weeks;\n    # a course shared with another programme must survive.\n    owned_course_ids = set()\n    for course_id in course_ids:\n        siblings = free_programme_fetch_all(\n            FREE_PROGRAMME_MODULES_TABLE, 'course_id = %s', [course_id], columns=['id'],\n        )\n        sibling_ids = {clean_str(row.get('id')) for row in siblings if clean_str(row.get('id'))}\n        if sibling_ids and sibling_ids.issubset(week_ids):\n            owned_course_ids.add(course_id)\n    return week_ids, owned_course_ids",
+    "owner": "curriculum_api.catalogue.application.content_preparation",
+    "dependencies": [
+      "FREE_PROGRAMME_COMPONENTS_TABLE",
+      "FREE_PROGRAMME_MODULES_TABLE",
+      "clean_str",
+      "free_programme_fetch_all"
+    ],
+    "local_ports": {},
+    "decorators": []
+  },
+  "component_reflection_question": {
+    "source": "def component_reflection_question(row, settings=None):\n    \"\"\"The reflection question stored against a component row.\n\n    The column is the source of truth. Rows written before it existed kept the\n    same text under ``settings_json.reflectionPrompt``, so that is the fallback\n    - and a narrowed read that skipped ``settings_json`` simply falls back to\n    nothing rather than reporting the question as cleared.\n    \"\"\"\n    stored = clean_str(row.get(REFLECTION_QUESTION_COLUMN))\n    if stored:\n        return stored\n    if settings is None:\n        settings = component_builder_settings(row)\n    settings = settings if isinstance(settings, dict) else {}\n    return clean_str(settings.get(LEGACY_REFLECTION_QUESTION_SETTING))",
+    "owner": "curriculum_api.catalogue.domain.content_values",
+    "dependencies": [
+      "LEGACY_REFLECTION_QUESTION_SETTING",
+      "REFLECTION_QUESTION_COLUMN",
+      "clean_str",
+      "component_builder_settings"
+    ],
+    "local_ports": {},
+    "decorators": []
+  },
+  "component_coach_validation": {
+    "source": "def component_coach_validation(row):\n    \"\"\"Whether a coach has to validate this component.\n\n    On unless the row says otherwise. The column arrived after the table, so a\n    row written before it - or a narrowed read that never selected it - reports\n    ``None``, and that means \"nobody turned it off\", not \"off\".\n    \"\"\"\n    value = row.get('coach_validation_required')\n    return True if value is None else bool_payload(value)",
+    "owner": "curriculum_api.catalogue.domain.content_values",
+    "dependencies": [
+      "bool_payload"
+    ],
+    "local_ports": {},
+    "decorators": []
+  },
+  "payload_coach_validation": {
+    "source": "def payload_coach_validation(component, default=True):\n    \"\"\"What a component payload is asking us to store for coach validation.\n\n    Either spelling counts, and an explicit ``False`` turns it off. A payload\n    naming neither is older than the field, so the default stands rather than\n    silently clearing a flag the author never saw.\n    \"\"\"\n    for key in ('coachValidationRequired', 'coach_validation_required'):\n        if key in component:\n            return bool_payload(component.get(key))\n    return default",
+    "owner": "curriculum_api.catalogue.domain.content_values",
+    "dependencies": [
+      "bool_payload"
+    ],
+    "local_ports": {},
+    "decorators": []
+  },
+  "component_ksb_mapping_json_item": {
+    "source": "def component_ksb_mapping_json_item(mapping_payload):\n    classification = normalise_ksb_classification(mapping_payload.get('classification'))\n    weight_class = normalise_ksb_weight_class(\n        mapping_payload.get('weight_class') if 'weight_class' in mapping_payload else mapping_payload.get('weightClass'),\n        legacy_weight_class_from_classification(classification),\n    )\n    code = coverage_normalise_code(mapping_payload.get('ksb_code') or mapping_payload.get('code'))\n    ksb_id = clean_str(mapping_payload.get('ksb_id') or mapping_payload.get('ksbId') or code)\n    return {\n        'id': clean_str(mapping_payload.get('id')),\n        'ksb_id': ksb_id,\n        'ksb_code': code,\n        'description': clean_str(mapping_payload.get('ksb_description') or mapping_payload.get('description')),\n        'source_type': clean_str(mapping_payload.get('source_type') or mapping_payload.get('sourceType')),\n        'source_id': clean_str(mapping_payload.get('source_id') or mapping_payload.get('sourceId')),\n        'classification': classification,\n        'weight': normalise_ksb_weight(mapping_payload.get('weight')),\n        'weight_class': weight_class,\n    }",
+    "owner": "curriculum_api.catalogue.domain.content_values",
+    "dependencies": [
+      "clean_str",
+      "coverage_normalise_code",
+      "legacy_weight_class_from_classification",
+      "normalise_ksb_classification",
+      "normalise_ksb_weight",
+      "normalise_ksb_weight_class"
+    ],
+    "local_ports": {},
+    "decorators": []
+  },
+  "component_ksb_mapping_api_item": {
+    "source": "def component_ksb_mapping_api_item(mapping):\n    classification = normalise_ksb_classification(mapping.get('classification') or mapping.get('type'))\n    weight_class = normalise_ksb_weight_class(mapping.get('weight_class') or mapping.get('weightClass'), legacy_weight_class_from_classification(classification))\n    code = coverage_normalise_code(mapping.get('ksb_code') or mapping.get('code'))\n    ksb_id = clean_str(mapping.get('ksb_id') or mapping.get('ksbId') or code)\n    return {\n        'id': clean_str(mapping.get('id')),\n        'ksbId': ksb_id,\n        'code': code,\n        'description': clean_str(mapping.get('description') or mapping.get('ksb_description')),\n        'sourceType': clean_str(mapping.get('source_type') or mapping.get('sourceType')),\n        'sourceId': clean_str(mapping.get('source_id') or mapping.get('sourceId')),\n        'classification': classification,\n        'type': classification,\n        'weight': normalise_ksb_weight(mapping.get('weight')),\n        'weightClass': weight_class,\n        'weight_class': weight_class,\n    }",
+    "owner": "curriculum_api.catalogue.domain.content_values",
+    "dependencies": [
+      "clean_str",
+      "coverage_normalise_code",
+      "legacy_weight_class_from_classification",
+      "normalise_ksb_classification",
+      "normalise_ksb_weight",
+      "normalise_ksb_weight_class"
+    ],
+    "local_ports": {},
+    "decorators": []
+  },
+  "component_ksb_mappings_from_row": {
+    "source": "def component_ksb_mappings_from_row(row, projection_rows=None):\n    canonical = as_json_value((row or {}).get('ksb_mappings'), [])\n    if isinstance(canonical, list) and canonical:\n        return [\n            component_ksb_mapping_json_item({\n                'id': mapping.get('id'),\n                'ksb_id': mapping.get('ksbId') or mapping.get('ksb_id'),\n                'ksb_code': mapping.get('code') or mapping.get('ksbCode') or mapping.get('ksb_code'),\n                'ksb_description': mapping.get('description') or mapping.get('ksbDescription') or mapping.get('ksb_description'),\n                'source_type': mapping.get('sourceType') or mapping.get('source_type'),\n                'source_id': mapping.get('sourceId') or mapping.get('source_id'),\n                'classification': mapping.get('classification') or mapping.get('type'),\n                'weight_class': mapping.get('weight_class') or mapping.get('weightClass'),\n                'weight': mapping.get('weight'),\n            })\n            for mapping in canonical\n            if isinstance(mapping, dict) and coverage_normalise_code(mapping.get('code') or mapping.get('ksbCode') or mapping.get('ksb_code'))\n        ]\n    return [\n        component_ksb_mapping_json_item(mapping)\n        for mapping in (projection_rows or [])\n        if coverage_normalise_code(mapping.get('ksb_code') or mapping.get('code'))\n    ]",
+    "owner": "curriculum_api.catalogue.domain.content_values",
+    "dependencies": [
+      "as_json_value",
+      "component_ksb_mapping_json_item",
+      "coverage_normalise_code"
+    ],
+    "local_ports": {},
+    "decorators": []
+  },
+  "authoring_row_differs": {
+    "source": "def authoring_row_differs(payload, stored_row):\n    \"\"\"Would writing ``payload`` change ``stored_row``? Timestamps aside.\n\n    Errs towards True: a value that merely looks different is written, which\n    costs a row, never correctness.\n    \"\"\"\n    if not stored_row:\n        return True\n    for column, value in payload.items():\n        if column in AUTHORING_COMPARE_IGNORED_COLUMNS or column not in stored_row:\n            continue\n        if authoring_comparable(column, value) != authoring_comparable(column, stored_row.get(column)):\n            return True\n    return False",
+    "owner": "curriculum_api.catalogue.domain.content_values",
+    "dependencies": [
+      "AUTHORING_COMPARE_IGNORED_COLUMNS",
+      "authoring_comparable"
+    ],
+    "local_ports": {},
+    "decorators": []
+  },
+  "authoring_mapping_signature": {
+    "source": "def authoring_mapping_signature(rows):\n    \"\"\"What an owner's KSB mappings say, without their ids.\n\n    By content because a mapping that arrives without an id is minted a fresh\n    one on every save: compared by id, an untouched component would always\n    look changed.\n    \"\"\"\n    return sorted(\n        json.dumps({\n            column: authoring_comparable(column, value)\n            for column, value in row.items()\n            if column not in AUTHORING_COMPARE_IGNORED_COLUMNS\n            and column not in {'id', 'deleted_at', 'deleted_by', 'deleted_via_parent', 'is_programme_deleted'}\n        }, sort_keys=True, default=str)\n        for row in rows\n    )",
+    "owner": "curriculum_api.catalogue.domain.content_values",
+    "dependencies": [
+      "AUTHORING_COMPARE_IGNORED_COLUMNS",
+      "authoring_comparable",
+      "json"
+    ],
+    "local_ports": {},
+    "decorators": []
+  },
+  "week_template_scope_fields": {
+    "source": "def week_template_scope_fields(payload, course_type):\n    # Paid templates keep their programme/module/group scope; free templates\n    # clear it.\n    #\n    # An absent id is NULL, never ''. programme_id and group_id carry foreign\n    # keys to curriculum.programmes/groups, and '' is not a key any row holds --\n    # so an unscoped insert is rejected outright. The constraints are NOT\n    # VALIDATED, which is why the legacy '' rows written before they existed are\n    # still sitting there unbothered; new rows are checked normally. NULL is\n    # what \"no scope\" has to mean, and the columns are all nullable.\n    #\n    # The names beside them are free text with no constraint, so '' is fine and\n    # keeps update_rows clearing them when a template loses its scope.\n    if course_type == 'free':\n        return {\n            'programme_id': None,\n            'programme_name': '',\n            'module_catalogue_id': None,\n            'group_id': None,\n            'group_name': '',\n        }\n    return {\n        'programme_id': clean_str(payload.get('programmeId')) or None,\n        'programme_name': clean_str(payload.get('programmeName')),\n        'module_catalogue_id': clean_str(payload.get('moduleCatalogueId')) or None,\n        'group_id': clean_str(payload.get('groupId')) or None,\n        'group_name': clean_str(payload.get('groupName')),\n    }",
+    "owner": "curriculum_api.catalogue.domain.content_values",
+    "dependencies": [
+      "clean_str"
+    ],
+    "local_ports": {},
+    "decorators": []
+  },
+  "active_component_rows": {
+    "source": "def active_component_rows(rows):\n    # Detached library rows are excluded too. A detach deliberately clears the\n    # soft-delete stamps, so without this they would read as live content and\n    # surface in the component list belonging to no module at all. They are\n    # reachable only through the reuse library.\n    return [\n        row for row in rows\n        if not is_retired_component_type(row.get('type'))\n        and not programme_deleted_row(row)\n    ]",
+    "owner": "curriculum_api.catalogue.domain.content_values",
+    "dependencies": [
+      "is_retired_component_type",
+      "programme_deleted_row"
+    ],
+    "local_ports": {},
+    "decorators": []
+  },
+  "authoring_comparable": {
+    "source": "def authoring_comparable(column, value):\n    if column in AUTHORING_JSON_COMPARE_COLUMNS:\n        return parse_json_value(value, value)\n    if isinstance(value, bool) or value is None:\n        return value\n    if isinstance(value, (int, float)) or type(value).__name__ == 'Decimal':\n        return float(value)\n    return value",
+    "owner": "curriculum_api.catalogue.domain.content_values",
+    "dependencies": [
+      "AUTHORING_JSON_COMPARE_COLUMNS",
+      "parse_json_value"
+    ],
+    "local_ports": {},
+    "decorators": []
+  },
+  "authoring_mapping_owner": {
+    "source": "def authoring_mapping_owner(row):\n    if clean_str(row.get('component_id')):\n        return ('component', clean_str(row.get('component_id')))\n    if clean_str(row.get('week_id')):\n        return ('week', clean_str(row.get('week_id')))\n    return ('module', '')",
+    "owner": "curriculum_api.catalogue.domain.content_values",
+    "dependencies": [
+      "clean_str"
+    ],
+    "local_ports": {},
+    "decorators": []
+  },
+  "free_programme_fetch_all": {
+    "source": "def free_programme_fetch_all(table, where_sql='', params=None, order_sql='', columns=None):\n    \"\"\"Free-course rows. `columns` names the ones to read.\n\n    Default is every column, which is what the payload builders want. Callers\n    that only need identifiers should name them: free_course_weeks.\n    cover_image_url and free_courses.cover_image_url hold base64 `data:` image\n    payloads on some rows -- hundreds of kilobytes each -- and a `select *` for\n    an id list drags all of them across the wire.\n    \"\"\"\n    query = free_programme_select_sql(table, where_sql, order_sql, columns)\n    with connection.cursor() as cursor:\n        cursor.execute(query, params or [])\n        return rows_as_dicts(cursor)",
+    "owner": "curriculum_api.catalogue.infrastructure.free_course_reads",
+    "dependencies": [
+      "connection",
+      "free_programme_select_sql",
+      "rows_as_dicts"
+    ],
+    "local_ports": {},
+    "decorators": [
+      "scoped_curriculum_read"
+    ]
+  },
+  "free_programme_select_sql": {
+    "source": "def free_programme_select_sql(table, where_sql='', order_sql='', columns=None):\n    \"\"\"The SELECT free_programme_fetch_all() runs for these arguments.\"\"\"\n    ensure_free_programme_tables()\n    selection = ', '.join(quote_ident(column) for column in columns) if columns else '*'\n    from .learning_storage import free_read_table\n    query = f'select {selection} from {free_read_table(table)}'\n    if where_sql:\n        query += f' where {where_sql}'\n    if order_sql:\n        query += f' order by {order_sql}'\n    return query",
+    "owner": "curriculum_api.catalogue.infrastructure.free_course_reads",
+    "dependencies": [
+      "ensure_free_programme_tables",
+      "free_read_table",
+      "quote_ident"
+    ],
+    "local_ports": {
+      "free_read_table": "curriculum_api.learning_storage"
+    },
+    "decorators": []
+  },
+  "free_programme_fetch_many": {
+    "source": "def free_programme_fetch_many(reads):\n    \"\"\"Several free-course reads in one database round trip.\n\n    ``reads`` is ``[(table, where_sql, params, order_sql, columns), ...]``; the\n    result is one row list per read, in order. On PostgreSQL the statements go\n    out as one multi-statement query (see CURRICULUM_BATCHED_READS): from a\n    remote database the round trips, not the rows, are most of what these\n    endpoints wait on. Elsewhere, or with batching off, they run one by one.\n    \"\"\"\n    reads = list(reads)\n    if len(reads) < 2 or connection.vendor != 'postgresql' or not CURRICULUM_BATCHED_READS:\n        return [free_programme_fetch_all(table, where_sql, params, order_sql, columns=columns)\n                for table, where_sql, params, order_sql, columns in reads]\n    queries = [free_programme_select_sql(table, where_sql, order_sql, columns)\n               for table, where_sql, _params, order_sql, columns in reads]\n    results = []\n    with connection.cursor() as cursor:\n        cursor.execute('; '.join(queries), [value for read in reads for value in (read[2] or [])])\n        while True:\n            results.append(rows_as_dicts(cursor))\n            if not cursor.nextset():\n                break\n    if len(results) != len(reads):\n        raise DatabaseError(f'Batched free-course reads returned {len(results)} results for {len(reads)} reads.')\n    return results",
+    "owner": "curriculum_api.catalogue.infrastructure.free_course_reads",
+    "dependencies": [
+      "CURRICULUM_BATCHED_READS",
+      "DatabaseError",
+      "connection",
+      "free_programme_fetch_all",
+      "free_programme_select_sql",
+      "rows_as_dicts"
+    ],
+    "local_ports": {},
+    "decorators": []
+  },
+  "delivery_scope_lists": {
+    "source": "def delivery_scope_lists(request):\n    \"\"\"``{'cohorts': [...], 'groups': [...]}`` for the request's visibility.\n\n    The cohorts and groups exactly as the full curriculum payload builds them --\n    same build_cohorts_and_groups(), measured identical on the new database for\n    both visibilities -- without the rest of that payload (34-49 s cold against\n    0.5-1 s here). Shared by delivery-scope and the group list, one cache entry.\n    \"\"\"\n    visibility = curriculum_visibility(request)\n\n    def build():\n        with curriculum_read_scope():\n            cohorts, groups = build_cohorts_and_groups(\n                include_archived=visibility == 'all',\n            )\n            return {'cohorts': cohorts, 'groups': groups}\n\n    return cached_curriculum_value(\n        f'delivery-scope:{visibility}', build, force=request_bypasses_curriculum_cache(request),\n    )",
+    "owner": "curriculum_api.catalogue.api.delivery_scope",
+    "dependencies": [
+      "build_cohorts_and_groups",
+      "cached_curriculum_value",
+      "curriculum_read_scope",
+      "curriculum_visibility",
+      "request_bypasses_curriculum_cache"
+    ],
+    "local_ports": {},
+    "decorators": []
+  }
+}

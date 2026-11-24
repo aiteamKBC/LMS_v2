@@ -1,3 +1,4 @@
+from curriculum_api.catalogue.tests.parity.composition_test_support import composition_fixture
 import json
 from contextlib import nullcontext
 from types import SimpleNamespace
@@ -56,14 +57,14 @@ class FreeCourseQuizEndpointTests(SimpleTestCase):
             "weekTitle": "Week one", "courseName": "Safe course",
         }
         quiz = SimpleNamespace(id=44, free_course_week_id="FREEWEEK-1", week_id="", status="draft")
-        with mock.patch.object(views, "require_mode"), \
-             mock.patch.object(views, "_catalogue_lock"), \
+        with composition_fixture(views, "require_mode"), \
+             composition_fixture(views, "_catalogue_lock"), \
              mock.patch.object(views.transaction, "atomic", return_value=nullcontext()), \
-             mock.patch.object(views, "_document", side_effect=[{"revision": REVISION}, {"revision": NEXT_REVISION}]), \
-             mock.patch.object(views, "_owned_component", return_value=component), \
+             composition_fixture(views, "_document", side_effect=[{"revision": REVISION}, {"revision": NEXT_REVISION}]), \
+             composition_fixture(views, "_owned_component", return_value=component), \
              mock.patch.object(views.QuizPackage.objects, "create", return_value=quiz) as create, \
-             mock.patch.object(views, "connection", SimpleNamespace(cursor=lambda: Cursor())), \
-             mock.patch.object(views, "_quiz_preview_payload", return_value={"quiz": {"id": 44}, "questions": []}):
+             composition_fixture(views, "connection", SimpleNamespace(cursor=lambda: Cursor())), \
+             composition_fixture(views, "_quiz_preview_payload", return_value={"quiz": {"id": 44}, "questions": []}):
             response = self.call(
                 views.collection, request, "FREE-1",
                 accesses={ACCESS_CURRICULUM, ACCESS_FREE_COURSE_AUTHORING},
@@ -83,13 +84,13 @@ class FreeCourseQuizEndpointTests(SimpleTestCase):
         )
         quiz = SimpleNamespace(id=44, free_course_week_id="FREEWEEK-1", week_id="", status="published")
         component = {"componentId": "FREECOMP-1", "type": "quiz", "settings": {"linkedQuizId": "44"}}
-        with mock.patch.object(views, "require_mode"), \
-             mock.patch.object(views, "_catalogue_lock"), \
+        with composition_fixture(views, "require_mode"), \
+             composition_fixture(views, "_catalogue_lock"), \
              mock.patch.object(views.transaction, "atomic", return_value=nullcontext()), \
-             mock.patch.object(views, "_document", return_value={"revision": REVISION}), \
-             mock.patch.object(views, "_quiz_owner", return_value=quiz), \
-             mock.patch.object(views, "_owned_component", return_value=component), \
-             mock.patch.object(views, "_history_count", return_value=3):
+             composition_fixture(views, "_document", return_value={"revision": REVISION}), \
+             composition_fixture(views, "_quiz_owner", return_value=quiz), \
+             composition_fixture(views, "_owned_component", return_value=component), \
+             composition_fixture(views, "_history_count", return_value=3):
             response = self.call(
                 views.detail, request, "FREE-1", 44,
                 accesses={ACCESS_CURRICULUM, ACCESS_FREE_COURSE_AUTHORING},

@@ -31,12 +31,47 @@ def metadata():
         replacement_settings={},record_ids={},activity_dates={})
 
 
+def catalogue_sql_rows(definitions, course_id=3):
+    # Match the narrow SQL projection, while retaining full definitions for
+    # the independent historical viewer assertions below.
+    payload_fields = ('quiz_id', 'activity_id', 'parent_activity_id', 'section_order',
+                      'component_order', 'created_at', 'created_at_utc')
+    return [{**row, 'source_course_id': course_id,
+             'payload_section_title': row.get('source_payload', {}).get('section_title'),
+             **{key: row.get('source_payload', {}).get(key) for key in payload_fields}}
+            for row in definitions]
+
+
 def fake_connections():
     connection=MagicMock()
     return {'enrolment':connection}
 
 
 class MyLearningAggregateTests(SimpleTestCase):
+    def test_catalogue_uses_only_authoritative_module_cover_for_historical_cards(self):
+        from . import my_learning_activity, my_learning_ksbs
+        meta = metadata()
+        meta.update(modules={}, covers={'current:M1': 'https://assets.example.test/m1.webp'})
+        context = ([], [], [], native(), [], [], set(), set(), {}, meta, [])
+        cards = [
+            {'id': 'legacy:50', 'source': 'legacy', 'moduleId': 'M1'},
+            {'id': 'legacy:60', 'source': 'legacy', 'moduleId': None},
+        ]
+        source = SimpleNamespace(pk=7, cohort='', group='')
+        owner = {'name': 'Synthetic learner'}
+        with patch.object(learning, 'load_context', return_value=context), \
+             patch.object(learning, 'assemble_cards', return_value=(cards, {})), \
+             patch.object(my_learning_ksbs, 'read_card_ksb_mappings', return_value={}), \
+             patch.object(my_learning_activity, 'card_teaching_activity', return_value={}), \
+             patch.object(learning, 'journal_enabled', return_value=True), \
+             patch.object(canonical, 'programme_planned_hours', return_value=0), \
+             patch.object(learning, 'upcoming_links', return_value=[]):
+            result = learning.read_catalogue(source, 'commercial', owner)
+
+        by_id = {card['id']: card for card in result['modules']}
+        self.assertEqual(by_id['legacy:50']['cover'], 'https://assets.example.test/m1.webp')
+        self.assertIsNone(by_id['legacy:60']['cover'])
+
     def test_free_course_identity_query_uses_catalogue_relationships_and_preserves_module_collisions(self):
         cur = MagicMock()
         cur.fetchall.return_value = [('FREE-1',), ('FREEWEEK-1',)]
@@ -248,7 +283,7 @@ class MyLearningAggregateTests(SimpleTestCase):
         record = {'id': 1, 'accepted': False, 'actual_seconds': 0, 'activity_status': 'in_progress',
                   'reporting_started_at': '2026-11-11T10:00:00Z', 'sources': [{'source_system': 'old_lms',
                       'source_course_ref': '50', 'source_activity_id': 'material:7'}]}
-        with patch.object(canonical, 'query', return_value=definitions):
+        with patch.object(canonical, 'query', return_value=catalogue_sql_rows(definitions)):
             rows, done, started, hours, _ = learning.course_facts({'id': 9}, [record], [course])
         cards, _ = self.cards(native(), [course], rows, done, started, hours, records=[record])
         self.assertEqual(next(card for card in cards if card['source'] == 'legacy')['lastActivityAt'], '2026-11-11T10:00:00+00:00')
@@ -309,13 +344,103 @@ class MyLearningAggregateTests(SimpleTestCase):
         self.assertEqual(card['completedActivityCount'], 0)
         self.assertEqual(card['activityCount'], 2)
 
-    def cards(self, content, courses=(), definitions=(), done=None, started=None, hours=None, meta=None, records=()):
+    def cards(self, content, courses=(), definitions=(), done=None, started=None, hours=None, meta=None, records=(), credits=(), **options):
         from . import course_catalogue_display
         meta = meta or metadata()
         with patch.object(course_catalogue_display,'read_export_placements',return_value=[]):
             return learning.assemble_cards(content,meta['current_subjects'],list(courses),list(definitions),
                 done or set(),started or set(),hours or __import__('collections').defaultdict(float),
-                meta,list(records),{'M1':{'id':'M1','title':'One','total_otjh':10,'educational_session_count':2}},[])
+                meta,list(records),{'M1':{'id':'M1','title':'One','total_otjh':10,'educational_session_count':2}},list(credits),**options)
+
+    def test_certificate_hours_use_owned_accepted_records_and_live_credit_without_double_counting(self):
+        records = [
+            dict(id=1, module_ref='M1', component_ref='C1', accepted=True, actual_seconds=3600),
+            dict(id=2, module_ref='M1', component_ref='LIVE', accepted=True, actual_seconds=1800),
+            dict(id=3, module_ref='M1', accepted=False, actual_seconds=36000),
+            dict(id=4, module_ref='M2', accepted=True, actual_seconds=72000),
+        ]
+        credits = [dict(moduleId='M1', componentId='LIVE', hours=0.5, verifiedSeconds=1800),
+                   dict(moduleId='M2', componentId='OTHER', hours=20, verifiedSeconds=72000)]
+        cards, _ = self.cards(native([component()]), records=records, credits=credits, include_activity_items=True)
+        self.assertEqual(cards[0]['_actualLearningHours'], 1.5)
+        self.assertEqual(cards[0]['actualHours'], 1.5)
+        self.assertEqual(cards[0]['planModule']['total_otjh'], 10)
+        cards, _ = self.cards(native([component()]), records=records, credits=credits)
+        self.assertNotIn('_actualLearningHours', cards[0])
+
+    def test_retained_ledger_does_not_recreate_removed_old_course_cards(self):
+        record = dict(id=1, accepted=True, actual_seconds=137310, source_system='old_lms',
+                      sources=[dict(source_system='old_lms', source_course_ref='147095',
+                                    source_course_id=984, source_activity_id='material:1')])
+        cards, _ = self.cards(native([component()]), courses=[], records=[record], include_activity_items=True)
+        self.assertEqual([card['id'] for card in cards], ['current:M1'])
+        self.assertNotIn('legacy:147095', str(cards))
+
+    def test_required_certificate_counts_ignore_optional_work_and_hour_weights(self):
+        content = native([component('R1', expectedOtjh=0.01), component('R2', expectedOtjh=20),
+                          component('EXTRA', expectedOtjh=0), component('Q', expectedOtjh=0, isQuiz=True,
+                                    quizMeta={'quizId': 1}, pointNumber=1), component('R1', expectedOtjh=0.01)])
+        content['componentProgress'] = [{'componentId': 'R1', 'kind': 'component'}, {'componentId': 'EXTRA', 'kind': 'component'}]
+        content['quizAttempts'] = [{'componentId': 'Q', 'quizId': 1, 'passed': True}]
+        cards, _ = self.cards(content, include_activity_items=True)
+        card = cards[0]
+        self.assertEqual((card['activityCount'], card['completedActivityCount'], card['progress']), (4, 3, 75))
+        self.assertEqual((card['requiredActivityCount'], card['completedRequiredActivityCount']), (2, 1))
+        # The directory's shared all-activity item contract stays unchanged.
+        self.assertEqual(len(card['_activityItems']), 4)
+        self.assertTrue(all(set(item) == {'completed', 'schedule'} for item in card['_activityItems']))
+
+    def test_no_allocated_required_work_does_not_use_completed_optional_work(self):
+        values = [None, 0, -1, float('nan'), float('inf'), True, '1']
+        content = native([component(str(i), expectedOtjh=value) for i, value in enumerate(values)])
+        content['componentProgress'] = [{'componentId': str(i), 'kind': 'component'} for i in range(len(values))]
+        cards, _ = self.cards(content)
+        self.assertEqual(cards[0]['progress'], 100)
+        self.assertEqual((cards[0]['requiredActivityCount'], cards[0]['completedRequiredActivityCount']), (0, 0))
+
+    def test_legacy_required_counts_match_mapped_planned_time_in_the_activity_viewer(self):
+        course = {'id': 3, 'source_course_ref': '50', 'source_course_title': 'Old'}
+        definitions = [dict(source_course_ref='50', source_course_title='Old', source_activity_id=f'material:{i}',
+                            source_activity_title=f'Lesson {i}') for i in range(3)]
+        records = [dict(id=i, accepted=i != 1, completed=i != 1, actual_seconds=3600,
+                        **({'journal_planned_hours': hours} if hours is not None else {}),
+                        sources=[dict(source_system='old_lms', source_course_ref='50', source_activity_id=f'material:{i}')])
+                   for i, hours in enumerate([0.5, 10, None])]
+        with patch.object(canonical, 'query', return_value=catalogue_sql_rows(definitions)):
+            rows, done, started, hours, _ = learning.course_facts({'id': 9}, records, [course])
+        cards, _ = self.cards(native(), [course], rows, done, started, hours, records=records)
+        card = next(row for row in cards if row['id'] == 'legacy:50')
+        self.assertEqual((card['requiredActivityCount'], card['completedRequiredActivityCount']), (2, 1))
+        viewer = canonical.recorded_course_items([course], definitions, records, include_catalogue=True)[0]
+        self.assertEqual(sum(item['planned_hours_mapped'] and item['planned'] > 0 for item in viewer), card['requiredActivityCount'])
+        self.assertEqual(card['actualHours'], 2)
+
+    def test_certificate_hours_ignore_pending_transfer_summary(self):
+        meta = metadata()
+        meta['progress_transfers'] = [dict(status='pending', courseRef='legacy:50', moduleId='M1',
+            percent=80, hours=99, activityCount=5, completedActivityCount=4)]
+        course = dict(id=3, source_course_ref='50', source_course_title='Old')
+        cards, _ = self.cards(native(), [course], hours={'50': 2.25}, meta=meta, include_activity_items=True)
+        old = next(card for card in cards if card['id'] == 'legacy:50')
+        self.assertEqual(old['actualHours'], 99)  # Existing pending-preview contract.
+        self.assertEqual(old['_actualLearningHours'], 2.25)
+
+    def test_certificate_hours_retain_approved_transfer_and_only_new_native_hours(self):
+        meta = metadata()
+        meta['progress_transfers'] = [dict(status='approved', courseRef='legacy:50', moduleId='M1',
+            percent=80, hours=2.25, recordIds=['1'])]
+        records = [dict(id=1, module_ref='M1', accepted=True, actual_seconds=8100),
+                   dict(id=2, module_ref='M1', accepted=True, actual_seconds=1800)]
+        cards, _ = self.cards(native([component()]), meta=meta, records=records, include_activity_items=True)
+        self.assertEqual(cards[0]['_actualLearningHours'], 2.75)
+        self.assertEqual(cards[0]['actualHours'], 2.75)
+
+    def test_demonstration_hours_are_not_certificate_hours(self):
+        course = dict(id=3, source_course_ref='50', source_course_title='Demo', demo_progress={'percent': 80})
+        cards, _ = self.cards(native(), [course], hours={'50': 2.25}, include_activity_items=True)
+        demo = next(card for card in cards if card['id'] == 'legacy:50')
+        self.assertTrue(demo['demoProgress'])
+        self.assertIsNone(demo['_actualLearningHours'])
 
     def test_quiz_pass_component_ownership_attendance_and_retained_completion(self):
         content=native([component(), component('Q1',isQuiz=True,quizMeta={'quizId':1}),
@@ -415,7 +540,7 @@ class MyLearningIdentityProjectionTests(SimpleTestCase):
         from . import learner_detail
         cursor=MagicMock()
         cursor.fetchall.return_value=[('L1','W1','M1','live_session','Live','',
-            {'sessionDate':'2026-10-25','sessionDateTimeUtc':'2026-10-25T10:00:00Z','teamsLiveSessionId':'S1'},None,0,None,False,None,False)]
+            {'sessionDate':'2026-10-25','sessionDateTimeUtc':'2026-10-25T10:00:00Z','teamsLiveSessionId':'S1'},None,0,None,False,None,False,1.5)]
         connection=MagicMock();connection.cursor.return_value.__enter__.return_value=cursor
         existing=[{'module':'Old CSV','week':'Legacy week','component':'Legacy lesson'}]
         legacy_weeks=[{'module':'Old CSV','week':'Legacy week'}]
@@ -423,17 +548,34 @@ class MyLearningIdentityProjectionTests(SimpleTestCase):
         with patch.object(learner_detail,'connections',{'enrolment':connection}):
             titles,weeks,rows=learner_detail._resolve_from_master(['Old CSV'],legacy_weeks,existing,
                 assigned_modules=[{'moduleId':'M1'}],compact=True,identities_only=True,catalogue_facts=True,
-                resolved_metadata=resolved,live_session_ids=False,strict=True)
+                resolved_metadata=resolved,live_session_ids=False,strict=True,expected_otjh=True)
         self.assertEqual(titles,['One','Old CSV'])
         self.assertEqual(rows[0]['type'],'live_session')
         self.assertEqual(rows[0]['teamsLiveSessionId'],'S1')
+        self.assertEqual(rows[0]['expectedOtjh'], 1.5)
         self.assertEqual(rows[-1]['component'],'Legacy lesson')
         sql=cursor.execute.call_args.args[0]
         self.assertIn("'extraTeamsLiveSessionId'",sql)
-        self.assertIn('week_id = ANY(%s)',sql)
-        self.assertEqual(cursor.execute.call_args.args[1],[['M1'],['W1']])
+        self.assertIn('module_catalogue_id = ANY(%s)',sql)
+        self.assertIn('visible_parent.module_catalogue_id=components.module_catalogue_id',sql)
+        self.assertEqual(cursor.execute.call_args.args[1],[['M1']])
         self.assertNotIn('ksb_descriptions',sql)
         self.assertEqual(cursor.execute.call_count,1)
+
+    def test_compact_catalogue_requests_required_allocations_without_extra_master_lookups(self):
+        from . import weekly_learning as weekly
+        source = SimpleNamespace(id=7, programme='', cohort='', group='')
+        components = [component(expectedOtjh=0.5)]
+        with patch('learner_api.learner_detail._resolve_from_master', return_value=(['One'], [], components)) as resolve, \
+             patch('learner_api.learner_detail._append_week_quizzes', side_effect=lambda w,c,**kw: (w,c)), \
+             patch('learner_api.learner_detail._annotate_otjh') as annotate, \
+             patch('learner_api.live_session_access.annotate_access', side_effect=lambda s,c: c), \
+             patch.object(weekly, 'get_training_plan', return_value=[]):
+            result = weekly.build_learning_content_summary(source, 7, assigned_modules=[{'moduleId': 'M1'}],
+                identities_only=True, preserve_legacy=True, strict=True, resolved_metadata={}, progress=([], [], []))
+        self.assertTrue(resolve.call_args.kwargs['expected_otjh'])
+        annotate.assert_called_once_with([])
+        self.assertEqual(result['components'][0]['expectedOtjh'], 0.5)
 
     def test_request_context_reuses_metadata_and_never_reads_unrelated_course_rows_for_detail(self):
         from . import models, weekly_learning, dashboard_training, teams_attendance, live_session_progress, subject_origins, previous_learning_groups, builder_activity_dates, student_activity
@@ -488,9 +630,10 @@ class MyLearningIdentityProjectionTests(SimpleTestCase):
             stack.enter_context(patch.object(learning,'connections',fake_connections()))
             stack.enter_context(patch.object(learning,'request_preset_cache',return_value={}))
             plan=stack.enter_context(patch.object(learning,'effective_training_plan',return_value=[]))
-            stack.enter_context(patch('learner_api.student_activity_access.student_activity_available',return_value=True))
+            legacy_gate=stack.enter_context(patch('learner_api.student_activity_access.student_activity_available',return_value=False))
+            demo_courses=stack.enter_context(patch('learner_api.progress_demo.courses_for'))
             stack.enter_context(patch.object(canonical,'entries_for',return_value=[]))
-            stack.enter_context(patch.object(canonical,'owned_source_courses',return_value=[]))
+            memberships=stack.enter_context(patch.object(canonical,'owned_source_courses',return_value=[]))
             module_read=stack.enter_context(patch.object(learning,'catalogue_module_rows'))
             native_read=stack.enter_context(patch.object(weekly_learning,'build_learning_content_summary',return_value=content))
             credits=stack.enter_context(patch.object(live_session_progress,'read_catalogue_live_credits',return_value=[]))
@@ -506,7 +649,10 @@ class MyLearningIdentityProjectionTests(SimpleTestCase):
         self.assertEqual(context[3]['componentProgress'], [])
         self.assertEqual(context[9]['modules'], {})
         self.assertEqual(context[10], [])
-        plan.assert_called_once_with(source,{})
+        plan.assert_not_called()
+        legacy_gate.assert_not_called()
+        demo_courses.assert_not_called()
+        memberships.assert_called_once_with({'id':9,'progress_transfer_active':False})
         module_read.assert_not_called()
         credits.assert_called_once_with(source,[])
         imports.assert_not_called()
@@ -516,6 +662,29 @@ class MyLearningIdentityProjectionTests(SimpleTestCase):
             'quiz_modules': {}, 'schedule_modules': {}, 'schedule_components': [],
             'live_credit_components': [], 'imported_courses': {},
         })
+
+
+    def test_learner_plan_scope_never_uses_historical_memberships_or_json_fallback(self):
+        from . import models, weekly_learning, live_session_progress, subject_origins, previous_learning_groups, builder_activity_dates
+        source = SimpleNamespace(pk=7, id=7, _learner_plan_only=True, _canonical_training_plan=[])
+        manager = MagicMock()
+        with ExitStack() as stack:
+            stack.enter_context(patch.object(models.LearnerProfile, 'objects', manager))
+            stack.enter_context(patch.object(learning, 'connections', fake_connections()))
+            stack.enter_context(patch('learner_api.learner_plan_scope.read_scope', return_value=[]))
+            stack.enter_context(patch.object(canonical, 'entries_for', return_value=[]))
+            forbidden = [stack.enter_context(patch.object(obj, name, side_effect=AssertionError('Forbidden plan source')))
+                for obj, name in [(canonical, 'owned_source_courses'), (learning, 'effective_training_plan'),
+                    (subject_origins, 'read_imported_courses'), (subject_origins, 'read_replacement_courses'),
+                    (previous_learning_groups, 'read_previous_learning_groups'), (learning, 'free_course_exclusions')]]
+            stack.enter_context(patch.object(weekly_learning, 'build_learning_content_summary', return_value=native()))
+            stack.enter_context(patch.object(live_session_progress, 'read_catalogue_live_credits', return_value=[]))
+            stack.enter_context(patch.object(builder_activity_dates, 'read_builder_activity_dates', return_value={}))
+            context = learning.load_context(source, {'id': 9})
+        self.assertEqual(context[0], [])
+        self.assertEqual(context[4], [])
+        for reader in forbidden:
+            reader.assert_not_called()
 
     def test_offset_instants_preserve_dst_and_do_not_use_machine_time(self):
         self.assertEqual(learning.session_instant('2026-10-25T10:00:00+01:00'),learning.session_instant('2026-10-25T09:00:00Z'))
@@ -557,10 +726,11 @@ class MyLearningModuleTests(SimpleTestCase):
         full.assert_not_called()
 
     def test_legacy_detail_reads_one_owned_course_without_current_activity_content(self):
-        from . import weekly_learning, dashboard_training, training_plan_dashboard, live_session_progress, teams_attendance, builder_activity_dates, subject_store
+        from . import weekly_learning, dashboard_training, training_plan_dashboard, live_session_progress, teams_attendance, builder_activity_dates
         context=list(deepcopy(self.context))
         context[4]=[{'id':3,'source_course_ref':'50','source_course_title':'Old','curriculum_module_ref':'M1'},
                     {'id':4,'source_course_ref':'60','source_course_title':'Other'}]
+        context[9]['covers'] = {'current:M1': 'https://assets.example.test/m1.webp'}
         activity={'subjects':[{'id':50,'name':'Old'}], 'activities':[], 'progress_basis':'catalogue_activities'}
         with ExitStack() as stack:
             stack.enter_context(patch.object(learning,'load_context',return_value=tuple(context)))
@@ -572,7 +742,6 @@ class MyLearningModuleTests(SimpleTestCase):
             stack.enter_context(patch.object(live_session_progress,'read_live_credits',return_value=[]))
             stack.enter_context(patch.object(teams_attendance,'annotate_attendance_completion',side_effect=lambda rows,*args:rows))
             stack.enter_context(patch.object(builder_activity_dates,'read_builder_activity_dates',return_value={}))
-            stack.enter_context(patch.object(subject_store,'covers_for',return_value={}))
             result=learning.read_module(self.source,'apprenticeship',self.owner,'legacy:50')
         self.assertEqual(read.call_args.kwargs['assigned_modules'],[])
         self.assertEqual(full.call_args.kwargs['course_ids'],['50'])
@@ -580,6 +749,8 @@ class MyLearningModuleTests(SimpleTestCase):
         self.assertEqual(result['detail']['components'],[])
         self.assertNotIn('Other',json.dumps(result))
         self.assertEqual(result['metadata']['current_subjects'],[])
+        self.assertEqual(result['metadata']['covers']['legacy:50'],
+                         'https://assets.example.test/m1.webp')
 
     def test_invalid_module_fails_before_any_content_reader(self):
         from . import weekly_learning
@@ -680,7 +851,7 @@ class MyLearningEndpointTests(SimpleTestCase):
 
 def fixture_responses(*, standalone=False, kind='commercial'):
     """Execute both production projections over one synthetic, mocked source."""
-    from . import course_catalogue_display, training_plan_dashboard, weekly_learning, dashboard_training, teams_attendance, live_session_progress, builder_activity_dates, subject_store
+    from . import course_catalogue_display, training_plan_dashboard, weekly_learning, dashboard_training, teams_attendance, live_session_progress, builder_activity_dates
     source=SimpleNamespace(pk=7,id=7,email='synthetic@example.test',username='Synthetic learner',programme='Example programme',cohort='',group='',aptem_id=7,_case_file_profile=SimpleNamespace(pk=9))
     owner={'id':9,'name':'Synthetic learner','programme':'Example programme','programme_planned_hours':20,'aptem_id':7}
     modules={mid:{'id':mid,'title':title,'description':'','start_date':'2026-01-01','end_date':'2026-12-31','tutor_name':'Example tutor','coach_name':'','total_otjh':10,'educational_session_count':2}
@@ -724,7 +895,6 @@ def fixture_responses(*, standalone=False, kind='commercial'):
         stack.enter_context(patch.object(course_catalogue_display,'read_export_placements',return_value=[]))
         stack.enter_context(patch.object(training_plan_dashboard,'plan_sessions',return_value=[]))
         stack.enter_context(patch.object(dashboard_training,'module_rows',side_effect=lambda cur,ids,**kwargs:{mid:modules[mid] for mid in ids}))
-        stack.enter_context(patch.object(subject_store,'covers_for',return_value={}))
         stack.enter_context(patch.object(teams_attendance,'annotate_attendance_completion',side_effect=lambda rows,*args:rows))
         stack.enter_context(patch.object(live_session_progress,'read_live_credits',return_value=[]))
         stack.enter_context(patch.object(builder_activity_dates,'read_builder_activity_dates',return_value={}))
@@ -797,19 +967,18 @@ class MyLearningSearchTests(SimpleTestCase):
         for reader in forbidden:reader.assert_not_called()
 
     def test_upcoming_expansion_ignores_old_completion_hints_and_skips_unneeded_reads(self):
-        from . import subject_store,course_catalogue_display
+        from . import course_catalogue_display
         content=native([component('TASK',type='assignment',previousLearning={'completed':True})])
         meta=metadata();meta['modules']={'M1':{'id':'M1','title':'One'}}
         meta['activity_dates']={'TASK':{'due_timing':'End of week','week_end':'2099-01-02'}}
         context=([],[],[],content,[],[],set(),set(),{},meta,[])
         with patch.object(learning,'load_context',return_value=context), \
              patch.object(course_catalogue_display,'read_export_placements',return_value=[]), \
-             patch.object(subject_store,'covers_for') as covers, \
              patch.object(canonical,'programme_planned_hours') as planned:
             result=learning.read_catalogue(SimpleNamespace(pk=7),'commercial',{'id':9},upcoming_only=True)
         self.assertEqual(len(result['upcoming']),1)
         self.assertEqual(result['upcoming'][0]['href'],'/learner/component/commercial/7/TASK')
-        covers.assert_not_called();planned.assert_not_called()
+        planned.assert_not_called()
 
     def test_search_matches_each_title_and_preserves_owned_exclusions_without_full_historical_reads(self):
         courses=[{'id':3,'source_course_ref':'50','source_course_title':'Old',

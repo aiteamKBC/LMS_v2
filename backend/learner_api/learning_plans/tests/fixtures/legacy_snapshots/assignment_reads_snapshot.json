@@ -1,0 +1,458 @@
+{
+  "functions": {
+    "_s": {
+      "source": "def _s(value):\n    \"\"\"Coerce to a trimmed string ('' for None).\"\"\"\n    return \"\" if value is None else str(value).strip()\n",
+      "original": "learner_api/mappers.py",
+      "owner": "learner_api/learning_plans/domain/stored_plan.py"
+    },
+    "_maybe_json": {
+      "source": "def _maybe_json(value):\n    \"\"\"A TEXT column that might hold JSON. Returns parsed value or None.\"\"\"\n    if value is None:\n        return None\n    if isinstance(value, (list, dict)):\n        return value\n    if isinstance(value, str):\n        import json\n\n        try:\n            return json.loads(value)\n        except (ValueError, TypeError):\n            return None\n    return None\n",
+      "original": "learner_api/mappers.py",
+      "owner": "learner_api/learning_plans/domain/stored_plan.py"
+    },
+    "stored_training_plan": {
+      "source": "def stored_training_plan(source):\n    \"\"\"None means unsaved; an empty array is an explicitly cleared assignment.\"\"\"\n    for field in (\"training_plan\", \"learning_plan\"):\n        plan = _maybe_json(getattr(source, field, None))\n        if isinstance(plan, list):\n            return [entry for entry in plan if isinstance(entry, dict)]\n    return None\n",
+      "original": "learner_api/mappers.py",
+      "owner": "learner_api/learning_plans/domain/stored_plan.py"
+    },
+    "_rows": {
+      "source": "def _rows(sql, params, *, using=\"default\"):\n    # Deliberately the `default` alias: every caller reads curriculum.*, which is\n    # owned by curriculum_api and migrated on `default`. Not an oversight — see\n    # the note in apprenticeship_agreement._group_dates.\n    with projection_operation('assignment_query'), connections[using].cursor() as cursor:\n        cursor.execute(read_sql(sql, cursor.db), params)\n        columns = [c[0] for c in cursor.description]\n        return [dict(zip(columns, row)) for row in cursor.fetchall()]\n",
+      "original": "learner_api/learning_plan.py",
+      "owner": "learner_api/learning_plans/infrastructure/assignment_reads.py"
+    },
+    "_group_preset_rows": {
+      "source": "def _group_preset_rows(programme, group, source=None):\n    \"\"\"The one group row the preset comes from, or nothing.\"\"\"\n    return _rows(\n        GROUP_PRESET_SQL.format(source=f'(SELECT * FROM {source})' if source else GROUP_PRESET_SOURCE),\n        [group, programme, programme],\n    )\n",
+      "original": "learner_api/learning_plan.py",
+      "owner": "learner_api/learning_plans/infrastructure/assignment_reads.py"
+    },
+    "_module_ids_from_column": {
+      "source": "def _module_ids_from_column(ids):\n    \"\"\"The module_ids column as a list of trimmed strings.\"\"\"\n    if isinstance(ids, str):\n        try:\n            ids = json.loads(ids)\n        except ValueError:\n            return []\n    return [_s(i) for i in ids] if isinstance(ids, list) else []\n",
+      "original": "learner_api/learning_plan.py",
+      "owner": "learner_api/learning_plans/infrastructure/assignment_reads.py"
+    },
+    "_manual_roster_module_ids": {
+      "source": "def _manual_roster_module_ids(module_ids):\n    \"\"\"Return module ids that stay attached to a group but never inherit learners.\n\n    A manual-roster duplicate remains structurally linked through group_id.\n    Learner plan resolution filters\n    the ids here instead of deleting the module from its parent.  The lookup is\n    deliberately best-effort for older test/install schemas; an unavailable\n    column means the pre-feature inherited behaviour, never a blank plan.\n    \"\"\"\n    wanted = [item for item in dict.fromkeys(_s(value) for value in module_ids) if item]\n    if not wanted:\n        return set()\n    table = 'curriculum.modules' if connection.vendor == 'postgresql' else 'modules'\n    placeholders = ', '.join(['%s'] * len(wanted))\n    try:\n        rows = _rows(\n            f\"SELECT module_catalogue_id FROM {table} \"\n            f\"WHERE module_catalogue_id IN ({placeholders}) \"\n            \"AND COALESCE(learner_roster_mode, 'inherited') = 'manual'\",\n            wanted,\n        )\n    except Exception:\n        return set()\n    return {_s(row.get('module_catalogue_id')) for row in rows if _s(row.get('module_catalogue_id'))}\n",
+      "original": "learner_api/learning_plan.py",
+      "owner": "learner_api/learning_plans/infrastructure/assignment_reads.py"
+    },
+    "group_module_ids_bulk": {
+      "source": "def group_module_ids_bulk(pairs, source=None):\n    \"\"\"`_group_module_ids` for many (programme, group) pairs, in one query.\n\n    Every pair asked for is present in the result, mapping to [] when no live\n    group matches -- the caller can seed a cache with it and never ask again.\n\n    One round trip instead of one per pair. On the curriculum payload build that\n    was 46 sequential lookups of a 155-row table, ~3.2 s of latency for ~70 ms of\n    work, because the learner counts need a preset per distinct group.\n    \"\"\"\n    wanted = [(_s(programme), _s(group)) for programme, group in pairs]\n    askable = sorted({pair for pair in wanted if pair[1]})\n    found = {}\n    if askable:\n        rows = _rows(\n            GROUP_PRESET_BULK_SQL.format(source=f'(SELECT * FROM {source})' if source else GROUP_PRESET_SOURCE),\n            [[pair[0] for pair in askable], [pair[1] for pair in askable]],\n        )\n        found = {\n            (_s(row.get('programme')), _s(row.get('grp'))): _module_ids_from_column(row.get('module_ids'))\n            for row in rows\n        }\n        manual_ids = _manual_roster_module_ids(\n            [module_id for values in found.values() for module_id in values]\n        )\n        found = {\n            key: [module_id for module_id in values if module_id not in manual_ids]\n            for key, values in found.items()\n        }\n    return {pair: found.get(pair, []) for pair in wanted}\n",
+      "original": "learner_api/learning_plan.py",
+      "owner": "learner_api/learning_plans/infrastructure/assignment_reads.py"
+    },
+    "_group_module_ids": {
+      "source": "def _group_module_ids(programme, group, source=None, group_id=\"\"):\n    \"\"\"The module ids preset on the learner's group.\n\n    ``group_id``, when the learner's placement holds one, names the group\n    exactly: no rename can detach it and no namesake in another cohort can\n    stand in for it. Everything below describes the name lookup a learner\n    without one still falls back to.\n\n    A group is identified here by name and programme, but that pair is not\n    unique: the same group name recurs in every cohort of a programme, so\n    \"G1\" on Project Controls L6 matches three rows teaching 9, 1 and 0 modules.\n    The learner's cohort would settle it, and this function is never given one —\n    all five call sites pass (programme, group) only.\n\n    That left a bare LIMIT 1 with no ORDER BY, which is not a tiebreak but the\n    absence of one: Postgres returns whichever row it reaches first, and the\n    same learner could inherit nine modules on one request and none on the next.\n\n    So the choice is made explicitly instead:\n\n    * Soft-deleted groups are excluded outright. They were matching, and a\n      deleted group has no curriculum to lend anybody.\n    * A group that carries modules wins over one that carries none. Neither is\n      more \"correct\" without a cohort, but they fail very differently — an empty\n      row reads as \"this group teaches nothing\" and silently strips every module\n      the learner inherits, while a populated one at worst offers a sibling\n      cohort's list, which the learner's own saved plan overrides anyway.\n    * Then the most recently updated row, then group_id, so the answer is\n      stable across requests and across replicas.\n\n    Cohort-blindness itself is unfixed; this only stops it being random.\n    \"\"\"\n    group_id = _s(group_id)\n    if group_id:\n        rows = _rows(GROUP_PRESET_BY_ID_SQL.format(\n            source=f'(SELECT * FROM {source})' if source else GROUP_PRESET_SOURCE), [group_id])\n    elif group:\n        rows = _group_preset_rows(programme, group, source)\n    else:\n        return []\n    if not rows:\n        return []\n    # Shared with group_module_ids_bulk so the two cannot read the same column\n    # differently.\n    module_ids = _module_ids_from_column(rows[0].get(\"module_ids\"))\n    manual_ids = _manual_roster_module_ids(module_ids)\n    return [module_id for module_id in module_ids if module_id not in manual_ids]\n",
+      "original": "learner_api/learning_plan.py",
+      "owner": "learner_api/learning_plans/infrastructure/assignment_reads.py"
+    },
+    "_preset_ids_for": {
+      "source": "def _preset_ids_for(learner, cache):\n    \"\"\"The learner's group preset, cached by its canonical group ID.\n\n    A learner with no saved plan is *shown* their group's preset — see\n    ``_serialize`` — so that preset is their effective plan. Assigning one\n    module has to keep it: writing only the ticked module would silently drop\n    every other module their group teaches.\n    \"\"\"\n    group_id = projection_call('assignment_placement', placement_ids, learner)[\"group_id\"]\n    if not group_id:\n        return []\n    key = (\"group_id\", group_id)\n    if key not in cache:\n        cache[key] = _group_module_ids(\"\", \"\", group_id=group_id)\n    return cache[key]\n",
+      "original": "learner_api/learning_plan.py",
+      "owner": "learner_api/learning_plans/infrastructure/assignment_reads.py"
+    },
+    "request_preset_cache": {
+      "source": "def request_preset_cache(learner):\n    \"\"\"The group-preset cache a reader shares across one request, else a fresh one.\n\n    A Dashboard tab resolves the effective plan in several shared helpers; each\n    passing ``{}`` re-reads the same (programme, group) preset. ``read_tab``\n    installs one dict on its request-scoped source so the preset is read once.\n    \"\"\"\n    cache = getattr(learner, '_plan_preset_cache', None)\n    return cache if cache is not None else {}\n",
+      "original": "learner_api/learning_plan.py",
+      "owner": "learner_api/learning_plans/infrastructure/assignment_reads.py"
+    },
+    "_effective_plan_ids": {
+      "source": "def _effective_plan_ids(learner, preset_cache, *, saved_plan=...):\n    \"\"\"The module ids this learner is currently taught: saved plan, else preset.\n\n    A saved plan also picks up modules added to the learner's group since it was\n    agreed, exactly as ``_serialize`` shows them. Both sides read the plan the\n    same way, so a module inherited from the group reads as assigned here too\n    and the picker cannot contradict the modal.\n    \"\"\"\n    if saved_plan is ... and hasattr(learner, \"_canonical_training_plan\"):\n        saved = list(learner._canonical_training_plan or [])\n    else:\n        saved = stored_training_plan(learner) if saved_plan is ... else saved_plan\n    if saved is None:\n        return list(_preset_ids_for(learner, preset_cache))\n    ids = [_s(entry.get(\"moduleId\")) for entry in saved if _s(entry.get(\"moduleId\"))]\n    # An emptied plan stays empty, and is not re-filled from the group. Same\n    # rule as _serialize. Explicit curriculum selections also keep their scope.\n    if not ids or any(entry.get('assignmentMode') == 'explicit' for entry in saved):\n        return ids\n    planned = set(ids)\n    return ids + [i for i in _preset_ids_for(learner, preset_cache) if i not in planned]\n",
+      "original": "learner_api/learning_plan.py",
+      "owner": "learner_api/learning_plans/infrastructure/assignment_reads.py"
+    }
+  },
+  "constants": {
+    "GROUP_PRESET_SOURCE": {
+      "source": "GROUP_PRESET_SOURCE = \"\"\"(\n    SELECT g.group_id, g.group_name, g.programme_id,\n           p.name AS programme_name, g.created_at, g.updated_at,\n           COALESCE((SELECT jsonb_agg(m.module_catalogue_id ORDER BY m.module_catalogue_id)\n                     FROM curriculum.modules m WHERE m.group_id = g.group_id), '[]'::jsonb) AS module_ids\n    FROM curriculum.groups g\n    LEFT JOIN curriculum.programmes p ON p.programme_id = g.programme_id\n)\"\"\"\n",
+      "original": "learner_api/learning_plan.py",
+      "owner": "learner_api/learning_plans/infrastructure/assignment_reads.py"
+    },
+    "GROUP_PRESET_SQL": {
+      "source": "GROUP_PRESET_SQL = \"\"\"\nSELECT module_ids\nFROM {source} AS preset\nWHERE group_name = %s AND (programme_name = %s OR programme_id = %s)\nORDER BY\n    -- jsonb_array_length() errors on a scalar, and this column is not\n    -- guaranteed to hold an array -- the parsing in _group_module_ids allows\n    -- for a string too. Anything that is not an array sorts as empty.\n    jsonb_array_length(\n        CASE WHEN jsonb_typeof(module_ids) = 'array'\n             THEN module_ids ELSE '[]'::jsonb END\n    ) DESC,\n    updated_at DESC NULLS LAST,\n    created_at DESC NULLS LAST,\n    group_id\nLIMIT 1\n\"\"\"\n",
+      "original": "learner_api/learning_plan.py",
+      "owner": "learner_api/learning_plans/infrastructure/assignment_reads.py"
+    },
+    "GROUP_PRESET_BULK_SQL": {
+      "source": "GROUP_PRESET_BULK_SQL = \"\"\"\nSELECT DISTINCT ON (p.programme, p.grp)\n       p.programme, p.grp, g.module_ids\nFROM unnest(%s::text[], %s::text[]) AS p(programme, grp)\nJOIN {source} g\n  ON g.group_name = p.grp\n AND (g.programme_name = p.programme OR g.programme_id = p.programme)\nORDER BY\n    p.programme, p.grp,\n    jsonb_array_length(\n        CASE WHEN jsonb_typeof(g.module_ids) = 'array'\n             THEN g.module_ids ELSE '[]'::jsonb END\n    ) DESC,\n    g.updated_at DESC NULLS LAST,\n    g.created_at DESC NULLS LAST,\n    g.group_id\n\"\"\"\n",
+      "original": "learner_api/learning_plan.py",
+      "owner": "learner_api/learning_plans/infrastructure/assignment_reads.py"
+    },
+    "GROUP_PRESET_BY_ID_SQL": {
+      "source": "GROUP_PRESET_BY_ID_SQL = \"\"\"\nSELECT module_ids\nFROM {source} AS preset\nWHERE group_id = %s\n\"\"\"\n",
+      "original": "learner_api/learning_plan.py",
+      "owner": "learner_api/learning_plans/infrastructure/assignment_reads.py"
+    }
+  },
+  "redirected_imports": [
+    {
+      "consumer": "learner_api/active_users.py",
+      "line": 1003,
+      "symbol": "apply_module_session_plan_to_weeks",
+      "owner": "curriculum_api.catalogue.infrastructure.session_plan_persistence",
+      "owner_symbol": "apply_module_session_plan_to_weeks"
+    },
+    {
+      "consumer": "learner_api/active_users.py",
+      "line": 1941,
+      "symbol": "standard_required_ksbs",
+      "owner": "curriculum_api.reporting.infrastructure.source_catalogue_runtime",
+      "owner_symbol": "standard_required_ksbs"
+    },
+    {
+      "consumer": "learner_api/active_users.py",
+      "line": 875,
+      "symbol": "module_session_plan_for_count",
+      "owner": "curriculum_api.catalogue.infrastructure.session_plan_composition",
+      "owner_symbol": "module_session_plan_for_count"
+    },
+    {
+      "consumer": "learner_api/working_rules.py",
+      "line": 117,
+      "symbol": "HOLIDAY_SOURCE_GOVUK",
+      "owner": "curriculum_api.catalogue.domain.read_contracts",
+      "owner_symbol": "HOLIDAY_SOURCE_GOVUK"
+    },
+    {
+      "consumer": "learner_api/working_rules.py",
+      "line": 117,
+      "symbol": "holiday_row_source",
+      "owner": "curriculum_api.catalogue.domain.holiday_selection",
+      "owner_symbol": "holiday_row_source"
+    },
+    {
+      "consumer": "learner_api/working_rules.py",
+      "line": 117,
+      "symbol": "parse_date",
+      "owner": "curriculum_api.catalogue.domain.values",
+      "owner_symbol": "parse_date"
+    },
+    {
+      "consumer": "learner_api/working_rules.py",
+      "line": 117,
+      "symbol": "serialize_holiday_row",
+      "owner": "curriculum_api.catalogue.application.cohort_calendar",
+      "owner_symbol": "serialize_holiday_row"
+    },
+    {
+      "consumer": "learner_api/working_rules.py",
+      "line": 171,
+      "symbol": "holiday_details_by_date",
+      "owner": "curriculum_api.catalogue.application.session_plans",
+      "owner_symbol": "holiday_details_by_date"
+    },
+    {
+      "consumer": "learner_api/builder_activity_dates.py",
+      "line": 84,
+      "symbol": "apply_module_session_plan_to_weeks",
+      "owner": "curriculum_api.catalogue.infrastructure.session_plan_persistence",
+      "owner_symbol": "apply_module_session_plan_to_weeks"
+    },
+    {
+      "consumer": "learner_api/builder_activity_dates.py",
+      "line": 84,
+      "symbol": "cohort_selected_holidays_by_cohort",
+      "owner": "curriculum_api.catalogue.infrastructure.cohort_calendar_composition",
+      "owner_symbol": "cohort_selected_holidays_by_cohort"
+    },
+    {
+      "consumer": "learner_api/subject_cache.py",
+      "line": 58,
+      "symbol": "shared_curriculum_epoch",
+      "owner": "curriculum_api.catalogue.infrastructure.cache_composition",
+      "owner_symbol": "shared_curriculum_epoch"
+    },
+    {
+      "consumer": "learner_api/training_plan_dashboard.py",
+      "line": 158,
+      "symbol": "cohort_selected_holidays_by_cohort",
+      "owner": "curriculum_api.catalogue.infrastructure.cohort_calendar_composition",
+      "owner_symbol": "cohort_selected_holidays_by_cohort"
+    },
+    {
+      "consumer": "learner_api/training_plan_dashboard.py",
+      "line": 158,
+      "symbol": "module_session_plan_for_count",
+      "owner": "curriculum_api.catalogue.infrastructure.session_plan_composition",
+      "owner_symbol": "module_session_plan_for_count"
+    },
+    {
+      "consumer": "learner_api/training_plan_dashboard.py",
+      "line": 158,
+      "symbol": "module_stored_session_count",
+      "owner": "curriculum_api.catalogue.domain.delivery_values",
+      "owner_symbol": "module_stored_session_count"
+    },
+    {
+      "consumer": "learner_api/personal_learning_reads.py",
+      "line": 15,
+      "symbol": "cohort_selected_holidays_by_cohort",
+      "owner": "curriculum_api.catalogue.infrastructure.cohort_calendar_composition",
+      "owner_symbol": "cohort_selected_holidays_by_cohort"
+    },
+    {
+      "consumer": "learner_api/personal_learning_reads.py",
+      "line": 15,
+      "symbol": "module_session_plan_for_count",
+      "owner": "curriculum_api.catalogue.infrastructure.session_plan_composition",
+      "owner_symbol": "module_session_plan_for_count"
+    },
+    {
+      "consumer": "learner_api/personal_learning_reads.py",
+      "line": 15,
+      "symbol": "module_stored_session_count",
+      "owner": "curriculum_api.catalogue.domain.delivery_values",
+      "owner_symbol": "module_stored_session_count"
+    },
+    {
+      "consumer": "learner_api/weekly_calendar.py",
+      "line": 22,
+      "symbol": "clean_str",
+      "owner": "curriculum_api.catalogue.domain.values",
+      "owner_symbol": "clean_str"
+    },
+    {
+      "consumer": "learner_api/weekly_calendar.py",
+      "line": 22,
+      "symbol": "curriculum_in_clause",
+      "owner": "curriculum_api.catalogue.infrastructure.database_reads",
+      "owner_symbol": "curriculum_in_clause"
+    },
+    {
+      "consumer": "learner_api/weekly_calendar.py",
+      "line": 22,
+      "symbol": "COHORT_AUTHORING_DETAILS_TABLE",
+      "owner": "curriculum_api.catalogue.infrastructure.authoring_schema_runtime",
+      "owner_symbol": "COHORT_AUTHORING_DETAILS_TABLE"
+    },
+    {
+      "consumer": "learner_api/weekly_calendar.py",
+      "line": 22,
+      "symbol": "scheduling_holidays_from",
+      "owner": "curriculum_api.catalogue.application.inherited_calendar",
+      "owner_symbol": "scheduling_holidays_from"
+    },
+    {
+      "consumer": "learner_api/weekly_calendar.py",
+      "line": 22,
+      "symbol": "parse_json_value",
+      "owner": "curriculum_api.catalogue.domain.values",
+      "owner_symbol": "parse_json_value"
+    },
+    {
+      "consumer": "learner_api/weekly_calendar.py",
+      "line": 22,
+      "symbol": "fetch_all",
+      "owner": "curriculum_api.catalogue.infrastructure.database_reads",
+      "owner_symbol": "fetch_all"
+    },
+    {
+      "consumer": "learner_api/weekly_calendar.py",
+      "line": 22,
+      "symbol": "table_name",
+      "owner": "curriculum_api.catalogue.infrastructure.database_reads",
+      "owner_symbol": "table_name"
+    },
+    {
+      "consumer": "learner_api/weekly_calendar.py",
+      "line": 22,
+      "symbol": "table_exists",
+      "owner": "curriculum_api.catalogue.infrastructure.database_reads",
+      "owner_symbol": "table_exists"
+    },
+    {
+      "consumer": "learner_api/weekly_calendar.py",
+      "line": 22,
+      "symbol": "ENGLAND_HOLIDAYS_TABLE",
+      "owner": "curriculum_api.catalogue.domain.read_contracts",
+      "owner_symbol": "ENGLAND_HOLIDAYS_TABLE"
+    },
+    {
+      "consumer": "learner_api/weekly_calendar.py",
+      "line": 22,
+      "symbol": "authored_holiday_table_name",
+      "owner": "curriculum_api.catalogue.infrastructure.calendar_runtime",
+      "owner_symbol": "authored_holiday_table_name"
+    },
+    {
+      "consumer": "learner_api/weekly_calendar.py",
+      "line": 22,
+      "symbol": "holiday_row_archived",
+      "owner": "curriculum_api.catalogue.domain.holiday_selection",
+      "owner_symbol": "holiday_row_archived"
+    },
+    {
+      "consumer": "learner_api/weekly_calendar.py",
+      "line": 22,
+      "symbol": "holiday_row_sort_key",
+      "owner": "curriculum_api.catalogue.application.cohort_calendar",
+      "owner_symbol": "holiday_row_sort_key"
+    },
+    {
+      "consumer": "learner_api/ksb_progress.py",
+      "line": 42,
+      "symbol": "find_skills_england_standard",
+      "owner": "curriculum_api.reporting.infrastructure.source_catalogue_runtime",
+      "owner_symbol": "find_skills_england_standard"
+    },
+    {
+      "consumer": "learner_api/active_users.py",
+      "line": 25,
+      "symbol": "read_sql",
+      "owner": "curriculum_api.catalogue.infrastructure.course_storage_reads",
+      "owner_symbol": "read_sql",
+      "previous": "curriculum_api.learning_storage"
+    },
+    {
+      "consumer": "learner_api/activity_time_history.py",
+      "line": 2,
+      "symbol": "read_sql",
+      "owner": "curriculum_api.catalogue.infrastructure.course_storage_reads",
+      "owner_symbol": "read_sql",
+      "previous": "curriculum_api.learning_storage"
+    },
+    {
+      "consumer": "learner_api/assignment_topics.py",
+      "line": 2,
+      "symbol": "read_sql",
+      "owner": "curriculum_api.catalogue.infrastructure.course_storage_reads",
+      "owner_symbol": "read_sql",
+      "previous": "curriculum_api.learning_storage"
+    },
+    {
+      "consumer": "learner_api/components.py",
+      "line": 21,
+      "symbol": "read_table",
+      "owner": "curriculum_api.catalogue.infrastructure.learning_read_routes",
+      "owner_symbol": "read_table",
+      "previous": "curriculum_api.learning_storage"
+    },
+    {
+      "consumer": "learner_api/curriculum.py",
+      "line": 31,
+      "symbol": "read_sql",
+      "owner": "curriculum_api.catalogue.infrastructure.course_storage_reads",
+      "owner_symbol": "read_sql",
+      "previous": "curriculum_api.learning_storage"
+    },
+    {
+      "consumer": "learner_api/dashboard_metrics.py",
+      "line": 2,
+      "symbol": "read_sql",
+      "owner": "curriculum_api.catalogue.infrastructure.course_storage_reads",
+      "owner_symbol": "read_sql",
+      "previous": "curriculum_api.learning_storage"
+    },
+    {
+      "consumer": "learner_api/evidence.py",
+      "line": 20,
+      "symbol": "read_sql",
+      "owner": "curriculum_api.catalogue.infrastructure.course_storage_reads",
+      "owner_symbol": "read_sql",
+      "previous": "curriculum_api.learning_storage"
+    },
+    {
+      "consumer": "learner_api/learner_detail.py",
+      "line": 47,
+      "symbol": "read_sql",
+      "owner": "curriculum_api.catalogue.infrastructure.course_storage_reads",
+      "owner_symbol": "read_sql",
+      "previous": "curriculum_api.learning_storage"
+    },
+    {
+      "consumer": "learner_api/learning_plan.py",
+      "line": 57,
+      "symbol": "read_sql",
+      "owner": "curriculum_api.catalogue.infrastructure.course_storage_reads",
+      "owner_symbol": "read_sql",
+      "previous": "curriculum_api.learning_storage"
+    },
+    {
+      "consumer": "learner_api/live_session_progress.py",
+      "line": 88,
+      "symbol": "read_sql",
+      "owner": "curriculum_api.catalogue.infrastructure.course_storage_reads",
+      "owner_symbol": "read_sql",
+      "previous": "curriculum_api.learning_storage"
+    },
+    {
+      "consumer": "learner_api/marking_queue_entry.py",
+      "line": 25,
+      "symbol": "read_sql",
+      "owner": "curriculum_api.catalogue.infrastructure.course_storage_reads",
+      "owner_symbol": "read_sql",
+      "previous": "curriculum_api.learning_storage"
+    },
+    {
+      "consumer": "learner_api/my_learning.py",
+      "line": 23,
+      "symbol": "read_sql",
+      "owner": "curriculum_api.catalogue.infrastructure.course_storage_reads",
+      "owner_symbol": "read_sql",
+      "previous": "curriculum_api.learning_storage"
+    },
+    {
+      "consumer": "learner_api/my_learning_ksbs.py",
+      "line": 4,
+      "symbol": "read_sql",
+      "owner": "curriculum_api.catalogue.infrastructure.course_storage_reads",
+      "owner_symbol": "read_sql",
+      "previous": "curriculum_api.learning_storage"
+    },
+    {
+      "consumer": "learner_api/personal_learning.py",
+      "line": 73,
+      "symbol": "read_table",
+      "owner": "curriculum_api.catalogue.infrastructure.learning_read_routes",
+      "owner_symbol": "read_table",
+      "previous": "curriculum_api.learning_storage"
+    },
+    {
+      "consumer": "learner_api/personal_learning_reads.py",
+      "line": 10,
+      "symbol": "read_sql",
+      "owner": "curriculum_api.catalogue.infrastructure.course_storage_reads",
+      "owner_symbol": "read_sql",
+      "previous": "curriculum_api.learning_storage"
+    },
+    {
+      "consumer": "learner_api/reflection_submissions.py",
+      "line": 53,
+      "symbol": "read_table",
+      "owner": "curriculum_api.catalogue.infrastructure.learning_read_routes",
+      "owner_symbol": "read_table",
+      "previous": "curriculum_api.learning_storage"
+    },
+    {
+      "consumer": "learner_api/reflection_submissions.py",
+      "line": 129,
+      "symbol": "read_table",
+      "owner": "curriculum_api.catalogue.infrastructure.learning_read_routes",
+      "owner_symbol": "read_table",
+      "previous": "curriculum_api.learning_storage"
+    },
+    {
+      "consumer": "learner_api/student_activity.py",
+      "line": 2,
+      "symbol": "read_sql",
+      "owner": "curriculum_api.catalogue.infrastructure.course_storage_reads",
+      "owner_symbol": "read_sql",
+      "previous": "curriculum_api.learning_storage"
+    },
+    {
+      "consumer": "learner_api/training_plan_dashboard.py",
+      "line": 33,
+      "symbol": "read_sql",
+      "owner": "curriculum_api.catalogue.infrastructure.course_storage_reads",
+      "owner_symbol": "read_sql",
+      "previous": "curriculum_api.learning_storage"
+    },
+    {
+      "consumer": "learner_api/videos.py",
+      "line": 12,
+      "symbol": "read_sql",
+      "owner": "curriculum_api.catalogue.infrastructure.course_storage_reads",
+      "owner_symbol": "read_sql",
+      "previous": "curriculum_api.learning_storage"
+    }
+  ]
+}

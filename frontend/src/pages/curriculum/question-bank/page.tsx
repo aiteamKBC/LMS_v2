@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useListQueryState } from '@/hooks/useListQueryState';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
@@ -8,6 +9,7 @@ import { QuestionAnswersView } from '@/components/feature/QuestionTypeRenderer';
 import { QuizQuestionImage } from '@/components/feature/QuizQuestionImage';
 import { useToast } from "@/hooks/useToast";
 import { roleNavMap } from '@/mocks/navigation';
+import './page.css';
 
 const curriculumNav = roleNavMap.curriculum;
 
@@ -26,6 +28,7 @@ const questionTypeOptions: { value: QuestionType; label: string }[] = [
 
 interface QuestionBankProgramme {
   name: string;
+  key?: string;
   questionCount: number;
   quizCount: number;
   moduleRows?: number;
@@ -62,6 +65,9 @@ interface QuestionBankData {
   questions: QuestionBankQuestion[];
   quizzes: QuestionBankQuiz[];
   totalQuestions: number;
+  statuses?: string[];
+  ksbTaggedCount?: number;
+  pagination?: { page: number; pageSize: number; total: number; totalPages: number };
 }
 
 interface QuestionBankQuiz {
@@ -98,7 +104,7 @@ function statusIcon(status: string) {
   return 'ri-file-edit-line';
 }
 
-const QUESTION_BANK_QUERY_DEFAULTS = { programme: 'all', q: '', type: 'all', status: 'all' };
+const QUESTION_BANK_QUERY_DEFAULTS = { programme: 'all', q: '', type: 'all', status: 'all', page: 1 };
 
 export default function QuestionBankPage() {
   const { success, error: toastError } = useToast();
@@ -109,42 +115,62 @@ export default function QuestionBankPage() {
   const bankSearch = String(query.q);
   const typeFilter = String(query.type) as 'all' | QuestionType;
   const statusFilter = String(query.status);
-  const setBankProgramme = (value: string) => setQuery({ programme: value });
-  const setBankSearch = (value: string) => setQuery({ q: value });
-  const setTypeFilter = (value: 'all' | QuestionType) => setQuery({ type: value });
-  const setStatusFilter = (value: string) => setQuery({ status: value });
+  const page = Number(query.page);
+  const setBankProgramme = (value: string) => setQuery({ programme: value, page: 1 });
+  const setBankSearch = (value: string) => setQuery({ q: value, page: 1 });
+  const setTypeFilter = (value: 'all' | QuestionType) => setQuery({ type: value, page: 1 });
+  const setStatusFilter = (value: string) => setQuery({ status: value, page: 1 });
   const [bankLoading, setBankLoading] = useState(true);
   const [bankError, setBankError] = useState('');
   const [selectedQuestion, setSelectedQuestion] = useState<QuestionBankQuestion | null>(null);
   const [targetQuizId, setTargetQuizId] = useState('');
   const [addingQuestion, setAddingQuestion] = useState(false);
+  const requestSequence = useRef(0);
 
   const loadQuestionBank = useCallback(async (background = false, signal?: AbortSignal) => {
+    const sequence = ++requestSequence.current;
     if (!background) setBankLoading(true);
     setBankError('');
     const params = new URLSearchParams();
     params.set('programme', bankProgramme);
+    params.set('page', String(page));
+    params.set('pageSize', '25');
+    params.set('type', typeFilter);
+    params.set('status', statusFilter);
     if (bankSearch.trim()) params.set('search', bankSearch.trim());
 
     try {
       const response = await fetch(`/quiz_api/question-bank/?${params.toString()}`, { signal });
-      if (!response.ok) throw new Error('Could not load question bank');
+      if (!response.ok) throw new Error(`Could not load question bank (${response.status}). Please try again.`);
+      if (!(response.headers.get('content-type') || '').includes('application/json')) {
+        throw new Error('Could not load question bank: the server returned an unexpected response.');
+      }
       const data: QuestionBankData = await response.json();
+      if (!data || !Array.isArray(data.questions) || !Array.isArray(data.programmes)
+          || !Array.isArray(data.quizzes) || typeof data.totalQuestions !== 'number') {
+        throw new Error('Could not load question bank: the response was incomplete.');
+      }
+      if (sequence !== requestSequence.current || signal?.aborted) return;
       setQuestionBank(data);
     } catch (err) {
-      if ((err as DOMException).name !== 'AbortError') {
+      if (sequence === requestSequence.current && !signal?.aborted && (err as DOMException).name !== 'AbortError') {
         setBankError(err instanceof Error ? err.message : 'Could not load question bank');
       }
     } finally {
-      setBankLoading(false);
+      if (sequence === requestSequence.current && !signal?.aborted) setBankLoading(false);
     }
-  }, [bankProgramme, bankSearch]);
+  }, [bankProgramme, bankSearch, page, typeFilter, statusFilter]);
 
   useEffect(() => {
     const controller = new AbortController();
-    void loadQuestionBank(false, controller.signal);
-    return () => controller.abort();
-  }, [loadQuestionBank]);
+    setBankLoading(true);
+    const timer = window.setTimeout(() => void loadQuestionBank(false, controller.signal), bankSearch.trim() ? 250 : 0);
+    return () => {
+      controller.abort();
+      window.clearTimeout(timer);
+      requestSequence.current += 1;
+    };
+  }, [loadQuestionBank, bankSearch]);
 
   useEffect(() => {
     const refresh = () => {
@@ -179,17 +205,17 @@ export default function QuestionBankPage() {
   const activeBankCount = bankProgrammes.filter(programme => programme.questionCount > 0).length;
   const totalBankCount = bankProgrammes.length;
   const totalQuestionCount = questionBank?.totalQuestions ?? 0;
-  const visibleQuestionCount = filteredQuestions.length;
-  const visibleKsbTaggedCount = filteredQuestions.filter(question => /(\bksb\b|knowledge|skill|behaviour|behavior|k\d|s\d|b\d)/i.test(question.explanation)).length;
+  const visibleQuestionCount = questionBank?.pagination?.total ?? filteredQuestions.length;
+  const visibleKsbTaggedCount = questionBank?.ksbTaggedCount ?? filteredQuestions.filter(question => /(\bksb\b|knowledge|skill|behaviour|behavior|k\d|s\d|b\d)/i.test(question.explanation)).length;
   const ksbTaggedPercent = visibleQuestionCount ? Math.round((visibleKsbTaggedCount / visibleQuestionCount) * 100) : 0;
-  const hasActiveQuestionFilters = typeFilter !== 'all' || statusFilter !== 'all' || Boolean(bankSearch.trim());
+  const hasActiveQuestionFilters = bankProgramme !== 'all' || typeFilter !== 'all' || statusFilter !== 'all' || Boolean(bankSearch.trim());
   const statusOptions = useMemo(() => {
-    const statuses = Array.from(new Set((questionBank?.questions ?? []).map(question => question.quizStatus).filter(Boolean)));
+    const statuses = [...(questionBank?.statuses ?? new Set((questionBank?.questions ?? []).map(question => question.quizStatus).filter(Boolean)))];
     return [
       { value: 'all', label: 'All statuses' },
       ...statuses.sort().map(status => ({ value: status, label: statusLabel(status) })),
     ];
-  }, [questionBank?.questions]);
+  }, [questionBank?.questions, questionBank?.statuses]);
   const typeOptions: { value: 'all' | QuestionType; label: string }[] = useMemo(() => [
     { value: 'all' as const, label: 'All types' },
     ...questionTypeOptions,
@@ -274,7 +300,7 @@ export default function QuestionBankPage() {
 
   return (
     <WorkspaceShell role="curriculum" roleLabel={curriculumNav.label} navItems={curriculumNav.items} workspaceLabel={curriculumNav.workspaceLabel} pageTitle="Question Bank" pageSubtitle="Programme-scoped quiz questions" userName="Rachel Myers" userRole="Curriculum Designer">
-      <div className="curriculum-library-page min-h-full bg-[#f7f6f4] p-4 sm:p-5 lg:p-6 space-y-4">
+      <div className="curriculum-library-page question-bank-page min-h-full bg-[#f7f6f4] p-4 sm:p-5 lg:p-6 space-y-4">
         <WorkspaceHeroBanner
           className="curriculum-library-hero question-bank-hero"
           decorative
@@ -284,19 +310,14 @@ export default function QuestionBankPage() {
           icon="ri-database-2-line"
           statIconPosition="leading"
           stats={[
-            { label: 'Banks', value: String(activeBankCount), icon: 'ri-database-2-line' },
-            { label: 'Questions', value: String(totalQuestionCount), icon: 'ri-file-line' },
-            { label: 'KSB Tagged', value: `${ksbTaggedPercent}%`, icon: 'ri-price-tag-3-line' },
+            { label: 'Banks', value: questionBank ? String(activeBankCount) : '—', icon: 'ri-database-2-line' },
+            { label: 'Questions', value: questionBank ? String(totalQuestionCount) : '—', icon: 'ri-file-line' },
+            { label: 'KSB Tagged', value: questionBank ? `${ksbTaggedPercent}%` : '—', icon: 'ri-price-tag-3-line' },
           ]}
-          actions={(
-            <button type="button" className="inline-flex h-[4.5rem] min-w-[7.5rem] items-center justify-center whitespace-nowrap rounded-[0.75rem] bg-[#b27715] px-3 text-xs font-semibold text-white transition-smooth hover:bg-[#986511]">
-              <AppIcon className="mr-1" name="ri-add-line" size={13} /> Create Bank
-            </button>
-          )}
         />
 
         <section className="rounded-2xl border border-[#ded8e8] bg-white shadow-sm overflow-hidden">
-          <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 px-6 py-5 border-b border-[#e2e8f0] bg-[#fbfbfd]">
+          <div className="question-bank-heading flex flex-wrap items-center justify-between gap-4 px-6 py-5 border-b border-[#e2e8f0] bg-[#fbfbfd]">
             <div className="min-w-0">
               <div className="flex items-center gap-2 mb-2">
                 <span className="w-9 h-9 rounded-xl bg-[#f2f0ff] text-[#5b2dbb] flex items-center justify-center">
@@ -314,29 +335,29 @@ export default function QuestionBankPage() {
             </div>
           </div>
 
-          <div className="grid grid-cols-1 lg:grid-cols-[320px_1fr] min-h-[calc(100vh-260px)]">
-            <aside className="border-r border-[#e2e8f0] bg-white p-4 overflow-y-auto quiz-preview-scroll">
+          <div className="question-bank-layout grid min-h-[calc(100vh-260px)]">
+            <aside className="question-bank-programmes border-[#e2e8f0] bg-white p-4 overflow-y-auto quiz-preview-scroll" aria-label="Question bank programmes">
               <button
                 onClick={() => setBankProgramme('all')}
                 className={`w-full rounded-xl border px-3 py-3 text-left transition-smooth mb-3 ${bankProgramme === 'all' ? 'border-[#a78bfa] bg-[#f2f0ff]' : 'border-[#e2e8f0] bg-white hover:bg-[#f8fafc]'}`}
               >
                 <div className="flex items-center justify-between gap-3">
                   <span className="text-sm font-semibold text-foreground-900">All programmes</span>
-                  <span className="text-xs font-bold text-[#5b2dbb]">{questionBank?.totalQuestions ?? 0}</span>
+                  <span className="text-xs font-bold text-[#5b2dbb]">{questionBank?.totalQuestions ?? '—'}</span>
                 </div>
               </button>
               <div className="space-y-2">
                 {bankProgrammes.map(programme => {
-                  const value = programme.name === 'Unassigned' ? '__unassigned__' : programme.name;
+                  const value = programme.key ?? (programme.name === 'Unassigned' ? '__unassigned__' : programme.name);
                   return (
                     <button
-                      key={programme.name}
+                      key={value}
                       onClick={() => setBankProgramme(value)}
                       className={`w-full rounded-xl border px-3 py-3 text-left transition-smooth ${bankProgramme === value ? 'border-[#a78bfa] bg-[#f2f0ff]' : 'border-[#e2e8f0] bg-white hover:bg-[#f8fafc]'}`}
                     >
                       <div className="flex items-start justify-between gap-3">
                         <div className="min-w-0">
-                          <p className="text-sm font-semibold text-foreground-900 truncate">{programme.name}</p>
+                          <p className="text-sm font-semibold text-foreground-900 break-words">{programme.name}</p>
                           <p className="text-[11px] text-[#647083] mt-1">{programme.quizCount} quizzes - {programme.moduleRows ?? programme.trainingPlanRows ?? 0} module rows</p>
                         </div>
                         <span className="text-xs font-bold text-[#5b2dbb] bg-white rounded-full px-2 py-1 shrink-0">{programme.questionCount}</span>
@@ -347,37 +368,40 @@ export default function QuestionBankPage() {
               </div>
             </aside>
 
-            <section className="min-w-0 bg-[#f7f6f4] p-5">
-              <div className="sticky top-0 z-10 -mx-5 -mt-5 mb-5 border-b border-[#e2e8f0] bg-[#f7f6f4]/95 px-5 py-4 backdrop-blur">
-                <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
+            <section className="question-bank-results min-w-0 bg-[#f7f6f4] p-5">
+              <div className="question-bank-toolbar sticky top-0 z-10 -mx-5 -mt-5 mb-5 border-b border-[#e2e8f0] bg-[#f7f6f4]/95 px-5 py-4 backdrop-blur">
+                <div className="flex min-w-0 flex-col gap-3">
                   <div>
                     <p className="text-sm font-heading font-bold text-foreground-900">{bankProgramme === 'all' ? 'All programme questions' : bankProgramme === '__unassigned__' ? 'Unassigned questions' : bankProgramme}</p>
-                    <p className="text-xs text-[#647083] mt-1">{filteredQuestions.length} of {questionBank?.questions.length ?? 0} questions shown</p>
+                    <p className="text-xs text-[#647083] mt-1" aria-live="polite">{questionBank ? `${filteredQuestions.length} of ${visibleQuestionCount} questions shown` : bankLoading ? 'Loading questions…' : 'Question count unavailable'}</p>
                   </div>
-                  <div className="flex w-full flex-col gap-2 md:w-auto md:flex-row md:items-center">
+                  <div className="question-bank-filters">
                     <ThemedSelect
                       value={typeFilter}
                       options={typeOptions}
                       onChange={value => setTypeFilter(value as 'all' | QuestionType)}
-                      className="w-full md:w-44"
+                      className="min-w-0 w-full"
                     />
                     <ThemedSelect
                       value={statusFilter}
                       options={statusOptions}
                       onChange={setStatusFilter}
-                      className="w-full md:w-40"
+                      className="min-w-0 w-full"
                     />
-                    <div className="relative w-full md:w-80">
-                      <input value={bankSearch} onChange={event => setBankSearch(event.target.value)} placeholder="Search question bank" className="h-10 w-full rounded-lg bg-white border border-[#d8dde6] pl-4 pr-10 text-sm outline-none focus:border-[#8b5cf6] focus:ring-2 focus:ring-[#ede9fe]" />
+                    <div className="question-bank-search relative min-w-0 w-full">
+                      <input aria-label="Search question bank" value={bankSearch} onChange={event => setBankSearch(event.target.value)} placeholder="Search question bank" className="h-10 w-full rounded-lg bg-white border border-[#d8dde6] pl-4 pr-10 text-sm outline-none focus:border-[#8b5cf6] focus:ring-2 focus:ring-[#ede9fe]" />
                       <AppIcon className="ri-search-line absolute right-3 top-1/2 -translate-y-1/2 text-[#647083]"></AppIcon>
                     </div>
                   </div>
                 </div>
               </div>
 
-              {bankError && <div className="mb-4 rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">{bankError}</div>}
-              {bankLoading && <div className="py-16 text-center text-sm text-[#647083]">Loading question bank...</div>}
-              {!bankLoading && (!questionBank || filteredQuestions.length === 0) && (
+              {bankError && <div role="alert" className="mb-4 rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">
+                <p>{bankError}</p>
+                <button type="button" onClick={() => void loadQuestionBank()} className="mt-3 rounded-lg border border-red-300 px-3 py-2 font-semibold" disabled={bankLoading}>Try again</button>
+              </div>}
+              {bankLoading && <div className="py-16 text-center text-sm text-[#647083]"><LoadingSkeleton label="Loading question bank..." variant="rows" /></div>}
+              {!bankLoading && !bankError && questionBank && filteredQuestions.length === 0 && (
                 <div className="rounded-2xl border border-[#e2e8f0] bg-white p-10 text-center">
                   <span className="w-14 h-14 rounded-2xl bg-[#f2f0ff] text-[#5b2dbb] flex items-center justify-center mx-auto mb-3">
                     <AppIcon className="ri-question-answer-line text-xl"></AppIcon>
@@ -386,12 +410,12 @@ export default function QuestionBankPage() {
                   <p className="text-xs text-[#647083] mt-1">
                     {hasActiveQuestionFilters
                       ? 'The current type, status, or search filter is hiding the available questions.'
-                      : 'Upload a quiz file with a matched Training Plan programme to populate this bank.'}
+                      : 'Create or import quiz questions in Quiz Workspace to populate this bank.'}
                   </p>
                   {hasActiveQuestionFilters && (
                     <button
                       type="button"
-                      onClick={() => setQuery({ type: 'all', status: 'all', q: '' })}
+                      onClick={() => setQuery({ programme: 'all', type: 'all', status: 'all', q: '', page: 1 })}
                       className="mt-4 h-9 px-4 rounded-lg bg-[#5b2dbb] text-white text-xs font-semibold hover:bg-[#4c1d95] transition-smooth"
                     >
                       Clear filters
@@ -413,8 +437,8 @@ export default function QuestionBankPage() {
                       {questions.map(question => {
                         const hasKsbTag = /(\bksb\b|knowledge|skill|behaviour|behavior|k\d|s\d|b\d)/i.test(question.explanation);
                         return (
-                          <article key={question.id} className="rounded-2xl border border-[#dfe4ec] bg-white p-5 shadow-sm">
-                            <div className="flex flex-col lg:flex-row lg:items-start justify-between gap-3 mb-4">
+                          <article key={question.id} className="question-bank-question rounded-2xl border border-[#dfe4ec] bg-white p-5 shadow-sm">
+                            <div className="flex min-w-0 flex-col gap-3 mb-4">
                               <div className="min-w-0">
                                 <p className="text-[15px] font-semibold text-foreground-900 leading-7">{question.text}</p>
                                 <p className="text-xs text-[#647083] mt-2">
@@ -435,7 +459,7 @@ export default function QuestionBankPage() {
                                   })}
                                 </div>
                               </div>
-                              <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
+                              <div className="flex min-w-0 flex-wrap items-center gap-2">
                                 {hasKsbTag && <span className="inline-flex w-fit items-center gap-1 rounded-md bg-[#eefcf7] px-2 py-1 text-[10px] font-bold uppercase text-emerald-700"><AppIcon className="ri-price-tag-3-line text-[11px]"></AppIcon>KSB tagged</span>}
                                 <span className={`inline-flex w-fit items-center gap-1 rounded-md px-2 py-1 text-[10px] font-bold uppercase ${statusClasses(question.quizStatus)}`}><AppIcon className={`${statusIcon(question.quizStatus)} text-[11px]`}></AppIcon>{statusLabel(question.quizStatus)}</span>
                                 <span className="inline-flex w-fit items-center gap-1 rounded-md bg-[#e8edf4] px-2 py-1 text-[10px] font-bold uppercase text-[#526173]"><AppIcon className="ri-list-check-2-line text-[11px]"></AppIcon>{questionLabel(question.questionType)}</span>
@@ -453,19 +477,26 @@ export default function QuestionBankPage() {
                   ))}
                 </div>
               )}
+              {questionBank?.pagination && questionBank.pagination.totalPages > 1 && (
+                <nav aria-label="Question pages" className="mt-5 flex flex-wrap items-center justify-between gap-3 text-sm">
+                  <button type="button" disabled={bankLoading || questionBank.pagination.page <= 1} onClick={() => setQuery({ page: questionBank.pagination!.page - 1 })} className="rounded-lg border px-4 py-2 disabled:opacity-50">Previous</button>
+                  <span>Page {questionBank.pagination.page} of {questionBank.pagination.totalPages}</span>
+                  <button type="button" disabled={bankLoading || questionBank.pagination.page >= questionBank.pagination.totalPages} onClick={() => setQuery({ page: questionBank.pagination!.page + 1 })} className="rounded-lg border px-4 py-2 disabled:opacity-50">Next</button>
+                </nav>
+              )}
             </section>
           </div>
         </section>
 
         {selectedQuestion && (
           <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/45 p-4" onClick={() => setSelectedQuestion(null)}>
-            <div className="w-full max-w-lg rounded-2xl border border-[#ded8e8] bg-white shadow-2xl" onClick={event => event.stopPropagation()}>
+            <div role="dialog" aria-modal="true" aria-label="Copy question to an existing quiz" className="question-bank-dialog w-full max-w-lg rounded-2xl border border-[#ded8e8] bg-white shadow-2xl" onClick={event => event.stopPropagation()}>
               <div className="flex items-start justify-between gap-4 border-b border-[#e2e8f0] p-5">
                 <div className="min-w-0">
                   <p className="text-xs font-bold uppercase tracking-wider text-[#5b2dbb] mb-1">Add to quiz</p>
                   <h3 className="text-lg font-heading font-bold text-foreground-900">Copy question to an existing quiz</h3>
                 </div>
-                <button onClick={() => setSelectedQuestion(null)} className="w-9 h-9 rounded-xl bg-[#f8fafc] hover:bg-[#f1f5f9] text-[#475569] transition-smooth">
+                <button aria-label="Close add to quiz" onClick={() => setSelectedQuestion(null)} className="w-9 h-9 shrink-0 rounded-xl bg-[#f8fafc] hover:bg-[#f1f5f9] text-[#475569] transition-smooth">
                   <AppIcon className="ri-close-line text-lg"></AppIcon>
                 </button>
               </div>

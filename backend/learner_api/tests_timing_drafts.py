@@ -52,6 +52,9 @@ class TimingMigrationTargetTests(unittest.TestCase):
 
 class TimingDraftTests(unittest.TestCase):
     def setUp(self):
+        metadata = patch('learner_api.live_session_access._read', return_value=[{'type': 'reading'}])
+        metadata.start()
+        self.addCleanup(metadata.stop)
         ActivityTimingDraft.objects.using('enrolment').all().delete()
         self.now = datetime(2026, 10, 1, 10, tzinfo=dt_timezone.utc)
         self.clock = patch('django.utils.timezone.now', side_effect=lambda: self.now)

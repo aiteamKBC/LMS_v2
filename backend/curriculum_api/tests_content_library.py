@@ -9,6 +9,7 @@ The component reuse search (``library_component_rows``) still offers live and
 archived components; its ``library`` (detached) bucket is always empty, because
 nothing can be detached any more.
 """
+from curriculum_api.catalogue.tests.parity.composition_test_support import composition_fixture
 from unittest.mock import patch
 
 from django.db import connection
@@ -163,8 +164,8 @@ class ContentLibraryTests(TestCase):
     def test_the_refusal_comes_before_any_write(self):
         self._full_programme()
         writes = []
-        with patch.object(views, 'delete_rows', lambda *args, **kwargs: writes.append(args) or []), \
-                patch.object(views, 'update_rows', lambda *args, **kwargs: writes.append(args) or []):
+        with composition_fixture(views, 'delete_rows', lambda *args, **kwargs: writes.append(args) or []), \
+                composition_fixture(views, 'update_rows', lambda *args, **kwargs: writes.append(args) or []):
             with self.assertRaises(views.ProgrammeContentRetained):
                 views.permanently_delete_programme_structure(self._plan())
         self.assertEqual(writes, [])

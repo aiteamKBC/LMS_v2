@@ -72,6 +72,8 @@ export default function AdminAnnouncementsPage() {
   const rows = data ?? [];
   const liveCount = rows.filter(r => r.status === 'live').length;
   const scheduledCount = rows.filter(r => r.status === 'scheduled').length;
+  const selectedColor = form.backgroundColor.toUpperCase();
+  const isCustomColor = !PRESET_COLORS.includes(selectedColor);
 
   const update = (patch: Partial<FormState>) => setForm(prev => ({ ...prev, ...patch }));
 
@@ -179,18 +181,31 @@ export default function AdminAnnouncementsPage() {
                   type="button"
                   onClick={() => update({ backgroundColor: color })}
                   aria-label={`Use ${color}`}
-                  aria-pressed={form.backgroundColor === color}
-                  className={`h-7 w-7 cursor-pointer rounded-full border-2 transition-transform hover:scale-110 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 ${form.backgroundColor === color ? 'border-foreground-900' : 'border-transparent'}`}
+                  aria-pressed={selectedColor === color}
+                  title={selectedColor === color ? `${color} — selected` : `Use ${color}`}
+                  className={`inline-flex h-8 w-8 shrink-0 cursor-pointer items-center justify-center rounded-full border-2 border-background-50 text-white shadow-sm transition-smooth hover:scale-110 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2 focus-visible:ring-offset-background-50 ${selectedColor === color ? 'ring-2 ring-foreground-900 ring-offset-2 ring-offset-background-50' : ''}`}
                   style={{ backgroundColor: color }}
-                />
+                >
+                  {selectedColor === color && <AppIcon className="ri-check-line text-base" aria-hidden="true" />}
+                </button>
               ))}
-              <input
-                type="color"
-                value={form.backgroundColor}
-                onChange={e => update({ backgroundColor: e.target.value.toUpperCase() })}
-                aria-label="Custom colour"
-                className="h-7 w-10 cursor-pointer rounded border border-foreground-200/60 bg-transparent"
-              />
+              <label
+                className={`relative inline-flex min-h-9 cursor-pointer items-center gap-2 rounded-full border px-2.5 py-1.5 shadow-sm transition-smooth hover:border-primary-400 focus-within:ring-2 focus-within:ring-primary-500 focus-within:ring-offset-2 focus-within:ring-offset-background-50 ${isCustomColor ? 'border-primary-400 bg-background-100' : 'border-foreground-200/60 bg-background-50'}`}
+                title="Choose a custom colour"
+              >
+                <span className="pointer-events-none inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-black/10" style={{ backgroundColor: form.backgroundColor }}>
+                  {isCustomColor && <AppIcon className="ri-check-line rounded-full bg-black/65 text-[11px] text-white" aria-hidden="true" />}
+                </span>
+                <span className="pointer-events-none font-mono text-[11px] font-semibold tracking-wide text-foreground-700">{selectedColor}</span>
+                <AppIcon className="ri-palette-line pointer-events-none text-sm text-foreground-500" aria-hidden="true" />
+                <input
+                  type="color"
+                  value={form.backgroundColor}
+                  onChange={e => update({ backgroundColor: e.target.value.toUpperCase() })}
+                  aria-label="Custom colour"
+                  className="absolute inset-0 h-full w-full cursor-pointer opacity-0"
+                />
+              </label>
             </div>
           </div>
           <div>
@@ -257,14 +272,14 @@ export default function AdminAnnouncementsPage() {
       >
         <div className="overflow-hidden rounded-2xl border border-[var(--kbc-border)] bg-[var(--kbc-surface)]">
           <div className="overflow-x-auto">
-            <table className="w-full text-[13px]">
+            <table className="w-full text-[13px] [&_th]:!text-left [&_td]:!text-left">
               <thead>
                 <tr className="border-b border-foreground-400/50">
                   <th className="px-4 py-2.5 text-left text-[10px] font-medium uppercase tracking-wider text-foreground-400">Message</th>
                   <th className="px-4 py-2.5 text-left text-[10px] font-medium uppercase tracking-wider text-foreground-400">Status</th>
                   <th className="px-4 py-2.5 text-left text-[10px] font-medium uppercase tracking-wider text-foreground-400">From</th>
                   <th className="px-4 py-2.5 text-left text-[10px] font-medium uppercase tracking-wider text-foreground-400">Until</th>
-                  <th className="px-4 py-2.5 text-right text-[10px] font-medium uppercase tracking-wider text-foreground-400">Action</th>
+                  <th className="px-4 py-2.5 text-left text-[10px] font-medium uppercase tracking-wider text-foreground-400">Action</th>
                 </tr>
               </thead>
               <tbody>
@@ -282,7 +297,7 @@ export default function AdminAnnouncementsPage() {
                     <td className="px-4 py-2.5"><StatusBadge status={row.status} tone={STATUS_TONE[row.status]} /></td>
                     <td className="whitespace-nowrap px-4 py-2.5 text-[11px] text-foreground-500">{fmtDateTime(row.startsAt)}</td>
                     <td className="whitespace-nowrap px-4 py-2.5 text-[11px] text-foreground-500">{fmtDateTime(row.endsAt)}</td>
-                    <td className="whitespace-nowrap px-4 py-2.5 text-right">
+                    <td className="whitespace-nowrap px-4 py-2.5">
                       {confirmingDelete === row.id ? (
                         <span className="inline-flex items-center gap-2">
                           <button

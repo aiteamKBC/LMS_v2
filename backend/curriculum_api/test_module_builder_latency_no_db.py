@@ -1,7 +1,9 @@
 """Real grouped SQL over synthetic in-memory data; no application database."""
+from curriculum_api.catalogue.tests.parity.composition_test_support import composition_fixture
 import sqlite3
 from contextlib import ExitStack
 from unittest.mock import patch
+from .catalogue.tests.parity.read_dependency_test_support import database_read_fixture
 
 from django.test import SimpleTestCase
 
@@ -78,11 +80,11 @@ class GroupedCatalogueTests(SimpleTestCase):
                    for table in ('components', 'ksb_mappings', 'standard_ksbs')}
         stack = self.enterContext(ExitStack())
         for patcher in (
-            patch.object(views, 'connection', vendor='postgresql'),
-            patch.object(views, 'has_column', side_effect=lambda table, col: col in columns.get(table, set())),
-            patch.object(views, 'authoring_table_name', side_effect=lambda table: f'"{table}"'),
-            patch.object(views, 'authoring_fetch_all', side_effect=fetch),
-            patch.object(views, 'fetch_all', side_effect=sql_rows),
+            composition_fixture(views, 'connection', vendor='postgresql'),
+            database_read_fixture('has_column', side_effect=lambda table, col: col in columns.get(table, set())),
+            database_read_fixture('authoring_table_name', side_effect=lambda table: f'"{table}"'),
+            composition_fixture(views, 'authoring_fetch_all', side_effect=fetch),
+            database_read_fixture('fetch_all', side_effect=sql_rows),
         ):
             stack.enter_context(patcher)
 
@@ -119,7 +121,13 @@ class GroupedCatalogueTests(SimpleTestCase):
         expected = views.authoring_catalogue_summaries()['MOD-ONE']['deliveryWeeks']
         actual = views.authoring_catalogue_summaries(list_only=True)['MOD-ONE']['deliveryWeeks']
         self.assertEqual(actual, expected)
-        self.assertEqual(actual, 7)
+        # Live W1/W2/W4 rows are authoritative; weeks_number=7 is stale.
+        # Keep the delivery session count separate from this authored week count.
+        self.assertEqual(actual, 3)
+        for list_only in (False, True):
+            result = views.authoring_catalogue_summaries(list_only=list_only)['MOD-ONE']
+            self.assertEqual(result['sessionsNumber'], 2)
+            self.assertEqual(result['weeks'], 3)
 
 
 class ModuleListVisibilityTests(SimpleTestCase):
@@ -134,11 +142,11 @@ class ModuleListVisibilityTests(SimpleTestCase):
             {'id': f'M{index}', 'programmeId': f'P{index}', 'status': 'published'}
             for index in (1, 2, 3)
         ]
-        with patch.object(views, 'build_modules', return_value=modules), \
-             patch.object(views, 'applied_standard_required_codes', return_value=None), \
-             patch.object(views, 'authoring_programme_structure_counts', side_effect=AssertionError('unused totals')), \
-             patch.object(views, 'active_learner_programme_counts', side_effect=AssertionError('unused learners')), \
-             patch.object(views, 'attach_module_assignment_counts') as assignments:
+        with composition_fixture(views, 'build_modules', return_value=modules), \
+             composition_fixture(views, 'applied_standard_required_codes', return_value=None), \
+             composition_fixture(views, 'authoring_programme_structure_counts', side_effect=AssertionError('unused totals')), \
+             composition_fixture(views, 'active_learner_programme_counts', side_effect=AssertionError('unused learners')), \
+             composition_fixture(views, 'attach_module_assignment_counts') as assignments:
             operational = views.build_curriculum_payload_from_rows(rows, compact=True, module_list=True)
             all_modules = views.build_curriculum_payload_from_rows(rows, 'all', compact=True, module_list=True)
         self.assertEqual([row['id'] for row in operational['modules']], ['M1'])
@@ -151,32 +159,32 @@ class TutorCatalogueReadTests(SimpleTestCase):
         people = [{'id': 'T1', 'name': 'Tutor', 'email': 'tutor@example.test'}]
         modules = [{'id': 'M1', 'name': 'One', 'tutor': 'Tutor', 'status': 'active'}]
         expected = views.build_staff_profiles(people, 'tutor', modules, [{'id': 'G1', 'coach': 'Tutor'}])
-        with patch.object(views, 'get_staff_profile_rows', return_value=people), \
-             patch.object(views, 'get_training_rows', return_value=[]), \
-             patch.object(views, 'get_program_config_rows', return_value=[]), \
-             patch.object(views, 'table_exists', return_value=False), \
-             patch.object(views, 'authoring_modules_as_catalogue_rows', return_value=[]) as catalogue, \
-             patch.object(views, 'build_modules', return_value=modules), \
-             patch.object(views, 'get_module_rows', side_effect=AssertionError('unused week read')), \
-             patch.object(views, 'build_cohorts_and_groups', side_effect=AssertionError('unused group read')):
+        with composition_fixture(views, 'get_staff_profile_rows', return_value=people), \
+             composition_fixture(views, 'get_training_rows', return_value=[]), \
+             composition_fixture(views, 'get_program_config_rows', return_value=[]), \
+             composition_fixture(views, 'table_exists', return_value=False), \
+             composition_fixture(views, 'authoring_modules_as_catalogue_rows', return_value=[]) as catalogue, \
+             composition_fixture(views, 'build_modules', return_value=modules), \
+             composition_fixture(views, 'get_module_rows', side_effect=AssertionError('unused week read')), \
+             composition_fixture(views, 'build_cohorts_and_groups', side_effect=AssertionError('unused group read')):
             actual = views.build_staff_user_profile_collection('tutor')
         self.assertEqual(actual, expected)
         self.assertEqual(actual[0]['moduleCount'], 1)
         catalogue.assert_called_once_with(week_rows=[])
 
     def test_tutor_catalogue_and_coach_group_path_are_preserved(self):
-        with patch.object(views, 'get_staff_profile_rows', return_value=[{'name': 'Staff'}]), \
-             patch.object(views, 'get_training_rows', return_value=[]), \
-             patch.object(views, 'get_program_config_rows', return_value=[]), \
-             patch.object(views, 'authoring_modules_as_catalogue_rows', return_value=[]) as catalogue, \
-             patch.object(views, 'build_modules', return_value=[]), \
-             patch.object(views, 'build_cohorts_and_groups', return_value=([], [{'id': 'G1', 'coach': 'Staff'}])) as groups:
+        with composition_fixture(views, 'get_staff_profile_rows', return_value=[{'name': 'Staff'}]), \
+             composition_fixture(views, 'get_training_rows', return_value=[]), \
+             composition_fixture(views, 'get_program_config_rows', return_value=[]), \
+             composition_fixture(views, 'authoring_modules_as_catalogue_rows', return_value=[]) as catalogue, \
+             composition_fixture(views, 'build_modules', return_value=[]), \
+             composition_fixture(views, 'build_cohorts_and_groups', return_value=([], [{'id': 'G1', 'coach': 'Staff'}])) as groups:
             views.build_staff_user_profile_collection('tutor', 'all')
             groups.assert_not_called()
             self.assertEqual(catalogue.call_count, 1)
             # A coach profile carries groups only, so the coach path must not
             # build the module catalogue at all.
-            with patch.object(views, 'build_modules', side_effect=AssertionError('unused module build')):
+            with composition_fixture(views, 'build_modules', side_effect=AssertionError('unused module build')):
                 actual = views.build_staff_user_profile_collection('coach', 'all')
         self.assertEqual(catalogue.call_count, 1)
         self.assertEqual(actual[0]['assignedGroupIds'], ['G1'])

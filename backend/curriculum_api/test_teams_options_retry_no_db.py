@@ -17,6 +17,7 @@ The save itself is the real ``curriculum_teams_meeting_schedule`` and the real
 harness; only Microsoft is fake.
 """
 import ast
+from curriculum_api.catalogue.tests.parity.current_entry_source import current_entry_tree
 import copy
 import importlib.util
 import json
@@ -160,7 +161,7 @@ class Forbidden403Tests(harness.CalendarChecksTests):
         self.meeting_403 = True
         self.meetings = {}
         self.failures = []
-        tree = ast.parse((ROOT / 'views.py').read_text(encoding='utf-8-sig'))
+        tree = current_entry_tree()
         wanted = {'apply_teams_meeting_options', 'teams_meeting_base_path', 'teams_online_meeting_owner_id'}
         nodes = [node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name in wanted]
         self.assertEqual(len(nodes), len(wanted))

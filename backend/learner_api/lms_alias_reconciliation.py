@@ -85,8 +85,8 @@ def _json(value):
 
 def _candidate_identities(cursor):
     aliases = _rows(cursor, '''SELECT aptem_id,canonical_lms_id,lms_learner_id,
-        aptem_email,lms_email,is_primary,first_seen,last_seen
-        FROM "Learner".source_lms_learner_aliases
+        aptem_email,lms_email,is_primary,first_seen,last_seen,learner_profile_id
+        FROM "Last_audit".learner_lms_aliases
         ORDER BY aptem_id,is_primary DESC,lms_learner_id''')
     emails_by_aptem = defaultdict(set)
     aptems_by_email = defaultdict(set)
@@ -116,30 +116,35 @@ def _candidate_identities(cursor):
             'candidate_ids': [], 'eligible': {}, 'blocked_ids': set(),
             'aliases': [], 'identity_conflicts': 0,
         }
+    profile_ids = sorted({
+        int(alias['learner_profile_id']) for alias in candidate_aliases
+        if alias.get('learner_profile_id') is not None
+    })
     owners = _rows(cursor, '''SELECT l.id AS learner_id,l.enrolment_id,l.programme_id,
         l.aptem_id,l.email AS owner_email,account.id AS account_id,
         account."Email" AS account_email,account.aptem_id AS account_aptem_id
         FROM "Learner".learners l
         LEFT JOIN enrolment."Created_users" account ON account.id=l.enrolment_id
-        WHERE l.aptem_id=ANY(%s)
-        ORDER BY l.aptem_id,l.id''', [candidate_ids])
-    owners_by_aptem = defaultdict(list)
+        WHERE l.id=ANY(%s)
+        ORDER BY l.id''', [profile_ids]) if profile_ids else []
+    owners_by_id = {int(owner['learner_id']): owner for owner in owners}
     aliases_by_aptem = defaultdict(list)
-    for owner in owners:
-        owners_by_aptem[int(owner['aptem_id'])].append(owner)
     for alias in candidate_aliases:
         aliases_by_aptem[int(alias['aptem_id'])].append(alias)
     eligible, blocked_ids = {}, set(conflict_ids)
     for aptem_id in candidate_ids:
-        candidates = owners_by_aptem.get(aptem_id, [])
         source_aliases = aliases_by_aptem.get(aptem_id, [])
+        linked_aliases = [alias for alias in source_aliases
+                          if alias.get('learner_profile_id') is not None]
+        linked_profiles = {int(alias['learner_profile_id']) for alias in linked_aliases}
         canonical_ids = {str(alias['canonical_lms_id']) for alias in source_aliases}
-        source_emails = {normalize_email(alias.get('lms_email')) for alias in source_aliases}
-        source_emails.discard('')
-        if len(candidates) != 1 or not source_aliases or len(canonical_ids) != 1:
+        if len(linked_profiles) != 1 or not source_aliases or len(canonical_ids) != 1:
             blocked_ids.add(aptem_id)
             continue
-        owner = candidates[0]
+        owner = owners_by_id.get(next(iter(linked_profiles)))
+        if owner is None or owner.get('aptem_id') is None or int(owner['aptem_id']) != aptem_id:
+            blocked_ids.add(aptem_id)
+            continue
         owner_email = normalize_email(owner.get('owner_email'))
         account_email = normalize_email(owner.get('account_email'))
         account_aptem = normalize_aptem(owner.get('account_aptem_id'))
@@ -148,10 +153,12 @@ def _candidate_identities(cursor):
             or (account_aptem and account_aptem != normalize_aptem(aptem_id))
         )
         if (account_invalid
-                or any(not normalize_email(alias.get('lms_email')) for alias in source_aliases)):
+                or any(not normalize_email(alias.get('lms_email')) for alias in linked_aliases)):
             blocked_ids.add(aptem_id)
             continue
-        eligible[aptem_id] = {'owner': owner, 'aliases': source_aliases}
+        # A NULL profile is historical evidence only. It never inherits current
+        # ownership from another alias, an email, APTem ID or old LMS ID.
+        eligible[aptem_id] = {'owner': owner, 'aliases': linked_aliases}
     for aptem_id in blocked_ids:
         eligible.pop(aptem_id, None)
     return {
@@ -163,30 +170,72 @@ def _candidate_identities(cursor):
     }
 
 
-def _catalogue(cursor, group_ids):
-    if not group_ids:
+def _catalogue(cursor, course_ids):
+    if not course_ids:
         return {}, set()
     rows = _rows(cursor, '''SELECT c.id AS source_course_id,c.source_course_ref,
         c.source_course_title,c.curriculum_module_ref,a.id AS source_catalog_activity_id,
         a.source_activity_id,a.source_activity_kind,a.source_activity_title,
         a.source_activity_type,a.curriculum_component_ref,
-        material.payload->>'quiz_id' AS material_quiz_id
+        material.payload->>'quiz_id' AS material_quiz_id,
+        component.type AS component_type,component.status AS component_status,
+        component.module_catalogue_id AS component_module_id,
+        component.week_id AS component_week_id,
+        quiz.id AS linked_quiz_id,quiz.status AS linked_quiz_status,
+        quiz.week_id AS linked_quiz_week_id,
+        EXISTS (SELECT 1 FROM curriculum.historical_components h
+            WHERE h.source_course_id=c.id AND h.source_system=c.source_system
+              AND h.source_activity_id=a.source_activity_id
+              AND h.historical_only AND h.deleted_at IS NULL) AS historical_only
         FROM curriculum.source_courses c
         JOIN curriculum.source_activities a ON a.source_course_id=c.id
           AND a.source_system=c.source_system AND a.deleted_at IS NULL
         LEFT JOIN curriculum.source_materials material
           ON material.material_id=a.source_material_id
           AND material.source_system=a.source_system AND material.deleted_at IS NULL
+        LEFT JOIN curriculum.components component ON component.id=a.curriculum_component_ref
+        LEFT JOIN curriculum.quizzes quiz ON quiz.id=CASE
+          WHEN component.settings_json->>'linkedQuizId' ~ '^[0-9]+$'
+          THEN (component.settings_json->>'linkedQuizId')::bigint END
         WHERE c.source_system=%s AND c.deleted_at IS NULL
-          AND c.source_course_ref=ANY(%s)
-        ORDER BY c.id,a.id''', [SOURCE_SYSTEM, [str(value) for value in group_ids]])
+          AND c.id=ANY(%s)
+        ORDER BY c.id,a.id''', [SOURCE_SYSTEM, course_ids])
     by_key = defaultdict(list)
     course_refs = set()
     for record in rows:
         ref = str(record['source_course_ref'])
         course_refs.add(ref)
-        by_key[(ref, str(record['source_activity_id']))].append(record)
+        by_key[(int(record['source_course_id']), str(record['source_activity_id']))].append(record)
     return by_key, course_refs
+
+
+def _direct_quiz_target(catalogue, course_id, activity_id):
+    """Resolve exact catalogue evidence only; never infer a quiz from its title."""
+    key = f'quiz:{activity_id}'
+    definitions = catalogue.get((course_id, key), [])
+    if len(definitions) != 1:
+        return 'ambiguous', None
+    definition = definitions[0]
+    if (definition.get('source_course_id') != course_id
+            or definition.get('source_activity_id') != key):
+        return 'ambiguous', None
+    if definition.get('historical_only') is True:
+        return 'historical', None
+    if (not definition.get('curriculum_component_ref')
+            or definition.get('source_activity_kind') != 'quiz'
+            or definition.get('component_type') != 'quiz'
+            or definition.get('component_status') != 'active'
+            or not definition.get('curriculum_module_ref')
+            or definition.get('component_module_id') != definition['curriculum_module_ref']
+            or not definition.get('linked_quiz_id')
+            or not definition.get('component_week_id')
+            or definition.get('linked_quiz_week_id') != definition['component_week_id']):
+        return 'ambiguous', None
+    if definition.get('linked_quiz_status') == 'trash':
+        return 'historical', None
+    if definition.get('linked_quiz_status') != 'published':
+        return 'ambiguous', None
+    return 'existing', definition
 
 
 def _completion_candidates(cursor, eligible):
@@ -199,23 +248,34 @@ def _completion_candidates(cursor, eligible):
             source_ids.append(int(source_id))
     if not source_ids:
         return [], {'source_results': 0, 'unmapped_material_results': 0,
-                    'unmapped_quiz_results': 0}
-    results = _rows(cursor, '''SELECT group_id,learner_id,activity_id,activity_type,status,
-        video_completed,reading_viewed,quiz_passed,quiz_score,quiz_maximum_score,
-        quiz_attempt_number,updated_at
-        FROM "Learner".source_lms_activity_results
-        WHERE learner_id=ANY(%s)
-        ORDER BY learner_id,group_id,activity_id''', [source_ids])
-    group_ids = sorted({int(record['group_id']) for record in results})
-    catalogue, _ = _catalogue(cursor, group_ids)
+                    'unmapped_quiz_results': 0, 'unresolved_activity_ownership': 0,
+                    'inactive_membership_results': 0, 'direct_quiz_results_resolved': 0,
+                    'historical_mapping_results': 0, 'ambiguous_mapping_results': 0}
+    learner_ids = sorted(int(bundle['owner']['learner_id']) for bundle in eligible.values())
+    # Legacy IDs are evidence, never canonical learner/course foreign keys.
+    # Include alias-scoped unlinked/mismatched rows so the dry run reports them.
+    results = _rows(cursor, '''SELECT r.membership_id,r.group_id,r.learner_id,
+        r.activity_id,r.activity_type,r.status,r.video_completed,r.reading_viewed,
+        r.quiz_passed,r.quiz_score,r.quiz_maximum_score,r.quiz_attempt_number,r.updated_at,
+        m.learner_id AS canonical_learner_id,m.source_course_id,
+        m.deleted_at AS membership_deleted_at,c.source_system AS course_source_system
+        FROM "Learner".source_lms_activity_results r
+        LEFT JOIN "Learner".learner_source_course_memberships m ON m.id=r.membership_id
+        LEFT JOIN curriculum.source_courses c ON c.id=m.source_course_id
+        WHERE m.learner_id=ANY(%s) OR r.learner_id=ANY(%s)
+        ORDER BY r.learner_id,r.group_id,r.activity_id''', [learner_ids, source_ids])
+    course_ids = sorted({int(record['source_course_id']) for record in results
+                         if record.get('source_course_id') is not None})
+    catalogue, _ = _catalogue(cursor, course_ids)
     candidates = {}
-    unmapped_material = unmapped_quiz = 0
+    unmapped_material = unmapped_quiz = unresolved_ownership = inactive_results = 0
+    direct_quiz_results = historical_mapping = ambiguous_mapping = 0
 
     def add_candidate(result, definition, candidate_kind, source_id):
         aptem_id, _ = aliases_by_source[source_id]
         owner = eligible[aptem_id]['owner']
         source_activity_id = str(definition['source_activity_id'])
-        key = (int(owner['learner_id']), source_activity_id)
+        key = (int(owner['learner_id']), int(definition['source_course_id']), source_activity_id)
         candidate = candidates.get(key)
         if candidate is None:
             activity_type = 'quiz' if candidate_kind == 'quiz' else (
@@ -270,21 +330,57 @@ def _completion_candidates(cursor, eligible):
 
     for result in results:
         source_id = str(result['learner_id'])
-        if source_id not in aliases_by_source or not result_is_completed(result):
+        alias_owner = aliases_by_source.get(source_id)
+        if (alias_owner is None or result.get('membership_id') is None
+                or result.get('canonical_learner_id') != eligible[alias_owner[0]]['owner']['learner_id']
+                or result.get('course_source_system') != SOURCE_SYSTEM):
+            unresolved_ownership += 1
             continue
-        group_ref = str(result['group_id'])
+        if result.get('membership_deleted_at') is not None:
+            inactive_results += 1
+            continue
+        if not result_is_completed(result):
+            continue
+        course_id = int(result['source_course_id'])
         material_id = f"material:{result['activity_id']}"
-        material_defs = catalogue.get((group_ref, material_id), [])
+        material_defs = catalogue.get((course_id, material_id), [])
         if len(material_defs) != 1:
+            # A standalone quiz may deliberately have no active material row.
+            # Duplicate material definitions remain ambiguous, never bypassed.
+            resolution, quiz = _direct_quiz_target(catalogue, course_id, result['activity_id'])
+            if (not material_defs and resolution == 'existing'
+                    and normalized_activity_type(result.get('activity_type')) == 'readingquiz'
+                    and result.get('quiz_passed') is True):
+                # Legacy standalone quizzes use Reading+Quiz too, but have no
+                # reading component to view. Require the explicit quiz pass;
+                # retain the existing combined reading+quiz rule below.
+                add_candidate(result, quiz, 'quiz', source_id)
+                direct_quiz_results += 1
+                continue
             unmapped_material += 1
+            if not material_defs and resolution == 'historical':
+                historical_mapping += 1
+            else:
+                ambiguous_mapping += 1
             continue
         material = material_defs[0]
         add_candidate(result, material, 'material', source_id)
         if result_has_completed_quiz(result):
             quiz_id = str(material.get('material_quiz_id') or '').strip()
-            quiz_defs = catalogue.get((group_ref, f'quiz:{quiz_id}'), []) if quiz_id else []
+            quiz_defs = catalogue.get((course_id, f'quiz:{quiz_id}'), []) if quiz_id else []
             if len(quiz_defs) != 1:
+                # Only absent legacy metadata may use the exact source activity
+                # identity. A conflicting explicit quiz ID is not overridden.
+                resolution, quiz = _direct_quiz_target(catalogue, course_id, result['activity_id'])
+                if not quiz_id and resolution == 'existing':
+                    add_candidate(result, quiz, 'quiz', source_id)
+                    direct_quiz_results += 1
+                    continue
                 unmapped_quiz += 1
+                if not quiz_id and resolution == 'historical':
+                    historical_mapping += 1
+                else:
+                    ambiguous_mapping += 1
             else:
                 add_candidate(result, quiz_defs[0], 'quiz', source_id)
     output = []
@@ -303,73 +399,51 @@ def _completion_candidates(cursor, eligible):
         'source_results': len(results),
         'unmapped_material_results': unmapped_material,
         'unmapped_quiz_results': unmapped_quiz,
+        'unresolved_activity_ownership': unresolved_ownership,
+        'inactive_membership_results': inactive_results,
+        'direct_quiz_results_resolved': direct_quiz_results,
+        'historical_mapping_results': historical_mapping,
+        'ambiguous_mapping_results': ambiguous_mapping,
     }
 
 
 def _course_memberships(cursor, eligible):
-    aliases_by_source = {}
-    source_ids = []
-    for aptem_id, bundle in eligible.items():
-        for alias in bundle['aliases']:
-            source_id = str(alias['lms_learner_id'])
-            aliases_by_source[source_id] = (aptem_id, alias)
-            source_ids.append(int(source_id))
-    if not source_ids:
+    """Read authoritative memberships; aliases cannot create or restore access."""
+    owners = {int(bundle['owner']['learner_id']): bundle for bundle in eligible.values()}
+    if not owners:
         return [], 0
-    source_rows = _rows(cursor, '''SELECT learner_id,group_id
-        FROM "Learner".source_lms_group_learners
-        WHERE learner_id=ANY(%s)
-        ORDER BY learner_id,group_id''', [source_ids])
-    group_ids = sorted({int(record['group_id']) for record in source_rows})
-    courses = _rows(cursor, '''SELECT id,source_course_ref
-        FROM curriculum.source_courses
-        WHERE source_system=%s AND deleted_at IS NULL
-          AND source_course_ref=ANY(%s)
-        ORDER BY source_course_ref,id''', [SOURCE_SYSTEM, [str(value) for value in group_ids]]) if group_ids else []
-    courses_by_ref = defaultdict(list)
-    for course in courses:
-        courses_by_ref[str(course['source_course_ref'])].append(course)
+    rows = _rows(cursor, '''SELECT m.learner_id,m.source_course_id,m.source_learner_id
+        FROM "Learner".learner_source_course_memberships m
+        JOIN curriculum.source_courses c ON c.id=m.source_course_id
+        WHERE m.learner_id=ANY(%s) AND m.deleted_at IS NULL
+          AND m.source_relationship='historical'
+          AND c.source_system=%s AND c.deleted_at IS NULL
+        ORDER BY m.learner_id,m.source_course_id,m.id''', [sorted(owners), SOURCE_SYSTEM])
     memberships, unmapped = {}, 0
-    for source_row in source_rows:
-        source_id = str(source_row['learner_id'])
-        aptem_id, alias = aliases_by_source[source_id]
-        owner = eligible[aptem_id]['owner']
-        course_matches = courses_by_ref.get(str(source_row['group_id']), [])
-        if len(course_matches) != 1:
+    for row in rows:
+        bundle = owners[int(row['learner_id'])]
+        alias = next((alias for alias in bundle['aliases']
+                      if str(alias['lms_learner_id']) == str(row['source_learner_id'])), None)
+        if alias is None:
             unmapped += 1
             continue
-        course = course_matches[0]
-        key = (int(owner['learner_id']), int(course['id']))
-        incoming = {
-            'learner_id': int(owner['learner_id']),
-            'enrolment_id': owner.get('enrolment_id'),
-            'source_course_id': int(course['id']),
-            'source_learner_id': source_id,
+        key = (int(row['learner_id']), int(row['source_course_id']))
+        memberships[key] = {
+            **row, 'enrolment_id': bundle['owner'].get('enrolment_id'),
             'is_primary': alias.get('is_primary') is True,
         }
-        previous = memberships.get(key)
-        if previous is None or (incoming['is_primary'], source_id) > (
-                previous['is_primary'], previous['source_learner_id']):
-            memberships[key] = incoming
     return list(memberships.values()), unmapped
 
 
 def _existing_state(cursor, eligible, candidates, memberships):
     learner_ids = sorted(int(bundle['owner']['learner_id']) for bundle in eligible.values())
-    source_ids = sorted({
-        str(alias['lms_learner_id'])
+    alias_by_source = {
+        str(alias['lms_learner_id']): {
+            'learner_id': int(bundle['owner']['learner_id']),
+            'aptem_id': int(alias['aptem_id']),
+        }
         for bundle in eligible.values() for alias in bundle['aliases']
-    })
-    identities = _rows(cursor, '''SELECT learner_id,source_learner_id,source_payload
-        FROM "Learner".learner_external_identities
-        WHERE source_system=%s AND source_learner_id=ANY(%s) AND deleted_at IS NULL''',
-        [SOURCE_SYSTEM, source_ids]) if source_ids else []
-    identity_by_source = {str(record['source_learner_id']): record for record in identities}
-    identity_conflicts = sum(
-        int(record['learner_id']) != int(eligible[int(alias['aptem_id'])]['owner']['learner_id'])
-        for bundle in eligible.values() for alias in bundle['aliases']
-        if (record := identity_by_source.get(str(alias['lms_learner_id']))) is not None
-    )
+    }
     existing_memberships = set()
     if learner_ids:
         existing_memberships = {
@@ -378,11 +452,11 @@ def _existing_state(cursor, eligible, candidates, memberships):
                 FROM "Learner".learner_source_course_memberships
                 WHERE learner_id=ANY(%s) AND deleted_at IS NULL''', [learner_ids])
         }
-    existing_sources = set()
+    existing_sources = {}
     if learner_ids:
         existing_sources = {
-            (int(record['learner_id']), str(record['source_activity_id']))
-            for record in _rows(cursor, '''SELECT learner_id,source_activity_id
+            (int(record['learner_id']), str(record['source_activity_id'])): record
+            for record in _rows(cursor, '''SELECT learner_id,source_activity_id,source_course_ref
                 FROM "Learner".learner_activity_sources
                 WHERE learner_id=ANY(%s) AND source_system=%s AND deleted_at IS NULL''',
                 [learner_ids, SOURCE_SYSTEM])
@@ -415,25 +489,41 @@ def _existing_state(cursor, eligible, candidates, memberships):
 
     activity_actions = []
     ambiguous_links = 0
+    candidate_courses = defaultdict(set)
+    for candidate in candidates:
+        candidate_courses[(candidate['learner_id'], str(candidate['source_activity_id']))].add(
+            candidate['source_course_id'])
     for candidate in candidates:
         source_key = (candidate['learner_id'], str(candidate['source_activity_id']))
-        if source_key in existing_sources:
-            activity_actions.append({**candidate, 'action': 'existing_source', 'progress_id': None})
+        # The downstream source uniqueness key omits course. Do not collapse
+        # distinct course memberships into a single activity or create duplicates.
+        if len(candidate_courses[source_key]) > 1:
+            ambiguous_links += 1
+            activity_actions.append({**candidate, 'action': 'ambiguous', 'progress_id': None})
             continue
-        routes = [direct_progress.get(source_key, set())]
-        routes.append(canonical_progress.get(
+        if source_key in existing_sources:
+            same_course = str(existing_sources[source_key].get('source_course_ref')) == str(candidate['source_course_ref'])
+            if not same_course:
+                ambiguous_links += 1
+            activity_actions.append({**candidate,
+                'action': 'existing_source' if same_course else 'ambiguous', 'progress_id': None})
+            continue
+        routes = [canonical_progress.get(
             (candidate['learner_id'], candidate['canonical_activity_key']), set()
-        ))
+        )]
         if candidate['candidate_kind'] == 'material':
             material_id = str(candidate['source_activity_id']).partition(':')[2]
             routes.append(journal_progress.get((candidate['learner_id'],
                 f"la:{candidate['source_course_ref']}:{material_id}"), set()))
+        # A bare legacy activity ID cannot establish which course owns progress.
+        # Keep unscoped history intact rather than attach it or create a duplicate.
+        unscoped_progress = direct_progress.get(source_key, set())
         selected = None
         for route in routes:
             if route:
                 selected = route
                 break
-        if selected and len(selected) != 1:
+        if (selected and len(selected) != 1) or (not selected and unscoped_progress):
             ambiguous_links += 1
             activity_actions.append({**candidate, 'action': 'ambiguous', 'progress_id': None})
         elif selected:
@@ -444,8 +534,8 @@ def _existing_state(cursor, eligible, candidates, memberships):
         else:
             activity_actions.append({**candidate, 'action': 'create_progress', 'progress_id': None})
     return {
-        'identity_by_source': identity_by_source,
-        'identity_conflicts': identity_conflicts,
+        'alias_by_source': alias_by_source,
+        'identity_conflicts': 0,
         'missing_memberships': [record for record in memberships
             if (record['learner_id'], record['source_course_id']) not in existing_memberships],
         'activity_actions': activity_actions,
@@ -469,9 +559,8 @@ def inspect(cursor):
         ),
         'alias_rows': sum(len(bundle['aliases']) for bundle in identities['eligible'].values()),
         'identity_conflicts': identities['identity_conflicts'] + existing['identity_conflicts'],
-        'external_identities_missing': sum(
-            str(alias['lms_learner_id']) not in existing['identity_by_source']
-            for bundle in identities['eligible'].values() for alias in bundle['aliases']
+        'historical_alias_rows_skipped': sum(
+            alias.get('learner_profile_id') is None for alias in identities['aliases']
         ),
         'course_memberships_missing': len(existing['missing_memberships']),
         'course_memberships_unmapped': unmapped_memberships,
@@ -483,6 +572,11 @@ def inspect(cursor):
         'ambiguous_activity_links': existing['ambiguous_activity_links'],
         'unmapped_material_results': completion['unmapped_material_results'],
         'unmapped_quiz_results': completion['unmapped_quiz_results'],
+        'unresolved_activity_ownership': completion['unresolved_activity_ownership'],
+        'inactive_membership_results': completion['inactive_membership_results'],
+        'direct_quiz_results_resolved': completion['direct_quiz_results_resolved'],
+        'historical_mapping_results': completion['historical_mapping_results'],
+        'ambiguous_mapping_results': completion['ambiguous_mapping_results'],
     }
     return identities, existing, summary
 
@@ -538,6 +632,10 @@ def apply(cursor, expected_branch_id):
     identities, existing, summary = inspect(cursor)
     if summary['identity_conflicts']:
         raise ValueError('Identity conflicts remain; apply is blocked.')
+    if summary.get('unresolved_activity_ownership'):
+        raise ValueError('Unresolved activity membership ownership remains; apply is blocked.')
+    if existing['missing_memberships']:
+        raise ValueError('Canonical memberships changed during inspection; apply is blocked.')
     run_key = f"{RUN_KIND}:{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}:{uuid.uuid4().hex[:12]}"
     cursor.execute('''INSERT INTO "Learner".activity_sync_runs
         (run_key,run_kind,status,dry_run,source_counts,prompt_version)
@@ -548,47 +646,9 @@ def apply(cursor, expected_branch_id):
         cursor.execute('SELECT pg_advisory_xact_lock(%s,%s)',
                        [LOCK_NAMESPACE, int(bundle['owner']['learner_id'])])
 
-    identities_written = 0
-    for bundle in identities['eligible'].values():
-        owner = bundle['owner']
-        for alias in bundle['aliases']:
-            payload = _identity_payload(alias)
-            cursor.execute('''INSERT INTO "Learner".learner_external_identities AS existing (
-                learner_id,source_system,source_learner_id,source_payload,
-                first_seen_at,last_seen_at
-            ) VALUES (%s,%s,%s,%s::jsonb,%s,%s)
-            ON CONFLICT (source_system,source_learner_id) WHERE deleted_at IS NULL
-            DO UPDATE SET
-                source_payload=(CASE
-                  WHEN jsonb_typeof(existing.source_payload)='object'
-                  THEN existing.source_payload ELSE '{}'::jsonb END)
-                  || EXCLUDED.source_payload,
-                first_seen_at=least(existing.first_seen_at,EXCLUDED.first_seen_at),
-                last_seen_at=greatest(existing.last_seen_at,EXCLUDED.last_seen_at)
-            WHERE existing.learner_id=EXCLUDED.learner_id
-            RETURNING id''', [
-                owner['learner_id'], SOURCE_SYSTEM,
-                str(alias['lms_learner_id']), _json(payload),
-                alias.get('first_seen') or datetime.now(timezone.utc),
-                alias.get('last_seen') or datetime.now(timezone.utc),
-            ])
-            if cursor.fetchone() is None:
-                raise ValueError('An external identity changed ownership during apply.')
-            identities_written += 1
-
+    # Memberships are supplied by the canonical import. Reconciliation must
+    # never reconstruct deleted memberships or grant access from activity history.
     memberships_inserted = 0
-    for membership in existing['missing_memberships']:
-        cursor.execute('''INSERT INTO "Learner".learner_source_course_memberships (
-            learner_id,enrolment_id,source_course_id,source_learner_id,
-            source_relationship,source_payload
-        ) VALUES (%s,%s,%s,%s,'historical',%s::jsonb)
-        ON CONFLICT (learner_id,source_course_id) WHERE deleted_at IS NULL
-        DO NOTHING RETURNING id''', [
-            membership['learner_id'], membership.get('enrolment_id'),
-            membership['source_course_id'], membership['source_learner_id'],
-            _json({'identity_alias_reconciliation': RUN_KIND}),
-        ])
-        memberships_inserted += cursor.fetchone() is not None
 
     next_orders = {}
     sources_attached = progress_created = source_races = 0
@@ -649,7 +709,9 @@ def apply(cursor, expected_branch_id):
 
     result = {
         **summary,
-        'external_identities_written': identities_written,
+        'source_aliases_verified': sum(
+            len(bundle['aliases']) for bundle in identities['eligible'].values()
+        ),
         'course_memberships_inserted': memberships_inserted,
         'activity_sources_attached': sources_attached,
         'progress_rows_created': progress_created,

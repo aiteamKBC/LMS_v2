@@ -1,3 +1,4 @@
+import { LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {  } from '@tanstack/react-router';
@@ -68,7 +69,7 @@ export function MreTable({ learner }: { learner?: string }) {
             </TableHeader>
             <TableBody>
               {query.isLoading && (
-                <TableRow><TableCell colSpan={9} className="py-10 text-center text-sm text-muted-foreground">Loading learner data from Neon…</TableCell></TableRow>
+                <TableRow><TableCell colSpan={9} className="py-10 text-center text-sm text-muted-foreground"><LoadingSkeleton label="Loading learner data from Neon…" variant="rows" /></TableCell></TableRow>
               )}
               {query.data?.items.map((activity) => (
                 <TableRow key={activity.id}>

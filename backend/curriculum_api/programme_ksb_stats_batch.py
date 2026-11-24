@@ -16,7 +16,14 @@ exactly where it was.
 """
 from django.views.decorators.http import require_GET
 
-from . import views as V
+from curriculum_api.catalogue.domain.read_contracts import CURRICULUM_LEARNER_DATA_TTL_SECONDS
+from curriculum_api.catalogue.infrastructure.programme_builder_runtime import build_programme_ksb_stats
+from curriculum_api.catalogue.infrastructure.cache_access import cached_curriculum_value
+from curriculum_api.catalogue.domain.values import clean_str
+from curriculum_api.catalogue.infrastructure.cache_runtime import curriculum_read_scope
+from curriculum_api.catalogue.api.responses import curriculum_visibility, json_error
+from curriculum_api.reporting.infrastructure.source_runtime import forced_programme_ksb_design
+from curriculum_api.catalogue.api.adapters import request_bypasses_curriculum_cache
 from .http_cache import conditional_json_response, encode_json_entry, encode_json_error_entry, entry_payload
 
 # A page shows at most a few dozen programmes. The cap keeps one request from
@@ -25,10 +32,10 @@ MAX_PROGRAMMES = 60
 
 
 def programme_ids(request):
-    raw = V.clean_str(request.GET.get('ids'))
+    raw = clean_str(request.GET.get('ids'))
     seen = []
     for part in raw.split(','):
-        identifier = V.clean_str(part)
+        identifier = clean_str(part)
         if identifier and identifier not in seen:
             seen.append(identifier)
     return seen
@@ -37,17 +44,17 @@ def programme_ids(request):
 def programme_stats_entry(identifier, visibility, force):
     """The encoded entry ``views.curriculum_programme_ksb_stats`` serves -- same key, build and TTL."""
     def build_entry():
-        with V.forced_programme_ksb_design(force):
-            stats = V.build_programme_ksb_stats(identifier, visibility)
+        with forced_programme_ksb_design(force):
+            stats = build_programme_ksb_stats(identifier, visibility)
         if not stats:
             return encode_json_error_entry('Programme not found.', status=404)
         return encode_json_entry(stats)
 
-    return V.cached_curriculum_value(
+    return cached_curriculum_value(
         f'programme-ksb-stats-response:{visibility}:{identifier}',
         build_entry,
         force=force,
-        ttl=V.CURRICULUM_LEARNER_DATA_TTL_SECONDS,
+        ttl=CURRICULUM_LEARNER_DATA_TTL_SECONDS,
         scope=identifier,
     )
 
@@ -57,13 +64,13 @@ def curriculum_programmes_ksb_stats(request):
     """``{"stats": {<id>: <the single endpoint's body> | null}}``; null is "Programme not found"."""
     identifiers = programme_ids(request)
     if not identifiers:
-        return V.json_error('Choose at least one programme.', status=400)
+        return json_error('Choose at least one programme.', status=400)
     if len(identifiers) > MAX_PROGRAMMES:
-        return V.json_error(f'Ask for at most {MAX_PROGRAMMES} programmes at a time.', status=400)
-    visibility = V.curriculum_visibility(request)
-    force = V.request_bypasses_curriculum_cache(request)
+        return json_error(f'Ask for at most {MAX_PROGRAMMES} programmes at a time.', status=400)
+    visibility = curriculum_visibility(request)
+    force = request_bypasses_curriculum_cache(request)
     stats = {}
-    with V.curriculum_read_scope(targeted_child_reads=True):
+    with curriculum_read_scope(targeted_child_reads=True):
         for identifier in identifiers:
             entry = programme_stats_entry(identifier, visibility, force)
             stats[identifier] = entry_payload(entry) if entry.get('status', 200) == 200 else None

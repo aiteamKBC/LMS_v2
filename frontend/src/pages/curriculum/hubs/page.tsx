@@ -1,5 +1,7 @@
+import { useQualityAlerts } from './qualityAlertsContext';
 import { useMemo } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
+import QualityWorkspace, { QualityNavigation, QualityAlerts, QualityProvider } from './QualityWorkspace';
 import { AppIcon } from '@/components/feature/AppIcon';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { WorkspaceHeroBanner } from '@/components/feature/WorkspaceHeroBanner';
@@ -50,7 +52,8 @@ export function CurriculumDeliveryHub() {
 
 /** Quality availability is shown on individual feature cards. */
 export function CurriculumQualityHub() {
-  return <CurriculumHub kind="quality" />;
+  const [params] = useSearchParams();
+  return <QualityProvider>{params.get('view') ? <HubShell kind="quality"><QualityWorkspace /></HubShell> : <CurriculumHub kind="quality" />}</QualityProvider>;
 }
 
 /** Broader quality workflows beyond the available meeting checks. */
@@ -104,7 +107,9 @@ function CurriculumHub({ kind }: { kind: HubKind }) {
 
 function HubShell({ kind, children }: { kind: HubKind; children: ReactNode }) {
   const copy = HUB_COPY[kind];
+  const alerts = useQualityAlerts();
   return <WorkspaceShell role="curriculum" roleLabel="Curriculum Designer" navItems={curriculumNavItems}
+    notifications={alerts?.notifications} onNotificationClick={alerts?.select}
     workspaceLabel="Curriculum Studio" pageTitle={copy.title} pageSubtitle={copy.description}
     userName="Rachel Myers" userRole="Curriculum Designer">{children}</WorkspaceShell>;
 }
@@ -158,6 +163,7 @@ function CurriculumHubView({ kind, programmes, programmesLoading = false, progra
     mappingGaps: modulesWithoutKsb.length,
   });
   const copy = HUB_COPY[kind];
+  const alerts = useQualityAlerts();
   const primary = cards[0];
   const summaryStats = hubStats(kind, {
     programmes: programmes.length,
@@ -170,8 +176,9 @@ function CurriculumHubView({ kind, programmes, programmesLoading = false, progra
 
   return (
     <HubShell kind={kind}>
-      <main className={`min-h-full bg-background-100 p-4 sm:p-5 lg:p-6 ${kind === 'library' ? 'curriculum-library-page' : ''}`}>
+      <main className={`min-h-full bg-background-100 p-4 sm:p-5 lg:p-6 ${kind === 'library' ? 'curriculum-library-page curriculum-library-overview' : ''}`}>
         <div className="mx-auto max-w-[1560px] space-y-4">
+          {kind === 'quality' && <><QualityNavigation /><QualityAlerts /></>}
           <WorkspaceHeroBanner
             className={kind === 'library' ? 'curriculum-library-hero' : undefined}
             decorative={kind === 'library'}

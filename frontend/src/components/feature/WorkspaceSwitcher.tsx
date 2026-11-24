@@ -3,6 +3,7 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import { AppIcon } from '@/components/feature/AppIcon';
 import { useAuth } from '@/hooks/useAuth';
 import { activeWorkspace, grantedWorkspacesFor, workspacesFor, type PortalWorkspace } from '@/lib/portalWorkspaces';
+import styles from './WorkspaceSwitcher.module.css';
 
 /* ═══════════════════════════════════════════════════════
    WORKSPACE SWITCHER — how an administrator changes section.
@@ -43,16 +44,29 @@ export function WorkspaceSwitcher({ label }: { label?: string } = {}) {
   );
   const current = activeWorkspace(pathname, workspaces);
 
+  const toggleMenu = () => {
+    if (!open) {
+      // Initialise before mounting the scrolling list, so reopening cannot
+      // briefly scroll to the previous keyboard selection.
+      const index = current ? workspaces.findIndex((w) => w.slug === current.slug) : 0;
+      setHighlighted(index < 0 ? 0 : index);
+    }
+    setOpen(!open);
+  };
+
   useEffect(() => {
     if (!open) return;
-    // Start on the section you are in, so ↓ then ↵ is a deliberate move rather
-    // than a jump to the top of the list.
-    const index = current ? workspaces.findIndex((w) => w.slug === current.slug) : 0;
-    setHighlighted(index < 0 ? 0 : index);
     // There is no search field to take focus now, so the menu takes it itself —
     // otherwise the arrow keys would still be talking to the trigger button.
     menuRef.current?.focus();
-  }, [open, current, workspaces]);
+  }, [open]);
+
+  useEffect(() => {
+    if (open) {
+      menuRef.current?.querySelectorAll<HTMLElement>('[role="menuitem"]')[highlighted]
+        ?.scrollIntoView?.({ block: 'nearest' });
+    }
+  }, [open, highlighted]);
 
   useEffect(() => {
     if (!open) return undefined;
@@ -92,7 +106,7 @@ export function WorkspaceSwitcher({ label }: { label?: string } = {}) {
   return (
     <div className="kbc-workspace-switcher relative shrink-0" ref={rootRef} onKeyDown={handleKeyDown}>
       <button
-        onClick={() => setOpen((wasOpen) => !wasOpen)}
+        onClick={toggleMenu}
         aria-haspopup="menu"
         aria-expanded={open}
         className={`kbc-workspace-switcher-button group flex h-9 cursor-pointer items-center gap-2 rounded-xl border pl-1.5 pr-2 font-bold shadow-sm transition-smooth ${
@@ -125,13 +139,13 @@ export function WorkspaceSwitcher({ label }: { label?: string } = {}) {
           role="menu"
           tabIndex={-1}
           aria-label="Switch workspace"
-          className="absolute right-0 top-full z-50 mt-2 w-[18rem] overflow-hidden rounded-2xl border border-background-200 bg-background-50 shadow-2xl shadow-foreground-950/10 focus:outline-none"
+          className={styles.menu}
         >
-          <p className="px-3.5 pb-1.5 pt-3 text-[10px] font-bold uppercase tracking-widest text-foreground-400">
+          <p className={styles.heading}>
             Switch workspace
           </p>
 
-          <div className="px-1.5 pb-1.5">
+          <div className={styles.list}>
             {workspaces.map((workspace, index) => {
               const isCurrent = current?.slug === workspace.slug;
               const isHighlighted = index === highlighted;
@@ -142,42 +156,27 @@ export function WorkspaceSwitcher({ label }: { label?: string } = {}) {
                   onClick={() => go(workspace)}
                   onMouseEnter={() => setHighlighted(index)}
                   aria-current={isCurrent ? 'true' : undefined}
-                  className={`flex w-full cursor-pointer items-center gap-3 rounded-xl px-2 py-2.5 text-left transition-smooth ${
-                    isCurrent
-                      ? 'bg-primary-50'
-                      : isHighlighted
-                        ? 'bg-background-100'
-                        : ''
-                  }`}
+                  data-highlighted={isHighlighted || undefined}
+                  className={styles.item}
                 >
-                  <span
-                    className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg transition-smooth ${
-                      isCurrent ? 'bg-primary-500 text-white' : 'bg-background-100 text-foreground-500'
-                    }`}
-                  >
-                    <AppIcon className={`${workspace.icon} text-[13px]`} />
+                  <span className={styles.icon}>
+                    <AppIcon className={workspace.icon} />
                   </span>
-                  <span className="min-w-0 flex-1">
-                    <span
-                      className={`block truncate text-[13px] font-semibold leading-tight ${
-                        isCurrent ? 'text-primary-800' : 'text-foreground-800'
-                      }`}
-                    >
+                  <span className={styles.copy}>
+                    <span className={styles.label}>
                       {workspace.label}
                     </span>
-                    <span className="mt-0.5 block truncate text-[10.5px] leading-snug text-foreground-400">
+                    <span className={styles.description}>
                       {workspace.blurb}
                     </span>
                   </span>
                   {isCurrent ? (
-                    <AppIcon className="ri-check-line shrink-0 text-sm text-primary-600" />
+                    <AppIcon className={`ri-check-line ${styles.indicator}`} />
                   ) : (
                     // Appears on the active row only, so the list stays quiet
                     // until you are actually pointing at something.
                     <AppIcon
-                      className={`ri-arrow-right-line shrink-0 text-xs transition-opacity ${
-                        isHighlighted ? 'text-foreground-400 opacity-100' : 'opacity-0'
-                      }`}
+                      className={`ri-arrow-right-line ${styles.indicator} ${isHighlighted ? '' : styles.hiddenIndicator}`}
                     />
                   )}
                 </button>

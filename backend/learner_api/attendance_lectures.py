@@ -217,7 +217,7 @@ def shared_teams_sources(module_ids, *, cursor=None):
     return result
 
 
-def read_native_occurrences(source, *, module_ids=None):
+def read_native_occurrences(source, *, module_ids=None, occurrence_ids=None):
     """Current assigned-module occurrences expected for, or attended by, the learner.
 
     Current module assignment is authoritative for the learner's schedule.  A
@@ -239,10 +239,19 @@ def read_native_occurrences(source, *, module_ids=None):
         if not module_ids:
             return []
         assigned_module_ids = list(module_ids)
+        occurrence_ids = list(dict.fromkeys(str(value or '').strip()
+            for value in (occurrence_ids or []) if str(value or '').strip()))
         try:
-            cur.execute(SHARED_NATIVE_OCCURRENCES_SQL, [
+            statement = SHARED_NATIVE_OCCURRENCES_SQL
+            if occurrence_ids:
+                statement = statement.replace(
+                    'ORDER BY native.scheduled_start,native.session_id,targets.module_id',
+                    'WHERE native.occurrence_id=ANY(%s) '
+                    'ORDER BY native.scheduled_start,native.session_id,targets.module_id',
+                )
+            cur.execute(statement, [
                 sorted({_text(value) for value in module_ids} - {''}), _key(source.email),
-                module_ids, assigned_module_ids])
+                module_ids, assigned_module_ids, *([occurrence_ids] if occurrence_ids else [])])
             source_rows = dict_rows(cur)
             projections = [(row, row.get('target_module_id') or row.get('module_catalogue_id'),
                             row.get('target_module_title') or row.get('module_title')) for row in source_rows]
@@ -251,7 +260,14 @@ def read_native_occurrences(source, *, module_ids=None):
             shared = shared_teams_sources(assigned_module_ids, cursor=cur)
             source_module_ids = sorted(set().union(*shared.values())) if shared else []
             query_module_ids = list(dict.fromkeys([*assigned_module_ids, *source_module_ids]))
-            cur.execute(NATIVE_OCCURRENCES_SQL, [_key(source.email), query_module_ids])
+            statement = NATIVE_OCCURRENCES_SQL
+            if occurrence_ids:
+                statement = statement.replace(
+                    'ORDER BY o.scheduled_start,o.id',
+                    'AND o.id=ANY(%s) ORDER BY o.scheduled_start,o.id',
+                )
+            cur.execute(statement, [_key(source.email), query_module_ids,
+                                    *([occurrence_ids] if occurrence_ids else [])])
             source_rows = dict_rows(cur)
             cur.execute('''SELECT module_catalogue_id,title FROM curriculum.modules
                 WHERE module_catalogue_id=ANY(%s)''', [assigned_module_ids])
@@ -395,19 +411,22 @@ def normalize_native_occurrences(source, result):
 def lecture_register(
         source, *, module_ids=None, records=None, learner_profile_id=None,
         apply_adjustments=True, preloaded=None, scheduled=None,
-        credit_projection=False, recorded_mode=None):
+        credit_projection=False, recorded_mode=None, occurrence_ids=None,
+        teams_only=False):
     # Bulk consumers can preload source rows; all schedule, recovery and saved
     # confirmation rules still run through this same learner register.
     loaded_schedule = scheduled is None
-    if credit_projection and records is None:
+    if (credit_projection or teams_only) and records is None:
         if scheduled is None:
-            scheduled = projection_call('attendance_schedule', read_native_occurrences, source, module_ids=module_ids) if preloaded is None else preloaded['scheduled']
-        records = projection_call('attendance_sources', combined_attendance_rows, source, credit_projection=True, register_schedule=scheduled)
+            scheduled = projection_call('attendance_schedule', read_native_occurrences, source, module_ids=module_ids, occurrence_ids=occurrence_ids) if preloaded is None else preloaded['scheduled']
+        records = projection_call('attendance_sources', combined_attendance_rows, source,
+            credit_projection=True, register_schedule=scheduled,
+            **({'teams_only': True} if teams_only else {}))
     else:
         records = combined_attendance_rows(source) if records is None else records
     if scheduled is None:
-        scheduled = projection_call('attendance_schedule', read_native_occurrences, source, module_ids=module_ids) if preloaded is None else preloaded['scheduled']
-    if loaded_schedule and preloaded is None and any(row.get('source') == 'kbc-attendance' for row in records):
+        scheduled = projection_call('attendance_schedule', read_native_occurrences, source, module_ids=module_ids, occurrence_ids=occurrence_ids) if preloaded is None else preloaded['scheduled']
+    if loaded_schedule and preloaded is None and not occurrence_ids and any(row.get('source') == 'kbc-attendance' for row in records):
         cancelled = projection_call('attendance_schedule', read_cancelled_native_occurrences, source, module_ids=module_ids)
         records = _exclude_cancelled_kbc_mirrors(records, scheduled, cancelled)
     by_occurrence = {str(row['session_id']): row for row in scheduled}
@@ -448,9 +467,20 @@ def lecture_register(
                 if row.get('source') == 'live-register':
                     # Keep Teams/report metadata from the scheduled row while
                     # replacing only the learner outcome saved by Bulk.
+                    saved_report = str(row.get('attendance_report_id') or '').strip()
+                    scheduled_report = str(schedule.get('attendance_report_id') or '').strip()
+                    verified_seconds = (max(0, int(row.get('attended_seconds') or 0))
+                                        if saved_report and (not scheduled_report or saved_report == scheduled_report)
+                                        else 0)
                     projected = {
                         **schedule,
                         'attendance_status': row['attendance_status'],
+                        'resolved_attendance_status': row['attendance_status'],
+                        # The register already resolved this learner's Teams
+                        # identity (including guests/aliases). Keep its evidence;
+                        # the schedule's raw-email lookup cannot replace it.
+                        'attended_seconds': verified_seconds,
+                        'attended': row['attendance_status'] == 'present' and verified_seconds > 180,
                         'source': 'microsoft-teams',
                         'updated_at': _aware(row.get('updated_at')) or schedule.get('updated_at'),
                     }
@@ -1134,9 +1164,20 @@ def _mark_missed_catchups(lectures, reported):
                 lecture['catchupStatus'] = 'missed'
 
 
-def read_workspace(source, kind, *, monthly=None, monthly_occurrences=None):
+def read_workspace(source, kind, *, monthly=None, monthly_occurrences=None,
+                   module_ids=None, learner_profile_id=None,
+                   occurrence_ids=None):
     from .attendance_mode import read_mode
-    register = lecture_register(source)
+    register_options = {}
+    if module_ids is not None:
+        register_options['module_ids'] = module_ids
+    if learner_profile_id is not None:
+        register_options['learner_profile_id'] = learner_profile_id
+    if occurrence_ids is not None:
+        register_options['occurrence_ids'] = occurrence_ids
+    if monthly is not None:
+        register_options['teams_only'] = True
+    register = lecture_register(source, **register_options)
     if monthly is not None:
         register = [row for row in register if row.get('source') == 'microsoft-teams' and row['session_date'].isoformat().startswith(monthly)]
         if monthly_occurrences is not None:

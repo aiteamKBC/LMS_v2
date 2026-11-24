@@ -68,23 +68,13 @@ class MyLearningScheduleTests(unittest.TestCase):
 
 
 class MyLearningCatalogueTests(unittest.TestCase):
-    def test_cover_read_is_scoped_and_never_aggregates_attempts(self):
-        path = Path(__file__).with_name('subject_store.py')
-        node = next(n for n in ast.parse(path.read_text(encoding='utf-8')).body
-                    if isinstance(n, ast.FunctionDef) and n.name == 'covers_for')
-        cursor = Mock()
-        cursor.fetchall.return_value = [('legacy:5', 'cover.png')]
-        connection = Mock()
-        connection.cursor.return_value.__enter__ = Mock(return_value=cursor)
-        connection.cursor.return_value.__exit__ = Mock(return_value=False)
-        scope = dict(connections={'enrolment': connection}, ALIAS='enrolment',
-                     COVERS='covers', ready=Mock(return_value=True))
-        exec(compile(ast.Module(body=[node], type_ignores=[]), str(path), 'exec'), scope)
-        self.assertEqual(scope['covers_for']([]), {})
-        connection.cursor.assert_not_called()
-        self.assertEqual(scope['covers_for'](['legacy:5', 'legacy:5']), {'legacy:5': 'cover.png'})
-        cursor.execute.assert_called_once_with(
-            'SELECT subject_ref,storage_path FROM covers WHERE subject_ref=ANY(%s)', [['legacy:5']])
+    def test_active_cover_paths_do_not_reference_the_obsolete_table(self):
+        root = Path(__file__).parent
+        for name in ('subject_store.py', 'student_activity.py', 'my_learning.py'):
+            source = (root / name).read_text(encoding='utf-8')
+            self.assertNotIn('"Learner".subject_covers', source, name)
+            self.assertNotIn('covers_for(', source, name)
+            self.assertNotIn('save_cover(', source, name)
 
     def test_optional_ledger_is_not_calculated_and_reuses_verified_owner(self):
         from learner_api.test_canonical_learning_no_db import adapter

@@ -263,15 +263,16 @@ describe('explicit previous learning display groups', () => {
     componentId: 'CURRENT-1', component: 'Current lesson', type: 'reading', week: 'Week 1' }],
     componentProgress: [], quizAttempts: [] } as unknown as LearnerDetail;
 
-  it('shows one course with separate current and previous progress and preserves source filters', async () => {
+  it('counts separate current and historical cards and preserves source filters', async () => {
     vi.spyOn(api, 'subjectRequest').mockResolvedValue(metadata);
     render(<StudentActivityPanel data={data} real={real} kind="commercial" learnerId="132" loading={false} error={null} onRetry={vi.fn()} />);
-    const grouped = within(await screen.findByRole('region', { name: 'Current scheduling learning record' }));
-    expect(grouped.getByRole('heading', { name: 'Current learning plan' })).toBeVisible();
-    expect(grouped.getByRole('heading', { name: 'Previous learning' })).toBeVisible();
-    expect(grouped.getByRole('progressbar', { name: 'Current scheduling current plan activities progress' })).toHaveAttribute('aria-valuenow', '0');
-    expect(grouped.getByRole('progressbar', { name: 'Leadership previous learning activities progress' })).toHaveAttribute('aria-valuenow', '50');
-    expect(screen.getByText('1 subjects · 3 activities')).toBeVisible();
+    await screen.findByRole('heading', { name: 'Current scheduling' });
+    expect(screen.queryByRole('heading', { name: 'Training Plan' })).not.toBeInTheDocument();
+    expect(screen.getByRole('progressbar', { name: 'Current scheduling current plan activities progress' })).toHaveAttribute('aria-valuenow', '0');
+    expect(screen.getByRole('progressbar', { name: 'Leadership previous learning activities progress' })).toHaveAttribute('aria-valuenow', '50');
+    expect(screen.getAllByRole('heading', { name: 'Leadership' })).toHaveLength(1);
+    expect(screen.getAllByRole('heading', { name: 'Current scheduling' })).toHaveLength(1);
+    expect(screen.getByText('2 subjects · 3 activities')).toBeVisible();
     fireEvent.click(screen.getByRole('tab', { name: 'Old LMS' }));
     expect(screen.getByRole('heading', { name: 'Leadership' })).toBeVisible();
     expect(screen.queryByRole('heading', { name: 'Current scheduling' })).not.toBeInTheDocument();
@@ -467,7 +468,7 @@ describe('subjects shared with Module Builder', () => {
     vi.spyOn(api, 'subjectRequest').mockImplementation(() => new Promise(resolve => { finish = resolve; }));
     render(<StudentActivityPanel data={source === 'legacy' ? data : null} real={source === 'native' ? linkedReal : null}
       kind="commercial" learnerId="132" loading={false} error={null} onRetry={vi.fn()} />);
-    expect(screen.getByRole('status')).toHaveTextContent('Loading subjects');
+    expect(screen.getByRole('status')).toHaveAccessibleName(expect.stringContaining('Loading subjects'));
     expect(screen.queryByRole('button', { name: /New LMS.*Leadership/ })).not.toBeInTheDocument();
     await act(async () => finish(linkedMetadata));
     expect(screen.getByRole('region', { name: 'Your subjects' })).toBeInTheDocument();
@@ -489,7 +490,7 @@ describe('subjects shared with Module Builder', () => {
     const { rerender } = render(<StudentActivityPanel {...props} learnerId="132" loading={false} />);
     await screen.findByRole('button', { name: /New LMS.*Leadership/ });
     rerender(<StudentActivityPanel {...props} learnerId="133" loading />);
-    expect(screen.getByRole('status')).toHaveTextContent('Loading subjects');
+    expect(screen.getByRole('status')).toHaveAccessibleName(expect.stringContaining('Loading subjects'));
     expect(screen.queryByText('Anna Rundell')).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /New LMS.*Leadership/ })).not.toBeInTheDocument();
   });
@@ -582,7 +583,7 @@ describe('subjects shared with Module Builder', () => {
     let resolve!: (value: typeof linkedMetadata) => void;
     const request = vi.spyOn(api, 'subjectRequest').mockImplementation(() => new Promise((done) => { resolve = done; }));
     render(<StudentActivityPanel data={data} real={linkedReal} kind="commercial" learnerId="132" loading={false} error={null} onRetry={vi.fn()} />);
-    expect(screen.getByRole('status')).toHaveTextContent('Loading subjects');
+    expect(screen.getByRole('status')).toHaveAccessibleName(expect.stringContaining('Loading subjects'));
     expect(screen.queryByRole('button', { name: /New LMS.*Leadership/ })).not.toBeInTheDocument();
     await act(async () => resolve({ ...linkedMetadata, builder_subjects: { 'legacy:1': { id: 'MOD-1', title: 'Renamed Leadership' } } }));
     expect(screen.getAllByRole('button', { name: /Renamed Leadership/ })).toHaveLength(1);

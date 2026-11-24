@@ -18,54 +18,18 @@ UK = ZoneInfo('Europe/London')
 
 
 def activity_summary(items, today):
-    """Count completed work within each denominator; future work cannot hide arrears."""
-    due = []
-    undated = 0
-    for item in items:
-        schedule = item.get('schedule') or {}
-        if schedule.get('date_source') in {'introduction', 'extra_activity'}:
-            continue
-        delivery = schedule.get('delivery_week') or {}
-        date = ((delivery.get('end') or schedule.get('week_end'))
-                if str(schedule.get('due_timing') or '').casefold() == 'end of week'
-                else schedule.get('date') or delivery.get('start'))
-        try:
-            day = datetime.strptime(str(date)[:10], '%Y-%m-%d').date()
-        except ValueError:
-            day = None
-        if day is None or schedule.get('date_needs_review'):
-            undated += 1
-        elif day.isoformat() <= today:
-            due.append(item)
-
-    def metric(rows):
-        completed = sum(bool(row['completed']) for row in rows)
-        return {'completed': completed, 'total': len(rows),
-                'percent': round(completed / len(rows) * 100, 1) if rows else None}
-
-    return {'due': None if undated else metric(due), 'available': metric(items),
-            'undatedActivities': undated, 'asOfDate': today, 'timeZone': str(UK)}
+    from curriculum_api.directory.domain.progress import activity_summary as implementation
+    return implementation(items, today, UK=UK)
 
 
 def learner_progress(source, profile_id, module_ids, today):
+    from curriculum_api.directory.application.progress import learner_progress as implementation
     from learner_api import canonical_learning as canonical
     from learner_api.my_learning import load_context, assemble_cards
-
-    owner = canonical.require_profile(source.pk)
-    if str(owner['id']) != str(profile_id):
-        raise ServiceError('The learner identity needs review.', 'identity_review_required', 409)
-    _, _, records, native, courses, definitions, done, started, hours, metadata, credits = load_context(source, owner)
-    cards, _ = assemble_cards(native, metadata['current_subjects'], courses, definitions,
-                             done, started, hours, metadata, records, metadata['modules'], credits,
-                             include_activity_items=True)
-    # Imported/replacement subjects are linked by verified identities, never titles.
-    links = {**metadata['imported_courses'], **metadata['replacement_courses']}
-    allowed = {f'current:{mid}' for mid in module_ids}
-    allowed.update(old for current, old in links.items() if current in allowed)
-    items = [item for card in cards
-             if card['id'] in allowed or card.get('moduleId') in module_ids
-             for item in card['_activityItems']]
-    return activity_summary(items, today)
+    return implementation(source, profile_id, module_ids, today, require_profile=canonical.require_profile,
+        load_context=load_context, assemble_cards=assemble_cards,
+        activity_summary=activity_summary, ServiceError=ServiceError,
+    )
 
 
 def target_rows(scope, identifier):
@@ -78,45 +42,29 @@ def target_rows(scope, identifier):
 @require_GET
 @staff_only()
 def progress(request):
+    from curriculum_api.directory.api.progress import progress as implementation
     from . import views
     from learner_api.models import EnrolmentUser
     from learner_api.my_learning import SOURCE_FIELDS
     from learner_api.journal_sources import learner_journal_view
-
-    scope, identifier = request.GET.get('scope', ''), request.GET.get('id', '').strip()
-    ids = list(dict.fromkeys(request.GET.get('learnerIds', '').split(',')))
-    if scope not in SCOPES or not identifier or len(identifier) > 200 or not 1 <= len(ids) <= 5 or any(not value.isascii() or not value.isdecimal() or len(value) > 18 for value in ids):
-        return JsonResponse({'error': 'Choose a valid scope and up to five learners.'}, status=400)
-
-    @learner_journal_view
-    def read(request):
-        try:
-            rows = target_rows(scope, identifier)
-            if rows is None:
-                return JsonResponse({'error': 'This curriculum record could not be found.'}, status=404)
-            by_id = {row['id']: row for row in rows}
-            if any(value not in by_id for value in ids):
-                return JsonResponse({'error': 'A learner is no longer in this scope. Reload the list.'}, status=409)
-            with views.curriculum_read_scope(targeted_child_reads=True):
-                module_ids = {str(row['module_catalogue_id']) for row in views.authoring_scope_module_rows(scope, identifier)}
-            from learner_api.placement_links import with_placements
-            sources = {str(source.pk): source for source in with_placements(
-                EnrolmentUser.all_learners.only(*SOURCE_FIELDS).filter(
-                    pk__in=[by_id[value]['enrolmentId'] for value in ids if by_id[value].get('enrolmentId')]))}
-            today = timezone.now().astimezone(UK).date().isoformat()
-            result = {}
-            for value in ids:
-                source = sources.get(str(by_id[value].get('enrolmentId')))
-                try:
-                    if source is None:
-                        raise LookupError()
-                    result[value] = learner_progress(source, value, module_ids, today)
-                except (DatabaseError, ServiceError, LookupError):
-                    result[value] = {'error': 'Progress is unavailable. Please retry or review the learner identity.'}
-            return JsonResponse({'learners': result})
-        except DatabaseError:
-            return JsonResponse({'error': 'Progress is temporarily unavailable. Please retry.'}, status=503)
-    return read(request)
+    from learner_api.placement_links import with_placements
+    from .directory.application.progress import read_progress
+    from .directory.infrastructure.registration_reads import progress_sources
+    def module_ids(scope, identifier):
+        with views.curriculum_read_scope(targeted_child_reads=True):
+            return {str(row['module_catalogue_id']) for row in views.authoring_scope_module_rows(scope, identifier)}
+    def sources(enrolment_ids):
+        return progress_sources(enrolment_ids, EnrolmentUser=EnrolmentUser,
+                                SOURCE_FIELDS=SOURCE_FIELDS, with_placements=with_placements)
+    def read(scope, identifier, ids):
+        return read_progress(
+            scope, identifier, ids, target_rows=target_rows, read_module_ids=module_ids,
+            read_sources=sources, current_date=lambda: timezone.now().astimezone(UK).date().isoformat(),
+            learner_progress=learner_progress, DatabaseError=DatabaseError, ServiceError=ServiceError,
+        )
+    return implementation(request, SCOPES=SCOPES, JsonResponse=JsonResponse, DatabaseError=DatabaseError,
+        learner_journal_view=learner_journal_view, read_progress=read,
+    )
 
 
 @never_cache

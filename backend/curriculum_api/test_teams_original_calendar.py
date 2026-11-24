@@ -1,4 +1,5 @@
 """Standard editor transport/binding regressions; synthetic data, no DB/network."""
+from curriculum_api.catalogue.tests.parity.composition_test_support import composition_fixture
 import copy
 import json
 from contextlib import nullcontext, ExitStack
@@ -124,8 +125,8 @@ class OriginalCalendarBindingTests(SimpleTestCase):
                     'module_session_clock': lambda *_: ('09:00', '11:00', 120),
                     'invalidate_curriculum_cache': lambda: None}
                 for name, replacement in mocks.items():
-                    stack.enter_context(patch.object(views, name, replacement))
-                write = stack.enter_context(patch.object(views, 'update_authoring_rows'))
+                    stack.enter_context(composition_fixture(views, name, replacement))
+                write = stack.enter_context(composition_fixture(views, 'update_authoring_rows'))
                 unresolved = []
                 views.attach_teams_meeting_to_module_weeks('MODULE',
                     {**self.series, 'meeting_type': 'live-session', 'calendar_series': [{'day': 'Wednesday'}]},
@@ -157,8 +158,8 @@ class OriginalCalendarBindingTests(SimpleTestCase):
                 'delivery_days_per_week': lambda *_: 1, 'module_week_session_plan': lambda *_: [],
                 'module_session_clock': lambda *_: ('09:00', '11:00', 120),
                 'invalidate_curriculum_cache': lambda: None}.items():
-                stack.enter_context(patch.object(views, name, replacement))
-            write = stack.enter_context(patch.object(views, 'update_authoring_rows'))
+                stack.enter_context(composition_fixture(views, name, replacement))
+            write = stack.enter_context(composition_fixture(views, 'update_authoring_rows'))
             views.attach_teams_meeting_to_module_weeks('MODULE', {**self.series, 'meeting_type': 'live-session'},
                 {'sessionTimeZone': 'Europe/London'}, rows)
             saved = views.parse_json_value(write.call_args.args[3]['settings_json'], {})
@@ -187,8 +188,8 @@ class OriginalCalendarBindingTests(SimpleTestCase):
                 'live_occurrence_component_settings': lambda row, _settings: {'teamsOccurrenceId': row['id'],
                     'sessionDate': row['scheduled_start'][:10], 'liveSessionUrl': JOIN, 'teamsMeetingUrl': JOIN}}
             for name, replacement in mocks.items():
-                stack.enter_context(patch.object(views, name, replacement))
-            write = stack.enter_context(patch.object(views, 'update_authoring_rows'))
+                stack.enter_context(composition_fixture(views, name, replacement))
+            write = stack.enter_context(composition_fixture(views, 'update_authoring_rows'))
             self.assertEqual(views.attach_teams_meeting_to_module_weeks('MODULE',
                 {**self.series, 'meeting_type': 'live-session'}, {'sessionTimeZone': 'Europe/London'}, rows), (2, 0))
         self.assertEqual([call.args[2] for call in write.call_args_list], [['C0'], ['C2']])
@@ -201,7 +202,7 @@ class OriginalCalendarBindingTests(SimpleTestCase):
         before = copy.deepcopy(self.rows)
         with patch.object(original.transaction, 'atomic', nullcontext), \
              patch.object(state, 'load_calendar_state', return_value=(current or self.series, self.rows, {})), \
-             patch.object(views, 'update_authoring_rows') as write:
+             composition_fixture(views, 'update_authoring_rows') as write:
             original.bind_calendar(self.series, self.rows, self.master, self.events)
         self.assertEqual(self.rows, before)
         return write
@@ -221,7 +222,7 @@ class OriginalCalendarBindingTests(SimpleTestCase):
         before = copy.deepcopy(self.rows)
         with patch.object(original.transaction, 'atomic', nullcontext), \
              patch.object(state, 'load_calendar_state', return_value=(self.series, self.rows, {})), \
-             patch.object(views, 'update_authoring_rows') as write:
+             composition_fixture(views, 'update_authoring_rows') as write:
             original.bind_calendar(self.series, self.rows, self.master, self.events, online)
         updates = write.call_args_list[0].args[3]
         self.assertEqual(views.parse_json_value(updates['co_organizers'], []), ['tutor@example.invalid'])
@@ -254,7 +255,7 @@ class OriginalCalendarBindingTests(SimpleTestCase):
         from . import teams_calendar_actions as actions
         with patch.object(original.transaction, 'atomic', nullcontext), \
              patch.object(state, 'load_calendar_state', return_value=(self.series, self.rows, {})), \
-             patch.object(views, 'update_authoring_rows'), patch.object(actions, 'store_snapshot') as store:
+             composition_fixture(views, 'update_authoring_rows'), patch.object(actions, 'store_snapshot') as store:
             original.bind_calendar(self.series, self.rows, self.master, self.events, original_path='groups/GROUP/events/ROOT')
         binding = store.call_args.args[1]['originalCalendar']
         self.assertEqual(set(binding), {'liveId', 'joinUrl', 'organizer', 'eventId', 'path'})
@@ -300,7 +301,7 @@ class StandardOriginalCalendarRequestTests(SimpleTestCase):
 
     def test_native_calendar_uses_the_existing_view_without_imported_transport(self):
         callback = Mock(return_value=JsonResponse({'updated': True}))
-        with patch.object(views, 'authoring_fetch_all', return_value=[{**self.series, 'meeting_type': 'live-session'}]), \
+        with composition_fixture(views, 'authoring_fetch_all', return_value=[{**self.series, 'meeting_type': 'live-session'}]), \
              patch.object(imported, 'access_for') as access:
             self.assertEqual(original.original_calendar_request(callback)(self.request, 'LIVE').status_code, 200)
         access.assert_not_called()
@@ -309,7 +310,7 @@ class StandardOriginalCalendarRequestTests(SimpleTestCase):
     def test_missing_owner_access_does_not_enter_the_standard_mutation(self):
         callback = Mock()
         callback.__name__ = 'calendar_action'
-        with patch.object(views, 'authoring_fetch_all', return_value=[self.series]), \
+        with composition_fixture(views, 'authoring_fetch_all', return_value=[self.series]), \
              patch.object(state, 'load_calendar_state', return_value=(self.series, self.rows, {})), \
              patch.object(imported, 'access_for', return_value={'calendarKind': 'group'}), \
              patch.object(imported, 'require_access', side_effect=imported.Blocked('denied', 'Connect the original calendar.', connection_required=True, kind='group')):
@@ -327,7 +328,7 @@ class StandardOriginalCalendarRequestTests(SimpleTestCase):
         client = Mock()
         client.__enter__ = Mock(return_value=client)
         client.__exit__ = Mock(return_value=False)
-        with patch.object(views, 'authoring_fetch_all', return_value=[self.series]), \
+        with composition_fixture(views, 'authoring_fetch_all', return_value=[self.series]), \
              patch.object(state, 'load_calendar_state', return_value=(self.series, self.rows, {})), \
              patch.object(imported, 'access_for', return_value={'calendarKind': 'group', 'scopes': []}), \
              patch.object(imported, 'require_access'), patch.object(imported, 'CalendarClient', return_value=client), \
@@ -378,7 +379,7 @@ class StandardOriginalCalendarRequestTests(SimpleTestCase):
         client = Mock()
         client.__enter__ = Mock(return_value=client)
         client.__exit__ = Mock(return_value=False)
-        with patch.object(views, 'authoring_fetch_all', return_value=[self.series]), \
+        with composition_fixture(views, 'authoring_fetch_all', return_value=[self.series]), \
              patch.object(state, 'load_calendar_state', return_value=(self.series, self.rows, {})), \
              patch.object(imported, 'access_for', return_value={}), patch.object(imported, 'require_access'), \
              patch.object(imported, 'CalendarClient', return_value=client), \
@@ -405,7 +406,7 @@ class StandardOriginalCalendarRequestTests(SimpleTestCase):
         client.__enter__ = Mock(return_value=client)
         client.__exit__ = Mock(return_value=False)
         client.client.get.return_value = Mock(status_code=404, json=Mock(return_value={'error': {'code': 'ErrorItemNotFound'}}))
-        with patch.object(views, 'authoring_fetch_all', return_value=[self.series]), \
+        with composition_fixture(views, 'authoring_fetch_all', return_value=[self.series]), \
              patch.object(state, 'load_calendar_state', return_value=(self.series, self.rows, snapshot)), \
              patch.object(imported, 'access_for', return_value={'calendarKind': 'group'}), patch.object(imported, 'require_access'), \
              patch.object(imported, 'CalendarClient', return_value=client), patch.object(editing, 'verified_context') as active_master, \
@@ -433,7 +434,7 @@ class StandardEditorReadTests(SimpleTestCase):
         callback.__name__ = 'curriculum_teams_meeting_schedule'
         client = Mock(__enter__=Mock(), __exit__=Mock(return_value=False))
         client.__enter__.return_value = client
-        with patch.object(views, 'authoring_fetch_all', return_value=[series]), \
+        with composition_fixture(views, 'authoring_fetch_all', return_value=[series]), \
              patch.object(state, 'load_calendar_state', return_value=(series, rows, {})), \
              patch.object(imported, 'access_for', return_value=access), patch.object(imported, 'require_access'), \
              patch.object(imported, 'CalendarClient', return_value=client), \
@@ -482,9 +483,9 @@ class StandardEditorReadTests(SimpleTestCase):
         from . import teams_permission_check as permissions
         series, _, _, _ = fixtures()
         report = {'organizer': {'email': OWNER}, 'app': {'permissionContext': 'application'}}
-        with patch.object(views, 'authoring_fetch_all', return_value=[series]), \
+        with composition_fixture(views, 'authoring_fetch_all', return_value=[series]), \
              patch.object(original, 'current_calendar', return_value=SimpleNamespace()), \
-             patch.object(views, 'teams_online_meeting_owner_id', return_value=OWNER), \
+             composition_fixture(views, 'teams_online_meeting_owner_id', return_value=OWNER), \
              patch('coach_api.views.microsoft_graph_token', return_value='synthetic-test-token'), \
              patch.object(permissions, 'permission_report', return_value=report) as build:
             actual = permissions.check_live_session('LIVE')
@@ -533,7 +534,7 @@ class OriginalScheduleHistoryTests(SimpleTestCase):
         view = Mock()
         with patch.object(imported, 'review', return_value={'status': 'blocked', 'message': 'Historical dates must be preserved.'}), \
              patch.object(imported, 'confirm') as confirm, \
-             patch.object(views, 'held_schedule_snapshot', return_value=[]):
+             composition_fixture(views, 'held_schedule_snapshot', return_value=[]):
             response = original.update_original_schedule(request, 'LIVE', {}, view, (), {})
         self.assertEqual(response.status_code, 409)
         view.assert_not_called()
@@ -554,7 +555,7 @@ class OriginalScheduleHistoryTests(SimpleTestCase):
             return JsonResponse({'updated': True})
         with patch.object(imported, 'review', return_value={'status': 'up_to_date'}) as review, \
              patch.object(state, 'load_calendar_state', return_value=(series, rows, {})), \
-             patch.object(views, 'held_schedule_snapshot', return_value=[]):
+             composition_fixture(views, 'held_schedule_snapshot', return_value=[]):
             self.assertEqual(original.update_original_schedule(request, 'LIVE', {}, view, (), {}).status_code, 200)
         review.assert_called_once_with('LIVE', '7', {}, notify_attendees=False, standard_before=[])
         self.assertEqual(request.body, original_body)

@@ -67,8 +67,11 @@ class PresentationTemplateTests(TestCase):
         cursor.fetchone.return_value = None
         conn = MagicMock()
         conn.cursor.return_value.__enter__.return_value = cursor
-        with patch('learner_api.presentation_template.connections', {'enrolment': conn}), patch('learner_api.evidence_storage.download_blob_bytes') as download:
+        with patch('learner_api.presentation_template.connections', {'enrolment': conn}), \
+             patch('learner_api.evidence_ownership.profile_id_for_source', return_value=248), \
+             patch('learner_api.evidence_storage.download_blob_bytes') as download:
             with self.assertRaises(ValueError):
                 load_owned_template('commercial', '123', 'other-file')
-        self.assertEqual(cursor.execute.call_args.args[1], ['other-file', 'commercial', '123', 'approved'])
+        self.assertEqual(cursor.execute.call_args.args[1], ['other-file', 'commercial', 248, 'approved'])
+        self.assertIn('learner_profile_id', cursor.execute.call_args.args[0])
         download.assert_not_called()

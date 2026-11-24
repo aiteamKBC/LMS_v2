@@ -2,6 +2,8 @@
 
 Synthetic rows only; nothing here reaches a database.
 """
+from curriculum_api.catalogue.tests.parity.composition_test_support import composition_fixture
+from .catalogue.tests.parity.read_dependency_test_support import authoring_read_fixture
 import copy
 import json
 import random
@@ -136,9 +138,9 @@ class TextlessChildRowsTests(SimpleTestCase):
             return copy.deepcopy(rows.get(table, []))
 
         stack = self.enterContext(ExitStack())
-        stack.enter_context(patch('curriculum_api.authoring_read_transport.compact_authoring_rows', side_effect=compact))
-        stack.enter_context(patch.object(views, 'live_authoring_rows_sql', return_value=('', [])))
-        stack.enter_context(patch.object(views, 'authoring_fetch_all', return_value=[]))
+        stack.enter_context(authoring_read_fixture('compact_authoring_rows', side_effect=compact))
+        stack.enter_context(authoring_read_fixture('live_authoring_rows_sql', return_value=('', [])))
+        stack.enter_context(authoring_read_fixture('authoring_fetch_all', return_value=[]))
 
     def test_textless_read_asks_for_no_text_and_blanks_it_identically(self):
         shared = programme_workspace_reads.programme_structure_child_rows(['M1'], component_text=False)
@@ -166,12 +168,14 @@ class WorkspaceCandidateFallbackTests(SimpleTestCase):
 
         with patch.object(programme_workspace_reads, 'programme_structure_child_rows', side_effect=child_rows), \
                 patch.object(programme_workspace_reads, 'component_text_cancels', return_value=cancels), \
-                patch.object(views, 'programme_authoring_module_rows', return_value=[{'module_catalogue_id': 'M1'}]), \
-                patch.object(views, 'enrich_curriculum_modules_with_authoring_details',
-                             side_effect=lambda modules, child_rows: [{'from': 'enrich', 'text': child_rows['text']}]), \
-                patch.object(views, 'programme_authoring_modules',
-                             side_effect=lambda programme, config, module_rows, child_rows: [{'from': 'authoring', 'text': child_rows['text']}]), \
-                patch.object(views, 'programme_config_modules', return_value=[]):
+                composition_fixture(views, 'module_index_rows', return_value=[{'module_catalogue_id': 'M1', 'programme_id': 'P1'}]), \
+                composition_fixture(views, 'get_authoring_structure_payloads', side_effect=lambda ids, **kw: {'M1': {'programmeId': 'P1', 'text': kw['child_rows']['text']}}), \
+                composition_fixture(views, 'programme_authoring_module_rows', return_value=[{'module_catalogue_id': 'M1'}]), \
+                composition_fixture(views, 'enrich_curriculum_modules_with_authoring_details',
+                             side_effect=lambda modules, authoring_payloads: [{'from': 'enrich', 'text': authoring_payloads['M1']['text']}]), \
+                composition_fixture(views, 'programme_authoring_modules',
+                             side_effect=lambda programme, config, module_rows, payloads_by_id: [{'from': 'authoring', 'text': payloads_by_id['M1']['text']}]), \
+                composition_fixture(views, 'programme_config_modules', return_value=[]):
             result = views.programme_workspace_module_candidates([{'moduleCatalogueId': 'M1'}], {'id': 'P1'}, config)
         return calls, result
 
@@ -185,7 +189,7 @@ class WorkspaceCandidateFallbackTests(SimpleTestCase):
         self.assertEqual(calls, [False, True])
         self.assertEqual({item['text'] for item in result}, {True})
 
-    def test_config_stored_modules_keep_the_full_read(self):
+    def test_stale_config_modules_no_longer_force_a_full_read(self):
         calls, result = self.run_candidates(cancels=True, config={'modules': [{'moduleCatalogueId': 'M9'}]})
-        self.assertEqual(calls, [True])
-        self.assertEqual({item['text'] for item in result}, {True})
+        self.assertEqual(calls, [False])
+        self.assertEqual({item['text'] for item in result}, {False})

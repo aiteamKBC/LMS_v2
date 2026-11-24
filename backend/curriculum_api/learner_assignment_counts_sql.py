@@ -52,7 +52,7 @@ import time
 
 from django.db import connections
 
-from learner_api import learning_plan as plans
+from learner_api.learning_plans.infrastructure import assignment_reads as plans
 from learner_api.models import EnrolmentUser
 from learner_api.placement_links import with_placements
 
@@ -180,8 +180,9 @@ def _group_source():
     still stores the list it is None -- learning_plan's own default.
     """
     from django.db import connection
-    from . import views
-    if connection.vendor != 'postgresql' or 'module_ids' in set(views.column_names(views.GROUPS_TABLE)):
+    from .catalogue.infrastructure.database_reads import column_names
+    from .catalogue.infrastructure.authoring_schema_runtime import GROUPS_TABLE
+    if connection.vendor != 'postgresql' or 'module_ids' in set(column_names(GROUPS_TABLE)):
         return None
     inactive = "lower(coalesce({}.status, '')) in ('inactive', 'archived')"
     # ``only``: a plain table read, never re-routed by the request's SQL adapter.
@@ -199,8 +200,7 @@ def _group_source():
 def _preset_ids(programme, group, cache, group_id=''):
     """`learning_plan._preset_ids_for`, keyed off plain values not a learner.
 
-    Like the original, a placement's group id names the group exactly and wins
-    over the (programme, group) name pair.
+    A placement's canonical group id names the group; absent ids have no preset.
     """
     group_id = plans._s(group_id)
     if not group_id:
@@ -208,10 +208,7 @@ def _preset_ids(programme, group, cache, group_id=''):
     key = ('group_id', group_id)
     if key not in cache:
         source = _group_source()
-        cache[key] = (
-            plans._group_module_ids('', '', source=source, group_id=group_id) if group_id
-            else plans._group_module_ids(*key, source=source)
-        )
+        cache[key] = plans._group_module_ids('', '', source=source, group_id=group_id)
     return cache[key]
 
 
@@ -242,7 +239,6 @@ _JSONB_PLACEMENT = (
     "        COALESCE(to_jsonb(u) ->> 'Group', '')     AS grp,\n"
     "        COALESCE(to_jsonb(u) ->> 'group_id', '')  AS group_id,"
 )
-_PLACEMENT_SQL = {}
 
 
 def _learner_columns(alias):
@@ -323,12 +319,14 @@ def assignment_directory_facts(target_module_ids):
     possible to omit from `facts_by_learner_id` -- every learner row read by
     `fetch_plan_facts` produces one or the other.
     """
-    from . import views
+    from .catalogue.infrastructure.authoring_runtime import authoring_fetch_all
+    from .catalogue.infrastructure.database_reads import AUTHORING_MODULES_TABLE
+    from .catalogue.domain.values import clean_str
 
-    catalogue_rows = views.authoring_fetch_all(views.AUTHORING_MODULES_TABLE)
+    catalogue_rows = authoring_fetch_all(AUTHORING_MODULES_TABLE)
     wanted = {
-        views.clean_str(row.get('module_catalogue_id')) for row in catalogue_rows
-        if views.clean_str(row.get('module_catalogue_id'))
+        clean_str(row.get('module_catalogue_id')) for row in catalogue_rows
+        if clean_str(row.get('module_catalogue_id'))
     }
     wanted |= {plans._s(module_id) for module_id in target_module_ids if plans._s(module_id)}
     if not wanted:
@@ -352,8 +350,8 @@ def assignment_directory_facts(target_module_ids):
 def bulk_assigned_learner_counts_sql(module_ids):
     """Counts identical to `learner_assignments.bulk_assigned_learner_counts`.
 
-    Not yet wired into the payload build -- see `compare_assignment_counts` for
-    the check that has to pass first.
+    Used by the enrolment-keyed catalogue payload. `compare_assignment_counts`
+    remains an explicit diagnostic against the original Python reader.
     """
     wanted = {plans._s(module_id) for module_id in module_ids if plans._s(module_id)}
     if not wanted:
@@ -380,14 +378,36 @@ def bulk_assigned_learner_counts_sql(module_ids):
     return counts
 
 
+def bulk_assigned_learner_counts(module_ids):
+    """Assigned-learner counts for many modules in one pass over all learners.
+
+    The module list shows a "Learners (N)" figure on every card, and computing
+    it the way `_assigned()` does -- one query and one effective-plan
+    computation per module -- would mean one query per card. This runs that
+    same computation (saved plan, or the learner's group preset when nothing is
+    saved) once per learner instead, with the group-preset lookup cached and
+    shared across learners exactly as `_payload` already shares it across a
+    single module's request.
+    """
+    wanted = {plans._s(module_id) for module_id in module_ids if plans._s(module_id)}
+    if not wanted:
+        return {}
+    counts = {module_id: 0 for module_id in wanted}
+    cache = {}
+    learners = with_placements(EnrolmentUser.all_learners.only('id', 'learning_plan', 'training_plan'))
+    for learner in learners:
+        for module_id in set(plans._effective_plan_ids(learner, cache)):
+            if module_id in wanted:
+                counts[module_id] += 1
+    return counts
+
+
 def compare_assignment_counts(module_ids):
     """Run both implementations over the same live data and diff every module.
 
     Returns a report; the caller decides what to do with it. Nothing here
     changes what the application serves.
     """
-    from .learner_assignments import bulk_assigned_learner_counts
-
     started = time.monotonic()
     old = bulk_assigned_learner_counts(module_ids)
     old_seconds = time.monotonic() - started

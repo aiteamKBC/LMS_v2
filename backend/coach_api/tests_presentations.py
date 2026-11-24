@@ -49,8 +49,8 @@ class CoachPresentationTests(SimpleTestCase):
             CREATE TABLE Learner.learners(id,enrolment_id,learner_type,coach_email,email);
             INSERT INTO Learner.learners VALUES(70,7,'apprenticeship','coach@example.test','learner@example.test'),
                 (80,8,'commercial','coach@example.test','commercial@example.test');
-            CREATE TABLE Learner.learning_reflection_submissions(id,learner_kind,learner_id,activity_id,activity_type,status,full_submission,submitted_at);
-            CREATE TABLE Learner.evidence_files(id,learner_kind,learner_id,section_ref,original_filename,container,blob_name,size_bytes,status);
+            CREATE TABLE Learner.learning_reflection_submissions(id,learner_kind,learner_id INTEGER,activity_id,activity_type,status,full_submission,submitted_at);
+            CREATE TABLE Learner.evidence_files(id,learner_kind,learner_profile_id,section_ref,original_filename,blob_name,size_bytes,status);
         ''')
         self.document = {'activityId': 'COMP-1', 'signedDeclaration': True, 'actualTimeHours': '2',
             'monthlyAssignment': {'month': '2026-10', 'slides': [
@@ -58,9 +58,10 @@ class CoachPresentationTests(SimpleTestCase):
                 {'title': 'Saved application', 'body': 'Original workplace application. No new content or AI generation.'}]},
             'assignmentAttemptHistory': [{'status': 'rejected', 'content': {'monthlyAssignment': {'slides': [{'title': 'History', 'body': 'Prior attempt unchanged.'}]}}}]}
         self.db.execute('INSERT INTO Learner.learning_reflection_submissions VALUES(?,?,?,?,?,?,?,?)',
-            [IDENTIFIER, 'apprenticeship', '7', 'COMP-1', 'assignment', 'submitted_for_tutor_review', json.dumps(self.document), SUBMITTED])
+            [IDENTIFIER, 'apprenticeship', 70, 'COMP-1', 'assignment', 'submitted_for_tutor_review', json.dumps(self.document), SUBMITTED])
         self.statements = []
         self.enterContext(patch.object(decks, 'query', side_effect=self.query))
+        self.enterContext(patch.object(decks, 'learner_coach_sql', return_value='l.coach_email'))
         self.storage = self.enterContext(patch('learner_api.evidence_storage.download_blob_bytes', return_value=reference_file()))
         self.factory = RequestFactory()
 
@@ -78,8 +79,8 @@ class CoachPresentationTests(SimpleTestCase):
         self.update(full_submission=self.document)
 
     def file(self, identifier='file-1', **changes):
-        row = dict(id=identifier, learner_kind='apprenticeship', learner_id='7', section_ref='COMP-1',
-                   original_filename='original-upload.pptx', container='approved-test', blob_name='synthetic-file',
+        row = dict(id=identifier, learner_kind='apprenticeship', learner_profile_id=70, section_ref='COMP-1',
+                   original_filename='original-upload.pptx', blob_name='synthetic-file',
                    size_bytes=len(self.storage.return_value), status='approved')
         row.update(changes)
         self.db.execute(f'INSERT INTO Learner.evidence_files({",".join(row)}) VALUES({",".join("?" for _ in row)})', list(row.values()))
@@ -108,7 +109,7 @@ class CoachPresentationTests(SimpleTestCase):
         self.storage.assert_not_called()
 
     def test_commercial_learner_uses_the_same_owned_download(self):
-        self.update(learner_kind='commercial', learner_id='8')
+        self.update(learner_kind='commercial', learner_id=80)
         self.assertEqual(self.get().status_code, 200)
 
     def test_foreign_coach_wrong_kind_unlinked_account_and_ambiguous_profiles_are_refused(self):
@@ -140,7 +141,9 @@ class CoachPresentationTests(SimpleTestCase):
         self.assertEqual(response.content, self.storage.return_value)
         self.assertIn('original-upload.pptx', response['Content-Disposition'])
         self.assertEqual(response['X-Presentation-Source'], 'uploaded')
-        self.storage.assert_called_once_with('approved-test', 'synthetic-file', max_bytes=decks.MAX_UPLOAD)
+        self.storage.assert_called_once_with(
+            decks.settings.AZURE_APPROVED_CONTAINER, 'synthetic-file', max_bytes=decks.MAX_UPLOAD,
+        )
 
     def test_original_legacy_ppt_and_unicode_filename_are_preserved_safely(self):
         self.storage.return_value = b'\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1Synthetic old PowerPoint'
@@ -155,7 +158,7 @@ class CoachPresentationTests(SimpleTestCase):
 
     def test_upload_scope_status_size_and_extension_are_enforced_without_fallback(self):
         self.document['monthlyAssignment']['uploadedPresentation'] = {'id': 'file-1'}; self.save_document()
-        variants = [{'learner_id': '8'}, {'learner_kind': 'commercial'}, {'section_ref': 'OTHER'},
+        variants = [{'learner_profile_id': 80}, {'learner_kind': 'commercial'}, {'section_ref': 'OTHER'},
                     {'status': 'pending'}, {'status': 'rejected'}, {'size_bytes': 0},
                     {'size_bytes': decks.MAX_UPLOAD + 1}, {'original_filename': 'file.exe'}]
         for changes in variants:
@@ -188,8 +191,10 @@ class CoachPresentationTests(SimpleTestCase):
         self.save_document(); response = self.get()
         self.assertEqual(response.status_code, 200)
         self.assertIn('Original saved learning', visible_text(response.content))
-        self.storage.assert_called_once_with('approved-test', 'synthetic-file', max_bytes=decks.MAX_REFERENCE)
-        self.db.execute("UPDATE Learner.evidence_files SET learner_id='8'")
+        self.storage.assert_called_once_with(
+            decks.settings.AZURE_APPROVED_CONTAINER, 'synthetic-file', max_bytes=decks.MAX_REFERENCE,
+        )
+        self.db.execute("UPDATE Learner.evidence_files SET learner_profile_id=80")
         self.assertEqual(self.get().status_code, 404)
 
     def test_unavailable_or_invalid_reference_never_silently_changes_the_design(self):

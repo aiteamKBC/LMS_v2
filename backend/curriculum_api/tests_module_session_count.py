@@ -1,3 +1,4 @@
+from curriculum_api.catalogue.tests.parity.composition_test_support import composition_fixture
 import json
 from datetime import date
 from unittest.mock import patch
@@ -49,7 +50,7 @@ class ImportedModuleSessionCountTests(CurriculumPersistenceHarness):
             response = self.client.get(f'/curriculum_api/curriculum/modules/{module_id}/session-plan/{query}')
             self.assertEqual(response.status_code, 200, response.content)
             self.assertEqual(len(response.json()['sessions']), 16)
-        with patch.object(views, 'live_session_component_points', return_value=0):
+        with composition_fixture(views, 'live_session_component_points', return_value=0):
             updated, created = views.attach_teams_meeting_to_module_weeks(module_id, {}, {}, [], create_missing=True, dry_run=True)
         self.assertEqual((updated, created), (16, 0))
         # Re-saving the payload sent by an old browser must not regress to 3.

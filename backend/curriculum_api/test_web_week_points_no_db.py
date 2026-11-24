@@ -1,4 +1,5 @@
 """Isolated grouping tests: SQLite in memory and mocked external boundaries."""
+from curriculum_api.catalogue.tests.parity.composition_test_support import composition_patch
 import copy
 import json
 import sqlite3
@@ -129,7 +130,7 @@ class OptionalPointTests(SimpleTestCase):
              patch.object(author, 'read_configurations', return_value=saved or {}), \
              patch.object(author, 'save_configuration', return_value=1) as save, \
              patch('curriculum_api.views.lock_module_structure_row'), \
-             patch('curriculum_api.views.authoring_module_exists', return_value={'title':'Module'}), \
+             composition_patch('curriculum_api.views.authoring_module_exists', return_value={'title':'Module'}), \
              patch('curriculum_api.views.archived_programme_module_edit_error', return_value=None):
             response = author.week_points(request, module_id='M1', week_id='W1')
         return response, save

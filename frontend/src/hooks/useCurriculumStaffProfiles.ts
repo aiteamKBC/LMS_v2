@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { fetchCurriculumCoaches, fetchCurriculumTutors, type CurriculumStaffProfile } from '@/lib/curriculumApi';
 import { useRefreshOnReturn } from '@/hooks/useRefreshOnReturn';
+import { curriculumStaffReadError } from './curriculumStaffReads';
 
 type UseCurriculumStaffProfilesOptions = {
   autoLoad?: boolean;
@@ -11,32 +12,30 @@ export function useCurriculumStaffProfiles({ autoLoad = true }: UseCurriculumSta
   const [coaches, setCoaches] = useState<CurriculumStaffProfile[]>([]);
   const [loading, setLoading] = useState(autoLoad);
   const [error, setError] = useState<string | null>(null);
+  const requestIdRef = useRef(0);
 
   const load = useCallback((options: { silent?: boolean } = {}) => {
     const controller = new AbortController();
     let mounted = true;
+    const requestId = ++requestIdRef.current;
 
     if (!options.silent) setLoading(true);
     // `revalidate`, not `skipCache`: curriculum never writes staff -- tutors and
     // coaches come from the enrolment directory -- so there is no write of ours
     // to read back, and forcing the backend to rebuild its payload cost these
     // two requests seconds each on every mount.
-    Promise.all([
+    Promise.allSettled([
       fetchCurriculumTutors(controller.signal, { revalidate: true }),
       fetchCurriculumCoaches(controller.signal, { revalidate: true }),
     ])
       .then(([nextTutors, nextCoaches]) => {
-        if (!mounted) return;
-        setTutors(nextTutors);
-        setCoaches(nextCoaches);
-        setError(null);
-      })
-      .catch(err => {
-        if (!mounted || controller.signal.aborted) return;
-        setError(err instanceof Error ? err.message : 'Unable to load staff profiles');
+        if (!mounted || controller.signal.aborted || requestId !== requestIdRef.current) return;
+        if (nextTutors.status === 'fulfilled') setTutors(nextTutors.value);
+        if (nextCoaches.status === 'fulfilled') setCoaches(nextCoaches.value);
+        setError(curriculumStaffReadError(nextTutors, nextCoaches));
       })
       .finally(() => {
-        if (mounted) setLoading(false);
+        if (mounted && !controller.signal.aborted && requestId === requestIdRef.current) setLoading(false);
       });
 
     return () => {

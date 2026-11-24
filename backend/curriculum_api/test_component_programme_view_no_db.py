@@ -4,6 +4,8 @@ Pins what the page keeps, how a trimmed row is marked, that a live session is
 never stripped beyond its content keys in SQL, and that the view has its own
 cache entry.
 """
+from curriculum_api.catalogue.tests.parity.composition_test_support import composition_fixture
+from .catalogue.tests.parity.read_dependency_test_support import database_read_fixture
 import json
 from unittest import mock
 
@@ -62,7 +64,7 @@ class ProgrammePageProjectionTests(SimpleTestCase):
 
     def test_a_marked_row_is_refused_on_save_before_any_database_read(self):
         self.assertTrue(views.partial_read_errors({'id': 'COMP-1', 'settingsOmitted': ['*']}))
-        with mock.patch.object(views, 'authoring_fetch_all', side_effect=AssertionError('database read')):
+        with composition_fixture(views, 'authoring_fetch_all', side_effect=AssertionError('database read')):
             with self.assertRaises(views.ModuleAuthoringValidationError) as raised:
                 views.save_component_builder_payload({
                     'id': 'C1', 'title': 'Live intro', 'module': 'MOD-1', 'type': 'Live Session',
@@ -77,10 +79,10 @@ class ProgrammeViewSqlTests(SimpleTestCase):
         cursor.fetchall.return_value = [('COMP-1',)]
         connection = mock.MagicMock(vendor='postgresql')
         connection.cursor.return_value.__enter__.return_value = cursor
-        with mock.patch.object(views, 'connection', connection), \
-             mock.patch.object(views, 'ensure_module_authoring_tables'), \
-             mock.patch.object(views, 'column_names', return_value={'id', 'type', 'module_catalogue_id', 'settings_json'}), \
-             mock.patch.object(views, 'rows_as_dicts', return_value=[]):
+        with database_read_fixture('connection', connection), \
+             composition_fixture(views, 'ensure_module_authoring_tables'), \
+             database_read_fixture('column_names', return_value={'id', 'type', 'module_catalogue_id', 'settings_json'}), \
+             database_read_fixture('rows_as_dicts', return_value=[]):
             views.live_component_rows_without_content(['MOD-1'], keep_keys=keep_keys)
         return cursor.execute.call_args_list[-1].args
 
@@ -111,9 +113,9 @@ class ProgrammeViewEndpointTests(SimpleTestCase):
             return build()
 
         request = RequestFactory().get('/x', {'module_catalogue_ids': 'MOD-1', 'fields': 'programme'})
-        with mock.patch.object(views, 'cached_curriculum_value', side_effect=cached), \
-             mock.patch.object(views, 'component_builder_rows', return_value=[]) as rows, \
-             mock.patch.object(views, 'conditional_json_response', return_value='response'):
+        with composition_fixture(views, 'cached_curriculum_value', side_effect=cached), \
+             composition_fixture(views, 'component_builder_rows', return_value=[]) as rows, \
+             composition_fixture(views, 'conditional_json_response', return_value='response'):
             self.assertEqual(views.curriculum_component_collection(request), 'response')
         key, ttl, fingerprint = seen[0]
         self.assertTrue(key.startswith('components-response:programme:'))
@@ -130,17 +132,17 @@ class ProgrammeViewEndpointTests(SimpleTestCase):
             return build()
 
         request = RequestFactory().get('/x', {'module_catalogue_ids': 'MOD-1', 'omit': 'content'})
-        with mock.patch.object(views, 'cached_curriculum_value', side_effect=cached), \
-             mock.patch.object(views, 'component_builder_rows', return_value=[]), \
-             mock.patch.object(views, 'conditional_json_response', return_value='response'):
+        with composition_fixture(views, 'cached_curriculum_value', side_effect=cached), \
+             composition_fixture(views, 'component_builder_rows', return_value=[]), \
+             composition_fixture(views, 'conditional_json_response', return_value='response'):
             views.curriculum_component_collection(request)
         self.assertEqual(seen, [{}])
 
     def test_builder_rows_reach_the_page_projection_with_what_the_database_stripped(self):
         stripped = [{'id': 'COMP-1', views.COMPONENT_DB_OMITTED_KEYS_COLUMN: ['transcript']}]
         built = [row({'videoUrl': 'u'})]
-        with mock.patch.object(views, 'live_component_rows_without_content', return_value=stripped) as sql, \
-             mock.patch.object(views, '_component_builder_rows', return_value=built):
+        with composition_fixture(views, 'live_component_rows_without_content', return_value=stripped) as sql, \
+             composition_fixture(views, '_component_builder_rows', return_value=built):
             [projected] = views.component_builder_rows(['MOD-1'], programme_view=True)
         keep = sql.call_args.kwargs['keep_keys']
         self.assertLessEqual(set(views.COMPONENT_DERIVED_SETTING_KEYS), set(keep))
@@ -152,8 +154,8 @@ class ProgrammeViewEndpointTests(SimpleTestCase):
         # selected: the row must still read as partial, never as complete.
         stripped = [{'id': 'COMP-1', views.COMPONENT_DB_OMITTED_KEYS_COLUMN: []}]
         built = [row({'videoUrl': 'u'})]
-        with mock.patch.object(views, 'live_component_rows_without_content', return_value=stripped) as sql, \
-             mock.patch.object(views, '_component_builder_rows', return_value=built) as builder:
+        with composition_fixture(views, 'live_component_rows_without_content', return_value=stripped) as sql, \
+             composition_fixture(views, '_component_builder_rows', return_value=built) as builder:
             [projected] = views.component_builder_rows(['MOD-1'], programme_view=True)
         self.assertEqual(sql.call_args.kwargs['exclude_columns'], views.PROGRAMME_VIEW_EXCLUDED_COLUMNS)
         self.assertEqual(builder.call_args.kwargs['mapping_exclude_columns'], views.PROGRAMME_VIEW_EXCLUDED_MAPPING_COLUMNS)
@@ -161,8 +163,8 @@ class ProgrammeViewEndpointTests(SimpleTestCase):
         self.assertNotIn('reflectionQuestion', projected)
 
     def test_other_reads_select_every_column_and_every_mapping_field(self):
-        with mock.patch.object(views, 'live_component_rows_without_content', return_value=[]) as sql, \
-             mock.patch.object(views, '_component_builder_rows', return_value=[]) as builder:
+        with composition_fixture(views, 'live_component_rows_without_content', return_value=[]) as sql, \
+             composition_fixture(views, '_component_builder_rows', return_value=[]) as builder:
             views.component_builder_rows(['MOD-1'], omit_content=True)
         self.assertEqual(sql.call_args.kwargs['exclude_columns'], ())
         self.assertNotIn('mapping_exclude_columns', builder.call_args.kwargs)
@@ -175,10 +177,10 @@ class ProgrammeViewExcludedColumnsSqlTests(SimpleTestCase):
         connection = mock.MagicMock(vendor='postgresql')
         connection.cursor.return_value.__enter__.return_value = cursor
         columns = {'id', 'type', 'title', 'module_catalogue_id', 'description', 'Reflection_Question', 'settings_json'}
-        with mock.patch.object(views, 'connection', connection), \
-             mock.patch.object(views, 'ensure_module_authoring_tables'), \
-             mock.patch.object(views, 'column_names', return_value=columns), \
-             mock.patch.object(views, 'rows_as_dicts', return_value=[]):
+        with database_read_fixture('connection', connection), \
+             composition_fixture(views, 'ensure_module_authoring_tables'), \
+             database_read_fixture('column_names', return_value=columns), \
+             database_read_fixture('rows_as_dicts', return_value=[]):
             views.live_component_rows_without_content(
                 ['MOD-1'], keep_keys=('videoUrl',), exclude_columns=('description', 'reflection_question', 'id'),
             )
@@ -193,11 +195,11 @@ class ComponentSummaryKsbCodesTests(SimpleTestCase):
     def _codes(self, rows, mapping_columns):
         connection = mock.MagicMock(vendor='postgresql')
         component_columns = {'id', 'module_catalogue_id', 'week_id', 'type', 'status'}
-        with mock.patch.object(views, 'connection', connection), \
-             mock.patch.object(views, 'column_names', side_effect=lambda table: (
+        with database_read_fixture('connection', connection), \
+             database_read_fixture('column_names', side_effect=lambda table: (
                  component_columns if table == views.AUTHORING_COMPONENTS_TABLE else mapping_columns)), \
-             mock.patch.object(views, 'table_exists', return_value=True), \
-             mock.patch.object(views, 'fetch_all', return_value=rows) as fetch:
+             composition_fixture(views, 'table_exists', return_value=True), \
+             composition_fixture(views, 'fetch_all', return_value=rows) as fetch:
             result = views.component_summary_ksb_codes(['MOD-1'])
         return result, (fetch.call_args.args[0] if fetch.called else '')
 
@@ -226,10 +228,10 @@ class ComponentSummaryKsbCodesTests(SimpleTestCase):
             {'module_catalogue_id': 'MOD-1', 'week_id': 'W2', '_count': 1, '_published': 0, 'expected_otjh': 0,
              'display_order': 1, 'title': 'B'},
         ]
-        with mock.patch.object(views, 'ensure_module_authoring_tables'), \
-             mock.patch.object(views, 'component_summary_source_rows', return_value=source), \
-             mock.patch.object(views, 'authoring_fetch_all', return_value=[]), \
-             mock.patch.object(views, 'component_summary_ksb_codes', return_value={('MOD-1', 'W1'): {'K2', 'K1'}}):
+        with composition_fixture(views, 'ensure_module_authoring_tables'), \
+             composition_fixture(views, 'component_summary_source_rows', return_value=source), \
+             composition_fixture(views, 'authoring_fetch_all', return_value=[]), \
+             composition_fixture(views, 'component_summary_ksb_codes', return_value={('MOD-1', 'W1'): {'K2', 'K1'}}):
             rows = views.component_summary_rows(['MOD-1'])
         by_week = {row['weekId']: row for row in rows}
         self.assertEqual(by_week['W1']['ksbCodes'], ['K1', 'K2'])
@@ -238,9 +240,9 @@ class ComponentSummaryKsbCodesTests(SimpleTestCase):
     def test_summary_leaves_ksb_codes_out_when_they_cannot_be_read(self):
         source = [{'module_catalogue_id': 'MOD-1', 'week_id': 'W1', '_count': 1, '_published': 0,
                    'expected_otjh': 0, 'display_order': 1, 'title': 'A'}]
-        with mock.patch.object(views, 'ensure_module_authoring_tables'), \
-             mock.patch.object(views, 'component_summary_source_rows', return_value=source), \
-             mock.patch.object(views, 'authoring_fetch_all', return_value=[]), \
-             mock.patch.object(views, 'component_summary_ksb_codes', return_value=None):
+        with composition_fixture(views, 'ensure_module_authoring_tables'), \
+             composition_fixture(views, 'component_summary_source_rows', return_value=source), \
+             composition_fixture(views, 'authoring_fetch_all', return_value=[]), \
+             composition_fixture(views, 'component_summary_ksb_codes', return_value=None):
             [bucket] = views.component_summary_rows(['MOD-1'])
         self.assertNotIn('ksbCodes', bucket)

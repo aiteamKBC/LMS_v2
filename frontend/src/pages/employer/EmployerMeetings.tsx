@@ -1,3 +1,4 @@
+import { LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
 import { CalendarDays, UserRound, Video } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import type { EmployerLearnerCard } from '@/api/employerPortal';
@@ -36,7 +37,7 @@ export function EmployerMeetings({ employerId, learners, reviews, today, returnS
           </div>
         </article>;
       })}
-      {loading && <p role="status" className={styles.caption}>Loading booked meetings…</p>}
+      {loading && <p  className={styles.caption}><LoadingSkeleton label="Loading booked meetings…" variant="rows" /></p>}
       {failed && <p className={styles.caption}>Some meetings could not be loaded. Use Try again above.</p>}
       {!meetings.length && !loading && !failed && <p className={styles.caption}>No upcoming meetings booked. Planned reviews will appear here once a date is booked.</p>}
     </div>

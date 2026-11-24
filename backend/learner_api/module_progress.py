@@ -16,7 +16,7 @@ from .progress_rules import progress_counts_as_achieved
 from old_otjh.service import ServiceError
 
 
-def read_native_progress(source, profile, *, as_of=None):
+def read_native_progress(source, profile, *, as_of=None, compact_content=False):
     # Do not call build_learner_detail: its activation/plan/hour repairs write.
     # Reuse its authored component and retained-quiz projections directly.
     from .learner_detail import (_resolve_from_master, _append_week_quizzes,
@@ -30,7 +30,8 @@ def read_native_progress(source, profile, *, as_of=None):
     assigned = effective_training_plan(source)
     modules, weeks, components = flatten_training_plan(get_training_plan(source))
     modules, weeks, components = _resolve_from_master(
-        modules, weeks, components, assigned_modules=assigned, compact=True)
+        modules, weeks, components, assigned_modules=assigned, compact=True,
+        **({'compact_content': True} if compact_content else {}))
     components = _apply_programme_assignment_template(components, getattr(source, 'programme', ''))
     weeks, components = _append_week_quizzes(weeks, components, assigned_modules=assigned)
     from .teams_attendance import annotate_attendance_completion
@@ -117,6 +118,8 @@ def _module_progress_facts(activity, detail, current, progress, titles=None):
                     for attempt in detail['quizAttempts'])
             else:
                 done = item.get('attendanceCompleted') is True or (bool(component_id) and str(component_id) in completed)
+                if item.get('liveSessionLearning'):
+                    done = item['liveSessionLearning']['status'] == 'completed'
             subject['total'] += 1
             subject['completed'] += bool(done)
     modules = [{**row, 'percent': min(100, floor(row['completed'] / row['total'] * 10000 + 0.5) / 100)
@@ -205,6 +208,9 @@ def canonical_module_facts(source, profile, *, read_projection=None, as_of=None,
     if as_of is not None:
         from .progress_cutoff import records_as_of
         credits = records_as_of(credits, as_of)
+    from .attendance_learning import annotate_learning, with_learning_requirements
+    credits = with_learning_requirements(source, credits, as_of=as_of)
+    detail = {**detail, 'components': annotate_learning(detail['components'], credits)}
     progress = [*progress, *({'kind': 'component', 'passed': None,
                             'component_ref': row['componentId'], 'submitted_at': row['submittedAt']}
                            for row in credits)]

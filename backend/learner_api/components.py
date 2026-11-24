@@ -18,7 +18,7 @@ from django.db import DatabaseError, IntegrityError, connections
 from django.http import JsonResponse
 from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
-from curriculum_api.learning_storage import read_table
+from curriculum_api.catalogue.infrastructure.learning_read_routes import read_table
 
 from curriculum_api.canonical_read_sql import current_status_sql, standard_ksb_join_sql
 
@@ -212,14 +212,17 @@ def _completion_criteria(component_id, kind, learner_id, component_type=None):
             if needs_evidence:
                 # Only approved uploads count — a quarantined or rejected file
                 # is not usable evidence.
-                cur.execute(
-                    'SELECT COUNT(*) FROM "Learner"."evidence_files" '
-                    "WHERE section_ref = %s AND learner_kind = %s AND learner_id = %s "
-                    "AND status = 'approved'",
-                    [component_id, kind, str(learner_id)],
-                )
-                row = cur.fetchone()
-                evidence_count = int(row[0] or 0) if row else 0
+                from .evidence_ownership import profile_id_for_source
+                learner_profile_id = profile_id_for_source(cur, kind, learner_id)
+                if learner_profile_id is not None:
+                    cur.execute(
+                        'SELECT COUNT(*) FROM "Learner"."evidence_files" '
+                        "WHERE section_ref = %s AND learner_kind = %s "
+                        "AND learner_profile_id = %s AND status = 'approved'",
+                        [component_id, kind, learner_profile_id],
+                    )
+                    row = cur.fetchone()
+                    evidence_count = int(row[0] or 0) if row else 0
     except DatabaseError as exc:
         # Fail open: a lookup failure must not strand a learner who has done
         # the work. The criteria are re-checked on every submit.
@@ -307,6 +310,10 @@ def submit_component_progress(request, component_id):
     except (DatabaseError, ValueError) as exc:
         return _error(f"Database error: {exc}", 502)
 
+    from .live_session_access import access_refusal
+    refused = access_refusal(kind, learner_id, component_id, source=source, component_type=live_type)
+    if refused is not None:
+        return refused
     # Every assignment uses the monthly submission. Legacy author flags on
     # this component or elsewhere in the plan must not bypass its checks.
     monthly_submission = normalise_component_type(live_type or client_type) == "assignment"

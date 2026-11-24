@@ -1,3 +1,4 @@
+import { LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { EnrolmentWorkspaceShell as WorkspaceShell } from '../presentation/EnrolmentWorkspaceShell';
@@ -153,7 +154,7 @@ export default function WizardBuilderPage() {
           }
         />
 
-        {loading && <p className="text-[13px] text-foreground-400"><AppIcon className="ri-loader-4-line mr-2 animate-spin" />Loading the wizard…</p>}
+        {loading && <p className="text-[13px] text-foreground-400"><LoadingSkeleton label="Loading the wizard…" variant="rows" /></p>}
         {!loading && loadError && (
           <div className="rounded-2xl border border-red-200 bg-red-50 p-4 text-[13px] text-red-700">
             <AppIcon className="ri-error-warning-line mr-1.5" />{loadError}

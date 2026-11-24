@@ -21,7 +21,7 @@
 .activityTable .activityRow:nth-child(even) { background: var(--record-surface); }
 .activityTable .activityCell { min-width: 0; overflow-wrap: anywhere; }
 .activityDescription { display: grid; grid-template-columns: minmax(0, 1fr); gap: 4px; min-width: 0; }
-.activityTrigger { display: inline-flex; align-items: flex-start; gap: 6px; text-align: left; max-width: 100%; padding-block: 2px; border-radius: 5px; }
+.activityTrigger { display: inline-flex; align-items: flex-start; gap: 6px; text-align: left; max-width: 100%; padding-block: 2px; border-radius: var(--lms-radius, 16px); }
 .activityTrigger span { min-width: 0; }
 :global(.dashboard-theme .workspace-main) .activityTable .activityTrigger { white-space: normal; overflow-wrap: anywhere; }
 .activityTrigger:hover { color: var(--record-brand); text-decoration: underline; }
@@ -36,8 +36,8 @@
 .signatureCell { min-width: 0; }
 .signTable td { vertical-align: middle; }
 .signTable td[data-label='Status'] > span { text-transform: none; letter-spacing: 0; }
-.reportTableWrap { min-width: 0; overflow: hidden; border: 1px solid var(--record-border); border-radius: 6px; }
-.detailBadge { display: inline-flex; border-radius: 6px; background: var(--record-soft); border: 1px solid var(--record-ring); padding: 2px 6px; font-size: 10px; font-weight: 500; color: var(--record-deep); }
+.reportTableWrap { min-width: 0; overflow: hidden; border: 1px solid var(--record-border); border-radius: var(--lms-radius, 16px); }
+.detailBadge { display: inline-flex; border-radius: var(--lms-radius, 16px); background: var(--record-soft); border: 1px solid var(--record-ring); padding: 2px 6px; font-size: 10px; font-weight: 500; color: var(--record-deep); }
 .document { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: baseline; gap: 4px 8px; margin-top: 2px; }
 .documentName { display: inline-flex; gap: 6px; min-width: 0; overflow-wrap: anywhere; }
 .documentActions { display: inline-flex; gap: 8px; }

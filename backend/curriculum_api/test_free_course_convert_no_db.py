@@ -1,21 +1,25 @@
 """Pure mapping test for the free-course -> programme week builder.
 
-AST-loads only build_free_course_week_structure from views.py; no Django setup,
+Loads the extracted course-conversion owner; no Django setup,
 database or network. The builder leans on just parse_int/clean_str, injected here
 as faithful minimal versions so the test stays free of view-module imports.
 """
-import ast
+from functools import partial
+import importlib.util
 import unittest
+import sys
 from pathlib import Path
 
 ROOT = Path(__file__).parent
+sys.path.insert(0, str(ROOT.parent))
 
 
 def load_function(name, namespace):
-    tree = ast.parse((ROOT / 'views.py').read_text(encoding='utf-8-sig'))
-    nodes = [node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == name]
-    assert len(nodes) == 1, name
-    exec(compile(ast.Module(body=nodes, type_ignores=[]), str(ROOT / 'views.py'), 'exec'), namespace)
+    source = ROOT / 'catalogue/application/course_conversion.py'
+    spec = importlib.util.spec_from_file_location('pure_course_conversion', source)
+    owner = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(owner)
+    namespace[name] = partial(getattr(owner, name), parse_int=namespace['parse_int'], clean_str=namespace['clean_str'])
 
 
 def _parse_int(value, default=0):

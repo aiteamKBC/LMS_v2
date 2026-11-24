@@ -4,11 +4,13 @@ curriculum.groups no longer carries coach_id; a group may have several coaches,
 one group_coaches row each. Nothing here opens a connection: cursors and the
 PostgreSQL vendor are mocked with synthetic records.
 """
+from curriculum_api.catalogue.tests.parity.composition_test_support import composition_fixture
 from unittest import mock
 
 from django.test import SimpleTestCase
 
-from curriculum_api import curriculum_names as cn
+from curriculum_api.catalogue.infrastructure import placement_reads as cn
+from curriculum_api import curriculum_names as staff_names
 from curriculum_api import group_coaches
 
 
@@ -94,7 +96,7 @@ class NameTests(SimpleTestCase):
 
     def test_each_coach_is_canonicalised_on_its_own(self):
         from curriculum_api import views
-        with mock.patch.object(views, 'canonical_staff_assignment_name', side_effect=lambda role, name: name.title()):
+        with composition_fixture(views, 'canonical_staff_assignment_name', side_effect=lambda role, name: name.title()):
             self.assertEqual(views.canonical_group_coaches('adam coach, zara coach'), 'Adam Coach, Zara Coach')
             self.assertEqual(views.canonical_group_coaches(''), '')
 
@@ -108,8 +110,8 @@ class StoreTests(SimpleTestCase):
         patches = [
             mock.patch.object(group_coaches, 'connections', {'default': db}),
             mock.patch.object(group_coaches, 'in_use', return_value=True),
-            mock.patch.object(cn, 'staff_id', side_effect=lambda kind, prefix, name, email, using='default': f'ID:{name}'),
-            mock.patch.object(cn, 'lookups', return_value={
+            mock.patch.object(staff_names, 'staff_id', side_effect=lambda kind, prefix, name, email, using='default': f'ID:{name}'),
+            mock.patch.object(staff_names, 'lookups', return_value={
                 'groups': {'G-1': {'coach_ids': ['ID:Adam Coach', 'ID:Zara Coach']}},
                 'coaches': {'ID:Adam Coach': {'name': 'Adam Coach'}, 'ID:Zara Coach': {'name': 'Zara Coach'}},
             }),

@@ -54,6 +54,65 @@ def adapter(query):
     return scope
 
 
+class AssignmentActivityDateTests(unittest.TestCase):
+    def setUp(self):
+        self.query = Mock(return_value=[])
+        self.scope = adapter(self.query)
+        self.owner = {'id': 510, 'enrolment_id': 271}
+
+    def test_assignment_displays_saved_activity_date_without_changing_other_fields(self):
+        self.query.return_value = [{'id': 9, 'progress_id': 1,
+                                   'display_name': 'Synthetic assignment.pdf',
+                                   'content_type': 'application/pdf'}]
+        for category in ({'kind': 'assignment'}, {'kind': 'component', 'component_type': 'assignment'}):
+            for saved_date in ('2026-11-04', '2026-10-30'):
+                with self.subTest(category=category, saved_date=saved_date):
+                    entry = {'id': 1, **category, 'source_system': 'aptem', 'ksbs': ['K1'],
+                             'accepted': True, 'actual_seconds': 3600, 'expected_otjh': 2,
+                             'reporting_month': '2026-11',
+                             'started_at': '2026-11-19T09:00:00Z',
+                             'submitted_at': '2026-11-19T10:00:00Z',
+                             'reporting_started_at': f'{saved_date}T00:00:00Z',
+                             'reporting_timestamp_label': 'Input',
+                             'source_payload': {'activity_date': saved_date}}
+                    original = json.loads(json.dumps(entry))
+                    previous = self.scope['rows_for'](self.owner, [{**entry, 'source_payload': {}}])[0]
+                    result = self.scope['rows_for'](self.owner, [entry])[0]
+                    self.assertEqual(previous['activity_date'], '2026-11-19')
+                    self.assertEqual(result, {**previous, 'activity_date': saved_date})
+                    self.assertEqual(result['reporting_month'], '2026-11')
+                    self.assertEqual(result['actual_hours'], 1)
+                    self.assertEqual(result['documents'][0]['display_name'], 'Synthetic assignment.pdf')
+                    self.assertEqual(entry, original)
+                    allocation = self.scope['allocations'](entry)[0]
+                    self.assertEqual(allocation['completion_reporting_date'], '2026-11-19')
+
+    def test_assignment_saved_date_supports_json_metadata_and_rejects_invalid_dates(self):
+        self.query.return_value = []
+        entry = {'id': 1, 'kind': 'assignment', 'ksbs': [], 'accepted': False,
+                 'actual_seconds': 0, 'reporting_month': '2026-11',
+                 'submitted_at': '2026-11-19T10:00:00Z'}
+        result = self.scope['rows_for'](self.owner, [{**entry,
+            'source_payload': json.dumps({'activity_date': '2026-11-04'})}])[0]
+        self.assertEqual(result['activity_date'], '2026-11-04')
+        self.assertFalse(result['accepted'])
+        self.assertEqual(result['actual_hours'], 0)
+        for payload in ({}, None, [], '[]', *({'activity_date': value} for value in (
+                None, '', '2026-02-30', '2026-1-4', '2026-11-04T00:00:00Z', 20261104, []))):
+            with self.subTest(payload=payload):
+                row = self.scope['rows_for'](self.owner, [{**entry, 'source_payload': payload}])[0]
+                self.assertEqual(row['activity_date'], '2026-11-19')
+
+    def test_non_assignment_keeps_existing_completion_date_policy(self):
+        self.query.return_value = []
+        entry = {'id': 1, 'kind': 'video', 'ksbs': [], 'accepted': True,
+                 'actual_seconds': 60, 'reporting_month': '2026-11',
+                 'submitted_at': '2026-11-19T10:00:00Z',
+                 'source_payload': {'activity_date': '2026-11-04'}}
+        result = self.scope['rows_for'](self.owner, [entry])[0]
+        self.assertEqual(result['activity_date'], '2026-11-19')
+
+
 class CanonicalLearningTests(unittest.TestCase):
     def test_new_completion_date_moves_month_and_timestamp_without_rewriting_audit(self):
         self.query.return_value = []
@@ -209,7 +268,8 @@ class CanonicalLearningTests(unittest.TestCase):
         self.assertEqual(loaded[0]['journal_routes'], [route])
         sql, params = self.query.call_args_list[0].args
         self.assertIn("'activity_date',j.activity_date", sql)
-        self.assertIn('j.canonical_learner_id=p.learner_id', sql)
+        self.assertIn('j.learner_id=p.learner_id', sql)
+        self.assertNotIn('canonical_learner_id', sql)
         self.assertIn('s.learner_id=p.learner_id AND s.canonical_progress_id=p.id', sql)
         self.assertEqual(params, [self.owner['id']])
 
@@ -445,6 +505,10 @@ class CanonicalLearningTests(unittest.TestCase):
         self.assertEqual(self.scope['source_quiz_parts'](item, self.owner, {'id': 20}), [])
 
     def setUp(self):
+        # These ledger fixtures contain no live register evidence. The register's
+        # real SQL, ownership and protected months have a separate SQLite suite.
+        self.enterContext(patch('learner_api.attendance_otjh.read_bulk', side_effect=lambda owners, read, **kwargs:
+            {int(o['id']): {'lectures': [], 'protected': {}, 'frozen_rows': []} for o in owners}))
         self.query = Mock()
         self.scope = adapter(self.query)
         self.owner = {'id': 510, 'enrolment_id': 271, 'aptem_id': 3582, 'programme_id': 'PROG-ME-L4', 'name': 'Synthetic learner',
@@ -539,27 +603,24 @@ class CanonicalLearningTests(unittest.TestCase):
         self.assertEqual([r['reporting_month'] for r in result], ['2026-10', '2026-10', '2026-09'])
         self.assertEqual(self.scope['metrics_from_records'](result, {})['otjh']['actual'], .6667)
 
-    def test_extra_activity_is_separate_actual_after_review_without_planned_hours(self):
+    def test_legacy_extra_activity_never_supplements_canonical_actual_hours(self):
         from .test_current_learning_no_db import adapter as current_adapter
         merge = current_adapter()['merge_submissions']
         assignment = {'id': 1, 'accepted': True, 'actual_seconds': 3600,
                       'component_ref': 'assignment', 'expected_otjh': 2, 'ksbs': []}
         extra = {'id': 'extra', 'activity_type': 'extra_activity', 'actual_time_hours': '1',
                  'activity_month': '2026-09', 'submitted_at': '2026-10-23T13:00:00Z', 'ksb_codes': []}
-        for status, actual in [('draft', 1), ('submitted_for_tutor_review', 1),
-                               ('accepted', 2), ('partial', 2), ('referred', 1), ('rejected', 1)]:
+        for status in ('draft', 'submitted_for_tutor_review', 'accepted', 'partial', 'referred', 'rejected'):
             with self.subTest(status=status):
                 projected = merge([assignment], [{**extra, 'status': status}])
                 records = self.scope['progress_records_with_completion']([assignment], projected)
                 metrics = self.scope['metrics_from_records'](records, {'2026-09': 2})
                 hours = metrics['otjh']
-                self.assertEqual(hours['actual'], actual)
+                self.assertEqual(hours['actual'], 1)
                 self.assertEqual(hours['planned'], 2)
                 self.assertEqual(assignment['actual_seconds'], 3600)
                 self.assertEqual(metrics['programme']['total'], 1)
-                if status == 'accepted':
-                    self.assertEqual(records[-1]['reporting_month'], '2026-09')
-                    self.assertEqual(records[-1]['expected_otjh'], 0)
+                self.assertEqual(len(records), 1)
 
     def test_single_reader_retains_distinct_accepted_rows_sharing_a_source_key(self):
         first = {'id': 1, 'canonical_activity_key': 'shared', 'accepted': True,
@@ -941,12 +1002,12 @@ class CanonicalLearningTests(unittest.TestCase):
 
     def test_monthly_projection_includes_history_without_legacy_union(self):
         canonical = SimpleNamespace(enabled=lambda _: True,
-            activity_rows=lambda _: [{'reporting_month': '2025-07'}, {'reporting_month': '2026-09'}, {'reporting_month': '2026-12'}],
+            activity_rows=lambda _: [{'reporting_month': '2025-07', 'source_ref': 'a'}, {'reporting_month': '2026-09', 'source_ref': 'b'}, {'reporting_month': '2026-12', 'source_ref': 'c'}],
             targets=lambda _: {'2026-08': 2})
         scope = dict(canonical=canonical, defaultdict=defaultdict,
-                     attendance_rows=lambda _: [{'reporting_month': '2026-09'}, {'reporting_month': '2026-12'}],
+                     attendance_rows=lambda _: [{'reporting_month': '2026-09', 'source_ref': 'd'}, {'reporting_month': '2026-12', 'source_ref': 'e'}],
                      timezone=SimpleNamespace(localdate=lambda: date(2026, 9, 24)))
-        functions('monthly_logs.py', scope, {'current_months'})
+        functions('monthly_logs.py', scope, {'current_months', 'additional_attendance'})
         grouped = scope['current_months']({'id': 271}, include_open=True)
         self.assertEqual(set(grouped), {'2025-07', '2026-08', '2026-09'})
         self.assertEqual(len(grouped['2025-07']), 1)

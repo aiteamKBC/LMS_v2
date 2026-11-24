@@ -4,6 +4,9 @@ Nothing here opens a connection: the PostgreSQL vendor and the cached lookups
 are patched with synthetic records.
 """
 from unittest import mock
+from contextlib import ExitStack
+from curriculum_api.catalogue.tests.parity.read_dependency_test_support import placement_read_fixture, database_read_fixture
+from curriculum_api.catalogue.infrastructure import ksb_read_store
 
 from django.test import SimpleTestCase
 
@@ -32,15 +35,15 @@ GROUP_COLUMNS = {'group_id', 'group_name', 'cohort_id', 'programme_id', 'coach_i
 
 class Postgres:
     def __enter__(self):
-        self._vendor = mock.patch.object(cn, 'connections', {'default': mock.Mock(vendor='postgresql')})
-        self._lookups = mock.patch.object(cn, 'lookups', return_value=LOOKUPS)
-        self._vendor.start()
-        self._lookups.start()
+        self._vendor = placement_read_fixture('connections', {'default': mock.Mock(vendor='postgresql')})
+        self._lookups = placement_read_fixture('lookups', return_value=LOOKUPS)
+        self._stack = ExitStack()
+        self._stack.enter_context(self._vendor)
+        self._stack.enter_context(self._lookups)
         return self
 
     def __exit__(self, *exc):
-        self._lookups.stop()
-        self._vendor.stop()
+        self._stack.__exit__(*exc)
 
 
 class AttachTests(SimpleTestCase):
@@ -81,8 +84,8 @@ class AttachTests(SimpleTestCase):
 
     def test_off_postgres_nothing_is_read(self):
         row = {'programme_id': 'PROG-1'}
-        with mock.patch.object(cn, 'connections', {'default': mock.Mock(vendor='sqlite')}), \
-                mock.patch.object(cn, 'lookups') as lookups:
+        with placement_read_fixture('connections', {'default': mock.Mock(vendor='sqlite')}), \
+                placement_read_fixture('lookups') as lookups:
             cn.attach('cohorts', [row])
         lookups.assert_not_called()
         self.assertNotIn('programme_name', row)
@@ -193,7 +196,7 @@ class LookupChoicesTests(SimpleTestCase):
         db = mock.Mock(vendor='postgresql')
         db.cursor.return_value = cursor
         cn.invalidate()
-        with mock.patch.object(cn, 'connections', {'default': db}), mock.patch.object(cn, '_optional_tables', return_value={'choices': True, 'standards': True}):
+        with placement_read_fixture('connections', {'default': db}), placement_read_fixture('_optional_tables', return_value={'choices': True, 'standards': True}):
             data = cn.lookups()
         cn.invalidate()
         self.assertIn("union all select 'h'", cursor.execute.call_args[0][0])
@@ -208,13 +211,13 @@ class StandardsRowsCacheTests(SimpleTestCase):
         from curriculum_api import views
         reads = []
         fetch = lambda sql: reads.append(sql) or [{'id': len(reads)}]  # noqa: E731
-        saved = views._SKILLS_ENGLAND_ROWS
-        self.addCleanup(setattr, views, '_SKILLS_ENGLAND_ROWS', saved)
-        views._SKILLS_ENGLAND_ROWS = (None, None)
+        saved = ksb_read_store._SKILLS_ENGLAND_ROWS
+        self.addCleanup(setattr, ksb_read_store, '_SKILLS_ENGLAND_ROWS', saved)
+        ksb_read_store._SKILLS_ENGLAND_ROWS = (None, None)
         digest = ['A']
-        with mock.patch.object(views, 'table_exists', return_value=True), \
-                mock.patch.object(views, 'fetch_all', side_effect=fetch), \
-                mock.patch.object(cn, 'standards_digest', side_effect=lambda: digest[0]):
+        with database_read_fixture('table_exists', return_value=True), \
+                database_read_fixture('fetch_all', side_effect=fetch), \
+                placement_read_fixture('standards_digest', side_effect=lambda: digest[0]):
             first = views.get_skills_england_ksb_rows()
             again = views.get_skills_england_ksb_rows()
             digest[0] = 'B'  # the team edited the table
@@ -225,9 +228,9 @@ class StandardsRowsCacheTests(SimpleTestCase):
 
     def test_without_a_digest_every_call_reads(self):
         from curriculum_api import views
-        with mock.patch.object(views, 'table_exists', return_value=True), \
-                mock.patch.object(views, 'fetch_all', return_value=[]) as fetch, \
-                mock.patch.object(cn, 'standards_digest', return_value=''):
+        with database_read_fixture('table_exists', return_value=True), \
+                database_read_fixture('fetch_all', return_value=[]) as fetch, \
+                placement_read_fixture('standards_digest', return_value=''):
             views.get_skills_england_ksb_rows()
             views.get_skills_england_ksb_rows()
         self.assertEqual(fetch.call_count, 2)

@@ -63,9 +63,8 @@ class AttachmentTests(unittest.TestCase):
                  'live_session_booked_on_module_calendar', 'module_has_booked_series', 'live_session_meeting_scope',
                  'attach_teams_meeting_to_module_weeks', 'curriculum_module_teams_meeting_restore'}
         tree = ast.parse(Path(__file__).with_name('views.py').read_text(encoding='utf-8-sig'))
-        nodes = [node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name in names]
-        self.assertEqual(len(nodes), len(names))
-        exec(compile(ast.Module(body=nodes, type_ignores=[]), 'attachment-functions', 'exec'), self.n)
+        from curriculum_api.meetings.tests.source_loader import load_current_functions
+        load_current_functions(names, self.n, tree)
 
     def fetch(self, table, where='', values=(), *args):
         if table in ('series', 'modules', 'weeks', 'components'):
@@ -363,10 +362,8 @@ class OccurrenceReplacementTests(unittest.TestCase):
         }
         tree = ast.parse(Path(__file__).with_name('views.py').read_text(encoding='utf-8-sig'))
         names = {'occurrence_session_number', 'pair_planned_occurrences', 'replace_live_session_occurrences'}
-        nodes = [node for node in tree.body
-                 if isinstance(node, ast.FunctionDef) and node.name in names]
-        self.assertEqual(len(nodes), len(names))
-        exec(compile(ast.Module(body=nodes, type_ignores=[]), 'occurrence-replacement', 'exec'), namespace)
+        from curriculum_api.meetings.tests.source_loader import load_current_functions
+        load_current_functions(names, namespace, tree)
 
         namespace['replace_live_session_occurrences'](
             'LIVE-1', {}, None, 120, 'weekly', 3,
@@ -413,10 +410,8 @@ class OccurrenceReplacementTests(unittest.TestCase):
         }
         tree = ast.parse(Path(__file__).with_name('views.py').read_text(encoding='utf-8-sig'))
         names = {'occurrence_session_number', 'pair_planned_occurrences', 'replace_live_session_occurrences'}
-        nodes = [node for node in tree.body
-                 if isinstance(node, ast.FunctionDef) and node.name in names]
-        self.assertEqual(len(nodes), len(names))
-        exec(compile(ast.Module(body=nodes, type_ignores=[]), 'occurrence-replacement', 'exec'), namespace)
+        from curriculum_api.meetings.tests.source_loader import load_current_functions
+        load_current_functions(names, namespace, tree)
 
         namespace['replace_live_session_occurrences'](
             'LIVE-1', {}, None, 120, 'weekly', 1,

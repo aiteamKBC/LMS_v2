@@ -3,6 +3,7 @@
 GET /curriculum/groups/ used to build the full payload (34-49 s cold on the new
 database) for 80 groups the light build returns identically in under a second.
 """
+from curriculum_api.catalogue.tests.parity.composition_test_support import composition_fixture
 import json
 from unittest import mock
 
@@ -25,9 +26,9 @@ class GroupListReadTests(SimpleTestCase):
     def setUp(self):
         passthrough.keys = []
         patches = [
-            mock.patch.object(views, 'get_cached_payload', side_effect=AssertionError('full curriculum payload built')),
-            mock.patch.object(views, 'build_cohorts_and_groups', return_value=([], GROUPS)),
-            mock.patch.object(views, 'cached_curriculum_value', side_effect=passthrough),
+            composition_fixture(views, 'get_cached_payload', side_effect=AssertionError('full curriculum payload built')),
+            composition_fixture(views, 'build_cohorts_and_groups', return_value=([], GROUPS)),
+            composition_fixture(views, 'cached_curriculum_value', side_effect=passthrough),
         ]
         for patcher in patches:
             patcher.start()

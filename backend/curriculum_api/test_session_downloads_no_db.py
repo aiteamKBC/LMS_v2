@@ -1,4 +1,5 @@
 """Original lecture downloads: scope, permissions, preflight and bounded delivery."""
+from curriculum_api.catalogue.tests.parity.composition_test_support import composition_fixture
 from io import BytesIO
 import asyncio
 from types import SimpleNamespace
@@ -117,8 +118,8 @@ class OriginalRecordingDownloadTests(SimpleTestCase):
 
     def legacy(self, request):
         from . import views
-        with patch.object(views, 'ensure_live_session_tracking_tables'), \
-                patch.object(views, 'authoring_fetch_all', side_effect=[
+        with composition_fixture(views, 'ensure_live_session_tracking_tables'), \
+                composition_fixture(views, 'authoring_fetch_all', side_effect=[
                     [{'id': 'S'}], [{'id': 'O'}], [{**self.saved, 'id': 'R'}]]):
             return views.curriculum_teams_meeting_artifact_content(request, 'S', 'R')
 

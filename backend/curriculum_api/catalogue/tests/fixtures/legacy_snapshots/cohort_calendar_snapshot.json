@@ -1,0 +1,214 @@
+{
+  "_scoped_holiday_rows": {
+    "source": "def _scoped_holiday_rows(include_archived=False):\n    \"\"\"The read behind get_holiday_rows(); see there.\n\n    Two sources, one calendar:\n\n    ``curriculum.england_holidays``\n        England's bank holidays exactly as GOV.UK publishes them -- one date per\n        row, nobody here authors them, and they are kept current by\n        ``england_holidays.run_sync`` (see that module).\n    ``curriculum.holidays``\n        This organisation's own closure periods -- the Christmas shutdown, a\n        staff training day, an exam week. These *are* authored here, on the\n        Holidays page, and unlike a bank holiday one of them can span a range of\n        dates rather than a single day.\n\n    Both are serialized by ``serialize_holiday_row`` into the same start/end\n    shape, so everything downstream -- session plans, cohort periods, calendar\n    bands -- treats them identically. Which is the point: a delivery day is\n    closed or it is not, and why it is closed does not change the arithmetic.\n\n    Archived authored holidays are left out unless asked for: archiving one is\n    how a closure period stops shifting future session dates.\n    \"\"\"\n    rows = []\n    if calendar_holidays.in_use():\n        # The current curriculum database: both halves live in calendar_holidays,\n        # returned in the two shapes with their own ids (see calendar_holidays).\n        rows = calendar_holidays.rows()\n        if not include_archived:\n            rows = [row for row in rows if not holiday_row_archived(row)]\n        return sorted(rows, key=holiday_row_sort_key)\n    if table_exists(ENGLAND_HOLIDAYS_TABLE):\n        rows.extend(fetch_all(f'''\n            select *\n            from {table_name(ENGLAND_HOLIDAYS_TABLE)}\n            order by holiday_date, title\n        '''))\n    authored_table = authored_holiday_table_name()\n    if authored_table:\n        authored = fetch_all(f'''\n            select *\n            from {table_name(authored_table)}\n            order by start_date, label\n        ''')\n        if not include_archived:\n            authored = [row for row in authored if not holiday_row_archived(row)]\n        rows.extend(authored)\n    # One order over both sources. The pickers and the cohort range filters read\n    # these as a single calendar, so they must not arrive in two runs of dates.\n    return sorted(rows, key=holiday_row_sort_key)",
+    "module": "curriculum_api.catalogue.infrastructure.holiday_reads",
+    "deps": [
+      "calendar_in_use",
+      "calendar_rows",
+      "holiday_row_archived",
+      "holiday_row_sort_key",
+      "table_exists",
+      "ENGLAND_HOLIDAYS_TABLE",
+      "fetch_all",
+      "table_name",
+      "authored_holiday_table_name"
+    ],
+    "bindings": {
+      "calendar_in_use": "calendar_holidays.in_use",
+      "calendar_rows": "calendar_holidays.rows",
+      "holiday_row_archived": "holiday_row_archived",
+      "holiday_row_sort_key": "holiday_row_sort_key",
+      "table_exists": "table_exists",
+      "ENGLAND_HOLIDAYS_TABLE": "ENGLAND_HOLIDAYS_TABLE",
+      "fetch_all": "fetch_all",
+      "table_name": "table_name",
+      "authored_holiday_table_name": "authored_holiday_table_name"
+    },
+    "decorators": [
+      "scoped_curriculum_read"
+    ]
+  },
+  "holiday_row_sort_key": {
+    "source": "def holiday_row_sort_key(row):\n    row = row or {}\n    return (\n        format_date(row.get('holiday_date') or row.get('start_date')) or '',\n        clean_str(row.get('title') or row.get('label')),\n    )",
+    "module": "curriculum_api.catalogue.application.cohort_calendar",
+    "deps": [
+      "format_date",
+      "clean_str"
+    ],
+    "bindings": {
+      "format_date": "format_date",
+      "clean_str": "clean_str"
+    },
+    "decorators": []
+  },
+  "holiday_row_archived": {
+    "source": "def holiday_row_archived(row):\n    \"\"\"Whether an authored holiday has been archived, however it was recorded.\n\n    ``archive_payload`` sets whichever of ``is_archived``/``status``/``notes``\n    the table happens to carry, so the read side has to accept all three.\n    \"\"\"\n    row = row or {}\n    return bool(\n        truthy(row.get('is_archived'))\n        or truthy(row.get('archived'))\n        or clean_str(row.get('status')).lower() == 'archived'\n        or truthy(extract_notes_meta(row.get('notes')).get('archived'))\n    )",
+    "module": "curriculum_api.catalogue.domain.holiday_selection",
+    "deps": [
+      "truthy",
+      "clean_str",
+      "extract_notes_meta"
+    ],
+    "bindings": {
+      "truthy": "truthy",
+      "clean_str": "clean_str",
+      "extract_notes_meta": "extract_notes_meta"
+    },
+    "decorators": []
+  },
+  "cohort_holiday_period_end": {
+    "source": "def cohort_holiday_period_end(cohort):\n    \"\"\"The last date a cohort's holidays are drawn from.\n\n    The practical end date -- the end of the delivery period, not the end of the\n    EPA window that follows it. A cohort row that has lost its end date falls\n    back to the contracted duration, which is the same rule\n    ``cohort_authoring_payload`` writes the stored row with, so the two agree.\n    \"\"\"\n    cohort = cohort or {}\n    end_date = format_date(\n        cohort.get('practicalEndDate') or cohort.get('practical_end_date')\n        or cohort.get('endDate') or cohort.get('end_date')\n    )\n    if end_date:\n        return end_date\n    start_date = format_date(cohort.get('startDate') or cohort.get('start_date'))\n    months = parse_int(cohort.get('durationMonths') or cohort.get('duration_months'), 0)\n    if not start_date or months <= 0:\n        return ''\n    return format_date(calculate_cohort_end_date(start_date, months))",
+    "module": "curriculum_api.catalogue.domain.holiday_selection",
+    "deps": [
+      "format_date",
+      "parse_int",
+      "calculate_cohort_end_date"
+    ],
+    "bindings": {
+      "format_date": "format_date",
+      "parse_int": "parse_int",
+      "calculate_cohort_end_date": "calculate_cohort_end_date"
+    },
+    "decorators": []
+  },
+  "holiday_row_source": {
+    "source": "def holiday_row_source(row):\n    \"\"\"Which of the two tables a holiday row came from.\n\n    ``division`` and ``holiday_date`` are columns only the GOV.UK mirror has, so\n    they identify a bank holiday without the caller having to say. An already\n    serialized row states its own source and is believed.\n    \"\"\"\n    row = row or {}\n    stated = clean_str(row.get('source')).lower()\n    if stated in {HOLIDAY_SOURCE_GOVUK, HOLIDAY_SOURCE_AUTHORED, 'calendarific'}:\n        return stated\n    if row.get('division') or row.get('holiday_date'):\n        return HOLIDAY_SOURCE_GOVUK\n    return HOLIDAY_SOURCE_AUTHORED",
+    "module": "curriculum_api.catalogue.domain.holiday_selection",
+    "deps": [
+      "clean_str",
+      "HOLIDAY_SOURCE_GOVUK",
+      "HOLIDAY_SOURCE_AUTHORED"
+    ],
+    "bindings": {
+      "clean_str": "clean_str",
+      "HOLIDAY_SOURCE_GOVUK": "HOLIDAY_SOURCE_GOVUK",
+      "HOLIDAY_SOURCE_AUTHORED": "HOLIDAY_SOURCE_AUTHORED"
+    },
+    "decorators": []
+  },
+  "date_ranges_overlap": {
+    "source": "def date_ranges_overlap(left_start, left_end, right_start, right_end):\n    left_start = parse_date(left_start)\n    left_end = parse_date(left_end) or left_start\n    right_start = parse_date(right_start)\n    right_end = parse_date(right_end) or right_start\n    if not left_start or not left_end or not right_start or not right_end:\n        return False\n    return left_start <= right_end and right_start <= left_end",
+    "module": "curriculum_api.catalogue.domain.holiday_selection",
+    "deps": [
+      "parse_date"
+    ],
+    "bindings": {
+      "parse_date": "parse_date"
+    },
+    "decorators": []
+  },
+  "serialize_holiday_row": {
+    "source": "def serialize_holiday_row(row):\n    \"\"\"One holiday in the shape the whole curriculum reads.\n\n    Two tables arrive here. ``curriculum.england_holidays`` gives a single dated\n    bank holiday with a ``title``; ``curriculum.holidays`` gives an authored\n    closure period with a ``label`` and its own start and end date. Both come out\n    as a ``label`` plus a ``startDate``/``endDate`` pair -- a bank holiday simply\n    has the two dates equal -- so ``holiday_date_set``, ``date_ranges_overlap``\n    and the day arithmetic treat a one-day national holiday and a fortnight's\n    closure the same way, which is the only way they should be treated.\n\n    Rows that already arrived serialized are passed straight back through. A\n    caller previewing an unsaved cohort sends holidays as JSON, and it sends\n    them in this shape, not the database one.\n    \"\"\"\n    row = row or {}\n    source = holiday_row_source(row)\n    holiday_date = format_date(\n        row.get('holiday_date') or row.get('date')\n        or row.get('start_date') or row.get('startDate')\n    )\n    end_date = format_date(row.get('end_date') or row.get('endDate')) or holiday_date\n    label = clean_str(row.get('title') or row.get('label') or row.get('name'))\n    bank_holiday = source == HOLIDAY_SOURCE_GOVUK\n    item = {\n        'id': row.get('id'),\n        'label': label,\n        'startDate': holiday_date,\n        'endDate': end_date,\n        # A bank holiday's type is not stored -- being in the GOV.UK mirror is\n        # what makes it one -- while an authored holiday's type is whatever was\n        # typed on it, including nothing at all.\n        'type': clean_str(row.get('type')) or (BANK_HOLIDAY_TYPE if bank_holiday else ''),\n        'color': clean_str(row.get('color')) or (BANK_HOLIDAY_COLOR if bank_holiday else AUTHORED_HOLIDAY_COLOR),\n        'source': source,\n    }\n    if row.get('country'):\n        item['country'] = row['country']\n    if bank_holiday:\n        # Only GOV.UK rows carry these, and only 'Substitute day' ever appears in\n        # notes. Passed through so a picker can say why Boxing Day moved. An\n        # authored row's notes column is internal bookkeeping (see\n        # append_notes_meta) and is deliberately not published.\n        notes = clean_str(row.get('notes'))\n        if notes:\n            item['notes'] = notes\n        if row.get('bunting') is not None:\n            item['bunting'] = bool(row.get('bunting'))\n    return item",
+    "module": "curriculum_api.catalogue.application.cohort_calendar",
+    "deps": [
+      "holiday_row_source",
+      "format_date",
+      "clean_str",
+      "HOLIDAY_SOURCE_GOVUK",
+      "BANK_HOLIDAY_TYPE",
+      "BANK_HOLIDAY_COLOR",
+      "AUTHORED_HOLIDAY_COLOR"
+    ],
+    "bindings": {
+      "holiday_row_source": "holiday_row_source",
+      "format_date": "format_date",
+      "clean_str": "clean_str",
+      "HOLIDAY_SOURCE_GOVUK": "HOLIDAY_SOURCE_GOVUK",
+      "BANK_HOLIDAY_TYPE": "BANK_HOLIDAY_TYPE",
+      "BANK_HOLIDAY_COLOR": "BANK_HOLIDAY_COLOR",
+      "AUTHORED_HOLIDAY_COLOR": "AUTHORED_HOLIDAY_COLOR"
+    },
+    "decorators": []
+  },
+  "serialize_england_holiday_row": {
+    "source": "def serialize_england_holiday_row(row):\n    return {\n        'id': row.get('id'),\n        'division': clean_str(row.get('division')),\n        'title': clean_str(row.get('title')),\n        'date': format_date(row.get('holiday_date')),\n        # Only ever 'Substitute day' -- the holiday was moved because the real\n        # date fell on a weekend.\n        'notes': clean_str(row.get('notes')),\n        'bunting': bool(row.get('bunting')),\n        'fetchedAt': format_created_at(row.get('fetched_at')),\n    }",
+    "module": "curriculum_api.catalogue.application.cohort_calendar",
+    "deps": [
+      "clean_str",
+      "format_date",
+      "format_created_at"
+    ],
+    "bindings": {
+      "clean_str": "clean_str",
+      "format_date": "format_date",
+      "format_created_at": "format_created_at"
+    },
+    "decorators": []
+  },
+  "holidays_within_period": {
+    "source": "def holidays_within_period(holiday_rows, period_start, period_end):\n    \"\"\"The bank holidays landing inside a period, in date order.\n\n    The \"which holidays does this cohort have\" question: what the cohort drawer\n    lists and what the cohort row records. Inclusive at both ends, and an\n    unknown end of the period means nothing is in it rather than everything --\n    a cohort half way through being typed has no period yet.\n\n    This is *not* the set a session plan skips. A plan is free to run past the\n    cohort's practical end date -- that is what a holiday does to it -- so\n    scheduling asks ``scheduling_holidays_from`` instead.\n    \"\"\"\n    serialized = [serialize_holiday_row(row) for row in (holiday_rows or [])]\n    in_period = [\n        item for item in serialized\n        if date_ranges_overlap(period_start, period_end, item.get('startDate'), item.get('endDate'))\n    ]\n    return sorted_holidays(in_period)",
+    "module": "curriculum_api.catalogue.application.cohort_calendar",
+    "deps": [
+      "serialize_holiday_row",
+      "date_ranges_overlap",
+      "sorted_holidays"
+    ],
+    "bindings": {
+      "serialize_holiday_row": "serialize_holiday_row",
+      "date_ranges_overlap": "date_ranges_overlap",
+      "sorted_holidays": "sorted_holidays"
+    },
+    "decorators": []
+  },
+  "sorted_holidays": {
+    "source": "def sorted_holidays(items):\n    \"\"\"Holidays in date order, ties broken by name so the order is total.\"\"\"\n    return sorted(items, key=lambda item: (clean_str(item.get('startDate')), clean_str(item.get('label'))))",
+    "module": "curriculum_api.catalogue.application.cohort_calendar",
+    "deps": [
+      "clean_str"
+    ],
+    "bindings": {
+      "clean_str": "clean_str"
+    },
+    "decorators": []
+  },
+  "cohort_holiday_details": {
+    "source": "def cohort_holiday_details(holiday_rows, excluded_ids, start_date, end_date):\n    \"\"\"What one cohort's holidays are, given its dates and what it has unticked.\n\n    Every bank holiday inside ``start_date``..``end_date`` applies by default --\n    that in-range list is ``holidaysInRange``, the full set of options the\n    cohort drawer offers a checkbox for. ``excluded_ids`` is a deny-list: the\n    ids a human unticked, subtracted from that set to get ``selectedHolidays``\n    and the ``holidayIds`` module session planning skips. It is not the\n    selection itself, so an id that matches nothing in range -- a stale id from\n    the authored table this no longer reads, or a holiday that has since moved\n    out of the period -- simply has nothing to remove.\n\n    An empty or omitted ``excluded_ids`` means nothing is excluded: every\n    holiday in the period applies, which is both the default for a cohort\n    nobody has touched and the previous, all-or-nothing behaviour this\n    replaces.\n    \"\"\"\n    serialized = [serialize_holiday_row(row) for row in (holiday_rows or [])]\n    in_range = holidays_within_period(holiday_rows, start_date, end_date)\n    excluded_set = {clean_str(value) for value in (excluded_ids or []) if clean_str(value)}\n    selected = [item for item in in_range if clean_str(item.get('id')) not in excluded_set]\n    selected_ids = [clean_str(item.get('id')) for item in selected if clean_str(item.get('id'))]\n    excluded_in_range = [\n        clean_str(item.get('id')) for item in in_range\n        if clean_str(item.get('id')) in excluded_set\n    ]\n    return {\n        'holidayIds': selected_ids,\n        'selectedHolidays': selected,\n        'holidaysInRange': in_range,\n        'excludedHolidayIds': excluded_in_range,\n        'summary': {\n            'global': len(serialized),\n            'inRange': len(in_range),\n            'selected': len(selected),\n        },\n    }",
+    "module": "curriculum_api.catalogue.application.cohort_calendar",
+    "deps": [
+      "serialize_holiday_row",
+      "holidays_within_period",
+      "clean_str"
+    ],
+    "bindings": {
+      "serialize_holiday_row": "serialize_holiday_row",
+      "holidays_within_period": "holidays_within_period",
+      "clean_str": "clean_str"
+    },
+    "decorators": []
+  },
+  "serialize_cohort_authoring_detail": {
+    "source": "def serialize_cohort_authoring_detail(row, holiday_rows=None):\n    epa_months = parse_epa_months(row.get('epa_months'))\n    apprenticeship_end_override = format_date(row.get('apprenticeship_end_override'))\n    practical_end_date, apprenticeship_end_date = cohort_epa_dates(\n        row.get('end_date'),\n        epa_months,\n        apprenticeship_end_override,\n    )\n    # The holidayIds/selectedHolidays/holidaysInRange columns on the row are a\n    # record of what the dates (and the exclusions below) resolved to when it\n    # was last written, not an input in their own right. They are recomputed\n    # here instead of read back: a row written before holidays became England's\n    # bank holidays still carries ids into the authored table nobody reads any\n    # more, and a row whose dates were changed elsewhere would otherwise answer\n    # for the old period. excluded_holiday_ids is the one column that IS read\n    # back -- it is the human's own choice, not a derived cache, so there is\n    # nothing to recompute it from.\n    calendar_rows = get_holiday_rows_safe() if holiday_rows is None else holiday_rows\n    calendar_error = ''\n    if row.get('calendar_policy'):\n        from curriculum_api.calendar_policy import read_policy\n        from curriculum_api.delivery_calendar import policy_holidays\n        from curriculum_api.country_calendars import CalendarUnavailable\n        try:\n            calendar_rows = policy_holidays(read_policy(row), row.get('start_date'), cohort_holiday_period_end(row), calendar_rows)\n        except CalendarUnavailable as exc:\n            calendar_rows = []\n            calendar_error = str(exc)\n    holiday_info = cohort_holiday_details(\n        calendar_rows,\n        parse_json_value(row.get('excluded_holiday_ids'), []),\n        format_date(row.get('start_date')),\n        cohort_holiday_period_end(row),\n    )\n    return {\n        'cohortId': row.get('cohort_id'),\n        'cohortName': row.get('cohort_name'),\n        'programmeId': row.get('programme_id'),\n        'programmeName': row.get('programme_name'),\n        'startDate': format_date(row.get('start_date')),\n        # endDate stays the practical period end so every existing reader keeps\n        # its meaning; practicalEndDate is the same value under the name the\n        # apprenticeship model uses, and apprenticeshipEndDate adds the EPA\n        # period on top of it.\n        'endDate': practical_end_date,\n        'practicalEndDate': practical_end_date,\n        'epaMonths': epa_months,\n        'apprenticeshipEndDate': apprenticeship_end_date,\n        # Blank unless a human authored the date, so readers can tell an edited\n        # apprenticeship end date from one the EPA period produced.\n        'apprenticeshipEndOverride': apprenticeship_end_override,\n        'durationMonths': parse_int(row.get('duration_months'), 0),\n        # The contracted duration rule on its own. Holidays do not move this\n        # date; module schedules use selected holidays to skip clashing sessions.\n        'baseEndDate': format_date(calculate_cohort_end_date(\n            row.get('start_date'),\n            parse_int(row.get('duration_months'), 0),\n        )),\n        'color': row.get('color') or '',\n        'status': row.get('status') or 'planned',\n        'isProgrammeDeleted': programme_deleted_row(row),\n        'trainingPlanIds': as_json_value(row.get('training_plan_ids'), []),\n        'groupIds': as_json_value(row.get('group_ids'), []),\n        'moduleNames': as_json_value(row.get('module_names'), []),\n        'holidayIds': holiday_info['holidayIds'],\n        'selectedHolidays': holiday_info['selectedHolidays'],\n        'holidaysInRange': holiday_info['holidaysInRange'],\n        'excludedHolidayIds': holiday_info['excludedHolidayIds'],\n        'calendarPolicy': parse_json_value(row.get('calendar_policy'), None),\n        'calendarError': calendar_error,\n        'holidaySummary': holiday_info['summary'],\n        'notes': row.get('notes') or '',\n        'sourceType': row.get('source_type') or 'curriculum_authoring',\n        'sourceId': row.get('source_id') or '',\n        'updatedAt': format_date(row.get('updated_at')),\n        'createdAt': format_created_at(row.get('created_at')),\n    }",
+    "module": "curriculum_api.catalogue.application.cohort_calendar",
+    "deps": [
+      "parse_epa_months",
+      "format_date",
+      "cohort_epa_dates",
+      "get_holiday_rows_safe",
+      "read_policy_calendar",
+      "cohort_holiday_period_end",
+      "cohort_holiday_details",
+      "parse_json_value",
+      "parse_int",
+      "calculate_cohort_end_date",
+      "programme_deleted_row",
+      "as_json_value",
+      "format_created_at"
+    ],
+    "bindings": {
+      "parse_epa_months": "parse_epa_months",
+      "format_date": "format_date",
+      "cohort_epa_dates": "cohort_epa_dates",
+      "get_holiday_rows_safe": "get_holiday_rows_safe",
+      "read_policy_calendar": "read_policy_calendar",
+      "cohort_holiday_period_end": "cohort_holiday_period_end",
+      "cohort_holiday_details": "cohort_holiday_details",
+      "parse_json_value": "parse_json_value",
+      "parse_int": "parse_int",
+      "calculate_cohort_end_date": "calculate_cohort_end_date",
+      "programme_deleted_row": "programme_deleted_row",
+      "as_json_value": "as_json_value",
+      "format_created_at": "format_created_at"
+    },
+    "decorators": []
+  }
+}

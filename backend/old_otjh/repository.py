@@ -67,7 +67,7 @@ def query(sql, params=()):
 
 def _query_rows(alias, sql, params):
     with connections[alias].cursor() as cursor:
-        from curriculum_api.learning_storage import read_sql
+        from curriculum_api.catalogue.infrastructure.course_storage_reads import read_sql
         cursor.execute(read_sql(sql, connections[alias]), params)
         if cursor.description is None:
             return []

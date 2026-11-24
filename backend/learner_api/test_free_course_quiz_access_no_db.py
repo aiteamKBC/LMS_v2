@@ -60,6 +60,7 @@ GRADEABLE_QUIZ = {
 class FreeCourseQuizReadAccessTests(SimpleTestCase):
     def setUp(self):
         self.factory = RequestFactory()
+        self.enterContext(patch.object(free_courses_view.free_course_attempts, "history", return_value=[]))
         self.enterContext(patch.dict("os.environ", {"LEARNER_API_REQUIRE_AUTH": "1"}))
 
     def request(self):
@@ -99,7 +100,7 @@ class FreeCourseQuizReadAccessTests(SimpleTestCase):
             with self.subTest(kind=kind):
                 response = self.call(LEARNER_19, kind=kind, **self.allowed_patches())
                 self.assertEqual(response.status_code, 200)
-                self.assertEqual(json.loads(response.content), QUIZ)
+                self.assertEqual(json.loads(response.content), {**QUIZ, "attempts": []})
                 self.assertEqual(response["Cache-Control"], "private, no-store")
 
     def test_unassigned_course_learner_is_rejected(self):
@@ -188,6 +189,7 @@ class FreeCourseQuizStatusTests(SimpleTestCase):
 class GenericQuizCompatibilityTests(SimpleTestCase):
     def setUp(self):
         self.factory = RequestFactory()
+        self.enterContext(patch.object(free_courses_view.free_course_attempts, "history", return_value=[]))
         self.enterContext(patch.dict("os.environ", {"LEARNER_API_REQUIRE_AUTH": "1"}))
 
     def request(self, method="get"):
@@ -198,6 +200,7 @@ class GenericQuizCompatibilityTests(SimpleTestCase):
 
     def call_detail(self, context_result):
         with patch.object(permissions, "authenticate_request", return_value=LEARNER_19), \
+             patch.object(quizzes, "learner_profile_for_source", return_value=None), \
              patch.object(quizzes, "_programme_quiz_context", return_value=context_result), \
              patch.object(quizzes, "_fetch_quiz", return_value=QUIZ), \
              patch.object(quizzes, "_scrub_answer_key", return_value={"id": 7, "questions": []}):
@@ -263,9 +266,13 @@ class GenericQuizCompatibilityTests(SimpleTestCase):
         component = {"componentId": "PROGRAMME-Q1", "isQuiz": True, "quizMeta": {"quizId": 7}}
         response = self.call_detail((source(), component, None))
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(json.loads(response.content), {"id": 7, "questions": []})
+        self.assertEqual(json.loads(response.content), {"id": 7, "questions": [], 'unavailableReason': None,
+            'quizPolicy': {'enabled': False, 'attemptsUsed': 0, 'attemptLimit': None, 'bestGrade': None,
+                           'passed': False, 'canAttempt': True, 'retakeAfterPass': True,
+                           'unavailableReason': None, 'code': None}})
 
     def test_generic_response_strips_answer_key_fields(self):
+        self.enterContext(patch.object(quizzes, 'learner_profile_for_source', return_value=None))
         component = {"componentId": "PROGRAMME-Q1", "isQuiz": True, "quizMeta": {"quizId": 7}}
         quiz = {
             "id": 7,
@@ -346,6 +353,7 @@ class GenericQuizCompatibilityTests(SimpleTestCase):
 class StaffPreviewWriteTests(SimpleTestCase):
     def setUp(self):
         self.factory = RequestFactory()
+        self.enterContext(patch.object(free_courses_view.free_course_attempts, "history", return_value=[]))
         self.enterContext(patch.dict("os.environ", {"LEARNER_API_REQUIRE_AUTH": "1"}))
 
     def test_staff_preview_cannot_mark_material_or_submit_quiz(self):
@@ -370,7 +378,10 @@ class StaffPreviewWriteTests(SimpleTestCase):
 
 class FreeCourseQuizSubmissionTests(SimpleTestCase):
     def setUp(self):
+        from .test_free_course_attempts_no_db import empty_attempt_storage
+        self.enterContext(empty_attempt_storage())
         self.factory = RequestFactory()
+        self.enterContext(patch.object(free_courses_view.free_course_attempts, "history", return_value=[]))
         self.enterContext(patch.dict("os.environ", {"LEARNER_API_REQUIRE_AUTH": "1"}))
 
     def request(self, answer_id=1001):
@@ -458,7 +469,7 @@ class FreeCourseQuizSubmissionTests(SimpleTestCase):
     def test_passed_quiz_completion_uses_canonical_owner_and_is_idempotent(self):
         progress = Mock(side_effect=[
             (SimpleNamespace(status="active"), True),
-            (SimpleNamespace(status="active"), False),
+            (SimpleNamespace(status="active", deleted_at=None, free_course_ref="FREE-1", is_completed=True), False),
         ])
         first, _ = self.call(LEARNER_19, progress=progress)
         second, _ = self.call(LEARNER_19, progress=progress)
@@ -483,6 +494,7 @@ class FreeCourseQuizSubmissionTests(SimpleTestCase):
 class MobileProgrammeQuizScopeTests(SimpleTestCase):
     def setUp(self):
         self.factory = RequestFactory()
+        self.enterContext(patch.object(free_courses_view.free_course_attempts, "history", return_value=[]))
         self.component = {
             "componentId": "PROGRAMME-Q1",
             "mobileMode": "quiz",
@@ -522,3 +534,95 @@ class MobileProgrammeQuizScopeTests(SimpleTestCase):
             response = self.inner(mobile.submit_quiz)(request, "PROGRAMME-Q1")
         self.assertEqual(response.status_code, 200)
         self.assertEqual(delegated.call_args.kwargs["payload"]["componentId"], "PROGRAMME-Q1")
+
+
+class WithdrawnFreeCourseAccessTests(SimpleTestCase):
+    def setUp(self):
+        self.factory = RequestFactory()
+        self.enterContext(patch.dict('os.environ', {'LEARNER_API_REQUIRE_AUTH': '1'}))
+
+    def test_withdrawn_learner_cannot_read_or_submit_any_free_course_route(self):
+        routes = [
+            (free_courses_view.free_courses, 'get', {}),
+            (free_courses_view.free_course_detail, 'get', {'course_id': 'FREE-1'}),
+            (free_courses_view.free_course_quiz, 'get', {'component_id': 'COMP'}),
+            (free_courses_view.complete_free_course_activity, 'post', {}),
+            (free_courses_view.submit_free_course_quiz, 'post', {'component_id': 'COMP'}),
+        ]
+        for kind in ('commercial', 'apprenticeship'):
+            for field in ('lifecycle_status', 'programme_status'):
+                for view, method, extra in routes:
+                    with self.subTest(kind=kind, field=field, route=view.__name__):
+                        learner = source()
+                        setattr(learner, field, ' Withdrawn ')
+                        with patch.object(permissions, 'authenticate_request', return_value=LEARNER_19), \
+                             patch.object(free_courses_view, '_resolve_source', return_value=(learner, None)), \
+                             patch.object(free_courses_view, 'assigned_course_ids') as assignments, \
+                             patch.object(free_courses_view.free_course_attempts, 'save') as save:
+                            response = view(getattr(self.factory, method)('/'), kind=kind, pk=19, **extra)
+                        self.assertEqual(response.status_code, 403)
+                        assignments.assert_not_called()
+                        save.assert_not_called()
+
+    def test_staff_can_read_unpublished_or_unlinked_quiz_history_without_regrading(self):
+        learner = source()
+        learner.lifecycle_status = 'withdrawn'
+        for role in ('staff', 'admin'):
+            with self.subTest(role=role), \
+                 patch.object(permissions, 'authenticate_request', return_value=account(role, 7, 'staff')), \
+                 patch.object(free_courses_view, '_resolve_source', return_value=(learner, None)), \
+                 patch.object(free_courses_view, 'assigned_course_ids', return_value=['FREE-1']), \
+                 patch.object(free_courses_view, '_scoped_rows', return_value=scoped_rows(quiz_id=None)), \
+                 patch.object(free_courses_view.free_course_attempts, 'history', return_value=[{'grade': 80}]), \
+                 patch.object(free_courses_view, '_fetch_quiz') as fetch:
+                response = free_courses_view.free_course_quiz(self.factory.get('/'),
+                    kind='commercial', pk=19, component_id='FREECOMP-1')
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(json.loads(response.content)['attempts'], [{'grade': 80}])
+            self.assertTrue(json.loads(response.content)['historyOnly'])
+            fetch.assert_not_called()
+
+    def test_staff_reads_allowed_but_writes_never_allowed_for_withdrawn_learner(self):
+        learner = source()
+        learner.lifecycle_status = 'withdrawn'
+        with patch.object(permissions, 'authenticate_request', return_value=STAFF):
+            self.assertIsNone(free_courses_view._withdrawn_access(self.factory.get('/'), learner))
+            self.assertEqual(free_courses_view._withdrawn_access(self.factory.post('/'), learner).status_code, 403)
+
+
+    def test_withdrawal_after_initial_read_blocks_material_completion(self):
+        from .test_free_course_attempts_no_db import empty_attempt_storage
+        from .test_free_course_flow_no_db import catalogue_rows
+        with empty_attempt_storage() as cursor, \
+             patch.object(permissions, 'authenticate_request', return_value=LEARNER_19), \
+             patch.object(free_courses_view, '_resolve_source', return_value=(source(), None)), \
+             patch.object(free_courses_view, 'assigned_course_ids', return_value=['FREE-1']), \
+             patch.object(free_courses_view, '_scoped_rows', return_value=catalogue_rows()), \
+             patch.object(free_courses_view, '_record_completion') as save:
+            cursor.fetchone.side_effect = [None]
+            response = free_courses_view.complete_free_course_activity(
+                self.factory.post('/', data=json.dumps({'componentId':'C-1'}), content_type='application/json'),
+                kind='commercial', pk=19)
+        self.assertEqual(response.status_code, 403)
+        save.assert_not_called()
+
+    def test_staff_retains_assignments_progress_and_hours_for_withdrawn_learners(self):
+        from .test_free_course_flow_no_db import catalogue_rows
+        learner = source()
+        learner.lifecycle_status = 'withdrawn'
+        with patch.object(permissions, 'authenticate_request', return_value=STAFF), \
+             patch.object(free_courses_view, '_resolve_source', return_value=(learner, None)), \
+             patch.object(free_courses_view, 'assigned_course_ids', return_value=['FREE-1']), \
+             patch.object(free_courses_view, '_scoped_rows', return_value=catalogue_rows()), \
+             patch.object(free_courses_view, '_completed_refs', return_value={('FREE-1','C-1')}), \
+             patch.object(free_courses_view, '_activity_states', return_value={}), \
+             patch.object(free_courses_view, 'accepted_activity_seconds', return_value={('FREE-1','C-1'):3600}), \
+             patch.object(free_courses_view.free_course_attempts, 'activity_times', return_value={}):
+            response = free_courses_view.free_courses(self.factory.get('/'),kind='commercial',pk=19)
+            detail = free_courses_view.free_course_detail(self.factory.get('/'),kind='commercial',pk=19,course_id='FREE-1')
+        self.assertEqual(response.status_code, 200)
+        course = json.loads(response.content)['freeCourses'][0]
+        self.assertEqual(course['completedActivities'], 1)
+        self.assertEqual(course['acceptedActualSeconds'], 3600)
+        self.assertEqual(detail.status_code, 200)
+        self.assertTrue(json.loads(detail.content)['freeCourse']['weeks'][0]['activities'][0]['is_completed'])

@@ -18,6 +18,8 @@ export function canonicalWeekRow(week: CanonicalWeek, live?: CanonicalSelectedWe
 export function canonicalActivityRows(week: CanonicalSelectedWeek): JourneyComponent[] {
   return week.activities.map(activity => ({
     componentId: activity.id, component: activity.title, title: activity.title, type: activity.type,
+    liveSessionLearning: activity.liveSessionLearning,
+    liveSessionAccess: activity.liveSessionAccess,
     isQuiz: activity.isQuiz, quizMeta: activity.isQuiz && activity.quizId != null
       ? { quizId: activity.quizId, questions: null, duration: activity.quizDuration, timeUnit: activity.quizTimeUnit } : undefined,
     durationMinutes: activity.durationMinutes, expectedOtjh: activity.expectedHours,

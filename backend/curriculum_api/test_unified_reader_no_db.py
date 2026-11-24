@@ -4,11 +4,14 @@ import re
 from pathlib import Path
 import sqlite3
 import unittest
-from contextlib import closing
+from contextlib import closing, ExitStack
+from functools import wraps
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 from . import curriculum_names as cn, schema_compat as sc
+from .catalogue.infrastructure import database_reads, authoring_reads, authoring_sql
+from .catalogue.tests.parity.read_dependency_test_support import bind_test_defaults
 
 
 def reader_namespace(physical):
@@ -19,6 +22,8 @@ def reader_namespace(physical):
     nodes = [node for node in tree.body if
              (isinstance(node, ast.FunctionDef) and node.name in names) or
              (isinstance(node, ast.Assign) and any(isinstance(t, ast.Name) and t.id in names for t in node.targets))]
+    runtime_tree = ast.parse((Path(__file__).parent / 'catalogue/infrastructure/authoring_runtime.py').read_text(encoding='utf-8'))
+    nodes += [node for node in runtime_tree.body if isinstance(node, ast.FunctionDef) and node.name in names]
     placement = SimpleNamespace(
         PLACEMENT_FIELDS=('module_catalogue_id', 'week_id'),
         relation=lambda include_description=True: (
@@ -26,18 +31,45 @@ def reader_namespace(physical):
             'left join curriculum.components c on c.id = m.component_id '
             'left join curriculum.standard_ksbs s on s.id = m.standard_ksb_id) as "ksb_mappings"'),
         attach_descriptions=lambda rows: rows,
+        attach_component_items=lambda rows: rows,
     )
     namespace = dict(schema_compat=sc, curriculum_names=cn, CURRICULUM_SCHEMA='curriculum', re=re,
+                     __name__='curriculum_api.catalogue.infrastructure.authoring_runtime', __package__='curriculum_api.catalogue.infrastructure',
                      ksb_mapping_placement=placement, AUTHORING_KSB_MAPPINGS_TABLE='ksb_mappings',
                      AUTHORING_COMPONENTS_TABLE='components',
                      scoped_curriculum_read=lambda fn: fn,
                      column_names=lambda table: physical,
                      has_column=lambda table, key: key in physical,
                      authoring_table_name=lambda table: 'curriculum.' + table,
+                     learning_read_table=lambda table: 'curriculum.' + table,
                      quote_ident=lambda value: '"' + value + '"',
                      archive_state=SimpleNamespace(uses_status=lambda table: True),
                      LEGACY_LIFECYCLE_READ_COLUMNS={'deleted_at'}, ensure_module_authoring_tables=Mock())
     exec(compile(ast.Module(body=nodes, type_ignores=[]), 'views.py', 'exec'), namespace)
+    # Bind the SAME synthetic capabilities to the concrete readers now that
+    # the outer facade no longer supplies them on every call. Execute actual
+    # current functions; no reconstructed algorithm or changed expectation.
+    for name in ('derived_programme_name_sql', 'derived_placement_names_sql'):
+        namespace.setdefault(name, getattr(authoring_sql, name))
+
+    def isolated(function):
+        @wraps(function)
+        def call(*args, **kwargs):
+            with ExitStack() as stack:
+                for name in ('column_names', 'has_column', 'authoring_table_name',
+                             'quote_ident', 'connection', 'rows_as_dicts'):
+                    if name in namespace:
+                        stack.enter_context(patch.object(database_reads, name, namespace[name]))
+                stack.enter_context(bind_test_defaults(authoring_sql, ksb_relation=placement.relation))
+                stack.enter_context(bind_test_defaults(
+                    authoring_reads, attach_component_ksbs=placement.attach_component_items,
+                    attach_ksb_descriptions=placement.attach_descriptions))
+                return function(*args, **kwargs)
+        return call
+
+    for name in names:
+        if callable(namespace.get(name)):
+            namespace[name] = isolated(namespace[name])
     return namespace
 
 

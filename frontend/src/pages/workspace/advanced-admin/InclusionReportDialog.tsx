@@ -228,7 +228,7 @@ export default function InclusionReportDialog({ learnerId, learner, report, onCl
   ];
 
   return createPortal(<div className="fixed inset-0 z-[1000] flex items-center justify-center bg-[#100a22]/65 p-2 backdrop-blur-[2px] sm:p-5" onMouseDown={event => { if (event.target === event.currentTarget) onClose(); }}>
-    <div ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby="inclusion-report-title" onKeyDown={handleKeyDown} className="flex max-h-[min(94vh,1100px)] w-full max-w-[820px] flex-col overflow-hidden rounded-[22px] bg-[#f8f6fc] shadow-2xl">
+    <div ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby="inclusion-report-title" onKeyDown={handleKeyDown} className="flex max-h-[min(94vh,1100px)] w-full max-w-[820px] flex-col overflow-hidden rounded-2xl bg-[#f8f6fc] shadow-2xl">
       <header className="flex flex-wrap items-start justify-between gap-3 bg-[#251557] px-5 py-4 text-white">
         <div><div className="flex flex-wrap items-center gap-2"><h3 id="inclusion-report-title" className="text-lg font-bold">{learner.name}</h3><span className={`rounded-full px-3 py-1 text-[11px] font-semibold ${riskTone(risk).badge}`}>{risk} Risk</span></div>
           <p className="mt-1 text-xs text-[#d7cdf2]">{learner.email || 'Email not recorded'}</p>

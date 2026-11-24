@@ -6,6 +6,8 @@ unassigned and has to be given a new cohort and group from the module drawer.
 Teams meetings are not touched by the archive.
 """
 import ast
+import importlib.util
+import inspect
 import unittest
 from pathlib import Path
 from unittest.mock import Mock
@@ -20,11 +22,18 @@ class Response(dict):
 
 
 def cohort_detail(namespace):
-    tree = ast.parse((ROOT / 'views.py').read_text(encoding='utf-8'))
-    node = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == 'curriculum_cohort_detail')
-    node.decorator_list = []
-    exec(compile(ast.Module(body=[node], type_ignores=[]), 'views.py', 'exec'), namespace)
-    return namespace['curriculum_cohort_detail']
+    # The production body now belongs to the API adapter. Import this pure
+    # module by path; never import the legacy Django composition root.
+    spec = importlib.util.spec_from_file_location('cohort_commands', ROOT / 'catalogue/api/cohort_commands.py')
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    operation = module.curriculum_cohort_detail
+    ports = {
+        name: namespace[name] if name in namespace else Mock(side_effect=AssertionError('Unexpected archive capability: ' + name))
+        for name, param in inspect.signature(operation).parameters.items()
+        if param.kind == inspect.Parameter.KEYWORD_ONLY
+    }
+    return lambda request, identifier: operation(request, identifier, **ports)
 
 
 class CohortArchiveDetachesModulesTests(unittest.TestCase):
@@ -66,7 +75,7 @@ class CohortArchiveDetachesModulesTests(unittest.TestCase):
         self.assertEqual(kinds, [('unassign', 'GROUP-1'), ('archive', 'groups'), ('update', 'modules'), ('archive', 'cohorts')])
 
     def test_the_archive_reaches_no_teams_call(self):
-        tree = ast.parse((ROOT / 'views.py').read_text(encoding='utf-8'))
+        tree = ast.parse((ROOT / 'catalogue/api/cohort_commands.py').read_text(encoding='utf-8'))
         node = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == 'curriculum_cohort_detail')
         delete_branch = next(n for n in ast.walk(node) if isinstance(n, ast.If) and "'DELETE'" in ast.unparse(n.test))
         source = ast.unparse(delete_branch)

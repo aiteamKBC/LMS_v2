@@ -318,6 +318,12 @@ def attendance_rows(learner):
     return monthly_log_attendance.read_rows(owner, now=timezone.now()) if owner else []
 
 
+def additional_attendance(learner, rows):
+    """Canonical projections already include register allocations and captures."""
+    from learner_api.attendance_otjh import additional_rows
+    return additional_rows(rows, attendance_rows(learner))
+
+
 def current_months(learner, signs=(), *, include_open=False, include_future=False, ensure_month=None):
     grouped = defaultdict(list)
     open_month = timezone.localdate().strftime('%Y-%m')
@@ -325,7 +331,8 @@ def current_months(learner, signs=(), *, include_open=False, include_future=Fals
         return month < open_month or (include_open and month == open_month) or (include_future and month > open_month)
 
     if canonical.enabled(learner['id']):
-        for item in [*canonical.activity_rows(learner['id']), *attendance_rows(learner)]:
+        rows = canonical.activity_rows(learner['id'])
+        for item in [*rows, *additional_attendance(learner, rows)]:
             month = item.get('reporting_month')
             if month and allowed_month(month):
                 grouped[month].append(item)
@@ -373,7 +380,8 @@ def summary_data(learner, *, include_open=False, include_future=False, ensure_mo
         # full progress row document. This projection keeps the signed row
         # digest fields explicitly and avoids serialising unrelated columns.
         records = canonical.entries_for(canonical_owner, monthly_summary=True)
-        attendance = attendance_rows(learner)
+        rows = canonical.rows_for(canonical_owner, records)
+        attendance = additional_attendance(learner, rows)
         signs = canonical.signatures_for(canonical_owner)
         targets = canonical.targets_for(canonical_owner)
         grouped = defaultdict(list)
@@ -384,7 +392,7 @@ def summary_data(learner, *, include_open=False, include_future=False, ensure_mo
                 or (include_open and month == open_month)
                 or (include_future and month > open_month)
             )
-        for item in [*canonical.rows_for(canonical_owner, records), *attendance]:
+        for item in [*rows, *attendance]:
             month = item.get('reporting_month')
             if not month:
                 unallocated.append({key: item.get(key) for key in
@@ -727,7 +735,9 @@ def document(request, learner_id, file_id):
 
 def document_response(learner_id, file_id):
     rows = old_repo.query('''SELECT blob_name,original_filename,content_type FROM "Learner".evidence_files
-        WHERE id=%s AND learner_id=%s AND status='approved' ''', [str(file_id), str(learner_id)])
+        WHERE id=%s AND learner_profile_id=(
+            SELECT min(id) FROM "Learner".learners WHERE enrolment_id=%s HAVING count(*)=1
+        ) AND status='approved' ''', [str(file_id), learner_id])
     if not rows:
         raise old.ServiceError('Document not found.', 'not_found', 404)
     from .evidence_storage import download_blob_bytes, azure_configured

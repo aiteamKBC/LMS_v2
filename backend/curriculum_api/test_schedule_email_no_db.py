@@ -1,5 +1,6 @@
 """Run directly with Python; production functions, mocked storage/mail, no Django setup."""
 import ast
+from curriculum_api.catalogue.tests.parity.current_entry_source import current_entry_tree
 import functools
 import importlib.util
 import logging
@@ -32,7 +33,9 @@ class Response(dict):
 
 
 def definitions(path, namespace, names=None):
-    tree = ast.parse(path.read_text(encoding='utf-8-sig'))
+    if path == ROOT / 'views.py':
+        namespace.setdefault('__package__', 'curriculum_api')
+    tree = current_entry_tree() if path == ROOT / 'views.py' else ast.parse(path.read_text(encoding='utf-8-sig'))
     nodes = [node for node in tree.body if isinstance(node, (ast.FunctionDef, ast.ClassDef)) and (names is None or node.name in names)]
     exec(compile(ast.Module(body=nodes, type_ignores=[]), str(path), 'exec'), namespace)
 
@@ -439,7 +442,7 @@ class EmailTests(unittest.TestCase):
             verify.assert_not_called()
             series['warnings'] = []
             verify.return_value = {'attendees': []}
-            with self.assertRaisesRegex(ValueError, 'every learner'):
+            with self.assertRaisesRegex(ValueError, r'^Microsoft has not confirmed every participant invitation yet\.$'):
                 service['verified_message']('LIVE-ONE')
 
     def test_microsoft_date_mismatch_prevents_any_mail_batch(self):

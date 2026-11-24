@@ -1,0 +1,119 @@
+{
+  "actual_cohort_identity": {
+    "source": "def actual_cohort_identity(row, programme_name):\n    meta = row.get('_meta', {})\n    cohort_name = clean_str(row.get('Cohort_name'))\n    if not cohort_name:\n        return None\n    return {\n        'id': clean_str(meta.get('cohort_id')) or f'{slugify(programme_name)}-{slugify(cohort_name)}',\n        'name': cohort_name,\n    }",
+    "module": "curriculum_api.catalogue.domain.delivery_identity",
+    "deps": [
+      "clean_str",
+      "slugify"
+    ],
+    "direct": []
+  },
+  "actual_group_identity": {
+    "source": "def actual_group_identity(row, cohort_id):\n    meta = row.get('_meta', {})\n    group_name = clean_str(row.get('group_name') or meta.get('group_name'))\n    if not group_name:\n        return None\n    return {\n        'id': clean_str(meta.get('group_id')) or f'{cohort_id}-{slugify(group_name)}',\n        'name': group_name,\n    }",
+    "module": "curriculum_api.catalogue.domain.delivery_identity",
+    "deps": [
+      "clean_str",
+      "slugify"
+    ],
+    "direct": []
+  },
+  "delivery_learner_count": {
+    "source": "def delivery_learner_count(counts, record_id, name_key):\n    \"\"\"Learners placed in one cohort/group, however their placement is recorded.\n\n    The id bucket and the name bucket are *added*, not preferred one over the\n    other: a cohort can hold both learners whose placement resolved to its id\n    and older rows that only ever carried its name, and both are in it. No\n    learner is counted twice -- ``active_learner_delivery_counts`` puts each row\n    in exactly one of the two. Same shape as the programme card's count.\n    \"\"\"\n    record_id = clean_str(record_id)\n    by_id = counts.get(record_id, 0) if record_id else 0\n    return by_id + counts.get(name_key, 0)",
+    "module": "curriculum_api.catalogue.domain.delivery_identity",
+    "deps": [
+      "clean_str"
+    ],
+    "direct": []
+  },
+  "detail_is_archived": {
+    "source": "def detail_is_archived(detail):\n    return clean_str((detail or {}).get('status')).lower() == 'archived'",
+    "module": "curriculum_api.catalogue.domain.delivery_identity",
+    "deps": [
+      "clean_str"
+    ],
+    "direct": []
+  },
+  "build_cohorts_and_groups": {
+    "source": "def build_cohorts_and_groups(training_rows=None, program_configs=None, include_archived=False, *, include_learner_counts=True, source=None):\n    \"\"\"Build the cohort/group overview directly from the normalized tables.\n\n    Cohorts come from ``curriculum.cohorts`` and groups from ``curriculum.groups``.\n    Module names and session counts are derived from ``curriculum.modules`` keyed\n    on the stored canonical group/cohort ids. The ``training_rows`` argument is\n    accepted for backwards compatibility with existing callers but is ignored:\n    the normalized tables are the only source of truth.\n    \"\"\"\n    # The index projection the other module readers share (it leaves out only\n    # ksb_remap_report, which nothing here reads), so the read scope serves\n    # them all from one read of the table.\n    module_rows = safe_module_index_rows() if source is None else source['modules']\n    if not include_archived:\n        module_rows = [row for row in module_rows if not programme_deleted_row(row)]\n    cohort_learner_counts, group_learner_counts = (\n        active_learner_delivery_counts() if include_learner_counts else ({}, {})\n    )\n    modules_by_group = defaultdict(list)\n    modules_by_cohort = defaultdict(list)\n    for module in module_rows:\n        group_key = clean_str(module.get('group_id'))\n        cohort_key = clean_str(module.get('cohort_id'))\n        if group_key:\n            modules_by_group[group_key].append(module)\n        if cohort_key:\n            modules_by_cohort[cohort_key].append(module)\n\n    def module_ids(rows):\n        return [module_id for module_id in unique([clean_str(row.get('module_catalogue_id')) for row in rows]) if module_id]\n\n    def module_names(rows):\n        return [name for name in unique([clean_str(row.get('title')) for row in rows]) if name]\n\n    def session_total(rows):\n        return sum(parse_int(row.get('sessions_number'), 0) for row in rows)\n\n    cohorts = []\n    cohort_details = cohort_authoring_detail_rows() if source is None else source['cohorts']\n    for detail in cohort_details:\n        if programme_deleted_row(detail):\n            continue\n        if not include_archived and detail_is_archived(detail):\n            continue\n        cohort_id = clean_str(detail.get('cohortId'))\n        if not cohort_id:\n            continue\n        cohort_modules = modules_by_cohort.get(cohort_id, [])\n        stored_module_ids = [module_id for module_id in (detail.get('moduleCatalogueIds') or []) if clean_str(module_id)]\n        cohorts.append({\n            'id': cohort_id,\n            'name': clean_str(detail.get('cohortName')),\n            'programme': clean_str(detail.get('programmeName')),\n            'programmeId': clean_str(detail.get('programmeId')),\n            'startDate': format_date(detail.get('startDate')),\n            'endDate': format_date(detail.get('endDate')),\n            'practicalEndDate': format_date(detail.get('practicalEndDate') or detail.get('endDate')),\n            'epaMonths': parse_epa_months(detail.get('epaMonths')),\n            'apprenticeshipEndDate': format_date(detail.get('apprenticeshipEndDate')),\n            'apprenticeshipEndOverride': format_date(detail.get('apprenticeshipEndOverride')),\n            'durationMonths': parse_int(\n                detail.get('durationMonths'),\n                infer_duration_months(detail.get('startDate'), detail.get('endDate'), 0),\n            ),\n            'status': detail.get('status') or 'planned',\n            'learners': delivery_learner_count(cohort_learner_counts, cohort_id, (\n                normalise(detail.get('programmeName')),\n                normalise(detail.get('cohortName')),\n            )),\n            'groups': [clean_str(value) for value in (detail.get('groupIds') or []) if clean_str(value)],\n            'moduleIds': module_ids(cohort_modules) or stored_module_ids,\n            'modules': module_names(cohort_modules),\n            'sessions': session_total(cohort_modules),\n            'color': detail.get('color') or '#6941c6',\n            'holidayIds': [clean_str(value) for value in (detail.get('holidayIds') or []) if clean_str(value)],\n            'excludedHolidayIds': [clean_str(value) for value in (detail.get('excludedHolidayIds') or []) if clean_str(value)],\n            'calendarPolicy': detail.get('calendarPolicy'),\n            'calendarError': detail.get('calendarError') or '',\n            'createdAt': clean_str(detail.get('createdAt')),\n            'updatedAt': clean_str(detail.get('updatedAt')),\n            'progress': 0,\n            'attendance': 0,\n        })\n\n    groups = []\n    seen_group_ids = set()\n    group_details = group_authoring_detail_rows() if source is None else source['groups']\n    for detail in group_details:\n        if programme_deleted_row(detail):\n            continue\n        if not include_archived and detail_is_archived(detail):\n            continue\n        group_id = clean_str(detail.get('id'))\n        if not group_id:\n            continue\n        seen_group_ids.add(group_id)\n        group_modules = modules_by_group.get(group_id, [])\n        stored_module_ids = [module_id for module_id in (detail.get('moduleIds') or []) if clean_str(module_id)]\n        stored_module_names = [name for name in (detail.get('modules') or []) if clean_str(name)]\n        groups.append({\n            'id': group_id,\n            'name': clean_str(detail.get('name')),\n            'cohortId': clean_str(detail.get('cohortId')),\n            'cohort': clean_str(detail.get('cohort')),\n            'programmeId': clean_str(detail.get('programmeId')),\n            'programme': clean_str(detail.get('programme')),\n            'learners': delivery_learner_count(group_learner_counts, group_id, (\n                normalise(detail.get('programme')),\n                normalise(detail.get('cohort')),\n                normalise(detail.get('name')),\n            )),\n            'coach': detail.get('coach') or 'Unassigned',\n            'tutor': detail.get('tutor') or 'Unassigned',\n            'startDate': format_date(detail.get('startDate')),\n            'endDate': format_date(detail.get('endDate')),\n            'status': detail.get('status') or 'planned',\n            # The delivery pattern travels with the group: build_module_session_plan\n            # cannot date a single session without a delivery day, so a module\n            # editor that only receives `schedule` can never show an end date.\n            # serialize_group_authoring_detail already falls back to the day\n            # inside the schedule string, which is what older rows carry.\n            'weekDays': clean_str(detail.get('weekDays')),\n            'startTime': clean_str(detail.get('startTime')),\n            'endTime': clean_str(detail.get('endTime')),\n            'schedule': detail.get('schedule') or '',\n            'color': detail.get('color') or '',\n            'mode': detail.get('mode') or 'Live',\n            'moduleIds': module_ids(group_modules) or stored_module_ids,\n            'modules': module_names(group_modules) or stored_module_names,\n            'sessions': session_total(group_modules),\n            'createdAt': clean_str(detail.get('createdAt')),\n            'updatedAt': clean_str(detail.get('updatedAt')),\n            'isProgrammeDeleted': programme_deleted_row(detail),\n        })\n\n    for group_id, group_modules in modules_by_group.items():\n        if not group_id or group_id in seen_group_ids:\n            continue\n        first_module = group_modules[0] if group_modules else {}\n        groups.append({\n            'id': group_id,\n            'name': clean_str(first_module.get('group_name')) or group_id,\n            'cohortId': clean_str(first_module.get('cohort_id')),\n            'cohort': clean_str(first_module.get('cohort_name')),\n            'programmeId': clean_str(first_module.get('programme_id')),\n            'programme': clean_str(first_module.get('programme_name')),\n            'learners': delivery_learner_count(group_learner_counts, group_id, (\n                normalise(first_module.get('programme_name')),\n                normalise(first_module.get('cohort_name')),\n                normalise(first_module.get('group_name')),\n            )),\n            'coach': 'Unassigned',\n            'tutor': clean_str(first_module.get('tutor_name')) or 'Unassigned',\n            'startDate': format_date(first_module.get('start_date')),\n            'endDate': format_date(first_module.get('end_date')),\n            'status': 'planned' if clean_str(first_module.get('status')).lower() == 'archived' else (clean_str(first_module.get('status')) or 'planned'),\n            # Same delivery pattern, read off the module rows this group was\n            # reconstructed from.\n            'weekDays': clean_str(first_module.get('session_week_day')),\n            'startTime': clean_str(first_module.get('session_start_time')),\n            'endTime': clean_str(first_module.get('session_end_time')),\n            'schedule': '',\n            'color': clean_str(first_module.get('color')),\n            'mode': 'Live',\n            'moduleIds': module_ids(group_modules),\n            'modules': module_names(group_modules),\n            'sessions': session_total(group_modules),\n            # Reconstructed from module rows, so the earliest module's creation is\n            # the closest thing this group has to one of its own.\n            'createdAt': min([format_created_at(row.get('created_at')) for row in group_modules if row.get('created_at')] or ['']),\n            'updatedAt': max([format_created_at(row.get('updated_at')) for row in group_modules if row.get('updated_at')] or ['']),\n            'isProgrammeDeleted': programme_deleted_row(first_module),\n        })\n\n    # Ensure every cohort exposes the ids of its normalized child groups, even\n    # when the stored ``group_ids`` array is stale.\n    groups_by_cohort = defaultdict(list)\n    for group in groups:\n        if group['cohortId']:\n            groups_by_cohort[group['cohortId']].append(group['id'])\n    for cohort in cohorts:\n        derived = groups_by_cohort.get(cohort['id'], [])\n        cohort['groups'] = unique([*cohort['groups'], *derived]) if cohort['groups'] else derived\n\n    return cohorts, groups",
+    "module": "curriculum_api.catalogue.application.delivery_reads",
+    "deps": [
+      "active_learner_delivery_counts",
+      "clean_str",
+      "cohort_authoring_detail_rows",
+      "format_created_at",
+      "format_date",
+      "group_authoring_detail_rows",
+      "infer_duration_months",
+      "normalise",
+      "parse_epa_months",
+      "parse_int",
+      "programme_deleted_row",
+      "safe_module_index_rows",
+      "unique"
+    ],
+    "direct": [
+      "delivery_learner_count",
+      "detail_is_archived"
+    ]
+  },
+  "cohort_authoring_detail_rows": {
+    "source": "def cohort_authoring_detail_rows():\n    # One holiday read for the whole page: every cohort resolves its own\n    # holidays from its own dates, but they all resolve them against the same\n    # calendar.\n    holiday_rows = get_holiday_rows_safe()\n    try:\n        return [\n            serialize_cohort_authoring_detail(row, holiday_rows)\n            for row in authoring_fetch_all(\n                COHORT_AUTHORING_DETAILS_TABLE,\n                order_sql=COHORT_ROWS_ORDER,\n            )\n        ]\n    except (Exception, AssertionError) as exc:\n        logger.warning('Could not read cohort authoring details: %s', exc)\n        return []",
+    "module": "curriculum_api.catalogue.application.delivery_reads",
+    "deps": [
+      "COHORT_AUTHORING_DETAILS_TABLE",
+      "COHORT_ROWS_ORDER",
+      "authoring_fetch_all",
+      "get_holiday_rows_safe",
+      "logger",
+      "serialize_cohort_authoring_detail"
+    ],
+    "direct": []
+  },
+  "group_authoring_detail_rows": {
+    "source": "def group_authoring_detail_rows():\n    try:\n        details = [\n            serialize_group_authoring_detail(row)\n            for row in authoring_fetch_all(GROUPS_TABLE, order_sql=GROUP_ROWS_ORDER)\n        ]\n        module_dates_by_group = defaultdict(lambda: {'start': [], 'end': []})\n        # curriculum.groups has no tutor_name column: the group tutor is stored on\n        # each child module row (see update_staffing_assignment / group PATCH, which\n        # fan the chosen tutor out across the group's modules). Recover it here in\n        # the same pass that derives the delivery window so the read path reports\n        # what the write path actually persisted instead of always 'Unassigned'.\n        module_tutors_by_group = defaultdict(list)\n        # Group id, dates and tutor only: the index projection the list\n        # readers already read, not a second select * of the table.\n        for module in safe_module_index_rows():\n            group_id = clean_str(module.get('group_id'))\n            if not group_id:\n                continue\n            start = format_date(module.get('start_date'))\n            end = format_date(module.get('end_date'))\n            if start:\n                module_dates_by_group[group_id]['start'].append(start)\n            if end:\n                module_dates_by_group[group_id]['end'].append(end)\n            tutor_name = clean_str(module.get('tutor_name'))\n            if tutor_name and staff_assignment_key(tutor_name) != 'unassigned':\n                module_tutors_by_group[group_id].append(tutor_name)\n        for detail in details:\n            group_id = clean_str(detail.get('id'))\n            bounds = module_dates_by_group.get(group_id, {})\n            starts = bounds.get('start') or []\n            ends = bounds.get('end') or []\n            detail['startDate'] = min(starts) if starts else ''\n            detail['endDate'] = max(ends) if ends else ''\n            detail['tutor'] = group_tutor_from_module_names(module_tutors_by_group.get(group_id))\n        return details\n    except (Exception, AssertionError) as exc:\n        logger.warning('Could not read group authoring details: %s', exc)\n        return []",
+    "module": "curriculum_api.catalogue.application.delivery_reads",
+    "deps": [
+      "GROUPS_TABLE",
+      "GROUP_ROWS_ORDER",
+      "authoring_fetch_all",
+      "clean_str",
+      "format_date",
+      "group_tutor_from_module_names",
+      "logger",
+      "safe_module_index_rows",
+      "serialize_group_authoring_detail",
+      "staff_assignment_key"
+    ],
+    "direct": []
+  },
+  "serialize_group_authoring_detail": {
+    "source": "def serialize_group_authoring_detail(row):\n    return {\n        'id': row.get('group_id'),\n        'name': row.get('group_name'),\n        'cohortId': row.get('cohort_id'),\n        'cohort': row.get('cohort_name'),\n        'programmeId': row.get('programme_id'),\n        'programme': row.get('programme_name'),\n        'modules': as_json_value(row.get('module_names'), []),\n        'moduleIds': as_json_value(row.get('module_ids'), []),\n        'coach': row.get('coach_name') or 'Unassigned',\n        'coaches': group_coaches.split_names(row.get('coach_names') or row.get('coach_name')),\n        # Overwritten by group_authoring_detail_rows(), which derives the tutor\n        # from the group's module rows. Kept as the standalone-call fallback.\n        'tutor': 'Unassigned',\n        'startDate': '',\n        'endDate': '',\n        'weekDays': row.get('session_week_day') or schedule_day_part(row.get('schedule')),\n        'startTime': row.get('session_start_time') or schedule_time_parts(row.get('schedule'))[0],\n        'endTime': row.get('session_end_time') or schedule_time_parts(row.get('schedule'))[1],\n        'schedule': group_schedule_value(row),\n        'color': row.get('color') or '',\n        'status': row.get('status') or 'planned',\n        'isProgrammeDeleted': programme_deleted_row(row),\n        'notes': row.get('notes') or '',\n        'sourceType': row.get('source_type') or 'curriculum_authoring',\n        'sourceId': row.get('source_id') or '',\n        'updatedAt': format_date(row.get('updated_at')),\n        'createdAt': format_created_at(row.get('created_at')),\n    }",
+    "module": "curriculum_api.catalogue.application.delivery_reads",
+    "deps": [
+      "as_json_value",
+      "format_created_at",
+      "format_date",
+      "group_coaches",
+      "group_schedule_value",
+      "programme_deleted_row",
+      "schedule_day_part",
+      "schedule_time_parts"
+    ],
+    "direct": []
+  },
+  "active_learner_delivery_counts": {
+    "source": "def active_learner_delivery_counts():\n    \"\"\"Count live learners by the cohort/group their placement resolves to.\n\n    ``Learner.learners`` is the permanent canonical learner table. A learner\n    carrying ``cohort_id``/``group_id`` is counted against that record, so a\n    renamed cohort keeps its learners; a learner without one is still counted by\n    programme/cohort/group *name*, case- and whitespace-insensitively, so rows\n    predating those columns do not drop off the cards. Read either half back\n    with ``delivery_learner_count``.\n\n    Returns ``(cohort_counts, group_counts)``. Both are keyed either by a\n    canonical id (a plain string) or by the name tuple -- one dict holding the\n    two kinds of key, because they count the same thing and the caller adds\n    them. Missing learner infrastructure is treated as an empty data source (for\n    example in local SQLite tests or a curriculum-only deployment).\n    \"\"\"\n    if connection.vendor != 'postgresql':\n        return {}, {}\n    try:\n        if not learner_relation_exists('learners'):\n            return {}, {}\n        with connection.cursor() as cursor:\n            # The placement ids only exist where the columns do; elsewhere the\n            # two constants keep the row shape and every learner falls into the\n            # name bucket, which is what this counted before they were added.\n            if learners_link_placement_by_id():\n                id_select = \", coalesce(cohort_id, '') as cohort_id, coalesce(group_id, '') as group_id\"\n                id_group = ', cohort_id, group_id'\n            else:\n                id_select = \", '' as cohort_id, '' as group_id\"\n                id_group = ''\n            # The normalised table links placements by id only: no name columns\n            # there, so '' keeps the row shape. Unknown columns keep the original.\n            learner_columns = schema_compat.columns_of('Learner', 'learners')\n            if learner_columns and 'programme' not in learner_columns:\n                cursor.execute(\n                    f\"select '' as programme, '' as cohort, '' as group_name{id_select}, count(*) \"\n                    'from \"Learner\".\"learners\" '\n                    \"where lifecycle_status = 'active' \"\n                    f'group by 1, 2, 3{\", 4, 5\" if id_group else \"\"}'\n                )\n            else:\n                cursor.execute(\n                    f'select programme, cohort, group_name{id_select}, count(*) '\n                    'from \"Learner\".\"learners\" '\n                    \"where lifecycle_status = 'active' \"\n                    f'group by programme, cohort, group_name{id_group}'\n                )\n            rows = cursor.fetchall()\n    except Exception as exc:\n        logger.warning('Could not count active learners for curriculum delivery: %s', exc)\n        return {}, {}\n\n    cohort_counts = Counter()\n    group_counts = Counter()\n    for programme_name, cohort_name, group_name, cohort_id, group_id, learner_count in rows:\n        programme_key = normalise(programme_name)\n        cohort_key = normalise(cohort_name)\n        group_key = normalise(group_name)\n        cohort_id = clean_str(cohort_id)\n        group_id = clean_str(group_id)\n        count = parse_int(learner_count, 0)\n        if cohort_id:\n            cohort_counts[cohort_id] += count\n        elif programme_key and cohort_key:\n            cohort_counts[(programme_key, cohort_key)] += count\n        if group_id:\n            group_counts[group_id] += count\n        elif programme_key and cohort_key and group_key:\n            group_counts[(programme_key, cohort_key, group_key)] += count\n    return dict(cohort_counts), dict(group_counts)",
+    "module": "curriculum_api.catalogue.infrastructure.delivery_counts",
+    "deps": [
+      "clean_str",
+      "connection",
+      "learner_relation_exists",
+      "learners_link_placement_by_id",
+      "logger",
+      "normalise",
+      "parse_int",
+      "schema_compat"
+    ],
+    "direct": []
+  }
+}

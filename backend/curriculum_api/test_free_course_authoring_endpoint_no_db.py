@@ -1,4 +1,5 @@
 """DB-free HTTP and permission contracts for Phase B.1 authoring GETs."""
+from curriculum_api.catalogue.tests.parity.composition_test_support import composition_fixture
 import json
 from types import SimpleNamespace
 from unittest import mock
@@ -23,7 +24,7 @@ class FreeCourseAuthoringEndpointTests(SimpleTestCase):
     def _call(self, view, request, *args, account=None, accesses=()):
         with mock.patch("login.permissions.authenticate_request", return_value=account), \
              mock.patch("login.permissions._accesses_of", return_value=frozenset(accesses)), \
-             mock.patch.object(views, "authenticate_request", return_value=account):
+             composition_fixture(views, "authenticate_request", return_value=account):
             return view(request, *args)
 
     def _staff(self):

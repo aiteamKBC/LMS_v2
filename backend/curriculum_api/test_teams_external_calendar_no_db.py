@@ -122,17 +122,11 @@ class ImportedCalendarGuardTests(unittest.TestCase):
                                                {'join_url': 'https://example.invalid/lms'}))
 
     def test_normalisation_keeps_additional_identity_out_of_legacy_storage(self):
-        tree = ast.parse(Path(__file__).with_name('views.py').read_text(encoding='utf-8-sig'))
-        names = {'allowed_component_setting_keys', 'normalise_component_settings_payload'}
-        namespace = {'json': json, 'frontend_component_type': lambda value: value,
-                     'component_settings_defaults': lambda _kind: {'liveSessionUrl': ''},
-                     'as_json_value': lambda value, fallback: json.loads(value) if isinstance(value, str) else value or fallback}
-        for node in tree.body:
-            if isinstance(node, ast.Assign) and any(isinstance(target, ast.Name) and target.id in
-                    {'LEGACY_SETTING_KEYS', 'RECORDING_SOURCE_SETTING_KEYS', 'LIVE_SESSION_TRACKING_SETTING_KEYS'} for target in node.targets):
-                namespace[node.targets[0].id] = ast.literal_eval(node.value)
-        nodes = [node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name in names]
-        exec(compile(ast.Module(body=nodes, type_ignores=[]), 'views.py', 'exec'), namespace)
+        import importlib.util
+        spec = importlib.util.spec_from_file_location('settings_parity_support', Path(__file__).parent / 'catalogue/tests/parity/test_component_settings_standalone.py')
+        support = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(support)
+        namespace = support.contract(defaults=lambda kind: {'liveSessionUrl': ''})
         extra = {'teamsMeetingScope': 'additional', 'extraTeamsMeetingUrl': 'https://example.invalid/extra',
                  'extraTeamsLiveSessionId': 'EXTRA', 'extraTeamsStartDateTimeUtc': '2026-10-02T11:00:00Z'}
         saved = namespace['normalise_component_settings_payload']('live-session', {'legacySettings': json.dumps(extra)})
@@ -173,9 +167,8 @@ class ImportedCalendarEndpointTests(unittest.TestCase):
         tree = ast.parse(Path(__file__).with_name('views.py').read_text(encoding='utf-8-sig'))
         names = {'module_has_external_teams_calendar', 'external_teams_calendar_refusal', 'component_builder_settings',
                  'curriculum_teams_meeting', 'curriculum_teams_meeting_schedule'}
-        nodes = [node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name in names]
-        self.assertEqual(len(nodes), len(names))
-        exec(compile(ast.Module(body=nodes, type_ignores=[]), 'views.py', 'exec'), self.ns)
+        from curriculum_api.meetings.tests.source_loader import load_current_functions
+        load_current_functions(names, self.ns, tree)
         transport = types.ModuleType('coach_api.views')
         transport.microsoft_graph_request = self.graph
         transport.has_graph_credentials = lambda: True

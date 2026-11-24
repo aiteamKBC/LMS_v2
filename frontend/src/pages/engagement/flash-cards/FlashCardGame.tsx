@@ -276,7 +276,7 @@ function PlayStage({ card, index, total, cards, busy, burst, awardedNow, isLast,
         >
           {/* FRONT */}
           <div
-            className="absolute inset-0 rounded-[26px] overflow-hidden bg-white text-foreground-900 flex flex-col"
+            className="absolute inset-0 rounded-2xl overflow-hidden bg-white text-foreground-900 flex flex-col"
             style={{ backfaceVisibility: 'hidden', WebkitBackfaceVisibility: 'hidden', boxShadow: `0 30px 80px -30px ${hex}88, 0 10px 30px -12px rgba(0,0,0,.35)` }}
           >
             <div className="absolute inset-x-0 top-0 h-32" style={{ background: `linear-gradient(180deg, ${hex}22, transparent)` }} />
@@ -303,7 +303,7 @@ function PlayStage({ card, index, total, cards, busy, burst, awardedNow, isLast,
 
           {/* BACK */}
           <div
-            className="absolute inset-0 rounded-[26px] overflow-hidden flex flex-col text-white"
+            className="absolute inset-0 rounded-2xl overflow-hidden flex flex-col text-white"
             style={{ backfaceVisibility: 'hidden', WebkitBackfaceVisibility: 'hidden', transform: 'rotateY(180deg)', background: 'linear-gradient(150deg, #1b0b3a 0%, #3a1780 55%, #0f7a5a 100%)', boxShadow: '0 30px 80px -30px rgba(16,185,129,.55), 0 10px 30px -12px rgba(0,0,0,.4)' }}
           >
             <span className="absolute -right-6 -bottom-16 font-black leading-none select-none pointer-events-none text-white/[.06]" style={{ fontSize: '220px' }}>“</span>

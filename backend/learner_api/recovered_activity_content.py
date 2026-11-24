@@ -115,11 +115,10 @@ def saved_question_html(owner, material_id):
     """
     rows = query('''SELECT DISTINCT history.group_id,history.quiz_answers,
             history.quiz_score,history.quiz_maximum_score,history.quiz_attempt_number
-        FROM "Learner".learner_external_identities identity
+        FROM "Last_audit".learner_lms_aliases identity
         JOIN "Last_audit".activity_results history
-          ON history.learner_id::text=identity.source_learner_id AND history.activity_id=%s
-        WHERE identity.learner_id=%s AND identity.source_system='old_lms'
-          AND identity.deleted_at IS NULL
+          ON history.learner_id=identity.lms_learner_id AND history.activity_id=%s
+        WHERE identity.learner_profile_id=%s
         ORDER BY history.quiz_score DESC NULLS LAST,history.quiz_attempt_number DESC NULLS LAST''',
         [material_id, owner['id']])
     if not rows or any(row.get('group_id') is None for row in rows) or len({row['group_id'] for row in rows}) != 1:

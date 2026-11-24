@@ -8,6 +8,8 @@ No Django database connection: the generated SQL is executed against an
 in-memory sqlite3 database whose tables are unqualified, as the SQLite test
 schema creates them (authoring_table_name).
 """
+from curriculum_api.catalogue.tests.parity.composition_test_support import composition_fixture
+from .catalogue.tests.parity.read_dependency_test_support import database_read_fixture
 import sqlite3
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -27,7 +29,7 @@ REMOVED = ('"programme_name"', '"cohort_name"')
 
 
 def select_sql(table, schema=CANONICAL, **kwargs):
-    with patch.object(views, 'column_names', side_effect=lambda name: set(schema[name])):
+    with database_read_fixture('column_names', side_effect=lambda name: set(schema[name])):
         return views.authoring_select_sql(table, ensure_tables=False, **kwargs)
 
 
@@ -46,6 +48,11 @@ def database():
         CREATE TABLE main.modules (module_catalogue_id TEXT, title TEXT, programme_id TEXT, cohort_id TEXT, group_id TEXT);
         INSERT INTO main.modules VALUES ('M1','Module','P1','C1','g-1'),('M2','Loose','','','');
     ''')
+    # The mocked column catalogue must describe the same disposable schema.
+    for table, columns in CANONICAL.items():
+        existing = {row[1] for row in db.execute(f'PRAGMA table_info("{table}")')}
+        for column in sorted(columns - existing):
+            db.execute(f'ALTER TABLE "{table}" ADD COLUMN "{column}" TEXT')
     return db
 
 
@@ -106,7 +113,10 @@ class DerivedPlacementNamesExecutionTests(SimpleTestCase):
         self.addCleanup(self.db.close)
 
     def test_group_authoring_rows_keep_keys_order_and_count(self):
-        result = rows(self.db, select_sql('groups', order_sql=views.GROUP_ROWS_ORDER))
+        # This fixture tests ordering through derived output names, including
+        # ambiguous IDs. Import-time vendor-specific production order clauses
+        # are covered by the real PostgreSQL read-adapter parity tests.
+        result = rows(self.db, select_sql('groups', order_sql='programme_name, cohort_name, group_name'))
         self.assertEqual(len(result), 6)                       # no duplicated or dropped group
         by_id = {row['group_id']: row for row in result}
         self.assertEqual((by_id['g-1']['programme_name'], by_id['g-1']['cohort_name']), ('Marketing', 'October 2026'))
@@ -121,7 +131,7 @@ class DerivedPlacementNamesExecutionTests(SimpleTestCase):
         self.assertEqual([row['group_id'] for row in result], ['g-4', 'g-5', 'g-6', 'g-2', 'g-1', 'g-3'])
 
     def test_cohort_rows_are_ordered_by_derived_programme_name(self):
-        result = rows(self.db, select_sql('cohorts', order_sql=views.COHORT_ROWS_ORDER))
+        result = rows(self.db, select_sql('cohorts', order_sql='programme_name, cohort_name, start_date'))
         self.assertEqual([(row['cohort_id'], row['programme_name']) for row in result],
                          [('C2', 'Accounting'), ('C1', 'Marketing')])
 
@@ -151,9 +161,9 @@ class WritersIgnoreDerivedNamesTests(SimpleTestCase):
                 return []
 
         connection = SimpleNamespace(vendor='sqlite', cursor=lambda: Cursor())
-        with patch.object(views, 'column_names', return_value=set(CANONICAL['groups'])), \
-             patch.object(views, 'ensure_module_authoring_tables'), \
-             patch.object(views, 'connection', connection):
+        with database_read_fixture('column_names', return_value=set(CANONICAL['groups'])), \
+             composition_fixture(views, 'ensure_module_authoring_tables'), \
+             database_read_fixture('connection', connection):
             try:
                 views.authoring_upsert('groups', ['group_id'], {
                     'group_id': 'g-1', 'group_name': 'Group A', 'programme_name': 'Marketing', 'cohort_name': 'Oct'})

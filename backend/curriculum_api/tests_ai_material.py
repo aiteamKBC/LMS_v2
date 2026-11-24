@@ -21,6 +21,7 @@ those are what break silently:
 The Azure SDK is stubbed throughout: this is about routing, not about the SDK.
 """
 from __future__ import annotations
+from curriculum_api.catalogue.tests.parity.composition_test_support import composition_fixture
 
 from contextlib import ExitStack
 from pathlib import Path
@@ -86,11 +87,11 @@ class AiMaterialTestCase(SimpleTestCase):
             AZURE_CURRICULUM_CONTAINER='',
         ))
         self.assertFalse(upload_storage.azure_enabled())
-        stack.enter_context(patch.object(views, 'ensure_module_authoring_tables'))
-        stack.enter_context(patch.object(views, 'has_column', return_value=True))
-        stack.enter_context(patch.object(views, 'invalidate_curriculum_cache'))
-        stack.enter_context(patch.object(views, 'authoring_fetch_all', self.details.fetch_all))
-        stack.enter_context(patch.object(views, 'authoring_upsert', self.details.upsert))
+        stack.enter_context(composition_fixture(views, 'ensure_module_authoring_tables'))
+        stack.enter_context(composition_fixture(views, 'has_column', return_value=True))
+        stack.enter_context(composition_fixture(views, 'invalidate_curriculum_cache'))
+        stack.enter_context(composition_fixture(views, 'authoring_fetch_all', self.details.fetch_all))
+        stack.enter_context(composition_fixture(views, 'authoring_upsert', self.details.upsert))
         self.client = Client()
 
     def upload(self, uploaded=None):
@@ -142,14 +143,14 @@ class AiMaterialRecordTests(AiMaterialTestCase):
 
     def test_a_failed_replace_leaves_the_previous_book_recorded_and_readable(self):
         original = self.upload(book('first.pdf')).json()['material']
-        with patch.object(views, 'component_upload_metadata', side_effect=OSError('storage unavailable')):
+        with composition_fixture(views, 'component_upload_metadata', side_effect=OSError('storage unavailable')):
             failed = self.upload(book('second.pdf'))
         self.assertEqual(failed.status_code, 503)
         self.assertEqual(self.client.get(AI_MATERIAL_URL).json()['material'], original)
         self.assertTrue(upload_storage.exists(original['storedPath']))
 
     def test_a_book_that_cannot_be_recorded_does_not_leave_bytes_behind(self):
-        with patch.object(views, 'authoring_upsert', side_effect=RuntimeError('database down')), \
+        with composition_fixture(views, 'authoring_upsert', side_effect=RuntimeError('database down')), \
                 patch.object(upload_storage, 'delete') as delete:
             response = self.upload()
         self.assertEqual(response.status_code, 503)
@@ -179,7 +180,7 @@ class AiMaterialRecordTests(AiMaterialTestCase):
         self.assertEqual(self.client.get(AI_MATERIAL_URL).json()['material'], material)
 
     def test_an_unprovisioned_column_is_reported_rather_than_silently_dropping_the_book(self):
-        with patch.object(views, 'has_column', return_value=False):
+        with composition_fixture(views, 'has_column', return_value=False):
             response = self.upload()
         self.assertEqual(response.status_code, 503)
         self.assertIn('ai_material', response.json()['error'])

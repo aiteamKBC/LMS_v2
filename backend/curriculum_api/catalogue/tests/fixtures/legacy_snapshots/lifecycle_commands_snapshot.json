@@ -1,0 +1,401 @@
+{
+  "views_ast_sha256": "15de8321addf7016b61459dc6971c8f72b706cd81596cbe0d906de5ce6fb2358",
+  "functions": {
+    "soft_delete_programme_authoring_structure": {
+      "source": "def soft_delete_programme_authoring_structure(identifier, programme=None, config=None):\n    \"\"\"Archive a programme and mark its curriculum children as programme-deleted.\n\n    This is intentionally a soft cascade: no learner, component, week, module,\n    group or cohort content is removed. Operational reads already hide rows\n    carrying is_programme_deleted, while the data remains inspectable in Neon.\n    \"\"\"\n    config = config or programme_config_by_identifier(identifier)\n    programme_id = clean_str(programme_config_identity(config) or identifier)\n    programme_name = clean_str((programme or {}).get('name') or (config or {}).get('name'))\n    # The candidate set the permanent delete plans against, so an archive and a\n    # delete can never disagree about which rows belong to this programme: the\n    # identifier the caller used is in it, not only the canonical id the config\n    # row carries.\n    candidates = set(programme_identifier_candidates(identifier, programme, config))\n    result = {\n        'programmeArchived': False,\n        'cohorts': 0,\n        'groups': 0,\n        'modules': 0,\n        'weeks': 0,\n        'components': 0,\n        'ksbMappings': 0,\n    }\n    if not candidates:\n        return result\n\n    try:\n        ensure_program_config_archive_columns()\n        if config:\n            key_column = programme_config_key_column()\n            key_value = config.get(key_column)\n            if key_value is not None:\n                with archive_state.archive_context('programme-delete'):\n                    result['programmeArchived'] = bool(update_rows(\n                        'programmes',\n                        f'{quote_ident(key_column)} = %s',\n                        [key_value],\n                        soft_delete_payload('programmes', deleted_by='programme-delete'),\n                    ))\n    except Exception:\n        logger.warning('Could not archive programme %s during soft delete.', identifier, exc_info=True)\n\n    placeholders = ', '.join(['%s'] * len(candidates))\n    params = list(candidates)\n\n    def owned_by_programme(table):\n        \"\"\"``programme_id`` match, widened to the rows that only carry the name.\"\"\"\n        orphan_sql, orphan_params = orphan_programme_name_clause(table, programme_name)\n        if orphan_sql:\n            return f'(programme_id in ({placeholders}) or {orphan_sql})', [*params, *orphan_params]\n        return f'programme_id in ({placeholders})', list(params)\n\n    try:\n        cohort_where, cohort_params = owned_by_programme(COHORT_AUTHORING_DETAILS_TABLE)\n        result['cohorts'] = len(authoring_soft_delete(\n            COHORT_AUTHORING_DETAILS_TABLE,\n            cohort_where,\n            cohort_params,\n            via_parent=programme_id,\n            deleted_by='programme-delete',\n        ))\n\n        group_where, group_params = owned_by_programme(GROUPS_TABLE)\n        result['groups'] = len(authoring_soft_delete(\n            GROUPS_TABLE,\n            group_where,\n            group_params,\n            via_parent=programme_id,\n            deleted_by='programme-delete',\n        ))\n\n        result['modules'] = len(authoring_soft_delete(\n            AUTHORING_MODULES_TABLE,\n            f'''\n            programme_id in ({placeholders})\n            or group_id in (\n                select group_id\n                  from {authoring_table_name(GROUPS_TABLE)}\n                 where programme_id in ({placeholders})\n            )\n            ''',\n            [*params, *params],\n            via_parent=programme_id,\n            deleted_by='programme-delete',\n        ))\n\n        scoped_modules_sql = f'''\n            select module_catalogue_id\n              from {authoring_table_name(AUTHORING_MODULES_TABLE)}\n             where programme_id in ({placeholders})\n                or group_id in (\n                    select group_id\n                      from {authoring_table_name(GROUPS_TABLE)}\n                     where programme_id in ({placeholders})\n                )\n        '''\n        result['weeks'] = len(authoring_soft_delete(\n            AUTHORING_WEEKS_TABLE,\n            f'''\n            module_catalogue_id in (\n                {scoped_modules_sql}\n            )\n            ''',\n            [*params, *params],\n            via_parent=programme_id,\n            deleted_by='programme-delete',\n        ))\n\n        scoped_weeks_sql = f'''\n            select id\n              from {authoring_table_name(AUTHORING_WEEKS_TABLE)}\n             where module_catalogue_id in ({scoped_modules_sql})\n        '''\n        result['components'] = len(authoring_soft_delete(\n            AUTHORING_COMPONENTS_TABLE,\n            f'''\n            module_catalogue_id in (\n                {scoped_modules_sql}\n            )\n            or week_id in (\n                {scoped_weeks_sql}\n            )\n            ''',\n            [*params, *params, *params, *params],\n            via_parent=programme_id,\n            deleted_by='programme-delete',\n        ))\n\n        scoped_components_sql = f'''\n            select id\n              from {authoring_table_name(AUTHORING_COMPONENTS_TABLE)}\n             where module_catalogue_id in ({scoped_modules_sql})\n                or week_id in ({scoped_weeks_sql})\n        '''\n        # A mapping hangs off its component only; the scoped components already\n        # cover the programme's modules and weeks.\n        result['ksbMappings'] = len(authoring_soft_delete(\n            AUTHORING_KSB_MAPPINGS_TABLE,\n            f'''\n            component_id in (\n                {scoped_components_sql}\n            )\n            ''',\n            [*params, *params, *params, *params],\n            via_parent=programme_id,\n            deleted_by='programme-delete',\n        ))\n    except Exception:\n        logger.warning('Could not soft-delete programme children for %s (%s).', identifier, programme_name, exc_info=True)\n        raise\n    invalidate_curriculum_cache()\n    return result",
+      "decorators": [],
+      "owner": "curriculum_api.catalogue.application.programme_lifecycle",
+      "deps": [
+        "AUTHORING_COMPONENTS_TABLE",
+        "AUTHORING_KSB_MAPPINGS_TABLE",
+        "AUTHORING_MODULES_TABLE",
+        "AUTHORING_WEEKS_TABLE",
+        "COHORT_AUTHORING_DETAILS_TABLE",
+        "GROUPS_TABLE",
+        "archive_state",
+        "authoring_soft_delete",
+        "authoring_table_name",
+        "clean_str",
+        "ensure_program_config_archive_columns",
+        "invalidate_curriculum_cache",
+        "logger",
+        "orphan_programme_name_clause",
+        "programme_config_by_identifier",
+        "programme_config_identity",
+        "programme_config_key_column",
+        "programme_identifier_candidates",
+        "quote_ident",
+        "soft_delete_payload",
+        "update_rows"
+      ],
+      "callbacks": {}
+    },
+    "restore_programme_authoring_structure": {
+      "source": "def restore_programme_authoring_structure(identifier, programme=None, config=None):\n    \"\"\"Bring an archived programme and its cascade-archived children back.\n\n    The mirror image of ``soft_delete_programme_authoring_structure``: the\n    programme row loses its archive flags and every child that went down *with\n    this programme* is un-marked. Children archived independently keep their own\n    state, so restoring is not a way to resurrect unrelated deletions.\n    \"\"\"\n    config = config or programme_config_by_identifier(identifier)\n    programme_id = clean_str(programme_config_identity(config) or identifier)\n    result = {\n        'programmeRestored': False,\n        'cohorts': 0,\n        'groups': 0,\n        'modules': 0,\n        'weeks': 0,\n        'components': 0,\n        'ksbMappings': 0,\n    }\n    if not programme_id:\n        return result\n\n    try:\n        ensure_program_config_archive_columns()\n        if config:\n            key_column = programme_config_key_column()\n            key_value = config.get(key_column)\n            if key_value is not None:\n                payload = restore_payload('programmes', config.get('notes'))\n                payload.update(restore_soft_delete_payload('programmes'))\n                result['programmeRestored'] = bool(update_rows(\n                    'programmes',\n                    f'{quote_ident(key_column)} = %s',\n                    [key_value],\n                    payload,\n                    allow_null_columns=RESTORE_NULLABLE_COLUMNS,\n                ))\n    except Exception:\n        logger.warning('Could not restore programme %s.', identifier, exc_info=True)\n        raise\n\n    try:\n        ensure_module_authoring_tables()\n        for key, table in (\n            ('cohorts', COHORT_AUTHORING_DETAILS_TABLE),\n            ('groups', GROUPS_TABLE),\n            ('modules', AUTHORING_MODULES_TABLE),\n            ('weeks', AUTHORING_WEEKS_TABLE),\n            ('components', AUTHORING_COMPONENTS_TABLE),\n            ('ksbMappings', AUTHORING_KSB_MAPPINGS_TABLE),\n        ):\n            result[key] = len(restore_rows_via_parent(table, programme_id))\n    except Exception:\n        logger.warning('Could not restore programme children for %s.', identifier, exc_info=True)\n        raise\n    invalidate_curriculum_cache()\n    return result",
+      "decorators": [],
+      "owner": "curriculum_api.catalogue.application.programme_lifecycle",
+      "deps": [
+        "AUTHORING_COMPONENTS_TABLE",
+        "AUTHORING_KSB_MAPPINGS_TABLE",
+        "AUTHORING_MODULES_TABLE",
+        "AUTHORING_WEEKS_TABLE",
+        "COHORT_AUTHORING_DETAILS_TABLE",
+        "GROUPS_TABLE",
+        "RESTORE_NULLABLE_COLUMNS",
+        "clean_str",
+        "ensure_module_authoring_tables",
+        "ensure_program_config_archive_columns",
+        "invalidate_curriculum_cache",
+        "logger",
+        "programme_config_by_identifier",
+        "programme_config_identity",
+        "programme_config_key_column",
+        "quote_ident",
+        "restore_payload",
+        "restore_rows_via_parent",
+        "restore_soft_delete_payload",
+        "update_rows"
+      ],
+      "callbacks": {}
+    },
+    "unhook_programme_reusables": {
+      "source": "def unhook_programme_reusables(plan, removed):\n    \"\"\"Keep the quizzes and week templates of a dying programme, unhooked from it.\n\n    Quizzes are already standalone rows carrying learner attempts, and their\n    questions and answers hang off them by ``ON DELETE CASCADE`` - a cascade\n    that from here on simply never fires for a programme delete.\n    \"\"\"\n    child = plan.get('childIds') or {}\n    week_ids = child.get('weekIds') or []\n\n    def count(table, rows):\n        if rows:\n            removed[table] = removed.get(table, 0) + len(rows)\n\n    # Quizzes: unhook from the programme and week, keep the quiz.\n    if table_exists('quizzes'):\n        clauses = [curriculum_in_clause('programme_id', plan.get('candidates') or [])]\n        if week_ids:\n            clauses.append(curriculum_in_clause('week_id', week_ids))\n        where_sql, params = curriculum_where_any(clauses)\n        if where_sql:\n            updates = {}\n            if has_column('quizzes', 'week_id'):\n                updates['week_id'] = DETACHED_PARENT_SENTINEL\n            if has_column('quizzes', 'programme_id'):\n                updates['programme_id'] = DETACHED_PARENT_SENTINEL\n            if updates:\n                count('quizzes', update_rows('quizzes', where_sql, params, updates))\n\n    # Week templates are reusable by definition; unhook rather than delete.\n    template_ids = child.get('weekTemplateIds') or []\n    if template_ids and table_exists(WEEK_TEMPLATES_TABLE):\n        where_sql, params = curriculum_where_any([curriculum_in_clause('id', template_ids)])\n        if where_sql:\n            updates = {'updated_at': datetime.utcnow()}\n            for column in ('programme_id', 'programme_name', 'group_id', 'group_name', 'module_catalogue_id'):\n                if has_column(WEEK_TEMPLATES_TABLE, column):\n                    updates[column] = DETACHED_PARENT_SENTINEL\n            count(WEEK_TEMPLATES_TABLE, update_rows(WEEK_TEMPLATES_TABLE, where_sql, params, updates))",
+      "decorators": [],
+      "owner": "curriculum_api.catalogue.application.programme_deletion",
+      "deps": [
+        "DETACHED_PARENT_SENTINEL",
+        "WEEK_TEMPLATES_TABLE",
+        "curriculum_in_clause",
+        "curriculum_where_any",
+        "datetime",
+        "has_column",
+        "table_exists",
+        "update_rows"
+      ],
+      "callbacks": {}
+    },
+    "permanently_delete_programme_structure": {
+      "source": "def permanently_delete_programme_structure(plan, force_content=False):\n    \"\"\"Delete an archived programme that no longer owns authored content.\n\n    The order is dictated by the foreign keys migration 0038 added (children\n    first, ON DELETE RESTRICT). That ordering is exactly what a hand-written\n    ``delete from curriculum.programmes`` cannot supply, which is why Postgres\n    answers it with ``cohorts_programme_id_fkey``.\n\n    Authored content is *not* deleted by the normal path: a programme that still\n    owns weeks or components is refused whole (``refuse_if_programme_owns_content``).\n    ``force_content=True`` is an explicit destructive override used only by the\n    forced-delete flow; it removes components and weeks before their modules.\n    Quizzes\n    and week templates are kept, unhooked from it (``unhook_programme_reusables``);\n    the delivery scaffolding - the programme, cohorts, groups, modules, live\n    sessions and link rows - is what actually goes. Deleting a live session\n    still takes its occurrences, attendance, artifacts and recording events with\n    it by cascade.\n\n    The link tables are cleared explicitly first, because a link may point at\n    this programme's module from a quiz that belongs to another programme.\n\n    ``ksb_mappings`` is still wiped, and that loses nothing: since 0042 a\n    component owns its mappings in its own ``ksb_mappings`` JSONB column and\n    that table is a projection of it (``component_ksb_mappings_from_row``\n    prefers the JSONB).\n\n    Learner accounts, progress and enrolment rows are never touched. The\n    training-plan tables that reference this content are RESTRICT-guarded and\n    surface through ``plan['blockers']`` before anything is deleted.\n    \"\"\"\n    candidates = plan.get('candidates') or []\n    child = plan.get('childIds') or {}\n    removed = {}\n    if not candidates:\n        return removed\n\n    def wipe(table, clauses):\n        where_sql, params = curriculum_where_any(clauses)\n        if not where_sql or not table_exists(table):\n            return\n        # Links that reference these rows with RESTRICT go first, as in\n        # authoring_delete: a cohort's holiday choices, a group's coaches.\n        if table == COHORT_AUTHORING_DETAILS_TABLE:\n            calendar_holidays.release_cohorts(where_sql, params)\n        if table == GROUPS_TABLE:\n            group_coaches.release_groups(where_sql, params)\n        rows = delete_rows(table, where_sql, params)\n        log_curriculum_storage('hard_delete', table, rows=rows)\n        if rows:\n            removed[table] = len(rows)\n\n    programme_clause = curriculum_in_clause('programme_id', candidates)\n    module_clause = curriculum_in_clause('module_catalogue_id', child.get('moduleIds'))\n    week_clause = curriculum_in_clause('week_id', child.get('weekIds'))\n    component_clause = curriculum_in_clause('component_id', child.get('componentIds'))\n\n    # Refuse before anything is written, then unhook what is kept.\n    if not force_content:\n        refuse_if_programme_owns_content(plan)\n    unhook_programme_reusables(plan, removed)\n\n    # Mappings are placed by component; the plan's componentIds already hold\n    # every component of the programme's modules and weeks.\n    wipe(AUTHORING_KSB_MAPPINGS_TABLE, [component_clause])\n    wipe('quiz_component_links', [component_clause])\n    wipe('quiz_course_links', [module_clause, week_clause])\n    if force_content:\n        # Authored content is explicitly opted into deletion here. Components\n        # must go before weeks, and both must go before their parent modules.\n        wipe(AUTHORING_COMPONENTS_TABLE, [\n            curriculum_in_clause('id', child.get('componentIds')),\n        ])\n        wipe(AUTHORING_WEEKS_TABLE, [\n            curriculum_in_clause('id', child.get('weekIds')),\n        ])\n    wipe('tutor_module_notifications', [module_clause])\n    wipe('module_completion_criteria', [module_clause])\n    wipe('module_details', [module_clause])\n    wipe(LIVE_SESSIONS_TABLE, [module_clause])\n    wipe('free_programme_components', [programme_clause])\n    wipe('free_programme_modules', [programme_clause])\n    wipe(AUTHORING_MODULES_TABLE, [\n        curriculum_in_clause('module_catalogue_id', child.get('moduleIds')),\n    ])\n    wipe(GROUPS_TABLE, [curriculum_in_clause('group_id', child.get('groupIds'))])\n    wipe(COHORT_AUTHORING_DETAILS_TABLE, [\n        curriculum_in_clause('cohort_id', child.get('cohortIds')),\n    ])\n    wipe('programmes', [curriculum_in_clause(programme_config_key_column(), candidates)])\n\n    invalidate_curriculum_cache()\n    return removed",
+      "decorators": [],
+      "owner": "curriculum_api.catalogue.application.programme_deletion",
+      "deps": [
+        "AUTHORING_COMPONENTS_TABLE",
+        "AUTHORING_KSB_MAPPINGS_TABLE",
+        "AUTHORING_MODULES_TABLE",
+        "AUTHORING_WEEKS_TABLE",
+        "COHORT_AUTHORING_DETAILS_TABLE",
+        "GROUPS_TABLE",
+        "LIVE_SESSIONS_TABLE",
+        "calendar_holidays",
+        "curriculum_in_clause",
+        "curriculum_where_any",
+        "delete_rows",
+        "group_coaches",
+        "invalidate_curriculum_cache",
+        "log_curriculum_storage",
+        "programme_config_key_column",
+        "refuse_if_programme_owns_content",
+        "table_exists",
+        "unhook_programme_reusables"
+      ],
+      "callbacks": {}
+    },
+    "delete_module_authoring_structure": {
+      "source": "def delete_module_authoring_structure(module_catalogue_id):\n    module_catalogue_id = clean_str(module_catalogue_id)\n    ensure_module_authoring_tables()\n    existing = authoring_fetch_all(AUTHORING_MODULES_TABLE, 'module_catalogue_id = %s', [module_catalogue_id])\n    with transaction.atomic():\n        archive_module_child_quizzes(module_catalogue_id)\n        authoring_soft_delete(AUTHORING_KSB_MAPPINGS_TABLE, *ksb_mapping_placement.where(module_catalogue_id), via_parent=module_catalogue_id, deleted_by='module-delete')\n        authoring_soft_delete(AUTHORING_COMPONENTS_TABLE, 'module_catalogue_id = %s', [module_catalogue_id], via_parent=module_catalogue_id, deleted_by='module-delete')\n        authoring_soft_delete(AUTHORING_WEEKS_TABLE, 'module_catalogue_id = %s', [module_catalogue_id], via_parent=module_catalogue_id, deleted_by='module-delete')\n        authoring_soft_delete(AUTHORING_COMPLETION_TABLE, 'module_catalogue_id = %s', [module_catalogue_id], via_parent=module_catalogue_id, deleted_by='module-delete')\n        authoring_soft_delete(AUTHORING_ADVANCED_TABLE, 'module_catalogue_id = %s', [module_catalogue_id], via_parent=module_catalogue_id, deleted_by='module-delete')\n        authoring_soft_delete(AUTHORING_MODULES_TABLE, 'module_catalogue_id = %s', [module_catalogue_id], deleted_by='module-delete')\n    invalidate_curriculum_cache()\n    return bool(existing)",
+      "decorators": [
+        "with_course_storage"
+      ],
+      "owner": "curriculum_api.catalogue.application.module_lifecycle",
+      "deps": [
+        "AUTHORING_ADVANCED_TABLE",
+        "AUTHORING_COMPLETION_TABLE",
+        "AUTHORING_COMPONENTS_TABLE",
+        "AUTHORING_KSB_MAPPINGS_TABLE",
+        "AUTHORING_MODULES_TABLE",
+        "AUTHORING_WEEKS_TABLE",
+        "archive_module_child_quizzes",
+        "authoring_fetch_all",
+        "authoring_soft_delete",
+        "clean_str",
+        "ensure_module_authoring_tables",
+        "invalidate_curriculum_cache",
+        "ksb_mapping_placement",
+        "transaction"
+      ],
+      "callbacks": {}
+    },
+    "delete_rows": {
+      "source": "def delete_rows(table, where_sql, where_params):\n    if table == GROUPS_TABLE:\n        # A group's coach links reference it (RESTRICT): they go with it.\n        group_coaches.release_groups(where_sql, where_params)\n    query = f'delete from {table_name(table)} where {where_sql} returning *'\n    rows = written_rows(table, execute_returning(query, where_params))\n    # Recorded from the rows the delete returned, which is the only moment the\n    # content still exists. Querying the record afterwards finds nothing, and an\n    # audit trail whose delete entry cannot say what was deleted is the one entry\n    # that most needed to.\n    versioning.record_deleted_rows(table, rows)\n    note_live_rows(table, rows)\n    return rows",
+      "decorators": [],
+      "owner": "curriculum_api.catalogue.infrastructure.lifecycle_writes",
+      "deps": [
+        "GROUPS_TABLE",
+        "execute_returning",
+        "group_coaches",
+        "note_live_rows",
+        "table_name",
+        "versioning",
+        "written_rows"
+      ],
+      "callbacks": {}
+    },
+    "soft_delete_payload": {
+      "source": "def soft_delete_payload(table, *, via_parent='', deleted_by='system', extra=None):\n    if archive_state.uses_status(table):\n        # Normalised schema: status is the whole archive record. Who/why and the\n        # parent it went with are written to history (see soft_delete_rows).\n        return {**archive_state.archive_values(), **(extra or {})}\n    payload = {\n        'deleted_at': datetime.utcnow(),\n        'deleted_by': clean_str(deleted_by) or 'system',\n        # NULL, not '', when nothing above took this row down. Readers tell a\n        # cascade from a standalone delete by this column, and an empty string\n        # reads as \"deleted via a parent\" to any SQL using `IS NOT NULL` --\n        # which kept individually-deleted content visible to assigned learners.\n        'deleted_via_parent': clean_str(via_parent) or None,\n        'updated_at': datetime.utcnow(),\n        **(extra or {}),\n    }\n    return payload",
+      "decorators": [],
+      "owner": "curriculum_api.catalogue.infrastructure.lifecycle_writes",
+      "deps": [
+        "archive_state",
+        "clean_str",
+        "datetime"
+      ],
+      "callbacks": {}
+    },
+    "restore_soft_delete_payload": {
+      "source": "def restore_soft_delete_payload(table):\n    if archive_state.uses_status(table):\n        return archive_state.restore_values()\n    payload = {'updated_at': datetime.utcnow()}\n    if has_column(table, 'deleted_at'):\n        payload['deleted_at'] = None\n    if has_column(table, 'deleted_by'):\n        payload['deleted_by'] = None\n    if has_column(table, 'deleted_via_parent'):\n        payload['deleted_via_parent'] = None\n    return payload",
+      "decorators": [],
+      "owner": "curriculum_api.catalogue.infrastructure.lifecycle_writes",
+      "deps": [
+        "archive_state",
+        "datetime",
+        "has_column"
+      ],
+      "callbacks": {}
+    },
+    "soft_delete_rows": {
+      "source": "def soft_delete_rows(table, where_sql, where_params=None, *, via_parent='', deleted_by='system', extra=None):\n    payload = soft_delete_payload(table, via_parent=via_parent, deleted_by=deleted_by, extra=extra)\n    if not any(column in column_names(table) for column in payload):\n        return []\n    active_checks = []\n    if archive_state.uses_status(table):\n        active_checks.append(archive_state.live_sql())\n    if has_column(table, 'deleted_at'):\n        active_checks.append(f'{quote_ident(\"deleted_at\")} is null')\n    if not active_checks:\n        active_checks.append('1 = 1')\n    guarded_where = f'({where_sql}) and (' + ' and '.join(active_checks) + ')'\n    # `deleted_via_parent` is deliberately NULL for a standalone delete, and\n    # filtered_payload drops None unless the column is allowed to be nulled --\n    # without this the column would keep a stale value from an earlier cascade.\n    # History records the reason and the parent this archive went with: the\n    # normalised schema keeps neither on the row, and restore reads them back.\n    with archive_state.archive_context(deleted_by, via_parent):\n        rows = update_rows(table, guarded_where, where_params or [], payload,\n                           allow_null_columns=['deleted_via_parent'])\n    # Logged even when it matches nothing: a soft delete that hits zero rows is\n    # almost always the interesting case (already archived, or wrong id).\n    log_curriculum_storage(\n        'soft_delete', table, rows=rows,\n        entity_id=' '.join(clean_str(value) for value in (where_params or [])),\n        parent_id=via_parent, reason=deleted_by,\n    )\n    # No record_rows here: this writes through update_rows, which already\n    # recorded the revision. An archive is a revision like any other, and the\n    # snapshot holds what the record contained at the moment it was withdrawn --\n    # the whole reason to keep history of content that no longer appears.\n    return rows",
+      "decorators": [],
+      "owner": "curriculum_api.catalogue.infrastructure.lifecycle_writes",
+      "deps": [
+        "archive_state",
+        "clean_str",
+        "column_names",
+        "has_column",
+        "log_curriculum_storage",
+        "quote_ident",
+        "soft_delete_payload",
+        "update_rows"
+      ],
+      "callbacks": {}
+    },
+    "restore_rows_via_parent": {
+      "source": "def restore_rows_via_parent(table, parent_id, bounds=None):\n    \"\"\"Undo one soft-delete cascade, and only that one.\n\n    Rows are matched on ``deleted_via_parent``, the marker\n    ``soft_delete_programme_authoring_structure`` stamps on everything it takes\n    down. A cohort archived on its own carries an empty marker, so restoring the\n    programme leaves it archived rather than silently reviving it.\n\n    ``bounds`` -- ``module_archive_event_bounds`` of the parent -- narrows the\n    match to rows stamped in the same moment as the parent's own archive. Rows\n    left stamped by an earlier archive of the same parent (one later undone by a\n    save rather than a restore) are not part of this cascade and stay deleted.\n    \"\"\"\n    if archive_state.uses_status(table):\n        return restore_status_rows_via_parent(table, parent_id, bounds)\n    if not has_column(table, 'deleted_via_parent'):\n        return []\n    payload = restore_soft_delete_payload(table)\n    where_sql = f'{quote_ident(\"deleted_via_parent\")} = %s'\n    where_params = [parent_id]\n    if bounds is not None and has_column(table, 'deleted_at'):\n        where_sql += f' and {quote_ident(\"deleted_at\")} between %s and %s'\n        where_params += [bounds[0], bounds[1]]\n    rows = update_rows(\n        table,\n        where_sql,\n        where_params,\n        payload,\n        allow_null_columns=RESTORE_NULLABLE_COLUMNS,\n    )\n    log_curriculum_storage('restore', table, rows=rows, parent_id=parent_id)\n    return rows",
+      "decorators": [],
+      "owner": "curriculum_api.catalogue.infrastructure.lifecycle_writes",
+      "deps": [
+        "RESTORE_NULLABLE_COLUMNS",
+        "archive_state",
+        "has_column",
+        "log_curriculum_storage",
+        "quote_ident",
+        "restore_soft_delete_payload",
+        "restore_status_rows_via_parent",
+        "update_rows"
+      ],
+      "callbacks": {}
+    },
+    "restore_status_rows_via_parent": {
+      "source": "def restore_status_rows_via_parent(table, parent_id, bounds=None):\n    \"\"\"``restore_rows_via_parent`` on the normalised schema: the rows history says went with the parent.\"\"\"\n    key = LIFECYCLE_KEY_COLUMNS[table]\n    chosen = archive_state.archived_with(table, parent_id, archived_rows_under(table, parent_id), bounds, key_column=key)\n    ids = [clean_str(row.get(key)) for row in chosen if clean_str(row.get(key))]\n    rows = []\n    for start in range(0, len(ids), 500):\n        chunk = ids[start:start + 500]\n        rows += update_rows(\n            table, f'{quote_ident(key)} in ({\", \".join([\"%s\"] * len(chunk))})', chunk, archive_state.restore_values(),\n        )\n    log_curriculum_storage('restore', table, rows=rows, parent_id=parent_id)\n    return rows",
+      "decorators": [],
+      "owner": "curriculum_api.catalogue.infrastructure.lifecycle_writes",
+      "deps": [
+        "LIFECYCLE_KEY_COLUMNS",
+        "archive_state",
+        "archived_rows_under",
+        "clean_str",
+        "log_curriculum_storage",
+        "quote_ident",
+        "update_rows"
+      ],
+      "callbacks": {}
+    },
+    "authoring_delete": {
+      "source": "def authoring_delete(table, where_sql='1 = 1', params=None):\n    \"\"\"Hard-delete authoring rows, recording what they held before they went.\n\n    ``returning *`` is asked for only when the table is one history covers, so\n    the sweeps that clear rows nothing has ever pointed at do not pay to\n    serialise them. On sqlite, which has no DELETE ... RETURNING, the rows are\n    read back inside the same transaction first.\n    \"\"\"\n    ensure_module_authoring_tables()\n    if table == COHORT_AUTHORING_DETAILS_TABLE:\n        # A cohort's holiday choices reference it (RESTRICT): they go with it.\n        calendar_holidays.release_cohorts(where_sql, params)\n    if table == GROUPS_TABLE:\n        # A group's coach links reference it (RESTRICT): they go with it.\n        group_coaches.release_groups(where_sql, params)\n    versioned = table in versioning.VERSIONED_TABLES\n    if not versioned:\n        with connection.cursor() as cursor:\n            cursor.execute(f'delete from {authoring_table_name(table)} where {where_sql}', params or [])\n        return\n    if connection.vendor == 'postgresql':\n        with connection.cursor() as cursor:\n            cursor.execute(\n                f'delete from {authoring_table_name(table)} where {where_sql} returning *',\n                params or [],\n            )\n            rows = written_rows(table, rows_as_dicts(cursor))\n    else:\n        rows = authoring_fetch_all(table, where_sql, params or [], ensure_tables=False)\n        with connection.cursor() as cursor:\n            cursor.execute(f'delete from {authoring_table_name(table)} where {where_sql}', params or [])\n    versioning.record_deleted_rows(table, rows)\n    note_live_rows(table, rows)",
+      "decorators": [],
+      "owner": "curriculum_api.catalogue.infrastructure.lifecycle_writes",
+      "deps": [
+        "COHORT_AUTHORING_DETAILS_TABLE",
+        "GROUPS_TABLE",
+        "authoring_fetch_all",
+        "authoring_table_name",
+        "calendar_holidays",
+        "connection",
+        "ensure_module_authoring_tables",
+        "group_coaches",
+        "note_live_rows",
+        "rows_as_dicts",
+        "versioning",
+        "written_rows"
+      ],
+      "callbacks": {}
+    },
+    "archive_module_child_quizzes": {
+      "source": "def archive_module_child_quizzes(module_catalogue_id, *, include_deleted_children=False, apply=True):\n    \"\"\"Move quizzes owned only by this module into the Quiz Archive.\n\n    A quiz can be attached through the Module Builder's ``linkedQuizId``, the\n    normalised module/course link table, or the older component link table.  A\n    shared quiz is not a child of one module, so an active reference from another\n    module (or a week template) keeps it live.  Attempts, questions and links are\n    deliberately preserved: ``trash`` is the Quiz Workspace's recoverable archive\n    state, not a hard delete.\n    \"\"\"\n    module_catalogue_id = clean_str(module_catalogue_id)\n    if not module_catalogue_id or not table_exists('quizzes'):\n        return []\n\n    component_active_sql = ''\n    if not include_deleted_children:\n        component_active_sql = f' and {archive_state.live_sql()}'\n    module_components = authoring_fetch_all(\n        AUTHORING_COMPONENTS_TABLE,\n        f'module_catalogue_id = %s{component_active_sql}',\n        [module_catalogue_id],\n    )\n    component_ids = [clean_str(row.get('id')) for row in module_components if clean_str(row.get('id'))]\n    candidate_ids = set()\n    for component in module_components:\n        settings = parse_json_value(component.get('settings_json'), {})\n        quiz_id = _quiz_reference_id(settings.get('linkedQuizId') if isinstance(settings, dict) else None)\n        if quiz_id:\n            candidate_ids.add(quiz_id)\n\n    if table_exists('quiz_course_links'):\n        course_rows = fetch_all(\n            f'select quiz_id from {table_name(\"quiz_course_links\")} where module_catalogue_id = %s',\n            [module_catalogue_id],\n        )\n        candidate_ids.update(\n            quiz_id for quiz_id in (_quiz_reference_id(row.get('quiz_id')) for row in course_rows) if quiz_id\n        )\n\n    if component_ids and table_exists('quiz_component_links'):\n        placeholders = ', '.join(['%s'] * len(component_ids))\n        component_link_rows = fetch_all(\n            f'select quiz_id from {table_name(\"quiz_component_links\")} where component_id in ({placeholders})',\n            component_ids,\n        )\n        candidate_ids.update(\n            quiz_id for quiz_id in (_quiz_reference_id(row.get('quiz_id')) for row in component_link_rows) if quiz_id\n        )\n\n    # Legacy quizzes may carry only the module's week id/name metadata.\n    week_active_sql = ''\n    if not include_deleted_children:\n        week_active_sql = f' and {archive_state.live_sql()}'\n    module_weeks = authoring_fetch_all(\n        AUTHORING_WEEKS_TABLE,\n        f'module_catalogue_id = %s{week_active_sql}',\n        [module_catalogue_id],\n    )\n    week_ids = [clean_str(row.get('id')) for row in module_weeks if clean_str(row.get('id'))]\n    module_rows = authoring_fetch_all(AUTHORING_MODULES_TABLE, 'module_catalogue_id = %s', [module_catalogue_id])\n    module_row = module_rows[0] if module_rows else {}\n    legacy_clauses = []\n    legacy_params = []\n    if week_ids:\n        placeholders = ', '.join(['%s'] * len(week_ids))\n        legacy_clauses.append(f'week_id in ({placeholders})')\n        legacy_params.extend(week_ids)\n    module_title = clean_str(module_row.get('title'))\n    if module_title:\n        programme_id = clean_str(module_row.get('programme_id'))\n        programme_name = clean_str(module_row.get('programme_name'))\n        scope = []\n        scope_params = []\n        if programme_id:\n            scope.extend(['lower(coalesce(programme_id, \\'\\')) = lower(%s)', 'lower(coalesce(programme, \\'\\')) = lower(%s)'])\n            scope_params.extend([programme_id, programme_id])\n        if programme_name:\n            scope.extend(['lower(coalesce(programme, \\'\\')) = lower(%s)', 'lower(coalesce(programme_id, \\'\\')) = lower(%s)'])\n            scope_params.extend([programme_name, programme_name])\n        legacy_clauses.append(\n            '(lower(coalesce(module, \\'\\')) = lower(%s)'\n            + (f' and ({\" or \".join(scope)})' if scope else '')\n            + ')'\n        )\n        legacy_params.append(module_title)\n        legacy_params.extend(scope_params)\n    if legacy_clauses:\n        legacy_rows = fetch_all(\n            f'select id from {table_name(\"quizzes\")} where (' + ' or '.join(legacy_clauses) + ')',\n            legacy_params,\n        )\n        candidate_ids.update(\n            quiz_id for quiz_id in (_quiz_reference_id(row.get('id')) for row in legacy_rows) if quiz_id\n        )\n\n    if not candidate_ids:\n        return []\n\n    # Do not report/archive quizzes that are already in the Quiz Archive.\n    placeholders = ', '.join(['%s'] * len(candidate_ids))\n    current_quizzes = fetch_all(\n        f'select id, status from {table_name(\"quizzes\")} where id in ({placeholders})',\n        sorted(candidate_ids),\n    )\n    candidate_ids = {\n        quiz_id\n        for row in current_quizzes\n        for quiz_id in [_quiz_reference_id(row.get('id'))]\n        if quiz_id and clean_str(row.get('status')).lower() != 'trash'\n    }\n    if not candidate_ids:\n        return []\n\n    # Preserve quizzes that still have an active owner outside this module.\n    shared_ids = set()\n    placeholders = ', '.join(['%s'] * len(candidate_ids))\n    candidate_params = sorted(candidate_ids)\n    if table_exists('quiz_course_links'):\n        other_links = fetch_all(\n            f'select quiz_id, module_catalogue_id from {table_name(\"quiz_course_links\")} '\n            f'where quiz_id in ({placeholders}) and module_catalogue_id <> %s',\n            [*candidate_params, module_catalogue_id],\n        )\n        other_module_ids = {clean_str(row.get('module_catalogue_id')) for row in other_links if clean_str(row.get('module_catalogue_id'))}\n        active_other_ids = set()\n        if other_module_ids:\n            other_placeholders = ', '.join(['%s'] * len(other_module_ids))\n            other_modules = authoring_fetch_all(\n                AUTHORING_MODULES_TABLE,\n                f'module_catalogue_id in ({other_placeholders})',\n                sorted(other_module_ids),\n            )\n            active_other_ids = {\n                clean_str(row.get('module_catalogue_id'))\n                for row in other_modules\n                if not curriculum_row_effectively_deleted(row)\n            }\n        shared_ids.update(\n            quiz_id\n            for row in other_links\n            if clean_str(row.get('module_catalogue_id')) in active_other_ids\n            for quiz_id in [_quiz_reference_id(row.get('quiz_id'))]\n            if quiz_id\n        )\n\n    # Only the two columns this reads. A ``select *`` here pulled every other\n    # module's components (~40k rows) and, on the normalised schema, derived\n    # each one's KSB mapping list as well -- an archive of a two-week module\n    # took over 100 s.\n    if connection.vendor == 'postgresql' and has_column(AUTHORING_COMPONENTS_TABLE, 'settings_json'):\n        # Only components that link a quiz can share one; read just that value.\n        linked = fetch_all(\n            f\"select settings_json ->> 'linkedQuizId' as linked_quiz_id \"\n            f'from {table_name(AUTHORING_COMPONENTS_TABLE)} '\n            f'where module_catalogue_id <> %s{component_active_sql} '\n            f\"and coalesce(settings_json ->> 'linkedQuizId', '') <> ''\",\n            [module_catalogue_id],\n        )\n        linked_values = [row.get('linked_quiz_id') for row in linked]\n    else:\n        other_components = authoring_fetch_all(\n            AUTHORING_COMPONENTS_TABLE,\n            f'module_catalogue_id <> %s{component_active_sql}',\n            [module_catalogue_id],\n            columns=['id', 'settings_json'],\n        )\n        linked_values = []\n        for component in other_components:\n            settings = parse_json_value(component.get('settings_json'), {})\n            linked_values.append(settings.get('linkedQuizId') if isinstance(settings, dict) else None)\n    for value in linked_values:\n        quiz_id = _quiz_reference_id(value)\n        if quiz_id in candidate_ids:\n            shared_ids.add(quiz_id)\n    if table_exists('quiz_component_links'):\n        # The same set of other active components, as a subquery rather than\n        # tens of thousands of bound ids.\n        other_component_links = fetch_all(\n            f'select quiz_id from {table_name(\"quiz_component_links\")} '\n            f'where quiz_id in ({placeholders}) and component_id in ('\n            f'select id from {table_name(AUTHORING_COMPONENTS_TABLE)} '\n            f'where module_catalogue_id <> %s{component_active_sql})',\n            [*candidate_params, module_catalogue_id],\n        )\n        shared_ids.update(\n            quiz_id for quiz_id in (_quiz_reference_id(row.get('quiz_id')) for row in other_component_links) if quiz_id\n        )\n\n    # A Week Builder template is another active owner and must not be broken.\n    if table_exists('week_template_components') and has_column('week_template_components', 'settings_json'):\n        template_rows = fetch_all(f'select settings_json from {table_name(\"week_template_components\")}')\n        for row in template_rows:\n            settings = parse_json_value(row.get('settings_json'), {})\n            quiz_id = _quiz_reference_id(settings.get('linkedQuizId') if isinstance(settings, dict) else None)\n            if quiz_id in candidate_ids:\n                shared_ids.add(quiz_id)\n\n    archive_ids = sorted(candidate_ids - shared_ids)\n    if not archive_ids or not apply:\n        return archive_ids\n    placeholders = ', '.join(['%s'] * len(archive_ids))\n    update_rows(\n        'quizzes',\n        f'id in ({placeholders}) and lower(coalesce(status, \\'\\')) <> \\'trash\\'',\n        archive_ids,\n        {'status': 'trash', 'updated_at': datetime.utcnow()},\n    )\n    return archive_ids",
+      "decorators": [],
+      "owner": "curriculum_api.catalogue.infrastructure.quiz_lifecycle",
+      "deps": [
+        "AUTHORING_COMPONENTS_TABLE",
+        "AUTHORING_MODULES_TABLE",
+        "AUTHORING_WEEKS_TABLE",
+        "_quiz_reference_id",
+        "archive_state",
+        "authoring_fetch_all",
+        "clean_str",
+        "connection",
+        "curriculum_row_effectively_deleted",
+        "datetime",
+        "fetch_all",
+        "has_column",
+        "parse_json_value",
+        "table_exists",
+        "table_name",
+        "update_rows"
+      ],
+      "callbacks": {}
+    },
+    "permanent_programme_delete_response": {
+      "source": "def permanent_programme_delete_response(identifier, programme=None, config=None, force_content=False):\n    \"\"\"HTTP outcome of a permanent programme delete.\n\n    Archived-only by design: ``is_archived`` is the switch that turns an\n    irreversible delete on. A live programme is refused with 409 so the caller\n    archives it first, which is what the plain DELETE does.\n    \"\"\"\n    archived = is_archived_program_config(config) or programme_status_is_archived(\n        (programme or {}).get('status')\n    )\n    if not archived:\n        return json_error(\n            'Archive the programme before deleting it permanently.',\n            status=409,\n            reason='programme-not-archived',\n            deleted=False,\n            permanent=False,\n            id=clean_str(identifier),\n        )\n\n    plan = programme_permanent_delete_plan(identifier, programme, config)\n    if plan['blockers']:\n        return json_error(\n            'Learner training plans still reference this curriculum, so the programme '\n            'cannot be deleted permanently.',\n            status=409,\n            reason='programme-has-learner-delivery',\n            deleted=False,\n            permanent=False,\n            id=clean_str(identifier),\n            blockers=plan['blockers'],\n        )\n    for candidate in plan['candidates']:\n        blocked = permanent_delete_reference_refusal('programme', candidate)\n        if blocked is not None:\n            return blocked\n\n    try:\n        with transaction.atomic():\n            removed = permanently_delete_programme_structure(plan, force_content=force_content)\n        # Again, now the delete is committed. The invalidation inside the\n        # transaction cannot be the last word: a read arriving before the commit\n        # refills every cache from rows that are on their way out, and the\n        # programme then keeps its card on the list until that entry ages out --\n        # which is exactly what makes a discarded run look like it was saved.\n        invalidate_curriculum_cache()\n    except ProgrammeContentRetained as exc:\n        # The programme still owns authored content: refused whole (nothing was\n        # written) and it stays archived.\n        logger.info('Permanent delete of programme %s refused: %s', identifier, exc)\n        return json_error(\n            str(exc), status=409, reason='programme-content-cannot-detach',\n            deleted=False, permanent=False, id=clean_str(identifier),\n        )\n    except (IntegrityError, DatabaseError) as exc:\n        logger.warning('Permanent delete of programme %s was refused: %s', identifier, exc)\n        return json_error(\n            'The database refused the permanent delete because other rows still '\n            'reference this programme.',\n            status=409,\n            reason='programme-delete-restricted',\n            deleted=False,\n            permanent=False,\n            id=clean_str(identifier),\n            detail=clean_str(str(exc)),\n        )\n\n    # Never report a delete the database did not make. A candidate set that\n    # matched no programme row leaves the wipes as no-ops, and answering 'deleted'\n    # to that is what tells a discarded wizard run it left nothing behind while\n    # the programme is still on the list. The archive that ran first still\n    # stands, so this is the same outcome the caller already handles for a\n    # refusal: out of the active lists, still in the database.\n    if programme_config_rows_remaining(plan['candidates']):\n        log_curriculum_decision(\n            'programme.delete', outcome='incomplete', entity_id=identifier,\n            reason='programme-row-survived-delete',\n        )\n        return json_error(\n            'The programme row is still in the database after the delete, so it was '\n            'not removed permanently. It stays archived and out of the active lists.',\n            status=409,\n            reason='programme-delete-incomplete',\n            deleted=False,\n            permanent=False,\n            id=clean_str(identifier),\n            removed=removed,\n        )\n\n    return JsonResponse({\n        'deleted': True,\n        'permanent': True,\n        'forced': bool(force_content),\n        'archived': False,\n        'id': clean_str(identifier),\n        'removed': removed,\n        'learners': plan['learners'],\n        'message': 'Programme and every curriculum row beneath it were deleted permanently.',\n    })",
+      "decorators": [],
+      "owner": "curriculum_api.catalogue.api.lifecycle_commands",
+      "deps": [
+        "DatabaseError",
+        "IntegrityError",
+        "JsonResponse",
+        "ProgrammeContentRetained",
+        "clean_str",
+        "invalidate_curriculum_cache",
+        "is_archived_program_config",
+        "json_error",
+        "log_curriculum_decision",
+        "logger",
+        "permanent_delete_reference_refusal",
+        "permanently_delete_programme_structure",
+        "programme_config_rows_remaining",
+        "programme_permanent_delete_plan",
+        "programme_status_is_archived",
+        "transaction"
+      ],
+      "callbacks": {}
+    },
+    "curriculum_module_restore": {
+      "source": "def curriculum_module_restore(request, identifier):\n    \"\"\"Take a module, and everything archived under it, back out of the archive.\"\"\"\n    if request.method != 'POST':\n        return json_error('Method not allowed.', status=405)\n\n    catalogue_id = resolve_stored_module_catalogue_id(clean_str(identifier))\n    module_row = authoring_module_exists(catalogue_id) if catalogue_id else None\n    if not module_row:\n        log_curriculum_decision('module.restore', outcome='rejected', reason='not-found', entity_id=identifier)\n        return json_error('Module not found.', status=404)\n    if not curriculum_row_effectively_deleted(module_row):\n        return json_error(\n            'Module is not archived.', status=409,\n            reason='module-not-archived', restored=False, id=catalogue_id,\n        )\n\n    programme_id = clean_str(module_row.get('programme_id'))\n    archived_programme = archived_parent_programme(programme_id)\n    if archived_programme:\n        name = clean_str(archived_programme.get('name')) or 'The programme'\n        return json_error(\n            f'{name} is archived, so this module has no programme to come back to. Restore the '\n            'programme instead - it brings back everything archived with it, this module included.',\n            status=409, reason='programme-archived', restored=False, id=catalogue_id,\n        )\n\n    with transaction.atomic():\n        # Matched on the marker this module's own archive stamped, so only that\n        # cascade comes back: a component deleted by hand beforehand stays\n        # deleted rather than being resurrected by an unrelated restore.\n        # ...and only rows that archive stamped: an earlier archive of this\n        # same module, undone by a save, left its children stamped with this\n        # id too, and they are not part of what is being restored.\n        bounds = module_archive_event_bounds(module_row)\n        restored = {\n            table: len(restore_rows_via_parent(table, catalogue_id, bounds))\n            for table in MODULE_CHILD_AUTHORING_TABLES\n        }\n        update_rows(\n            AUTHORING_MODULES_TABLE, 'module_catalogue_id = %s', [catalogue_id],\n            restore_soft_delete_payload(AUTHORING_MODULES_TABLE),\n            allow_null_columns=RESTORE_NULLABLE_COLUMNS,\n        )\n    invalidate_curriculum_cache()\n    log_curriculum_decision(\n        'module.restore', outcome='restored', entity_id=catalogue_id,\n        parent_id=clean_str(module_row.get('group_id')),\n        reason=','.join(f'{table}:{count}' for table, count in sorted(restored.items())),\n    )\n    return JsonResponse({\n        'restored': True,\n        'id': catalogue_id,\n        'details': {\n            'weeks': restored.get(AUTHORING_WEEKS_TABLE, 0),\n            'components': restored.get(AUTHORING_COMPONENTS_TABLE, 0),\n        },\n        'message': f'Module restored. {ARCHIVE_MODULE_QUIZ_NOTE}',\n    })",
+      "decorators": [
+        "csrf_exempt",
+        "with_course_storage"
+      ],
+      "owner": "curriculum_api.catalogue.api.lifecycle_commands",
+      "deps": [
+        "ARCHIVE_MODULE_QUIZ_NOTE",
+        "AUTHORING_COMPONENTS_TABLE",
+        "AUTHORING_MODULES_TABLE",
+        "AUTHORING_WEEKS_TABLE",
+        "JsonResponse",
+        "MODULE_CHILD_AUTHORING_TABLES",
+        "RESTORE_NULLABLE_COLUMNS",
+        "archived_parent_programme",
+        "authoring_module_exists",
+        "clean_str",
+        "curriculum_row_effectively_deleted",
+        "invalidate_curriculum_cache",
+        "json_error",
+        "log_curriculum_decision",
+        "module_archive_event_bounds",
+        "resolve_stored_module_catalogue_id",
+        "restore_rows_via_parent",
+        "restore_soft_delete_payload",
+        "transaction",
+        "update_rows"
+      ],
+      "callbacks": {}
+    },
+    "permanent_module_delete_response": {
+      "source": "def permanent_module_delete_response(module_row):\n    \"\"\"HTTP outcome of a permanent module delete: the module and all its authoring.\"\"\"\n    catalogue_id = clean_str(module_row.get('module_catalogue_id'))\n    if not curriculum_row_effectively_deleted(module_row):\n        return json_error(\n            'Archive the module before deleting it permanently.',\n            status=409, reason='module-not-archived', deleted=False, permanent=False, id=catalogue_id,\n        )\n    # A module archived before this check existed can still own a running\n    # calendar; deleting it would orphan that calendar's rows for good.\n    blocked = module_teams_calendar_block_response(catalogue_id)\n    if blocked is not None:\n        return blocked\n    blocked = permanent_delete_reference_refusal('module', catalogue_id)\n    if blocked is not None:\n        return blocked\n\n    try:\n        with transaction.atomic():\n            # Children first: the module row is what the rest point at, and a\n            # database with the foreign keys in place refuses it the other way\n            # round.\n            removed = {\n                table: len(delete_rows(table, 'module_catalogue_id = %s', [catalogue_id]))\n                for table in MODULE_CHILD_AUTHORING_TABLES\n            }\n            removed[AUTHORING_MODULES_TABLE] = len(\n                delete_rows(AUTHORING_MODULES_TABLE, 'module_catalogue_id = %s', [catalogue_id])\n            )\n    except (IntegrityError, DatabaseError) as exc:\n        logger.warning('Permanent delete of module %s was refused: %s', catalogue_id, exc)\n        return json_error(\n            'The database refused the permanent delete because other rows still reference this module.',\n            status=409, reason='module-delete-restricted', deleted=False, permanent=False,\n            id=catalogue_id, detail=clean_str(str(exc)),\n        )\n\n    invalidate_curriculum_cache()\n    log_curriculum_decision(\n        'module.delete', outcome='permanent', entity_id=catalogue_id,\n        parent_id=clean_str(module_row.get('group_id')),\n        reason=','.join(f'{table}:{count}' for table, count in sorted(removed.items())),\n    )\n    return JsonResponse({\n        'deleted': True,\n        'permanent': True,\n        'id': catalogue_id,\n        'removed': removed,\n        'message': 'Module and its authored weeks, components and mappings were removed from the database.',\n    })",
+      "decorators": [],
+      "owner": "curriculum_api.catalogue.api.lifecycle_commands",
+      "deps": [
+        "AUTHORING_MODULES_TABLE",
+        "DatabaseError",
+        "IntegrityError",
+        "JsonResponse",
+        "MODULE_CHILD_AUTHORING_TABLES",
+        "clean_str",
+        "curriculum_row_effectively_deleted",
+        "delete_rows",
+        "invalidate_curriculum_cache",
+        "json_error",
+        "log_curriculum_decision",
+        "logger",
+        "module_teams_calendar_block_response",
+        "permanent_delete_reference_refusal",
+        "transaction"
+      ],
+      "callbacks": {}
+    },
+    "curriculum_module_component_detail": {
+      "source": "def curriculum_module_component_detail(request, module_catalogue_id, component_id):\n    if request.method != 'DELETE':\n        return json_error('Method not allowed.', status=405)\n    module_catalogue_id = clean_str(module_catalogue_id)\n    component_id = clean_str(component_id)\n    ensure_module_authoring_tables()\n    payload = json_body(request) if request.body else {}\n    with transaction.atomic():\n        refused = refuse_stale_module_write(request, payload or {}, module_catalogue_id)\n        if refused is not None:\n            return refused\n        from .module_collaboration import check_removal\n        refused = check_removal(request, module_catalogue_id, 'component', component_id, payload or {})\n        if refused is not None:\n            return refused\n        authoring_soft_delete(AUTHORING_KSB_MAPPINGS_TABLE, *ksb_mapping_placement.where(module_catalogue_id, component_ids=[component_id]), via_parent=component_id, deleted_by='component-delete')\n        authoring_soft_delete(AUTHORING_COMPONENTS_TABLE, 'module_catalogue_id = %s and id = %s', [module_catalogue_id, component_id], deleted_by='component-delete')\n    invalidate_curriculum_cache()\n    return JsonResponse({'deleted': True, 'permanent': False, 'moduleCatalogueId': module_catalogue_id, 'componentId': component_id})",
+      "decorators": [
+        "csrf_exempt",
+        "with_course_storage"
+      ],
+      "owner": "curriculum_api.catalogue.api.lifecycle_commands",
+      "deps": [
+        "AUTHORING_COMPONENTS_TABLE",
+        "AUTHORING_KSB_MAPPINGS_TABLE",
+        "JsonResponse",
+        "authoring_soft_delete",
+        "check_removal",
+        "clean_str",
+        "ensure_module_authoring_tables",
+        "invalidate_curriculum_cache",
+        "json_body",
+        "json_error",
+        "ksb_mapping_placement",
+        "refuse_stale_module_write",
+        "transaction"
+      ],
+      "callbacks": {
+        "check_removal": {
+          "level": 1,
+          "module": "module_collaboration",
+          "name": "check_removal"
+        }
+      }
+    },
+    "curriculum_module_week_detail": {
+      "source": "def curriculum_module_week_detail(request, module_catalogue_id, week_id):\n    if request.method != 'DELETE':\n        return json_error('Method not allowed.', status=405)\n    module_catalogue_id = clean_str(module_catalogue_id)\n    week_id = clean_str(week_id)\n    payload = json_body(request) if request.body else {}\n    with transaction.atomic():\n        refused = refuse_stale_module_write(request, payload or {}, module_catalogue_id)\n        if refused is not None:\n            return refused\n        from .module_collaboration import check_removal\n        refused = check_removal(request, module_catalogue_id, 'week', week_id, payload or {})\n        if refused is not None:\n            return refused\n        # Read under the lock: a component added to this week after the caller\n        # read it is part of what the caller's version check just accepted.\n        component_rows = authoring_fetch_all(AUTHORING_COMPONENTS_TABLE, 'module_catalogue_id = %s and week_id = %s', [module_catalogue_id, week_id])\n        component_ids = [str(row.get('id')) for row in component_rows]\n        if component_ids:\n            placeholders = ', '.join(['%s'] * len(component_ids))\n            authoring_soft_delete(AUTHORING_KSB_MAPPINGS_TABLE, *ksb_mapping_placement.where(module_catalogue_id, component_ids=component_ids), via_parent=week_id, deleted_by='week-delete')\n        authoring_soft_delete(AUTHORING_KSB_MAPPINGS_TABLE, *ksb_mapping_placement.where(module_catalogue_id, week_id=week_id), via_parent=week_id, deleted_by='week-delete')\n        authoring_soft_delete(AUTHORING_COMPONENTS_TABLE, 'module_catalogue_id = %s and week_id = %s', [module_catalogue_id, week_id], via_parent=week_id, deleted_by='week-delete')\n        authoring_soft_delete(AUTHORING_WEEKS_TABLE, 'module_catalogue_id = %s and id = %s', [module_catalogue_id, week_id], deleted_by='week-delete')\n    log_curriculum_decision(\n        'week.archive', outcome='soft_deleted', entity_id=week_id,\n        parent_id=module_catalogue_id, row_count=len(component_ids),\n    )\n    invalidate_curriculum_cache()\n    return JsonResponse({'deleted': True, 'permanent': False, 'moduleCatalogueId': module_catalogue_id, 'weekId': week_id})",
+      "decorators": [
+        "csrf_exempt",
+        "with_course_storage"
+      ],
+      "owner": "curriculum_api.catalogue.api.lifecycle_commands",
+      "deps": [
+        "AUTHORING_COMPONENTS_TABLE",
+        "AUTHORING_KSB_MAPPINGS_TABLE",
+        "AUTHORING_WEEKS_TABLE",
+        "JsonResponse",
+        "authoring_fetch_all",
+        "authoring_soft_delete",
+        "check_removal",
+        "clean_str",
+        "invalidate_curriculum_cache",
+        "json_body",
+        "json_error",
+        "ksb_mapping_placement",
+        "log_curriculum_decision",
+        "refuse_stale_module_write",
+        "transaction"
+      ],
+      "callbacks": {
+        "check_removal": {
+          "level": 1,
+          "module": "module_collaboration",
+          "name": "check_removal"
+        }
+      }
+    }
+  },
+  "removed": {
+    "name": "delete_programme_authoring_structure",
+    "source": "def delete_programme_authoring_structure(identifier, programme=None, config=None, rows=None):\n    rows = rows or []\n    programme_id_candidates = {\n        clean_str(identifier),\n        clean_str((programme or {}).get('id')),\n        clean_str((programme or {}).get('sourceId')),\n        programme_config_identity(config),\n    }\n    programme_id_candidates = {value for value in programme_id_candidates if value and not value.startswith('program-')}\n    programme_name_candidates = {\n        clean_str((programme or {}).get('name')),\n        clean_str((config or {}).get('name')),\n        clean_str((config or {}).get('standard')),\n    }\n    programme_name_candidates = {value for value in programme_name_candidates if value}\n\n    def programme_where_sql(id_column='programme_id', name_column='programme_name'):\n        clauses = []\n        params = []\n        ids = [value for value in programme_id_candidates if value]\n        names = [value for value in programme_name_candidates if value]\n        if ids:\n            placeholders = ', '.join(['%s'] * len(ids))\n            clauses.append(f'{quote_ident(id_column)} in ({placeholders})')\n            params.extend(ids)\n        if names:\n            placeholders = ', '.join(['%s'] * len(names))\n            clauses.append(f'{quote_ident(name_column)} in ({placeholders})')\n            params.extend(names)\n        if not clauses:\n            return '', []\n        return f'({\" or \".join(clauses)})', params\n\n    def belongs_to_programme(row):\n        row_ids = {\n            clean_str(row.get('programme_id')),\n            clean_str(row.get('program_id')),\n            clean_str(row.get('sourceId')),\n        }\n        row_names = {\n            clean_str(row.get('programme_name')),\n            clean_str(row.get('programme')),\n            clean_str(row.get('Program')),\n            clean_str(row.get('name')),\n        }\n        if programme_id_candidates.intersection(row_ids):\n            return True\n        return bool({normalise(value) for value in programme_name_candidates}.intersection(\n            {normalise(value) for value in row_names if value}\n        ))\n\n    cohort_where, cohort_params = programme_where_sql('programme_id', 'programme_name')\n    cohort_rows = authoring_fetch_all(COHORT_AUTHORING_DETAILS_TABLE, cohort_where, cohort_params) if cohort_where else []\n    cohort_ids = {\n        clean_str(row.get('cohort_id') or row.get('cohortId'))\n        for row in cohort_rows\n    }\n    cohort_ids = {value for value in cohort_ids if value}\n    group_where, group_params = programme_where_sql('programme_id', 'programme_name')\n    if cohort_ids:\n        placeholders = ', '.join(['%s'] * len(cohort_ids))\n        group_where = f'({group_where} or {quote_ident(\"cohort_id\")} in ({placeholders}))' if group_where else f'{quote_ident(\"cohort_id\")} in ({placeholders})'\n        group_params = [*group_params, *cohort_ids]\n    group_rows = authoring_fetch_all(GROUPS_TABLE, group_where, group_params) if group_where else []\n    group_ids = {\n        clean_str(row.get('group_id') or row.get('groupId'))\n        for row in group_rows\n    }\n    group_ids = {value for value in group_ids if value}\n    module_ids = {\n        training_row_module_catalogue_id(row)\n        for row in rows\n        if training_row_module_catalogue_id(row)\n    }\n    module_where, module_params = programme_where_sql('programme_id', 'programme_name')\n    if cohort_ids:\n        placeholders = ', '.join(['%s'] * len(cohort_ids))\n        module_where = f'({module_where} or {quote_ident(\"cohort_id\")} in ({placeholders}))' if module_where else f'{quote_ident(\"cohort_id\")} in ({placeholders})'\n        module_params = [*module_params, *cohort_ids]\n    if group_ids:\n        placeholders = ', '.join(['%s'] * len(group_ids))\n        module_where = f'({module_where} or {quote_ident(\"group_id\")} in ({placeholders}))' if module_where else f'{quote_ident(\"group_id\")} in ({placeholders})'\n        module_params = [*module_params, *group_ids]\n    for module in authoring_fetch_all(AUTHORING_MODULES_TABLE, module_where, module_params) if module_where else []:\n        module_id = clean_str(module.get('module_catalogue_id'))\n        if module_id:\n            module_ids.add(module_id)\n\n    with transaction.atomic():\n        if module_ids:\n            module_id_list = list(module_ids)\n            placeholders = ', '.join(['%s'] * len(module_id_list))\n            authoring_delete(AUTHORING_KSB_MAPPINGS_TABLE, *ksb_mapping_placement.where(module_id_list))\n            authoring_delete(AUTHORING_COMPONENTS_TABLE, f'{quote_ident(\"module_catalogue_id\")} in ({placeholders})', module_id_list)\n            authoring_delete(AUTHORING_WEEKS_TABLE, f'{quote_ident(\"module_catalogue_id\")} in ({placeholders})', module_id_list)\n            authoring_delete(AUTHORING_COMPLETION_TABLE, f'{quote_ident(\"module_catalogue_id\")} in ({placeholders})', module_id_list)\n            authoring_delete(AUTHORING_ADVANCED_TABLE, f'{quote_ident(\"module_catalogue_id\")} in ({placeholders})', module_id_list)\n            authoring_delete(AUTHORING_MODULES_TABLE, f'{quote_ident(\"module_catalogue_id\")} in ({placeholders})', module_id_list)\n\n        if group_ids:\n            placeholders = ', '.join(['%s'] * len(group_ids))\n            authoring_delete(GROUPS_TABLE, f'{quote_ident(\"group_id\")} in ({placeholders})', list(group_ids))\n        if cohort_ids:\n            placeholders = ', '.join(['%s'] * len(cohort_ids))\n            authoring_delete(COHORT_AUTHORING_DETAILS_TABLE, f'{quote_ident(\"cohort_id\")} in ({placeholders})', list(cohort_ids))\n\n        # Scope free-course deletion to the programme being removed. This\n        # previously deleted every free course in the system regardless of\n        # which programme was targeted.\n        existing_free_course_ids = []\n        existing_free_week_ids = []\n        if current_mode() == LEGACY:\n            for candidate in programme_id_candidates:\n                week_ids, course_ids = delete_free_programme_data(candidate)\n                existing_free_week_ids.extend(week_ids)\n                existing_free_course_ids.extend(course_ids)\n        existing_free_authoring_ids = unique([*existing_free_course_ids, *existing_free_week_ids])\n        if existing_free_authoring_ids:\n            placeholders = ', '.join(['%s'] * len(existing_free_authoring_ids))\n            authoring_delete(AUTHORING_WEEKS_TABLE, f'module_catalogue_id in ({placeholders}) or id in ({placeholders})', [*existing_free_authoring_ids, *existing_free_authoring_ids])\n\n        if config:\n            key_column = programme_config_key_column()\n            key_value = config.get(key_column)\n            if key_value is not None:\n                delete_rows(\n                    'programmes',\n                    f'{quote_ident(key_column)} = %s',\n                    [key_value],\n                )\n\n    invalidate_curriculum_cache()\n    return {\n        'modules': len(module_ids),\n        'groups': len(group_ids),\n        'cohorts': len(cohort_ids),\n        'programmeId': next(iter(programme_id_candidates), clean_str(identifier)),\n    }",
+    "index": 937
+  }
+}

@@ -33,7 +33,7 @@ import logging
 
 from . import review_instances
 from . import reviews
-from . import views as curriculum_views
+from curriculum_api.catalogue.domain.values import clean_str, format_date
 
 logger = logging.getLogger(__name__)
 
@@ -145,16 +145,16 @@ def planned_meetings(
         if not occurrences:
             continue
         dates = sorted(
-            curriculum_views.format_date(occurrence['targetDate'])
+            format_date(occurrence['targetDate'])
             for occurrence in occurrences
         )
         meetings.append({
             'reviewTemplateId': template_row.get('id'),
-            'name': curriculum_views.clean_str(template_row.get('name')),
+            'name': clean_str(template_row.get('name')),
             'hoursEach': hours,
             'occurrences': len(occurrences),
             'hours': round(hours * len(occurrences), 2),
-            'recurrenceLabel': curriculum_views.clean_str(
+            'recurrenceLabel': clean_str(
                 occurrences[0].get('recurrenceLabel')
             ),
             # The window this projection actually covers, so the plan can show
@@ -187,7 +187,7 @@ def completed_hours(learner_id, *, window_start=None, window_end=None):
 
     completed = [
         instance for instance in instances
-        if curriculum_views.clean_str(instance.get('status')) == STATUS_COMPLETED
+        if clean_str(instance.get('status')) == STATUS_COMPLETED
     ]
     if not completed:
         return 0.0
@@ -195,7 +195,7 @@ def completed_hours(learner_id, *, window_start=None, window_end=None):
     hours_by_template: dict[str, float] = {}
     total = 0.0
     for instance in completed:
-        template_id = curriculum_views.clean_str(instance.get('review_template_id'))
+        template_id = clean_str(instance.get('review_template_id'))
         if not template_id:
             continue
         if template_id not in hours_by_template:

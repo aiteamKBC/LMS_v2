@@ -1,0 +1,452 @@
+{
+  "modules": {
+    "views.py": {
+      "ast_sha256": "25cc5e37b16c617fa1ebf86c86a17a04f55c9a63521cb4b203608ff63f84f810"
+    },
+    "calendar_holidays.py": {
+      "ast_sha256": "2ab59556c84c1b58d44e533f0c3cd7e8dcfeb76f1a6bfa63ba71671844962e5d"
+    }
+  },
+  "functions": {
+    "views.py:curriculum_holidays": {
+      "source": "def curriculum_holidays(request):\n    \"\"\"The curriculum's holiday calendar, both halves of it.\n\n    England's bank holidays, mirrored from GOV.UK, plus this organisation's own\n    authored closure periods -- in one list, in the one label/start/end shape\n    every caller already reads. See ``get_holiday_rows``.\n\n    ``/curriculum/england-holidays/`` serves the GOV.UK half on its own, in the\n    feed's raw shape (title, notes, bunting), for the page that lists it.\n    \"\"\"\n    visibility = curriculum_visibility(request)\n    include_archived = visibility == 'all'\n\n    def build_holidays():\n        return [\n            serialize_holiday_row(item)\n            for item in get_holiday_rows(include_archived=include_archived)\n        ]\n\n    # Keyed on visibility again now that authored holidays are back: an archived\n    # closure period is in one answer and not the other, and a single cache key\n    # would serve whichever was asked for first to both.\n    holidays = cached_curriculum_value(f'holidays:{visibility}', build_holidays)\n    # Any read of the calendar is a chance to notice GOV.UK has moved a date.\n    # Costs this request nothing: it starts a thread at most once per interval,\n    # and does nothing at all in the overwhelmingly common case. Imported here\n    # rather than at module load: england_holidays imports this module, the way\n    # reviews.py does, so the cycle is broken by deferring to call time.\n    from . import england_holidays\n    england_holidays.auto_sync_if_due()\n    return curriculum_results_response(holidays)",
+      "decorators": [
+        "require_GET"
+      ],
+      "owner": "curriculum_api.catalogue.api.holiday_commands",
+      "deps": [
+        "cached_curriculum_value",
+        "curriculum_results_response",
+        "curriculum_visibility",
+        "get_holiday_rows",
+        "load_england_holidays",
+        "serialize_holiday_row"
+      ],
+      "callbacks": {
+        "load_england_holidays": {
+          "module": null,
+          "name": "england_holidays",
+          "loader": true
+        }
+      },
+      "viewrefs": []
+    },
+    "views.py:curriculum_holiday_collection": {
+      "source": "def curriculum_holiday_collection(request):\n    \"\"\"Read the whole calendar; write the authored half of it.\n\n    A POST here creates one of this organisation's own closure periods -- a\n    Christmas shutdown, an exam week, a staff training day -- with its own start\n    and end date. It never touches the GOV.UK mirror: nobody here gets to invent\n    a national holiday, and ``curriculum_holiday_detail`` refuses to edit one for\n    the same reason.\n    \"\"\"\n    if request.method == 'GET':\n        return curriculum_holidays(request)\n    if request.method != 'POST':\n        return json_error('Method not allowed.', status=405)\n\n    source_table = authored_holiday_table_name()\n    on_calendar = not source_table and calendar_holidays.in_use()\n    if not source_table and not on_calendar:\n        return json_error(\n            'The holidays table is not provisioned. Apply '\n            'sql/2026-09-14_curriculum_authored_holidays.sql first.',\n            status=404,\n        )\n\n    payload = json_body(request)\n    if payload is None:\n        return json_error('Invalid JSON body.')\n    missing = require_fields(payload, ['label', 'startDate'])\n    if missing:\n        return json_error('Missing required fields.', fields=missing)\n\n    dates = holiday_date_payload(payload)\n    if isinstance(dates, JsonResponse):\n        return dates\n\n    if on_calendar:\n        row = calendar_holidays.create_local({\n            'label': clean_str(payload.get('label')),\n            'start_date': dates['start'],\n            'end_date': dates['end'],\n            'type': clean_str(payload.get('type')),\n            'color': clean_str(payload.get('color')) or AUTHORED_HOLIDAY_COLOR,\n            'notes': clean_str(payload.get('notes')),\n        })\n        invalidate_curriculum_cache()\n        return JsonResponse({'created': True, 'holiday': serialize_holiday_row(row)}, status=201)\n\n    row = insert_row(source_table, {\n        'label': clean_str(payload.get('label')),\n        'start_date': dates['start'],\n        # A holiday with no end date is a single day, stored as such rather than\n        # left null: every reader downstream measures a period, and \"one day\" is\n        # a period whose two ends are the same date.\n        'end_date': dates['end'],\n        'type': clean_str(payload.get('type')),\n        'color': clean_str(payload.get('color')) or AUTHORED_HOLIDAY_COLOR,\n        'notes': clean_str(payload.get('notes')),\n        'created_at': datetime.utcnow(),\n        'updated_at': datetime.utcnow(),\n        'is_archived': False,\n    })\n    invalidate_curriculum_cache()\n    return JsonResponse({'created': True, 'holiday': serialize_holiday_row(row)}, status=201)",
+      "decorators": [
+        "csrf_exempt"
+      ],
+      "owner": "curriculum_api.catalogue.api.holiday_commands",
+      "deps": [
+        "AUTHORED_HOLIDAY_COLOR",
+        "JsonResponse",
+        "authored_holiday_table_name",
+        "calendar_holidays",
+        "clean_str",
+        "curriculum_holidays",
+        "datetime",
+        "holiday_date_payload",
+        "insert_row",
+        "invalidate_curriculum_cache",
+        "json_body",
+        "json_error",
+        "require_fields",
+        "serialize_holiday_row"
+      ],
+      "callbacks": {},
+      "viewrefs": []
+    },
+    "views.py:curriculum_holiday_detail": {
+      "source": "def curriculum_holiday_detail(request, identifier):\n    \"\"\"One holiday: read either kind, edit or archive only an authored one.\"\"\"\n    identifier = clean_str(identifier)\n\n    if request.method == 'GET':\n        rows = [\n            item for item in get_holiday_rows(include_archived=True)\n            if clean_str(item.get('id')) == identifier\n        ]\n        if not rows:\n            return json_error('Holiday not found.', status=404)\n        return JsonResponse(serialize_holiday_row(rows[0]))\n\n    if request.method not in {'PATCH', 'DELETE'}:\n        return json_error('Method not allowed.', status=405)\n\n    source_table = authored_holiday_table_name()\n    on_calendar = not source_table and calendar_holidays.in_use()\n    if not source_table and not on_calendar:\n        return json_error('The holidays table is not provisioned.', status=404)\n\n    if on_calendar:\n        found = calendar_holidays.local_row(identifier)\n        rows = [found] if found else []\n    else:\n        # Official ids are namespaced strings; manual ids may be integer columns.\n        # Comparing as text lets the read-only check below reject an official id\n        # without PostgreSQL trying to cast it to a manual row's numeric key.\n        rows = fetch_all(f'select * from {table_name(source_table)} where cast(id as text) = %s', [identifier])\n    if not rows:\n        # A GOV.UK id reaching a write is a client that has not noticed the two\n        # kinds apart, so say which it is rather than \"not found\".\n        if england_holiday_exists(identifier):\n            return json_error(HOLIDAY_READ_ONLY_MESSAGE, status=405)\n        return json_error('Holiday not found.', status=404)\n\n    if request.method == 'DELETE':\n        if on_calendar:\n            calendar_holidays.archive_local(identifier)\n            invalidate_curriculum_cache()\n            return JsonResponse({'archived': True, 'id': identifier})\n        payload = archive_payload(source_table, rows[0].get('notes'))\n        if payload:\n            update_rows(source_table, 'id = %s', [identifier], payload)\n        else:\n            delete_rows(source_table, 'id = %s', [identifier])\n        invalidate_curriculum_cache()\n        return JsonResponse({'archived': True, 'id': identifier})\n\n    payload = json_body(request)\n    if payload is None:\n        return json_error('Invalid JSON body.')\n\n    updates = {'updated_at': datetime.utcnow()}\n    # Only what was sent is written. The Holidays page saves a type rename by\n    # PATCHing the type alone across every holiday that carries it, and a patch\n    # that also blanked the dates would move every one of those holidays.\n    if 'label' in payload:\n        updates['label'] = clean_str(payload.get('label'))\n    if 'type' in payload:\n        updates['type'] = clean_str(payload.get('type'))\n    if 'color' in payload:\n        updates['color'] = clean_str(payload.get('color'))\n    if 'notes' in payload:\n        updates['notes'] = clean_str(payload.get('notes'))\n    if 'startDate' in payload or 'endDate' in payload:\n        dates = holiday_date_payload(payload, existing=rows[0])\n        if isinstance(dates, JsonResponse):\n            return dates\n        updates['start_date'] = dates['start']\n        updates['end_date'] = dates['end']\n\n    if on_calendar:\n        calendar_holidays.update_local(identifier, updates)\n        invalidate_curriculum_cache()\n        return JsonResponse({'updated': True, 'id': identifier})\n    update_rows(source_table, 'id = %s', [identifier], updates)\n    invalidate_curriculum_cache()\n    return JsonResponse({'updated': True, 'id': identifier})",
+      "decorators": [
+        "csrf_exempt"
+      ],
+      "owner": "curriculum_api.catalogue.api.holiday_commands",
+      "deps": [
+        "HOLIDAY_READ_ONLY_MESSAGE",
+        "JsonResponse",
+        "archive_payload",
+        "authored_holiday_table_name",
+        "calendar_holidays",
+        "clean_str",
+        "datetime",
+        "delete_rows",
+        "england_holiday_exists",
+        "fetch_all",
+        "get_holiday_rows",
+        "holiday_date_payload",
+        "invalidate_curriculum_cache",
+        "json_body",
+        "json_error",
+        "serialize_holiday_row",
+        "table_name",
+        "update_rows"
+      ],
+      "callbacks": {},
+      "viewrefs": []
+    },
+    "views.py:curriculum_england_holidays": {
+      "source": "def curriculum_england_holidays(request):\n    \"\"\"England's bank holidays as GOV.UK publishes them.\n\n    Reference data, not the authored half of the calendar above: nobody here\n    edits these, so the route is read-only. The table is loaded by\n    sql/2026-09-13_curriculum_england_holidays.sql and kept current by\n    ``england_holidays.run_sync`` -- automatically on the interval, by the\n    refresh route below on demand, or by the fetch_england_holidays command.\n\n    Deliberately uncached. It is one indexed read of well under a hundred rows,\n    and caching it would pin an empty list for the whole TTL on any environment\n    where the table has not been created yet.\n    \"\"\"\n    # Reading the page is the most likely moment for the mirror to be checked,\n    # and the least costly: the check runs behind the response.\n    from . import england_holidays\n    england_holidays.auto_sync_if_due()\n    rows = []\n    if table_exists(ENGLAND_HOLIDAYS_TABLE):\n        rows = fetch_all(f'''\n            select *\n            from {table_name(ENGLAND_HOLIDAYS_TABLE)}\n            order by holiday_date\n        ''')\n    elif calendar_holidays.in_use():\n        # The GOV.UK mirror lives in calendar_holidays (source_kind\n        # england_official), read back in its own shape.\n        rows = sorted(calendar_holidays.rows(calendar_holidays.OFFICIAL),\n                      key=lambda row: format_date(row.get('holiday_date')) or '')\n    results = [serialize_england_holiday_row(row) for row in rows]\n    # The sync state rides along with the list rather than costing the page a\n    # second request: \"these are the dates\" and \"this is when they were last\n    # checked\" are one answer, and the page shows them together.\n    return JsonResponse({\n        'schema': CURRICULUM_SCHEMA,\n        'count': len(results),\n        'results': results,\n        'syncStatus': england_holidays.sync_status(),\n    })",
+      "decorators": [
+        "require_GET"
+      ],
+      "owner": "curriculum_api.catalogue.api.holiday_commands",
+      "deps": [
+        "CURRICULUM_SCHEMA",
+        "ENGLAND_HOLIDAYS_TABLE",
+        "JsonResponse",
+        "calendar_holidays",
+        "fetch_all",
+        "format_date",
+        "load_england_holidays",
+        "serialize_england_holiday_row",
+        "table_exists",
+        "table_name"
+      ],
+      "callbacks": {
+        "load_england_holidays": {
+          "module": null,
+          "name": "england_holidays",
+          "loader": true
+        }
+      },
+      "viewrefs": []
+    },
+    "views.py:curriculum_england_holiday_syncs": {
+      "source": "def curriculum_england_holiday_syncs(request):\n    \"\"\"Every recent check against GOV.UK, and what each one found.\n\n    This is the \"which holidays changed on the website?\" answer. A check that\n    found nothing is listed too -- without it, the last real change reads as the\n    last time anyone looked, which is the one wrong conclusion available here.\n    \"\"\"\n    from . import england_holidays\n    limit = parse_int(request.GET.get('limit'), 20) or 20\n    return JsonResponse({\n        'schema': CURRICULUM_SCHEMA,\n        'status': england_holidays.sync_status(),\n        'results': england_holidays.recent_syncs(min(limit, 100)),\n    })",
+      "decorators": [
+        "require_GET"
+      ],
+      "owner": "curriculum_api.catalogue.api.holiday_commands",
+      "deps": [
+        "CURRICULUM_SCHEMA",
+        "JsonResponse",
+        "load_england_holidays",
+        "parse_int"
+      ],
+      "callbacks": {
+        "load_england_holidays": {
+          "module": null,
+          "name": "england_holidays",
+          "loader": true
+        }
+      },
+      "viewrefs": []
+    },
+    "views.py:curriculum_england_holidays_refresh": {
+      "source": "def curriculum_england_holidays_refresh(request):\n    \"\"\"Check GOV.UK now, and report what moved.\n\n    The button behind this exists because \"it will refresh itself within a day\"\n    is not an answer when someone has just read that a bank holiday changed and\n    needs the cohorts under it rescheduled today.\n\n    ``?dryRun=1`` reports what would change without writing it.\n    \"\"\"\n    from . import england_holidays\n    if request.method != 'POST':\n        return json_error('Method not allowed.', status=405)\n    payload = json_body(request) or {}\n    dry_run = truthy(request.GET.get('dryRun')) or truthy(payload.get('dryRun'))\n    summary = england_holidays.run_sync(source='manual', apply=not dry_run)\n    # The next automatic check is a full interval from this one, and the latch\n    # holding that answer in memory was set before this check happened.\n    england_holidays.reset_auto_sync_state()\n    status = 200 if summary.get('status') == 'ok' else 502\n    return JsonResponse({'summary': summary, 'status': england_holidays.sync_status()}, status=status)",
+      "decorators": [
+        "csrf_exempt"
+      ],
+      "owner": "curriculum_api.catalogue.api.holiday_commands",
+      "deps": [
+        "JsonResponse",
+        "json_body",
+        "json_error",
+        "load_england_holidays",
+        "truthy"
+      ],
+      "callbacks": {
+        "load_england_holidays": {
+          "module": null,
+          "name": "england_holidays",
+          "loader": true
+        }
+      },
+      "viewrefs": []
+    },
+    "views.py:curriculum_preview_cohort_end_date": {
+      "source": "def curriculum_preview_cohort_end_date(request):\n    if request.method != 'POST':\n        return json_error('Method not allowed.', status=405)\n    payload = json_body(request)\n    if payload is None:\n        return json_error('Invalid JSON body.')\n    start_date = parse_date(payload.get('startDate') or payload.get('start_date'))\n    calculated_end_date = calculate_cohort_end_date(payload.get('startDate') or payload.get('start_date'), payload.get('durationMonths') or payload.get('duration_months'))\n    # An authored practical end date wins over the duration calculation. Editors\n    # let the delivery team nudge that date a day either way, and the EPA window\n    # has to be counted from the date they actually set, not from the rule.\n    authored_end_date = parse_date(\n        payload.get('practicalEndDate')\n        or payload.get('practical_end_date')\n        or payload.get('endDate')\n        or payload.get('end_date')\n    )\n    # Selected holidays belong to module scheduling, not cohort contract dates.\n    # A holiday clash skips a generated module session and extends that module's\n    # plan; the cohort practical/apprenticeship end dates remain fixed.\n    holiday_days = 0\n    holiday_breakdown = []\n    authored_months = parse_int(payload.get('durationMonths') or payload.get('duration_months'), 0)\n\n    # An authored date still wins outright: a human who typed a contracted date\n    # has already accounted for whatever they meant to account for.\n    end_date = authored_end_date or calculated_end_date\n    # Measured from the end date that actually applies, so an authored date is\n    # reported by how long it really runs rather than by the duration rule.\n    effective_months = infer_duration_months(start_date, end_date, 0) if start_date and end_date else 0\n    epa_months = payload_epa_months(payload)\n    override = payload_apprenticeship_end_override(payload)\n    apprenticeship_end_date = cohort_apprenticeship_end_date(end_date, epa_months, override)\n    warnings = []\n    if not end_date:\n        warnings.append('Set cohort start date and duration months to calculate the end date.')\n    if end_date and not apprenticeship_end_date:\n        warnings.append('Set an EPA period in months to calculate the apprenticeship end date.')\n    if authored_end_date and start_date and authored_end_date < start_date:\n        warnings.append('The practical end date is before the cohort start date.')\n    if override and end_date and override < parse_date(end_date):\n        warnings.append('The apprenticeship end date is before the practical end date.')\n    return JsonResponse({\n        'endDate': format_date(end_date),\n        'practicalEndDate': format_date(end_date),\n        # The date the duration rule gives, kept alongside the authored one so an\n        # editor can offer \"reset to the calculated date\" without a second call.\n        'calculatedEndDate': format_date(calculated_end_date),\n        # The duration rule on its own. The picker uses this window to show\n        # relevant holidays, but those holidays do not move the cohort dates.\n        'baseEndDate': format_date(calculated_end_date),\n        'holidayExtensionDays': holiday_days,\n        'holidayExtensions': holiday_breakdown,\n        'durationMonths': authored_months,\n        'effectiveDurationMonths': effective_months,\n        'practicalEndIsManual': bool(authored_end_date and authored_end_date != calculated_end_date),\n        'epaMonths': epa_months,\n        'apprenticeshipEndDate': format_date(apprenticeship_end_date),\n        'apprenticeshipEndOverride': format_date(override),\n        'autoCalculated': bool(end_date),\n        'rule': 'add duration months minus one day; holidays extend clashing module schedules, not cohort dates',\n        'epaRule': 'add the EPA period in months to the practical end date',\n        'apprenticeshipRule': 'the authored apprenticeship end date when set, otherwise the EPA rule',\n        'warnings': warnings,\n    })",
+      "decorators": [
+        "csrf_exempt"
+      ],
+      "owner": "curriculum_api.catalogue.api.cohort_preview",
+      "deps": [
+        "JsonResponse",
+        "calculate_cohort_end_date",
+        "cohort_apprenticeship_end_date",
+        "format_date",
+        "infer_duration_months",
+        "json_body",
+        "json_error",
+        "parse_date",
+        "parse_int",
+        "payload_apprenticeship_end_override",
+        "payload_epa_months"
+      ],
+      "callbacks": {},
+      "viewrefs": []
+    },
+    "views.py:holiday_table_name": {
+      "source": "def holiday_table_name():\n    \"\"\"The one table holidays come from: ``curriculum.england_holidays``.\n\n    Curriculum used to read authored closure periods out of ``holidays`` (and,\n    before that, ``training_plan_holidays``). Neither is consulted any more:\n    GOV.UK's published bank holidays are the calendar, loaded by\n    sql/2026-09-13_curriculum_england_holidays.sql and kept current by the\n    fetch_england_holidays command.\n\n    An environment that has not applied that SQL yet reads as \"no holidays\"\n    rather than falling back to the old table, so a half-migrated database can\n    never quietly schedule against closure periods nobody picked.\n    \"\"\"\n    if table_exists(ENGLAND_HOLIDAYS_TABLE):\n        return ENGLAND_HOLIDAYS_TABLE\n    if calendar_holidays.in_use():\n        # The current curriculum database keeps the calendar in one table.\n        return calendar_holidays.TABLE\n    return ''",
+      "decorators": [],
+      "owner": "curriculum_api.catalogue.infrastructure.holiday_reads",
+      "deps": [
+        "ENGLAND_HOLIDAYS_TABLE",
+        "calendar_holidays",
+        "table_exists"
+      ],
+      "callbacks": {},
+      "viewrefs": []
+    },
+    "views.py:authored_holiday_table_name": {
+      "source": "def authored_holiday_table_name():\n    \"\"\"The table the Holidays page writes to, or '' if it is not provisioned.\n\n    ``training_plan_holidays`` is still accepted as the older name for the same\n    thing, because some environments have not been through the rename.\n    \"\"\"\n    if table_exists(AUTHORED_HOLIDAYS_TABLE):\n        return AUTHORED_HOLIDAYS_TABLE\n    if table_exists('training_plan_holidays'):\n        return 'training_plan_holidays'\n    return ''",
+      "decorators": [],
+      "owner": "curriculum_api.catalogue.infrastructure.holiday_reads",
+      "deps": [
+        "AUTHORED_HOLIDAYS_TABLE",
+        "table_exists"
+      ],
+      "callbacks": {},
+      "viewrefs": []
+    },
+    "views.py:england_holiday_exists": {
+      "source": "def england_holiday_exists(identifier):\n    if not table_exists(ENGLAND_HOLIDAYS_TABLE):\n        return calendar_holidays.in_use() and calendar_holidays.official_exists(identifier)\n    rows = fetch_all(\n        f'select 1 from {table_name(ENGLAND_HOLIDAYS_TABLE)} where id = %s limit 1',\n        [clean_str(identifier)],\n    )\n    return bool(rows)",
+      "decorators": [],
+      "owner": "curriculum_api.catalogue.infrastructure.holiday_reads",
+      "deps": [
+        "ENGLAND_HOLIDAYS_TABLE",
+        "calendar_holidays",
+        "clean_str",
+        "fetch_all",
+        "table_exists",
+        "table_name"
+      ],
+      "callbacks": {},
+      "viewrefs": []
+    },
+    "calendar_holidays.py:in_use": {
+      "source": "def in_use():\n    \"\"\"True when the calendar lives in ``calendar_holidays``.\"\"\"\n    from . import views\n    return (\n        connection.vendor == 'postgresql'\n        and views.table_exists(TABLE)\n        and not views.table_exists(views.ENGLAND_HOLIDAYS_TABLE)\n        and not views.authored_holiday_table_name()\n    )",
+      "decorators": [],
+      "owner": "curriculum_api.catalogue.infrastructure.holiday_store",
+      "deps": [
+        "ENGLAND_HOLIDAYS_TABLE",
+        "TABLE",
+        "authored_holiday_table_name",
+        "connection",
+        "table_exists"
+      ],
+      "callbacks": {},
+      "viewrefs": [
+        "ENGLAND_HOLIDAYS_TABLE",
+        "authored_holiday_table_name",
+        "table_exists"
+      ]
+    },
+    "calendar_holidays.py:_shape": {
+      "source": "def _shape(record):\n    (_id, kind, record_id, label, start, end, category, color, notes, archived, division,\n     bunting, fetched_at, created_at, updated_at) = record\n    if kind == OFFICIAL:\n        return {'id': record_id, 'title': label, 'holiday_date': start, 'division': division or '',\n                'notes': notes or '', 'bunting': bool(bunting), 'fetched_at': fetched_at,\n                'created_at': created_at, 'updated_at': updated_at}\n    return {'id': record_id, 'label': label, 'start_date': start, 'end_date': end,\n            'type': category or '', 'color': color or '', 'notes': notes or '',\n            'is_archived': bool(archived), 'created_at': created_at, 'updated_at': updated_at}",
+      "decorators": [],
+      "owner": "curriculum_api.catalogue.infrastructure.holiday_store",
+      "deps": [
+        "OFFICIAL"
+      ],
+      "callbacks": {},
+      "viewrefs": []
+    },
+    "calendar_holidays.py:rows": {
+      "source": "def rows(kind=None):\n    \"\"\"Every holiday, in the shape of the table it came from.\n\n    A bank holiday GOV.UK has withdrawn while a cohort still names it is kept\n    archived (see ``apply_official``) and is not part of the calendar.\n    Authored closures come back archived or not; the caller filters.\n    \"\"\"\n    where = 'where not (source_kind = %s and is_archived)'\n    params = [OFFICIAL]\n    if kind:\n        where += ' and source_kind = %s'\n        params.append(kind)\n    with connection.cursor() as cursor:\n        cursor.execute(f'select {_COLUMNS} from {_ref(TABLE)} {where} order by start_date, label', params)\n        return [_shape(record) for record in cursor.fetchall()]",
+      "decorators": [],
+      "owner": "curriculum_api.catalogue.infrastructure.holiday_store",
+      "deps": [
+        "OFFICIAL",
+        "TABLE",
+        "_COLUMNS",
+        "_ref",
+        "_shape",
+        "connection"
+      ],
+      "callbacks": {},
+      "viewrefs": []
+    },
+    "calendar_holidays.py:local_row": {
+      "source": "def local_row(identifier):\n    \"\"\"One authored closure by its id (archived or not), or None.\"\"\"\n    with connection.cursor() as cursor:\n        cursor.execute(\n            f'select {_COLUMNS} from {_ref(TABLE)} where source_kind = %s and source_record_id = %s',\n            [LOCAL, str(identifier or '').strip()],\n        )\n        record = cursor.fetchone()\n    return _shape(record) if record else None",
+      "decorators": [],
+      "owner": "curriculum_api.catalogue.infrastructure.holiday_store",
+      "deps": [
+        "LOCAL",
+        "TABLE",
+        "_COLUMNS",
+        "_ref",
+        "_shape",
+        "connection"
+      ],
+      "callbacks": {},
+      "viewrefs": []
+    },
+    "calendar_holidays.py:official_exists": {
+      "source": "def official_exists(identifier):\n    with connection.cursor() as cursor:\n        cursor.execute(\n            f'select 1 from {_ref(TABLE)} where source_kind = %s and source_record_id = %s limit 1',\n            [OFFICIAL, str(identifier or '').strip()],\n        )\n        return cursor.fetchone() is not None",
+      "decorators": [],
+      "owner": "curriculum_api.catalogue.infrastructure.holiday_store",
+      "deps": [
+        "OFFICIAL",
+        "TABLE",
+        "_ref",
+        "connection"
+      ],
+      "callbacks": {},
+      "viewrefs": []
+    },
+    "calendar_holidays.py:create_local": {
+      "source": "def create_local(fields):\n    \"\"\"Add an authored closure; returns it in the authored shape.\n\n    The number continues the authored sequence (the ids the Holidays page and\n    the cohorts already hold are numbers). Serialised by a transaction lock so\n    two saves never take the same one.\n    \"\"\"\n    now = _now()\n    with transaction.atomic():\n        with connection.cursor() as cursor:\n            cursor.execute('select pg_advisory_xact_lock(hashtextextended(%s, 0))', ['curriculum.calendar_holidays.local'])\n            cursor.execute(\n                f\"select coalesce(max(source_record_id::bigint), 0) + 1 from {_ref(TABLE)} \"\n                f\"where source_kind = %s and source_record_id ~ '^[0-9]+$'\",\n                [LOCAL],\n            )\n            number = str(cursor.fetchone()[0])\n            cursor.execute(\n                f'''insert into {_ref(TABLE)}\n                        (id, source_kind, source_record_id, label, start_date, end_date, category, color,\n                         notes, is_archived, is_system_marker, created_at, updated_at)\n                    values (%s, %s, %s, %s, %s, %s, %s, %s, %s, false, false, %s, %s)''',\n                [f'{LOCAL}:{number}', LOCAL, number, fields.get('label') or '', fields['start_date'],\n                 fields['end_date'], fields.get('type') or '', fields.get('color') or '', fields.get('notes') or '',\n                 now, now],\n            )\n    return local_row(number)",
+      "decorators": [],
+      "owner": "curriculum_api.catalogue.infrastructure.holiday_store",
+      "deps": [
+        "LOCAL",
+        "TABLE",
+        "_now",
+        "_ref",
+        "connection",
+        "local_row",
+        "transaction"
+      ],
+      "callbacks": {},
+      "viewrefs": []
+    },
+    "calendar_holidays.py:update_local": {
+      "source": "def update_local(identifier, updates):\n    \"\"\"Write only the authored fields given (``label``/``type``/... as the page names them).\"\"\"\n    sets, params = [], []\n    for key, value in updates.items():\n        column = _LOCAL_COLUMNS.get(key)\n        if column:\n            sets.append(f'{column} = %s')\n            params.append(value)\n    sets.append('updated_at = %s')\n    params.append(_now())\n    with connection.cursor() as cursor:\n        cursor.execute(\n            f'update {_ref(TABLE)} set {\", \".join(sets)} where source_kind = %s and source_record_id = %s',\n            [*params, LOCAL, str(identifier or '').strip()],\n        )\n        return cursor.rowcount",
+      "decorators": [],
+      "owner": "curriculum_api.catalogue.infrastructure.holiday_store",
+      "deps": [
+        "LOCAL",
+        "TABLE",
+        "_LOCAL_COLUMNS",
+        "_now",
+        "_ref",
+        "connection"
+      ],
+      "callbacks": {},
+      "viewrefs": []
+    },
+    "calendar_holidays.py:archive_local": {
+      "source": "def archive_local(identifier):\n    return update_local(identifier, {'is_archived': True})",
+      "decorators": [],
+      "owner": "curriculum_api.catalogue.infrastructure.holiday_store",
+      "deps": [
+        "update_local"
+      ],
+      "callbacks": {},
+      "viewrefs": []
+    },
+    "calendar_holidays.py:stored_official": {
+      "source": "def stored_official():\n    \"\"\"The mirror keyed by date, like the feed (archived rows included: a\n    withdrawn date that comes back is restored, not added twice).\"\"\"\n    from . import views\n    with connection.cursor() as cursor:\n        cursor.execute(\n            f'select source_record_id, label, start_date, notes, bunting, is_archived from {_ref(TABLE)} '\n            f'where source_kind = %s',\n            [OFFICIAL],\n        )\n        found = {}\n        for record_id, label, start, notes, bunting, archived in cursor.fetchall():\n            if archived:\n                continue\n            found[views.format_date(start)] = {'id': record_id, 'title': label, 'holiday_date': start,\n                                               'notes': notes or '', 'bunting': bool(bunting)}\n        return found",
+      "decorators": [],
+      "owner": "curriculum_api.catalogue.infrastructure.holiday_store",
+      "deps": [
+        "OFFICIAL",
+        "TABLE",
+        "_ref",
+        "connection",
+        "format_date"
+      ],
+      "callbacks": {},
+      "viewrefs": [
+        "format_date"
+      ]
+    },
+    "calendar_holidays.py:apply_official": {
+      "source": "def apply_official(incoming, added, changed, removed, division, now=None):\n    \"\"\"``england_holidays.apply_changes`` for this table, in one transaction.\n\n    A removed date a cohort still names (``cohort_calendar_holidays``, RESTRICT)\n    cannot be deleted; it is archived instead, which takes it out of the\n    calendar exactly as a delete would and keeps the cohort's choice intact.\n    \"\"\"\n    now = now or _now()\n    table, choices = _ref(TABLE), _ref(CHOICES_TABLE)\n    with transaction.atomic():\n        with connection.cursor() as cursor:\n            for item in added:\n                cursor.execute(\n                    f'''insert into {table}\n                            (id, source_kind, source_record_id, label, start_date, end_date, category, notes,\n                             division, bunting, fetched_at, is_archived, is_system_marker, created_at, updated_at)\n                        values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, false, false, %s, %s)\n                        on conflict (source_kind, source_record_id) do update set\n                            label = excluded.label, start_date = excluded.start_date, end_date = excluded.end_date,\n                            notes = excluded.notes, bunting = excluded.bunting, fetched_at = excluded.fetched_at,\n                            is_archived = false, updated_at = excluded.updated_at''',\n                    [f'england:{item[\"id\"]}', OFFICIAL, item['id'], item['title'], item['date'], item['date'],\n                     OFFICIAL_CATEGORY, item['notes'], division, item['bunting'], now, now, now],\n                )\n            for item in changed:\n                cursor.execute(\n                    f'''update {table} set label = %s, notes = %s, bunting = %s, fetched_at = %s, updated_at = %s\n                         where source_kind = %s and start_date = %s and not is_archived''',\n                    [item['title'], item['notes'], item['bunting'], now, now, OFFICIAL, item['date']],\n                )\n            for item in removed:\n                cursor.execute(\n                    f'''delete from {table} h\n                         where h.source_kind = %s and h.start_date = %s\n                           and not exists (select 1 from {choices} c where c.calendar_holiday_id = h.id)''',\n                    [OFFICIAL, item['date']],\n                )\n                cursor.execute(\n                    f'update {table} set is_archived = true, updated_at = %s '\n                    f'where source_kind = %s and start_date = %s',\n                    [now, OFFICIAL, item['date']],\n                )\n            dates = sorted(incoming)\n            if dates:\n                cursor.execute(\n                    f'update {table} set fetched_at = %s where source_kind = %s and not is_archived '\n                    f'and start_date = any(%s::date[])',\n                    [now, OFFICIAL, dates],\n                )",
+      "decorators": [],
+      "owner": "curriculum_api.catalogue.infrastructure.holiday_store",
+      "deps": [
+        "CHOICES_TABLE",
+        "OFFICIAL",
+        "OFFICIAL_CATEGORY",
+        "TABLE",
+        "_now",
+        "_ref",
+        "connection",
+        "transaction"
+      ],
+      "callbacks": {},
+      "viewrefs": []
+    },
+    "calendar_holidays.py:last_fetched": {
+      "source": "def last_fetched():\n    \"\"\"The newest ``fetched_at`` of the mirror: when GOV.UK was last read successfully.\"\"\"\n    with connection.cursor() as cursor:\n        cursor.execute(f'select max(fetched_at) from {_ref(TABLE)} where source_kind = %s', [OFFICIAL])\n        found = cursor.fetchone()\n    return found[0] if found else None",
+      "decorators": [],
+      "owner": "curriculum_api.catalogue.infrastructure.holiday_store",
+      "deps": [
+        "OFFICIAL",
+        "TABLE",
+        "_ref",
+        "connection"
+      ],
+      "callbacks": {},
+      "viewrefs": []
+    },
+    "calendar_holidays.py:cohort_choices": {
+      "source": "def cohort_choices(cohort_ids=None):\n    \"\"\"``{cohort_id: {'selected': [holiday id, ...], 'excluded': [...]}}`` (the holidays' own ids).\"\"\"\n    sql = (f'select h.cohort_id::text, ch.source_record_id::text, h.is_selected, h.is_excluded '\n           f'from {_ref(CHOICES_TABLE)} h join {_ref(TABLE)} ch on ch.id = h.calendar_holiday_id')\n    params = []\n    if cohort_ids is not None:\n        sql += ' where h.cohort_id = any(%s)'\n        params.append(sorted({str(value) for value in cohort_ids if value}))\n    found = {}\n    with connection.cursor() as cursor:\n        cursor.execute(sql + ' order by h.id', params)\n        for cohort_id, holiday_id, is_selected, is_excluded in cursor.fetchall():\n            entry = found.setdefault(cohort_id, {'selected': [], 'excluded': []})\n            if is_selected:\n                entry['selected'].append(holiday_id)\n            if is_excluded:\n                entry['excluded'].append(holiday_id)\n    return found",
+      "decorators": [],
+      "owner": "curriculum_api.catalogue.infrastructure.holiday_store",
+      "deps": [
+        "CHOICES_TABLE",
+        "TABLE",
+        "_ref",
+        "connection"
+      ],
+      "callbacks": {},
+      "viewrefs": []
+    },
+    "calendar_holidays.py:_id_list": {
+      "source": "def _id_list(value):\n    if value is None:\n        return None\n    if isinstance(value, str):\n        import json\n        try:\n            value = json.loads(value or '[]')\n        except ValueError:\n            return None\n    if not isinstance(value, (list, tuple)):\n        return None\n    return [str(item).strip() for item in value if str(item).strip()]",
+      "decorators": [],
+      "owner": "curriculum_api.catalogue.infrastructure.holiday_store",
+      "deps": [],
+      "callbacks": {},
+      "viewrefs": []
+    },
+    "calendar_holidays.py:store_cohort_choices": {
+      "source": "def store_cohort_choices(payload, rows):\n    \"\"\"Write the holiday lists a cohort save carries (only the lists it carries).\n\n    Runs on the caller's connection and transaction. A no-op unless the\n    calendar is in ``calendar_holidays``.\n    \"\"\"\n    if not payload or not in_use():\n        return\n    selected = _id_list(payload.get('holiday_ids')) if 'holiday_ids' in payload else None\n    excluded = _id_list(payload.get('excluded_holiday_ids')) if 'excluded_holiday_ids' in payload else None\n    if selected is None and excluded is None:\n        return\n    cohort_ids = {str(row.get('cohort_id')) for row in (rows or []) if row and row.get('cohort_id')}\n    if payload.get('cohort_id'):\n        cohort_ids.add(str(payload['cohort_id']))\n    choices = cohort_choices(cohort_ids)\n    rows_by_cohort = {}\n    for row in rows or []:\n        if row and row.get('cohort_id'):\n            rows_by_cohort.setdefault(str(row['cohort_id']), []).append(row)\n    with connection.cursor() as cursor:\n        for cohort_id in sorted(cohort_ids):\n            current = choices.get(cohort_id, {})\n            want_selected = selected if selected is not None else current.get('selected', [])\n            want_excluded = excluded if excluded is not None else current.get('excluded', [])\n            wanted = list(dict.fromkeys([*want_selected, *want_excluded]))\n            cursor.execute(f'delete from {_ref(CHOICES_TABLE)} where cohort_id = %s', [cohort_id])\n            calendar_ids = {}\n            if wanted:\n                cursor.execute(\n                    f'select source_record_id, id from {_ref(TABLE)} where source_record_id = any(%s)', [wanted],\n                )\n                calendar_ids = dict(cursor.fetchall())\n            # The rows handed back by the save show what is stored from now on.\n            for row in rows_by_cohort.get(cohort_id, []):\n                row['holiday_ids'] = [value for value in want_selected\n                                      if value in calendar_ids and value not in want_excluded]\n                row['excluded_holiday_ids'] = [value for value in want_excluded if value in calendar_ids]\n            for record_id in wanted:\n                calendar_id = calendar_ids.get(record_id)\n                if not calendar_id:\n                    continue  # an id no calendar row carries cannot be stored\n                is_excluded = record_id in want_excluded\n                cursor.execute(\n                    f'insert into {_ref(CHOICES_TABLE)} (cohort_id, calendar_holiday_id, is_selected, is_excluded) '\n                    f'values (%s, %s, %s, %s)',\n                    [cohort_id, calendar_id, record_id in want_selected and not is_excluded, is_excluded],\n                )\n    from .curriculum_names import invalidate\n    invalidate()",
+      "decorators": [],
+      "owner": "curriculum_api.catalogue.infrastructure.holiday_store",
+      "deps": [
+        "CHOICES_TABLE",
+        "TABLE",
+        "_id_list",
+        "_ref",
+        "cohort_choices",
+        "connection",
+        "in_use",
+        "invalidate"
+      ],
+      "callbacks": {
+        "invalidate": {
+          "module": "curriculum_names",
+          "name": "invalidate",
+          "loader": false
+        }
+      },
+      "viewrefs": []
+    },
+    "calendar_holidays.py:release_cohorts": {
+      "source": "def release_cohorts(where_sql, params):\n    \"\"\"Before cohorts matching ``where_sql`` are deleted: their holiday choices go\n    with them (they reference the cohort with RESTRICT).\"\"\"\n    if not in_use():\n        return\n    with connection.cursor() as cursor:\n        cursor.execute(\n            f'delete from {_ref(CHOICES_TABLE)} where cohort_id in '\n            f'(select cohort_id from {_ref(\"cohorts\")} where {where_sql})',\n            list(params or []),\n        )",
+      "decorators": [],
+      "owner": "curriculum_api.catalogue.infrastructure.holiday_store",
+      "deps": [
+        "CHOICES_TABLE",
+        "_ref",
+        "connection",
+        "in_use"
+      ],
+      "callbacks": {},
+      "viewrefs": []
+    },
+    "calendar_holidays.py:attach_cohort_choices": {
+      "source": "def attach_cohort_choices(rows, requested=None, excluded=None):\n    \"\"\"Put each cohort's ``holiday_ids`` / ``excluded_holiday_ids`` on its row.\"\"\"\n    fields = [field for field in CHOICE_FIELDS\n              if (requested is None or field in requested) and field not in (excluded or ())]\n    wanted = [row for row in rows or [] if row is not None and any(field not in row for field in fields)]\n    if not wanted or not fields or not in_use():\n        return rows\n    # Read with the names, in the request's one lookup round trip.\n    from .curriculum_names import lookups\n    choices = lookups().get('cohort_holidays', {})\n    for row in wanted:\n        entry = choices.get(str(row.get('cohort_id') or ''), {})\n        values = {'holiday_ids': list(entry.get('selected', [])),\n                  'excluded_holiday_ids': list(entry.get('excluded', []))}\n        for field in fields:\n            row.setdefault(field, values[field])\n    return rows",
+      "decorators": [],
+      "owner": "curriculum_api.catalogue.application.cohort_calendar",
+      "deps": [
+        "CHOICE_FIELDS",
+        "in_use",
+        "lookups"
+      ],
+      "callbacks": {
+        "lookups": {
+          "module": "curriculum_names",
+          "name": "lookups",
+          "loader": false
+        }
+      },
+      "viewrefs": []
+    }
+  }
+}

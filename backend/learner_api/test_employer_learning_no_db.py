@@ -56,6 +56,7 @@ class EmployerLearningParityTests(SimpleTestCase):
         cursor.fetchone.return_value = (100,)
         connection = SimpleNamespace(cursor=lambda: cursor)
         with ExitStack() as stack:
+            stack.enter_context(patch('learner_api.learning_plan.install_canonical_training_plan', side_effect=lambda source, profile: setattr(source, '_canonical_training_plan', plan)))
             for target, value in (
                 ('learner_api.canonical_learning.require_profile', owner),
                 ('learner_api.identity.learner_profile_for_source', profile),

@@ -1,3 +1,4 @@
+import { LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
 import { useContext, useEffect, useId, useMemo, useRef, useState } from 'react';
 import type { PDFDocumentProxy } from 'pdfjs-dist';
 import { sanitizeCurriculumHtml } from '@/lib/curriculumHtml';
@@ -86,28 +87,28 @@ export function PdfReadingText({ pdf, pageNumber, active, storageKey, preference
   useEffect(() => {
     register?.(id, {
       highlight: () => {
-        if (!active || !highlightReadingSelection(root.current)) return false;
+        if (!active || !highlightReadingSelection(root.current, tools?.highlightColour || preferences.highlightColour)) return false;
         const highlightedHtml = root.current!.innerHTML;
         setDocuments(current => ({ ...current, [pageNumber]: { sourceHtml, html: highlightedHtml } }));
         onDirty?.();
         return true;
       },
       clear: () => {
-        const cleared = Object.fromEntries(Object.entries(documents).map(([page, doc]) => [page, { ...doc, html: doc.sourceHtml }]));
-        if (root.current) clearReadingHighlights(root.current);
-        setDocuments(cleared);
+        if (!root.current || !clearReadingHighlights(root.current)) return false;
+        setDocuments(current => ({ ...current, [pageNumber]: { sourceHtml, html: root.current!.innerHTML } }));
         onDirty?.();
+        return true;
       },
       save: () => window.localStorage.setItem(storageKey, JSON.stringify(documents)),
     });
-  }, [register, id, active, pageNumber, sourceHtml, documents, storageKey, onDirty]);
+  }, [register, id, active, pageNumber, sourceHtml, documents, storageKey, onDirty, tools?.highlightColour, preferences.highlightColour]);
   useEffect(() => () => register?.(id, null), [register, id]);
 
   if (!active) return null;
   if (error) return <div role="alert" className="p-5 text-sm text-red-700">{error}
     <button type="button" className="ml-2 underline" onClick={() => setRetry(value => value + 1)}>Retry text view</button>
   </div>;
-  if (loaded?.page !== pageNumber) return <p role="status" className="p-5 text-sm">Loading page text…</p>;
+  if (loaded?.page !== pageNumber) return <p  className="p-5 text-sm"><LoadingSkeleton label="Loading page text…" variant="rows" /></p>;
   if (!sourceHtml) return <div className="p-5 text-sm">
     <p role="status">No readable text was found on this page. Extract text from this scanned page to use the reading tools.</p>
     <button type="button" disabled={extracting} onClick={() => void extractText()}

@@ -1,0 +1,204 @@
+{
+  "derived_programme_name_sql": {
+    "source": "def derived_programme_name_sql(table):\n    \"\"\"``<expr> AS programme_name`` when ``table`` no longer stores the name, else ''.\n\n    Keeps every ``row['programme_name']`` reader and every bare\n    ``order by programme_name`` working: Postgres resolves a bare ORDER BY name\n    to this output column. Correlated on the table's own reference, so callers'\n    where/order clauses are unchanged. A blank, unknown or duplicated programme\n    id gives '' (the old column's default) rather than an arbitrary name. A\n    database that still has the physical copy also reads the authoritative name.\n    \"\"\"\n    if table not in PROGRAMME_NAME_DERIVED_TABLES or not has_column(table, 'programme_id'):\n        return ''\n    row = authoring_table_name(table)\n    return (f\"COALESCE((SELECT CASE WHEN count(*) = 1 THEN min(programme_name_source.name) END \"\n            f\"FROM {authoring_table_name('programmes')} programme_name_source \"\n            f\"WHERE programme_name_source.programme_id = {row}.programme_id \"\n            f\"AND btrim(coalesce({row}.programme_id, '')) <> ''), '') AS programme_name\")",
+    "module": "curriculum_api.catalogue.infrastructure.authoring_sql",
+    "deps": [
+      "PROGRAMME_NAME_DERIVED_TABLES",
+      "authoring_table_name",
+      "has_column"
+    ],
+    "attrs": {},
+    "bindings": {},
+    "decorators": []
+  },
+  "derived_placement_names_sql": {
+    "source": "def derived_placement_names_sql(table):\n    \"\"\"``{output: '<expr> AS output'}`` for every placement name ``table`` no longer stores.\n\n    ``programme_name`` comes from derived_programme_name_sql(); cohort and\n    group names are read the same way through their ids. Each is a scalar\n    subquery correlated on the table's own reference, so no outer row is ever\n    duplicated, and a blank, unknown or duplicated id gives '' (the removed\n    column's default). Physical copies are replaced, never used as a fallback.\n    Writers are unaffected: authoring_upsert()\n    and update_authoring_rows() write only physical columns, so a derived key\n    in a payload is dropped.\n    \"\"\"\n    derived = {}\n    programme = derived_programme_name_sql(table)\n    if programme:\n        derived['programme_name'] = programme\n    row = authoring_table_name(table)\n    for output, source, key, source_column in PLACEMENT_NAME_DERIVED_COLUMNS.get(table, ()):\n        if not has_column(table, key):\n            continue\n        derived[output] = (\n            f\"COALESCE((SELECT CASE WHEN count(*) = 1 THEN min(placement_source.{source_column}) END \"\n            f\"FROM {authoring_table_name(source)} placement_source \"\n            f\"WHERE placement_source.{key} = {row}.{key} \"\n            f\"AND btrim(coalesce({row}.{key}, '')) <> ''), '') AS {output}\")\n    return derived",
+    "module": "curriculum_api.catalogue.infrastructure.authoring_sql",
+    "deps": [
+      "PLACEMENT_NAME_DERIVED_COLUMNS",
+      "authoring_table_name",
+      "derived_programme_name_sql",
+      "has_column"
+    ],
+    "attrs": {},
+    "bindings": {},
+    "decorators": []
+  },
+  "authoring_select_sql": {
+    "source": "def authoring_select_sql(table, where_sql='', order_sql='', *, ensure_tables=True, columns=None, exclude_columns=None):\n    \"\"\"The statement authoring_fetch_all() runs; shared so a prefetch sends the same SQL.\"\"\"\n    if ensure_tables:\n        ensure_module_authoring_tables()\n    available = set(column_names(table))\n    relation = None\n    if table == AUTHORING_KSB_MAPPINGS_TABLE:\n        # A mapping's module and week are its component's, its code its\n        # standard KSB's. The description is attached after the fetch\n        # (complete_authoring_rows): it is the standard's text on every row.\n        relation = ksb_mapping_placement.relation(include_description=False)\n        available |= {*ksb_mapping_placement.PLACEMENT_FIELDS, 'ksb_code'}\n    # Placement names by id -- a stale physical copy is never read. Only the\n    # names the read uses (selected, or named by its WHERE / ORDER BY) are\n    # derived: each is a lookup per row. In FROM, so WHERE and ORDER BY can use\n    # them even when the caller does not select them.\n    names = derived_placement_names_sql(table)\n    stale_copies = set(names) & available\n    available -= set(names)\n    clauses = f'{where_sql} {order_sql}'\n    derived = {\n        key: expression for key, expression in names.items()\n        if (key in columns if columns else key not in (exclude_columns or ()))\n        or re.search(rf'\\b{key}\\b', clauses)\n    }\n    if derived or stale_copies:\n        source_columns = [quote_ident(key) for key in sorted(available)]\n        projection = ', '.join([*source_columns, *derived.values()])\n        relation = f'(select {projection} from {authoring_table_name(table)}) as {quote_ident(table)}'\n        available.update(derived)\n    if columns:\n        wanted = [column for column in columns if column in available]\n        if (table == AUTHORING_KSB_MAPPINGS_TABLE and 'ksb_description' in columns\n                and 'standard_ksb_id' in available and 'standard_ksb_id' not in wanted):\n            # The description is looked up by this key.\n            wanted.append('standard_ksb_id')\n        select_list = ', '.join(quote_ident(column) for column in wanted) if wanted else '*'\n    elif exclude_columns:\n        # Everything but the named columns. Safer than an allow-list for a\n        # caller that reads most of the row: a column added later is included\n        # automatically instead of silently arriving as None.\n        wanted = sorted(available - {column for column in exclude_columns})\n        select_list = ', '.join(quote_ident(column) for column in wanted) if wanted else '*'\n    else:\n        select_list = '*'\n    query = f'select {select_list} from {relation or learning_read_table(table)}'\n    if where_sql:\n        query += f' where {where_sql}'\n    if order_sql:\n        query += f' order by {order_sql}'\n    return query",
+    "module": "curriculum_api.catalogue.infrastructure.authoring_sql",
+    "deps": [
+      "AUTHORING_KSB_MAPPINGS_TABLE",
+      "authoring_table_name",
+      "column_names",
+      "derived_placement_names_sql",
+      "ksb_placement_fields",
+      "ksb_relation",
+      "learning_read_table",
+      "quote_ident"
+    ],
+    "attrs": {
+      "ksb_relation": "ksb_mapping_placement.relation",
+      "ksb_placement_fields": "ksb_mapping_placement.PLACEMENT_FIELDS"
+    },
+    "bindings": {
+      "ksb_placement_fields": "ksb_mapping_placement.PLACEMENT_FIELDS",
+      "ksb_relation": "ksb_mapping_placement.relation"
+    },
+    "decorators": []
+  },
+  "authoring_rows_by_id": {
+    "source": "def authoring_rows_by_id(table, id_column, ids, order_sql, *, ensure_tables=True):\n    \"\"\"``table``'s rows whose ``id_column`` is one of ``ids``, in no promised order.\n\n    Inside a curriculum_read_scope() this filters the whole-table read the\n    list readers make (memoised, so it costs nothing once they have run, and\n    one round trip when they have not -- the same as the targeted read). Outside\n    a scope it is the targeted ``in (...)`` read it has always been, and\n    ``ensure_tables`` applies to it; the scoped read is the list readers' own,\n    so it provisions as they do (a no-op once any of them has run).\n    \"\"\"\n    wanted = {clean_str(value) for value in ids if clean_str(value)}\n    if not wanted:\n        return []\n    if getattr(_CURRICULUM_READ_SCOPE, 'memo', None) is not None:\n        return [\n            row for row in authoring_fetch_all(table, order_sql=order_sql)\n            if clean_str(row.get(id_column)) in wanted\n        ]\n    ordered = sorted(wanted)\n    clause, params = curriculum_in_clause(id_column, ordered)\n    return authoring_fetch_all(table, clause, params, ensure_tables=ensure_tables)",
+    "module": "curriculum_api.catalogue.infrastructure.authoring_reads",
+    "deps": [
+      "authoring_fetch_all",
+      "clean_str",
+      "current_read_memo",
+      "curriculum_in_clause"
+    ],
+    "attrs": {
+      "current_read_memo()": "getattr(_CURRICULUM_READ_SCOPE, 'memo', None)"
+    },
+    "bindings": {
+      "current_read_memo": "lambda: getattr(_CURRICULUM_READ_SCOPE, 'memo', None)"
+    },
+    "decorators": []
+  },
+  "authoring_fetch_all": {
+    "source": "def authoring_fetch_all(table, where_sql='', params=None, order_sql='', *, ensure_tables=True, columns=None, exclude_columns=None):\n    \"\"\"Read authoring rows. Pass ``columns`` to avoid ``select *``.\n\n    Narrowing matters on ``curriculum.components``: it holds ~18k rows and\n    39 MB, 24 MB of which is ``settings_json``, and the database is remote.\n    A caller that only needs titles and counts pays ~90 s for ``select *``\n    against well under a second for the columns it actually reads. ``columns``\n    is part of the memo key, so a narrow read and a full read never collide.\n\n    ``exclude_columns`` is the inverse and is the safer choice for a caller that\n    reads most of the row: it drops only what is named, so a column added later\n    still arrives.\n    \"\"\"\n    query = authoring_select_sql(\n        table, where_sql, order_sql,\n        ensure_tables=ensure_tables, columns=columns, exclude_columns=exclude_columns,\n    )\n    with connection.cursor() as cursor:\n        cursor.execute(query, params or [])\n        rows = rows_as_dicts(cursor)\n    return complete_authoring_rows(table, rows, columns, exclude_columns)",
+    "module": "curriculum_api.catalogue.infrastructure.authoring_reads",
+    "deps": [
+      "authoring_select_sql",
+      "complete_authoring_rows",
+      "open_cursor",
+      "rows_as_dicts"
+    ],
+    "attrs": {
+      "open_cursor()": "connection.cursor()"
+    },
+    "bindings": {
+      "open_cursor": "lambda: connection.cursor()"
+    },
+    "decorators": [
+      "scoped_curriculum_read"
+    ]
+  },
+  "complete_authoring_rows": {
+    "source": "def complete_authoring_rows(table, rows, columns=None, exclude_columns=None):\n    \"\"\"What a read adds after the fetch, the same for a direct and a prefetched read.\n\n    A KSB mapping's description (its standard's text, left out of the\n    statement), a component's KSB items, then the programme / cohort / group /\n    tutor / coach names, read by id. The archive state is the row's ``status``.\n    \"\"\"\n    def wanted(key):\n        return bool(rows) and (not columns or key in columns) and key not in (exclude_columns or ())\n\n    if table == AUTHORING_KSB_MAPPINGS_TABLE and wanted('ksb_description'):\n        ksb_mapping_placement.attach_descriptions(rows)\n    if table == AUTHORING_COMPONENTS_TABLE and wanted('ksb_mappings'):\n        # A component's KSBs, in the item shape its readers take\n        # (component_ksb_mappings_from_row).\n        ksb_mapping_placement.attach_component_items(rows)\n    return curriculum_names.attach(table, rows, requested=columns, excluded=exclude_columns)",
+    "module": "curriculum_api.catalogue.infrastructure.authoring_reads",
+    "deps": [
+      "AUTHORING_COMPONENTS_TABLE",
+      "AUTHORING_KSB_MAPPINGS_TABLE",
+      "attach_component_ksbs",
+      "attach_curriculum_names",
+      "attach_ksb_descriptions"
+    ],
+    "attrs": {
+      "attach_ksb_descriptions": "ksb_mapping_placement.attach_descriptions",
+      "attach_component_ksbs": "ksb_mapping_placement.attach_component_items",
+      "attach_curriculum_names": "curriculum_names.attach"
+    },
+    "bindings": {
+      "attach_component_ksbs": "ksb_mapping_placement.attach_component_items",
+      "attach_curriculum_names": "curriculum_names.attach",
+      "attach_ksb_descriptions": "ksb_mapping_placement.attach_descriptions"
+    },
+    "decorators": []
+  },
+  "prefetch_authoring_reads": {
+    "source": "def prefetch_authoring_reads(calls):\n    \"\"\"Send independent authoring_fetch_all() reads to the database together.\n\n    ``calls`` is ``[(args, kwargs), ...]``, exactly as the caller below will\n    make them. Each result goes into the read scope under the key that call is\n    memoised with, so the call itself then costs nothing. A builder's reads go\n    out one round trip at a time, and from a remote database each round trip,\n    not the rows, is most of what a programme build waits on; one\n    multi-statement query sends them all and waits once.\n\n    Only ever an optimisation: the SQL is authoring_select_sql()'s own, and a\n    call whose key does not match what was prefetched -- arguments spelled\n    differently, a batch that failed -- just reads as it always did. Outside\n    a read scope, inside an atomic block (a failed statement there would poison\n    the caller's transaction) or off PostgreSQL, nothing is sent.\n    \"\"\"\n    memo = getattr(_CURRICULUM_READ_SCOPE, 'memo', None)\n    if (\n        memo is None or not CURRICULUM_BATCHED_READS\n        or connection.vendor != 'postgresql' or connection.in_atomic_block\n    ):\n        return\n    try:\n        signature = inspect.signature(authoring_fetch_all.__wrapped__)\n    except (AttributeError, TypeError, ValueError):\n        return\n    pending = {}\n    for args, kwargs in calls:\n        try:\n            key = authoring_fetch_all.memo_key(*args, **kwargs)\n            if key in memo or key in pending:\n                continue\n            bound = signature.bind(*args, **kwargs)\n            bound.apply_defaults()\n            options = bound.arguments\n            query = authoring_select_sql(\n                options['table'], options['where_sql'], options['order_sql'],\n                ensure_tables=options['ensure_tables'], columns=options['columns'],\n                exclude_columns=options['exclude_columns'],\n            )\n        except Exception:\n            logger.debug('Skipping a curriculum read prefetch.', exc_info=True)\n            continue\n        pending[key] = (query, options['params'] or [], options['table'], options['columns'], options['exclude_columns'])\n    if len(pending) < 2:\n        # One read gains nothing from a batch; let the call make it.\n        return\n    results = []\n    try:\n        with connection.cursor() as cursor:\n            cursor.execute(\n                '; '.join(query for query, *_ in pending.values()),\n                [value for _query, params, *_ in pending.values() for value in params],\n            )\n            while True:\n                results.append(rows_as_dicts(cursor))\n                if not cursor.nextset():\n                    break\n    except Exception:\n        logger.warning('Batched curriculum reads failed; they will be read one by one.', exc_info=True)\n        return\n    if len(results) != len(pending):\n        logger.warning('Batched curriculum reads returned %s results for %s reads; they will be read one by one.',\n                       len(results), len(pending))\n        return\n    for (key, (_query, _params, table, columns, exclude_columns)), rows in zip(pending.items(), results):\n        # Same completion authoring_fetch_all() applies, so a prefetched read and\n        # a direct one hand callers identical rows.\n        memo.setdefault(key, complete_authoring_rows(table, rows, columns, exclude_columns))",
+    "module": "curriculum_api.catalogue.infrastructure.authoring_reads",
+    "deps": [
+      "CURRICULUM_BATCHED_READS",
+      "authoring_fetch_all",
+      "authoring_select_sql",
+      "complete_authoring_rows",
+      "current_read_memo",
+      "database_vendor",
+      "in_atomic_block",
+      "logger",
+      "open_cursor",
+      "rows_as_dicts"
+    ],
+    "attrs": {
+      "current_read_memo()": "getattr(_CURRICULUM_READ_SCOPE, 'memo', None)",
+      "open_cursor()": "connection.cursor()",
+      "database_vendor()": "connection.vendor",
+      "in_atomic_block()": "connection.in_atomic_block"
+    },
+    "bindings": {
+      "current_read_memo": "lambda: getattr(_CURRICULUM_READ_SCOPE, 'memo', None)",
+      "database_vendor": "lambda: connection.vendor",
+      "in_atomic_block": "lambda: connection.in_atomic_block",
+      "open_cursor": "lambda: connection.cursor()"
+    },
+    "decorators": []
+  },
+  "component_summary_source_rows": {
+    "source": "def component_summary_source_rows(catalogue_ids):\n    \"\"\"The live component rows of ``catalogue_ids``, reduced to what the summary reads.\n\n    The same rows component_builder_rows() returns -- the Postgres-side filter\n    of live_component_rows_paged(), then active_component_rows() -- without\n    the authored content, the KSB mappings, or any column the summary never\n    looks at. Each row stands for ``_count`` components (1 unless grouped)\n    and says how many of them are published in ``_published``.\n\n    On Postgres identical rows are grouped by the database, so the largest\n    programme's ~17k components arrive as roughly one row per week instead of\n    one per component: the statement itself runs in ~0.2 s there, and shipping\n    every row to the application was most of a multi-second read. Two things\n    stay per component on purpose: ``expected_otjh`` is grouped on its stored\n    value and converted to minutes here, so the rounding is the browser's\n    double arithmetic and never Postgres numeric's; and a settings document\n    stored as a JSON string (not an object) is read row by row and parsed by\n    component_builder_settings(), exactly as the full read parses it.\n    \"\"\"\n    columns = column_names(AUTHORING_COMPONENTS_TABLE)\n    placeholders = ', '.join(['%s'] * len(catalogue_ids))\n    clauses = [f'module_catalogue_id in ({placeholders})']\n    if connection.vendor != 'postgresql' or 'settings_json' not in columns:\n        wanted = [column for column in COMPONENT_SUMMARY_COLUMNS if column in columns]\n        rows = authoring_fetch_all(\n            AUTHORING_COMPONENTS_TABLE, clauses[0], list(catalogue_ids),\n            columns=[*wanted, 'settings_json'] if 'settings_json' in columns else wanted,\n        )\n        return [\n            {**row, '_count': 1, '_published': component_is_published(row)}\n            for row in active_component_rows(rows)\n        ]\n    clauses.append(archive_state.live_sql())\n    where = ' and '.join(f'({clause})' for clause in clauses)\n    table = learning_read_table(AUTHORING_COMPONENTS_TABLE)\n    settings = quote_ident('settings_json')\n    # Every column active_component_rows() and the bucket key read; a column\n    # this table does not carry is selected as null, as a row without it reads.\n    key_columns = [\n        'module_catalogue_id', 'week_id', 'type', 'status', 'expected_otjh',\n    ]\n    key_select = ', '.join(\n        f'{quote_ident(column)} as {quote_ident(column)}' if column in columns else f'null as {quote_ident(column)}'\n        for column in key_columns\n    )\n    group_by = ', '.join(str(index) for index in range(1, len(key_columns) + 2))\n    published = f\"coalesce(({settings} ->> 'componentBuilderStatus') = 'published', false)\"\n    rows = fetch_all(\n        f'select {key_select}, {published} as {quote_ident(\"_published_flag\")},'\n        f' count(*) as {quote_ident(\"_count\")},'\n        f' min(display_order) as {quote_ident(\"display_order\")},'\n        f' (array_agg(title order by display_order, title))[1] as {quote_ident(\"title\")}'\n        f' from {table} where {where}'\n        f\" and ({settings} is null or jsonb_typeof({settings}) = 'object')\"\n        f' group by {group_by}',\n        list(catalogue_ids),\n    )\n    grouped = []\n    for row in rows:\n        count = int(row.pop('_count') or 0)\n        flag = bool(row.pop('_published_flag'))\n        grouped.append({**row, '_count': count, '_published': count if flag else 0})\n    wanted = [column for column in COMPONENT_SUMMARY_COLUMNS if column in columns]\n    loose = fetch_all(\n        f'select {\", \".join(quote_ident(column) for column in wanted)}, {settings}'\n        f' from {table} where {where}'\n        f\" and {settings} is not null and jsonb_typeof({settings}) <> 'object'\",\n        list(catalogue_ids),\n    )\n    loose = [{**row, '_count': 1, '_published': component_is_published(row)} for row in loose]\n    return active_component_rows(grouped + loose)",
+    "module": "curriculum_api.catalogue.infrastructure.component_summary_reads",
+    "deps": [
+      "AUTHORING_COMPONENTS_TABLE",
+      "COMPONENT_SUMMARY_COLUMNS",
+      "active_component_rows",
+      "archive_live_sql",
+      "authoring_fetch_all",
+      "column_names",
+      "component_is_published",
+      "database_vendor",
+      "fetch_all",
+      "learning_read_table",
+      "quote_ident"
+    ],
+    "attrs": {
+      "database_vendor()": "connection.vendor",
+      "archive_live_sql": "archive_state.live_sql"
+    },
+    "bindings": {
+      "archive_live_sql": "archive_state.live_sql",
+      "database_vendor": "lambda: connection.vendor"
+    },
+    "decorators": []
+  },
+  "component_summary_ksb_codes": {
+    "source": "def component_summary_ksb_codes(catalogue_ids):\n    \"\"\"``{(module_catalogue_id, week_id): {code, ...}}``: the KSB codes the full read maps there.\n\n    The same mappings component_builder_rows() puts on its components, counted\n    by code rather than shipped one per component: live mappings\n    (active_mapping_rows), with a code, on live components that\n    active_component_rows() keeps, codes normalised as coverage_normalise_code\n    does. The programme Modules tab counts a module's distinct KSBs from this.\n\n    None off Postgres or without the standard KSB table; the summary then\n    leaves ``ksbCodes`` out and the page falls back to the full component read.\n    \"\"\"\n    if connection.vendor != 'postgresql' or not catalogue_ids or not table_exists('standard_ksbs'):\n        return None\n    # A mapping's code is its standard KSB's; both rows are filtered by status.\n    code_sql = 'standard.ksb_code'\n    join_sql = f' join {authoring_table_name(\"standard_ksbs\")} as standard on standard.id = mapping.standard_ksb_id'\n    clauses = [\n        f'component.module_catalogue_id in ({\", \".join([\"%s\"] * len(catalogue_ids))})',\n        archive_state.live_sql('component'),\n        archive_state.live_sql('mapping'),\n        f\"coalesce({code_sql}, '') <> ''\",\n    ]\n    # What active_component_rows() reads beyond the archive state the SQL filtered.\n    key_columns = ['module_catalogue_id', 'week_id', 'type']\n    key_select = ', '.join(f'component.{quote_ident(column)} as {quote_ident(column)}' for column in key_columns)\n    group_by = ', '.join(str(index) for index in range(1, len(key_columns) + 1))\n    rows = fetch_all(\n        f'select {key_select}, array_agg(distinct {code_sql}) as {quote_ident(\"_codes\")}'\n        f' from {authoring_table_name(AUTHORING_COMPONENTS_TABLE)} as component'\n        f' join {authoring_table_name(AUTHORING_KSB_MAPPINGS_TABLE)} as mapping on mapping.component_id = component.id'\n        f'{join_sql}'\n        f' where {\" and \".join(f\"({clause})\" for clause in clauses)}'\n        f' group by {group_by}',\n        list(catalogue_ids),\n    )\n    codes = defaultdict(set)\n    for row in active_component_rows(rows):\n        key = (str(row.get('module_catalogue_id') or ''), str(row.get('week_id') or ''))\n        codes[key].update(code for code in (coverage_normalise_code(value) for value in (row.get('_codes') or [])) if code)\n    return codes",
+    "module": "curriculum_api.catalogue.infrastructure.component_summary_reads",
+    "deps": [
+      "AUTHORING_COMPONENTS_TABLE",
+      "AUTHORING_KSB_MAPPINGS_TABLE",
+      "active_component_rows",
+      "archive_live_sql",
+      "authoring_table_name",
+      "coverage_normalise_code",
+      "database_vendor",
+      "fetch_all",
+      "quote_ident",
+      "table_exists"
+    ],
+    "attrs": {
+      "database_vendor()": "connection.vendor",
+      "archive_live_sql": "archive_state.live_sql"
+    },
+    "bindings": {
+      "archive_live_sql": "archive_state.live_sql",
+      "database_vendor": "lambda: connection.vendor"
+    },
+    "decorators": []
+  },
+  "js_round": {
+    "source": "def js_round(value):\n    \"\"\"``Math.round`` exactly: halves go up, towards +infinity, never to even.\"\"\"\n    whole = math.floor(value)\n    return whole + 1 if value - whole >= 0.5 else whole",
+    "module": "curriculum_api.catalogue.domain.component_summary",
+    "deps": [],
+    "attrs": {},
+    "bindings": {},
+    "decorators": []
+  },
+  "component_is_published": {
+    "source": "def component_is_published(row):\n    \"\"\"1 when component_builder_response() would report this row 'published', else 0.\"\"\"\n    return 1 if (component_builder_settings(row).get('componentBuilderStatus') or 'draft') == 'published' else 0",
+    "module": "curriculum_api.catalogue.domain.component_summary",
+    "deps": [],
+    "attrs": {},
+    "bindings": {},
+    "decorators": []
+  }
+}

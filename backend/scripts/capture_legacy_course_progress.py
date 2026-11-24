@@ -87,11 +87,9 @@ def run(enrolment_id, *, apply=False, expected_target=None):
         cur.execute("SET LOCAL statement_timeout='20s'")
         cur.execute("SET LOCAL lock_timeout='5s'")
         owners = cur.execute('''SELECT l.id,l.enrolment_id,l.aptem_id,
-            i.source_learner_id,coalesce(nullif(i.source_payload->>'source_email',''),
-                i.source_payload->>'learner_email') AS source_email
+            i.lms_learner_id AS source_learner_id,i.lms_email AS source_email
             FROM "Learner".learners l JOIN enrolment."Created_users" e ON e.id=l.enrolment_id
-            JOIN "Learner".learner_external_identities i ON i.learner_id=l.id
-                AND i.source_system='old_lms' AND i.deleted_at IS NULL
+            JOIN "Last_audit".learner_lms_aliases i ON i.learner_profile_id=l.id AND i.aptem_id=l.aptem_id
             WHERE l.enrolment_id=%s AND l.aptem_id::text=e.aptem_id::text
               AND lower(trim(l.email))=lower(trim(e."Email"))''', [enrolment_id]).fetchall()
         if len(owners) != 1:

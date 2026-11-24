@@ -34,6 +34,9 @@ class QuizPackage(models.Model):
     limit_attempts = models.BooleanField(default=False)
     passing_grade = models.PositiveIntegerField(default=65)
     retake_points_cut = models.PositiveIntegerField(default=5)
+    policy_enabled = models.BooleanField(default=False)
+    attempt_limit = models.PositiveIntegerField(default=3)
+    grade_settings = models.JSONField(null=True, blank=True)
     published_at = models.DateTimeField(blank=True, null=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -45,6 +48,18 @@ class QuizPackage(models.Model):
 
     def __str__(self):
         return self.title
+
+
+class QuizDefaults(models.Model):
+    id = models.PositiveIntegerField(primary_key=True, default=1)
+    general = models.JSONField()
+    grades = models.JSONField()
+    revision = models.PositiveIntegerField(default=1)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        managed = False
+        db_table = '"curriculum"."quiz_defaults"'
 
 
 class QuizQuestion(models.Model):

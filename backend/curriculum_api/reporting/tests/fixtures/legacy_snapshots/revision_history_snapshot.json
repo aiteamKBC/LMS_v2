@@ -1,0 +1,463 @@
+{
+  "functions": {
+    "safe_metadata": {
+      "source": "def safe_metadata(metadata):\n    \"\"\"The declared metadata, reduced to what is safe and small enough to keep.\n\n    An allowlist rather than a filter of known-bad names: a deny-list has to\n    guess every future spelling of \"token\", and the first one it has not heard\n    of ends up in an append-only log nobody can edit. Anything not named here is\n    dropped silently -- the caller is passing descriptive context, not content,\n    and a dropped key costs a note in the trail rather than a leak.\n    \"\"\"\n    if not isinstance(metadata, dict):\n        return {}\n    safe = {}\n    for key, value in metadata.items():\n        name = clean(key)\n        if name not in METADATA_KEYS:\n            continue\n        if value is None or isinstance(value, bool) or isinstance(value, int):\n            safe[name] = value\n            continue\n        text = clean(value if isinstance(value, str) else json.dumps(jsonable(value), ensure_ascii=False))\n        # A URL can carry a SAS token, a signature or a session in its query\n        # string, so only the part before the '?' is ever kept.\n        if '://' in text or text.startswith('/'):\n            text = text.split('?', 1)[0].split('#', 1)[0]\n        safe[name] = text[:METADATA_VALUE_LIMIT]\n    if len(json.dumps(safe, ensure_ascii=False)) > METADATA_JSON_LIMIT:\n        # Bounded rather than truncated mid-value: half a JSON document in an\n        # append-only column is worse than an honest note that it was too big.\n        return {'note': 'metadata omitted: too large'}\n    return safe",
+      "owner": "curriculum_api.reporting.domain.snapshot_values",
+      "dependencies": [
+        "METADATA_JSON_LIMIT",
+        "METADATA_KEYS",
+        "METADATA_VALUE_LIMIT",
+        "clean",
+        "json",
+        "jsonable"
+      ]
+    },
+    "clean": {
+      "source": "def clean(value):\n    return str(value or '').strip()",
+      "owner": "curriculum_api.reporting.domain.snapshot_values",
+      "dependencies": []
+    },
+    "as_list": {
+      "source": "def as_list(value):\n    \"\"\"A json column as a list, whether the driver parsed it or handed back text.\"\"\"\n    if isinstance(value, list):\n        return value\n    text = clean(value)\n    if not text:\n        return []\n    try:\n        parsed = json.loads(text)\n    except (TypeError, ValueError):\n        return []\n    return parsed if isinstance(parsed, list) else []",
+      "owner": "curriculum_api.reporting.domain.snapshot_values",
+      "dependencies": [
+        "clean",
+        "json"
+      ]
+    },
+    "as_dict": {
+      "source": "def as_dict(value):\n    \"\"\"A jsonb column as a dict, whatever the driver handed back.\"\"\"\n    if isinstance(value, dict):\n        return value\n    text = clean(value)\n    if not text:\n        return {}\n    try:\n        parsed = json.loads(text)\n    except (TypeError, ValueError):\n        return {}\n    return parsed if isinstance(parsed, dict) else {}",
+      "owner": "curriculum_api.reporting.domain.snapshot_values",
+      "dependencies": [
+        "clean",
+        "json"
+      ]
+    },
+    "jsonable": {
+      "source": "def jsonable(value):\n    \"\"\"A column value in a form ``json.dumps`` accepts, without losing meaning.\n\n    Decimal becomes float on purpose. The driver returns ``Decimal('2.00')`` for\n    an OTJH column while the tree save passes ``2.0``; as text those differ, and\n    every alternate save would report a change to a field nobody touched.\n    \"\"\"\n    if value is None or isinstance(value, (bool, int, float, str)):\n        return value\n    if isinstance(value, Decimal):\n        return float(value)\n    if isinstance(value, (datetime, date)):\n        return value.isoformat()\n    if isinstance(value, dict):\n        return {str(key): jsonable(item) for key, item in value.items()}\n    if isinstance(value, (list, tuple)):\n        return [jsonable(item) for item in value]\n    # UUID and anything else the driver invents: text is lossless enough for a\n    # snapshot and always comparable.\n    return str(value)",
+      "owner": "curriculum_api.reporting.domain.snapshot_values",
+      "dependencies": [
+        "Decimal",
+        "date",
+        "datetime",
+        "jsonable"
+      ]
+    },
+    "parse_json_column": {
+      "source": "def parse_json_column(value):\n    \"\"\"A JSON column as its parsed value, whether it arrived parsed or as text.\"\"\"\n    if isinstance(value, (dict, list)):\n        return value\n    text = clean(value)\n    if not text:\n        return None\n    try:\n        return json.loads(text)\n    except (TypeError, ValueError):\n        return None",
+      "owner": "curriculum_api.reporting.domain.snapshot_values",
+      "dependencies": [
+        "clean",
+        "json"
+      ]
+    },
+    "strip_credentials": {
+      "source": "def strip_credentials(value):\n    \"\"\"The same value with any URL query string removed, however deep it sits.\n\n    A stored upload URL can carry a SAS token, a signature or a one-time key in\n    its query string. The allowlist above keeps such things out of *metadata*,\n    but a component's own ``settings_json`` holds the URL as ordinary content,\n    so without this the snapshot and the diff would quietly archive a working\n    credential in an append-only table that nobody can edit afterwards.\n\n    Only the query and fragment go. The path stays, because which file this is\n    remains the useful part, and two different signatures for the same file were\n    never a change worth reporting anyway.\n    \"\"\"\n    if isinstance(value, str):\n        if ('://' in value or value.startswith('/')) and ('?' in value or '#' in value):\n            return value.split('?', 1)[0].split('#', 1)[0]\n        return value\n    if isinstance(value, dict):\n        return {key: strip_credentials(item) for key, item in value.items()}\n    if isinstance(value, (list, tuple)):\n        return [strip_credentials(item) for item in value]\n    return value",
+      "owner": "curriculum_api.reporting.domain.snapshot_values",
+      "dependencies": [
+        "strip_credentials"
+      ]
+    },
+    "redacted": {
+      "source": "def redacted(value):\n    \"\"\"A stand-in that changes when the value changes and reveals nothing.\"\"\"\n    if value is None or value == '':\n        return None\n    text = value if isinstance(value, str) else json.dumps(jsonable(value), sort_keys=True, ensure_ascii=False)\n    return REDACTED_PREFIX + hashlib.sha256(text.encode('utf-8')).hexdigest()[:16]",
+      "owner": "curriculum_api.reporting.domain.snapshot_values",
+      "dependencies": [
+        "REDACTED_PREFIX",
+        "hashlib",
+        "json",
+        "jsonable"
+      ]
+    },
+    "audit_display_value": {
+      "source": "def audit_display_value(entity_type, field, value):\n    \"\"\"Apply today's privacy policy to old plaintext history on read as well.\"\"\"\n    if field.split('.', 1)[0] in REDACTED_COLUMNS.get(entity_type, ()):\n        return None if value is None or value == '' else REDACTED_PREFIX + 'hidden'\n    return strip_credentials(value)",
+      "owner": "curriculum_api.reporting.domain.snapshot_values",
+      "dependencies": [
+        "REDACTED_COLUMNS",
+        "REDACTED_PREFIX",
+        "strip_credentials"
+      ]
+    },
+    "build_snapshot": {
+      "source": "def build_snapshot(entity_type, row):\n    \"\"\"The saved record as history will hold it, in a shape both write paths share.\n\n    Always carries exactly the columns ``SNAPSHOT_COLUMNS`` declares for the\n    entity \u2014 see the note there for why the source's own key set is not used.\n    Columns named in ``REDACTED_COLUMNS`` carry a digest instead of the value.\n    \"\"\"\n    row = row or {}\n    hidden = REDACTED_COLUMNS.get(entity_type) or frozenset()\n    skipped = SYSTEM_COLUMNS.get(entity_type) or frozenset()\n    snapshot = {}\n    for column in SNAPSHOT_COLUMNS.get(entity_type, ()):\n        if column in skipped:\n            continue\n        value = row.get(column)\n        if column in hidden:\n            snapshot[column] = redacted(value)\n            continue\n        if column in JSON_SNAPSHOT_COLUMNS:\n            parsed = parse_json_column(value)\n            if column == 'settings_json':\n                parsed = logged_settings(parsed)\n            snapshot[column] = strip_credentials(jsonable(parsed)) if parsed is not None else None\n            continue\n        snapshot[column] = strip_credentials(jsonable(value))\n    return snapshot",
+      "owner": "curriculum_api.reporting.domain.snapshot_values",
+      "dependencies": [
+        "JSON_SNAPSHOT_COLUMNS",
+        "REDACTED_COLUMNS",
+        "SNAPSHOT_COLUMNS",
+        "SYSTEM_COLUMNS",
+        "jsonable",
+        "logged_settings",
+        "parse_json_column",
+        "redacted",
+        "strip_credentials"
+      ]
+    },
+    "logged_settings": {
+      "source": "def logged_settings(settings):\n    \"\"\"Settings as the log keeps them: the Teams ids and links become one flag.\"\"\"\n    if not isinstance(settings, dict):\n        return settings\n    kept = {key: value for key, value in settings.items() if key not in TEAMS_SYSTEM_SETTING_KEYS}\n    if any(settings.get(key) for key in TEAMS_LINK_KEYS):\n        kept[TEAMS_LINK_MARKER] = TEAMS_LINKED\n    return kept",
+      "owner": "curriculum_api.reporting.domain.snapshot_values",
+      "dependencies": [
+        "TEAMS_LINKED",
+        "TEAMS_LINK_KEYS",
+        "TEAMS_LINK_MARKER",
+        "TEAMS_SYSTEM_SETTING_KEYS"
+      ]
+    },
+    "logged_view": {
+      "source": "def logged_view(entity_type, snapshot):\n    \"\"\"An older stored snapshot put in today's shape before it is compared.\n\n    Rows written before these rules still carry the Teams ids and Microsoft's\n    calendar ids. Comparing them as they are would report every one of those\n    keys as removed on the next save.\n    \"\"\"\n    if not snapshot:\n        return snapshot\n    skipped = SYSTEM_COLUMNS.get(entity_type) or frozenset()\n    view = {key: value for key, value in snapshot.items() if key not in skipped}\n    if isinstance(view.get('settings_json'), dict):\n        view['settings_json'] = logged_settings(view['settings_json'])\n    return view",
+      "owner": "curriculum_api.reporting.domain.snapshot_values",
+      "dependencies": [
+        "SYSTEM_COLUMNS",
+        "logged_settings"
+      ]
+    },
+    "short": {
+      "source": "def short(value):\n    \"\"\"A diff-sized rendering of a value, and whether it had to be cut.\"\"\"\n    if value is None:\n        return '', False\n    if isinstance(value, (dict, list)):\n        text = json.dumps(value, sort_keys=True, ensure_ascii=False)\n    else:\n        text = str(value)\n    if len(text) <= DIFF_VALUE_LIMIT:\n        return text, False\n    return f'{text[:DIFF_VALUE_LIMIT]}\u2026', True",
+      "owner": "curriculum_api.reporting.domain.snapshot_values",
+      "dependencies": [
+        "DIFF_VALUE_LIMIT",
+        "json"
+      ]
+    },
+    "diff_snapshots": {
+      "source": "def diff_snapshots(previous, current):\n    \"\"\"Field-level changes between two snapshots, newest value last.\n\n    ``settings_json`` is compared one level in, so an edit reads as\n    ``settings.contentHtml`` rather than as the whole settings blob changing.\n    \"\"\"\n    changes = []\n    previous = previous or {}\n    current = current or {}\n    for key in sorted(set(previous) | set(current)):\n        # Underscore keys are context, not content. See CONTEXT_KEY.\n        if key.startswith('_'):\n            continue\n        before = previous.get(key)\n        after = current.get(key)\n        if before == after:\n            continue\n        if key == 'settings_json' and (isinstance(before, dict) or isinstance(after, dict)):\n            changes.extend(diff_settings(\n                before if isinstance(before, dict) else {},\n                after if isinstance(after, dict) else {},\n            ))\n            continue\n        changes.append(change_entry(key, before, after))\n    return changes",
+      "owner": "curriculum_api.reporting.domain.snapshot_changes",
+      "dependencies": [
+        "change_entry",
+        "diff_settings"
+      ]
+    },
+    "people_in": {
+      "source": "def people_in(value):\n    if isinstance(value, str):\n        value = parse_json_column(value) if value.strip().startswith('[') else value.split(',')\n    if not isinstance(value, list):\n        return set()\n    return {clean(item).lower() for item in value if clean(item)}",
+      "owner": "curriculum_api.reporting.domain.snapshot_changes",
+      "dependencies": [
+        "clean",
+        "parse_json_column"
+      ]
+    },
+    "is_text_field": {
+      "source": "def is_text_field(field, before, after):\n    name = field.split('.', 1)[1] if field.startswith('settings.') else field\n    if field.startswith('settings.'):\n        if TEXT_SETTING_PATTERN.search(name):\n            return isinstance(before, (str, type(None))) and isinstance(after, (str, type(None)))\n    elif name in TEXT_COLUMNS:\n        return True\n    # Anything too long to show whole is prose, not a setting.\n    return any(isinstance(value, str) and len(value) > DIFF_VALUE_LIMIT for value in (before, after))",
+      "owner": "curriculum_api.reporting.domain.snapshot_changes",
+      "dependencies": [
+        "DIFF_VALUE_LIMIT",
+        "TEXT_COLUMNS",
+        "TEXT_SETTING_PATTERN"
+      ]
+    },
+    "change_entry": {
+      "source": "def change_entry(field, before, after):\n    \"\"\"One changed field as the log keeps it.\"\"\"\n    if field in PEOPLE_LIST_FIELDS:\n        was, now = people_in(before), people_in(after)\n        added, removed = len(now - was), len(was - now)\n        return {\n            'field': field, 'from': f'{len(was)} invited',\n            'to': f'{len(now)} invited (+{added}, -{removed})', 'truncated': False,\n        }\n    if is_text_field(field, before, after):\n        return {'field': field, 'from': '', 'to': TEXT_CHANGED, 'truncated': False, 'text': True}\n    from_text, from_cut = short(before)\n    to_text, to_cut = short(after)\n    return {'field': field, 'from': from_text, 'to': to_text, 'truncated': from_cut or to_cut}",
+      "owner": "curriculum_api.reporting.domain.snapshot_changes",
+      "dependencies": [
+        "PEOPLE_LIST_FIELDS",
+        "TEXT_CHANGED",
+        "is_text_field",
+        "people_in",
+        "short"
+      ]
+    },
+    "merge_changes": {
+      "source": "def merge_changes(earlier, later):\n    \"\"\"Two diffs of one record as one: each field from its first value to its last.\n\n    A field put back where it started drops out; text keeps its \"changed\" line,\n    since the log never held the words to compare.\n    \"\"\"\n    merged = {}\n    for change in list(earlier or ()) + list(later or ()):\n        field = clean(change.get('field'))\n        if not field:\n            continue\n        if field in merged:\n            first = merged[field]\n            combined = dict(change)\n            combined['from'] = first.get('from')\n            combined['truncated'] = bool(first.get('truncated') or change.get('truncated'))\n            combined['text'] = bool(first.get('text') or change.get('text'))\n            if not combined['text']:\n                combined.pop('text')\n            merged[field] = combined\n        else:\n            merged[field] = dict(change)\n    return [change for change in merged.values() if change.get('text') or change.get('from') != change.get('to')]",
+      "owner": "curriculum_api.reporting.domain.snapshot_changes",
+      "dependencies": [
+        "clean"
+      ]
+    },
+    "diff_settings": {
+      "source": "def diff_settings(previous, current):\n    changes = []\n    for key in sorted(set(previous) | set(current)):\n        if key in IGNORED_SETTING_KEYS:\n            continue\n        before = previous.get(key)\n        after = current.get(key)\n        if before == after:\n            continue\n        changes.append(change_entry(f'settings.{key}', before, after))\n    return changes",
+      "owner": "curriculum_api.reporting.domain.snapshot_changes",
+      "dependencies": [
+        "IGNORED_SETTING_KEYS",
+        "change_entry"
+      ]
+    },
+    "resolve_file_action": {
+      "source": "def resolve_file_action(changes):\n    \"\"\"Which file event this diff is, if it is one at all.\"\"\"\n    for change in changes or ():\n        if change.get('field') != UPLOAD_NAME_FIELD:\n            continue\n        before, after = clean(change.get('from')), clean(change.get('to'))\n        if before and not after:\n            return 'file_removed'\n        if after and not before:\n            return 'file_uploaded'\n        if after and before:\n            return 'file_replaced'\n    return ''",
+      "owner": "curriculum_api.reporting.domain.snapshot_changes",
+      "dependencies": [
+        "UPLOAD_NAME_FIELD",
+        "clean"
+      ]
+    },
+    "file_metadata": {
+      "source": "def file_metadata(action, snapshot, previous_snapshot):\n    \"\"\"What the trail records about a file event, read from the rows themselves.\n\n    Only ever the name, the type and the size -- enough for a reader to know\n    which file this was, and nothing that is the file or that could let someone\n    fetch it.\n    \"\"\"\n    if action not in {'file_uploaded', 'file_replaced', 'file_removed'}:\n        return {}\n    settings = as_dict(snapshot.get('settings_json'))\n    previous = as_dict((previous_snapshot or {}).get('settings_json'))\n    if action == 'file_removed':\n        return safe_metadata({'previous_file_name': previous.get(UPLOAD_NAME_KEY)})\n    metadata = {\n        'file_name': settings.get(UPLOAD_NAME_KEY),\n        'file_type': settings.get(UPLOAD_TYPE_KEY),\n        'file_size': settings.get(UPLOAD_SIZE_KEY),\n    }\n    if action == 'file_replaced':\n        metadata['previous_file_name'] = previous.get(UPLOAD_NAME_KEY)\n    return safe_metadata({key: value for key, value in metadata.items() if value not in (None, '')})",
+      "owner": "curriculum_api.reporting.domain.snapshot_changes",
+      "dependencies": [
+        "UPLOAD_NAME_KEY",
+        "UPLOAD_SIZE_KEY",
+        "UPLOAD_TYPE_KEY",
+        "as_dict",
+        "safe_metadata"
+      ]
+    },
+    "snapshot_archived": {
+      "source": "def snapshot_archived(snapshot, entity_type=''):\n    \"\"\"Is this snapshot of an archived row?\n\n    The normalised schema records it in ``status`` ('inactive'); snapshots taken\n    on the old schema carry ``deleted_at``, and history mixes both.\n    \"\"\"\n    if snapshot.get('deleted_at'):\n        return True\n    if entity_type not in STATUS_LIFECYCLE_TYPES:\n        return False\n    return str(snapshot.get('status') or '').strip().lower() in ('inactive', 'archived')",
+      "owner": "curriculum_api.reporting.domain.snapshot_changes",
+      "dependencies": [
+        "STATUS_LIFECYCLE_TYPES"
+      ]
+    },
+    "resolve_action": {
+      "source": "def resolve_action(entity_type, snapshot, previous_row, changes):\n    \"\"\"The action this revision records, from the row and its own diff.\n\n    Archive and restore win over everything, because withdrawing a record is the\n    most consequential thing that can happen to it. Below those, a diff that\n    touches only the parent column is a move and a diff that touches only the\n    order column is a reorder -- said outright rather than left for a reader to\n    infer from a `week_id` that went from one opaque id to another.\n    \"\"\"\n    archived = snapshot_archived(snapshot, entity_type)\n    if previous_row is None:\n        return 'archived' if archived else 'created'\n    was_archived = snapshot_archived(previous_row.get('snapshot') or {}, entity_type)\n    if archived and not was_archived:\n        return 'archived'\n    if was_archived and not archived:\n        return 'restored'\n    # Attaching, swapping or detaching a file, read off the component's own\n    # diff rather than declared by a caller.\n    #\n    # Derived on purpose. The obvious place to declare it is the upload endpoint,\n    # but that endpoint does not write the component (it hands the file's details\n    # back and the browser saves them with the next component save), so a\n    # declaration there would label a write that never happens while the real one\n    # went on reading as a settings edit. The name the component ends up carrying\n    # is the fact; whichever save carried it is beside the point.\n    file_action = resolve_file_action(changes)\n    if file_action:\n        return file_action\n    fields = {change.get('field') for change in changes or ()}\n    if fields:\n        parents = set(PARENT_COLUMNS.get(entity_type) or ())\n        # A move has to actually touch a parent column. Landing in a new position\n        # within the same week is a reorder, and reading it as a move because\n        # `week_id` happens to be a parent column would mislabel every drag.\n        if fields & parents and fields <= (parents | ORDER_COLUMNS):\n            return 'moved'\n        if fields <= ORDER_COLUMNS:\n            return 'reordered'\n    return 'updated'",
+      "owner": "curriculum_api.reporting.domain.snapshot_changes",
+      "dependencies": [
+        "ORDER_COLUMNS",
+        "PARENT_COLUMNS",
+        "resolve_file_action",
+        "snapshot_archived"
+      ]
+    },
+    "looks_newly_created": {
+      "source": "def looks_newly_created(item):\n    \"\"\"Whether this row came into existence now, or merely reached history now.\n\n    Both stamps have to be readable for this to answer yes. An unreadable or\n    missing stamp is treated as \"cannot tell\", and the honest answer to \"cannot\n    tell whether this was just created\" is no -- claiming a create that did not\n    happen is the worse of the two mistakes, because it puts a false origin\n    story against a record nobody can correct afterwards.\n    \"\"\"\n    created, updated = item.get('created_at'), item.get('updated_at')\n    if created is None or updated is None:\n        return False\n    if isinstance(created, datetime) and isinstance(updated, datetime):\n        # The two are written microseconds apart by the same statement, never\n        # exactly equal, so this asks whether the row's whole life fits inside\n        # this save rather than whether the stamps match to the microsecond.\n        return abs((updated - created).total_seconds()) < 1\n    return clean(created) == clean(updated)",
+      "owner": "curriculum_api.reporting.domain.snapshot_changes",
+      "dependencies": [
+        "clean",
+        "datetime"
+      ]
+    },
+    "strip_context": {
+      "source": "def strip_context(snapshot):\n    \"\"\"A snapshot without its ancestry, for the did-anything-change comparison.\n\n    Renaming a programme must not make every component under it look edited.\n    \"\"\"\n    return {key: value for key, value in (snapshot or {}).items() if not key.startswith('_')}",
+      "owner": "curriculum_api.reporting.domain.snapshot_changes",
+      "dependencies": []
+    },
+    "snapshot_title": {
+      "source": "def snapshot_title(snapshot, columns, join=' '):\n    \"\"\"The record's own name, from one snapshot column or several joined.\n\n    Several, because outside the curriculum a record's name is rarely in one\n    column: a coaching meeting is identified by whose it is *and* what kind it\n    is, and an employer contact by a first name *and* a surname. A column that\n    is empty is skipped rather than joined as a gap, so a contact with no\n    surname reads as their first name and not as a name with a dangling\n    separator.\n    \"\"\"\n    if not columns:\n        return ''\n    if isinstance(columns, str):\n        columns = (columns,)\n    parts = [clean(snapshot.get(column)) for column in columns]\n    return join.join(part for part in parts if part)",
+      "owner": "curriculum_api.reporting.domain.snapshot_context",
+      "dependencies": [
+        "clean"
+      ]
+    },
+    "entity_facts": {
+      "source": "def entity_facts(entity_type, snapshot):\n    \"\"\"The columns the history table denormalises out of a snapshot.\"\"\"\n    fields = ENTITY_FACT_FIELDS.get(entity_type) or {}\n    settings = as_dict(snapshot.get('settings_json'))\n    version_label = clean(settings.get('version')) if entity_type == 'component' else ''\n    content_status = clean(settings.get('contentStatus')) if entity_type == 'component' else ''\n    if not content_status and fields.get('status'):\n        content_status = clean(snapshot.get(fields['status']))\n    title_column = fields.get('title')\n    title = snapshot_title(snapshot, title_column, fields.get('title_join') or ' ')\n    # A record whose usual name is blank still has to be findable in a list.\n    # `title_fallback` names the column to use instead -- an email where a\n    # username was never set -- rather than leaving the row to be listed under\n    # its own primary key, which tells a reader nothing.\n    if not title and fields.get('title_fallback'):\n        title = snapshot_title(snapshot, fields['title_fallback'])\n    # A row with no title of its own is still worth naming in a list, and the\n    # only honest name it has is the record it belongs to.\n    if not title and entity_type in {'module_details', 'module_completion'}:\n        title = clean(snapshot.get('module_catalogue_id'))\n    parent_column = fields.get('parent')\n    return {\n        'module_catalogue_id': clean(snapshot.get('module_catalogue_id')),\n        'parent_id': clean(snapshot.get(parent_column)) if parent_column else '',\n        'title': title[:500],\n        'version_label': version_label,\n        'content_status': content_status[:64],\n    }",
+      "owner": "curriculum_api.reporting.domain.snapshot_context",
+      "dependencies": [
+        "ENTITY_FACT_FIELDS",
+        "as_dict",
+        "clean",
+        "snapshot_title"
+      ]
+    },
+    "context_for": {
+      "source": "def context_for(entity_type, snapshot, ancestry):\n    \"\"\"The ancestry to store beside a snapshot, from an already-resolved map.\"\"\"\n    registered = ENTITY_CONTEXT_FIELDS.get(entity_type)\n    if registered:\n        # Read off the row itself, and stored with it, for the same reason the\n        # curriculum's is: this is where the record sat WHEN the change\n        # happened. A learner moved to another cohort next month must not\n        # silently rewrite the line against today's edit.\n        return {\n            column: clean(snapshot.get(column))\n            for column in registered\n            if clean(snapshot.get(column))\n        }\n    module_id = clean(snapshot.get('module_catalogue_id'))\n    context = {}\n    if entity_type == 'programme':\n        context = {'programme_id': clean(snapshot.get('programme_id')), 'programme_name': clean(snapshot.get('name'))}\n    elif entity_type in {'cohort', 'group', 'module', 'week_template'}:\n        context = {\n            'programme_id': clean(snapshot.get('programme_id')),\n            'programme_name': clean(snapshot.get('programme_name')),\n        }\n        if entity_type in {'group', 'module'}:\n            context['cohort_id'] = clean(snapshot.get('cohort_id'))\n            context['cohort_name'] = clean(snapshot.get('cohort_name'))\n        if entity_type == 'module':\n            context['group_id'] = clean(snapshot.get('group_id'))\n            context['group_name'] = clean(snapshot.get('group_name'))\n    elif module_id:\n        context = dict(ancestry.get(module_id) or {})\n    if entity_type == 'component':\n        context['week_id'] = clean(snapshot.get('week_id'))\n        context['module_catalogue_id'] = module_id\n    elif entity_type == 'week':\n        context['module_catalogue_id'] = module_id\n    elif entity_type == 'ksb_mapping':\n        context['week_id'] = clean(snapshot.get('week_id'))\n        context['component_id'] = clean(snapshot.get('component_id'))\n        context['module_catalogue_id'] = module_id\n    return {key: value for key, value in context.items() if value}",
+      "owner": "curriculum_api.reporting.domain.snapshot_context",
+      "dependencies": [
+        "ENTITY_CONTEXT_FIELDS",
+        "clean"
+      ]
+    },
+    "qualified": {
+      "source": "def qualified(table):\n    if connection.vendor != 'postgresql':\n        return f'\"{table}\"'\n    return f'\"curriculum\".\"{table}\"'",
+      "owner": "curriculum_api.reporting.infrastructure.revision_reads",
+      "dependencies": [
+        "connection"
+      ]
+    },
+    "history_available": {
+      "source": "def history_available():\n    \"\"\"True when both history tables exist. Cached; a miss is not cached.\n\n    Probed with ``to_regclass``, which answers NULL for a missing relation\n    instead of raising. Selecting from a table that is not there would raise,\n    and in Postgres a raised statement aborts the whole surrounding transaction\n    -- so the cheapest possible check would have been able to fail the very save\n    it was asked to record.\n\n    Not caching the negative matters: these tables are created by hand against\n    Neon, and a process started before that SQL ran must begin recording once it\n    has, without a restart.\n    \"\"\"\n    if _AVAILABLE.get('ready'):\n        return True\n    try:\n        with connection.cursor() as cursor:\n            if connection.vendor == 'postgresql':\n                cursor.execute(\n                    'select to_regclass(%s) is not null and to_regclass(%s) is not null',\n                    [f'curriculum.{REVISIONS_TABLE}', f'curriculum.{VERSIONS_TABLE}'],\n                )\n            else:\n                cursor.execute(\n                    \"select count(*) = 2 from sqlite_master \"\n                    \"where type = 'table' and name in (%s, %s)\",\n                    [REVISIONS_TABLE, VERSIONS_TABLE],\n                )\n            row = cursor.fetchone()\n    except Exception:\n        return False\n    if not (row and row[0]):\n        return False\n    _AVAILABLE['ready'] = True\n    return True",
+      "owner": "curriculum_api.reporting.infrastructure.revision_reads",
+      "dependencies": [
+        "REVISIONS_TABLE",
+        "VERSIONS_TABLE",
+        "_AVAILABLE",
+        "connection"
+      ]
+    },
+    "reset_availability": {
+      "source": "def reset_availability():\n    _AVAILABLE.pop('ready', None)\n    _AVAILABLE.pop('metadata', None)",
+      "owner": "curriculum_api.reporting.infrastructure.revision_reads",
+      "dependencies": [
+        "_AVAILABLE"
+      ]
+    },
+    "resolve_ancestry": {
+      "source": "def resolve_ancestry(module_ids):\n    \"\"\"Programme / cohort / group / module names for these modules, in one read.\n\n    One query for every module touched by the flush, not one per row: a tree\n    save buffers thousands of components and they nearly all sit under the same\n    handful of modules.\n    \"\"\"\n    ids = sorted({clean(value) for value in module_ids if clean(value)})\n    if not ids:\n        return {}\n    placeholders = ', '.join(['%s'] * len(ids))\n    # The module keeps ids; the names are its programme's / cohort's / group's own.\n    query = (\n        'select m.module_catalogue_id, m.title, m.programme_id, p.name as programme_name, '\n        'm.cohort_id, c.cohort_name, m.group_id, g.group_name '\n        f'from {qualified(\"modules\")} m '\n        f'left join {qualified(\"programmes\")} p on p.programme_id = m.programme_id '\n        f'left join {qualified(\"cohorts\")} c on c.cohort_id = m.cohort_id '\n        f'left join {qualified(\"groups\")} g on g.group_id = m.group_id '\n        f'where m.module_catalogue_id in ({placeholders})'\n    )\n    try:\n        with connection.cursor() as cursor:\n            cursor.execute(query, ids)\n            columns = [column[0] for column in cursor.description]\n            rows = [dict(zip(columns, values)) for values in cursor.fetchall()]\n    except Exception:\n        # Context is a nicety; the snapshot and the diff are the record. A module\n        # that has just been hard-deleted is exactly the case that lands here.\n        logger.debug('Could not resolve curriculum ancestry.', exc_info=True)\n        return {}\n    return {\n        clean(row.get('module_catalogue_id')): {\n            key: clean(row.get(key))\n            for key in (\n                'programme_id', 'programme_name', 'cohort_id', 'cohort_name',\n                'group_id', 'group_name',\n            )\n            if clean(row.get(key))\n        } | {'module_name': clean(row.get('title'))}\n        for row in rows\n    }",
+      "owner": "curriculum_api.reporting.infrastructure.revision_reads",
+      "dependencies": [
+        "clean",
+        "connection",
+        "logger",
+        "qualified"
+      ]
+    },
+    "latest_revisions": {
+      "source": "def latest_revisions(entity_type, entity_ids):\n    \"\"\"The newest revision per entity, in one read.\n\n    ``distinct on`` keeps this a single index scan over\n    ``record_revisions_entity_idx`` however many ids are asked for, which is\n    what makes the bulk path viable \u2014 the tree save hands over every component\n    in a module at once.\n    \"\"\"\n    ids = [clean(value) for value in entity_ids if clean(value)]\n    if not ids:\n        return {}\n    placeholders = ', '.join(['%s'] * len(ids))\n    columns_sql = 'entity_id, id, revision_no, snapshot, version_label, content_status, action, actor_email, created_at, changed_fields'\n    if metadata_columns_available():\n        columns_sql += ', metadata'\n    if connection.vendor == 'postgresql':\n        query = (\n            f'select distinct on (entity_id) {columns_sql} '\n            f'from {qualified(REVISIONS_TABLE)} '\n            f'where entity_type = %s and entity_id in ({placeholders}) '\n            f'order by entity_id, revision_no desc'\n        )\n    else:\n        # sqlite has no `distinct on`, and the correlated-subquery form cannot\n        # alias a schema-qualified name. The row count here is bounded by the\n        # revisions of the entities being saved, so the newest is picked below.\n        query = (\n            f'select {columns_sql} from {qualified(REVISIONS_TABLE)} '\n            f'where entity_type = %s and entity_id in ({placeholders}) '\n            f'order by entity_id, revision_no'\n        )\n    with connection.cursor() as cursor:\n        cursor.execute(query, [entity_type, *ids])\n        columns = [column[0] for column in cursor.description]\n        rows = [dict(zip(columns, values)) for values in cursor.fetchall()]\n    result = {}\n    for row in rows:\n        key = clean(row.get('entity_id'))\n        existing = result.get(key)\n        if existing and int(existing.get('revision_no') or 0) >= int(row.get('revision_no') or 0):\n            continue\n        row['snapshot'] = as_dict(row.get('snapshot'))\n        result[key] = row\n    return result",
+      "owner": "curriculum_api.reporting.infrastructure.revision_reads",
+      "dependencies": [
+        "REVISIONS_TABLE",
+        "as_dict",
+        "clean",
+        "connection",
+        "metadata_columns_available",
+        "qualified"
+      ]
+    },
+    "metadata_columns_available": {
+      "source": "def metadata_columns_available():\n    \"\"\"Whether ``record_revisions`` has the Phase 2 metadata columns yet.\n\n    Probed the same way the tables themselves are, and for the same reason: this\n    runs inside somebody's save, so it has to answer without raising. Cached on\n    success only -- the columns are added by hand against Neon, and a process\n    started before that SQL ran must begin using them once it has, without a\n    restart. ``reset_availability`` clears it.\n    \"\"\"\n    if _AVAILABLE.get('metadata'):\n        return True\n    try:\n        with connection.cursor() as cursor:\n            if connection.vendor == 'postgresql':\n                cursor.execute(\n                    'select count(*) from information_schema.columns '\n                    'where table_schema = %s and table_name = %s and column_name = any(%s)',\n                    ['curriculum', REVISIONS_TABLE, list(METADATA_COLUMNS)],\n                )\n            else:\n                cursor.execute(f'pragma table_info(\"{REVISIONS_TABLE}\")')\n                names = {row[1] for row in cursor.fetchall()}\n                _AVAILABLE['metadata'] = set(METADATA_COLUMNS) <= names\n                return _AVAILABLE['metadata']\n            row = cursor.fetchone()\n    except Exception:\n        return False\n    if not (row and int(row[0] or 0) == len(METADATA_COLUMNS)):\n        return False\n    _AVAILABLE['metadata'] = True\n    return True",
+      "owner": "curriculum_api.reporting.infrastructure.revision_reads",
+      "dependencies": [
+        "METADATA_COLUMNS",
+        "REVISIONS_TABLE",
+        "_AVAILABLE",
+        "connection"
+      ]
+    },
+    "module_publish_count": {
+      "source": "def module_publish_count(entity_id):\n    with connection.cursor() as cursor:\n        cursor.execute(\n            f'select count(*) from {qualified(VERSIONS_TABLE)} where entity_type = %s and entity_id = %s',\n            ['module', entity_id],\n        )\n        row = cursor.fetchone()\n    return int(row[0]) if row else 0",
+      "owner": "curriculum_api.reporting.infrastructure.revision_reads",
+      "dependencies": [
+        "VERSIONS_TABLE",
+        "connection",
+        "qualified"
+      ]
+    }
+  },
+  "constants": {
+    "REVISIONS_TABLE": {
+      "source": "REVISIONS_TABLE = 'record_revisions'",
+      "owner": "curriculum_api.reporting.domain.revision_contracts"
+    },
+    "VERSIONS_TABLE": {
+      "source": "VERSIONS_TABLE = 'record_versions'",
+      "owner": "curriculum_api.reporting.domain.revision_contracts"
+    },
+    "VERSIONED_TABLES": {
+      "source": "VERSIONED_TABLES = {\n    'programmes': {'entity_type': 'programme', 'key': 'programme_id', 'title': 'name'},\n    'cohorts': {'entity_type': 'cohort', 'key': 'cohort_id', 'title': 'cohort_name'},\n    'groups': {'entity_type': 'group', 'key': 'group_id', 'title': 'group_name'},\n    'modules': {'entity_type': 'module', 'key': 'module_catalogue_id', 'title': 'title'},\n    'module_details': {'entity_type': 'module_details', 'key': 'module_catalogue_id', 'title': ''},\n    'module_completion_criteria': {'entity_type': 'module_completion', 'key': 'module_catalogue_id', 'title': ''},\n    'weeks': {'entity_type': 'week', 'key': 'id', 'title': 'title'},\n    'components': {'entity_type': 'component', 'key': 'id', 'title': 'title'},\n    'ksb_mappings': {'entity_type': 'ksb_mapping', 'key': 'id', 'title': 'ksb_code'},\n    'live_sessions': {'entity_type': 'live_session', 'key': 'id', 'title': 'module_title'},\n    'holidays': {'entity_type': 'holiday', 'key': 'id', 'title': 'label'},\n    'week_templates': {'entity_type': 'week_template', 'key': 'id', 'title': 'title'},\n    'week_template_components': {'entity_type': 'week_template_component', 'key': 'id', 'title': 'title'},\n}",
+      "owner": "curriculum_api.reporting.domain.revision_contracts"
+    },
+    "ENTITY_TYPES": {
+      "source": "ENTITY_TYPES = {config['entity_type'] for config in VERSIONED_TABLES.values()}",
+      "owner": "curriculum_api.reporting.domain.revision_contracts"
+    },
+    "SNAPSHOT_COLUMNS": {
+      "source": "SNAPSHOT_COLUMNS = {\n    'programme': (\n        'programme_id', 'name', 'standard', 'level', 'owner', 'color', 'description',\n        'structure_type', 'ksb_profile_source_id', 'required_otjh', 'status', 'is_active',\n        'is_archived', 'deleted_at', 'deleted_by',\n    ),\n    'cohort': (\n        'cohort_id', 'cohort_name', 'programme_id', 'programme_name', 'start_date', 'end_date',\n        'duration_months', 'epa_months', 'apprenticeship_end_date', 'apprenticeship_end_override',\n        'color', 'status', 'group_ids', 'module_names', 'holiday_ids', 'excluded_holiday_ids',\n        'notes', 'deleted_at', 'deleted_by',\n    ),\n    'group': (\n        'group_id', 'group_name', 'cohort_id', 'cohort_name', 'programme_id', 'programme_name',\n        'module_ids', 'module_names', 'coach_name', 'color', 'session_week_day',\n        'session_start_time', 'session_end_time', 'notes', 'status', 'deleted_at', 'deleted_by',\n    ),\n    # Carries the delivery schedule and the tutor, not only the title: \"who\n    # changed this module's tutor\" and \"who moved this module's start date\" are\n    # among the questions most often asked of the trail, and neither could be\n    # answered while the snapshot stopped at the description.\n    'module': (\n        'module_catalogue_id', 'programme_id', 'programme_name', 'cohort_id', 'cohort_name',\n        'group_id', 'group_name', 'title', 'description', 'quality_score',\n        'status', 'tutor_name', 'tutor_email', 'coach_name', 'sessions_number',\n        'start_date', 'end_date', 'session_week_day', 'session_start_time', 'session_end_time',\n        'weekly_schedule', 'session_holidays', 'session_overrides', 'ksb_profile_source_id',\n        'color', 'cover_image_url', 'deleted_at', 'deleted_by',\n    ),\n    'week': (\n        'id', 'module_catalogue_id', 'week_number', 'title', 'summary', 'learning_outcomes',\n        'display_order', 'status', 'deleted_at', 'deleted_by',\n    ),\n    'component': (\n        'id', 'module_catalogue_id', 'week_id', 'type', 'title', 'description',\n        'expected_otjh', 'points', 'ksb_mappings', 'reflection_required',\n        'Reflection_Question', 'workplace_evidence_required', 'tutor_validation_required',\n        'coach_validation_required', 'display_order', 'settings_json', 'live_sessions_link',\n        'status', 'deleted_at', 'deleted_by',\n    ),\n    'module_details': (\n        'module_catalogue_id', 'background', 'epa_requirements',\n        'professional_qualification_outcomes', 'intent', 'learner_benefit', 'employer_benefit',\n        'sequence_purpose', 'deleted_at', 'deleted_by',\n    ),\n    'module_completion': (\n        'module_catalogue_id', 'quizzes_completed_required', 'checkpoints_completed_required',\n        'average_score_required_enabled', 'average_score_required',\n        'total_score_required_enabled', 'total_score_required', 'additional_notes',\n        'deleted_at', 'deleted_by',\n    ),\n    'ksb_mapping': (\n        'id', 'module_catalogue_id', 'week_id', 'component_id', 'ksb_id', 'ksb_code',\n        'ksb_description', 'classification', 'weight', 'weight_class', 'source_type', 'source_id',\n        'standard_ksb_id', 'status', 'deleted_at', 'deleted_by',\n    ),\n    # No join_url / web_link / meeting_options_url: see the note above.\n    'live_session': (\n        'id', 'module_catalogue_id', 'module_title', 'provider', 'graph_event_id',\n        'online_meeting_id', 'organizer_email', 'attendees', 'presenters', 'co_organizers',\n        'start_datetime', 'timezone', 'duration_minutes', 'repeat_pattern', 'repeat_occurrences',\n        'lobby_bypass', 'recording', 'spoken_language', 'meeting_type', 'request_responses',\n        'allow_time_proposals', 'hide_attendees', 'status',\n    ),\n    'holiday': (\n        'id', 'label', 'start_date', 'end_date', 'type', 'color', 'notes', 'is_archived',\n    ),\n    'week_template': (\n        'id', 'title', 'summary', 'learning_outcomes', 'course_type', 'programme_id',\n        'programme_name', 'module_catalogue_id', 'group_id', 'group_name', 'status',\n        'ksb_mappings', 'total_otjh', 'points', 'component_count', 'author',\n        'deleted_at', 'deleted_by',\n    ),\n    'week_template_component': (\n        'id', 'week_template_id', 'type', 'title', 'description', 'expected_otjh', 'points',\n        'reflection_required', 'workplace_evidence_required', 'tutor_validation_required',\n        'coach_validation_required', 'ksb_mappings', 'settings_json', 'display_order',\n    ),\n}",
+      "owner": "curriculum_api.reporting.domain.revision_contracts"
+    },
+    "ORDER_COLUMNS": {
+      "source": "ORDER_COLUMNS = {'display_order', 'week_number'}",
+      "owner": "curriculum_api.reporting.domain.revision_contracts"
+    },
+    "PARENT_COLUMNS": {
+      "source": "PARENT_COLUMNS = {\n    'component': ('week_id', 'module_catalogue_id'),\n    'week': ('module_catalogue_id',),\n    'module': ('group_id', 'cohort_id', 'programme_id'),\n    'group': ('cohort_id', 'programme_id'),\n    'cohort': ('programme_id',),\n    'ksb_mapping': ('component_id', 'week_id', 'module_catalogue_id'),\n    'week_template_component': ('week_template_id',),\n    'live_session': ('module_catalogue_id',),\n}",
+      "owner": "curriculum_api.reporting.domain.revision_contracts"
+    },
+    "JSON_SNAPSHOT_COLUMNS": {
+      "source": "JSON_SNAPSHOT_COLUMNS = {\n    'settings_json', 'ksb_mappings', 'learning_outcomes',\n    'weekly_schedule', 'session_holidays', 'session_overrides',\n    'attendees', 'presenters', 'co_organizers',\n    'group_ids', 'module_ids', 'module_names', 'holiday_ids', 'excluded_holiday_ids',\n}",
+      "owner": "curriculum_api.reporting.domain.revision_contracts"
+    },
+    "IGNORED_SETTING_KEYS": {
+      "source": "IGNORED_SETTING_KEYS = {'updatedAt', 'lastEdited'}",
+      "owner": "curriculum_api.reporting.domain.revision_contracts"
+    },
+    "DIFF_VALUE_LIMIT": {
+      "source": "DIFF_VALUE_LIMIT = 200",
+      "owner": "curriculum_api.reporting.domain.revision_contracts"
+    },
+    "TEAMS_SYSTEM_SETTING_KEYS": {
+      "source": "TEAMS_SYSTEM_SETTING_KEYS = frozenset({\n    'teamsEventId', 'teamsOnlineMeetingId', 'teamsLiveSessionId', 'teamsOccurrenceId',\n    'teamsMeetingUrl', 'teamsMeetingOptionsUrl', 'teamsWebLink', 'teamsProvider',\n    'teamsForBusiness', 'teamsCalendarSeries', 'teamsCalendarsToUpdate',\n    'liveSessionId', 'liveSessionIds', 'liveSessionUrl',\n})",
+      "owner": "curriculum_api.reporting.domain.revision_contracts"
+    },
+    "TEAMS_LINK_KEYS": {
+      "source": "TEAMS_LINK_KEYS = ('teamsEventId', 'teamsLiveSessionId', 'liveSessionId', 'teamsOnlineMeetingId')",
+      "owner": "curriculum_api.reporting.domain.revision_contracts"
+    },
+    "TEAMS_LINK_MARKER": {
+      "source": "TEAMS_LINK_MARKER = 'teamsMeeting'",
+      "owner": "curriculum_api.reporting.domain.revision_contracts"
+    },
+    "TEAMS_LINKED": {
+      "source": "TEAMS_LINKED = 'Linked'",
+      "owner": "curriculum_api.reporting.domain.revision_contracts"
+    },
+    "SYSTEM_COLUMNS": {
+      "source": "SYSTEM_COLUMNS = {'live_session': frozenset({'graph_event_id', 'online_meeting_id'})}",
+      "owner": "curriculum_api.reporting.domain.revision_contracts"
+    },
+    "PEOPLE_LIST_FIELDS": {
+      "source": "PEOPLE_LIST_FIELDS = frozenset({'settings.teamsAttendees', 'attendees'})",
+      "owner": "curriculum_api.reporting.domain.revision_contracts"
+    },
+    "TEXT_COLUMNS": {
+      "source": "TEXT_COLUMNS = frozenset({\n    'description', 'summary', 'notes', 'Reflection_Question', 'background',\n    'epa_requirements', 'professional_qualification_outcomes', 'intent',\n    'learner_benefit', 'employer_benefit', 'sequence_purpose', 'additional_notes',\n})",
+      "owner": "curriculum_api.reporting.domain.revision_contracts"
+    },
+    "TEXT_SETTING_PATTERN": {
+      "source": "TEXT_SETTING_PATTERN = re.compile(r'(html|content|text|instructions?|description|body|prompt|summary|notes?|question)$', re.I)",
+      "owner": "curriculum_api.reporting.domain.revision_contracts"
+    },
+    "TEXT_CHANGED": {
+      "source": "TEXT_CHANGED = 'Text changed'",
+      "owner": "curriculum_api.reporting.domain.revision_contracts"
+    },
+    "METADATA_KEYS": {
+      "source": "METADATA_KEYS = {\n    'import_type', 'import_batch_id', 'filename', 'row_count', 'reason_code',\n    'file_name', 'file_type', 'file_size', 'previous_file_name',\n    'recalculated_from', 'command', 'job', 'occurrences', 'note',\n    'page_path', 'page_label', 'page_workspace', 'page_source',\n    'request_path', 'request_method',\n    'merged_saves', 'last_saved_at',\n    # The parent an archive went with (curriculum_api.archive_state): the\n    # normalised schema keeps no deleted_via_parent, so restore reads it here.\n    'archived_via',\n}",
+      "owner": "curriculum_api.reporting.domain.revision_contracts"
+    },
+    "METADATA_VALUE_LIMIT": {
+      "source": "METADATA_VALUE_LIMIT = 200",
+      "owner": "curriculum_api.reporting.domain.revision_contracts"
+    },
+    "METADATA_JSON_LIMIT": {
+      "source": "METADATA_JSON_LIMIT = 2000",
+      "owner": "curriculum_api.reporting.domain.revision_contracts"
+    },
+    "REDACTED_COLUMNS": {
+      "source": "REDACTED_COLUMNS = {}",
+      "owner": "curriculum_api.reporting.domain.revision_contracts"
+    },
+    "REDACTED_PREFIX": {
+      "source": "REDACTED_PREFIX = 'redacted:'",
+      "owner": "curriculum_api.reporting.domain.revision_contracts"
+    },
+    "ENTITY_FACT_FIELDS": {
+      "source": "ENTITY_FACT_FIELDS = {\n    'programme': {'title': 'name', 'parent': '', 'status': 'status'},\n    'cohort': {'title': 'cohort_name', 'parent': 'programme_id', 'status': 'status'},\n    'group': {'title': 'group_name', 'parent': 'cohort_id', 'status': ''},\n    'module': {'title': 'title', 'parent': 'programme_id', 'status': 'status'},\n    'module_details': {'title': '', 'parent': 'module_catalogue_id', 'status': ''},\n    'module_completion': {'title': '', 'parent': 'module_catalogue_id', 'status': ''},\n    'week': {'title': 'title', 'parent': 'module_catalogue_id', 'status': ''},\n    'component': {'title': 'title', 'parent': 'week_id', 'status': ''},\n    'ksb_mapping': {'title': 'ksb_code', 'parent': 'component_id', 'status': 'classification'},\n    'live_session': {'title': 'module_title', 'parent': 'module_catalogue_id', 'status': 'status'},\n    'holiday': {'title': 'label', 'parent': '', 'status': ''},\n    'week_template': {'title': 'title', 'parent': 'programme_id', 'status': 'status'},\n    'week_template_component': {'title': 'title', 'parent': 'week_template_id', 'status': ''},\n}",
+      "owner": "curriculum_api.reporting.domain.revision_contracts"
+    },
+    "CONTEXT_KEY": {
+      "source": "CONTEXT_KEY = '_context'",
+      "owner": "curriculum_api.reporting.domain.revision_contracts"
+    },
+    "ENTITY_CONTEXT_FIELDS": {
+      "source": "ENTITY_CONTEXT_FIELDS = {}",
+      "owner": "curriculum_api.reporting.domain.revision_contracts"
+    },
+    "ACTIONS": {
+      "source": "ACTIONS = (\n    'created', 'updated', 'archived', 'restored', 'deleted', 'moved', 'reordered', 'recorded',\n    'file_uploaded', 'file_replaced', 'file_removed', 'recalculated', 'imported',\n)",
+      "owner": "curriculum_api.reporting.domain.revision_contracts"
+    },
+    "DECLARABLE_ACTIONS": {
+      "source": "DECLARABLE_ACTIONS = {'file_uploaded', 'file_replaced', 'file_removed', 'recalculated', 'imported'}",
+      "owner": "curriculum_api.reporting.domain.revision_contracts"
+    },
+    "UPLOAD_NAME_FIELD": {
+      "source": "UPLOAD_NAME_FIELD = 'settings.uploadedFileName'",
+      "owner": "curriculum_api.reporting.domain.revision_contracts"
+    },
+    "UPLOAD_NAME_KEY": {
+      "source": "UPLOAD_NAME_KEY = 'uploadedFileName'",
+      "owner": "curriculum_api.reporting.domain.revision_contracts"
+    },
+    "UPLOAD_TYPE_KEY": {
+      "source": "UPLOAD_TYPE_KEY = 'uploadedFileContentType'",
+      "owner": "curriculum_api.reporting.domain.revision_contracts"
+    },
+    "UPLOAD_SIZE_KEY": {
+      "source": "UPLOAD_SIZE_KEY = 'uploadedFileSize'",
+      "owner": "curriculum_api.reporting.domain.revision_contracts"
+    },
+    "STATUS_LIFECYCLE_TYPES": {
+      "source": "STATUS_LIFECYCLE_TYPES = frozenset({'programme', 'cohort', 'group', 'module', 'week', 'component', 'ksb_mapping'})",
+      "owner": "curriculum_api.reporting.domain.revision_contracts"
+    },
+    "REVISION_COLUMNS": {
+      "source": "REVISION_COLUMNS = (\n    'entity_type', 'entity_id', 'revision_no', 'action', 'module_catalogue_id', 'parent_id',\n    'title', 'version_label', 'content_status', 'snapshot', 'changed_fields',\n    'actor_email', 'actor_name', 'reason',\n)",
+      "owner": "curriculum_api.reporting.domain.revision_contracts"
+    },
+    "METADATA_COLUMNS": {
+      "source": "METADATA_COLUMNS = ('actor_type', 'triggered_by_email', 'triggered_by_name', 'source', 'metadata')",
+      "owner": "curriculum_api.reporting.domain.revision_contracts"
+    },
+    "JSON_REVISION_COLUMNS": {
+      "source": "JSON_REVISION_COLUMNS = {'snapshot', 'changed_fields', 'metadata'}",
+      "owner": "curriculum_api.reporting.domain.revision_contracts"
+    }
+  },
+  "merge_source": "\"\"\"Item-level three-way merge for Module Builder partial saves.\n\nA partial save used to be accepted only when the module was still exactly the\nversion the editor had read. Two people working on different components of one\nmodule therefore refused each other on every save: the second one re-read the\nwhole module (up to 5 MB), merged it in the browser and tried again, queueing\nbehind the first save's lock each time.\n\nThis module answers the question the browser was answering, on the server and\nunder the module's lock, one item at a time:\n\n* an item only one side changed takes that side's version, whole;\n* an item both sides changed is merged field by field, the way\n  ``lib/collaborativeMerge.ts`` merges, and a field both changed to different\n  values is a **conflict** -- refused, never silently decided (D2);\n* an item one side deleted and the other edited is a conflict as well, and a\n  deleted row is never brought back unless the caller names it in\n  ``restoreIds`` (D3).\n\n\"Did the other side change this item?\" is answered by the fingerprint the\nserver issued with the copy the editor started from (``itemFingerprints``), not\nby comparing the editor's copy with the stored one. The editor's copy has been\nthrough the browser's normalisation, so a field-by-field comparison would read\nevery default the browser filled in as a change somebody made. The fingerprint\nis computed here, from the same payload shape, both times, so it is exact.\n\nPure Python: no Django, no database. The view reads the stored module and the\nsoft-deleted ids and passes them in.\n\"\"\"\nfrom __future__ import annotations\n\nimport hashlib\nimport json\n\n# Module fields the server derives on every read or save. Taken from the\n# editor's copy (they are recomputed anyway) and never reported as a conflict.\nDERIVED_MODULE_FIELDS = frozenset({\n    'structureRevision', 'lastUpdated', 'createdAt', 'weeks', 'weeksNumber',\n    'totalOtjh', 'declaredTotalOtjh', 'ksbCount', 'lessonCount', 'quizCount',\n    'qualityScore', 'qualityChecklist', 'assignedLearnerCount', 'sourceModule',\n    'deliveryUsages', 'deliveryWeeks', 'deliveryStatus', 'deliveryMetadata',\n    'itemFingerprints', 'id', 'moduleId', 'moduleCatalogueId', 'structureId',\n    'catalogueId',\n    # Re-derived from the live-session components (the Builder's\n    # recalculateModule and the schedule both rewrite it); only a fallback.\n    'sessionsNumber',\n})\n\n# Week fields stamped from the session plan on every read. Not stored, so\n# whichever copy is newer is right; never a conflict.\nDERIVED_WEEK_FIELDS = frozenset({\n    'weekNumber', 'moduleId', 'sessionDate', 'sessionDay', 'sessionStartTime',\n    'sessionEndTime', 'sessionDurationMinutes', 'sessionRescheduled',\n})\n\n# Component settings the session plan or the Teams attachment path writes.\n# The stored copy wins when both sides moved them: it is what the planner and\n# Microsoft last said, and the editor never authored it.\nPLANNED_SETTING_KEYS = frozenset({\n    'sessionDate', 'sessionDay', 'sessionTime', 'durationMinutes',\n    'sessionDateTimeUtc', 'teamsStartDateTimeUtc',\n})\n\n# Settings that name a Microsoft meeting. Mirrors TEAMS_MEETING_SETTING_KEYS in\n# module-builder/moduleAuthoringData.ts: the stored value always wins, so a tab\n# opened before a meeting was booked or moved can never re-point a join link.\nTEAMS_OWNED_SETTING_KEYS = frozenset({\n    'teamsLiveSessionId', 'teamsSessionNumber', 'teamsEventId', 'teamsOnlineMeetingId',\n    'teamsCalendarSeries', 'teamsMeetingOptionsUrl', 'teamsMeetingUrl', 'liveSessionUrl',\n    'teamsProvider', 'teamsOccurrenceId', 'teamsWebLink', 'teamsDurationMinutes',\n    'sessionRescheduled', 'liveSessionLinkOverride', 'teamsCalendarBinding',\n    'teamsMainLinkInherited', 'liveSessionMeetingScope',\n    'extraTeamsMeetingUrl', 'extraTeamsLiveSessionId', 'extraTeamsEventId',\n    'extraTeamsOnlineMeetingId', 'extraTeamsWebLink', 'extraTeamsMeetingOptionsUrl',\n    'extraTeamsOrganizerEmail', 'extraTeamsAttendees', 'extraTeamsPresenters',\n    'extraTeamsCoOrganizers', 'extraTeamsStartDateTimeUtc', 'extraTeamsDurationMinutes',\n    'extraTeamsSubject',\n})\n\n# Values chosen as a set, compared whole. Half of one is a value neither\n# editor chose. Paths with list ids replaced by `*`.\nATOMIC_PATTERNS = frozenset({\n    'weeklySchedule', 'scheduleMode', 'sessionHolidays', 'epaRequirements', 'qualificationOutcomes',\n    'moduleKsbMappings',\n    'weekStructure[*].learningOutcomes',\n    'weekStructure[*].ksbMappings',\n    'weekStructure[*].components[*].ksbMappings',\n})\n\nCONTROL_KEYS = frozenset({\n    'saveMode', 'structureDelta', 'structureBase', 'expectedRevision', 'expected_revision',\n    'weekStructure', 'weeks', 'restoreIds', 'collaboration',\n})\n\n\nclass ModuleMergeConflicts(Exception):\n    \"\"\"Both sides changed the same thing. Nothing may be written.\"\"\"\n\n    def __init__(self, conflicts):\n        super().__init__(f'{len(conflicts)} conflicting change(s)')\n        self.conflicts = conflicts\n\n\nclass ModuleMergeUnavailable(Exception):\n    \"\"\"The save does not carry what an item merge needs (an older client).\"\"\"\n\n\n# --- fingerprints -----------------------------------------------------------\n\ndef fingerprint(value):\n    \"\"\"Short, stable digest of one payload item. Same input, same answer.\"\"\"\n    encoded = json.dumps(value, sort_keys=True, default=str, separators=(',', ':'))\n    return hashlib.sha1(encoded.encode('utf-8')).hexdigest()[:16]\n\n\ndef week_fields(week):\n    return {key: value for key, value in (week or {}).items() if key != 'components'}\n\n\ndef structure_fingerprints(payload):\n    \"\"\"``{'weeks': {id: fp}, 'components': {id: fp}}`` for a structure payload.\"\"\"\n    weeks, components = {}, {}\n    for week in (payload or {}).get('weekStructure') or []:\n        week_id = _id(week)\n        if not week_id:\n            continue\n        weeks[week_id] = fingerprint(week_fields(week))\n        for component in week.get('components') or []:\n            component_id = _id(component)\n            if component_id:\n                components[component_id] = fingerprint(component)\n    return {'weeks': weeks, 'components': components}\n\n\n# --- equality ---------------------------------------------------------------\n\ndef _id(item):\n    return str((item or {}).get('id') or '').strip()\n\n\ndef _normalised(value):\n    \"\"\"A value as a save sees it: empty is empty, a number is a number.\n\n    The editor's copy and the stored copy come from different serialisers --\n    JSON in a browser, Python dicts here -- so ``1`` and ``1.0``, ``''`` and\n    ``None``, a missing key and an empty list must compare equal, or every\n    item would look changed.\n    \"\"\"\n    if value is None or value == '' or value == [] or value == {}:\n        return None\n    if isinstance(value, bool):\n        return value\n    if isinstance(value, (int, float)):\n        return float(value)\n    if isinstance(value, dict):\n        out = {}\n        for key, item in value.items():\n            normalised = _normalised(item)\n            if normalised is not None:\n                out[str(key)] = normalised\n        return out or None\n    if isinstance(value, (list, tuple)):\n        return [_normalised(item) for item in value]\n    if isinstance(value, str):\n        return value\n    return str(value)\n\n\ndef same(a, b):\n    return _normalised(a) == _normalised(b)\n\n\ndef _pattern(path):\n    out, depth = [], 0\n    for char in path:\n        if char == '[':\n            depth += 1\n            if depth == 1:\n                out.append('[*]')\n            continue\n        if char == ']':\n            depth -= 1\n            continue\n        if depth == 0:\n            out.append(char)\n    return ''.join(out)\n\n\ndef _child(path, key):\n    return f'{path}.{key}' if path else key\n\n\ndef _keyed(value):\n    return (\n        isinstance(value, list) and value\n        and all(isinstance(entry, dict) and _id(entry) for entry in value)\n    )\n\n\n# --- the field merge ----------------------------------------------------------\n\nclass _Context:\n    def __init__(self, *, ignore=None, prefer_stored=None, atomic=None):\n        self.conflicts = []\n        self.ignore = ignore or (lambda pattern: False)\n        self.prefer_stored = prefer_stored or (lambda pattern: False)\n        self.atomic = atomic or (lambda pattern: pattern in ATOMIC_PATTERNS)\n\n    def conflict(self, path, local, stored, kind='value'):\n        self.conflicts.append({'path': path, 'kind': kind, 'local': local, 'remote': stored})\n\n\n_ABSENT = object()\n\n\n_SAME_BASE = object()\n\n\ndef merge_value(base, local, stored, path, ctx, mine_base=_SAME_BASE):\n    \"\"\"Three-way merge of one value; records a conflict and keeps local on a real clash.\n\n    ``base`` is the server's own copy of what the editor started from, so\n    \"did someone else change this?\" is ``stored`` against it. ``mine_base``,\n    when the editor sends it, is that same starting point as the editor holds\n    it -- normalised by the browser -- so \"did this author change it?\" is\n    ``local`` against it. With one base for both questions, every default the\n    browser filled in would read as the author's change, and a colleague's\n    edit to that field as a conflict nobody made.\n    \"\"\"\n    if mine_base is _SAME_BASE:\n        mine_base = base\n    if same(local, stored):\n        return local\n    pattern = _pattern(path)\n    if ctx.ignore(pattern):\n        return local\n    if ctx.prefer_stored(pattern):\n        return stored\n    if same(mine_base, local):\n        return stored\n    if same(base, stored):\n        return local\n    if not ctx.atomic(pattern):\n        if isinstance(local, list) and isinstance(stored, list) and (_keyed(local) or _keyed(stored)):\n            return _merge_keyed_list(\n                base if isinstance(base, list) else [], local, stored, path, ctx,\n                mine_base=mine_base if isinstance(mine_base, list) else [],\n            )\n        if isinstance(local, dict) and isinstance(stored, dict):\n            return merge_object(\n                base if isinstance(base, dict) else {}, local, stored, path, ctx,\n                mine_base=mine_base if isinstance(mine_base, dict) else {},\n            )\n    ctx.conflict(path, local, stored)\n    return local\n\n\ndef merge_object(base, local, stored, path, ctx, mine_base=None):\n    mine_base = base if mine_base is None else mine_base\n    merged = {}\n    ordered = list(local.keys()) + [key for key in stored.keys() if key not in local]\n    for key in ordered:\n        value = merge_value(\n            base.get(key), local.get(key, None), stored.get(key, None), _child(path, key), ctx,\n            mine_base=mine_base.get(key),\n        )\n        if key in local or value is not None:\n            merged[key] = value\n        # A key the editor removed and nobody else touched stays removed.\n    return merged\n\n\ndef _merge_keyed_list(base, local, stored, path, ctx, mine_base=None):\n    base_by = {_id(row): row for row in base if isinstance(row, dict)}\n    mine_by = {_id(row): row for row in (base if mine_base is None else mine_base) if isinstance(row, dict)}\n    local_by = {_id(row): row for row in local}\n    stored_by = {_id(row): row for row in stored}\n    merged = []\n    for row in local:\n        row_id = _id(row)\n        if row_id in stored_by:\n            merged.append(merge_value(\n                base_by.get(row_id), row, stored_by[row_id], f'{path}[{row_id}]', ctx,\n                mine_base=mine_by.get(row_id, base_by.get(row_id)),\n            ))\n        elif row_id in base_by and same(mine_by.get(row_id, base_by[row_id]), row):\n            continue  # they deleted it, the editor never touched it\n        elif row_id in base_by:\n            ctx.conflict(f'{path}[{row_id}]', row, None, 'remote-deleted')\n            merged.append(row)\n        else:\n            merged.append(row)  # the editor added it\n    for index, row in enumerate(stored):\n        row_id = _id(row)\n        if row_id in local_by:\n            continue\n        if row_id in base_by:\n            if not same(base_by[row_id], row):\n                ctx.conflict(f'{path}[{row_id}]', None, row, 'local-deleted')\n            continue\n        anchor = _id(stored[index - 1]) if index > 0 else ''\n        position = next((at for at, item in enumerate(merged) if _id(item) == anchor), -1) if anchor else -1\n        merged.insert(position + 1 if anchor else 0, row)\n    return merged\n\n\n# --- orders -------------------------------------------------------------------\n\ndef merge_order(base_ids, local_ids, stored_ids, members, path, ctx):\n    \"\"\"One list's order, three ways, holding exactly ``members``.\n\n    Whoever moved the shared entries decides their order; an entry only one\n    side has stays behind the entry it followed in that side's list. Two\n    different rearrangements of the same entries are a conflict.\n    \"\"\"\n    base_ids = [value for value in base_ids or []]\n    local_ids = [value for value in local_ids or []]\n    stored_ids = [value for value in stored_ids or []]\n    shared = set(base_ids) & set(local_ids) & set(stored_ids) & set(members)\n\n    def order(ids):\n        return [value for value in ids if value in shared]\n\n    local_moved = order(local_ids) != order(base_ids)\n    stored_moved = order(stored_ids) != order(base_ids)\n    if local_moved and stored_moved and order(local_ids) != order(stored_ids):\n        ctx.conflict(path, order(local_ids), order(stored_ids), 'reorder')\n    primary, secondary = (stored_ids, local_ids) if stored_moved and not local_moved else (local_ids, stored_ids)\n    result = []\n    for value in primary:\n        if value in members and value not in result:\n            result.append(value)\n    for source in (secondary, base_ids):\n        for index, value in enumerate(source):\n            if value not in members or value in result:\n                continue\n            anchor = next((source[at] for at in range(index - 1, -1, -1) if source[at] in result), '')\n            result.insert(result.index(anchor) + 1 if anchor else 0, value)\n    for value in members:\n        if value not in result:\n            result.append(value)\n    return result\n\n\n# --- the save -------------------------------------------------------------------\n\ndef _week_path(week_id):\n    return f'weekStructure[{week_id}]'\n\n\ndef _component_path(week_id, component_id):\n    return f'weekStructure[{week_id}].components[{component_id}]'\n\n\ndef _module_ctx():\n    return _Context(ignore=lambda pattern: pattern in DERIVED_MODULE_FIELDS)\n\n\ndef _week_ctx():\n    return _Context(ignore=lambda pattern: pattern.split('.')[-1] in DERIVED_WEEK_FIELDS)\n\n\ndef _component_ctx():\n    def prefer_stored(pattern):\n        parts = pattern.split('.')\n        return (\n            len(parts) >= 2 and parts[-2] == 'settings'\n            and (parts[-1] in TEAMS_OWNED_SETTING_KEYS or parts[-1] in PLANNED_SETTING_KEYS)\n        )\n\n    def ignore(pattern):\n        return pattern.split('.')[-1] in {'moduleId'}\n\n    return _Context(ignore=ignore, prefer_stored=prefer_stored)\n\n\ndef merge_partial_save(stored, payload, *, deleted_ids=frozenset(), fingerprint_of=fingerprint):\n    \"\"\"The full module a partial save should write, given what is stored now.\n\n    ``stored`` is the structure payload as the server reads it; ``payload`` is\n    the editor's partial save carrying ``structureDelta`` and\n    ``structureBase``. ``deleted_ids`` are week/component ids that exist as\n    soft-deleted rows. Returns ``(module_payload, summary)`` or raises\n    ModuleMergeConflicts / ModuleMergeUnavailable.\n    \"\"\"\n    delta = payload.get('structureDelta')\n    base = payload.get('structureBase')\n    if not isinstance(delta, dict) or not isinstance(base, dict):\n        raise ModuleMergeUnavailable('A merge needs the copy the changes were made against.')\n    base_prints = base.get('fingerprints') if isinstance(base.get('fingerprints'), dict) else None\n    if base_prints is None:\n        raise ModuleMergeUnavailable('A merge needs the fingerprints of the copy it was made against.')\n    base_week_prints = base_prints.get('weeks') or {}\n    base_component_prints = base_prints.get('components') or {}\n    base_week_copies = base.get('weeks') if isinstance(base.get('weeks'), dict) else {}\n    base_component_copies = base.get('components') if isinstance(base.get('components'), dict) else {}\n    # The same starting point as the editor holds it (normalised by the\n    # browser), for \"did this author change it?\". Older clients send none.\n    mine_module = base.get('localModule') if isinstance(base.get('localModule'), dict) else None\n    mine_weeks = base.get('localWeeks') if isinstance(base.get('localWeeks'), dict) else {}\n    mine_components = base.get('localComponents') if isinstance(base.get('localComponents'), dict) else {}\n    base_week_order = [str(value) for value in base.get('weekOrder') or []]\n    base_component_order = {\n        str(week_id): [str(value) for value in ids or []]\n        for week_id, ids in (base.get('componentOrder') or {}).items()\n    }\n    restore_ids = {str(value) for value in payload.get('restoreIds') or []}\n    deleted_ids = {str(value) for value in deleted_ids}\n\n    local_week_order = [str(value) for value in delta.get('weekOrder') or []]\n    local_component_order = {\n        str(week_id): [str(value) for value in ids or []]\n        for week_id, ids in (delta.get('componentOrder') or {}).items()\n    }\n    local_weeks = delta.get('weeks') if isinstance(delta.get('weeks'), dict) else {}\n    local_components = delta.get('components') if isinstance(delta.get('components'), dict) else {}\n\n    stored_weeks = {}\n    stored_week_order = []\n    stored_components = {}\n    stored_component_order = {}\n    for week in stored.get('weekStructure') or []:\n        week_id = _id(week)\n        stored_week_order.append(week_id)\n        stored_weeks[week_id] = week_fields(week)\n        stored_component_order[week_id] = []\n        for component in week.get('components') or []:\n            component_id = _id(component)\n            stored_components[component_id] = component\n            stored_component_order[week_id].append(component_id)\n\n    conflicts = []\n    summary = {'taken_local': 0, 'taken_stored': 0, 'merged': 0, 'deleted': 0}\n\n    # Module fields. Field by field: the module row is one record many fields\n    # wide, and two editors changing two of its fields is the normal case.\n    module_ctx = _module_ctx()\n    base_module = base.get('module') if isinstance(base.get('module'), dict) else {}\n    stored_module = {key: value for key, value in stored.items() if key != 'weekStructure'}\n    local_module = {key: value for key, value in payload.items() if key not in CONTROL_KEYS}\n    merged_module = {}\n    for key, local_value in local_module.items():\n        merged_module[key] = merge_value(\n            base_module.get(key), local_value, stored_module.get(key), key, module_ctx,\n            **({'mine_base': mine_module.get(key)} if mine_module is not None else {}),\n        )\n    conflicts.extend(module_ctx.conflicts)\n\n    def resolve_item(kind, item_id, *, local_item, base_copy, base_print, stored_item, path, ctx, mine_copy=None):\n        \"\"\"One week or component: (merged item or None, conflict list).\"\"\"\n        in_base = base_print is not None\n        if stored_item is None:\n            if item_id in deleted_ids and item_id not in restore_ids:\n                return local_item, [{'path': path, 'kind': 'remote-deleted', 'local': local_item, 'remote': None}]\n            if in_base and item_id not in restore_ids:\n                # Gone entirely (hard-deleted) while the editor changed it.\n                return local_item, [{'path': path, 'kind': 'remote-deleted', 'local': local_item, 'remote': None}]\n            summary['taken_local'] += 1\n            return local_item, []\n        stored_print = fingerprint_of(stored_item)\n        if in_base and stored_print == base_print:\n            summary['taken_local'] += 1\n            return local_item, []\n        if same(local_item, stored_item):\n            summary['taken_local'] += 1\n            return local_item, []\n        merged = merge_value(\n            base_copy if in_base else None, local_item, stored_item, path, ctx,\n            **({'mine_base': mine_copy} if in_base and mine_copy is not None else {}),\n        )\n        summary['merged'] += 1\n        found, ctx.conflicts = ctx.conflicts, []\n        return merged, found\n\n    # Weeks.\n    final_weeks = {}\n    deleted_weeks = set()\n    for week_id in _union(base_week_order, list(base_week_prints), local_week_order, stored_week_order):\n        in_local = week_id in local_week_order\n        in_base = week_id in base_week_prints\n        stored_week = stored_weeks.get(week_id)\n        if in_local and week_id in local_weeks:\n            merged, found = resolve_item(\n                'week', week_id,\n                local_item=week_fields(local_weeks[week_id]),\n                base_copy=week_fields(base_week_copies.get(week_id) or {}),\n                base_print=base_week_prints.get(week_id),\n                stored_item=stored_week,\n                path=_week_path(week_id),\n                ctx=_week_ctx(),\n                mine_copy=week_fields(mine_weeks[week_id]) if isinstance(mine_weeks.get(week_id), dict) else None,\n            )\n            conflicts.extend(found)\n            final_weeks[week_id] = merged\n        elif in_local:\n            if stored_week is not None:\n                final_weeks[week_id] = stored_week\n                summary['taken_stored'] += 1\n            # else: they deleted a week this editor never changed.\n        elif in_base:\n            if stored_week is None:\n                continue\n            if fingerprint_of(stored_week) == base_week_prints.get(week_id):\n                deleted_weeks.add(week_id)\n                summary['deleted'] += 1\n            else:\n                conflicts.append({\n                    'path': _week_path(week_id), 'kind': 'local-deleted',\n                    'local': None, 'remote': stored_week,\n                })\n                final_weeks[week_id] = stored_week\n        elif stored_week is not None:\n            final_weeks[week_id] = stored_week  # added by someone else\n            summary['taken_stored'] += 1\n\n    # Components. Where a component lives is its `weekId`, merged like any\n    # other field, so a move on one side and an edit on the other both land.\n    local_location = {\n        component_id: week_id\n        for week_id, ids in local_component_order.items()\n        for component_id in ids\n    }\n    base_location = {\n        component_id: week_id\n        for week_id, ids in base_component_order.items()\n        for component_id in ids\n    }\n    final_components = {}\n    for component_id in _union(\n        [value for ids in base_component_order.values() for value in ids],\n        list(base_component_prints),\n        [value for ids in local_component_order.values() for value in ids],\n        [value for ids in stored_component_order.values() for value in ids],\n    ):\n        in_local = component_id in local_location\n        in_base = component_id in base_component_prints\n        stored_component = stored_components.get(component_id)\n        week_for_path = local_location.get(component_id) or base_location.get(component_id) \\\n            or (stored_component or {}).get('weekId') or ''\n        path = _component_path(week_for_path, component_id)\n        if in_local and component_id in local_components:\n            local_component = {**local_components[component_id], 'weekId': local_location[component_id]}\n            merged, found = resolve_item(\n                'component', component_id,\n                local_item=local_component,\n                base_copy=base_component_copies.get(component_id) or {},\n                base_print=base_component_prints.get(component_id),\n                stored_item=stored_component,\n                path=path,\n                ctx=_component_ctx(),\n                mine_copy=mine_components.get(component_id) if isinstance(mine_components.get(component_id), dict) else None,\n            )\n            conflicts.extend(found)\n            final_components[component_id] = merged\n        elif in_local:\n            if stored_component is not None:\n                final_components[component_id] = stored_component\n                summary['taken_stored'] += 1\n        elif in_base:\n            if stored_component is None:\n                continue\n            if fingerprint_of(stored_component) == base_component_prints.get(component_id):\n                summary['deleted'] += 1\n            else:\n                conflicts.append({'path': path, 'kind': 'local-deleted', 'local': None, 'remote': stored_component})\n                final_components[component_id] = stored_component\n        elif stored_component is not None:\n            final_components[component_id] = stored_component\n            summary['taken_stored'] += 1\n\n    # A week deleted here that someone else has since put content into is not\n    # the week this editor deleted.\n    for component_id, component in final_components.items():\n        week_id = str(component.get('weekId') or '')\n        if week_id in deleted_weeks:\n            conflicts.append({\n                'path': _week_path(week_id), 'kind': 'local-deleted',\n                'local': None, 'remote': stored_weeks.get(week_id),\n            })\n            deleted_weeks.discard(week_id)\n            final_weeks[week_id] = stored_weeks[week_id]\n        elif week_id not in final_weeks:\n            conflicts.append({\n                'path': _week_path(week_id), 'kind': 'remote-deleted',\n                'local': local_weeks.get(week_id), 'remote': None,\n            })\n\n    if conflicts:\n        raise ModuleMergeConflicts(_dedupe(conflicts))\n\n    order_ctx = _Context()\n    week_order = merge_order(\n        base_week_order, local_week_order, stored_week_order, set(final_weeks), 'weekStructure', order_ctx,\n    )\n    members_by_week = {week_id: set() for week_id in week_order}\n    for component_id, component in final_components.items():\n        members_by_week.setdefault(str(component.get('weekId') or ''), set()).add(component_id)\n    weeks = []\n    for index, week_id in enumerate(week_order):\n        component_ids = merge_order(\n            base_component_order.get(week_id, []),\n            local_component_order.get(week_id, []),\n            stored_component_order.get(week_id, []),\n            members_by_week.get(week_id, set()),\n            f'{_week_path(week_id)}.components',\n            order_ctx,\n        )\n        weeks.append({\n            **final_weeks[week_id],\n            'weekNumber': index + 1,\n            'components': [final_components[component_id] for component_id in component_ids],\n        })\n    if order_ctx.conflicts:\n        raise ModuleMergeConflicts(_dedupe(order_ctx.conflicts))\n    merged_module['weekStructure'] = weeks\n    merged_module['weeksNumber'] = len(weeks)\n    return merged_module, summary\n\n\ndef restore_conflicts(delta, stored, deleted_ids, restore_ids):\n    \"\"\"Ids a save would bring back from a soft delete without being asked to.\n\n    For the fast path, where the editor's base is the stored version: an item\n    the delta sends that is not stored but exists deleted is either the\n    editor's own undo (named in ``restoreIds``) or a stale copy resurrecting a\n    colleague's delete, which must be refused.\n    \"\"\"\n    stored_ids = set()\n    for week in (stored or {}).get('weekStructure') or []:\n        stored_ids.add(_id(week))\n        for component in week.get('components') or []:\n            stored_ids.add(_id(component))\n    restore_ids = {str(value) for value in restore_ids or []}\n    deleted_ids = {str(value) for value in deleted_ids or []}\n    found = []\n    for kind in ('weeks', 'components'):\n        for item_id, item in ((delta or {}).get(kind) or {}).items():\n            item_id = str(item_id)\n            if item_id in stored_ids or item_id not in deleted_ids or item_id in restore_ids:\n                continue\n            week_id = str((item or {}).get('weekId') or '') if kind == 'components' else item_id\n            path = _week_path(item_id) if kind == 'weeks' else _component_path(week_id, item_id)\n            found.append({'path': path, 'kind': 'remote-deleted', 'local': item, 'remote': None})\n    return found\n\n\ndef candidate_new_ids(delta, stored):\n    \"\"\"Ids the delta sends that the stored module does not hold (live).\"\"\"\n    stored_ids = set()\n    for week in (stored or {}).get('weekStructure') or []:\n        stored_ids.add(_id(week))\n        for component in week.get('components') or []:\n            stored_ids.add(_id(component))\n    found = {'weeks': [], 'components': []}\n    for kind in ('weeks', 'components'):\n        for item_id in ((delta or {}).get(kind) or {}):\n            if str(item_id) not in stored_ids:\n                found[kind].append(str(item_id))\n    return found\n\n\ndef _union(*lists):\n    seen, out = set(), []\n    for values in lists:\n        for value in values:\n            value = str(value)\n            if value and value not in seen:\n                seen.add(value)\n                out.append(value)\n    return out\n\n\ndef _dedupe(conflicts):\n    seen, out = set(), []\n    for conflict in conflicts:\n        key = (conflict['path'], conflict['kind'])\n        if key in seen:\n            continue\n        seen.add(key)\n        out.append(conflict)\n    return out\n"
+}

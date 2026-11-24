@@ -5,6 +5,7 @@ standard_ksbs) and weight > 0. Pins that a mapping's own standard picks its
 standard_ksbs row before the module's profile does, and that the component
 builder refuses a weightless mapping instead of failing at the insert.
 """
+from curriculum_api.catalogue.tests.parity.composition_test_support import composition_fixture
 from unittest import mock
 
 from django.test import SimpleTestCase
@@ -89,12 +90,12 @@ class StandardKsbIdTests(SimpleTestCase):
 class ComponentBuilderWeightTests(SimpleTestCase):
     def test_a_weightless_mapping_is_refused_before_anything_is_written(self):
         mappings = [{'ksb_code': 'K1', 'weight': 40}, {'ksb_code': 'S2', 'weight': 0}]
-        with mock.patch.object(views, 'authoring_fetch_all', return_value=[]), \
-             mock.patch.object(views, 'component_context_for_payload', return_value=('MOD-1', 'WEEK-1', 1)), \
-             mock.patch.object(views, 'ensure_module_authoring_tables'), \
-             mock.patch.object(views, 'normalise_component_ksb_mappings', return_value=([], mappings)), \
-             mock.patch.object(views, 'authoring_upsert', side_effect=AssertionError('written')), \
-             mock.patch.object(views, 'authoring_bulk_upsert', side_effect=AssertionError('written')):
+        with composition_fixture(views, 'authoring_fetch_all', return_value=[]), \
+             composition_fixture(views, 'component_context_for_payload', return_value=('MOD-1', 'WEEK-1', 1)), \
+             composition_fixture(views, 'ensure_module_authoring_tables'), \
+             composition_fixture(views, 'normalise_component_ksb_mappings', return_value=([], mappings)), \
+             composition_fixture(views, 'authoring_upsert', side_effect=AssertionError('written')), \
+             composition_fixture(views, 'authoring_bulk_upsert', side_effect=AssertionError('written')):
             with self.assertRaises(views.ModuleAuthoringValidationError) as raised:
                 views.save_component_builder_payload({
                     'title': 'Intro', 'module': 'MOD-1', 'week': 'WEEK-1', 'type': 'reading',

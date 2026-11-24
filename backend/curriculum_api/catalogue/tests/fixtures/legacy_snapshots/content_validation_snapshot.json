@@ -1,0 +1,167 @@
+{
+  "frontend_component_type": {
+    "source": "def frontend_component_type(value):\n    return str(value or '').replace('_', '-')",
+    "owner": "curriculum_api.catalogue.domain.content_validation",
+    "dependencies": [],
+    "decorators": []
+  },
+  "display_component_type": {
+    "source": "def display_component_type(value):\n    raw = frontend_component_type(value)\n    labels = {\n        'live-session': 'Live Session',\n        'recording-placeholder': 'Recording Placeholder',\n        'video': 'Self-study',\n        'podcast': 'Self-study',\n        'reading': 'Self-study',\n        'powerpoint': 'Self-study',\n        'quiz': 'Quiz',\n        'monthly-ksb-quiz': 'Quiz',\n        'assignment': 'Assignment',\n        'workshop': 'Workshop',\n        'reflection': 'Self-study',\n        'checkpoint': 'Quiz',\n        'coaching-preparation': 'Self-study',\n    }\n    return labels.get(raw, clean_str(value).replace('-', ' ').replace('_', ' ').title() or 'Self-study')",
+    "owner": "curriculum_api.catalogue.domain.content_validation",
+    "dependencies": [
+      "clean_str",
+      "frontend_component_type"
+    ],
+    "decorators": []
+  },
+  "stored_component_type": {
+    "source": "def stored_component_type(value):\n    label = clean_str(value).lower()\n    mapping = {\n        'live session': 'live_session',\n        'recording placeholder': 'recording_placeholder',\n        'video': 'video',\n        'podcast': 'podcast',\n        'reading': 'reading',\n        'reading material': 'reading',\n        'powerpoint': 'powerpoint',\n        'power point': 'powerpoint',\n        'self-study': 'reading',\n        'self study': 'reading',\n        'quiz': 'quiz',\n        'checkpoint': 'checkpoint',\n        'checkpoint quiz': 'checkpoint',\n        'monthly ksb quiz': 'monthly_ksb_quiz',\n        'assignment': 'assignment',\n        'reflection': 'reflection',\n        'coaching preparation': 'coaching_preparation',\n        'workshop': 'workshop',\n    }\n    return mapping.get(label, normalise_component_type(value) or 'reading')",
+    "owner": "curriculum_api.catalogue.domain.content_validation",
+    "dependencies": [
+      "clean_str",
+      "normalise_component_type"
+    ],
+    "decorators": []
+  },
+  "http_url": {
+    "source": "def http_url(value):\n    text = clean_str(value)\n    if not text:\n        return False\n    parsed = urlparse(text)\n    return parsed.scheme in {'http', 'https'} and bool(parsed.netloc)",
+    "owner": "curriculum_api.catalogue.domain.content_validation",
+    "dependencies": [
+      "clean_str"
+    ],
+    "decorators": []
+  },
+  "component_resource_url": {
+    "source": "def component_resource_url(value):\n    text = clean_str(value)\n    return text.startswith('/curriculum_api/curriculum/uploads/') or http_url(text)",
+    "owner": "curriculum_api.catalogue.domain.content_validation",
+    "dependencies": [
+      "clean_str",
+      "http_url"
+    ],
+    "decorators": []
+  },
+  "component_uploaded_video_url": {
+    "source": "def component_uploaded_video_url(value):\n    \"\"\"Existing LMS MP4 resources may predate the generated video-import path.\"\"\"\n    from urllib.parse import unquote\n    parsed = urlparse(clean_str(value))\n    path = unquote(parsed.path)\n    return (not parsed.scheme and not parsed.netloc and not parsed.query and not parsed.fragment\n            and path.startswith('/curriculum_api/curriculum/uploads/')\n            and path.lower().endswith('.mp4') and '\\\\' not in path\n            and not any(part in {'.', '..'} for part in path.split('/')))",
+    "owner": "curriculum_api.catalogue.domain.content_validation",
+    "dependencies": [
+      "clean_str"
+    ],
+    "decorators": []
+  },
+  "host_matches": {
+    "source": "def host_matches(value, allowed_hosts):\n    if not http_url(value):\n        return False\n    host = (urlparse(clean_str(value)).hostname or '').lower()\n    return any(host == allowed or host.endswith(f'.{allowed}') for allowed in allowed_hosts)",
+    "owner": "curriculum_api.catalogue.domain.content_validation",
+    "dependencies": [
+      "clean_str",
+      "http_url"
+    ],
+    "decorators": []
+  },
+  "component_expected_otjh": {
+    "source": "def component_expected_otjh(component, default=2):\n    component = component or {}\n    if component.get('expectedOtjh') not in (None, ''):\n        return parse_float(component.get('expectedOtjh'), default)\n    if component.get('expected_otjh') not in (None, ''):\n        return parse_float(component.get('expected_otjh'), default)\n    return default",
+    "owner": "curriculum_api.catalogue.domain.content_validation",
+    "dependencies": [
+      "parse_float"
+    ],
+    "decorators": []
+  },
+  "payload_reflection_question": {
+    "source": "def payload_reflection_question(component, settings=None):\n    \"\"\"The reflection question a component payload is asking us to store.\n\n    ``reflectionQuestion`` is what the builders send, and an explicit empty\n    string there clears the question. A payload that names neither spelling is\n    older than the field, so its legacy ``settings.reflectionPrompt`` stands in.\n    \"\"\"\n    if 'reflectionQuestion' in component or 'reflection_question' in component:\n        return clean_str(component.get('reflectionQuestion') or component.get('reflection_question'))\n    if settings is None:\n        settings = component.get('settings')\n    settings = settings if isinstance(settings, dict) else {}\n    return clean_str(settings.get(LEGACY_REFLECTION_QUESTION_SETTING))",
+    "owner": "curriculum_api.catalogue.domain.content_validation",
+    "dependencies": [
+      "LEGACY_REFLECTION_QUESTION_SETTING",
+      "clean_str"
+    ],
+    "decorators": []
+  },
+  "partial_read_errors": {
+    "source": "def partial_read_errors(payload, path=''):\n    \"\"\"Refuse a save built from a partial read (see the two projections above).\n\n    A component carrying ``settingsOmitted`` lacks text the stored row holds,\n    and a week or module marked as an outline lacks every component. Saved as\n    they are, a full structure save would withdraw that content. Nothing in\n    the frontend sends either; this is the server's own guarantee.\n    \"\"\"\n    errors = []\n    if not isinstance(payload, dict):\n        return errors\n    prefix = f'{path}.' if path else ''\n    if payload.get(COMPONENT_SETTINGS_OMITTED_FLAG):\n        errors.append({\n            'path': f'{prefix}settings',\n            'message': 'This component was loaded without its full content. Reload it before saving.',\n        })\n    if payload.get(WEEK_OUTLINE_MODULE_FLAG) or payload.get(WEEK_OUTLINE_WEEK_FLAG):\n        errors.append({\n            'path': f'{prefix}weekStructure' if payload.get(WEEK_OUTLINE_MODULE_FLAG) else f'{prefix}components',\n            'message': 'This module was loaded as an outline without its components. Reload it before saving.',\n        })\n    return errors",
+    "owner": "curriculum_api.catalogue.domain.content_validation",
+    "dependencies": [
+      "COMPONENT_SETTINGS_OMITTED_FLAG",
+      "WEEK_OUTLINE_MODULE_FLAG",
+      "WEEK_OUTLINE_WEEK_FLAG"
+    ],
+    "decorators": []
+  },
+  "active_components_payload": {
+    "source": "def active_components_payload(components):\n    return [\n        component\n        for component in (components or [])\n        if isinstance(component, dict) and not is_retired_component_type(component.get('type'))\n    ]",
+    "owner": "curriculum_api.catalogue.domain.content_validation",
+    "dependencies": [
+      "is_retired_component_type"
+    ],
+    "decorators": []
+  },
+  "without_retired_components": {
+    "source": "def without_retired_components(weeks):\n    clean_weeks = []\n    for week in weeks if isinstance(weeks, list) else []:\n        if not isinstance(week, dict):\n            clean_weeks.append(week)\n            continue\n        clean_weeks.append({\n            **week,\n            'components': active_components_payload(week.get('components')),\n        })\n    return clean_weeks",
+    "owner": "curriculum_api.catalogue.domain.content_validation",
+    "dependencies": [
+      "active_components_payload"
+    ],
+    "decorators": []
+  },
+  "validate_mapping_duplicates": {
+    "source": "def validate_mapping_duplicates(mappings, path):\n    errors = []\n    seen = set()\n    for index, mapping in enumerate(mappings or []):\n        key = component_mapping_identity('component', mapping)[1:]\n        if key[0] and key in seen:\n            errors.append({'path': f'{path}.{index}.code', 'message': 'This KSB is already mapped to this component.'})\n        seen.add(key)\n    return errors",
+    "owner": "curriculum_api.catalogue.domain.content_validation",
+    "dependencies": [
+      "component_mapping_identity"
+    ],
+    "decorators": []
+  },
+  "validate_component_authoring_payload": {
+    "source": "def validate_component_authoring_payload(component, path):\n    errors = []\n    component_type = frontend_component_type(component.get('type'))\n    settings = normalise_component_settings_payload(component_type, component.get('settings'))\n    component['settings'] = settings\n    allowed = allowed_component_setting_keys(component_type)\n    title = clean_str(component.get('title'))\n    status = clean_str(settings.get('contentStatus') or 'Draft')\n    version = clean_str(settings.get('version') or '0.1')\n\n    if not title:\n        errors.append({'path': f'{path}.title', 'message': 'Component title is required.'})\n    if component_expected_otjh(component) < 0:\n        errors.append({'path': f'{path}.expectedOtjh', 'message': 'Expected OTJH cannot be negative.'})\n    if parse_int(component.get('points'), 0) < 0:\n        errors.append({'path': f'{path}.points', 'message': 'Points cannot be negative.'})\n    if status not in CONTENT_AUTHORING_STATUSES:\n        errors.append({'path': f'{path}.settings.contentStatus', 'message': 'Status must be Draft, Ready for QA, Needs changes, or Approved.'})\n    if not re.match(r'^\\d+(?:\\.\\d+){0,2}$', version):\n        errors.append({'path': f'{path}.settings.version', 'message': 'Version must use numbers such as 0.1 or 1.2.0.'})\n    if bool_payload(component.get('reflectionRequired')) and not payload_reflection_question(component, settings):\n        errors.append({'path': f'{path}.reflectionQuestion', 'message': 'A reflection question is required when reflection is enabled.'})\n    for key in settings.keys():\n        if key not in allowed:\n            errors.append({'path': f'{path}.settings.{key}', 'message': f'Unsupported setting \"{key}\" for {component_type}.'})\n\n    if component_type == 'video':\n        source_type = clean_str(settings.get('sourceType') or settings.get('provider') or 'YouTube')\n        if source_type == 'Upload file':\n            source_type = 'HTML (MP4)'\n        if source_type == 'External link':\n            source_type = 'External Link'\n        if source_type == 'Shortcode':\n            if status != 'Draft':\n                errors.append({'path': f'{path}.settings.sourceType', 'message': 'Legacy Shortcode sources are preserved but cannot be marked ready or approved in the new Module Builder.'})\n            return errors\n        video_url = clean_str(settings.get('videoUrl'))\n        progress = parse_float(settings.get('requiredProgressPercentage'), 0)\n        if progress < 0 or progress > 100:\n            errors.append({'path': f'{path}.settings.requiredProgressPercentage', 'message': 'Required progress must be between 0 and 100.'})\n        if video_url and source_type == 'YouTube' and not host_matches(video_url, {'youtube.com', 'youtu.be'}):\n            errors.append({'path': f'{path}.settings.videoUrl', 'message': 'Enter a valid YouTube URL.'})\n        if video_url and source_type == 'Vimeo' and not host_matches(video_url, {'vimeo.com'}):\n            errors.append({'path': f'{path}.settings.videoUrl', 'message': 'Enter a valid Vimeo URL.'})\n        from .video_uploads import stored_video_path\n        saved_mp4 = source_type == 'HTML (MP4)' and (bool(stored_video_path(video_url)) or component_uploaded_video_url(video_url))\n        if video_url and source_type in {'External Link', 'HTML (MP4)'} and not (http_url(video_url) or saved_mp4):\n            errors.append({'path': f'{path}.settings.videoUrl', 'message': 'Enter a valid URL.'})\n        if status != 'Draft' and source_type == 'Embed' and not clean_str(settings.get('embedCode')):\n            errors.append({'path': f'{path}.settings.embedCode', 'message': 'Embed content is required before QA or approval.'})\n        if status != 'Draft' and source_type != 'Embed' and not video_url:\n            errors.append({'path': f'{path}.settings.videoUrl', 'message': 'Video URL is required before QA or approval.'})\n\n    if component_type == 'recording-placeholder':\n        recording_url = clean_str(settings.get('recordingUrl'))\n        if recording_url and not http_url(recording_url):\n            errors.append({'path': f'{path}.settings.recordingUrl', 'message': 'Enter a valid recording URL.'})\n        # A linked recording plays its live session's Teams recording, so it\n        # has no URL of its own to require.\n        linked = clean_str(settings.get('linkedLiveSessionComponentId'))\n        if status != 'Draft' and not recording_url and not linked:\n            errors.append({'path': f'{path}.settings.recordingUrl', 'message': 'Recording URL is required before QA or approval.'})\n\n    if component_type == 'podcast':\n        source_type = clean_str(settings.get('podcastSource') or 'External URL')\n        podcast_url = clean_str(settings.get('podcastUrl'))\n        embed_code = clean_str(settings.get('embedCode'))\n        progress = parse_float(settings.get('requiredProgressPercentage'), 0)\n        if progress < 0 or progress > 100:\n            errors.append({'path': f'{path}.settings.requiredProgressPercentage', 'message': 'Required progress must be between 0 and 100.'})\n        if source_type not in {'Embed', 'Shortcode'} and podcast_url and not component_resource_url(podcast_url):\n            errors.append({'path': f'{path}.settings.podcastUrl', 'message': 'Enter a valid podcast URL.'})\n        if status != 'Draft' and source_type == 'Embed' and not embed_code:\n            errors.append({'path': f'{path}.settings.embedCode', 'message': 'Embed content is required before QA or approval.'})\n\n    if component_type == 'reading':\n        resource_url = clean_str(settings.get('resourceUrl'))\n        if resource_url and not component_resource_url(resource_url):\n            errors.append({'path': f'{path}.settings.resourceUrl', 'message': 'Enter a valid reading URL.'})\n        audio_url = clean_str(settings.get('audioUrl'))\n        if audio_url and not http_url(audio_url):\n            errors.append({'path': f'{path}.settings.audioUrl', 'message': 'Enter a valid audio URL.'})\n\n    if component_type == 'powerpoint':\n        value = clean_str(settings.get('presentationUrl'))\n        if value and not component_resource_url(value):\n            errors.append({'path': f'{path}.settings.presentationUrl', 'message': 'Enter a valid presentation URL.'})\n\n    return errors",
+    "owner": "curriculum_api.catalogue.application.content_validation",
+    "dependencies": [
+      "CONTENT_AUTHORING_STATUSES",
+      "allowed_component_setting_keys",
+      "bool_payload",
+      "clean_str",
+      "component_expected_otjh",
+      "component_resource_url",
+      "component_uploaded_video_url",
+      "frontend_component_type",
+      "host_matches",
+      "http_url",
+      "normalise_component_settings_payload",
+      "parse_float",
+      "parse_int",
+      "payload_reflection_question",
+      "stored_video_path"
+    ],
+    "decorators": []
+  },
+  "validate_module_authoring_payload": {
+    "source": "def validate_module_authoring_payload(payload):\n    errors = []\n    if 'calendarPolicy' in payload or 'calendar_policy' in payload:\n        from curriculum_api.calendar_policy import read_policy\n        try:\n            read_policy(payload)\n        except ValueError as exc:\n            errors.append({'path': 'calendarPolicy', 'message': str(exc)})\n    if 'scheduleMode' in payload and payload['scheduleMode'] not in ('group', 'custom'):\n        errors.append({'path': 'scheduleMode', 'message': 'Choose Group or Custom scheduling.'})\n    try:\n        module_week_starts_on(payload)\n    except ValueError as exc:\n        errors.append({'path': 'weekStartsOn', 'message': str(exc)})\n    try:\n        weekly = module_weekly_schedule(payload)\n        if payload.get('scheduleMode') == 'custom' and not weekly:\n            errors.append({'path': 'weeklySchedule', 'message': 'Choose the weekdays and times for the custom schedule.'})\n    except ValueError as exc:\n        errors.append({'path': 'weeklySchedule', 'message': str(exc)})\n    source_cache = {}\n    if not clean_str(payload.get('title') or payload.get('name')):\n        errors.append({'path': 'title', 'message': 'Module title is required.'})\n    errors.extend(partial_read_errors(payload))\n    raw_weeks = payload.get('weekStructure')\n    if raw_weeks is None:\n        raw_weeks = payload.get('weeks')\n    # An integer `weeks` is a session count, not a structure. Reject it instead of\n    # coercing it to [], which would drop authored weeks without telling anyone.\n    if raw_weeks not in (None, '') and not isinstance(raw_weeks, list):\n        errors.append({'path': 'weekStructure', 'message': 'Week structure must be a list.'})\n        return errors\n    weeks = without_retired_components(raw_weeks or [])\n    for week_index, week in enumerate(weeks):\n        if not isinstance(week, dict):\n            errors.append({'path': f'weekStructure.{week_index}', 'message': 'Week must be an object.'})\n            continue\n        if not clean_str(week.get('title')):\n            errors.append({'path': f'weekStructure.{week_index}.title', 'message': f'Week {week_index + 1} needs a title.'})\n        errors.extend(partial_read_errors(week, f'weekStructure.{week_index}'))\n        components = week.get('components') or []\n        if not isinstance(components, list):\n            errors.append({'path': f'weekStructure.{week_index}.components', 'message': 'Components must be a list.'})\n            continue\n        for component_index, component in enumerate(components):\n            if not isinstance(component, dict):\n                errors.append({'path': f'weekStructure.{week_index}.components.{component_index}', 'message': 'Component must be an object.'})\n                continue\n            errors.extend(validate_component_authoring_payload(component, f'weekStructure.{week_index}.components.{component_index}'))\n            errors.extend(partial_read_errors(component, f'weekStructure.{week_index}.components.{component_index}'))\n            component_mappings = component.get('ksbMappings') or []\n            errors.extend(validate_mapping_duplicates(component_mappings, f'weekStructure.{week_index}.components.{component_index}.ksbMappings'))\n            for mapping_index, mapping in enumerate(component_mappings):\n                if not isinstance(mapping, dict):\n                    errors.append({'path': f'weekStructure.{week_index}.components.{component_index}.ksbMappings.{mapping_index}', 'message': 'KSB mapping must be an object.'})\n                    continue\n                errors.extend(validate_ksb_mapping_payload(mapping, f'weekStructure.{week_index}.components.{component_index}.ksbMappings.{mapping_index}', source_cache))\n    return errors",
+    "owner": "curriculum_api.catalogue.application.content_validation",
+    "dependencies": [
+      "clean_str",
+      "module_week_starts_on",
+      "module_weekly_schedule",
+      "partial_read_errors",
+      "read_policy",
+      "validate_component_authoring_payload",
+      "validate_ksb_mapping_payload",
+      "validate_mapping_duplicates",
+      "without_retired_components"
+    ],
+    "decorators": []
+  },
+  "validate_ksb_mapping_payload": {
+    "source": "def validate_ksb_mapping_payload(mapping, path='ksbMappings', source_cache=None):\n    errors = []\n    code = coverage_normalise_code(mapping.get('code') or mapping.get('ksbCode') or mapping.get('ksb_code'))\n    classification = clean_str(mapping.get('classification') or mapping.get('type')).lower()\n    has_weight_class = any(key in mapping for key in ('weight_class', 'weightClass'))\n    raw_weight_class = mapping.get('weight_class') if 'weight_class' in mapping else mapping.get('weightClass')\n    weight_class = normalise_ksb_weight_class(raw_weight_class)\n    weight_value = mapping.get('weight')\n    source_type, source_id = source_payload_from_mapping(mapping)\n    if not code:\n        errors.append({'path': f'{path}.code', 'message': 'KSB code is required.'})\n    if classification not in SUPPORTED_CLASSIFICATIONS:\n        errors.append({'path': f'{path}.classification', 'message': 'Classification must be main, secondary, or possible.'})\n    if not has_weight_class:\n        errors.append({'path': f'{path}.weight_class', 'message': 'Weight class is required and must be hard, soft, or possible.'})\n    elif weight_class not in SUPPORTED_KSB_WEIGHT_CLASSES or clean_str(raw_weight_class).lower() not in SUPPORTED_KSB_WEIGHT_CLASSES:\n        errors.append({'path': f'{path}.weight_class', 'message': 'Weight class must be hard, soft, or possible.'})\n    try:\n        weight = float(weight_value)\n    except (TypeError, ValueError):\n        weight = None\n    if weight is None:\n        errors.append({'path': f'{path}.weight', 'message': 'Weight must be numeric.'})\n    elif weight <= 0:\n        errors.append({'path': f'{path}.weight', 'message': 'Weight must be greater than zero.'})\n    if source_type not in SUPPORTED_KSB_SOURCE_TYPES:\n        errors.append({'path': f'{path}.sourceType', 'message': 'Source type must be standard or framework.'})\n    if not source_id:\n        errors.append({'path': f'{path}.sourceId', 'message': 'Source identifier is required.'})\n    mismatch_message = source_type_mismatch_message(source_type, source_id) if source_type and source_id else ''\n    if mismatch_message:\n        errors.append({'path': f'{path}.source', 'message': mismatch_message})\n    if source_type in SUPPORTED_KSB_SOURCE_TYPES and source_id and not mismatch_message:\n        if not source_record_exists(source_type, source_id, source_cache):\n            errors.append({'path': f'{path}.sourceId', 'message': f'Selected {source_type_label(source_type)} source was not found.'})\n        elif code and not ksb_exists_in_source(source_type, source_id, code, source_cache):\n            errors.append({'path': f'{path}.code', 'message': f'{code} does not belong to the selected {source_type_label(source_type)} source.'})\n    return errors",
+    "owner": "curriculum_api.catalogue.application.content_validation",
+    "dependencies": [
+      "SUPPORTED_CLASSIFICATIONS",
+      "SUPPORTED_KSB_SOURCE_TYPES",
+      "SUPPORTED_KSB_WEIGHT_CLASSES",
+      "clean_str",
+      "coverage_normalise_code",
+      "ksb_exists_in_source",
+      "normalise_ksb_weight_class",
+      "source_payload_from_mapping",
+      "source_record_exists",
+      "source_type_label",
+      "source_type_mismatch_message"
+    ],
+    "decorators": []
+  }
+}

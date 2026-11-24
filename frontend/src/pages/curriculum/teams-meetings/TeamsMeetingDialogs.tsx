@@ -1,3 +1,4 @@
+import { LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
 import {
   useCallback,
   useEffect,
@@ -276,7 +277,7 @@ function TranscriptPreview({ liveSessionId, artifact, title, onClose }: {
         </div>
         <div className="min-h-0 flex-1 overflow-y-auto p-5">
           {state.status === 'loading' && (
-            <p className="text-[12px] font-semibold text-foreground-500">Loading transcript…</p>
+            <p className="text-[12px] font-semibold text-foreground-500"><LoadingSkeleton label="Loading transcript…" variant="rows" /></p>
           )}
           {state.status === 'error' && (
             <p className="text-[12px] font-semibold text-red-600">{state.message}</p>
@@ -644,10 +645,7 @@ export function TeamsMeetingDialogs({ workspace, secondTab }: {
                     className="rounded-lg border px-3 py-2 text-[12px] font-bold">Try again</button>
                 </div>
               ) : (
-                <p role="status" className="flex items-center gap-1.5 rounded-xl border border-background-200 bg-background-100/60 p-3 text-[11px] font-semibold text-foreground-500">
-                  <AppIcon className="ri-loader-4-line animate-spin"></AppIcon>
-                  Loading this module&rsquo;s session dates and Teams calendar, and checking its existing Teams links…
-                </p>
+                <p  className="flex items-center gap-1.5 rounded-xl border border-background-200 bg-background-100/60 p-3 text-[11px] font-semibold text-foreground-500"><LoadingSkeleton label="Loading this module&rsquo;s session dates and Teams calendar, and checking its existing Teams links…" variant="rows" /></p>
               )
             ) : (<>
             {/* Where this module stands, in the same chips the table uses. */}

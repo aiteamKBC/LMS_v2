@@ -1,3 +1,4 @@
+import { LoadingLabel, LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
 import { useEffect, useState } from "react";
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { createFileRoute } from '@tanstack/react-router';
@@ -57,10 +58,10 @@ function StyledFilterSelect({
       onValueChange={(nextValue) => onChange(includeAllOption && nextValue === "all" ? "" : nextValue)}
     >
       <SelectTrigger className="bg-card shadow-none">
-        <SelectValue placeholder={allLabel} />
+        <SelectValue placeholder={<LoadingLabel>{allLabel}</LoadingLabel>} />
       </SelectTrigger>
       <SelectContent position="popper" className="max-h-72">
-        {includeAllOption && <SelectItem value="all">{allLabel}</SelectItem>}
+        {includeAllOption && <SelectItem value="all"><LoadingLabel>{allLabel}</LoadingLabel></SelectItem>}
         {options.filter((option) => option.value !== "all").map((option) => (
           <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>
         ))}
@@ -223,7 +224,7 @@ function SearchPage() {
                 </TableHeader>
                 <TableBody>
                   {summaries.isLoading && (
-                    <TableRow><TableCell colSpan={7} className="py-10 text-center text-sm text-muted-foreground">Loading learners from Neon…</TableCell></TableRow>
+                    <TableRow><TableCell colSpan={7} className="py-10 text-center text-sm text-muted-foreground"><LoadingSkeleton label="Loading learners from Neon…" variant="rows" /></TableCell></TableRow>
                   )}
                   {summaries.data?.learners.map((learner) => (
                     <TableRow key={learner.id}>
@@ -331,7 +332,7 @@ function SearchPage() {
                 </TableHeader>
                 <TableBody>
                   {activities.isLoading && (
-                    <TableRow><TableCell colSpan={9} className="py-10 text-center text-sm text-muted-foreground">Loading activity records…</TableCell></TableRow>
+                    <TableRow><TableCell colSpan={9} className="py-10 text-center text-sm text-muted-foreground"><LoadingSkeleton label="Loading activity records…" variant="rows" /></TableCell></TableRow>
                   )}
                   {activities.data?.items.map((row) => (
                     <TableRow key={row.id}>

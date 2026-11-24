@@ -4,10 +4,14 @@ from unittest.mock import patch
 
 from django.test import SimpleTestCase
 
-from .builder_activity_dates import read_builder_activity_dates
+from .builder_activity_dates import read_builder_activity_dates, STUDY_WEEK_SCHEDULE_SQL
 
 
 class BuilderActivitySchemaTests(SimpleTestCase):
+    def test_optional_week_count_uses_schema_tolerant_json_access(self):
+        self.assertIn("to_jsonb(m)->'weeks_number'", STUDY_WEEK_SCHEDULE_SQL)
+        self.assertNotIn('m.weeks_number', STUDY_WEEK_SCHEDULE_SQL)
+
     def test_assignment_dates_load_without_module_deletion_columns(self):
         with sqlite3.connect(':memory:') as db:
             db.execute("ATTACH DATABASE ':memory:' AS curriculum")
@@ -27,6 +31,7 @@ class BuilderActivitySchemaTests(SimpleTestCase):
                         # Only the Postgres JSON accessor and array binding need
                         # translation; the actual selected columns remain intact.
                         sql = sql.replace("to_jsonb(m)->'session_overrides'", 'session_overrides')
+                        sql = sql.replace(STUDY_WEEK_SCHEDULE_SQL, "'{}'")
                         sql = sql.replace('=ANY(%s)', ' IN (' + ','.join('?' for _ in params[0]) + ')')
                         self.result = db.execute(sql, params[0]).fetchall()
                         module_rows.extend(self.result)

@@ -1,0 +1,204 @@
+/* Shared presentation for native selects, custom selects and action popovers.
+   Keep native form participation, events and keyboard handling intact. */
+:root,
+[data-theme='light'],
+[data-theme='dark'] {
+  --lms-dropdown-surface: oklch(var(--background-50));
+  --lms-dropdown-border: oklch(var(--background-300) / .8);
+  --lms-dropdown-text: oklch(var(--foreground-800));
+  --lms-dropdown-muted: oklch(var(--foreground-400));
+  --lms-dropdown-hover: oklch(var(--background-100));
+  --lms-dropdown-selected: oklch(var(--primary-50));
+  --lms-dropdown-accent: oklch(var(--primary-700));
+  --lms-dropdown-ring: oklch(var(--primary-300) / .35);
+  --lms-dropdown-shadow: 0 16px 40px -12px rgb(35 20 55 / .22), 0 3px 10px rgb(35 20 55 / .06);
+}
+
+/* Resolve the theme at the panel itself: custom panels can live in body portals. */
+[data-theme='dark'] {
+  --lms-dropdown-accent: #d6bbfb;
+  --lms-dropdown-selected: #2c203d;
+  --lms-dropdown-ring: rgb(167 139 250 / .4);
+  --lms-dropdown-shadow: 0 16px 40px -12px rgb(0 0 0 / .6), 0 3px 10px rgb(0 0 0 / .2);
+}
+
+/* Single-value controls only; multi-selects and visible listboxes keep their layout. */
+select:not([multiple]):not([size]),
+select:not([multiple])[size='1'] {
+  cursor: pointer;
+  max-inline-size: 100%;
+  border-radius: var(--lms-radius, 16px);
+  transition: border-color .16s ease, box-shadow .16s ease;
+}
+
+select:not([multiple]):not([size]):disabled,
+select:not([multiple])[size='1']:disabled {
+  cursor: not-allowed;
+  opacity: .6;
+}
+
+/* Progressive enhancement: unsupported browsers retain their native picker.
+   The picker is in the browser top layer, so cards and dialogs cannot clip it. */
+@supports (appearance: base-select) {
+  select:not([multiple]):not([size]),
+  select:not([multiple])[size='1'] {
+    appearance: base-select !important;
+    -webkit-appearance: base-select !important;
+    gap: .75rem;
+    align-items: center;
+    padding-inline-end: .875rem !important;
+    background-image: none !important;
+  }
+
+  select:not([multiple]):not([size])::picker(select),
+  select:not([multiple])[size='1']::picker(select) {
+    appearance: base-select;
+    box-sizing: border-box;
+    min-inline-size: anchor-size(self-inline);
+    max-inline-size: calc(100vw - 1rem);
+    max-block-size: min(22.5rem, 60dvh);
+    margin-block: .5rem;
+    padding: .375rem;
+    overflow: auto;
+    overscroll-behavior: contain;
+    border: 1px solid var(--lms-dropdown-border);
+    border-radius: var(--lms-radius, 16px);
+    background: var(--lms-dropdown-surface);
+    color: var(--lms-dropdown-text);
+    box-shadow: var(--lms-dropdown-shadow);
+    font: inherit;
+    font-size: .8125rem;
+    scrollbar-width: thin;
+    scrollbar-color: var(--scrollbar-thumb) transparent;
+  }
+
+  select::picker-icon {
+    flex: 0 0 auto;
+    inline-size: .5rem;
+    block-size: .5rem;
+    margin-inline: auto .125rem;
+    border-inline-end: 1.5px solid currentColor;
+    border-block-end: 1.5px solid currentColor;
+    color: var(--lms-dropdown-muted);
+    content: '';
+    rotate: 45deg;
+    translate: 0 -2px;
+    transition: rotate .16s ease;
+  }
+
+  select:open::picker-icon {
+    rotate: 225deg;
+    translate: 0 2px;
+    color: var(--lms-dropdown-accent);
+  }
+
+  select:not([multiple]):not([size]):open,
+  select:not([multiple])[size='1']:open {
+    border-color: var(--lms-dropdown-accent) !important;
+    outline: none !important;
+    box-shadow: 0 0 0 3px var(--lms-dropdown-ring) !important;
+  }
+
+  :is(select:not([multiple]):not([size]), select:not([multiple])[size='1']) option {
+    display: flex;
+    align-items: center;
+    gap: .75rem;
+    min-block-size: 2.5rem;
+    margin-block: .125rem;
+    padding: .625rem .75rem;
+    border: 0;
+    border-radius: 10px;
+    background: transparent;
+    color: var(--lms-dropdown-text);
+    font-weight: 500;
+    line-height: 1.45;
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+
+  :is(select:not([multiple]):not([size]), select:not([multiple])[size='1']) option:not(:disabled):is(:hover, :focus-visible) {
+    outline: none;
+    background: var(--lms-dropdown-hover);
+    box-shadow: inset 0 0 0 1px var(--lms-dropdown-ring);
+  }
+
+  :is(select:not([multiple]):not([size]), select:not([multiple])[size='1']) option:checked:not(:disabled) {
+    background: var(--lms-dropdown-selected);
+    color: var(--lms-dropdown-accent);
+    font-weight: 650;
+  }
+
+  select option::checkmark {
+    order: 1;
+    margin-inline-start: auto;
+    color: var(--lms-dropdown-accent);
+    content: '\2713';
+    font-weight: 700;
+  }
+
+  :is(select:not([multiple]):not([size]), select:not([multiple])[size='1']) option:disabled {
+    opacity: .45;
+    cursor: not-allowed;
+  }
+
+  select optgroup > legend {
+    padding: .625rem .75rem .25rem;
+    color: var(--lms-dropdown-muted);
+    font-size: .6875rem;
+    font-weight: 700;
+    letter-spacing: .05em;
+  }
+}
+
+/* Custom implementations share the same surfaces and option states. The
+   SelectMenu list lives inside its panel and must not gain a second border. */
+:is(.select-menu-pop, .lms-select-panel, .learner-log-pro-select-content, .llp-hours-test-select-content),
+[role='listbox']:is(.absolute, .fixed),
+:is(.absolute, .fixed):has(> [role='listbox']) {
+  border-color: var(--lms-dropdown-border);
+  border-radius: var(--lms-radius, 16px);
+  background: var(--lms-dropdown-surface);
+  color: var(--lms-dropdown-text);
+  box-shadow: var(--lms-dropdown-shadow);
+}
+
+.lms-select-panel {
+  box-sizing: border-box;
+  max-inline-size: calc(100vw - 1rem);
+  padding: .375rem;
+  overscroll-behavior: contain;
+}
+
+[role='listbox'] [role='option'] {
+  min-block-size: 2.5rem;
+  border-radius: 10px;
+  line-height: 1.45;
+}
+
+.lms-select-panel [role='option'] {
+  margin-block: .125rem;
+  padding-block: .625rem;
+  height: auto;
+}
+
+[role='listbox'] [role='option']:not(:disabled):not([data-disabled]):is(:hover, :focus-visible, [data-highlighted]) {
+  background: var(--lms-dropdown-hover) !important;
+  color: var(--lms-dropdown-text) !important;
+}
+
+[role='listbox'] [role='option'][aria-selected='true'] {
+  background: var(--lms-dropdown-selected) !important;
+  color: var(--lms-dropdown-accent) !important;
+  font-weight: 650;
+}
+
+[role='listbox'] [role='option'][aria-selected='true'] > svg {
+  color: inherit;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  select,
+  select::picker-icon {
+    transition: none !important;
+  }
+}

@@ -21,7 +21,7 @@ def canonical_learner(kind, enrolment_id):
         raise LearnerProfile.DoesNotExist
     return (
         LearnerProfile.objects
-        .only("id", "enrolment_id", "learner_type")
+        .only("id", "enrolment_id", "learner_type", "lifecycle_status", "programme_status")
         .get(enrolment_id=enrolment_id, learner_type=kind)
     )
 

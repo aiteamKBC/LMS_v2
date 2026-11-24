@@ -11,6 +11,7 @@ Two rules are pinned here:
 1. an unsent flag is re-derived from the programme the module is saved against;
 2. a group's cached module list contains only its surviving modules.
 """
+from curriculum_api.catalogue.tests.parity.composition_test_support import composition_fixture
 import json
 
 from django.db import connection
@@ -22,7 +23,8 @@ from . import views
 
 class ModuleQuizArchiveTests(SimpleTestCase):
     def test_archives_a_quiz_owned_by_the_deleted_module(self):
-        def authoring_rows(table, where_sql='', params=None):
+        def authoring_rows(table, where_sql='', params=None, *, columns=None):
+            self.assertIn(columns, (None, ['id', 'settings_json']))
             if table == views.AUTHORING_COMPONENTS_TABLE:
                 if 'module_catalogue_id <>' in where_sql:
                     return []
@@ -34,11 +36,11 @@ class ModuleQuizArchiveTests(SimpleTestCase):
             return []
 
         with (
-            patch.object(views, 'table_exists', side_effect=lambda table: table == 'quizzes'),
-            patch.object(views, 'has_column', return_value=True),
-            patch.object(views, 'fetch_all', return_value=[{'id': 17, 'status': 'published'}]),
-            patch.object(views, 'authoring_fetch_all', side_effect=authoring_rows),
-            patch.object(views, 'update_rows', return_value=[{'id': 17, 'status': 'trash'}]) as update,
+            composition_fixture(views, 'table_exists', side_effect=lambda table: table == 'quizzes'),
+            composition_fixture(views, 'has_column', return_value=True),
+            composition_fixture(views, 'fetch_all', return_value=[{'id': 17, 'status': 'published'}]),
+            composition_fixture(views, 'authoring_fetch_all', side_effect=authoring_rows),
+            composition_fixture(views, 'update_rows', return_value=[{'id': 17, 'status': 'trash'}]) as update,
         ):
             archived = views.archive_module_child_quizzes('MOD-1')
 
@@ -65,7 +67,8 @@ class ModuleQuizArchiveTests(SimpleTestCase):
                 return [{'quiz_id': 17, 'module_catalogue_id': 'MOD-2'}]
             return []
 
-        def authoring_rows(table, where_sql='', params=None):
+        def authoring_rows(table, where_sql='', params=None, *, columns=None):
+            self.assertIn(columns, (None, ['id', 'settings_json']))
             if table == views.AUTHORING_MODULES_TABLE and ' in (' in where_sql:
                 return [{'module_catalogue_id': 'MOD-2', 'deleted_at': None, 'is_programme_deleted': False}]
             if table == views.AUTHORING_MODULES_TABLE:
@@ -73,11 +76,11 @@ class ModuleQuizArchiveTests(SimpleTestCase):
             return []
 
         with (
-            patch.object(views, 'table_exists', side_effect=table_exists),
-            patch.object(views, 'has_column', return_value=True),
-            patch.object(views, 'fetch_all', side_effect=fetch_rows),
-            patch.object(views, 'authoring_fetch_all', side_effect=authoring_rows),
-            patch.object(views, 'update_rows') as update,
+            composition_fixture(views, 'table_exists', side_effect=table_exists),
+            composition_fixture(views, 'has_column', return_value=True),
+            composition_fixture(views, 'fetch_all', side_effect=fetch_rows),
+            composition_fixture(views, 'authoring_fetch_all', side_effect=authoring_rows),
+            composition_fixture(views, 'update_rows') as update,
         ):
             archived = views.archive_module_child_quizzes('MOD-1')
 
@@ -184,9 +187,9 @@ class ModuleDeleteFlagTests(TestCase):
             'title': title,
             'is_programme_deleted': deleted or stale_flag or bool(withdrawn_via) or deleted_on_purpose,
             **({'deleted_at': views.datetime.utcnow(), 'deleted_by': 'test'} if deleted else {}),
-            # Exactly what delete_programme_authoring_structure writes onto a
-            # module when its programme is archived: the delete stamp plus the
-            # parent it was carried off by.
+            # Legacy programme-archive provenance: the archive stamp plus the
+            # parent it was carried off by. Normalized rows derive these facts
+            # from revision history instead of storing the marker columns.
             **({
                 'deleted_at': views.datetime.utcnow(),
                 'deleted_by': 'programme-delete',
@@ -454,7 +457,7 @@ class ModuleDeleteFlagTests(TestCase):
         self._module('MOD-STRUCT-ARCH', programme_id='PROG-ARCH-STRUCT')
         # Authored while the programme still reads live to the save path, so the
         # module starts visible -- which is the case under test.
-        with patch.object(views, 'programme_archived_for_authoring', return_value=False):
+        with composition_fixture(views, 'programme_archived_for_authoring', return_value=False):
             self._seed_structure(
                 'MOD-STRUCT-ARCH', programme_id='PROG-ARCH-STRUCT', programme_name='Archived Programme',
             )

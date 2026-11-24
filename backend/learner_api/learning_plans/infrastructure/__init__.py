@@ -1,0 +1,1 @@
+"""Membership read infrastructure boundary."""

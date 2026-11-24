@@ -20,7 +20,7 @@ class ComputeTallyTests(SimpleTestCase):
         conn = MagicMock()
         conn.__getitem__.return_value.cursor.return_value.__enter__.return_value = cursor
         patch.object(tally, "connections", conn).start()
-        patch.object(tally, "_learner_ids_for_profile", return_value=["1"]).start()
+        patch.object(tally, "_learner_owner", return_value=(1, "commercial")).start()
         self.addCleanup(patch.stopall)
         return cursor
 
@@ -70,7 +70,7 @@ class ComputeTallyTests(SimpleTestCase):
         # zeroes would erase a real marking record.
         conn = MagicMock()
         patch.object(tally, "connections", conn).start()
-        patch.object(tally, "_learner_ids_for_profile", return_value=[]).start()
+        patch.object(tally, "_learner_owner", return_value=None).start()
         self.addCleanup(patch.stopall)
 
         self.assertIsNone(tally.compute_tally(1))

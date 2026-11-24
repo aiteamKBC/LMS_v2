@@ -35,7 +35,7 @@ describe('Enrolment personal courses', () => {
 
   it('loads existing personal courses and derives activity completion from their counts', async () => {
     vi.mocked(personalLearningJson).mockResolvedValue({ courses: [course, { ...course, id: 'pl.7.study.M2', moduleId: 'M2', title: 'Second course', progressPercent: 100, trackableDone: 2, trackableTotal: 2 }] });
-    show(); expect(screen.getByText('Loading your courses…')).toBeVisible();
+    show(); expect(screen.getByRole('status', { name: 'Loading your courses…' })).toBeVisible();
     await screen.findByRole('article', { name: course.title });
     const stats = screen.getByText('Activities completed').closest('dl')!;
     expect(stats).toHaveTextContent('4 / 10'); expect(stats).toHaveTextContent('40%');

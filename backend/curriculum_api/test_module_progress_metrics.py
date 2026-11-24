@@ -79,15 +79,15 @@ class ModuleProgressMetricsTests(SimpleTestCase):
         self.assertEqual(rows[0]['consumedWeightTotal'], 0)
         self.assertEqual(rows[0]['progressPercentage'], 0)
 
-    def test_native_assignment_marks_are_scoped_by_enrolment_and_learner_type_without_fabricating_time(self):
+    def test_native_assignment_marks_are_scoped_by_profile_and_learner_type_without_fabricating_time(self):
         self.db.executemany('INSERT INTO learning_reflection_submissions VALUES (?,?,?,?,?,?,?,?)', [
-            (1, '91', 'apprenticeship', 'C1', 'accepted', 2, '2026-10-01', 'assignment'),
-            (2, '91', 'commercial', 'C1', 'submitted', 9, '2026-10-02', 'assignment'),
+            (1, '1', 'apprenticeship', 'C1', 'accepted', 2, '2026-10-01', 'assignment'),
+            (2, '1', 'commercial', 'C1', 'submitted', 9, '2026-10-02', 'assignment'),
         ])
         original = [self.record(actual_seconds=None, component_link_source='direct', component_type='assignment',
                                 submitted_at=datetime(2026, 10, 1, tzinfo=timezone.utc), verified_seconds=600)]
         before = copy.deepcopy(original)
-        owner = {'1': {'enrolment_id': 91, 'learner_type': 'apprenticeship'}}
+        owner = {'1': {'id': 1, 'enrolment_id': 91, 'learner_type': 'apprenticeship'}}
         rows = metrics.completion_records(original, owner, self.read, lambda name: name)
         self.assertTrue(rows[0]['completed'])
         self.assertTrue(rows[0]['accepted'])

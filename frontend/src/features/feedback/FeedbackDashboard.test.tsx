@@ -1,12 +1,13 @@
 import { cloneElement, type ReactElement } from 'react';
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { feedbackApi, type FeedbackDashboardReport } from '@/api/feedback';
 import { FeedbackDashboard } from './FeedbackDashboard';
 import { dashboardPeriod, negativeCategories, rankedQuestions, ukCalendarDate, weeklyClassifications } from './feedbackDashboardData';
+import { notifyQualityTicketClosed } from './qualityTicketEvents';
 
-vi.mock('@/api/feedback', async original => ({ ...await original<typeof import('@/api/feedback')>(), feedbackApi: { insightsDashboard: vi.fn() } }));
+vi.mock('@/api/feedback', async original => ({ ...await original<typeof import('@/api/feedback')>(), feedbackApi: { insightsDashboard: vi.fn(), createQualityTicket: vi.fn().mockResolvedValue({ ticket: { id: 'quality-ticket', assignedTeam: 'Quality Team', status: 'Open' } }), qualityTicketStatus: vi.fn().mockResolvedValue({ ticket: { id: 'quality-ticket', assignedTeam: 'Quality Team', status: 'Open' } }) } }));
 // jsdom supplies no layout; keep real Recharts and supply only missing dimensions.
 vi.mock('recharts', async original => ({ ...await original<typeof import('recharts')>(), ResponsiveContainer: ({ children }: { children: ReactElement<{ width?: number; height?: number }> }) => cloneElement(children, { width: 500, height: 235 }) }));
 
@@ -35,12 +36,71 @@ beforeEach(() => {
 afterEach(() => vi.useRealTimers());
 
 describe('independent feedback insights dashboard', () => {
+  it('keeps cached filter results visible when revalidation fails and supports retry', async () => {
+    const user = userEvent.setup();
+    render(<FeedbackDashboard onViewResponse={vi.fn()} />);
+    await screen.findByRole('region', { name: 'Submitted feedback' });
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Analytics date range' }), '0');
+    await waitFor(() => expect(feedbackApi.insightsDashboard).toHaveBeenCalledTimes(2));
+    vi.mocked(feedbackApi.insightsDashboard).mockRejectedValueOnce(new Error('Refresh unavailable'));
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Analytics date range' }), '8');
+    expect(await screen.findByRole('alert')).toHaveTextContent('Showing the previous report. Refresh unavailable');
+    expect(screen.getByRole('region', { name: 'Submitted feedback' })).toBeVisible();
+    await user.click(screen.getByRole('button', { name: 'Retry analytics' }));
+    await waitFor(() => expect(screen.queryByRole('alert')).not.toBeInTheDocument());
+  });
+
+  it('pauses report and ticket refreshes while its tab is inactive', async () => {
+    const open = vi.fn();
+    const { rerender } = render(<FeedbackDashboard onViewResponse={open} />);
+    await screen.findByText('Quality ticket: Open');
+    rerender(<FeedbackDashboard active={false} onViewResponse={open} />);
+    const reports = vi.mocked(feedbackApi.insightsDashboard).mock.calls.length;
+    const statusReads = vi.mocked(feedbackApi.qualityTicketStatus).mock.calls.length;
+    act(() => window.dispatchEvent(new Event('focus')));
+    expect(feedbackApi.insightsDashboard).toHaveBeenCalledTimes(reports);
+    expect(feedbackApi.qualityTicketStatus).toHaveBeenCalledTimes(statusReads);
+    rerender(<FeedbackDashboard active onViewResponse={open} />);
+    expect(screen.getByRole('region', { name: 'Submitted feedback' })).toBeVisible();
+    await waitFor(() => expect(feedbackApi.insightsDashboard).toHaveBeenCalledTimes(reports + 1));
+  });
+
+  it('clears cached learner report data when revalidation is unauthorized', async () => {
+    const user = userEvent.setup();
+    render(<FeedbackDashboard onViewResponse={vi.fn()} />);
+    await screen.findByRole('region', { name: 'Submitted feedback' });
+    vi.mocked(feedbackApi.insightsDashboard).mockRejectedValueOnce(Object.assign(new Error('Session expired'), { status: 401 }));
+    await user.click(screen.getByRole('button', { name: 'Refresh analytics' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('Session expired');
+    expect(screen.queryByRole('region', { name: 'Submitted feedback' })).not.toBeInTheDocument();
+    expect(screen.queryByText('Business Communication — Session 3')).not.toBeInTheDocument();
+  });
+  it('immediately reflects closure of the matching response without recreating tickets', async () => {
+    render(<FeedbackDashboard onViewResponse={vi.fn()} />);
+    await screen.findByText('Quality ticket: Open');
+    const creations = vi.mocked(feedbackApi.createQualityTicket).mock.calls.length;
+    act(() => notifyQualityTicketClosed(99));
+    expect(screen.getByText('Quality ticket: Open')).toBeVisible();
+    act(() => notifyQualityTicketClosed(1));
+    expect(screen.getByText('Quality ticket: Closed')).toBeVisible();
+    expect(feedbackApi.createQualityTicket).toHaveBeenCalledTimes(creations);
+  });
+  it('ignores an older status read that finishes after the email closes the ticket', async () => {
+    let finish!: (value: Awaited<ReturnType<typeof feedbackApi.qualityTicketStatus>>) => void;
+    vi.mocked(feedbackApi.qualityTicketStatus).mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+    render(<FeedbackDashboard onViewResponse={vi.fn()} />);
+    await screen.findByText('Quality ticket: Open');
+    act(() => window.dispatchEvent(new Event('focus')));
+    act(() => notifyQualityTicketClosed(1));
+    await act(async () => finish({ ticket: { id: 'quality-ticket', assignedTeam: 'Quality Team', status: 'Open' } }));
+    expect(screen.getByText('Quality ticket: Closed')).toBeVisible();
+  });
   it('uses real score classifications, displays the reference panels and opens original negative answers', async () => {
     const open = vi.fn();
     render(<FeedbackDashboard onViewResponse={open} />);
     await screen.findByRole('region', { name: 'Submitted feedback' });
     expect(feedbackApi.insightsDashboard).toHaveBeenCalledExactlyOnceWith({ formType: 'post_lecture', submittedFrom: '2026-09-01', submittedTo: '2026-10-26' });
-    for (const name of ['Insights response split', 'Insights feedback type comparison', 'Insights weekly response trend']) expect(screen.getByRole('group', { name })).toBeVisible();
+    for (const name of ['Analytics response split', 'Analytics feedback type comparison', 'Analytics weekly response trend']) expect(screen.getByRole('group', { name })).toBeVisible();
     expect(within(screen.getByRole('region', { name: 'Response rate' })).getByText('25%')).toBeVisible();
     expect(within(screen.getByRole('region', { name: 'Top Positive Questions' })).getByText('67%')).toBeVisible();
     expect(screen.getByText('Business Communication — Session 3')).toBeVisible();
@@ -50,40 +110,54 @@ describe('independent feedback insights dashboard', () => {
     expect(open).toHaveBeenCalledWith(1);
   });
 
+  it('displays the current Ticketing system status after a negative response is synced', async () => {
+    vi.mocked(feedbackApi.createQualityTicket).mockResolvedValueOnce({ ticket: { id: 'quality-ticket', assignedTeam: 'Quality Team', status: 'Closed' } });
+    render(<FeedbackDashboard onViewResponse={vi.fn()} />);
+    expect(await screen.findByText('Quality ticket: Closed')).toBeVisible();
+  });
+
+  it('refreshes the displayed status when the dashboard regains focus', async () => {
+    vi.mocked(feedbackApi.qualityTicketStatus).mockResolvedValueOnce({ ticket: { id: 'quality-ticket', assignedTeam: 'Quality Team', status: 'Closed' } });
+    render(<FeedbackDashboard onViewResponse={vi.fn()} />);
+    await screen.findByText('Quality ticket: Open');
+    window.dispatchEvent(new Event('focus'));
+    expect(await screen.findByText('Quality ticket: Closed')).toBeVisible();
+  });
+
   it('combines type, date, classification, saved group and module filters on the separate read-only API', async () => {
     const user = userEvent.setup();
     render(<FeedbackDashboard onViewResponse={vi.fn()} />);
     await screen.findByRole('region', { name: 'Submitted feedback' });
-    await user.selectOptions(screen.getByRole('combobox', { name: 'Insights learner group' }), 'G1');
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Analytics learner group' }), 'G1');
     await waitFor(() => expect(feedbackApi.insightsDashboard).toHaveBeenLastCalledWith(expect.objectContaining({ groupId: 'G1' })));
     await screen.findByRole('region', { name: 'Submitted feedback' });
-    await user.selectOptions(screen.getByRole('combobox', { name: 'Insights module' }), 'M1');
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Analytics module' }), 'M1');
     await waitFor(() => expect(feedbackApi.insightsDashboard).toHaveBeenLastCalledWith(expect.objectContaining({ groupId: 'G1', moduleId: 'M1' })));
     await screen.findByRole('region', { name: 'Submitted feedback' });
-    await user.selectOptions(screen.getByRole('combobox', { name: 'Insights classification' }), 'negative');
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Analytics classification' }), 'negative');
     await waitFor(() => expect(feedbackApi.insightsDashboard).toHaveBeenLastCalledWith(expect.objectContaining({ groupId: 'G1', moduleId: 'M1', classification: 'negative' })));
-    await user.selectOptions(screen.getByRole('combobox', { name: 'Insights date range' }), '0');
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Analytics date range' }), '0');
     await waitFor(() => expect(feedbackApi.insightsDashboard).toHaveBeenLastCalledWith({ formType: 'post_lecture', groupId: 'G1', moduleId: 'M1', classification: 'negative' }));
-    await user.selectOptions(screen.getByRole('combobox', { name: 'Insights feedback type' }), 'post_event');
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Analytics feedback type' }), 'post_event');
     await waitFor(() => expect(feedbackApi.insightsDashboard).toHaveBeenLastCalledWith({ formType: 'post_event', classification: 'negative' }));
-    expect(screen.getByRole('combobox', { name: 'Insights learner group' })).toHaveValue('');
-    expect(screen.getByRole('combobox', { name: 'Insights module' })).toHaveValue('');
+    expect(screen.getByRole('combobox', { name: 'Analytics learner group' })).toHaveValue('');
+    expect(screen.getByRole('combobox', { name: 'Analytics module' })).toHaveValue('');
   });
 
   it('resets the module when group changes and supports reports with no recorded modules', async () => {
     const user = userEvent.setup();
     render(<FeedbackDashboard onViewResponse={vi.fn()} />);
     await screen.findByRole('region', { name: 'Submitted feedback' });
-    await user.selectOptions(screen.getByRole('combobox', { name: 'Insights module' }), 'M2');
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Analytics module' }), 'M2');
     await screen.findByRole('region', { name: 'Submitted feedback' });
     const next = report();
     next.modules = [];
     vi.mocked(feedbackApi.insightsDashboard).mockResolvedValueOnce({ analytics: next });
-    await user.selectOptions(screen.getByRole('combobox', { name: 'Insights learner group' }), 'G1');
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Analytics learner group' }), 'G1');
     await waitFor(() => expect(feedbackApi.insightsDashboard).toHaveBeenLastCalledWith({ formType: 'post_lecture', groupId: 'G1', submittedFrom: '2026-09-01', submittedTo: '2026-10-26' }));
     await screen.findByRole('region', { name: 'Submitted feedback' });
-    expect(screen.getByRole('combobox', { name: 'Insights module' })).toHaveValue('');
-    expect(screen.getByRole('combobox', { name: 'Insights module' })).toBeDisabled();
+    expect(screen.getByRole('combobox', { name: 'Analytics module' })).toHaveValue('');
+    expect(screen.getByRole('combobox', { name: 'Analytics module' })).toBeDisabled();
     expect(screen.getByRole('option', { name: 'All modules' })).toBeInTheDocument();
   });
 
@@ -98,13 +172,13 @@ describe('independent feedback insights dashboard', () => {
     empty.coverage = { assigned: 0, submitted: 0, rate: null };
     empty.modules = [];
     vi.mocked(feedbackApi.insightsDashboard).mockResolvedValueOnce({ analytics: empty });
-    await user.selectOptions(screen.getByRole('combobox', { name: 'Insights module' }), 'M1');
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Analytics module' }), 'M1');
     expect(await screen.findByText('No submitted feedback in this selection.')).toBeVisible();
-    expect(screen.getByRole('combobox', { name: 'Insights module' })).toHaveValue('M1');
-    expect(screen.getByRole('combobox', { name: 'Insights module' })).toBeEnabled();
+    expect(screen.getByRole('combobox', { name: 'Analytics module' })).toHaveValue('M1');
+    expect(screen.getByRole('combobox', { name: 'Analytics module' })).toBeEnabled();
     expect(within(screen.getByRole('region', { name: 'Submitted feedback' })).getByText('0')).toBeVisible();
     expect(feedbackApi.insightsDashboard).toHaveBeenLastCalledWith(expect.objectContaining({ moduleId: 'M1' }));
-    await user.selectOptions(screen.getByRole('combobox', { name: 'Insights module' }), '');
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Analytics module' }), '');
     await waitFor(() => expect(feedbackApi.insightsDashboard).toHaveBeenLastCalledWith({ formType: 'post_lecture', submittedFrom: '2026-09-01', submittedTo: '2026-10-26' }));
   });
 
@@ -118,7 +192,7 @@ describe('independent feedback insights dashboard', () => {
     vi.mocked(feedbackApi.insightsDashboard).mockResolvedValueOnce({ analytics: empty });
     render(<FeedbackDashboard onViewResponse={vi.fn()} />);
     expect(await screen.findByRole('alert')).toHaveTextContent('Report unavailable');
-    await userEvent.click(screen.getByRole('button', { name: 'Retry insights' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Retry analytics' }));
     expect(await screen.findByText('No submitted feedback in this selection.')).toBeVisible();
     expect(screen.getByText('No negative responses in this selection.')).toBeVisible();
     expect(screen.getByText('No scored category')).toBeVisible();
@@ -132,7 +206,7 @@ describe('independent feedback insights dashboard', () => {
     latest.insights!.classification!.total = 10;
     vi.mocked(feedbackApi.insightsDashboard).mockResolvedValueOnce({ analytics: latest });
     render(<FeedbackDashboard onViewResponse={vi.fn()} />);
-    await userEvent.selectOptions(screen.getByRole('combobox', { name: 'Insights date range' }), '0');
+    await userEvent.selectOptions(screen.getByRole('combobox', { name: 'Analytics date range' }), '0');
     const submitted = await screen.findByRole('region', { name: 'Submitted feedback' });
     expect(within(submitted).getByText('10')).toBeVisible();
     finish({ analytics: report() });

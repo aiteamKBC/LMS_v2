@@ -1684,7 +1684,7 @@ _SUBMITTED_ASSIGNMENTS_SQL = """
 _ASSIGNMENT_FILES_SQL = """
     select id, original_filename, section_ref, uploaded_at
     from "Learner"."evidence_files"
-    where learner_kind = %s and learner_id = %s and status = 'approved' and section_ref = any(%s)
+    where learner_kind = %s and learner_profile_id = %s and status = 'approved' and section_ref = any(%s)
     order by uploaded_at
 """
 
@@ -1702,14 +1702,19 @@ def _learner_assignments(kind, learner):
     from django.db import connections
 
     from . import legacy_assignments
+    from .identity import learner_profile_for_source
+
+    profile = learner_profile_for_source(learner)
+    if profile is None:
+        return []
 
     with connections["enrolment"].cursor() as cur:
-        cur.execute(_SUBMITTED_ASSIGNMENTS_SQL, [kind, str(learner.pk)])
+        cur.execute(_SUBMITTED_ASSIGNMENTS_SQL, [kind, profile.pk])
         submissions = cur.fetchall()
         files_by_activity = {}
         activity_ids = [row[0] for row in submissions]
         if activity_ids:
-            cur.execute(_ASSIGNMENT_FILES_SQL, [kind, str(learner.pk), activity_ids])
+            cur.execute(_ASSIGNMENT_FILES_SQL, [kind, profile.pk, activity_ids])
             for file_id, name, section_ref, uploaded_at in cur.fetchall():
                 files_by_activity.setdefault(section_ref, []).append(
                     {"source": "lms", "id": str(file_id), "name": _s(name) or "Uploaded file"},
@@ -1783,24 +1788,28 @@ def employer_portal_assignment_file(request, employer_id, kind, learner_id, file
     from django.db import connections
 
     from .evidence_storage import azure_configured, get_download_sas
+    from .identity import learner_profile_for_source
 
     if not azure_configured():
         return _error("Document storage is not configured.", 503)
+    profile = learner_profile_for_source(learner)
+    if profile is None:
+        return _error("Learner not found.", 404)
     try:
         with connections["enrolment"].cursor() as cur:
             cur.execute(
                 """
                 select f.blob_name, f.original_filename
                 from "Learner"."evidence_files" f
-                where f.id = %s and f.learner_kind = %s and f.learner_id = %s and f.status = 'approved'
+                where f.id = %s and f.learner_kind = %s and f.learner_profile_id = %s and f.status = 'approved'
                   and exists (
                     select 1 from "Learner"."learning_reflection_submissions" s
-                    where s.learner_kind = f.learner_kind and s.learner_id = f.learner_id
+                    where s.learner_kind = f.learner_kind and s.learner_id = %s
                       and s.activity_type = 'assignment' and s.status <> 'draft'
                       and s.activity_id = f.section_ref
                   )
                 """,
-                [str(file_id), kind, str(learner.pk)],
+                [str(file_id), kind, profile.pk, profile.pk],
             )
             row = cur.fetchone()
     except DatabaseError:

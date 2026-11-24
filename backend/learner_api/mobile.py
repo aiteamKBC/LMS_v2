@@ -187,7 +187,8 @@ def _detail(request):
         _, source, _, _ = request.mobile_context
         # This is the maintained entitlement + content + progress projection.
         # It can hydrate the saved plan/refresh snapshots, like the LMS workspace.
-        request._mobile_detail = build_learner_detail(source, source.pk, compact=True)
+        from quiz_api.policy import visible_learner_attempts
+        request._mobile_detail = visible_learner_attempts(build_learner_detail(source, source.pk, compact=True))
     return request._mobile_detail
 
 

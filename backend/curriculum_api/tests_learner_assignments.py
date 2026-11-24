@@ -1,3 +1,5 @@
+from curriculum_api.catalogue.tests.parity.composition_test_support import composition_patch
+from curriculum_api.catalogue.tests.parity.composition_test_support import composition_fixture
 import json
 from contextlib import nullcontext
 from types import SimpleNamespace
@@ -7,7 +9,9 @@ from django.db import DatabaseError, connections
 from django.test import RequestFactory, SimpleTestCase, TransactionTestCase
 
 from . import learner_assignments as assignments
+from learner_api import free_course_catalogue
 from learner_api.learning_plan import _effective_plan_ids, _serialize
+from learner_api.learning_plans.infrastructure import assignment_reads
 
 
 def learner(plan=None, **overrides):
@@ -55,21 +59,33 @@ class AssignmentTests(SimpleTestCase):
 
     def test_single_module_after_empty_plan_never_inherits_group_siblings(self):
         row = learner([])
-        with patch.object(assignments.plans, '_group_module_ids', return_value=['MOD-2']):
+        placement = {**self.placement, 'group_id': 'GROUP-1'}
+        with patch.object(assignments.plans, 'placement_ids', return_value=placement), \
+                patch.object(assignments.plans, '_group_module_ids', return_value=['MOD-2']):
             assignments._assign(row, MODULE, CATALOGUE, {})
             self.assertEqual(_effective_plan_ids(row, {}), ['MOD-1'])
             with patch.object(assignments.plans, '_programme_modules', return_value=list(CATALOGUE.values())), \
                     patch.object(assignments.plans, '_all_modules', return_value=list(CATALOGUE.values())), \
-                    patch.object(assignments.plans, '_meetings', return_value=([], '')):
-                data = _serialize(row)
+                    patch.object(assignments.plans, '_meetings', return_value=([], '')), \
+                    patch.object(assignments.plans, '_canonical_free_course_assignment_ids', return_value=[]), \
+                    patch.object(assignments.plans, '_canonical_free_course_assignment_version', return_value='synthetic-free-v1'), \
+                    patch.object(free_course_catalogue, 'builder_free_courses', return_value=[]):
+                # The serializer receives normalized assignments explicitly; it
+                # must not merge the independently available group preset.
+                data = _serialize(row, canonical_plan=[{'moduleId': 'MOD-1'}], plan_version='synthetic-plan-v1')
             self.assertEqual([entry['moduleId'] for entry in data['plan']], ['MOD-1'])
+            self.assertEqual([entry['moduleId'] for entry in data['preset']], ['MOD-2'])
+            self.assertEqual(data['planVersion'], 'synthetic-plan-v1')
             self.assertEqual(data['inheritedCount'], 0)
 
     def test_unsaved_learner_keeps_modules_they_already_inherit(self):
         row = learner()
-        with patch.object(assignments.plans, '_group_module_ids', return_value=['OLD']):
+        placement = {**self.placement, 'group_id': 'GROUP-1'}
+        with patch.object(assignment_reads, 'placement_ids', return_value=placement), \
+                patch.object(assignment_reads, '_group_module_ids', return_value=['OLD']) as preset:
             assignments._assign(row, MODULE, CATALOGUE, {})
         self.assertEqual([entry['moduleId'] for entry in row.learning_plan], ['OLD', 'MOD-1'])
+        preset.assert_called_once_with('', '', group_id='GROUP-1')
 
     def test_commercial_plan_column_is_used_even_when_explicitly_empty(self):
         row = learner([{'moduleId': 'OLD'}], training_plan=[])
@@ -79,12 +95,19 @@ class AssignmentTests(SimpleTestCase):
         row.save.assert_called_once_with(update_fields=['training_plan'])
 
     def test_cohort_includes_every_target_module_and_preserves_other_modules(self):
-        row = learner([{'moduleId': 'OLD'}])
+        row = learner([{'moduleId': 'OLD'}], _state=SimpleNamespace(db='enrolment'))
+        profile_query = self.profiles.objects.using.return_value.filter.return_value
+        profile_query.update.return_value = 1
         assignments._assign(row, COHORT, CATALOGUE, {})
         self.assertEqual([entry['moduleId'] for entry in row.learning_plan], ['OLD', 'MOD-1', 'MOD-2'])
-        self.assertEqual((row.programme, row.cohort, row.group), ('Business', 'September', ''))
-        self.profiles.objects.filter.return_value.update.assert_called_once_with(
-            programme='Business', programme_id='PROG-1', cohort='September', cohort_id='COHORT-1', group_name='', group_id=None)
+        # Placement belongs to the linked profile; registration display fields
+        # are no longer a second writable placement source.
+        self.assertEqual((row.programme, row.cohort, row.group), ('Original programme', 'Original cohort', 'Original group'))
+        self.profiles.objects.using.assert_called_once_with('enrolment')
+        self.profiles.objects.using.return_value.filter.assert_called_once_with(enrolment_id=row.pk)
+        profile_query.update.assert_called_once_with(
+            programme_id='PROG-1', cohort_id='COHORT-1', group_id=None)
+        row.save.assert_called_once_with(update_fields=['learning_plan'])
 
     def test_repeat_assignment_does_not_write_or_duplicate_modules(self):
         row = learner([{'moduleId': 'MOD-1', 'assignmentMode': 'explicit'}])
@@ -131,7 +154,7 @@ class AssignmentTests(SimpleTestCase):
         self.mirror.assert_not_called()
 
     def test_directory_includes_company_and_accurate_assignment_state(self):
-        with patch('curriculum_api.learner_status_counts.module_member_enrolment_ids', return_value={'2'}):
+        with composition_patch('curriculum_api.learner_status_counts.module_member_enrolment_ids', return_value={'2'}):
             data = assignments._payload(MODULE, [learner([]), learner([{'moduleId': 'MOD-1'}], pk=2)])
         self.assertEqual(data['totals'], {'learnerCount': 2, 'assignedCount': 1})
         self.assertEqual(data['learners'][0]['company'], 'Al Fanar')
@@ -139,7 +162,7 @@ class AssignmentTests(SimpleTestCase):
     def test_directory_exposes_profile_lifecycle_status_separately_from_programme_status(self):
         row = learner([], programme_status='Onboarding')
         profile = SimpleNamespace(lifecycle_status='active')
-        with patch('curriculum_api.learner_status_counts.module_member_enrolment_ids', return_value=set()), \
+        with composition_patch('curriculum_api.learner_status_counts.module_member_enrolment_ids', return_value=set()), \
                 patch.object(assignments, 'placement_profile', return_value=profile):
             data = assignments._payload(MODULE, [row])
         self.assertEqual(data['learners'][0]['programmeStatus'], 'Onboarding')
@@ -157,17 +180,17 @@ class AssignmentTests(SimpleTestCase):
                 {'module_catalogue_id': 'OUTSIDE', 'cohort_id': 'COHORT-2'},
                 {'module_catalogue_id': 'ARCHIVED', 'cohort_id': 'COHORT-1', 'deleted_at': '2026-01-01'},
             ]
-        with patch.object(views, 'resolve_cohort_row', return_value=cohort), \
-                patch.object(views, 'authoring_fetch_all', side_effect=rows), \
-                patch.object(views, 'curriculum_row_effectively_deleted', side_effect=lambda row: bool(row.get('deleted_at'))):
+        with composition_fixture(views, 'resolve_cohort_row', return_value=cohort), \
+                composition_fixture(views, 'authoring_fetch_all', side_effect=rows), \
+                composition_fixture(views, 'curriculum_row_effectively_deleted', side_effect=lambda row: bool(row.get('deleted_at'))):
             self.assertEqual(assignments._target('cohort', 'COHORT-1')['moduleIds'], ['MOD-1', 'MOD-2'])
 
     def test_module_target_prefers_stored_catalogue_identifier(self):
         from . import views
         row = {'module_catalogue_id': 'MOD-1', 'title': 'Leadership'}
-        with patch.object(views, 'resolve_stored_module_catalogue_id', return_value='MOD-1') as resolve, \
-                patch.object(views, 'authoring_fetch_all', return_value=[row]), \
-                patch.object(views, 'curriculum_row_effectively_deleted', return_value=False):
+        with composition_fixture(views, 'resolve_stored_module_catalogue_id', return_value='MOD-1') as resolve, \
+                composition_fixture(views, 'authoring_fetch_all', return_value=[row]), \
+                composition_fixture(views, 'curriculum_row_effectively_deleted', return_value=False):
             target = assignments._target('module', 'MOD-1')
         resolve.assert_called_once_with('MOD-1')
         self.assertEqual(target['moduleIds'], ['MOD-1'])

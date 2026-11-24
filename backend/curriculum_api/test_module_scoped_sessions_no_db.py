@@ -7,8 +7,10 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
 NAMES = {'clean_str', 'module_scoped_sessions', 'curriculum_sessions', 'build_sessions_from_authoring_modules',
-         'cohort_selected_holidays_by_id', 'detail_is_archived'}
+         'cohort_selected_holidays_by_id', 'detail_is_archived', 'authored_calendar_snapshot'}
 
 
 class ModuleScopedSessionTests(unittest.TestCase):
@@ -37,7 +39,7 @@ class ModuleScopedSessionTests(unittest.TestCase):
             {'moduleCatalogueId': 'MOD-9', 'moduleId': 'MOD-9', 'title': 'other'},
         ])
         self.calendar = Mock(return_value={'results': [{'id': 'calendar-session'}]})
-        calendar_module = SimpleNamespace(calendar_sessions=self.calendar)
+        calendar_module = SimpleNamespace(calendar_sessions=self.calendar, build_calendar_snapshot=self.snapshot)
         module_patch = patch.dict(sys.modules, {'curriculum_api.delivery_dashboard': calendar_module})
         module_patch.start()
         self.addCleanup(module_patch.stop)
@@ -77,8 +79,30 @@ class ModuleScopedSessionTests(unittest.TestCase):
     def fetch(self, table, where='', values=(), *args, **kwargs):
         self.reads.append((table, list(values)))
         rows = {'modules': self.modules, 'cohorts': self.cohorts, 'groups': self.groups}[table]
-        column = where.split(' = ')[0]
-        return [row for row in rows if row.get(column) == values[0]]
+        key = {'modules': 'module_catalogue_id', 'cohorts': 'cohort_id', 'groups': 'group_id'}[table]
+        return [row for row in rows if not where or row.get(key) in values]
+
+    def snapshot(self, **scope):
+        from curriculum_api.catalogue.application.calendar_queries import build_calendar_snapshot
+        from curriculum_api.catalogue.infrastructure.calendar_rows import read_inputs
+        def inputs(**kwargs):
+            return read_inputs(**kwargs, authoring_fetch_all=self.fetch, modules_table='modules',
+                groups_table='groups', cohorts_table='cohorts', module_fields=(),
+                excluded_module_columns=(), group_order='group_id', cohort_order='cohort_id')
+        def relationships(modules, groups, cohorts, holidays, include_archived=False):
+            # Synthetic relationship port; real group inheritance is covered by
+            # tests_delivery_calendar_projection inside the isolated Django suite.
+            visible = lambda row: include_archived or row.get('status') != 'archived'
+            cs = [dict(id=row['cohort_id'], startDate=row['start_date'], excludedHolidayIds=row['excluded']) for row in cohorts if visible(row)]
+            gs = [dict(id=row['group_id'], startTime=row['session_start_time'], endTime=row['session_end_time']) for row in groups if visible(row)]
+            for row in modules:
+                if row['group_id'] not in {g['id'] for g in gs}:
+                    gs.append(dict(id=row['group_id'], startTime=row['session_start_time'], endTime=row['session_end_time']))
+            return cs, gs
+        return build_calendar_snapshot(**scope, read_inputs=inputs, read_holidays=lambda: self.holidays,
+            relationships=relationships, live_rows=lambda ids: ([], []),
+            build_snapshot=self.n['authored_calendar_snapshot'],
+            programme_deleted_row=self.n['programme_deleted_row'], clean_str=self.n['clean_str'])
 
     def get(self, **query):
         return self.n['curriculum_sessions'](SimpleNamespace(GET=query))
@@ -127,9 +151,10 @@ class ModuleScopedSessionTests(unittest.TestCase):
         self.modules[0]['deleted'] = True
         self.assertEqual(self.get(module_catalogue_id='MOD-1')['results'], [])
 
-    def test_non_authoring_module_and_archive_view_are_answered_by_the_overview(self):
-        self.assertEqual(self.get(module_catalogue_id='LEGACY-1')['results'], [self.overview.return_value[0]])
-        self.assertEqual(self.get(module_catalogue_id='MOD-1', visibility='all')['results'], [])
+    def test_missing_module_stays_empty_and_all_visibility_keeps_scope(self):
+        self.assertEqual(self.get(module_catalogue_id='LEGACY-1')['results'], [])
+        self.assertEqual({r['moduleCatalogueId'] for r in self.get(module_catalogue_id='MOD-1', visibility='all')['results']}, {'MOD-1'})
+        self.overview.assert_not_called()
         self.assertEqual(self.get(visibility='all')['results'], self.overview.return_value)
         self.calendar.assert_not_called()
 

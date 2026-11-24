@@ -10,6 +10,7 @@ series ID and session 1 instead. Ambiguity leaves the destination on its own evi
 """
 
 from curriculum_api.week_visibility import visible_child_sql, visible_week_sql
+from .module_placement_sql import current_module_sql
 
 
 REPLACED_ATTENDANCE_LATERAL_SQL = r'''
@@ -82,9 +83,9 @@ def additional_module_context(module_ids, series, read):
         JOIN curriculum.modules m ON m.module_catalogue_id=c.module_catalogue_id
         JOIN curriculum.weeks w ON w.id=c.week_id AND w.module_catalogue_id=c.module_catalogue_id
         WHERE c.module_catalogue_id=ANY(%s)
-          AND c.deleted_at IS NULL AND NOT coalesce(c.is_programme_deleted,false)
-          AND m.deleted_at IS NULL AND NOT coalesce(m.is_programme_deleted,false)
-          AND w.deleted_at IS NULL AND NOT coalesce(w.is_programme_deleted,false)
+          AND ''' + visible_child_sql('c') + r'''
+          AND ''' + current_module_sql('m') + r'''
+          AND ''' + visible_week_sql('w') + r'''
           AND lower(replace(coalesce(c.type,''),'-','_'))='live_session'
           AND c.settings_json->>'extraTeamsLiveSessionId'=%s
           AND btrim(c.settings_json->>'extraTeamsMeetingUrl')=%s

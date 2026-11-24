@@ -11,7 +11,7 @@ import styles from './markingReview.module.css';
 import { AssignmentAttemptHistory } from '@/components/feature/AssignmentAttemptHistory';
 import type { SubmissionAttempt } from '@/api/assignmentAttempts';
 import { fetchMarkingDetail, fetchMarkingSidebarQueue } from '@/features/coach/marking/api/markingApi';
-import { readExtraActivities } from '../extra-activities/api';
+import { readExtraActivities, readExtraActivityDetail } from '../extra-activities/api';
 import { loadLearningReflectionSubmission, type StoredLearningReflectionSubmission } from '@/api/reflectionSubmission';
 import { CoachPresentationDownload } from './CoachPresentationDownload';
 import { KsbReviewPanel, type KsbReview } from './KsbReviewPanel';
@@ -114,7 +114,8 @@ export default function CoachMarkingReviewPage() {
   const [searchParams] = useSearchParams();
   const extraActivities = useLocation().pathname.startsWith('/coach/extra-activities');
   const personal = searchParams.get('scope') === 'personal';
-  const apiEndpoint = personal ? '/coach_api/coach/personal-marking' : '/coach_api/coach/marking-queue';
+  const apiEndpoint = extraActivities ? '/coach_api/coach/extra-activities'
+    : personal ? '/coach_api/coach/personal-marking' : '/coach_api/coach/marking-queue';
   const scopeQuery = personal ? '?scope=personal' : '';
   const queuePath = extraActivities ? '/coach/extra-activities' : `/coach/marking-queue${scopeQuery}`;
   const { submissionId } = useParams<{ submissionId: string }>();
@@ -159,7 +160,9 @@ export default function CoachMarkingReviewPage() {
     }
 
     try {
-      const detailItem = await fetchMarkingDetail<Submission>(personal ? 'personal' : 'official', submissionId || '');
+      const detailItem = extraActivities
+        ? await readExtraActivityDetail<Submission>(submissionId || '')
+        : await fetchMarkingDetail<Submission>(personal ? 'personal' : 'official', submissionId || '');
       if (sequence !== loadSequence.current) return;
       if (extraActivities && detailItem?.activityType !== 'extra_activity') throw new Error('Extra activity not found.');
       // Initialise together: a later effect could overwrite the coach's first edit.
@@ -216,7 +219,7 @@ export default function CoachMarkingReviewPage() {
   }, [personal, selected]);
 
   useEffect(() => {
-    if (!selected || personal) return;
+    if (!selected || personal || extraActivities) return;
     let cancelled = false;
     setPromptError('');
     coachFetch(`${apiEndpoint}/${selected.id}/ai-prompt`)
@@ -236,7 +239,7 @@ export default function CoachMarkingReviewPage() {
         if (!cancelled) setPromptError(loadError instanceof Error ? loadError.message : 'The marking prompt could not be loaded.');
       });
     return () => { cancelled = true; };
-  }, [apiEndpoint, personal, selected]);
+  }, [apiEndpoint, personal, selected, extraActivities]);
 
   const promptEdited = Boolean(prompt.trim()) && prompt.trim() !== defaultPrompt.trim();
   const promptCleared = !prompt.trim() && Boolean(defaultPrompt.trim());
@@ -279,7 +282,7 @@ export default function CoachMarkingReviewPage() {
   };
 
   const generateAiFeedback = async () => {
-    if (!selected || generating) return;
+    if (!selected || generating || extraActivities) return;
     setGenerating(true);
     setError('');
     setAiNotice('');
@@ -376,7 +379,7 @@ export default function CoachMarkingReviewPage() {
                 <div><i className="ri-error-warning-line" aria-hidden="true" /><span>Overdue</span><strong>{queueSummary.overdueItems}</strong></div>
                 <div><i className="ri-checkbox-circle-line" aria-hidden="true" /><span>Marked today</span><strong>{markedToday}</strong></div>
               </div>}
-              <label className={styles.search}>
+              <label data-search-field className={styles.search}>
                 <i className="ri-search-line" aria-hidden="true" />
                 <span className="sr-only">Search marking queue</span>
                 <input value={search} onChange={event => setSearch(event.target.value)} placeholder="Search learner or activity" />
@@ -520,8 +523,8 @@ export default function CoachMarkingReviewPage() {
                 submissionId={selected.id} review={selected.ksbReview} onSaved={() => void load()} />}
               {selected.ksbReview?.status !== 'pending' && <section className={styles.feedbackPanel}>
                 <div className={styles.feedbackHeading}>
-                  <div><p>Coach feedback</p><h4>Review the AI draft and make the final decision</h4></div>
-                  {!personal && <div className={styles.feedbackActions}>
+                  <div><p>Coach feedback</p><h4>{extraActivities ? 'Record feedback and make the final decision' : 'Review the AI draft and make the final decision'}</h4></div>
+                  {!personal && !extraActivities && <div className={styles.feedbackActions}>
                     <button type="button" disabled={generating || saving} onClick={() => void generateAiFeedback()}>
                       <i className={generating ? 'ri-loader-4-line' : 'ri-sparkling-line'} aria-hidden="true" />
                       {generating ? 'Generating…' : 'Generate AI draft'}
@@ -532,7 +535,7 @@ export default function CoachMarkingReviewPage() {
                 {aiNotice && <p className={styles.aiNotice}><i className="ri-sparkling-line" aria-hidden="true" /> {aiNotice}</p>}
                 {error && <p className={styles.inlineError}>{error}</p>}
 
-                {!personal && <MarkingInstructionsPanel key={selected.id} edited={promptEdited} guidanceAttached={Boolean(promptUpload)}>
+                {!personal && !extraActivities && <MarkingInstructionsPanel key={selected.id} edited={promptEdited} guidanceAttached={Boolean(promptUpload)}>
                   <p>{promptAvailable ? `These ${promptKind === 'assignment' ? 'assignment marking' : 'reflection validation'} instructions apply to the next draft only.` : 'No saved prompt is available. You can supply instructions for this draft.'}</p>
                   <textarea aria-label="AI marking instructions" value={prompt} onChange={event => setPrompt(event.target.value)} rows={8} spellCheck={false} placeholder="Write the instructions the AI should mark against…" />
                   <label className={styles.promptUpload}>

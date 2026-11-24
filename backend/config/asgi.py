@@ -25,6 +25,7 @@ from config.health import with_health_check
 from config.load_metric import with_load_metric
 from curriculum_api.session_sync_runtime import SessionSyncASGI
 from learner_api.catchup_reminders import CatchupReminderASGI
+from learner_api.monthly_actual_scheduler import MonthlyActualASGI
 from curriculum_api.module_collaboration_consumer import ModuleCollaborationASGI
 
 
@@ -34,7 +35,8 @@ from curriculum_api.module_collaboration_consumer import ModuleCollaborationASGI
 # validation or the scheduler wrappers run (see config/health.py).
 application = with_load_metric(with_health_check(ProtocolTypeRouter(
     {
-        'http': CountryCalendarASGI(CoachDashboardSnapshotASGI(CatchupReminderASGI(SessionSyncASGI(django_application)))),
+        'http': CountryCalendarASGI(CoachDashboardSnapshotASGI(
+            MonthlyActualASGI(CatchupReminderASGI(SessionSyncASGI(django_application))))),
         'websocket': ModuleCollaborationASGI(AuthMiddlewareStack(URLRouter(websocket_urlpatterns))),
     }
 )))

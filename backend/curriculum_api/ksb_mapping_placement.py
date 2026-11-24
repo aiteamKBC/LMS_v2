@@ -1,215 +1,28 @@
-"""Where a KSB mapping sits in the curriculum: its component's module and week.
-
-``curriculum.ksb_mappings`` keeps ``component_id`` (foreign key, RESTRICT) and
-``standard_ksb_id``. Its module and week are its component's, and its code and
-description its standard KSB's. A write that scopes mappings by module or week
-therefore scopes them through their component, and a read that wants the
-placement or the code joins them from there.
-"""
+"""Compatibility exports for KSB reads, plus the existing mapping writers."""
 from __future__ import annotations
-
 import re
-import threading
-import time
 import uuid
 from datetime import datetime, timezone
-
 from django.db import connection
-
-PLACEMENT_FIELDS = ('module_catalogue_id', 'week_id')
-
-#: What a mapping read through ``relation()`` carries beyond its own columns.
-READ_FIELDS = ('module_catalogue_id', 'week_id', 'ksb_code', 'ksb_description')
-
-
-def _only():
-    """``only`` before a table on PostgreSQL (these tables have no inheritance,
-    so it reads exactly the same rows); nothing elsewhere."""
-    return 'only ' if connection.vendor == 'postgresql' else ''
-
-
-def where(module_ids=None, week_id=None, component_ids=None):
-    """``(where_sql, params)`` selecting mappings by placement.
-
-    ``module_ids`` is one id or a list; ``week_id`` narrows to one week;
-    ``component_ids`` narrows to those components (and is enough on its own).
-    Every argument given must match.
-    """
-    from . import views
-    if isinstance(module_ids, str):
-        module_ids = [module_ids]
-    module_ids = [views.clean_str(value) for value in (module_ids or []) if views.clean_str(value)]
-    component_ids = [views.clean_str(value) for value in (component_ids or []) if views.clean_str(value)]
-    week_id = views.clean_str(week_id)
-
-    clauses, params = [], []
-    owner, owner_params = [], []
-    if module_ids:
-        owner.append(f'c.module_catalogue_id in ({", ".join(["%s"] * len(module_ids))})')
-        owner_params += module_ids
-    if week_id:
-        owner.append('c.week_id = %s')
-        owner_params.append(week_id)
-    if owner:
-        components = views.authoring_table_name(views.AUTHORING_COMPONENTS_TABLE)
-        clauses.append(f'component_id in (select c.id from {components} c where {" and ".join(owner)})')
-        params += owner_params
-    if component_ids:
-        clauses.append(f'component_id in ({", ".join(["%s"] * len(component_ids))})')
-        params += component_ids
-    return ' and '.join(clauses) or '1 = 0', params
-
-
-def relation(*, include_description=True):
-    """FROM text for a read that wants each mapping with its placement and code.
-
-    ``module_catalogue_id`` / ``week_id`` come from the component and
-    ``ksb_code`` / ``ksb_description`` from the standard KSB; the mapping's own
-    columns are unchanged. ``include_description=False`` leaves the description
-    out: it is the standard's text repeated on every mapping (2.5 MB of a 6 MB
-    programme read), so a caller that needs it attaches it afterwards
-    (``attach_descriptions``).
-    """
-    from . import views
-    only = _only()
-    table = views.authoring_table_name(views.AUTHORING_KSB_MAPPINGS_TABLE)
-    components = views.authoring_table_name(views.AUTHORING_COMPONENTS_TABLE)
-    standards = views.authoring_table_name('standard_ksbs')
-    description = ', s.ksb_description' if include_description else ''
-    return (
-        '(select m.*, c.module_catalogue_id, c.week_id, '
-        f"coalesce(s.ksb_code, '') as ksb_code{description} "
-        f'from {only}{table} m '
-        f'left join {only}{components} c on c.id = m.component_id '
-        f'left join {only}{standards} s on s.id = m.standard_ksb_id) as "ksb_mappings"'
-    )
-
-
-def read_source(table):
-    """FROM text for a hand-written read of ``table``: mappings through
-    ``relation()`` (placement and code by key), any other table as itself."""
-    from . import views
-    if table == views.AUTHORING_KSB_MAPPINGS_TABLE:
-        return relation()
-    return views.authoring_table_name(table)
-
-
-def read_columns(table):
-    """The columns a read through ``read_source(table)`` can select."""
-    from . import views
-    columns = set(views.column_names(table))
-    if table == views.AUTHORING_KSB_MAPPINGS_TABLE:
-        columns |= set(READ_FIELDS)
-    return columns
-
-
-def can_select(table, column):
-    """Whether a read through ``read_source(table)`` can select ``column``."""
-    from . import views
-    if views.has_column(table, column):
-        return True
-    return column in READ_FIELDS and table == views.AUTHORING_KSB_MAPPINGS_TABLE
-
-
-# standard_ksbs ids -> (code, description), as last read. Reference data:
-# changed only by a manual Skills England import, which the curriculum cache
-# already lets lag by up to 60 s (views.coverage_entry), so this lags no more.
-STANDARD_TEXTS_TTL_SECONDS = 60
-_STANDARD_TEXTS = {'read_at': 0.0, 'rows': {}}
-_STANDARD_TEXTS_LOCK = threading.Lock()
-
-
-def _chunks(values, size=2000):
-    values = list(values)
-    for start in range(0, len(values), size):
-        yield values[start:start + size]
-
-
-def standard_ksb_texts(standard_ids):
-    """``{standard_ksbs.id: (ksb_code, ksb_description)}`` for ``standard_ids``."""
-    from django.db import connection
-    from . import views
-    wanted = {value for value in standard_ids if value is not None}
-    if not wanted:
-        return {}
-    with _STANDARD_TEXTS_LOCK:
-        if time.monotonic() - _STANDARD_TEXTS['read_at'] > STANDARD_TEXTS_TTL_SECONDS:
-            _STANDARD_TEXTS.update(read_at=time.monotonic(), rows={})
-        known = _STANDARD_TEXTS['rows']
-        missing = wanted - known.keys()
-    if missing:
-        found = {}
-        standards = views.authoring_table_name('standard_ksbs')
-        with connection.cursor() as cursor:
-            for chunk in _chunks(missing):
-                placeholders = ', '.join(['%s'] * len(chunk))
-                cursor.execute(
-                    f'select id, ksb_code, ksb_description from {_only()}{standards} where id in ({placeholders})',
-                    chunk,
-                )
-                found.update({sid: (code, description) for sid, code, description in cursor.fetchall()})
-        with _STANDARD_TEXTS_LOCK:
-            known.update(found)
-    return {value: known[value] for value in wanted if value in known}
-
-
-def reset_standard_ksb_texts():
-    with _STANDARD_TEXTS_LOCK:
-        _STANDARD_TEXTS.update(read_at=0.0, rows={})
-
-
-def component_items(component_ids):
-    """``{component_id: [mapping item, ...]}``: each component's live KSB mappings."""
-    from django.db import connection
-    from . import views
-    items = {}
-    ids = [str(value) for value in component_ids if value]
-    if not ids:
-        return items
-    only = _only()
-    mappings = views.authoring_table_name(views.AUTHORING_KSB_MAPPINGS_TABLE)
-    standards = views.authoring_table_name('standard_ksbs')
-    with connection.cursor() as cursor:
-        for chunk in _chunks(ids):
-            placeholders = ', '.join(['%s'] * len(chunk))
-            cursor.execute(
-                f"""
-                select m.component_id, m.id, m.ksb_id, m.weight, m.classification, m.source_type,
-                       m.source_id, m.weight_class, s.ksb_code, s.ksb_description
-                from {only}{mappings} m
-                left join {only}{standards} s on s.id = m.standard_ksb_id
-                where m.component_id in ({placeholders})
-                  and lower(coalesce(m.status, '')) not in ('inactive', 'archived')
-                order by m.component_id, s.ksb_code, m.id
-                """,
-                chunk,
-            )
-            for (component_id, mapping_id, ksb_id, weight, classification, source_type,
-                 source_id, weight_class, code, description) in cursor.fetchall():
-                items.setdefault(str(component_id), []).append({
-                    'id': mapping_id, 'ksb_id': ksb_id or '',
-                    'weight': float(weight) if weight is not None else None,
-                    'ksb_code': code or '', 'source_id': source_id or '',
-                    'description': description or '', 'source_type': source_type or '',
-                    'weight_class': weight_class or '', 'classification': classification or '',
-                })
-    return items
-
-
-def attach_component_items(rows):
-    """Put each component's KSB items on it as ``ksb_mappings``."""
-    items = component_items({row.get('id') for row in rows})
-    for row in rows:
-        row.setdefault('ksb_mappings', items.get(str(row.get('id')), []))
-    return rows
-
-
-def attach_descriptions(rows):
-    """Put each mapping's standard KSB description on it (read once per standard)."""
-    texts = standard_ksb_texts(row.get('standard_ksb_id') for row in rows)
-    for row in rows:
-        row.setdefault('ksb_description', texts.get(row.get('standard_ksb_id'), ('', None))[1])
-    return rows
+from .catalogue.infrastructure.ksb_read_store import (
+    PLACEMENT_FIELDS,
+    READ_FIELDS,
+    STANDARD_TEXTS_TTL_SECONDS,
+    _STANDARD_TEXTS,
+    _STANDARD_TEXTS_LOCK,
+    _only,
+    where,
+    relation,
+    read_source,
+    read_columns,
+    can_select,
+    _chunks,
+    standard_ksb_texts,
+    reset_standard_ksb_texts,
+    component_items,
+    attach_component_items,
+    attach_descriptions,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -217,8 +30,8 @@ def attach_descriptions(rows):
 # ---------------------------------------------------------------------------
 
 def _table(name):
-    from . import views
-    return f'{_only()}{views.authoring_table_name(name)}'
+    from .catalogue.infrastructure.database_reads import authoring_table_name
+    return f'{_only()}{authoring_table_name(name)}'
 
 
 def standard_reference(source_id):

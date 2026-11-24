@@ -6,6 +6,7 @@ and written there, never on modules (whose sale columns are dropped). On the new
 database the free-course catalogue save keeps the price per course. Nothing here
 opens a connection.
 """
+from curriculum_api.catalogue.tests.parity.composition_test_support import composition_fixture
 from decimal import Decimal
 from unittest import mock
 
@@ -37,14 +38,14 @@ class FakeCursor:
 
 class ReadTests(SimpleTestCase):
     def test_a_list_without_a_free_course_reads_nothing(self):
-        with mock.patch.object(views, 'fetch_all') as fetch:
+        with composition_fixture(views, 'fetch_all') as fetch:
             self.assertEqual(pricing.lookup([PLAIN]), {})
         fetch.assert_not_called()
 
     def test_free_courses_are_read_from_their_own_rows_in_one_query(self):
         stored = [{'module_catalogue_id': 'MOD-FREE', 'is_for_sale': True, 'price': Decimal('49.5'), 'currency': 'GBP'}]
-        with mock.patch.object(views, 'column_names', return_value=LINKED), \
-             mock.patch.object(views, 'fetch_all', return_value=stored) as fetch:
+        with composition_fixture(views, 'column_names', return_value=LINKED), \
+             composition_fixture(views, 'fetch_all', return_value=stored) as fetch:
             prices = pricing.lookup([FREE, PLAIN])
         sql, params = fetch.call_args.args
         self.assertIn('free_courses', sql)
@@ -57,8 +58,8 @@ class ReadTests(SimpleTestCase):
                          {'isForSale': False, 'price': None, 'currency': 'GBP'})
 
     def test_without_the_module_link_nothing_is_read(self):
-        with mock.patch.object(views, 'column_names', return_value=SELF_CONTAINED), \
-             mock.patch.object(views, 'fetch_all') as fetch:
+        with composition_fixture(views, 'column_names', return_value=SELF_CONTAINED), \
+             composition_fixture(views, 'fetch_all') as fetch:
             self.assertEqual(pricing.lookup([FREE]), {})
         fetch.assert_not_called()
 
@@ -68,7 +69,7 @@ class SaveTests(SimpleTestCase):
         cursor = FakeCursor(rowcount)
         connection = mock.MagicMock()
         connection.cursor.return_value = cursor
-        with mock.patch.object(views, 'column_names', return_value=columns), \
+        with composition_fixture(views, 'column_names', return_value=columns), \
              mock.patch.object(pricing, 'connection', connection):
             result = pricing.save('MOD-FREE', values)
         return result, cursor
@@ -132,7 +133,7 @@ class CatalogueSaveTests(SimpleTestCase):
             mock.patch.object(store, '_bulk_upsert', side_effect=bulk),
             mock.patch.object(store, '_delete_ids'),
             mock.patch.object(store, 'refuse_in_use'),
-            mock.patch.object(views, 'stored_module_cover_image', side_effect=lambda _id, url: url),
+            composition_fixture(views, 'stored_module_cover_image', side_effect=lambda _id, url: url),
         ]
         for patcher in patches:
             patcher.start()

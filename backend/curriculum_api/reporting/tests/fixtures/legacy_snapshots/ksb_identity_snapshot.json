@@ -1,0 +1,174 @@
+{
+  "views.py:codes_from_session_ksb": {
+    "source": "def codes_from_session_ksb(value):\n    entries = parse_json_value(value, [])\n    codes = set()\n    if not isinstance(entries, list):\n        return codes\n\n    for entry in entries:\n        if not isinstance(entry, dict):\n            continue\n        for key in ('knowledgeCodes', 'skillCodes', 'behaviourCodes'):\n            codes.update(str(code) for code in entry.get(key, []) if code)\n    return codes\n",
+    "decorators": [],
+    "owner": "curriculum_api.reporting.domain.sources",
+    "deps": [
+      "parse_json_value"
+    ]
+  },
+  "views.py:ksb_type_label": {
+    "source": "def ksb_type_label(type_code):\n    return {\n        'K': 'Knowledge',\n        'S': 'Skill',\n        'B': 'Behaviour',\n    }.get(str(type_code).upper(), 'Knowledge')\n",
+    "decorators": [],
+    "owner": "curriculum_api.reporting.domain.sources",
+    "deps": []
+  },
+  "views.py:normalise_ksb_type": {
+    "source": "def normalise_ksb_type(value):\n    raw = str(value or '').strip().upper()\n    if raw in {'K', 'KNOWLEDGE'}:\n        return 'K'\n    if raw in {'S', 'SKILL', 'SKILLS'}:\n        return 'S'\n    if raw in {'B', 'BEHAVIOUR', 'BEHAVIOURS', 'BEHAVIOR', 'BEHAVIORS'}:\n        return 'B'\n    return 'K'\n",
+    "decorators": [],
+    "owner": "curriculum_api.reporting.domain.sources",
+    "deps": []
+  },
+  "views.py:normalise_ksb_code": {
+    "source": "def normalise_ksb_code(value, type_code=''):\n    code = str(value or '').strip().upper()\n    type_code = normalise_ksb_type(type_code)\n    if code.startswith(type_code):\n        code = code[1:]\n    return re.sub(r'[^0-9.]', '', code)\n",
+    "decorators": [],
+    "owner": "curriculum_api.reporting.domain.sources",
+    "deps": [
+      "normalise_ksb_type"
+    ]
+  },
+  "views.py:full_ksb_code": {
+    "source": "def full_ksb_code(item):\n    type_code = normalise_ksb_type(item.get('type'))\n    code = normalise_ksb_code(item.get('code') or item.get('full_code'), type_code)\n    return f'{type_code}{code}' if code else ''\n",
+    "decorators": [],
+    "owner": "curriculum_api.reporting.domain.sources",
+    "deps": [
+      "normalise_ksb_code",
+      "normalise_ksb_type"
+    ]
+  },
+  "views.py:ksb_profile_required_codes": {
+    "source": "def ksb_profile_required_codes(profile):\n    if not profile:\n        return []\n    ksb_items = parse_json_value(profile.get('ksb_items'), [])\n    if isinstance(ksb_items, list) and ksb_items:\n        return unique([\n            coverage_normalise_code(full_ksb_code(item))\n            for item in ksb_items\n            if isinstance(item, dict)\n        ])\n    return unique([\n        coverage_normalise_code(code)\n        for code in [\n            *parse_json_value(profile.get('knowledge_codes'), []),\n            *parse_json_value(profile.get('skill_codes'), []),\n            *parse_json_value(profile.get('behaviour_codes'), []),\n        ]\n    ])\n",
+    "decorators": [],
+    "owner": "curriculum_api.reporting.domain.sources",
+    "deps": [
+      "coverage_normalise_code",
+      "full_ksb_code",
+      "parse_json_value",
+      "unique"
+    ]
+  },
+  "views.py:ksb_profile_source_id": {
+    "source": "def ksb_profile_source_id(profile):\n    public_id = clean_str((profile or {}).get('id'))\n    if public_id.startswith('KSBP-'):\n        return public_id\n    return clean_str((profile or {}).get('ksb_profile_id')) or unique_ksb_profile_id((profile or {}).get('name') or '')\n",
+    "decorators": [],
+    "owner": "curriculum_api.reporting.domain.sources",
+    "deps": [
+      "clean_str",
+      "unique_ksb_profile_id"
+    ]
+  },
+  "views.py:normalise_ksb_profile_source_value": {
+    "source": "def normalise_ksb_profile_source_value(value):\n    source = clean_str(value)\n    if ':' not in source:\n        return source\n    prefix, source_id = source.split(':', 1)\n    if prefix.lower() in {'profile', 'framework'}:\n        return clean_str(source_id)\n    return source\n",
+    "decorators": [],
+    "owner": "curriculum_api.reporting.domain.sources",
+    "deps": [
+      "clean_str"
+    ]
+  },
+  "views.py:ksb_profile_context_ids": {
+    "source": "def ksb_profile_context_ids(profile, key, primary_value=''):\n    values = parse_json_value((profile or {}).get(key), [])\n    if not isinstance(values, list):\n        values = []\n    return unique([clean_str(primary_value), *[clean_str(value) for value in values]])\n",
+    "decorators": [],
+    "owner": "curriculum_api.reporting.domain.sources",
+    "deps": [
+      "clean_str",
+      "parse_json_value",
+      "unique"
+    ]
+  },
+  "views.py:curriculum_standards": {
+    "source": "def curriculum_standards(request):\n    # Reference data: identical for every user and changed only by a standards\n    # import, so it revalidates cheaply via ETag. Four curriculum pages fetch this\n    # on mount, and each repeat visit now costs a 304 instead of the full list.\n    standards = cached_curriculum_value('skills-england-standards', build_skills_england_standards)\n    return reference_json_response(request, {\n        'schema': CURRICULUM_SCHEMA,\n        'sourceTable': 'standard_ksbs',\n        'count': len(standards),\n        'results': standards,\n    })\n",
+    "decorators": [
+      "require_GET"
+    ],
+    "owner": "curriculum_api.catalogue.api.ksb_sources",
+    "deps": [
+      "CURRICULUM_SCHEMA",
+      "build_skills_england_standards",
+      "cached_curriculum_value",
+      "reference_json_response"
+    ]
+  },
+  "views.py:curriculum_standard_detail": {
+    "source": "def curriculum_standard_detail(request, identifier):\n    standard = find_skills_england_standard(identifier)\n    if not standard:\n        return json_error('Skills England standard not found.', status=404)\n    return reference_json_response(request, {\n        'schema': CURRICULUM_SCHEMA,\n        'sourceTable': 'standard_ksbs',\n        **standard,\n    })\n",
+    "decorators": [
+      "require_GET"
+    ],
+    "owner": "curriculum_api.catalogue.api.ksb_sources",
+    "deps": [
+      "CURRICULUM_SCHEMA",
+      "find_skills_england_standard",
+      "json_error",
+      "reference_json_response"
+    ]
+  },
+  "views.py:curriculum_ksb_frameworks": {
+    "source": "def curriculum_ksb_frameworks(request):\n    return curriculum_collection_response(get_cached_payload(request, compact=True), 'ksbFrameworks')\n",
+    "decorators": [
+      "require_GET"
+    ],
+    "owner": "curriculum_api.catalogue.api.ksb_sources",
+    "deps": [
+      "curriculum_collection_response",
+      "get_cached_payload"
+    ]
+  },
+  "views.py:curriculum_ksb_framework_collection": {
+    "source": "def curriculum_ksb_framework_collection(request):\n    if request.method == 'GET':\n        return curriculum_ksb_frameworks(request)\n    if request.method != 'POST':\n        return json_error('Method not allowed.', status=405)\n    # The curriculum database keeps no KSB frameworks (curriculum.ksb_profiles\n    # was removed); a programme takes its KSBs from its apprenticeship standard.\n    return json_error('KSB frameworks cannot be created: the current curriculum database keeps no KSB frameworks. '\n                      'A programme takes its KSBs from its apprenticeship standard.',\n                      status=409, code='ksb_frameworks_not_available')\n",
+    "decorators": [
+      "csrf_exempt"
+    ],
+    "owner": "curriculum_api.catalogue.api.ksb_sources",
+    "deps": [
+      "curriculum_ksb_frameworks",
+      "json_error"
+    ]
+  },
+  "views.py:curriculum_ksb_framework_detail": {
+    "source": "def curriculum_ksb_framework_detail(request, identifier):\n    if request.method not in {'GET', 'PATCH', 'DELETE'}:\n        return json_error('Method not allowed.', status=405)\n    # No KSB frameworks are stored (see curriculum_ksb_framework_collection):\n    # a read finds nothing and a change is refused plainly.\n    if request.method != 'GET':\n        return json_error('KSB frameworks cannot be changed: the current curriculum database keeps no KSB frameworks. '\n                          'A programme takes its KSBs from its apprenticeship standard.',\n                          status=409, code='ksb_frameworks_not_available')\n    return json_error('KSB framework not found.', status=404)\n",
+    "decorators": [
+      "csrf_exempt"
+    ],
+    "owner": "curriculum_api.catalogue.api.ksb_sources",
+    "deps": [
+      "json_error"
+    ]
+  },
+  "views.py:curriculum_ksb_set_definitions": {
+    "source": "def curriculum_ksb_set_definitions(request, identifier):\n    # A KSB set was one stored KSB profile; none are stored any more\n    # (curriculum.ksb_profiles was removed), so every set id is unknown.\n    return json_error('KSB profile not found.', status=404)\n",
+    "decorators": [
+      "gzip_page",
+      "require_GET"
+    ],
+    "owner": "curriculum_api.catalogue.api.ksb_sources",
+    "deps": [
+      "json_error"
+    ]
+  },
+  "views.py:curriculum_ksb_sets": {
+    "source": "def curriculum_ksb_sets(request):\n    # Every KSB set was one stored KSB profile, and curriculum keeps none any more\n    # (curriculum.ksb_profiles was removed). Kept so older screens get an empty list.\n    return curriculum_collection_response({'schema': CURRICULUM_SCHEMA}, 'ksbSets', [])\n",
+    "decorators": [
+      "gzip_page",
+      "require_GET"
+    ],
+    "owner": "curriculum_api.catalogue.api.ksb_sources",
+    "deps": [
+      "CURRICULUM_SCHEMA",
+      "curriculum_collection_response"
+    ]
+  },
+  "reporting/domain/sources.py:get_ksb_profile_for_program": {
+    "source": "def get_ksb_profile_for_program(program_name, ksb_profiles, *, ksb_profile_context_ids, normalise):\n    program_norm = normalise(program_name)\n    if not program_norm:\n        return None\n    for profile in ksb_profiles:\n        candidates = [\n            profile.get('name'),\n            *ksb_profile_context_ids(profile, 'programme_ids'),\n        ]\n        for candidate in candidates:\n            candidate_norm = normalise(candidate)\n            if candidate_norm == program_norm:\n                return profile\n    return None\n",
+    "decorators": []
+  },
+  "reporting/application/source_catalogue.py:programme_row_ksb_source": {
+    "source": "def programme_row_ksb_source(\n    programme_id,\n    *,\n    clean_str,\n    get_program_config_rows,\n    normalise,\n    programme_config_identity,\n    programme_config_ksb_source,\n):\n    \"\"\"The KSB source stored on the programme row itself.\n\n    `curriculum.programmes.ksb_profile_source_id` is what the Programme form\n    writes and what `set_programme_modules_ksb_source` cascades onto every\n    module underneath, so it is the authority for any scope inside that\n    programme. Nothing on the coverage path used to read it: a programme whose\n    name no longer matched an entry in a profile's `programme_ids` fell all the\n    way through to the union of every profile without saying so.\n    \"\"\"\n    ident = clean_str(programme_id)\n    ident_key = normalise(ident)\n    if not ident_key:\n        return '', ''\n    for row in get_program_config_rows():\n        candidates = {\n            normalise(programme_config_identity(row)),\n            normalise(row.get('name')),\n        }\n        candidates.discard('')\n        if ident_key not in candidates:\n            continue\n        return programme_config_ksb_source(row)\n    return '', ''\n",
+    "decorators": []
+  },
+  "reporting/application/source_catalogue.py:programme_applied_ksb_profile": {
+    "source": "def programme_applied_ksb_profile(\n    config,\n    ksb_profiles,\n    *programme_names,\n    active_ksb_profiles,\n    clean_str,\n    get_ksb_profile_for_program,\n    ksb_profile_source_id,\n    normalise,\n    programme_config_ksb_source,\n):\n    \"\"\"The manual KSB profile a programme applies, or None.\n\n    The stored source decides (programme_config_ksb_source):\n\n    - a standard: no manual profile speaks for the programme. Applying a standard\n      never unlinks the programme from a profile's ``programme_ids``, so a\n      profile still listing it -- archived or not -- is a leftover link. Reading\n      it made a programme on ST0845 call itself \"Empty KSB profile\";\n    - a profile: that profile, whatever its state, because the row chose it;\n    - nothing: the legacy match by programme name, against active profiles only,\n      so an archived profile cannot name a programme by accident.\n    \"\"\"\n    source_type, source_id = programme_config_ksb_source(config)\n    if source_type == 'standard':\n        return None\n    if source_id:\n        wanted = normalise(source_id)\n        for profile in ksb_profiles or []:\n            profile_id = clean_str(profile.get('id'))\n            identities = {\n                profile_id,\n                clean_str(profile.get('ksb_profile_id')),\n                ksb_profile_source_id(profile),\n                f'ksb-{profile_id}' if profile_id else '',\n            }\n            if wanted in {normalise(value) for value in identities if value}:\n                return profile\n        return None\n    active = active_ksb_profiles(ksb_profiles)\n    for name in programme_names:\n        profile = get_ksb_profile_for_program(name, active)\n        if profile:\n            return profile\n    return None\n",
+    "decorators": []
+  },
+  "catalogue/application/ksb_projection.py:build_ksb_data": {
+    "source": "def build_ksb_data(\n    ksb_profiles,\n    modules,\n    training_rows,\n    *,\n    summary_only=False,\n    clean_str,\n    codes_from_session_ksb,\n    format_date,\n    infer_level,\n    ksb_profile_context_ids,\n    ksb_profile_source_id,\n    ksb_type_label,\n    normalise_ksb_code,\n    normalise_ksb_type,\n    parse_int,\n    parse_json_value,\n    slugify,\n):\n    module_names_by_code = defaultdict(set)\n    for module in modules:\n        for code in module.get('ksbCodes', []):\n            module_names_by_code[code].add(module['name'])\n\n    for row in training_rows:\n        for code in codes_from_session_ksb(row.get('session_ksb_json')):\n            if row.get('module_name'):\n                module_names_by_code[code].add(row.get('module_name'))\n\n    frameworks = []\n    sets = []\n    for profile in ksb_profiles:\n        knowledge = parse_json_value(profile.get('knowledge_codes'), [])\n        skills = parse_json_value(profile.get('skill_codes'), [])\n        behaviours = parse_json_value(profile.get('behaviour_codes'), [])\n        items = parse_json_value(profile.get('ksb_items'), [])\n        if not isinstance(items, list):\n            items = []\n\n        normalised_items = []\n        for index, item in enumerate(items):\n            if not isinstance(item, dict):\n                continue\n            type_code = normalise_ksb_type(item.get('type'))\n            raw_code = normalise_ksb_code(item.get('code') or item.get('full_code'), type_code)\n            if not raw_code:\n                continue\n            parent_code = normalise_ksb_code(item.get('parentCode') or item.get('parent_code'), type_code)\n            full_code = f'{type_code}{raw_code}'\n            normalised_items.append({\n                **item,\n                'type': type_code,\n                'code': raw_code,\n                'parentCode': parent_code,\n                'fullCode': full_code,\n                'displayOrder': parse_int(item.get('displayOrder') or item.get('display_order'), index + 1),\n            })\n\n        entries = []\n        for item in ([] if summary_only else normalised_items):\n            code = item['fullCode']\n            raw_code = item['code']\n            mapped_modules = sorted(module_names_by_code.get(code, []) or module_names_by_code.get(raw_code, []))\n            mapped = bool(mapped_modules)\n            entries.append({\n                'id': item.get('id') or f'{profile.get(\"id\")}-{slugify(code)}',\n                'code': code,\n                'rawCode': raw_code,\n                'fullCode': code,\n                'parentCode': f'{item[\"type\"]}{item[\"parentCode\"]}' if item.get('parentCode') else '',\n                'parentId': item.get('parentId') or item.get('parent_id'),\n                'displayOrder': item.get('displayOrder') or 0,\n                'title': item.get('title') or item.get('description') or code,\n                'description': item.get('description') or '',\n                'type': ksb_type_label(item.get('type')),\n                'standard': profile.get('name') or '',\n                'activities': [\n                    {'activityType': 'Live Session', 'weight': 20 if mapped else 0},\n                    {'activityType': 'Workshop', 'weight': 20 if mapped else 0},\n                    {'activityType': 'Self-study', 'weight': 10 if mapped else 0},\n                    {'activityType': 'Assignment', 'weight': 20 if mapped else 0},\n                    {'activityType': 'Quiz', 'weight': 10 if mapped else 0},\n                    {'activityType': 'OTJH', 'weight': 10 if mapped else 0},\n                    {'activityType': 'Collaboration', 'weight': 5 if mapped else 0},\n                    {'activityType': 'Review', 'weight': 5 if mapped else 0},\n                ],\n                'modules': mapped_modules or ['Not mapped yet'],\n                'assessmentMethod': 'Curriculum plan',\n                'mappedBy': profile.get('created_by') or '',\n                'status': 'mapped' if mapped else 'unmapped',\n                'lastUpdated': format_date(profile.get('updated_at')),\n            })\n\n        total = len(normalised_items) or len(knowledge) + len(skills) + len(behaviours)\n        knowledge_count = sum(1 for item in normalised_items if item.get('type') == 'K') or len(knowledge)\n        skill_count = sum(1 for item in normalised_items if item.get('type') == 'S') or len(skills)\n        behaviour_count = sum(1 for item in normalised_items if item.get('type') == 'B') or len(behaviours)\n        mapped_count = sum(1 for entry in entries if entry['status'] == 'mapped')\n        framework_id = ksb_profile_source_id(profile)\n        programme_ids = ksb_profile_context_ids(profile, 'programme_ids')\n        primary_programme_id = programme_ids[0] if programme_ids else ''\n        display_name = profile.get('name') or 'KSB Framework'\n        frameworks.append({\n            'id': framework_id,\n            'profileId': profile.get('id'),\n            'ksbProfileId': framework_id,\n            'standardSourceId': clean_str(profile.get('standard_source_id')),\n            'programmeId': primary_programme_id,\n            'programmeIds': programme_ids,\n            'cohortIds': [],\n            'groupIds': [],\n            'moduleCatalogueIds': [],\n            'name': display_name,\n            'standard': profile.get('name') or '',\n            'programmeName': display_name,\n            'notes': profile.get('description') or '',\n            'ifateRef': display_name,\n            'level': parse_int(infer_level(display_name).replace('L', ''), 0),\n            'totalKsbs': total,\n            'knowledgeCount': knowledge_count,\n            'skillCount': skill_count,\n            'behaviourCount': behaviour_count,\n            'modulesCount': len(set().union(*(module_names_by_code.get(entry['code'], set()) for entry in entries))) if entries else 0,\n            'mapped': mapped_count,\n            'status': 'published' if profile.get('is_active') else 'archived',\n            'lastModified': format_date(profile.get('updated_at')),\n            'modifiedBy': profile.get('created_by') or '',\n            'version': '1.0',\n            'programmes': programme_ids,\n        })\n        sets.append({\n            'frameworkId': framework_id,\n            'profileId': profile.get('id'),\n            'ksbProfileId': framework_id,\n            'standardSourceId': clean_str(profile.get('standard_source_id')),\n            'programmeId': primary_programme_id,\n            'programmeIds': programme_ids,\n            'cohortIds': [],\n            'groupIds': [],\n            'moduleCatalogueIds': [],\n            'programmeName': display_name,\n            'standard': profile.get('name') or '',\n            'notes': profile.get('description') or '',\n            'status': 'published' if profile.get('is_active') else 'archived',\n            **({\n                'ksbCount': len(normalised_items),\n                'knowledgeCount': sum(item['type'] == 'K' for item in normalised_items),\n                'skillCount': sum(item['type'] == 'S' for item in normalised_items),\n                'behaviourCount': sum(item['type'] == 'B' for item in normalised_items),\n            } if summary_only else {'ksbs': entries}),\n        })\n    return frameworks, sets\n",
+    "decorators": []
+  }
+}

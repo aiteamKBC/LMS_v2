@@ -46,7 +46,7 @@ def median_cpu(callback, repeats, batch=1):
 def compare(baseline, repeats):
     from learner_api import current_learning, my_learning as learning, canonical_learning as canonical
     from learner_api import course_catalogue_display as display, training_plan_dashboard as schedule, learner_detail
-    from learner_api import dashboard_training, subject_store
+    from learner_api import dashboard_training
     from learner_api import live_session_progress
     from learner_api.tests_my_learning_performance_no_db import large_facts
     from learner_api.tests_my_learning_no_db import fixture_responses
@@ -179,7 +179,6 @@ def compare(baseline, repeats):
             stack.enter_context(patch.object(learning,'load_context',side_effect=lambda *args:deepcopy(context)))
             stack.enter_context(patch.object(learning,'journal_enabled',return_value=True))
             stack.enter_context(patch.object(display,'read_export_placements',return_value=[]))
-            stack.enter_context(patch.object(subject_store,'covers_for',return_value={}))
             stack.enter_context(patch.object(canonical,'query',return_value=[]))
             assert before_catalogue(source,'commercial',owner)==learning.read_catalogue(source,'commercial',owner)
     checked=Path('frontend/src/test/myLearningFixtures.json')

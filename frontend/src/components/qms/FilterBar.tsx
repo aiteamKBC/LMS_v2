@@ -1,5 +1,8 @@
+import { useId, useState } from "react";
 import { PERIODS, RAG_META, RAG_ORDER, formatNumber } from "@/lib/qms";
 import type { DashboardFilters } from "@/types/qms";
+import { SelectMenu, type SelectMenuProps } from "@/components/feature/SelectField";
+import styles from "./FilterBar.module.css";
 
 type FieldKey =
   | "period"
@@ -36,10 +39,8 @@ interface FilterBarProps {
   tutors?: string[];
   searchLabel?: string;
   searchPlaceholder?: string;
+  collapsible?: boolean;
 }
-
-const selectClass =
-  "box-border w-full appearance-none rounded-md border border-background-300 bg-background-50 py-2 pl-3 pr-8 font-label text-[12.5px] text-foreground-900 hover:border-background-400 focus:border-primary-500";
 
 function Label({ htmlFor, children }: { htmlFor: string; children: string }) {
   return (
@@ -52,15 +53,15 @@ function Label({ htmlFor, children }: { htmlFor: string; children: string }) {
   );
 }
 
-function SelectWrap({ children }: { children: React.ReactNode }) {
+function FilterSelect(props: Pick<SelectMenuProps, "id" | "ariaLabel" | "value" | "onChange" | "options">) {
   return (
-    <div className="relative">
-      {children}
-      <i
-        className="ri-arrow-down-s-line pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-[16px] text-foreground-500"
-        aria-hidden="true"
-      />
-    </div>
+    <SelectMenu
+      {...props}
+      size="sm"
+      triggerClassName={styles.selectTrigger}
+      menuClassName={styles.selectMenu}
+      menuMinWidth={220}
+    />
   );
 }
 
@@ -81,7 +82,10 @@ export default function FilterBar({
   tutors = [],
   searchLabel = "Search",
   searchPlaceholder = "Coach, learner, form or record reference",
+  collapsible = false,
 }: FilterBarProps) {
+  const [expanded, setExpanded] = useState(false);
+  const panelId = useId();
   const activeCount = [
     filters.period !== "Last 12 months",
     filters.department !== "All departments",
@@ -99,241 +103,23 @@ export default function FilterBar({
   return (
     <section
       aria-label="Global filters"
-      className="rounded-xl border border-background-200 bg-background-50 p-3 sm:p-4"
+      className="flex flex-col rounded-xl border border-background-200 bg-background-50 p-3 sm:p-4"
     >
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-6">
-        {fields.includes("period") ? (
-          <div className="min-w-0">
-            <Label htmlFor="filter-period">Reporting period</Label>
-            <SelectWrap>
-              <select
-                id="filter-period"
-                className={selectClass}
-                value={filters.period}
-                onChange={(event) => onChange({ period: event.target.value as DashboardFilters["period"] })}
-              >
-                {PERIODS.map((period) => (
-                  <option key={period} value={period}>
-                    {period}
-                  </option>
-                ))}
-              </select>
-            </SelectWrap>
-          </div>
+      <div className={`flex flex-wrap items-center gap-3 text-[12px] text-foreground-600 ${collapsible ? "" : "order-last mt-3 border-t border-background-200 pt-2.5"}`}>
+        {collapsible ? (
+          <button
+            type="button"
+            aria-expanded={expanded}
+            aria-controls={panelId}
+            onClick={() => setExpanded(value => !value)}
+            className="inline-flex min-h-10 items-center gap-2 rounded-lg bg-primary-50 px-3 py-2 font-label text-[12.5px] font-semibold text-primary-700 transition-colors hover:bg-primary-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-600"
+          >
+            <i className="ri-filter-3-line text-[16px]" aria-hidden="true" />
+            Filters
+            <i className={expanded ? "ri-arrow-up-s-line" : "ri-arrow-down-s-line"} aria-hidden="true" />
+          </button>
         ) : null}
-
-        {fields.includes("department") ? (
-          <div className="min-w-0">
-            <Label htmlFor="filter-department">Department</Label>
-            <SelectWrap>
-              <select
-                id="filter-department"
-                className={selectClass}
-                value={filters.department}
-                onChange={(event) => onChange({ department: event.target.value, programme: "All programmes" })}
-              >
-                <option>All departments</option>
-                {departments.map((department) => (
-                  <option key={department} value={department}>
-                    {department}
-                  </option>
-                ))}
-              </select>
-            </SelectWrap>
-          </div>
-        ) : null}
-
-        {fields.includes("programme") ? (
-          <div className="min-w-0">
-            <Label htmlFor="filter-programme">Programme</Label>
-            <SelectWrap>
-              <select
-                id="filter-programme"
-                className={selectClass}
-                value={filters.programme}
-                onChange={(event) => onChange({ programme: event.target.value })}
-              >
-                <option>All programmes</option>
-                {programmes.map((programme) => (
-                  <option key={programme} value={programme}>
-                    {programme}
-                  </option>
-                ))}
-              </select>
-            </SelectWrap>
-          </div>
-        ) : null}
-
-        {fields.includes("category") ? (
-          <div className="min-w-0">
-            <Label htmlFor="filter-category">Form category</Label>
-            <SelectWrap>
-              <select
-                id="filter-category"
-                className={selectClass}
-                value={filters.category}
-                onChange={(event) => onChange({ category: event.target.value })}
-              >
-                <option>All form categories</option>
-                {categories.map((category) => (
-                  <option key={category} value={category}>
-                    {category}
-                  </option>
-                ))}
-              </select>
-            </SelectWrap>
-          </div>
-        ) : null}
-
-        {fields.includes("formType") ? (
-          <div className="min-w-0">
-            <Label htmlFor="filter-form-type">Form type</Label>
-            <SelectWrap>
-              <select
-                id="filter-form-type"
-                className={selectClass}
-                value={filters.formType}
-                onChange={(event) => onChange({ formType: event.target.value })}
-              >
-                <option>All form types</option>
-                {formTypes.map((form) => (
-                  <option key={form.id} value={form.id}>
-                    {form.name}
-                  </option>
-                ))}
-              </select>
-            </SelectWrap>
-          </div>
-        ) : null}
-
-        {fields.includes("respondentType") ? (
-          <div className="min-w-0">
-            <Label htmlFor="filter-respondent-type">Feedback type</Label>
-            <SelectWrap>
-              <select
-                id="filter-respondent-type"
-                className={selectClass}
-                value={filters.respondentType}
-                onChange={(event) => onChange({ respondentType: event.target.value })}
-              >
-                <option>All feedback types</option>
-                {respondentTypes.map((type) => (
-                  <option key={type} value={type}>
-                    {type}
-                  </option>
-                ))}
-              </select>
-            </SelectWrap>
-          </div>
-        ) : null}
-
-        {fields.includes("feedbackType") ? (
-          <div className="min-w-0">
-            <Label htmlFor="filter-feedback-type">Feedback type</Label>
-            <SelectWrap>
-              <select
-                id="filter-feedback-type"
-                className={selectClass}
-                value={filters.feedbackType}
-                onChange={(event) => onChange({ feedbackType: event.target.value })}
-              >
-                <option>All feedback types</option>
-                {feedbackTypes.map((type) => (
-                  <option key={type.id} value={type.id}>
-                    {type.name}
-                  </option>
-                ))}
-              </select>
-            </SelectWrap>
-          </div>
-        ) : null}
-
-        {fields.includes("coach") ? (
-          <div className="min-w-0">
-            <Label htmlFor="filter-coach">Coach</Label>
-            <SelectWrap>
-              <select
-                id="filter-coach"
-                className={selectClass}
-                value={filters.coach}
-                onChange={(event) => onChange({ coach: event.target.value })}
-              >
-                <option>All coaches</option>
-                {coaches.map((coach) => (
-                  <option key={coach} value={coach}>
-                    {coach}
-                  </option>
-                ))}
-              </select>
-            </SelectWrap>
-          </div>
-        ) : null}
-
-        {fields.includes("tutor") ? (
-          <div className="min-w-0">
-            <Label htmlFor="filter-tutor">Tutor</Label>
-            <SelectWrap>
-              <select
-                id="filter-tutor"
-                className={selectClass}
-                value={filters.tutor}
-                onChange={(event) => onChange({ tutor: event.target.value })}
-              >
-                <option>All tutors</option>
-                {tutors.map((tutor) => (
-                  <option key={tutor} value={tutor}>
-                    {tutor}
-                  </option>
-                ))}
-              </select>
-            </SelectWrap>
-          </div>
-        ) : null}
-
-        {fields.includes("rag") ? (
-          <div className="min-w-0">
-            <Label htmlFor="filter-rag">Quality status</Label>
-            <SelectWrap>
-              <select
-                id="filter-rag"
-                className={selectClass}
-                value={filters.rag}
-                onChange={(event) => onChange({ rag: event.target.value })}
-              >
-                <option>All statuses</option>
-                {RAG_ORDER.map((status) => (
-                  <option key={status} value={RAG_META[status].label}>
-                    {RAG_META[status].label} — {RAG_META[status].meaning}
-                  </option>
-                ))}
-              </select>
-            </SelectWrap>
-          </div>
-        ) : null}
-
-        {fields.includes("query") ? (
-          <div className="min-w-0">
-            <Label htmlFor="filter-query">{searchLabel}</Label>
-            <div className="relative">
-              <i
-                className="ri-search-line pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-[15px] text-foreground-500"
-                aria-hidden="true"
-              />
-              <input
-                id="filter-query"
-                type="search"
-                value={filters.query}
-                placeholder={searchPlaceholder}
-                onChange={(event) => onChange({ query: event.target.value })}
-                className="box-border w-full rounded-md border border-background-300 bg-background-50 py-2 pl-8 pr-3 font-label text-[12.5px] text-foreground-900 placeholder:text-foreground-500 hover:border-background-400 focus:border-primary-500"
-              />
-            </div>
-          </div>
-        ) : null}
-      </div>
-
-      <div className="mt-3 flex flex-col gap-2 border-t border-background-200 pt-2.5 text-[12px] text-foreground-600 sm:flex-row sm:items-center sm:justify-between">
-        <p>
+        <p className={collapsible ? "order-last min-w-0 basis-full sm:order-none sm:flex-1 sm:basis-0" : "min-w-0 flex-1 basis-full sm:basis-0"}>
           <span className="font-semibold text-foreground-900">{formatNumber(resultCount)}</span>{" "}
           {resultLabel}
           {activeCount > 0 ? (
@@ -351,6 +137,175 @@ export default function FilterBar({
           <i className="ri-refresh-line text-[13px]" aria-hidden="true" />
           Reset filters
         </button>
+      </div>
+
+      <div
+        id={panelId}
+        data-filter-fields
+        hidden={collapsible && !expanded}
+        className={`${collapsible && !expanded ? "hidden" : "grid"} grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-6 ${collapsible ? "mt-3 border-t border-background-200 pt-3" : ""}`}
+      >
+        {fields.includes("period") ? (
+          <div className="min-w-0">
+            <Label htmlFor="filter-period">Reporting period</Label>
+            <FilterSelect
+              id="filter-period"
+              ariaLabel="Reporting period"
+              value={filters.period}
+              onChange={(period) => onChange({ period: period as DashboardFilters["period"] })}
+              options={PERIODS.map((period) => ({ value: period, label: period }))}
+            />
+          </div>
+        ) : null}
+
+        {fields.includes("department") ? (
+          <div className="min-w-0">
+            <Label htmlFor="filter-department">Department</Label>
+            <FilterSelect
+              id="filter-department"
+              ariaLabel="Department"
+              value={filters.department}
+              onChange={(department) => onChange({ department, programme: "All programmes" })}
+              options={["All departments", ...departments].map((department) => ({ value: department, label: department }))}
+            />
+          </div>
+        ) : null}
+
+        {fields.includes("programme") ? (
+          <div className="min-w-0">
+            <Label htmlFor="filter-programme">Programme</Label>
+            <FilterSelect
+              id="filter-programme"
+              ariaLabel="Programme"
+              value={filters.programme}
+              onChange={(programme) => onChange({ programme })}
+              options={["All programmes", ...programmes].map((programme) => ({ value: programme, label: programme }))}
+            />
+          </div>
+        ) : null}
+
+        {fields.includes("category") ? (
+          <div className="min-w-0">
+            <Label htmlFor="filter-category">Form category</Label>
+            <FilterSelect
+              id="filter-category"
+              ariaLabel="Form category"
+              value={filters.category}
+              onChange={(category) => onChange({ category })}
+              options={["All form categories", ...categories].map((category) => ({ value: category, label: category }))}
+            />
+          </div>
+        ) : null}
+
+        {fields.includes("formType") ? (
+          <div className="min-w-0">
+            <Label htmlFor="filter-form-type">Form type</Label>
+            <FilterSelect
+              id="filter-form-type"
+              ariaLabel="Form type"
+              value={filters.formType}
+              onChange={(formType) => onChange({ formType })}
+              options={[
+                { value: "All form types", label: "All form types" },
+                ...formTypes.map((form) => ({ value: form.id, label: form.name })),
+              ]}
+            />
+          </div>
+        ) : null}
+
+        {fields.includes("respondentType") ? (
+          <div className="min-w-0">
+            <Label htmlFor="filter-respondent-type">Respondent</Label>
+            <FilterSelect
+              id="filter-respondent-type"
+              ariaLabel="Respondent"
+              value={filters.respondentType}
+              onChange={(respondentType) => onChange({ respondentType })}
+              options={[{ value: "All feedback types", label: "All respondents" }, ...respondentTypes.map((type) => ({ value: type, label: type }))]}
+            />
+          </div>
+        ) : null}
+
+        {fields.includes("feedbackType") ? (
+          <div className="min-w-0">
+            <Label htmlFor="filter-feedback-type">Feedback type</Label>
+            <FilterSelect
+              id="filter-feedback-type"
+              ariaLabel="Feedback type"
+              value={filters.feedbackType}
+              onChange={(feedbackType) => onChange({ feedbackType })}
+              options={[
+                { value: "All feedback types", label: "All feedback types" },
+                ...feedbackTypes.map((type) => ({ value: type.id, label: type.name })),
+              ]}
+            />
+          </div>
+        ) : null}
+
+        {fields.includes("coach") ? (
+          <div className="min-w-0">
+            <Label htmlFor="filter-coach">Coach</Label>
+            <FilterSelect
+              id="filter-coach"
+              ariaLabel="Coach"
+              value={filters.coach}
+              onChange={(coach) => onChange({ coach })}
+              options={["All coaches", ...coaches].map((coach) => ({ value: coach, label: coach }))}
+            />
+          </div>
+        ) : null}
+
+        {fields.includes("tutor") ? (
+          <div className="min-w-0">
+            <Label htmlFor="filter-tutor">Tutor</Label>
+            <FilterSelect
+              id="filter-tutor"
+              ariaLabel="Tutor"
+              value={filters.tutor}
+              onChange={(tutor) => onChange({ tutor })}
+              options={["All tutors", ...tutors].map((tutor) => ({ value: tutor, label: tutor }))}
+            />
+          </div>
+        ) : null}
+
+        {fields.includes("rag") ? (
+          <div className="min-w-0">
+            <Label htmlFor="filter-rag">Quality status</Label>
+            <FilterSelect
+              id="filter-rag"
+              ariaLabel="Quality status"
+              value={filters.rag}
+              onChange={(rag) => onChange({ rag })}
+              options={[
+                { value: "All statuses", label: "All statuses" },
+                ...RAG_ORDER.map((status) => ({
+                  value: RAG_META[status].label,
+                  label: `${RAG_META[status].label} — ${RAG_META[status].meaning}`,
+                })),
+              ]}
+            />
+          </div>
+        ) : null}
+
+        {fields.includes("query") ? (
+          <div className="min-w-0">
+            <Label htmlFor="filter-query">{searchLabel}</Label>
+            <div className="relative">
+              <i
+                className="ri-search-line pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-[15px] text-foreground-500"
+                aria-hidden="true"
+              />
+              <input
+                id="filter-query"
+                type="search"
+                value={filters.query}
+                placeholder={searchPlaceholder}
+                onChange={(event) => onChange({ query: event.target.value })}
+                className={`${styles.searchInput} box-border w-full rounded-md py-2 pl-8 pr-3 font-label text-[12.5px] text-foreground-900 placeholder:text-foreground-500`}
+              />
+            </div>
+          </div>
+        ) : null}
       </div>
     </section>
   );

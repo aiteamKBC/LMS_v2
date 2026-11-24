@@ -1,19 +1,28 @@
 import json
+import logging
 import re
 import uuid
+from copy import deepcopy
 from datetime import datetime
 
 from django.db import DatabaseError, connections, transaction
 from django.http import JsonResponse
 from django.middleware.csrf import get_token
+from django.views.decorators.cache import never_cache
 
 from login.permissions import staff_only
+from old_otjh.service import ServiceError
 
 from .learner_detail import SOURCE_MODELS, build_learner_detail
+from .certificate_progress import course_progress
+from .activity_requirements import has_required_hours
+from .certificate_display import CORRECTION_FIELDS, certificate_display
+from .journal_sources import learner_journal_view, learner_journal_reads
 
 
 CERTIFICATE_TYPE = "progress-achievement"
 SOURCE_DOES_NOT_EXIST = tuple({model.DoesNotExist for model in SOURCE_MODELS.values()})
+logger = logging.getLogger(__name__)
 
 
 def _error(message, status):
@@ -41,7 +50,8 @@ def _template_dict(row):
         "title": row[2],
         "bodyText": row[3],
         "minimumProgress": float(row[4]),
-        "requireFinalTest": row[5],
+        # Retain the response field for older clients. Eligibility is progress-only.
+        "requireFinalTest": False,
         "layoutConfig": _json_dict(row[6]),
     }
 
@@ -60,7 +70,7 @@ def _certificate_dict(row):
     if not row:
         return None
     issued_at = row[6]
-    snapshot = _json_dict(row[5])
+    snapshot = deepcopy(_json_dict(row[5]))
     if "layoutConfig" in snapshot:
         snapshot["layoutConfig"] = _json_dict(snapshot.get("layoutConfig"))
     data = {
@@ -69,11 +79,14 @@ def _certificate_dict(row):
         "templateId": row[2],
         "templateVersion": row[3],
         "progressPercent": float(row[4]),
+        "otjHours": snapshot.get("otjHours"),
         "snapshot": snapshot,
         "issuedAt": issued_at.isoformat() if issued_at else None,
         "pdfBlobUrl": row[7] or "",
         "verificationToken": str(row[8]),
         "verificationUrl": f"/verify-certificate/{row[8]}",
+        "revision": int(snapshot.get("certificateRevision") or 1),
+        "correctedAt": snapshot.get("correctedAt"),
     }
     if len(row) > 9:
         data["moduleRef"] = row[9] or ""
@@ -90,6 +103,27 @@ def _published_template(cursor):
         [CERTIFICATE_TYPE, "published"],
     )
     return cursor.fetchone()
+
+
+def _canonical_certificate_owner(cursor, kind, enrolment_id):
+    """Route IDs belong to Created_users; certificate ownership belongs to learners."""
+    if kind not in SOURCE_MODELS:
+        raise ValueError("Unknown learner type.")
+    cursor.execute('SELECT id FROM "Learner".learners WHERE enrolment_id=%s LIMIT 2',
+                   [enrolment_id])
+    owners = cursor.fetchall()
+    if len(owners) != 1:
+        raise ValueError("Learner identity is unavailable or ambiguous.")
+    return owners[0][0]
+
+
+def _certificate_enrolment_id(cursor, learner_id):
+    """Resolve a stored canonical owner without guessing from snapshots or ID equality."""
+    cursor.execute('SELECT enrolment_id FROM "Learner".learners WHERE id=%s', [learner_id])
+    owner = cursor.fetchone()
+    if not owner or owner[0] is None:
+        raise ValueError("Learner enrolment is unavailable.")
+    return owner[0]
 
 
 def _issued_certificate(cursor, kind, pk, template_id=None, template_version=None, module_ref=None):
@@ -109,7 +143,7 @@ def _issued_certificate(cursor, kind, pk, template_id=None, template_version=Non
             JOIN "Learner".certificate_templates ct ON ct.id = lc.template_id
             WHERE lc.learner_kind=%s AND lc.learner_id=%s AND lc.status='issued'
               AND ct.certificate_type=%s {version_clause} {module_clause}
-            ORDER BY lc.issued_at DESC LIMIT 1''',
+            ORDER BY lc.issued_at DESC,lc.id DESC LIMIT 1''',
         params,
     )
     return cursor.fetchone()
@@ -179,54 +213,10 @@ def _component_has_content(component):
 
 
 def _learner_progress(detail):
-    quiz_attempts = detail.get("quizAttempts") if isinstance(detail.get("quizAttempts"), list) else []
-    video_done = {
-        _clean_text(row.get("componentId"))
-        for row in (detail.get("videoProgress") or [])
-        if _clean_text(row.get("componentId")) and _progress_counts(row)
-    }
-    component_done = {
-        _clean_text(row.get("componentId"))
-        for row in (detail.get("componentProgress") or [])
-        if _clean_text(row.get("componentId")) and _progress_counts(row)
-    }
-    # Older imports stored watched videos in the generic component bucket.
-    # Completion is keyed by component id, so both buckets are valid evidence
-    # regardless of which runner wrote the row.
-    completed_component_ids = video_done | component_done
-
-    total = 0
-    done = 0
-    final_test_passed = False
-    for component in detail.get("components") or []:
-        component_id = _clean_text(component.get("componentId"))
-        ctype = _clean_text(component.get("type")).lower().replace("-", "_")
-        if component.get("isQuiz"):
-            if not _component_has_content(component):
-                continue
-            total += 1
-            quiz_meta = component.get("quizMeta") if isinstance(component.get("quizMeta"), dict) else {}
-            quiz_id = _clean_text(quiz_meta.get("quizId"))
-            attempts = [row for row in quiz_attempts if _clean_text(row.get("quizId")) == quiz_id]
-            if any(row.get("passed") is True for row in attempts):
-                done += 1
-            component_title = _clean_text(component.get("component") or component.get("componentTitle")).lower()
-            if "final" in component_title and any(row.get("passed") is True for row in attempts):
-                final_test_passed = True
-        elif ctype == "video" or _has_url(component.get("videoUrl")):
-            if component_id and _component_has_content(component):
-                total += 1
-                if component_id in completed_component_ids:
-                    done += 1
-        elif component_id and _component_has_content(component):
-            total += 1
-            if component_id in completed_component_ids:
-                done += 1
-    percent = round((done / total) * 100) if total else 0
-    return {"progressPercent": percent, "trackableTotal": total, "trackableDone": done, "finalTestPassed": final_test_passed}
+    return _component_activity_progress(detail, detail.get("components") or [], required_only=True)
 
 
-def _component_activity_progress(detail, components):
+def _component_activity_progress(detail, components, *, required_only=False):
     quiz_attempts = detail.get("quizAttempts") if isinstance(detail.get("quizAttempts"), list) else []
     completed_component_ids = {
         _clean_text(row.get("componentId"))
@@ -238,15 +228,27 @@ def _component_activity_progress(detail, components):
     done = 0
     final_test_passed = False
     for index, component in enumerate(components):
+        if required_only and not has_required_hours(component.get('expectedOtjh')):
+            continue
         quiz_meta = component.get("quizMeta") if isinstance(component.get("quizMeta"), dict) else {}
         component_key = _clean_text(component.get("componentId")) or f"quiz:{_clean_text(quiz_meta.get('quizId')) or f'{_clean_text(component.get('week'))}:{index}'}"
         if component_key in seen:
             continue
         seen.add(component_key)
         total += 1
+        if required_only and ((component.get('previousLearning') or {}).get('completed') is True
+                or (_clean_text(component.get('type')).replace('-', '_') == 'live_session'
+                    and component.get('attendanceCompleted') is True)):
+            done += 1
+            continue
         if component.get("isQuiz"):
             quiz_id = _clean_text(quiz_meta.get("quizId"))
             attempts = [row for row in quiz_attempts if _clean_text(row.get("quizId")) == quiz_id]
+            if required_only:
+                # A pass on an optional sibling with the same quiz ID does not
+                # complete this Required component. Keep old unscoped attempts.
+                attempts = [row for row in attempts if not row.get('componentId')
+                            or _clean_text(row['componentId']) == _clean_text(component.get('componentId'))]
             passed = any(row.get("passed") is True for row in attempts)
             if passed:
                 done += 1
@@ -261,7 +263,7 @@ def _component_activity_progress(detail, components):
 
 def _subject_ref(value):
     ref = _clean_text(value)
-    if not ref or len(ref) > 180 or not re.fullmatch(r"(current|legacy|unlinked):[-\w .:]+", ref):
+    if not ref or len(ref) > 180 or not re.fullmatch(r"(current|legacy|unlinked|free):[-\w .:]+", ref):
         raise ValueError("Unknown module.")
     return ref
 
@@ -282,12 +284,12 @@ def _module_components(detail, module_ref):
     return []
 
 
-def _module_progress(detail, module_ref):
+def _module_progress(detail, module_ref, *, required_only=False):
     module_ref = _subject_ref(module_ref)
     components = _module_components(detail, module_ref)
     if not components:
         raise ValueError("Module not found.")
-    progress = _component_activity_progress(detail, components)
+    progress = _component_activity_progress(detail, components, required_only=required_only)
     title = _clean_text(components[0].get("module")) or module_ref.split(":", 1)[1]
     return {**progress, "moduleRef": module_ref, "moduleTitle": title}
 
@@ -331,7 +333,7 @@ def _snapshot_with_fallbacks(snapshot, kind, pk, module_ref="", module_title="",
         source = _load_source(kind, pk)
         detail = build_learner_detail(source, pk)
         fallback_learner = _learner_identity(detail, source, kind, pk)
-    except (SOURCE_DOES_NOT_EXIST, ValueError, DatabaseError):
+    except SOURCE_DOES_NOT_EXIST + (ValueError, DatabaseError):
         fallback_learner = {}
 
     current_learner = data.get("learner") if isinstance(data.get("learner"), dict) else {}
@@ -361,15 +363,81 @@ def _snapshot_with_fallbacks(snapshot, kind, pk, module_ref="", module_title="",
     return data
 
 
+def _certificate_overrides(cursor, certificate):
+    """Recover old Correct edits from their audit trail; never pin other fields."""
+    snapshot = certificate['snapshot']
+    saved = snapshot.get('certificateOverrides')
+    if isinstance(saved, dict):
+        return {key: value for key, value in saved.items()
+                if key in CORRECTION_FIELDS and isinstance(value, str)}
+    if certificate.get('revision', 1) <= 1:
+        return {}
+    # Audit snapshots contain embedded artwork. Recover only the correction
+    # fields here, leaving the full, immutable history available to admins.
+    cursor.execute('''SELECT jsonb_build_object(
+            'changedFields',details->'changedFields',
+            'after',jsonb_build_object('editable',details#>'{after,editable}'))
+        FROM "Learner".certificate_audit_logs
+        WHERE certificate_id=%s AND action='certificate-corrected'
+        ORDER BY created_at,id''', [certificate['id']])
+    rows = cursor.fetchall()
+    if not rows:
+        # Rendering uncorrected source values here could undo a name correction.
+        raise DatabaseError('Certificate correction history is unavailable.')
+    overrides = {}
+    for row in rows:
+        details = _json_dict(row[0])
+        values = _json_dict(_json_dict(details.get('after')).get('editable'))
+        for key in details.get('changedFields') or []:
+            if key in CORRECTION_FIELDS and isinstance(values.get(key), str):
+                overrides[key] = values[key]
+    return overrides
+
+
+def _current_certificate(cursor, certificate, kind, learner_id):
+    """Read the current display, retaining the stored award and correction history."""
+    overrides = _certificate_overrides(cursor, certificate)
+    template = _template_dict(_published_template(cursor))
+    warnings = []
+    if not template:
+        warnings.append('No published template is available. Showing the saved design.')
+    learner, progress = None, None
+    try:
+        pk = _certificate_enrolment_id(cursor, learner_id)
+        source = _load_source(kind, pk)
+    except SOURCE_DOES_NOT_EXIST + (ValueError, DatabaseError, ServiceError):
+        warnings.append('Current learner and course details could not be loaded. Showing saved details.')
+    else:
+        # Module certificates use the same profile identity as initial issuance.
+        learner = _learner_identity({}, source, kind, pk)
+        try:
+            with learner_journal_reads():
+                if certificate.get('moduleRef'):
+                    progress = course_progress(source, certificate['moduleRef'])
+                else:
+                    detail = build_learner_detail(source, pk, read_only=True)
+                    learner = _learner_identity(detail, source, kind, pk)
+                    progress = _learner_progress(detail)
+        except SOURCE_DOES_NOT_EXIST + (ValueError, DatabaseError, ServiceError):
+            warnings.append('Current course details could not be loaded. Showing the saved course and progress.')
+    result = certificate_display(certificate, template, learner=learner, progress=progress, overrides=overrides)
+    result['refreshWarnings'] = warnings
+    return result
+
+
+def _lock_certificate_scope(cursor, kind, pk, module_ref=''):
+    # Serialize first issuance even when another request publishes a new template.
+    cursor.execute('SELECT pg_advisory_xact_lock(hashtextextended(%s,0))',
+                   [f'certificate:{kind}:{pk}:{module_ref}'])
+
+
 def _eligibility(kind, pk, template):
     source = _load_source(kind, pk)
     detail = build_learner_detail(source, pk)
     progress = _learner_progress(detail)
     missing = []
-    if progress["progressPercent"] < template["minimumProgress"]:
+    if not progress["trackableTotal"] or progress["trackableDone"] * 100 < template["minimumProgress"] * progress["trackableTotal"]:
         missing.append("progress")
-    if template["requireFinalTest"] and not progress["finalTestPassed"]:
-        missing.append("final_test")
     return {
         **progress,
         "eligible": not missing,
@@ -383,20 +451,18 @@ def _eligibility(kind, pk, template):
 
 def _module_eligibility(kind, pk, module_ref, template):
     source = _load_source(kind, pk)
-    detail = build_learner_detail(source, pk)
-    progress = _module_progress(detail, module_ref)
+    progress = course_progress(source, module_ref)
     missing = []
-    if progress["progressPercent"] < template["minimumProgress"]:
+    if (not progress["trackableTotal"] or progress.get("demoProgress")
+            or progress["trackableDone"] * 100 < template["minimumProgress"] * progress["trackableTotal"]):
         missing.append("progress")
-    if template["requireFinalTest"] and not progress["finalTestPassed"]:
-        missing.append("final_test")
     return {
         **progress,
         "eligible": not missing,
         "missing": missing,
         "minimumProgress": template["minimumProgress"],
         "learner": {
-            **_learner_identity(detail, source, kind, pk),
+            **_learner_identity({}, source, kind, pk),
         },
     }
 
@@ -411,7 +477,15 @@ def learner_certificate_template(request, kind, pk):
         return JsonResponse({"error": "Method not allowed."}, status=405)
     try:
         with connections["enrolment"].cursor() as cursor:
+            learner_id = _canonical_certificate_owner(cursor, kind, pk)
             row = _published_template(cursor)
+            cursor.execute('''SELECT DISTINCT lc.module_ref FROM "Learner".learner_certificates lc
+                JOIN "Learner".certificate_templates ct ON ct.id=lc.template_id
+                WHERE lc.learner_kind=%s AND lc.learner_id=%s AND lc.status='issued'
+                  AND ct.certificate_type=%s AND lc.module_ref<>'' ''', [kind, learner_id, CERTIFICATE_TYPE])
+            issued_module_refs = [item[0] for item in cursor.fetchall()]
+    except ValueError as exc:
+        return _error(str(exc), 404)
     except DatabaseError:
         return JsonResponse({"template": None, "configured": False})
     if not row:
@@ -419,6 +493,7 @@ def learner_certificate_template(request, kind, pk):
     template = _template_dict(row)
     if request.GET.get("summary") == "1":
         template = _template_summary(template)
+    template['issuedModuleRefs'] = issued_module_refs
     return JsonResponse({
         "configured": True,
         "template": template,
@@ -432,10 +507,11 @@ def learner_certificate_status(request, kind, pk):
         return _error("Method not allowed.", 405)
     try:
         with connections["enrolment"].cursor() as cursor:
+            learner_id = _canonical_certificate_owner(cursor, kind, pk)
             template = _template_dict(_published_template(cursor))
             if not template:
                 return JsonResponse({"configured": True, "template": None, "certificate": None})
-            certificate = _certificate_dict(_issued_certificate(cursor, kind, pk, template["id"], template["version"]))
+            certificate = _certificate_dict(_issued_certificate(cursor, kind, learner_id))
         eligibility = _eligibility(kind, pk, template)
     except SOURCE_DOES_NOT_EXIST:
         return _error("Learner not found.", 404)
@@ -453,9 +529,14 @@ def issue_learner_certificate(request, kind, pk):
 
     try:
         with connections["enrolment"].cursor() as cursor:
+            learner_id = _canonical_certificate_owner(cursor, kind, pk)
             template = _template_dict(_published_template(cursor))
         if not template:
             return _error("No published certificate template has been configured.", 409)
+        with connections["enrolment"].cursor() as cursor:
+            existing = _issued_certificate(cursor, kind, learner_id)
+            if existing:
+                return JsonResponse({"certificate": _certificate_dict(existing), "template": template, "issued": False})
         eligibility = _eligibility(kind, pk, template)
         if not eligibility["eligible"]:
             return JsonResponse({"error": "Learner is not eligible for this certificate yet.", "eligibility": eligibility}, status=409)
@@ -475,7 +556,8 @@ def issue_learner_certificate(request, kind, pk):
         actor = _clean_text(getattr(getattr(request, "login_account", None), "email", "")) or "system"
         with transaction.atomic(using="enrolment"):
             with connections["enrolment"].cursor() as cursor:
-                existing = _issued_certificate(cursor, kind, pk, template["id"], template["version"])
+                _lock_certificate_scope(cursor, kind, learner_id)
+                existing = _issued_certificate(cursor, kind, learner_id)
                 if existing:
                     return JsonResponse({
                         "certificate": _certificate_dict(existing),
@@ -495,7 +577,7 @@ def issue_learner_certificate(request, kind, pk):
                     [
                         _new_certificate_number(),
                         kind,
-                        pk,
+                        learner_id,
                         template["id"],
                         template["version"],
                         "",
@@ -511,10 +593,12 @@ def issue_learner_certificate(request, kind, pk):
                         '''INSERT INTO "Learner".certificate_audit_logs
                            (actor_email,action,template_id,certificate_id,details)
                            VALUES (%s,%s,%s,%s,%s::jsonb)''',
-                        [actor, "certificate-issued", template["id"], row[0], json.dumps({"learnerKind": kind, "learnerId": pk})],
+                        [actor, "certificate-issued", template["id"], row[0], json.dumps({"learnerKind": kind, "learnerId": learner_id, "enrolmentId": pk})],
                     )
                 else:
-                    row = _issued_certificate(cursor, kind, pk, template["id"], template["version"])
+                    row = _issued_certificate(cursor, kind, learner_id)
+                    if not row:
+                        return _error("This certificate is no longer active. Contact an administrator.", 409)
     except SOURCE_DOES_NOT_EXIST:
         return _error("Learner not found.", 404)
     except ValueError as exc:
@@ -526,17 +610,21 @@ def issue_learner_certificate(request, kind, pk):
 
 
 @staff_only(allow_own_learner="pk")
+@learner_journal_view
 def learner_module_certificate_status(request, kind, pk, module_ref):
     if request.method != "GET":
         return _error("Method not allowed.", 405)
     try:
         module_ref = _subject_ref(module_ref)
         with connections["enrolment"].cursor() as cursor:
+            learner_id = _canonical_certificate_owner(cursor, kind, pk)
             template = _template_dict(_published_template(cursor))
             if not template:
                 return JsonResponse({"configured": True, "template": None, "certificate": None})
-            certificate = _certificate_dict(_issued_certificate(cursor, kind, pk, template["id"], template["version"], module_ref))
+            certificate = _certificate_dict(_issued_certificate(cursor, kind, learner_id, module_ref=module_ref))
         eligibility = _module_eligibility(kind, pk, module_ref, template)
+    except ServiceError as exc:
+        return _error(str(exc), exc.status)
     except SOURCE_DOES_NOT_EXIST:
         return _error("Learner not found.", 404)
     except ValueError as exc:
@@ -547,6 +635,7 @@ def learner_module_certificate_status(request, kind, pk, module_ref):
 
 
 @staff_only(allow_own_learner="pk")
+@learner_journal_view
 def issue_learner_module_certificate(request, kind, pk, module_ref):
     if request.method != "POST":
         return _error("Method not allowed.", 405)
@@ -554,11 +643,12 @@ def issue_learner_module_certificate(request, kind, pk, module_ref):
     try:
         module_ref = _subject_ref(module_ref)
         with connections["enrolment"].cursor() as cursor:
+            learner_id = _canonical_certificate_owner(cursor, kind, pk)
             template = _template_dict(_published_template(cursor))
         if not template:
             return _error("No published certificate template has been configured.", 409)
         with connections["enrolment"].cursor() as cursor:
-            existing = _issued_certificate(cursor, kind, pk, template["id"], template["version"], module_ref)
+            existing = _issued_certificate(cursor, kind, learner_id, module_ref=module_ref)
             if existing:
                 return JsonResponse({
                     "certificate": _certificate_dict(existing),
@@ -578,6 +668,7 @@ def issue_learner_module_certificate(request, kind, pk, module_ref):
             "moduleRef": eligibility["moduleRef"],
             "moduleTitle": eligibility["moduleTitle"],
             "progressPercent": eligibility["progressPercent"],
+            "otjHours": eligibility.get("otjHours"),
             "trackableDone": eligibility["trackableDone"],
             "trackableTotal": eligibility["trackableTotal"],
             "minimumProgress": template["minimumProgress"],
@@ -586,23 +677,11 @@ def issue_learner_module_certificate(request, kind, pk, module_ref):
         actor = _clean_text(getattr(getattr(request, "login_account", None), "email", "")) or "system"
         with transaction.atomic(using="enrolment"):
             with connections["enrolment"].cursor() as cursor:
-                existing = _issued_certificate(cursor, kind, pk, template["id"], template["version"], module_ref)
+                _lock_certificate_scope(cursor, kind, learner_id, module_ref)
+                existing = _issued_certificate(cursor, kind, learner_id, module_ref=module_ref)
                 if existing:
-                    cursor.execute(
-                        '''UPDATE "Learner".learner_certificates
-                           SET progress_percent=%s, snapshot=%s::jsonb, module_title=%s
-                           WHERE id=%s
-                           RETURNING id,certificate_number,template_id,template_version,
-                                     progress_percent,snapshot,issued_at,pdf_blob_url,verification_token,
-                                     module_ref,module_title''',
-                        [
-                            eligibility["progressPercent"],
-                            json.dumps(snapshot),
-                            eligibility["moduleTitle"],
-                            existing[0],
-                        ],
-                    )
-                    existing = cursor.fetchone() or existing
+                    # Another request may have issued and then corrected this
+                    # certificate while eligibility was loading. Keep that copy.
                     return JsonResponse({
                         "certificate": _certificate_dict(existing),
                         "template": template,
@@ -621,7 +700,7 @@ def issue_learner_module_certificate(request, kind, pk, module_ref):
                     [
                         _new_certificate_number(),
                         kind,
-                        pk,
+                        learner_id,
                         template["id"],
                         template["version"],
                         module_ref,
@@ -637,10 +716,14 @@ def issue_learner_module_certificate(request, kind, pk, module_ref):
                         '''INSERT INTO "Learner".certificate_audit_logs
                            (actor_email,action,template_id,certificate_id,details)
                            VALUES (%s,%s,%s,%s,%s::jsonb)''',
-                        [actor, "module-certificate-issued", template["id"], row[0], json.dumps({"learnerKind": kind, "learnerId": pk, "moduleRef": module_ref})],
+                        [actor, "module-certificate-issued", template["id"], row[0], json.dumps({"learnerKind": kind, "learnerId": learner_id, "enrolmentId": pk, "moduleRef": module_ref})],
                     )
                 else:
-                    row = _issued_certificate(cursor, kind, pk, template["id"], template["version"], module_ref)
+                    row = _issued_certificate(cursor, kind, learner_id, module_ref=module_ref)
+                    if not row:
+                        return _error("This certificate is no longer active. Contact an administrator.", 409)
+    except ServiceError as exc:
+        return _error(str(exc), exc.status)
     except SOURCE_DOES_NOT_EXIST:
         return _error("Learner not found.", 404)
     except ValueError as exc:
@@ -651,38 +734,38 @@ def issue_learner_module_certificate(request, kind, pk, module_ref):
     return JsonResponse({"certificate": _certificate_dict(row), "template": template, "eligibility": eligibility, "issued": True})
 
 
+@never_cache
 def verify_certificate(request, token):
     if request.method != "GET":
         return _error("Method not allowed.", 405)
+    stage = 'certificate lookup'
     try:
         with connections["enrolment"].cursor() as cursor:
             cursor.execute(
                 '''SELECT lc.id,lc.certificate_number,lc.template_id,lc.template_version,
                           lc.progress_percent,lc.snapshot,lc.issued_at,lc.pdf_blob_url,lc.verification_token,
                           lc.module_ref,lc.module_title,lc.learner_kind,lc.learner_id,
-                          ct.title,ct.body_text,ct.layout_config
+                          ct.title,ct.body_text,ct.layout_config,lc.status
                    FROM "Learner".learner_certificates lc
                    JOIN "Learner".certificate_templates ct ON ct.id=lc.template_id
-                   WHERE lc.verification_token=%s AND lc.status='issued'
+                   WHERE lc.verification_token=%s
                    LIMIT 1''',
                 [token],
             )
             row = cursor.fetchone()
-    except DatabaseError:
+            if not row:
+                return _error("Certificate not found.", 404)
+            if row[16] != 'issued':
+                return _error("This certificate has been revoked." if row[16] == 'revoked'
+                              else "This certificate has been replaced by a newer template version.", 410)
+            stage = 'certificate refresh'
+            certificate = _current_certificate(cursor, _certificate_dict(row), row[11], row[12])
+    except DatabaseError as exc:
+        cause = exc.__cause__ or exc
+        # Record a diagnostic category without logging SQL parameters, tokens,
+        # connection strings or personal details from the database exception.
+        logger.error('Certificate verification unavailable during %s: %s (SQLSTATE %s)',
+                     stage, type(cause).__name__,
+                     getattr(cause, 'sqlstate', None) or getattr(cause, 'pgcode', None) or 'unknown')
         return _error("Certificate verification is unavailable.", 503)
-    if not row:
-        return _error("Certificate not found.", 404)
-    if len(row) > 15:
-        row = list(row)
-        row[5] = _snapshot_with_fallbacks(row[5], row[11], row[12], row[9], row[10], row[13], row[14], row[15])
-        if _clean_text(row[9]):
-            try:
-                source = _load_source(row[11], row[12])
-                progress = _module_progress(build_learner_detail(source, row[12]), row[9])
-                row[4] = progress["progressPercent"]
-                row[5]["progressPercent"] = progress["progressPercent"]
-                row[5]["trackableDone"] = progress["trackableDone"]
-                row[5]["trackableTotal"] = progress["trackableTotal"]
-            except (SOURCE_DOES_NOT_EXIST, ValueError, DatabaseError):
-                pass
-    return JsonResponse({"valid": True, "certificate": _certificate_dict(row)})
+    return JsonResponse({"valid": True, "certificate": certificate})

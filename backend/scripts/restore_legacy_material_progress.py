@@ -101,8 +101,12 @@ def read_state(cur, aptem_id, course_id, selected):
         raise ValueError('Expected one canonical learner.')
     owner = owners[0]
     state = {'owner': owner}
-    for key, table in [('identities', 'learner_external_identities'),
-                       ('progress', 'learner_progress_entries'), ('sources', 'learner_activity_sources'),
+    state['identities'] = cur.execute('''SELECT lms_learner_id AS id,
+        learner_profile_id AS learner_id,aptem_id,lms_learner_id AS source_learner_id,
+        lms_email,is_primary,canonical_lms_id,first_seen,last_seen
+        FROM "Last_audit".learner_lms_aliases
+        WHERE learner_profile_id=%s ORDER BY lms_learner_id''', [owner['id']]).fetchall()
+    for key, table in [('progress', 'learner_progress_entries'), ('sources', 'learner_activity_sources'),
                        ('segments', 'learner_activity_reporting_segments')]:
         state[key] = cur.execute(f'SELECT * FROM "Learner".{table} WHERE learner_id=%s ORDER BY id', [owner['id']]).fetchall()
     state['journals'] = cur.execute('SELECT * FROM "Learner".learner_journal_rows WHERE canonical_learner_id=%s ORDER BY id', [owner['id']]).fetchall()
@@ -130,12 +134,12 @@ def plan_restore(state, course, user_id, course_id, selected):
             or str(owner.get('account_aptem_id')) != str(owner['aptem_id'])
             or str(owner.get('email', '')).strip().casefold() != str(owner.get('account_email', '')).strip().casefold()):
         raise ValueError('Canonical learner/enrolment identity needs review.')
-    identities = [i for i in state['identities'] if i['source_system'] == 'old_lms'
-                  and str(i['source_learner_id']) == str(user_id) and i['deleted_at'] is None]
+    identities = [i for i in state['identities']
+                  if str(i['source_learner_id']) == str(user_id)]
     if len(identities) != 1:
         raise ValueError('Source account is not uniquely linked to this learner.')
     identity = identities[0]
-    email = identity['source_payload'].get('source_email') or identity['source_payload'].get('learner_email')
+    email = identity['lms_email']
     if (identity['learner_id'] != owner['id'] or not email
             or str(course.get('email') or '').strip().casefold() != email.strip().casefold()
             or course.get('user_id') != user_id or course.get('course_id') != course_id):
@@ -289,8 +293,11 @@ def main():
                 if len(owners) != 1:
                     raise ValueError('Expected one canonical learner.')
                 cur.execute("SELECT pg_advisory_xact_lock(hashtext('learner-journal-progress'),%s::integer)", [owners[0]['id']])
-                for table in ('learner_progress_entries', 'learner_activity_sources', 'learner_external_identities'):
+                for table in ('learner_progress_entries', 'learner_activity_sources'):
                     cur.execute(f'SELECT id FROM "Learner".{table} WHERE learner_id=%s FOR UPDATE', [owners[0]['id']])
+                cur.execute('''SELECT aptem_id,lms_learner_id
+                    FROM "Last_audit".learner_lms_aliases
+                    WHERE learner_profile_id=%s ORDER BY lms_learner_id FOR UPDATE''', [owners[0]['id']])
                 cur.execute('SELECT id FROM "Learner".learner_journal_rows WHERE canonical_learner_id=%s FOR UPDATE', [owners[0]['id']])
             state = read_state(cur, args.aptem_id, args.course_id, args.material_ids)
             plans = plan_restore(state, course, args.source_user_id, args.course_id, args.material_ids)

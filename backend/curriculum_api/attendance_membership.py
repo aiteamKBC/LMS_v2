@@ -28,7 +28,9 @@ def assigned_module_ids_by_profile(profile_ids, module_ids):
     resolving the whole catalogue. Unknown modules and unknown learners hold
     nothing.
     """
-    from . import views
+    from curriculum_api.catalogue.infrastructure.cache_runtime import curriculum_read_scope
+    from curriculum_api.catalogue.infrastructure.catalogue_resolution import programme_identity_candidates
+    from curriculum_api.catalogue.infrastructure.placement_runtime import scope_programme_identifier
     from .learner_status_counts import learner_facts, members_for_lineages, placement_lineages
 
     profile_ids = {int(value) for value in profile_ids or () if str(value).strip().lstrip('-').isdigit()}
@@ -36,13 +38,13 @@ def assigned_module_ids_by_profile(profile_ids, module_ids):
     result = {profile_id: set() for profile_id in profile_ids}
     if not profile_ids or not module_ids:
         return result
-    with views.curriculum_read_scope(targeted_child_reads=True):
+    with curriculum_read_scope(targeted_child_reads=True):
         lineages = placement_lineages('module', module_ids)
         found = {key: lineage for key, lineage in lineages.items() if lineage.get('found')}
         if not found:
             return result
-        programme_ids = {views.scope_programme_identifier(lineage) for lineage in found.values()}
-        candidates = {identifier: views.programme_identity_candidates(identifier)
+        programme_ids = {scope_programme_identifier(lineage) for lineage in found.values()}
+        candidates = {identifier: programme_identity_candidates(identifier)
                       for identifier in programme_ids if identifier}
         facts = learner_facts({str(lineage.get('moduleCatalogueId') or key) for key, lineage in found.items()},
                               profile_ids=profile_ids)
@@ -64,18 +66,20 @@ def module_roster(module_id):
     """
     from learner_api.models import LearnerProfile
 
-    from . import views
+    from curriculum_api.catalogue.infrastructure.cache_runtime import curriculum_read_scope
+    from curriculum_api.catalogue.infrastructure.catalogue_resolution import programme_identity_candidates
+    from curriculum_api.catalogue.infrastructure.placement_runtime import scope_programme_identifier
     from .learner_status_counts import learner_facts, members_for_lineages, placement_lineages
 
     module_id = str(module_id or '').strip()
     if not module_id:
         return []
-    with views.curriculum_read_scope(targeted_child_reads=True):
+    with curriculum_read_scope(targeted_child_reads=True):
         lineage = placement_lineages('module', [module_id]).get(module_id) or {}
         if not lineage.get('found'):
             return []
-        programme_id = views.scope_programme_identifier(lineage)
-        candidates = {programme_id: views.programme_identity_candidates(programme_id)} if programme_id else {}
+        programme_id = scope_programme_identifier(lineage)
+        candidates = {programme_id: programme_identity_candidates(programme_id)} if programme_id else {}
         facts = learner_facts({str(lineage.get('moduleCatalogueId') or module_id)})
         members = members_for_lineages({module_id: lineage}, facts, candidates).get(module_id) or ()
         profile_ids = {int(facts[index]['id']) for index in members if facts[index].get('id') is not None}

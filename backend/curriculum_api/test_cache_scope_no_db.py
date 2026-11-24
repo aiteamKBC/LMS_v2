@@ -1,4 +1,6 @@
 """Programme-scoped cache generations; every database and cache call is mocked."""
+from curriculum_api.catalogue.tests.parity.composition_test_support import composition_patch
+from curriculum_api.catalogue.tests.parity.composition_test_support import composition_fixture
 import contextlib
 import json
 import threading
@@ -50,8 +52,8 @@ def resolution(found=(1, 0, 0), linked=1, refs=(), programmes=()):
 class AffectedProgrammeTests(SimpleTestCase):
     def resolve(self, seeds, **kwargs):
         connection, cursor = resolution(**kwargs)
-        with patch.object(cache_scope, 'connection', connection), \
-                patch.object(cache_scope, 'scope_table_available', return_value=True):
+        with composition_fixture(cache_scope, 'connection', connection), \
+                composition_fixture(cache_scope, 'scope_table_available', return_value=True):
             return cache_scope.affected_programmes(seeds), cursor
 
     def seeds(self, **ids):
@@ -88,15 +90,15 @@ class AffectedProgrammeTests(SimpleTestCase):
     def test_a_failed_lookup_is_global(self):
         connection, cursor = resolution()
         cursor.execute.side_effect = RuntimeError('timeout')
-        with patch.object(cache_scope, 'connection', connection), \
-                patch.object(cache_scope, 'scope_table_available', return_value=True), \
+        with composition_fixture(cache_scope, 'connection', connection), \
+                composition_fixture(cache_scope, 'scope_table_available', return_value=True), \
                 patch.object(cache_scope.logger, 'warning'):
             self.assertIsNone(cache_scope.affected_programmes(self.seeds(modules=['M1'])))
 
     def test_no_table_means_no_lookup(self):
         connection, cursor = resolution()
-        with patch.object(cache_scope, 'connection', connection), \
-                patch.object(cache_scope, 'scope_table_available', return_value=False):
+        with composition_fixture(cache_scope, 'connection', connection), \
+                composition_fixture(cache_scope, 'scope_table_available', return_value=False):
             self.assertIsNone(cache_scope.affected_programmes(self.seeds(modules=['M1'])))
         cursor.execute.assert_not_called()
 
@@ -110,20 +112,20 @@ class AffectedProgrammeTests(SimpleTestCase):
 class ProgrammeGenerationTests(SimpleTestCase):
     def test_only_an_exact_programme_id_is_scoped(self):
         epochs = {'#global': 40, '#bumps': 30, '*': 5, 'P1': 2}
-        with patch.object(cache_scope, 'scope_epochs', return_value=epochs), \
-                patch.object(cache_scope, 'programme_ids', return_value=frozenset({'P1', 'P2'})):
+        with composition_fixture(cache_scope, 'scope_epochs', return_value=epochs), \
+                composition_fixture(cache_scope, 'programme_ids', return_value=frozenset({'P1', 'P2'})):
             self.assertEqual(cache_scope.programme_generation('P1'), ('scope', 10, 5, 'P1', 2))
             self.assertEqual(cache_scope.programme_generation('P2'), ('scope', 10, 5, 'P2', 0))
             self.assertIsNone(cache_scope.programme_generation('data-analyst'))
             self.assertIsNone(cache_scope.programme_generation(''))
 
     def test_no_table_is_global(self):
-        with patch.object(cache_scope, 'scope_epochs', return_value=None):
+        with composition_fixture(cache_scope, 'scope_epochs', return_value=None):
             self.assertIsNone(cache_scope.programme_generation('P1'))
 
     def test_no_global_reading_is_global(self):
-        with patch.object(cache_scope, 'scope_epochs', return_value={'*': 1}), \
-                patch.object(cache_scope, 'programme_ids', return_value=frozenset({'P1'})):
+        with composition_fixture(cache_scope, 'scope_epochs', return_value={'*': 1}), \
+                composition_fixture(cache_scope, 'programme_ids', return_value=frozenset({'P1'})):
             self.assertIsNone(cache_scope.programme_generation('P1'))
 
 
@@ -134,19 +136,19 @@ class ScopedCacheTests(SimpleTestCase):
         self.cache = Mock()
         self.cache.get.return_value = None
         for patcher in (
-            patch.dict(views._CURRICULUM_CACHE, {}, clear=True),
-            patch.object(views, '_CURRICULUM_CACHE_EPOCH', 0),
-            patch.object(views, 'shared_curriculum_epoch', self.global_epoch),
-            patch.object(views, 'cache', self.cache),
+            patch.dict(views.cache_state._CURRICULUM_CACHE, {}, clear=True),
+            patch.object(views.cache_state, '_CURRICULUM_CACHE_EPOCH', 0),
+            composition_fixture(views, 'shared_curriculum_epoch', self.global_epoch),
+            composition_fixture(views, 'cache', self.cache),
             patch.object(views.shared_build, 'try_acquire', return_value=(True, None)),
             patch.object(views.shared_build, 'release'),
-            patch.object(cache_scope, 'scope_epochs', lambda: dict(self.epochs)),
-            patch.object(cache_scope, 'programme_ids', return_value=frozenset({'P1', 'P2'})),
+            composition_fixture(cache_scope, 'scope_epochs', lambda: dict(self.epochs)),
+            composition_fixture(cache_scope, 'programme_ids', return_value=frozenset({'P1', 'P2'})),
         ):
             patcher.start()
             self.addCleanup(patcher.stop)
-        views._CURRICULUM_EPOCH_BUMP.pending = False
-        views._CURRICULUM_EPOCH_BUMP.scoped = False
+        views.cache_state._CURRICULUM_EPOCH_BUMP.pending = False
+        views.cache_state._CURRICULUM_EPOCH_BUMP.scoped = False
 
     def get(self, programme, value):
         return views.cached_curriculum_value(f'detail:{programme}', lambda: value, scope=programme)
@@ -187,30 +189,30 @@ class ScopedCacheTests(SimpleTestCase):
     def test_a_local_invalidation_keeps_scoped_entries_and_drops_the_rest(self):
         self.get('P1', 'p1 v1')
         views.cached_curriculum_value('overview', lambda: 'o1')
-        with patch.object(views, 'bump_shared_curriculum_epoch'), \
+        with composition_fixture(views, 'bump_shared_curriculum_epoch'), \
                 patch.object(views.transaction, 'on_commit'), \
-                patch('curriculum_api.read_model.enqueue_all_curriculum_home_refreshes'):
+                composition_patch('curriculum_api.read_model.enqueue_all_curriculum_home_refreshes'):
             views.invalidate_curriculum_cache()
-        self.assertIn('detail:P1', views._CURRICULUM_CACHE)
-        self.assertNotIn('overview', views._CURRICULUM_CACHE)
+        self.assertIn('detail:P1', views.cache_state._CURRICULUM_CACHE)
+        self.assertNotIn('overview', views.cache_state._CURRICULUM_CACHE)
 
     def test_the_writing_request_reads_its_own_writes(self):
         self.get('P1', 'p1 v1')
-        views._CURRICULUM_EPOCH_BUMP.pending = True
+        views.cache_state._CURRICULUM_EPOCH_BUMP.pending = True
         try:
             self.assertEqual(self.get('P1', 'p1 after write'), 'p1 after write')
         finally:
-            views._CURRICULUM_EPOCH_BUMP.pending = False
+            views.cache_state._CURRICULUM_EPOCH_BUMP.pending = False
 
     def test_a_build_overtaken_by_its_programmes_write_is_not_published(self):
         def build():
             self.epochs['P1'] += 1
             return 'pre-write'
         self.assertEqual(views.cached_curriculum_value('detail:P1', build, scope='P1'), 'pre-write')
-        self.assertNotIn('detail:P1', views._CURRICULUM_CACHE)
+        self.assertNotIn('detail:P1', views.cache_state._CURRICULUM_CACHE)
 
     def test_without_the_table_a_scope_is_ignored(self):
-        with patch.object(cache_scope, 'scope_epochs', return_value=None):
+        with composition_fixture(cache_scope, 'scope_epochs', return_value=None):
             self.get('P1', 'p1 v1')
             self.global_epoch.return_value = 8
             self.assertEqual(self.get('P1', 'p1 v2'), 'p1 v2')
@@ -219,16 +221,16 @@ class ScopedCacheTests(SimpleTestCase):
 class MiddlewareScopeTests(SimpleTestCase):
     def run_request(self, method, path, before, after, pending=True, status=200):
         def view(request):
-            views._CURRICULUM_EPOCH_BUMP.pending = pending
+            views.cache_state._CURRICULUM_EPOCH_BUMP.pending = pending
             return Mock(status_code=status)
 
         middleware = CurriculumChangeLogMiddleware(view)
         request = getattr(RequestFactory(), method.lower())('/curriculum_api' + path)
         answers = iter([before, after])
-        with patch.object(cache_scope, 'affected_programmes', side_effect=lambda seeds: next(answers)) as resolve, \
-                patch.object(views, 'write_shared_curriculum_epoch_bump') as bump, \
-                patch.object(views, 'shared_curriculum_epoch', return_value=1), \
-                patch.object(views, 'record_curriculum_change'):
+        with composition_fixture(cache_scope, 'affected_programmes', side_effect=lambda seeds: next(answers)) as resolve, \
+                composition_fixture(views, 'write_shared_curriculum_epoch_bump') as bump, \
+                composition_fixture(views, 'shared_curriculum_epoch', return_value=1), \
+                composition_fixture(views, 'record_curriculum_change'):
             middleware(request)
         return bump, resolve
 
@@ -259,20 +261,20 @@ class BumpTests(SimpleTestCase):
         connection = MagicMock(vendor='postgresql')
         for scopes, expected in ((frozenset({'P2', 'P1'}), ['#bumps', 'P1', 'P2']), (None, ['#bumps', '*'])):
             with self.subTest(scopes=scopes), \
-                    patch.object(cache_scope, 'connection', connection), \
-                    patch.object(cache_scope, 'scope_table_available', return_value=True), \
+                    composition_fixture(cache_scope, 'connection', connection), \
+                    composition_fixture(cache_scope, 'scope_table_available', return_value=True), \
                     patch.object(cache_scope.transaction, 'atomic'), \
-                    patch.object(views, 'fetch_all', return_value=[]) as fetch:
+                    composition_fixture(views, 'fetch_all', return_value=[]) as fetch:
                 cache_scope.bump_scopes(scopes)
             self.assertEqual(fetch.call_args.args[1], [expected])
 
     def test_a_failed_programme_bump_falls_back_to_the_unscoped_one(self):
         connection = MagicMock(vendor='postgresql')
-        with patch.object(cache_scope, 'connection', connection), \
-                patch.object(cache_scope, 'scope_table_available', return_value=True), \
+        with composition_fixture(cache_scope, 'connection', connection), \
+                composition_fixture(cache_scope, 'scope_table_available', return_value=True), \
                 patch.object(cache_scope.transaction, 'atomic'), \
                 patch.object(cache_scope.logger, 'warning'), \
-                patch.object(views, 'fetch_all', side_effect=[RuntimeError('x'), []]) as fetch:
+                composition_fixture(views, 'fetch_all', side_effect=[RuntimeError('x'), []]) as fetch:
             cache_scope.bump_scopes(frozenset({'P1'}))
         self.assertEqual(fetch.call_args.args[1], [['#bumps', '*']])
 
@@ -295,11 +297,11 @@ def bump_harness(test, *, global_error=None, scope_rows=None, commit_error=None)
         return [{'epoch': 8}]
 
     for patcher in (
-        patch.object(views, 'connection', MagicMock(vendor='postgresql')),
-        patch.object(views, 'ensure_curriculum_epoch_table', return_value=True),
+        composition_fixture(views, 'connection', MagicMock(vendor='postgresql')),
+        composition_fixture(views, 'ensure_curriculum_epoch_table', return_value=True),
         patch.object(views.transaction, 'atomic', atomic),
-        patch.object(views, 'fetch_all', side_effect=fetch_all),
-        patch.object(cache_scope, 'bump_scopes', return_value=scope_rows),
+        composition_fixture(views, 'fetch_all', side_effect=fetch_all),
+        composition_fixture(cache_scope, 'bump_scopes', return_value=scope_rows),
         patch.object(views.logger, 'error'),
     ):
         patcher.start()
@@ -312,9 +314,9 @@ class BumpFailureTests(SimpleTestCase):
 
     def setUp(self):
         for patcher in (
-            patch.dict(views._CURRICULUM_CACHE, {}, clear=True),
-            patch.object(views, '_CURRICULUM_CACHE_EPOCH', 0),
-            patch.dict(views._SHARED_EPOCH_STATE, {'value': 7, 'checked_at': 0.0}),
+            patch.dict(views.cache_state._CURRICULUM_CACHE, {}, clear=True),
+            patch.object(views.cache_state, '_CURRICULUM_CACHE_EPOCH', 0),
+            patch.dict(views.cache_state._SHARED_EPOCH_STATE, {'value': 7, 'checked_at': 0.0}),
             patch.dict(cache_scope._STATE, {
                 'epochs': {'#global': 7, '#bumps': 2, '*': 1, 'P1': 1},
                 'checked_at': 123.0, 'table': True, 'table_checked_at': 0.0,
@@ -322,7 +324,7 @@ class BumpFailureTests(SimpleTestCase):
         ):
             patcher.start()
             self.addCleanup(patcher.stop)
-        views._CURRICULUM_CACHE.update({
+        views.cache_state._CURRICULUM_CACHE.update({
             'detail:P1': {'expires_at': 1e12, 'shared_epoch': ('scope', 5, 1, 'P1', 1), 'value': 'p1', 'scoped': True},
             'overview': {'expires_at': 1e12, 'shared_epoch': 7, 'value': 'o', 'scoped': False},
         })
@@ -330,13 +332,13 @@ class BumpFailureTests(SimpleTestCase):
     def test_a_failed_global_bump_drops_this_workers_scoped_entries_and_says_so(self):
         bump_harness(self, global_error=RuntimeError('connection lost'))
         views.write_shared_curriculum_epoch_bump(frozenset({'P1'}))
-        self.assertNotIn('detail:P1', views._CURRICULUM_CACHE)
+        self.assertNotIn('detail:P1', views.cache_state._CURRICULUM_CACHE)
         # A build already running cannot publish its pre-write result.
-        self.assertEqual(views._CURRICULUM_CACHE_EPOCH, 1)
+        self.assertEqual(views.cache_state._CURRICULUM_CACHE_EPOCH, 1)
         # The polled generations are read again rather than trusted.
         self.assertIsNone(cache_scope._STATE['epochs'])
         # Nothing moved, so the remembered global epoch is unchanged.
-        self.assertEqual(views._SHARED_EPOCH_STATE['value'], 7)
+        self.assertEqual(views.cache_state._SHARED_EPOCH_STATE['value'], 7)
         views.logger.error.assert_called_once()
 
     def test_a_failed_commit_never_publishes_the_scope_epochs_it_returned(self):
@@ -347,16 +349,16 @@ class BumpFailureTests(SimpleTestCase):
                      commit_error=RuntimeError('commit failed'))
         views.write_shared_curriculum_epoch_bump(frozenset({'P1'}))
         self.assertIsNone(cache_scope._STATE['epochs'])
-        self.assertNotIn('detail:P1', views._CURRICULUM_CACHE)
-        self.assertEqual(views._SHARED_EPOCH_STATE['value'], 7)
+        self.assertNotIn('detail:P1', views.cache_state._CURRICULUM_CACHE)
+        self.assertEqual(views.cache_state._SHARED_EPOCH_STATE['value'], 7)
 
     def test_a_committed_bump_is_published_to_this_worker_at_once(self):
         bump_harness(self, scope_rows=[{'scope': '#bumps', 'epoch': 3}, {'scope': 'P1', 'epoch': 2}])
         views.write_shared_curriculum_epoch_bump(frozenset({'P1'}))
         self.assertEqual(cache_scope._STATE['epochs'], {'#global': 8, '#bumps': 3, '*': 1, 'P1': 2})
-        self.assertEqual(views._SHARED_EPOCH_STATE['value'], 8)
+        self.assertEqual(views.cache_state._SHARED_EPOCH_STATE['value'], 8)
         # Kept: the new P1 generation retires it on the next read.
-        self.assertIn('detail:P1', views._CURRICULUM_CACHE)
+        self.assertIn('detail:P1', views.cache_state._CURRICULUM_CACHE)
         views.logger.error.assert_not_called()
 
     def test_a_scope_bump_that_moved_nothing_rereads_rather_than_guesses(self):
@@ -365,38 +367,38 @@ class BumpFailureTests(SimpleTestCase):
         self.assertIsNone(cache_scope._STATE['epochs'])
 
     def test_without_the_epoch_table_scoped_entries_are_dropped_as_before_scoping(self):
-        with patch.object(views, 'ensure_curriculum_epoch_table', return_value=False), \
-                patch.object(views, 'cache', Mock()):
+        with composition_fixture(views, 'ensure_curriculum_epoch_table', return_value=False), \
+                composition_fixture(views, 'cache', Mock()):
             views.write_shared_curriculum_epoch_bump(frozenset({'P1'}))
-        self.assertNotIn('detail:P1', views._CURRICULUM_CACHE)
-        self.assertIn('overview', views._CURRICULUM_CACHE)
+        self.assertNotIn('detail:P1', views.cache_state._CURRICULUM_CACHE)
+        self.assertIn('overview', views.cache_state._CURRICULUM_CACHE)
 
     def test_both_scope_bumps_failing_falls_back_to_the_global_epoch(self):
         # The programme counter and the unscoped fallback both fail: the table
         # is forgotten, so lookups use the global epoch this write did move.
-        with patch.object(cache_scope, 'connection', MagicMock(vendor='postgresql')), \
-                patch.object(cache_scope, 'scope_table_available', return_value=True), \
+        with composition_fixture(cache_scope, 'connection', MagicMock(vendor='postgresql')), \
+                composition_fixture(cache_scope, 'scope_table_available', return_value=True), \
                 patch.object(cache_scope.transaction, 'atomic'), \
                 patch.object(cache_scope.logger, 'warning'), \
-                patch.object(views, 'fetch_all', side_effect=RuntimeError('x')):
+                composition_fixture(views, 'fetch_all', side_effect=RuntimeError('x')):
             self.assertIsNone(cache_scope.bump_scopes(frozenset({'P1'})))
         self.assertIsNone(cache_scope._STATE['table'])
 
 
 class WriteOutsideRequestTests(SimpleTestCase):
     def tearDown(self):
-        views._CURRICULUM_EPOCH_BUMP.scoped = False
-        views._CURRICULUM_EPOCH_BUMP.pending = False
+        views.cache_state._CURRICULUM_EPOCH_BUMP.scoped = False
+        views.cache_state._CURRICULUM_EPOCH_BUMP.pending = False
 
     def test_a_save_outside_a_request_moves_the_unscoped_counter_at_once(self):
-        views._CURRICULUM_EPOCH_BUMP.scoped = False
-        with patch.object(views, 'write_shared_curriculum_epoch_bump') as bump:
+        views.cache_state._CURRICULUM_EPOCH_BUMP.scoped = False
+        with composition_fixture(views, 'write_shared_curriculum_epoch_bump') as bump:
             views.bump_shared_curriculum_epoch()
         bump.assert_called_once_with()
 
     def test_inside_a_request_the_bump_is_owed_until_the_view_returns(self):
         views.begin_curriculum_write_scope()
-        with patch.object(views, 'write_shared_curriculum_epoch_bump') as bump:
+        with composition_fixture(views, 'write_shared_curriculum_epoch_bump') as bump:
             views.bump_shared_curriculum_epoch()
             bump.assert_not_called()
             self.assertTrue(views.curriculum_write_pending())
@@ -455,9 +457,9 @@ class LearnerFreshnessTests(SimpleTestCase):
             return Mock()
 
         match = resolve(path)
-        with patch.object(views, 'cached_curriculum_value', fake_cache), \
-                patch.object(views, 'repair_curriculum_parent_links'), \
-                patch.object(views, 'conditional_json_response', return_value=Mock(status_code=200)):
+        with composition_fixture(views, 'cached_curriculum_value', fake_cache), \
+                composition_fixture(views, 'repair_curriculum_parent_links'), \
+                composition_fixture(views, 'conditional_json_response', return_value=Mock(status_code=200)):
             match.func(RequestFactory().get(path), *match.args, **match.kwargs)
         return captured
 
@@ -480,14 +482,14 @@ class LearnerFreshnessTests(SimpleTestCase):
         fake_datetime = Mock()
         fake_datetime.now.return_value.timestamp.side_effect = lambda: clock[0]
         ttl = views.CURRICULUM_LEARNER_DATA_TTL_SECONDS
-        with patch.dict(views._CURRICULUM_CACHE, {}, clear=True), \
-                patch.object(views, 'datetime', fake_datetime), \
-                patch.object(views, 'shared_curriculum_epoch', return_value=7), \
-                patch.object(views, 'cache', Mock(get=Mock(return_value=None))), \
+        with patch.dict(views.cache_state._CURRICULUM_CACHE, {}, clear=True), \
+                composition_fixture(views, 'datetime', fake_datetime), \
+                composition_fixture(views, 'shared_curriculum_epoch', return_value=7), \
+                composition_fixture(views, 'cache', Mock(get=Mock(return_value=None))), \
                 patch.object(views.shared_build, 'try_acquire', return_value=(True, None)), \
                 patch.object(views.shared_build, 'release'), \
-                patch.object(cache_scope, 'scope_epochs', return_value=epochs), \
-                patch.object(cache_scope, 'programme_ids', return_value=frozenset({'P1'})):
+                composition_fixture(cache_scope, 'scope_epochs', return_value=epochs), \
+                composition_fixture(cache_scope, 'programme_ids', return_value=frozenset({'P1'})):
             def get(value):
                 return views.cached_curriculum_value('shell:P1', lambda: value, ttl=ttl, scope='P1')
 
@@ -501,14 +503,14 @@ class LearnerFreshnessTests(SimpleTestCase):
         fake_datetime = Mock()
         fake_datetime.now.return_value.timestamp.side_effect = lambda: clock[0]
         return [
-            patch.dict(views._CURRICULUM_CACHE, {}, clear=True),
-            patch.object(views, 'datetime', fake_datetime),
-            patch.object(views, 'shared_curriculum_epoch', return_value=7),
-            patch.object(views, 'cache', Mock(get=Mock(return_value=None))),
+            patch.dict(views.cache_state._CURRICULUM_CACHE, {}, clear=True),
+            composition_fixture(views, 'datetime', fake_datetime),
+            composition_fixture(views, 'shared_curriculum_epoch', return_value=7),
+            composition_fixture(views, 'cache', Mock(get=Mock(return_value=None))),
             patch.object(views.shared_build, 'try_acquire', return_value=(True, None)),
             patch.object(views.shared_build, 'release'),
-            patch.object(cache_scope, 'scope_epochs', side_effect=lambda: dict(epochs)),
-            patch.object(cache_scope, 'programme_ids', return_value=frozenset({'P1'})),
+            composition_fixture(cache_scope, 'scope_epochs', side_effect=lambda: dict(epochs)),
+            composition_fixture(cache_scope, 'programme_ids', return_value=frozenset({'P1'})),
         ]
 
     def test_only_the_shell_is_rechecked_against_its_learner_rows(self):
@@ -601,14 +603,14 @@ class LearnerFreshnessTests(SimpleTestCase):
             self.assertEqual(checks, ['checked', 'checked'])
 
     def test_the_shell_fingerprint_is_exactly_the_two_learner_count_reads(self):
-        with patch.object(views, 'active_learner_programme_counts', return_value=({'P1': 3}, {'mba': 1})), \
-                patch.object(views, 'active_learner_delivery_counts', return_value=({'C1': 2, ('p', 'c'): 1}, {'G1': 2})):
+        with composition_fixture(views, 'active_learner_programme_counts', return_value=({'P1': 3}, {'mba': 1})), \
+                composition_fixture(views, 'active_learner_delivery_counts', return_value=({'C1': 2, ('p', 'c'): 1}, {'G1': 2})):
             first = views.programme_shell_learner_fingerprint()
-        with patch.object(views, 'active_learner_programme_counts', return_value=({'P1': 3}, {'mba': 1})), \
-                patch.object(views, 'active_learner_delivery_counts', return_value=({('p', 'c'): 1, 'C1': 2}, {'G1': 2})):
+        with composition_fixture(views, 'active_learner_programme_counts', return_value=({'P1': 3}, {'mba': 1})), \
+                composition_fixture(views, 'active_learner_delivery_counts', return_value=({('p', 'c'): 1, 'C1': 2}, {'G1': 2})):
             reordered = views.programme_shell_learner_fingerprint()
-        with patch.object(views, 'active_learner_programme_counts', return_value=({'P1': 3}, {'mba': 1})), \
-                patch.object(views, 'active_learner_delivery_counts', return_value=({'C1': 2, ('p', 'c'): 1}, {'G1': 3})):
+        with composition_fixture(views, 'active_learner_programme_counts', return_value=({'P1': 3}, {'mba': 1})), \
+                composition_fixture(views, 'active_learner_delivery_counts', return_value=({'C1': 2, ('p', 'c'): 1}, {'G1': 3})):
             moved = views.programme_shell_learner_fingerprint()
         self.assertEqual(first, reordered)
         self.assertNotEqual(first, moved)

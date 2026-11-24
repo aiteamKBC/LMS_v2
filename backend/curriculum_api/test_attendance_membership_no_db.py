@@ -3,6 +3,7 @@
 No database: placement lineages and learner facts are synthetic, shaped like
 ``learner_status_counts.placement_lineages`` / ``learner_facts`` rows.
 """
+from curriculum_api.catalogue.tests.parity.composition_test_support import composition_patch
 from contextlib import nullcontext
 from unittest import mock
 
@@ -25,9 +26,9 @@ def fact(profile_id, *, programme='P1', cohort='C1', group='G1', plan=(), explic
 
 class AttendanceMembershipTests(SimpleTestCase):
     def membership(self, lineages, facts, profile_ids, module_ids):
-        with mock.patch('curriculum_api.views.curriculum_read_scope', return_value=nullcontext()), \
-             mock.patch('curriculum_api.views.scope_programme_identifier', side_effect=lambda row: row.get('programmeId')), \
-             mock.patch('curriculum_api.views.programme_identity_candidates', return_value=[]), \
+        with composition_patch('curriculum_api.views.curriculum_read_scope', return_value=nullcontext()), \
+             composition_patch('curriculum_api.views.scope_programme_identifier', side_effect=lambda row: row.get('programmeId')), \
+             composition_patch('curriculum_api.views.programme_identity_candidates', return_value=[]), \
              mock.patch.object(learner_status_counts, 'placement_lineages', return_value=lineages) as lineage_read, \
              mock.patch.object(learner_status_counts, 'learner_facts', return_value=facts) as fact_read:
             result = attendance_membership.assigned_module_ids_by_profile(profile_ids, module_ids)
@@ -101,9 +102,9 @@ class AttendanceModuleRosterTests(SimpleTestCase):
     def roster(self, lineages, facts, profiles):
         profile_manager = mock.MagicMock()
         profile_manager.filter.return_value.values.return_value = profiles
-        with mock.patch('curriculum_api.views.curriculum_read_scope', return_value=nullcontext()), \
-             mock.patch('curriculum_api.views.scope_programme_identifier', side_effect=lambda row: row.get('programmeId')), \
-             mock.patch('curriculum_api.views.programme_identity_candidates', return_value=[]), \
+        with composition_patch('curriculum_api.views.curriculum_read_scope', return_value=nullcontext()), \
+             composition_patch('curriculum_api.views.scope_programme_identifier', side_effect=lambda row: row.get('programmeId')), \
+             composition_patch('curriculum_api.views.programme_identity_candidates', return_value=[]), \
              mock.patch.object(learner_status_counts, 'placement_lineages', return_value=lineages), \
              mock.patch.object(learner_status_counts, 'learner_facts', return_value=facts), \
              mock.patch('learner_api.models.LearnerProfile.objects', profile_manager):

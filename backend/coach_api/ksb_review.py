@@ -21,11 +21,14 @@ def save_review(request, submission_id, allowed_learner_ids, payload):
     if not allowed_learner_ids:
         return JsonResponse({'detail': 'Submission not found.'}, status=404)
     try:
+        from .views import MARKING_QUEUE_CANONICAL_OWNER_SQL
         with transaction.atomic(using='enrolment'), connections['enrolment'].cursor() as cursor:
-            cursor.execute('''SELECT learner_kind,learner_id,status,ksb_codes,ksb_weights,ksb_explanations,
+            cursor.execute(f'''SELECT learner_kind,learner_id,status,ksb_codes,ksb_weights,ksb_explanations,
                 confidence_before,confidence_after,full_submission
                 FROM "Learner".learning_reflection_submissions
-                WHERE id=%s AND learner_id=ANY(%s) FOR UPDATE''', [str(submission_id), allowed_learner_ids])
+                WHERE id=%s AND learner_id=ANY(%s)
+                  AND activity_type<>'extra_activity'
+                  AND {MARKING_QUEUE_CANONICAL_OWNER_SQL} FOR UPDATE''', [str(submission_id), allowed_learner_ids])
             value = cursor.fetchone()
             if not value:
                 return JsonResponse({'detail': 'Submission not found.'}, status=404)
@@ -39,7 +42,8 @@ def save_review(request, submission_id, allowed_learner_ids, payload):
             columns = list(fields)
             cursor.execute('UPDATE "Learner".learning_reflection_submissions SET '
                 + ', '.join(f'{column}=%s::jsonb' for column in columns)
-                + ' WHERE id=%s AND learner_id=ANY(%s)',
+                + " WHERE id=%s AND learner_id=ANY(%s) AND activity_type<>'extra_activity' AND "
+                + MARKING_QUEUE_CANONICAL_OWNER_SQL,
                 [*(json.dumps(fields[column]) for column in columns), str(submission_id), allowed_learner_ids])
     except KsbReviewError as exc:
         return JsonResponse({'detail': str(exc)}, status=exc.status)

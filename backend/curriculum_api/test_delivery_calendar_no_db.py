@@ -1,4 +1,5 @@
 """Pure policy/provider regressions; provider transport is always mocked."""
+from curriculum_api.catalogue.tests.parity.composition_test_support import composition_fixture
 import copy
 import os
 from datetime import date
@@ -60,13 +61,13 @@ class DeliveryCalendarPolicyTests(TestCase):
 
     def test_legacy_path_does_not_request_another_country(self):
         rows = [holiday('existing-england')]
-        with patch.object(delivery_calendar, 'holidays_for_period', side_effect=AssertionError('No provider read')):
+        with composition_fixture(delivery_calendar, 'holidays_for_period', side_effect=AssertionError('No provider read')):
             self.assertEqual(delivery_calendar.policy_holidays(None, None, None, rows), rows)
             self.assertEqual(delivery_calendar.policy_holidays(policy.normalise_policy({}), None, None, rows), rows)
 
     def test_foreign_country_does_not_inherit_england_or_global_manual_closures(self):
         selected = policy.normalise_policy({'country': 'SA'})
-        with patch.object(delivery_calendar, 'holidays_for_period', return_value=[holiday('sa')]):
+        with composition_fixture(delivery_calendar, 'holidays_for_period', return_value=[holiday('sa')]):
             self.assertEqual([row['id'] for row in delivery_calendar.policy_holidays(selected, '2026-01-01', '2026-12-31', [holiday('gb')])], ['sa'])
 
 
