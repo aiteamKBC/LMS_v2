@@ -61,7 +61,9 @@ const dateLabel = (date: string | null, short = false) => date
   ? new Intl.DateTimeFormat('en-GB', { ...(short ? {} : { weekday: 'short' as const }), day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' }).format(new Date(`${date}T12:00:00Z`))
   : 'Date to be confirmed';
 const monthLabel = (date: string | null) => date ? new Intl.DateTimeFormat('en-GB', { month: 'long', year: 'numeric', timeZone: 'UTC' }).format(new Date(`${date}T12:00:00Z`)) : 'Monthly coaching';
-const titleOf = (state: CoachingSessionState) => state.session.importedReview?.name || (state.date ? `${monthLabel(state.date)} coaching` : 'Monthly coaching');
+const titleOf = (state: CoachingSessionState) => state.session.importedReview?.name
+  || (state.session.reviewSource === 'aptem' ? state.session.title : '')
+  || (state.date ? `${monthLabel(state.date)} coaching` : 'Monthly coaching');
 const timeLabel = (state: CoachingSessionState) => {
   const time = state.attendance ? state.attendance.startTime : state.session.scheduledTime;
   return state.booked && time ? time.slice(0, 5) : 'Time to be confirmed';
@@ -136,8 +138,16 @@ export default function CoachingHome(props: CoachingHomeProps) {
   const currentCaption = isSelected ? 'SELECTED MEETING' : current?.action === 'sign' ? 'YOUR NEXT STEP'
     : current?.action === 'reschedule' ? 'REARRANGE YOUR MEETING'
       : current?.isToday ? "TODAY'S MEETING" : current?.booked ? 'YOUR NEXT MEETING' : 'PLAN YOUR MEETING';
-  const dateCaption = current?.action === 'sign' ? 'Meeting summary ready to review'
-    : current?.booked ? timeLabel(current) : current?.action === 'schedule' ? 'Planned date - a time has not been booked' : 'Check the meeting details below';
+  const imported = current?.session.reviewSource === 'aptem';
+  const plannedDate = imported ? current?.session.importedReview?.plannedDate : current?.session.targetDate;
+  const hasBooking = Boolean(current && (imported
+    ? current.session.calendarEventKey || current.attendance?.calendarEventKey
+    : current.session.scheduledDate));
+  const meetingDate = hasBooking ? current?.session.scheduledDate || current?.attendance?.date : null;
+  const meetingTime = meetingDate ? current?.session.scheduledTime || current?.attendance?.startTime : null;
+  const meetingDateLabel = meetingDate && current?.session.syncState && current.session.syncState !== 'synced'
+    ? 'Saved meeting time' : 'Booked meeting';
+  const completedDate = imported ? current?.session.importedReview?.completedDate : null;
 
   function renderAction(state: CoachingSessionState, secondary = false) {
     const className = secondary ? styles.secondaryButton : styles.primaryButton;
@@ -214,10 +224,15 @@ export default function CoachingHome(props: CoachingHomeProps) {
         </section>}
         <div className={styles.currentLayout}>
           {current ? <article className={styles.current} aria-label={isSelected ? 'Selected coaching meeting' : 'Current coaching meeting'}>
-            <div className={styles.currentTop}><p className={styles.eyebrow}>{currentCaption}</p>{renderStatus(current)}</div>
+            <div className={styles.currentTop}><p className={styles.eyebrow}>{currentCaption}<span className={styles.meetingNumber}> · MCM {current.session.occurrenceNumber ?? current.session.sequence}</span></p>{renderStatus(current)}</div>
             <h2>{titleOf(current)}</h2>
-            <div className={styles.appointment}><span className={styles.dateIcon}><CalendarDays size={28}/></span><div><p>{dateLabel(current.date)}</p><span>{dateCaption}</span>
-              {current.booked && <span className={styles.timeZone}>{props.timeZone || 'Europe/London'}{duration != null && duration > 0 && <> · {duration} minutes</>}</span>}</div></div>
+            <div className={styles.meetingDates}>
+              <div className={styles.dateDetail}><span className={styles.dateIcon}><CalendarDays size={23}/></span><div><span className={styles.dateDetailLabel}>Planned date</span><p>{plannedDate ? dateLabel(plannedDate) : 'Not recorded'}</p>
+                {imported && current.session.importedReview?.plannedTime && <span className={styles.dateDetailMeta}>{current.session.importedReview.plannedTime}</span>}</div></div>
+              <div className={styles.dateDetail}><span className={styles.dateIcon}><Clock3 size={23}/></span><div><span className={styles.dateDetailLabel}>{meetingDateLabel}</span><p>{meetingDate ? dateLabel(meetingDate) : imported ? 'No LMS booking recorded' : 'Not booked yet'}</p>
+                {meetingDate && <span className={styles.dateDetailMeta}>{meetingTime ? `${meetingTime.slice(0, 5)} · ` : ''}{props.timeZone || 'Europe/London'}{duration != null && duration > 0 && <> · {duration} minutes</>}</span>}</div></div>
+              {completedDate && <div className={styles.dateDetail}><span className={styles.dateIcon}><Check size={23}/></span><div><span className={styles.dateDetailLabel}>Review completed</span><p>{dateLabel(completedDate)}</p></div></div>}
+            </div>
             <div className={styles.coach}><span><UserRound size={20}/></span><div><small>{isSelected ? 'Meeting coach' : 'Your current coach'}</small><strong>{currentCoachName}</strong>
               {hostDiffers && <p className={styles.bookedHost}>This meeting is booked with {bookedHost}.</p>}</div>
               {current.booked && <span className={styles.provider}><Video size={17}/>{provider || 'Location to be confirmed'}</span>}</div>
