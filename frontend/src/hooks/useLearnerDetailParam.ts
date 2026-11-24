@@ -19,10 +19,12 @@ export function useLearnerDetailParam(
   kind: string | undefined, id: string | undefined, refreshOnFocus: LearnerDetailRefreshOnFocus = false,
   /** false defers the read (and reports no data) until a consumer needs it. */
   enabled = true,
+  /** Assessment lists need activity/progress facts without dashboard hour totals. */
+  quizView = false,
 ) {
   const session = useCaseFileSession();
   const isRealMode = kind === 'commercial' || kind === 'apprenticeship';
-  const identity = isRealMode && id && enabled ? `${kind}:${id}` : null;
+  const identity = isRealMode && id && enabled ? `${kind}:${id}${quizView ? ':quiz' : ''}` : null;
   const [state, setState] = useState<{
     identity: string; real: LearnerDetail | null; loading: boolean; loadError: string | null;
   } | null>(null);
@@ -46,14 +48,14 @@ export function useLearnerDetailParam(
     const onReturn = () => {
       if (document.visibilityState !== 'visible' || Date.now() - lastRefresh < 1000) return;
       // A failed read is never cached, so an error always retries.
-      if (onlyWhenExpired && !hasLoadError.current && peekLearnerDetail(learnerKind, learnerId)) return;
+      if (onlyWhenExpired && !hasLoadError.current && peekLearnerDetail(learnerKind, learnerId, false, quizView)) return;
       lastRefresh = Date.now();
       refresh();
     };
     // Saves in this tab drop the shared entry. Unrelated saves leave it in place.
     const unsubscribe = onlyWhenExpired
       ? subscribeLearnerReadInvalidation(() => {
-        if (!peekLearnerDetail(learnerKind, learnerId, true)) refresh();
+        if (!peekLearnerDetail(learnerKind, learnerId, true, quizView)) refresh();
       })
       : undefined;
     window.addEventListener('focus', onReturn);
@@ -65,27 +67,28 @@ export function useLearnerDetailParam(
       window.removeEventListener('online', onReturn);
       document.removeEventListener('visibilitychange', onReturn);
     };
-  }, [refreshOnFocus, identity, refresh, session]);
+  }, [refreshOnFocus, identity, refresh, session, quizView]);
 
   useEffect(() => {
     if (!isRealMode || !id || !identity) return;
     let cancelled = false;
-    const cached = session ? undefined : peekLearnerDetail(kind as LearnerKind, id, true);
+    const cached = session ? undefined : peekLearnerDetail(kind as LearnerKind, id, true, quizView);
     setState((previous) => {
       const real = previous?.identity === identity ? previous.real : cached ?? null;
       return { identity, real, loading: !real, loadError: null };
     });
-    (session ? session.detail(refreshTick > 0) : fetchLearnerDetail(kind as LearnerKind, id, { revalidate: refreshTick > 0 }))
+    (session ? session.detail(refreshTick > 0) : fetchLearnerDetail(kind as LearnerKind, id,
+      { revalidate: refreshTick > 0, ...(quizView ? { quizView: true } : {}) }))
       .then((data) => { if (!cancelled) setState({ identity, real: data, loading: false, loadError: null }); })
       .catch((error) => {
         if (!cancelled) setState((previous) => ({ identity, real: previous?.identity === identity ? previous.real : null, loading: false, loadError: error instanceof Error ? error.message : 'Could not load learner' }));
       });
     return () => { cancelled = true; };
-  }, [isRealMode, kind, id, identity, refreshTick, session]);
+  }, [isRealMode, kind, id, identity, refreshTick, session, quizView]);
 
   // Staff can move directly between View pages. Hide the previous learner in
   // the first render of the new URL, before the next request effect runs.
   const current = identity && state?.identity === identity ? state : null;
-  const cached = !session && !current && identity && id ? peekLearnerDetail(kind as LearnerKind, id, true) : undefined;
+  const cached = !session && !current && identity && id ? peekLearnerDetail(kind as LearnerKind, id, true, quizView) : undefined;
   return { isRealMode, real: current?.real ?? cached ?? null, loading: current?.loading ?? (!!identity && !cached), loadError: current?.loadError ?? null, refresh };
 }

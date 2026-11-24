@@ -125,15 +125,23 @@ def _source_rows(profile_id, source_review_id=None):
         return [dict(zip(columns, row)) for row in cursor.fetchall()]
 
 
-def sync_review_feedback(learner_id, *, source_review_id=None, dry_run=False):
+def sync_review_feedback(learner_id, *, source_review_id=None, dry_run=False, require_aptem_completed=False,
+                         include_employer=True):
     """Assign independently to the learner and employer; expose pending counts."""
-    result = _sync_review_feedback(learner_id, source_review_id=source_review_id, dry_run=dry_run)
-    employer_result = _sync_review_feedback(learner_id, source_review_id=source_review_id, employer=True, dry_run=dry_run)
+    policy = {'require_aptem_completed': True} if require_aptem_completed else {}
+    result = _sync_review_feedback(learner_id, source_review_id=source_review_id, dry_run=dry_run, **policy)
+    if include_employer:
+        employer_result = _sync_review_feedback(learner_id, source_review_id=source_review_id,
+                                                employer=True, dry_run=dry_run, **policy)
+    else:
+        employer_result = {key: 0 for key in result}
+        employer_result['pending'] = 0
     result.update({f'employer{key[0].upper()}{key[1:]}': value for key, value in employer_result.items()})
     return result
 
 
-def _sync_review_feedback(learner_id, *, source_review_id=None, employer=False, dry_run=False):
+def _sync_review_feedback(learner_id, *, source_review_id=None, employer=False, dry_run=False,
+                          require_aptem_completed=False):
     """Reconcile persisted completions for an *enrolment* learner identity.
 
     published_at remains the existing launch boundary. Missing dates are
@@ -197,6 +205,17 @@ def _sync_review_feedback(learner_id, *, source_review_id=None, employer=False, 
         form = templates.get(form_type)
         if form is None:
             continue
+        # The opt-in outbox gate mirrors the typed source columns exactly:
+        # status = 'Completed' AND completed_date IS NOT NULL. Neither source
+        # metadata nor a completed LMS overlay may fill missing source fields.
+        # Existing callers keep their completion rules with this option false.
+        if require_aptem_completed:
+            if row.get('status') != 'Completed':
+                result['incomplete'] += 1
+                continue
+            if row.get('completed_date') is None:
+                result['undated'] += 1
+                continue
         data = _json_value(row.get('review_data'), dict, {})
         if (str(row['learner_id']) != str(profile.pk)
                 or (data.get('aptem_learner_id')

@@ -5,8 +5,10 @@ Read-time credit only: retain Teams evidence, and never rewrite absence history.
 from django.utils import timezone
 
 from .attendance_rules import attendance_outcome, INVALID
+from .weekly_read_cache import reuse_weekly_read
 
 
+@reuse_weekly_read
 def saved_delivery_mode(learner_id):
     from django.db import connections
     from .attendance_mode import TABLE, _ready

@@ -120,7 +120,7 @@ class CataloguePerformanceTests(SimpleTestCase):
         self.assertNotIn('to_jsonb(s)',sql);self.assertNotIn('to_jsonb(h)',sql)
         self.assertNotIn("jsonb_build_object('id',s.id)",sql)
         self.assertIn("'[{}]'::jsonb AS payload",sql)
-        self.assertIn("'source_activity_id',h.source_activity_id",sql)
+        self.assertIn('jsonb_build_array(h.source_system,h.source_course_ref,h.source_activity_id)',sql)
         self.assertIn('s.learner_id=p.learner_id',sql)
         self.assertIn('progress.deleted_at IS NULL',sql)
 

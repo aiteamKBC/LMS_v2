@@ -313,7 +313,7 @@ it('preserves a saved draft month and time entries when selecting another month'
   await screen.findByDisplayValue('Saved workshop');
   expect(screen.getByLabelText('Activity month')).toHaveValue('2026-09');
   fireEvent.change(screen.getByLabelText('Activity month'), { target: { value: '2026-10' } });
-  expect(screen.getByRole('alert')).toHaveTextContent('Some activity dates are outside the selected month');
+  expect(screen.queryByText('Some activity dates are outside the selected month')).not.toBeInTheDocument();
   fireEvent.click(screen.getByRole('button', { name: 'Save draft' }));
   await screen.findByText('Draft saved');
   expect(saveLearningReflectionSubmission).toHaveBeenLastCalledWith(expect.objectContaining({

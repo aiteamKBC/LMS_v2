@@ -9,6 +9,17 @@ from .ksb_exclusions import and_not_excluded
 from .learner_detail import _component_ksb_items
 
 
+# Card percentages consume codes, never the descriptions, classifications or
+# weights carried by each authoring mapping. Preserve the three accepted code
+# keys and their JSON types so the existing Python decoder keeps precedence,
+# empty/invalid fallback and legacy encoded-string behavior unchanged.
+INLINE_CODES_SQL = """CASE WHEN jsonb_typeof(c.ksb_mappings)='array' THEN
+    (SELECT coalesce(jsonb_agg(jsonb_strip_nulls(jsonb_build_object(
+        'code',item->'code','ksbCode',item->'ksbCode','ksb_code',item->'ksb_code'))),'[]'::jsonb)
+     FROM jsonb_array_elements(c.ksb_mappings) item WHERE jsonb_typeof(item)='object')
+    ELSE c.ksb_mappings END"""
+
+
 def read_card_ksb_mappings(owner, native, record_ids):
     """Read codes in batches within the card's existing assignment/lineage scope.
 
@@ -22,12 +33,18 @@ def read_card_ksb_mappings(owner, native, record_ids):
     connection = connections['enrolment']
     if component_ids:
         rows = canonical.query(read_sql(f'''
-            SELECT c.id AS component_id,c.ksb_mappings AS inline_mappings,
-                coalesce((SELECT jsonb_agg(jsonb_build_object('code',m.ksb_code))
-                    FROM curriculum.ksb_mappings m WHERE m.component_id=c.id
-                    AND {visible_child_sql('m')}),'[]'::jsonb) AS normalized_mappings
-            FROM curriculum.components c
-            WHERE c.id=ANY(%s) AND {visible_child_sql('c')}
+            WITH scoped_components AS MATERIALIZED (
+                SELECT c.id,c.ksb_mappings FROM curriculum.components c
+                WHERE c.id=ANY(%s) AND {visible_child_sql('c')}
+            ), normalized AS (
+                SELECT m.component_id,jsonb_agg(jsonb_build_object('code',m.ksb_code)) AS mappings
+                FROM curriculum.ksb_mappings m
+                JOIN scoped_components c ON c.id=m.component_id
+                WHERE {visible_child_sql('m')} GROUP BY m.component_id
+            )
+            SELECT c.id AS component_id,{INLINE_CODES_SQL} AS inline_mappings,
+                coalesce(n.mappings,'[]'::jsonb) AS normalized_mappings
+            FROM scoped_components c LEFT JOIN normalized n ON n.component_id=c.id
         ''', connection), [component_ids])
         for row in rows:
             inline = _component_ksb_items(row['inline_mappings'])

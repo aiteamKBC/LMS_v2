@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { clearAllCachedResources } from '../cachedRequest';
-import { fetchLearnerDetail, invalidateLearnerDetailCache } from '../learnerDetail';
+import { fetchLearnerDetail, invalidateLearnerDetailCache, peekLearnerDetail } from '../learnerDetail';
 import { hasComponentContent } from '@/utils/learnerJourney';
 
 beforeEach(() => {
@@ -82,4 +82,15 @@ it('loads quizzes independently from the dashboard graph and invalidates them af
   invalidateLearnerDetailCache('commercial', '101');
   await fetchLearnerDetail('commercial', '101', { quizView: true });
   expect(fetch).toHaveBeenCalledTimes(2);
+});
+
+it('never reuses dashboard totals as the assessment cache entry or the reverse', async () => {
+  const dashboard = await fetchLearnerDetail('commercial', '125');
+  expect(peekLearnerDetail('commercial', '125', false, true)).toBeUndefined();
+  const assessment = await fetchLearnerDetail('commercial', '125', { quizView: true });
+  expect(peekLearnerDetail('commercial', '125')).toBe(dashboard);
+  expect(peekLearnerDetail('commercial', '125', true, true)).toBe(assessment);
+  invalidateLearnerDetailCache('commercial', '125');
+  expect(peekLearnerDetail('commercial', '125')).toBeUndefined();
+  expect(peekLearnerDetail('commercial', '125', false, true)).toBeUndefined();
 });

@@ -15,7 +15,7 @@ from .tests_progress_transfer_no_db import item, saved
 
 
 class ModuleContextScopeTests(SimpleTestCase):
-    def context(self, selected, kind, *, transfers=None, component_settings=None, imported_links=None):
+    def context(self, selected, kind, *, transfers=None, component_settings=None, imported_links=None, approved_replacements_only=False):
         from . import (models, weekly_learning, student_activity, subject_origins,
                        previous_learning_groups, progress_transfer_store)
         plan = [{'moduleId': f'M{i}', 'moduleTitle': f'Module {i}',
@@ -58,7 +58,8 @@ class ModuleContextScopeTests(SimpleTestCase):
             stack.enter_context(patch.object(subject_origins, 'read_replacement_courses', return_value={}))
             stack.enter_context(patch.object(previous_learning_groups, 'read_previous_learning_groups', return_value={}))
             stack.enter_context(patch.object(progress_transfer_store, 'read_state', return_value=transfers if transfers is not None else saved('approved')))
-            result = learning.load_context(source, {'id': 9, 'progress_transfer_active': True}, selected)
+            result = learning.load_context(source, {'id': 9, 'progress_transfer_active': True}, selected,
+                approved_replacements_only=approved_replacements_only)
         self.assertEqual((source.training_plan, source.learning_plan), original)
         return result, reader
 
@@ -78,13 +79,15 @@ class ModuleContextScopeTests(SimpleTestCase):
             transfer['items'][0]['matchedComponents'] = {'C1': manual_completion(
                 transfer['items'][0], 'material:8', review['modules'][0]['targets'][0])}
             for links in ({'current:M1': 'legacy:50'}, {}):
-                with self.subTest(kind=kind, links=links):
-                    approved, _ = self.context('current:M1', kind, transfers=transfer,
-                                              component_settings=settings, imported_links=links)
-                    self.assertEqual(approved[9]['replacement_settings'], settings)
-                    projected = project_approved_learning(approved[3]['components'],
-                        approved[9]['replacement_settings'], transfer['items'])
-                    self.assertTrue(projected[0]['previousLearning']['completed'])
+                for approved_only in (False, True):
+                    with self.subTest(kind=kind, links=links, approved_only=approved_only):
+                        approved, _ = self.context('current:M1', kind, transfers=transfer,
+                            component_settings=settings, imported_links=links,
+                            approved_replacements_only=approved_only)
+                        self.assertEqual(approved[9]['replacement_settings'], settings)
+                        projected = project_approved_learning(approved[3]['components'],
+                            approved[9]['replacement_settings'], transfer['items'])
+                        self.assertTrue(projected[0]['previousLearning']['completed'])
 
     def test_current_module_reads_one_assignment_even_in_large_plans_for_both_kinds(self):
         for kind in ('commercial', 'apprenticeship'):

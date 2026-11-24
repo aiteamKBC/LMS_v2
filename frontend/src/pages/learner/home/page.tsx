@@ -62,6 +62,13 @@ export default function StudentHome() {
 function StaffStudentHome() {
   const { kind: urlKind, id: urlId } = useParams<{ kind?: string; id?: string }>();
   const { kind, id } = useResolvedLearner(urlKind, urlId);
+  if (!kind || !id) return <main className="mx-auto max-w-xl p-6">
+    <section aria-labelledby="student-selection-heading" className="rounded-2xl border border-foreground-200 bg-background-50 p-8 text-center">
+      <h1 id="student-selection-heading" className="text-lg font-semibold text-foreground-900">No learner selected</h1>
+      <p className="mt-2 text-sm text-foreground-500">Open a learner from your workspace to view their Student Home.</p>
+      <Link to="/" className="mt-5 inline-flex min-h-11 items-center rounded-lg bg-primary-600 px-4 py-2 text-sm font-semibold text-white hover:bg-primary-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-300">Return to your workspace</Link>
+    </section>
+  </main>;
   return <LearnerHome key={`${kind}:${id}`} kind={kind} id={id} preview />;
 }
 

@@ -9,7 +9,7 @@ from unittest.mock import Mock, patch
 from django.test import TestCase
 
 from . import session_bunny, video_imports
-from .bunny_stream import VideoImportError
+from .bunny_stream import MissingProgrammeCollection, VideoImportError
 from .models import CurriculumVideoImport
 from .session_bunny_policy import bunny_recording, recording_uses_bunny, signed_embed
 from .session_recording_source import RecordingRedirect, download_recording, resolve_recording_download
@@ -162,6 +162,19 @@ class SessionBunnyTests(TestCase):
         download.assert_called_once()
         client.upload.assert_called_once()
         self.assertEqual(client.upload.call_args.args[0], VIDEO)
+        publish.assert_called_once()
+
+    def test_new_programme_recording_provisions_bunny_without_manual_collection_setup(self):
+        self.pending = self.asset()
+        client = self.bunny_client([4])
+        client.collection.side_effect = MissingProgrammeCollection('No collection yet')
+        client.create_programme_collection.return_value = 'NEW-COLLECTION'
+        result, download, publish = self.transfer(client)
+        self.assertEqual((result.status, result.collection_id, result.video_id), ('ready', 'NEW-COLLECTION', VIDEO))
+        self.assertEqual(result.scope['occurrence_id'], self.occurrence['id'])
+        client.create_programme_collection.assert_called_once_with('P', 'Example programme')
+        self.assertEqual(client.create.call_args.args[2], 'NEW-COLLECTION')
+        download.assert_called_once()
         publish.assert_called_once()
 
     def test_source_403_never_creates_empty_bunny_video_and_remains_retryable(self):

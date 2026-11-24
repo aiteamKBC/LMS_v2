@@ -36,11 +36,14 @@ function reading(overrides: Partial<JourneyComponent> = {}) {
     contentKind="reading" parsed={null} title="Reading" onDuration={vi.fn()} onProgress={vi.fn()}
     onPlayingChange={vi.fn()} onEnded={vi.fn()} onUnsupported={vi.fn()} />;
 }
-function selectText(root: HTMLElement) {
+function selectNodeContents(node: Node) {
   const range = document.createRange();
-  range.selectNodeContents(root);
+  range.selectNodeContents(node);
   window.getSelection()!.removeAllRanges();
   window.getSelection()!.addRange(range);
+}
+function selectText(root: HTMLElement) {
+  selectNodeContents(root);
   fireEvent.mouseDown(screen.getByRole('button', { name: 'Highlight selection' }));
   fireEvent.click(screen.getByRole('button', { name: 'Highlight selection' }));
 }
@@ -61,7 +64,7 @@ it('updates, saves and restores every display preference for authored reading te
   const view = render(reading());
   changePreferences();
   expectPreferences(screen.getByRole('region', { name: 'Reading text' }));
-  fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Save highlights' }));
   view.unmount();
   render(reading());
   expectPreferences(screen.getByRole('region', { name: 'Reading text' }));
@@ -69,6 +72,40 @@ it('updates, saves and restores every display preference for authored reading te
   expect(screen.getByRole('region', { name: 'Reading text' })).toHaveStyle({ fontSize: '16px' });
   for (const colour of ['dark', 'monochrome', 'paper']) fireEvent.change(screen.getByLabelText('Reading colour mode'), { target: { value: colour } });
   expect(screen.getByRole('region', { name: 'Reading text' })).toHaveStyle({ backgroundColor: '#fff', color: '#1f2937' });
+});
+
+it('keeps the reading tools visible while the material scrolls', () => {
+  render(reading());
+  expect(screen.getByLabelText('Reading accessibility tools')).toHaveClass('sticky', 'top-0', 'z-30');
+});
+
+it('offers yellow, green and pink highlight colours', () => {
+  render(reading());
+  const colour = screen.getByLabelText('Highlight colour') as HTMLSelectElement;
+  expect(colour.value).toBe('yellow');
+
+  fireEvent.change(colour, { target: { value: 'green' } });
+  expect(colour.value).toBe('green');
+  const content = screen.getByRole('region', { name: 'Reading text' }).querySelector('[data-reading-text]') as HTMLElement;
+  selectText(content);
+  expect(content.querySelector('mark')?.style.getPropertyValue('--reading-highlight-color')).toBe('#86efac');
+
+  fireEvent.change(colour, { target: { value: 'pink' } });
+  expect(colour.value).toBe('pink');
+});
+
+it('paginates long authored reading without splitting the reading blocks', () => {
+  const contentHtml = Array.from({ length: 8 }, (_, index) => `<p>Paragraph ${index + 1}. ${'Long reading content '.repeat(300)}</p>`).join('');
+  render(reading({ contentHtml }));
+
+  expect(screen.getByRole('navigation', { name: 'Reading pages' })).toBeVisible();
+  expect(screen.getByText('Page 1 of 8')).toBeVisible();
+  expect(screen.getByText('Paragraph 1.', { exact: false })).toBeVisible();
+  expect(screen.getByText('Paragraph 8.', { exact: false })).not.toBeVisible();
+  fireEvent.click(screen.getByRole('button', { name: 'Next page' }));
+  expect(screen.getByText('Page 2 of 8')).toBeVisible();
+  expect(screen.getByText('Paragraph 1.', { exact: false })).not.toBeVisible();
+  expect(screen.getByText('Paragraph 2.', { exact: false })).toBeVisible();
 });
 
 it('keeps the ruler relative to the reading area when the pointer moves over nested content', () => {
@@ -87,19 +124,23 @@ it('keeps the ruler relative to the reading area when the pointer moves over nes
   expect(surface.querySelector('[data-reading-ruler]')).toBeNull();
 });
 
-it('highlights across paragraphs without breaking their structure, and persists and clears the marks', () => {
+it('highlights across paragraphs without breaking their structure, and clears only the selected mark', () => {
   const view = render(reading());
   const content = screen.getByRole('region', { name: 'Reading text' }).querySelector('[data-reading-text]') as HTMLElement;
   selectText(content);
   expect(content.querySelectorAll('p')).toHaveLength(2);
   expect(content.querySelector('strong mark')).toHaveTextContent('important');
   expect(content.querySelector('mark p')).toBeNull();
-  fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Save highlights' }));
   view.unmount();
   render(reading());
   expect(screen.getByRole('region', { name: 'Reading text' }).querySelectorAll('mark')).toHaveLength(4);
-  fireEvent.click(screen.getByRole('button', { name: 'Clear highlights' }));
-  expect(screen.getByRole('region', { name: 'Reading text' }).querySelector('mark')).toBeNull();
+  const restoredContent = screen.getByRole('region', { name: 'Reading text' }).querySelector('[data-reading-text]') as HTMLElement;
+  const firstMark = restoredContent.querySelector('mark')!;
+  selectNodeContents(firstMark);
+  fireEvent.mouseDown(screen.getByRole('button', { name: 'Clear selected highlight' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Clear selected highlight' }));
+  expect(restoredContent.querySelectorAll('mark')).toHaveLength(3);
 });
 
 it('does not carry text or preferences into a different activity in the same mounted viewer', () => {
@@ -125,14 +166,16 @@ it('applies all preferences to PDF text and retains independent page highlights 
   fireEvent.click(screen.getByRole('button', { name: 'Previous page' }));
   fireEvent.click(screen.getByRole('button', { name: 'Text reading view' }));
   expect((await screen.findByRole('region', { name: 'PDF text, page 1' })).querySelector('mark')).toHaveTextContent('Page 1 reading text.');
-  fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Save highlights' }));
   view.unmount();
   render(reading({ contentHtml: '', resourceUrl: '/book.pdf' }));
   fireEvent.click(await screen.findByRole('button', { name: 'Text reading view' }));
   const restored = await screen.findByRole('region', { name: 'PDF text, page 1' });
   expectPreferences(restored);
   expect(restored.querySelector('mark')).not.toBeNull();
-  fireEvent.click(screen.getByRole('button', { name: 'Clear highlights' }));
+  selectNodeContents(restored.querySelector('mark')!);
+  fireEvent.mouseDown(screen.getByRole('button', { name: 'Clear selected highlight' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Clear selected highlight' }));
   expect(restored.querySelector('mark')).toBeNull();
 });
 
@@ -155,14 +198,16 @@ it.each(['txt', 'docx'])('applies and saves reading tools on uploaded %s text to
   expectPreferences(surface);
   selectText(surface.querySelector('[data-reading-text]') as HTMLElement);
   expect(surface.querySelector('mark')).toHaveTextContent('Uploaded reading text.');
-  fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Save highlights' }));
   view.unmount();
   vi.mocked(fetch).mockResolvedValue(new Response('Uploaded reading text.'));
   render(reading({ contentHtml: '', resourceUrl: `/notes.${extension}` }));
   const restored = await screen.findByRole('region', { name: 'Reading attachment text' });
   expectPreferences(restored);
   expect(restored.querySelector('mark')).toHaveTextContent('Uploaded reading text.');
-  fireEvent.click(screen.getByRole('button', { name: 'Clear highlights' }));
+  selectNodeContents(restored.querySelector('mark')!);
+  fireEvent.mouseDown(screen.getByRole('button', { name: 'Clear selected highlight' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Clear selected highlight' }));
   expect(restored.querySelector('mark')).toBeNull();
 });
 
@@ -178,6 +223,39 @@ it('reads a PDF page once when its extracted text is also visible', async () => 
   expect(speak.mock.calls[0][0].text).toBe('Page 1 reading text.');
   await act(async () => speak.mock.calls[0][0].onend());
   expect(screen.getByRole('button', { name: 'Read aloud' })).toHaveAttribute('aria-pressed', 'false');
+});
+
+it('automatically extracts a scanned PDF page for the main Read aloud control', async () => {
+  const speak = vi.fn();
+  vi.stubGlobal('speechSynthesis', { speak, cancel: vi.fn() });
+  vi.stubGlobal('SpeechSynthesisUtterance', class { text: string; constructor(text: string) { this.text = text; } });
+  pdfText.mockResolvedValue({ items: [] });
+  vi.mocked(extractScannedPage).mockResolvedValue('Scanned page text for narration.');
+
+  render(reading({ contentHtml: '', resourceUrl: '/scanned.pdf' }));
+  await screen.findByRole('region', { name: 'Original PDF page' });
+  await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Read aloud' })));
+
+  await waitFor(() => expect(extractScannedPage).toHaveBeenCalledWith(
+    expect.anything(), 1, expect.any(AbortSignal),
+  ));
+  await waitFor(() => expect(speak).toHaveBeenCalledOnce());
+  expect(speak.mock.calls[0][0].text).toBe('Scanned page text for narration.');
+});
+
+it('keeps authored reading narration working when a PDF OCR attempt fails', async () => {
+  const speak = vi.fn();
+  vi.stubGlobal('speechSynthesis', { speak, cancel: vi.fn() });
+  vi.stubGlobal('SpeechSynthesisUtterance', class { text: string; constructor(text: string) { this.text = text; } });
+  pdfText.mockResolvedValue({ items: [] });
+  vi.mocked(extractScannedPage).mockRejectedValue(new Error('OCR unavailable'));
+
+  render(reading({ resourceUrl: '/unreadable.pdf' }));
+  await screen.findByRole('region', { name: 'Original PDF page' });
+  await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Read aloud' })));
+
+  await waitFor(() => expect(speak).toHaveBeenCalledOnce());
+  expect(speak.mock.calls[0][0].text).toContain('First important paragraph.');
 });
 
 it('keeps two documents on the same page number isolated when saving PDF text highlights', async () => {
@@ -197,7 +275,7 @@ it('keeps two documents on the same page number isolated when saving PDF text hi
   fireEvent.click(views[1]);
   await waitFor(() => expect(screen.getAllByRole('region', { name: 'PDF text, page 1' })).toHaveLength(2));
   expect(screen.getAllByRole('region', { name: 'PDF text, page 1' })[1].querySelector('mark')).toBeNull();
-  fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Save highlights' }));
   expect(localStorage.getItem('kbc-reading:TOOLS:/first.pdf:pdf-text-highlights')).toContain('data-learner-highlight');
   expect(localStorage.getItem('kbc-reading:/second.pdf:/second.pdf:pdf-text-highlights')).not.toContain('data-learner-highlight');
 });
@@ -288,9 +366,9 @@ it('reports failed PDF annotation storage instead of displaying Saved', async ()
     if (key.endsWith('pdf-text-highlights')) throw new DOMException('Full', 'QuotaExceededError');
     original.call(this, key, value);
   });
-  fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Save highlights' }));
   expect(screen.getByRole('alert')).toHaveTextContent('some highlights could not be saved');
-  expect(screen.getByRole('button', { name: 'Save changes' })).toBeVisible();
+  expect(screen.getByRole('button', { name: 'Save highlights' })).toBeVisible();
 });
 
 it('uses the same working tools for staff Preview as learner without writing progress', async () => {

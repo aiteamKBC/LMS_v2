@@ -27,6 +27,22 @@ beforeEach(() => {
 });
 afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.clearAllMocks(); vi.unstubAllGlobals(); });
 
+it('loads authored LMS upload links with the current session for preview and download', async () => {
+  const path = '/curriculum_api/curriculum/uploads/course/brief.pdf';
+  render(<AssignmentAttachment url={`https://lms.kentbusinesscollege.org${path}`} title="Brief" defaultExpanded />);
+  expect(await screen.findByText('Page 1 of 3')).toBeVisible();
+  expect(fetch).toHaveBeenCalledWith(path, expect.objectContaining({ credentials: 'same-origin' }));
+  expect(screen.getByRole('link', { name: 'Download file' })).toHaveAttribute('href', path);
+});
+
+it('preserves external attachment origins', async () => {
+  const url = 'https://files.example.test/curriculum_api/curriculum/uploads/brief.pdf';
+  render(<AssignmentAttachment url={url} title="Brief" defaultExpanded />);
+  expect(await screen.findByText('Page 1 of 3')).toBeVisible();
+  expect(fetch).toHaveBeenCalledWith(url, expect.anything());
+  expect(screen.getByRole('link', { name: 'Download file' })).toHaveAttribute('href', url);
+});
+
 it('opens two instruction PDFs automatically with independent pages, zoom, and collapse', async () => {
   let finishSecond!: (response: Response) => void;
   const secondResponse = new Promise<Response>(resolve => { finishSecond = resolve; });

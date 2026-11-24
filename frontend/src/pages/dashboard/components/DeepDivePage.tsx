@@ -28,6 +28,15 @@ function recordText(record: DeepDiveRecord, key: string) {
   return typeof value === "string" || typeof value === "number" ? String(value) : "";
 }
 
+function learnerPostcode(row: JourneyRow) {
+  return (row.record?.postcode || (row.record ? recordText(row.record, "postcode") : "") || "").trim();
+}
+
+function postcodeArea(row: JourneyRow) {
+  const match = learnerPostcode(row).toUpperCase().match(/^([A-Z]{1,2})[0-9]/);
+  return match?.[1] || "No postcode";
+}
+
 function IlrContactFields({ recordId }: { recordId: string }) {
   const [contact, setContact] = useState<{ uln: string | null; postcode: string | null } | null>(null);
   const [error, setError] = useState(false);
@@ -249,8 +258,30 @@ export default function DeepDivePage() {
       if (reviewStatus === "reviewed" && !record?.reviewedBy) return false;
       if (reviewStatus === "awaiting" && record?.reviewedBy) return false;
       return true;
+    }).sort((left, right) => {
+      const leftArea = postcodeArea(left);
+      const rightArea = postcodeArea(right);
+      if (leftArea === "No postcode" && rightArea !== "No postcode") return 1;
+      if (leftArea !== "No postcode" && rightArea === "No postcode") return -1;
+      const areaOrder = leftArea.localeCompare(rightArea, "en", { sensitivity: "base" });
+      if (areaOrder) return areaOrder;
+      const leftPostcode = learnerPostcode(left);
+      const rightPostcode = learnerPostcode(right);
+      const postcodeOrder = leftPostcode.localeCompare(rightPostcode, "en", { numeric: true, sensitivity: "base" });
+      return postcodeOrder || left.learner.name.localeCompare(right.learner.name, "en", { sensitivity: "base" });
     });
   }, [mergedRows, programme, query, reviewStatus, status]);
+
+  const postcodeGroups = useMemo(() => {
+    const groups = new Map<string, JourneyRow[]>();
+    filteredRows.forEach((row) => {
+      const area = postcodeArea(row);
+      const rows = groups.get(area) || [];
+      rows.push(row);
+      groups.set(area, rows);
+    });
+    return Array.from(groups, ([area, rows]) => ({ area, rows }));
+  }, [filteredRows]);
 
   const selectedRow = selectedId ? mergedRows.find((row) => row.key === selectedId) ?? null : null;
   const selected = selectedRow?.learner ?? null;
@@ -508,19 +539,20 @@ export default function DeepDivePage() {
           <table aria-labelledby="deep-dive-journey-title" className={`${styles.journeyTable} w-full min-w-[1100px] !overflow-visible text-left text-[12px] [&_th]:sticky [&_th]:top-0 [&_th]:z-10 [&_th]:whitespace-nowrap [&_th]:shadow-[inset_0_-1px_0_var(--kbc-border)]`}>
             <thead className="bg-background-100 text-[10.5px] uppercase tracking-[0.08em] text-foreground-500"><tr><th scope="col" className="w-[23%] px-4 py-3 font-semibold">Learner</th><th scope="col" className="w-[25%] px-4 py-3 font-semibold">Programme / cohort</th><th scope="col" className="px-4 py-3 font-semibold">Status</th><th scope="col" className="px-4 py-3 font-semibold">Planned dates</th><th scope="col" className="px-4 py-3 font-semibold">Reviewed date</th><th scope="col" className="px-4 py-3 font-semibold">Review status</th><th scope="col" className="px-4 py-3 font-semibold">Details</th></tr></thead>
             <tbody className="divide-y divide-background-100">
-              {filteredRows.map((row) => {
-                const { learner, record } = row;
-                const isSelected = selectedId === row.key;
-                return <tr key={row.key} className={`cursor-pointer align-top transition-colors hover:bg-primary-50/40 ${isSelected ? "bg-primary-50/60" : ""}`} onClick={() => setSelectedId(isSelected ? null : row.key)}>
-                  <td className="break-words px-4 py-3"><button type="button" className="text-left" onClick={() => setSelectedId(isSelected ? null : row.key)}><p className="font-semibold text-primary-700 hover:text-primary-900">{learner.name || "Unnamed learner"}</p><p className="mt-0.5 break-all text-[11px] text-foreground-500">{learner.email || learner.referenceNumber || "No reference recorded"}</p></button></td>
-                  <td className="break-words px-4 py-3 text-foreground-700">{programmeLabel(learner)}</td>
-                  <td className="whitespace-nowrap px-4 py-3"><span className={`inline-flex rounded-full px-2 py-1 text-[10.5px] font-semibold ${statusClass(learner.programmeStatus)}`}>{learner.programmeStatus || "Not recorded"}</span></td>
-                  <td className="whitespace-nowrap px-4 py-3 text-foreground-700"><p>{displayDate(record?.startDate || learner.learnerStartDate || learner.startDate)}</p><p className="mt-0.5 text-[11px] text-foreground-500">to {displayDate(record?.practicalEndDate || learner.learnerEndDate || learner.endDate)}</p></td>
-                  <td className="whitespace-nowrap px-4 py-3 text-foreground-700">{record?.reviewedAt ? displayDate(record.reviewedAt.slice(0, 10)) : "Not reviewed"}</td>
-                  <td className="whitespace-nowrap px-4 py-3"><span className={record?.reviewedBy ? "font-semibold text-emerald-700" : "font-semibold text-foreground-800"}>{record?.reviewedBy ? "Reviewed" : "Awaiting review"}</span></td>
-                  <td className="whitespace-nowrap px-4 py-3"><button type="button" className="font-semibold text-primary-700 hover:text-primary-900" onClick={(event) => { event.stopPropagation(); setSelectedId(row.key); }}>View details →</button></td>
-                </tr>;
-              })}
+              {postcodeGroups.flatMap(({ rows }, groupIndex) => rows.map((row, rowIndex) => {
+                  const { learner, record } = row;
+                  const isSelected = selectedId === row.key;
+                  const groupDivider = groupIndex > 0 && rowIndex === 0 ? "border-t-2 border-primary-200" : "";
+                  return <tr key={row.key} className={`${groupDivider} cursor-pointer align-top transition-colors hover:bg-primary-50/40 ${isSelected ? "bg-primary-50/60" : ""}`} onClick={() => setSelectedId(isSelected ? null : row.key)}>
+                    <td className="break-words px-4 py-3"><button type="button" className="text-left" onClick={() => setSelectedId(isSelected ? null : row.key)}><p className="font-semibold text-primary-700 hover:text-primary-900">{learner.name || "Unnamed learner"}</p><p className="mt-0.5 break-all text-[11px] text-foreground-500">{learner.email || learner.referenceNumber || "No reference recorded"}</p></button></td>
+                    <td className="break-words px-4 py-3 text-foreground-700">{programmeLabel(learner)}</td>
+                    <td className="whitespace-nowrap px-4 py-3"><span className={`inline-flex rounded-full px-2 py-1 text-[10.5px] font-semibold ${statusClass(learner.programmeStatus)}`}>{learner.programmeStatus || "Not recorded"}</span></td>
+                    <td className="whitespace-nowrap px-4 py-3 text-foreground-700"><p>{displayDate(record?.startDate || learner.learnerStartDate || learner.startDate)}</p><p className="mt-0.5 text-[11px] text-foreground-500">to {displayDate(record?.practicalEndDate || learner.learnerEndDate || learner.endDate)}</p></td>
+                    <td className="whitespace-nowrap px-4 py-3 text-foreground-700">{record?.reviewedAt ? displayDate(record.reviewedAt.slice(0, 10)) : "Not reviewed"}</td>
+                    <td className="whitespace-nowrap px-4 py-3"><span className={record?.reviewedBy ? "font-semibold text-emerald-700" : "font-semibold text-foreground-800"}>{record?.reviewedBy ? "Reviewed" : "Awaiting review"}</span></td>
+                    <td className="whitespace-nowrap px-4 py-3"><button type="button" className="font-semibold text-primary-700 hover:text-primary-900" onClick={(event) => { event.stopPropagation(); setSelectedId(row.key); }}>View details →</button></td>
+                  </tr>;
+                }))}
             </tbody>
           </table>
         </div>

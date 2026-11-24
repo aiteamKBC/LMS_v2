@@ -73,6 +73,8 @@ export function AssignmentEvidence({
   const [loading, setLoading] = useState(true);
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const loadVersion = useRef(0);
   const [confirmingId, setConfirmingId] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -85,9 +87,12 @@ export function AssignmentEvidence({
   useEffect(() => { onUploadCompletedRef.current = onUploadCompleted; }, [onUploadCompleted]);
 
   const load = useCallback(() => {
+    const version = ++loadVersion.current;
     setLoading(true);
+    setLoadError(null);
     fetchEvidence(kind, learnerId, { sectionRef: componentId })
       .then((rows) => {
+        if (version !== loadVersion.current) return;
         setFiles((prev) => {
           // A file finishing its scan changes whether the completion criteria
           // are met, so tell the caller when the approved count moves.
@@ -97,11 +102,18 @@ export function AssignmentEvidence({
           return rows;
         });
       })
-      .catch((e) => setError(e instanceof Error ? e.message : 'Could not load evidence.'))
-      .finally(() => setLoading(false));
+      .catch((e) => {
+        if (version === loadVersion.current) setLoadError(e instanceof Error ? e.message : 'Could not load evidence.');
+      })
+      .finally(() => { if (version === loadVersion.current) setLoading(false); });
+    return () => { ++loadVersion.current; };
   }, [kind, learnerId, componentId]);
 
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    setFiles([]);
+    setError(null);
+    return load();
+  }, [load]);
 
   // Poll while any file is still being scanned, so status flips pending -> approved/rejected.
   useEffect(() => {
@@ -197,11 +209,15 @@ export function AssignmentEvidence({
       <p className="text-[11px] text-foreground-400 mb-3">Word, PowerPoint, PDF, PNG, JPEG or MP4, up to 50 MB.</p>
 
       {error && <p className="text-xs font-medium text-red-600 mb-3">{error}</p>}
+      {loadError && <div role="alert" className="text-xs font-medium text-red-600 mb-3">
+        <p>{loadError}</p>
+        <button type="button" onClick={load} className="mt-2 underline font-semibold">Retry loading evidence</button>
+      </div>}
 
       {loading ? (
         <p className="text-xs text-foreground-400"><LoadingSkeleton label="Loading evidence…" variant="rows" /></p>
       ) : files.length === 0 ? (
-        <p className="text-xs text-foreground-400">No evidence uploaded yet.</p>
+        !loadError && <p className="text-xs text-foreground-400">No evidence uploaded yet.</p>
       ) : (
         <ul className="space-y-2">
           {files.map((f) => {
