@@ -187,6 +187,9 @@ def enqueue_recording(series, occurrence, artifact, module):
         'id': uuid.uuid5(uuid.NAMESPACE_URL, 'lms-live-recording:' + identity),
         'target_kind': 'live_session', 'target_id': series['id'], 'component_id': artifact['id'],
         'title': title, 'source_url': source, 'source_at_start': source, 'scope': scope,
+        # Preserve the existing LMS transfer/playback pipeline. The separate
+        # KBC LiveSessions ingester owns its videos; the module collection
+        # worker organizes them by their canonical occurrence metadata.
         'library_id': os.environ.get('BUNNY_STREAM_LIBRARY_ID', '798153'), 'status': 'queued',
     })
     if not created and asset.status == 'failed':

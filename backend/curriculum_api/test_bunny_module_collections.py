@@ -15,7 +15,8 @@ VIDEO = 'c1c2c3c4-1234-5678-abcd-123456789abc'
 
 class ModuleCollectionTests(TestCase):
     def setUp(self):
-        env = patch.dict(os.environ, BUNNY_STREAM_ENABLED='true', BUNNY_STREAM_LIBRARY_ID='798153')
+        env = patch.dict(os.environ, BUNNY_STREAM_ENABLED='true', BUNNY_STREAM_LIBRARY_ID='798153',
+                         BUNNY_LIVE_STREAM_LIBRARY_ID='798153')
         env.start(); self.addCleanup(env.stop)
         self.client = Mock(library_id='798153')
         self.client.collection.side_effect = MissingProgrammeCollection('Missing')
@@ -66,6 +67,16 @@ class ModuleCollectionTests(TestCase):
         folders.ensure_collection(one, self.client)
         folders.ensure_collection(two, self.client)
         self.assertEqual(self.client.create_programme_collection.call_count, 2)
+
+    def test_new_module_targets_live_library_without_rewriting_legacy_destination(self):
+        row = {'module_catalogue_id': 'MODULE', 'title': 'Example module'}
+        legacy = folders.queue_module(row, library_id='798153', wake=False)
+        with patch.dict(os.environ, BUNNY_LIVE_STREAM_LIBRARY_ID='796471'):
+            live = folders.queue_module(row, wake=False)
+        self.assertNotEqual(legacy.pk, live.pk)
+        self.assertEqual((legacy.library_id, live.library_id), ('798153', '796471'))
+        legacy.refresh_from_db()
+        self.assertEqual(legacy.library_id, '798153')
 
     def test_existing_container_survives_title_change_without_new_collection(self):
         one = self.job()
@@ -136,6 +147,7 @@ class ModuleCollectionTests(TestCase):
         ready.collection_id, ready.status = COLLECTION, 'ready'
         ready.save()
         with patch.object(folders, 'capture_modules') as capture, \
+             patch('curriculum_api.bunny_live_recording_collections.organize_ready_recordings'), \
              patch.object(folders, 'BunnyStream', return_value=self.client):
             self.assertEqual(folders.run_pending_collections(limit=5), 1)
         capture.assert_called_once_with(5)

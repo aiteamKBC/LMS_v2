@@ -30,7 +30,7 @@ class SessionBunnyTests(TestCase):
         self.read = self.components.start(); self.addCleanup(self.components.stop)
         self.owner = patch('curriculum_api.views.teams_online_meeting_owner_id', return_value='OWNER')
         self.owner.start(); self.addCleanup(self.owner.stop)
-        self.environment = patch.dict(os.environ, BUNNY_STREAM_ENABLED='true')
+        self.environment = patch.dict(os.environ, BUNNY_STREAM_ENABLED='true', BUNNY_LIVE_STREAM_LIBRARY_ID='798153')
         self.environment.start(); self.addCleanup(self.environment.stop)
 
     def asset(self):

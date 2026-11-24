@@ -194,6 +194,30 @@ instead of the availability of a retained Azure rollback copy.
 
 ### Configuration
 
+Module Collections in the separate **LiveSessions** library use their own
+credentials. Keep the existing curriculum library settings below unchanged:
+
+```dotenv
+BUNNY_LIVE_STREAM_LIBRARY_ID=796471
+BUNNY_LIVE_STREAM_API_KEY=<LiveSessions library API key>
+```
+
+Set these on curriculum-serving backends and the scheduled `session-worker`.
+Saving a module queues its Collection before the first recording. The scheduled
+worker recovers missed saves and files newly ready KBC-ingested videos using
+`kbc_lms_occurrence_id` and the canonical occurrence-to-module relation. It keeps
+each video GUID and its metadata, and does not infer ownership from titles.
+This organization does not introduce another uploader into LiveSessions or
+rewrite existing LMS player references. Existing manually chosen folders are
+retained. A durable cursor scans older pages while each pass also checks the
+newest videos; ambiguous or missing ownership stays visible for review.
+
+If directly serving protected player URLs from this library, also set
+`BUNNY_LIVE_STREAM_TOKEN_KEY` from **LiveSessions > Security**. It is distinct
+from the API key. Never reuse the old library's security key for a different
+library or disable playback protection. Existing saved library identities
+continue to select their own API and player-security credentials.
+
 Use the backend and worker environments, including the AWS runtime secrets:
 
 ```dotenv

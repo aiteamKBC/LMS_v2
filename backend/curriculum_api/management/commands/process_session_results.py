@@ -58,12 +58,13 @@ class Command(BaseCommand):
         requested_ids = list(dict.fromkeys(value.strip() for value in options.get('live_session_ids', []) if value.strip()))
         scope_params = [requested_ids] if requested_ids else []
         if options['scheduled']:
-            try:
-                from curriculum_api.bunny_module_collections import run_pending_collections
-                run_pending_collections(limit=options['limit'])
-            except Exception as collection_failure:
-                logging.getLogger(__name__).warning('Module live collections need retry (%s).',
-                                                    type(collection_failure).__name__)
+            if not requested_ids:
+                try:
+                    from curriculum_api.bunny_module_collections import run_pending_collections
+                    run_pending_collections(limit=options['limit'])
+                except Exception as collection_failure:
+                    logging.getLogger(__name__).warning('Module live collections need retry (%s).',
+                                                        type(collection_failure).__name__)
             scheduled_scope = ' AND o.live_session_id=ANY(%s)' if requested_ids else ''
             with connections['default'].cursor() as cursor:
                 # A series can exhaust its attempts before its next lecture. Reopen

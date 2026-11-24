@@ -38,6 +38,27 @@ COLLECTION_NAMES = {
 FREE_COURSE_COLLECTION = 'Free course'
 
 
+def live_library_id():
+    """LiveSessions is separate from the existing curriculum-material library."""
+    library = os.environ.get('BUNNY_LIVE_STREAM_LIBRARY_ID', '796471').strip()
+    if not library.isdigit():
+        raise VideoImportError('The LiveSessions library identity is not configured.')
+    return library
+
+
+def library_secret(library_id, suffix):
+    """Select a credential by the saved library; never send another library's key."""
+    library = str(library_id)
+    materials = os.environ.get('BUNNY_STREAM_LIBRARY_ID', '798153').strip()
+    if library == materials:
+        prefix = 'BUNNY_STREAM_'
+    elif library == live_library_id():
+        prefix = 'BUNNY_LIVE_STREAM_'
+    else:
+        raise VideoImportError('The saved Bunny library is not configured. Existing media is unchanged.')
+    return os.environ.get(prefix + suffix, '').strip()
+
+
 def programme_collection_name(programme_id, programme_name):
     aliases = COLLECTION_NAMES.get(programme_id, ())
     name = ' '.join(str(aliases[0] if aliases else programme_name or '').split())
@@ -90,7 +111,7 @@ def is_bunny_url(value):
 class BunnyStream:
     def __init__(self, library_id=None, api_key=None, session=None):
         self.library_id = str(library_id or os.environ.get('BUNNY_STREAM_LIBRARY_ID', '798153'))
-        self.api_key = api_key if api_key is not None else os.environ.get('BUNNY_STREAM_API_KEY', '').strip()
+        self.api_key = api_key if api_key is not None else library_secret(self.library_id, 'API_KEY')
         if not self.library_id.isdigit() or not self.api_key:
             raise VideoImportError('Bunny Stream is not configured. Contact an administrator.')
         self.base = f'https://video.bunnycdn.com/library/{self.library_id}'

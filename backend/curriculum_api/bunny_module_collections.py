@@ -14,7 +14,7 @@ from django.db import connections, transaction
 from django.db.models import Q
 from django.utils import timezone
 
-from .bunny_stream import BunnyStream, MissingProgrammeCollection, VideoImportError
+from .bunny_stream import BunnyStream, MissingProgrammeCollection, VideoImportError, live_library_id
 from .models import CurriculumVideoImport
 
 KIND = 'live_collection'
@@ -42,7 +42,7 @@ def queue_module(row, *, library_id=None, wake=True):
     module_id = str(row.get('module_catalogue_id') or '').strip()
     title = row.get('title')
     name = collection_name(module_id, title)
-    library = str(library_id or os.environ.get('BUNNY_STREAM_LIBRARY_ID', '798153'))
+    library = str(library_id or live_library_id())
     fingerprint = hashlib.sha256(f'bunny-live-collection:{library}:{module_id}'.encode()).hexdigest()
     job, created = CurriculumVideoImport.objects.get_or_create(fingerprint=fingerprint, defaults={
         'id': uuid.uuid5(uuid.NAMESPACE_URL, fingerprint), 'target_kind': KIND, 'target_id': module_id,
@@ -142,7 +142,7 @@ def capture_modules(limit=20):
     connection = connections['default']
     if connection.vendor != 'postgresql':
         return 0
-    library = os.environ.get('BUNNY_STREAM_LIBRARY_ID', '798153')
+    library = live_library_id()
     with connection.cursor() as cursor:
         cursor.execute('''SELECT m.module_catalogue_id,m.title FROM curriculum.modules m
             WHERE m.deleted_at IS NULL AND NOT coalesce(m.is_programme_deleted,false)
@@ -164,4 +164,9 @@ def run_pending_collections(limit=20):
         Q(lease_until__isnull=True) | Q(lease_until__lte=timezone.now())).order_by('updated_at')[:limit]
     for job in list(jobs):
         process_collection(job)
+    try:
+        from .bunny_live_recording_collections import organize_ready_recordings
+        organize_ready_recordings(limit=limit)
+    except Exception as failure:
+        log.warning('LiveSessions recording organization needs retry (%s).', type(failure).__name__)
     return len(jobs)

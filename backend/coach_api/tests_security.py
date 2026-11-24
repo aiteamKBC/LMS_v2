@@ -183,6 +183,9 @@ class CoachAuthorizationSecurityTests(CoachTransactionTestCase):
         context.assert_not_called()
 
     def test_removed_coach_message_routes_return_not_found(self):
+        # The prefix gate rejects anonymous requests before route resolution.
+        self.assertEqual(self.client.get('/coach_api/coach/messages').status_code, 401)
+        self._authenticate(self._make_staff_account(email='retired-routes@example.invalid', access='coach'))
         self.assertEqual(self.client.get("/coach_api/coach/messages").status_code, 404)
         self.assertEqual(self.client.get("/coach_api/coach/messages/101").status_code, 404)
         self.assertEqual(
@@ -578,5 +581,13 @@ class CoachAuthorizationSecurityTests(CoachTransactionTestCase):
             },
         )
 
+        self.assertEqual(response.status_code, 401)
+        self.assertEqual(response.json()['code'], 'unauthenticated')
+        # An authenticated non-staff caller can reach the envelope, but cannot
+        # use it to access a staff-only child request.
+        self._authenticate(self._make_non_staff_account(role='learner'))
+        response = self._request('POST', '/coach_api/_batch/', {
+            'requests': [{'id': 'caseload', 'url': '/coach_api/coach/caseload'}],
+        })
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json()["responses"][0]["status"], 401)
+        self.assertEqual(response.json()['responses'][0]['status'], 403)
