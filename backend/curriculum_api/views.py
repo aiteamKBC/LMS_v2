@@ -21066,26 +21066,36 @@ def apply_module_session_plan_to_weeks(module, group_row, weeks, *, holidays=Non
                 if planned_rescheduled:
                     planned_settings['sessionRescheduled'] = True
                 component['settings'] = planned_settings
-            first_settings = live_components[0].get('settings')
+            first_main = next((component for component in live_components
+                               if not clean_str((component.get('settings') or {}).get('extraTeamsMeetingUrl'))
+                               and clean_str((component.get('settings') or {}).get('teamsMeetingScope')).lower() != 'additional'), None)
+            first_settings = (first_main or {}).get('settings')
             first_settings = first_settings if isinstance(first_settings, dict) else {}
             first_number = parse_int(first_settings.get('teamsSessionNumber'), 0)
             first_numbered = next(
                 (item for item in session_plan if first_number > 0 and item.get('sessionNumber') == first_number),
                 None,
             )
-            if first_numbered:
-                # Teams numbering can omit orientation and additional events.
-                # Keep a confirmed date that already fits this authored week's
-                # slots; a changed plan still moves the header when it no
-                # longer fits. Mirrors applyModuleWeekSessionPlan.
-                confirmed_date = (
-                    format_date(first_settings.get('sessionDate'))
-                    if clean_str(first_settings.get('teamsLiveSessionId')) else ''
-                )
-                first_planned = next(
-                    (slot for slot in slots if slot.get('date') == confirmed_date),
-                    first_numbered,
-                )
+            confirmed_date = (
+                format_date(first_settings.get('sessionDate'))
+                if clean_str(first_settings.get('teamsLiveSessionId')) and first_number > 0
+                and first_settings.get('teamsCalendarBinding') not in {'missing', 'ambiguous', 'unverified'} else ''
+            )
+            delivery_start = format_date(module.get('start_date') or module.get('startDate'))
+            delivery_end = format_date(module.get('end_date') or module.get('endDate'))
+            confirmed_in_delivery = (confirmed_date
+                                     and (not delivery_start or confirmed_date >= delivery_start)
+                                     and (not delivery_end or confirmed_date <= delivery_end))
+            if confirmed_in_delivery:
+                # Occurrence numbers omit orientation and reading weeks. The
+                # heading describes the meeting this card actually opens;
+                # schedule drift is reported by the calendar sync verdict. A
+                # booking outside a newly edited module window keeps the
+                # existing planned-heading drift behavior.
+                first_planned = {'date': confirmed_date, 'day': parse_date(confirmed_date).strftime('%A'),
+                                 'rescheduled': bool(first_settings.get('sessionRescheduled'))}
+            elif first_numbered:
+                first_planned = first_numbered
         # The week runs on the day its live session is delivered on. A closed
         # delivery slot is not this week -- it is a reading week of its own,
         # which the plan's `slots` spine keeps in the curriculum at the closed

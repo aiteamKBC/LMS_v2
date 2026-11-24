@@ -1249,21 +1249,27 @@ export function applyModuleWeekSessionPlan(
         };
       });
       if (componentsMoved) components = plannedComponents;
-      const firstLive = components.find(component => component.type === 'live-session');
+      const firstLive = components.find(component => component.type === 'live-session'
+        && !trimmed(component.settings?.extraTeamsMeetingUrl)
+        && trimmed(component.settings?.teamsMeetingScope).toLowerCase() !== 'additional');
       const firstNumber = Number(firstLive?.settings?.teamsSessionNumber || 0);
       const firstNumberedSession = firstNumber > 0
         ? sessions.find(session => session.sessionNumber === firstNumber)
         : undefined;
-      if (firstNumberedSession) {
-        // Teams numbers can omit orientation and separately booked events.
-        // A confirmed date already fitting this authored week's slots wins
-        // over that unrelated index. A changed plan still moves the header
-        // when the confirmed date no longer fits, preserving its drift notice.
-        const confirmedDate = trimmed(firstLive?.settings?.teamsLiveSessionId)
-          ? trimmed(firstLive?.settings?.sessionDate) : '';
-        const headerSession = slots.find(slot => slot.date === confirmedDate) || firstNumberedSession;
-        sessionDate = headerSession.date || '';
-        sessionDay = headerSession.day || '';
+      const confirmedDate = trimmed(firstLive?.settings?.teamsLiveSessionId) && firstNumber > 0
+        && !['missing', 'ambiguous', 'unverified'].includes(trimmed(firstLive?.settings?.teamsCalendarBinding))
+        ? trimmed(firstLive?.settings?.sessionDate) : '';
+      const confirmedInDelivery = confirmedDate && /^\d{4}-\d{2}-\d{2}$/.test(confirmedDate)
+        && (!module.startDate || confirmedDate >= module.startDate)
+        && (!module.endDate || confirmedDate <= module.endDate);
+      if (confirmedInDelivery) {
+        // The heading follows the confirmed meeting, whose numbering may
+        // exclude reading weeks. Calendar sync still reports schedule drift.
+        sessionDate = confirmedDate;
+        sessionDay = new Date(`${confirmedDate}T12:00:00Z`).toLocaleDateString('en-GB', { weekday: 'long', timeZone: 'UTC' });
+      } else if (firstNumberedSession) {
+        sessionDate = firstNumberedSession.date || '';
+        sessionDay = firstNumberedSession.day || '';
       }
     }
     if (

@@ -15,6 +15,31 @@ function moduleWithGeneralMaterials() {
 }
 
 describe('general materials before the delivery plan', () => {
+  it('uses the confirmed meeting date for its heading when numbering excludes other weeks', () => {
+    const module = moduleWithGeneralMaterials();
+    const live = module.weekStructure[1].components[0];
+    live.settings = { ...live.settings, sessionDate: '2026-12-16', teamsSessionNumber: 1,
+      teamsOccurrenceId: 'OCC-CONFIRMED', liveSessionUrl: 'https://example.invalid/confirmed' };
+    const original = structuredClone(module.weekStructure[1].components);
+    const result = applyModuleWeekSessionPlan(module, { sessions, skippedHolidays: [], warnings: [], finalEndDate: '' });
+    expect(result.weekStructure[1].sessionDate).toBe('2026-12-16');
+    expect(result.weekStructure[1].sessionDay).toBe('Wednesday');
+    expect(result.weekStructure[1].components).toEqual(original);
+  });
+
+  it('does not use an unverified booking or an additional meeting as the confirmed main heading', () => {
+    const module = moduleWithGeneralMaterials();
+    const live = module.weekStructure[1].components[0];
+    live.settings = { ...live.settings, sessionDate: '2026-12-16', teamsSessionNumber: 1,
+      teamsCalendarBinding: 'unverified' };
+    const extra = structuredClone(live);
+    extra.id = 'EXTRA';
+    extra.settings = { ...extra.settings, sessionDate: '2026-12-30', extraTeamsMeetingUrl: 'https://example.invalid/extra' };
+    module.weekStructure[1].components.unshift(extra);
+    const result = applyModuleWeekSessionPlan(module, { sessions, skippedHolidays: [], warnings: [], finalEndDate: '' });
+    expect(result.weekStructure[1].sessionDate).toBe('2026-12-09');
+    expect(result.weekStructure[1].components[0]).toEqual(extra);
+  });
   it.each([2, 3, 4])('keeps every link and recording with its own session for %i lives per week', count => {
     const draft = createLocalModuleDraft({ programme: 'Programme', title: 'Multiple live sessions', description: '', weeks: 4, status: 'draft', endDate: '2027-03-21' });
     const plan: ModuleWeekSessionPlan['sessions'] = [];
