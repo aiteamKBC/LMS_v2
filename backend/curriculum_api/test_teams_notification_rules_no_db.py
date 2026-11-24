@@ -471,7 +471,7 @@ class WeekMeetingEditTests(unittest.TestCase):
             active_component_rows=lambda rows: rows, component_builder_settings=lambda item: item['settings'],
             teams_schedule_settings=lambda settings, *_a, **_k: settings, teams_event_payload=event_payload,
             calendar_targets=lambda *a, **k: [], graph_timezone_iana=lambda _settings: 'Europe/London',
-            teams_non_delivery_reason=lambda *a: '', as_json_value=lambda value, fallback: value or fallback,
+            teams_non_delivery_reason=lambda *a, **kw: '', as_json_value=lambda value, fallback: value or fallback,
             apply_teams_meeting_options=lambda *a, **k: (True, {}, []),
             forward_teams_invitation=lambda request, owner, ids, people, comment='': (
                 [request('POST', f'users/{owner}/events/{ids[0]}/forward',
