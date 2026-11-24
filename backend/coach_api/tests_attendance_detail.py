@@ -252,7 +252,7 @@ class CoachDetailProjectionTests(SimpleTestCase):
         self.reports = [SimpleNamespace(id=7, attendance_id=report_id, status='submitted', evidence_image_url=''),
                         SimpleNamespace(id=8, attendance_id=report_id, status='approved', evidence_image_url='/evidence/synthetic')]
         actual = self.read(pageSize=1)
-        self.report_manager.filter.assert_called_once_with(learner_id=901, attendance_id__in=[report_id])
+        self.report_manager.filter.assert_called_once_with(enrolment_id=901, attendance_id__in=[report_id])
         self.assertEqual(actual['records'][0]['absenceReport'], {'id': '8', 'status': 'approved', 'url': '/evidence/synthetic'})
 
     def test_empty_history_keeps_null_rate_and_does_not_query_reports(self):

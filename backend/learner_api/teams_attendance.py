@@ -731,118 +731,15 @@ _ATTENDANCE_SCHEMA_READY_DATABASES: set[str] = set()
 def ensure_teams_attendance_reporting_columns(database: str = "default") -> None:
     if database in _ATTENDANCE_SCHEMA_READY_DATABASES:
         return
-    # PostgreSQL DDL is transactional. Keep the additive schema upgrade, its
-    # backfill and the view replacement all-or-nothing on Neon.
-    with transaction.atomic(using=database), connections[database].cursor() as cursor:
-        # This legacy trigger targets the removed Learner.Absence table and
-        # prevents every insert/update on the reporting table.
-        cursor.execute(
-            f"""
-            DROP TRIGGER IF EXISTS learner_attendance_details_sync_absence_counts
-            ON {ATTENDANCE_REPORTING_TABLE}
-            """
-        )
-        cursor.execute(
-            f"""
-            ALTER TABLE {ATTENDANCE_REPORTING_TABLE}
-                ADD COLUMN IF NOT EXISTS attended_seconds integer NOT NULL DEFAULT 0,
-                ADD COLUMN IF NOT EXISTS attendance_report_id text,
-                ADD COLUMN IF NOT EXISTS live_session_id text,
-                ADD COLUMN IF NOT EXISTS source varchar(40) NOT NULL DEFAULT 'legacy',
-                ADD COLUMN IF NOT EXISTS synced_at timestamp with time zone,
-                ADD COLUMN IF NOT EXISTS enrolment_id bigint,
-                ADD COLUMN IF NOT EXISTS learner_profile_id bigint,
-                ADD COLUMN IF NOT EXISTS occurrence_id text,
-                ADD COLUMN IF NOT EXISTS module_catalogue_id text,
-                ADD COLUMN IF NOT EXISTS group_id text,
-                ADD COLUMN IF NOT EXISTS group_name text,
-                ADD COLUMN IF NOT EXISTS is_expected boolean NOT NULL DEFAULT true,
-                ADD COLUMN IF NOT EXISTS eligibility_reason varchar(80),
-                ADD COLUMN IF NOT EXISTS source_record_id text,
-                ADD COLUMN IF NOT EXISTS scheduled_start timestamp with time zone,
-                ADD COLUMN IF NOT EXISTS scheduled_end timestamp with time zone,
-                ADD COLUMN IF NOT EXISTS actual_start timestamp with time zone,
-                ADD COLUMN IF NOT EXISTS actual_end timestamp with time zone,
-                ADD COLUMN IF NOT EXISTS first_join_at timestamp with time zone,
-                ADD COLUMN IF NOT EXISTS last_leave_at timestamp with time zone,
-                ADD COLUMN IF NOT EXISTS calculated_at timestamp with time zone
-            """
-        )
-        cursor.execute(
-            f"""
-            UPDATE {ATTENDANCE_REPORTING_TABLE}
-            SET learner_profile_id = COALESCE(learner_profile_id, learner_id),
-                occurrence_id = COALESCE(NULLIF(occurrence_id, ''), session_id),
-                calculated_at = COALESCE(calculated_at, synced_at, updated_at, created_at)
-            WHERE source = 'microsoft_teams'
-              AND (
-                    learner_profile_id IS NULL
-                 OR occurrence_id IS NULL
-                 OR occurrence_id = ''
-                 OR calculated_at IS NULL
-              )
-            """
-        )
-        cursor.execute(
-            f"""
-            UPDATE {ATTENDANCE_REPORTING_TABLE} attendance
-            SET module_catalogue_id = session.module_catalogue_id,
-                group_id = module.group_id,
-                group_name = delivery_group.group_name
-            FROM curriculum.live_sessions session
-            LEFT JOIN curriculum.modules module
-                   ON module.module_catalogue_id = session.module_catalogue_id
-            LEFT JOIN curriculum.groups delivery_group
-                   ON delivery_group.group_id = module.group_id
-            WHERE attendance.source = 'microsoft_teams'
-              AND attendance.live_session_id = session.id
-              AND (
-                    attendance.module_catalogue_id IS NULL
-                 OR attendance.group_id IS NULL
-                 OR attendance.group_name IS NULL
-              )
-            """
-        )
-        cursor.execute(
-            f"""
-            CREATE INDEX IF NOT EXISTS idx_attendance_details_source
-            ON {ATTENDANCE_REPORTING_TABLE} (source)
-            """
-        )
-        cursor.execute(
-            f"""
-            CREATE INDEX IF NOT EXISTS idx_attendance_details_learner_source_date
-            ON {ATTENDANCE_REPORTING_TABLE} (learner_id, source, session_date DESC)
-            """
-        )
-        cursor.execute(
-            f"""
-            CREATE INDEX IF NOT EXISTS idx_attendance_details_module_group
-            ON {ATTENDANCE_REPORTING_TABLE} (module_catalogue_id, group_id)
-            WHERE source = 'microsoft_teams' AND is_expected
-            """
-        )
-        cursor.execute(
-            f"""
-            CREATE UNIQUE INDEX IF NOT EXISTS uq_attendance_details_profile_occurrence
-            ON {ATTENDANCE_REPORTING_TABLE} (learner_profile_id, occurrence_id)
-            WHERE source = 'microsoft_teams'
-              AND learner_profile_id IS NOT NULL
-              AND occurrence_id IS NOT NULL
-            """
-        )
-        cursor.execute(
-            f"""
-            CREATE OR REPLACE VIEW "Learner"."verified_teams_attendance" AS
-            SELECT *
-            FROM {ATTENDANCE_REPORTING_TABLE}
-            WHERE source = 'microsoft_teams' AND is_expected
-            """
-        )
-    transaction.on_commit(
-        lambda: _ATTENDANCE_SCHEMA_READY_DATABASES.add(database),
-        using=database,
-    )
+    # Canonical reporting is provisioned by the database owner. A scheduled
+    # sync must never recreate retired identity columns or replace the JOIN view.
+    with connections[database].cursor() as cursor:
+        cursor.execute(f"""SELECT learner_id, session_id, occurrence_id, source,
+            attended_seconds, is_expected, catchup_completed, calculated_at
+            FROM {ATTENDANCE_REPORTING_TABLE} LIMIT 0""")
+        cursor.execute('''SELECT learner_id, learner_profile_id, enrolment_id,
+            learner_name, learner_email FROM "Learner".verified_teams_attendance LIMIT 0''')
+    _ATTENDANCE_SCHEMA_READY_DATABASES.add(database)
 
 
 def _verified_occurrence_ids(database: str, module_refs: list[str] | None = None) -> list[str]:
@@ -893,8 +790,7 @@ def sync_verified_teams_attendance_reporting(
 
     query = f"""
         INSERT INTO {ATTENDANCE_REPORTING_TABLE} (
-            learner_id, learner_name, learner_email,
-            learner_profile_id, enrolment_id,
+            learner_id,
             session_id, session_title, session_type,
             occurrence_id,
             session_date, session_start_time, session_end_time,
@@ -907,8 +803,7 @@ def sync_verified_teams_attendance_reporting(
             first_join_at, last_leave_at,
             source, synced_at, calculated_at, updated_at
         ) VALUES (
-            %s, %s, %s,
-            %s, %s,
+            %s,
             %s, %s, %s,
             %s,
             %s, %s, %s,
@@ -922,10 +817,6 @@ def sync_verified_teams_attendance_reporting(
             'microsoft_teams', CURRENT_TIMESTAMP, %s, %s
         )
         ON CONFLICT (learner_id, session_id) DO UPDATE SET
-            learner_name = EXCLUDED.learner_name,
-            learner_email = EXCLUDED.learner_email,
-            learner_profile_id = EXCLUDED.learner_profile_id,
-            enrolment_id = EXCLUDED.enrolment_id,
             session_title = EXCLUDED.session_title,
             session_type = EXCLUDED.session_type,
             occurrence_id = EXCLUDED.occurrence_id,
@@ -961,10 +852,6 @@ def sync_verified_teams_attendance_reporting(
     params = [
         (
             row["learner_id"],
-            row["learner_name"],
-            row["learner_email"],
-            row["learner_profile_id"],
-            row["enrolment_id"],
             row["session_id"],
             row["session_title"],
             row["session_type"],

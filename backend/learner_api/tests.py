@@ -814,9 +814,9 @@ class LearnerAttendanceEndpointTests(SimpleTestCase):
         self.assertEqual(response.status_code, 200)
         profiles.filter.assert_called_once_with(enrolment_id=enrolment_id)
         profiles.filter.return_value.values_list.assert_called_once_with('id', flat=True)
-        adjustments.filter.assert_called_once_with(learner_id=learner_profile_id)
+        adjustments.filter.assert_called_once_with(learner_profile_id=learner_profile_id)
         sync.assert_called_once_with(learner_email=source.email)
-        scheduled.assert_called_once_with(source, module_ids=None)
+        scheduled.assert_called_once_with(source, module_ids=None, occurrence_ids=None)
         confirmations.assert_called_once_with(enrolment_id)
         fetch_rows.assert_called_once_with(
             aptem_id='92',

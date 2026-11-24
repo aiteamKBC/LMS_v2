@@ -76,4 +76,6 @@ def normalise(table, payload, columns):
             )
             if resolved is not None:
                 payload['standard_ksb_id'] = resolved
+            else:
+                raise ValueError('KSB mapping requires an unambiguous exact Standard version and code.')
     return payload, nullable

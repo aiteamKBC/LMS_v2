@@ -174,7 +174,10 @@ class DashboardAttendanceTests(SimpleTestCase):
         self.profiles.filter.side_effect = lambda *, enrolment_id: SimpleNamespace(
             values_list=lambda *args, **kwargs: [profile_by_enrolment[enrolment_id]])
         for target, kwargs in (
+            ("learner_api.attendance_lectures.effective_assigned_module_ids", {"return_value": ["assigned-module"]}),
+            ("learner_api.recorded_attendance.saved_delivery_mode", {"return_value": "live"}),
             ("learner_api.attendance_lectures.read_native_occurrences", {"return_value": []}),
+            ("learner_api.attendance_lectures.read_cancelled_native_occurrences", {"return_value": []}),
             ("learner_api.attendance_confirmation.read_confirmations", {"return_value": {}}),
             ("learner_api.attendance_lectures._completed_catchup_occurrences", {"return_value": set()}),
             ("learner_api.attendance_lectures._apply_coach_source_adjustments", {"side_effect": lambda rows, learner_id: rows}),

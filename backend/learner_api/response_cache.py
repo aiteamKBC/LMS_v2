@@ -32,6 +32,7 @@ import time
 
 from django.core.cache import cache
 from django.http import HttpResponse
+from curriculum_api.source_activity_ksbs import CACHE_GENERATION_KEY
 
 log = logging.getLogger(__name__)
 
@@ -82,7 +83,8 @@ def _key(request, name, kind, pk):
     viewer = f"{getattr(account, 'pk', '')}:{getattr(account, 'role', '')}" if account else 'anon'
     raw = f"{viewer}|{request.get_full_path()}"
     digest = hashlib.sha256(raw.encode()).hexdigest()[:32]
-    return f'learner-read:{name}:{kind}:{pk}:{_version(kind, pk)}:{digest}'
+    source_version = cache.get(CACHE_GENERATION_KEY) or 'initial'
+    return f'learner-read:{name}:{kind}:{pk}:{_version(kind, pk)}:{source_version}:{digest}'
 
 
 def _restore(stored):

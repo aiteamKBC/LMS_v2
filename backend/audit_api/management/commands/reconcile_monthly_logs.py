@@ -40,7 +40,6 @@ WEEKLY_CAPS = {4626: Decimal("13")}
 MANUAL = 'structured_manual_activities.manual_learner_activities'
 ROW_KSB = 'structured_manual_activities.learner_journal_row_ksbs'
 LEARNER_KSB = 'structured_manual_activities.learner_activity_ksbs'
-ACTIVITY_KSB = 'structured_manual_activities.activity_ksbs'
 REVISIONS = 'structured_manual_activities.manual_activity_hours_revision'
 AUDIT_TABLE = 'structured_manual_activities.monthly_log_reconciliation_audit'
 
@@ -276,7 +275,8 @@ class Command(BaseCommand):
         results = self._dicts(cursor)
         cursor.execute(f'''SELECT aptem_id,activity_id,ksbs FROM {LEARNER_KSB} WHERE aptem_id=ANY(%s)''', [aptem_ids])
         learner_ksbs = {(r["aptem_id"], r["activity_id"]): _codes(r["ksbs"]) for r in self._dicts(cursor)}
-        cursor.execute(f'''SELECT activity_id,ksbs FROM {ACTIVITY_KSB}''')
+        from curriculum_api.source_activity_ksbs import relation
+        cursor.execute(f'''SELECT activity_id,ksbs FROM {relation()} activity_ksbs''')
         activity_ksbs = {r["activity_id"]: _codes(r["ksbs"]) for r in self._dicts(cursor)}
         cursor.execute(f'''SELECT row_id,ksbs FROM {ROW_KSB} WHERE aptem_id=ANY(%s)''', [aptem_ids])
         row_ksbs = {int(r["row_id"]): _codes(r["ksbs"]) for r in self._dicts(cursor)}

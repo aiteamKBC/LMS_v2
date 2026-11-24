@@ -75,6 +75,12 @@ class ForeignKeyTests(SimpleTestCase):
 
 
 class KsbMappingTests(SimpleTestCase):
+    def test_unresolved_write_is_rejected_instead_of_retaining_an_unrelated_definition(self):
+        with mock.patch.object(ksb_mapping_placement, 'standard_ksb_id_for', return_value=None):
+            with self.assertRaisesRegex(ValueError, 'exact Standard version'):
+                shape('ksb_mappings', {'component_id': 'C1', 'ksb_code': 'K1',
+                                       'source_id': 'st0612-v99-0', 'source_type': 'standard'})
+
     def test_a_mapping_resolves_its_standard_ksb_from_its_own_source(self):
         with mock.patch.object(ksb_mapping_placement, 'standard_ksb_id_for', return_value=7) as lookup:
             shaped, _ = shape('ksb_mappings', {

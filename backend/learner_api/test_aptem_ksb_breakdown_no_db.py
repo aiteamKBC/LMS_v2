@@ -121,7 +121,8 @@ class ProgressKsbBreakdownTests(unittest.TestCase):
         tree = ast.parse(Path(__file__).with_name('dashboard_metrics.py').read_text())
         endpoint = next(node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == 'learner_metrics')
         self.assertEqual([ast.unparse(item) for item in endpoint.decorator_list],
-                         ['require_GET', "learner_self_or_staff(kwarg='pk')", 'journal_sources.learner_journal_view'])
+                         ['require_GET', "learner_self_or_staff(kwarg='pk')", 'journal_sources.learner_journal_view',
+                          "cached_learner_read('metrics')"])
         endpoint.decorator_list = []
         source = SimpleNamespace(pk=125, aptem_id=1055)
         model = MagicMock()

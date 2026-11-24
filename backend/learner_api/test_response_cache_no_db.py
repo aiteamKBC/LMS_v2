@@ -55,6 +55,18 @@ class ResponseCacheTests(unittest.TestCase):
         self.assertEqual(second['X-Learner-Cache'], 'hit')
         self.assertEqual(second['Cache-Control'], 'private, no-store')
 
+    def test_source_ksb_change_invalidates_both_role_responses(self):
+        learner = request()
+        coach = request(account=Account(2, 'coach'))
+        for req in (learner,coach):
+            self.view(req,kind='commercial',pk=7)
+            self.view(req,kind='commercial',pk=7)
+        self.assertEqual(self.calls,2)
+        cache.set(response_cache.CACHE_GENERATION_KEY,'new-source-version')
+        for req in (learner,coach):
+            self.view(req,kind='commercial',pk=7)
+        self.assertEqual(self.calls,4)
+
     def test_viewers_and_query_strings_are_kept_apart(self):
         self.view(request(), kind='commercial', pk=7)
         self.view(request(account=Account(2, 'coach')), kind='commercial', pk=7)

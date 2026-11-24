@@ -1,4 +1,4 @@
-"""Request-scoped journal reads; coach callers retain their existing sources."""
+"""Request-scoped journal reads with shared canonical KSB sources for both roles."""
 from contextvars import ContextVar
 from contextlib import contextmanager
 from functools import wraps
@@ -47,6 +47,9 @@ def standard_monthly_reads():
 
 
 def table(name):
+    if name == 'activity_ksbs':
+        from curriculum_api.source_activity_ksbs import relation
+        return relation()
     return TABLES[name] if enabled() else f'structured_manual_activities.{name}'
 
 
@@ -56,9 +59,11 @@ def retained_journal_sql(sql):
     Only the explicitly migrated relations are eligible; values remain bound
     parameters and signatures/ownership queries keep their original tables.
     """
-    if not enabled():
-        return sql
     for name, target in TABLES.items():
+        if name == 'activity_ksbs':
+            target = table(name)
+        elif not enabled():
+            continue
         sql = re.sub(r'(?<![\w])"?structured_manual_activities"?\."?'
                      + re.escape(name) + r'"?(?![\w])', lambda _: target, sql)
     return sql

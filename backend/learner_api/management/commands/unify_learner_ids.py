@@ -19,8 +19,8 @@ What is remapped, and what is deliberately left alone
 -----------------------------------------------------
 Remapped: the columns that hold ``learners.id`` -- the FK children, the
 attendance tables, ``reviews``, and Progress Review runs. The attendance tables
-carry no FK, so they were confirmed by their own ``learner_name`` column
-matching ``learners.full_name`` rather than ``Created_users."Username"``.
+now use canonical learner FKs. The verified attendance JOIN view is derived
+from those keys and must not be remapped independently.
 
 ``evidence_files.learner_profile_id`` is a canonical ``learners.id`` child and
 is remapped with the other child keys. Left alone: ``learner_monthly_reports``,
@@ -51,9 +51,6 @@ CHILD_COLUMNS = [
     ("Learner", "learner_ksb_assignments", "learner_id"),
     ("Learner", "reviews", "learner_id"),
     ("Learner", "learner_attendance_details", "learner_id"),
-    ("Learner", "learner_attendance_details", "learner_profile_id"),
-    ("Learner", "verified_teams_attendance", "learner_id"),
-    ("Learner", "verified_teams_attendance", "learner_profile_id"),
     ("Learner", "progress_review_runs", "learner_id"),
 ]
 

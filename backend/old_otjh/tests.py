@@ -507,7 +507,8 @@ class TransitionTests(SimpleTestCase):
 
     def test_original_evidence_preview_checks_learner_and_month_before_reading(self):
         doc = {'source_evidence_id': 88, 'source_kind': 'note', 'month': '2026-07', 'body': 'Original learner reflection', 'display_name': 'Reflection.txt'}
-        with patch.object(repo, 'source_documents', return_value=[doc]) as read:
+        with patch.object(repo, 'source_documents', return_value=[doc]) as read, \
+             patch.object(repo, 'query', return_value=[]) as later_month:
             response = views.source_document(self.request(path='/audit_api/old-otjh/source-documents/3/88/note/'), 3, 88, 'note')
             self.assertEqual(response.status_code, 200)
             self.assertEqual(response.content, b'Original learner reflection')
@@ -518,6 +519,7 @@ class TransitionTests(SimpleTestCase):
             doc['month'] = '2026-09'
             response = views.source_document(self.request(), 3, 88, 'note')
             self.assertEqual(response.status_code, 400)
+            self.assertEqual(later_month.call_args.args[1], [42, '2026-09'])
 
     def test_office_preview_is_issued_only_for_an_authorized_record_document(self):
         doc = {'container': 'documents', 'blob_name': 'report.pptx', 'month': '2026-07'}
@@ -534,7 +536,8 @@ class TransitionTests(SimpleTestCase):
         from . import content
         row = {'id': 3, 'month': '2026-07', 'category': 'reading+quiz', 'source_ref': 'la:7:99', 'title': 'Reading'}
         backup = {'material_id': 99, 'title': 'Reading', 'blob_container': 'private-source', 'blob_name': 'original.pdf', 'blob_content_type': 'application/pdf'}
-        with patch.object(repo, 'activity_row', return_value=row), patch.object(content, 'catalogue', return_value={99: {'backup': backup}}), patch.object(views.evidence_storage, '_service_client') as storage:
+        with patch.object(repo, 'activity_row', return_value=row), patch.object(content, 'catalogue', return_value={99: {'backup': backup}}), patch.object(views.evidence_storage, '_service_client') as storage, \
+             patch.object(repo, 'query', return_value=[]) as later_month:
             storage.return_value.get_blob_client.return_value.download_blob.return_value.chunks.return_value = iter([b'%PDF-original'])
             response = views.material_document(self.request(path='/audit_api/old-otjh/material-documents/3/99/?month=2026-07'), 3, 99)
             self.assertEqual(response.status_code, 200)
@@ -544,6 +547,7 @@ class TransitionTests(SimpleTestCase):
                 response = views.material_document(self.request(path=f'/audit_api/old-otjh/material-documents/3/{ident}/?{query}'), 3, ident)
                 self.assertIn(response.status_code, (400,404))
             self.assertEqual(storage.call_count, 1)
+            self.assertEqual(later_month.call_args.args[1], [42, '2026-09'])
 
     def test_embedded_activity_cannot_select_another_learner_or_missing_row(self):
         for query in ('month=2026-07&activity_id=3&aptem_id=999', 'month=2026-07&activity_id=999',
