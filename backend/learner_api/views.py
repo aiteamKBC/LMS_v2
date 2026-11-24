@@ -20,8 +20,7 @@ import json
 
 import logging
 
-from django.db import DatabaseError, transaction
-from django.db.models.functions import Lower, Trim
+from django.db import DatabaseError, IntegrityError, transaction
 from django.http import JsonResponse
 from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
@@ -43,6 +42,7 @@ from .active_users import (
 )
 from .identity import learner_profile_for_source
 from .account_deletion import delete_learner_account
+from .account_identity import LearnerEmailConflict, email_owner, save_learner_identity
 from .learner_dates import save_enrolment_fields
 from .coach_assignment import case_owner_coach, current_coach
 from .directory import learner_directory_queryset
@@ -779,8 +779,15 @@ def enrolment_users(request):
             row = _create_enrolment_user(
                 request, fields, session_date=session_date, session_time=session_time,
             )
+        except LearnerEmailConflict as exc:
+            return JsonResponse(exc.payload(), status=400)
         except ValidationError as exc:
             return _error(str(exc), 400)
+        except IntegrityError:
+            existing = email_owner(fields.get('email'))
+            if existing is not None:
+                return JsonResponse(LearnerEmailConflict(existing).payload(), status=400)
+            return _error('The learner could not be created. Please reload the directory and try again.', 502)
         except DatabaseError as exc:
             return _error(f"Database error: {exc}", 502)
         return JsonResponse(row, status=201)
@@ -810,17 +817,9 @@ def _create_enrolment_user(request, fields, *, require_account=False,
     # protection against two truly concurrent requests.
     email = str(fields.get('email') or '').strip()
     if email:
-        existing = (
-            EnrolmentUser.all_learners
-            .annotate(_normalised_email=Lower(Trim('email')))
-            .filter(_normalised_email=email.casefold())
-            .only('id')
-            .first()
-        )
+        existing = email_owner(email)
         if existing is not None:
-            raise ValidationError(
-                'A learner with this email already exists. Update the existing learner instead.'
-            )
+            raise LearnerEmailConflict(existing)
 
     # Stamp who/when enrolled, server-side.
     stamp = timezone.now().strftime("%d/%m/%Y %H:%M:%S")
@@ -980,18 +979,18 @@ def enrolment_user_detail(request, pk):
         except ValidationError as exc:
             return _error(str(exc), 400)
         try:
+            identity_fields = {
+                field: fields[field] for field in ACCOUNT_IDENTITY_FIELDS
+                if field in fields and fields[field] != getattr(user, field, None)
+            }
+            if identity_fields:
+                save_learner_identity(user, identity_fields)
             for attr, value in fields.items():
                 setattr(user, attr, value)
             if fields:
-                handover = save_enrolment_fields(user, fields)
-                # The address and name on this row ARE the sign-in identity, and
-                # the login account keeps its own copy — which is what an
-                # invitation is sent to. Correcting an email here without this
-                # left the invitation going to the old address for ever, since
-                # the account only refreshes itself when its owner signs in and
-                # an invited learner has not yet.
-                if any(field in fields for field in ACCOUNT_IDENTITY_FIELDS):
-                    sync_account("learner", user.pk, subject=user)
+                remaining_fields = {key: value for key, value in fields.items() if key not in identity_fields}
+                if remaining_fields:
+                    handover = save_enrolment_fields(user, remaining_fields)
                 if any(field in fields for field in PLACEMENT_SOURCE_FIELDS):
                     # A learner placed after they were created has none of the
                     # cohort's dates, and progression cannot start them without
@@ -1009,6 +1008,10 @@ def enrolment_user_detail(request, pk):
                     # hook cannot notice Active -> Active, leaving the profile
                     # in Delivery and hiding coach/review/calendar records.
                     sync_active_user(user)
+        except LearnerEmailConflict as exc:
+            return JsonResponse(exc.payload(), status=409)
+        except ValidationError as exc:
+            return _error(str(exc), 400)
         except DatabaseError as exc:
             return _error(f"Database error: {exc}", 502)
         return JsonResponse({**to_board(user), **(handover or {})})
