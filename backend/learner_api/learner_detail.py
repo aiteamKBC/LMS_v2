@@ -28,6 +28,7 @@ from django.utils import timezone
 
 from login.permissions import learner_self_or_staff
 from old_otjh.service import ServiceError
+from old_otjh.repository import request_read_scope
 from curriculum_api import content_cache
 from curriculum_api.session_component_identity import occurrence_fallbacks as _live_session_occurrence_fallbacks
 
@@ -37,6 +38,7 @@ from .aptem_status import programme_status
 from .constants import DEFAULT_PROGRAMME_STATUS
 from .learner_progression import access_gate, advance_learner
 from .learning_plan import effective_training_plan
+from .weekly_read_cache import weekly_read_scope
 from .programme_access import learning_access
 from .mappers import _s, get_training_plan, to_learner_detail
 from .models import EnrolmentUser, LearnerProfile
@@ -611,7 +613,7 @@ def _matching_module_ids_for_quiz_record(quiz_record, modules_by_id, explicit_mo
     return []
 
 
-def _append_week_quizzes(weeks, components, assigned_modules=None, *, strict=False, native_week_ids=False, resolved_metadata=None):
+def _append_week_quizzes(weeks, components, assigned_modules=None, *, strict=False, native_week_ids=False, resolved_metadata=None, reuse_loaded_quizzes=False):
     """Append published quizzes for the learner's weeks/modules.
 
     Visibility now honours explicit module assignments (curriculum.quiz_course_links)
@@ -741,6 +743,8 @@ def _append_week_quizzes(weeks, components, assigned_modules=None, *, strict=Fal
                     explicit_week_ids_by_quiz_module = {}
 
                 explicit_quiz_ids = sorted(explicit_module_ids_by_quiz)
+                if reuse_loaded_quizzes:
+                    explicit_quiz_ids = [qid for qid in explicit_quiz_ids if qid not in quiz_rows_by_id]
                 if explicit_quiz_ids:
                     cur.execute(
                         """
@@ -760,6 +764,7 @@ def _append_week_quizzes(weeks, components, assigned_modules=None, *, strict=Fal
                     if _normalise_quiz_scope_value(meta.get("module"))
                 })
                 if module_titles:
+                    already_loaded = sorted(quiz_rows_by_id) if reuse_loaded_quizzes else []
                     cur.execute(
                         """
                         SELECT id, week_id, title, questions, duration, time_unit,
@@ -767,8 +772,8 @@ def _append_week_quizzes(weeks, components, assigned_modules=None, *, strict=Fal
                         FROM curriculum.quizzes
                         WHERE lower(COALESCE(status, '')) = 'published'
                           AND lower(COALESCE(module, '')) = ANY(%s)
-                        """,
-                        [module_titles],
+                        """ + (' AND NOT (id = ANY(%s))' if already_loaded else ''),
+                        [module_titles, *([already_loaded] if already_loaded else [])],
                     )
                     store_quiz_rows(cur.fetchall())
             represented = {
@@ -1538,7 +1543,8 @@ from .linked_recordings import (LINK_KEY, LINK_MODULE_KEY, LINKED_RECORDING_SETT
 
 def _resolve_from_master(modules, weeks, components, assigned_modules=None, *, compact=False,
                          live_session_ids=True, expected_otjh=False, strict=False, week_ids=None, identities_only=False,
-                         resolved_metadata=None, routing_only=False, compact_content=False, catalogue_facts=False):
+                         resolved_metadata=None, routing_only=False, compact_content=False, catalogue_facts=False,
+                         batch_modules=False, include_presentation=True):
     """Rebuild the module -> week -> component tree LIVE from the master
     authoring tables (curriculum.modules/weeks/components) so coach edits in the
     Module Builder show up immediately for already-enrolled learners.
@@ -1698,8 +1704,18 @@ def _resolve_from_master(modules, weeks, components, assigned_modules=None, *, c
                     "'readingReflectionPrompts','learnerGuidance','legacySettings'] "
                     f"ELSE ({settings_sql}) END")
 
-            # Presentation metadata survives all compact/identity paths.
-            settings_sql = f"({settings_sql}) || {POINT_SETTINGS_SQL} || {AUDIO_ALTERNATIVE_SETTINGS_SQL} || {LINKED_RECORDING_SETTINGS_SQL}"
+            # Material/week readers keep display metadata. Catalogue counts
+            # explicitly opt out so legacy lesson bodies are not transferred
+            # merely to decode a point label or an alternative audio URL.
+            if include_presentation:
+                settings_sql = f"({settings_sql}) || {POINT_SETTINGS_SQL} || {AUDIO_ALTERNATIVE_SETTINGS_SQL}"
+            settings_sql = f"({settings_sql}) || {LINKED_RECORDING_SETTINGS_SQL}"
+            if identities_only and catalogue_facts and not include_presentation:
+                # Missing optional values are read with .get below. Avoid
+                # sending dozens of null properties per catalogue component,
+                # but retain an explicitly cleared quiz link: its presence
+                # suppresses fallback to an older normalized link.
+                settings_sql = f"jsonb_strip_nulls({settings_sql}) || {quiz_settings_sql}"
 
             detail_columns = (f"CASE WHEN coalesce(btrim(live_sessions_link,'{strip_chars}'),'')<>'' THEN 'content' END AS live_sessions_link, display_order, NULL AS ksb_mappings, "
                               "false AS reflection_required, NULL AS \"Reflection_Question\", false AS tutor_validation_required") if identities_only else (
@@ -1710,6 +1726,8 @@ def _resolve_from_master(modules, weeks, components, assigned_modules=None, *, c
                 # Keep ->> text semantics for dates independent of the native
                 # identity projection's JSON types and display overrides.
                 schedule_column = ', ' + COMPONENT_SCHEDULE_SETTINGS.replace('c.settings_json', 'settings_json')
+                if not include_presentation:
+                    schedule_column = ', jsonb_strip_nulls(' + schedule_column[2:] + ')'
             def component_sql(week_filter):
                 return read_sql(
                     "SELECT id, week_id, module_catalogue_id, type, title, "
@@ -1743,16 +1761,22 @@ def _resolve_from_master(modules, weeks, components, assigned_modules=None, *, c
             else:
                 # Bound detailed viewer reads per module when the cache misses;
                 # lightweight catalogue/week projections keep their batched read.
-                module_batches = (
-                    [[mid] for mid in module_ids]
-                    if compact and not (identities_only or week_ids is not None or compact_content)
-                    else [module_ids]
-                )
+                if batch_modules:
+                    module_batches = [module_ids[index:index + 4] for index in range(0, len(module_ids), 4)]
+                elif compact and not (identities_only or week_ids is not None or compact_content):
+                    module_batches = [[mid] for mid in module_ids]
+                else:
+                    module_batches = [module_ids]
                 master_components = []
                 statement = component_sql(week_ids is not None)
                 for module_batch in module_batches:
                     cur.execute(statement, [module_batch, *([week_ids] if week_ids is not None else [])])
                     master_components.extend(cur.fetchall())
+                if batch_modules:
+                    # Stable grouping preserves the database's order within each
+                    # module, including databases with a non-code-point collation.
+                    module_order = {mid: index for index, mid in enumerate(module_ids)}
+                    master_components.sort(key=lambda row: module_order[row[2]])
             if catalogue_facts and resolved_metadata is not None and 'schedule_components' in resolved_metadata:
                 # Preserve the date reader's ordering and module-level
                 # components; empty weeks are still supplied independently.
@@ -1919,7 +1943,8 @@ def _resolve_from_master(modules, weeks, components, assigned_modules=None, *, c
                                            **({'expectedOtjh': float(component_row[13]) if component_row[13] is not None else None}
                                               if expected_otjh else {}),
                                            **presentation_link,
-                                           'quizMeta': quiz, 'component': title, **point_projection(settings),
+                                           'quizMeta': quiz, 'component': title,
+                                           **(point_projection(settings) if include_presentation else {}),
                                            **({'type': ctype, 'sessionDate': _s(settings.get('sessionDate')) or None,
                                                'sessionDateTimeUtc': _s(settings.get('sessionDateTimeUtc')) or None,
                                                **({'_liveSessionOccurrenceId': None if _s(settings.get('extraTeamsMeetingUrl')) else settings.get('teamsOccurrenceId')}
@@ -2439,6 +2464,7 @@ def build_learner_detail(source, pk, *, compact=False, read_only=False, quiz_vie
         detail["modules"], detail["week"], detail["components"],
         assigned_modules=assigned_modules,
         **({"compact": True} if compact else {}),
+        **({"batch_modules": True} if quiz_view else {}),
         **({"strict": True} if activity_component_id else {}),
     )
     detail["components"] = _apply_programme_assignment_template(
@@ -2614,6 +2640,9 @@ def learner_detail(request, kind, pk):
             section=request.GET.get('content') or 'complete',
         ) as measurement:
             with measurement.stage('detail'):
+                if options.get('quiz_view'):
+                    with weekly_read_scope(), request_read_scope():
+                        return JsonResponse(build_learner_detail(source, pk, **options))
                 return JsonResponse(build_learner_detail(source, pk, **options))
     except ServiceError as exc:
         return _error(str(exc), exc.status)

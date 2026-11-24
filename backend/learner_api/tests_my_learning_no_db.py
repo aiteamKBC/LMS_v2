@@ -477,14 +477,17 @@ class MyLearningEndpointTests(SimpleTestCase):
     def test_both_learner_kinds_use_guarded_narrow_source_and_private_response(self):
         for kind in ('commercial','apprenticeship'):
             model=Mock();model.DoesNotExist=type('Missing',(Exception,),{})
-            model.all_learners.only.return_value.get.return_value=SimpleNamespace(pk=7)
+            source=SimpleNamespace(pk=7, _catalogue_training_plan=[], _catalogue_learning_plan=None)
+            model.all_learners.only.return_value.annotate.return_value.get.return_value=source
             with patch.dict(learning.SOURCE_MODELS,{kind:model}), patch.object(canonical,'require_profile',return_value={'id':9}) as identity, patch.object(learning,'read_catalogue',return_value={'modules':[]}) as read:
                 response=learning.my_learning.__wrapped__.__wrapped__.__wrapped__(RequestFactory().get('/'),kind,7)
             self.assertEqual(response.status_code,200)
             self.assertEqual(response['Cache-Control'],'private, no-store')
-            model.all_learners.only.assert_called_once_with(*learning.SOURCE_FIELDS)
+            model.all_learners.only.assert_called_once_with(*(field for field in learning.SOURCE_FIELDS
+                if field not in {'training_plan', 'learning_plan', 'modules', 'weeks', 'components'}))
+            model.all_learners.only.return_value.annotate.return_value.get.assert_called_once_with(pk=7)
             identity.assert_called_once_with(7)
-            read.assert_called_once()
+            read.assert_called_once_with(source, kind, {'id':9})
 
     def test_foreign_learner_is_denied_before_any_projection(self):
         with patch('login.permissions._auth_gate_enabled',return_value=True), patch('login.permissions.authenticate_request',return_value=SimpleNamespace(role='learner',subject_id=8)), patch.object(learning,'read_catalogue') as read:

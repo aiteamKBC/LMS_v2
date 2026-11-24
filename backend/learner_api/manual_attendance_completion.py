@@ -7,6 +7,8 @@ from zoneinfo import ZoneInfo
 
 from django.utils import timezone
 
+from .weekly_read_cache import reuse_weekly_read
+
 
 UK = ZoneInfo('Europe/London')
 INVALID = {'cancelled', 'canceled', 'deleted', 'failed', 'superseded'}
@@ -115,6 +117,14 @@ def project_manual_completion(components, occurrences, adjustments, manual_rows,
 
 
 def _read_manual_context(candidates, profile):
+    # Completion badges and hours consume the same full-module evidence. Reuse
+    # that snapshot inside an aggregate read, regardless of candidate ordering
+    # or the display fields carried by each caller's component dictionaries.
+    return _read_manual_module_context(tuple(sorted({c['moduleId'] for c in candidates})), profile)
+
+
+@reuse_weekly_read
+def _read_manual_module_context(module_ids, profile):
     from coach_api.models import CoachAttendanceSourceAdjustment, CoachManualAttendance
     from curriculum_api.models import ModuleAuthoringComponent, ModuleAuthoringModule
     from .attendance_lectures import ATTENDANCE_SOURCE_FIELDS, read_native_occurrences
@@ -123,7 +133,7 @@ def _read_manual_context(candidates, profile):
     manual = list(CoachManualAttendance.objects.filter(learner_id=profile.pk))
     if not adjustments and not manual:
         return {}, [], []
-    module_ids = sorted({c['moduleId'] for c in candidates})
+    module_ids = list(module_ids)
     source = SimpleNamespace(id=profile.enrolment_id, email=profile.email, username='')
     if manual or any(r.source == 'kbc-attendance' for r in adjustments):
         from .learner_detail import SOURCE_MODELS

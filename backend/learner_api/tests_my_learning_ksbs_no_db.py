@@ -82,3 +82,25 @@ class MyLearningKsbTests(SimpleTestCase):
         with patch.object(ksbs.canonical, 'query') as query:
             self.assertEqual(ksbs.read_card_ksb_mappings({'id': 9}, native(), {}), {})
         query.assert_not_called()
+
+    def test_inline_codes_keep_alias_precedence_and_encoded_legacy_fallback(self):
+        rows = [
+            dict(component_id='ALIASES', inline_mappings=[
+                {'code': '', 'ksbCode': ' k1 ', 'ksb_code': 'stale'},
+                {'code': 0, 'ksbCode': False, 'ksb_code': 's1'},
+                {'code': 'K1'}, {'code': {'legacy': 'value'}}],
+                 normalized_mappings=[{'code': 'STALE'}]),
+            dict(component_id='EMPTY', inline_mappings=[{}, {'code': None}],
+                 normalized_mappings=[{'code': 'B1'}]),
+            dict(component_id='ENCODED', inline_mappings='[{"ksb_code":"k2","description":"legacy"}]',
+                 normalized_mappings=[{'code': 'STALE'}]),
+        ]
+        with patch.object(ksbs.canonical, 'query', return_value=rows) as query:
+            result = ksbs.read_card_ksb_mappings({'id': 9},
+                native([component(row['component_id']) for row in rows]), {})
+        self.assertEqual(result['ALIASES'], {'K1', 'S1', "{'LEGACY': 'VALUE'}"})
+        self.assertEqual(result['EMPTY'], {'B1'})
+        self.assertEqual(result['ENCODED'], {'K2'})
+        sql = query.call_args.args[0]
+        self.assertIn(ksbs.INLINE_CODES_SQL, sql)
+        self.assertNotIn('c.ksb_mappings AS inline_mappings', sql)

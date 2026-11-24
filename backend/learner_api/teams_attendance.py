@@ -554,21 +554,30 @@ def fetch_verified_teams_attendance_rows(
         target_occurrences_by_source[
             attendance_source_by_occurrence[str(occurrence.id)]
         ].append(occurrence.id)
-    attendance_records = projection_call('teams_evidence', list,
-        LiveSessionAttendance.objects.using(database)
-        .filter(occurrence_id__in=source_occurrence_ids)
-        .only(
-            "id",
-            "occurrence_id",
-            "graph_record_id",
-            "email",
-            "display_name",
-            "role",
-            "raw_data",
-            "total_attendance_seconds",
-            "intervals",
-        )
-    )
+    compact_identity = verified_profile is not None and not include_group_metadata
+    evidence = LiveSessionAttendance.objects.using(database).filter(occurrence_id__in=source_occurrence_ids)
+    evidence_fields = [
+        "id",
+        "occurrence_id",
+        "graph_record_id",
+        "email",
+        "display_name",
+        "role",
+        "total_attendance_seconds",
+        "intervals",
+    ]
+    if compact_identity:
+        from django.db.models import F
+        from learner_api.attendance_identity_projection import AttendanceIdentityProjection
+        evidence = evidence.annotate(_identity_raw_data=AttendanceIdentityProjection(
+            F('raw_data'), output_field=LiveSessionAttendance._meta.get_field('raw_data')))
+    else:
+        evidence_fields.append('raw_data')
+    attendance_records = projection_call('teams_evidence', list, evidence.only(*evidence_fields))
+    if compact_identity:
+        for record in attendance_records:
+            # This is an in-memory read projection; never save these instances.
+            record.raw_data = record._identity_raw_data
     rules_by_module = defaultdict(list)
     for rule in projection_call('identity_rules', identity_rules, list(assigned_by_module), database):
         rules_by_module[rule['module_catalogue_id']].append(rule)

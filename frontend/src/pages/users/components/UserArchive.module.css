@@ -1,0 +1,4 @@
+.views { display: flex; flex-wrap: wrap; gap: .5rem; }
+.views button { display: inline-flex; align-items: center; gap: .5rem; min-height: 2.5rem; padding: .5rem 1rem; border: 1px solid #ded4eb; border-radius: var(--lms-radius, 16px); background: #fff; color: #5d2e88; font-size: .8125rem; font-weight: 600; cursor: pointer; }
+.views button[aria-pressed="true"], .confirm { background: #381656; color: #f5eff9; border-color: #381656; }
+.views button:focus-visible { outline: 3px solid #8b5db1; outline-offset: 2px; }

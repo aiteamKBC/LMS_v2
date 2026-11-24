@@ -1,9 +1,28 @@
 """Activity scheduling dates, separate from import and completion timestamps."""
 
 from datetime import date, datetime, timedelta
+from contextlib import contextmanager
+from contextvars import ContextVar
+from functools import lru_cache
 import html
 import re
 import unicodedata
+
+
+_schedule_reader = ContextVar('catalogue_schedule_reader', default=None)
+
+
+@contextmanager
+def schedule_read_scope():
+    """Reuse pure date parsing within one catalogue, with independent outputs."""
+    reader = lru_cache(maxsize=4096, typed=True)(_activity_schedule)
+    token = _schedule_reader.set(reader)
+    try:
+        yield
+    finally:
+        _schedule_reader.reset(token)
+        reader.cache_clear()
+
 
 MONTHS = {name: number for number, names in enumerate((
     ('jan', 'january'), ('feb', 'february'), ('mar', 'march'), ('apr', 'april'),
@@ -54,6 +73,18 @@ def is_introduction_section(title):
 
 
 def activity_schedule(title, stored_date=None, original_created_at=None, *, section_title=None, section_source='section_title'):
+    reader = _schedule_reader.get()
+    values = (title, stored_date, original_created_at, section_title, section_source)
+    # Equal aware datetimes can have different local dates. Cache only scalar
+    # text/number inputs; date objects and permissive legacy inputs read fresh.
+    if reader is None or any(type(value) not in (str, int, float, bool, type(None)) for value in values):
+        return _activity_schedule(*values)
+    # Callers enrich their dates with placement/review fields. Never let that
+    # mutate another activity with the same heading or cross a request boundary.
+    return dict(reader(*values))
+
+
+def _activity_schedule(title, stored_date, original_created_at, section_title, section_source):
     text = unicodedata.normalize('NFKC', html.unescape(str(title or '')))
     text = text.translate(str.maketrans({'–': '-', '—': '-', '−': '-', '\u200b': ''}))
     text = ''.join(str(unicodedata.digit(char)) if char.isdecimal() else char for char in text)
