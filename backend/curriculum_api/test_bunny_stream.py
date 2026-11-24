@@ -5,7 +5,7 @@ from unittest.mock import Mock, patch
 
 import requests
 
-from curriculum_api.bunny_stream import BunnyStream, VideoImportError, is_bunny_url, playback_url, video_title
+from curriculum_api.bunny_stream import BunnyStream, MissingProgrammeCollection, VideoImportError, is_bunny_url, playback_url, video_title
 from curriculum_api.video_sources import _drive_confirmation, _public_target, download_url, download_video, source_url, validate_video, youtube_url
 
 VIDEO_ID = 'c1c2c3c4-1234-5678-abcd-123456789abc'
@@ -42,6 +42,44 @@ class BunnyTransportTests(unittest.TestCase):
         self.http.request.return_value = response({'items': []})
         with self.assertRaises(VideoImportError):
             self.client.collection('UNKNOWN', '')
+
+    def test_collection_discovery_distinguishes_absence_from_provider_failure(self):
+        self.http.request.return_value = response({'items': []})
+        with self.assertRaises(MissingProgrammeCollection):
+            self.client.collection('NEW-PROGRAMME', 'Example programme')
+        self.http.request.return_value = response({}, status=503)
+        with self.assertRaises(VideoImportError) as caught:
+            self.client.collection('NEW-PROGRAMME', 'Example programme')
+        self.assertNotIsInstance(caught.exception, MissingProgrammeCollection)
+        self.assertEqual(caught.exception.status_code, 503)
+
+    def test_programme_collection_matches_normalised_whitespace(self):
+        self.http.request.return_value = response({'items': [{'guid': VIDEO_ID, 'name': 'Example Programme'}]})
+        self.assertEqual(self.client.collection('P', '  Example  Programme '), VIDEO_ID)
+        self.assertEqual(self.http.request.call_args.args[0], 'GET')
+
+    def test_new_programme_collection_is_created_with_saved_name(self):
+        self.http.request.return_value = response({'guid': VIDEO_ID})
+        self.assertEqual(self.client.create_programme_collection('P', '  Example  Programme '), VIDEO_ID)
+        self.assertEqual(self.http.request.call_args.args, ('POST', 'https://video.bunnycdn.com/library/798153/collections'))
+        self.assertEqual(self.http.request.call_args.kwargs['json'], {'name': 'Example Programme'})
+
+    def test_collection_discovery_failure_or_ambiguity_never_creates(self):
+        for data in ({'items': None}, {'items': [None]}, {'items': [{'name': 'Example', 'guid': ''}]},
+                     {'items': [{'name': 'Example', 'guid': VIDEO_ID}] * 2}):
+            with self.subTest(data=data):
+                self.http.request.return_value = response(data)
+                with self.assertRaises(VideoImportError):
+                    self.client.collection('P', 'Example')
+                self.assertEqual(self.http.request.call_args.args[0], 'GET')
+
+    def test_collection_creation_requires_programme_and_confirmed_guid(self):
+        with self.assertRaises(VideoImportError):
+            self.client.create_programme_collection('', 'Example')
+        self.http.request.assert_not_called()
+        self.http.request.return_value = response({'guid': ''})
+        with self.assertRaises(VideoImportError):
+            self.client.create_programme_collection('P', 'Example')
 
     def test_upload_sends_bytes_and_never_follows_redirects_with_key(self):
         self.http.request.return_value = response({'success': True})
