@@ -678,7 +678,8 @@ class OneEmailPerPersonTests(unittest.TestCase):
                              ({'resendKey': 'round-one-key', 'addedKey': 'first-readd-key'}, 400)):
             view = types.SimpleNamespace(json_body=lambda _, body=body: body)
             with patch.dict(sys.modules, {'curriculum_api.views': view}):
-                request = types.SimpleNamespace(account=types.SimpleNamespace(role='staff'), method='POST')
+                request = types.SimpleNamespace(account=types.SimpleNamespace(role='staff'), method='POST',
+                                                body=json.dumps(body).encode('utf-8'))
                 self.assertEqual(self.service['schedule_email'](request, 'LIVE-ONE').status_code, status, body)
         source = (ROOT / 'teams_schedule_delivery.py').read_text(encoding='utf-8')
         self.assertIn("f'{live_session_id}+{added_key}' if added_key", source)
