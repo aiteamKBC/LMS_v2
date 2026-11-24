@@ -93,7 +93,7 @@ class TransferMatchingReviewTests(SimpleTestCase):
         review = build_review(request_id, pending['items'], data)
         decisions = {'reviewToken': review['reviewToken'], 'mappings': [
             {'moduleId': 'M1', 'sourceActivityRef': 'material:8', 'targetComponentId': 'MANUAL'}]}
-        cursor = MagicMock(); cursor.fetchone.return_value = (7, 'commercial')
+        cursor = MagicMock(); cursor.fetchone.return_value = (7, 'commercial', 9)
         connection = MagicMock(); connection.cursor.return_value.__enter__.return_value = cursor
         with patch.object(api, 'connections', {'enrolment': connection}), \
                 patch.object(api.store, 'lock_learner', return_value=nullcontext(cursor)), \
@@ -355,7 +355,7 @@ class TransferMatchingReviewTests(SimpleTestCase):
                     decisions = {'reviewToken': review['reviewToken'], 'mappings': [
                         {'moduleId': 'M1', 'sourceActivityRef': ref, 'targetComponentId': ident}
                         for ident in ['MANUAL', 'EXTRA']]}
-                    cursor = MagicMock(); cursor.fetchone.return_value = (7, kind)
+                    cursor = MagicMock(); cursor.fetchone.return_value = (7, kind, 9)
                     connection = MagicMock(); connection.cursor.return_value.__enter__.return_value = cursor
                     with patch.object(api, 'connections', {'enrolment': connection}), \
                             patch.object(api.store, 'lock_learner', return_value=nullcontext(cursor)), \
@@ -388,7 +388,8 @@ class TransferMatchingReviewTests(SimpleTestCase):
                     self.assertEqual(data[9]['replacement_settings'], original[9]['replacement_settings'])
                     # Verify the actual learner aggregate, not just the approval preview.
                     data[9]['progress_transfers'] = [approved]
-                    cards, _ = MyLearningAggregateTests().cards(data[3], [], [], meta=data[9])
+                    cards, _ = MyLearningAggregateTests().cards(data[3], [], [], meta=data[9],
+                        records=[{'id': 1, 'accepted': True, 'actual_seconds': 7200}])
                     card = next(c for c in cards if c['id'] == 'current:M1')
                     self.assertEqual((card['completedActivityCount'], card['progress']), (len(expected_ids), len(expected_ids) * 25))
                     self.assertEqual(card['actualHours'], 2)
@@ -440,7 +441,7 @@ class TransferMatchingReviewTests(SimpleTestCase):
         review = build_review(request_id, pending['items'], data)
         decisions = {'reviewToken': review['reviewToken'], 'mappings': [
             {'moduleId': 'M1', 'sourceActivityRef': 'material:8', 'targetComponentId': 'MANUAL'}]}
-        cursor = MagicMock(); cursor.fetchone.return_value = (7, 'commercial')
+        cursor = MagicMock(); cursor.fetchone.return_value = (7, 'commercial', 9)
         connection = MagicMock(); connection.cursor.return_value.__enter__.return_value = cursor
         with patch.object(api, 'connections', {'enrolment': connection}), \
                 patch.object(api.store, 'lock_learner', return_value=nullcontext(cursor)), \
@@ -470,7 +471,7 @@ class TransferMatchingReviewTests(SimpleTestCase):
         request_id = pending['items'][0]['requestId']
         type_cursor = MagicMock(); type_cursor.fetchall.return_value = [('50', 'material:8', 'pdf', {}, {}, None, None)]
         type_connection = MagicMock(); type_connection.cursor.return_value.__enter__.return_value = type_cursor
-        cursor = MagicMock(); cursor.fetchone.return_value = (7, 'commercial')
+        cursor = MagicMock(); cursor.fetchone.return_value = (7, 'commercial', 9)
         connection = MagicMock(); connection.cursor.return_value.__enter__.return_value = cursor
         with patch('learner_api.progress_transfer_content.connections', {'enrolment': type_connection}):
             reviewed = build_review(request_id, pending['items'], verified_source_types(data, pending['items']))

@@ -17,7 +17,7 @@ from curriculum_api.models import (
     ModuleAuthoringModule,
 )
 from curriculum_api.live_session_register import upsert_live_session_register
-from curriculum_api.attendance_link_policy import apply_reviewed_identities
+from curriculum_api.attendance_link_policy import apply_reviewed_identities, series_identity_emails
 from curriculum_api.attendance_link_store import identity_rules
 from curriculum_api.week_visibility import visible_child_sql
 
@@ -375,7 +375,7 @@ def fetch_verified_teams_attendance_rows(
     if modules:
         session_queryset = session_queryset.filter(module_catalogue_id__in=modules)
     sessions = list(
-        session_queryset.only("id", "module_catalogue_id", "module_title")
+        session_queryset.only("id", "module_catalogue_id", "module_title", "organizer_email", "presenters", "co_organizers")
     )
     if not sessions:
         return []
@@ -585,6 +585,12 @@ def fetch_verified_teams_attendance_rows(
             'email': record.email, 'display_name': record.display_name,
             'raw_data': record.raw_data, 'role': record.role,
         })
+    # A signed-in learner from another delivery is not a name/local-part
+    # candidate for this roster. Keep single-learner reads equally scoped.
+    reported_emails = {_email(record.email) for record in attendance_records if record.email} - set(matching_learners)
+    known_reported_emails = {_email(email) for email in LearnerProfile.objects.using(database)
+        .filter(email_normalized__in=reported_emails).values_list('email', flat=True)} if reported_emails else set()
+    known_reported_emails.update(matching_learners)
     resolved_by_context = {}
     identity_rosters = {}
     module_alias_rows = {module_ref:[{'alias_email':key, 'canonical_email':value} for key,value in aliases.items()]
@@ -608,7 +614,8 @@ def fetch_verified_teams_attendance_rows(
                         for email,learner in matching_learners.items() if email in eligible}
                 resolved_by_context[context_key] = {str(row['id']): row for row in projection_call('identity_matching', apply_reviewed_identities,
                     raw_by_source[str(record.occurrence_id)], module_alias_rows.get(module_ref, []), legacy_links,
-                    rules_by_module.get(module_ref, []), learners=identity_rosters[roster_key])}
+                    rules_by_module.get(module_ref, []), learners=identity_rosters[roster_key],
+                    protected_emails=series_identity_emails(session) | (known_reported_emails - set(identity_rosters[roster_key])))}
             resolved = resolved_by_context[context_key][source_row_id]
             blocked_identity = resolved.get('identityReviewRequired')
             email_key = '' if blocked_identity else _email(resolved.get('email'))

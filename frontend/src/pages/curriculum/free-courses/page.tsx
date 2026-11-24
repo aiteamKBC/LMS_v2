@@ -1983,9 +1983,6 @@ function SavedFreeCourseCardView({ card, onEdit, onDelete, onConvert }: { card: 
       <div className="flex flex-1 flex-col p-5">
         <div className="min-h-[96px]">
           <h3 className="line-clamp-2 font-heading text-base font-bold leading-6 text-foreground-950">{card.title}</h3>
-          {card.isForSale && <p className="mt-1 text-xs font-semibold text-primary-700">
-            For sale · {new Intl.NumberFormat('en-GB', { style: 'currency', currency: 'GBP' }).format(Number(card.price))}
-          </p>}
           <p className="mt-1.5 line-clamp-2 text-xs leading-5 text-foreground-500">{card.description || 'No description added yet.'}</p>
         </div>
 

@@ -109,6 +109,18 @@ def public_ticket(ticket):
                         for reply in ticket.get('replies', [])]}
 
 
+def canonical_learner_id(cursor, enrolment_id):
+    """Resolve a login subject/enrolment identity to the canonical profile."""
+    cursor.execute(
+        'SELECT id FROM "Learner".learners WHERE enrolment_id=%s',
+        [enrolment_id],
+    )
+    row = cursor.fetchone()
+    if not row:
+        raise TicketError('This learner account is not linked to a canonical learner profile.', 409)
+    return row[0]
+
+
 def collection(request, account, body, *, staff):
     if request.method == 'GET':
         try:
@@ -136,8 +148,9 @@ def collection(request, account, body, *, staff):
                 messages=0, timeline=[{'event': 'Opened', 'timestamp': now}], replies=[],
                 attachments=[item for item, _ in prepared])
     with files.upload_session() as staged, transaction.atomic(using='enrolment'), connections['enrolment'].cursor() as cursor:
-        cursor.execute(f'INSERT INTO {TABLE} (id,owner_account_id,enrolment_id,data) VALUES (%s,%s,%s,%s::jsonb) ON CONFLICT(id) DO NOTHING',
-                       [ticket_id, account.pk, account.subject_id, json.dumps(data)])
+        learner_id = canonical_learner_id(cursor, account.subject_id)
+        cursor.execute(f'INSERT INTO {TABLE} (id,owner_account_id,enrolment_id,learner_id,data) VALUES (%s,%s,%s,%s,%s::jsonb) ON CONFLICT(id) DO NOTHING',
+                       [ticket_id, account.pk, account.subject_id, learner_id, json.dumps(data)])
         inserted = cursor.rowcount == 1
         cursor.execute(f'SELECT data FROM {TABLE} WHERE id=%s AND owner_account_id=%s FOR UPDATE', [ticket_id, account.pk])
         row = cursor.fetchone()
@@ -187,9 +200,10 @@ def create_staff_ticket(*, learner_account, ticket, actor_name='Support'):
         'attachments': [],
     }
     with transaction.atomic(using='enrolment'), connections['enrolment'].cursor() as cursor:
+        learner_id = canonical_learner_id(cursor, learner_account.subject_id)
         cursor.execute(
-            f'INSERT INTO {TABLE} (id,owner_account_id,enrolment_id,data) VALUES (%s,%s,%s,%s::jsonb) ON CONFLICT(id) DO NOTHING',
-            [ticket_id, learner_account.pk, learner_account.subject_id, json.dumps(data)],
+            f'INSERT INTO {TABLE} (id,owner_account_id,enrolment_id,learner_id,data) VALUES (%s,%s,%s,%s,%s::jsonb) ON CONFLICT(id) DO NOTHING',
+            [ticket_id, learner_account.pk, learner_account.subject_id, learner_id, json.dumps(data)],
         )
         cursor.execute(f'SELECT data FROM {TABLE} WHERE id=%s AND owner_account_id=%s FOR UPDATE', [ticket_id, learner_account.pk])
         row = cursor.fetchone()
@@ -205,7 +219,7 @@ def create_staff_ticket(*, learner_account, ticket, actor_name='Support'):
     return saved
 
 
-def close_feedback_ticket(*, ticket_id, learner_id, actor_name):
+def close_feedback_ticket(*, ticket_id, enrolment_id, actor_name):
     """Synchronize closure of one server-identified feedback ticket.
 
     Remote commits first. A local commit failure remains retryable: the next
@@ -213,7 +227,8 @@ def close_feedback_ticket(*, ticket_id, learner_id, actor_name):
     The local row lock also serializes ticket creation and staff updates.
     """
     with transaction.atomic(using='enrolment'), connections['enrolment'].cursor() as cursor:
-        cursor.execute(f'SELECT data, enrolment_id FROM {TABLE} WHERE id=%s FOR UPDATE', [str(ticket_id)])
+        learner_id = canonical_learner_id(cursor, enrolment_id)
+        cursor.execute(f'SELECT data, learner_id FROM {TABLE} WHERE id=%s FOR UPDATE', [str(ticket_id)])
         row = cursor.fetchone()
         if not row:
             return 'not_required'

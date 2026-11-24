@@ -197,10 +197,14 @@ def book_first_session(learner, *, scheduled_date, scheduled_time,
     learner_email = _text(getattr(learner, "email", ""))
 
     try:
+        from .models import LearnerProfile
+        profile_id = LearnerProfile.objects.filter(enrolment_id=learner.pk).values_list('id', flat=True).first()
+        if profile_id is None:
+            raise ValueError("A canonical learner profile is required before booking.")
         record, _created = reserve_coach_calendar_booking(
             owner_email=owner_email,
             owner_name=_text(owner_name) or "Case owner",
-            learner_id=int(learner.pk),
+            learner_id=int(profile_id),
             learner_name=learner_name,
             learner_email=learner_email,
             session_type=SESSION_TYPE,

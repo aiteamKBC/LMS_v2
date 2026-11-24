@@ -277,7 +277,7 @@ WHERE calendar_event_id IN (SELECT id FROM _legacy_events)
 -- ---------------------------------------------------------------------------
 -- 10. DELETE the 23 legacy calendar rows.
 -- ---------------------------------------------------------------------------
-DELETE FROM "Coach".coach_calendar_event
+DELETE FROM "Learner".coach_calendar_event
 WHERE id IN (SELECT id FROM _legacy_events);
 
 -- ---------------------------------------------------------------------------

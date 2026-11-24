@@ -9,9 +9,9 @@ def quality_ticket_id(response_id):
 
 
 def close_response_ticket(response, *, actor_name):
-    learner_id = str(response.learner_id or '')
-    if not learner_id.isdecimal():
+    enrolment_id = str(response.enrolment_id or '')
+    if not enrolment_id.isdecimal():
         return 'not_required'
     return support_tickets.close_feedback_ticket(
-        ticket_id=str(quality_ticket_id(response.pk)), learner_id=int(learner_id), actor_name=actor_name,
+        ticket_id=str(quality_ticket_id(response.pk)), enrolment_id=int(enrolment_id), actor_name=actor_name,
     )

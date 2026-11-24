@@ -10,9 +10,14 @@ from .teams_calendar_checks import CalendarMismatch, calendar_targets, local_cal
 
 class StudyCalendarLimitTests(SimpleTestCase):
     def test_only_the_saved_new_layout_can_raise_the_review_limit(self):
-        for row, weeks, expected in ((None, 0, 52), ({'weeks_number': 104, 'week_starts_on': 'Monday'}, 104, 52),
-                                     ({'weeks_number': 0, 'week_boundary_mode': 'calendar'}, 16, 112),
-                                     ({'weeks_number': 1, 'week_boundary_mode': 'calendar'}, 104, 728)):
+        for row, weeks, expected in (
+            (None, 0, 52),
+            ({'weeks_number': 104, 'week_starts_on': 'Monday'}, 104, 52),
+            ({'weeks_number': 16, 'week_boundary_mode': 'calendar'}, 16, 112),
+            ({'weeks_number': 104, 'week_boundary_mode': 'calendar'}, 104, 728),
+            ({'weeks_number': 0, 'week_boundary_mode': 'calendar'}, 16, 112),
+            ({'weeks_number': 1, 'week_boundary_mode': 'calendar'}, 104, 728),
+        ):
             with self.subTest(row=row), composition_fixture(views, 'authoring_module_exists', return_value=row), \
                  patch.object(invitation_runtime, '_authored_week_count', return_value=weeks) as read_weeks:
                 self.assertEqual(views.teams_module_session_limit('MODULE'), expected)

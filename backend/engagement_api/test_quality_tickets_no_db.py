@@ -79,6 +79,7 @@ class FeedbackQualityTicketScoringTests(SimpleTestCase):
         response.id = 42
         response.status = 'completed'
         response.learner_id = '7'
+        response.enrolment_id = '7'
         response.learner_name = 'Example Learner'
         response.delivery = SimpleNamespace(session_title='Session 3', module_name='Module')
         response.form = SimpleNamespace(title='Lecture feedback')

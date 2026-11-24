@@ -1181,6 +1181,7 @@ class AttendanceModeTests(SimpleTestCase):
         with patch('learner_api.attendance_mode.SOURCE_MODELS', {'apprenticeship': model}), \
              patch('learner_api.attendance_mode.connections', {'enrolment': conn}), \
              patch('learner_api.attendance_mode.transaction.atomic', return_value=nullcontext()), \
+             patch('learner_api.attendance_mode.canonical_learner_id', return_value=12), \
              patch('learner_api.attendance_mode._state', return_value=state), \
              patch('learner_api.attendance_mode._manager', return_value='manager@example.test'):
             response = review_attendance_mode(RequestFactory().get('/', {'token': token}))
@@ -1228,6 +1229,7 @@ class AttendanceModeTests(SimpleTestCase):
              patch('learner_api.attendance_mode.SOURCE_MODELS', {'apprenticeship': model, 'commercial': model}), \
              patch('learner_api.attendance_mode.connections', {'enrolment': conn}), \
              patch('learner_api.attendance_mode.transaction.atomic', return_value=nullcontext()), \
+             patch('learner_api.attendance_mode.canonical_learner_id', return_value=12), \
              patch('learner_api.attendance_mode._ready', return_value=True), \
              patch('learner_api.attendance_mode._state', side_effect=[before, {**before, 'mode': body['mode'],
                    'requested_mode': None, 'status': 'active'}]), \
@@ -1300,8 +1302,8 @@ class AttendanceModeTests(SimpleTestCase):
     def test_bulk_mode_read_is_staff_or_admin_and_returns_saved_modes(self):
         from .attendance_mode import attendance_modes
         conn = MagicMock()
-        saved = [{'learner_id': 12, 'mode': 'lazy', 'requested_mode': None, 'status': 'active'},
-                 {'learner_id': 13, 'mode': 'live', 'requested_mode': 'lazy', 'status': 'pending',
+        saved = [{'enrolment_id': 12, 'learner_id': 91, 'mode': 'lazy', 'requested_mode': None, 'status': 'active'},
+                 {'enrolment_id': 13, 'learner_id': 92, 'mode': 'live', 'requested_mode': 'lazy', 'status': 'pending',
                   'updated_at': timezone.now()}]
         with patch('learner_api.attendance_mode.connections', {'enrolment': conn}),              patch('learner_api.attendance_mode._ready', return_value=True),              patch('learner_api.attendance_mode.rows', return_value=saved):
             with patch('login.permissions.authenticate_request', return_value=SimpleNamespace(role='learner')):

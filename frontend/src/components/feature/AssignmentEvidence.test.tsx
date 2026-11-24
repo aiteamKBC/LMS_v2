@@ -1,11 +1,33 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { AssignmentEvidence } from './AssignmentEvidence';
 import { fetchEvidence, uploadEvidence, deleteEvidence, type EvidenceRecord, type UploadEvidenceResult } from '@/api/evidence';
 
 vi.mock('@/api/evidence', () => ({ fetchEvidence: vi.fn(), uploadEvidence: vi.fn(), getEvidenceDownloadUrl: vi.fn(), deleteEvidence: vi.fn() }));
 afterEach(() => { cleanup(); vi.clearAllMocks(); });
 beforeEach(() => { vi.mocked(fetchEvidence).mockReset().mockResolvedValue([]); vi.mocked(uploadEvidence).mockReset(); });
+
+it.each(['commercial', 'apprenticeship'] as const)('retries a failed initial list without claiming evidence is empty (%s)', async kind => {
+  vi.mocked(fetchEvidence).mockRejectedValueOnce(new Error('Loading is taking longer than expected. Please try again.'));
+  render(<AssignmentEvidence kind={kind} learnerId="101" componentId="COMP-1" trainingPlanDetails={{}} />);
+  expect(await screen.findByRole('alert')).toHaveTextContent('Loading is taking longer than expected');
+  expect(screen.queryByText('No evidence uploaded yet.')).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', { name: 'Retry loading evidence' }));
+  expect(await screen.findByText('No evidence uploaded yet.')).toBeVisible();
+  expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  expect(fetchEvidence).toHaveBeenLastCalledWith(kind, '101', { sectionRef: 'COMP-1' });
+});
+
+it('ignores a late failure from another assignment', async () => {
+  let fail!: (error: Error) => void;
+  vi.mocked(fetchEvidence).mockReturnValueOnce(new Promise((_resolve, reject) => { fail = reject; }));
+  const view = render(<AssignmentEvidence kind="commercial" learnerId="101" componentId="COMP-1" trainingPlanDetails={{}} />);
+  view.rerender(<AssignmentEvidence kind="commercial" learnerId="101" componentId="COMP-2" trainingPlanDetails={{}} />);
+  expect(await screen.findByText('No evidence uploaded yet.')).toBeVisible();
+  await act(async () => { fail(new Error('Old assignment timed out')); });
+  expect(fetchEvidence).toHaveBeenCalledTimes(2);
+  expect(screen.queryByText('Old assignment timed out')).not.toBeInTheDocument();
+});
 
 it('identifies only the explicit new upload, while preserving notifications for existing approved files', async () => {
   const old = { id: 'old-file', filename: 'Existing.pdf', status: 'approved', sectionRef: 'extra:synthetic', sizeBytes: 12 } as EvidenceRecord;

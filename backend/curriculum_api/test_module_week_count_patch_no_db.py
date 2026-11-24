@@ -15,6 +15,7 @@ class ModuleWeekCountPatchTests(SimpleTestCase):
         return self.enterContext(composition_fixture(views, name, **kwargs))
 
     def setUp(self):
+        self.stub('native_only', return_value=True)
         self.stored = {'module_catalogue_id': 'MOD-SYNTHETIC', 'title': 'Synthetic module',
                        'weeks_number': 2, 'sessions_number': 4, 'start_date': '2026-11-01',
                        'end_date': '2026-11-08', 'week_boundary_mode': 'calendar',

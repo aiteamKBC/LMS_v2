@@ -26,7 +26,9 @@ class TransferSourceWeekTests(SimpleTestCase):
         self.pending = saved(modules=[item(completedSourceActivities=['material:7', 'material:8'])])
         self.request_id = self.pending['items'][0]['requestId']
         self.cursor = MagicMock()
-        self.cursor.fetchone.return_value = (7, 'commercial')
+        self.cursor.fetchone.side_effect = lambda: (7, 'commercial', 9) if (
+            'SELECT enrolment_id,learner_kind,learner_id FROM' in self.cursor.execute.call_args.args[0]
+        ) else (7, 'commercial')
         connection = MagicMock()
         connection.cursor.return_value.__enter__.return_value = self.cursor
         for patcher in (

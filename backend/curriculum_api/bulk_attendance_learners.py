@@ -49,12 +49,11 @@ class LearnerDirectoryIdentityError(ValueError):
 def _read_lms_directory(*, with_modes):
     from .bulk_attendance_kbc_source import dict_rows, new_database_cursor
 
-    # Follow the profile's explicit preference FK. Its target key happens to
-    # be an enrolment id; do not infer this relation from l.enrolment_id.
+    # Preferences belong directly to the canonical learner profile.
     sql = LMS_LEARNERS_SQL.format(
         mode="CASE WHEN pref.mode = 'lazy' THEN 'lazy' ELSE 'live' END" if with_modes else "'live'",
         preference_join=(
-            'LEFT JOIN "Learner".attendance_preferences pref ON pref.learner_id = l.attendance_preference_id'
+            'LEFT JOIN "Learner".attendance_preferences pref ON pref.learner_id = l.id'
             if with_modes else ''
         ),
     )

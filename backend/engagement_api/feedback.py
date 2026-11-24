@@ -1021,10 +1021,10 @@ def ensure_quality_ticket_for_response(response, *, actor='Feedback automation')
     if 'assistant_conversations' not in connections.databases:
         raise support_tickets.TicketError('The technicalsupport database connection is not configured.', 503)
     try:
-        learner_id = int(str(response.learner_id))
+        enrolment_id = int(str(response.enrolment_id))
     except (TypeError, ValueError):
         raise support_tickets.TicketError('This response is not linked to a learner account.', 409) from None
-    learner_account = account_for_subject('learner', learner_id)
+    learner_account = account_for_subject('learner', enrolment_id)
     context = getattr(response.delivery, 'session_title', '') or getattr(response.delivery, 'module_name', '') or response.form.title
     ticket_id = _quality_ticket_id(response.id)
     ticket = {
@@ -1668,6 +1668,25 @@ def form_recipients(request, pk):
         form = FeedbackForm.objects.get(pk=pk)
     except FeedbackForm.DoesNotExist:
         return json_error('Feedback form not found.', status=404)
+    if request.GET.get('groupBy') == 'coach':
+        if form.form_type != 'post_mcm_review':
+            return json_error('Coach grouping is available for Monthly Coaching Meeting feedback only.')
+        try:
+            page = max(int(request.GET.get('page', 1)), 1)
+            page_size = min(max(int(request.GET.get('pageSize', 25)), 1), 100)
+        except (TypeError, ValueError):
+            return json_error('Page values must be integers.')
+        rows = _form_recipient_rows(form)
+        # One scoped scalar lookup, including both learner types. No ownership,
+        # review history, assignment or response records are changed by this view.
+        learner_ids = {row['learnerId'] for row in rows}
+        coaches = {str(learner['id']): learner for learner in
+                   EnrolmentUser.all_learners.filter(id__in=learner_ids).values('id', 'coach_name', 'coach_email')}
+        from .recipient_coaches import group_mcm_recipients
+        return JsonResponse(group_mcm_recipients(
+            rows, coaches, search=_clean(request.GET.get('search')),
+            coach_key=_clean(request.GET.get('coach')), page=page, page_size=page_size,
+        ))
     if form.form_type in MODULE_FORM_TYPES:
         sync_module_feedback()
     rows = _form_recipient_rows(form)

@@ -186,8 +186,17 @@ class ImportedStartTests(SimpleTestCase):
                 self.assertFalse(has_start_evidence(self.calendar, modified))
 
     def test_check_session_starts_on_complete_early_transcript_without_relaxing_end_gate(self):
+        self._check_early_transcript(saved_booking='current', expected_status=200)
+
+    def test_check_session_reports_partial_for_missing_saved_booking_provenance(self):
+        self._check_early_transcript(saved_booking='missing', expected_status=207)
+
+    def test_check_session_reports_partial_for_another_saved_booking_revision(self):
+        self._check_early_transcript(saved_booking='other', expected_status=207)
+
+    def _check_early_transcript(self, *, saved_booking, expected_status):
         from .migrated_intelligence_views import migrated_review_check_session
-        from .migrated_session_scope import booking_window
+        from .migrated_session_scope import booking_window, booking_fingerprint
         local = timezone.localtime() - timedelta(minutes=10)
         self.calendar.scheduled_date, self.calendar.scheduled_time = local.date(), local.time().replace(tzinfo=None)
         start, _ = booking_window(self.calendar)
@@ -196,15 +205,21 @@ class ImportedStartTests(SimpleTestCase):
         snapshot['artifacts'] = [{'artifact_type': 'transcript', 'graph_artifact_id': 'segment', 'call_id': 'call',
             'created_datetime': start.isoformat(), 'end_datetime': timezone.now().isoformat(),
             'transcript_text': 'Synthetic content', 'transcript_vtt': 'WEBVTT\n\nSynthetic content'}]
+        # Persistence stamps the saved artifact with this exact booking revision.
+        metadata = {
+            '_lms_graph_event_id': self.calendar.graph_event_id,
+            '_lms_verified_online_meeting_id': 'synthetic-meeting',
+        }
+        if saved_booking != 'missing':
+            metadata['_lms_booking_fingerprint'] = (
+                booking_fingerprint(self.calendar) if saved_booking == 'current' else 'another-booking-revision')
         request = RequestFactory().post('/', data='{}', content_type='application/json')
         handler = migrated_review_check_session
         while hasattr(handler, '__wrapped__'): handler = handler.__wrapped__
         with patch('coach_api.migrated_intelligence_views._association', return_value=(self.overlay, self.calendar, {})), \
              patch('coach_api.migrated_intelligence_views._checked_lock', return_value=(self.overlay, self.calendar, None)), \
              patch('coach_api.views.stored_coach_meeting_snapshot', return_value={
-                 'artifacts': [{**snapshot['artifacts'][0], 'metadata': {
-                     '_lms_graph_event_id': self.calendar.graph_event_id,
-                     '_lms_verified_online_meeting_id': 'synthetic-meeting'}}],
+                 'artifacts': [{**snapshot['artifacts'][0], 'metadata': metadata}],
                  'storage': {'stored': True}}), \
              patch('coach_api.views.fetch_coach_meeting_graph_snapshot',
                    side_effect=lambda record, **options: (
@@ -218,8 +233,18 @@ class ImportedStartTests(SimpleTestCase):
              patch('coach_api.views.stored_coach_meeting_transcript_for_summary', return_value={'artifactId': 'segment', 'text': 'Synthetic content'}), \
              patch('coach_api.views.openai_meeting_summary') as ai:
             response = handler(request, self.overlay.event_key)
-        self.assertEqual(response.status_code, 200, response.content)
-        self.assertEqual(json.loads(response.content)['intelligence']['meetingEndCode'], 'MEETING_END_PENDING')
+        self.assertEqual(response.status_code, expected_status, response.content)
+        payload = json.loads(response.content)
+        self.assertEqual(payload['intelligence']['meetingEndCode'], 'MEETING_END_PENDING')
+        if expected_status == 200:
+            self.assertFalse(payload['partial'])
+            self.assertEqual(payload['errors'], [])
+            self.assertNotIn('TRANSCRIPT_INCOMPLETE', payload['intelligence']['errorCodes'])
+        else:
+            self.assertTrue(payload['partial'])
+            self.assertTrue(payload['errors'])
+            self.assertIn('TRANSCRIPT_INCOMPLETE', payload['intelligence']['errorCodes'])
+            self.assertIn('TRANSCRIPT_FETCH_FAILED', payload['intelligence']['errorCodes'])
         self.assertEqual(self.overlay.status, 'in-progress')
         self.assertEqual(self.overlay.answers, {'answer': 'Keep'})
         persist.assert_called_once()

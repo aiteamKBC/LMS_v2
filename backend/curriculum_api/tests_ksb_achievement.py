@@ -13,7 +13,6 @@ the Curriculum impact endpoint, the Coach dashboard and the Learner page all
 consume its output.
 """
 from curriculum_api.catalogue.tests.parity.composition_test_support import composition_fixture
-from unittest.mock import patch
 
 from django.test import SimpleTestCase
 
@@ -55,12 +54,13 @@ class FakeConnection:
 
 
 PROGRESS_COLUMNS = (
-    'learner_id', 'progress_id', 'kind', 'component_ref', 'component_title',
-    'component_type', 'quiz_ref', 'module_title', 'week_title', 'submitted_at',
-    'reported_time', 'feedback', 'passed', 'programme_ref', 'cohort_ref',
-    'group_ref', 'module_ref', 'week_ref', 'progress_expected_otjh',
-    'component_expected_otjh', 'resolved_component_title', 'ksb_codes', 'ksb_weights',
-    'ksb_classes',
+    'learner_id', 'progress_id', 'kind', 'component_ref', 'component_type',
+    'quiz_ref', 'submitted_at', 'reported_time', 'feedback', 'passed',
+    'programme_ref', 'cohort_ref', 'group_ref', 'module_ref', 'week_ref',
+    'progress_expected_otjh', 'component_expected_otjh',
+    'resolved_component_title', 'live_module_title', 'live_week_title',
+    'live_module_catalogue_id', 'module_found', 'module_deleted',
+    'ksb_codes', 'ksb_weights', 'ksb_classes',
 )
 
 
@@ -70,15 +70,15 @@ def progress_row(*, learner_id=19, progress_id=1, kind='component',
                  component_expected_otjh=3, programme_ref='PROG-1',
                  cohort_ref='COHORT-1', group_ref='GROUP-1',
                  module_ref='MOD-1', week_ref='WEEK-1'):
+    codes = [code] if code is not None else None
+    weights = [weight] if code is not None else None
+    classes = [weight_class] if code is not None else None
     return (
-        learner_id, progress_id, kind, component_ref, 'E2E activity',
-        'assignment', None, 'Module One', 'Week 1', None,
+        learner_id, progress_id, kind, component_ref, 'assignment', None, None,
         '2.5 hours', 'Reflection text', passed, programme_ref, cohort_ref,
         group_ref, module_ref, week_ref, progress_expected_otjh,
-        component_expected_otjh, 'E2E activity',
-        [code] if code is not None else None,
-        [weight] if code is not None else None,
-        [weight_class] if code is not None else None,
+        component_expected_otjh, 'E2E activity', 'Module One', 'Week 1',
+        module_ref, True, False, codes, weights, classes,
     )
 
 

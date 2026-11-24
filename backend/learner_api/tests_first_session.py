@@ -112,6 +112,29 @@ class SlotValidationTests(SimpleTestCase):
 
 
 class BookingTests(SimpleTestCase):
+    def setUp(self):
+        boundary = patch('learner_api.models.LearnerProfile.objects.filter')
+        self.profiles = boundary.start()
+        self.addCleanup(boundary.stop)
+        self.profiles.return_value.values_list.return_value.first.return_value = 42
+        flags = patch.object(first_session, '_write_booking_columns')
+        flags.start()
+        self.addCleanup(flags.stop)
+
+    def test_reservation_uses_canonical_profile_not_enrolment_id(self):
+        def reserve(**kwargs):
+            self.assertEqual(kwargs['learner_id'], 42)
+            return SimpleNamespace(pk=99, event_key='evt-1'), True
+        self.assertTrue(self._book(learner(pk=7), reserve=reserve)['booked'])
+
+    def test_missing_profile_never_reserves_a_meeting(self):
+        self.profiles.return_value.values_list.return_value.first.return_value = None
+        with patch('coach_api.views.reserve_coach_calendar_booking') as reserve:
+            result = first_session.book_first_session(learner(), scheduled_date=bookable_day(),
+                scheduled_time=time(10), owner_email='coach@example.test')
+        self.assertFalse(result['booked'])
+        reserve.assert_not_called()
+
     def _book(self, subject, *, warning="", reserve=None, save=None):
         record = SimpleNamespace(pk=99, event_key="evt-1")
         reserve = reserve or (lambda **kwargs: (record, True))

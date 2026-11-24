@@ -573,8 +573,8 @@ export function AssignmentSubmissionForm({
             </div>
           )}
 
-          {/* The question stays in view on every step; learners can fold it away. */}
-          {!historicalContent && <details open className="mb-5 rounded-xl border border-background-200 bg-white p-4">
+          {/* Keep the KSBs and hours step focused on claims and time entries. */}
+          {!historicalContent && step !== 2 && !(onShowInstructions && step === 0) && <details className="mb-5 rounded-xl border border-background-200 bg-white p-4">
             <summary className={`cursor-pointer ${briefLabelClass}`}>Assignment brief & instructions</summary>
             <div className="mt-3 space-y-4">
               <section aria-label="Assignment question">
@@ -593,7 +593,7 @@ export function AssignmentSubmissionForm({
 
           {historicalContent ? <HistoricalAssignmentCards content={orderedHistoricalContent!} step={step} files={evidenceFiles} onPreviewFile={file => { setPreviewOpen(true); void openEvidence(file); }} /> : step === 0 && (
             <div className="space-y-5">
-              {questionAttachments.map(file => <AssignmentAttachment key={file.url} url={file.url} fileName={file.fileName} title={file.label || title} defaultExpanded pdfTools />)}
+              {!onShowInstructions && questionAttachments.map(file => <AssignmentAttachment key={file.url} url={file.url} fileName={file.fileName} title={file.label || title} defaultExpanded pdfTools />)}
               <MonthlyAnswerField qualityTarget="answer" title={title} label="Your answer (at least 120 words; one point per line)" value={answers.assignmentAnswer} onChange={value => setAnswer('assignmentAnswer', value)} disabled={readOnly || submittingRef.current} rows={10} minimumWords={120} onePointPerLine generation={{ enabled: learningGeneration.canGenerate, busy: learningGeneration.generating, onGenerate: () => { if (!(answers.whatYouLearned || monthly.understood || monthly.gainedSkills) || window.confirm('Replace the three learning statements with new drafts from your answer?')) void learningGeneration.generate(); } }} />
               <p className="rounded-xl border border-blue-100 bg-blue-50 px-4 py-3 text-sm leading-6 text-blue-900">Write at least 120 words, then click Generate learning statements to draft the three fields below. Review and edit the generated text before submitting.</p>
               {learningGeneration.status && <div

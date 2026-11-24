@@ -32,7 +32,7 @@ Event = views.CoachCalendarEvent
 
 def event(pk=1, **overrides):
     values = dict(
-        pk=pk, learner_id=10, learner_name='Example Learner', learner_email='learner@example.org',
+        pk=pk, learner_profile_id=10, learner_name='Example Learner', learner_email='learner@example.org',
         owner_name='Example Owner', owner_email='owner@example.org',
         scheduled_date=date(2026, 10, 6), scheduled_time=time(10, 0), duration_minutes=60,
         meeting_link='https://teams.example.org/join/1', status=Event.STATUS_SCHEDULED,
@@ -148,24 +148,24 @@ class StateTests(unittest.TestCase):
 
 
 class LearnerResolutionTests(Base):
-    def test_enrolment_id_with_matching_email(self):
+    def test_enrolment_id_and_email_without_profile_are_not_identity(self):
         own = learner(10, 'Learner@Example.org ')
         self.mock_tables(by_id=[own])
-        self.assertIs(views.resolve_learners([event()])[1], own)
+        self.assertIsNone(views.resolve_learners([event()])[1])
 
-    def test_profile_id_collision_resolves_by_email(self):
+    def test_profile_id_collision_resolves_by_canonical_enrolment_link(self):
         # Calendar id 42 is a learner-profile id; enrolment row 42 is somebody else.
         stranger = learner(42, 'someone-else@example.org')
         target = learner(7, 'learner@example.org')
         profile = SimpleNamespace(id=42, email='learner@example.org', enrolment_id=7)
         self.mock_tables(profiles=[profile], by_id=[stranger, target])
-        self.assertIs(views.resolve_learners([event(learner_id=42)])[1], target)
+        self.assertIs(views.resolve_learners([event(learner_profile_id=42)])[1], target)
 
-    def test_email_fallback_and_unmatched(self):
+    def test_no_email_fallback_for_missing_canonical_profiles(self):
         target = learner(8, 'learner@example.org')
         self.mock_tables(by_id=[learner(99, 'other@example.org')], by_email=[target])
-        resolved = views.resolve_learners([event(learner_id=99), event(pk=2, learner_id=5, learner_email='nobody@example.org')])
-        self.assertIs(resolved[1], target)
+        resolved = views.resolve_learners([event(learner_profile_id=99), event(pk=2, learner_profile_id=5, learner_email='nobody@example.org')])
+        self.assertIsNone(resolved[1])
         self.assertIsNone(resolved[2])
 
 
@@ -199,9 +199,9 @@ class SerializeTests(unittest.TestCase):
         row = views.serialize_booking(event(), learner(10, 'learner@example.org', learner_type='commercial'))
         self.assertEqual(row['source'], 'commercial')
 
-    def test_owner_name_falls_back_to_recorded_case_owner(self):
+    def test_current_case_owner_does_not_replace_original_meeting_owner(self):
         row = views.serialize_booking(event(owner_name=''), learner(10, 'learner@example.org'))
-        self.assertEqual(row['caseOwner']['name'], 'Recorded Owner')
+        self.assertEqual(row['caseOwner']['name'], '')
 
 
 if __name__ == '__main__':

@@ -6239,7 +6239,7 @@ def build_catchup_calendar_event(
         "eventKey": record.event_key,
         "id": record.event_key,
         "ownerEmail": clean_text(record.owner_email),
-        "ownerName": clean_text(owner_name) or clean_text(record.owner_name) or "Med Maher",
+        "ownerName": clean_text(record.owner_name) or "Coach",
         "learnerId": str(record.learner_profile_id),
         **learner_detail_identity(learner),
         "learner": learner_name,
@@ -11726,7 +11726,6 @@ def coach_timetable_schedule_event(request):
             exclude_record=catchup_record,
         ):
             return JsonResponse({"detail": "This learner is busy at that time. Choose another time."}, status=409)
-        catchup_record.owner_name = owner_name or catchup_record.owner_name
         catchup_record.scheduled_date = scheduled_date
         catchup_record.scheduled_time = scheduled_time
         catchup_record.duration_minutes = duration_minutes
@@ -11791,11 +11790,7 @@ def coach_timetable_schedule_event(request):
                 "target_date": target_date,
             },
         )
-        record.owner_email = owner_email
-        record.owner_name = owner_name
         record.learner_id = learner_id
-        record.learner_name = clean_text(catchup_template_event.get("learner"))
-        record.learner_email = clean_text(catchup_template_event.get("email"))
         record.event_type = CATCH_UP_EVENT_TYPE
         record.sequence = int(catchup_template_event.get("sequence") or 1)
         record.target_date = target_date
@@ -11981,11 +11976,7 @@ def coach_timetable_schedule_event(request):
         if record.owner_email.casefold() != owner_email.casefold() or record.learner_id != int(base_event['learnerId']):
             return JsonResponse({'detail': 'The booking association changed. Reload the Review.'}, status=409)
 
-    record.owner_email = owner_email
-    record.owner_name = owner_name
     record.learner_id = int(base_event["learnerId"])
-    record.learner_name = clean_text(base_event.get("learner"))
-    record.learner_email = clean_text(base_event.get("email"))
     record.event_type = clean_text(base_event.get("source"))
     record.sequence = int(base_event.get("sequence") or 1)
     record.target_date = target_date
@@ -12315,7 +12306,6 @@ def coach_timetable_event_action(request):
             except LearnerCalendarConflict as exc:
                 return JsonResponse({"detail": str(exc)}, status=409)
 
-        catchup_record.owner_name = owner_name or catchup_record.owner_name
         catchup_record.last_graph_sync_error = public_graph_sync_warning(warning)
         catchup_record.save()
         if action == "complete":
@@ -12359,7 +12349,6 @@ def coach_timetable_event_action(request):
         )
         return JsonResponse({"detail": "This event does not have a Teams link. Retry calendar synchronization before continuing."}, status=409)
 
-    record.owner_name = owner_name
     warning = ""
     review_responses = None
     completion_source = base_event.get("source")
@@ -12537,7 +12526,6 @@ def coach_timetable_event_action(request):
         instance_row = curriculum_review_instances.get_review_instance(instance_row["id"])
         _sync_calendar_record_to_review_instance_status(instance_row)
         record.refresh_from_db()
-        record.owner_name = owner_name
     elif action == "complete":
         record.status = (
             CoachCalendarEvent.STATUS_AWAITING_SIGNATURE
@@ -12568,7 +12556,6 @@ def coach_timetable_event_action(request):
         except ValueError as exc:
             return JsonResponse({"detail": str(exc)}, status=400)
         record.refresh_from_db()
-        record.owner_name = owner_name
     elif action == "sign":
         record.status = CoachCalendarEvent.STATUS_COMPLETED
         record.manager_signed_at = timezone.now()

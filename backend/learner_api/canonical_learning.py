@@ -350,7 +350,6 @@ def entries_for(owner, *, overview_only=False, entry_ids=None, lineage_only=Fals
         from .progress_transfer_store import read_state
         from .progress_transfer_policy import frozen_records
         transfer_state = read_state(owner['enrolment_id'], include_records=True)
-        loaded = frozen_records(loaded, transfer_state, entry_ids=entry_ids)
     with projection_stage('ledger_reconcile'):
         current = current_records(owner, loaded)
     with projection_stage('ledger_completion'):
@@ -361,7 +360,12 @@ def entries_for(owner, *, overview_only=False, entry_ids=None, lineage_only=Fals
             # retained in the journal learner view only.
             for record in result:
                 record['completed'] = counts_as_completed(record)
+    if entry_ids is None:
+        from learner_api.attendance_otjh import apply
+        result = apply(owner, result, query)
     if transfer_state is not None:
+        # Historical completion is overlaid only after the ordinary canonical
+        # time/acceptance, retake and attendance reconciliation has finished.
         result = frozen_records(result, transfer_state, entry_ids=entry_ids)
     if entry_ids is None:
         from learner_api.attendance_otjh import apply

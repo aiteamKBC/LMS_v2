@@ -178,7 +178,7 @@ class RepointKeyTests(SimpleTestCase):
         self.assertTrue({"grade", "attempt", "passed", "claimed_seconds", "verified_seconds",
                          "expected_otjh", "submitted_at", "accepted", "actual_seconds"}.isdisjoint(changed))
         self.assertEqual((entry.grade, entry.attempt, entry.claimed_seconds), (72, 2, 5400))
-        ksbs.assert_called_once_with(entry, TARGET_CONTEXT)
+        ksbs.assert_called_once_with(entry, TARGET_CONTEXT, 211)
 
     def test_an_absent_canonical_ref_stays_absent(self):
         entry = _entry(curriculum_component_ref="")

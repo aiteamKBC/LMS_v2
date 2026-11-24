@@ -484,13 +484,14 @@ describe('Module Builder delivery catalogue', { timeout: 15000 }, () => {
     expect(cardFor('Data Foundations').queryByRole('button', { name: 'Move to module' })).not.toBeInTheDocument();
   });
 
-  it('shows the GBP sale price on a standalone course and passes it to the editor', async () => {
+  it('keeps the sale price off the catalogue card while passing it to the editor', async () => {
     modules.push({ id: 'MOD-PRICED', moduleCatalogueId: 'MOD-PRICED', name: 'Paid independent study',
       isFreeCourse: true, isForSale: true, price: '49.99', currency: 'GBP',
       programme: '', programmeId: '', weeks: 2, lessons: 1, assignments: 0 } as CurriculumModule);
     await renderCatalogue('?catalogue=free', 'Paid independent study');
     const card = cardFor('Paid independent study');
-    expect(card.getByText(/£49\.99/)).toBeInTheDocument();
+    expect(card.queryByText(/£49\.99/)).not.toBeInTheDocument();
+    expect(card.queryByText(/For sale/)).not.toBeInTheDocument();
     await userEvent.click(card.getByRole('button', { name: 'Edit' }));
     expect(await screen.findByLabelText('Price (GBP)')).toHaveValue('49.99');
     expect(fetchFreeCourseAuthoringCourse).toHaveBeenCalledWith('FREE-MOD-PRICED', expect.any(AbortSignal));
