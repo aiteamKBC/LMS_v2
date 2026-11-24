@@ -33,6 +33,29 @@ def manual(**values):
 
 
 class ManualAttendanceCompletionTests(SimpleTestCase):
+    def test_aggregate_reuses_manual_evidence_by_module_scope_and_profile(self):
+        from .manual_attendance_completion import read_manual_credit_evidence
+        from .weekly_read_cache import weekly_read_scope
+        first = [{'componentId': 'C1', 'moduleId': 'M1', 'component': 'Display title'},
+                 {'componentId': 'C2', 'moduleId': 'M2'}]
+        second = [{'componentId': 'C2', 'moduleId': 'M2'},
+                  {'componentId': 'C1', 'moduleId': 'M1', 'title': 'Credit title'}]
+        profile = SimpleNamespace(pk=9, enrolment_id=7, email='learner@example.test')
+        with patch('coach_api.models.CoachAttendanceSourceAdjustment.objects') as adjustments, \
+             patch('coach_api.models.CoachManualAttendance.objects') as manual:
+            adjustments.filter.return_value = []
+            manual.filter.return_value = []
+            with weekly_read_scope():
+                self.assertEqual(read_manual_completion(first, profile), {})
+                self.assertEqual(read_manual_credit_evidence(second, profile), ({}, []))
+                adjustments.filter.assert_called_once_with(learner_id=9)
+                manual.filter.assert_called_once_with(learner_id=9)
+                read_manual_completion(first[:1], profile)
+                self.assertEqual(adjustments.filter.call_count, 2)
+            with weekly_read_scope():
+                read_manual_completion(first, profile)
+            self.assertEqual(adjustments.filter.call_count, 3)
+
     def project(self, components=None, occurrences=None, adjustments=None, manual_rows=None):
         return project_manual_completion(
             components if components is not None else [component()],

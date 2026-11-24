@@ -28,8 +28,12 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import Mock, patch
 
-import test_calendar_checks_no_db as checks_tests
-import test_schedule_email_no_db as email_tests
+if __package__:
+    from . import test_calendar_checks_no_db as checks_tests
+    from . import test_schedule_email_no_db as email_tests
+else:
+    import test_calendar_checks_no_db as checks_tests
+    import test_schedule_email_no_db as email_tests
 
 ROOT = Path(__file__).resolve().parent
 checks = checks_tests.checks
@@ -471,7 +475,7 @@ class WeekMeetingEditTests(unittest.TestCase):
             active_component_rows=lambda rows: rows, component_builder_settings=lambda item: item['settings'],
             teams_schedule_settings=lambda settings, *_a, **_k: settings, teams_event_payload=event_payload,
             calendar_targets=lambda *a, **k: [], graph_timezone_iana=lambda _settings: 'Europe/London',
-            teams_non_delivery_reason=lambda *a: '', as_json_value=lambda value, fallback: value or fallback,
+            teams_non_delivery_reason=lambda *a, **kw: '', as_json_value=lambda value, fallback: value or fallback,
             apply_teams_meeting_options=lambda *a, **k: (True, {}, []),
             forward_teams_invitation=lambda request, owner, ids, people, comment='': (
                 [request('POST', f'users/{owner}/events/{ids[0]}/forward',

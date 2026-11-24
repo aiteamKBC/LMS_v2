@@ -61,13 +61,20 @@ type WeeklyLearningPlanProps = {
 
 /** Dashboard and My Learning render the same canonical Weekly resource. */
 export function WeeklyLearningPlan(props: WeeklyLearningPlanProps) {
-  const read = useWeeklyLearning(props.kind, props.learnerId, true, props.initialModuleId, props.active);
-  return <WeeklyLearningPlanView key={`${props.kind}:${props.learnerId}`} {...props} read={read} />;
+  return <ModuleWeeklyLearningPlan key={`${props.kind}:${props.learnerId}`} {...props} />;
+}
+
+function ModuleWeeklyLearningPlan(props: WeeklyLearningPlanProps) {
+  const [moduleId, setModuleId] = useState<string | null>(null);
+  const read = useWeeklyLearning(props.kind, props.learnerId, true, moduleId || props.initialModuleId,
+    props.active, true, moduleId === null);
+  return <WeeklyLearningPlanView {...props} read={read} onModuleChange={setModuleId} />;
 }
 export { WeeklyLearningPlan as DashboardWeeklyLearningPlan };
 
-function WeeklyLearningPlanView({ kind, learnerId, canOpenActivities = true, active = true, read }: WeeklyLearningPlanProps & {
+function WeeklyLearningPlanView({ kind, learnerId, canOpenActivities = true, active = true, read, onModuleChange }: WeeklyLearningPlanProps & {
   read: { real: WeeklyLearningDetail | null; loading: boolean; loadError: string | null; refresh: () => void };
+  onModuleChange: (moduleId: string) => void;
 }) {
   const { real, loading: scheduleLoading, loadError: scheduleError, refresh: refreshDetail } = read;
   const detailError = scheduleError;
@@ -152,7 +159,7 @@ function WeeklyLearningPlanView({ kind, learnerId, canOpenActivities = true, act
         <p className="mt-3 pt-4 text-foreground-500">Outer ring shows activity progress.</p>
       </div>}
       {candidateModules.length > 1 && <label className="mt-2.5 block text-xs font-medium text-foreground-500">Module
-        <select aria-label="Module" value={resolvedModuleId || ''} onChange={event => { setSelectedModuleId(event.target.value); setSelection(null); }}
+        <select aria-label="Module" value={resolvedModuleId || ''} onChange={event => { setSelectedModuleId(event.target.value); setSelection(null); onModuleChange(event.target.value); }}
           className="mt-1 w-full rounded-lg border border-foreground-200 bg-background-50 px-2.5 py-1.5 text-xs font-semibold text-foreground-900">
           {candidateModules.map(item => <option key={item.id} value={item.id}>{item.title}</option>)}
         </select>

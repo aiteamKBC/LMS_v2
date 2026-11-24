@@ -10,6 +10,27 @@ const second = { id: '132', name: 'Second learner', components: [{ componentId: 
 describe('learner View identity', () => {
   afterEach(() => vi.restoreAllMocks());
 
+  it('keeps assessment and dashboard projections separate when the view changes', async () => {
+    const assessment = { ...first, name: 'Assessment projection' };
+    const peek = vi.spyOn(api, 'peekLearnerDetail').mockImplementation((_kind, _id, _stale, quizView) =>
+      quizView ? assessment : first);
+    const fetch = vi.spyOn(api, 'fetchLearnerDetail').mockImplementation(async (_kind, _id, options) =>
+      options?.quizView ? assessment : first);
+    const { result, rerender } = renderHook(({ quizView }) =>
+      useLearnerDetailParam('commercial', '125', false, true, quizView),
+    { initialProps: { quizView: false } });
+    await waitFor(() => expect(result.current.real).toBe(first));
+    rerender({ quizView: true });
+    expect(result.current.real).toBe(assessment);
+    await waitFor(() => expect(fetch).toHaveBeenLastCalledWith('commercial', '125',
+      { revalidate: false, quizView: true }));
+    expect(peek).toHaveBeenCalledWith('commercial', '125', true, true);
+    act(() => result.current.refresh());
+    await waitFor(() => expect(fetch).toHaveBeenLastCalledWith('commercial', '125',
+      { revalidate: true, quizView: true }));
+    expect(result.current.real).toBe(assessment);
+  });
+
   it('renders a cached learner on the first frame without a loading flash', async () => {
     vi.spyOn(api, 'peekLearnerDetail').mockImplementation((_kind, id) => id === '125' ? first : undefined);
     vi.spyOn(api, 'fetchLearnerDetail').mockResolvedValue(first);

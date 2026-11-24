@@ -19501,7 +19501,7 @@ def preserve_additional_meeting_settings(payload_settings, stored_row):
     return {**payload_settings, **kept, 'liveSessionUrl': join_url, 'teamsMeetingUrl': join_url}
 
 
-def attach_teams_meeting_to_module_weeks(module_catalogue_id, series_row, series_settings, occurrence_rows, *, create_missing=False, dry_run=False, unresolved_components=None):
+def attach_teams_meeting_to_module_weeks(module_catalogue_id, series_row, series_settings, occurrence_rows, *, create_missing=False, dry_run=False, unresolved_components=None, align_to_week_plan=False):
     """Write a tracked Teams meeting onto the weeks of a module.
 
     A module's live sessions and its meeting's sessions are one list, read in
@@ -19522,6 +19522,10 @@ def attach_teams_meeting_to_module_weeks(module_catalogue_id, series_row, series
     from it. The ``created`` count is the one that answers that question: the
     update pass rewrites every existing live-session component every time, so it
     is never zero and never means work is outstanding.
+
+    ``align_to_week_plan`` explicitly repairs content-to-calendar bindings by
+    each authored week's delivery slots. It never edits occurrences, sends to
+    Microsoft or creates components; ordinary restores keep booked identities.
     """
     module_row = (authoring_fetch_all(AUTHORING_MODULES_TABLE, 'module_catalogue_id = %s', [module_catalogue_id]) or [{}])[0]
     group_rows = authoring_fetch_all(GROUPS_TABLE, 'group_id = %s', [module_row.get('group_id')]) if module_row.get('group_id') else []
@@ -19554,11 +19558,13 @@ def attach_teams_meeting_to_module_weeks(module_catalogue_id, series_row, series
     session_plan = module_week_session_plan(module_row, 0 if session_rows else len(week_rows))
     external_calendar = clean_str(series_row.get('meeting_type')) == 'linked-external'
     external_slots = []
-    if external_calendar:
+    if external_calendar or align_to_week_plan:
         # Imported occurrences already exist in Microsoft. Moving curriculum
         # content changes which occurrence delivers it, not that occurrence's
         # date, attendance or recordings.
         external_slots, _external_plan = module_week_delivery_slots(module_row, group_row, len(week_rows))
+    if align_to_week_plan:
+        create_missing = False
     session_start_time, _session_end_time, session_duration = module_session_clock(module_row, group_row)
     default_points = live_session_component_points() if create_missing else 0
     now = datetime.utcnow()
@@ -19566,6 +19572,21 @@ def attach_teams_meeting_to_module_weeks(module_catalogue_id, series_row, series
     created = 0
     handled_component_ids = set()
     claimed_occurrence_ids = set()
+
+    def occurrence_on_planned_slot(planned):
+        # A repair must not let obsolete IDs or dates steal a neighbour's
+        # meeting. Match the business-local date and, when needed, its clock.
+        planned_date = format_date(planned.get('date'))
+        matches = [row for row in occurrence_rows
+                   if planned_date and occurrence_local_date(row, series_settings) == planned_date
+                   and clean_str(row.get('status')).lower() not in TEAMS_OFF_CALENDAR_OCCURRENCE_STATUSES | {'failed'}]
+        clock = clean_str(planned.get('startTime'))[:5]
+        if len(matches) > 1 and clock:
+            matches = [row for row in matches
+                       if occurrence_local_start(row, series_settings).strftime('%H:%M') == clock]
+        if len(matches) == 1 and clean_str(matches[0].get('id')) not in claimed_occurrence_ids:
+            return matches[0], 'matched'
+        return None, 'ambiguous' if matches else 'missing'
 
     def free_occurrence_on(date_value):
         """The unclaimed session Microsoft holds on one date, if there is one."""
@@ -19575,7 +19596,7 @@ def attach_teams_meeting_to_module_weeks(module_catalogue_id, series_row, series
                      if clean_str(row.get('id')) not in claimed_occurrence_ids
                      and occurrence_local_date(row, series_settings) == date_value), None)
 
-    def occurrence_for_component(existing_settings, slot_index):
+    def occurrence_for_component(existing_settings, slot_index, planned=None):
         """Which booked session a live-session component owns.
 
         Paired by DATE, never by counting. Session numbers cannot carry this:
@@ -19588,13 +19609,12 @@ def attach_teams_meeting_to_module_weeks(module_catalogue_id, series_row, series
 
         In order of authority:
 
-        1. The date this component itself currently runs on -- where its own
-           meeting sits, which is what keeps a booked session with its invited
-           attendees while a plan moves around it.
-        2. The date its week is planned for, which is what dates a component
-           that has never been booked, and what re-pairs one whose stored date
-           was left on another session's day.
-        3. For a component with no date at all -- neither its own nor a planned
+        1. An existing tracked occurrence keeps its identity while the plan
+           moves around it.
+        2. An unbooked component takes its week's planned date. A copied date
+           is not a booking and must not take the following week's meeting.
+        3. With no planned date, its authored date can identify a meeting.
+        4. For a component with no date at all -- neither its own nor a planned
            one for its week -- the next unclaimed session in order, which is
            what fills a freshly created series.
 
@@ -19620,12 +19640,15 @@ def attach_teams_meeting_to_module_weeks(module_catalogue_id, series_row, series
         )), None)
         if tracked:
             return tracked
+        if planned is None:
+            planned = session_plan[slot_index] if slot_index < len(session_plan) else {}
+        planned_date = format_date(planned.get('date'))
+        if planned_date and not live_session_booked_on_module_calendar(existing_settings):
+            return free_occurrence_on(planned_date)
         stored_date = clean_str(existing_settings.get('sessionDate'))[:10]
         found = free_occurrence_on(stored_date)
         if found:
             return found
-        planned = session_plan[slot_index] if slot_index < len(session_plan) else {}
-        planned_date = format_date(planned.get('date'))
         found = free_occurrence_on(planned_date)
         if found or stored_date or planned_date:
             return found
@@ -19641,7 +19664,7 @@ def attach_teams_meeting_to_module_weeks(module_catalogue_id, series_row, series
         `occurrence_for_component`.
         """
         existing_settings = existing_settings if isinstance(existing_settings, dict) else {}
-        if not occurrence and stored_calendar_series(series_row):
+        if not occurrence:
             saved_link = clean_str(existing_settings.get('liveSessionUrl') or existing_settings.get('teamsMeetingUrl') or existing_link)
             if saved_link:
                 # A failed match is not an instruction to erase an existing
@@ -19649,10 +19672,9 @@ def attach_teams_meeting_to_module_weeks(module_catalogue_id, series_row, series
                 # binding; a later verified update can match it again.
                 return {**existing_settings, 'liveSessionUrl': saved_link,
                         'teamsMeetingUrl': clean_str(existing_settings.get('teamsMeetingUrl')) or saved_link,
-                        'teamsCalendarBinding': 'missing'}
+                        'teamsCalendarBinding': 'missing', 'teamsStartDateTimeUtc': ''}
             empty_settings = {key: '' for key in ('teamsMeetingUrl', 'liveSessionUrl', 'teamsEventId', 'teamsOnlineMeetingId', 'teamsOccurrenceId', 'teamsLiveSessionId', 'teamsSessionNumber', 'sessionDateTimeUtc', 'teamsStartDateTimeUtc')}
-            if 'teamsCalendarBinding' in existing_settings:
-                empty_settings['teamsCalendarBinding'] = 'missing'
+            empty_settings['teamsCalendarBinding'] = 'missing'
             override = clean_str(existing_settings.get('liveSessionLinkOverride'))
             if override:
                 empty_settings['liveSessionUrl'] = override
@@ -19698,8 +19720,7 @@ def attach_teams_meeting_to_module_weeks(module_catalogue_id, series_row, series
                     planned_settings['sessionDateTimeUtc'] = planned_instant
                     planned_settings['teamsStartDateTimeUtc'] = planned_instant
         attached = {**shared_series_settings, **planned_settings, **session_settings}
-        if 'teamsCalendarBinding' in existing_settings:
-            attached['teamsCalendarBinding'] = 'matched' if occurrence else 'missing'
+        attached['teamsCalendarBinding'] = 'matched'
         # A bulk authoring replacement intentionally changes the join URL while
         # leaving the Teams meeting identity and occurrence metadata intact.
         # Keep that explicit override when the calendar is re-attached after a
@@ -19713,6 +19734,10 @@ def attach_teams_meeting_to_module_weeks(module_catalogue_id, series_row, series
 
     session_index = 0
     sessions_per_week = delivery_days_per_week(module_row)
+    sessions_by_week = defaultdict(list)
+    for session in session_plan:
+        if parse_int(session.get('weekNumber'), 0) > 0:
+            sessions_by_week[parse_int(session['weekNumber'], 0)].append(session)
     for week_index, week_row in enumerate(week_rows):
         week_id = clean_str(week_row.get('id'))
         live_rows = [row for row in components_by_week.get(week_id, []) if frontend_component_type(row.get('type')) == 'live-session']
@@ -19766,6 +19791,9 @@ def attach_teams_meeting_to_module_weeks(module_catalogue_id, series_row, series
                     existing_settings, series_row, planned, occurrence_rows, claimed_occurrence_ids,
                     series_settings.get('sessionTimeZone') or graph_timezone_iana({}),
                 )
+                if (attached is not None and attached.get('teamsCalendarBinding') != 'matched'
+                        and unresolved_components is not None):
+                    unresolved_components.append(clean_str(row.get('id')))
                 session_index += 1
                 handled_component_ids.add(clean_str(row.get('id')))
                 if attached is not None:
@@ -19778,11 +19806,20 @@ def attach_teams_meeting_to_module_weeks(module_catalogue_id, series_row, series
                             })
                         updated += 1
                 continue
-            occurrence = occurrence_for_component(existing_settings, session_index)
+            if align_to_week_plan:
+                slots = external_slots[week_index] if week_index < len(external_slots) else []
+                planned = slots[live_index] if live_index < len(slots) else {}
+                occurrence, binding = occurrence_on_planned_slot(planned)
+            else:
+                week_slots = sessions_by_week.get(week_index + 1, [])
+                planned = (week_slots[live_index] if live_index < len(week_slots) else {}) if sessions_by_week else None
+                occurrence = occurrence_for_component(existing_settings, session_index, planned)
+                binding = 'matched' if occurrence else 'missing'
             if occurrence:
                 claimed_occurrence_ids.add(clean_str(occurrence.get('id')))
             settings_for_week = settings_for_session(session_index, occurrence, existing_settings, row.get('live_sessions_link'))
-            if not occurrence and settings_for_week.get('teamsCalendarBinding') == 'missing' and unresolved_components is not None:
+            settings_for_week['teamsCalendarBinding'] = binding
+            if not occurrence and unresolved_components is not None:
                 unresolved_components.append(clean_str(row.get('id')))
             session_index += 1
             handled_component_ids.add(clean_str(row.get('id')))
@@ -19944,9 +19981,11 @@ def curriculum_module_teams_meeting_restore(request, module_catalogue_id):
     # path must never author anything: only a person pressing "re-attach" may.
     body = json_body(request) if request.method == 'POST' else None
     create_missing = truthy(body.get('createMissingComponents')) if isinstance(body, dict) else False
+    align_to_week_plan = truthy(body.get('alignToWeekPlan')) if isinstance(body, dict) else False
 
     updated_components = 0
     created_components = 0
+    unresolved_components = []
     # Opt-in on GET, because GET is also the Module Builder's silent restore and
     # that path must stay as cheap as it is. ``?probe=1`` asks the same walk what
     # re-attaching would create, so the UI can hide the button when the answer
@@ -19962,6 +20001,8 @@ def curriculum_module_teams_meeting_restore(request, module_catalogue_id):
             settings_update,
             occurrence_rows,
             create_missing=create_missing,
+            align_to_week_plan=align_to_week_plan,
+            unresolved_components=unresolved_components,
         )
     elif truthy(request.GET.get('probe')):
         _would_update, pending_components = attach_teams_meeting_to_module_weeks(
@@ -19997,6 +20038,7 @@ def curriculum_module_teams_meeting_restore(request, module_catalogue_id):
         'verificationPending': verification_pending,
         'updatedComponents': updated_components,
         'createdComponents': created_components,
+        'unresolvedComponentIds': unresolved_components,
         'meeting': settings_update,
         'calendar': {
             'title': clean_str(sessions[0].get('module_title')),

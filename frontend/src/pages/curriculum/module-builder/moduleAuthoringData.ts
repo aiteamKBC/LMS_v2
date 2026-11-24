@@ -3625,10 +3625,10 @@ export function loadTeamsMeetingConfiguration() {
  * module whose join link has gone missing, and a page load must not author
  * anything the person did not ask for.
  */
-export function restoreModuleTeamsMeeting(moduleCatalogueId: string, options: { createMissingComponents?: boolean } = {}) {
-  return apiJson<{ restored: boolean; updatedComponents: number; createdComponents?: number; meeting: Record<string, unknown>; module: ModuleCatalogueItem }>(`/curriculum/modules/${encodeURIComponent(moduleCatalogueId)}/teams-meetings/restore/`, {
+export function restoreModuleTeamsMeeting(moduleCatalogueId: string, options: { createMissingComponents?: boolean; alignToWeekPlan?: boolean } = {}) {
+  return apiJson<{ restored: boolean; updatedComponents: number; createdComponents?: number; unresolvedComponentIds?: string[]; meeting: Record<string, unknown>; module: ModuleCatalogueItem }>(`/curriculum/modules/${encodeURIComponent(moduleCatalogueId)}/teams-meetings/restore/`, {
     method: 'POST',
-    body: JSON.stringify({ createMissingComponents: Boolean(options.createMissingComponents) }),
+    body: JSON.stringify({ createMissingComponents: Boolean(options.createMissingComponents), ...(options.alignToWeekPlan ? { alignToWeekPlan: true } : {}) }),
     timeoutMs: 30000,
   }).then(result => {
     // Re-attaching rewrites the module's live-session components, so the cached
