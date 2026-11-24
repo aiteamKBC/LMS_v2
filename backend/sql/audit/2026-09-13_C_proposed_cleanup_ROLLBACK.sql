@@ -106,7 +106,7 @@ UPDATE curriculum.review_instances
        updated_at        = now()
  WHERE calendar_event_id IN (SELECT id FROM _doomed_events);
 
-UPDATE "Coach".coach_calendar_event
+UPDATE "Learner".coach_calendar_event
    SET review_instance_id = '',
        updated_at         = now()
  WHERE review_instance_id IN (SELECT id FROM _doomed_instances);
@@ -129,7 +129,7 @@ DELETE FROM curriculum.review_instances
 -- Step 3. Delete the unbooked, inert calendar rows.
 -- The Curriculum engine regenerates these occurrences on the next read.
 -- ---------------------------------------------------------------------------
-DELETE FROM "Coach".coach_calendar_event
+DELETE FROM "Learner".coach_calendar_event
  WHERE id IN (SELECT id FROM _doomed_events);
 
 -- ---------------------------------------------------------------------------

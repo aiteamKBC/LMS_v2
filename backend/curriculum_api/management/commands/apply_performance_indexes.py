@@ -27,8 +27,8 @@ PERFORMANCE_INDEXES = (
     PerformanceIndex("perf_live_attendance_occurrence_email_idx", '"curriculum"."live_session_attendance"', "occurrence_id, email"),
 
     # Coach calendars and reporting.
-    PerformanceIndex("coach_owner_date_status_idx", '"Coach"."coach_calendar_event"', "owner_email, target_date, status"),
-    PerformanceIndex("coach_learner_type_date_idx", '"Coach"."coach_calendar_event"', "learner_id, event_type, target_date"),
+    PerformanceIndex("coach_owner_date_status_idx", '"Learner"."coach_calendar_event"', "owner_coach_id, target_date, status"),
+    PerformanceIndex("coach_learner_type_date_idx", '"Learner"."coach_calendar_event"', "learner_id, event_type, target_date"),
     PerformanceIndex("coach_abs_owner_status_idx", '"Coach"."coach_absence_report"', "owner_email, status, session_date DESC"),
     PerformanceIndex("coach_abs_learner_date_idx", '"Coach"."coach_absence_report"', "learner_id, session_date DESC"),
 

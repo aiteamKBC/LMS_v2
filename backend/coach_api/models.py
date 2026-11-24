@@ -2,6 +2,7 @@ from django.conf import settings
 from django.db import models
 from config.legacy_identity import legacy_field_alias
 from django.db.models.functions import Lower
+from .calendar_identity import CalendarIdentityField, CalendarManager, ALIASES
 import uuid
 
 
@@ -49,12 +50,16 @@ class CoachCalendarEvent(models.Model):
     event_key = models.CharField(max_length=255, unique=True)
     operation_id = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
     idempotency_key = models.CharField(max_length=255, blank=True)
-    owner_email = models.EmailField(max_length=255, db_index=True)
-    owner_name = models.CharField(max_length=255, blank=True)
+    owner_coach = models.ForeignKey(
+        'learner_api.PlacementCoach', db_column='owner_coach_id',
+        on_delete=models.PROTECT, related_name='+', db_index=False,
+    )
+    owner_email = CalendarIdentityField()
+    owner_name = CalendarIdentityField()
     learner_profile_id = models.IntegerField(db_index=True, db_column='learner_id')
     learner_id = legacy_field_alias("learner_profile_id")
-    learner_name = models.CharField(max_length=255, blank=True)
-    learner_email = models.EmailField(max_length=255, blank=True)
+    learner_name = CalendarIdentityField()
+    learner_email = CalendarIdentityField()
     event_type = models.CharField(max_length=32, db_index=True)
     sequence = models.PositiveIntegerField(default=1)
     target_date = models.DateField(db_index=True)
@@ -96,11 +101,46 @@ class CoachCalendarEvent(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
+    objects = CalendarManager()
+
+    @classmethod
+    def from_db(cls, db, field_names, values):
+        instance = super().from_db(db, field_names, values)
+        if 'owner_coach_id' in field_names:
+            instance._original_owner_coach_id = instance.owner_coach_id
+        return instance
+
+    def prepare_owner(self, *, using):
+        if self.owner_coach_id:
+            return
+        from learner_api.models import PlacementCoach
+        email = str(self.__dict__.get('_pending_owner_email') or '').strip()
+        owners = list(PlacementCoach.objects.using(using).filter(email__iexact=email)[:2]) if email else []
+        if len(owners) != 1:
+            raise ValueError('A unique canonical calendar owner is required.')
+        self.owner_coach_id = owners[0].pk
+        self._meta.get_field('owner_coach').set_cached_value(self, owners[0])
+
+    def save(self, *args, **kwargs):
+        using = kwargs.get('using') or self._state.db or 'default'
+        if self._state.adding:
+            self.prepare_owner(using=using)
+        else:
+            original = getattr(self, '_original_owner_coach_id', None)
+            if original is None:
+                original = type(self).objects.using(using).values_list('owner_coach_id', flat=True).get(pk=self.pk)
+            if self.owner_coach_id != original:
+                raise ValueError('The original calendar owner cannot be changed.')
+        if kwargs.get('update_fields') is not None:
+            kwargs['update_fields'] = set(kwargs['update_fields']) - set(ALIASES)
+        result = super().save(*args, **kwargs)
+        self._original_owner_coach_id = self.owner_coach_id
+        return result
+
     class Meta:
-        db_table = _table_name('coach_test_calendar_events', 'Coach"."coach_calendar_event')
+        db_table = _table_name('coach_test_calendar_events', 'Learner"."coach_calendar_event')
         ordering = ["target_date", "learner_name", "event_type", "sequence"]
         indexes = [
-            models.Index(fields=["owner_email", "target_date", "status"], name="coach_owner_date_status_idx"),
             models.Index(fields=["learner_profile_id", "event_type", "target_date"], name="coach_learner_type_date_idx"),
         ]
         constraints = [
@@ -137,9 +177,9 @@ class CoachCalendarEvent(models.Model):
                 name="coach_calendar_booking_seq_uniq",
             ),
             models.UniqueConstraint(
-                fields=["owner_email", "idempotency_key"],
+                fields=["owner_coach", "idempotency_key"],
                 condition=~models.Q(idempotency_key=""),
-                name="coach_calendar_owner_idempotency_uniq",
+                name="coach_calendar_owner_coach_idempotency_uniq",
             ),
         ]
 

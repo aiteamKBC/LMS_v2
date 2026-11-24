@@ -425,12 +425,12 @@ def standalone_review_records(records, profiles, aptem_profile_ids, *, linked_ke
     # generosity they have on the learner side and are never dropped here.
     known_profile_ids = {row.id for row in profiles}
     unresolved = {
-        record.learner_id
+        record.learner_profile_id
         for record in records
         if record.event_type in REVIEW_CYCLE_EVENT_TYPES
         and not (record.idempotency_key or "").startswith("learner-book:")
-        and record.learner_id not in known_profile_ids
-        and record.learner_id not in aptem_profile_ids
+        and record.learner_profile_id not in known_profile_ids
+        and record.learner_profile_id not in aptem_profile_ids
     }
     deleted_profile_ids = _deleted_profile_ids(unresolved)
     result = []
@@ -444,7 +444,7 @@ def standalone_review_records(records, profiles, aptem_profile_ids, *, linked_ke
                     continue
             elif record.learner_profile_id in aptem_profile_ids:
                 continue
-            elif record.learner_id in deleted_profile_ids:
+            elif record.learner_profile_id in deleted_profile_ids:
                 continue
         result.append(record)
     return result
