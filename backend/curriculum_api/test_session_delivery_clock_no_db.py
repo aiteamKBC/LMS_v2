@@ -106,6 +106,15 @@ class SessionDeliveryClockTests(unittest.TestCase):
     def stamp(self, module=None, group=None):
         return self.n['apply_module_session_plan_to_weeks'](module or self.module, group, self.weeks, holidays=[])
 
+    def test_general_materials_do_not_consume_the_first_delivery_week(self):
+        for index, week in enumerate(self.weeks):
+            week['components'][0]['settings'].update(teamsLiveSessionId='SERIES', teamsSessionNumber=index+1)
+        self.weeks.insert(0, {'id': 'GENERAL', 'components': [{'id': 'READING', 'type': 'reading', 'settings': {}}]})
+        booked = copy.deepcopy([w['components'] for w in self.weeks])
+        weeks = self.stamp()
+        self.assertEqual([w.get('sessionDate', '') for w in weeks], ['', '2026-10-23', '2026-10-30'])
+        self.assertEqual([w['components'] for w in weeks], booked)
+
     def test_unbooked_components_inherit_two_hours_and_correct_utc_across_dst(self):
         weeks = self.stamp()
         for week in weeks:

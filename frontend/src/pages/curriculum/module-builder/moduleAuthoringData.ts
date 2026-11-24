@@ -362,6 +362,36 @@ export function moduleUsesSessionRows(module: ModuleCatalogueItem, plannedSessio
  * Every screen that pairs weeks with dates reads this -- the Course structure
  * rail, the sessions drawer, the module workspace.
  */
+export function moduleWeekPlanOffset(module: ModuleCatalogueItem, plan: ModuleWeekSessionPlan['sessions']): number {
+  if (module.weekBoundaryMode === 'calendar') return 0;
+  const byDate = new Map<string, number>();
+  for (const session of plan) {
+    const number = Number(session.weekNumber);
+    if (!session.date || !Number.isInteger(number) || number <= 0) continue;
+    const day = session.date.slice(0, 10);
+    if (byDate.has(day) && byDate.get(day) !== number) return 0;
+    byDate.set(day, number);
+  }
+  const offsets = new Set<number>();
+  const anchoredWeeks = new Set<number>();
+  for (const [index, week] of module.weekStructure.entries()) {
+    for (const component of week.components) {
+      const settings = component.settings;
+      if (component.type !== 'live-session' || settings.extraTeamsMeetingUrl || settings.sessionRescheduled) continue;
+      if (!settings.teamsOccurrenceId && !(settings.teamsLiveSessionId && settings.teamsSessionNumber)) continue;
+      const number = byDate.get(String(settings.sessionDate || '').slice(0, 10));
+      if (number === undefined) return 0;
+      offsets.add(index + 1 - number);
+      anchoredWeeks.add(number);
+    }
+  }
+  if (offsets.size !== 1 || anchoredWeeks.size < 2) return 0;
+  const offset = [...offsets][0];
+  if (offset <= 0 || offset >= module.weekStructure.length) return 0;
+  if (module.weekStructure.slice(0, offset).some(week => week.components.some(component => component.type === 'live-session'))) return 0;
+  return offset;
+}
+
 export function moduleWeekSessionSlots(
   module: ModuleCatalogueItem | null | undefined,
   plannedSessions?: ModuleWeekSessionPlan['sessions'],
@@ -381,7 +411,8 @@ export function moduleWeekSessionSlots(
       const weekNumber = Number(session.weekNumber) || 0;
       if (weekNumber > 0) countByWeekNumber.set(weekNumber, (countByWeekNumber.get(weekNumber) || 0) + 1);
     });
-    return weeks.map((_week, index) => countByWeekNumber.get(index + 1) || 0);
+    const offset = moduleWeekPlanOffset(module, plan);
+    return weeks.map((_week, index) => countByWeekNumber.get(index + 1 - offset) || 0);
   }
   // No week numbers to read: an older payload, or a screen holding no plan at
   // all. The module's own delivery pattern is the only thing left to answer

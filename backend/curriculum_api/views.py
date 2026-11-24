@@ -4591,7 +4591,8 @@ def curriculum_teams_meeting_schedule(request, live_session_id):
     if repeat != 'none':
         pruned, holiday_warnings = prune_study_week_fillers(
             microsoft_graph_request, owner_key, event_id, clean_str(series.get('module_catalogue_id')),
-            targets, graph_settings, current_occurrences, allow_delete=not people_only,
+            targets, graph_settings, current_occurrences, allow_delete=not people_only and notify_attendees,
+            allow_uninvited_delete=not people_only,
         )
         stale_deletions = [item for item in stale_deletions if item.get('instance_id') not in pruned]
         warnings.extend(holiday_warnings)
@@ -11136,6 +11137,7 @@ def delivery_slots_by_catalogue(
                 groups.get(clean_str(module_row.get('group_id'))) or {},
                 week_count,
                 holidays=holidays,
+                weeks=weeks_by_catalogue.get(catalogue_id),
             )
         except (Exception, AssertionError):
             # One module's plan failing leaves that module on its stored dates;
@@ -11222,7 +11224,9 @@ def authoring_session_links_by_catalogue(
     # which is the index its planned slot is numbered by.
     weeks_by_catalogue = defaultdict(list)
     for week_row in week_rows:
-        weeks_by_catalogue[clean_str(week_row.get('module_catalogue_id'))].append(week_row)
+        weeks_by_catalogue[clean_str(week_row.get('module_catalogue_id'))].append({
+            **week_row, 'components': live_components_by_week.get(clean_str(week_row.get('id')), []),
+        })
     plans_by_catalogue = delivery_slots_by_catalogue(
         weeks_by_catalogue,
         modules_by_catalogue=modules_by_catalogue,
@@ -12263,7 +12267,7 @@ def module_week_session_plan(module_row, week_count=0):
     ).get('sessions') or []
 
 
-def module_week_delivery_slots(module_row, group_row, week_count, *, holidays=None):
+def module_week_delivery_slots(module_row, group_row, week_count, *, holidays=None, weeks=None):
     """Every planned delivery slot of each authored week, in delivery order.
 
     **A week owns one planned slot per delivery day its group runs.** A group
@@ -12298,7 +12302,9 @@ def module_week_delivery_slots(module_row, group_row, week_count, *, holidays=No
     slots_by_week_number = defaultdict(list)
     for planned_session in session_plan:
         slots_by_week_number[parse_int(planned_session.get('weekNumber'), 0)].append(planned_session)
-    slots_by_week = [list(slots_by_week_number.get(index + 1) or []) for index in range(week_count)]
+    from curriculum_api.week_plan_alignment import week_plan_offset
+    offset = 0 if module_week_boundary_mode(delivery_module) == 'calendar' else week_plan_offset(weeks, session_plan)
+    slots_by_week = [list(slots_by_week_number.get(index + 1 - offset) or []) for index in range(week_count)]
     return slots_by_week, session_plan
 
 
@@ -19556,13 +19562,16 @@ def attach_teams_meeting_to_module_weeks(module_catalogue_id, series_row, series
     structure_rows = [{**week, 'components': components_by_week.get(clean_str(week.get('id')), [])} for week in week_rows]
     session_rows = module_structure_uses_session_rows(structure_rows, module_stored_session_count(module_row), delivery_days_per_week(module_row))
     session_plan = module_week_session_plan(module_row, 0 if session_rows else len(week_rows))
+    from curriculum_api.week_plan_alignment import week_plan_offset
+    from curriculum_api.weekly_schedule import module_week_boundary_mode
+    week_offset = 0 if session_rows or module_week_boundary_mode(module_row) == 'calendar' else week_plan_offset(structure_rows, session_plan)
     external_calendar = clean_str(series_row.get('meeting_type')) == 'linked-external'
     external_slots = []
     if external_calendar or align_to_week_plan:
         # Imported occurrences already exist in Microsoft. Moving curriculum
         # content changes which occurrence delivers it, not that occurrence's
         # date, attendance or recordings.
-        external_slots, _external_plan = module_week_delivery_slots(module_row, group_row, len(week_rows))
+        external_slots, _external_plan = module_week_delivery_slots(module_row, group_row, len(week_rows), weeks=structure_rows)
     if align_to_week_plan:
         create_missing = False
     session_start_time, _session_end_time, session_duration = module_session_clock(module_row, group_row)
@@ -19740,6 +19749,7 @@ def attach_teams_meeting_to_module_weeks(module_catalogue_id, series_row, series
             sessions_by_week[parse_int(session['weekNumber'], 0)].append(session)
     for week_index, week_row in enumerate(week_rows):
         week_id = clean_str(week_row.get('id'))
+        week_slots = sessions_by_week.get(week_index + 1 - week_offset, [])
         live_rows = [row for row in components_by_week.get(week_id, []) if frontend_component_type(row.get('type')) == 'live-session']
         for live_index, row in enumerate(live_rows):
             existing_settings = component_builder_settings(row)
@@ -19811,7 +19821,6 @@ def attach_teams_meeting_to_module_weeks(module_catalogue_id, series_row, series
                 planned = slots[live_index] if live_index < len(slots) else {}
                 occurrence, binding = occurrence_on_planned_slot(planned)
             else:
-                week_slots = sessions_by_week.get(week_index + 1, [])
                 planned = (week_slots[live_index] if live_index < len(week_slots) else {}) if sessions_by_week else None
                 occurrence = occurrence_for_component(existing_settings, session_index, planned)
                 binding = 'matched' if occurrence else 'missing'
@@ -19841,11 +19850,19 @@ def attach_teams_meeting_to_module_weeks(module_catalogue_id, series_row, series
                 # structure payload's backward-compatible week-header walk.
                 session_index += 1
             continue
-        missing_count = 0 if session_rows else max(0, sessions_per_week - len(live_rows))
+        # Restore links only for verified bookings in this week's open slots.
+        # Reading/holiday weeks and leading general materials must not acquire
+        # a Live component just because the recurring master has a join URL.
+        closed_week = bool(session_plan) and (not week_slots or any(slot.get('skippedHolidays') for slot in week_slots))
+        capacity = len(week_slots) if session_plan else sessions_per_week
+        missing_count = 0 if session_rows or closed_week else max(0, capacity - len(live_rows))
         for offset in range(missing_count):
-            occurrence = occurrence_for_component({}, session_index)
-            if occurrence:
-                claimed_occurrence_ids.add(clean_str(occurrence.get('id')))
+            slot = week_slots[len(live_rows) + offset] if week_slots else None
+            occurrence = occurrence_for_component({}, session_index, slot)
+            if not occurrence:
+                session_index += 1
+                continue
+            claimed_occurrence_ids.add(clean_str(occurrence.get('id')))
             settings_for_week = settings_for_session(session_index, occurrence)
             session_index += 1
             join_url = clean_str(settings_for_week.get('liveSessionUrl') or settings_for_week.get('teamsMeetingUrl'))
@@ -20938,6 +20955,7 @@ def apply_module_session_plan_to_weeks(module, group_row, weeks, *, holidays=Non
         else:
             slots_by_week, session_plan = module_week_delivery_slots(
                 module, group_row, len(weeks), holidays=holidays,
+                weeks=weeks,
             )
     except ValueError as exc:
         from curriculum_api.country_calendars import CalendarUnavailable
