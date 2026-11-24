@@ -230,6 +230,13 @@ export async function updateEnrolmentUser(id: string, patch: Partial<CreateEnrol
   return board;
 }
 
+/** Archive or restore a learner while retaining their previous subscription status. */
+export async function setEnrolmentUserArchived(id: string, archived: boolean): Promise<void> {
+  await request(`${BASE}/${id}/${archived ? 'archive' : 'restore'}/`, { method: 'POST' });
+  invalidateWizardCacheById(id);
+  invalidateLearnerDetailCache();
+}
+
 /** Permanently delete the enrolment record and its linked sign-in account. */
 export async function deleteEnrolmentUser(id: string): Promise<void> {
   await request<{ deleted: boolean }>(`${BASE}/${id}/`, { method: 'DELETE' });
