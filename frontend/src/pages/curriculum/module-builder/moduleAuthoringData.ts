@@ -40,6 +40,8 @@ export type KsbWeightClass = 'hard' | 'soft' | 'possible';
 
 export interface KsbMapping {
   id: string;
+  standardKsbId?: number;
+  standard_ksb_id?: number;
   ksbId: string;
   code: string;
   description: string;
@@ -77,6 +79,8 @@ export interface KsbRemapReport {
 
 export interface DuplicateKsbSourceEntry {
   id?: string | number;
+  standardKsbId?: number;
+  standard_ksb_id?: number;
   code: string;
   description?: string;
   type?: string;
@@ -1696,6 +1700,10 @@ function remapMapping(mapping: KsbMapping, source: DuplicateKsbSource | undefine
       ...mapping,
       id: makeAuthoringId('ksb'),
       ksbId: String(target.id ?? mapping.ksbId ?? ''),
+      // Never carry an official identity from the source standard into a remap.
+      // Without an explicit target identity the server resolves its exact pair/code.
+      standardKsbId: target.standardKsbId ?? target.standard_ksb_id,
+      standard_ksb_id: target.standardKsbId ?? target.standard_ksb_id,
       code: target.code,
       description: target.description || mapping.description,
       sourceType: source.sourceType,

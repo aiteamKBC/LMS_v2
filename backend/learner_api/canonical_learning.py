@@ -12,6 +12,7 @@ from old_otjh import repository
 from old_otjh.repository import query
 from old_otjh.service import ServiceError
 from .ksb_exclusions import not_excluded_sql
+from .ksb_domain import official_progress_relation, point_counts_sql
 from .learner_coach_columns import owner_coach_sql
 from .monthly_log_sources import decoded, number, row
 from .current_learning import (
@@ -22,7 +23,7 @@ UK = ZoneInfo('Europe/London')
 
 
 def _ksb_not_excluded(alias='k'):
-    """Skip KSB rows the standards migration registered as not counting."""
+    """Retained adapter for readers not yet moved to the canonical relation."""
     return not_excluded_sql(alias, repository._query_alias.get() or repository.DB)
 
 
@@ -268,9 +269,8 @@ def entries_for(owner, *, overview_only=False, entry_ids=None, lineage_only=Fals
         )''' if monthly_log_summary else ''
     ksb_cte = '' if catalogue_summary else f''', progress_ksbs AS (
         SELECT k.progress_id,jsonb_agg(k.ksb_code ORDER BY k.position) AS payload
-        FROM "Learner".learner_progress_ksbs k
+        FROM {official_progress_relation()} k
         JOIN canonical p ON p.id=k.progress_id
-        WHERE {_ksb_not_excluded()}
         GROUP BY k.progress_id
     )'''
     with projection_stage('ledger_read'):
@@ -1397,19 +1397,7 @@ def read_ksb_point_counts(learner_id):
     needed to reproduce its KSB counts here.
     """
     from .progress_cache import value
-    sql = '''WITH links AS (
-        SELECT DISTINCT ON (k.ksb_code,p.id) k.ksb_code AS code,p.id,
-            k.ksb_description AS description,k.position,p.accepted,
-            (p.activity_status='completed' AND p.accepted IS TRUE) AS achieved
-        FROM "Learner".learner_progress_entries p
-        JOIN "Learner".learner_progress_ksbs k ON k.progress_id=p.id
-        WHERE p.learner_id=%s AND p.deleted_at IS NULL AND k.ksb_code IS NOT NULL
-          AND ''' + _ksb_not_excluded() + '''
-        ORDER BY k.ksb_code,p.id,k.position
-    ) SELECT code,(array_agg(description ORDER BY id,position))[1] AS description,
-        count(*) AS "evidenceCount",count(*) FILTER (WHERE achieved) AS completed,
-        count(*) FILTER (WHERE accepted IS TRUE) AS "pointsAchieved"
-        FROM links GROUP BY code ORDER BY min(id),code'''
+    sql = point_counts_sql()
     alias = repository._query_alias.get() or repository.DB
     return value(sql, [alias], learner_id, lambda: query(sql, [learner_id]))
 
@@ -1654,12 +1642,10 @@ def metrics_bulk(learner_ids, *, learner_workspace=False, include_ksb_points=Fal
 
     progress_ids = list(records_by_progress)
     if progress_ids:
-        definition_columns = ",to_jsonb(k)->>'ksb_definition_id' AS ksb_definition_id,d.code AS definition_code" if include_ksb_points else ''
-        definition_join = "LEFT JOIN curriculum.ksb_definitions d ON d.id::text=to_jsonb(k)->>'ksb_definition_id'" if include_ksb_points else ''
+        definition_columns = ",k.standard_ksb_id::text AS ksb_definition_id,k.ksb_code AS definition_code" if include_ksb_points else ''
         for item in query(f'''SELECT k.progress_id,k.ksb_code{definition_columns}
-            FROM "Learner".learner_progress_ksbs k
-            {definition_join}
-            WHERE k.progress_id=ANY(%s) AND {_ksb_not_excluded()}
+            FROM {official_progress_relation()} k
+            WHERE k.progress_id=ANY(%s)
             ORDER BY k.progress_id,k.position''', [progress_ids]):
             record = records_by_progress.get(int(item['progress_id']))
             if record is not None:

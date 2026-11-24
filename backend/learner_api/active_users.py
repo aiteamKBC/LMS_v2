@@ -29,9 +29,7 @@ from .ksb_definition_links import assigned_definition_ids, attach_definition_ids
 from .mappers import ValidationError, get_training_plan, training_plan_field
 from .models import (
     EnrolmentUser,
-    KsbDefinition,
-    KsbProfileVersion,
-    LearnerKsbAssignment,
+    KsbStandardVersion,
     LearnerProfile,
     LearnerProgressEntry,
     LearnerProgressKsb,
@@ -1084,50 +1082,26 @@ def _ksb_version_hash(items):
 
 
 def replace_learner_ksbs(learner, items, *, source_profile_id=""):
-    """Assign one immutable shared KSB profile version to a learner.
+    """Pin an unassigned learner to the programme's registered official pair.
 
-    Definitions are stored once per content version in curriculum; the learner
-    receives a single assignment row.  The legacy learner_ksbs snapshot is left
-    untouched as a rollback/read compatibility fallback.
+    Input item text never creates definitions. Existing pins remain immutable;
+    missing programme standards remain explicitly unassigned.
     """
-    canonical = _canonical_ksb_items(items)
-    if learner is None or not canonical:
+    if learner is None:
         return None
-
-    source_key = _s(source_profile_id) or f"programme:{_s(getattr(learner, 'programme', '')).casefold()}"
-    if source_key == "programme:":
-        source_key = "legacy"
-    version_hash = _ksb_version_hash(canonical)
-
-    with transaction.atomic(using="enrolment"):
-        version, created = KsbProfileVersion.objects.using("enrolment").get_or_create(
-            source_profile_id=source_key,
-            version_hash=version_hash,
-            defaults={
-                "programme": _s(getattr(learner, "programme", "")),
-                "definition_count": len(canonical),
-            },
-        )
-        if created:
-            KsbDefinition.objects.using("enrolment").bulk_create([
-                KsbDefinition(
-                    profile_version=version,
-                    position=position,
-                    code=item["code"],
-                    number=item["number"],
-                    ksb_type=item["type"],
-                    description=item["description"],
-                )
-                for position, item in enumerate(canonical, 1)
-            ])
-        # An existing learner stays pinned to the version assigned at enrolment.
-        # Curriculum edits create a new immutable version for future learners
-        # instead of changing historical requirements retroactively.
-        LearnerKsbAssignment.objects.using("enrolment").get_or_create(
-            learner=learner,
-            defaults={"profile_version": version},
-        )
-    return version
+    using = learner._state.db or 'enrolment'
+    with transaction.atomic(using=using):
+        with connections[using].cursor() as cursor:
+            from .ksb_domain import pin_learner_standard
+            pair = pin_learner_standard(cursor,learner.pk)
+            if pair is None:
+                return None
+            reference, version = pair
+            standard = KsbStandardVersion.objects.using(using).get(
+                standard_ref=reference, standard_version=version)
+            learner.standard_ref, learner.standard_version = reference, version
+            learner._state.fields_cache.pop('ksb_standard', None)
+            return standard
 
 
 PROGRESS_ENTRY_PKEY = "learner_progress_entries_pkey"
@@ -1349,7 +1323,11 @@ def save_progress_record(learner, record, activity=None, *, monthly_assignment=F
                     progress=progress,
                     position=position,
                     ksb_code=_s(item.get("code") or item.get("ksbCode")).upper(),
-                    ksb_definition_id=item["ksb_definition_id"],
+                    standard_ksb_id=item["standard_ksb_id"],
+                    legacy_definition_snapshot=item.get('legacy_definition_snapshot'),
+                    is_excluded=item.get('is_excluded', False),
+                    exclusion_reason=item.get('exclusion_reason'),
+                    exclusion_metadata=item.get('exclusion_metadata'),
                     ksb_description=_s(item.get("description") or item.get("ksbDescription")),
                     source_type=_s(item.get("sourceType") or item.get("source_type")),
                     source_id=_s(item.get("sourceId") or item.get("source_id")),
@@ -1815,232 +1793,53 @@ def _linkable_placement_ids(programme_id="", programme="", cohort="", group=""):
     return cohort_id, group_id
 
 
-# The three KSB lookups below each run their query inside its own savepoint.
-# They already caught DatabaseError and degraded to "no KSBs", which is the right
-# behaviour — but catching an error does not un-abort a Postgres transaction, and
-# these are called from inside sync_active_user's atomic block. Without the
-# savepoint one failed lookup made every subsequent statement fail with "current
-# transaction is aborted", so a whole batch of profile writes was silently lost.
-def _fetch_ksb_items_for_programme(programme_id, programme):
-    try:
-        with connections["enrolment"].cursor() as cursor:
-            # curriculum.ksb_profiles links to programmes through a single
-            # jsonb array, programme_ids, which holds programme ids AND
-            # programme names side by side. This query used to read
-            # `programme_id = %s OR programme_name = %s` — neither column
-            # exists, so it raised every time, was swallowed as a warning, and
-            # silently returned no KSBs while leaving the caller's transaction
-            # aborted.
-            cursor.execute(
-                "SELECT ksb_items FROM curriculum.ksb_profiles "
-                "WHERE COALESCE(is_active, true) AND ("
-                "      (%s <> '' AND programme_ids @> to_jsonb(%s::text)) "
-                "   OR (%s <> '' AND programme_ids @> to_jsonb(%s::text))"
-                ") "
-                # An id match beats a name match: names are not unique.
-                "ORDER BY CASE "
-                "    WHEN %s <> '' AND programme_ids @> to_jsonb(%s::text) THEN 0 "
-                "    ELSE 1 "
-                "END, updated_at DESC NULLS LAST LIMIT 1",
-                [programme_id, programme_id, programme, programme,
-                 programme_id, programme_id],
-            )
-            row = cursor.fetchone()
-    except DatabaseError as exc:
-        logger.warning("Could not find KSB profile for %s / %s: %s", programme_id, programme, exc)
-        return []
-    return _coerce_ksb_items(row[0]) if row else []
-
-
-def _fetch_ksb_items_from_plan_mappings(programme_id="", programme="", training_plan=None):
-    module_ids = _plan_module_ids(training_plan)
-    if not module_ids:
-        return []
-    try:
-        # Savepointed for the same reason: a failure here must not abort the
-        # caller's transaction, only this query.
-        with transaction.atomic(using="enrolment"), connections["enrolment"].cursor() as cursor:
-            cursor.execute(
-                read_sql("SELECT DISTINCT ON (upper(mapping.ksb_code)) "
-                "       upper(mapping.ksb_code) AS code, "
-                "       COALESCE(NULLIF(mapping.ksb_description, ''), '') AS description "
-                "FROM curriculum.ksb_mappings mapping "
-                "LEFT JOIN curriculum.modules module ON module.module_catalogue_id = mapping.module_catalogue_id "
-                "WHERE mapping.module_catalogue_id = ANY(%s) "
-                "  AND mapping.ksb_code IS NOT NULL "
-                "  AND mapping.ksb_code <> '' "
-                "  AND ("
-                "        (%s = '' AND %s = '') "
-                "     OR module.programme_id = %s "
-                "     OR " + programme_name_sql('module') + " = %s "
-                "     OR %s LIKE " + programme_name_sql('module') + " || ' %%'"
-                "  ) "
-                "ORDER BY upper(mapping.ksb_code), "
-                "         CASE mapping.classification "
-                "             WHEN 'main' THEN 0 "
-                "             WHEN 'secondary' THEN 1 "
-                "             WHEN 'possible' THEN 2 "
-                "             ELSE 3 "
-                "         END, "
-                "         mapping.weight DESC, "
-                "         mapping.ksb_description", cursor.db),
-                [module_ids, programme_id, programme, programme_id, programme, programme],
-            )
-            rows = cursor.fetchall()
-    except DatabaseError as exc:
-        logger.warning("Could not derive KSBs from plan mappings for %s / %s: %s", programme_id, programme, exc)
-        return []
-    items = [
-        {
-            "code": code,
-            "number": _ksb_number_from_code(code),
-            "type": _ksb_type_from_code(code),
-            "description": _s(description),
-        }
-        for code, description in rows
-        if _s(code)
-    ]
-    return sorted(items, key=lambda item: _ksb_sort_key(item.get("code")))
-
-
 def _resolve_ksb_profile_source_id(programme_id="", programme="", training_plan=None):
-    module_ids = _plan_module_ids(training_plan)
-    try:
-        # Savepointed for the same reason as the two helpers above.
-        with transaction.atomic(using="enrolment"), connections["enrolment"].cursor() as cursor:
-            cursor.execute(
-                "SELECT COALESCE(NULLIF(ksb_profile_source_id, ''), '') "
-                "FROM curriculum.programmes "
-                "WHERE (%s <> '' AND programme_id = %s) "
-                "   OR name = %s "
-                "   OR %s LIKE name || ' %%' "
-                "ORDER BY CASE "
-                "    WHEN %s <> '' AND programme_id = %s THEN 0 "
-                "    WHEN name = %s THEN 1 "
-                "    ELSE 2 END, updated_at DESC NULLS LAST LIMIT 1",
-                [programme_id, programme_id, programme, programme,
-                 programme_id, programme_id, programme],
-            )
-            row = cursor.fetchone()
-            source_id = _clean_ksb_profile_source_id(row[0]) if row else ""
-            if source_id:
-                return source_id
-            if not module_ids:
-                return ""
-            cursor.execute(
-                read_sql("SELECT COALESCE(NULLIF(module.ksb_profile_source_id, ''), '') "
-                "FROM curriculum.modules module "
-                "WHERE module.module_catalogue_id = ANY(%s) "
-                "  AND module.ksb_profile_source_id IS NOT NULL "
-                "  AND module.ksb_profile_source_id <> '' "
-                "  AND ("
-                "        (%s = '' AND %s = '') "
-                "     OR module.programme_id = %s "
-                "     OR " + programme_name_sql('module') + " = %s "
-                "     OR %s LIKE " + programme_name_sql('module') + " || ' %%'"
-                "  ) "
-                "ORDER BY module.updated_at DESC NULLS LAST LIMIT 1", cursor.db),
-                [module_ids, programme_id, programme, programme_id, programme, programme],
-            )
-            row = cursor.fetchone()
-    except DatabaseError as exc:
-        logger.warning("Could not resolve KSB profile source for %s / %s: %s", programme_id, programme, exc)
-        return ""
-    return _clean_ksb_profile_source_id(row[0]) if row else ""
+    """Retained API selector derived exclusively from programme identity."""
+    programme_id = programme_id or _resolve_programme_id(programme, training_plan)
+    if not programme_id:
+        return ''
+    from curriculum_api.canonical_read_sql import standard_source_sql
+    with connections['enrolment'].cursor() as cursor:
+        cursor.execute(f"SELECT {standard_source_sql('p')} FROM curriculum.programmes p "
+                       "JOIN curriculum.ksb_standard_versions v ON v.standard_ref=p.standard_ref "
+                       "AND v.standard_version=p.standard_version WHERE p.programme_id=%s", [programme_id])
+        row = cursor.fetchone()
+    return row[0] if row else ''
 
 
 def _fetch_ksb_items_from_profile_source(profile_source_id):
-    profile_source_id = _clean_ksb_profile_source_id(profile_source_id)
-    if not profile_source_id:
-        return []
-    if profile_source_id.lower().startswith("standard:"):
-        from curriculum_api.views import standard_required_ksbs
-        return _coerce_ksb_items(standard_required_ksbs(profile_source_id.split(":", 1)[1]))
-    try:
-        # Savepointed: see the note above _fetch_ksb_items_for_programme.
-        # The programme applies this profile, so it is read even once archived
-        # (is_active = false); only name-based discovery is limited to active
-        # profiles.
-        with transaction.atomic(using="enrolment"), connections["enrolment"].cursor() as cursor:
-            cursor.execute(
-                "SELECT ksb_items FROM curriculum.ksb_profiles "
-                "WHERE (id = %s OR ksb_profile_id = %s) "
-                "ORDER BY COALESCE(is_active, true) DESC, updated_at DESC NULLS LAST LIMIT 1",
-                [profile_source_id, profile_source_id],
-            )
-            row = cursor.fetchone()
-    except DatabaseError as exc:
-        logger.warning("Could not find KSB profile from source %s: %s", profile_source_id, exc)
-        return []
-    return _coerce_ksb_items(row[0]) if row else []
+    from .ksb_sources import resolve_source
+    return resolve_source(profile_source_id, using='enrolment').items
+
+
+def _fetch_ksb_items_for_programme(programme_id, programme=''):
+    return _fetch_ksb_items_from_profile_source(_resolve_ksb_profile_source_id(programme_id))
+
+
+def _fetch_ksb_items_from_plan_mappings(programme_id="", programme="", training_plan=None):
+    # Authored mappings are not a substitute for an official registry.
+    return _fetch_ksb_items_for_programme(programme_id)
 
 
 def _fetch_ksb_items(programme, training_plan=None):
-    programme = _s(programme)
-    programme_id = _resolve_programme_id(programme, training_plan=training_plan)
-    if not programme and not programme_id:
-        return []
-    profile_source_id = _resolve_ksb_profile_source_id(
-        programme_id=programme_id,
-        programme=programme,
-        training_plan=training_plan,
-    )
-    if profile_source_id:
-        items = _fetch_ksb_items_from_profile_source(profile_source_id)
-        if items:
-            return items
-    items = _fetch_ksb_items_for_programme(programme_id, programme)
-    if items:
-        return items
-    items = _fetch_ksb_items_from_plan_mappings(
-        programme_id=programme_id,
-        programme=programme,
-        training_plan=training_plan,
-    )
-    if items:
-        return items
-    return []
+    return _fetch_ksb_items_for_programme(_resolve_programme_id(programme, training_plan))
 
 
 def current_curriculum_ksb_items_for_learner(learner=None, source=None, training_plan=None):
-    """Read the learner's current authored KSB profile from curriculum.
-
-    LearnerProfile.ksbs is an immutable assignment snapshot captured when the
-    learner was activated. For live dashboard totals, staff expect the current
-    Curriculum KSB profile, so this helper resolves it read-only and lets callers
-    fall back to the snapshot only when curriculum has no matching profile.
-    """
-    plan = training_plan
-    if plan is None and source is not None:
-        plan = get_training_plan(source)
-    if plan is None and learner is not None:
-        plan = getattr(learner, "training_plan", None)
-
-    programme = (
-        getattr(source, "programme", None)
-        if source is not None
-        else getattr(learner, "programme", None)
-    )
-    return _fetch_ksb_items(programme, training_plan=plan)
+    """A pinned learner never changes standard through a read or plan edit."""
+    if learner is not None and getattr(learner, 'standard_ref', None):
+        return learner.ksbs
+    programme_id = getattr(learner, 'programme_id', None) or getattr(source, 'programme_id', None)
+    if not programme_id:
+        plan = training_plan if training_plan is not None else (get_training_plan(source) if source is not None else None)
+        programme_id = _resolve_programme_id(getattr(source, 'programme', None) or getattr(learner, 'programme', ''), plan)
+    return _fetch_ksb_items_for_programme(programme_id) if programme_id else []
 
 
 def refresh_learner_ksb_snapshot(learner, source, training_plan=None):
-    plan = training_plan if training_plan is not None else get_training_plan(source)
-    programme = getattr(source, "programme", None)
-    items = _fetch_ksb_items(programme, training_plan=plan)
-    if items:
-        programme_id = _resolve_programme_id(programme, training_plan=plan)
-        profile_source_id = _resolve_ksb_profile_source_id(
-            programme_id=programme_id,
-            programme=_s(programme),
-            training_plan=plan,
-        )
-        replace_learner_ksbs(
-            learner,
-            items,
-            source_profile_id=profile_source_id or programme_id or _s(programme),
-        )
-    return items
+    """Resolve official requirements; never infer a standard from names or items."""
+    replace_learner_ksbs(learner, [])
+    return learner.ksbs
 
 
 #: The learner-record fields that decide where a learner sits. A change to any

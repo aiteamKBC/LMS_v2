@@ -53,7 +53,7 @@ _GROUP_COACHES_SQL = '''
 # round trip of their own. Computed by the database; 32 characters come back.
 _STANDARDS_SQL = '''
     union all select 's', md5(coalesce(string_agg(t::text, '|' order by t.id), '')), null, null, null, null, null, null
-    from curriculum.standard_ksbs t
+    from curriculum.ksb_standard_definitions t
 '''
 
 
@@ -65,7 +65,7 @@ def is_inactive(status):
 # KSB mappings, history ...) leaves every name it answers unchanged.
 NAME_TABLES = frozenset({
     'programmes', 'cohorts', 'groups', 'modules', 'tutors', 'coaches', 'group_coaches',
-    'cohort_calendar_holidays', 'calendar_holidays', 'standard_ksbs',
+    'cohort_calendar_holidays', 'calendar_holidays', 'ksb_standard_definitions',
 })
 
 
@@ -167,7 +167,7 @@ def _optional_tables(using='default'):
             cursor.execute(
                 "select to_regclass('curriculum.cohort_calendar_holidays') is not null "
                 "and to_regclass('curriculum.calendar_holidays') is not null, "
-                "to_regclass('curriculum.standard_ksbs') is not null"
+                "to_regclass('curriculum.ksb_standard_definitions') is not null"
             )
             choices, standards = cursor.fetchone()
             cursor.execute(
@@ -183,7 +183,7 @@ def _optional_tables(using='default'):
 
 
 def standards_digest(using='default'):
-    """The current digest of curriculum.standard_ksbs, or '' when unknown."""
+    """The current digest of curriculum.ksb_standard_definitions, or '' when unknown."""
     if connections[using].vendor != 'postgresql':
         return ''
     return lookups(using).get('standards_digest') or ''

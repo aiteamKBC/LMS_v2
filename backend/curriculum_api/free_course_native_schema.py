@@ -118,8 +118,13 @@ def prepare(connection):
                 WHERE d.module_catalogue_id=m.module_catalogue_id), '{}'::jsonb),
             completion_json=coalesce((SELECT to_jsonb(c) FROM curriculum.module_completion_criteria c
                 WHERE c.module_catalogue_id=m.module_catalogue_id), '{}'::jsonb),
-            ksb_mappings=coalesce((SELECT jsonb_agg(to_jsonb(k) ORDER BY k.id)
-                FROM curriculum.ksb_mappings k WHERE k.module_catalogue_id=m.module_catalogue_id), '[]'::jsonb)
+            ksb_mappings=coalesce((SELECT jsonb_agg(to_jsonb(k) || jsonb_build_object(
+                    'module_catalogue_id',c.module_catalogue_id,'week_id',c.week_id,
+                    'ksb_code',d.ksb_code,'ksb_description',d.ksb_description) ORDER BY k.id)
+                FROM curriculum.ksb_component_mappings k
+                JOIN curriculum.components c ON c.id=k.component_id
+                JOIN curriculum.ksb_standard_definitions d ON d.id=k.standard_ksb_id
+                WHERE c.module_catalogue_id=m.module_catalogue_id), '[]'::jsonb)
             FROM curriculum.modules m WHERE f.module_catalogue_id=m.module_catalogue_id
               AND m.source_type='free_course' AND f.storage_version=1''')
         cursor.execute('''UPDATE curriculum.free_course_weeks f SET

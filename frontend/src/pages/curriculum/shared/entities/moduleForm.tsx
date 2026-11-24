@@ -39,6 +39,7 @@ import {
   curriculumErrorMessage,
   isTutorConflictError,
   fetchTutorAssignmentEmailStatus,
+  fetchTutorNotificationOptions,
   previewModuleSessionPlan,
   sendTutorAssignmentEmail,
   tutorConflictMessage,
@@ -178,7 +179,6 @@ export function ModuleFormDrawer({
   cohorts,
   groups,
   holidays = [],
-  tutorNames = [],
   lockGroup = false,
   chain,
   onClose,
@@ -234,6 +234,33 @@ export function ModuleFormDrawer({
   const [startDate, setStartDate] = useState('');
   const [targetEndDate, setTargetEndDate] = useState('');
   const [tutor, setTutor] = useState('');
+  const [notificationTutors, setNotificationTutors] = useState<{ id: string; name: string }[]>([]);
+  const [notificationTutorId, setNotificationTutorId] = useState('');
+  const notificationTutorEdited = useRef(false);
+  const pickNotificationTutor = (id: string) => {
+    notificationTutorEdited.current = true;
+    setNotificationTutorId(id);
+    setTutor(notificationTutors.find(item => item.id === id)?.name ?? '');
+    setTutorEmailStatus(null);
+  };
+  useEffect(() => {
+    if (!open) return;
+    notificationTutorEdited.current = false;
+    setNotificationTutorId('');
+    setNotificationTutors([]);
+    const controller = new AbortController();
+    const moduleId = cleanText(module?.id);
+    fetchTutorNotificationOptions(moduleId ? [moduleId] : [], controller.signal)
+      .then(options => {
+        if (controller.signal.aborted) return;
+        setNotificationTutors(options.tutors);
+        if (!notificationTutorEdited.current) {
+          setNotificationTutorId(options.assignments.find(item => item.moduleId === moduleId)?.tutorId ?? '');
+        }
+      })
+      .catch(() => { if (!controller.signal.aborted) setNotificationTutors([]); });
+    return () => controller.abort();
+  }, [open, module?.id]);
   // Whether this save should tell the tutor. This is intent, not memory: the
   // record of who has actually been written to lives in the assignment ledger
   // and is read back below, so nothing here has to be remembered between opens.
@@ -827,27 +854,27 @@ export function ModuleFormDrawer({
     setTutorConflictGroup(null);
   }, [tutorOverrideScope]);
   const tutorVerdicts = useMemo(
-    () => tutorNames.map(tutorName => ({ tutorName, verdict: verdictFor(tutorName) })),
+    () => notificationTutors.map(item => ({ tutorId: item.id, tutorName: item.name, verdict: verdictFor(item.name) })),
     // `verdictFor` closes over the roster, so it changes exactly when the answers
     // do -- which is the dependency this list has.
-    [tutorNames, verdictFor],
+    [notificationTutors, verdictFor],
   );
   // Named on the notice as one-click swaps, so the warning carries its own fix.
   const freeTutorNames = useMemo(() => (
     bookable
-      ? tutorVerdicts.filter(item => item.verdict?.available).map(item => item.tutorName).slice(0, 4)
+      ? tutorVerdicts.filter(item => item.verdict?.available).map(item => item.tutorId).slice(0, 4)
       : []
   ), [bookable, tutorVerdicts]);
   const tutorOptions = useMemo<SelectOption[]>(() => {
-    const options = tutorVerdicts.map(({ tutorName, verdict }): SelectOption & { rank: number } => {
+    const options = tutorVerdicts.map(({ tutorId, tutorName, verdict }): SelectOption & { rank: number } => {
       if (verdict?.available) {
-        return { value: tutorName, label: tutorName, group: 'Free in this slot', rank: 0 };
+        return { value: tutorId, label: tutorName, group: 'Free in this slot', rank: 0 };
       }
       if (verdict) {
         const clash = verdict.conflicts[0];
         const also = verdict.conflicts.length - 1;
         return {
-          value: tutorName,
+          value: tutorId,
           label: tutorName,
           // The reason travels with the row: picking a busy name is still allowed --
           // the delivery day or the time may be what moves instead -- but not by
@@ -865,7 +892,7 @@ export function ModuleFormDrawer({
       // unchecked list would say "free" about names nobody has checked.
       if (bookable || tutorCheckFailed) {
         return {
-          value: tutorName,
+          value: tutorId,
           label: tutorName,
           description: tutorCheckFailed ? 'The availability check failed' : 'Not covered by the availability check',
           icon: 'ri-question-line',
@@ -873,7 +900,7 @@ export function ModuleFormDrawer({
           rank: 2,
         };
       }
-      return { value: tutorName, label: tutorName, rank: 0 };
+      return { value: tutorId, label: tutorName, rank: 0 };
     });
     // The menu prints a heading whenever the group changes from one row to the
     // next, so the names are kept together by status (alphabetical within it);
@@ -923,19 +950,19 @@ export function ModuleFormDrawer({
 
   useEffect(() => {
     const ids = deliveryIdsKey ? deliveryIdsKey.split(',') : [];
-    if (!open || !selectedTutorName || !ids.length) {
+    if (!open || !notificationTutorId || !ids.length) {
       setTutorEmailStatus(null);
       return;
     }
     const controller = new AbortController();
     let cancelled = false;
-    fetchTutorAssignmentEmailStatus(ids, selectedTutorName, controller.signal)
+    fetchTutorAssignmentEmailStatus(ids, notificationTutorId, controller.signal)
       .then(status => { if (!cancelled) setTutorEmailStatus(status); })
       // The tick falls back to "not emailed", which is the safe way to be
       // wrong: it offers to send rather than claiming somebody was told.
       .catch(() => { if (!cancelled) setTutorEmailStatus(null); });
     return () => { cancelled = true; controller.abort(); };
-  }, [open, selectedTutorName, deliveryIdsKey]);
+  }, [open, notificationTutorId, deliveryIdsKey]);
 
   // Deliveries this save would create, which cannot have been emailed yet.
   // Counting them is what makes a fully-notified module go back to "2 of 3"
@@ -1852,8 +1879,8 @@ export function ModuleFormDrawer({
         <>
           <FormField label="Tutor" required={Boolean(selectedGroups.length)} hint={tutorHint}>
             <SelectControl
-              value={tutor}
-              onChange={setTutor}
+              value={notificationTutorId}
+              onChange={pickNotificationTutor}
               options={tutorOptions}
               placeholder="Select a tutor"
             />
@@ -1933,7 +1960,8 @@ export function ModuleFormDrawer({
               verdict={tutorClash}
               sessionDates={sessionDates}
               freeTutors={freeTutorNames}
-              onPickTutor={setTutor}
+              tutorLabels={Object.fromEntries(notificationTutors.map(item => [item.id, item.name]))}
+              onPickTutor={pickNotificationTutor}
             />
           )}
           {tutorConflictGroup && (

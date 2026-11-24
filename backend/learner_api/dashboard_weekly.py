@@ -38,7 +38,7 @@ def recorded_ksbs(owner, component_ids):
         coalesce(nullif(p.curriculum_component_ref,''),nullif(p.component_ref,'')) AS component_id,
         upper(btrim(k.ksb_code)) AS code
         FROM "Learner".learner_progress_entries p
-        JOIN "Learner".learner_progress_ksbs k ON k.progress_id=p.id
+        JOIN "Learner".ksb_learner_progress k ON k.progress_id=p.id
         WHERE p.learner_id=%s AND p.deleted_at IS NULL
           AND coalesce(nullif(p.curriculum_component_ref,''),nullif(p.component_ref,''))=ANY(%s)
           AND nullif(btrim(k.ksb_code),'') IS NOT NULL AND {canonical_learning._ksb_not_excluded('k')}

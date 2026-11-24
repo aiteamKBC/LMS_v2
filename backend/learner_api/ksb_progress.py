@@ -13,22 +13,31 @@ def _code(value):
     return normalize_ksb_parent_code(value)
 
 
-def _mapping_codes(component):
+def _mapping_codes(component, required_ids):
     mappings = component.get('ksbMappings')
     if not isinstance(mappings, list):
         mappings = component.get('ksbs') if isinstance(component.get('ksbs'), list) else []
-    return extract_ksb_codes(mappings)
+    result = set()
+    for mapping in mappings:
+        if not isinstance(mapping, dict):
+            continue
+        if mapping.get('is_excluded') or mapping.get('isExcluded'):
+            continue
+        if mapping.get('mapping_status', mapping.get('resolutionStatus', 'verified')) != 'verified':
+            continue
+        identity = mapping.get('standardKsbId', mapping.get('standard_ksb_id'))
+        code = required_ids.get(str(identity))
+        if code:
+            result.add(code)
+    return result
 
 
 def _assigned_source(learner_profile):
-    try:
-        assignment = learner_profile.ksb_assignment
-    except (AttributeError, ObjectDoesNotExist):
-        assignment = None
-    if assignment is None:
+    reference = _text(getattr(learner_profile, 'standard_ref', None))
+    version = _text(getattr(learner_profile, 'standard_version', None))
+    if not reference or not version:
         return '', None
-    version = getattr(assignment, 'profile_version', None)
-    return _text(getattr(version, 'source_profile_id', '')), version
+    return f"standard:{reference.lower()}-v{version.replace('.', '-')}", None
 
 
 # Importing django here keeps the pure calculation below usable in simple unit
@@ -72,6 +81,9 @@ def calculate_ksb_progress(learner_profile, detail, progress):
         for item in (required_items if isinstance(required_items, list) else [])
         if _code(item.get('code') if isinstance(item, dict) else item)
     }
+    required_ids = {str(item.get('standardKsbId', item.get('standard_ksb_id'))): _code(item.get('code'))
+                    for item in (required_items or []) if isinstance(item, dict)
+                    and item.get('standardKsbId', item.get('standard_ksb_id')) is not None}
     title = assigned_standard_title(source_id, profile_version)
     if not source_id or not required_codes:
         return {
@@ -89,7 +101,7 @@ def calculate_ksb_progress(learner_profile, detail, progress):
             continue
         identity = component_identity(component)
         if identity and identity in achieved_identities:
-            completed_codes.update(_mapping_codes(component))
+            completed_codes.update(_mapping_codes(component, required_ids))
     achieved_required = completed_codes & required_codes
     actual, total = len(achieved_required), len(required_codes)
     percent = round(actual / total * 100, 2)

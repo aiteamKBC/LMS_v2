@@ -269,7 +269,7 @@ def tutor_learners(request):
             LearnerProfile.objects.using('enrolment')
             .filter(id__in=plan_learner_ids, lifecycle_status__iexact='active')
             .prefetch_related(
-                'ksb_assignment__profile_version__definitions',
+                'ksb_standard__definitions',
                 'plan_modules__weeks__components',
                 'progress_entries__ksb_links',
             )

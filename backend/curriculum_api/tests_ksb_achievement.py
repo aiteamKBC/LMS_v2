@@ -403,7 +403,8 @@ class LearnerProgressOtjhVisibilityTests(SimpleTestCase):
 
         sql = cursor.executed[0][0]
         self.assertIn('left join lateral (', sql)
-        self.assertIn('from "Learner"."learner_progress_ksbs" k', sql)
+        from learner_api.ksb_domain import official_progress_relation
+        self.assertIn(official_progress_relation(), sql)
         self.assertIn(') ksb on true', sql)
 
     def test_a_code_this_scope_never_authored_keeps_the_activity(self):

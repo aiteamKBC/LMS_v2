@@ -40,7 +40,7 @@ def main():
         # Daphne needs a local socketpair during Windows startup.
         import django
         django.setup()
-        with override_settings(CACHES={'default': {
+        with override_settings(ALLOWED_HOSTS=['testserver'], CACHES={'default': {
                 'BACKEND': 'django.core.cache.backends.locmem.LocMemCache',
                 'LOCATION': 'ksb-closure-audit'}}), \
              patch.object(socket.socket, 'connect', side_effect=AssertionError('Network forbidden')):

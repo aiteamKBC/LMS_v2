@@ -20,10 +20,10 @@ class SourceKsbTests(TestCase):
         coach = [journal_sources.table(name) for name in names]
         with journal_sources.learner_journal_reads():
             self.assertEqual(coach, [journal_sources.table(name) for name in names])
-        self.assertIn('source_activity_ksbs_normalized', coach[0])
-        self.assertIn('standard_ksbs', coach[0])
-        self.assertEqual(journal_sources.table('learner_journal_row_ksbs'),
-                         'structured_manual_activities.learner_journal_row_ksbs')
+        self.assertIn('ksb_source_activity_mappings', coach[0])
+        self.assertIn('ksb_standard_definitions', coach[0])
+        self.assertIn('j.ksb_snapshot AS ksbs', journal_sources.table('learner_journal_row_ksbs'))
+        self.assertIn('j.ksb_metadata', journal_sources.table('learner_journal_row_ksbs'))
         self.assertEqual(journal_sources.table('manual_learner_activities'),
                          'structured_manual_activities.manual_learner_activities')
 

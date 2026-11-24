@@ -12,7 +12,7 @@ from unittest.mock import patch
 from django.db import DatabaseError, IntegrityError, close_old_connections, connections
 from django.test import Client, TransactionTestCase
 
-from learner_api.models import StaffUser
+from learner_api.models import StaffUser, PlacementCoach, LearnerProfile
 from login.identity import ensure_account
 from login.models import LoginAccount, LoginSession
 from login.sessions import COOKIE_NAME, issue_session
@@ -29,14 +29,13 @@ class CoachCalendarRaceTests(TransactionTestCase):
 
     def setUp(self):
         self.coach_email = f"coach-{uuid.uuid4().hex[:8]}@kbc.invalid"
-        # The fresh unmanaged-table test provisioner predates Staff_users.uuid;
-        # insert only the columns this auth integration needs.
+        # The canonical StaffUser schema requires an explicit UUID for raw inserts.
         with connections["enrolment"].cursor() as cursor:
             cursor.execute(
                 'INSERT INTO enrolment."Staff_users" '
-                '("Username", "Email", "Position", "Access", "Type", " Status") '
-                'VALUES (%s, %s, %s, %s, %s, %s) RETURNING id',
-                ["Calendar race coach", self.coach_email, "Caseowner", "coach", "Admin", "FullUser"],
+                '("Username", "Email", "Position", "Access", "Type", " Status", uuid) '
+                'VALUES (%s, %s, %s, %s, %s, %s, %s) RETURNING id',
+                ["Calendar race coach", self.coach_email, "Caseowner", "coach", "Admin", "FullUser", uuid.uuid4()],
             )
             staff_id = cursor.fetchone()[0]
         self.staff = SimpleNamespace(
@@ -48,12 +47,25 @@ class CoachCalendarRaceTests(TransactionTestCase):
             access="coach",
         )
         self.account, _ = ensure_account("staff", self.staff.id, subject=self.staff)
+        # Login identity and calendar ownership are different canonical records.
+        # The calendar stores owner_coach_id, never a copied owner email/name.
+        self.owner = PlacementCoach.objects.using('default').create(
+            id=f'race-owner-{uuid.uuid4().hex}', name=self.staff.username,
+            email=self.coach_email, status='active')
+        self.other_owner = PlacementCoach.objects.using('default').create(
+            id=f'race-other-{uuid.uuid4().hex}', name='Other Coach',
+            email=f'other-{uuid.uuid4().hex}@kbc.invalid', status='active')
         self.learner = SimpleNamespace(
             id=int(uuid.uuid4().hex[:7], 16),
             username="Calendar Learner",
             email="calendar-learner@kbc.invalid",
             coach_name="Calendar race coach",
         )
+        self.learner_record = LearnerProfile.objects.using('default').create(
+            id=self.learner.id, full_name=self.learner.username,
+            email=f'learner-{uuid.uuid4().hex}@kbc.invalid',
+            lifecycle_status='Active', coach_id=self.owner.id)
+        self.learner.email = self.learner_record.email
 
     def tearDown(self):
         CoachCalendarEvent.objects.filter(learner_profile_id=self.learner.id).delete()
@@ -61,6 +73,8 @@ class CoachCalendarRaceTests(TransactionTestCase):
         LoginSession.objects.filter(account_id=self.account.id).delete()
         LoginAccount.objects.filter(id=self.account.id).delete()
         StaffUser.objects.filter(id=self.staff.id).delete()
+        LearnerProfile.objects.using('default').filter(pk=self.learner_record.pk).delete()
+        PlacementCoach.objects.using('default').filter(pk__in=[self.owner.id,self.other_owner.id]).delete()
         super().tearDown()
 
     def _client(self) -> tuple[Client, str]:
@@ -340,7 +354,8 @@ class CoachCalendarRaceTests(TransactionTestCase):
         sync_graph.side_effect = self._graph_success
         CoachCalendarEvent.objects.create(
             event_key=f"other-coach-{uuid.uuid4().hex}",
-            owner_email="other-coach@kbc.invalid",
+            owner_coach_id=self.other_owner.id,
+            owner_email=self.other_owner.email,
             owner_name="Other Coach",
             learner_profile_id=self.learner.id,
             learner_name=self.learner.username,
@@ -533,6 +548,7 @@ class CoachCalendarRaceTests(TransactionTestCase):
 
     def test_database_constraint_rejects_duplicate_sequence_in_same_scope(self):
         common = {
+            "owner_coach_id": self.owner.id,
             "owner_email": self.coach_email,
             "learner_id": self.learner.id,
             "learner_name": self.learner.username,

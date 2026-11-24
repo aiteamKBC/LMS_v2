@@ -94,7 +94,7 @@ class FeedbackValidationTests(SimpleTestCase):
         delivery_upsert.assert_called_once_with(occurrence_key='OCC-1', defaults=mock.ANY, create_defaults=mock.ANY)
         self.assertIs(delivery_upsert.call_args.kwargs['defaults']['form'], form)
         pin_questions.assert_called_once_with(delivery, form)
-        recipient_upsert.assert_called_once_with(delivery=delivery, learner_id='7', defaults=mock.ANY)
+        recipient_upsert.assert_called_once_with(delivery=delivery, enrolment_id='7', defaults=mock.ANY)
         self.assertEqual(result['deliveryIds'], [11])
         self.assertEqual(result['recipientsMatched'], 1)
 
@@ -376,11 +376,11 @@ class FeedbackValidationTests(SimpleTestCase):
             form=delivery_form,
         )
         recipient = SimpleNamespace(
-            id=5, delivery=delivery, delivery_id=3, learner_id='7', learner_name='Synthetic Learner',
+            id=5, delivery=delivery, delivery_id=3, learner_id='7', enrolment_id='7', learner_name='Synthetic Learner',
             programme='Marketing', assigned_at=datetime(2026, 9, 24, tzinfo=timezone.utc), due_date=None,
         )
         learner = SimpleNamespace(id=7, username='Synthetic Learner', email='learner@example.test', programme='Marketing')
-        response = SimpleNamespace(delivery_id=3, learner_id='7', status='completed')
+        response = SimpleNamespace(delivery_id=3, learner_id='7', enrolment_id='7', status='completed')
         family_query = mock.MagicMock()
         family_query.values_list.return_value = [19]
         recipient_query = mock.MagicMock()
@@ -420,19 +420,19 @@ class FeedbackValidationTests(SimpleTestCase):
             event_date=datetime(2026, 9, 29).date(),
         )
         learner_recipient = SimpleNamespace(
-            id=44, event=event, learner_id='7', attendee_name='Synthetic Learner',
+            id=44, event=event, learner_id='7', enrolment_id='7', attendee_name='Synthetic Learner',
             attendee_email='learner@example.test', invitation_sent_at=None,
             updated_at=datetime(2026, 9, 29, 10, tzinfo=timezone.utc),
         )
         guest_recipient = SimpleNamespace(
-            id=45, event=event, learner_id='', attendee_name='Guest Attendee',
+            id=45, event=event, learner_id='', enrolment_id='', attendee_name='Guest Attendee',
             attendee_email='guest@example.test', invitation_sent_at=None,
             updated_at=datetime(2026, 9, 29, 10, 5, tzinfo=timezone.utc),
         )
         learner = SimpleNamespace(id=7, username='Synthetic Learner', email='learner@example.test', programme='Marketing')
         completed = SimpleNamespace(
             form_id=31, delivery_id=None, event_recipient_id=44,
-            learner_id='7', status='completed',
+            learner_id='7', enrolment_id='7', status='completed',
         )
         empty_delivery_query = mock.MagicMock()
         empty_delivery_query.filter.return_value.order_by.return_value = []
@@ -1000,7 +1000,7 @@ class VoucherClaimDetailTransitionTests(SimpleTestCase):
     def _claim(self, status):
         reward = SimpleNamespace(id=7, name="Costa Voucher", total_claimed=0, save=mock.MagicMock())
         return SimpleNamespace(
-            id=1, learner_id="61", learner_name="Daniel Walsh", reward=reward, reward_id=7,
+            id=1, learner_id="61", enrolment_id="61", learner_name="Daniel Walsh", reward=reward, reward_id=7,
             points=50, requested_at=datetime.now(timezone.utc), status=status,
             reviewed_by=None, reviewed_at=None, delivery_type="digital", delivery_method="Email",
             delivery_detail=None, delivery_instructions=None, save=mock.MagicMock(),
@@ -1179,7 +1179,7 @@ class ClubMembersViewTests(SimpleTestCase):
 
     def test_assigning_an_existing_active_member_is_idempotent(self):
         existing = SimpleNamespace(
-            id=5, learner_id="61", learner_name="Daniel Walsh", assigned_by="Rewan",
+            id=5, learner_id="61", enrolment_id="61", learner_name="Daniel Walsh", assigned_by="Rewan",
             assigned_at=datetime(2026, 8, 1, tzinfo=timezone.utc),
         )
         request = self.factory.post("/", data=json.dumps({"learnerId": "61", "learnerName": "Daniel Walsh"}), content_type="application/json")
@@ -1194,7 +1194,7 @@ class ClubMembersViewTests(SimpleTestCase):
 
     def test_staff_may_assign_a_new_member(self):
         created = SimpleNamespace(
-            id=6, learner_id="61", learner_name="Daniel Walsh", assigned_by="Rewan Yasser",
+            id=6, learner_id="61", enrolment_id="61", learner_name="Daniel Walsh", assigned_by="Rewan Yasser",
             assigned_at=datetime(2026, 8, 31, tzinfo=timezone.utc),
         )
         request = self.factory.post("/", data=json.dumps({"learnerId": "61", "learnerName": "Daniel Walsh"}), content_type="application/json")
@@ -1237,7 +1237,7 @@ class AttendanceInterventionViewTests(SimpleTestCase):
 
     def test_staff_logs_an_intervention_with_session_actor(self):
         created = SimpleNamespace(
-            id=1, learner_id="61", learner_name="Daniel Walsh", action="Called learner", employer_notified=True,
+            id=1, learner_id="61", enrolment_id="61", learner_name="Daniel Walsh", action="Called learner", employer_notified=True,
             intervention_date=None, created_by="Rewan Yasser", created_at=datetime(2026, 8, 31, tzinfo=timezone.utc),
             resolved=False, resolved_at=None,
         )
@@ -1253,7 +1253,7 @@ class AttendanceInterventionViewTests(SimpleTestCase):
 
     def test_resolving_sets_resolved_at(self):
         intervention = SimpleNamespace(
-            id=1, learner_id="61", learner_name="Daniel Walsh", action="Called learner", employer_notified=False,
+            id=1, learner_id="61", enrolment_id="61", learner_name="Daniel Walsh", action="Called learner", employer_notified=False,
             intervention_date=None, created_by="Rewan", created_at=datetime(2026, 8, 1, tzinfo=timezone.utc),
             resolved=False, resolved_at=None, save=mock.MagicMock(),
         )

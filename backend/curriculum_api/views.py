@@ -1,3 +1,4 @@
+from .template_ksbs import authoring_transaction as template_authoring_transaction
 from config.time_zones import calendar_zone, local_clock_to_utc
 import base64
 import contextlib
@@ -61,6 +62,7 @@ from .teams_calendar_checks import (CalendarMismatch, attendee_differences, atte
                                     dropped_sessions_sentence, sessions_a_rewrite_would_drop,
                                     unconfirmed_attendee_detail, utc_datetime, verify_calendar, read_calendar_instances)
 
+from learner_api.ksb_domain import official_progress_relation
 from learner_api.ksb_exclusions import and_not_excluded
 from learner_api.progress_rules import (
     progress_achievement_status,
@@ -107,7 +109,7 @@ STAFF_PROFILE_PHONE_PATTERN = re.compile(r'^[+()\d\s.\-]{7,20}$')
 CURRICULUM_CACHE_TTL_SECONDS = 1800
 # Programme payloads that carry learner figures: learner counts on the
 # programme, its cohorts and groups (``Learner.learners``), and learner KSB
-# progress (``learner_progress_ksbs``). No curriculum epoch covers those
+# progress (``ksb_learner_progress``). No curriculum epoch covers those
 # tables -- they are written by learner, hours and progress code, management
 # commands and imports outside any curriculum request -- so this TTL is their
 # only freshness bound. Under the global epoch any curriculum save anywhere
@@ -1202,6 +1204,8 @@ def quote_ident(value):
 
 
 def table_name(table):
+    from .canonical_read_sql import ksb_physical_table
+    table = ksb_physical_table(table)
     # PostgreSQL uses the dedicated ``curriculum`` schema; sqlite (tests) keeps
     # the tables in the default schema, so drop the schema qualifier there to
     # stay consistent with authoring_table_name().
@@ -1211,6 +1215,8 @@ def table_name(table):
 
 
 def column_names(table):
+    from .canonical_read_sql import ksb_physical_table
+    table = ksb_physical_table(table)
     global _TABLE_COLUMNS_LISTED
     if native_only():
         from .free_course_contract import COLUMNS
@@ -1262,6 +1268,8 @@ def has_column(table, column):
 
 
 def table_exists(table):
+    from .canonical_read_sql import ksb_physical_table
+    table = ksb_physical_table(table)
     # Cached because this runs on hot read paths and the schema does not change
     # under us; invalidate_curriculum_cache() clears it, as does a process restart.
     # A failed probe is deliberately not cached, so a transient error does not
@@ -1340,7 +1348,8 @@ def ensure_program_config_archive_columns():
             'color': 'varchar(32)',
             'description': 'text',
             'status': 'varchar(32)',
-            'ksb_profile_source_id': 'varchar(128)',
+            'standard_ref': 'text',
+            'standard_version': 'text',
             'required_otjh': 'numeric(8, 2)',
             'display_order': 'integer',
         })
@@ -7724,7 +7733,7 @@ def permanently_delete_programme_structure(plan, force_content=False):
         wipe(AUTHORING_WEEKS_TABLE, [
             curriculum_in_clause('id', child.get('weekIds')),
         ])
-    wipe('tutor_module_notifications', [module_clause])
+    # Notification history is retained; its RESTRICT FK may refuse this delete.
     wipe('module_completion_criteria', [module_clause])
     wipe('module_details', [module_clause])
     wipe(LIVE_SESSIONS_TABLE, [module_clause])
@@ -8092,50 +8101,16 @@ def active_ksb_profiles(ksb_profiles):
 
 
 def programme_config_ksb_source(config):
-    """(source_type, source_id) a programme row stores, or ('', '').
-
-    The one reading of ``curriculum.programmes.ksb_profile_source_id``. Coverage,
-    Achievement and the programme card all go through it, so they cannot
-    disagree about which source a programme applies.
-    """
-    stored = normalise_ksb_profile_source_value((config or {}).get('ksb_profile_source_id'))
-    return split_ksb_source('', stored) if stored else ('', '')
+    """Programme source comes from the official standard/version pair."""
+    config = config or {}
+    reference, version = config.get('standard_ref'), config.get('standard_version')
+    if reference and version:
+        return 'standard', f"{reference.lower()}-v{version.replace('.', '-')}"
+    return '', ''
 
 
 def programme_applied_ksb_profile(config, ksb_profiles, *programme_names):
-    """The manual KSB profile a programme applies, or None.
-
-    The stored source decides (programme_config_ksb_source):
-
-    - a standard: no manual profile speaks for the programme. Applying a standard
-      never unlinks the programme from a profile's ``programme_ids``, so a
-      profile still listing it -- archived or not -- is a leftover link. Reading
-      it made a programme on ST0845 call itself "Empty KSB profile";
-    - a profile: that profile, whatever its state, because the row chose it;
-    - nothing: the legacy match by programme name, against active profiles only,
-      so an archived profile cannot name a programme by accident.
-    """
-    source_type, source_id = programme_config_ksb_source(config)
-    if source_type == 'standard':
-        return None
-    if source_id:
-        wanted = normalise(source_id)
-        for profile in ksb_profiles or []:
-            profile_id = clean_str(profile.get('id'))
-            identities = {
-                profile_id,
-                clean_str(profile.get('ksb_profile_id')),
-                ksb_profile_source_id(profile),
-                f'ksb-{profile_id}' if profile_id else '',
-            }
-            if wanted in {normalise(value) for value in identities if value}:
-                return profile
-        return None
-    active = active_ksb_profiles(ksb_profiles)
-    for name in programme_names:
-        profile = get_ksb_profile_for_program(name, active)
-        if profile:
-            return profile
+    """Manual profiles are retired; programme names cannot assign standards."""
     return None
 
 
@@ -8184,7 +8159,7 @@ def applied_standard_required_codes(config, cache):
     manual profile matched by its name: the name match kept Marketing Executive
     and Marketing Manager on their profiles' counts after both moved to
     standards, and gave 0 to programmes no profile names. None means the
-    programme applies no standard (or it is not in standard_ksbs), so the
+    programme applies no standard (or it is not in ksb_standard_definitions), so the
     caller keeps the profile match. ``cache`` is per build, keyed by standard.
     """
     source = clean_str((config or {}).get('ksb_profile_source_id'))
@@ -8225,48 +8200,10 @@ def ksb_profile_context_ids(profile, key, primary_value=''):
 
 
 def set_programme_modules_ksb_source(programme_values, source_value):
-    raw_targets = unique([clean_str(value) for value in programme_values if clean_str(value)])
-    targets = {normalise(value) for value in raw_targets if normalise(value)}
-    source_value = normalise_ksb_profile_source_value(source_value)
-    if not raw_targets:
-        return 0
-    ensure_module_authoring_tables()
-    if connection.vendor == 'postgresql':
-        placeholders = ', '.join(['%s'] * len(raw_targets))
-        params = [source_value, datetime.utcnow(), *raw_targets]
-        with connection.cursor() as cursor:
-            cursor.execute(
-                f'''
-                update {authoring_table_name(AUTHORING_MODULES_TABLE)}
-                set ksb_profile_source_id = %s, updated_at = %s
-                where programme_id in ({placeholders})
-                   or programme_id in (
-                       select programme_id from {table_name('programmes')} where name in ({placeholders}))
-                ''',
-                [*params, *raw_targets],
-            )
-            # Raw SQL across a programme's modules: no helper reported it.
-            # Rare, so retiring every module's learner content costs little.
-            from . import content_cache
-            content_cache.retire_all()
-            return cursor.rowcount
-    updated = 0
-    for module in authoring_fetch_all(AUTHORING_MODULES_TABLE):
-        module_programme_values = [
-            module.get('programme_id'),
-            module.get('programme_name'),
-        ]
-        if not any(normalise(value) in targets for value in module_programme_values):
-            continue
-        module_id = clean_str(module.get('module_catalogue_id'))
-        if not module_id:
-            continue
-        update_authoring_rows(AUTHORING_MODULES_TABLE, 'module_catalogue_id = %s', [module_id], {
-            'ksb_profile_source_id': source_value,
-            'updated_at': datetime.utcnow(),
-        })
-        updated += 1
-    return updated
+    """Module selectors inherit the programme pair; there is no copied column."""
+    from . import content_cache
+    content_cache.retire_all()
+    return 0
 
 
 def program_config_by_id(program_configs):
@@ -8878,7 +8815,7 @@ def get_module_rows():
 @scoped_curriculum_read
 def get_ksb_profile_rows():
     # curriculum.ksb_profiles was removed: a programme takes its KSBs from its
-    # apprenticeship standard (standard_ksbs). Kept as an empty source so the
+    # apprenticeship standard (ksb_standard_definitions). Kept as an empty source so the
     # callers that still pass profiles through need no change.
     return []
 
@@ -8890,7 +8827,7 @@ _SKILLS_ENGLAND_ROWS = (None, None)
 
 @scoped_curriculum_read
 def get_skills_england_ksb_rows():
-    if not table_exists('standard_ksbs'):
+    if not table_exists('ksb_standard_definitions'):
         return []
     # Re-read only when the table changed: its digest rides the request's one
     # lookup round trip, so an unchanged table costs nothing.
@@ -8901,7 +8838,7 @@ def get_skills_england_ksb_rows():
         return cached_rows
     rows = fetch_all(f'''
         select *
-        from {table_name("standard_ksbs")}
+        from {table_name("ksb_standard_definitions")}
         order by standard_ref, standard_version, ksb_type, ksb_code, id
     ''')
     if digest:
@@ -10541,7 +10478,7 @@ def programme_learner_ksb_progress(programme_id, required_codes=None):
     can never disagree:
 
       * weighted progress continues to come from the Component Progress
-        snapshot (``learner_progress_ksbs``); the separate learner/KSB count
+        snapshot (``ksb_learner_progress``); the separate learner/KSB count
         also accepts an explicit KSB declaration in a submitted reflection.
       * per KSB, achieved weight is capped at the mapped weight, so one
         over-weighted activity cannot push the programme past 100%.
@@ -13454,7 +13391,7 @@ def curriculum_standards(request):
     standards = cached_curriculum_value('skills-england-standards', build_skills_england_standards)
     return reference_json_response(request, {
         'schema': CURRICULUM_SCHEMA,
-        'sourceTable': 'standard_ksbs',
+        'sourceTable': 'ksb_standard_definitions',
         'count': len(standards),
         'results': standards,
     })
@@ -13467,7 +13404,7 @@ def curriculum_standard_detail(request, identifier):
         return json_error('Skills England standard not found.', status=404)
     return reference_json_response(request, {
         'schema': CURRICULUM_SCHEMA,
-        'sourceTable': 'standard_ksbs',
+        'sourceTable': 'ksb_standard_definitions',
         **standard,
     })
 
@@ -15012,6 +14949,8 @@ def find_existing_authoring_catalogue_id_for_payload(payload):
 
 
 def authoring_table_name(table):
+    from .canonical_read_sql import ksb_physical_table
+    table = ksb_physical_table(table)
     if connection.vendor == 'postgresql':
         return table_name(table)
     return quote_ident(table)
@@ -15063,7 +15002,7 @@ def provision_module_authoring_tables():
     their parents' ids and read names through them, a module names its tutor by
     ``tutor_id``, a group's coaches live in ``group_coaches``, a cohort's holiday
     choices in ``cohort_calendar_holidays``, and a KSB mapping belongs to its
-    component and points at ``standard_ksbs``. Foreign keys are left out so the
+    component and points at ``ksb_standard_definitions``. Foreign keys are left out so the
     SQLite harness can seed rows in any order; ``standard_ksb_id`` is nullable
     here because the harness carries no Skills England catalogue to resolve it.
     """
@@ -15094,7 +15033,6 @@ def provision_module_authoring_tables():
                 session_week_day varchar(255),
                 session_start_time varchar(32),
                 session_end_time varchar(32),
-                ksb_profile_source_id varchar(128),
                 schedule_mode varchar(16) not null default 'group',
                 week_starts_on varchar(9),
                 week_boundary_mode varchar(16),
@@ -15124,7 +15062,6 @@ def provision_module_authoring_tables():
             cursor.execute(f"alter table {authoring_table_name(AUTHORING_MODULES_TABLE)} add column if not exists learner_roster_mode varchar(32) not null default 'inherited'")
             cursor.execute(f'alter table {authoring_table_name(AUTHORING_MODULES_TABLE)} add column if not exists teams_shared_source_module_id varchar(128)')
             cursor.execute(f'alter table {authoring_table_name(AUTHORING_MODULES_TABLE)} add column if not exists ksb_remap_report text')
-            cursor.execute(f'alter table {authoring_table_name(AUTHORING_MODULES_TABLE)} add column if not exists ksb_profile_source_id varchar(128)')
             cursor.execute(f'alter table {authoring_table_name(AUTHORING_MODULES_TABLE)} add column if not exists session_week_day varchar(255)')
             cursor.execute(f'alter table {authoring_table_name(AUTHORING_MODULES_TABLE)} add column if not exists session_start_time varchar(32)')
             cursor.execute(f'alter table {authoring_table_name(AUTHORING_MODULES_TABLE)} add column if not exists session_end_time varchar(32)')
@@ -15163,8 +15100,6 @@ def provision_module_authoring_tables():
                 cursor.execute(f'alter table {authoring_table_name(AUTHORING_MODULES_TABLE)} add column teams_shared_source_module_id varchar(128)')
             if 'ksb_remap_report' not in columns:
                 cursor.execute(f'alter table {authoring_table_name(AUTHORING_MODULES_TABLE)} add column ksb_remap_report text')
-            if 'ksb_profile_source_id' not in columns:
-                cursor.execute(f'alter table {authoring_table_name(AUTHORING_MODULES_TABLE)} add column ksb_profile_source_id varchar(128)')
             if 'session_week_day' not in columns:
                 cursor.execute(f'alter table {authoring_table_name(AUTHORING_MODULES_TABLE)} add column session_week_day varchar(255)')
             if 'session_start_time' not in columns:
@@ -15251,7 +15186,7 @@ def provision_module_authoring_tables():
             )
         ''')
         cursor.execute(f'''
-            create table if not exists {authoring_table_name('standard_ksbs')} (
+            create table if not exists {authoring_table_name('ksb_standard_definitions')} (
                 id {serial_key},
                 standard_ref text not null,
                 standard_version text not null default '',
@@ -15268,8 +15203,8 @@ def provision_module_authoring_tables():
         cursor.execute(f'''
             create table if not exists {authoring_table_name(AUTHORING_KSB_MAPPINGS_TABLE)} (
                 id varchar(128) primary key,
-                component_id varchar(128) not null,
-                ksb_id varchar(255),
+                component_id varchar(128),
+                template_component_id varchar(128),
                 classification varchar(32) not null default 'secondary',
                 created_at timestamp not null default current_timestamp,
                 updated_at timestamp not null default current_timestamp,
@@ -15423,7 +15358,7 @@ def provision_module_authoring_tables():
         AUTHORING_MODULES_TABLE, AUTHORING_WEEKS_TABLE, AUTHORING_COMPONENTS_TABLE,
         AUTHORING_KSB_MAPPINGS_TABLE, AUTHORING_COMPLETION_TABLE, AUTHORING_ADVANCED_TABLE,
         COHORT_AUTHORING_DETAILS_TABLE, GROUPS_TABLE, MODULE_TEAMS_SHARES_TABLE,
-        'standard_ksbs', 'cohort_calendar_holidays', 'tutors', 'coaches', 'group_coaches',
+        'ksb_standard_definitions', 'cohort_calendar_holidays', 'tutors', 'coaches', 'group_coaches',
     ):
         _TABLE_COLUMNS_CACHE.pop(f'{CURRICULUM_SCHEMA}.{table}', None)
         _TABLE_COLUMNS_CACHE.pop(table, None)
@@ -16186,6 +16121,8 @@ def authoring_upsert(table, key_columns, payload, allow_null_columns=None):
     writable = column_names(table)
     payload, staff_nullable = curriculum_names.store_staff(table, payload, writable)
     payload, shaped_nullable = write_shape.normalise(table, payload, writable)
+    if table == AUTHORING_KSB_MAPPINGS_TABLE and 'standard_ksb_id' in writable:
+        payload = ksb_mapping_placement.reuse_mapping_rows([payload])[0]
     nullable = set(SOFT_DELETE_COLUMNS) | set(allow_null_columns or ()) | shaped_nullable | staff_nullable
     values = {
         key: value
@@ -18173,11 +18110,11 @@ def component_summary_ksb_codes(catalogue_ids):
     None off Postgres or without the standard KSB table; the summary then
     leaves ``ksbCodes`` out and the page falls back to the full component read.
     """
-    if connection.vendor != 'postgresql' or not catalogue_ids or not table_exists('standard_ksbs'):
+    if connection.vendor != 'postgresql' or not catalogue_ids or not table_exists('ksb_standard_definitions'):
         return None
     # A mapping's code is its standard KSB's; both rows are filtered by status.
     code_sql = 'standard.ksb_code'
-    join_sql = f' join {authoring_table_name("standard_ksbs")} as standard on standard.id = mapping.standard_ksb_id'
+    join_sql = f' join {authoring_table_name("ksb_standard_definitions")} as standard on standard.id = mapping.standard_ksb_id'
     clauses = [
         f'component.module_catalogue_id in ({", ".join(["%s"] * len(catalogue_ids))})',
         archive_state.live_sql('component'),
@@ -21181,10 +21118,20 @@ def week_template_revision(template_id):
     if not ident:
         return ''
     ensure_week_template_tables()
-    return record_revision((
+    revision = record_revision((
         ('template', WEEK_TEMPLATES_TABLE, 'id = %s', [ident], 'id'),
         ('components', WEEK_TEMPLATE_COMPONENTS_TABLE, 'week_template_id = %s', [ident], 'id'),
     ))
+    if not revision:
+        return ''
+    with connection.cursor() as cursor:
+        cursor.execute('''SELECT m.id,m.template_component_id,m.standard_ksb_id,m.classification,
+                m.weight,m.weight_class,m.status
+            FROM curriculum.ksb_component_mappings m
+            JOIN curriculum.week_template_components c ON c.id=m.template_component_id
+            WHERE c.week_template_id=%s ORDER BY m.id''', [ident])
+        mappings = cursor.fetchall()
+    return hashlib.sha256(json.dumps([revision,mappings],default=str).encode()).hexdigest()[:32]
 
 
 @with_course_storage
@@ -23270,6 +23217,7 @@ def authoring_mapping_payload(module_catalogue_id, mapping, week_id=None, compon
         'module_catalogue_id': module_catalogue_id,
         'week_id': week_id,
         'component_id': component_id,
+        'standard_ksb_id': mapping.get('standard_ksb_id') or mapping.get('standardKsbId'),
         'ksb_id': mapping.get('ksbId') or mapping.get('ksb_id') or mapping.get('code') or mapping.get('ksb_code'),
         'ksb_code': code,
         'ksb_description': mapping.get('description') or mapping.get('ksbDescription') or '',
@@ -23295,6 +23243,7 @@ def component_ksb_mapping_json_item(mapping_payload):
     ksb_id = clean_str(mapping_payload.get('ksb_id') or mapping_payload.get('ksbId') or code)
     return {
         'id': clean_str(mapping_payload.get('id')),
+        **({'standard_ksb_id': mapping_payload['standard_ksb_id']} if mapping_payload.get('standard_ksb_id') else {}),
         'ksb_id': ksb_id,
         'ksb_code': code,
         'description': clean_str(mapping_payload.get('ksb_description') or mapping_payload.get('description')),
@@ -23313,6 +23262,7 @@ def component_ksb_mapping_api_item(mapping):
     ksb_id = clean_str(mapping.get('ksb_id') or mapping.get('ksbId') or code)
     return {
         'id': clean_str(mapping.get('id')),
+        **({'standardKsbId': mapping['standard_ksb_id']} if mapping.get('standard_ksb_id') else {}),
         'ksbId': ksb_id,
         'code': code,
         'description': clean_str(mapping.get('description') or mapping.get('ksb_description')),
@@ -23332,6 +23282,7 @@ def component_ksb_mappings_from_row(row, projection_rows=None):
         return [
             component_ksb_mapping_json_item({
                 'id': mapping.get('id'),
+                'standard_ksb_id': mapping.get('standardKsbId') or mapping.get('standard_ksb_id'),
                 'ksb_id': mapping.get('ksbId') or mapping.get('ksb_id'),
                 'ksb_code': mapping.get('code') or mapping.get('ksbCode') or mapping.get('ksb_code'),
                 'ksb_description': mapping.get('description') or mapping.get('ksbDescription') or mapping.get('ksb_description'),
@@ -23422,7 +23373,8 @@ def sync_component_ksb_projection(component_id, component_row=None, module_row=N
         update_authoring_rows(AUTHORING_COMPONENTS_TABLE, 'id = %s', [component_id], {'ksb_mappings': json_db_value(json_items)})
     authoring_soft_delete(AUTHORING_KSB_MAPPINGS_TABLE, 'component_id = %s', [component_id], deleted_by=deleted_by)
     authoring_bulk_upsert(AUTHORING_KSB_MAPPINGS_TABLE, ['id'], projection_payloads)
-    sync_progress_ksbs({component_id: json_items}, actor=deleted_by)
+    persisted = ksb_mapping_placement.component_items([component_id])
+    sync_progress_ksbs({component_id: persisted.get(component_id, [])}, actor=deleted_by)
     return json_items
 
 
@@ -24119,13 +24071,16 @@ def save_module_authoring_structure(
         # Learner progress carries a snapshot of each component's KSBs. A light
         # save re-syncs only the components whose mappings it changed: the rest
         # already match, and each one costs a read of learner progress.
-        sync_progress_ksbs({
-            component['id']: as_json_value(component.get('ksb_mappings'), [])
+        changed_mapping_components = [
+            component['id']
             for component in component_payloads
             if not light or authoring_comparable('ksb_mappings', component.get('ksb_mappings')) != authoring_comparable(
                 'ksb_mappings', (stored_components_by_id.get(component['id']) or {}).get('ksb_mappings'))
             or not authoring_row_is_active(stored_components_by_id.get(component['id']) or {})
-        }, actor='curriculum-module-save')
+        ]
+        persisted_mappings = ksb_mapping_placement.component_items(changed_mapping_components)
+        sync_progress_ksbs({component_id: persisted_mappings.get(component_id, [])
+                            for component_id in changed_mapping_components}, actor='curriculum-module-save')
 
         criteria = payload.get('completionCriteria') or {}
         defaults = default_completion_payload()
@@ -27477,7 +27432,7 @@ def curriculum_module_structure(request, module_catalogue_id):
             # inside it (mappings_with_inferred_sources) asks whether a code
             # exists in a standard or a profile once per mapping row that has no
             # stored source, and each of those questions is a whole-table read of
-            # standard_ksbs or ksb_profiles. Memoised for the scope, a module
+            # ksb_standard_definitions or ksb_profiles. Memoised for the scope, a module
             # with thirty unsourced mappings costs two reads instead of ninety.
             with curriculum_read_scope(targeted_child_reads=True):
                 if is_training_alias:
@@ -28491,14 +28446,14 @@ def component_source_inputs_fingerprint():
     """What a mapping's inferred KSB source depends on beyond the curriculum epoch.
 
     The component reads infer a mapping's source from the Skills England KSBs
-    (``standard_ksbs``). It is not written through a curriculum handler, so no
+    (``ksb_standard_definitions``). It is not written through a curriculum handler, so no
     epoch bump retires a cached read when it changes. This is its row count and
     newest stamp: one round trip, taken when a cached entry passes its ttl, so
     the entry is rebuilt only when it has moved (see cached_curriculum_value's
     ``fingerprint``).
     """
     parts = []
-    for table in ('standard_ksbs',):
+    for table in ('ksb_standard_definitions',):
         if not table_exists(table):
             parts.append((table, None))
             continue
@@ -28591,7 +28546,7 @@ def curriculum_component_collection(request):
                 # authoring data, written only through curriculum handlers
                 # that bump the epoch, so any edit retires this at once. The
                 # one input that bumps nothing is the Skills England list a
-                # mapping's source is inferred from (standard_ksbs, changed by
+                # mapping's source is inferred from (ksb_standard_definitions, changed by
                 # manual import), hence the same 60s bound coverage keeps.
                 # Keyed on the sorted, de-duped id set: order never changes
                 # the rows.
@@ -29774,7 +29729,7 @@ def coverage_entry(request, scope='', identifier=''):
     through curriculum handlers, which bump the shared epoch and retire the
     entry at once (modules, weeks, components, KSB mappings, programme configs,
     KSB profiles). The exception is the Skills England requirement list: it is
-    read straight from standard_ksbs at build time, and that table changes by
+    read straight from ksb_standard_definitions at build time, and that table changes by
     manual SQL import, which bumps nothing. The 60s expiry is what bounds how
     long coverage can lag such an import, so it stays until the import path
     invalidates the curriculum cache itself.
@@ -29819,7 +29774,7 @@ def coverage_entry(request, scope='', identifier=''):
             return {name: encode_json_entry(coverage_part(dict(result), name)) for name in COVERAGE_PART_VIEWS}
 
         # Past its 60s an entry is re-checked against the one input no epoch
-        # covers (standard_ksbs / ksb_profiles, see the docstring) and kept when
+        # covers (ksb_standard_definitions / ksb_profiles, see the docstring) and kept when
         # it has not moved, instead of being rebuilt every minute.
         return cached_curriculum_value(
             f'{key}:parts-v4', build_parts, ttl=60, fingerprint=component_source_inputs_fingerprint,
@@ -30371,7 +30326,7 @@ def out_of_scope_progress_count(learner_ids, predicate, predicate_params):
             from "Learner"."learner_progress_entries" p
             cross join lateral (
                 select count(distinct k.ksb_code) as n
-                from "Learner"."learner_progress_ksbs" k
+                from ''' + official_progress_relation() + ''' k
                 where k.progress_id = p.id''' + not_excluded + '''
             ) codes
             where p.learner_id = any(%s) and not ''' + predicate,
@@ -30467,7 +30422,7 @@ def progress_consumption_rows(learner_ids, codes=None, scope_predicate=None, ach
                     select k.ksb_code,
                            coalesce(max(k.weight), 0) as weight,
                            coalesce(max(nullif(k.weight_class, '')), 'soft') as weight_class
-                    from "Learner"."learner_progress_ksbs" k
+                    from ''' + official_progress_relation() + ''' k
                     -- Rows the KSB standards migration registered as not
                     -- counting drop out here; the activity and its hours stay.
                     where k.progress_id = p.id''' + not_excluded + code_sql + '''
@@ -30546,7 +30501,7 @@ def learner_progress_ksb_consumption(learner_ids, programme_ksb_codes, component
     says which of the two placed the row: ``component`` (it is in the scope's live
     content) or ``lineage`` (the row's own stamped reference).
 
-    The join to ``learner_progress_ksbs`` is a LEFT join, and that is the point:
+    The join to ``ksb_learner_progress`` is a LEFT join, and that is the point:
     most completed components carry no KSB snapshot at all, and an inner join
     made every one of them invisible — taking their off-the-job hours and their
     place in the activity feed with them. A row with no KSB comes back with an
@@ -30555,7 +30510,7 @@ def learner_progress_ksb_consumption(learner_ids, programme_ksb_codes, component
     """
     if not learner_ids or connection.vendor != 'postgresql':
         return {}, [], []
-    if not learner_schema_table_exists('learner_progress_entries') or not learner_schema_table_exists('learner_progress_ksbs'):
+    if not learner_schema_table_exists('learner_progress_entries') or not learner_schema_table_exists('ksb_learner_progress'):
         return {}, [], []
     code_filter = {coverage_normalise_code(code) for code in programme_ksb_codes if coverage_normalise_code(code)}
     scope_filter = {clean_str(value) for value in (component_ids or []) if clean_str(value)}
@@ -30718,7 +30673,7 @@ def learner_progress_ksb_totals(learner_ids, programme_ksb_codes, *, compact=Fal
     """
     if not learner_ids or connection.vendor != 'postgresql':
         return {}
-    if not learner_schema_table_exists('learner_progress_entries') or not learner_schema_table_exists('learner_progress_ksbs'):
+    if not learner_schema_table_exists('learner_progress_entries') or not learner_schema_table_exists('ksb_learner_progress'):
         return {}
     code_filter = sorted({
         coverage_normalise_code(code)
@@ -30745,7 +30700,7 @@ def learner_progress_ksb_totals(learner_ids, programme_ksb_codes, *, compact=Fal
                        p.component_ref, p.passed, p.submitted_at,
                        k.ksb_code, coalesce(max(k.weight), 0) as weight
                 from "Learner"."learner_progress_entries" p
-                join "Learner"."learner_progress_ksbs" k on k.progress_id = p.id''' + and_not_excluded('k', connection) + '''
+                join ''' + official_progress_relation() + ''' k on k.progress_id = p.id''' + and_not_excluded('k', connection) + '''
                 where p.learner_id = any(%s)
                   -- KSB snapshots are normalised to upper-case on every write.
                   -- Keep the indexed column bare so PostgreSQL can use
@@ -30889,7 +30844,7 @@ def reflection_submission_ksb_consumption(learners, programme_ksb_codes, compone
     Returns ``(declared_totals, rows, excluded_rows, unlinked_rows)``.
 
     ``declared_totals`` is *declared* weight, never achieved weight. The
-    Component Progress snapshot (``learner_progress_ksbs``) is the canonical
+    Component Progress snapshot (``ksb_learner_progress``) is the canonical
     achievement source — see ``learner_progress_ksb_consumption`` — so a
     reflection's KSB declaration is supplementary evidence *about the same
     activity*. Adding it to achieved totals would count one activity's KSBs
@@ -31218,7 +31173,7 @@ def learner_activity_trace(progress_rows, excluded_progress_rows, reflection_row
     Curriculum already share. That makes cross-layer checks a lookup rather than
     a match on titles, emails or enrolment source ids.
 
-    Achieved KSB weight stays in ``ksbSnapshot`` (from ``learner_progress_ksbs``)
+    Achieved KSB weight stays in ``ksbSnapshot`` (from ``ksb_learner_progress``)
     and reflection declarations stay in ``declaredReflectionKsbs``. They are
     deliberately separate lists: the same activity's KSBs must not be summed
     twice.
@@ -31994,7 +31949,7 @@ def scope_ksb_achievement(coverage_items, learner_consumption, learners, plan, l
     uncapped sum, reported so over-delivery stays visible rather than clipped.
 
     Codes are keyed by code alone. A code authored against two different KSB
-    sources appears once, because ``learner_progress_ksbs`` records a code and
+    sources appears once, because ``ksb_learner_progress`` records a code and
     not the source it was authored from — the same collapse
     ``learner_consumption_payload`` already makes.
     """
@@ -32130,9 +32085,9 @@ def scope_ksb_achievement(coverage_items, learner_consumption, learners, plan, l
         # them that way; the row table alone cannot be read for it.
         'byType': ksb_achievement_by_type(rows),
         'sources': {
-            'plannedWeight': 'curriculum.ksb_mappings.weight (whole scope)',
-            'expectedWeight': 'curriculum.ksb_mappings.weight (of each learner\'s group)',
-            'achievedWeight': 'Learner.learner_progress_ksbs.weight',
+            'plannedWeight': 'curriculum.ksb_component_mappings.weight (whole scope)',
+            'expectedWeight': 'curriculum.ksb_component_mappings.weight (of each learner\'s group)',
+            'achievedWeight': 'Learner.ksb_learner_progress.weight',
             'declaredWeight': 'Learner.learning_reflection_submissions.ksb_weights',
         },
     }
@@ -32306,7 +32261,7 @@ def _scope_learner_ksb_impact_payload(request, scope, identifier):
             'learnerActivityPlanCount': len(activity_plan),
         } if include_activity_plan else {}),
         'ksbAchievementPolicy': {
-            'achievedWeightSource': 'learner_progress_ksbs',
+            'achievedWeightSource': 'ksb_learner_progress',
             'reflectionKsbRole': 'supplementary_evidence',
             'reflectionKsbCountsTowardAchievedWeight': False,
             'reflectionLearnerResolution': 'progress_entry_id',
@@ -32618,14 +32573,14 @@ def achievement_inputs_fingerprint(programme_id, cache_key):
                 select
                     (select count(*)::text || ':' || coalesce(sum(hashtext(concat_ws('|', l.id, l.full_name,
                             l.programme_id, l.cohort_id, l.group_id, l.programme_status, l.lifecycle_status,
-                            l.updated_at))::bigint), 0) from "Learner".learners l),
+                            l.updated_at,l.standard_ref,l.standard_version))::bigint), 0) from "Learner".learners l),
                     (select count(*)::text || ':' || coalesce(sum(h::bigint), 0) from entries),
                     (select count(*)::text || ':' || coalesce(sum(hashtext(concat_ws('|', k.progress_id, k.position,
-                            k.ksb_code, k.weight, k.weight_class))::bigint), 0)
-                       from "Learner".learner_progress_ksbs k where k.progress_id in (select id from entries)),
-                    (select count(*)::text || ':' || coalesce(sum(hashtext(concat_ws('|', x.progress_id, x.position,
-                            x.ksb_code, x.status))::bigint), 0)
-                       from "Learner".learner_progress_ksb_exclusions x)
+                            k.ksb_code, k.weight, k.weight_class,k.standard_ksb_id,k.is_excluded,k.mapping_status))::bigint), 0)
+                       from "Learner".ksb_learner_progress k where k.progress_id in (select id from entries)),
+                    (select count(*)::text || ':' || coalesce(sum(hashtext(concat_ws('|', d.id,
+                            d.standard_ref,d.standard_version,d.ksb_code,d.ksb_description))::bigint), 0)
+                       from curriculum.ksb_standard_definitions d)
                 ''',
                 [programme_id, learner_ids],
             )
@@ -35158,6 +35113,7 @@ PERMANENT_DELETE_REFERENCES = {
         ('Learner', 'learner_progress_entries', 'group_id', 'progressEntries', None),
     ),
     'module': (
+        ('curriculum', 'tutor_module_notifications', 'module_catalogue_id', 'tutorNotifications', None),
         ('curriculum', 'live_session_learner_attendance', 'module_catalogue_id', 'attendance', None),
         ('curriculum', 'live_session_attendance_aliases', 'module_catalogue_id', 'attendanceAliases', None),
         ('curriculum', 'live_session_attendance_identity_rules', 'module_catalogue_id', 'attendanceIdentityRules', None),
@@ -35207,6 +35163,7 @@ def permanent_delete_reference_refusal(kind, identifier):
     if not blockers:
         return None
     labels = {
+        'tutorNotifications': 'tutor notification records',
         'learners': 'learner records', 'enrolmentAccounts': 'enrolment accounts',
         'progressEntries': 'learner progress entries', 'attendance': 'live-session attendance records',
         'attendanceAliases': 'attendance name links', 'attendanceIdentityRules': 'attendance identity rules',
@@ -37176,7 +37133,6 @@ def provision_week_template_tables():
                 group_id varchar(255),
                 group_name varchar(255),
                 status varchar(32) not null default 'draft',
-                ksb_mappings {json_type},
                 total_otjh numeric(8,2) not null default 0,
                 points integer not null default 0,
                 component_count integer not null default 0,
@@ -37199,7 +37155,6 @@ def provision_week_template_tables():
                 workplace_evidence_required boolean not null default false,
                 tutor_validation_required boolean not null default false,
                 coach_validation_required boolean not null default true,
-                ksb_mappings {json_type},
                 settings_json {json_type},
                 display_order integer not null default 0,
                 created_at timestamp not null default current_timestamp,
@@ -37337,12 +37292,16 @@ def get_week_template_row(template_id, *, include_deleted=False):
 
 
 def get_week_template_component_rows(template_id):
+    from . import template_ksbs
     ensure_week_template_tables()
-    return fetch_all(
+    rows = fetch_all(
         f'select * from {table_name(WEEK_TEMPLATE_COMPONENTS_TABLE)} '
-        f'where week_template_id = %s order by display_order asc',
-        [template_id],
-    )
+        f'where week_template_id = %s order by display_order asc', [template_id])
+    with connection.cursor() as cursor:
+        mappings = template_ksbs.items(cursor, [row['id'] for row in rows])
+    for row in rows:
+        row['ksb_mappings'] = mappings.get(row['id'], [])
+    return rows
 
 
 def week_template_component_payload(row):
@@ -37383,7 +37342,9 @@ def week_template_payload(row, components=None):
         'groupId': row.get('group_id') or '',
         'groupName': row.get('group_name') or '',
         'status': row.get('status') or 'draft',
-        'ksbMappings': as_json_value(row.get('ksb_mappings'), []),
+        'ksbMappings': ([mapping for component in components
+                        for mapping in as_json_value(component.get('ksb_mappings'), [])]
+                        if components is not None else row.get('ksb_mappings', [])),
         'totalOtjh': week_template_number(row.get('total_otjh')),
         'points': parse_int(row.get('points'), 0),
         'componentCount': parse_int(row.get('component_count'), 0),
@@ -37394,18 +37355,27 @@ def week_template_payload(row, components=None):
     }
 
 
+@transaction.atomic
 def save_week_template_components(template_id, components):
-    # Delete-then-reinsert the whole component list (same approach as the free
-    # programme module save). Returns the saved rows in display order.
+    from . import template_ksbs
+    # Preserve existing child identities; release mappings before removed children.
     ensure_week_template_tables()
-    delete_rows(WEEK_TEMPLATE_COMPONENTS_TABLE, 'week_template_id = %s', [template_id])
+    lock_record_row(WEEK_TEMPLATES_TABLE, 'id = %s', [template_id])
+    existing = {row['id']: row for row in get_week_template_component_rows(template_id)}
+    incoming_ids = [clean_str(component.get('id')) for component in components or [] if component.get('id')]
+    occupied = {row['id'] for row in fetch_all(
+        f'select id from {table_name(WEEK_TEMPLATE_COMPONENTS_TABLE)} where id=ANY(%s)', [incoming_ids])} if incoming_ids else set()
+    kept = set()
     saved = []
     for index, component in enumerate(components or []):
         component_id = clean_str(component.get('id')) or unique_prefixed_id('WTC')
         component_settings = component.get('settings') if isinstance(component.get('settings'), dict) else {}
         reflection_question = payload_reflection_question(component, component_settings)
         component_settings = {**component_settings, LEGACY_REFLECTION_QUESTION_SETTING: reflection_question}
-        row = insert_row(WEEK_TEMPLATE_COMPONENTS_TABLE, {
+        if component_id in kept:
+            raise ValueError('Duplicate template component identity.')
+        kept.add(component_id)
+        values = {
             'id': component_id,
             'week_template_id': template_id,
             'type': clean_str(component.get('type')) or 'reading',
@@ -37418,13 +37388,30 @@ def save_week_template_components(template_id, components):
             'workplace_evidence_required': bool(component.get('workplaceEvidenceRequired')),
             'tutor_validation_required': bool(component.get('tutorValidationRequired')),
             'coach_validation_required': payload_coach_validation(component),
-            'ksb_mappings': json_db_value(component.get('ksbMappings') or []),
             'settings_json': json_db_value(component_settings),
             'display_order': index,
             'created_at': datetime.utcnow(),
             'updated_at': datetime.utcnow(),
-        })
-        saved.append(row)
+        }
+        if component_id in existing:
+            values.pop('created_at')
+            update_rows(WEEK_TEMPLATE_COMPONENTS_TABLE, 'id = %s and week_template_id = %s',
+                        [component_id, template_id], values)
+        else:
+            # A copied template gets independent component and mapping identities.
+            if component_id in occupied:
+                component_id = unique_prefixed_id('WTC')
+                values['id'] = component_id
+            insert_row(WEEK_TEMPLATE_COMPONENTS_TABLE, values)
+        if 'ksbMappings' in component:
+            with connection.cursor() as cursor:
+                template_ksbs.replace(cursor, component_id, component.get('ksbMappings') or [])
+        saved.append(values)
+    removed = sorted(set(existing) - kept)
+    if removed:
+        with connection.cursor() as cursor:
+            cursor.execute('DELETE FROM curriculum.ksb_component_mappings WHERE template_component_id=ANY(%s)', [removed])
+            cursor.execute('DELETE FROM curriculum.week_template_components WHERE week_template_id=%s AND id=ANY(%s)', [template_id, removed])
     return saved
 
 
@@ -37477,6 +37464,7 @@ def week_template_detail_response(template_id, wrapper_key='weekTemplate', *, af
 
 
 @csrf_exempt
+@template_authoring_transaction
 def curriculum_week_template_collection(request):
     ensure_week_template_tables()
     if request.method == 'GET':
@@ -37500,7 +37488,17 @@ def curriculum_week_template_collection(request):
         search = clean_str(request.GET.get('search')).lower()
         if search:
             rows = [row for row in rows if search in clean_str(row.get('title')).lower()]
-        results = [week_template_payload(row) for row in rows]
+        from . import template_ksbs
+        template_ids = [row['id'] for row in rows]
+        with connection.cursor() as cursor:
+            cursor.execute(f'SELECT id,week_template_id FROM {table_name(WEEK_TEMPLATE_COMPONENTS_TABLE)} '
+                           'WHERE week_template_id=ANY(%s) ORDER BY display_order,id', [template_ids])
+            owners = cursor.fetchall()
+            mappings = template_ksbs.items(cursor, [owner[0] for owner in owners])
+        by_template = defaultdict(list)
+        for component_id, template_id in owners:
+            by_template[template_id].extend(mappings.get(component_id, []))
+        results = [week_template_payload({**row, 'ksb_mappings': by_template[row['id']]}) for row in rows]
         return curriculum_results_response(results)
 
     if request.method != 'POST':
@@ -37536,7 +37534,6 @@ def curriculum_week_template_collection(request):
         'course_type': course_type,
         **week_template_scope_fields(payload, course_type),
         'status': clean_str(payload.get('status')) or 'draft',
-        'ksb_mappings': json_db_value(payload.get('ksbMappings') or []),
         'total_otjh': total_otjh,
         'points': points,
         'component_count': component_count,
@@ -37551,6 +37548,7 @@ def curriculum_week_template_collection(request):
 
 
 @csrf_exempt
+@template_authoring_transaction
 def curriculum_week_template_detail(request, identifier):
     if request.method not in {'GET', 'PATCH', 'DELETE'}:
         return json_error('Method not allowed.', status=405)
@@ -37587,8 +37585,6 @@ def curriculum_week_template_detail(request, identifier):
         updates['summary'] = clean_str(payload.get('summary'))
     if 'learningOutcomes' in payload:
         updates['learning_outcomes'] = json_db_value(payload.get('learningOutcomes') or [])
-    if 'ksbMappings' in payload:
-        updates['ksb_mappings'] = json_db_value(payload.get('ksbMappings') or [])
     if 'status' in payload:
         updates['status'] = clean_str(payload.get('status')) or 'draft'
     if 'author' in payload:

@@ -10,7 +10,7 @@ The cleaned database branch (``NEW_ENDPOINT_URL``) normalised ``curriculum``:
   ``module_ids``, ``group_ids``, ``assigned_*_ids`` ...) were dropped in favour
   of keys: ``modules.tutor_id -> tutors``, ``group_coaches -> groups, coaches`` (a group may have several);
 * ``ksb_mappings`` keeps ``component_id`` + ``ksb_id`` and points at
-  ``standard_ksbs`` (``standard_ksb_id``) for the code and description; its
+  ``ksb_standard_definitions`` (``standard_ksb_id``) for the code and description; its
   module and week come from the component, and ``components.ksb_mappings``
   (the JSON copy) is gone;
 * cohort holiday choices live in ``cohort_calendar_holidays``.
@@ -43,6 +43,7 @@ import time
 from datetime import datetime, timezone
 
 from django.db import connection
+from .canonical_read_sql import ksb_physical_table, standard_ksb_compatibility_id_sql, standard_source_sql
 
 LIFECYCLE_TABLES = frozenset({
     'programmes', 'cohorts', 'groups', 'modules', 'weeks', 'components',
@@ -65,12 +66,13 @@ DERIVED_COLUMNS = {
     # They remain FK reads, never copied storage.
     'cohorts': ('programme_name',),
     'groups': ('programme_name', 'cohort_name'),
-    'modules': ('programme_name', 'cohort_name', 'group_name'),
+    'modules': ('programme_name', 'cohort_name', 'group_name', 'ksb_profile_source_id'),
+    'programmes': ('ksb_profile_source_id',),
     # Staff names (tutor_name ...), child lists (module_ids,
     # group_ids, assigned_*_ids ...) and a cohort's holiday choices are not
     # here: curriculum_names puts them on the rows natively, by key
     # (curriculum_names.ROW_FIELDS, calendar_holidays.attach_cohort_choices).
-    'ksb_mappings': ('module_catalogue_id', 'week_id', 'ksb_code', 'ksb_description'),
+    'ksb_mappings': ('module_catalogue_id', 'week_id', 'ksb_code', 'ksb_description', 'ksb_id'),
     'components': ('ksb_mappings', 'library_state', 'detached_at', 'origin_module_catalogue_id',
                    'origin_week_id', 'origin_module_title', 'origin_week_label'),
     'weeks': ('library_state', 'detached_at', 'origin_module_catalogue_id', 'origin_week_id',
@@ -86,12 +88,14 @@ class UnsupportedOnNormalisedSchema(ValueError):
 
 
 def _qualified(table):
+    table = ksb_physical_table(table)
     if connection.vendor != 'postgresql':
         return f'"{table}"'
     return f'"curriculum"."{table}"'
 
 
 def _internal(table):
+    table = ksb_physical_table(table)
     """A table reference adapt_sql never rewrites (``ONLY`` -- these tables have
     no inheritance, so it reads exactly the same rows). Used inside the read
     relation and this module's own queries, so a statement is adapted once."""
@@ -164,9 +168,11 @@ def _lifecycle_select(table, columns, alias='t'):
     if not uses_status_lifecycle(table, columns):
         return []
     inactive = inactive_condition(alias)
+    timestamp = f'{alias}."updated_at"' if 'updated_at' in columns else (
+        f'{alias}."created_at"' if 'created_at' in columns else 'null::timestamp')
     expressions = {
         'is_programme_deleted': f'({inactive}) as "is_programme_deleted"',
-        'deleted_at': f'case when {inactive} then coalesce({alias}."updated_at", now()) end as "deleted_at"',
+        'deleted_at': f'case when {inactive} then coalesce({timestamp}, now()) end as "deleted_at"',
         'deleted_by': 'null::varchar as "deleted_by"',
         'deleted_via_parent': 'null::varchar as "deleted_via_parent"',
         'is_archived': f'({inactive}) as "is_archived"',
@@ -276,6 +282,9 @@ def adapt_sql(sql):
 
     def replace(match):
         table = (match.group('qt') or match.group('t') or '').lower()
+        original_table = table
+        if table == 'ksb_component_mappings':
+            table = 'ksb_mappings'
         if table not in RELATION_TABLES:
             return match.group(0)
         if re.search(r'\bdelete\s+$', lowered[max(0, match.start() - 12):match.start()]):
@@ -292,8 +301,8 @@ def adapt_sql(sql):
         following = _NEXT_WORD.match(sql, match.end())
         word = (following.group(1) or '').lower() if following else ''
         if not word or word in _CLAUSE_WORDS:
-            relation += f' as "{table}"'
-            requalify.add(table)
+            relation += f' as "{original_table}"'
+            requalify.add(original_table)
         return match.group('kw') + relation
 
     requalify = set()
@@ -419,11 +428,16 @@ def read_relation(table, columns, alias=True, defer=()):
 
     if table == 'ksb_mappings':
         joins.append(f'left join {q("components")} cc on cc.id = {t}.component_id')
-        joins.append(f'left join {q("standard_ksbs")} sk on sk.id = {t}.standard_ksb_id')
+        joins.append(f'left join {q("ksb_standard_definitions")} sk on sk.id = {t}.standard_ksb_id')
         add('module_catalogue_id', "coalesce(cc.module_catalogue_id, '')::varchar")
         add('week_id', 'cc.week_id')
+        add('ksb_id', standard_ksb_compatibility_id_sql('sk'))
         add('ksb_code', "coalesce(sk.ksb_code, '')::varchar")
         add('ksb_description', 'sk.ksb_description')
+    elif table == 'programmes':
+        add('ksb_profile_source_id', standard_source_sql('t'))
+    elif table == 'modules':
+        add('ksb_profile_source_id', f"(select {standard_source_sql('sp')} from {q('programmes')} sp where sp.programme_id=t.programme_id)")
     elif table in {'weeks', 'components'}:
         if table == 'weeks':
             # Canonical weeks always belong to a normal module. Free Course
@@ -438,7 +452,8 @@ def read_relation(table, columns, alias=True, defer=()):
         add('origin_week_label', "''::text")
     if not extra:
         return None
-    body = f'(select {t}.*, ' + ', '.join(extra) + f' from {q(table)} {t} ' + ' '.join(joins) + ')'
+    owner_filter = f' where {t}.component_id is not null' if table == 'ksb_mappings' else ''
+    body = f'(select {t}.*, ' + ', '.join(extra) + f' from {q(table)} {t} ' + ' '.join(joins) + owner_filter + ')'
     return f'{body} as "{table}"' if alias else body
 
 
@@ -522,7 +537,7 @@ def _chunks(values, size=2000):
         yield values[start:start + size]
 
 
-# standard_ksbs ids -> (code, description), as last read. Reference data:
+# ksb_standard_definitions ids -> (code, description), as last read. Reference data:
 # changed only by a manual Skills England import, which the curriculum cache
 # already lets lag by up to 60 s (views.coverage_entry), so this lags no more.
 STANDARD_TEXTS_TTL_SECONDS = 60
@@ -531,7 +546,7 @@ _STANDARD_TEXTS_LOCK = threading.Lock()
 
 
 def standard_ksb_texts(standard_ids):
-    """``{standard_ksbs.id: (ksb_code, ksb_description)}`` for ``standard_ids``."""
+    """``{ksb_standard_definitions.id: (ksb_code, ksb_description)}`` for ``standard_ids``."""
     wanted = {value for value in standard_ids if value is not None}
     if not wanted:
         return {}
@@ -544,7 +559,7 @@ def standard_ksb_texts(standard_ids):
         found = {}
         with connection.cursor() as cursor:
             for chunk in _chunks(missing):
-                cursor.execute(f'select id, ksb_code, ksb_description from {_internal("standard_ksbs")} where id = any(%s)', [chunk])
+                cursor.execute(f'select id, ksb_code, ksb_description from {_internal("ksb_standard_definitions")} where id = any(%s)', [chunk])
                 found.update({sid: (code, description) for sid, code, description in cursor.fetchall()})
         with _STANDARD_TEXTS_LOCK:
             known.update(found)
@@ -566,10 +581,17 @@ def _project_ksb_mappings(rows, derived):
                 placements.update({cid: (module_id, week_id) for cid, module_id, week_id in cursor.fetchall()})
     if {'ksb_code', 'ksb_description'} & set(derived):
         standards = standard_ksb_texts(row.get('standard_ksb_id') for row in rows)
+    identifiers = {}
+    if 'ksb_id' in derived:
+        with connection.cursor() as cursor:
+            for chunk in _chunks({r.get('standard_ksb_id') for r in rows if r.get('standard_ksb_id')}):
+                cursor.execute(f'select s.id,{standard_ksb_compatibility_id_sql("s")} from {_internal("ksb_standard_definitions")} s where s.id=any(%s)', [chunk])
+                identifiers.update(cursor.fetchall())
     for row in rows:
         module_id, week_id = placements.get(str(row.get('component_id')), (None, None))
         code, description = standards.get(row.get('standard_ksb_id'), ('', ''))
-        values = {'module_catalogue_id': module_id or '', 'week_id': week_id,
+        values = {'ksb_id': identifiers.get(row.get('standard_ksb_id'), ''),
+                  'module_catalogue_id': module_id or '', 'week_id': week_id,
                   'ksb_code': code or '', 'ksb_description': description}
         for key in derived:
             row.setdefault(key, values[key])
@@ -585,19 +607,20 @@ def component_mapping_items(component_ids):
         for chunk in _chunks(ids):
             cursor.execute(
                 f'''
-                select m.component_id, m.id, m.ksb_id, m.weight, m.classification, m.source_type,
-                       m.source_id, m.weight_class, s.ksb_code, s.ksb_description
+                select m.component_id, m.id, {standard_ksb_compatibility_id_sql("s")}, m.weight, m.classification, m.source_type,
+                       m.source_id, m.weight_class, s.ksb_code, s.ksb_description, m.standard_ksb_id
                 from {_internal("ksb_mappings")} m
-                left join {_internal("standard_ksbs")} s on s.id = m.standard_ksb_id
+                left join {_internal("ksb_standard_definitions")} s on s.id = m.standard_ksb_id
                 where m.component_id = any(%s) and {active_condition("m")}
                 order by m.component_id, s.ksb_code, m.id
                 ''',
                 [chunk],
             )
             for (component_id, mapping_id, ksb_id, weight, classification, source_type,
-                 source_id, weight_class, code, description) in cursor.fetchall():
+                 source_id, weight_class, code, description, *official_id) in cursor.fetchall():
                 items.setdefault(component_id, []).append({
                     'id': mapping_id, 'ksb_id': ksb_id or '',
+                    **({'standard_ksb_id': official_id[0]} if official_id else {}),
                     'weight': float(weight) if weight is not None else None,
                     'ksb_code': code or '', 'source_id': source_id or '',
                     'description': description or '', 'source_type': source_type or '',

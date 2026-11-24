@@ -2,7 +2,7 @@
 
 The description is the standard KSB's, repeated on every mapping row (2.5 MB
 of a programme's 6 MB mapping read for 235 distinct rows). Curriculum reads
-defer it and project_rows() fills it from a cached standard_ksbs lookup;
+defer it and project_rows() fills it from a cached ksb_standard_definitions lookup;
 hand-written SQL through the relation still gets the column. Nothing here
 opens a connection.
 """
@@ -72,21 +72,21 @@ class ProjectionTests(SimpleTestCase):
     def test_only_the_description_is_derived_and_components_are_not_reread(self):
         rows = [{'id': 'M1', 'component_id': 'C1', 'standard_ksb_id': 7, 'module_catalogue_id': 'MOD', 'week_id': 'W',
                  'ksb_code': 'K1', 'status': 'active'}]
-        connection, cursor = fake_connection({'standard_ksbs': [(7, 'K1', 'Knows things')]})
+        connection, cursor = fake_connection({'ksb_standard_definitions': [(7, 'K1', 'Knows things')]})
         with mock.patch.object(sc, 'connection', connection):
             sc.project_rows('ksb_mappings', rows, NORMALISED_KSB)
         self.assertEqual(rows[0]['ksb_description'], 'Knows things')
         self.assertFalse(any('components' in sql for sql in cursor.queries))
 
     def test_standard_texts_are_read_once_then_served_from_memory(self):
-        connection, cursor = fake_connection({'standard_ksbs': [(7, 'K1', 'Knows things')]})
+        connection, cursor = fake_connection({'ksb_standard_definitions': [(7, 'K1', 'Knows things')]})
         with mock.patch.object(sc, 'connection', connection):
             self.assertEqual(sc.standard_ksb_texts([7]), {7: ('K1', 'Knows things')})
             self.assertEqual(sc.standard_ksb_texts([7, None]), {7: ('K1', 'Knows things')})
         self.assertEqual(len(cursor.queries), 1)
 
     def test_standard_texts_are_reread_after_the_ttl(self):
-        connection, cursor = fake_connection({'standard_ksbs': [(7, 'K1', 'Knows things')]})
+        connection, cursor = fake_connection({'ksb_standard_definitions': [(7, 'K1', 'Knows things')]})
         with mock.patch.object(sc, 'connection', connection), mock.patch.object(sc.time, 'monotonic') as clock:
             clock.return_value = 1000.0
             sc.standard_ksb_texts([7])

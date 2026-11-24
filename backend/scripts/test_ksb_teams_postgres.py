@@ -20,7 +20,9 @@ from psycopg import sql
 BACKEND = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(BACKEND))
 SUITES = ['curriculum_api.tests.CurriculumTeamsMeetingTests',
-          'curriculum_api.tests.TeamsCalendarSyncVerdictTests']
+          'curriculum_api.tests.TeamsCalendarSyncVerdictTests',
+          'curriculum_api.test_template_ksbs_postgres.TemplateKsbApiTests']
+EXPECTED_CASES = 37
 
 
 def tests(port, directory):
@@ -92,13 +94,15 @@ def tests(port, directory):
             # Existing deployment DDL is used only inside this verified empty
             # disposable cluster, never through an application connection.
             with connection.cursor() as cursor:
-                cursor.execute("ALTER TABLE curriculum.programmes ADD COLUMN status text NOT NULL DEFAULT 'active'")
+                cursor.execute("ALTER TABLE curriculum.programmes ADD COLUMN status text NOT NULL DEFAULT 'active', ADD COLUMN standard_ref text, ADD COLUMN standard_version text, ADD COLUMN updated_at timestamp")
+                # Match installed defaults omitted by unmanaged ORM fixture DDL.
+                cursor.execute('ALTER TABLE enrolment."Staff_users" ALTER COLUMN uuid SET DEFAULT gen_random_uuid(), ALTER COLUMN "Created_at" SET DEFAULT CURRENT_TIMESTAMP, ALTER COLUMN "Updated_at" SET DEFAULT CURRENT_TIMESTAMP')
                 for fixture in ('session_results_archive.sql', 'teams_calendar_create_claims.sql'):
                     cursor.execute((BACKEND / 'sql' / fixture).read_text(encoding='utf-8'))
             setup_test_environment()
             try:
                 suite = unittest.defaultTestLoader.loadTestsFromNames(SUITES)
-                assert suite.countTestCases()==31
+                assert suite.countTestCases()==EXPECTED_CASES
                 result = unittest.TextTestRunner(verbosity=2).run(suite)
                 print(f'COUNTS run={result.testsRun} failures={len(result.failures)} errors={len(result.errors)} skipped={len(result.skipped)}')
                 return int(not result.wasSuccessful())
@@ -137,4 +141,6 @@ def main():
 
 
 if __name__=='__main__':
+    if sys.argv[1:]:
+        raise SystemExit('Use test_notification_teams_postgres.py for the complete Coach integration setup.')
     raise SystemExit(main())

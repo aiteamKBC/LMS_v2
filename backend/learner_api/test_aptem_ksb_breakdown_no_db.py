@@ -72,11 +72,11 @@ class ProgressKsbBreakdownTests(unittest.TestCase):
         self.assertEqual(calls[1].args[1], [315])
         sql = calls[1].args[0]
         self.assertIn('k.progress_id=p.id', sql)
-        self.assertEqual(sql.split('WHERE')[1].split('ORDER BY')[0].strip(),
+        self.assertEqual(sql.rsplit('WHERE', 1)[1].split('ORDER BY')[0].strip(),
                          'p.learner_id=%s AND p.deleted_at IS NULL')
         for call in calls:
             self.assertTrue(call.args[0].startswith('SELECT'))
-            for forbidden in ['aptem_id', 'Aptem_users', 'aptem_component_ksbs', 'curriculum.', 'legacy_aptem_component']:
+            for forbidden in ['aptem_id', 'Aptem_users', 'aptem_component_ksbs', 'curriculum.ksb_component_mappings', 'legacy_aptem_component']:
                 self.assertNotIn(forbidden, call.args[0])
 
     def test_evidence_reader_matches_only_exact_code_and_returns_point_metadata(self):

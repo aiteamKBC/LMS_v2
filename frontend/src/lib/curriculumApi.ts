@@ -5218,22 +5218,21 @@ export interface TutorAssignmentEmailStatus {
   deliveries: { moduleId: string; emailed: boolean; lastSent: { status: string | null; at: string | null } | null }[];
 }
 
-/**
- * Whether this tutor has already been told about these deliveries.
- *
- * The answer comes from the assignment ledger, which is keyed on (tutor,
- * module) -- so it is per tutor by construction, and a module whose tutor
- * changed reports nothing for the new name. `tutorName` asks about a tutor the
- * module does not carry yet, which is what the drawer needs while somebody is
- * still choosing one.
- *
- * A read, so it must not disturb the caches a write would: see `isReadOnlyPost`
- * for the same idea on the POST side.
- */
-export function fetchTutorAssignmentEmailStatus(moduleIds: string[], tutorName: string, signal?: AbortSignal) {
+/** Notification preview identity is exclusively curriculum.tutors.id. */
+export function fetchTutorAssignmentEmailStatus(moduleIds: string[], tutorId: string, signal?: AbortSignal) {
   const params = new URLSearchParams({ moduleIds: moduleIds.join(',') });
-  if (tutorName) params.set('tutor', tutorName);
+  if (tutorId) params.set('tutorId', tutorId);
   return tutorEmailJson<TutorAssignmentEmailStatus>(`${tutorEmailUrl()}?${params.toString()}`, { signal });
+}
+
+export interface TutorNotificationOptions {
+  tutors: { id: string; name: string }[];
+  assignments: { moduleId: string; tutorId: string }[];
+}
+
+export function fetchTutorNotificationOptions(moduleIds: string[], signal?: AbortSignal) {
+  const params = new URLSearchParams({ options: '1', moduleIds: moduleIds.join(',') });
+  return tutorEmailJson<TutorNotificationOptions>(`${tutorEmailUrl()}?${params.toString()}`, { signal });
 }
 
 export function sendTutorAssignmentEmail(moduleIds: string[]) {

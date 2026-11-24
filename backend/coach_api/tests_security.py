@@ -183,6 +183,10 @@ class CoachAuthorizationSecurityTests(CoachTransactionTestCase):
         context.assert_not_called()
 
     def test_removed_coach_message_routes_return_not_found(self):
+        # The API prefix gate runs before URL resolution. Anonymous requests
+        # cannot use a removed route to bypass authentication.
+        self.assertEqual(self.client.get("/coach_api/coach/messages").status_code, 401)
+        self._authenticate(self._make_staff_account(email='removed-route@kbc.invalid', access='coach'))
         self.assertEqual(self.client.get("/coach_api/coach/messages").status_code, 404)
         self.assertEqual(self.client.get("/coach_api/coach/messages/101").status_code, 404)
         self.assertEqual(
@@ -578,5 +582,13 @@ class CoachAuthorizationSecurityTests(CoachTransactionTestCase):
             },
         )
 
+        # Anonymous callers are refused at the outer ANY-authenticated gate.
+        self.assertEqual(response.status_code, 401)
+        self.assertEqual(response.json()['code'], 'unauthenticated')
+        # An authenticated learner can reach the batch transport but must still
+        # be refused by the coach subrequest's role boundary.
+        self._authenticate(self._make_non_staff_account(role='learner'))
+        response = self._request('POST', '/coach_api/_batch/', {
+            'requests': [{'id':'caseload','url':'/coach_api/coach/caseload'}]})
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json()["responses"][0]["status"], 401)
+        self.assertEqual(response.json()['responses'][0]['status'], 403)

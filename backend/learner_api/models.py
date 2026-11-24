@@ -48,7 +48,6 @@ class SafeJSONField(models.JSONField):
 
 
 LEARNER_ACTIVITY_EVENTS_RELATION = '"Learner"."learner_activity_events"'
-LEARNER_KSBS_RELATION = '"Learner"."learner_ksbs"'
 
 
 @lru_cache(maxsize=None)
@@ -66,40 +65,6 @@ def learner_activity_events_relation_exists(using: str) -> bool:
         return False
     return bool(result and result[0])
 
-
-@lru_cache(maxsize=None)
-def learner_ksbs_relation_exists(using: str) -> bool:
-    """Is the legacy per-learner KSB snapshot compatible with its ORM model?
-
-    ``LearnerKsb`` / ``LearnerProfile.assigned_ksbs`` map the pre-normalisation
-    snapshot, kept as a read/rollback fallback. It is absent from the current
-    database, where the authoritative source is the shared, immutable
-    ``learner_ksb_assignments`` -> ``ksb_profile_versions`` graph.
-
-    ``LearnerProfile.ksbs`` already tolerates its absence, but a queryset-level
-    ``prefetch_related("assigned_ksbs")`` raises before any of that runs, so
-    callers probe here first — same shape as the activity-events check above.
-    """
-    required_columns = {
-        "id", "learner_id", "position", "code", "number", "ksb_type", "description",
-    }
-    try:
-        with connections[using].cursor() as cursor:
-            cursor.execute(
-                """
-                select array_agg(attribute.attname)
-                from pg_attribute attribute
-                where attribute.attrelid = to_regclass(%s)
-                  and attribute.attnum > 0
-                  and not attribute.attisdropped
-                """,
-                [LEARNER_KSBS_RELATION],
-            )
-            result = cursor.fetchone()
-    except DatabaseError:
-        return False
-    available_columns = set(result[0] or []) if result else set()
-    return required_columns.issubset(available_columns)
 
 
 def _serialise_quiz_ref(value):
@@ -682,6 +647,14 @@ class LearnerPlanComponentManager(models.Manager):
 class LearnerProfile(models.Model):
     """Permanent learner identity shared by active and inactive workflows."""
 
+    standard_ref = models.TextField(null=True, blank=True)
+    standard_version = models.TextField(null=True, blank=True)
+    ksb_standard = models.ForeignObject(
+        'KsbStandardVersion', from_fields=('standard_ref', 'standard_version'),
+        to_fields=('standard_ref', 'standard_version'), on_delete=models.PROTECT,
+        related_name='learners', null=True,
+    )
+
     id = models.BigAutoField(primary_key=True)
 
     # The same value as this learner's Created_users.uuid — one identity across
@@ -858,34 +831,16 @@ class LearnerProfile(models.Model):
 
     @property
     def ksbs(self):
+        if not self.standard_ref or not self.standard_version:
+            return []
         try:
-            assignment = self.ksb_assignment
-        except LearnerKsbAssignment.DoesNotExist:
-            assignment = None
-        if assignment is not None:
-            return [
-                {
-                    "code": item.code,
-                    "number": item.number,
-                    "type": item.ksb_type,
-                    "description": item.description,
-                }
-                for item in assignment.profile_version.definitions.all()
-            ]
-
-        # The retained Development snapshot has a different physical and
-        # semantic shape from the retired LearnerKsb ORM model.  Read it through
-        # the narrow adapter so missing rows remain [] while database failures
-        # stay visible to the endpoint instead of being disguised as no KSBs.
-        from .legacy_ksbs import read_legacy_learner_ksbs
-
-        cache_name = "_legacy_ksbs_cache"
-        if cache_name not in self.__dict__:
-            self.__dict__[cache_name] = read_legacy_learner_ksbs(
-                self.pk,
-                using=self._state.db or "enrolment",
-            )
-        return self.__dict__[cache_name]
+            standard = self.ksb_standard
+        except KsbStandardVersion.DoesNotExist:
+            return []
+        return [{'code': item.code, 'number': item.number, 'type': item.ksb_type,
+                 'description': item.description, 'standardKsbId': item.pk,
+                 'standardRef': item.standard_ref, 'standardVersion': item.standard_version}
+                for item in standard.definitions.all()]
 
     @property
     def training_plan(self):
@@ -1092,70 +1047,85 @@ class LearnerProfile(models.Model):
         return self.activity_feed_entries(newest_first=True)
 
 
-class LearnerKsb(models.Model):
-    learner = models.ForeignKey(LearnerProfile, on_delete=models.CASCADE, related_name="assigned_ksbs")
-    position = models.PositiveIntegerField()
-    code = models.CharField(max_length=100)
-    number = models.CharField(max_length=100, blank=True)
-    ksb_type = models.CharField(max_length=100, blank=True)
-    description = models.TextField(blank=True)
+class KsbStandardVersion(models.Model):
+    pk = models.CompositePrimaryKey('standard_ref', 'standard_version')
+    standard_ref = models.TextField()
+    standard_version = models.TextField()
+
+    @property
+    def source_profile_id(self):
+        return f"standard:{self.standard_ref.lower()}-v{self.standard_version.replace('.', '-')}"
 
     class Meta:
         managed = False
-        db_table = 'Learner"."learner_ksbs'
-        ordering = ("position", "id")
-
-
-class KsbProfileVersion(models.Model):
-    source_profile_id = models.CharField(max_length=255)
-    version_hash = models.CharField(max_length=64)
-    programme = models.TextField(blank=True)
-    definition_count = models.PositiveIntegerField(default=0)
-    created_at = models.DateTimeField(auto_now_add=True)
-
-    class Meta:
-        managed = False
-        db_table = 'curriculum"."ksb_profile_versions'
-        unique_together = (("source_profile_id", "version_hash"),)
+        db_table = 'curriculum"."ksb_standard_versions'
 
 
 class KsbDefinition(models.Model):
-    profile_version = models.ForeignKey(
-        KsbProfileVersion,
-        on_delete=models.CASCADE,
-        related_name="definitions",
+    id = models.BigAutoField(primary_key=True)
+    standard_ref = models.TextField()
+    standard_version = models.TextField()
+    standard = models.ForeignObject(
+        KsbStandardVersion, from_fields=('standard_ref', 'standard_version'),
+        to_fields=('standard_ref', 'standard_version'), on_delete=models.PROTECT,
+        related_name='definitions',
     )
-    position = models.PositiveIntegerField()
-    code = models.CharField(max_length=100)
-    number = models.CharField(max_length=100, blank=True)
-    ksb_type = models.CharField(max_length=100, blank=True)
-    description = models.TextField(blank=True)
+    code = models.TextField(db_column='ksb_code')
+    ksb_type = models.TextField()
+    description = models.TextField(db_column='ksb_description')
+
+    @property
+    def number(self):
+        return self.code[1:]
 
     class Meta:
         managed = False
-        db_table = 'curriculum"."ksb_definitions'
-        ordering = ("position", "id")
-        unique_together = (("profile_version", "code"),)
+        db_table = 'curriculum"."ksb_standard_definitions'
+        ordering = ('id',)
+        unique_together = (('standard_ref', 'standard_version', 'code'),)
 
 
-class LearnerKsbAssignment(models.Model):
-    learner = models.OneToOneField(
-        LearnerProfile,
-        on_delete=models.CASCADE,
-        primary_key=True,
-        related_name="ksb_assignment",
+class SourceActivityKsbMapping(models.Model):
+    id = models.BigAutoField(primary_key=True)
+    source_activity_id = models.BigIntegerField(null=True)
+    standard_ksb = models.ForeignKey(KsbDefinition, on_delete=models.PROTECT, null=True)
+    legacy_activity_id = models.BigIntegerField()
+    legacy_ksb_code = models.TextField()
+    legacy_ksb_snapshot = SafeJSONField(null=True)
+    version = models.BigIntegerField(default=1)
+    created_by = models.TextField()
+    updated_by = models.TextField()
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    mapping_status = models.GeneratedField(
+        expression=models.Case(
+            models.When(source_activity_id__isnull=False, standard_ksb__isnull=False,
+                        then=models.Value('verified')), default=models.Value('unresolved')),
+        output_field=models.TextField(), db_persist=True,
     )
-    profile_version = models.ForeignKey(
-        KsbProfileVersion,
-        on_delete=models.PROTECT,
-        related_name="learner_assignments",
-    )
-    assigned_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        managed = False
+        db_table = 'curriculum"."ksb_source_activity_mappings'
+
+
+class LearnerActivityKsbMapping(models.Model):
+    pk = models.CompositePrimaryKey('learner_id', 'source_kind', 'activity_id')
+    learner = models.ForeignKey(LearnerProfile, on_delete=models.PROTECT, db_column='learner_id')
+    source_kind = models.TextField(default='learner_activity')
+    activity_id = models.BigIntegerField()
+    ksbs = SafeJSONField(default=list)
+    source_preference = models.TextField(default='material')
+    source_metadata = SafeJSONField(null=True, blank=True)
+    version = models.BigIntegerField(default=1)
+    created_by = models.TextField()
+    updated_by = models.TextField()
+    created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
         managed = False
-        db_table = 'Learner"."learner_ksb_assignments'
+        db_table = 'Learner"."ksb_learner_activity_mappings'
 
 
 class LearnerTrainingPlanModule(models.Model):
@@ -1449,10 +1419,10 @@ class LearnerProgressKsb(models.Model):
     progress = models.ForeignKey(LearnerProgressEntry, on_delete=models.CASCADE, related_name="ksb_links")
     position = models.PositiveIntegerField()
     ksb_code = models.CharField(max_length=100)
-    ksb_definition = models.ForeignKey(
+    standard_ksb = models.ForeignKey(
         KsbDefinition,
-        db_column="ksb_definition_id",
-        on_delete=models.SET_NULL,
+        db_column="standard_ksb_id",
+        on_delete=models.PROTECT,
         null=True,
         blank=True,
         related_name="progress_links",
@@ -1463,6 +1433,16 @@ class LearnerProgressKsb(models.Model):
     classification = models.CharField(max_length=32, blank=True, default='')
     weight = models.DecimalField(max_digits=5, decimal_places=2, null=True, blank=True)
     weight_class = models.CharField(max_length=32, blank=True, default='')
+
+    mapping_status = models.GeneratedField(
+        expression=models.Case(models.When(standard_ksb__isnull=False, then=models.Value('verified')),
+                               default=models.Value('unresolved')),
+        output_field=models.TextField(), db_persist=True,
+    )
+    legacy_definition_snapshot = SafeJSONField(null=True, blank=True)
+    is_excluded = models.BooleanField(default=False)
+    exclusion_reason = models.TextField(null=True, blank=True)
+    exclusion_metadata = SafeJSONField(null=True, blank=True)
 
     objects = models.Manager.from_queryset(LearnerProgressQuerySet)()
 
@@ -1481,7 +1461,7 @@ class LearnerProgressKsb(models.Model):
 
     class Meta:
         managed = False
-        db_table = 'Learner"."learner_progress_ksbs'
+        db_table = 'Learner"."ksb_learner_progress'
         unique_together = (("progress", "position"),)
         ordering = ("position",)
 

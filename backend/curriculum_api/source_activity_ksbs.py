@@ -22,42 +22,46 @@ def relation(source_activity_sql=None):
     """
     if source_activity_sql and not re.fullmatch(r'[a-z_]+\.[a-z_]+', source_activity_sql):
         raise ValueError('Expected a trusted source activity column.')
-    scope = f'WHERE n.source_activity_id={source_activity_sql}' if source_activity_sql else ''
+    scope = f'AND (n.source_activity_id={source_activity_sql} OR n.source_activity_id IS NULL)' if source_activity_sql else ''
     return f'''(WITH candidates AS (
-        SELECT n.legacy_activity_id,n.legacy_ksb_code,
+        SELECT n.legacy_activity_id,n.legacy_ksb_code,n.mapping_status,
+            min(n.id) AS ordinal,
             count(DISTINCT n.standard_ksb_id) AS definitions,
             bool_and(coalesce(s.id IS NOT NULL AND source_a.id IS NOT NULL
                 AND source_a.source_material_id=n.legacy_activity_id
-                AND lower(p.ksb_profile_source_id)=
-                    'standard:'||lower(s.standard_ref)||'-v'||replace(s.standard_version,'.','-')
-                AND n.version=l.version,false)) IS TRUE AS compatible,
+                AND p.standard_ref=s.standard_ref
+                AND p.standard_version=s.standard_version,false)) IS TRUE AS compatible,
             min(s.id) AS definition_id,min(s.ksb_code) AS code,
             min(s.ksb_description) AS description,min(s.ksb_type) AS kind,
-            min(s.standard_ref) AS standard_ref,min(s.standard_version) AS standard_version
-        FROM curriculum.source_activity_ksbs_normalized n
-        LEFT JOIN curriculum.standard_ksbs s ON s.id=n.standard_ksb_id
+            min(s.standard_ref) AS standard_ref,min(s.standard_version) AS standard_version,
+            (array_agg(n.legacy_ksb_snapshot ORDER BY n.id))[1] AS snapshot
+        FROM curriculum.ksb_source_activity_mappings n
+        LEFT JOIN curriculum.ksb_standard_definitions s ON s.id=n.standard_ksb_id
         LEFT JOIN curriculum.source_activities source_a ON source_a.id=n.source_activity_id
         LEFT JOIN curriculum.source_courses c ON c.id=source_a.source_course_id
         LEFT JOIN curriculum.programmes p ON p.programme_id=c.curriculum_programme_ref
-        LEFT JOIN curriculum.source_activity_ksbs l ON l.activity_id=n.legacy_activity_id
-        {scope}
-        GROUP BY n.legacy_activity_id,n.legacy_ksb_code
-    ) SELECT l.activity_id,l.version,l.created_by,l.updated_by,l.created_at,l.updated_at,
-        coalesce(jsonb_agg(
-            CASE WHEN c.definitions=1 AND c.compatible THEN
-                e.item || jsonb_build_object('code',c.code,'description',c.description,
-                    'type',c.kind,'standardKsbId',c.definition_id,
-                    'standardRef',c.standard_ref,'standardVersion',c.standard_version,
-                    'legacyCode',e.item->>'code','resolutionStatus','verified')
-            ELSE (e.item - 'standardKsbId' - 'standardRef' - 'standardVersion') ||
-                jsonb_build_object('resolutionStatus',CASE WHEN c.definitions IS NULL
+        WHERE true {scope}
+        GROUP BY n.legacy_activity_id,n.legacy_ksb_code,n.mapping_status
+    ), metadata AS (
+        SELECT legacy_activity_id,max(version) AS version,min(created_by) AS created_by,
+            (array_agg(updated_by ORDER BY updated_at DESC,id DESC))[1] AS updated_by,
+            min(created_at) AS created_at,max(updated_at) AS updated_at
+        FROM curriculum.ksb_source_activity_mappings GROUP BY legacy_activity_id
+    ) SELECT c.legacy_activity_id AS activity_id,m.version,m.created_by,m.updated_by,m.created_at,m.updated_at,
+        jsonb_agg(
+            CASE WHEN c.mapping_status='verified' AND c.definitions=1 AND c.compatible THEN
+                coalesce(c.snapshot,'{{}}'::jsonb) || jsonb_build_object(
+                    'code',c.code,'description',c.description,'type',c.kind,
+                    'standardKsbId',c.definition_id,'standardRef',c.standard_ref,
+                    'standardVersion',c.standard_version,'legacyCode',c.legacy_ksb_code,
+                    'resolutionStatus','verified')
+            ELSE (coalesce(c.snapshot,jsonb_build_object('code',c.legacy_ksb_code))
+                - 'standardKsbId' - 'standardRef' - 'standardVersion') ||
+                jsonb_build_object('resolutionStatus',CASE WHEN c.mapping_status='unresolved'
                     THEN 'unresolved' ELSE 'ambiguous_or_incompatible' END)
-            END ORDER BY e.ordinality) FILTER (WHERE e.ordinality IS NOT NULL),'[]'::jsonb) AS ksbs
-        FROM curriculum.source_activity_ksbs l
-        LEFT JOIN LATERAL jsonb_array_elements(l.ksbs) WITH ORDINALITY e(item,ordinality) ON true
-        LEFT JOIN candidates c ON c.legacy_activity_id=l.activity_id
-            AND c.legacy_ksb_code=e.item->>'code'
-        GROUP BY l.activity_id,l.version,l.created_by,l.updated_by,l.created_at,l.updated_at)'''
+            END ORDER BY c.ordinal) AS ksbs
+        FROM candidates c JOIN metadata m ON m.legacy_activity_id=c.legacy_activity_id
+        GROUP BY c.legacy_activity_id,m.version,m.created_by,m.updated_by,m.created_at,m.updated_at)'''
 
 
 def add_mapping(connection, *, source_activity_id, standard_ksb_id, expected_version,
@@ -65,8 +69,8 @@ def add_mapping(connection, *, source_activity_id, standard_ksb_id, expected_ver
     """Add one validated relationship without deleting/replacing legacy evidence.
 
 Use a psycopg connection (or Django's underlying psycopg connection) owned by
-the caller. Transaction nesting uses a savepoint. The legacy row serializes
-all copies of an activity. Existing identical requests are idempotent, including
+the caller. Transaction nesting uses a savepoint. A transaction advisory lock serializes
+all copies of a legacy activity, including an initially empty mapping set. Existing identical requests are idempotent, including
 retries after a lost response. Conflicting provenance never overwrites a row.
 No schema creation, definition writes or Programme changes occur here.
 """
@@ -78,7 +82,7 @@ No schema creation, definition writes or Programme changes occur here.
         with connection.cursor() as cursor:
             # Lock the parent scope as well: an incompatible concurrent remap
             # cannot commit between validation and insertion.
-            cursor.execute('''SELECT a.source_material_id,p.ksb_profile_source_id
+            cursor.execute('''SELECT a.source_material_id,p.standard_ref,p.standard_version
                 FROM curriculum.source_activities a
                 JOIN curriculum.source_courses c ON c.id=a.source_course_id
                 JOIN curriculum.programmes p ON p.programme_id=c.curriculum_programme_ref
@@ -86,27 +90,23 @@ No schema creation, definition writes or Programme changes occur here.
             source = cursor.fetchone()
             if not source or source[0] is None:
                 raise ValueError('Source activity has no unambiguous legacy/Programme lineage.')
-            legacy_id, applied = source
-            cursor.execute('''SELECT ksbs,version FROM curriculum.source_activity_ksbs
-                WHERE activity_id=%s FOR UPDATE''', [legacy_id])
-            legacy = cursor.fetchone()
-            if not legacy:
-                raise ValueError('Legacy activity evidence is required; creation is not implicit.')
-            items, version = legacy
-            if isinstance(items, str):
-                items = json.loads(items)
+            legacy_id, applied_ref, applied_version = source
+            cursor.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s,0))",
+                           [f'ksb-source-activity:{legacy_id}'])
+            cursor.execute('''SELECT coalesce(max(version),1)
+                FROM curriculum.ksb_source_activity_mappings WHERE legacy_activity_id=%s''', [legacy_id])
+            version = cursor.fetchone()[0]
             cursor.execute('''SELECT ksb_code,ksb_description,ksb_type,standard_ref,standard_version
-                FROM curriculum.standard_ksbs WHERE id=%s FOR SHARE''', [standard_ksb_id])
+                FROM curriculum.ksb_standard_definitions WHERE id=%s FOR SHARE''', [standard_ksb_id])
             definition = cursor.fetchone()
             if not definition:
                 raise ValueError('Unknown canonical KSB definition.')
             code, description, kind, reference, standard_version = definition
-            exact_source = f'standard:{reference.lower()}-v{standard_version.replace(".", "-")}'
-            if (applied or '').lower() != exact_source:
+            if (applied_ref, applied_version) != (reference, standard_version):
                 raise ValueError('Definition does not match the exact applied Standard version.')
             legacy_code = legacy_code or code
             cursor.execute('''SELECT legacy_activity_id,legacy_ksb_code
-                FROM curriculum.source_activity_ksbs_normalized
+                FROM curriculum.ksb_source_activity_mappings
                 WHERE source_activity_id=%s AND standard_ksb_id=%s''',
                 [source_activity_id, standard_ksb_id])
             existing = cursor.fetchone()
@@ -118,30 +118,27 @@ No schema creation, definition writes or Programme changes occur here.
             # not invent new code remaps (including a blanket B7 -> B8 rule).
             if legacy_code != code:
                 raise ValueError('New code remapping requires a separately reviewed migration.')
-            cursor.execute('''SELECT 1 FROM curriculum.source_activity_ksbs_normalized
+            cursor.execute('''SELECT 1 FROM curriculum.ksb_source_activity_mappings
                 WHERE legacy_activity_id=%s AND standard_ksb_id=%s AND legacy_ksb_code<>%s LIMIT 1''',
                 [legacy_id, standard_ksb_id, legacy_code])
             if cursor.fetchone():
                 raise ValueError('Definition already has different legacy provenance on another activity copy.')
             if version != expected_version:
                 raise KsbVersionConflict('KSB evidence changed; reload before writing.')
-            cursor.execute('''SELECT standard_ksb_id FROM curriculum.source_activity_ksbs_normalized
+            cursor.execute('''SELECT standard_ksb_id FROM curriculum.ksb_source_activity_mappings
                 WHERE source_activity_id=%s AND legacy_ksb_code=%s''', [source_activity_id, legacy_code])
             if cursor.fetchone():
                 raise ValueError('Legacy element already has a different definition.')
-            if not any(item.get('code') == legacy_code for item in items):
-                items.append({'code': code, 'description': description, 'type': kind})
-            cursor.execute('''UPDATE curriculum.source_activity_ksbs
-                SET ksbs=%s::jsonb,version=version+1,updated_by=%s,updated_at=clock_timestamp()
-                WHERE activity_id=%s''', [json.dumps(items), actor, legacy_id])
-            cursor.execute('''UPDATE curriculum.source_activity_ksbs_normalized n
-                SET version=l.version,updated_by=l.updated_by,updated_at=l.updated_at
-                FROM curriculum.source_activity_ksbs l
-                WHERE l.activity_id=%s AND n.legacy_activity_id=l.activity_id''', [legacy_id])
-            cursor.execute('''INSERT INTO curriculum.source_activity_ksbs_normalized
+            # Unresolved snapshots remain separate historical rows. Explicitly
+            # adding a verified relationship never rewrites their identity.
+            cursor.execute('''UPDATE curriculum.ksb_source_activity_mappings
+                SET version=%s,updated_by=%s,updated_at=clock_timestamp()
+                WHERE legacy_activity_id=%s''', [version + 1, actor, legacy_id])
+            cursor.execute('''INSERT INTO curriculum.ksb_source_activity_mappings
                 (source_activity_id,standard_ksb_id,legacy_activity_id,legacy_ksb_code,
-                 version,created_by,updated_by,created_at,updated_at)
-                SELECT %s,%s,l.activity_id,%s,l.version,l.created_by,l.updated_by,l.created_at,l.updated_at
-                FROM curriculum.source_activity_ksbs l WHERE l.activity_id=%s''',
-                [source_activity_id, standard_ksb_id, legacy_code, legacy_id])
+                 legacy_ksb_snapshot,version,created_by,updated_by)
+                VALUES (%s,%s,%s,%s,%s::jsonb,%s,%s,%s)''',
+                [source_activity_id, standard_ksb_id, legacy_id, legacy_code,
+                 json.dumps({'code': code, 'description': description, 'type': kind}),
+                 version + 1, actor, actor])
             return {'version': version + 1, 'changed': True}

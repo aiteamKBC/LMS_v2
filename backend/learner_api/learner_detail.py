@@ -244,7 +244,7 @@ def _active_profile_for_source(source, source_pk, *, heal=True):
         # only when an older profile has no current KSB assignment.
         prefetch_related_objects(
             [profile],
-            "ksb_assignment__profile_version__definitions",
+            "ksb_standard__definitions",
             "progress_entries__ksb_links",
             "progress_entries__quiz_answers__chosen_answers",
             "progress_entries__quiz_answers__correct_answers",
@@ -2227,8 +2227,8 @@ def _resolve_from_master(modules, weeks, components, assigned_modules=None, *, c
                         cur, 'ksbm',
                         "SELECT mapping.component_id, standard_ksb.ksb_code AS ksb_code, "
                         "standard_ksb.ksb_description AS ksb_description, "
-                        "mapping.classification, mapping.weight, mapping.weight_class, component.module_catalogue_id "
-                        "FROM curriculum.ksb_mappings mapping "
+                        "mapping.classification, mapping.weight, mapping.weight_class, component.module_catalogue_id, mapping.standard_ksb_id "
+                        "FROM curriculum.ksb_component_mappings mapping "
                         + standard_ksb_join_sql('mapping', 'standard_ksb') + " "
                         "JOIN curriculum.components component ON component.id = mapping.component_id "
                         "WHERE component.module_catalogue_id = ANY(%s) "
@@ -2241,9 +2241,9 @@ def _resolve_from_master(modules, weeks, components, assigned_modules=None, *, c
                     if by_module is not None:
                         wanted = set(component_ids)
                         mapping_rows = sorted(
-                            ((cid, code, None if compact_content else desc, cls, weight, weight_class)
+                            ((cid, code, None if compact_content else desc, cls, weight, weight_class, *identity)
                              for rows in by_module.values()
-                             for cid, code, desc, cls, weight, weight_class, _module in rows if cid in wanted),
+                             for cid, code, desc, cls, weight, weight_class, _module, *identity in rows if cid in wanted),
                             key=lambda row: (content_cache.null_last(row[0]), content_cache.null_last(row[1])),
                         )
                 if mapping_rows is None:
@@ -2256,8 +2256,8 @@ def _resolve_from_master(modules, weeks, components, assigned_modules=None, *, c
                         f"AND {visible_child_sql('component')} ")
                     cur.execute(
                         f"SELECT mapping.component_id, standard_ksb.ksb_code AS ksb_code, {ksb_description}, "
-                        "mapping.classification, mapping.weight, mapping.weight_class "
-                        "FROM curriculum.ksb_mappings mapping "
+                        "mapping.classification, mapping.weight, mapping.weight_class, mapping.standard_ksb_id "
+                        "FROM curriculum.ksb_component_mappings mapping "
                         + standard_ksb_join_sql('mapping', 'standard_ksb') + " "
                         + component_scope +
                         f"AND {visible_child_sql('mapping')} "
@@ -2266,11 +2266,12 @@ def _resolve_from_master(modules, weeks, components, assigned_modules=None, *, c
                         [component_ids] if compact_content or plan_owned_only else [module_ids, component_ids],
                     )
                     mapping_rows = cur.fetchall()
-                for comp_id, code, description, classification, weight, weight_class in mapping_rows:
+                for comp_id, code, description, classification, weight, weight_class, *identity in mapping_rows:
                     if comp_id in inline_ksb_component_ids:
                         continue
                     ksbs_by_component.setdefault(comp_id, []).append({
                         "code": _s(code),
+                        **({"standardKsbId": identity[0]} if identity else {}),
                         "description": _s(description) or None,
                         "classification": _s(classification) or None,
                         "weight": float(weight or 0),

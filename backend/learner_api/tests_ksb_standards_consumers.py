@@ -76,27 +76,28 @@ class SkillsRadarHistoryTests(SimpleTestCase):
 class ReaderExclusionTests(SimpleTestCase):
     """Achievement readers outside curriculum_api skip registered rows."""
 
-    def test_canonical_learning_reads_apply_the_registry(self):
-        with patch.object(ksb_exclusions, 'exclusions_table_exists', return_value=True):
-            predicate = canonical_learning._ksb_not_excluded()
-        self.assertIn('learner_progress_ksb_exclusions', predicate)
-        with patch.object(ksb_exclusions, 'exclusions_table_exists', return_value=False):
-            self.assertEqual(canonical_learning._ksb_not_excluded(), '1 = 1')
+    def test_canonical_learning_reads_apply_inline_eligibility(self):
+        predicate = canonical_learning._ksb_not_excluded()
+        self.assertIn('k.is_excluded=false', predicate)
+        self.assertIn('ksb_standard_definitions', predicate)
+        self.assertNotIn('learner_progress_ksb_exclusions', predicate)
 
     def test_point_counts_query_carries_the_predicate(self):
-        with patch.object(canonical_learning, 'query', return_value=[]) as query, \
-             patch.object(ksb_exclusions, 'exclusions_table_exists', return_value=True):
+        with patch.object(canonical_learning, 'query', return_value=[]) as query:
             canonical_learning.read_ksb_point_counts(315)
         sql = query.call_args.args[0]
-        self.assertIn('learner_progress_ksb_exclusions', sql)
+        self.assertIn('k.is_excluded=false', sql)
+        self.assertIn("k.mapping_status='verified'", sql)
+        self.assertNotIn('learner_progress_ksb_exclusions', sql)
         self.assertIn('WHERE p.learner_id=%s', sql)
 
     def test_evidenced_counts_keep_the_learner_but_drop_registered_codes(self):
         cursor = MagicMock()
         cursor.db = SimpleNamespace(alias='default')
         cursor.fetchall.return_value = []
-        with patch.object(ksb_exclusions, 'exclusions_table_exists', return_value=True):
-            read_evidenced_ksb_counts_bulk(cursor, [123])
+        read_evidenced_ksb_counts_bulk(cursor, [123])
         sql = cursor.execute.call_args.args[0]
-        join = sql.split('LEFT JOIN "Learner".learner_progress_ksbs k ON')[1].split('WHERE l.aptem_id')[0]
-        self.assertIn('learner_progress_ksb_exclusions', join)
+        from learner_api.ksb_domain import official_progress_relation
+        self.assertIn('LEFT JOIN ' + official_progress_relation() + ' k ON', sql)
+        self.assertIn('k.is_excluded=false', sql)
+        self.assertIn('WHERE l.aptem_id', sql)

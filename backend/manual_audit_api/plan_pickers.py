@@ -9,7 +9,7 @@ from the group's data, or build by hand):
   members actually touched (activity_results), full catalogue as fallback;
 * assignments          -> "Last_audit".learner_assignments aggregated by the
   normalised component NAME (component ids are unique per learner);
-* KSBs                 -> curriculum.standard_ksbs (the IfATE standard list);
+* KSBs                 -> curriculum.ksb_standard_definitions (the IfATE standard list);
 * LMS groups           -> mirror groups/group_learners as membership seeds;
 * attendance modules   -> "Last_audit".learner_attendance module -> lecture
   pairs, cohort-wide (the inline activity-row name picker);
@@ -638,10 +638,10 @@ def picker_ksbs(request: HttpRequest) -> JsonResponse:
         return JsonResponse({'error': 'Select both Standard reference and version.'}, status=400)
     try:
         with connections[CONN].cursor() as cur:
-            cur.execute('select distinct standard_title from curriculum.standard_ksbs order by 1')
+            cur.execute('select distinct standard_title from curriculum.ksb_standard_definitions order by 1')
             standards = [row[0] for row in cur.fetchall()]
             if standard and not reference:
-                cur.execute('''select distinct standard_ref,standard_version from curriculum.standard_ksbs
+                cur.execute('''select distinct standard_ref,standard_version from curriculum.ksb_standard_definitions
                     where standard_title=%s''', [standard])
                 identities = cur.fetchall()
                 if len(identities) > 1:
@@ -649,7 +649,7 @@ def picker_ksbs(request: HttpRequest) -> JsonResponse:
             cur.execute(
                 '''
                 select ksb_code, ksb_type, ksb_description,id,standard_ref,standard_version
-                from curriculum.standard_ksbs
+                from curriculum.ksb_standard_definitions
                 where (%s = '' or standard_title = %s)
                   and (%s = '' or (upper(standard_ref)=upper(%s) and standard_version=%s))
                   and (%s = '' or ksb_description ilike '%%' || %s || '%%' or ksb_code ilike %s || '%%')

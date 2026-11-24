@@ -1,3 +1,4 @@
+from learner_api.ksb_domain import official_progress_relation
 """Narrow PostgreSQL inputs for programme KSB summary statistics."""
 from collections import Counter
 
@@ -101,7 +102,7 @@ def progress_totals(learner_ids, codes):
                 join (values {values}) eligible(kind, passed)
                   on p.kind is not distinct from eligible.kind
                  and p.passed is not distinct from eligible.passed
-                join "Learner"."learner_progress_ksbs" k on k.progress_id = p.id {exclusion}
+                join {official_progress_relation()} k on k.progress_id = p.id {exclusion}
                 where p.learner_id = any(%s) and k.ksb_code = any(%s)
                 group by p.learner_id, p.id, p.submitted_at, p.component_ref, k.ksb_code
             ) facts

@@ -382,7 +382,7 @@ def _decode_json(value):
     return value
 
 
-def _programme_links(programme_name):
+def _programme_links(programme_name, programme_id=None):
     """The programme ids and KSB profile references behind a programme name.
 
     The marking queue stores a display name ("MBA"), while KSB profiles are
@@ -394,23 +394,27 @@ def _programme_links(programme_name):
         with connections["default"].cursor() as cur:
             cur.execute(
                 """
-                SELECT programme_id, ksb_profile_source_id
+                SELECT programme_id, CASE WHEN standard_ref IS NOT NULL AND standard_version IS NOT NULL
+                    THEN 'standard:' || lower(standard_ref) || '-v' || replace(standard_version,'.','-') ELSE '' END
                   FROM curriculum.programmes
-                 WHERE lower(btrim(name)) = %s
+                 WHERE (%s<>'' AND programme_id=%s) OR (%s='' AND lower(btrim(name))=%s)
                 """,
-                [_s(programme_name).lower()],
+                [_s(programme_id), _s(programme_id), _s(programme_id), _s(programme_name).lower()],
             )
             rows = cur.fetchall()
     except DatabaseError:
         logger.warning("Could not resolve programme %s", programme_name, exc_info=True)
         return [], []
 
+    if len(rows) != 1:
+        return [], []
     ids = [_s(row[0]) for row in rows if _s(row[0])]
     sources = [_s(row[1]) for row in rows if _s(row[1])]
     return ids, sources
 
 
 def load_component_ksbs(activity_id):
+    from curriculum_api.canonical_read_sql import component_ksb_mappings_sql
     """The KSBs assigned to this component, as the curriculum author set them.
 
     This is the framework the model is allowed to map against. Handing over the
@@ -426,7 +430,7 @@ def load_component_ksbs(activity_id):
     try:
         with connections["default"].cursor() as cur:
             cur.execute(
-                "SELECT title, ksb_mappings FROM curriculum.components WHERE id = %s",
+                f"SELECT c.title, {component_ksb_mappings_sql('c')} FROM curriculum.components c WHERE c.id = %s",
                 [_s(activity_id)],
             )
             row = cur.fetchone()
@@ -446,7 +450,7 @@ def load_component_ksbs(activity_id):
     for item in mappings:
         if not isinstance(item, dict):
             continue
-        code = _s(item.get("ksb_code"))
+        code = _s(item.get("ksb_code") or item.get("code"))
         description = _s(item.get("description"))
         if not code:
             continue
@@ -455,7 +459,7 @@ def load_component_ksbs(activity_id):
         # only touches -- a distinction the feedback should respect.
         qualifiers = []
         classification = _s(item.get("classification"))
-        weight_class = _s(item.get("weight_class"))
+        weight_class = _s(item.get("weight_class") or item.get("weightClass"))
         if classification:
             qualifiers.append(classification)
         if weight_class:
@@ -471,27 +475,12 @@ def load_component_ksbs(activity_id):
 
 
 def load_ksb_framework(programme_name, programme_id=None):
-    """The KSB list this learner's programme is assessed against.
+    """Resolve the official standard by programme identity, or an unambiguous name.
 
-    A programme reaches its profile by any of three routes, all of which are in
-    use in the live data, so all three are tried in order of directness:
-
-    1. ``programmes.ksb_profile_source_id`` naming a profile id outright.
-    2. The same column naming an apprenticeship standard ("standard:st0845-v1-1"),
-       matched against ``ksb_profiles.standard_source_id``.
-    3. The profile's own ``programme_ids`` list containing the programme id or
-       its name.
-
-    Returns ``(text, count)``. The count lets the caller tell the coach when no
-    framework was found, rather than quietly asking the model to map KSBs with
-    nothing authoritative to map against -- which is when it starts inventing
-    codes that look real.
-
-    The source the programme applies wins: a standard is read from
-    curriculum.standard_ksbs, a named profile even once archived. The scan of
-    active profiles below is only discovery for programmes that apply nothing.
+    Historical answers retain their snapshots; removed manual profile selectors
+    never supply official assessment definitions.
     """
-    linked_ids, linked_sources = _programme_links(programme_name)
+    linked_ids, linked_sources = _programme_links(programme_name, programme_id)
     for source in linked_sources:
         resolved = resolve_source(source, using="default")
         applied = [
@@ -505,69 +494,7 @@ def load_ksb_framework(programme_name, programme_id=None):
             )
             return f"{heading}\n\n" + "\n".join(applied), len(applied)
 
-    try:
-        with connections["default"].cursor() as cur:
-            cur.execute(
-                """
-                SELECT id, name, ksb_items, programme_ids, standard_source_id
-                  FROM curriculum.ksb_profiles
-                 WHERE is_active = true
-                   AND ksb_items IS NOT NULL
-                """
-            )
-            rows = cur.fetchall()
-    except DatabaseError:
-        logger.warning("Could not load KSB profiles", exc_info=True)
-        return "", 0
-
-    wanted_ids = {_s(programme_id)} | set(linked_ids)
-    wanted_ids.discard("")
-    wanted_name = _s(programme_name).lower()
-    # "standard:st0845-v1-1" refers to standard_source_id "st0845-v1-1".
-    wanted_standards = {
-        source.split(":", 1)[1].lower() for source in linked_sources if ":" in source
-    }
-    wanted_profile_ids = {
-        source.lower() for source in linked_sources if not source.startswith("standard:")
-    }
-
-    def score(row):
-        """Lower is a more direct link, so the best match wins."""
-        profile_id, name, _items, programme_ids, standard_source = row
-        if _s(profile_id).lower() in wanted_profile_ids:
-            return 0
-        if _s(standard_source).lower() in wanted_standards:
-            return 1
-        ids = _decode_json(programme_ids) or []
-        ids = [_s(i) for i in ids] if isinstance(ids, list) else []
-        if wanted_ids & set(ids):
-            return 2
-        if wanted_name and wanted_name in {i.lower() for i in ids}:
-            return 3
-        if wanted_name and wanted_name == _s(name).lower():
-            return 4
-        return 99
-
-    candidates = sorted(((score(row), row) for row in rows), key=lambda pair: pair[0])
-    if not candidates or candidates[0][0] == 99:
-        return "", 0
-
-    _rank, (_profile_id, name, items, _programme_ids, _standard) = candidates[0]
-    items = _decode_json(items) or []
-    if not isinstance(items, list) or not items:
-        return "", 0
-
-    lines = []
-    for item in items:
-        if not isinstance(item, dict):
-            continue
-        code = _s(item.get("code"))
-        description = _s(item.get("description"))
-        if code and description:
-            lines.append(f"{code}: {description}")
-    if not lines:
-        return "", 0
-    return f"KSB profile: {name}\n\n" + "\n".join(lines), len(lines)
+    return "", 0
 
 
 # --------------------------------------------------------------------------- #
@@ -604,27 +531,6 @@ def _programme_standard(programme_name):
     if not ids:
         return ""
 
-    try:
-        with connections["default"].cursor() as cur:
-            cur.execute(
-                """
-                SELECT id, standard_source_id, programme_ids
-                  FROM curriculum.ksb_profiles
-                 WHERE is_active = true
-                   AND standard_source_id IS NOT NULL
-                """
-            )
-            rows = cur.fetchall()
-    except DatabaseError:
-        logger.warning("Could not resolve the standard for %s", programme_name, exc_info=True)
-        return ""
-
-    wanted_ids = {i.lower() for i in ids}
-    for profile_id, standard_source, programme_ids in rows:
-        linked = _decode_json(programme_ids) or []
-        linked = {_s(i).lower() for i in linked} if isinstance(linked, list) else set()
-        if wanted_ids & linked:
-            return root(standard_source)
     return ""
 
 

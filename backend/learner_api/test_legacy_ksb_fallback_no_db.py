@@ -5,68 +5,35 @@ from django.db import DatabaseError
 from django.test import SimpleTestCase
 
 from .legacy_ksbs import LEGACY_KSB_READ_SQL, read_legacy_learner_ksbs
-from .models import LearnerKsbAssignment, LearnerProfile
-
-
-class _MissingAssignmentProfile:
-    pk = 41
-    _state = SimpleNamespace(db="enrolment")
-
-    @property
-    def ksb_assignment(self):
-        raise LearnerKsbAssignment.DoesNotExist
+from .models import KsbStandardVersion, LearnerProfile
 
 
 class LearnerKsbSourceTests(SimpleTestCase):
-    def test_canonical_assignment_remains_primary(self):
+    def test_canonical_standard_remains_primary(self):
         definitions = MagicMock()
-        definitions.all.return_value = [
-            SimpleNamespace(
-                code="K1", number="1", ksb_type="Knowledge",
-                description="Canonical knowledge",
-            ),
-        ]
-        profile = SimpleNamespace(
-            ksb_assignment=SimpleNamespace(
-                profile_version=SimpleNamespace(definitions=definitions),
-            ),
-        )
-
-        with patch("learner_api.legacy_ksbs.read_legacy_learner_ksbs") as legacy:
+        definitions.all.return_value = [SimpleNamespace(pk=7, code='K1', number='1',
+            ksb_type='Knowledge', description='Canonical knowledge', standard_ref='ST0612',standard_version='1.0')]
+        profile = SimpleNamespace(standard_ref='ST0612',standard_version='1.0',
+            ksb_standard=SimpleNamespace(definitions=definitions))
+        with patch('learner_api.legacy_ksbs.read_legacy_learner_ksbs') as legacy:
             result = LearnerProfile.ksbs.fget(profile)
-
-        self.assertEqual(result, [{
-            "code": "K1",
-            "number": "1",
-            "type": "Knowledge",
-            "description": "Canonical knowledge",
-        }])
+        self.assertEqual(result,[{'code':'K1','number':'1','type':'Knowledge',
+            'description':'Canonical knowledge','standardKsbId':7,'standardRef':'ST0612','standardVersion':'1.0'}])
         legacy.assert_not_called()
 
-    def test_profile_without_assignment_uses_learner_scoped_adapter(self):
-        expected = [{
-            "code": "S2", "number": "", "type": "Skill",
-            "description": "Saved skill", "level": "Occasionally",
-        }]
-        profile = _MissingAssignmentProfile()
-        with patch(
-            "learner_api.legacy_ksbs.read_legacy_learner_ksbs",
-            return_value=expected,
-        ) as legacy:
-            result = LearnerProfile.ksbs.fget(profile)
-            repeated = LearnerProfile.ksbs.fget(profile)
-
-        self.assertEqual(result, expected)
-        self.assertIs(repeated, result)
-        legacy.assert_called_once_with(41, using="enrolment")
+    def test_unpinned_profile_never_uses_self_assessment_as_official_achievement(self):
+        profile = SimpleNamespace(standard_ref=None,standard_version=None)
+        with patch('learner_api.legacy_ksbs.read_legacy_learner_ksbs') as legacy:
+            self.assertEqual(LearnerProfile.ksbs.fget(profile),[])
+        legacy.assert_not_called()
 
     def test_database_errors_are_not_silently_changed_to_empty_data(self):
-        with patch(
-            "learner_api.legacy_ksbs.read_legacy_learner_ksbs",
-            side_effect=DatabaseError("unavailable"),
-        ):
-            with self.assertRaises(DatabaseError):
-                LearnerProfile.ksbs.fget(_MissingAssignmentProfile())
+        definitions = MagicMock()
+        definitions.all.side_effect = DatabaseError('unavailable')
+        profile = SimpleNamespace(standard_ref='ST0612',standard_version='1.0',
+            ksb_standard=SimpleNamespace(definitions=definitions))
+        with self.assertRaises(DatabaseError):
+            LearnerProfile.ksbs.fget(profile)
 
 
 class LegacyLearnerKsbAdapterTests(SimpleTestCase):

@@ -49,7 +49,7 @@ class StatsScopeTests(SimpleTestCase):
         db.executescript('''
             create table weeks (module_catalogue_id text, status text);
             create table components (id text, module_catalogue_id text, week_id text, type text, status text);
-            create table standard_ksbs (id integer, ksb_code text, ksb_description text);
+            create table ksb_standard_definitions (id integer, ksb_code text, ksb_description text, standard_ref text default 'ST0612', standard_version text default '1.0');
             create table ksb_mappings (id text, component_id text, standard_ksb_id integer,
                                       weight real, source_type text, source_id text, status text);
             insert into weeks values ('M1','active'),('M2','active'),('M2','active'),('M2','inactive');
@@ -57,7 +57,7 @@ class StatsScopeTests(SimpleTestCase):
                 ('C2','M2','W2','reading','active'),('C3','M2','W2','reading','active'),
                 ('C4','M2','W2','workplace_evidence','active'),('C5','M2','W2','reading','active'),
                 ('C7','M2','W2','reading','inactive');
-            insert into standard_ksbs values (1,'K1',''),(2,'K2',''),(9,'K9','');
+            insert into ksb_standard_definitions(id,ksb_code,ksb_description) values (1,'K1',''),(2,'K2',''),(9,'K9','');
             insert into ksb_mappings values ('A1','C1',1,4,'standard','S1','active'),
                 ('A2','C1',2,4,'standard','S1','active'),('A3','C2',1,.125,'standard','S1','active'),
                 ('A4','C3',1,.125,'standard','S1','active'),('A5','C4',1,.125,'standard','S1','active'),
@@ -69,7 +69,7 @@ class StatsScopeTests(SimpleTestCase):
         modules = [{'module_catalogue_id': key, 'title': 'Duplicate', 'programme_id': 'P1'} for key in ('M1', 'M2')]
         mappings = ('select m.*, c.module_catalogue_id, c.week_id, s.ksb_code from ksb_mappings m '
                     'left join components c on c.id = m.component_id '
-                    'left join standard_ksbs s on s.id = m.standard_ksb_id')
+                    'left join ksb_standard_definitions s on s.id = m.standard_ksb_id')
         def full_children(table, ids, **kwargs):
             fields = kwargs.get('columns')
             source = mappings if table == 'ksb_mappings' else f'select * from {table}'
@@ -81,7 +81,7 @@ class StatsScopeTests(SimpleTestCase):
              patch.object(views, 'authoring_child_rows_for_modules', side_effect=full_children), \
              patch.object(views, 'has_column', side_effect=lambda table,col: col in columns[table]), \
              patch.object(views, 'authoring_table_name', side_effect=lambda table: table), \
-             patch.object(views, 'fetch_all', side_effect=lambda sql, params: [dict(row) for row in db.execute(sql.replace('%s','?'), params)]):
+             patch.object(views, 'fetch_all', side_effect=lambda sql, params: [dict(row) for row in db.execute(sql.replace('%s','?').replace('::text',''), params)]):
             full = views.authoring_scope_data('programme', 'P1')
             grouped = views.authoring_scope_data('programme', 'P1', stats_only=True)
         self.assertEqual(grouped[0], full[0])
@@ -178,6 +178,7 @@ class LearnerProgressStatsTests(SimpleTestCase):
             'learnerKsbProgressPercentage': 67, 'learnerKsbConsumedWeight': 40,
             'learnerKsbExpectedWeight': 60, 'learnerKsbLearnerCount': 2,
             'learnerKsbCodesStarted': 2, 'learnerKsbCodesComplete': 2, 'learnerKsbCodesTotal': 2,
+            'learnerKsbAchievedCount': 3, 'learnerKsbTargetCount': 4, 'learnerKsbAchievementPercentage': 75,
         })
 
     def test_no_learners_keep_design_weight_with_zero_progress(self):

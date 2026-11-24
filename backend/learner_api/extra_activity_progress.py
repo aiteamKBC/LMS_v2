@@ -94,28 +94,37 @@ def _sync_ksbs(cursor, progress_id, activity_id, learner_id, document):
         }
         for position, (code, weight) in enumerate(_ksbs(document), 1)
     ]
-    cursor.execute('''SELECT position,ksb_code,ksb_definition_id,ksb_description,
-            source_type,source_id,classification,weight,weight_class
-        FROM "Learner".learner_progress_ksbs
+    cursor.execute('''SELECT position,ksb_code,standard_ksb_id,ksb_description,
+            source_type,source_id,classification,weight,weight_class,
+            legacy_definition_snapshot,is_excluded,exclusion_reason,exclusion_metadata
+        FROM "Learner".ksb_learner_progress
         WHERE progress_id=%s ORDER BY position''', [progress_id])
-    columns = ('position', 'ksb_code', 'ksb_definition_id', 'ksb_description',
-               'source_type', 'source_id', 'classification', 'weight', 'weight_class')
+    columns = ('position', 'ksb_code', 'standard_ksb_id', 'ksb_description',
+               'source_type', 'source_id', 'classification', 'weight', 'weight_class',
+               'legacy_definition_snapshot', 'is_excluded', 'exclusion_reason', 'exclusion_metadata')
     current = [dict(zip(columns, row)) for row in cursor.fetchall()]
     definition_ids = assigned_definition_ids(cursor, [learner_id], expected)
     expected = attach_definition_ids(
         expected, learner_id, definition_ids, existing=current,
     )
+    for row in expected:
+        row.pop('ksb_definition_id', None)
+        for key in ('legacy_definition_snapshot', 'exclusion_reason', 'exclusion_metadata'):
+            row.setdefault(key, None)
+        row.setdefault('is_excluded', False)
     if current == expected:
         return False
-    cursor.execute('DELETE FROM "Learner".learner_progress_ksbs WHERE progress_id=%s', [progress_id])
+    cursor.execute('DELETE FROM "Learner".ksb_learner_progress WHERE progress_id=%s', [progress_id])
     for row in expected:
-        cursor.execute('''INSERT INTO "Learner".learner_progress_ksbs
-            (progress_id,position,ksb_code,ksb_definition_id,ksb_description,source_type,source_id,
-             classification,weight,weight_class)
-            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)''', [
-                progress_id, row['position'], row['ksb_code'], row['ksb_definition_id'],
+        cursor.execute('''INSERT INTO "Learner".ksb_learner_progress
+            (progress_id,position,ksb_code,standard_ksb_id,ksb_description,source_type,source_id,
+             classification,weight,weight_class,legacy_definition_snapshot,is_excluded,exclusion_reason,exclusion_metadata)
+            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb,%s,%s,%s::jsonb)''', [
+                progress_id, row['position'], row['ksb_code'], row['standard_ksb_id'],
                 row['ksb_description'], row['source_type'], row['source_id'],
                 row['classification'], row['weight'], row['weight_class'],
+                _json(row['legacy_definition_snapshot']) if row.get('legacy_definition_snapshot') is not None else None, row.get('is_excluded', False),
+                row.get('exclusion_reason'), _json(row['exclusion_metadata']) if row.get('exclusion_metadata') is not None else None,
             ])
     return True
 

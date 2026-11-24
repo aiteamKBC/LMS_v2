@@ -1,7 +1,7 @@
 """Shared cache of one learner's KSB progress rows.
 
 Coach and learner pages read the same learner's progress entries joined to
-their KSB links many times over (learner_progress_ksbs was the fourth heaviest
+their KSB links many times over (ksb_learner_progress was the fourth heaviest
 statement). ``rows`` and ``rows_by_learner`` return a statement's rows from
 Valkey when they can, under:
 
@@ -18,9 +18,8 @@ Only what the statement returns is stored, zlib-compressed. A value above
 log line counts it, so one heavy learner cannot fill Valkey.
 
 Not covered by an invalidation, and so up to ``ENTRY_TTL_SECONDS`` (120 s)
-stale: changes made outside the application to the KSB exclusion registry
-("Learner".learner_progress_ksb_exclusions, which no application code writes)
-and the one-off scripts in backend/scripts/.
+stale: changes made outside the application to inline KSB exclusion fields,
+official definitions, learner pins, and the one-off scripts in backend/scripts/.
 
 Valkey unavailable: the statement runs against the database, exactly as
 before; the process-local fallback is never used. Residual risk as in

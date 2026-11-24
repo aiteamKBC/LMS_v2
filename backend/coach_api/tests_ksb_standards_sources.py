@@ -57,7 +57,7 @@ class KsbFrameworkTests(SimpleTestCase):
         self.assertEqual(count, 1)
         self.assertTrue(text.startswith('KSB profile: Old profile'))
 
-    def test_missing_source_falls_back_to_discovery_among_active_profiles(self):
+    def test_missing_source_does_not_query_retired_profiles(self):
         cursor = MagicMock()
         cursor.fetchall.return_value = []
         connection = MagicMock()
@@ -65,7 +65,7 @@ class KsbFrameworkTests(SimpleTestCase):
         with patch.object(ai_marking, '_programme_links', return_value=([], [])), \
              patch.object(ai_marking, 'connections', {'default': connection}):
             self.assertEqual(ai_marking.load_ksb_framework('Unknown'), ('', 0))
-        self.assertIn('is_active = true', cursor.execute.call_args.args[0])
+        cursor.execute.assert_not_called()
 
 
 class CaseloadExclusionTests(SimpleTestCase):
@@ -76,8 +76,7 @@ class CaseloadExclusionTests(SimpleTestCase):
         connection.alias = 'learner'
         connection.cursor.return_value.__enter__.return_value = cursor
         with patch.object(coach_views, 'get_learner_db_alias', return_value='learner'), \
-             patch.object(coach_views, 'connections', {'learner': connection}), \
-             patch.object(ksb_exclusions, 'exclusions_table_exists', return_value=True):
+             patch.object(coach_views, 'connections', {'learner': connection}):
             result = coach_views.caseload_completed_ksb_codes([SimpleNamespace(id=1)])
         self.assertEqual(result, {1: {'K2'}})
-        self.assertIn('learner_progress_ksb_exclusions', cursor.execute.call_args.args[0])
+        self.assertIn('k.is_excluded=false', cursor.execute.call_args.args[0])

@@ -59,7 +59,7 @@ class MyLearningKsbTests(SimpleTestCase):
         self.assertEqual(result, {'completed': 1, 'total': 3, 'percent': 33.33, 'status': 'ready'})
 
     def test_batch_read_uses_normalized_schema_and_scopes_historical_codes_to_owned_records(self):
-        rows = [dict(component_id='C1', normalized_mappings=[{'code': 'STALE'}]),
+        rows = [dict(component_id='C1', normalized_mappings=[{'code': 'K2'}]),
                 dict(component_id='C2', normalized_mappings=[{'code': 'S1'}])]
         lineage = {('50', 'material:7'): {'10'}, ('51', 'quiz:7'): {'11'}}
         with patch.object(ksbs.canonical, 'query', side_effect=[rows, [
@@ -69,12 +69,14 @@ class MyLearningKsbTests(SimpleTestCase):
                 component('C1', ksbMappings=[{'code': 'K1'}, {'code': 'K1'}]),
                 component('C2'),
             ]), lineage)
-        self.assertEqual(result, {'C1': {'K1'}, 'C2': {'S1'},
+        self.assertEqual(result, {'C1': {'K2'}, 'C2': {'S1'},
             'catalogue:50:material:7': {'K2'}, 'catalogue:51:quiz:7': {'B1'}})
         self.assertEqual(query.call_count, 2)
         component_statement, component_params = query.call_args_list[0].args
-        self.assertEqual(component_params, [['C1', 'C2']])
-        self.assertIn('JOIN curriculum.standard_ksbs standard_ksb', component_statement)
+        self.assertEqual(component_params, [9, ['C1', 'C2']])
+        self.assertIn('ksb_owner.id=%s', component_statement)
+        self.assertIn('standard_ksb.standard_version=ksb_version.standard_version', component_statement)
+        self.assertIn('JOIN curriculum.ksb_standard_definitions standard_ksb', component_statement)
         self.assertIn('standard_ksb.id = mapping.standard_ksb_id', component_statement)
         self.assertIn("'code',standard_ksb.ksb_code", component_statement)
         self.assertNotIn('c.ksb_mappings', component_statement)
@@ -115,5 +117,5 @@ class MyLearningKsbTests(SimpleTestCase):
         self.assertEqual(result['EMPTY'], set())
         self.assertEqual(result['ENCODED'], {'K2'})
         sql = query.call_args.args[0]
-        self.assertIn(ksbs.component_ksb_codes_sql('c'), sql)
+        self.assertIn(ksbs.component_ksb_codes_sql('c', eligibility_sql=ksbs.learner_definition_condition('standard_ksb','%s')), sql)
         self.assertNotIn('c.ksb_mappings', sql)
