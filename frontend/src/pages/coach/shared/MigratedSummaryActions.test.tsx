@@ -10,7 +10,7 @@ vi.mock('@/api/reviewInstances', () => ({
 afterEach(() => { cleanup(); vi.clearAllMocks(); });
 const props = {
   instanceId: 'imported-review:synthetic', editable: true, teamsAvailable: true,
-  busy: false, unsaved: false, onResult: vi.fn(), onBusyChange: vi.fn(),
+  busy: false, onResult: vi.fn(), onBusyChange: vi.fn(),
   onGenerationBusyChange: vi.fn(), onApplySuggestion: vi.fn(),
 };
 

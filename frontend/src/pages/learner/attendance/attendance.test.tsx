@@ -105,7 +105,13 @@ describe('Attendance lecture workspace', () => {
       rawStatus: 'absent', effectiveStatus: 'made_up', effectiveAttendance: 1, catchupStatus: 'completed',
       recovery: { method: 'alternative', date: '2026-09-02' } })];
     mount();
-    await waitFor(() => expect(screen.queryByRole('article', { name: 'Manually confirmed lecture' })).not.toBeInTheDocument());
+    const manual = await screen.findByRole('article', { name: 'Manually confirmed lecture' });
+    expect(within(manual).getByText('Attended')).toBeInTheDocument();
+    expect(within(manual).getByText('Attendance confirmed manually')).toBeInTheDocument();
+    expect(within(manual).queryByText('Made up')).not.toBeInTheDocument();
+    expect(within(manual).queryByRole('button', { name: 'Book Catchup Session' })).not.toBeInTheDocument();
+    expect(screen.getByText('Total Lectures').parentElement).toHaveTextContent('3');
+    expect(screen.getByText('100% attendance')).toBeInTheDocument();
     const verified = await screen.findByRole('article', { name: 'Verified lecture' });
     expect(within(verified).getByText('Attended')).toBeInTheDocument();
     expect(within(verified).queryByText('Attendance confirmed manually')).not.toBeInTheDocument();
@@ -114,6 +120,46 @@ describe('Attendance lecture workspace', () => {
     expect(within(recovered).getByText('Made up via alternative')).toBeInTheDocument();
     expect(lectureCounts(peekAttendanceWorkspace(kind as 'commercial' | 'apprenticeship', '12')!.lectures))
       .toMatchObject({ attended: 3, absent: 0, covered: 1, rate: 100 });
+  });
+
+  it('keeps corrected weeks in the register, counts, filters and activities without changing saved evidence', async () => {
+    const weeks = ['04', '05', '06', '07', '08', '09', '10'];
+    const dates = ['2026-10-09', '2026-10-16', '2026-10-23', '2026-10-30', '2026-11-06', '2026-11-13', '2026-11-20'];
+    payload.lectures = weeks.map((week, index) => {
+      const corrected = !['04', '08'].includes(week);
+      return lecture({ id: `week-${week}`, title: `Week ${week}`, date: dates[index],
+        status: corrected ? 'present' as AttendanceLecture['status'] : 'absent',
+        rawStatus: ['absent', 'pending', 'unmarked'][index % 3],
+        effectiveStatus: corrected ? 'present' : 'absent', effectiveAttendance: corrected ? 1 : 0,
+        componentHref: `/learner/component/apprenticeship/12/week-${week}`,
+      });
+    });
+    payload.lectures.push(lecture({ id: 'cancelled', title: 'Cancelled lecture', status: 'cancelled' }));
+    const before = structuredClone(payload);
+    mount();
+    await screen.findByRole('article', { name: 'Week 10' });
+    expect(screen.getAllByRole('article').map(row => within(row).getByRole('heading').textContent))
+      .toEqual([...weeks].reverse().map(week => `Week ${week}`));
+    expect(screen.queryByRole('article', { name: 'Cancelled lecture' })).not.toBeInTheDocument();
+    expect(screen.getByText('Total Lectures').parentElement).toHaveTextContent('7');
+    expect(screen.getByText('71% attendance')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Group by month' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Expand all months' }));
+    expect(screen.getAllByRole('article')).toHaveLength(7);
+    fireEvent.click(screen.getByRole('button', { name: 'Group by month' }));
+    fireEvent.click(screen.getByText('Search & filters'));
+    fireEvent.click(screen.getByRole('button', { name: /^Attended\s*5$/ }));
+    expect(screen.getAllByRole('article').map(row => within(row).getByRole('heading').textContent))
+      .toEqual(['Week 10', 'Week 09', 'Week 07', 'Week 06', 'Week 05']);
+    const corrected = screen.getByRole('article', { name: 'Week 05' });
+    fireEvent.click(within(corrected).getByRole('button', { name: 'Open Activities' }));
+    expect(screen.getByTestId('location')).toHaveTextContent('/learner/component/apprenticeship/12/week-05');
+    fireEvent.click(screen.getByRole('button', { name: /^Absent\s*2$/ }));
+    expect(screen.getAllByRole('article').map(row => within(row).getByRole('heading').textContent))
+      .toEqual(['Week 08', 'Week 04']);
+    expect(payload).toEqual(before);
+    expect(posts).toEqual([]);
   });
 
   it.each(['apprenticeship', 'commercial'])('keeps learning-only modules out of the %s attendance selector, default and totals', async kind => {

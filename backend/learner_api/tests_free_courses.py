@@ -59,7 +59,7 @@ class NormalizeFreeCoursesTests(SimpleTestCase):
 
 class FreeCourseActivityMapperTests(SimpleTestCase):
     """`_activity` maps an authored component to the learner viewer shape and
-    carries NO hours/KSB/progress fields (free courses have none by design)."""
+    carries curriculum allocation for Required, without awarded hours/KSBs."""
 
     def test_reading_maps_content_html_and_no_progress_fields(self):
         out = _activity({
@@ -67,13 +67,15 @@ class FreeCourseActivityMapperTests(SimpleTestCase):
             "title": "Intro reading",
             "type": "reading",
             "description": "Read this",
+            "expectedOtjh": 0.75,
             "settings": {"readingContent": "<p>Hello</p>", "expectedOtjh": 5, "downloadAllowed": True},
         })
         self.assertEqual(out["componentId"], "FREECOMP-1")
         self.assertEqual(out["contentHtml"], "<p>Hello</p>")
         self.assertTrue(out["downloadAllowed"])
-        # Nothing hours/KSB/progress leaks through.
-        for banned in ("expectedOtjh", "ksbMappings", "completed", "planned"):
+        # Only authored allocation, not a settings override or awarded hours.
+        self.assertEqual(out['expectedOtjh'], 0.75)
+        for banned in ("ksbMappings", "completed", "planned", "actualHours"):
             self.assertNotIn(banned, out)
 
     def test_video_url_resolved_from_settings(self):

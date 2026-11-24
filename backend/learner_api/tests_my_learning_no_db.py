@@ -119,13 +119,95 @@ class MyLearningAggregateTests(SimpleTestCase):
         self.assertEqual(card['completedActivityCount'], 0)
         self.assertEqual(card['activityCount'], 2)
 
-    def cards(self, content, courses=(), definitions=(), done=None, started=None, hours=None, meta=None, records=()):
+    def cards(self, content, courses=(), definitions=(), done=None, started=None, hours=None, meta=None, records=(), credits=(), **options):
         from . import course_catalogue_display
         meta = meta or metadata()
         with patch.object(course_catalogue_display,'read_export_placements',return_value=[]):
             return learning.assemble_cards(content,meta['current_subjects'],list(courses),list(definitions),
                 done or set(),started or set(),hours or __import__('collections').defaultdict(float),
-                meta,list(records),{'M1':{'id':'M1','title':'One','total_otjh':10,'educational_session_count':2}},[])
+                meta,list(records),{'M1':{'id':'M1','title':'One','total_otjh':10,'educational_session_count':2}},list(credits),**options)
+
+    def test_certificate_hours_use_owned_accepted_records_and_live_credit_without_double_counting(self):
+        records = [
+            dict(id=1, module_ref='M1', component_ref='C1', accepted=True, actual_seconds=3600),
+            dict(id=2, module_ref='M1', component_ref='LIVE', accepted=True, actual_seconds=1800),
+            dict(id=3, module_ref='M1', accepted=False, actual_seconds=36000),
+            dict(id=4, module_ref='M2', accepted=True, actual_seconds=72000),
+        ]
+        credits = [dict(moduleId='M1', componentId='LIVE', hours=0.5, verifiedSeconds=1800),
+                   dict(moduleId='M2', componentId='OTHER', hours=20, verifiedSeconds=72000)]
+        cards, _ = self.cards(native([component()]), records=records, credits=credits, include_activity_items=True)
+        self.assertEqual(cards[0]['_actualLearningHours'], 1.5)
+        self.assertEqual(cards[0]['actualHours'], 1.5)
+        self.assertEqual(cards[0]['planModule']['total_otjh'], 10)
+        cards, _ = self.cards(native([component()]), records=records, credits=credits)
+        self.assertNotIn('_actualLearningHours', cards[0])
+
+    def test_required_certificate_counts_ignore_optional_work_and_hour_weights(self):
+        content = native([component('R1', expectedOtjh=0.01), component('R2', expectedOtjh=20),
+                          component('EXTRA', expectedOtjh=0), component('Q', expectedOtjh=0, isQuiz=True,
+                                    quizMeta={'quizId': 1}, pointNumber=1), component('R1', expectedOtjh=0.01)])
+        content['componentProgress'] = [{'componentId': 'R1', 'kind': 'component'}, {'componentId': 'EXTRA', 'kind': 'component'}]
+        content['quizAttempts'] = [{'componentId': 'Q', 'quizId': 1, 'passed': True}]
+        cards, _ = self.cards(content, include_activity_items=True)
+        card = cards[0]
+        self.assertEqual((card['activityCount'], card['completedActivityCount'], card['progress']), (4, 3, 75))
+        self.assertEqual((card['requiredActivityCount'], card['completedRequiredActivityCount']), (2, 1))
+        # The directory's shared all-activity item contract stays unchanged.
+        self.assertEqual(len(card['_activityItems']), 4)
+        self.assertTrue(all(set(item) == {'completed', 'schedule'} for item in card['_activityItems']))
+
+    def test_no_allocated_required_work_does_not_use_completed_optional_work(self):
+        values = [None, 0, -1, float('nan'), float('inf'), True, '1']
+        content = native([component(str(i), expectedOtjh=value) for i, value in enumerate(values)])
+        content['componentProgress'] = [{'componentId': str(i), 'kind': 'component'} for i in range(len(values))]
+        cards, _ = self.cards(content)
+        self.assertEqual(cards[0]['progress'], 100)
+        self.assertEqual((cards[0]['requiredActivityCount'], cards[0]['completedRequiredActivityCount']), (0, 0))
+
+    def test_legacy_required_counts_match_mapped_planned_time_in_the_activity_viewer(self):
+        course = {'id': 3, 'source_course_ref': '50', 'source_course_title': 'Old'}
+        definitions = [dict(source_course_ref='50', source_course_title='Old', source_activity_id=f'material:{i}',
+                            source_activity_title=f'Lesson {i}') for i in range(3)]
+        records = [dict(id=i, accepted=i != 1, completed=i != 1, actual_seconds=3600,
+                        **({'journal_planned_hours': hours} if hours is not None else {}),
+                        sources=[dict(source_system='old_lms', source_course_ref='50', source_activity_id=f'material:{i}')])
+                   for i, hours in enumerate([0.5, 10, None])]
+        with patch.object(canonical, 'query', return_value=definitions):
+            rows, done, started, hours, _ = learning.course_facts({'id': 9}, records, [course])
+        cards, _ = self.cards(native(), [course], rows, done, started, hours, records=records)
+        card = next(row for row in cards if row['id'] == 'legacy:50')
+        self.assertEqual((card['requiredActivityCount'], card['completedRequiredActivityCount']), (2, 1))
+        viewer = canonical.recorded_course_items([course], definitions, records, include_catalogue=True)[0]
+        self.assertEqual(sum(item['planned_hours_mapped'] and item['planned'] > 0 for item in viewer), card['requiredActivityCount'])
+        self.assertEqual(card['actualHours'], 2)
+
+    def test_certificate_hours_ignore_pending_transfer_summary(self):
+        meta = metadata()
+        meta['progress_transfers'] = [dict(status='pending', courseRef='legacy:50', moduleId='M1',
+            percent=80, hours=99, activityCount=5, completedActivityCount=4)]
+        course = dict(id=3, source_course_ref='50', source_course_title='Old')
+        cards, _ = self.cards(native(), [course], hours={'50': 2.25}, meta=meta, include_activity_items=True)
+        old = next(card for card in cards if card['id'] == 'legacy:50')
+        self.assertEqual(old['actualHours'], 99)  # Existing pending-preview contract.
+        self.assertEqual(old['_actualLearningHours'], 2.25)
+
+    def test_certificate_hours_retain_approved_transfer_and_only_new_native_hours(self):
+        meta = metadata()
+        meta['progress_transfers'] = [dict(status='approved', courseRef='legacy:50', moduleId='M1',
+            percent=80, hours=2.25, recordIds=['1'])]
+        records = [dict(id=1, module_ref='M1', accepted=True, actual_seconds=8100),
+                   dict(id=2, module_ref='M1', accepted=True, actual_seconds=1800)]
+        cards, _ = self.cards(native([component()]), meta=meta, records=records, include_activity_items=True)
+        self.assertEqual(cards[0]['_actualLearningHours'], 2.75)
+        self.assertEqual(cards[0]['actualHours'], 2.75)
+
+    def test_demonstration_hours_are_not_certificate_hours(self):
+        course = dict(id=3, source_course_ref='50', source_course_title='Demo', demo_progress={'percent': 80})
+        cards, _ = self.cards(native(), [course], hours={'50': 2.25}, include_activity_items=True)
+        demo = next(card for card in cards if card['id'] == 'legacy:50')
+        self.assertTrue(demo['demoProgress'])
+        self.assertIsNone(demo['_actualLearningHours'])
 
     def test_quiz_pass_component_ownership_attendance_and_retained_completion(self):
         content=native([component(), component('Q1',isQuiz=True,quizMeta={'quizId':1}),
@@ -221,7 +303,7 @@ class MyLearningIdentityProjectionTests(SimpleTestCase):
         from . import learner_detail
         cursor=MagicMock()
         cursor.fetchall.return_value=[('L1','W1','M1','live_session','Live','',
-            {'sessionDate':'2026-10-25','sessionDateTimeUtc':'2026-10-25T10:00:00Z','teamsLiveSessionId':'S1'},None,0,None,False,None,False)]
+            {'sessionDate':'2026-10-25','sessionDateTimeUtc':'2026-10-25T10:00:00Z','teamsLiveSessionId':'S1'},None,0,None,False,None,False,1.5)]
         connection=MagicMock();connection.cursor.return_value.__enter__.return_value=cursor
         existing=[{'module':'Old CSV','week':'Legacy week','component':'Legacy lesson'}]
         legacy_weeks=[{'module':'Old CSV','week':'Legacy week'}]
@@ -229,15 +311,31 @@ class MyLearningIdentityProjectionTests(SimpleTestCase):
         with patch.object(learner_detail,'connections',{'enrolment':connection}):
             titles,weeks,rows=learner_detail._resolve_from_master(['Old CSV'],legacy_weeks,existing,
                 assigned_modules=[{'moduleId':'M1'}],compact=True,identities_only=True,catalogue_facts=True,
-                resolved_metadata=resolved,live_session_ids=False,strict=True)
+                resolved_metadata=resolved,live_session_ids=False,strict=True,expected_otjh=True)
         self.assertEqual(titles,['One','Old CSV'])
         self.assertEqual(rows[0]['type'],'live_session')
         self.assertEqual(rows[0]['teamsLiveSessionId'],'S1')
+        self.assertEqual(rows[0]['expectedOtjh'], 1.5)
         self.assertEqual(rows[-1]['component'],'Legacy lesson')
         sql=cursor.execute.call_args.args[0]
         self.assertIn("'extraTeamsLiveSessionId'",sql)
         self.assertNotIn('ksb_descriptions',sql)
         self.assertEqual(cursor.execute.call_count,1)
+
+    def test_compact_catalogue_requests_required_allocations_without_extra_master_lookups(self):
+        from . import weekly_learning as weekly
+        source = SimpleNamespace(id=7, programme='', cohort='', group='')
+        components = [component(expectedOtjh=0.5)]
+        with patch('learner_api.learner_detail._resolve_from_master', return_value=(['One'], [], components)) as resolve, \
+             patch('learner_api.learner_detail._append_week_quizzes', side_effect=lambda w,c,**kw: (w,c)), \
+             patch('learner_api.learner_detail._annotate_otjh') as annotate, \
+             patch('learner_api.live_session_access.annotate_access', side_effect=lambda s,c: c), \
+             patch.object(weekly, 'get_training_plan', return_value=[]):
+            result = weekly.build_learning_content_summary(source, 7, assigned_modules=[{'moduleId': 'M1'}],
+                identities_only=True, preserve_legacy=True, strict=True, resolved_metadata={}, progress=([], [], []))
+        self.assertTrue(resolve.call_args.kwargs['expected_otjh'])
+        annotate.assert_called_once_with([])
+        self.assertEqual(result['components'][0]['expectedOtjh'], 0.5)
 
     def test_request_context_reuses_metadata_and_never_reads_unrelated_course_rows_for_detail(self):
         from . import models, weekly_learning, dashboard_training, teams_attendance, live_session_progress, subject_origins, previous_learning_groups, builder_activity_dates, student_activity

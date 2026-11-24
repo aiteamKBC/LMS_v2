@@ -1,4 +1,5 @@
-import { useMemo, useState, type CSSProperties, type MouseEvent } from 'react';
+import { useState, type CSSProperties, type MouseEvent } from 'react';
+import { QRCodeSVG } from 'qrcode.react';
 
 interface CertificateLayout {
   primaryColor?: string;
@@ -20,6 +21,7 @@ interface CertificateLayout {
   certifyText?: string;
   recognitionText?: string;
   progressPrefix?: string;
+  otjHoursLabel?: string;
   instructorLabel?: string;
   awardedLabel?: string;
   certificateNumberLabel?: string;
@@ -31,6 +33,7 @@ interface CertificateLayout {
   showFooter?: boolean;
   showWebsite?: boolean;
   showProgress?: boolean;
+  showOtjHours?: boolean;
   decorationSize?: number;
   logoSize?: number;
   titleSize?: number;
@@ -50,6 +53,7 @@ export interface CertificateDocumentProps {
   learnerName: string;
   programmeName: string;
   progressLabel: string;
+  otjHours?: number | null;
   certificateNumber?: string | null;
   awardedOn?: string | null;
   verificationUrl?: string | null;
@@ -72,6 +76,7 @@ export type CertificateElementId =
   | 'programmeName'
   | 'recognitionText'
   | 'progress'
+  | 'otjHours'
   | 'qr'
   | 'instructor'
   | 'awardDate'
@@ -222,85 +227,41 @@ function FlourishCorner({ className, primary, accent }: { className: string; pri
   );
 }
 
-function QrFallback({ value, color }: { value?: string | null; color: string }) {
-  const text = value || 'KBC certificate verification';
-  const modules = useMemo(() => Array.from({ length: 625 }, (_, index) => {
-    const x = index % 25;
-    const y = Math.floor(index / 25);
-    const inFinder = (x < 8 && y < 8) || (x > 16 && y < 8) || (x < 8 && y > 16);
-    if (inFinder) return false;
-    const code = text.charCodeAt(index % text.length) || 0;
-    return ((code + index * 11 + x * 7 + y * 13) % 9) < 4;
-  }), [text]);
-  const finder = (x: number, y: number) => (
-    <>
-      <rect x={x} y={y} width="28" height="28" fill="currentColor" />
-      <rect x={x + 4} y={y + 4} width="20" height="20" fill="white" />
-      <rect x={x + 10} y={y + 10} width="8" height="8" fill="currentColor" />
-    </>
-  );
-
-  return (
-    <svg viewBox="0 0 116 116" className="h-full w-full text-black" aria-hidden="true">
-      <rect width="116" height="116" fill="white" />
-      {modules.map((filled, index) => (
-        filled ? <rect key={index} x={8 + (index % 25) * 4} y={8 + Math.floor(index / 25) * 4} width="3.4" height="3.4" fill="currentColor" /> : null
-      ))}
-      {finder(8, 8)}
-      {finder(80, 8)}
-      {finder(8, 80)}
-      <rect x="96" y="96" width="8" height="8" rx="1.5" fill={color} />
-    </svg>
-  );
-}
-
-function qrImageSource(value?: string | null, size = 180) {
-  const target = absoluteUrl(value);
-  return target
-    ? `https://api.qrserver.com/v1/create-qr-code/?size=${size}x${size}&margin=14&data=${encodeURIComponent(target)}`
-    : '';
-}
-
 function absoluteUrl(value?: string | null) {
   const text = String(value || '').trim();
-  if (!text) return '';
-  if (/^https?:\/\//i.test(text)) return text;
-  if (typeof window === 'undefined') return text;
-  return `${window.location.origin}${text.startsWith('/') ? text : `/${text}`}`;
+  if (!text || (!/^https?:\/\//i.test(text) && !text.startsWith('/'))) return '';
+  try {
+    const url = new URL(text, typeof window === 'undefined' ? undefined : window.location.origin);
+    return url.protocol === 'https:' || url.protocol === 'http:' ? url.href : '';
+  } catch {
+    return '';
+  }
 }
 
-function QrMark({ value, color }: { value?: string | null; color: string }) {
-  const [imageFailed, setImageFailed] = useState(false);
-  const source = qrImageSource(value);
+function VerificationQr({ value, size }: { value: string; size: number }) {
+  // Inline SVG is available immediately, including offline and in PDF exports.
+  // Keep a white quiet zone and dark modules regardless of the template colours.
+  return <QRCodeSVG value={value} size={size} level="M" marginSize={4}
+    bgColor="#ffffff" fgColor="#000000" className="h-full w-full"
+    role="img" aria-label="Certificate verification QR code" data-certificate-qr="ready" />;
+}
 
+function QrMark({ value }: { value: string }) {
   return (
     <div className="w-[calc(11.2cqw*var(--certificate-qr-scale))] rounded-[0.9cqw] bg-white p-[0.72cqw] text-black shadow-sm ring-1 ring-slate-200" title={value || undefined}>
       <div className="aspect-square w-full overflow-hidden rounded-[0.28cqw] bg-white">
-        {source && !imageFailed ? (
-          <img
-            src={source}
-            alt="Certificate verification QR code"
-            crossOrigin="anonymous"
-            className="h-full w-full object-contain"
-            loading="eager"
-            onError={() => setImageFailed(true)}
-          />
-        ) : (
-          <QrFallback value={value} color={color} />
+        {value ? <VerificationQr value={value} size={180} /> : (
+          <p data-certificate-qr="unavailable" className="grid h-full place-items-center text-[0.8cqw] text-slate-600">Verification link unavailable</p>
         )}
       </div>
       <p className="mt-[0.45cqw] text-center text-[0.72cqw] font-bold uppercase tracking-[0.14em] text-slate-500">
-        Scan to verify
+        {value ? 'Scan to verify' : 'QR unavailable'}
       </p>
     </div>
   );
 }
 
-function QrPreview({ value, color, onClose }: { value?: string | null; color: string; onClose: () => void }) {
-  const [imageFailed, setImageFailed] = useState(false);
-  const source = qrImageSource(value, 360);
-  const target = absoluteUrl(value);
-
+function QrPreview({ value, color, onClose }: { value: string; color: string; onClose: () => void }) {
   return (
     <div className="fixed inset-0 z-[120] flex items-center justify-center bg-black/60 p-5" onClick={onClose}>
       <div className="w-full max-w-sm rounded-3xl bg-white p-5 text-center shadow-2xl" onClick={(event) => event.stopPropagation()}>
@@ -314,25 +275,15 @@ function QrPreview({ value, color, onClose }: { value?: string | null; color: st
           </button>
         </div>
         <div className="mx-auto aspect-square w-72 max-w-full rounded-2xl border border-foreground-100 bg-white p-4 shadow-sm">
-          {source && !imageFailed ? (
-            <img
-              src={source}
-              alt="Certificate verification QR code"
-              crossOrigin="anonymous"
-              className="h-full w-full object-contain"
-              onError={() => setImageFailed(true)}
-            />
-          ) : (
-            <QrFallback value={value} color={color} />
-          )}
+          <VerificationQr value={value} size={360} />
         </div>
-        {target ? (
+        {value ? (
           <>
             <p className="mt-4 break-all rounded-xl bg-background-100 p-3 text-xs font-semibold text-foreground-600">
-              {target}
+              {value}
             </p>
             <a
-              href={target}
+              href={value}
               target="_blank"
               rel="noreferrer"
               className="mt-4 inline-flex rounded-xl px-4 py-2 text-sm font-bold text-white"
@@ -359,12 +310,20 @@ function percentValue(value: unknown, fallback: number, min = 0, max = 100) {
   return Math.min(Math.max(numeric, min), max);
 }
 
+function formatOtjHours(hours: number) {
+  const seconds = Math.round(hours * 3600);
+  return [Math.floor(seconds / 3600) ? `${Math.floor(seconds / 3600)}h` : '',
+    Math.floor(seconds % 3600 / 60) ? `${Math.floor(seconds % 3600 / 60)}m` : '',
+    seconds % 60 ? `${seconds % 60}s` : ''].filter(Boolean).join(' ') || '0h';
+}
+
 export function CertificateDocument({
   title,
   bodyText,
   learnerName,
   programmeName,
   progressLabel,
+  otjHours,
   certificateNumber,
   awardedOn,
   verificationUrl,
@@ -376,6 +335,7 @@ export function CertificateDocument({
   onSelectElement,
 }: CertificateDocumentProps) {
   const [qrPreviewOpen, setQrPreviewOpen] = useState(false);
+  const verificationTarget = absoluteUrl(verificationUrl);
   const primary = layoutConfig?.primaryColor || '#5b21b6';
   const accent = layoutConfig?.accentColor || '#c99a2e';
   const decorationStyle = layoutConfig?.decorationStyle || 'waves';
@@ -397,6 +357,9 @@ export function CertificateDocument({
   const certifyText = layoutConfig?.certifyText || 'This is to certify that';
   const recognitionText = layoutConfig?.recognitionText || 'in recognition of their dedication, knowledge, and commitment to professional excellence.';
   const progressPrefix = layoutConfig?.progressPrefix || 'with progress';
+  const otjHoursLabel = layoutConfig?.otjHoursLabel || 'OTJ hours completed';
+  const otjHoursText = typeof otjHours === 'number' && Number.isFinite(otjHours) && otjHours >= 0
+    ? formatOtjHours(otjHours) : null;
   const instructorLabel = layoutConfig?.instructorLabel || 'Instructor';
   const awardedLabel = layoutConfig?.awardedLabel || 'Awarded on';
   const certificateNumberLabel = layoutConfig?.certificateNumberLabel || 'Certificate Number';
@@ -408,6 +371,7 @@ export function CertificateDocument({
   const showFooter = layoutConfig?.showFooter !== false;
   const showWebsite = layoutConfig?.showWebsite !== false;
   const showProgress = layoutConfig?.showProgress !== false;
+  const showOtjHours = layoutConfig?.showOtjHours !== false && otjHoursText !== null;
   const extraSignatureFields = Array.isArray(layoutConfig?.extraSignatureFields)
     ? layoutConfig.extraSignatureFields
         .map((field) => ({
@@ -451,7 +415,7 @@ export function CertificateDocument({
       selectElement('qr', event);
       return;
     }
-    if (verificationUrl) {
+    if (verificationTarget) {
       setQrPreviewOpen(true);
     }
   };
@@ -638,11 +602,12 @@ export function CertificateDocument({
         <p onClick={(event) => selectElement('programmeName', event)} className={`${editorClass('programmeName')} mt-[0.55cqw] font-sans text-[calc(1.45cqw*var(--certificate-body-scale))] font-black italic leading-[1.18] text-black`}>{programmeName}</p>
         <p onClick={(event) => selectElement('recognitionText', event)} className={editorClass('recognitionText')}>{recognitionText}</p>
         {showProgress ? <p onClick={(event) => selectElement('progress', event)} className={editorClass('progress')}>{progressPrefix} <span className="font-sans font-black italic text-black">{progressLabel}</span></p> : null}
+        {showOtjHours ? <p onClick={(event) => selectElement('otjHours', event)} className={editorClass('otjHours')}>{otjHoursLabel}: <span className="font-sans font-black italic text-black">{otjHoursText}</span></p> : null}
       </div>
 
       {showQr ? (
-        <div onClick={handleQrClick} className={`${editorClass('qr')} ${!editable && verificationUrl ? 'cursor-pointer' : ''} absolute bottom-[12%] left-[5.2%]`}>
-          <QrMark value={verificationUrl} color={primary} />
+        <div onClick={handleQrClick} className={`${editorClass('qr')} ${!editable && verificationTarget ? 'cursor-pointer' : ''} absolute bottom-[12%] left-[5.2%]`}>
+          <QrMark value={verificationTarget} />
         </div>
       ) : null}
 
@@ -684,7 +649,7 @@ export function CertificateDocument({
       ) : null}
       {revisionLabel && <p className="absolute bottom-[4%] left-[12%] right-[12%] text-[1cqw] leading-none font-semibold text-slate-600">{revisionLabel}</p>}
     </div>
-    {qrPreviewOpen ? <QrPreview value={verificationUrl} color={primary} onClose={() => setQrPreviewOpen(false)} /> : null}
+    {qrPreviewOpen && verificationTarget ? <QrPreview value={verificationTarget} color={primary} onClose={() => setQrPreviewOpen(false)} /> : null}
     </>
   );
 }

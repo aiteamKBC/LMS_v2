@@ -10,6 +10,7 @@ from django.db import DatabaseError
 from django.test import RequestFactory, SimpleTestCase
 
 from . import admin_certificates as api
+from learner_api import certificates
 
 
 class IssuedCertificateAdminTests(SimpleTestCase):
@@ -32,9 +33,17 @@ class IssuedCertificateAdminTests(SimpleTestCase):
                              layoutConfig=dict(instructorName='Tutor', primaryColor='#112233', backgroundImageUrl='data:image/png;base64,AAAA'),
                              trackableDone=4, trackableTotal=5, minimumProgress=80, customField='keep')
         self.row = (11, 'KBC-TEST', 1, 3, 80, self.snapshot, self.at, 'old-pdf', 'stable-token', 'free:FC-1', 'Original course',
-                    'issued', 'commercial', 'Template title', 'Template body', {}, None, '')
+                    'issued', 'commercial', 'Template title', 'Template body', {}, None, '', 7)
         self.cursor.fetchone.return_value = self.row
         self.cursor.fetchall.return_value = []
+        self.source = self.enterContext(patch.object(certificates, '_load_source', return_value=SimpleNamespace(
+            id=7, pk=7, username='Original name', programme='Programme')))
+        self.template = self.enterContext(patch.object(certificates, '_published_template', return_value=(
+            1, 3, 'Achievement', 'Original text', 80, False, deepcopy(self.snapshot['layoutConfig']))))
+        self.progress = self.enterContext(patch.object(certificates, 'course_progress', return_value=dict(
+            moduleTitle='Original course', progressPercent=80, trackableDone=4, trackableTotal=5)))
+        self.enterContext(patch.object(certificates, 'build_learner_detail', return_value={
+            'name': 'Original name', 'programme': 'Programme'}))
 
     def request(self, body=None, method='POST', header=True, pk=11):
         req = self.factory.generic(method, '/', data=json.dumps(body or {}), content_type='application/json',
@@ -57,7 +66,7 @@ class IssuedCertificateAdminTests(SimpleTestCase):
 
     def test_requires_csrf_header_and_refuses_uneditable_values_before_database(self):
         self.assertEqual(self.request(self.body(), header=False).status_code, 403)
-        for changes in ({'progressPercent': 100}, {'issuedAt': '2030-01-01'}, {'learnerId': 8},
+        for changes in ({'progressPercent': 100}, {'otjHours': 100}, {'issuedAt': '2030-01-01'}, {'learnerId': 8},
                         {'verificationToken': 'replacement'}, {'layoutConfig': {}}, {'learnerName': ''}, {'title': 'X' * 201}):
             body = self.body(); body['changes'] = changes
             self.assertEqual(self.request(body).status_code, 400)
@@ -81,6 +90,7 @@ class IssuedCertificateAdminTests(SimpleTestCase):
     def test_correction_is_scoped_keeps_history_and_preserves_identity_dates_and_progress(self):
         after = list(deepcopy(self.row))
         after[5].update(certificateRevision=2, correctedAt=self.at.isoformat())
+        after[5]['certificateOverrides'] = {'learnerName': 'Corrected name'}
         after[5]['learner']['name'] = 'Corrected name'
         after[7] = ''
         self.cursor.fetchone.side_effect = [self.row, tuple(after)]
@@ -102,11 +112,12 @@ class IssuedCertificateAdminTests(SimpleTestCase):
             self.assertEqual(saved[key], self.snapshot[key])
         self.assertEqual(saved['learner']['email'], self.snapshot['learner']['email'])
         audit = json.loads(writes[1].args[1][-1])
-        self.assertEqual(audit['before']['snapshot'], self.snapshot)
+        self.assertEqual(audit['storedBefore']['snapshot'], self.snapshot)
         self.assertEqual(audit['after']['editable']['learnerName'], 'Corrected name')
         self.assertEqual(audit['reason'], 'Spelling correction')
         self.assertEqual(writes[1].args[1][0], 'admin@example.invalid')
         self.assertEqual(audit['changedFields'], ['learnerName'])
+        self.assertEqual(saved['certificateOverrides'], {'learnerName': 'Corrected name'})
         self.assertIn('FOR UPDATE OF lc', self.cursor.execute.call_args_list[0].args[0])
         self.atomic.assert_called_once_with(using='enrolment')
         self.assertNotIn('certificate_templates', sql)
@@ -160,7 +171,37 @@ class IssuedCertificateAdminTests(SimpleTestCase):
         self.assertEqual(values[:3], ['admin@example.invalid', self.at, 'Issued in error'])
         self.assertEqual(values[-1], 11)
         self.assertEqual(writes[1].args[1][1], 'certificate-revoked')
-        self.assertEqual(json.loads(writes[1].args[1][-1])['before']['snapshot'], self.snapshot)
+        self.assertEqual(json.loads(writes[1].args[1][-1])['storedBefore']['snapshot'], self.snapshot)
+
+    def test_revocation_does_not_depend_on_refreshing_live_display_sources(self):
+        revoked = list(deepcopy(self.row)); revoked[11] = 'revoked'
+        self.cursor.fetchone.side_effect = [self.row, tuple(revoked)]
+        with patch.object(api, '_current_certificate', side_effect=DatabaseError('Refresh unavailable')) as refresh:
+            response = self.request(dict(action='revoke', revision=1, reason='Issued in error'))
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(json.loads(response.content)['certificate']['status'], 'revoked')
+        refresh.assert_not_called()
+
+    def test_admin_views_current_details_and_a_single_edit_does_not_pin_unedited_fields(self):
+        self.source.return_value.username = 'Updated profile name'
+        self.template.return_value = (2, 4, 'New title', 'New body', 80, False, {'primaryColor': '#445566'})
+        self.progress.return_value.update(moduleTitle='Updated course', progressPercent=100, trackableDone=5, otjHours=2.5)
+        response = self.request(method='GET')
+        current = json.loads(response.content)['certificate']
+        self.assertEqual(current['editable']['learnerName'], 'Updated profile name')
+        self.assertEqual(current['editable']['courseTitle'], 'Updated course')
+        self.assertEqual(current['layoutConfig'], {'primaryColor': '#445566'})
+        self.assertEqual((current['progressPercent'], current['progressAtIssue']), (100, 80))
+        self.assertEqual(current['otjHours'], 2.5)
+        self.assertEqual(self.writes(), [])
+        self.assertEqual(self.request(self.body()).status_code, 200)
+        snapshot = json.loads(self.writes()[0].args[1][0])
+        self.assertEqual(snapshot['certificateOverrides'], {'learnerName': 'Corrected name'})
+        self.assertEqual(snapshot['layoutConfig'], self.snapshot['layoutConfig'])
+        audit = json.loads(self.writes()[1].args[1][-1])
+        self.assertEqual(audit['before']['editable']['learnerName'], 'Updated profile name')
+        self.assertEqual(audit['before']['otjHours'], 2.5)
+        self.assertEqual(audit['storedBefore']['snapshot'], self.snapshot)
 
     def test_database_failure_is_visible_and_not_reported_as_saved(self):
         self.cursor.execute.side_effect = DatabaseError('Private connection detail')

@@ -63,6 +63,7 @@ export interface DeepDiveRecord {
   apprenticeshipEndDate: string;
   plannedGatewayDate: string;
   plannedEpaDate: string;
+  postcode?: string;
   observer: string;
   reviewedBy: string;
   notes: string;

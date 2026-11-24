@@ -28,6 +28,7 @@ class LearnerCertificateProgressTests(SimpleTestCase):
         detail = {
             "components": [{
                 "componentId": "VIDEO-1",
+                "expectedOtjh": 1,
                 "component": "Lesson video",
                 "type": "video",
                 "videoUrl": "https://example.test/video",
@@ -43,6 +44,7 @@ class LearnerCertificateProgressTests(SimpleTestCase):
         detail = {
             "components": [{
                 "componentId": "QUIZ-COMP-1",
+                "expectedOtjh": 1,
                 "component": "Knowledge quiz",
                 "type": "quiz",
                 "isQuiz": True,
@@ -59,6 +61,7 @@ class LearnerCertificateProgressTests(SimpleTestCase):
         detail = {
             "components": [{
                 "componentId": "QUIZ-COMP-1",
+                "expectedOtjh": 1,
                 "component": "Knowledge quiz",
                 "type": "quiz",
                 "isQuiz": True,
@@ -73,3 +76,18 @@ class LearnerCertificateProgressTests(SimpleTestCase):
         }
 
         self.assertEqual(_learner_progress(detail)["trackableDone"], 1)
+
+    def test_optional_quiz_pass_does_not_complete_required_sibling(self):
+        detail = {'components': [
+            {'componentId': 'REQUIRED', 'expectedOtjh': 1, 'isQuiz': True, 'quizMeta': {'quizId': 7}},
+            {'componentId': 'OPTIONAL', 'expectedOtjh': 0, 'isQuiz': True, 'quizMeta': {'quizId': 7}}],
+            'quizAttempts': [{'componentId': 'OPTIONAL', 'quizId': 7, 'passed': True}]}
+        result = _learner_progress(detail)
+        self.assertEqual((result['trackableTotal'], result['trackableDone'], result['progressPercent']), (1, 0, 0))
+
+    def test_missing_required_content_is_not_silently_removed(self):
+        result = _learner_progress({'components': [
+            {'componentId': 'REQUIRED', 'expectedOtjh': 1, 'type': 'reading'},
+            {'componentId': 'OPTIONAL', 'expectedOtjh': 0, 'type': 'reading'}],
+            'componentProgress': [{'componentId': 'OPTIONAL', 'passed': True}]})
+        self.assertEqual((result['trackableTotal'], result['trackableDone']), (1, 0))

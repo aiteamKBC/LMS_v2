@@ -125,15 +125,15 @@ def _source_rows(profile_id, source_review_id=None):
         return [dict(zip(columns, row)) for row in cursor.fetchall()]
 
 
-def sync_review_feedback(learner_id, *, source_review_id=None):
+def sync_review_feedback(learner_id, *, source_review_id=None, dry_run=False):
     """Assign independently to the learner and employer; expose pending counts."""
-    result = _sync_review_feedback(learner_id, source_review_id=source_review_id)
-    employer_result = _sync_review_feedback(learner_id, source_review_id=source_review_id, employer=True)
+    result = _sync_review_feedback(learner_id, source_review_id=source_review_id, dry_run=dry_run)
+    employer_result = _sync_review_feedback(learner_id, source_review_id=source_review_id, employer=True, dry_run=dry_run)
     result.update({f'employer{key[0].upper()}{key[1:]}': value for key, value in employer_result.items()})
     return result
 
 
-def _sync_review_feedback(learner_id, *, source_review_id=None, employer=False):
+def _sync_review_feedback(learner_id, *, source_review_id=None, employer=False, dry_run=False):
     """Reconcile persisted completions for an *enrolment* learner identity.
 
     published_at remains the existing launch boundary. Missing dates are
@@ -146,6 +146,8 @@ def _sync_review_feedback(learner_id, *, source_review_id=None, employer=False):
                                 'undated', 'future', 'unlinked', 'identityConflicts')}
     if employer:
         result['pending'] = 0
+    if dry_run:
+        result['wouldCreate'] = 0
     templates = {}
     delivery_model = FeedbackEmployerReviewDelivery if employer else FeedbackReviewDelivery
     allowed_types = {EMPLOYER_REVIEW_FORM_TYPE} if employer else REVIEW_FORM_TYPES
@@ -223,7 +225,8 @@ def _sync_review_feedback(learner_id, *, source_review_id=None, employer=False):
         if delivery is not None:
             if employer and str(delivery.learner_id) == str(learner.pk):
                 from .employer_feedback import resolve_pending_delivery
-                resolve_pending_delivery(delivery, learner)
+                if not dry_run:
+                    resolve_pending_delivery(delivery, learner)
                 result['pending'] += int(delivery.employer_id is None)
             result['existing' if str(delivery.learner_id) == str(learner.pk)
                    else 'identityConflicts'] += 1
@@ -249,6 +252,9 @@ def _sync_review_feedback(learner_id, *, source_review_id=None, employer=False):
             continue
         if state.first_completed_at > now:
             result['future'] += 1
+            continue
+        if dry_run:
+            result['wouldCreate'] += 1
             continue
         # The UNIQUE source_review_id constraint makes recognition a durable
         # transition exactly once, including concurrent LMS/Aptem detections.
@@ -279,7 +285,7 @@ def _sync_review_feedback(learner_id, *, source_review_id=None, employer=False):
 
 
 def sync_completed_overlay(overlay):
-    """Post-commit fast path; page/command reconciliation is the retry path."""
+    """Post-commit fast path; page or explicitly scoped commands can retry."""
     profile = LearnerProfile.objects.filter(pk=overlay.learner_id).first()
     learner = enrolment_for_review_profile(profile)
     if learner is None:

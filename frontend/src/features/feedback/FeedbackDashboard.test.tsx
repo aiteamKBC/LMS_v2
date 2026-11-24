@@ -40,13 +40,13 @@ describe('independent feedback insights dashboard', () => {
     const user = userEvent.setup();
     render(<FeedbackDashboard onViewResponse={vi.fn()} />);
     await screen.findByRole('region', { name: 'Submitted feedback' });
-    await user.selectOptions(screen.getByRole('combobox', { name: 'Insights date range' }), '0');
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Analytics date range' }), '0');
     await waitFor(() => expect(feedbackApi.insightsDashboard).toHaveBeenCalledTimes(2));
     vi.mocked(feedbackApi.insightsDashboard).mockRejectedValueOnce(new Error('Refresh unavailable'));
-    await user.selectOptions(screen.getByRole('combobox', { name: 'Insights date range' }), '8');
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Analytics date range' }), '8');
     expect(await screen.findByRole('alert')).toHaveTextContent('Showing the previous report. Refresh unavailable');
     expect(screen.getByRole('region', { name: 'Submitted feedback' })).toBeVisible();
-    await user.click(screen.getByRole('button', { name: 'Retry insights' }));
+    await user.click(screen.getByRole('button', { name: 'Retry analytics' }));
     await waitFor(() => expect(screen.queryByRole('alert')).not.toBeInTheDocument());
   });
 
@@ -70,7 +70,7 @@ describe('independent feedback insights dashboard', () => {
     render(<FeedbackDashboard onViewResponse={vi.fn()} />);
     await screen.findByRole('region', { name: 'Submitted feedback' });
     vi.mocked(feedbackApi.insightsDashboard).mockRejectedValueOnce(Object.assign(new Error('Session expired'), { status: 401 }));
-    await user.click(screen.getByRole('button', { name: 'Refresh insights' }));
+    await user.click(screen.getByRole('button', { name: 'Refresh analytics' }));
     expect(await screen.findByRole('alert')).toHaveTextContent('Session expired');
     expect(screen.queryByRole('region', { name: 'Submitted feedback' })).not.toBeInTheDocument();
     expect(screen.queryByText('Business Communication — Session 3')).not.toBeInTheDocument();
@@ -100,7 +100,7 @@ describe('independent feedback insights dashboard', () => {
     render(<FeedbackDashboard onViewResponse={open} />);
     await screen.findByRole('region', { name: 'Submitted feedback' });
     expect(feedbackApi.insightsDashboard).toHaveBeenCalledExactlyOnceWith({ formType: 'post_lecture', submittedFrom: '2026-09-01', submittedTo: '2026-10-26' });
-    for (const name of ['Insights response split', 'Insights feedback type comparison', 'Insights weekly response trend']) expect(screen.getByRole('group', { name })).toBeVisible();
+    for (const name of ['Analytics response split', 'Analytics feedback type comparison', 'Analytics weekly response trend']) expect(screen.getByRole('group', { name })).toBeVisible();
     expect(within(screen.getByRole('region', { name: 'Response rate' })).getByText('25%')).toBeVisible();
     expect(within(screen.getByRole('region', { name: 'Top Positive Questions' })).getByText('67%')).toBeVisible();
     expect(screen.getByText('Business Communication — Session 3')).toBeVisible();
@@ -128,36 +128,36 @@ describe('independent feedback insights dashboard', () => {
     const user = userEvent.setup();
     render(<FeedbackDashboard onViewResponse={vi.fn()} />);
     await screen.findByRole('region', { name: 'Submitted feedback' });
-    await user.selectOptions(screen.getByRole('combobox', { name: 'Insights learner group' }), 'G1');
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Analytics learner group' }), 'G1');
     await waitFor(() => expect(feedbackApi.insightsDashboard).toHaveBeenLastCalledWith(expect.objectContaining({ groupId: 'G1' })));
     await screen.findByRole('region', { name: 'Submitted feedback' });
-    await user.selectOptions(screen.getByRole('combobox', { name: 'Insights module' }), 'M1');
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Analytics module' }), 'M1');
     await waitFor(() => expect(feedbackApi.insightsDashboard).toHaveBeenLastCalledWith(expect.objectContaining({ groupId: 'G1', moduleId: 'M1' })));
     await screen.findByRole('region', { name: 'Submitted feedback' });
-    await user.selectOptions(screen.getByRole('combobox', { name: 'Insights classification' }), 'negative');
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Analytics classification' }), 'negative');
     await waitFor(() => expect(feedbackApi.insightsDashboard).toHaveBeenLastCalledWith(expect.objectContaining({ groupId: 'G1', moduleId: 'M1', classification: 'negative' })));
-    await user.selectOptions(screen.getByRole('combobox', { name: 'Insights date range' }), '0');
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Analytics date range' }), '0');
     await waitFor(() => expect(feedbackApi.insightsDashboard).toHaveBeenLastCalledWith({ formType: 'post_lecture', groupId: 'G1', moduleId: 'M1', classification: 'negative' }));
-    await user.selectOptions(screen.getByRole('combobox', { name: 'Insights feedback type' }), 'post_event');
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Analytics feedback type' }), 'post_event');
     await waitFor(() => expect(feedbackApi.insightsDashboard).toHaveBeenLastCalledWith({ formType: 'post_event', classification: 'negative' }));
-    expect(screen.getByRole('combobox', { name: 'Insights learner group' })).toHaveValue('');
-    expect(screen.getByRole('combobox', { name: 'Insights module' })).toHaveValue('');
+    expect(screen.getByRole('combobox', { name: 'Analytics learner group' })).toHaveValue('');
+    expect(screen.getByRole('combobox', { name: 'Analytics module' })).toHaveValue('');
   });
 
   it('resets the module when group changes and supports reports with no recorded modules', async () => {
     const user = userEvent.setup();
     render(<FeedbackDashboard onViewResponse={vi.fn()} />);
     await screen.findByRole('region', { name: 'Submitted feedback' });
-    await user.selectOptions(screen.getByRole('combobox', { name: 'Insights module' }), 'M2');
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Analytics module' }), 'M2');
     await screen.findByRole('region', { name: 'Submitted feedback' });
     const next = report();
     next.modules = [];
     vi.mocked(feedbackApi.insightsDashboard).mockResolvedValueOnce({ analytics: next });
-    await user.selectOptions(screen.getByRole('combobox', { name: 'Insights learner group' }), 'G1');
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Analytics learner group' }), 'G1');
     await waitFor(() => expect(feedbackApi.insightsDashboard).toHaveBeenLastCalledWith({ formType: 'post_lecture', groupId: 'G1', submittedFrom: '2026-09-01', submittedTo: '2026-10-26' }));
     await screen.findByRole('region', { name: 'Submitted feedback' });
-    expect(screen.getByRole('combobox', { name: 'Insights module' })).toHaveValue('');
-    expect(screen.getByRole('combobox', { name: 'Insights module' })).toBeDisabled();
+    expect(screen.getByRole('combobox', { name: 'Analytics module' })).toHaveValue('');
+    expect(screen.getByRole('combobox', { name: 'Analytics module' })).toBeDisabled();
     expect(screen.getByRole('option', { name: 'All modules' })).toBeInTheDocument();
   });
 
@@ -172,13 +172,13 @@ describe('independent feedback insights dashboard', () => {
     empty.coverage = { assigned: 0, submitted: 0, rate: null };
     empty.modules = [];
     vi.mocked(feedbackApi.insightsDashboard).mockResolvedValueOnce({ analytics: empty });
-    await user.selectOptions(screen.getByRole('combobox', { name: 'Insights module' }), 'M1');
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Analytics module' }), 'M1');
     expect(await screen.findByText('No submitted feedback in this selection.')).toBeVisible();
-    expect(screen.getByRole('combobox', { name: 'Insights module' })).toHaveValue('M1');
-    expect(screen.getByRole('combobox', { name: 'Insights module' })).toBeEnabled();
+    expect(screen.getByRole('combobox', { name: 'Analytics module' })).toHaveValue('M1');
+    expect(screen.getByRole('combobox', { name: 'Analytics module' })).toBeEnabled();
     expect(within(screen.getByRole('region', { name: 'Submitted feedback' })).getByText('0')).toBeVisible();
     expect(feedbackApi.insightsDashboard).toHaveBeenLastCalledWith(expect.objectContaining({ moduleId: 'M1' }));
-    await user.selectOptions(screen.getByRole('combobox', { name: 'Insights module' }), '');
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Analytics module' }), '');
     await waitFor(() => expect(feedbackApi.insightsDashboard).toHaveBeenLastCalledWith({ formType: 'post_lecture', submittedFrom: '2026-09-01', submittedTo: '2026-10-26' }));
   });
 
@@ -192,7 +192,7 @@ describe('independent feedback insights dashboard', () => {
     vi.mocked(feedbackApi.insightsDashboard).mockResolvedValueOnce({ analytics: empty });
     render(<FeedbackDashboard onViewResponse={vi.fn()} />);
     expect(await screen.findByRole('alert')).toHaveTextContent('Report unavailable');
-    await userEvent.click(screen.getByRole('button', { name: 'Retry insights' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Retry analytics' }));
     expect(await screen.findByText('No submitted feedback in this selection.')).toBeVisible();
     expect(screen.getByText('No negative responses in this selection.')).toBeVisible();
     expect(screen.getByText('No scored category')).toBeVisible();
@@ -206,7 +206,7 @@ describe('independent feedback insights dashboard', () => {
     latest.insights!.classification!.total = 10;
     vi.mocked(feedbackApi.insightsDashboard).mockResolvedValueOnce({ analytics: latest });
     render(<FeedbackDashboard onViewResponse={vi.fn()} />);
-    await userEvent.selectOptions(screen.getByRole('combobox', { name: 'Insights date range' }), '0');
+    await userEvent.selectOptions(screen.getByRole('combobox', { name: 'Analytics date range' }), '0');
     const submitted = await screen.findByRole('region', { name: 'Submitted feedback' });
     expect(within(submitted).getByText('10')).toBeVisible();
     finish({ analytics: report() });

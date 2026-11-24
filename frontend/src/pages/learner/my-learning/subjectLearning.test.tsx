@@ -11,6 +11,8 @@ import { certificateEligible, currentLearningSubject, currentLearningWeek, conti
 
 const entry = (id: string, date: string, completed = false): SubjectEntry => ({ id, title: `Activity ${id}`, category: 'reading', completed, position: 0,
   schedule: { date, month: date?.slice(0, 7) || 'undated', week_start: date, week_end: date } });
+const requiredEntry = (id: string, completed = false, hours = 1): SubjectEntry => ({ ...entry(id, '', completed),
+  native: { componentId: id, title: id, type: 'reading', expectedOtjh: hours } });
 const module = (id: string, start: string | null, end: string | null, extra = {}) => ({ id, title: id, start_date: start, end_date: end,
   programme_name: 'Leadership', cohort_name: 'Autumn', group_name: 'G1', ...extra }) as PlanModule;
 const metadata = { covers: {}, current_subjects: [{ id: 'M1', title: 'Leadership' }], builder_subjects: { 'legacy:1': { id: 'M1', title: 'Leadership' } } };
@@ -127,7 +129,7 @@ describe('shared subject and week selection', () => {
   // templates which still contain requireFinalTest=true.
   it.each(['current:M1', 'unlinked:Course', 'legacy:50', 'free:FC-1'])('unlocks %s at the configured progress without a final exam', id => {
     const subject: Subject = { id, title: 'Course', source: id.startsWith('legacy:') ? 'legacy' : 'current',
-      activities: Array.from({ length: 5 }, (_, i) => entry(String(i), '2026-09-10', i < 3)) };
+      activities: Array.from({ length: 5 }, (_, i) => requiredEntry(String(i), i < 3)) };
     const template = { id: 1, version: 2, title: 'Certificate', minimumProgress: 80, requireFinalTest: true };
     expect(certificateEligible(subject, template)).toBe(false);
     subject.activities[3].completed = true;
@@ -138,26 +140,54 @@ describe('shared subject and week selection', () => {
   });
 
   it('uses completed activities even when an aggregate or hours percentage differs', () => {
-    const subject: Subject = { id: 'legacy:50', title: 'Course', source: 'legacy', activities: [entry('1', '', false)], aggregateProgress: 100, acceptedHours: 100 };
+    const subject: Subject = { id: 'legacy:50', title: 'Course', source: 'legacy', activities: [requiredEntry('1')], aggregateProgress: 100, acceptedHours: 100 };
     const template = { title: 'Certificate', minimumProgress: 80, requireFinalTest: false };
     expect(certificateEligible(subject, template)).toBe(false);
-    expect(certificateEligible({ ...subject, aggregateProgress: 0, acceptedHours: 0, activities: [entry('1', '', true)] }, template)).toBe(true);
+    expect(certificateEligible({ ...subject, aggregateProgress: 0, acceptedHours: 0, activities: [requiredEntry('1', true)] }, template)).toBe(true);
   });
 
   it.each(['current:M1', 'legacy:50', 'free:FC-1'])('uses the activity counts on the %s card and applies the configured threshold exactly', id => {
     const subject: Subject = { id, title: 'Course', source: 'current', activities: [], acceptedHours: 100,
-      card: { activityCount: 200, completedActivityCount: 159, progress: 80, finalTestPassed: false, status: 'In progress' } };
+      card: { activityCount: 400, completedActivityCount: 359, requiredActivityCount: 200, completedRequiredActivityCount: 159,
+        progress: 80, finalTestPassed: false, status: 'In progress' } };
     const template = { title: 'Certificate', minimumProgress: 80, requireFinalTest: false };
     expect(certificateEligible(subject, template)).toBe(false); // 79.5% cannot round up to 80%.
-    subject.card!.completedActivityCount = 160;
+    subject.card!.completedRequiredActivityCount = 160;
     subject.card!.progress = 20;
     subject.acceptedHours = 0;
     expect(certificateEligible(subject, template)).toBe(true);
     expect(certificateEligible(subject, { ...template, minimumProgress: 100 })).toBe(false);
-    subject.card!.completedActivityCount = 199;
+    subject.card!.completedRequiredActivityCount = 199;
     expect(certificateEligible(subject, { ...template, minimumProgress: 100 })).toBe(false);
-    subject.card!.completedActivityCount = 200;
+    subject.card!.completedRequiredActivityCount = 200;
     expect(certificateEligible(subject, { ...template, minimumProgress: 100 })).toBe(true);
+  });
+
+  it('counts Required badges with equal weight and ignores optional or open activities', () => {
+    const subject: Subject = { id: 'current:M1', title: 'Course', source: 'current', activities: [
+      ...Array.from({ length: 5 }, (_, i) => requiredEntry(`R${i}`, i < 4, i === 4 ? 100 : 0.01)),
+      ...Array.from({ length: 15 }, (_, i) => requiredEntry(`O${i}`, i % 2 === 0, 0))] };
+    const template = { title: 'Certificate', minimumProgress: 80, requireFinalTest: false };
+    expect(certificateEligible(subject, template)).toBe(true);
+    subject.activities[3].completed = false;
+    subject.activities.slice(5).forEach(activity => { activity.completed = true; });
+    expect(certificateEligible(subject, template)).toBe(false);
+  });
+
+  it('uses only mapped planned time for imported Required components', () => {
+    const required = { ...entry('R', '', true), legacy: { ...data.activities[0], planned: 0.5, planned_hours_mapped: true, completed: true } };
+    const optional = { ...entry('O', ''), legacy: { ...data.activities[1], planned: 100, planned_hours_mapped: false } };
+    expect(certificateEligible({ id: 'legacy:50', title: 'Old', source: 'legacy', activities: [required, optional] },
+      { title: 'Certificate', minimumProgress: 100, requireFinalTest: false })).toBe(true);
+  });
+
+  it('never uses all-activity totals when Required data is absent or empty', () => {
+    for (const requiredCount of [undefined, 0]) {
+      expect(certificateEligible({ id: 'current:M1', title: 'Course', source: 'current', activities: [entry('O', '', true)],
+        card: { activityCount: 1, completedActivityCount: 1, requiredActivityCount: requiredCount, completedRequiredActivityCount: requiredCount,
+          progress: 100, finalTestPassed: false, status: 'Completed' } },
+      { title: 'Certificate', minimumProgress: 0, requireFinalTest: false })).toBe(false);
+    }
   });
 
   it('keeps a calendar week together across two months and preserves every activity', () => {
