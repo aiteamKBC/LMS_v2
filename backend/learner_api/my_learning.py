@@ -414,7 +414,7 @@ def course_facts(owner, records, courses):
         if not placements:
             continue
         is_started = str(record.get('activity_status') or '').strip().lower().replace('-', '_') in {'started','in_progress','submitted','failed','completed','passed'}
-        is_done = canonical.counts_as_completed(record, include_source_evidence='completed' in record)
+        is_done = not record.get('hours_only') and canonical.counts_as_completed(record, include_source_evidence='completed' in record)
         is_actual = canonical.counts_as_actual(record)
         actual_hours = canonical.recorded_seconds(record) / 3600 if is_actual else 0
         record_id = str(record['id'])
@@ -662,7 +662,7 @@ def assemble_cards(native, current, courses, definitions, done, started, hours, 
             subject.update(demo, status='In progress' if demo['progress'] else 'Upcoming')
         pending = next((item for item in transfers if item['courseRef'] == subject['id'] and item['status'] == 'pending'), None)
         if pending:
-            subject.update(progress=pending['percent'], actualHours=pending['hours'],
+            subject.update(progress=pending['percent'], actualHours=hours.get(pending['courseRef'][7:], 0),
                 activityCount=pending['activityCount'], completedActivityCount=pending['completedActivityCount'], transferPending=True)
             if pending.get('demoProgress'):
                 subject['demoProgress'] = True
@@ -674,10 +674,10 @@ def assemble_cards(native, current, courses, definitions, done, started, hours, 
             if transfer.get('demoProgress'):
                 subject['demoProgress'] = True
             subject.pop('importedCourseRef', None)
-            previous_ids = set(transfer['recordIds'])
-            native_records = [record for record in records if str(record['id']) not in previous_ids]
-            native_hours = supplement_module_hours(_canonical_module_progress(native_records, module_list), native_records, credits)
-            subject['actualHours'] = round(transfer['hours'] + (native_hours.get(subject.get('moduleId'), {}).get('hours', {}).get('actual') or 0), 6)
+            from .progress_transfer_policy import transfer_hour_records
+            allocated = transfer_hour_records(records, transfer)
+            reconciled = supplement_module_hours(_canonical_module_progress(allocated, module_list), allocated, credits)
+            subject['actualHours'] = reconciled.get(subject.get('moduleId'), {}).get('hours', {}).get('actual') or 0
             actual_learning_hours = subject['actualHours']
             # Keep the component-derived status, including a started native
             # attempt with no completed components yet (0% is not "Upcoming").
@@ -1139,12 +1139,12 @@ def read_module(source, kind, owner, subject_id):
             ident = c.get('componentId') or f"quiz:{(c.get('quizMeta') or {}).get('quizId') or str(c.get('week')) + ':' + str(index)}"
             components.setdefault(ident, c)
         component_ids = {ident for ident, c in components.items() if native_done(c, detail)}
-        previous_ids = set(transfer['recordIds'])
-        native_records = [record for record in records if str(record['id']) not in previous_ids]
-        native_hours = supplement_module_hours(_canonical_module_progress(native_records, list(modules.values())), native_records, credits)
+        from .progress_transfer_policy import transfer_hour_records
+        allocated = transfer_hour_records(records, transfer)
+        reconciled = supplement_module_hours(_canonical_module_progress(allocated, list(modules.values())), allocated, credits)
         clean_metadata['module_credits'][subject_id] = {
             'progress': merged_percent(component_ids, len(components)), 'transferredProgress': transfer['percent'],
-            'actualHours': round(transfer['hours'] + (native_hours.get(mid, {}).get('hours', {}).get('actual') or 0), 6)}
+            'actualHours': reconciled.get(mid, {}).get('hours', {}).get('actual') or 0}
         if transfer.get('demoProgress'):
             clean_metadata['module_credits'][subject_id]['demoProgress'] = True
     from .progress_demo import credit as demo_credit
@@ -1153,7 +1153,7 @@ def read_module(source, kind, owner, subject_id):
         clean_metadata.setdefault('module_credits', {})[subject_id] = demo
     pending = next((item for item in transfers if item['courseRef'] == subject_id), None)
     if pending:
-        clean_metadata['module_credits'][subject_id] = {'progress': pending['percent'], 'actualHours': pending['hours'], 'transferPending': pending['status'] == 'pending'}
+        clean_metadata['module_credits'][subject_id] = {'progress': pending['percent'], 'actualHours': hours.get(pending['courseRef'][7:], 0), 'transferPending': pending['status'] == 'pending'}
         if pending.get('demoProgress'):
             clean_metadata['module_credits'][subject_id]['demoProgress'] = True
     from .builder_activity_dates import read_builder_activity_dates

@@ -100,7 +100,7 @@ class AttendanceOtjhTests(SimpleTestCase):
              patch('learner_api.progress_transfer_store.read_state', return_value=state):
             result = canonical.entries_for(owner, **({'entry_ids': [snapshot['id']]} if selected else {}))
         self.assertEqual(state, before)
-        self.assertEqual(next(row for row in result if row['id'] == snapshot['id']), snapshot)
+        self.assertIn(snapshot['id'], [row['id'] for row in result])
         return result
 
     def test_transfer_history_does_not_hide_new_attendance_from_programme_hours(self):
@@ -110,8 +110,10 @@ class AttendanceOtjhTests(SimpleTestCase):
                     'actual_seconds': 3600, 'ksbs': [], 'sources': [], 'segments': []}
         before = list(self.db.iterdump())
         result = self.transferred_entries(snapshot)
-        self.assertEqual(self.hours(result), 3.5)
-        self.assertEqual([row['id'] for row in result], [91, 'attendance:O1'])
+        self.assertEqual(self.hours(result), 2.5)
+        self.assertEqual([row['id'] for row in result], ['attendance:O1', 91])
+        self.assertTrue(result[-1]['completion_only'])
+        self.assertFalse(result[-1]['accepted'])
         self.assertEqual(list(self.db.iterdump()), before)
         # The display supplement must recognise the newly shared allocation.
         from .live_session_progress import supplement_module_hours
@@ -120,19 +122,27 @@ class AttendanceOtjhTests(SimpleTestCase):
         totals = {'M1': {'hours': {'actual': 2.5}}}
         self.assertEqual(supplement_module_hours(totals, result, credits), totals)
 
-    def test_attendance_does_not_rewrite_an_allocation_in_a_transfer_snapshot(self):
+    def test_current_attendance_reconciles_hours_without_mutating_transfer_snapshot(self):
         self.lecture()
         self.allocation(settings={'teamsOccurrenceId': 'O1'}, seconds=3600)
         snapshot = self.saved()[0]
-        self.assertEqual(self.hours(self.transferred_entries(snapshot)), 1)
+        before = deepcopy(snapshot)
+        self.assertEqual(self.hours(self.transferred_entries(snapshot)), 2.5)
+        self.assertEqual(snapshot, before)
+        self.assertEqual(self.saved()[0]['actual_seconds'], 3600)
 
     def test_transfer_owner_still_respects_signed_months_and_selected_entry_reads(self):
         self.lecture()
         snapshot = {'id': 91, 'source_system': 'old_lms', 'module_ref': '50', 'accepted': True,
                     'actual_seconds': 3600, 'ksbs': [], 'sources': [], 'segments': []}
-        self.assertEqual(self.transferred_entries(snapshot, selected=True), [snapshot])
+        selected = self.transferred_entries(snapshot, selected=True)
+        self.assertEqual([row['id'] for row in selected], [91])
+        self.assertTrue(selected[0]['completed'])
+        self.assertEqual(self.hours(selected), 0)
         self.signature()
-        self.assertEqual(self.transferred_entries(snapshot), [snapshot])
+        signed = self.transferred_entries(snapshot)
+        self.assertEqual([row['id'] for row in signed], [91])
+        self.assertEqual(self.hours(signed), 0)
 
     def test_closed_month_keeps_activity_completed_without_adding_display_hours(self):
         from .live_session_progress import protect_credit_hours, supplement_component_progress, supplement_module_hours

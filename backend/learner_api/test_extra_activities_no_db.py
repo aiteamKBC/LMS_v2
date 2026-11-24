@@ -83,11 +83,19 @@ class ExtraActivityTests(unittest.TestCase):
             with self.subTest(month=month), self.assertRaisesRegex(ValueError, 'activity month'):
                 self.scope['prepare_extra_activity']({**self.payload, 'monthlyAssignment': {'month': month}})
 
-    def test_dates_must_still_belong_to_selected_month(self):
+    def test_dates_may_be_outside_selected_month_when_not_in_future(self):
         self.payload['monthlyAssignment']['month'] = '2026-09'
-        checks = {check['key']: check['passed'] for check in self.scope['extra_activity_checks'](self.payload)}
-        self.assertFalse(checks['hours'])
+        checks = {check['key']: check['passed'] for check in self.scope['extra_activity_checks'](
+            self.payload, today=date(2026, 10, 2))}
+        self.assertTrue(checks['hours'])
         self.assertEqual(self.payload['monthlyAssignment']['timeEntries'][0]['hours'], '2')
+
+    def test_future_dates_are_rejected(self):
+        self.payload['monthlyAssignment']['month'] = '2026-09'
+        self.payload['monthlyAssignment']['timeEntries'][0]['date'] = '2026-10-03'
+        checks = {check['key']: check['passed'] for check in self.scope['extra_activity_checks'](
+            self.payload, today=date(2026, 10, 2))}
+        self.assertFalse(checks['hours'])
 
     def test_invalid_identity_and_unowned_claims_cannot_pass(self):
         with self.assertRaises(ValueError):

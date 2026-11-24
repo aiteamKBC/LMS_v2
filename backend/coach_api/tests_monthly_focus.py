@@ -57,22 +57,39 @@ class MonthlyFocusTests(SimpleTestCase):
         self.assertEqual(project_month('2026-10', None, 0, [], [], lectures)['lectures'][0]['date'], '2026-10-01')
 
     def test_narrow_route_never_calls_legacy_dashboard_readers(self):
-        context = MagicMock(profile=SimpleNamespace(id=101, enrolment_id=201, lifecycle_status='active'), source=SimpleNamespace(pk=201))
+        request = RequestFactory().get('/?month=2026-10')
+        context = MagicMock(profile=SimpleNamespace(id=101, enrolment_id=201, lifecycle_status='active'),
+                            source=SimpleNamespace(pk=201), kind='apprenticeship', request=request)
         activities, reviews, lectures = self.fixtures()
         with patch('learner_api.canonical_learning.require_profile', return_value={'id': 101}), \
              patch('coach_api.monthly_focus.read_month_activities', return_value=(activities[:1], ['M1'])), \
-             patch('learner_api.canonical_learning.targets_for', return_value={'2026-10': 50}) as targets, \
-             patch('coach_api.monthly_focus.query', return_value=[{'actual_seconds': 36000, 'accepted': True}, {'actual_seconds': 7200, 'accepted': False}]) as actual, \
+             patch('coach_api.monthly_focus.read_monthly', return_value={'summary': {'requiredHours': 50, 'achievedHours': 10, 'ksbs': ['K1', 'S1']}}) as monthly, \
              patch('learner_api.calendar.coaching_events_for_learner', return_value=reviews) as calendar, \
              patch('coach_api.monthly_focus.read_month_lectures', return_value=lectures):
             result = build_tab(context, 'monthly-focus', '2026-10')
         self.assertEqual(result['summary']['achievedHours'], 10)
         self.assertEqual(result['summary']['differenceHours'], -40)
-        targets.assert_called_once_with({'id': 101}, month='2026-10')
-        self.assertIn('reporting_month=%s', actual.call_args.args[0])
-        self.assertEqual(actual.call_args.args[1], [101, '2026-10'])
+        monthly.assert_called_once_with(context.source, context.kind, {'id': 101}, context.profile, context.request)
         calendar.assert_called_once_with(context.source, context.profile, month='2026-10')
         context.payload.assert_not_called(); context.parallel.assert_not_called(); context.learner_read.assert_not_called()
+
+    def test_canonical_hour_source_is_used_for_both_learner_kinds(self):
+        request = RequestFactory().get('/?month=2026-10')
+        context = MagicMock(profile=SimpleNamespace(id=101, enrolment_id=201, lifecycle_status='active'),
+                            source=SimpleNamespace(pk=201), request=request)
+        activities, reviews, lectures = self.fixtures()
+        for kind in ('apprenticeship', 'commercial'):
+            with self.subTest(kind=kind), \
+                 patch('learner_api.canonical_learning.require_profile', return_value={'id': 101}), \
+                 patch('coach_api.monthly_focus.read_month_activities', return_value=(activities[:1], ['M1'])), \
+                 patch('coach_api.monthly_focus.read_monthly', return_value={'summary': {'requiredHours': 23, 'achievedHours': 14.83, 'ksbs': []}}) as monthly, \
+                 patch('learner_api.calendar.coaching_events_for_learner', return_value=reviews), \
+                 patch('coach_api.monthly_focus.read_month_lectures', return_value=lectures):
+                context.kind = kind
+                result = build_tab(context, 'monthly-focus', '2026-10')
+            self.assertEqual(result['summary']['achievedHours'], 14.83)
+            self.assertEqual(result['summary']['differenceHours'], -8.17)
+            monthly.assert_called_once_with(context.source, kind, {'id': 101}, context.profile, context.request)
 
     def test_targets_filtered_in_sql_keep_programme_identity_precedence(self):
         from learner_api.canonical_learning import targets_for

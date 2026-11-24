@@ -1,5 +1,5 @@
 """Transfer workflow contracts with all persistence/authentication mocked."""
-from contextlib import nullcontext
+from contextlib import contextmanager, nullcontext
 from copy import deepcopy
 from datetime import datetime, timezone
 import json
@@ -63,10 +63,14 @@ class TransferPolicyTests(SimpleTestCase):
         state = {'items':[item()], 'records':[snapshot]}
         before = deepcopy([later,new_old,other,current,state])
         result = frozen_records([later,new_old,other,current], state)
-        self.assertEqual(result,[snapshot,other,current])
+        self.assertEqual(result,[{**later, 'completed': False}, {**new_old, 'hours_only': True}, other, current])
         self.assertEqual([later,new_old,other,current,state],before)
         self.assertEqual(frozen_records([other],state,entry_ids=[3]),[other])
-        self.assertEqual(frozen_records([],state),[snapshot])
+        missing = frozen_records([],state)[0]
+        self.assertFalse(missing['accepted'])
+        self.assertIsNone(missing['actual_seconds'])
+        self.assertTrue(missing['completion_only'])
+        self.assertEqual(missing['reporting_month'], snapshot['reporting_month'])
 
     def test_local_legacy_attempts_freeze_but_native_saves_remain_independent(self):
         attempt = {'id':'subject:50:9', 'completed':True, 'accepted':False,
@@ -74,11 +78,15 @@ class TransferPolicyTests(SimpleTestCase):
         state={'items':[item()], 'records':[attempt]}
         native_save={'id':99, 'component_ref':'NEW', 'completed':True}
         later={**attempt, 'id':'subject:50:10'}
-        self.assertEqual(frozen_records([later,native_save],state),[native_save,attempt])
+        result = frozen_records([later,native_save],state)
+        self.assertEqual(result[:2],[{**later, 'hours_only': True}, native_save])
+        self.assertTrue(result[2]['completed'])
+        self.assertTrue(result[2]['completion_only'])
+        self.assertFalse(result[2]['accepted'])
 
     def test_later_import_with_only_explicit_source_reference_is_excluded(self):
         record={'id':2,'source_system':'old_lms','source_payload':'{"original_source_ref":"la:50:9"}'}
-        self.assertEqual(frozen_records([record],{'items':[item()],'records':[]}),[])
+        self.assertEqual(frozen_records([record],{'items':[item()],'records':[]}),[{**record, 'hours_only': True}])
 
     def test_canonical_reads_reapply_frozen_facts_after_current_attempt_projection(self):
         canonical=api.canonical
@@ -95,9 +103,9 @@ class TransferPolicyTests(SimpleTestCase):
              patch.object(canonical,'current_records',return_value=[]) as current, \
              patch.object(canonical,'progress_records_with_completion',return_value=[imported,native_save]):
             result=canonical.entries_for({'id':9,'enrolment_id':7,'progress_transfer_active':True})
-        self.assertEqual(current.call_args.args[1],[snapshot])
-        self.assertEqual(result,[snapshot,native_save])
-        self.assertEqual(sum(r.get('actual_seconds',0) for r in result),3600)
+        self.assertEqual(current.call_args.args[1][0]['actual_seconds'], 7200)
+        self.assertEqual(result,[{**imported, 'completed': False},native_save])
+        self.assertEqual(sum(r.get('actual_seconds',0) for r in result),7200)
 
 
 class TransferEndpointTests(SimpleTestCase):
@@ -217,6 +225,51 @@ class TransferWorkflowTests(SimpleTestCase):
         self.owner = {'id':9,'enrolment_id':7}
         self.account = SimpleNamespace(id=11)
 
+    def test_approval_rejects_changed_saved_identity_inside_lock_before_any_write(self):
+        for kind in ('commercial', 'apprenticeship'):
+            for status in ('pending', 'approved'):
+                with self.subTest(kind=kind, status=status):
+                    state = saved(status)
+                    original = deepcopy(state)
+                    cursor = MagicMock()
+                    cursor.fetchone.return_value = (7, kind, 99)
+                    connection = MagicMock()
+                    connection.cursor.return_value.__enter__.return_value = cursor
+                    locked = False
+
+                    @contextmanager
+                    def lock(pk):
+                        nonlocal locked
+                        self.assertEqual(pk, 7)
+                        locked = True
+                        try:
+                            yield cursor
+                        finally:
+                            locked = False
+
+                    def current_owner(actual_kind, pk):
+                        self.assertTrue(locked)
+                        self.assertEqual((actual_kind, pk), (kind, 7))
+                        return self.source, self.owner
+
+                    with patch.object(api, 'connections', {'enrolment': connection}), \
+                         patch.object(store, 'lock_learner', side_effect=lock), \
+                         patch.object(store, 'read_state', return_value=state), \
+                         patch.object(api, 'source_owner', side_effect=current_owner), \
+                         patch('learner_api.my_learning.load_context') as load, \
+                         patch.object(api, 'authenticate_request', return_value=SimpleNamespace(role='admin', id=11)):
+                        request = RequestFactory().post('/', data=json.dumps({'confirm': True}), content_type='application/json')
+                        request._dont_enforce_csrf_checks = True
+                        request_id = state['items'][0]['requestId']
+                        response = api.admin_requests(request, request_id=request_id)
+                    self.assertEqual(response.status_code, 409)
+                    self.assertEqual(json.loads(response.content)['code'], 'transfer_identity_changed')
+                    load.assert_not_called()
+                    cursor.execute.assert_called_once_with(
+                        f'SELECT enrolment_id,learner_kind,learner_id FROM {store.REQUESTS} WHERE id=%s', [request_id])
+                    self.assertEqual(state, original)
+                    self.assertFalse(locked)
+
     def test_selected_module_freezes_only_its_old_records_and_retries_without_writes(self):
         for kind in ('commercial', 'apprenticeship'):
             with self.subTest(kind=kind):
@@ -290,7 +343,7 @@ class TransferWorkflowTests(SimpleTestCase):
             self.assertIs(available.call_args.kwargs['records'],records)
 
     def test_admin_approval_is_all_or_nothing_on_changed_mapping_and_idempotent(self):
-        cursor = MagicMock(); cursor.fetchone.return_value=(7,'commercial')
+        cursor = MagicMock(); cursor.fetchone.return_value=(7,'commercial',9)
         connection = MagicMock(); connection.cursor.return_value.__enter__.return_value=cursor
         meta=metadata(); meta['replacement_courses']={'current:M1':'legacy:50'}
         native_rows=native([component('BEFORE'),component('AFTER')]); native_rows['componentProgress']=[{'componentId':'BEFORE','kind':'component'}]
@@ -308,7 +361,7 @@ class TransferWorkflowTests(SimpleTestCase):
             calls=cursor.execute.call_count
             self.assertEqual(api.approve_request(request_id,self.account),result)
             self.assertEqual(cursor.execute.call_count,calls+1)  # ownership lookup only
-        cursor.reset_mock(); cursor.fetchone.return_value=(7,'commercial')
+        cursor.reset_mock(); cursor.fetchone.return_value=(7,'commercial',9)
         meta['replacement_courses']={'current:M1':'legacy:51'}
         with patch.object(api,'connections',{'enrolment':connection}),patch.object(store,'lock_learner',return_value=nullcontext(cursor)), \
              patch.object(store,'read_state',return_value=pending),patch.object(api,'source_owner',return_value=(self.source,self.owner)), \
@@ -326,7 +379,7 @@ class TransferWorkflowTests(SimpleTestCase):
         store.assert_legacy_writable(cursor,8,50)
 
     def test_approval_matches_only_completions_frozen_at_request_not_later_source_results(self):
-        cursor = MagicMock(); cursor.fetchone.return_value = (7, 'commercial')
+        cursor = MagicMock(); cursor.fetchone.return_value = (7, 'commercial', 9)
         connection = MagicMock(); connection.cursor.return_value.__enter__.return_value = cursor
         meta = metadata(); meta['replacement_courses'] = {'current:M1': 'legacy:50'}
         meta['replacement_settings'] = {key: {'legacySettings': {'sourceLessonId': ident}}
@@ -415,7 +468,8 @@ class TransferCatalogueTests(SimpleTestCase):
                 meta['progress_transfers'] = saved('approved', [snapshot])['items']
                 content = native([*[component(str(i)) for i in range(10)], component('0'), component('OTHER', module='M2')])
                 content['componentProgress'] = [{'componentId': ident, 'kind': 'component'} for ident in [*native_ids, 'OTHER']]
-                cards, _ = harness.cards(content, old, [], meta=meta)
+                cards, _ = harness.cards(content, old, [], meta=meta,
+                    records=[{'id': 1, 'accepted': True, 'actual_seconds': 7200}])
                 card = next(row for row in cards if row['id'] == 'current:M1')
                 self.assertEqual((card['progress'], card['activityCount'], card['completedActivityCount']), (expected, 10, expected // 10))
                 self.assertEqual((card['transferredProgress'], card['actualHours']), (60, 2))
@@ -436,7 +490,8 @@ class TransferCatalogueTests(SimpleTestCase):
         self.assertTrue(cards[0]['transferPending'])
         meta['progress_transfers']=saved('approved',[item(baselineCompletedIds=[])])['items']
         content['componentProgress']=[{'componentId':'0','kind':'component'}]
-        cards,summary=harness.cards(content,courses,definitions,meta=meta)
+        cards,summary=harness.cards(content,courses,definitions,meta=meta,
+            records=[{'id': 1, 'accepted': True, 'actual_seconds': 7200}])
         self.assertEqual([card['id'] for card in cards],['current:M1'])
         self.assertEqual(cards[0]['completedActivityCount'],1)
         self.assertEqual(cards[0]['progress'],10)
