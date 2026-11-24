@@ -373,6 +373,13 @@ export default function UsersListPage() {
     if (summaryFilter === 'active') return r.programmeStatus === 'Active';
     return true;
   }), [directoryRows, applied, summaryFilter, searchTerm, attendanceModes]);
+  // Creation checks every learner, while this table honours programme/status
+  // filters and the archive. Offer an explicit route to an exact email match
+  // without silently discarding the user's filters or matching similar names.
+  const lookupEmail = (searchTerm || applied.email || '').trim().toLowerCase();
+  const hiddenEmailMatches = lookupEmail.includes('@') && filtered.length === 0
+    ? rows.filter(row => isLearnerRow(row) && row.email.trim().toLowerCase() === lookupEmail)
+    : [];
   const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
   useEffect(() => {
     if (!loading && !error && page > totalPages) setQueryValues({ page: totalPages });
@@ -824,7 +831,17 @@ export default function UsersListPage() {
                   </tr>
                   );
                 })}
-                {!loading && !error && pageRows.length === 0 && <tr><td colSpan={12} className="py-10 text-center text-[13px] text-foreground-400">{archiveView && archivedCount === 0 ? 'No archived users.' : rows.length === 0 ? 'No users yet. Use “Create” to add the first learner.' : applied.attendanceMode && attendanceModes === 'failed' ? 'Attendance modes could not be loaded, so the attendance mode filter cannot be applied.' : applied.attendanceMode && attendanceModes === null ? <LoadingSkeleton label="Loading attendance modes…" variant="text" /> : 'No users match your filters.'}</td></tr>}
+                {!loading && !error && pageRows.length === 0 && <tr><td colSpan={12} className="py-10 text-center text-[13px] text-foreground-400">{archiveView && archivedCount === 0 ? 'No archived users.' : rows.length === 0 ? 'No users yet. Use “Create” to add the first learner.' : applied.attendanceMode && attendanceModes === 'failed' ? 'Attendance modes could not be loaded, so the attendance mode filter cannot be applied.' : applied.attendanceMode && attendanceModes === null ? <LoadingSkeleton label="Loading attendance modes…" variant="text" /> : 'No users match your filters.'}
+                  {hiddenEmailMatches.map(row => (
+                    <div key={`${row.source}:${row.id}`} className="mx-auto mt-3 max-w-lg rounded-xl border border-primary-200 bg-primary-50 px-4 py-3 text-foreground-700">
+                      <p>{row.name || 'This learner'} already exists{isArchived(row) ? ' in the archive' : ' outside the current filters'}.
+                        {' '}{row.programme ? `Programme: ${row.programme}.` : 'No programme is assigned.'}</p>
+                      <button type="button" className="mt-2 font-semibold text-primary-700 underline" onClick={() => setQueryValues({
+                        ...DIRECTORY_QUERY_DEFAULTS, view: isArchived(row) ? 'archive' : 'users', search: row.email.trim(),
+                      })}>Show existing learner</button>
+                    </div>
+                  ))}
+                </td></tr>}
               </tbody>
             </table>
           </div>

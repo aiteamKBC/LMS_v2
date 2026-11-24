@@ -59,6 +59,26 @@ const menu = async (name: string) => {
 };
 const confirm = (name: string) => fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name }));
 
+it.each(['11', '12'])('finds an exact email outside programme filters or in the archive (%s) after an explicit action', async id => {
+  view(`/users?programme=Other+programme&search=${id}@example.test`);
+  const show = await screen.findByRole('button', { name: 'Show existing learner' });
+  expect(screen.queryByRole('button', { name: /More actions for/ })).not.toBeInTheDocument();
+  fireEvent.click(show);
+  const name = id === '11' ? 'Current learner' : 'Archived learner';
+  expect(await screen.findByRole('button', { name: `More actions for ${name}` })).toBeVisible();
+  expect(screen.queryByRole('button', { name: 'Show existing learner' })).not.toBeInTheDocument();
+});
+
+it('does not treat different emails or similar learner names as an existing-email match', async () => {
+  records = [
+    { ...learner('11', 'Example Alpha'), email: 'alpha@example.test' },
+    { ...learner('12', 'Example Alpha Two'), email: 'alpha.two@example.test' },
+  ];
+  view('/users?search=alpha.three@example.test');
+  await screen.findByText('No users match your filters.');
+  expect(screen.queryByRole('button', { name: 'Show existing learner' })).not.toBeInTheDocument();
+});
+
 it('keeps archived learners out of the users list and preserves the archive view in the URL', async () => {
   view();
   expect(await screen.findByText('Current learner')).toBeVisible();
