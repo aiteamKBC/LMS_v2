@@ -74,7 +74,7 @@ export default function AttendanceLectureList({ lectures, moduleId, onModuleChan
   const [order, setOrder] = useState('newest');
   const [groupByMonth, setGroupByMonth] = useState(false);
   const [monthExpansion, setMonthExpansion] = useState<Record<string, boolean>>({});
-  const displayLectures = useMemo(() => lectures.filter(row => row.status !== 'cancelled' && !isManuallyConfirmedLecture(row)), [lectures]);
+  const displayLectures = useMemo(() => lectures.filter(row => row.status !== 'cancelled'), [lectures]);
   const months = useMemo(() => [...new Set(displayLectures.map(row => monthKey(row.date)))].sort((a, b) =>
     a === 'undated' ? 1 : b === 'undated' ? -1 : b.localeCompare(a)), [displayLectures]);
   const selectedMonth = months.includes(month) ? month : 'all';

@@ -389,6 +389,7 @@ class LiveSession(models.Model):
     organizer_email = models.CharField(max_length=320)
     attendees = models.JSONField(default=list, blank=True)
     presenters = models.JSONField(default=list, blank=True)
+    co_organizers = models.JSONField(default=list, blank=True)
     start_datetime = models.DateTimeField(blank=True, null=True)
     timezone = models.CharField(max_length=128, blank=True, default='')
     duration_minutes = models.IntegerField(default=60)
