@@ -1681,8 +1681,8 @@ class CurriculumTeamsMeetingTests(CurriculumTeamsRequestTestCase):
         )
         self.assertEqual(response.status_code, 200, response.content)
         result = response.json()
-        # Week 1 already has Live; weeks 2 and 3 are closed for Christmas.
-        self.assertEqual(result['createdComponents'], 3)
+        # Week 1 has Live; weeks 2-4 close for Christmas and New Year holidays.
+        self.assertEqual(result['createdComponents'], 2)
         self.assertEqual(result['updatedComponents'], 1)
 
         weeks = result['module']['weekStructure']
@@ -1690,11 +1690,11 @@ class CurriculumTeamsMeetingTests(CurriculumTeamsRequestTestCase):
             [component for component in week['components'] if component['type'] == 'live-session']
             for week in weeks
         ]
-        self.assertEqual([len(items) for items in live_sessions], [1, 0, 0, 1, 1, 1])
+        self.assertEqual([len(items) for items in live_sessions], [1, 0, 0, 0, 1, 1])
         # Later sessions retain their own dates; no compensation or extension.
         self.assertEqual(
             [items[0]['settings']['sessionDate'] for items in live_sessions if items],
-            ['2026-12-12', '2027-01-02', '2027-01-09', '2027-01-16'],
+            ['2026-12-12', '2027-01-09', '2027-01-16'],
         )
         # Every one of them can be joined, and the created ones say when they
         # start and how long they run.
@@ -1703,7 +1703,7 @@ class CurriculumTeamsMeetingTests(CurriculumTeamsRequestTestCase):
             for items in live_sessions if items
         ))
         self.assertEqual(len(views.authoring_fetch_all(views.LIVE_SESSION_OCCURRENCES_TABLE, 'live_session_id = %s', ['LIVE-WEEKS'])), 6)
-        created = live_sessions[3][0]
+        created = live_sessions[4][0]
         self.assertEqual(created['settings']['sessionTime'], '09:00')
         self.assertEqual(created['settings']['durationMinutes'], 120)
         self.assertEqual(created['expectedOtjh'], 2.0)

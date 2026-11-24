@@ -143,6 +143,7 @@ export interface ModuleComponent {
 }
 
 export interface ModuleWeek {
+  liveSessionsClosed?: boolean;
   studyWeekStartDate?: string;
   studyWeekEndDate?: string;
   studyWeekHolidays?: ModuleSlotHoliday[];
@@ -251,6 +252,8 @@ function monthLabelOf(key: string) {
  */
 export interface ModuleWeekSessionPlan {
   weeks?: import('@/lib/curriculumApi').CurriculumStudyWeek[];
+  /** Effective public/manual holiday weeks; candidate session numbers stay stable. */
+  closedWeeks?: import('@/lib/curriculumApi').CurriculumStudyWeek[];
   calendarEndDate?: string;
   /**
    * `weekNumber` is the Monday-to-Sunday window this date falls in, counting
@@ -706,6 +709,7 @@ export function moduleTeamsPlannedSessions(
 ): ModuleTeamsPlannedSession[] {
   if (!module) return [];
   const liveDatesByWeek = moduleWeekLiveSessionDates(module, plan?.sessions);
+  const closedWeeks = weeksTouchedByHoliday(module, plan);
   const closuresByDate = new Map<string, string[]>();
   (plan?.sessions || []).forEach(session => {
     const date = trimmed(session.date);
@@ -713,6 +717,7 @@ export function moduleTeamsPlannedSessions(
   });
   const sessions: ModuleTeamsPlannedSession[] = [];
   (module.weekStructure || []).forEach((week, weekIndex) => {
+    if (closedWeeks.has(week.id) || (!plan && week.liveSessionsClosed)) return;
     const weekDates = liveDatesByWeek[weekIndex] || [];
     const live = (week.components || []).filter(component => component.type === 'live-session');
     // A week owns one planned date per delivery day, and its Nth live session
@@ -739,6 +744,7 @@ export function moduleTeamsPlannedSessions(
       // could not be read at all -- the caller passes `null` on a failed load
       // -- which is the one case where that stamp is the best answer available.
       const date = weekDates[index] || trimmed(settings.sessionDate);
+      if (plan?.closedWeeks?.some(window => date >= window.startDate && date <= window.endDate)) return;
       const planned = plan?.sessions.find(session => session.date === date);
       const { startTime, durationMinutes } = liveSessionClock(module, settings, date, week, planned);
       sessions.push({
@@ -1005,9 +1011,20 @@ export function applyModuleComponentUpdate(module: ModuleCatalogueItem, componen
  */
 export function weeksTouchedByHoliday(
   module: ModuleCatalogueItem | null | undefined,
-  plan: Pick<ModuleWeekSessionPlan, 'sessions' | 'slots' | 'weeks'> | null | undefined,
+  plan: Pick<ModuleWeekSessionPlan, 'sessions' | 'slots' | 'weeks' | 'closedWeeks'> | null | undefined,
 ): Map<string, ModuleSessionSlot[]> {
   const byWeekId = new Map<string, ModuleSessionSlot[]>();
+  if (module && plan?.closedWeeks?.length) {
+    const offset = module.weekBoundaryMode === 'calendar' ? 0 : moduleWeekPlanOffset(module, plan.sessions);
+    const weekIdBySession = moduleWeekIdBySessionNumber(module, plan.sessions);
+    plan.closedWeeks.forEach(window => {
+      const ids = new Set((plan.sessions || []).filter(session => session.weekNumber === window.weekNumber)
+        .map(session => weekIdBySession.get(session.sessionNumber)).filter(Boolean));
+      if (!ids.size) ids.add(module.weekStructure[window.weekNumber - 1 + offset]?.id);
+      ids.forEach(id => { if (id) byWeekId.set(id, [{ slotNumber: window.weekNumber, weekNumber: window.weekNumber,
+        date: window.startDate, day: '', type: 'reading-week', cause: 'holiday-week', sessionNumber: null, holidays: window.holidays }]); });
+    });
+  }
   if (module?.weekBoundaryMode === 'calendar') {
     // Older session-plan responses carry a numeric week count here.
     const studyWeeks = Array.isArray(plan?.weeks) ? plan.weeks : [];
@@ -1131,7 +1148,8 @@ export function applyModuleWeekSessionPlan(
 ): ModuleCatalogueItem {
   const sessions = plan?.sessions || [];
   const studyWeeks = Array.isArray(plan?.weeks) ? plan.weeks : [];
-  if (!sessions.length && !(module.weekBoundaryMode === 'calendar' && studyWeeks.length)) return module;
+  if (!sessions.length && !plan.closedWeeks?.length && !(module.weekBoundaryMode === 'calendar' && studyWeeks.length)) return module;
+  const closedWeeks = weeksTouchedByHoliday(module, plan);
   // How many planned dates one authored week owns. A Mon+Fri module runs two
   // sessions for every week it authors, so a ten-week module spends twenty
   // planned dates -- and it spends them whether or not the live-session
@@ -1144,7 +1162,17 @@ export function applyModuleWeekSessionPlan(
   let sessionIndex = 0;
   const weekStructure = module.weekStructure.map((week, weekIndex) => {
     const window = module.weekBoundaryMode === 'calendar' ? studyWeeks.find(item => item.weekNumber === weekIndex + 1) : undefined;
-    const liveComponents = week.components.filter(component => component.type === 'live-session');
+    const liveSessionsClosed = closedWeeks.has(week.id);
+    // Existing confirmed meetings keep their identity/history. An automatically
+    // generated or copied unbooked Live never survives a holiday week.
+    const openComponents = liveSessionsClosed ? week.components.filter(component => {
+      if (component.type !== 'live-session') return true;
+      const settings = component.settings || {};
+      return Boolean(settings.teamsOccurrenceId || settings.extraTeamsMeetingUrl
+        || (settings.teamsLiveSessionId && Number(settings.teamsSessionNumber || 0) > 0));
+    }) : week.components;
+    let components = openComponents.length === week.components.length ? week.components : openComponents;
+    const liveComponents = components.filter(component => component.type === 'live-session');
     const slotCount = slotCounts[weekIndex] ?? 1;
     const slots = sessions.slice(sessionIndex, sessionIndex + slotCount);
     sessionIndex += slotCount;
@@ -1154,7 +1182,6 @@ export function applyModuleWeekSessionPlan(
     // follows the actual session date after holiday shifts.
     let sessionDate = firstSession ? (firstSession.date || '') : '';
     let sessionDay = firstSession ? (firstSession.day || '') : '';
-    let components = week.components;
     if (liveComponents.length) {
       const plannedByComponentId = new Map<string, ModuleWeekSessionPlan['sessions'][number] | undefined>();
       // A week owns one planned slot per delivery day its group runs, and its
@@ -1180,7 +1207,7 @@ export function applyModuleWeekSessionPlan(
         plannedByComponentId.set(component.id, numberedSession || slots[offset]);
       });
       let componentsMoved = false;
-      const plannedComponents = week.components.map(component => {
+      const plannedComponents = components.map(component => {
       if (component.type !== 'live-session') return component;
         const planned = plannedByComponentId.get(component.id);
         if (!planned?.date) return component;
@@ -1274,12 +1301,13 @@ export function applyModuleWeekSessionPlan(
     }
     if (
       (!window || (week.studyWeekStartDate === window.startDate && week.studyWeekEndDate === window.endDate && JSON.stringify(week.studyWeekHolidays) === JSON.stringify(window.holidays)))
+      && Boolean(week.liveSessionsClosed) === liveSessionsClosed
       && components === week.components
       && (week.sessionDate || '') === sessionDate
       && (week.sessionDay || '') === sessionDay
     ) return week;
     weeksMoved = true;
-    return { ...week, components, sessionDate, sessionDay, ...(window ? { studyWeekStartDate: window.startDate, studyWeekEndDate: window.endDate, studyWeekHolidays: window.holidays } : {}) };
+    return { ...week, components, sessionDate, sessionDay, liveSessionsClosed, ...(window ? { studyWeekStartDate: window.startDate, studyWeekEndDate: window.endDate, studyWeekHolidays: window.holidays } : {}) };
   });
   const currentEndDate = String(module.endDate || '').trim();
   const endDateFollowsPlan = module.weekBoundaryMode !== 'calendar' && options.followEndDate !== false

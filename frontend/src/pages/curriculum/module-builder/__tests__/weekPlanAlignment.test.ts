@@ -92,3 +92,48 @@ describe('general materials before the delivery plan', () => {
     expect(moduleWeekPlanOffset({ ...module, weekBoundaryMode: 'calendar' }, sessions)).toBe(0);
   });
 });
+
+describe('holiday weeks close Live creation without moving other content', () => {
+  it.each([2, 3, 4])('removes automatic Lives and Teams targets for %i sessions per week', count => {
+    const draft = createLocalModuleDraft({ programme: 'Programme', title: 'Holiday guard', description: '', weeks: 3, status: 'draft', startDate: '2027-03-01', endDate: '2027-03-21' });
+    const plan: ModuleWeekSessionPlan = { sessions: [], skippedHolidays: [], warnings: [], finalEndDate: '' , closedWeeks: [
+      { weekNumber: 2, startDate: '2027-03-08', endDate: '2027-03-14', holidayWeek: true,
+        holidays: [{ label: 'Local closure on a non-delivery day', startDate: '2027-03-12', endDate: '2027-03-12' }] },
+    ] };
+    const module = { ...draft, sessionsNumber: count * 3, weekStructure: draft.weekStructure.map((week, wi) => {
+      const components = [createEmptyComponent(week.id, 'reading', 1), createEmptyComponent(week.id, 'quiz', 2)];
+      for (let index = 0; index < count; index += 1) {
+        const date = `2027-03-${String(1 + wi * 7 + index).padStart(2, '0')}`;
+        plan.sessions.push({ sessionNumber: plan.sessions.length + 1, weekNumber: wi + 1, date, day: 'Monday', skippedHolidays: [] });
+        const live = createEmptyComponent(week.id, 'live-session', index + 3);
+        live.settings = { ...live.settings, sessionDate: date };
+        components.push(live);
+      }
+      return { ...week, components };
+    }) };
+    const contentIds = module.weekStructure[1].components.slice(0, 2).map(c => c.id);
+    const result = applyModuleWeekSessionPlan(module, plan);
+    expect(result.weekStructure.map(w => w.id)).toEqual(module.weekStructure.map(w => w.id));
+    expect(result.weekStructure[1].components.map(c => c.id)).toEqual(contentIds);
+    expect(result.weekStructure[1].liveSessionsClosed).toBe(true);
+    expect(result.endDate).toBe(module.endDate);
+    expect(applyModuleWeekSessionPlan(result, plan)).toBe(result);
+    expect(result.weekStructure.map(w => w.components.filter(c => c.type === 'live-session').length)).toEqual([count, 0, count]);
+    const targets = moduleTeamsPlannedSessions(result, plan);
+    expect(targets).toHaveLength(count * 2);
+    expect(targets.map(s => s.date)).toEqual(plan.sessions.filter(s => s.weekNumber !== 2).map(s => s.date));
+  });
+
+  it('keeps a historical booking and recording identity while excluding new calendar requests', () => {
+    const module = moduleWithGeneralMaterials();
+    const live = module.weekStructure[1].components[0];
+    live.settings = { ...live.settings, teamsOccurrenceId: 'OLD-OCCURRENCE', recordingUrl: 'https://example.invalid/old-recording' };
+    const plan: ModuleWeekSessionPlan = { sessions, skippedHolidays: [], finalEndDate: '', warnings: [], closedWeeks: [
+      { weekNumber: 1, startDate: '2026-12-07', endDate: '2026-12-13', holidayWeek: true,
+        holidays: [{ label: 'Closure', startDate: '2026-12-10', endDate: '2026-12-10' }] },
+    ] };
+    const result = applyModuleWeekSessionPlan(module, plan);
+    expect(result.weekStructure[1].components[0]).toEqual(live);
+    expect(moduleTeamsPlannedSessions(result, plan).some(s => s.componentId === live.id)).toBe(false);
+  });
+});
