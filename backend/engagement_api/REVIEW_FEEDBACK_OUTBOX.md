@@ -24,21 +24,76 @@ writers need no extra queue permissions; this is covered by the PostgreSQL tests
 Do not drop the function-owning role after installation. Grant a future consumer
 only the queue privileges it requires after verifying its actual connection role.
 
-## Consumer integration remains outstanding
+## Local consumer; production integration remains outstanding
+
+`process_review_feedback_outbox` now implements one explicit bounded pass. It is
+**local-test-only**: before opening a connection it requires both database aliases
+to target `127.0.0.1`, the database `review_feedback_consumer_test`, and a marked
+data directory under `.local-runtime/review-feedback-consumer-tests/`. It then
+checks the real database name, address and server data directory. Cached targets
+are checked too. Application/Neon targets are rejected without connecting.
+
+It defaults to read-only preview. `--apply` can write only after those sandbox
+checks; it does not relax them. No environment release flag enables production,
+and no HTTP endpoint, AppConfig, ASGI/WSGI wrapper or scheduler calls this command.
+Do not remove the sandbox gate as an operational workaround.
+
+The options are `--expected-data-directory` (required), `--dry-run` (default),
+`--apply`, `--limit` (default/hard maximum 20), `--max-queries` (default 500,
+hard maximum 1000), `--max-seconds` (default 20, maximum 30), and `--max-errors`
+(default 3, maximum 20). Invalid limits fail before database access.
+
+There is exactly one bounded pending-list read per invocation. Each selected
+source gets at most one attempt; there is no sleep, polling, or automatic retry.
+Each review has its own transaction. A transaction advisory lock serializes
+consumers without locking outbox rows while the service runs, so the source
+trigger can capture a concurrent newer update. The acknowledgement uses only
+the captured version, never the latest version at the end.
+
+The query meter covers SQL execution through Django, connection initialization
+SQL, and driver transaction starts. `queries` is the work count. Each review
+reserves six commands for settling the service's two delivery savepoints and
+outer transaction, including a uniqueness-race rollback. Work stops before
+consuming that reserve; necessary COMMIT/ROLLBACK and savepoint cleanup is never
+denied. Cleanup is reported in `cleanupQueries`; `totalQueries` includes both and
+is tested against `--max-queries`. Driver transaction commands are also shown in
+`transactionCommands`. This is an
+application SQL budget, not a measurement of Neon compute billing or TLS cost.
+Budget exhaustion rolls back the current review and leaves it pending; earlier
+committed reviews stay committed. Reports contain aggregate counts only.
+
+Missing/ambiguous identities, undated completions and future dates stay pending
+and are reported as blocked. A missing source is acknowledged explicitly.
+Unsupported/unpublished types or genuinely incomplete source states can be
+acknowledged and await a new source event. Learner and employer work is committed
+with the acknowledgement together. A missing employer account is the existing
+durable pending delivery, not a reason to omit the learner assignment. A database
+failure rolls back that review; three failures stop the default pass. Command
+exit is nonzero for failed/blocked work or an exhausted budget.
+
+There is **no persisted retry counter, backoff scheduler, or retry across runs**
+in this change; the current queue schema is untouched. An operator may explicitly
+run another pass. A future production importer integration must define bounded
+retry timing and blocked-work handling before enabling automatic invocations.
 
 The actual Aptem Review importer has not been located in this repository.
 After its final COMMIT it must start a bounded queue drain; it must also recover
 pending work on startup even when a batch contains no new changes. An importer
 that stays stopped cannot provide prompt processing without another agreed wakeup.
-There is no automatic queue consumer in this change.
+There is no automatic or production-enabled queue consumer in this change.
 
-The agreed Aptem eligibility gate is a valid completion date AND a completed
-status. The observed source status is `Completed`. `AwaitingSignature` with a
-date is a change to evaluate, not permission to assign feedback. The existing
-MCM/PR reconciliation service is broader (a date can be completion evidence), so
-calling it alone does not implement that stricter gate. Integrate the gate while
-preserving the reviewed LMS completion path, trusted identity mapping, template
-publication boundary, supported review types, and historical deliveries.
+The new consumer opts into `require_aptem_completed=True` on the existing
+reconciliation service. Its entry gate is exactly the typed source condition
+`status = 'Completed' AND completed_date IS NOT NULL`. JSON/metadata cannot
+supply either value, status is not trimmed or normalized, and a completed local
+overlay cannot bypass this queue-specific gate. Conflicting metadata does not
+override populated typed columns. `AwaitingSignature` with a date does not qualify.
+Existing callers leave this option false, preserving their own LMS/source
+completion paths. The consumer never deletes or rewrites historical deliveries
+when source fields become incomplete. Trusted identity mapping,
+template publication boundaries, supported types and pinned history still apply.
+The consumer also skips the employer pass entirely for MCM/EPA; the existing
+public service defaults to including the employer pass for all other callers.
 
 A consumer must atomically claim/serialize work, remember the version it actually
 evaluated, and acknowledge only that version. It must NOT acknowledge whatever
@@ -72,6 +127,23 @@ unchanged and unrelated updates, inserts, NULL transitions, signature-to-complet
 changes, commit visibility, rollback, queue-write failure, concurrent source
 writers, version acknowledgements, privileges, reapplication and disable/re-enable.
 Artifacts go under ignored `.local-runtime/review-feedback-outbox-tests/`.
+
+For the real service/consumer integration tests, also from the repository root:
+
+```powershell
+backend/.venv/Scripts/python.exe backend/engagement_api/run_review_feedback_consumer_tests.py --pg-bin '<PostgreSQL bin directory>'
+```
+
+This runner creates a separate, fresh loopback cluster, verifies its identity,
+uses model column types/single-field uniqueness for synthetic fixture tables,
+and runs the actual producer SQL, consumer, ORM service, identity resolution and
+employer link resolver. It does not apply application migrations or load `.env`.
+External PostgreSQL/application network access is blocked in the child. Only
+framework-internal loopback event-loop self-pipes are allowed on Windows.
+The cluster is stopped in `finally`, including on failure. Synthetic reports
+and logs are under ignored `.local-runtime/review-feedback-consumer-tests/`.
+Fixtures are not a claim to reproduce every production FK/constraint or live
+integration. No production source records, forms, answers or assignments are used.
 
 Existing feedback checks use only the verified SQLite test settings:
 
