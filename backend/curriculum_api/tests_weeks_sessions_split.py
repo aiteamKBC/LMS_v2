@@ -21,6 +21,11 @@ from curriculum_api.tests import CurriculumPersistenceTransactionHarness
 class WeeksAndSessionsAreStoredApart(CurriculumPersistenceTransactionHarness):
     """The counts a module carries, and which of them each feature reads."""
 
+    def setUp(self):
+        super().setUp()
+        from coach_api.tests_support.persisted_fixtures import curriculum_session
+        curriculum_session(self, self.client)
+
     def create_module(self, *, week_days='Monday, Thursday', weeks=5, sessions=10):
         response = self.client.post(
             '/curriculum_api/curriculum/modules/',

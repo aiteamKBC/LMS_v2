@@ -1824,6 +1824,48 @@ class ArchiveWorkerTests(unittest.TestCase):
         self.storage.upload_blob.assert_not_called()
         self.ns['save_archive'].assert_not_called()
 
+    def attendance_archive(self, *, failure=None, original_failure=False, malformed=False):
+        self.archive(state='ready')
+        client = Mock()
+        csv_blob, original_blob = Mock(), Mock()
+        client.get_blob_client.side_effect = [csv_blob, original_blob]
+        if failure:
+            (original_blob if original_failure else csv_blob).upload_blob.side_effect = failure
+        self.ns.update(storage_client=lambda: client, json=json, attendance_csv=attendance_csv,
+                       result_rows=lambda series: [{'id': 'O', 'reportReady': True, 'sessionNumber': 1,
+                           'attendance': [{'name': 'Learner', 'email': 'learner@example.invalid', **({} if malformed else {'seconds': 200})}]}])
+        self.ns['read'].side_effect = [[{'id': 'S', 'module_catalogue_id': 'M'}],
+                                      [{'group_id': 'G'}], [{'id': 'O', 'session_number': 1}], [],
+                                      [{'raw_data': {'duration': 200}}]]
+        return self.ns['archive_series']('S'), csv_blob, original_blob
+
+    def test_attendance_archives_keep_the_csv_and_original_teams_evidence(self):
+        errors, csv_blob, original_blob = self.attendance_archive()
+        self.assertEqual(errors, [])
+        self.assertIn(b'learner@example.invalid', csv_blob.upload_blob.call_args.args[0])
+        self.assertEqual(json.loads(original_blob.upload_blob.call_args.args[0]), [{'raw_data': {'duration': 200}}])
+        self.assertEqual(csv_blob.upload_blob.call_args.kwargs, {'overwrite': True})
+        self.assertEqual(original_blob.upload_blob.call_args.kwargs, {'overwrite': True})
+
+    def test_attendance_failure_reports_the_storage_stage_without_private_error_text(self):
+        for original in (False, True):
+            with self.subTest(original=original):
+                failure = self.http_error('private credentials https://private.invalid?token=secret')
+                failure.status_code = 403
+                errors, csv_blob, original_blob = self.attendance_archive(failure=failure, original_failure=original)
+                phase = 'uploading_original' if original else 'uploading_csv'
+                self.assertIn(f'during {phase} (HttpResponseError, HTTP 403)', errors[0])
+                self.assertNotIn('private', errors[0])
+                self.assertNotIn('token', str(self.ns['log'].warning.call_args))
+                if not original:
+                    original_blob.upload_blob.assert_not_called()
+
+    def test_attendance_export_failure_is_not_misreported_as_an_upload_failure(self):
+        errors, csv_blob, original_blob = self.attendance_archive(malformed=True)
+        self.assertIn('during exporting (KeyError)', errors[0])
+        csv_blob.upload_blob.assert_not_called()
+        original_blob.upload_blob.assert_not_called()
+
     def test_ready_recording_does_not_redownload_or_reupload(self):
         errors, blob = self.archive(state='ready')
         self.assertEqual(errors, [])
@@ -2075,6 +2117,7 @@ class ArchiveWorkerTests(unittest.TestCase):
         self.views.curriculum_teams_meeting_artifacts = Mock(return_value=Response(json.dumps({'errors': ['partial'] if partial else []}), 207 if partial else 200))
         ns = {'BaseCommand': object, 'CommandError': RuntimeError, 'json': json, 'uuid': uuid, 'logging': logging,
             're': re,
+            'archive_runtime_preflight': Mock(return_value='synthetic:instance:1:s3'),
             'connections': {'default': types.SimpleNamespace(cursor=lambda: cursor)},
             'transaction': types.SimpleNamespace(atomic=nullcontext), 'archive_series': Mock(return_value=[]),
             'reconcile_component_links': Mock(return_value=0),
@@ -2091,6 +2134,20 @@ class ArchiveWorkerTests(unittest.TestCase):
         command.handle(limit=2, scheduled=False, provision_container=False)
         self.views.curriculum_teams_meeting_artifacts.assert_not_called()
         ns['archive_series'].assert_not_called()
+
+    def test_worker_failure_logs_origin_and_lease_without_private_exception_text(self):
+        command, ns, cursor = self.worker()
+        self.views.curriculum_teams_meeting_artifacts.side_effect = RuntimeError('private-token@example.invalid')
+        with self.assertLogs(level='INFO')as logs, self.assertRaisesRegex(RuntimeError,'Some session jobs need retry'):
+            command.handle(limit=1,scheduled=False,provision_container=False)
+        output='\n'.join(logs.output)
+        self.assertIn('runtime=synthetic:instance:1:s3',output)
+        self.assertIn('phase=graph_sync error_type=RuntimeError',output)
+        self.assertIn('lease=',output)
+        self.assertNotIn('private-token',output)
+        finish=next(call for call in cursor.execute.call_args_list if 'finished_at=now()'in call.args[0])
+        self.assertEqual(finish.args[1][0],'failed')
+        self.assertNotIn('private-token',str(finish.args[1]))
 
     def test_worker_claims_with_lock_and_finishes_only_owned_lease(self):
         command, ns, cursor = self.worker()

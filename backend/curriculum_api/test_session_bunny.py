@@ -30,7 +30,7 @@ class SessionBunnyTests(TestCase):
         self.read = self.components.start(); self.addCleanup(self.components.stop)
         self.owner = patch('curriculum_api.views.teams_online_meeting_owner_id', return_value='OWNER')
         self.owner.start(); self.addCleanup(self.owner.stop)
-        self.environment = patch.dict(os.environ, BUNNY_STREAM_ENABLED='true')
+        self.environment = patch.dict(os.environ, BUNNY_STREAM_ENABLED='true', BUNNY_LIVE_STREAM_LIBRARY_ID='798153')
         self.environment.start(); self.addCleanup(self.environment.stop)
 
     def asset(self):
@@ -147,6 +147,7 @@ class SessionBunnyTests(TestCase):
 
     def bunny_client(self, statuses):
         client = Mock()
+        client.library_id = '798153'
         client.collection.return_value = 'COLLECTION'
         client.find_import.return_value = None
         client.create.return_value = {'guid': VIDEO}
@@ -164,7 +165,7 @@ class SessionBunnyTests(TestCase):
         self.assertEqual(client.upload.call_args.args[0], VIDEO)
         publish.assert_called_once()
 
-    def test_new_programme_recording_provisions_bunny_without_manual_collection_setup(self):
+    def test_new_module_recording_provisions_bunny_without_manual_collection_setup(self):
         self.pending = self.asset()
         client = self.bunny_client([4])
         client.collection.side_effect = MissingProgrammeCollection('No collection yet')
@@ -172,7 +173,8 @@ class SessionBunnyTests(TestCase):
         result, download, publish = self.transfer(client)
         self.assertEqual((result.status, result.collection_id, result.video_id), ('ready', 'NEW-COLLECTION', VIDEO))
         self.assertEqual(result.scope['occurrence_id'], self.occurrence['id'])
-        client.create_programme_collection.assert_called_once_with('P', 'Example programme')
+        from .bunny_module_collections import collection_name
+        client.create_programme_collection.assert_called_once_with('LMS-MODULE:M', collection_name('M', 'Example module'))
         self.assertEqual(client.create.call_args.args[2], 'NEW-COLLECTION')
         download.assert_called_once()
         publish.assert_called_once()

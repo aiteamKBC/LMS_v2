@@ -1,6 +1,9 @@
 """No database, credentials, Django setup or live HTTP calls."""
 import io
+import hashlib
+import os
 import unittest
+from urllib.parse import parse_qs, urlsplit
 from unittest.mock import Mock, patch
 
 import requests
@@ -310,6 +313,49 @@ class VideoSourceTests(unittest.TestCase):
     def test_bunny_parser_only_recognises_exact_embed_host_and_path(self):
         self.assertTrue(is_bunny_url(playback_url('798153', VIDEO_ID)))
         self.assertFalse(is_bunny_url(f'https://iframe.mediadelivery.net.attacker.test/embed/798153/{VIDEO_ID}'))
+
+
+class SeparateLibraryCredentialsTests(unittest.TestCase):
+    def setUp(self):
+        env = patch.dict(os.environ, {
+            'BUNNY_STREAM_LIBRARY_ID': '798153', 'BUNNY_STREAM_API_KEY': 'synthetic-materials-api',
+            'BUNNY_STREAM_TOKEN_KEY': 'synthetic-materials-token',
+            'BUNNY_LIVE_STREAM_LIBRARY_ID': '796471', 'BUNNY_LIVE_STREAM_API_KEY': 'synthetic-live-api',
+            'BUNNY_LIVE_STREAM_TOKEN_KEY': 'synthetic-live-token',
+        }, clear=True)
+        env.start(); self.addCleanup(env.stop)
+
+    def test_materials_and_live_sessions_use_their_own_credentials(self):
+        self.assertEqual(BunnyStream().library_id, '798153')
+        self.assertEqual(BunnyStream('798153').api_key, 'synthetic-materials-api')
+        self.assertEqual(BunnyStream('796471').api_key, 'synthetic-live-api')
+
+    def test_missing_live_key_never_sends_the_materials_key_to_another_library(self):
+        with patch.dict(os.environ, BUNNY_LIVE_STREAM_API_KEY=''):
+            with self.assertRaises(VideoImportError):
+                BunnyStream('796471')
+            self.assertEqual(BunnyStream('798153').api_key, 'synthetic-materials-api')
+
+    def test_unknown_library_requires_an_explicit_credential(self):
+        with self.assertRaises(VideoImportError):
+            BunnyStream('999999')
+        self.assertEqual(BunnyStream('999999', api_key='explicit-synthetic').api_key, 'explicit-synthetic')
+
+    def test_saved_playback_uses_the_security_key_for_its_library(self):
+        from curriculum_api.session_bunny_policy import signed_embed
+        for library, key in (('798153', 'synthetic-materials-token'), ('796471', 'synthetic-live-token')):
+            url = signed_embed(library, VIDEO_ID, now=100)
+            query = parse_qs(urlsplit(url).query)
+            expected = hashlib.sha256(f'{key}{VIDEO_ID}{100 + 4 * 60 * 60}'.encode()).hexdigest()
+            self.assertEqual(query['token'], [expected])
+            self.assertIn('/embed/' + library + '/', url)
+
+    def test_missing_live_security_key_leaves_old_playback_working(self):
+        from curriculum_api.session_bunny_policy import signed_embed
+        with patch.dict(os.environ, BUNNY_LIVE_STREAM_TOKEN_KEY=''):
+            with self.assertRaises(VideoImportError):
+                signed_embed('796471', VIDEO_ID)
+            self.assertIn('/embed/798153/', signed_embed('798153', VIDEO_ID))
 
 
 if __name__ == '__main__':

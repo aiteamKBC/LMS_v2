@@ -27,7 +27,8 @@ def _anchor(asset, key):
                                   'big', signed=True)
             with connection.cursor() as cursor:
                 cursor.execute('SELECT pg_advisory_xact_lock(%s)', [lock])
-        rows = CurriculumVideoImport.objects.select_for_update().filter(library_id=asset.library_id)
+        rows = CurriculumVideoImport.objects.select_for_update().filter(library_id=asset.library_id).exclude(
+            target_kind='live_collection').exclude(scope__has_key='bunny_live_collection_module')
         anchor = rows.filter(**{'scope__' + KEY: key}).order_by('created_at', 'id').first()
         if anchor is None:
             programme = rows.filter(scope__programme_id=asset.scope['programme_id']).order_by('created_at', 'id')
