@@ -43,7 +43,7 @@ def booking(scheduled_date, *, status="scheduled"):
 class FirstSessionAccessTests(SimpleTestCase):
     def call(self, *, record=None, aptem_id=None, owner=("ann@kbc.test", "Ann Coach"),
              programme_status="Fresh user", learner_start_date=None, kind="commercial",
-             learner_type=None):
+             learner_type=None, profile_ids=(70,), events_by_profile=None, seen=None):
         learner = SimpleNamespace(
             pk=7, aptem_id=aptem_id,
             programme_status=programme_status, learner_start_date=learner_start_date,
@@ -55,19 +55,114 @@ class FirstSessionAccessTests(SimpleTestCase):
                 filter=lambda **kw: SimpleNamespace(first=lambda: learner)
             )
         )
-        chain = SimpleNamespace(
-            exclude=lambda **kw: SimpleNamespace(
-                order_by=lambda *a: SimpleNamespace(first=lambda: record)
+        def filter_events(**kwargs):
+            if seen is not None:
+                seen["event_filter"] = kwargs
+            selected = (
+                events_by_profile.get(kwargs["learner_profile_id"])
+                if events_by_profile is not None else record
             )
-        )
+            return SimpleNamespace(
+                exclude=lambda **kw: SimpleNamespace(
+                    order_by=lambda *a: SimpleNamespace(first=lambda: selected)
+                )
+            )
+
         request = RequestFactory().get(f"/learner_api/calendar/{kind}/7/first-session/")
         with patch.dict(learner_calendar.SOURCE_MODELS, {kind: model}, clear=True), \
+             patch.object(learner_calendar, "_first_session_profile_ids",
+                          return_value=tuple(profile_ids)), \
              patch.object(learner_calendar.CoachCalendarEvent, "objects",
-                          SimpleNamespace(filter=lambda **kw: chain)), \
+                          SimpleNamespace(filter=filter_events)), \
              patch.object(learner_calendar, "_case_owner_contact", lambda l: owner), \
              patch.object(learner_calendar, "_serialize_event", lambda r: {"eventKey": r.event_key}), \
              patch.dict("os.environ", {"LEARNER_API_REQUIRE_AUTH": "0"}):
             return learner_calendar.learner_first_session(request, kind, 7)
+
+    def test_profile_resolver_uses_only_the_exact_enrolment_bridge(self):
+        seen = {}
+
+        class ProfileIds:
+            def __getitem__(self, item):
+                seen["slice"] = item
+                return [70]
+
+        query = SimpleNamespace(
+            values_list=lambda *fields, **kwargs: (
+                seen.update({"fields": fields, "values_kwargs": kwargs}) or ProfileIds()
+            )
+        )
+
+        def filter_profiles(**kwargs):
+            seen["filter"] = kwargs
+            return query
+
+        with patch.object(learner_calendar.LearnerProfile, "objects",
+                          SimpleNamespace(filter=filter_profiles)):
+            profile_ids = learner_calendar._first_session_profile_ids(7)
+
+        self.assertEqual(profile_ids, (70,))
+        self.assertEqual(seen["filter"], {"enrolment_id": 7})
+        self.assertEqual(seen["fields"], ("pk",))
+        self.assertEqual(seen["values_kwargs"], {"flat": True})
+        self.assertEqual(seen["slice"], slice(None, 2, None))
+
+    def test_event_lookup_uses_the_linked_canonical_profile_id(self):
+        seen = {}
+
+        response = self.call(record=None, profile_ids=(70,), seen=seen)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(seen["event_filter"]["learner_profile_id"], 70)
+
+    def test_equal_numeric_enrolment_id_cannot_expose_another_profile_event(self):
+        wrong = booking(date(2026, 10, 5))
+        wrong.event_key = "first-session:wrong-learner"
+        correct = booking(date(2026, 10, 6))
+        correct.event_key = "first-session:correct-learner"
+
+        payload = body(self.call(
+            profile_ids=(70,),
+            events_by_profile={7: wrong, 70: correct},
+        ))
+
+        self.assertEqual(payload["event"], {"eventKey": "first-session:correct-learner"})
+        self.assertNotEqual(payload["event"], {"eventKey": "first-session:wrong-learner"})
+
+    def test_missing_profile_is_rejected_before_event_lookup(self):
+        seen = {}
+
+        response = self.call(profile_ids=(), seen=seen)
+
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(body(response), {"error": "Learner profile not found."})
+        self.assertNotIn("event_filter", seen)
+
+    def test_ambiguous_profiles_are_rejected_before_event_lookup(self):
+        seen = {}
+
+        response = self.call(profile_ids=(70, 71), seen=seen)
+
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(body(response), {"error": "Learner profile identity needs review."})
+        self.assertNotIn("event_filter", seen)
+
+    def test_authenticated_learner_cannot_read_another_learners_first_session(self):
+        request = RequestFactory().get(
+            "/learner_api/calendar/commercial/7/first-session/"
+        )
+        other_learner = SimpleNamespace(role="learner", subject_id=8)
+
+        with patch("login.permissions.authenticate_request", return_value=other_learner), \
+             patch.object(learner_calendar, "_first_session_profile_ids") as profiles, \
+             patch.dict("os.environ", {"LEARNER_API_REQUIRE_AUTH": "1"}):
+            response = learner_calendar.learner_first_session(
+                request, "commercial", pk=7
+            )
+
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(body(response), {"error": "Not found."})
+        profiles.assert_not_called()
 
     def test_nothing_booked_asks_the_learner_to_book(self):
         payload = body(self.call(record=None))
@@ -265,6 +360,7 @@ class CancelledFirstSessionTests(SimpleTestCase):
 
         request = RequestFactory().get("/learner_api/calendar/commercial/7/first-session/")
         with patch.dict(learner_calendar.SOURCE_MODELS, {"commercial": model}, clear=True), \
+             patch.object(learner_calendar, "_first_session_profile_ids", return_value=(70,)), \
              patch.object(learner_calendar.CoachCalendarEvent, "objects",
                           SimpleNamespace(filter=filter_)), \
              patch.object(learner_calendar, "_case_owner_contact", lambda l: ("a@b.test", "A")), \
@@ -272,6 +368,7 @@ class CancelledFirstSessionTests(SimpleTestCase):
             learner_calendar.learner_first_session(request, "commercial", 7)
 
         self.assertEqual(seen["filtered"]["event_type"], "first-session")
+        self.assertEqual(seen["filtered"]["learner_profile_id"], 70)
         self.assertEqual(seen["excluded"]["status"], "cancelled")
 
 
