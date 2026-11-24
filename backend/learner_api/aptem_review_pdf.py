@@ -1,6 +1,10 @@
 """Shared lookup for read-only PDFs of imported Aptem reviews."""
 
+import hashlib
+import json
 import logging
+import re
+from datetime import datetime
 from urllib.parse import urlparse
 
 from django.conf import settings
@@ -73,6 +77,42 @@ def _direct_blob_location(row):
     return (container, blob) if container and blob else None
 
 
+def _pdf_sha256(value):
+    value = _clean(value).lower()
+    return value if re.fullmatch(r'[0-9a-f]{64}', value) else None
+
+
+def _valid_sha256_proof(row, review):
+    metadata = row.get('pdf_metadata')
+    if isinstance(metadata, str):
+        try:
+            metadata = json.loads(metadata)
+        except (ValueError, RecursionError):
+            return False
+    proof = metadata.get('review_link_proof') if isinstance(metadata, dict) else None
+    if not isinstance(proof, dict) or proof.get('method') != 'aptem_review_document_sha256_v1':
+        return False
+    expected = {
+        'learner_id': review.get('learnerId'),
+        'aptem_learner_id': review.get('aptemLearnerId'),
+        'review_id': review.get('id'),
+        'aptem_review_id': review.get('aptemReviewId'),
+        'aptem_document_id': row.get('aptem_document_id'),
+        'file_size': row.get('file_size'),
+    }
+    if any(not _clean(value) or _clean(proof.get(key)) != _clean(value)
+           for key, value in expected.items()):
+        return False
+    digest = _pdf_sha256(row.get('sha256'))
+    if not digest or _pdf_sha256(proof.get('sha256')) != digest:
+        return False
+    try:
+        checked = datetime.fromisoformat(_clean(proof.get('checked_at')).replace('Z', '+00:00'))
+        return checked.utcoffset() is not None
+    except (TypeError, ValueError):
+        return False
+
+
 def _direct_pdf_locations(review):
     """Find safe direct archive locations for this exact imported review.
 
@@ -99,7 +139,8 @@ def _direct_pdf_locations(review):
                 SELECT learner_id, aptem_learner_id, document_type, status,
                        mapping_status, review_match_status, original_filename, source_url,
                        source_hash, verified_at, azure_account_url,
-                       azure_container, azure_blob_name, file_size
+                       azure_container, azure_blob_name, file_size,
+                       sha256, pdf_metadata, aptem_document_id, review_id
                 FROM "Learner".review_documents
                 WHERE review_id = %s
                 ''',
@@ -118,6 +159,7 @@ def _direct_pdf_locations(review):
                 'mapping_status', 'review_match_status', 'original_filename', 'source_url',
                 'source_hash', 'verified_at', 'azure_account_url',
                 'azure_container', 'azure_blob_name', 'file_size',
+                'sha256', 'pdf_metadata', 'aptem_document_id', 'review_id',
             ),
             values,
         ))
@@ -133,7 +175,10 @@ def _direct_pdf_locations(review):
             or _clean(row['document_type']).casefold() != review_type
             or _clean(row['status']).casefold() != 'uploaded'
             or _clean(row['mapping_status']).casefold() != 'aptem_id'
-            or _clean(row['review_match_status']).casefold() != 'matched_pdf_type_dates'
+            or _clean(row['review_id']) != str(review_id)
+            or _clean(row['review_match_status']).casefold() not in {
+                'matched_pdf_type_dates', 'matched_aptem_document_sha256',
+            }
             or not _clean(row['original_filename']).casefold().endswith('.pdf')
             or source_url_parts.scheme not in {'http', 'https'}
             or not source_url_parts.netloc
@@ -142,9 +187,15 @@ def _direct_pdf_locations(review):
             or file_size <= 0
         ):
             continue
+        if (_clean(row['review_match_status']).casefold() == 'matched_aptem_document_sha256'
+                and not _valid_sha256_proof(row, review)):
+            continue
+        digest = _pdf_sha256(row['sha256'])
+        if _clean(row['sha256']) and not digest:
+            continue
         location = _direct_blob_location(row)
         if location:
-            locations.add(location)
+            locations.add((*location, digest, file_size))
     return locations
 
 
@@ -185,8 +236,16 @@ def _read_verified_pdf(location):
     from .evidence_storage import download_blob_bytes
 
     try:
-        content = download_blob_bytes(*location, max_bytes=25 * 1024 * 1024)
-        return content if content and content.startswith(b'%PDF-') else None
+        container, blob = location[:2]
+        digest, expected_size = location[2:] if len(location) == 4 else (None, None)
+        content = download_blob_bytes(container, blob, max_bytes=25 * 1024 * 1024)
+        if not content or not content.startswith(b'%PDF-'):
+            return None
+        if expected_size is not None and len(content) != expected_size:
+            return None
+        if digest is not None and hashlib.sha256(content).hexdigest() != digest:
+            return None
+        return content
     except Exception:
         logger.warning('Could not read the original imported Aptem PDF blob.', exc_info=True)
         return None
@@ -218,7 +277,12 @@ def original_review_pdf(review):
     if len(probe_locations) != 1:
         logger.info('historical_pdf_source=probe historical_pdf_result=unavailable')
         return None
-    content = _read_verified_pdf(next(iter(probe_locations)))
+    probe_location = next(iter(probe_locations))
+    # A probe pointing to the same blob must not bypass archive integrity checks.
+    archived = {location for location in direct_locations if location[:2] == probe_location}
+    if len(archived) > 1:
+        return None
+    content = _read_verified_pdf(next(iter(archived)) if archived else probe_location)
     if content is None:
         logger.info('historical_pdf_source=probe historical_pdf_result=missing')
         return None

@@ -313,8 +313,21 @@ class SignedMcmPdfTests(SimpleTestCase):
     def test_submitted_answers_cannot_change_behind_a_signature(self):
         from .review_instances import save_review_instance_answers
         for status in ('awaiting-signature', 'completed'):
-            with self.subTest(status=status), self.assertRaisesMessage(ValueError, 'Submitted review answers cannot be changed'):
-                save_review_instance_answers({'status': status}, {'answer': 'Replacement'})
+            instance = {'id': 'signed-review', 'status': status}
+            # Keep the reconciliation wrapper exercised while replacing its DB boundaries.
+            with (
+                self.subTest(status=status),
+                patch('coach_api.reconciliation_links.transaction.atomic') as atomic,
+                patch('curriculum_api.review_instances.get_review_instance', return_value=instance) as lock,
+                patch('coach_api.reconciliation_links.for_native', return_value=None) as reconciliation,
+                patch('curriculum_api.review_instances._save_review_instance_answers_locked') as save,
+            ):
+                with self.assertRaisesMessage(ValueError, 'Submitted review answers cannot be changed'):
+                    save_review_instance_answers(instance, {'answer': 'Replacement'})
+                atomic.assert_called_once_with()
+                lock.assert_called_once_with('signed-review', for_update=True)
+                reconciliation.assert_called_once_with('signed-review')
+                save.assert_not_called()
 
 
 def progress_review_definition(snapshot=None, rag_history=None):
