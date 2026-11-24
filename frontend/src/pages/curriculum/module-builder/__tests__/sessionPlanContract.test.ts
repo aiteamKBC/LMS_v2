@@ -18,7 +18,7 @@ const plan: ModuleWeekSessionPlan = {
 
 function moduleDraft() {
   const draft = createLocalModuleDraft({ catalogueId: 'MOD-CONTRACT', title: 'Synthetic module',
-    programme: 'Synthetic programme', description: '', weeks: 2, status: 'draft', endDate: '2026-11-29' });
+    programme: 'Synthetic programme', description: '', weeks: 2, status: 'draft', startDate: '2026-11-01', endDate: '2026-11-29' });
   draft.weekBoundaryMode = 'calendar';
   draft.weekStructure[1].studyWeekHolidays = [holiday];
   const booked = createEmptyComponent(draft.weekStructure[0].id, 'live-session', 1);
@@ -39,7 +39,9 @@ describe('module session-plan response contract', () => {
     const draft = moduleDraft();
     const before = structuredClone(draft);
     const result = applyModuleWeekSessionPlan(draft, loaded!);
-    expect(result.weekStructure[0].sessionDate).toBe('2026-11-19');
+    // A confirmed booking within the module window owns the heading even
+    // when an older API returns a numeric/malformed weeks field.
+    expect(result.weekStructure[0].sessionDate).toBe('2026-11-12');
     expect(result.weekStructure[0].components).toEqual(before.weekStructure[0].components);
     expect(result.weekStructure[1].studyWeekHolidays).toEqual([holiday]);
     expect(result.endDate).toBe(before.endDate);
