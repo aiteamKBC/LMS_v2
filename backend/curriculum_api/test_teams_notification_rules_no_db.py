@@ -28,8 +28,12 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import Mock, patch
 
-import test_calendar_checks_no_db as checks_tests
-import test_schedule_email_no_db as email_tests
+if __package__:
+    from . import test_calendar_checks_no_db as checks_tests
+    from . import test_schedule_email_no_db as email_tests
+else:
+    import test_calendar_checks_no_db as checks_tests
+    import test_schedule_email_no_db as email_tests
 
 ROOT = Path(__file__).resolve().parent
 checks = checks_tests.checks
