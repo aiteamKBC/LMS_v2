@@ -1,14 +1,19 @@
 /* Shared by employer screens and My Courses. These tokens do not restyle
    other workspaces; only the screens that consume them use this palette. */
 :root {
-  --employer-background: #f7f7fa;
-  --employer-surface: #ffffff;
-  --employer-soft: #f1edf6;
-  --employer-line: #e2dce9;
+  --employer-background: var(--workspace-colour-canvas, #f5f4fb);
+  --employer-surface: var(--workspace-colour-surface, #ffffff);
+  --employer-soft: var(--workspace-colour-soft, #f0eafd);
+  --employer-line: var(--workspace-colour-line, #ded5ef);
+  --employer-hero: linear-gradient(110deg, var(--employer-soft), var(--employer-surface) 55%, var(--employer-teal-soft));
+  --employer-teal: var(--workspace-colour-teal, #087f8c);
+  --employer-teal-soft: var(--workspace-colour-teal-soft, #e7f6f5);
+  --employer-blue: var(--workspace-colour-blue, #3868b2);
+  --employer-blue-soft: var(--workspace-colour-blue-soft, #ebf2ff);
   --employer-ink: #2e2938;
   --employer-muted: #6b6476;
-  --employer-primary: #68468c;
-  --employer-primary-hover: #563774;
+  --employer-primary: var(--workspace-colour-purple, #7040b5);
+  --employer-primary-hover: var(--workspace-colour-purple-hover, #592c97);
   --employer-primary-strong: #4a2c67;
   --employer-on-primary: #ffffff;
   --employer-gold: #f1d46c;
@@ -19,24 +24,28 @@
   --employer-series-1: #4a2c67;
   --employer-series-2: var(--employer-gold);
   --employer-series-3: var(--employer-success);
-  --employer-series-4: #856a95;
-  --employer-success: #43735d;
-  --employer-success-soft: #edf4f0;
+  --employer-series-4: var(--employer-teal);
+  --employer-success: #187654;
+  --employer-success-soft: #e7f5ed;
   --employer-warning: #8c682e;
-  --employer-warning-soft: #f8f3e9;
-  --employer-danger: #a24747;
-  --employer-danger-soft: #f8eded;
+  --employer-warning-soft: #fff5dd;
+  --employer-danger: #b74358;
+  --employer-danger-soft: #fcecf0;
 }
 
 [data-theme='dark'] {
-  --employer-background: #1c1921;
-  --employer-surface: #26222d;
-  --employer-soft: #322b3c;
-  --employer-line: #494050;
+  --employer-background: var(--workspace-colour-canvas, #181622);
+  --employer-surface: var(--workspace-colour-surface, #252131);
+  --employer-soft: var(--workspace-colour-soft, #332940);
+  --employer-line: var(--workspace-colour-line, #4c405e);
+  --employer-teal: var(--workspace-colour-teal, #75d4cc);
+  --employer-teal-soft: var(--workspace-colour-teal-soft, #203a3d);
+  --employer-blue: var(--workspace-colour-blue, #9cbeff);
+  --employer-blue-soft: var(--workspace-colour-blue-soft, #25334b);
   --employer-ink: #eeeaf3;
   --employer-muted: #beb5c8;
-  --employer-primary: #c4addb;
-  --employer-primary-hover: #d5c3e5;
+  --employer-primary: var(--workspace-colour-purple, #ba9ce6);
+  --employer-primary-hover: var(--workspace-colour-purple-hover, #d2b8f4);
   --employer-primary-strong: #e5d7f2;
   --employer-on-primary: #261b31;
   --employer-gold-soft: #3b3422;
@@ -44,7 +53,7 @@
   --employer-series-1: #ad8bc9;
   --employer-series-2: var(--employer-gold);
   --employer-series-3: var(--employer-success);
-  --employer-series-4: #d2c1e1;
+  --employer-series-4: var(--employer-teal);
   --employer-success: #a8cdb8;
   --employer-success-soft: #28382f;
   --employer-warning: #ddc293;

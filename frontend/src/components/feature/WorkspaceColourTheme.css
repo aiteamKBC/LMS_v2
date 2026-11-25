@@ -1,0 +1,226 @@
+/* Register before the legacy workspace layers: layered !important rules have
+   reverse priority. Keep the colour treatment here so every role, including
+   Curriculum and Audit, shares it without changing layout or printed reports. */
+@layer workspace-colour {
+  @media screen {
+    :root {
+      --workspace-colour-canvas: #f5f4fb;
+      --workspace-colour-surface: #ffffff;
+      --workspace-colour-soft: #f0eafd;
+      --workspace-colour-line: #ded5ef;
+      --workspace-colour-ink: #302343;
+      --workspace-colour-muted: #71647f;
+      --workspace-colour-purple: #7040b5;
+      --workspace-colour-purple-hover: #592c97;
+      --workspace-colour-teal: #087f8c;
+      --workspace-colour-teal-soft: #e7f6f5;
+      --workspace-colour-blue: #3868b2;
+      --workspace-colour-blue-soft: #ebf2ff;
+      --workspace-colour-gold: #9a6812;
+      --workspace-colour-gold-soft: #fff5d9;
+      --workspace-colour-success: #187654;
+      --workspace-colour-success-soft: #e7f5ed;
+      --workspace-colour-danger: #b74358;
+      --workspace-colour-danger-soft: #fcecf0;
+      --workspace-colour-hero: radial-gradient(ellipse at 100% 0%, #258f9466, transparent 58%), linear-gradient(115deg, #39205e, #65409b 65%, #316d82);
+      --workspace-colour-wash: radial-gradient(ellipse at 0% 0%, #e9defa99, transparent 55%), radial-gradient(ellipse at 100% 0%, #d9f1ee88, transparent 50%);
+    }
+
+    [data-theme='dark'] {
+      --workspace-colour-canvas: #181622;
+      --workspace-colour-surface: #252131;
+      --workspace-colour-soft: #332940;
+      --workspace-colour-line: #4c405e;
+      --workspace-colour-ink: #f1eafa;
+      --workspace-colour-muted: #c1b4d0;
+      --workspace-colour-purple: #ba9ce6;
+      --workspace-colour-purple-hover: #d2b8f4;
+      --workspace-colour-teal: #75d4cc;
+      --workspace-colour-teal-soft: #203a3d;
+      --workspace-colour-blue: #9cbeff;
+      --workspace-colour-blue-soft: #25334b;
+      --workspace-colour-gold: #ebca77;
+      --workspace-colour-gold-soft: #3b3223;
+      --workspace-colour-success: #8fdab0;
+      --workspace-colour-success-soft: #243a31;
+      --workspace-colour-danger: #f2a2b1;
+      --workspace-colour-danger-soft: #442b38;
+      --workspace-colour-hero: radial-gradient(ellipse at 100% 0%, #167e8766, transparent 58%), linear-gradient(115deg, #2d1a48, #493064 65%, #234d5a);
+      --workspace-colour-wash: radial-gradient(ellipse at 0% 0%, #6d3e9222, transparent 55%), radial-gradient(ellipse at 100% 0%, #237b7922, transparent 50%);
+    }
+
+    :root:has(.workspace-shell),
+    .workspace-shell {
+      --enrolment-ui-canvas: var(--workspace-colour-canvas) !important;
+      --enrolment-ui-surface: var(--workspace-colour-surface) !important;
+      --enrolment-ui-soft: var(--workspace-colour-soft) !important;
+      --enrolment-ui-border: var(--workspace-colour-line) !important;
+      --enrolment-ui-heading: var(--workspace-colour-ink) !important;
+      --enrolment-ui-link: var(--workspace-colour-purple) !important;
+      --enrolment-ui-focus: var(--workspace-colour-purple) !important;
+      --enrolment-ui-hero: var(--workspace-colour-hero) !important;
+      --kbc-app-bg: var(--workspace-colour-canvas) !important;
+      --kbc-canvas: var(--workspace-colour-canvas) !important;
+      --kbc-page-bg: var(--workspace-colour-canvas) !important;
+      --kbc-surface: var(--workspace-colour-surface) !important;
+      --kbc-border: var(--workspace-colour-line) !important;
+      --kbc-hero-gradient: var(--workspace-colour-hero) !important;
+      --action-primary: #7040b5 !important;
+      --action-primary-hover: #592c97 !important;
+      --action-primary-active: #472178 !important;
+      --enrolment-ui-action: var(--action-primary) !important;
+      --enrolment-ui-action-hover: var(--action-primary-hover) !important;
+    }
+
+    .workspace-shell {
+      background: var(--workspace-colour-wash), var(--workspace-colour-canvas) !important;
+    }
+
+    .workspace-shell :is(.workspace-content, .workspace-main) {
+      background-color: transparent !important;
+    }
+
+    .workspace-shell > .workspace-content > .kbc-workspace-topbar {
+      background: linear-gradient(105deg, var(--workspace-colour-soft), var(--workspace-colour-surface) 55%, var(--workspace-colour-teal-soft)) !important;
+      border-color: var(--workspace-colour-line) !important;
+      box-shadow: 0 2px 10px #39205e06 !important;
+    }
+
+    .workspace-shell .kbc-workspace-topbar :is(.kbc-topbar-title, .kbc-topbar-user-name, .kbc-topbar-profile) {
+      color: var(--workspace-colour-ink) !important;
+    }
+
+    .workspace-shell .kbc-workspace-topbar :is(.kbc-topbar-subtitle, small, .coach-header-search) {
+      color: var(--workspace-colour-muted) !important;
+    }
+
+    .workspace-shell .kbc-workspace-topbar :is(.kbc-workspace-switcher-button, .coach-header-search) {
+      background: var(--workspace-colour-surface) !important;
+      border-color: var(--workspace-colour-line) !important;
+    }
+
+    .workspace-shell .kbc-workspace-topbar :is(.kbc-workspace-switcher-button *, .kbc-navigation-menu, .kbc-topbar-profile > svg) {
+      color: var(--workspace-colour-purple) !important;
+    }
+
+    .workspace-shell .kbc-workspace-topbar .kbc-topbar-profile:is(:hover, [aria-expanded='true']) {
+      background: var(--workspace-colour-soft) !important;
+    }
+
+    .workspace-shell .kbc-workspace-sidebar,
+    .workspace-shell .kbc-workspace-sidebar .kbc-sidebar-surface {
+      background: linear-gradient(165deg, #57317d, #38214f 65%, #234b56) !important;
+    }
+
+    .workspace-shell .kbc-workspace-sidebar .kbc-sidebar-icon-well {
+      background: #ffffff10 !important;
+      color: #96ded8 !important;
+    }
+
+    .workspace-shell .kbc-workspace-sidebar .kbc-sidebar-icon-well svg {
+      color: inherit !important;
+    }
+
+    .workspace-shell .kbc-workspace-sidebar [aria-current='page'] .kbc-sidebar-icon-well {
+      background: #f1d46c22 !important;
+      color: #f1d46c !important;
+    }
+
+    .workspace-shell .workspace-main .workspace-hero-banner {
+      background: var(--workspace-colour-hero) !important;
+      border-color: #7f5da4 !important;
+      color: #ffffff !important;
+    }
+
+    .workspace-shell .workspace-main .workspace-hero-banner .workspace-hero-title {
+      color: #ffffff !important;
+    }
+
+    .workspace-shell .workspace-main .workspace-hero-banner .workspace-hero-description {
+      color: #f0e7fa !important;
+    }
+
+    .workspace-shell .workspace-main .workspace-hero-banner :is(.workspace-hero-eyebrow, .workspace-hero-banner__icon) {
+      color: #f4d780 !important;
+    }
+
+    .workspace-shell .workspace-main .workspace-hero-banner__icon {
+      background: #ffffff18 !important;
+      border-color: #ffffff40 !important;
+    }
+
+    /* A neutral metric may carry a decorative accent. Status metrics keep
+       their existing number and icon colours; colour never changes meaning. */
+    .workspace-shell .workspace-main :is(.ui-metric-card[data-metric-tone='neutral'], .workspace-hero-metric--default) {
+      --metric-accent: var(--workspace-colour-purple);
+      --metric-soft: var(--workspace-colour-soft);
+      background: linear-gradient(115deg, var(--workspace-colour-surface) 35%, var(--metric-soft)) !important;
+      border-color: color-mix(in srgb, var(--metric-accent) 25%, var(--workspace-colour-line)) !important;
+      box-shadow: inset 0 3px var(--metric-accent), 0 4px 16px #39205e06 !important;
+    }
+
+    .workspace-shell .workspace-main :is(.ui-metric-card[data-metric-tone='neutral'], .workspace-hero-metric--default):nth-child(4n + 2) {
+      --metric-accent: var(--workspace-colour-teal);
+      --metric-soft: var(--workspace-colour-teal-soft);
+    }
+
+    .workspace-shell .workspace-main :is(.ui-metric-card[data-metric-tone='neutral'], .workspace-hero-metric--default):nth-child(4n + 3) {
+      --metric-accent: var(--workspace-colour-blue);
+      --metric-soft: var(--workspace-colour-blue-soft);
+    }
+
+    .workspace-shell .workspace-main :is(.ui-metric-card[data-metric-tone='neutral'], .workspace-hero-metric--default):nth-child(4n + 4) {
+      --metric-accent: var(--workspace-colour-gold);
+      --metric-soft: var(--workspace-colour-gold-soft);
+    }
+
+    .workspace-shell .workspace-main :is(.ui-metric-card[data-metric-tone='neutral'], .workspace-hero-metric--default) :is(.workspace-metric-icon, .workspace-hero-metric__icon, .workspace-hero-metric__status-icon) {
+      background: var(--metric-soft) !important;
+      color: var(--metric-accent) !important;
+    }
+
+    .workspace-shell .workspace-main :is(.ui-metric-card, .workspace-hero-metric) :is(.workspace-metric-label, .workspace-hero-metric__label, .workspace-hero-metric__status) {
+      color: var(--workspace-colour-muted) !important;
+    }
+
+    .workspace-shell .ui-metric-card[data-metric-tone='positive'] {
+      --metric-status-ink: var(--workspace-colour-success);
+      --metric-status-soft: var(--workspace-colour-success-soft);
+    }
+
+    .workspace-shell .ui-metric-card[data-metric-tone='caution'] {
+      --metric-status-ink: var(--workspace-colour-gold);
+      --metric-status-soft: var(--workspace-colour-gold-soft);
+    }
+
+    .workspace-shell .ui-metric-card[data-metric-tone='critical'] {
+      --metric-status-ink: var(--workspace-colour-danger);
+      --metric-status-soft: var(--workspace-colour-danger-soft);
+    }
+
+    .workspace-shell .ui-metric-card:is([data-metric-tone='positive'], [data-metric-tone='caution'], [data-metric-tone='critical']) .workspace-metric-icon {
+      background: var(--metric-status-soft) !important;
+      color: var(--metric-status-ink) !important;
+    }
+
+    .workspace-shell .ui-metric-card:is([data-metric-tone='positive'], [data-metric-tone='caution'], [data-metric-tone='critical']) :is(.text-emerald-700, .text-amber-700, .text-red-700) {
+      color: var(--metric-status-ink) !important;
+    }
+
+    .workspace-shell .workspace-main .workspace-hero-metric--default .workspace-hero-metric__value,
+    .workspace-shell .workspace-main .workspace-hero-metric--default > p:last-child,
+    .workspace-shell .workspace-main .workspace-hero-metric--default > p:last-child > span {
+      color: var(--workspace-colour-ink) !important;
+    }
+
+    /* The inset selection ring must remain visible over decorative accents. */
+    .workspace-shell .workspace-main .ui-metric-card[aria-pressed='true'] {
+      box-shadow: inset 0 0 0 2px var(--workspace-colour-purple) !important;
+    }
+
+    .workspace-shell .workspace-main :is(.ui-metric-card, .ui-page-tabs button, [role='tab']):focus-visible {
+      outline: 2px solid var(--workspace-colour-purple) !important;
+      outline-offset: 3px !important;
+    }
+  }
+}

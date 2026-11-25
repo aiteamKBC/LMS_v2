@@ -1,18 +1,18 @@
 @import './employer-palette.css';
 
 .cards { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 14px; }
-.card { --tone: var(--employer-primary); display: flex; flex-direction: column; align-items: flex-start; min-width: 0; min-height: 170px; gap: 10px; padding: 18px; color: var(--ink); border: 1px solid var(--line); border-radius: 16px; background: var(--surface); box-shadow: 0 4px 16px #32136d06; text-align: left; }
+.card { --tone: var(--employer-primary); --tint: var(--employer-soft); display: flex; flex-direction: column; align-items: flex-start; min-width: 0; min-height: 170px; gap: 10px; padding: 18px; color: var(--ink); border: 1px solid var(--line); border-radius: 16px; background: linear-gradient(135deg, var(--surface) 25%, var(--tint)); box-shadow: inset 0 3px var(--tone), 0 4px 16px #32136d06; text-align: left; }
 .card:hover { border-color: var(--tone); }
 .card:focus-visible { outline: 3px solid var(--tone); outline-offset: 3px; }
 .icon { display: grid; place-items: center; width: 36px; height: 36px; border-radius: 11px; color: var(--tone); background: color-mix(in srgb, var(--tone) 9%, var(--surface)); }
 .label { font-size: 12px; font-weight: 600; line-height: 1.5; }
 .card strong { margin-top: auto; font-size: clamp(20px, 2vw, 29px); font-weight: 750; line-height: 1.2; overflow-wrap: anywhere; }
 .card small { font-size: 11px; line-height: 1.5; color: var(--muted); }
-.card[data-tone='green'] { --tone: var(--employer-success); }
-.card[data-tone='blue'] { --tone: var(--employer-primary); }
-.card[data-tone='amber'] { --tone: var(--employer-gold-ink); }
+.card[data-tone='green'] { --tone: var(--employer-success); --tint: var(--employer-success-soft); }
+.card[data-tone='blue'] { --tone: var(--employer-teal); --tint: var(--employer-teal-soft); }
+.card[data-tone='amber'] { --tone: var(--employer-gold-ink); --tint: var(--employer-gold-soft); }
 .card[data-tone='amber'] .icon { background: var(--employer-gold); color: var(--employer-on-gold); }
-.card[data-tone='rose'] { --tone: var(--employer-primary); }
+.card[data-tone='rose'] { --tone: var(--employer-blue); --tint: var(--employer-blue-soft); }
 .card[data-tone='overall'] { background: color-mix(in srgb, var(--purple) 7%, var(--surface)); border-color: color-mix(in srgb, var(--purple) 30%, var(--line)); }
 .chartPanel { padding: 22px; border: 1px solid var(--line); border-radius: 16px; color: var(--ink); background: var(--surface); }
 .chartHeader { display: flex; justify-content: space-between; align-items: flex-start; gap: 20px; }

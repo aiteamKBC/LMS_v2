@@ -16,7 +16,7 @@
   z-index: -1;
   pointer-events: none;
   /* The supplied artwork includes white margins; crop them without altering the asset. */
-  background: linear-gradient(0deg, rgb(79 45 127 / 0.88), rgb(79 45 127 / 0.72)),
+  background: var(--workspace-colour-hero, linear-gradient(0deg, rgb(79 45 127 / 0.88), rgb(79 45 127 / 0.72))),
     url('https://jokdxsdbxorzciulkdyl.supabase.co/storage/v1/object/public/images/ad6d34c7dae948ab8038f42ebe5631e7.png') center / 102.5% 132% no-repeat;
 }
 
