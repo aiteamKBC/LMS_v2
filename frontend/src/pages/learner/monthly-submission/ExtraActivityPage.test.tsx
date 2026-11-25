@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { MemoryRouter, useLocation } from 'react-router-dom';
 import type { ReactNode } from 'react';
 import ExtraActivityPage, { ExtraActivityForm } from './ExtraActivityPage';
@@ -144,6 +145,7 @@ it('keeps a deleted extra-activity topic removed when switching steps, and retai
 });
 
 it('asks before replacing statements and keeps written answers, claims and hours when generation returns blanks', async () => {
+  const user = userEvent.setup();
   const monthly = { ...emptyMonthlyAssignment([], '2026-10'),
     understood: 'Written understanding', gainedSkills: 'Written skills',
     timeEntries: [{ topic: 'Research', hours: '2', date: '2026-10-14' }],
@@ -158,11 +160,11 @@ it('asks before replacing statements and keeps written answers, claims and hours
   const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false);
   render(<MemoryRouter><ExtraActivityForm kind="commercial" learnerId="101" savedId="extra:00000000-0000-4000-8000-000000000001" /></MemoryRouter>);
   await screen.findByDisplayValue('Written activity');
-  fireEvent.click(screen.getByRole('button', { name: 'Generate learning statements' }));
+  await user.click(screen.getByRole('button', { name: 'Generate learning statements' }));
   expect(confirm).toHaveBeenCalled();
   expect(request).not.toHaveBeenCalled();
   confirm.mockReturnValue(true);
-  fireEvent.click(screen.getByRole('button', { name: 'Generate learning statements' }));
+  await user.click(screen.getByRole('button', { name: 'Generate learning statements' }));
   await screen.findByText(/Your existing answers have been kept/);
   expect(screen.getByDisplayValue('Written knowledge')).toBeVisible();
   expect(screen.getByDisplayValue('Written understanding')).toBeVisible();

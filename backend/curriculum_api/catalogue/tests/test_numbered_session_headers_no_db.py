@@ -2,7 +2,7 @@
 import ast
 import sys
 import unittest
-import sys
+from datetime import date
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2].parent))
@@ -30,6 +30,7 @@ class NumberedSessionHeaderTests(unittest.TestCase):
             'module_session_clock': lambda *args: ('09:00', '11:00', 120),
             'module_live_session_clock': lambda *args, **kwargs: ('09:00', '11:00', 120),
             'calendar_clock_to_utc_iso': lambda date, clock, zone: f'{date}T{clock}:00Z',
+            'parse_date': lambda value: date.fromisoformat(str(value)[:10]) if value else None,
             'parse_int': lambda value, default: int(value or default),
             'clean_str': lambda value: str(value or '').strip(),
             'format_date': lambda value: str(value or ''),
@@ -54,16 +55,26 @@ class NumberedSessionHeaderTests(unittest.TestCase):
         self.assertEqual(week['sessionDay'], 'Saturday')
         self.assertEqual(week['components'][0]['id'], 'live-1')
 
-    def test_booked_session_keeps_its_date_while_the_header_follows_the_plan(self):
+    def test_booking_outside_the_edited_module_window_keeps_the_planned_header(self):
         # Agreed 2026-10-25: a moved start date moves the week at once; the
         # booked session stays on its Teams date until Update Teams moves it.
         weeks = self.weeks(teamsLiveSessionId='meeting-1', sessionDate='2026-09-26',
                            sessionDay='Saturday', joinUrl='https://example.invalid/meeting-1')
         before = dict(weeks[1]['components'][0]['settings'])
-        result = self.apply({}, {}, weeks, holidays=[])
+        result = self.apply({'start_date': '2026-10-03', 'end_date': '2026-10-17'}, {}, weeks, holidays=[])
         self.assertEqual(result[1]['components'][0]['settings'], before)
         self.assertEqual(result[1]['sessionDate'], '2026-10-03')
         self.assertEqual(result[1]['sessionDay'], 'Saturday')
+
+    def test_booking_inside_the_module_window_sets_the_header_without_changing_its_identity(self):
+        weeks = self.weeks(teamsLiveSessionId='meeting-1', teamsOccurrenceId='occurrence-1',
+                           sessionDate='2026-09-26', sessionDay='Saturday')
+        before = dict(weeks[1]['components'][0]['settings'])
+        result = self.apply({'start_date': '2026-09-01', 'end_date': '2026-10-31'}, {}, weeks, holidays=[])
+        self.assertEqual(result[1]['sessionDate'], '2026-09-26')
+        self.assertEqual(result[1]['sessionDay'], 'Saturday')
+        self.assertEqual(result[1]['components'][0]['settings'], before)
+        self.assertEqual(result[1]['components'][0]['id'], 'live-1')
 
     def test_unnumbered_session_keeps_positional_behavior(self):
         result = self.apply({}, {}, self.weeks(number=0), holidays=[])

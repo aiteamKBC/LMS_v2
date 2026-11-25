@@ -17,6 +17,14 @@ def note_live_rows(table, rows, *, curriculum_names, load_content_cache, logger,
         note_rows(table, rows)
     except Exception:
         logger.debug('Unable to note a write for live sync.', exc_info=True)
+    if str(table or '').split('.')[-1].strip('"') == 'modules':
+        try:
+            from curriculum_api.bunny_module_collections import queue_module
+            for row in rows:
+                queue_module(row)
+        except Exception as failure:
+            # The scheduled collection scanner recovers an interrupted save hook.
+            logger.warning('Module live collection queue needs recovery (%s).', type(failure).__name__)
     # Learner content entries of these rows' modules (never raises; on any
     # doubt it retires all modules).
     content_cache = load_content_cache()

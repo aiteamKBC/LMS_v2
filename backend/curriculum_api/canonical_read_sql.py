@@ -6,6 +6,18 @@ shape of the API payloads those projections already return.
 """
 
 
+def ksb_physical_table(table):
+    """Translate the retained authoring collection key to its physical owner."""
+    return 'ksb_component_mappings' if table == 'ksb_mappings' else table
+
+
+def standard_source_sql(alias):
+    """Compatibility selector value derived from an exact registered pair."""
+    return (f"CASE WHEN {alias}.standard_ref IS NOT NULL AND {alias}.standard_version IS NOT NULL "
+            f"THEN 'standard:' || lower({alias}.standard_ref) || '-v' || "
+            f"replace({alias}.standard_version,'.','-') ELSE '' END")
+
+
 def current_status_sql(alias):
     """Keep every row except the explicitly inactive one.
 
@@ -42,8 +54,19 @@ def module_expected_otjh_sql(module_alias='m'):
 
 def standard_ksb_join_sql(mapping_alias='mapping', standard_alias='standard_ksb'):
     """Canonical mapping -> Skills England KSB relationship."""
-    return (f"JOIN curriculum.standard_ksbs {standard_alias} "
+    return (f"JOIN curriculum.ksb_standard_definitions {standard_alias} "
             f"ON {standard_alias}.id = {mapping_alias}.standard_ksb_id")
+
+
+def standard_ksb_compatibility_id_sql(standard_alias='standard_ksb'):
+    """Retain the installed view/API ID shape without the removed mapping column.
+
+    The official numeric definition ID is scoped by its standard and version;
+    a code alone is never an identity.
+    """
+    return (f"lower({standard_alias}.standard_ref) || '-v' || "
+            f"replace({standard_alias}.standard_version, '.', '-') || '-' || "
+            f"{standard_alias}.id::text")
 
 
 def component_ksb_mappings_sql(component_alias='c', mapping_alias='mapping',
@@ -56,32 +79,36 @@ def component_ksb_mappings_sql(component_alias='c', mapping_alias='mapping',
     return f"""coalesce((
         SELECT jsonb_agg(jsonb_build_object(
             'code',{standard_alias}.ksb_code,
+            'standardKsbId',{standard_alias}.id,
+            'standardRef',{standard_alias}.standard_ref,
+            'standardVersion',{standard_alias}.standard_version,
             'description',{standard_alias}.ksb_description,
-            'ksbId',{mapping_alias}.ksb_id,
+            'ksbId',{standard_ksb_compatibility_id_sql(standard_alias)},
             'classification',{mapping_alias}.classification,
             'weight',{mapping_alias}.weight,
             'weightClass',{mapping_alias}.weight_class,
             'sourceType',{mapping_alias}.source_type,
             'sourceId',{mapping_alias}.source_id
         ) ORDER BY {standard_alias}.ksb_code,{mapping_alias}.id)
-        FROM curriculum.ksb_mappings {mapping_alias}
+        FROM curriculum.ksb_component_mappings {mapping_alias}
         {standard_ksb_join_sql(mapping_alias, standard_alias)}
         WHERE {mapping_alias}.component_id={component_alias}.id
-          AND {current_status_sql(mapping_alias)}
+          AND {mapping_alias}.status='active'
           AND nullif(btrim({standard_alias}.ksb_code),'') IS NOT NULL
     ), '[]'::jsonb)"""
 
 
 def component_ksb_codes_sql(component_alias='c', mapping_alias='mapping',
-                            standard_alias='standard_ksb'):
+                            standard_alias='standard_ksb', eligibility_sql='TRUE'):
     """Return only the KSB codes needed by compact weekly projections."""
     return f"""coalesce((
         SELECT jsonb_agg(jsonb_build_object(
             'code',{standard_alias}.ksb_code
         ) ORDER BY {standard_alias}.ksb_code,{mapping_alias}.id)
-        FROM curriculum.ksb_mappings {mapping_alias}
+        FROM curriculum.ksb_component_mappings {mapping_alias}
         {standard_ksb_join_sql(mapping_alias, standard_alias)}
         WHERE {mapping_alias}.component_id={component_alias}.id
-          AND {current_status_sql(mapping_alias)}
+          AND {mapping_alias}.status='active'
+          AND ({eligibility_sql})
           AND nullif(btrim({standard_alias}.ksb_code),'') IS NOT NULL
     ), '[]'::jsonb)"""

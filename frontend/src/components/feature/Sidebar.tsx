@@ -411,6 +411,14 @@ export function Sidebar({
     ));
     if (!matches) return false;
 
+    // A workspace overview can share its URL with a visible, more specific
+    // child destination. Mark that child once, while retaining the overview's
+    // active state for its other explicitly matched routes.
+    if (matchPaths.length && location.pathname === hrefPath
+      && filteredNavItems.some(item => item.children?.some(child => child.href === href && !child.matchPaths?.length))) {
+      return false;
+    }
+
     // Nested sibling routes can share a prefix (for example /learner/clubs
     // and /learner/clubs/events). Only the most specific matching item should
     // receive the active style.

@@ -10,8 +10,8 @@ def fixture():
     state = {
         'owner': dict(id=1, enrolment_id=11, account_id=11, aptem_id=101, account_aptem_id='101',
                       email='work@example.test', account_email='work@example.test'),
-        'identities': [dict(id=9, learner_id=1, source_system='old_lms', source_learner_id='22',
-                           source_payload={'source_email': 'personal@example.test'}, deleted_at=None)],
+        'identities': [dict(id=9, learner_id=1, source_learner_id='22',
+                           lms_email='personal@example.test')],
         'catalogue': [dict(id=50, source_activity_id='material:5', source_course_ref='55',
                           historical_id='HCOMP-TEST', historical_only=True,
                           curriculum_component_ref=None, ksbs=[])],
@@ -58,11 +58,20 @@ class RestoreMaterialTests(unittest.TestCase):
             with self.subTest(field=field), self.assertRaisesRegex(ValueError, 'ownership mismatch'):
                 plan(state, course)
 
-    def test_deleted_or_wrong_owner_identity_is_rejected(self):
-        for field, value in [('deleted_at', '2026-01-01'), ('learner_id', 2)]:
+    def test_unlinked_or_wrong_owner_identity_is_rejected(self):
+        # The canonical alias table has no deleted_at column. An absent source
+        # link or a different canonical owner must still fail closed.
+        for field, value in [('source_learner_id', '23'), ('learner_id', 2)]:
             state, course = fixture()
             state['identities'][0][field] = value
             with self.subTest(field=field), self.assertRaises(ValueError):
+                plan(state, course)
+
+    def test_missing_or_wrong_alias_email_is_rejected(self):
+        for email in ('', None, 'different@example.test'):
+            state, course = fixture()
+            state['identities'][0]['lms_email'] = email
+            with self.subTest(email=email), self.assertRaisesRegex(ValueError, 'ownership mismatch'):
                 plan(state, course)
 
     def test_enrolment_mismatch_does_not_create_progress(self):

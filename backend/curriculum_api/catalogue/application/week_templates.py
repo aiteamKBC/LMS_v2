@@ -55,16 +55,31 @@ def save_week_template_components(
     payload_reflection_question,
     unique_prefixed_id,
     week_template_number,
+    lock_record_row,
+    WEEK_TEMPLATES_TABLE,
+    get_week_template_component_rows,
+    occupied_template_component_ids,
+    update_rows,
+    replace_template_mappings,
+    delete_template_components,
 ):
+    # Preserve existing child identities; release mappings before removed children.
     ensure_week_template_tables()
-    delete_rows(WEEK_TEMPLATE_COMPONENTS_TABLE, 'week_template_id = %s', [template_id])
+    lock_record_row(WEEK_TEMPLATES_TABLE, 'id = %s', [template_id])
+    existing = {row['id']: row for row in get_week_template_component_rows(template_id)}
+    incoming_ids = [clean_str(component.get('id')) for component in components or [] if component.get('id')]
+    occupied = occupied_template_component_ids(incoming_ids)
+    kept = set()
     saved = []
     for index, component in enumerate(components or []):
         component_id = clean_str(component.get('id')) or unique_prefixed_id('WTC')
         component_settings = component.get('settings') if isinstance(component.get('settings'), dict) else {}
         reflection_question = payload_reflection_question(component, component_settings)
         component_settings = {**component_settings, LEGACY_REFLECTION_QUESTION_SETTING: reflection_question}
-        row = insert_row(WEEK_TEMPLATE_COMPONENTS_TABLE, {
+        if component_id in kept:
+            raise ValueError('Duplicate template component identity.')
+        kept.add(component_id)
+        values = {
             'id': component_id,
             'week_template_id': template_id,
             'type': clean_str(component.get('type')) or 'reading',
@@ -77,13 +92,26 @@ def save_week_template_components(
             'workplace_evidence_required': bool(component.get('workplaceEvidenceRequired')),
             'tutor_validation_required': bool(component.get('tutorValidationRequired')),
             'coach_validation_required': payload_coach_validation(component),
-            'ksb_mappings': json_db_value(component.get('ksbMappings') or []),
             'settings_json': json_db_value(component_settings),
             'display_order': index,
             'created_at': datetime.utcnow(),
             'updated_at': datetime.utcnow(),
-        })
-        saved.append(row)
+        }
+        if component_id in existing:
+            values.pop('created_at')
+            update_rows(WEEK_TEMPLATE_COMPONENTS_TABLE, 'id = %s and week_template_id = %s',
+                        [component_id, template_id], values)
+        else:
+            # A copied template gets independent component and mapping identities.
+            if component_id in occupied:
+                component_id = unique_prefixed_id('WTC')
+                values['id'] = component_id
+            insert_row(WEEK_TEMPLATE_COMPONENTS_TABLE, values)
+        if 'ksbMappings' in component:
+            replace_template_mappings(component_id, component.get('ksbMappings') or [])
+        saved.append(values)
+    removed = sorted(set(existing) - kept)
+    delete_template_components(template_id, removed)
     return saved
 
 
@@ -152,7 +180,9 @@ def week_template_payload(
         'groupId': row.get('group_id') or '',
         'groupName': row.get('group_name') or '',
         'status': row.get('status') or 'draft',
-        'ksbMappings': as_json_value(row.get('ksb_mappings'), []),
+        'ksbMappings': ([mapping for component in components
+                        for mapping in as_json_value(component.get('ksb_mappings'), [])]
+                        if components is not None else row.get('ksb_mappings', [])),
         'totalOtjh': week_template_number(row.get('total_otjh')),
         'points': parse_int(row.get('points'), 0),
         'componentCount': parse_int(row.get('component_count'), 0),

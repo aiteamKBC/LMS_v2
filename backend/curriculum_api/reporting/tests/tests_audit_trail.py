@@ -584,15 +584,22 @@ class AuditTrailEndpointTests(AuditHarness):
         self.assertEqual(ids, {'COMP-R'})
         self.assertIn('rachel@kentbusinesscollege.com', [person['email'] for person in payload['actors']])
 
-    def test_the_trail_still_answers_when_history_is_switched_off(self):
-        """The older derived reading is the fallback, and says what it is."""
+    def test_missing_history_is_explicitly_unavailable_without_fallback(self):
+        from unittest.mock import patch
+        from system_audit import derived
         with self.connection_cursor() as cursor:
             cursor.execute(f'drop table {versioning.qualified(versioning.VERSIONS_TABLE)}')
             cursor.execute(f'drop table {versioning.qualified(versioning.REVISIONS_TABLE)}')
         versioning.reset_availability()
-        payload = self.trail()
-        self.assertFalse(payload['authorRecorded'])
-        self.assertEqual(payload['source'], 'timestamps')
+        with patch.object(derived, 'resolve', side_effect=AssertionError('Retired timestamp scan')):
+            for query in ('', '?actor=nobody@example.test'):
+                payload = self.trail(query)
+                self.assertIs(payload['available'], False)
+                self.assertTrue(payload['reason'])
+                self.assertEqual({key: value for key, value in payload.items() if key != 'reason'}, {
+                    'available': False, 'totalRevisions': 0, 'totalNamedVersions': 0,
+                    'count': 0, 'entities': [], 'versions': [], 'revisions': [],
+                })
 
 
 class SafetyTests(AuditHarness):
@@ -828,36 +835,36 @@ class AuditTrailPaginationTests(AuditHarness):
         self.assertEqual(first['actionCounts'], last['actionCounts'])
         self.assertEqual(first['entityCounts'], last['entityCounts'])
 
-    def test_the_timestamp_fallback_pages_too(self):
-        """The reading used where there is no revision log pages the same way."""
+    def test_missing_history_does_not_fabricate_paged_results(self):
+        from unittest.mock import patch
+        from system_audit import derived
         with self.connection_cursor() as cursor:
             cursor.execute(f'drop table {versioning.qualified(versioning.VERSIONS_TABLE)}')
             cursor.execute(f'drop table {versioning.qualified(versioning.REVISIONS_TABLE)}')
         versioning.reset_availability()
-        # Counted rather than asserted at 7: this reading reports a create and
-        # an edit per row, so the number of events is not the number of
-        # records. What matters is that the pages add back up to it.
-        total = self.trail('?limit=200')['total']
-        payload = self.trail('?limit=3')
-        self.assertEqual(payload['source'], 'timestamps')
-        self.assertEqual(payload['total'], total)
-        self.assertEqual(payload['pages'], -(-total // 3))
-        self.assertEqual(len(payload['events']), 3)
-        seen = []
-        for page in range(1, payload['pages'] + 1):
-            seen.extend(
-                (event['entityId'], event['action'])
-                for event in self.trail(f'?limit=3&page={page}')['events']
-            )
-        self.assertEqual(len(seen), total)
-        self.assertEqual(len(set(seen)), total)
+        with patch.object(derived, 'resolve', side_effect=AssertionError('Retired timestamp scan')):
+            for query in ('?limit=200', '?limit=3&page=2'):
+                payload = self.trail(query)
+                self.assertIs(payload['available'], False)
+                self.assertTrue(payload['reason'])
+                self.assertEqual({key: value for key, value in payload.items() if key != 'reason'}, {
+                    'available': False, 'totalRevisions': 0, 'totalNamedVersions': 0,
+                    'count': 0, 'entities': [], 'versions': [], 'revisions': [],
+                })
 
-    def test_the_timestamp_fallback_names_the_workspaces_as_well(self):
-        """The page opens on Changes, so its filter and notice read from these."""
+    def test_missing_history_does_not_advertise_timestamp_coverage(self):
+        from unittest.mock import patch
+        from system_audit import derived
         with self.connection_cursor() as cursor:
             cursor.execute(f'drop table {versioning.qualified(versioning.VERSIONS_TABLE)}')
             cursor.execute(f'drop table {versioning.qualified(versioning.REVISIONS_TABLE)}')
         versioning.reset_availability()
-        payload = self.trail()
-        self.assertIn('curriculum', [option['value'] for option in payload['workspaces']])
-        self.assertEqual(payload['changeWorkspaces'], ['curriculum'])
+        with patch.object(derived, 'resolve', side_effect=AssertionError('Retired timestamp scan')):
+            for query in ('', '?workspace=curriculum'):
+                payload = self.trail(query)
+                self.assertIs(payload['available'], False)
+                self.assertTrue(payload['reason'])
+                self.assertEqual({key: value for key, value in payload.items() if key != 'reason'}, {
+                    'available': False, 'totalRevisions': 0, 'totalNamedVersions': 0,
+                    'count': 0, 'entities': [], 'versions': [], 'revisions': [],
+                })

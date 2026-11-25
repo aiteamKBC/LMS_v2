@@ -117,33 +117,15 @@ def learner_and_owner(account):
 
 
 def calendar_learner_id(learner):
-    """The id this learner's introduction is filed under in the coach calendar.
-
-    The profile id ("Learner".learners.id) when the learner has a profile, as
-    every other calendar row is; Created_users.id only before one exists.
-    """
+    """Canonical profile id; never fall back to the enrolment sequence."""
     from learner_api.models import LearnerProfile
-
-    profile_id = LearnerProfile.objects.filter(enrolment_id=learner.pk).values_list("id", flat=True).first()
-    return int(profile_id) if profile_id is not None else int(learner.pk)
+    return LearnerProfile.objects.filter(enrolment_id=learner.pk).values_list("id", flat=True).first()
 
 
 def _requests(learner):
-    """Every introduction row of this learner, old or new.
-
-    Rows written before 2026-11-12 carry Created_users.id, a sequence that can
-    equal another learner's profile id, so those match only with this learner's
-    email as well.
-    """
-    from django.db.models import Q
-
+    """Only rows linked to this learner's canonical profile."""
     from coach_api.models import CoachCalendarEvent
-
-    owner = Q(learner_profile_id=calendar_learner_id(learner))
-    email = str(learner.email or "").strip()
-    if email:
-        owner |= Q(learner_profile_id=int(learner.pk), learner_email__iexact=email)
-    return CoachCalendarEvent.objects.filter(owner, event_type=EVENT_TYPE)
+    return CoachCalendarEvent.objects.filter(learner_profile_id=calendar_learner_id(learner), event_type=EVENT_TYPE)
 
 
 def open_request(learner):
@@ -234,15 +216,14 @@ def _save(account, learner, owner_email, owner_name, day, at, note):
     )
 
     learner_id = calendar_learner_id(learner)
+    if learner_id is None:
+        raise ValueError("A canonical learner profile is required before booking.")
     learner_name = str(learner.username or account.display_name or "").strip()
     existing = open_request(learner)
     if existing is not None:
         if existing.status != CoachCalendarEvent.STATUS_NOT_SCHEDULED:
             return existing, False
         # A request saved before bookings were immediate: book it now.
-        existing.owner_email = normalize_email(owner_email)
-        existing.owner_name = owner_name
-        existing.learner_email = account.email
         existing.scheduled_date = existing.target_date = day
         existing.scheduled_time = at
         existing.duration_minutes = DURATION_MINUTES

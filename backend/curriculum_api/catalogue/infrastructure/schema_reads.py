@@ -85,6 +85,8 @@ def table_exists(table, *, CURRICULUM_SCHEMA, _TABLE_EXISTS_CACHE, logger, schem
     # under us; invalidate_curriculum_cache() clears it, as does a process restart.
     # A failed probe is deliberately not cached, so a transient error does not
     # pin a table to "missing" for the life of the process.
+    from curriculum_api.canonical_read_sql import ksb_physical_table
+    table = ksb_physical_table(table)
     cache_key = f'{CURRICULUM_SCHEMA}.{table}'
     if cache_key in _TABLE_EXISTS_CACHE:
         return _TABLE_EXISTS_CACHE[cache_key]
@@ -100,10 +102,13 @@ def table_exists(table, *, CURRICULUM_SCHEMA, _TABLE_EXISTS_CACHE, logger, schem
         raise CatalogueReadUnavailable('Curriculum schema availability could not be verified. Please retry.') from exc
 
 
+
 def column_names(
     table, *, CURRICULUM_SCHEMA, _TABLE_COLUMNS_CACHE, columns_listed, connection, defaultdict, fetch_all,
     free_course_columns, mark_columns_listed, native_only, quote_ident,
 ):
+    from curriculum_api.canonical_read_sql import ksb_physical_table
+    table = ksb_physical_table(table)
     if native_only():
         if table in free_course_columns():
             return {name for name, _ in free_course_columns()[table]}

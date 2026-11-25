@@ -84,7 +84,7 @@ def prepare_database():
     apply_migration()
     from importlib import import_module
     with connections['default'].schema_editor() as editor:
-        import_module('quiz_api.migrations.0006_quiz_policies').install(None, editor)
+        import_module('quiz_api.migrations.0007_remove_quiz_defaults').remove_defaults(None, editor)
 
 
 @unittest.skipUnless(getattr(settings, 'QUIZ_HISTORY_POSTGRES_TESTS', False), 'Use the isolated PostgreSQL runner')

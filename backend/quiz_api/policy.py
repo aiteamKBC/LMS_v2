@@ -1,9 +1,8 @@
-"""Quiz defaults and explicit learner rules. Historical scores are never rewritten."""
+"""Per-quiz settings and explicit learner rules. Historical scores are never rewritten."""
 from copy import deepcopy
 from math import isfinite
 
 from django.db import connections
-from django.db import DatabaseError
 from django.db.models import Case, Count, F, FloatField, Max, Q, When
 
 GENERAL_DEFAULTS = {
@@ -36,20 +35,6 @@ def boolean(value, label):
     if type(value) is not bool:
         raise ValueError(f'{label} must be true or false.')
     return value
-
-
-def validate_general(value):
-    if not isinstance(value, dict) or set(value) - GENERAL_DEFAULTS.keys():
-        raise ValueError('Invalid general quiz settings.')
-    result = {**GENERAL_DEFAULTS, **value}
-    if result['attemptMode'] not in ('limited', 'unlimited'):
-        raise ValueError('Choose limited or unlimited attempts.')
-    if result['quizStyle'] not in ('default', 'pagination', 'global'):
-        raise ValueError('Choose a supported quiz style.')
-    result['attemptLimit'] = integer(result['attemptLimit'], 'Attempt limit', 1, 20)
-    for key in ('attemptHistory', 'retakeAfterPass'):
-        boolean(result[key], key)
-    return result
 
 
 def validate_grades(value):
@@ -91,19 +76,12 @@ def default_settings():
     return {'general': deepcopy(GENERAL_DEFAULTS), 'grades': deepcopy(GRADE_DEFAULTS)}
 
 
-def load_defaults():
-    from .models import QuizDefaults
-    saved = QuizDefaults.objects.filter(pk=1).first()
-    if saved is None:
-        raise DatabaseError('Quiz defaults have not been provisioned.')
-    return {'general': saved.general, 'grades': saved.grades, 'revision': saved.revision}
-
 
 def quiz_settings(payload, *, creating=False, defaults=None):
     """Validate supplied fields only; an unrelated PATCH cannot activate old rules."""
     result = {}
     if creating:
-        defaults = defaults if defaults is not None else load_defaults()
+        defaults = defaults if defaults is not None else default_settings()
         general = defaults['general']
         result = {'policy_enabled': True, 'attempt_limit': general['attemptLimit'],
                   'limit_attempts': general['attemptMode'] == 'limited',

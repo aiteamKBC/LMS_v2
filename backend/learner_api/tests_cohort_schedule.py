@@ -8,9 +8,8 @@ page was declaring someone "Gateway ready" as soon as their modules were
 complete, which for a cohort ending in 2027 happened a year early — so the
 payload now carries the cohort's own dates for the page to gate on.
 
-The lookup is by cohort *name*, because that is what the enrolment record
-stores, so these pin the parts that go wrong with names: a learner with no
-cohort, a name that matches nothing, and a database that is unavailable.
+The learner payload uses canonical placement IDs. The lower-level compatibility
+reader also supports names; those tests retain its missing/ambiguous-name rules.
 """
 from datetime import date
 from types import SimpleNamespace
@@ -89,13 +88,25 @@ class ApplyScheduleTests(SimpleTestCase):
         })
 
     def test_a_found_cohort_fills_them_in(self):
-        connections, _cursor = _cursor_returning(ROW)
+        connections, cursor = _cursor_returning(ROW)
         detail = {}
         with patch('learner_api.learner_detail.connections', connections):
-            _apply_cohort_schedule(detail, SimpleNamespace(cohort='Final Cohort', programme='Final Test'))
+            _apply_cohort_schedule(detail, SimpleNamespace(
+                cohort_id='COHORT-FINAL', programme_id='PROG-FINAL',
+                cohort='Renamed display label', programme='Display label'))
 
         self.assertEqual(detail['gatewayStartDate'], '2027-08-02')
         self.assertEqual(detail['epaMonths'], 5)
+        self.assertIn('WHERE cohort_id = %s', cursor.execute.call_args.args[0])
+        self.assertEqual(cursor.execute.call_args.args[1], ['COHORT-FINAL'])
+
+    def test_display_names_without_placement_do_not_select_a_cohort(self):
+        connections, cursor = _cursor_returning(ROW)
+        detail = {}
+        with patch('learner_api.learner_detail.connections', connections):
+            _apply_cohort_schedule(detail, SimpleNamespace(cohort='Final Cohort', programme='Final Test'))
+        cursor.execute.assert_not_called()
+        self.assertEqual(detail['gatewayStartDate'], '')
 
 
 class IsoDateTests(SimpleTestCase):

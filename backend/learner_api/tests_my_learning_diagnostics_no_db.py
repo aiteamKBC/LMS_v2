@@ -115,7 +115,7 @@ class LocalProjectionDiagnosticsTests(SimpleTestCase):
                 if self.wrapper:self.wrapper(lambda *args:None,'SELECT sensitive', ['private@example.test'],False,{})
         connection=FakeConnection()
         model=Mock();model.DoesNotExist=type('Missing',(Exception,),{})
-        source=SimpleNamespace(pk=7)
+        source=SimpleNamespace(pk=7, _catalogue_training_plan=[], _catalogue_learning_plan=None)
         def read_source(**kwargs):connection.query();return source
         model.all_learners.only.return_value.get.side_effect=read_source
         def read_owner(pk):connection.query();return {'id':9}
@@ -140,7 +140,7 @@ class LocalProjectionDiagnosticsTests(SimpleTestCase):
 
 
 class SafeCatalogueReductionTests(SimpleTestCase):
-    def load_replacement_context(self, transfers=None, components=None, *, transfer_review=False):
+    def load_replacement_context(self, transfers=None, components=None, *, transfer_review=False, approved_replacements_only=False):
         from . import models,weekly_learning,subject_origins,previous_learning_groups,builder_activity_dates,teams_attendance
         from .tests_my_learning_no_db import native,component
         source=SimpleNamespace(pk=7,id=7,aptem_id=7,programme='Programme',cohort='',group='',
@@ -155,6 +155,8 @@ class SafeCatalogueReductionTests(SimpleTestCase):
         with ExitStack() as stack:
             stack.enter_context(patch.object(models.LearnerProfile,'objects',manager))
             stack.enter_context(patch.object(learning,'connections',{'enrolment':conn}))
+            # Isolate provenance queries from the independent free-course exclusion read.
+            stack.enter_context(patch.object(learning,'free_course_exclusions',return_value=(set(), set())))
             stack.enter_context(patch.object(learning,'effective_training_plan',return_value=[{'moduleId':'M1'}]))
             stack.enter_context(patch.object(learning,'catalogue_module_rows',side_effect=module_rows))
             stack.enter_context(patch.object(learning.canonical,'entries_for',return_value=[]))
@@ -168,7 +170,8 @@ class SafeCatalogueReductionTests(SimpleTestCase):
             stack.enter_context(patch.object(live,'read_live_credits',return_value=[]))
             state=stack.enter_context(patch('learner_api.progress_transfer_store.read_state',return_value={'items':transfers or []}))
             context=learning.load_context(source,{'id':9,'progress_transfer_active':transfers is not None},
-                                          include_personal_replacements=transfer_review)
+                                          include_personal_replacements=transfer_review,
+                                          approved_replacements_only=approved_replacements_only)
         self.assertEqual(state.call_count, int(transfers is not None))
         imports.assert_not_called()
         return context,cur
@@ -202,6 +205,29 @@ class SafeCatalogueReductionTests(SimpleTestCase):
     def test_pending_transfer_keeps_lineage_reads_for_later_approval(self):
         _,cur=self.load_replacement_context([{'moduleId':'M1','status':'pending','matchedComponents':{}}])
         self.assertEqual(cur.execute.call_args.args[1],[['M1'],['C1']])
+
+    def test_transfer_review_retains_candidates_even_with_approved_only_hint(self):
+        context,cur=self.load_replacement_context(transfer_review=True, approved_replacements_only=True)
+        self.assertEqual(cur.execute.call_args.args[1],[['M1'],['C1']])
+        self.assertIn('C1', context[9]['replacement_settings'])
+
+    def test_cards_skip_unapproved_provenance_but_keep_transfer_state(self):
+        for transfers in (None, [], [{'moduleId':'M1','status':'pending','matchedComponents':{}}],
+                          [{'moduleId':'M1','status':'approved','matchedComponents':{},'percent':40}]):
+            with self.subTest(transfers=transfers):
+                context,cur=self.load_replacement_context(transfers, approved_replacements_only=True)
+                cur.execute.assert_not_called()
+                self.assertEqual(context[9]['replacement_settings'],{})
+                self.assertEqual(context[9]['progress_transfers'],transfers or [])
+                self.assertEqual(context[9]['imported_courses'],{'current:M1':'legacy:50'})
+
+    def test_cards_retain_full_module_provenance_for_approved_matches(self):
+        from .tests_my_learning_no_db import component
+        transfer={'moduleId':'M1','status':'approved','matchedComponents':{'C1':{'completed':True}}}
+        context,cur=self.load_replacement_context([transfer],
+            [component('C1'),component('C2'),component('OTHER','M2')], approved_replacements_only=True)
+        self.assertEqual(cur.execute.call_args.args[1],[['M1'],['C1','C2']])
+        self.assertEqual(context[9]['replacement_settings']['C1']['legacySettings']['sourceLessonId'],7)
 
     def test_approved_matches_keep_unmatched_identities_for_duplicate_detection(self):
         from .tests_my_learning_no_db import component

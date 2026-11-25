@@ -179,7 +179,8 @@ def build_module_session_plan(
     if week_limit is None and len(sessions) < session_count:
         warnings.append('Could not generate the full session plan from the supplied delivery pattern.')
 
-    return {
+    from curriculum_api.live_holiday_policy import with_closed_weeks
+    return with_closed_weeks({
         'sessions': sessions,
         'slots': curriculum_slots,
         'skippedHolidays': skipped,
@@ -189,4 +190,4 @@ def build_module_session_plan(
         # Stated rather than dropped, because callers render the pair.
         'originalEndDate': sessions[-1]['date'] if sessions else '',
         'warnings': warnings,
-    }
+    }, holidays_by_date, start, first_weekday=first_weekday)

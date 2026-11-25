@@ -112,7 +112,7 @@ def module_week_session_plan(module_row, week_count=0):
     ).get('sessions') or []
 
 
-def module_week_delivery_slots(module_row, group_row, week_count, *, holidays=None):
+def module_week_delivery_slots(module_row, group_row, week_count, *, holidays=None, weeks=None):
     """Every planned delivery slot of each authored week, in delivery order.
 
     **A week owns one planned slot per delivery day its group runs.** A group
@@ -147,5 +147,9 @@ def module_week_delivery_slots(module_row, group_row, week_count, *, holidays=No
     slots_by_week_number = defaultdict(list)
     for planned_session in session_plan:
         slots_by_week_number[parse_int(planned_session.get('weekNumber'), 0)].append(planned_session)
-    slots_by_week = [list(slots_by_week_number.get(index + 1) or []) for index in range(week_count)]
+    from curriculum_api.week_plan_alignment import week_plan_offset
+    offset = 0 if module_week_boundary_mode(delivery_module) == 'calendar' else week_plan_offset(weeks, session_plan)
+    slots_by_week = [list(slots_by_week_number.get(index + 1 - offset) or []) for index in range(week_count)]
     return slots_by_week, session_plan
+
+from curriculum_api.weekly_schedule import module_week_boundary_mode

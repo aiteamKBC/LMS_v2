@@ -141,7 +141,7 @@ def scope_ksb_achievement(coverage_items, learner_consumption, learners, plan, l
     uncapped sum, reported so over-delivery stays visible rather than clipped.
 
     Codes are keyed by code alone. A code authored against two different KSB
-    sources appears once, because ``learner_progress_ksbs`` records a code and
+    sources appears once, because ``ksb_learner_progress`` records a code and
     not the source it was authored from — the same collapse
     ``learner_consumption_payload`` already makes.
     """
@@ -277,9 +277,9 @@ def scope_ksb_achievement(coverage_items, learner_consumption, learners, plan, l
         # them that way; the row table alone cannot be read for it.
         'byType': ksb_achievement_by_type(rows),
         'sources': {
-            'plannedWeight': 'curriculum.ksb_mappings.weight (whole scope)',
-            'expectedWeight': 'curriculum.ksb_mappings.weight (of each learner\'s group)',
-            'achievedWeight': 'Learner.learner_progress_ksbs.weight',
+            'plannedWeight': 'curriculum.ksb_component_mappings.weight (whole scope)',
+            'expectedWeight': 'curriculum.ksb_component_mappings.weight (of each learner\'s group)',
+            'achievedWeight': 'Learner.ksb_learner_progress.weight',
             'declaredWeight': 'Learner.learning_reflection_submissions.ksb_weights',
         },
     }

@@ -19,11 +19,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 from django.apps import AppConfig
 from django.conf import settings
 
-settings.configure(
-    SECRET_KEY='synthetic-test-key', DEFAULT_CHARSET='utf-8', USE_TZ=True,
-    DATABASES={'default': {'ENGINE': 'django.db.backends.sqlite3', 'NAME': ':memory:'}},
-    INSTALLED_APPS=['login', AppConfig('learner_api', importlib.import_module('learner_api'))],
-)
+if not settings.configured:
+    settings.configure(
+        SECRET_KEY='synthetic-test-key', DEFAULT_CHARSET='utf-8', USE_TZ=True,
+        DATABASES={'default': {'ENGINE': 'django.db.backends.sqlite3', 'NAME': ':memory:'}},
+        INSTALLED_APPS=['login', AppConfig('learner_api', importlib.import_module('learner_api'))],
+    )
 import django
 django.setup()
 
@@ -105,8 +106,7 @@ class ProfileDirectorySQLTests(unittest.TestCase):
             CREATE TABLE "Learner".learners (
                 id INTEGER PRIMARY KEY, enrolment_id INTEGER, aptem_id INTEGER,
                 full_name TEXT, email TEXT, programme_status TEXT, learner_type TEXT,
-                programme_id TEXT, cohort_id TEXT, group_id TEXT, end_date TEXT, learner_end_date TEXT,
-                attendance_preference_id INTEGER
+                programme_id TEXT, cohort_id TEXT, group_id TEXT, end_date TEXT, learner_end_date TEXT
             );
             CREATE TABLE curriculum.programmes (programme_id TEXT PRIMARY KEY, name TEXT);
             CREATE TABLE curriculum.groups (group_id TEXT PRIMARY KEY, group_name TEXT);
@@ -118,18 +118,18 @@ class ProfileDirectorySQLTests(unittest.TestCase):
             INSERT INTO curriculum.groups VALUES ('G1', 'Shared group name'), ('G2', 'Shared group name');
             INSERT INTO "Learner".learners VALUES
                 (11,81,301,' Alex Profile ','profile@example.invalid','Active','apprenticeship',
-                 'P1','C1','G1','2026-12-31','2027-01-01',81),
+                 'P1','C1','G1','2026-12-31','2027-01-01'),
                 (12,82,302,'Blair Profile','commercial@example.invalid','Withdrawn','commercial',
-                 'P1','C2','G2',NULL,'2027-02-01',NULL),
+                 'P1','C2','G2',NULL,'2027-02-01'),
                 (13,NULL,303,'Casey Unlinked','unlinked@example.invalid','','apprenticeship',
-                 NULL,NULL,NULL,NULL,NULL,NULL),
+                 NULL,NULL,NULL,NULL,NULL),
                 (14,84,NULL,'No Aptem','no-aptem@example.invalid','Active','commercial',
-                 'P1','C1','G1',NULL,NULL,84);
+                 'P1','C1','G1',NULL,NULL);
             INSERT INTO enrolment.Created_users VALUES
                 (81,'301','enrolment@example.invalid','Completed'),
                 (82,'302','old-commercial@example.invalid','Active'),
                 (84,'301','profile@example.invalid','Active');
-            INSERT INTO "Learner".attendance_preferences VALUES (81,'lazy'),(11,'live'),(84,'live');
+            INSERT INTO "Learner".attendance_preferences VALUES (81,'live'),(11,'lazy'),(14,'live');
         """)
         self.calls = []
 
@@ -171,22 +171,22 @@ class ProfileDirectorySQLTests(unittest.TestCase):
         self.assertEqual(rows[1]['endDate'], '2027-02-01')
         self.assertEqual(self.calls, [True])
 
-    def test_mode_follows_preference_link_not_profile_id_aptem_or_email(self):
+    def test_mode_follows_canonical_id_not_enrolment_aptem_or_email(self):
         rows = directory.read_lms_directory()
         self.assertEqual([row['attendanceMode'] for row in rows], ['lazy', 'live', 'live'])
         # Another enrolment with the same Aptem/email must not affect profile 11.
-        self.database.execute("UPDATE \"Learner\".attendance_preferences SET mode='lazy' WHERE learner_id=84")
+        self.database.execute("UPDATE \"Learner\".attendance_preferences SET mode='lazy' WHERE learner_id=14")
         self.assertEqual(directory.read_lms_directory(), rows)
 
-    def test_preference_link_wins_when_enrolment_points_to_another_mode(self):
+    def test_canonical_preferences_win_when_enrolment_points_to_another_mode(self):
         # The saved profile relation is authoritative for both learner types.
-        self.database.execute('UPDATE "Learner".learners SET attendance_preference_id=84 WHERE id=11')
-        self.database.execute('UPDATE "Learner".learners SET attendance_preference_id=81 WHERE id=12')
+        self.database.execute('UPDATE "Learner".attendance_preferences SET mode="live" WHERE learner_id=11')
+        self.database.execute('INSERT INTO "Learner".attendance_preferences VALUES (12,"lazy")')
         rows = directory.read_lms_directory()
         self.assertEqual([row['attendanceMode'] for row in rows], ['live', 'lazy', 'live'])
 
-    def test_missing_preference_link_does_not_use_enrolment_preference(self):
-        self.database.execute('UPDATE "Learner".learners SET attendance_preference_id=NULL WHERE id=11')
+    def test_missing_preference_does_not_use_enrolment_preference(self):
+        self.database.execute('DELETE FROM "Learner".attendance_preferences WHERE learner_id=11')
         rows = directory.read_lms_directory()
         self.assertEqual([row['attendanceMode'] for row in rows], ['live', 'live', 'live'])
 

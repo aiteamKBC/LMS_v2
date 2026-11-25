@@ -81,14 +81,12 @@ def scope_programme_id(module_rows, scope='', identifier='', *, clean_str):
 
 
 def programme_config_ksb_source(config, *, normalise_ksb_profile_source_value, split_ksb_source):
-    """(source_type, source_id) a programme row stores, or ('', '').
-
-    The one reading of ``curriculum.programmes.ksb_profile_source_id``. Coverage,
-    Achievement and the programme card all go through it, so they cannot
-    disagree about which source a programme applies.
-    """
-    stored = normalise_ksb_profile_source_value((config or {}).get('ksb_profile_source_id'))
-    return split_ksb_source('', stored) if stored else ('', '')
+    """Programme source comes from the official standard/version pair."""
+    config = config or {}
+    reference, version = config.get('standard_ref'), config.get('standard_version')
+    if reference and version:
+        return 'standard', f"{reference.lower()}-v{version.replace('.', '-')}"
+    return '', ''
 
 
 def active_ksb_profiles(ksb_profiles, *, falsey):

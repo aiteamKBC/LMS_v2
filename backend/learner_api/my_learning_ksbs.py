@@ -6,7 +6,9 @@ from curriculum_api.week_visibility import visible_child_sql
 
 from . import canonical_learning as canonical
 from .dashboard_metrics import point_codes, ratio, unavailable
+from .ksb_domain import official_progress_relation
 from .ksb_exclusions import and_not_excluded
+from .ksb_domain import learner_definition_condition
 
 
 def read_card_ksb_mappings(owner, native, record_ids):
@@ -17,17 +19,16 @@ def read_card_ksb_mappings(owner, native, record_ids):
     progress rows.
     """
     components = [*native.get('components', []), *native.get('retiredQuizComponents', [])]
-    facts = {c['componentId']: point_codes(c['ksbMappings']) for c in components
-             if c.get('componentId') and 'ksbMappings' in c}
+    facts = {}
     component_ids = sorted({str(c['componentId']) for c in components if c.get('componentId')})
     connection = connections['enrolment']
     if component_ids:
         rows = canonical.query(read_sql(f'''
             SELECT c.id AS component_id,
-                {component_ksb_codes_sql('c')} AS normalized_mappings
+                {component_ksb_codes_sql('c', eligibility_sql=learner_definition_condition('standard_ksb','%s'))} AS normalized_mappings
             FROM curriculum.components c
             WHERE c.id=ANY(%s) AND {visible_child_sql('c')}
-        ''', connection), [component_ids])
+        ''', connection), [owner['id'],component_ids])
         for row in rows:
             facts.setdefault(row['component_id'], point_codes(row['normalized_mappings']))
 
@@ -38,7 +39,7 @@ def read_card_ksb_mappings(owner, native, record_ids):
             SELECT p.id,coalesce(jsonb_agg(k.ksb_code)
                 FILTER (WHERE k.ksb_code IS NOT NULL),'[]'::jsonb) AS codes
             FROM "Learner".learner_progress_entries p
-            LEFT JOIN "Learner".learner_progress_ksbs k ON k.progress_id=p.id
+            LEFT JOIN ''' + official_progress_relation() + ''' k ON k.progress_id=p.id
             ''' + and_not_excluded('k', connection) + '''
             WHERE p.learner_id=%s AND p.deleted_at IS NULL AND p.id=ANY(%s)
             GROUP BY p.id

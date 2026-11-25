@@ -3,6 +3,7 @@
 Existing algorithms and call contracts are preserved; dependencies have explicit owners.
 No import of the legacy views module.
 """
+from django.db import transaction
 from curriculum_api.catalogue.domain.read_contracts import STRUCTURE_REVISION_UNAVAILABLE
 from curriculum_api.catalogue.domain.read_contracts import WEEK_TEMPLATES_TABLE
 from curriculum_api.catalogue.infrastructure.course_schema_runtime import WEEK_TEMPLATE_COMPONENTS_TABLE
@@ -21,17 +22,19 @@ def week_template_revision(template_id):
         record_revision=record_revision,
         WEEK_TEMPLATES_TABLE=WEEK_TEMPLATES_TABLE,
         WEEK_TEMPLATE_COMPONENTS_TABLE=WEEK_TEMPLATE_COMPONENTS_TABLE,
+        read_template_mapping_revision=read_template_mapping_revision,
     )
+
 
 
 def get_week_template_rows(where_sql='', params=None, *, include_deleted=False):
     from curriculum_api.catalogue.infrastructure.week_templates import get_week_template_rows as query
-    return query(
+    return attach_template_mappings(query(
         where_sql, params,
         include_deleted=include_deleted, ensure_week_template_tables=ensure_week_template_tables,
         table_name=table_name, WEEK_TEMPLATES_TABLE=WEEK_TEMPLATES_TABLE, fetch_all=fetch_all,
         curriculum_row_effectively_deleted=curriculum_row_effectively_deleted,
-    )
+    ))
 
 
 def get_week_template_row(template_id, *, include_deleted=False):
@@ -77,7 +80,9 @@ from curriculum_api.catalogue.infrastructure.row_queries import json_db_value
 from curriculum_api.catalogue.infrastructure.write_composition import delete_rows
 from datetime import datetime
 
+@transaction.atomic
 def save_week_template_components(template_id, components):
+    from curriculum_api.catalogue.infrastructure.revision_runtime import lock_record_row
     from curriculum_api.catalogue.application.week_templates import save_week_template_components as implementation
     return implementation(
         template_id, components,
@@ -95,4 +100,17 @@ def save_week_template_components(template_id, components):
         payload_reflection_question=payload_reflection_question,
         unique_prefixed_id=unique_prefixed_id,
         week_template_number=week_template_number,
+        lock_record_row=lock_record_row,
+        WEEK_TEMPLATES_TABLE=WEEK_TEMPLATES_TABLE,
+        get_week_template_component_rows=get_week_template_component_rows,
+        occupied_template_component_ids=occupied_template_component_ids,
+        update_rows=update_rows,
+        replace_template_mappings=replace_template_mappings,
+        delete_template_components=delete_template_components,
     )
+
+
+from curriculum_api.catalogue.infrastructure.template_ksb_storage import read_template_mapping_revision
+
+from curriculum_api.catalogue.infrastructure.authoring_storage import update_rows
+from curriculum_api.catalogue.infrastructure.template_ksb_storage import occupied_template_component_ids, replace_template_mappings, delete_template_components, attach_template_mappings

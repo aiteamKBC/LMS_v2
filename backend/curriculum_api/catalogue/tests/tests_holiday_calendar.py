@@ -173,6 +173,9 @@ class HolidayTableCase(CoachTransactionTestCase):
         england_holidays.reset_auto_sync_state()
         self.create_tables()
         views.invalidate_curriculum_cache()
+        # Exercise the real HTTP authorization boundary before calendar behavior.
+        from coach_api.tests_support.persisted_fixtures import curriculum_session
+        curriculum_session(self, self.client)
 
     def create_tables(self):
         primary_key = 'bigserial primary key' if connection.vendor == 'postgresql' else 'integer primary key autoincrement'
@@ -459,6 +462,14 @@ class FakeThread:
 # --------------------------------------------------------------------------
 
 class AuthoredHolidaysCoverARangeOfDates(HolidayTableCase):
+    def test_anonymous_caller_cannot_create_a_holiday(self):
+        from django.test import Client
+        response = Client().post('/curriculum_api/curriculum/holidays/',
+                                 data=json.dumps({'label': 'Unauthorized closure', 'startDate': '2027-03-01'}),
+                                 content_type='application/json')
+        self.assertEqual(response.status_code, 401)
+        self.assertEqual(json.loads(response.content)['code'], 'unauthenticated')
+
     def create_holiday(self, **payload):
         return self.client.post(
             '/curriculum_api/curriculum/holidays/', data=json.dumps(payload), content_type='application/json',

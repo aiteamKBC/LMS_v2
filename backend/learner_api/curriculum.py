@@ -191,19 +191,13 @@ def components(request):
 def _source_row(raw_source):
     """The KSB list an applied source names, shaped like a ksb_profiles row.
 
-    A standard ('standard:st0596-v1-0') is read from curriculum.standard_ksbs.
+    A standard ('standard:st0596-v1-0') is read from curriculum.ksb_standard_definitions.
     A profile id is read even once archived: the programme still applies it,
     and Skills Radar answers were given against its items.
     """
     kind, source_id = parse_source(raw_source)
     if kind == PROFILE:
-        rows = _rows(
-            "SELECT id, name, ksb_items FROM curriculum.ksb_profiles "
-            "WHERE id = %s OR ksb_profile_id = %s "
-            "ORDER BY COALESCE(is_active, true) DESC LIMIT 1",
-            [source_id, source_id],
-        )
-        return rows[0] if rows else None
+        return None  # Retired definition source; historical answers remain in their owner.
     if kind == STANDARD:
         resolved = resolve_source(raw_source, using="enrolment")
         if not resolved.items:
@@ -221,42 +215,17 @@ def _source_row(raw_source):
 
 
 def _ksb_profile_row(programme):
-    """The KSB list a programme applies, or None.
-
-    Two links exist, tried in order of authority:
-      1. programmes.ksb_profile_source_id — the applied source: a profile id
-         ('KSBP-...', 'profile:<id>') or a standard ('standard:st0596-v1-0').
-      2. ksb_profiles.programme_ids — discovery for a programme that applies
-         nothing; only active profiles take part.
-    """
-    programme = (programme or "").strip()
+    """Resolve one exact programme identity to its canonical standard/version."""
+    from curriculum_api.canonical_read_sql import standard_source_sql
+    programme = (programme or '').strip()
     if not programme:
         return None
-
-    source = _rows(
-        "SELECT programme_id, ksb_profile_source_id FROM curriculum.programmes "
-        "WHERE name = %s OR programme_id = %s LIMIT 1",
-        [programme, programme],
-    )
-    programme_id = (source[0].get("programme_id") or "") if source else ""
-    raw_source = (source[0].get("ksb_profile_source_id") or "") if source else ""
-
-    if raw_source:
-        row = _source_row(raw_source)
-        if row:
-            return row
-
-    # programme_ids holds programme ids and names side by side. (This read used
-    # programme_id / programme_name, columns ksb_profiles no longer has, so it
-    # raised for every programme without an applied source.)
-    rows = _rows(
-        "SELECT id, name, ksb_items FROM curriculum.ksb_profiles "
-        "WHERE COALESCE(is_active, true) "
-        "  AND (programme_ids @> to_jsonb(%s::text) OR programme_ids @> to_jsonb(%s::text)) "
-        "ORDER BY updated_at DESC NULLS LAST LIMIT 1",
-        [programme_id or programme, programme],
-    )
-    return rows[0] if rows else None
+    rows = _rows(f"SELECT p.programme_id, {standard_source_sql('p')} AS ksb_profile_source_id "
+                 "FROM curriculum.programmes p WHERE programme_id=%s OR name=%s "
+                 "ORDER BY (programme_id=%s) DESC LIMIT 2", [programme, programme, programme])
+    if not rows or (len(rows)>1 and rows[0]['programme_id'] != programme):
+        return None
+    return _source_row(rows[0].get('ksb_profile_source_id') or '')
 
 
 _KSB_KIND = {"K": "Knowledge", "S": "Skill", "B": "Behaviour"}

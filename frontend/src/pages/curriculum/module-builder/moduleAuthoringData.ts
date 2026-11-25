@@ -40,6 +40,8 @@ export type KsbWeightClass = 'hard' | 'soft' | 'possible';
 
 export interface KsbMapping {
   id: string;
+  standardKsbId?: number;
+  standard_ksb_id?: number;
   ksbId: string;
   code: string;
   description: string;
@@ -77,6 +79,8 @@ export interface KsbRemapReport {
 
 export interface DuplicateKsbSourceEntry {
   id?: string | number;
+  standardKsbId?: number;
+  standard_ksb_id?: number;
   code: string;
   description?: string;
   type?: string;
@@ -143,6 +147,7 @@ export interface ModuleComponent {
 }
 
 export interface ModuleWeek {
+  liveSessionsClosed?: boolean;
   studyWeekStartDate?: string;
   studyWeekEndDate?: string;
   studyWeekHolidays?: ModuleSlotHoliday[];
@@ -251,6 +256,8 @@ function monthLabelOf(key: string) {
  */
 export interface ModuleWeekSessionPlan {
   weeks?: import('@/lib/curriculumApi').CurriculumStudyWeek[];
+  /** Effective public/manual holiday weeks; candidate session numbers stay stable. */
+  closedWeeks?: import('@/lib/curriculumApi').CurriculumStudyWeek[];
   calendarEndDate?: string;
   /**
    * `weekNumber` is the Monday-to-Sunday window this date falls in, counting
@@ -362,6 +369,36 @@ export function moduleUsesSessionRows(module: ModuleCatalogueItem, plannedSessio
  * Every screen that pairs weeks with dates reads this -- the Course structure
  * rail, the sessions drawer, the module workspace.
  */
+export function moduleWeekPlanOffset(module: ModuleCatalogueItem, plan: ModuleWeekSessionPlan['sessions']): number {
+  if (module.weekBoundaryMode === 'calendar') return 0;
+  const byDate = new Map<string, number>();
+  for (const session of plan) {
+    const number = Number(session.weekNumber);
+    if (!session.date || !Number.isInteger(number) || number <= 0) continue;
+    const day = session.date.slice(0, 10);
+    if (byDate.has(day) && byDate.get(day) !== number) return 0;
+    byDate.set(day, number);
+  }
+  const offsets = new Set<number>();
+  const anchoredWeeks = new Set<number>();
+  for (const [index, week] of module.weekStructure.entries()) {
+    for (const component of week.components) {
+      const settings = component.settings;
+      if (component.type !== 'live-session' || settings.extraTeamsMeetingUrl || settings.sessionRescheduled) continue;
+      if (!settings.teamsOccurrenceId && !(settings.teamsLiveSessionId && settings.teamsSessionNumber)) continue;
+      const number = byDate.get(String(settings.sessionDate || '').slice(0, 10));
+      if (number === undefined) return 0;
+      offsets.add(index + 1 - number);
+      anchoredWeeks.add(number);
+    }
+  }
+  if (offsets.size !== 1 || anchoredWeeks.size < 2) return 0;
+  const offset = [...offsets][0];
+  if (offset <= 0 || offset >= module.weekStructure.length) return 0;
+  if (module.weekStructure.slice(0, offset).some(week => week.components.some(component => component.type === 'live-session'))) return 0;
+  return offset;
+}
+
 export function moduleWeekSessionSlots(
   module: ModuleCatalogueItem | null | undefined,
   plannedSessions?: ModuleWeekSessionPlan['sessions'],
@@ -381,7 +418,8 @@ export function moduleWeekSessionSlots(
       const weekNumber = Number(session.weekNumber) || 0;
       if (weekNumber > 0) countByWeekNumber.set(weekNumber, (countByWeekNumber.get(weekNumber) || 0) + 1);
     });
-    return weeks.map((_week, index) => countByWeekNumber.get(index + 1) || 0);
+    const offset = moduleWeekPlanOffset(module, plan);
+    return weeks.map((_week, index) => countByWeekNumber.get(index + 1 - offset) || 0);
   }
   // No week numbers to read: an older payload, or a screen holding no plan at
   // all. The module's own delivery pattern is the only thing left to answer
@@ -675,6 +713,7 @@ export function moduleTeamsPlannedSessions(
 ): ModuleTeamsPlannedSession[] {
   if (!module) return [];
   const liveDatesByWeek = moduleWeekLiveSessionDates(module, plan?.sessions);
+  const closedWeeks = weeksTouchedByHoliday(module, plan);
   const closuresByDate = new Map<string, string[]>();
   (plan?.sessions || []).forEach(session => {
     const date = trimmed(session.date);
@@ -682,6 +721,7 @@ export function moduleTeamsPlannedSessions(
   });
   const sessions: ModuleTeamsPlannedSession[] = [];
   (module.weekStructure || []).forEach((week, weekIndex) => {
+    if (closedWeeks.has(week.id) || (!plan && week.liveSessionsClosed)) return;
     const weekDates = liveDatesByWeek[weekIndex] || [];
     const live = (week.components || []).filter(component => component.type === 'live-session');
     // A week owns one planned date per delivery day, and its Nth live session
@@ -708,6 +748,7 @@ export function moduleTeamsPlannedSessions(
       // could not be read at all -- the caller passes `null` on a failed load
       // -- which is the one case where that stamp is the best answer available.
       const date = weekDates[index] || trimmed(settings.sessionDate);
+      if (plan?.closedWeeks?.some(window => date >= window.startDate && date <= window.endDate)) return;
       const planned = plan?.sessions.find(session => session.date === date);
       const { startTime, durationMinutes } = liveSessionClock(module, settings, date, week, planned);
       sessions.push({
@@ -974,9 +1015,20 @@ export function applyModuleComponentUpdate(module: ModuleCatalogueItem, componen
  */
 export function weeksTouchedByHoliday(
   module: ModuleCatalogueItem | null | undefined,
-  plan: Pick<ModuleWeekSessionPlan, 'sessions' | 'slots' | 'weeks'> | null | undefined,
+  plan: Pick<ModuleWeekSessionPlan, 'sessions' | 'slots' | 'weeks' | 'closedWeeks'> | null | undefined,
 ): Map<string, ModuleSessionSlot[]> {
   const byWeekId = new Map<string, ModuleSessionSlot[]>();
+  if (module && plan?.closedWeeks?.length) {
+    const offset = module.weekBoundaryMode === 'calendar' ? 0 : moduleWeekPlanOffset(module, plan.sessions);
+    const weekIdBySession = moduleWeekIdBySessionNumber(module, plan.sessions);
+    plan.closedWeeks.forEach(window => {
+      const ids = new Set((plan.sessions || []).filter(session => session.weekNumber === window.weekNumber)
+        .map(session => weekIdBySession.get(session.sessionNumber)).filter(Boolean));
+      if (!ids.size) ids.add(module.weekStructure[window.weekNumber - 1 + offset]?.id);
+      ids.forEach(id => { if (id) byWeekId.set(id, [{ slotNumber: window.weekNumber, weekNumber: window.weekNumber,
+        date: window.startDate, day: '', type: 'reading-week', cause: 'holiday-week', sessionNumber: null, holidays: window.holidays }]); });
+    });
+  }
   if (module?.weekBoundaryMode === 'calendar') {
     // Older session-plan responses carry a numeric week count here.
     const studyWeeks = Array.isArray(plan?.weeks) ? plan.weeks : [];
@@ -1100,7 +1152,8 @@ export function applyModuleWeekSessionPlan(
 ): ModuleCatalogueItem {
   const sessions = plan?.sessions || [];
   const studyWeeks = Array.isArray(plan?.weeks) ? plan.weeks : [];
-  if (!sessions.length && !(module.weekBoundaryMode === 'calendar' && studyWeeks.length)) return module;
+  if (!sessions.length && !plan.closedWeeks?.length && !(module.weekBoundaryMode === 'calendar' && studyWeeks.length)) return module;
+  const closedWeeks = weeksTouchedByHoliday(module, plan);
   // How many planned dates one authored week owns. A Mon+Fri module runs two
   // sessions for every week it authors, so a ten-week module spends twenty
   // planned dates -- and it spends them whether or not the live-session
@@ -1113,7 +1166,17 @@ export function applyModuleWeekSessionPlan(
   let sessionIndex = 0;
   const weekStructure = module.weekStructure.map((week, weekIndex) => {
     const window = module.weekBoundaryMode === 'calendar' ? studyWeeks.find(item => item.weekNumber === weekIndex + 1) : undefined;
-    const liveComponents = week.components.filter(component => component.type === 'live-session');
+    const liveSessionsClosed = closedWeeks.has(week.id);
+    // Existing confirmed meetings keep their identity/history. An automatically
+    // generated or copied unbooked Live never survives a holiday week.
+    const openComponents = liveSessionsClosed ? week.components.filter(component => {
+      if (component.type !== 'live-session') return true;
+      const settings = component.settings || {};
+      return Boolean(settings.teamsOccurrenceId || settings.extraTeamsMeetingUrl
+        || (settings.teamsLiveSessionId && Number(settings.teamsSessionNumber || 0) > 0));
+    }) : week.components;
+    let components = openComponents.length === week.components.length ? week.components : openComponents;
+    const liveComponents = components.filter(component => component.type === 'live-session');
     const slotCount = slotCounts[weekIndex] ?? 1;
     const slots = sessions.slice(sessionIndex, sessionIndex + slotCount);
     sessionIndex += slotCount;
@@ -1123,7 +1186,6 @@ export function applyModuleWeekSessionPlan(
     // follows the actual session date after holiday shifts.
     let sessionDate = firstSession ? (firstSession.date || '') : '';
     let sessionDay = firstSession ? (firstSession.day || '') : '';
-    let components = week.components;
     if (liveComponents.length) {
       const plannedByComponentId = new Map<string, ModuleWeekSessionPlan['sessions'][number] | undefined>();
       // A week owns one planned slot per delivery day its group runs, and its
@@ -1149,7 +1211,7 @@ export function applyModuleWeekSessionPlan(
         plannedByComponentId.set(component.id, numberedSession || slots[offset]);
       });
       let componentsMoved = false;
-      const plannedComponents = week.components.map(component => {
+      const plannedComponents = components.map(component => {
       if (component.type !== 'live-session') return component;
         const planned = plannedByComponentId.get(component.id);
         if (!planned?.date) return component;
@@ -1218,31 +1280,38 @@ export function applyModuleWeekSessionPlan(
         };
       });
       if (componentsMoved) components = plannedComponents;
-      const firstLive = components.find(component => component.type === 'live-session');
+      const firstLive = components.find(component => component.type === 'live-session'
+        && !trimmed(component.settings?.extraTeamsMeetingUrl)
+        && trimmed(component.settings?.teamsMeetingScope).toLowerCase() !== 'additional');
       const firstNumber = Number(firstLive?.settings?.teamsSessionNumber || 0);
       const firstNumberedSession = firstNumber > 0
         ? sessions.find(session => session.sessionNumber === firstNumber)
         : undefined;
-      if (firstNumberedSession) {
-        // Teams numbers can omit orientation and separately booked events.
-        // A confirmed date already fitting this authored week's slots wins
-        // over that unrelated index. A changed plan still moves the header
-        // when the confirmed date no longer fits, preserving its drift notice.
-        const confirmedDate = trimmed(firstLive?.settings?.teamsLiveSessionId)
-          ? trimmed(firstLive?.settings?.sessionDate) : '';
-        const headerSession = slots.find(slot => slot.date === confirmedDate) || firstNumberedSession;
-        sessionDate = headerSession.date || '';
-        sessionDay = headerSession.day || '';
+      const confirmedDate = trimmed(firstLive?.settings?.teamsLiveSessionId) && firstNumber > 0
+        && !['missing', 'ambiguous', 'unverified'].includes(trimmed(firstLive?.settings?.teamsCalendarBinding))
+        ? trimmed(firstLive?.settings?.sessionDate) : '';
+      const confirmedInDelivery = confirmedDate && /^\d{4}-\d{2}-\d{2}$/.test(confirmedDate)
+        && (!module.startDate || confirmedDate >= module.startDate)
+        && (!module.endDate || confirmedDate <= module.endDate);
+      if (confirmedInDelivery) {
+        // The heading follows the confirmed meeting, whose numbering may
+        // exclude reading weeks. Calendar sync still reports schedule drift.
+        sessionDate = confirmedDate;
+        sessionDay = new Date(`${confirmedDate}T12:00:00Z`).toLocaleDateString('en-GB', { weekday: 'long', timeZone: 'UTC' });
+      } else if (firstNumberedSession) {
+        sessionDate = firstNumberedSession.date || '';
+        sessionDay = firstNumberedSession.day || '';
       }
     }
     if (
       (!window || (week.studyWeekStartDate === window.startDate && week.studyWeekEndDate === window.endDate && JSON.stringify(week.studyWeekHolidays) === JSON.stringify(window.holidays)))
+      && Boolean(week.liveSessionsClosed) === liveSessionsClosed
       && components === week.components
       && (week.sessionDate || '') === sessionDate
       && (week.sessionDay || '') === sessionDay
     ) return week;
     weeksMoved = true;
-    return { ...week, components, sessionDate, sessionDay, ...(window ? { studyWeekStartDate: window.startDate, studyWeekEndDate: window.endDate, studyWeekHolidays: window.holidays } : {}) };
+    return { ...week, components, sessionDate, sessionDay, liveSessionsClosed, ...(window ? { studyWeekStartDate: window.startDate, studyWeekEndDate: window.endDate, studyWeekHolidays: window.holidays } : {}) };
   });
   const currentEndDate = String(module.endDate || '').trim();
   const endDateFollowsPlan = module.weekBoundaryMode !== 'calendar' && options.followEndDate !== false
@@ -1696,6 +1765,10 @@ function remapMapping(mapping: KsbMapping, source: DuplicateKsbSource | undefine
       ...mapping,
       id: makeAuthoringId('ksb'),
       ksbId: String(target.id ?? mapping.ksbId ?? ''),
+      // Never carry an official identity from the source standard into a remap.
+      // Without an explicit target identity the server resolves its exact pair/code.
+      standardKsbId: target.standardKsbId ?? target.standard_ksb_id,
+      standard_ksb_id: target.standardKsbId ?? target.standard_ksb_id,
       code: target.code,
       description: target.description || mapping.description,
       sourceType: source.sourceType,
@@ -3553,10 +3626,10 @@ export function loadTeamsMeetingConfiguration() {
  * module whose join link has gone missing, and a page load must not author
  * anything the person did not ask for.
  */
-export function restoreModuleTeamsMeeting(moduleCatalogueId: string, options: { createMissingComponents?: boolean } = {}) {
-  return apiJson<{ restored: boolean; updatedComponents: number; createdComponents?: number; meeting: Record<string, unknown>; module: ModuleCatalogueItem }>(`/curriculum/modules/${encodeURIComponent(moduleCatalogueId)}/teams-meetings/restore/`, {
+export function restoreModuleTeamsMeeting(moduleCatalogueId: string, options: { createMissingComponents?: boolean; alignToWeekPlan?: boolean } = {}) {
+  return apiJson<{ restored: boolean; updatedComponents: number; createdComponents?: number; unresolvedComponentIds?: string[]; meeting: Record<string, unknown>; module: ModuleCatalogueItem }>(`/curriculum/modules/${encodeURIComponent(moduleCatalogueId)}/teams-meetings/restore/`, {
     method: 'POST',
-    body: JSON.stringify({ createMissingComponents: Boolean(options.createMissingComponents) }),
+    body: JSON.stringify({ createMissingComponents: Boolean(options.createMissingComponents), ...(options.alignToWeekPlan ? { alignToWeekPlan: true } : {}) }),
     timeoutMs: 30000,
   }).then(result => {
     // Re-attaching rewrites the module's live-session components, so the cached

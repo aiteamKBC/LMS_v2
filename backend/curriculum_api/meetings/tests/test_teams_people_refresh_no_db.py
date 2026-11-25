@@ -362,6 +362,7 @@ class PeopleSyncCoordinationTests(SimpleTestCase):
         command = worker.Command()
         command.stdout = Mock()
         with patch.object(worker, 'connections', {'default': SimpleNamespace(cursor=lambda: cursor)}), \
+                patch.object(worker, 'archive_runtime_preflight', return_value='synthetic:instance:1:s3'), \
                 patch.object(worker, 'transaction', SimpleNamespace(atomic=nullcontext)), \
                 patch('curriculum_api.session_captions.sync_pending_captions'), \
                 patch.object(refresh, 'sync_due_people', side_effect=RuntimeError('private Graph body')) as service:

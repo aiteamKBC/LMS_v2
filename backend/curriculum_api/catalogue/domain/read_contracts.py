@@ -316,6 +316,7 @@ PERMANENT_DELETE_REFERENCES = {
         ('Learner', 'learner_progress_entries', 'group_id', 'progressEntries', None),
     ),
     'module': (
+        ('curriculum', 'tutor_module_notifications', 'module_catalogue_id', 'tutorNotifications', None),
         ('curriculum', 'live_session_learner_attendance', 'module_catalogue_id', 'attendance', None),
         ('curriculum', 'live_session_attendance_aliases', 'module_catalogue_id', 'attendanceAliases', None),
         ('curriculum', 'live_session_attendance_identity_rules', 'module_catalogue_id', 'attendanceIdentityRules', None),

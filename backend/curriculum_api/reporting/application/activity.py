@@ -11,7 +11,7 @@ def learner_activity_trace(progress_rows, excluded_progress_rows, reflection_row
     Curriculum already share. That makes cross-layer checks a lookup rather than
     a match on titles, emails or enrolment source ids.
 
-    Achieved KSB weight stays in ``ksbSnapshot`` (from ``learner_progress_ksbs``)
+    Achieved KSB weight stays in ``ksbSnapshot`` (from ``ksb_learner_progress``)
     and reflection declarations stay in ``declaredReflectionKsbs``. They are
     deliberately separate lists: the same activity's KSBs must not be summed
     twice.
@@ -341,7 +341,7 @@ def learner_consumption_payload(learners, coverage_items, progress_totals, refle
             'cohort': learner.get('cohort') or '',
             'group': learner.get('group') or '',
             'consumedWeightTotal': float_weight(consumed_total),
-            'consumedWeightSource': 'learner_progress_ksbs',
+            'consumedWeightSource': 'ksb_learner_progress',
             'declaredReflectionWeightTotal': float_weight(sum(float(value or 0) for value in declared_weights.values())),
             'expectedWeightTotal': float_weight(expected_total),
             'cappedConsumedWeightTotal': float_weight(sum(row['cappedConsumedWeight'] for row in ksb_rows)),

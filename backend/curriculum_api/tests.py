@@ -1037,7 +1037,8 @@ class CurriculumTeamsMeetingTests(CurriculumTeamsRequestTestCase):
             )
         self.assertEqual(queued.status_code, 202, queued.content)
         dispatch.assert_called_once_with(live_session_id)
-        with patch('curriculum_api.management.commands.process_session_results.archive_series', return_value=[]):
+        with patch('curriculum_api.management.commands.process_session_results.archive_series', return_value=[]), \
+                patch('curriculum_api.management.commands.process_session_results.archive_runtime_preflight', return_value='synthetic:instance:1:s3'):
             call_command('process_session_results', limit=1, live_session_ids=[live_session_id], stdout=StringIO())
         response = self.client.get(f'/curriculum_api/curriculum/teams-meetings/{live_session_id}/artifacts/')
         self.assertEqual(response.status_code, 200, response.content)
@@ -1959,6 +1960,59 @@ class CurriculumTeamsMeetingTests(CurriculumTeamsRequestTestCase):
         )
         self.assertRegex(detailed_row['nextOccurrence'], r'(Z|[+-]\d{2}:\d{2})$')
 
+    @patch('curriculum_api.views.get_holiday_rows', return_value=CURRICULUM_HOLIDAY_ROWS)
+    def test_restore_creates_live_only_in_open_weeks_without_shifting_the_run(self, _holidays):
+        # Restoring links must respect the author's closed weeks even when an
+        # older series still contains a tracked occurrence on those dates.
+        self._module_with_six_saturday_weeks()
+        views.authoring_upsert(views.AUTHORING_COMPONENTS_TABLE, ['id'], {
+            'id': 'COMP-EXISTING',
+            'week_id': 'WEEK-1',
+            'module_catalogue_id': 'MOD-WEEKS',
+            'type': 'live_session',
+            'title': 'Kick-off',
+            'display_order': 1,
+        })
+
+        response = self.client.post(
+            '/curriculum_api/curriculum/modules/MOD-WEEKS/teams-meetings/restore/',
+            data=json.dumps({'createMissingComponents': True}),
+            content_type='application/json',
+        )
+        self.assertEqual(response.status_code, 200, response.content)
+        result = response.json()
+        # Week 1 has Live; weeks 2-4 close for Christmas and New Year holidays.
+        self.assertEqual(result['createdComponents'], 2)
+        self.assertEqual(result['updatedComponents'], 1)
+
+        weeks = result['module']['weekStructure']
+        live_sessions = [
+            [component for component in week['components'] if component['type'] == 'live-session']
+            for week in weeks
+        ]
+        self.assertEqual([len(items) for items in live_sessions], [1, 0, 0, 0, 1, 1])
+        # Later sessions retain their own dates; no compensation or extension.
+        self.assertEqual(
+            [items[0]['settings']['sessionDate'] for items in live_sessions if items],
+            ['2026-12-12', '2027-01-09', '2027-01-16'],
+        )
+        # Every one of them can be joined, and the created ones say when they
+        # start and how long they run.
+        self.assertTrue(all(
+            items[0]['settings']['liveSessionUrl'] == 'https://teams.microsoft.com/l/meetup-join/series'
+            for items in live_sessions if items
+        ))
+        self.assertEqual(len(views.authoring_fetch_all(views.LIVE_SESSION_OCCURRENCES_TABLE, 'live_session_id = %s', ['LIVE-WEEKS'])), 6)
+        created = live_sessions[4][0]
+        self.assertEqual(created['settings']['sessionTime'], '09:00')
+        self.assertEqual(created['settings']['durationMinutes'], 120)
+        self.assertEqual(created['expectedOtjh'], 2.0)
+        # Titled after the session, never after the week: a live session named
+        # "Week 4" is read as a generated placeholder and hidden by the authoring
+        # model.
+        self.assertNotIn(created['title'], {'Week 4', ''})
+
+
 
 class TeamsCalendarSyncVerdictTests(CurriculumTeamsRequestTestCase):
     """The Teams Meetings badge's real verdict: the module's *current* plan,
@@ -2287,7 +2341,7 @@ class CurriculumPersistenceFixtures:
     """Schema setup and payload builders shared by the persistence test suites.
 
     Split out from ``CurriculumPersistenceTests`` so sibling suites can reuse the
-    fixture without inheriting — and therefore re-running — every test in it.
+    fixture without inheriting â€” and therefore re-running â€” every test in it.
     """
 
     def setUp(self):
@@ -3586,7 +3640,7 @@ class CurriculumCacheTests(SimpleTestCase):
         # Curriculum writes cascade widely: a module edit changes the overview, the
         # programme tree, the module list and any resolve-structures entry naming it.
         # Rather than enumerate that fan-out per write, invalidation clears the whole
-        # cache — the trade-off is a cold rebuild after each write, in exchange for
+        # cache â€” the trade-off is a cold rebuild after each write, in exchange for
         # making a missed key impossible. This test fails if it is ever narrowed to
         # targeted eviction without the per-key mapping being proven first.
         for key in ('overview:operational:compact', 'overview:all:full', 'modules:all:enriched'):
@@ -3921,6 +3975,10 @@ class ProgrammePermanentDeleteTests(SimpleTestCase):
         # only the ordering of the deletes matters.
         with composition_fixture(views, 'table_exists', lambda table: True), \
                 composition_fixture(views, 'delete_rows', record), \
+                patch.object(views.group_coaches, 'release_groups',
+                             lambda where, params: self.assertTrue(where and params)), \
+                patch.object(views.calendar_holidays, 'release_cohorts',
+                             lambda where, params: self.assertTrue(where and params)), \
                 composition_fixture(views, 'refuse_if_programme_owns_content', lambda plan: None), \
                 patch.object(
                     views, 'unhook_programme_reusables',
@@ -4195,7 +4253,7 @@ class StructurePayloadsCacheKeyTests(SimpleTestCase):
     def test_key_length_is_bounded_for_large_requests(self):
         # A resolve request may name hundreds of modules; the key must stay short or the
         # process cache holds megabytes of keys for the whole TTL. Only the count digits
-        # vary with input size — the identifiers themselves are hashed to a fixed width.
+        # vary with input size â€” the identifiers themselves are hashed to a fixed width.
         one = self.key(['MOD-A'])
         many = self.key([f'MOD-{index}' for index in range(500)])
         self.assertLess(len(many), 160)
@@ -4279,7 +4337,7 @@ class ProgrammeLearnerKsbProgressTests(TestCase):
         views.reset_schema_ready_flags()
         views.invalidate_curriculum_cache()
         # Borrow the persistence suite's schema fixtures so the helper runs its
-        # real query path instead of bailing out on a missing table — a test that
+        # real query path instead of bailing out on a missing table â€” a test that
         # only exercises the except branch would pass no matter what the maths did.
         CurriculumPersistenceTests.ensure_programmes_table(self)
         CurriculumPersistenceTests.ensure_ksb_profiles_table(self)
@@ -5002,7 +5060,7 @@ class AuthoringModuleSessionHolidayTests(SimpleTestCase):
     HOLIDAY_ROWS = [
         {'id': 'england-and-wales:2026-12-25', 'title': 'Christmas Day', 'holiday_date': '2026-12-25'},
         {'id': 'england-and-wales:2026-12-28', 'title': 'Boxing Day', 'holiday_date': '2026-12-28', 'notes': 'Substitute day'},
-        {'id': 'england-and-wales:2027-01-01', 'title': 'New Year’s Day', 'holiday_date': '2027-01-01'},
+        {'id': 'england-and-wales:2027-01-01', 'title': 'New Yearâ€™s Day', 'holiday_date': '2027-01-01'},
         # A Monday, but well after the cohort period used below.
         {'id': 'england-and-wales:2027-03-29', 'title': 'Easter Monday', 'holiday_date': '2027-03-29'},
     ]
@@ -5441,8 +5499,8 @@ class CohortEpaPeriodTests(SimpleTestCase):
 class ApprenticeshipEndDateOverrideTests(SimpleTestCase):
     """The apprenticeship end date is editable, and the edit wins.
 
-    The calculated date is only a default. A cohort that has to move it — a break
-    in learning, a resit window, an EPAO with no capacity — usually lands on a
+    The calculated date is only a default. A cohort that has to move it â€” a break
+    in learning, a resit window, an EPAO with no capacity â€” usually lands on a
     date no whole number of EPA months reaches, so the authored date has to
     override the arithmetic rather than be reverse-engineered into months.
     """
@@ -5782,7 +5840,7 @@ class TutorAssignmentNotificationTests(TestCase):
         self.assertIn('3 modules', send.call_args.kwargs['subject'])
 
     def test_a_tutor_with_no_email_is_skipped_and_stays_notifiable(self):
-        """No address is not a delivered notification — record nothing, retry later."""
+        """No address is not a delivered notification â€” record nothing, retry later."""
         self.seed_tutor(email='')
         self.seed_delivery(tutor_name='Amira Hassan')
 

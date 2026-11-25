@@ -57,6 +57,7 @@ from .views import curriculum_home_attention, curriculum_home_summary
 from .teaching_quality import teaching_review
 from .recordings_transcript_pdf import lecture_transcript
 from .module_hours import module_target
+from . import module_hours_workflows
 from .catalogue_activity import catalogue_activity
 from curriculum_api import delivery_dashboard
 from curriculum_api.catalogue.api import free_course_authoring_views as free_course_authoring_views
@@ -94,6 +95,10 @@ urlpatterns = [
     path('curriculum/modules/<str:module_id>/weeks/<str:week_id>/web-points/', week_points, name='web-week-points'),
     path('curriculum/modules/catalogue-activity/', catalogue_activity, name='module-catalogue-activity'),
     path('curriculum/modules/<str:module_id>/hours-target/', module_target, name='module-hours-target'),
+    path('curriculum/module-hours/v2/preview/', module_hours_workflows.preview),
+    path('curriculum/module-hours/v2/confirm/', module_hours_workflows.confirm),
+    path('curriculum/module-hours/v2/defaults/', module_hours_workflows.defaults),
+    path('curriculum/module-hours/v2/operations/', module_hours_workflows.operations),
     path('curriculum/learner-directory/counts/', learner_directory.counts),
     path('curriculum/learner-directory/learners/', learner_directory.learners),
     path('curriculum/learner-directory/progress/', learner_directory_details.progress),

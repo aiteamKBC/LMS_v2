@@ -19,7 +19,7 @@ from .database_reads import scoped_curriculum_read
 PLACEMENT_FIELDS = ('module_catalogue_id', 'week_id')
 
 #: What a mapping read through ``relation()`` carries beyond its own columns.
-READ_FIELDS = ('module_catalogue_id', 'week_id', 'ksb_code', 'ksb_description')
+READ_FIELDS = ('module_catalogue_id', 'week_id', 'ksb_code', 'ksb_description', 'ksb_id')
 
 
 def _only():
@@ -73,7 +73,7 @@ def can_select(table, column):
     return column in READ_FIELDS and table == database_reads.AUTHORING_KSB_MAPPINGS_TABLE
 
 
-# standard_ksbs ids -> (code, description), as last read. Reference data:
+# ksb_standard_definitions ids -> (code, description), as last read. Reference data:
 # changed only by a manual Skills England import, which the curriculum cache
 # already lets lag by up to 60 s (views.coverage_entry), so this lags no more.
 STANDARD_TEXTS_TTL_SECONDS = 60
@@ -134,7 +134,7 @@ _SKILLS_ENGLAND_ROWS = (None, None)
 
 @scoped_curriculum_read
 def get_skills_england_ksb_rows():
-    if not database_reads.table_exists('standard_ksbs'):
+    if not database_reads.table_exists('ksb_standard_definitions'):
         return []
     # Re-read only when the table changed: its digest rides the request's one
     # lookup round trip, so an unchanged table costs nothing.
@@ -145,7 +145,7 @@ def get_skills_england_ksb_rows():
         return cached_rows
     rows = database_reads.fetch_all(f'''
         select *
-        from {database_reads.table_name("standard_ksbs")}
+        from {database_reads.table_name("ksb_standard_definitions")}
         order by standard_ref, standard_version, ksb_type, ksb_code, id
     ''')
     if digest:

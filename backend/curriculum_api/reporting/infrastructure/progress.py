@@ -4,7 +4,7 @@
 def progress_source_available(*, connection, learner_schema_table_exists):
     return (connection.vendor == 'postgresql'
             and learner_schema_table_exists('learner_progress_entries')
-            and learner_schema_table_exists('learner_progress_ksbs'))
+            and learner_schema_table_exists('ksb_learner_progress'))
 
 
 def progress_scope_predicate(component_ids, lineage_column='', scope_ref='', *, PROGRESS_LINEAGE_COLUMN_BY_SCOPE, quote_ident):
@@ -36,7 +36,7 @@ def out_of_scope_progress_count(learner_ids, predicate, predicate_params, *, and
             from "Learner"."learner_progress_entries" p
             cross join lateral (
                 select count(distinct k.ksb_code) as n
-                from "Learner"."learner_progress_ksbs" k
+                from ''' + official_progress_relation() + ''' k
                 where k.progress_id = p.id''' + not_excluded + '''
             ) codes
             where p.learner_id = any(%s) and not ''' + predicate,
@@ -132,7 +132,7 @@ def progress_consumption_rows(learner_ids, codes=None, scope_predicate=None, ach
                     select k.ksb_code,
                            coalesce(max(k.weight), 0) as weight,
                            coalesce(max(nullif(k.weight_class, '')), 'soft') as weight_class
-                    from "Learner"."learner_progress_ksbs" k
+                    from ''' + official_progress_relation() + ''' k
                     -- Rows the KSB standards migration registered as not
                     -- counting drop out here; the activity and its hours stay.
                     where k.progress_id = p.id''' + not_excluded + code_sql + '''
@@ -155,3 +155,5 @@ def progress_consumption_rows(learner_ids, codes=None, scope_predicate=None, ach
         for ksb_code, weight, weight_class in list(zip(codes_of, weights, classes)) or [(None, 0, 'soft')]:
             rows.append({**entry, 'ksb_code': ksb_code, 'weight': weight, 'weight_class': weight_class})
     return rows
+
+from learner_api.ksb_domain import official_progress_relation

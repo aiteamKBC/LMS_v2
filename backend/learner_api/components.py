@@ -158,7 +158,7 @@ def _component_ksb_mappings(component_id):
         with database.cursor() as cur:
             cur.execute(
                 f"SELECT standard_ksb.ksb_code, mapping.weight "
-                f"FROM curriculum.ksb_mappings mapping "
+                f"FROM curriculum.ksb_component_mappings mapping "
                 f"{standard_ksb_join_sql('mapping', 'standard_ksb')} "
                 f"WHERE mapping.component_id = %s "
                 f"AND {current_status_sql('mapping')} "

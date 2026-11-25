@@ -44,14 +44,14 @@ def achievement_inputs_fingerprint(
                 select
                     (select count(*)::text || ':' || coalesce(sum(hashtext(concat_ws('|', l.id, l.full_name,
                             l.programme_id, l.cohort_id, l.group_id, l.programme_status, l.lifecycle_status,
-                            l.updated_at))::bigint), 0) from "Learner".learners l),
+                            l.updated_at,l.standard_ref,l.standard_version))::bigint), 0) from "Learner".learners l),
                     (select count(*)::text || ':' || coalesce(sum(h::bigint), 0) from entries),
                     (select count(*)::text || ':' || coalesce(sum(hashtext(concat_ws('|', k.progress_id, k.position,
-                            k.ksb_code, k.weight, k.weight_class))::bigint), 0)
-                       from "Learner".learner_progress_ksbs k where k.progress_id in (select id from entries)),
-                    (select count(*)::text || ':' || coalesce(sum(hashtext(concat_ws('|', x.progress_id, x.position,
-                            x.ksb_code, x.status))::bigint), 0)
-                       from "Learner".learner_progress_ksb_exclusions x)
+                            k.ksb_code, k.weight, k.weight_class,k.standard_ksb_id,k.is_excluded,k.mapping_status))::bigint), 0)
+                       from "Learner".ksb_learner_progress k where k.progress_id in (select id from entries)),
+                    (select count(*)::text || ':' || coalesce(sum(hashtext(concat_ws('|', d.id,
+                            d.standard_ref,d.standard_version,d.ksb_code,d.ksb_description))::bigint), 0)
+                       from curriculum.ksb_standard_definitions d)
                 ''',
                 [programme_id, learner_ids],
             )

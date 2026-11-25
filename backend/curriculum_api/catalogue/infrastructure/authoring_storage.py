@@ -102,7 +102,10 @@ def authoring_upsert(table, key_columns, payload, allow_null_columns=None):
         versioning=versioning,
         write_shape=write_shape,
         written_rows=written_rows,
+        AUTHORING_KSB_MAPPINGS_TABLE=AUTHORING_KSB_MAPPINGS_TABLE,
+        reuse_mapping_rows=reuse_mapping_rows,
     )
+
 
 
 @with_course_storage
@@ -167,3 +170,5 @@ def update_authoring_rows(table, where_sql, where_params, payload):
         write_shape=write_shape,
         written_rows=written_rows,
     )
+
+from curriculum_api.ksb_mapping_placement import reuse_mapping_rows

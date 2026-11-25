@@ -10,7 +10,7 @@ from datetime import date, datetime, timedelta, timezone
 from math import isfinite
 
 from django.core.serializers.json import DjangoJSONEncoder
-from django.db import DatabaseError, connection, transaction
+from django.db import DatabaseError, IntegrityError, connection, transaction
 from django.http import JsonResponse
 from django.views.decorators.http import require_http_methods
 from config.working_hours import UK, WORKING_DAY_START, WORKING_DAY_END, WORKING_WEEKDAYS, WORKING_HOURS_LABEL
@@ -372,7 +372,7 @@ def enrich(payload, account):
     apply_ksb_metrics(payload, canonical_records, query, table, connection)
 
 
-def resolve(account, module_id, learner_id, component_id):
+def resolve(account, module_id, learner_id, component_id, *, lock_parents=False):
     from . import views
     learners = views.assigned_learners_for_scope('module', module_id, '')
     if not any(str(row['id']) == str(learner_id) for row in learners):
@@ -380,15 +380,15 @@ def resolve(account, module_id, learner_id, component_id):
     owners = query(f'SELECT * FROM {table("learners")} WHERE id=%s', [learner_id])
     # allowed() matches a tutor by the module's tutor email, read from the tutor record.
     modules = curriculum_names.attach('modules', query(f'SELECT * FROM {table("modules", "curriculum")} WHERE module_catalogue_id=%s', [module_id]))
-    components = query(f'SELECT * FROM {table("components", "curriculum")} WHERE id=%s AND module_catalogue_id=%s', [component_id, module_id])
+    components = query(f'SELECT * FROM {table("components", "curriculum")} WHERE id=%s AND module_catalogue_id=%s'
+                       + (lock() if lock_parents else ''), [component_id, module_id])
     if not owners or not modules or not components or any(views.curriculum_row_effectively_deleted(row) for row in [modules[0], components[0]]):
         raise ServiceError('Activity not found.', 'not_found', 404)
     owner = owners[0]
-    if not owner.get('enrolment_id'):
-        raise ServiceError('Learner identity needs review.', 'identity_review_required', 409)
-    from learner_api.canonical_learning import require_profile
-    if require_profile(owner['enrolment_id'])['id'] != owner['id']:
-        raise ServiceError('Learner identity needs review.', 'identity_review_required', 409)
+    # The route and both display tables identify the canonical learner. Never
+    # resolve that identity backwards through a redundant enrolment column.
+    if not query(f'SELECT id FROM {table("Login_accounts", "login")} WHERE id=%s', [account.id]):
+        raise ServiceError('The acting account no longer exists.', 'actor_not_found', 409)
     if not allowed(account, owner, modules[0]):
         raise ServiceError('You do not own this learner or module.', 'forbidden', 403)
     return owner, modules[0], components[0]
@@ -472,11 +472,19 @@ def save(account, module_id, learner_id, component_id, payload):
     reason = f'Staff set displayed status to Completed with {mode} time entry.' if status == 'completed' else 'Staff set displayed status to Not Started; activity hours and progress retained.'
     with transaction.atomic():
         owner, module, component = resolve(account, module_id, learner_id, component_id)
+        # Compatibility only: both display tables still require enrolment_id,
+        # and the existing time-entry workflow shares the enrolment month lock.
+        # Always derive it from the canonical learner, never an old override.
+        if not owner.get('enrolment_id'):
+            raise ServiceError('Learner identity needs review.', 'identity_review_required', 409)
         # Shared with Monthly Log signing; protects an empty destination month.
         query(f'SELECT id FROM {table("Created_users", "enrolment")} WHERE id=%s{lock()}', [owner['enrolment_id']])
         query(f'SELECT id FROM {table("learners")} WHERE id=%s{lock()}', [learner_id])
-        # Reread membership/ownership after the learner lock.
-        owner, module, component = resolve(account, module_id, learner_id, component_id)
+        # Reread membership/ownership after the learner lock; prevent a component
+        # moving to another module until the override and audit have committed.
+        owner, module, component = resolve(account, module_id, learner_id, component_id, lock_parents=True)
+        if not owner.get('enrolment_id'):
+            raise ServiceError('Learner identity needs review.', 'identity_review_required', 409)
         is_attendance = attendance.is_attendance(component)
         if not is_attendance and 'attendanceMode' in payload:
             raise ServiceError('Attendance choices apply only to a lecture activity.')
@@ -603,6 +611,7 @@ def save(account, module_id, learner_id, component_id, payload):
             (learner_id,enrolment_id,module_id,component_id,display_status,revision,actor_id,reason)
             VALUES (%s,%s,%s,%s,%s,%s,%s,%s)
             ON CONFLICT (learner_id,module_id,component_id) DO UPDATE SET
+                enrolment_id=excluded.enrolment_id,
                 display_status=excluded.display_status,revision=excluded.revision,actor_id=excluded.actor_id,
                 reason=excluded.reason,updated_at=CURRENT_TIMESTAMP''',
             [learner_id, owner['enrolment_id'], module_id, component_id, status, revision, account.id, reason])
@@ -650,5 +659,8 @@ def activity_status(request, module_id, learner_id, component_id):
         return JsonResponse({'error': str(exc), 'code': exc.code}, status=exc.status)
     except schema_gate.SchemaNotProvisioned as exc:
         return JsonResponse({'error': str(exc), 'code': 'schema_not_provisioned'}, status=503)
+    except IntegrityError:
+        return JsonResponse({'error': 'Activity references changed. Reload before saving.',
+                             'code': 'record_changed'}, status=409)
     except DatabaseError:
         return JsonResponse({'error': 'Activity storage is unavailable. No changes were saved.', 'code': 'storage_unavailable'}, status=503)

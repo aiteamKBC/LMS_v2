@@ -35,6 +35,8 @@ def authoring_upsert(
     versioning,
     write_shape,
     written_rows,
+    AUTHORING_KSB_MAPPINGS_TABLE,
+    reuse_mapping_rows,
 ):
     """Insert-or-update one authoring row.
 
@@ -47,6 +49,8 @@ def authoring_upsert(
     writable = column_names(table)
     payload, staff_nullable = curriculum_names.store_staff(table, payload, writable)
     payload, shaped_nullable = write_shape.normalise(table, payload, writable)
+    if table == AUTHORING_KSB_MAPPINGS_TABLE and 'standard_ksb_id' in writable:
+        payload = reuse_mapping_rows([payload])[0]
     nullable = set(SOFT_DELETE_COLUMNS) | set(allow_null_columns or ()) | shaped_nullable | staff_nullable
     values = {
         key: value

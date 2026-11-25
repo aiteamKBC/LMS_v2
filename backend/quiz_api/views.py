@@ -3444,10 +3444,7 @@ def quizzes(request):
         if not 1 <= duration <= 1440:
             return JsonResponse({"error": "Quiz duration must be between 1 and 1440 minutes."}, status=400)
 
-        try:
-            settings_values = quiz_settings({}, creating=True)
-        except DatabaseError:
-            return JsonResponse({"error": "Could not load quiz defaults. Please retry."}, status=503)
+        settings_values = quiz_settings({}, creating=True)
 
         try:
             _store_question_images(parsed_questions)
@@ -3493,8 +3490,6 @@ def quizzes(request):
         settings_values = quiz_settings(payload, creating=True)
     except ValueError as exc:
         return JsonResponse({"error": str(exc)}, status=400)
-    except DatabaseError:
-        return JsonResponse({"error": "Could not load quiz defaults. Please retry."}, status=503)
 
     # Empty authoring shells stay drafts; complete initial batches are validated below.
     if _clean_quiz_status(payload.get("status"), "draft") == "published" and "initialQuestions" not in payload:

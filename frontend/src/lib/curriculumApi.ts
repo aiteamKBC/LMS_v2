@@ -2060,6 +2060,7 @@ export interface CurriculumAuditActor {
 }
 
 export interface CurriculumAuditTrail {
+  available?: true;
   workspaces?: { value: string; label: string }[];
   /** Every workspace this response can speak for, whichever reading covers it. */
   changeWorkspaces?: string[];
@@ -2075,7 +2076,8 @@ export interface CurriculumAuditTrail {
   recoveredHistory?: boolean;
   /** The recovered history could not be read this time; the log is shown alone. */
   recoveryFailed?: boolean;
-  /** Where each record type's revision history begins; null when it has none yet. */
+  /** Earliest canonical event timestamp per type, independent of paging/window;
+   * null when no authoritative timestamp exists. Never inferred from source rows. */
   revisionStartedAt?: Record<string, string | null>;
   generatedAt: string;
   windowDays: number;
@@ -3211,7 +3213,7 @@ async function fetchJsonOnce<T>(path: string, init?: CurriculumRequestInit): Pro
   const csrfToken = unsafe && typeof document !== 'undefined'
     ? document.cookie.split('; ').find(value => value.startsWith('csrftoken='))?.split('=').slice(1).join('=')
     : undefined;
-  const response = await fetch(`${API_BASE_URL}${path}`, {
+  const response = await (csrf ? coachFetch : fetch)(`${API_BASE_URL}${path}`, {
     ...fetchInit,
     ...(init?.skipCache ? { cache: 'no-store' as const } : {}),
     signal,
@@ -4171,11 +4173,19 @@ export function fetchCurriculumRecordHistory(
   );
 }
 
-/**
- * Record activity across the curriculum authoring tables: what was created,
- * edited or archived, newest first. Derived from created_at/updated_at/
- * deleted_at on the records themselves - Quality owns no log of its own.
- */
+/** The store is unavailable; this is not an empty successful Changes feed. */
+export interface CurriculumAuditHistoryUnavailable {
+  available: false;
+  reason: string;
+  totalRevisions: 0;
+  totalNamedVersions: 0;
+  count: 0;
+  entities: [];
+  versions: [];
+  revisions: [];
+}
+
+/** Canonical revision events, newest first; explicitly unavailable without the log. */
 export function fetchCurriculumAuditTrail(
   options: {
     days?: number;
@@ -4206,7 +4216,7 @@ export function fetchCurriculumAuditTrail(
     skipCache?: boolean;
     revalidate?: boolean;
   } = {},
-): Promise<CurriculumAuditTrail> {
+): Promise<CurriculumAuditTrail | CurriculumAuditHistoryUnavailable> {
   const query = new URLSearchParams();
   if (options.days) query.set('days', String(options.days));
   if (options.limit) query.set('limit', String(options.limit));
@@ -4223,7 +4233,7 @@ export function fetchCurriculumAuditTrail(
     query.set('scopeId', options.scopeId);
   }
   const suffix = query.toString() ? `?${query.toString()}` : '';
-  return fetchJson<CurriculumAuditTrail>(`/curriculum/quality/audit-trail/${suffix}`, {
+  return fetchJson<CurriculumAuditTrail | CurriculumAuditHistoryUnavailable>(`/curriculum/quality/audit-trail/${suffix}`, {
     signal: options.signal,
     skipCache: options.skipCache,
     revalidate: options.revalidate,
@@ -5218,22 +5228,21 @@ export interface TutorAssignmentEmailStatus {
   deliveries: { moduleId: string; emailed: boolean; lastSent: { status: string | null; at: string | null } | null }[];
 }
 
-/**
- * Whether this tutor has already been told about these deliveries.
- *
- * The answer comes from the assignment ledger, which is keyed on (tutor,
- * module) -- so it is per tutor by construction, and a module whose tutor
- * changed reports nothing for the new name. `tutorName` asks about a tutor the
- * module does not carry yet, which is what the drawer needs while somebody is
- * still choosing one.
- *
- * A read, so it must not disturb the caches a write would: see `isReadOnlyPost`
- * for the same idea on the POST side.
- */
-export function fetchTutorAssignmentEmailStatus(moduleIds: string[], tutorName: string, signal?: AbortSignal) {
+/** Notification preview identity is exclusively curriculum.tutors.id. */
+export function fetchTutorAssignmentEmailStatus(moduleIds: string[], tutorId: string, signal?: AbortSignal) {
   const params = new URLSearchParams({ moduleIds: moduleIds.join(',') });
-  if (tutorName) params.set('tutor', tutorName);
+  if (tutorId) params.set('tutorId', tutorId);
   return tutorEmailJson<TutorAssignmentEmailStatus>(`${tutorEmailUrl()}?${params.toString()}`, { signal });
+}
+
+export interface TutorNotificationOptions {
+  tutors: { id: string; name: string }[];
+  assignments: { moduleId: string; tutorId: string }[];
+}
+
+export function fetchTutorNotificationOptions(moduleIds: string[], signal?: AbortSignal) {
+  const params = new URLSearchParams({ options: '1', moduleIds: moduleIds.join(',') });
+  return tutorEmailJson<TutorNotificationOptions>(`${tutorEmailUrl()}?${params.toString()}`, { signal });
 }
 
 export function sendTutorAssignmentEmail(moduleIds: string[]) {

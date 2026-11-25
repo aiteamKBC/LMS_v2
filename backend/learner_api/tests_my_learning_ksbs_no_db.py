@@ -59,7 +59,7 @@ class MyLearningKsbTests(SimpleTestCase):
         self.assertEqual(result, {'completed': 1, 'total': 3, 'percent': 33.33, 'status': 'ready'})
 
     def test_batch_read_uses_normalized_schema_and_scopes_historical_codes_to_owned_records(self):
-        rows = [dict(component_id='C1', normalized_mappings=[{'code': 'STALE'}]),
+        rows = [dict(component_id='C1', normalized_mappings=[{'code': 'K2'}]),
                 dict(component_id='C2', normalized_mappings=[{'code': 'S1'}])]
         lineage = {('50', 'material:7'): {'10'}, ('51', 'quiz:7'): {'11'}}
         with patch.object(ksbs.canonical, 'query', side_effect=[rows, [
@@ -69,12 +69,14 @@ class MyLearningKsbTests(SimpleTestCase):
                 component('C1', ksbMappings=[{'code': 'K1'}, {'code': 'K1'}]),
                 component('C2'),
             ]), lineage)
-        self.assertEqual(result, {'C1': {'K1'}, 'C2': {'S1'},
+        self.assertEqual(result, {'C1': {'K2'}, 'C2': {'S1'},
             'catalogue:50:material:7': {'K2'}, 'catalogue:51:quiz:7': {'B1'}})
         self.assertEqual(query.call_count, 2)
         component_statement, component_params = query.call_args_list[0].args
-        self.assertEqual(component_params, [['C1', 'C2']])
-        self.assertIn('JOIN curriculum.standard_ksbs standard_ksb', component_statement)
+        self.assertEqual(component_params, [9, ['C1', 'C2']])
+        self.assertIn('ksb_owner.id=%s', component_statement)
+        self.assertIn('standard_ksb.standard_version=ksb_version.standard_version', component_statement)
+        self.assertIn('JOIN curriculum.ksb_standard_definitions standard_ksb', component_statement)
         self.assertIn('standard_ksb.id = mapping.standard_ksb_id', component_statement)
         self.assertIn("'code',standard_ksb.ksb_code", component_statement)
         self.assertNotIn('c.ksb_mappings', component_statement)
@@ -90,3 +92,30 @@ class MyLearningKsbTests(SimpleTestCase):
         with patch.object(ksbs.canonical, 'query') as query:
             self.assertEqual(ksbs.read_card_ksb_mappings({'id': 9}, native(), {}), {})
         query.assert_not_called()
+
+    def test_canonical_codes_preserve_decoder_shapes_without_legacy_mapping_fallback(self):
+        # The canonical SQL reader owns mapping precedence. Its response decoder
+        # still accepts the supported code aliases and encoded JSON shapes.
+        rows = [
+            dict(component_id='ALIASES', normalized_mappings=[
+                {'code': '', 'ksbCode': ' k1 ', 'ksb_code': 'stale'},
+                {'code': 0, 'ksbCode': False, 'ksb_code': 's1'},
+                {'code': 'K1'}],
+                 inline_mappings=[{'code': 'STALE'}]),
+            dict(component_id='INVALID', normalized_mappings=[{'code': {'legacy': 'value'}}],
+                 inline_mappings=[{'code': 'STALE'}]),
+            dict(component_id='EMPTY', normalized_mappings=[],
+                 inline_mappings=[{'code': 'STALE'}]),
+            dict(component_id='ENCODED', normalized_mappings='[{"ksb_code":"k2"}]',
+                 inline_mappings=[{'code': 'STALE'}]),
+        ]
+        with patch.object(ksbs.canonical, 'query', return_value=rows) as query:
+            result = ksbs.read_card_ksb_mappings({'id': 9},
+                native([component(row['component_id']) for row in rows]), {})
+        self.assertEqual(result['ALIASES'], {'K1', 'S1'})
+        self.assertIsNone(result['INVALID'])
+        self.assertEqual(result['EMPTY'], set())
+        self.assertEqual(result['ENCODED'], {'K2'})
+        sql = query.call_args.args[0]
+        self.assertIn(ksbs.component_ksb_codes_sql('c', eligibility_sql=ksbs.learner_definition_condition('standard_ksb','%s')), sql)
+        self.assertNotIn('c.ksb_mappings', sql)

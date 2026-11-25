@@ -75,7 +75,7 @@ class StudyWeekPersistenceTests(CurriculumPersistenceTransactionHarness):
         self.assertEqual([s['date'] for s in plan['sessions']], ['2026-09-10', '2026-09-22', '2026-09-24'])
         self.assertEqual(views.authoring_summary_catalogue_item(views.authoring_catalogue_summaries()[module['catalogueId']])['weekBoundaryMode'], 'calendar')
 
-    def test_holiday_week_keeps_materials_and_manually_added_live_component(self):
+    def test_holiday_week_keeps_materials_and_refuses_new_manual_live_component(self):
         module = self.create_delivery()
         weeks = copy.deepcopy(module['weekStructure'])
         weeks[1]['components'] = [
@@ -87,13 +87,94 @@ class StudyWeekPersistenceTests(CurriculumPersistenceTransactionHarness):
         self.assertEqual(result.status_code, 200, result.content)
         after = views.get_authoring_structure_payload(module['catalogueId'])
         self.assertEqual(len(after['weekStructure']), 3)
-        self.assertEqual([c['title'] for c in after['weekStructure'][1]['components']], ['Independent reading', 'Optional workshop'])
-        self.assertEqual(after['weekStructure'][1]['components'][1]['settings']['sessionDate'], '2026-09-17')
+        self.assertEqual([c['title'] for c in after['weekStructure'][1]['components']], ['Independent reading'])
         self.assertEqual(after['weekStartsOn'], 'Monday')
-        row = views.authoring_module_exists(module['catalogueId'])
-        sessions = views.build_sessions_from_authoring_modules([row])
-        manual = next(session for session in sessions if session['title'] == 'Optional workshop')
-        self.assertEqual(manual['startTime'], '14:00')
+        self.assertEqual(after['endDate'], module['endDate'])
+
+    def test_legacy_and_calendar_holidays_keep_other_content_and_multiple_live_weeks(self):
+        for mode in (None, 'calendar'):
+            for count in (2, 3, 4):
+                with self.subTest(mode=mode, live_per_week=count):
+                    days = ('Monday', 'Tuesday', 'Thursday', 'Friday')[:count]
+                    module = self.create_delivery(moduleName=f'Synthetic {mode} {count} days', tutor='Unassigned', startDate='2026-09-07', weekBoundaryMode=mode,
+                        weeklySchedule=[{'day': day, 'startTime': '09:00', 'endTime': '10:00'} for day in days])
+                    before_weeks = copy.deepcopy(module['weekStructure'])
+                    self.assertEqual([len(w['components']) for w in before_weeks], [count, 0, count])
+                    weeks = copy.deepcopy(before_weeks)
+                    weeks[1]['components'] = [
+                        {'id': 'COMP-READING-' + module['catalogueId'], 'type': 'reading', 'title': 'Independent reading', 'settings': {}},
+                        {'id': 'COMP-QUIZ-' + module['catalogueId'], 'type': 'quiz', 'title': 'Independent quiz', 'settings': {}},
+                        {'id': 'COMP-COPIED-LIVE-' + module['catalogueId'], 'type': 'live-session', 'title': 'Copied Live',
+                         'settings': {'sessionDate': '2026-09-17', 'teamsOccurrenceId': 'COPIED-OCCURRENCE',
+                                      'teamsLiveSessionId': 'COPIED-SERIES', 'teamsSessionNumber': 1}},
+                    ]
+                    response = self.patch_json(f"/curriculum_api/curriculum/modules/{module['catalogueId']}/", {'weekStructure': weeks})
+                    self.assertEqual(response.status_code, 200, response.content)
+                    after = views.get_authoring_structure_payload(module['catalogueId'])
+                    self.assertEqual([w['id'] for w in after['weekStructure']], [w['id'] for w in before_weeks])
+                    self.assertEqual([len(w['components']) for w in after['weekStructure']], [count, 2, count])
+                    self.assertEqual([c['type'] for c in after['weekStructure'][1]['components']], ['reading', 'quiz'])
+                    for index in (0, 2):
+                        self.assertEqual([c['id'] for c in after['weekStructure'][index]['components']],
+                                         [c['id'] for c in before_weeks[index]['components']])
+                        self.assertEqual([c['settings']['sessionDate'] for c in after['weekStructure'][index]['components']],
+                                         [c['settings']['sessionDate'] for c in before_weeks[index]['components']])
+                    self.assertEqual(after['endDate'], module['endDate'])
+                    reason = views.teams_non_delivery_reason([{'start': datetime(2026, 9, 17, 9, tzinfo=timezone.utc)}],
+                                                            module_catalogue_id=module['catalogueId'])
+                    self.assertIn('holiday week', reason)
+
+    def test_single_component_creation_cannot_bypass_a_holiday_week(self):
+        module = self.create_delivery(weekBoundaryMode=None, startDate='2026-09-07')
+        week = module['weekStructure'][1]
+        with self.assertRaises(views.ModuleAuthoringValidationError):
+            views.save_component_builder_payload({'moduleCatalogueId': module['catalogueId'], 'weekId': week['id'],
+                'weekNumber': 2, 'type': 'Live session', 'title': 'Forbidden holiday Live',
+                'settings': {'sessionDate': '2026-09-17'}})
+        after = views.get_authoring_structure_payload(module['catalogueId'])
+        self.assertEqual(after['weekStructure'][1]['components'], [])
+
+    def test_teams_rejects_a_non_holiday_day_inside_a_closed_week_before_graph(self):
+        module = self.create_delivery(weekBoundaryMode=None, startDate='2026-09-07')
+        payload = {'title': 'Blocked Live', 'moduleCatalogueId': module['catalogueId'],
+                   'organizerEmail': 'tutor@example.com', 'attendees': ['learner@example.com'],
+                   'startDateTimeUtc': '2026-09-17T09:00:00Z', 'localStartDateTime': '2026-09-17T09:00',
+                   'durationMinutes': 60, 'repeat': 'none', 'repeatOccurrences': 1,
+                   'scheduledOccurrences': [{'sessionNumber': 1, 'startDateTimeUtc': '2026-09-17T09:00:00Z', 'durationMinutes': 60}]}
+        with patch('coach_api.views.microsoft_graph_request', side_effect=AssertionError('Holiday booking must not reach Graph')) as graph, \
+                patch('coach_api.views.has_graph_credentials', return_value=True), \
+                patch('coach_api.views.get_graph_settings', return_value=GRAPH_SETTINGS):
+            response = self.post_json('/curriculum_api/curriculum/teams-meetings/', payload)
+        self.assertEqual(response.status_code, 400, response.content)
+        self.assertEqual(response.json()['code'], 'non_delivery_date')
+        graph.assert_not_called()
+
+    def test_saving_a_closure_preserves_existing_component_and_recording_ids(self):
+        module = self.create_delivery(calendarPolicy={'country': 'GB', 'observePublicHolidays': False, 'manualHolidays': []})
+        weeks = copy.deepcopy(module['weekStructure'])
+        live = weeks[1]['components'][0]
+        live['settings'].update(teamsOccurrenceId='OLD-OCCURRENCE', teamsLiveSessionId='OLD-SERIES',
+                                teamsSessionNumber=2, recordingUrl='https://example.invalid/original-recording')
+        response = self.patch_json(f"/curriculum_api/curriculum/modules/{module['catalogueId']}/", {'weekStructure': weeks})
+        self.assertEqual(response.status_code, 200, response.content)
+        before = views.get_authoring_structure_payload(module['catalogueId'])
+        with patch('coach_api.views.microsoft_graph_request', side_effect=AssertionError('No changes to historical Microsoft meetings')):
+            response = self.patch_json(f"/curriculum_api/curriculum/modules/{module['catalogueId']}/", {'calendarPolicy': {
+                'country': 'GB', 'observePublicHolidays': False,
+                'manualHolidays': [{'label': 'New closure', 'startDate': '2026-09-16', 'endDate': '2026-09-16'}]}})
+        self.assertEqual(response.status_code, 200, response.content)
+        after = views.get_authoring_structure_payload(module['catalogueId'])
+        self.assertEqual([[c['id'] for c in w['components']] for w in after['weekStructure']],
+                         [[c['id'] for c in w['components']] for w in before['weekStructure']])
+        saved = after['weekStructure'][1]['components'][0]
+        for key in ('teamsOccurrenceId', 'teamsLiveSessionId', 'teamsSessionNumber', 'recordingUrl'):
+            self.assertEqual(saved['settings'][key], live['settings'][key])
+        self.assertEqual(after['endDate'], before['endDate'])
+        moved = copy.deepcopy(after['weekStructure'])
+        moved[1]['components'].append(moved[0]['components'].pop())
+        response = self.patch_json(f"/curriculum_api/curriculum/modules/{module['catalogueId']}/", {'weekStructure': moved})
+        self.assertEqual(response.status_code, 400, response.content)
+        self.assertEqual(views.get_authoring_structure_payload(module['catalogueId'])['weekStructure'], after['weekStructure'])
 
     def test_programme_workspace_edit_retains_the_explicit_week_layout(self):
         module = self.create_delivery()

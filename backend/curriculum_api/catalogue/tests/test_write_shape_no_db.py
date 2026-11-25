@@ -75,6 +75,12 @@ class ForeignKeyTests(SimpleTestCase):
 
 
 class KsbMappingTests(SimpleTestCase):
+    def test_unresolved_write_is_rejected_instead_of_retaining_an_unrelated_definition(self):
+        with mock.patch.object(ksb_mapping_placement, 'standard_ksb_id_for', return_value=None):
+            with self.assertRaisesRegex(ValueError, 'exact Standard version'):
+                shape('ksb_mappings', {'component_id': 'C1', 'ksb_code': 'K1',
+                                       'source_id': 'st0612-v99-0', 'source_type': 'standard'})
+
     def test_a_mapping_resolves_its_standard_ksb_from_its_own_source(self):
         with mock.patch.object(ksb_mapping_placement, 'standard_ksb_id_for', return_value=7) as lookup:
             shaped, _ = shape('ksb_mappings', {
@@ -83,10 +89,15 @@ class KsbMappingTests(SimpleTestCase):
             })
         self.assertEqual(shaped['standard_ksb_id'], 7)
         lookup.assert_called_once_with('K1', 'K1', module_catalogue_id='MOD-1', source_type='standard',
-                                       source_id='st0596-v1-0')
+                                   source_id='st0596-v1-0', standard_ksb_id=None, component_id='C1')
 
-    def test_a_given_standard_ksb_is_kept(self):
-        with mock.patch.object(ksb_mapping_placement, 'standard_ksb_id_for') as lookup:
+    def test_a_given_standard_ksb_is_validated_before_it_is_kept(self):
+        with mock.patch.object(ksb_mapping_placement, 'standard_ksb_id_for', return_value=3) as lookup:
             shaped, _ = shape('ksb_mappings', {'component_id': 'C1', 'standard_ksb_id': 3, 'ksb_code': 'K1'})
         self.assertEqual(shaped['standard_ksb_id'], 3)
-        lookup.assert_not_called()
+        self.assertEqual(lookup.call_args.kwargs['standard_ksb_id'], 3)
+
+    def test_an_explicit_wrong_standard_identity_is_rejected(self):
+        with mock.patch.object(ksb_mapping_placement, 'standard_ksb_id_for', return_value=None):
+            with self.assertRaises(ValueError):
+                shape('ksb_mappings', {'component_id': 'C1', 'standard_ksb_id': 3, 'ksb_code': 'K1'})

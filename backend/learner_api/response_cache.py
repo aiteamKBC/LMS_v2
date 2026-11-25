@@ -6,8 +6,11 @@ at once (a learner's own tabs, refreshes, a coach and the learner together) and
 each one repeated the whole build, so they queued on the database together.
 
 ``cached_learner_read`` stores a successful JSON response for
-``LEARNER_RESPONSE_CACHE_SECONDS`` seconds (unset or 0 = off) in the configured
-cache (shared in deployed environments, per-process memory in local development). Only one request
+``LEARNER_RESPONSE_CACHE_SECONDS`` seconds (0 = off; AWS sets 30) in the
+shared cache (Valkey on AWS, per-process memory elsewhere). When unset, readers
+default to off unless they explicitly opt into a short lifetime. Student Weekly
+opts into 30 seconds; the existing environment override still takes precedence.
+Only one request
 per key builds at a time: the others wait up to ``WAIT_SECONDS`` for its result
 instead of starting their own build, then build it themselves.
 
@@ -32,6 +35,7 @@ import time
 
 from django.core.cache import cache
 from django.http import HttpResponse
+from curriculum_api.source_activity_ksbs import CACHE_GENERATION_KEY
 
 log = logging.getLogger(__name__)
 
@@ -45,14 +49,9 @@ POLL_SECONDS = 0.1
 _LEARNER_PATH = re.compile(r'^/learner_api/(?:[^/]+/)+?(?P<kind>[a-z_-]+)/(?P<pk>\d+)(?:/|$)')
 
 
-def ttl_seconds():
+def ttl_seconds(default=0):
     try:
-        # Match the deployed app's short cache window while using runserver.
-        # Successful learner writes still invalidate the versioned key below.
-        # A local process has no shared cache warmer. Keep a successful read for
-        # five minutes; learner writes still bump the version immediately.
-        default = '300' if 'runserver' in sys.argv else '0'
-        return max(0, int(os.environ.get('LEARNER_RESPONSE_CACHE_SECONDS', default)))
+        return max(0, int(os.environ.get('LEARNER_RESPONSE_CACHE_SECONDS', str(default))))
     except ValueError:
         return 0
 
@@ -82,7 +81,8 @@ def _key(request, name, kind, pk):
     viewer = f"{getattr(account, 'pk', '')}:{getattr(account, 'role', '')}" if account else 'anon'
     raw = f"{viewer}|{request.get_full_path()}"
     digest = hashlib.sha256(raw.encode()).hexdigest()[:32]
-    return f'learner-read:{name}:{kind}:{pk}:{_version(kind, pk)}:{digest}'
+    source_version = cache.get(CACHE_GENERATION_KEY) or 'initial'
+    return f'learner-read:{name}:{kind}:{pk}:{_version(kind, pk)}:{source_version}:{digest}'
 
 
 def _restore(stored):
@@ -93,11 +93,11 @@ def _restore(stored):
     return response
 
 
-def cached_learner_read(name):
+def cached_learner_read(name, *, default_ttl=0):
     def decorator(view):
         @wraps(view)
         def wrapped(request, *args, **kwargs):
-            ttl = ttl_seconds()
+            ttl = ttl_seconds(default_ttl)
             kind, pk = kwargs.get('kind'), kwargs.get('pk')
             if not ttl or request.method != 'GET' or kind is None or pk is None:
                 return view(request, *args, **kwargs)

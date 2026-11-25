@@ -96,7 +96,7 @@ it('does not inherit a previous staff account selection or use matching staff su
   session.account = { ...session.account, id: 8 };
   transport.mockClear();
   mount('/workspace/learner');
-  expect(await screen.findByText(/We could not verify your learner profile/)).toBeVisible();
+  expect(await screen.findByRole('heading', { name: 'No learner selected' })).toBeVisible();
   expect(transport).not.toHaveBeenCalled();
   expect(screen.queryByRole('heading', { name: 'Aya' })).not.toBeInTheDocument();
 });
@@ -104,7 +104,8 @@ it('does not inherit a previous staff account selection or use matching staff su
 it('preserves a server authorization denial and never loads Home cards for that learner', async () => {
   transport.mockResolvedValue(json({ error: 'Preview forbidden' }, 403));
   mount('/workspace/learner/commercial/502');
-  expect(await screen.findByText('Preview forbidden')).toBeVisible();
+  expect(await screen.findByRole('alert')).toHaveTextContent('Could not load your learning data');
+  expect(screen.queryByText('Preview forbidden')).not.toBeInTheDocument();
   expect(calls('/learner-summary/')).toHaveLength(1);
   expect(calls('section=home-summary')).toHaveLength(0);
   expect(screen.queryByRole('heading', { name: 'Aya' })).not.toBeInTheDocument();
@@ -113,7 +114,7 @@ it('preserves a server authorization denial and never loads Home cards for that 
 it('requires a fresh explicit selection for old unowned storage', async () => {
   rememberLearner('commercial', '502');
   mount('/workspace/learner');
-  expect(await screen.findByText(/We could not verify your learner profile/)).toBeVisible();
+  expect(await screen.findByRole('heading', { name: 'No learner selected' })).toBeVisible();
   expect(transport).not.toHaveBeenCalled();
 });
 

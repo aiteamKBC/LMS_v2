@@ -44,7 +44,7 @@ import { ActivityRetakeTimeDialog, ActivityTimeLimitNotice } from '@/components/
 import { countedActivityTime, activityTimeIssue, type ActivityTimeChoice } from '@/lib/activityTimeDecision';
 import { CompletionValidationError, type WorkingRuleReason } from '@/lib/completionValidation';
 import { ActivityTimeConflictError } from '@/lib/activityTimeConflict';
-import { formatQuizResult } from '@/lib/quizDefaults';
+import { formatQuizResult } from '@/lib/quizGradeSettings';
 import { formatQuizGradeRange, type QuizGradeSettings } from '@/lib/quizGradeSettings';
 
 const learnerNav = roleNavMap.learner;

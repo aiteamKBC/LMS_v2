@@ -92,17 +92,16 @@ class ResolveSourceTests(unittest.TestCase):
         unknown_standard = self.resolve('standard:st9999-v1-0', rows=[])
         self.assertEqual((unknown_standard.kind, unknown_standard.items), ('standard', []))
 
-    def test_fetch_profile_reads_archived_rows(self):
+    def test_retired_profile_reader_never_queries_deleted_table(self):
         cursor = MagicMock()
         cursor.fetchone.return_value = ('KSBP-1', 'Old', '[]', False, None)
         connection = MagicMock()
         connection.cursor.return_value.__enter__.return_value = cursor
         with patch.object(ksb_sources, 'connections', {'default': connection}):
             row = ksb_sources.fetch_profile('KSBP-1')
-        sql = cursor.execute.call_args.args[0]
-        self.assertNotIn('is_active = true', sql.lower())
-        self.assertNotIn('where is_active', sql.lower())
-        self.assertFalse(row['is_active'])
+        cursor.execute.assert_not_called()
+        self.assertIsNone(row)
+
 
 
 class SkillsRadarSourceTests(unittest.TestCase):
@@ -119,7 +118,7 @@ class SkillsRadarSourceTests(unittest.TestCase):
         self.assertEqual(results[0]['id'], 'st0596-v1-0-K1')
         self.assertEqual(rows.call_count, 1)  # no profile lookup for a standard
 
-    def test_applied_profile_is_read_even_when_archived(self):
+    def test_retired_profile_cannot_supply_official_definitions(self):
         calls = []
 
         def fake_rows(sql, params=None):
@@ -130,14 +129,11 @@ class SkillsRadarSourceTests(unittest.TestCase):
 
         with patch.object(curriculum, '_rows', side_effect=fake_rows):
             standard, results = curriculum.ksb_profile_for_programme('Programme X')
-        self.assertEqual(standard['label'], 'Archived profile')
-        self.assertEqual([r['codes'][0] for r in results], ['K1', 'K1.1', 'S2'])
-        self.assertEqual(results[0]['id'], 'KSBP-1-0')
-        profile_sql = calls[1]
-        self.assertNotIn('COALESCE(is_active, true) AND', profile_sql)
-        self.assertNotIn('WHERE COALESCE(is_active', profile_sql)
+        self.assertEqual((standard,results),(None,[]))
+        self.assertEqual(len(calls),1)
+        self.assertNotIn('curriculum.ksb_profiles',calls[0])
 
-    def test_discovery_uses_programme_ids_and_active_profiles_only(self):
+    def test_missing_pair_does_not_discover_retired_profiles(self):
         calls = []
 
         def fake_rows(sql, params=None):
@@ -148,72 +144,51 @@ class SkillsRadarSourceTests(unittest.TestCase):
 
         with patch.object(curriculum, '_rows', side_effect=fake_rows):
             self.assertEqual(curriculum.ksb_profile_for_programme('Programme Y'), (None, []))
-        discovery_sql, params = calls[-1]
-        self.assertIn('programme_ids @>', discovery_sql)
-        self.assertIn('COALESCE(is_active, true)', discovery_sql)
-        self.assertNotIn('programme_name', discovery_sql)
-        self.assertEqual(params, ['PROG-Y', 'Programme Y'])
+        self.assertEqual(len(calls),1)
+        self.assertIn('standard_ref',calls[0][0])
+        self.assertNotIn('curriculum.ksb_profiles',calls[0][0])
 
     def test_explicit_source_for_history(self):
         with patch.object(curriculum, '_rows', return_value=[
                 {'id': 'KSBP-1', 'name': 'Archived', 'ksb_items': MANUAL_ITEMS}]):
             standard, results = curriculum.ksb_profile_for_source('KSBP-1', 'Programme')
-        self.assertEqual(standard['id'], 'KSBP-1')
-        self.assertEqual(len(results), 3)
+        self.assertEqual((standard,results),(None,[]))
         self.assertEqual(curriculum.ksb_profile_for_source('', 'Programme'), (None, []))
 
 
-class ExclusionRegistryTests(unittest.TestCase):
-    def setUp(self):
-        ksb_exclusions._exists_cache.clear()
+class CanonicalExclusionTests(unittest.TestCase):
+    def test_inline_exclusion_cannot_be_released_by_a_missing_registry(self):
+        sql=ksb_exclusions.not_excluded_sql('k')
+        self.assertIn('k.is_excluded=false',sql)
+        self.assertNotIn('learner_progress_ksb_exclusions',sql)
 
-    def test_predicate_skips_registered_rows_unless_released(self):
-        with patch.object(ksb_exclusions, 'exclusions_table_exists', return_value=True):
-            sql = ksb_exclusions.not_excluded_sql('k', 'default')
-        self.assertIn('not exists', sql)
-        self.assertIn('"Learner".learner_progress_ksb_exclusions', sql)
-        self.assertIn('ksb_x.progress_id = k.progress_id', sql)
-        self.assertIn('ksb_x.position = k.position', sql)
-        self.assertIn('ksb_x.ksb_code = upper(btrim(k.ksb_code))', sql)
-        self.assertIn("ksb_x.status <> 'released'", sql)
+    def test_official_resolution_is_required(self):
+        self.assertIn("mapping_status='verified'",ksb_exclusions.not_excluded_sql())
 
-    def test_no_registry_means_no_filter(self):
-        with patch.object(ksb_exclusions, 'exclusions_table_exists', return_value=False):
-            self.assertEqual(ksb_exclusions.not_excluded_sql('k', 'default'), '1 = 1')
-            self.assertEqual(ksb_exclusions.and_not_excluded('k', SimpleNamespace(alias='default')), '')
+    def test_learner_pin_and_programme_reference_are_checked(self):
+        sql=ksb_exclusions.not_excluded_sql()
+        self.assertIn('coalesce(owner.standard_ref,programme.standard_ref)',sql)
+        self.assertIn('owner.standard_ref=programme.standard_ref',sql)
 
-    def test_fake_connections_never_get_a_filter(self):
-        self.assertEqual(ksb_exclusions.and_not_excluded('k', MagicMock()), '')
-        self.assertEqual(ksb_exclusions.and_not_excluded('k', None), '')
+    def test_null_and_fake_connections_do_not_disable_the_filter(self):
+        for connection in (None,MagicMock(),SimpleNamespace(vendor='sqlite')):
+            self.assertIn('k.is_excluded=false',ksb_exclusions.and_not_excluded('k',connection))
 
-    def test_non_postgres_database_reports_no_registry(self):
-        connection = MagicMock(vendor='sqlite')
-        with patch.object(ksb_exclusions, 'connections', {'default': connection}):
-            self.assertFalse(ksb_exclusions.exclusions_table_exists('default'))
-        connection.cursor.assert_not_called()
+    def test_alias_preserves_progress_and_position_identity(self):
+        sql=ksb_exclusions.not_excluded_sql('snapshot')
+        self.assertIn('eligible_ksb.progress_id=snapshot.progress_id',sql)
+        self.assertIn('eligible_ksb.position=snapshot.position',sql)
 
-    def test_existing_registry_is_cached(self):
-        cursor = MagicMock()
-        cursor.fetchone.return_value = (True,)
-        connection = MagicMock(vendor='postgresql')
-        connection.cursor.return_value.__enter__.return_value = cursor
-        with patch.object(ksb_exclusions, 'connections', {'default': connection}):
-            self.assertTrue(ksb_exclusions.exclusions_table_exists('default'))
-            self.assertTrue(ksb_exclusions.exclusions_table_exists('default'))
-        self.assertEqual(cursor.execute.call_count, 1)
-
-    def test_breakdown_reader_applies_the_registry_in_its_join(self):
-        connection = MagicMock()
-        connection.alias = 'default'
-        cursor = connection.cursor.return_value.__enter__.return_value
-        cursor.fetchall.return_value = []
-        with patch.object(ksb_exclusions, 'exclusions_table_exists', return_value=True):
-            read_breakdown(connection, 315)
-        sql = cursor.execute.call_args.args[0]
-        join = sql.split('JOIN "Learner".learner_progress_ksbs k ON')[1].split('WHERE')[0]
-        self.assertIn('learner_progress_ksb_exclusions', join)
-        self.assertEqual(sql.split('WHERE')[1].split('ORDER BY')[0].strip().splitlines()[0].strip(),
-                         'p.learner_id=%s AND p.deleted_at IS NULL')
+    def test_breakdown_reader_applies_eligibility_and_primary_owner_scope(self):
+        connection=MagicMock()
+        connection.alias='default'
+        cursor=connection.cursor.return_value.__enter__.return_value
+        cursor.fetchall.return_value=[]
+        read_breakdown(connection,315)
+        sql=cursor.execute.call_args.args[0]
+        self.assertIn('k.is_excluded=false',sql)
+        self.assertIn('WHERE p.learner_id=%s AND p.deleted_at IS NULL',sql)
+        self.assertEqual(cursor.execute.call_args.args[1],[315])
 
 
 if __name__ == '__main__':

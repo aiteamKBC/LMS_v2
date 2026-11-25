@@ -19,7 +19,7 @@ from django.views.decorators.http import require_http_methods
 from login.email_azure import is_configured, send_mail
 from login.permissions import learner_self_or_admin, require_role
 from .learner_detail import SOURCE_MODELS
-from .models import Employer
+from .models import Employer, LearnerProfile
 from .training_plan_dashboard import rows
 from .training_plan_document import _extended_ilr_answers
 
@@ -27,6 +27,14 @@ TABLE = '"Learner".attendance_preferences'
 SALT = 'learner-attendance-mode-v1'
 MAX_AGE = 7 * 24 * 60 * 60
 log = logging.getLogger(__name__)
+
+
+def canonical_learner_id(source):
+    """Resolve only the explicit enrolment link; never guess or repair identity."""
+    ids = list(LearnerProfile.objects.filter(enrolment_id=source.id).values_list('id', flat=True)[:2])
+    if len(ids) != 1:
+        raise ValueError('Attendance requires one canonical learner profile.')
+    return ids[0]
 
 
 def _manager(source):
@@ -72,15 +80,22 @@ def _payload(state, *, available=True, manager_available=False):
 
 def read_mode(source, kind):
     del kind
+    try:
+        learner_id = canonical_learner_id(source)
+    except ValueError:
+        return _payload(None, available=False)
     with connections['enrolment'].cursor() as cur:
         if not _ready(cur):
             return _payload(None, available=False)
-        state = _state(cur, source.id)
+        state = _state(cur, learner_id)
     return _payload(state, manager_available=bool(_manager(source)))
 
 
 def _send_request(source, kind, state):
-    token = signing.dumps({'learner': source.id, 'kind': kind, 'request': str(state['request_id'])}, salt=SALT)
+    learner_id = canonical_learner_id(source)
+    if state['learner_id'] != learner_id:
+        raise ValueError('Attendance request identity changed.')
+    token = signing.dumps({'profile': learner_id, 'learner': source.id, 'kind': kind, 'request': str(state['request_id'])}, salt=SALT)
     origin = (os.environ.get('FRONTEND_URL') or 'http://localhost:5173').rstrip('/')
     url = f'{origin}/learner_api/attendance-mode/review/?{urlencode({"token": token})}'
     name = escape(source.username or 'Your learner')
@@ -91,7 +106,7 @@ def _send_request(source, kind, state):
                   f'<p><a href="{escape(url, quote=True)}">Review the request</a> (expires in 7 days).</p>')
     with connections['enrolment'].cursor() as cur:
         cur.execute(f'''UPDATE {TABLE} SET email_sent=%s WHERE learner_id=%s
-            AND request_id=%s AND status='pending' ''', [sent, source.id, state['request_id']])
+            AND request_id=%s AND status='pending' ''', [sent, learner_id, state['request_id']])
     return sent
 
 
@@ -121,6 +136,10 @@ def attendance_mode(request, kind, learner_id):
     direct = isinstance(body, dict) and body.get('direct') is True
     if direct and getattr(getattr(request, 'login_account', None), 'role', None) != 'admin':
         return JsonResponse({'error': 'Only an administrator can set the attendance mode directly.'}, status=403)
+    try:
+        learner_id = canonical_learner_id(source)
+    except ValueError as exc:
+        return JsonResponse({'error': str(exc)}, status=409)
     approval = mode == 'lazy' and not direct
     manager = _manager(source) if approval else ''
     if approval and not manager:
@@ -134,11 +153,6 @@ def attendance_mode(request, kind, learner_id):
             cur.execute(f'''INSERT INTO {TABLE} (learner_id) VALUES (%s)
                 ON CONFLICT (learner_id) DO NOTHING''', [learner_id])
             state = _state(cur, learner_id, lock=True)
-            # The preference key is an enrolment id; link only its profiles.
-            # Fill missing links even on retries, preserving any existing link.
-            cur.execute('''UPDATE "Learner".learners SET attendance_preference_id=%s
-                WHERE enrolment_id=%s AND attendance_preference_id IS NULL''',
-                        [learner_id, learner_id])
             if mode == 'lazy' and state['mode'] == 'lazy':
                 return JsonResponse(_payload(state, manager_available=True))
             if approval and _payload(state)['status'] == 'pending' and state['email_sent']:
@@ -167,17 +181,21 @@ def attendance_modes(request):
     as the directory; setting a mode directly stays admin-only.
 
     A learner with no saved row is on Live Sessions, so only saved rows are
-    returned, keyed by learner id.
+    returned, keyed by enrolment id for the existing directory consumer.
     """
     with connections['enrolment'].cursor() as cur:
         if not _ready(cur):
             return JsonResponse({'available': False, 'modes': {}})
-        cur.execute(f'SELECT * FROM {TABLE}')
+        cur.execute(f'''SELECT pref.*, l.enrolment_id FROM {TABLE} pref
+            JOIN "Learner".learners l ON l.id=pref.learner_id
+            WHERE l.enrolment_id IS NOT NULL
+            AND NOT EXISTS (SELECT 1 FROM "Learner".learners other
+                WHERE other.enrolment_id=l.enrolment_id AND other.id<>l.id)''')
         saved = rows(cur)
     modes = {}
     for state in saved:
         payload = _payload(state)
-        modes[str(state['learner_id'])] = {'mode': payload['mode'], 'requestedMode': payload['requestedMode']}
+        modes[str(state['enrolment_id'])] = {'mode': payload['mode'], 'requestedMode': payload['requestedMode']}
     return JsonResponse({'available': True, 'modes': modes})
 
 
@@ -193,9 +211,12 @@ def review_attendance_mode(request):
         source = model.all_learners.filter(pk=data['learner']).first() if model else None
         if source is None:
             raise ValueError('Unknown learner')
+        learner_id = canonical_learner_id(source)
+        if 'profile' in data and data['profile'] != learner_id:
+            raise ValueError('Attendance request identity changed')
         # GET only previews. Link scanners cannot approve a request.
         with transaction.atomic(using='enrolment'), connections['enrolment'].cursor() as cur:
-            state = _state(cur, source.id, lock=request.method == 'POST')
+            state = _state(cur, learner_id, lock=request.method == 'POST')
             if (not state or state['status'] != 'pending' or str(state['request_id']) != data['request']
                     or state['manager_email'].casefold() != _manager(source).casefold()):
                 raise ValueError('Request is no longer active')
@@ -207,7 +228,7 @@ def review_attendance_mode(request):
                 approved = decision == 'approve'
                 cur.execute(f'''UPDATE {TABLE} SET mode=%s,requested_mode=NULL,status=%s,
                     request_id=NULL,updated_at=now() WHERE learner_id=%s''',
-                            ['lazy' if approved else 'live', 'approved' if approved else 'declined', source.id])
+                            ['lazy' if approved else 'live', 'approved' if approved else 'declined', learner_id])
                 context.update(done=True, approved=approved)
     except (signing.BadSignature, ValueError, KeyError, TypeError):
         context['error'] = 'This request has expired, was already reviewed, or is no longer available.'

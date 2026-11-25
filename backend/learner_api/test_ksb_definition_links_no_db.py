@@ -33,8 +33,8 @@ class KsbDefinitionLinkTests(SimpleTestCase):
         )
 
         self.assertEqual(resolved, {(11, 'K1'): 101, (12, 'K1'): 202})
-        self.assertIn('learner_ksb_assignments', cursor.execute_args[0])
-        self.assertIn('d.profile_version_id=a.profile_version_id', cursor.execute_args[0])
+        self.assertIn('ksb_standard_versions', cursor.execute_args[0])
+        self.assertIn('d.standard_ref=v.standard_ref AND d.standard_version=v.standard_version', cursor.execute_args[0])
         self.assertEqual(cursor.execute_args[1], [[11, 12, 13], ['K1']])
 
     def test_unchanged_mapping_preserves_its_historical_definition(self):
@@ -96,7 +96,7 @@ class KsbDefinitionLinkTests(SimpleTestCase):
         self.assertIsNone(rejected[0]['ksb_definition_id'])
 
     def test_model_maps_the_existing_nullable_foreign_key_column(self):
-        field = LearnerProgressKsb._meta.get_field('ksb_definition')
-        self.assertEqual(field.column, 'ksb_definition_id')
+        field = LearnerProgressKsb._meta.get_field('standard_ksb')
+        self.assertEqual(field.column, 'standard_ksb_id')
         self.assertTrue(field.null)
-        self.assertEqual(field.remote_field.model._meta.db_table, 'curriculum"."ksb_definitions')
+        self.assertEqual(field.remote_field.model._meta.db_table, 'curriculum"."ksb_standard_definitions')

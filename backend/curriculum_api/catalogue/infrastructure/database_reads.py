@@ -53,6 +53,8 @@ def quote_ident(value):
 
 
 def table_name(table):
+    from curriculum_api.canonical_read_sql import ksb_physical_table
+    table = ksb_physical_table(table)
     # PostgreSQL uses the dedicated ``curriculum`` schema; sqlite (tests) keeps
     # the tables in the default schema, so drop the schema qualifier there to
     # stay consistent with authoring_table_name().
@@ -90,6 +92,8 @@ def table_exists(table):
 
 
 def authoring_table_name(table):
+    from curriculum_api.canonical_read_sql import ksb_physical_table
+    table = ksb_physical_table(table)
     if connection.vendor == 'postgresql':
         return table_name(table)
     return quote_ident(table)

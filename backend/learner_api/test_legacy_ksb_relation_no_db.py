@@ -1,23 +1,23 @@
-from unittest.mock import patch
-
+from unittest.mock import MagicMock, patch
 from django.test import SimpleTestCase
-
-from .models import learner_ksbs_relation_exists
+from .legacy_ksbs import read_legacy_learner_ksbs
 
 
 class LearnerKsbLegacyRelationCompatibilityTests(SimpleTestCase):
-    @patch("learner_api.models.connections")
-    def test_rejects_an_incompatible_table_with_the_same_name(self, connections):
-        cursor = connections["legacy_without_id"].cursor.return_value.__enter__.return_value
-        cursor.fetchone.return_value = (["learner_id", "category", "code", "title", "level"],)
+    def test_rejects_the_removed_definition_shape(self):
+        connection = MagicMock()
+        cursor = connection.cursor.return_value.__enter__.return_value
+        cursor.fetchone.return_value = (['id','learner_id','position','code','number','ksb_type','description'],)
+        with patch.dict('learner_api.legacy_ksbs.connections', {'enrolment':connection}):
+            self.assertEqual(read_legacy_learner_ksbs(41), [])
+        self.assertEqual(cursor.execute.call_count, 1)
 
-        self.assertFalse(learner_ksbs_relation_exists("legacy_without_id"))
-
-    @patch("learner_api.models.connections")
-    def test_accepts_the_complete_rollback_table_shape(self, connections):
-        cursor = connections["compatible_legacy"].cursor.return_value.__enter__.return_value
-        cursor.fetchone.return_value = ([
-            "id", "learner_id", "position", "code", "number", "ksb_type", "description",
-        ],)
-
-        self.assertTrue(learner_ksbs_relation_exists("compatible_legacy"))
+    def test_accepts_only_the_retained_self_assessment_shape(self):
+        connection = MagicMock()
+        cursor = connection.cursor.return_value.__enter__.return_value
+        cursor.fetchone.return_value = (['learner_id','category','code','title','level'],)
+        cursor.fetchall.return_value = [('Skill','S1','Saved skill','Frequently')]
+        with patch.dict('learner_api.legacy_ksbs.connections', {'enrolment':connection}):
+            result = read_legacy_learner_ksbs(41)
+        self.assertEqual(result[0]['level'], 'Frequently')
+        self.assertEqual(cursor.execute.call_args.args[1], [41])

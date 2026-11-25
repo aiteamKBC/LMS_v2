@@ -16,6 +16,7 @@ class StudyWeekTeamsGuardTests(SimpleTestCase):
         self.invalid_response = False
         self.targets = [{'start': datetime(2027, 3, 2, 9, tzinfo=timezone.utc)},
                         {'start': datetime(2027, 3, 16, 9, tzinfo=timezone.utc)}]
+        self.authored_dates = ['2027-03-02', '2027-03-16']
 
     def setUp(self):
         self.reset_transport()
@@ -23,6 +24,8 @@ class StudyWeekTeamsGuardTests(SimpleTestCase):
         clock.now.return_value = datetime(2026, 11, 16, tzinfo=timezone.utc)
         self.module = {'week_boundary_mode': 'calendar', 'weeks_number': 3}
         self.lookup = self.enterContext(patch('curriculum_api.views.authoring_module_exists', side_effect=lambda _id: self.module))
+        self.enterContext(patch('curriculum_api.views.authoring_session_links_by_catalogue', side_effect=lambda ids: {
+            ids[0]: [{'date': day, 'meetingScope': 'main'} for day in self.authored_dates]}))
         self.enterContext(patch('curriculum_api.views.module_session_plan_for_weeks', return_value={'weeks': [
             {'weekNumber': 2, 'startDate': '2027-03-08', 'endDate': '2027-03-14', 'holidayWeek': True}]}))
         self.enterContext(patch('curriculum_api.views.graph_timezone_iana', return_value='UTC'))
@@ -50,10 +53,31 @@ class StudyWeekTeamsGuardTests(SimpleTestCase):
         self.assertEqual(self.events, [])
         self.assertEqual([method for method, _path in self.calls], ['GET', 'DELETE', 'GET'])
 
-    def test_legacy_modules_do_not_read_or_change_the_provider_calendar(self):
+    def test_legacy_modules_remove_only_untracked_filler_between_reviewed_sessions(self):
         self.module['week_boundary_mode'] = None
+        self.assertEqual(self.prune(), ({'AUTO-PADDING'}, []))
+        self.assertEqual([method for method, _ in self.calls], ['GET', 'DELETE', 'GET'])
+
+    def test_padding_outside_the_reviewed_date_range_is_preserved(self):
+        self.events[0]['start']['dateTime'] = '2027-03-23T09:00:00Z'
+        self.assertEqual(self.prune(), (set(), []))
+        self.assertFalse(any(method == 'DELETE' for method, _ in self.calls))
+
+    def test_an_authored_live_missing_from_a_partial_payload_is_preserved(self):
+        self.authored_dates.append('2027-03-09')
+        self.assertEqual(self.prune(), (set(), []))
+        self.assertFalse(any(method == 'DELETE' for method, _ in self.calls))
+
+    def test_legacy_cleanup_requires_the_reviewed_dates_to_match_authored_components(self):
+        self.module['week_boundary_mode'] = None
+        self.authored_dates = []
         self.assertEqual(self.prune(), (set(), []))
         self.assertEqual(self.calls, [])
+
+    def test_an_untracked_second_meeting_on_a_reviewed_date_is_preserved(self):
+        self.events[0]['start']['dateTime'] = '2027-03-02T15:00:00Z'
+        self.assertEqual(self.prune(), (set(), []))
+        self.assertFalse(any(method == 'DELETE' for method, _ in self.calls))
 
     def test_manual_exceptions_known_sessions_and_history_are_preserved(self):
         for variant in ('exception', 'tracked-id', 'tracked-date', 'requested-manual', 'past'):
@@ -128,6 +152,27 @@ class StudyWeekTeamsGuardTests(SimpleTestCase):
                 self.assertEqual(removed, set())
                 self.assertTrue(warnings)
                 self.assertEqual(len(self.events), 2)
+    def test_pending_creation_can_retry_silently_only_when_the_provider_proves_nobody_is_invited(self):
+        original = self.graph
+        def transport(method, path):
+            if method == 'GET' and path.endswith('?$select=id,attendees'):
+                return {'id': 'MASTER', 'attendees': []}
+            return original(method, path)
+        self.assertEqual(prune_study_week_fillers(transport, 'synthetic-owner', 'MASTER', 'MOD-SYNTHETIC',
+                         self.targets, {}, allow_delete=False, allow_uninvited_delete=True), ({'AUTO-PADDING'}, []))
+
+    def test_missing_or_nonempty_provider_attendees_never_allow_a_silent_cancellation(self):
+        for master in ({'id': 'MASTER'}, {'id': 'OTHER', 'attendees': []},
+                       {'id': 'MASTER', 'attendees': [{'emailAddress': {'address': 'synthetic@example.invalid'}}]}):
+            with self.subTest(master=master):
+                self.reset_transport()
+                original = self.graph
+                def transport(method, path):
+                    return master if method == 'GET' and path.endswith('?$select=id,attendees') else original(method, path)
+                removed, warnings = prune_study_week_fillers(transport, 'synthetic-owner', 'MASTER', 'MOD-SYNTHETIC',
+                    self.targets, {}, allow_delete=False, allow_uninvited_delete=True)
+                self.assertEqual(removed, set())
+                self.assertTrue(warnings)
                 self.assertFalse(any(method == 'DELETE' for method, _ in self.calls))
 
     def test_failed_deletion_can_retry_without_creating_or_replacing_the_master(self):

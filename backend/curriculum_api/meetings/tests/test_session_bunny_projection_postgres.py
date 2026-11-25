@@ -17,8 +17,8 @@ class SessionBunnyProjectionTests(TestCase):
     def setUp(self):
         with connection.cursor() as cursor:
             cursor.execute('''INSERT INTO curriculum.programmes
-                (programme_id,name,color,created_at,updated_at)
-                VALUES ('BUNNY-P','Synthetic Bunny programme','#123456',now(),now())''')
+                (id,programme_id,name,color,created_at,updated_at)
+                VALUES ('BUNNY-P','BUNNY-P','Synthetic Bunny programme','#123456',now(),now())''')
             cursor.execute('''INSERT INTO curriculum.modules
                 (module_catalogue_id,title,programme_id,cohort_id,group_id)
                 VALUES ('BUNNY-M','Synthetic Bunny module','BUNNY-P','BUNNY-C','BUNNY-G')''')

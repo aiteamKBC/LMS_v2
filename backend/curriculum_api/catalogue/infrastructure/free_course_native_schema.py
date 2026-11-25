@@ -16,7 +16,7 @@ from curriculum_api.catalogue.infrastructure.learning_relations import REFERENCE
 from curriculum_api.catalogue.infrastructure.ksb_placement_reads import relation as ksb_placement_relation
 
 
-KSB_DERIVED_COLUMNS = frozenset({'module_catalogue_id', 'week_id', 'ksb_code', 'ksb_description'})
+KSB_DERIVED_COLUMNS = frozenset({'module_catalogue_id', 'week_id', 'ksb_code', 'ksb_description', 'ksb_id'})
 
 
 def _ksb_read_source():
@@ -27,7 +27,7 @@ def _ksb_read_source():
     """
     return ksb_placement_relation(
         include_description=True, AUTHORING_COMPONENTS_TABLE='components',
-        AUTHORING_KSB_MAPPINGS_TABLE='ksb_mappings', _only=lambda: 'only ',
+        AUTHORING_KSB_MAPPINGS_TABLE='ksb_component_mappings', _only=lambda: 'only ',
         authoring_table_name=lambda table: f'"curriculum"."{table}"',
     )
 
@@ -47,6 +47,11 @@ def verify_remaining_references(cursor, course_refs):
             'curriculum.modules'::regclass,'curriculum.weeks'::regclass,'curriculum.components'::regclass)
         GROUP BY fk.oid,ns.nspname,child.relname,parent.relname''')
     for namespace, table, parent, child_keys, parent_keys in cursor.fetchall():
+        if (namespace == 'curriculum' and table == 'ksb_component_mappings'
+                and parent == 'components' and child_keys == ['component_id'] and parent_keys == ['id']):
+            # Prepared mappings are copied with their component and explicitly
+            # removed by that same component FK after reference verification.
+            continue
         predicates = sql.SQL(' AND ').join(
             sql.SQL('child.{}=parent.{}').format(sql.Identifier(left), sql.Identifier(right))
             for left, right in zip(child_keys, parent_keys))
@@ -223,7 +228,8 @@ def create_read_views(connection, *, tables=None):
             # Ordinary column discovery belongs only to this mixed-catalogue
             # migration step; the native contract above is independently owned.
             cursor.execute('''SELECT column_name FROM information_schema.columns
-                WHERE table_schema='curriculum' AND table_name=%s''', [table])
+                WHERE table_schema='curriculum' AND table_name=%s''',
+                ['ksb_component_mappings' if table == 'ksb_mappings' else table])
             available = {row[0] for row in cursor.fetchall()}
             source = sql.Identifier('curriculum', table)
             if table == 'ksb_mappings':
@@ -348,7 +354,10 @@ def detach(connection):
         # Constraints with CASCADE/SET NULL would not raise an integrity error.
         # Check their live references explicitly before deleting copied rows.
         verify_remaining_references(cursor, course_refs)
-        for table in ('ksb_mappings', 'module_details', 'module_completion_criteria', 'components', 'weeks', 'modules'):
+        cursor.execute('''DELETE FROM curriculum.ksb_component_mappings m
+            USING curriculum.components c
+            WHERE m.component_id=c.id AND c.module_catalogue_id=ANY(%s)''', [course_refs])
+        for table in ('module_details', 'module_completion_criteria', 'components', 'weeks', 'modules'):
             cursor.execute(sql.SQL('DELETE FROM curriculum.{} WHERE module_catalogue_id=ANY(%s)').format(
                 sql.Identifier(table)), [course_refs])
         cursor.execute('UPDATE curriculum.free_courses SET storage_version=2 WHERE content_ref=ANY(%s)', [course_refs])

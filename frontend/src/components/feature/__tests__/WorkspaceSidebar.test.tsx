@@ -425,16 +425,14 @@ it.each([
   ['/curriculum/coaching-recordings/42', 'Coach meetings'],
   ['/curriculum/quality', 'Quality Assurance'],
   ['/curriculum/quality?view=deep-dive', 'Deep Dive'],
-])('opens Recording Quality with matching canonical destinations selected on %s', (path, label) => {
+])('opens Recording Quality with only the matching destination selected on %s', (path, label) => {
   localStorage.setItem('kbc_sidebar_expanded', '[]');
   const { rail } = showWorkspace('curriculum', path);
   expect(within(rail).getByRole('button', { name: 'Toggle Recording Quality pages' })).toHaveAttribute('aria-expanded', 'true');
   const links = within(rail).getAllByRole('link').filter(link => link.hasAttribute('aria-current'));
-  // Dev retired the demo page: both existing Quality entry points now share
-  // the canonical workspace, while the query-specific Deep Dive stays distinct.
-  expect(links).toHaveLength(path === '/curriculum/quality' ? 2 : 1);
+  // Both links retain the canonical destination; only the selected navigation item is current.
+  expect(links).toHaveLength(1);
   expect(links[0]).toHaveAccessibleName(label);
-  if (path === '/curriculum/quality') expect(links[1]).toHaveAccessibleName('Quality');
 });
 
 it('lets Curriculum open each recording destination and toggle the group without changing routes', async () => {
@@ -471,7 +469,7 @@ it('opens the same canonical workspace from Quality Assurance and Quality', asyn
   expect(link).toHaveAttribute('aria-current', 'page');
   const quality = within(rail).getByRole('link', { name: 'Quality' });
   expect(quality).toHaveAttribute('href', '/curriculum/quality');
-  expect(quality).toHaveAttribute('aria-current', 'page');
+  expect(quality).not.toHaveAttribute('aria-current');
 });
 
 it.each([

@@ -17,6 +17,7 @@ from pathlib import Path
 from urllib.parse import parse_qsl, urlparse, unquote
 
 from django.core.exceptions import ImproperlyConfigured
+from config.postgres_pooling import neon_transaction_pooler
 
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
@@ -163,6 +164,7 @@ def database_from_url(database_url):
         'OPTIONS': options,
         'CONN_MAX_AGE': 0 if pooled else DB_CONN_MAX_AGE,
         'CONN_HEALTH_CHECKS': DB_CONN_HEALTH_CHECKS,
+        'DISABLE_SERVER_SIDE_CURSORS': scheme == 'postgres' and neon_transaction_pooler(parsed.hostname),
     }
 
 
@@ -727,6 +729,7 @@ if DATABASE_URL and not USE_SQLITE_FOR_TESTS:
             "OPTIONS": db_options,
             "CONN_MAX_AGE": 0 if DB_POOL else DB_CONN_MAX_AGE,
             "CONN_HEALTH_CHECKS": DB_CONN_HEALTH_CHECKS,
+            "DISABLE_SERVER_SIDE_CURSORS": neon_transaction_pooler(parsed_db.hostname),
         }
     }
 else:

@@ -3,6 +3,7 @@ import sqlite3
 import ast
 import sys
 import unittest
+from contextlib import nullcontext
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
@@ -98,11 +99,15 @@ class JournalSourceTests(unittest.TestCase):
 
     def test_home_card_uses_supplied_canonical_metrics_for_every_source(self):
         from datetime import date
+        self.enterContext(patch('learner_api.module_progress.canonical_module_progress',
+                               return_value=[{'completed': 3, 'total': 7}]))
         tree = ast.parse((Path(__file__).parent / 'home_progress.py').read_text())
         functions = [n for n in tree.body if isinstance(n, ast.FunctionDef)
                      and n.name in {'read_home_progress', 'apply_canonical_home_metrics'}]
         connection = MagicMock()
         scope = {'__package__': 'learner_api', 'journal_sources': sources,
+            'projection_stage': lambda *args: nullcontext(),
+            'counts': lambda rows, predicate: {'completed': sum(predicate(row) for row in rows), 'total': len(rows)},
             'connections': {'enrolment': connection}, 'rows': lambda cursor: [],
             '_group_dates': lambda source: (date(2026, 1, 1), None, None),
             'student_activity_available': lambda _: False,
@@ -116,7 +121,7 @@ class JournalSourceTests(unittest.TestCase):
             targets=lambda _: {'2026-01': 3, '2026-02': 2},
             programme_planned_hours=lambda _: 20,
             recorded_seconds=lambda row: row['actual_seconds'])
-        args = (SimpleNamespace(pk=1, aptem_id=None), 'commercial', [], [], [], [], date(2026, 1, 31))
+        args = (SimpleNamespace(pk=1, aptem_id=None, _canonical_profile={'id': 1}), 'commercial', [], [], [], [], date(2026, 1, 31))
         self.assertEqual(scope['read_home_progress'](*args)['otjh']['actual'], 999)
         metrics = {'otjh': {'actual': 8, 'planned': 10},
                    'programme': {'completed': 3, 'total': 7, 'status': 'ready'}}
@@ -136,10 +141,11 @@ class JournalSourceTests(unittest.TestCase):
             sources._current.reset(token)
 
     def test_shared_metrics_use_supplied_targets_and_preserve_source_empty_semantics(self):
+        from learner_api.ksb_points import point_ratio
         tree = ast.parse((Path(__file__).parent / 'canonical_learning.py').read_text())
         functions = [n for n in tree.body if isinstance(n, ast.FunctionDef)
                      and n.name in {'counts_as_completed', 'metrics_from_records'}]
-        scope = {'recorded_seconds': lambda row: row['actual_seconds']}
+        scope = {'recorded_seconds': lambda row: row['actual_seconds'], 'point_ratio': point_ratio}
         exec(compile(ast.Module(body=functions, type_ignores=[]), 'canonical_learning.py', 'exec'), scope)
         metrics = scope['metrics_from_records']
         records = [{'accepted': True, 'actual_seconds': 3600}]

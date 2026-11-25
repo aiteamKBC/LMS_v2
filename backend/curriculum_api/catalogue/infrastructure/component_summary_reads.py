@@ -112,11 +112,11 @@ def component_summary_ksb_codes(catalogue_ids, *,
     None off Postgres or without the standard KSB table; the summary then
     leaves ``ksbCodes`` out and the page falls back to the full component read.
     """
-    if database_vendor() != 'postgresql' or not catalogue_ids or not table_exists('standard_ksbs'):
+    if database_vendor() != 'postgresql' or not catalogue_ids or not table_exists('ksb_standard_definitions'):
         return None
     # A mapping's code is its standard KSB's; both rows are filtered by status.
     code_sql = 'standard.ksb_code'
-    join_sql = f' join {authoring_table_name("standard_ksbs")} as standard on standard.id = mapping.standard_ksb_id'
+    join_sql = f' join {authoring_table_name("ksb_standard_definitions")} as standard on standard.id = mapping.standard_ksb_id'
     clauses = [
         f'component.module_catalogue_id in ({", ".join(["%s"] * len(catalogue_ids))})',
         archive_live_sql('component'),

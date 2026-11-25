@@ -73,6 +73,21 @@ class SharedTeamsProjectionTests(unittest.TestCase):
         self.assertEqual(weeks[0]['components'][0]['settings']['teamsMeetingUrl'], 'https://teams.example/source')
         self.assertEqual(weeks[0]['components'][0]['settings']['sessionPurpose'], 'Keep this text')
 
+    def test_shared_week_heading_follows_the_confirmed_source_without_changing_ids(self):
+        weeks = [{'id': 'ALIAS-WEEK', 'sessionDate': '2026-12-28', 'components': [
+            {'id': 'ALIAS-LIVE', 'type': 'live-session', 'settings': {}}]}]
+        self.apply({'teams_shared_source_module_id': 'SOURCE', 'start_date': '2026-12-01', 'end_date': '2027-01-31'}, weeks)
+        self.assertEqual((weeks[0]['sessionDate'], weeks[0]['sessionDay']), ('2026-12-30', 'Wednesday'))
+        self.assertEqual((weeks[0]['sessionStartTime'], weeks[0]['sessionDurationMinutes']), ('12:00', 120))
+        self.assertEqual((weeks[0]['id'], weeks[0]['components'][0]['id']), ('ALIAS-WEEK', 'ALIAS-LIVE'))
+        self.assertEqual(weeks[0]['components'][0]['settings']['teamsOccurrenceId'], 'OCC-SOURCE')
+
+    def test_shared_booking_outside_the_alias_window_keeps_its_planned_heading(self):
+        weeks = [{'sessionDate': '2026-12-14', 'components': [{'type': 'live-session', 'settings': {}}]}]
+        self.apply({'teams_shared_source_module_id': 'SOURCE', 'end_date': '2026-12-20'}, weeks)
+        self.assertEqual(weeks[0]['sessionDate'], '2026-12-14')
+        self.assertEqual(weeks[0]['components'][0]['settings']['sessionDate'], '2026-12-30')
+
     def test_alias_save_payload_can_strip_source_owned_identity(self):
         stripped = self.strip({
             'sessionPurpose': 'Keep this text',

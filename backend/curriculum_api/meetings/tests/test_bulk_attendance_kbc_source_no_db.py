@@ -244,7 +244,7 @@ class DirectoryTests(SimpleTestCase):
         self.assertEqual(len(cursor.executed), 1)
         sql = cursor.executed[0][0]
         self.assertIn('FROM "Learner".learners l', sql)
-        self.assertIn('pref.learner_id = l.attendance_preference_id', sql)
+        self.assertIn('pref.learner_id = l.id', sql)
         self.assertNotIn('Created_users', sql)
         self.assertEqual(learners[0]['name'], 'One')
         self.assertEqual(learners[0]['endDate'], '')

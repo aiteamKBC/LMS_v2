@@ -3,6 +3,7 @@ import { MemoryRouter, useLocation } from 'react-router-dom';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { LearnerCalendarEvent, LearnerReviewDefinition } from '@/api/learnerCalendar';
 import type { MeetingAttendance } from '@/api/meetingAttendance';
+import type { ImportedReview } from '@/api/reviewHistory';
 import CoachingHome, { type CoachingHomeProps } from './CoachingHome';
 
 const today = '2026-09-14';
@@ -18,6 +19,11 @@ const attendance = (id: string, overrides: Partial<MeetingAttendance> = {}): Mee
   status: 'scheduled', meetingLink: 'https://teams.microsoft.com/meet/123', meetingProvider: 'Microsoft Teams',
   canAttend: true, attendanceConfirmed: false, creditedMinutes: null, canReportAbsence: true,
   absenceReported: false, absenceSessionId: 'absence:12:1', missed: false, ...overrides,
+});
+const importedReview = (name: string, plannedDate: string | null, completedDate: string | null = null): ImportedReview => ({
+  id: 'source-review', aptemReviewId: 'source-review', name, type: 'Monthly Coaching Meeting',
+  reviewerName: '', plannedDate, plannedTime: null, completedDate, status: completedDate ? 'completed' : 'not-scheduled',
+  extractionStatus: 'complete', detailsAvailable: false, sections: [],
 });
 const signatureDefinition = (): LearnerReviewDefinition => ({
   manualOverride: null,
@@ -115,6 +121,52 @@ describe('coaching learner navigation and actions', () => {
     expect(meetings[0]).toHaveTextContent('MCM 1');
     expect(meetings[1]).toHaveTextContent('10 Oct 2026');
     expect(meetings[1]).toHaveTextContent('MCM 2');
+  });
+  it('shows separate Aptem plans, booked dates and source names for meetings displayed on the same day', () => {
+    const first = session('imported-review:1', '2026-11-19', {
+      reviewSource: 'aptem', sequence: 1, targetDate: '2026-04-29', scheduledDate: '2026-11-19',
+      scheduledTime: '13:00', calendarEventKey: 'imported-review:1', reviewAttendance: 'pending', meetingOutcome: 'ended',
+      importedReview: importedReview('First coaching review', '2026-04-29'),
+    });
+    const eighth = session('imported-review:8', '2026-11-19', {
+      reviewSource: 'aptem', sequence: 8, targetDate: '2026-11-19', scheduledDate: '2026-11-19',
+      calendarEventKey: null, status: 'completed',
+      importedReview: importedReview('AI Foundations coaching review', '2026-11-19', '2026-11-19'),
+    });
+    mount({ sessions: [eighth, first], today: '2026-11-20' });
+    const timeline = within(screen.getByRole('region', { name: 'Monthly coaching programme timeline' }));
+    const meetings = timeline.getAllByRole('button');
+    expect(meetings[0]).toHaveTextContent('MCM 1');
+    expect(meetings[1]).toHaveTextContent('MCM 8');
+    expect(meetings[0]).toHaveTextContent('19 Nov 2026');
+    expect(meetings[1]).toHaveTextContent('19 Nov 2026');
+
+    fireEvent.click(meetings[0]);
+    let selected = within(screen.getByRole('article', { name: 'Selected coaching meeting' }));
+    expect(selected.getByRole('heading', { name: 'First coaching review' })).toBeInTheDocument();
+    expect(selected.getByText(/MCM 1/)).toBeInTheDocument();
+    expect(within(selected.getByText('Planned date').parentElement!).getByText('Wed, 29 Apr 2026')).toBeInTheDocument();
+    expect(within(selected.getByText('Booked meeting').parentElement!).getByText('Thu, 19 Nov 2026')).toBeInTheDocument();
+    expect(selected.getByText('13:00 · Europe/London · 60 minutes')).toBeInTheDocument();
+
+    fireEvent.click(meetings[1]);
+    selected = within(screen.getByRole('article', { name: 'Selected coaching meeting' }));
+    expect(selected.getByRole('heading', { name: 'AI Foundations coaching review' })).toBeInTheDocument();
+    expect(selected.getByText(/MCM 8/)).toBeInTheDocument();
+    expect(within(selected.getByText('Planned date').parentElement!).getByText('Thu, 19 Nov 2026')).toBeInTheDocument();
+    expect(within(selected.getByText('Booked meeting').parentElement!).getByText('No LMS booking recorded')).toBeInTheDocument();
+    expect(within(selected.getByText('Review completed').parentElement!).getByText('Thu, 19 Nov 2026')).toBeInTheDocument();
+  });
+  it('labels a locally saved meeting time without claiming a failed calendar sync was booked', () => {
+    mount({ sessions: [session('imported-review:pending', '2026-11-19', {
+      reviewSource: 'aptem', targetDate: '2026-04-29', calendarEventKey: 'imported-review:pending',
+      syncState: 'failed', scheduledDate: '2026-11-19', scheduledTime: '13:00',
+      importedReview: importedReview('Pending coaching review', '2026-04-29'),
+    })] });
+    const current = within(screen.getByRole('article', { name: 'Current coaching meeting' }));
+    expect(current.getByText('Saved meeting time')).toBeInTheDocument();
+    expect(current.queryByText('Booked meeting')).not.toBeInTheDocument();
+    expect(current.getByText('13:00 · Europe/London · 60 minutes')).toBeInTheDocument();
   });
   it('shows an in-progress meeting status in the learner timeline and meeting card', () => {
     mount({ sessions: [session('mcm-1', today, { status: 'in-progress' })] });
@@ -222,12 +274,13 @@ describe('coaching learner navigation and actions', () => {
     expect(attention.getByRole('heading', { name: 'Your signature is needed' })).toBeInTheDocument();
     expect(attention.getByRole('link', { name: 'Review & sign' })).toHaveAttribute('href', '/learner/monthly-coaching/summary%3A1?kind=apprenticeship&learner=12');
     const current = within(screen.getByRole('article', { name: 'Current coaching meeting' }));
-    expect(current.getByText('Wed, 28 Oct 2026')).toBeInTheDocument();
+    expect(within(current.getByText('Booked meeting').parentElement!).getByText('Wed, 28 Oct 2026')).toBeInTheDocument();
     expect(current.getByRole('link', { name: 'Prepare for meeting' })).toHaveAttribute('href', '/learner/monthly-coaching/next%3A2?kind=apprenticeship&learner=12');
     fireEvent.click(september);
     expect(within(screen.getByRole('article', { name: 'Selected coaching meeting' })).getByRole('link', { name: 'Review & sign' })).toHaveAttribute('href', '/learner/monthly-coaching/summary%3A1?kind=apprenticeship&learner=12');
     fireEvent.click(october);
-    expect(within(screen.getByRole('article', { name: 'Current coaching meeting' })).getByText('Wed, 28 Oct 2026')).toBeInTheDocument();
+    const restored = within(screen.getByRole('article', { name: 'Current coaching meeting' }));
+    expect(within(restored.getByText('Booked meeting').parentElement!).getByText('Wed, 28 Oct 2026')).toBeInTheDocument();
     expect(october).toHaveAttribute('aria-pressed', 'true');
     expect(screen.queryByText('January 2027 coaching')).not.toBeInTheDocument();
     expect(screen.queryByRole('tablist')).not.toBeInTheDocument();

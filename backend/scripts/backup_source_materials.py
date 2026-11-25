@@ -218,7 +218,7 @@ def main():
             cursor.execute('''SELECT m.id,m.source_url,m.reading_iframe_url,m.video_iframe_url,
                 m.audio_iframe_url,m.content_type,m.updated_at FROM curriculum.source_materials m
                 WHERE m.deleted_at IS NULL AND m.id>%s AND (%s::bigint IS NULL OR m.id=%s)
-                  AND m.backup_status IS DISTINCT FROM 'available'
+                  AND m.blob_name IS NULL AND m.backup_status IN ('pending','error')
                   AND (NOT %s OR lower(m.content_type) IN ('video','recording','live'))
                 ORDER BY (m.id=%s) DESC NULLS LAST,m.id LIMIT %s''',
                 [args.after_id, args.record_id, args.record_id, args.videos_only, args.priority_id, args.limit])

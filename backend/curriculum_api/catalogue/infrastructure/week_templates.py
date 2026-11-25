@@ -50,9 +50,15 @@ def get_week_template_component_rows(
     table_name,
     WEEK_TEMPLATE_COMPONENTS_TABLE,
 ):
+    from curriculum_api import template_ksbs
     ensure_week_template_tables()
-    return fetch_all(
+    rows = fetch_all(
         f'select * from {table_name(WEEK_TEMPLATE_COMPONENTS_TABLE)} '
-        f'where week_template_id = %s order by display_order asc',
-        [template_id],
-    )
+        f'where week_template_id = %s order by display_order asc', [template_id])
+    with connection.cursor() as cursor:
+        mappings = template_ksbs.items(cursor, [row['id'] for row in rows])
+    for row in rows:
+        row['ksb_mappings'] = mappings.get(row['id'], [])
+    return rows
+
+from django.db import connection

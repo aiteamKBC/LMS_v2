@@ -36,7 +36,7 @@ def provision_module_authoring_tables(
     their parents' ids and read names through them, a module names its tutor by
     ``tutor_id``, a group's coaches live in ``group_coaches``, a cohort's holiday
     choices in ``cohort_calendar_holidays``, and a KSB mapping belongs to its
-    component and points at ``standard_ksbs``. Foreign keys are left out so the
+    component and points at ``ksb_standard_definitions``. Foreign keys are left out so the
     SQLite harness can seed rows in any order; ``standard_ksb_id`` is nullable
     here because the harness carries no Skills England catalogue to resolve it.
     """
@@ -64,7 +64,6 @@ def provision_module_authoring_tables(
                 session_week_day varchar(255),
                 session_start_time varchar(32),
                 session_end_time varchar(32),
-                ksb_profile_source_id varchar(128),
                 schedule_mode varchar(16) not null default 'group',
                 week_starts_on varchar(9),
                 week_boundary_mode varchar(16),
@@ -94,7 +93,6 @@ def provision_module_authoring_tables(
             cursor.execute(f"alter table {authoring_table_name(AUTHORING_MODULES_TABLE)} add column if not exists learner_roster_mode varchar(32) not null default 'inherited'")
             cursor.execute(f'alter table {authoring_table_name(AUTHORING_MODULES_TABLE)} add column if not exists teams_shared_source_module_id varchar(128)')
             cursor.execute(f'alter table {authoring_table_name(AUTHORING_MODULES_TABLE)} add column if not exists ksb_remap_report text')
-            cursor.execute(f'alter table {authoring_table_name(AUTHORING_MODULES_TABLE)} add column if not exists ksb_profile_source_id varchar(128)')
             cursor.execute(f'alter table {authoring_table_name(AUTHORING_MODULES_TABLE)} add column if not exists session_week_day varchar(255)')
             cursor.execute(f'alter table {authoring_table_name(AUTHORING_MODULES_TABLE)} add column if not exists session_start_time varchar(32)')
             cursor.execute(f'alter table {authoring_table_name(AUTHORING_MODULES_TABLE)} add column if not exists session_end_time varchar(32)')
@@ -133,8 +131,6 @@ def provision_module_authoring_tables(
                 cursor.execute(f'alter table {authoring_table_name(AUTHORING_MODULES_TABLE)} add column teams_shared_source_module_id varchar(128)')
             if 'ksb_remap_report' not in columns:
                 cursor.execute(f'alter table {authoring_table_name(AUTHORING_MODULES_TABLE)} add column ksb_remap_report text')
-            if 'ksb_profile_source_id' not in columns:
-                cursor.execute(f'alter table {authoring_table_name(AUTHORING_MODULES_TABLE)} add column ksb_profile_source_id varchar(128)')
             if 'session_week_day' not in columns:
                 cursor.execute(f'alter table {authoring_table_name(AUTHORING_MODULES_TABLE)} add column session_week_day varchar(255)')
             if 'session_start_time' not in columns:
@@ -221,7 +217,7 @@ def provision_module_authoring_tables(
             )
         ''')
         cursor.execute(f'''
-            create table if not exists {authoring_table_name('standard_ksbs')} (
+            create table if not exists {authoring_table_name('ksb_standard_definitions')} (
                 id {serial_key},
                 standard_ref text not null,
                 standard_version text not null default '',
@@ -238,8 +234,8 @@ def provision_module_authoring_tables(
         cursor.execute(f'''
             create table if not exists {authoring_table_name(AUTHORING_KSB_MAPPINGS_TABLE)} (
                 id varchar(128) primary key,
-                component_id varchar(128) not null,
-                ksb_id varchar(255),
+                component_id varchar(128),
+                template_component_id varchar(128),
                 classification varchar(32) not null default 'secondary',
                 created_at timestamp not null default current_timestamp,
                 updated_at timestamp not null default current_timestamp,
@@ -392,7 +388,7 @@ def provision_module_authoring_tables(
         AUTHORING_MODULES_TABLE, AUTHORING_WEEKS_TABLE, AUTHORING_COMPONENTS_TABLE,
         AUTHORING_KSB_MAPPINGS_TABLE, AUTHORING_COMPLETION_TABLE, AUTHORING_ADVANCED_TABLE,
         COHORT_AUTHORING_DETAILS_TABLE, GROUPS_TABLE, MODULE_TEAMS_SHARES_TABLE,
-        'standard_ksbs', 'cohort_calendar_holidays', 'tutors', 'coaches', 'group_coaches',
+        'ksb_standard_definitions', 'cohort_calendar_holidays', 'tutors', 'coaches', 'group_coaches',
     ):
         _TABLE_COLUMNS_CACHE.pop(f'{CURRICULUM_SCHEMA}.{table}', None)
         _TABLE_COLUMNS_CACHE.pop(table, None)
@@ -629,7 +625,6 @@ def provision_week_template_tables(
                 group_id varchar(255),
                 group_name varchar(255),
                 status varchar(32) not null default 'draft',
-                ksb_mappings {json_type},
                 total_otjh numeric(8,2) not null default 0,
                 points integer not null default 0,
                 component_count integer not null default 0,
@@ -652,7 +647,6 @@ def provision_week_template_tables(
                 workplace_evidence_required boolean not null default false,
                 tutor_validation_required boolean not null default false,
                 coach_validation_required boolean not null default true,
-                ksb_mappings {json_type},
                 settings_json {json_type},
                 display_order integer not null default 0,
                 created_at timestamp not null default current_timestamp,
@@ -757,7 +751,8 @@ def ensure_program_config_archive_columns(*, ensure_columns, has_column, logger,
             'color': 'varchar(32)',
             'description': 'text',
             'status': 'varchar(32)',
-            'ksb_profile_source_id': 'varchar(128)',
+            'standard_ref': 'text',
+            'standard_version': 'text',
             'required_otjh': 'numeric(8, 2)',
             'display_order': 'integer',
         })

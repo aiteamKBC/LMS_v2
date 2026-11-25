@@ -30,7 +30,7 @@ def recorded_sources(learner_ids):
         if not _ready(cursor):
             return {}
         cursor.execute(f'''SELECT l.id FROM "Learner".learners l
-            JOIN {TABLE} pref ON pref.learner_id=l.attendance_preference_id
+            JOIN {TABLE} pref ON pref.learner_id=l.id
             WHERE pref.mode='lazy' AND l.id=ANY(%s)''',
                        [[profile.id for profile in profiles.values()]])
         recorded_ids = {row[0] for row in cursor.fetchall()}

@@ -9,7 +9,7 @@ from django.utils import timezone
 
 from login.email_azure import is_configured, send_mail
 from learner_api.attendance_lectures import read_workspace
-from learner_api.attendance_mode import TABLE, _state, _payload
+from learner_api.attendance_mode import TABLE, _state, _payload, canonical_learner_id
 from learner_api.models import EnrolmentUser
 
 
@@ -34,6 +34,10 @@ class Command(BaseCommand):
         sources = EnrolmentUser.all_learners.filter(pk__in=options['learner_id'])
         for source in sources:
             kind = 'commercial' if source.learner_type == 'commercial' else 'apprenticeship'
+            try:
+                learner_id = canonical_learner_id(source)
+            except ValueError as exc:
+                raise CommandError(str(exc)) from exc
             workspace = read_workspace(source, kind)
             if not workspace['mode']['available']:
                 raise CommandError('Apply backend/sql/2026-09-12_attendance_preferences.sql manually first.')
@@ -45,11 +49,11 @@ class Command(BaseCommand):
                 # Serialize against mode changes and another reminder worker.
                 # A failed transport rolls back the claim so it can be retried.
                 with transaction.atomic(using='enrolment'), connections['enrolment'].cursor() as cur:
-                    cur.execute(f'INSERT INTO {TABLE} (learner_id) VALUES (%s) ON CONFLICT DO NOTHING', [source.id])
-                    if not _payload(_state(cur, source.id, lock=True))['remindersEnabled']:
+                    cur.execute(f'INSERT INTO {TABLE} (learner_id) VALUES (%s) ON CONFLICT DO NOTHING', [learner_id])
+                    if not _payload(_state(cur, learner_id, lock=True))['remindersEnabled']:
                         break
                     cur.execute('''INSERT INTO "Learner".attendance_reminders (learner_id,session_key)
-                        VALUES (%s,%s) ON CONFLICT DO NOTHING RETURNING learner_id''', [source.id, lecture['id']])
+                        VALUES (%s,%s) ON CONFLICT DO NOTHING RETURNING learner_id''', [learner_id, lecture['id']])
                     if not cur.fetchone():
                         continue
                     origin = (os.environ.get('FRONTEND_URL') or 'http://localhost:5173').rstrip('/')

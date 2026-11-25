@@ -772,6 +772,10 @@ def _rewrite_ksbs(entry, context, learner_id):
                if 'ksb_definition_id' in item else {}),
             **({'ksbDefinitionId': item.get('ksbDefinitionId')}
                if 'ksbDefinitionId' in item else {}),
+            **({'standard_ksb_id': item.get('standard_ksb_id')}
+               if 'standard_ksb_id' in item else {}),
+            **({'standardKsbId': item.get('standardKsbId')}
+               if 'standardKsbId' in item else {}),
         }
         for position, item in enumerate(mappings, 1)
     ]
@@ -786,7 +790,11 @@ def _rewrite_ksbs(entry, context, learner_id):
             progress=entry,
             position=item['position'],
             ksb_code=item['ksb_code'],
-            ksb_definition_id=item['ksb_definition_id'],
+            standard_ksb_id=item['standard_ksb_id'],
+            legacy_definition_snapshot=item.get('legacy_definition_snapshot'),
+            is_excluded=item.get('is_excluded', False),
+            exclusion_reason=item.get('exclusion_reason'),
+            exclusion_metadata=item.get('exclusion_metadata'),
             ksb_description=item['ksb_description'],
             source_type=item['source_type'],
             source_id=item['source_id'],

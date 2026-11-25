@@ -19,7 +19,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const coachFetchMock = vi.fn();
 vi.mock('@/lib/coachFetch', () => ({ coachFetch: (...args: unknown[]) => coachFetchMock(...args) }));
 
-const { fetchTutorAssignmentEmailStatus, sendTutorAssignmentEmail } = await import('./curriculumApi');
+const { fetchTutorAssignmentEmailStatus, fetchTutorNotificationOptions, sendTutorAssignmentEmail } = await import('./curriculumApi');
 
 function jsonResponse(body: unknown, ok = true, status = 200) {
   return { ok, status, json: async () => body } as unknown as Response;
@@ -64,14 +64,26 @@ describe('tutor assignment email transport', () => {
       total: 2, emailed: 1, lastSentAt: null, deliveries: [],
     }));
 
-    await fetchTutorAssignmentEmailStatus(['MOD-A', 'MOD-B'], 'Tutor One');
+    await fetchTutorAssignmentEmailStatus(['MOD-A', 'MOD-B'], 'TUTOR-1');
 
     const [url, init] = coachFetchMock.mock.calls[0] as [string, RequestInit | undefined];
     expect(url).toContain('moduleIds=MOD-A%2CMOD-B');
     // The tutor the author has selected, which is not necessarily the one
     // stored on the module — that is what keeps a swap from reading the
     // previous tutor's record.
-    expect(url).toContain('tutor=Tutor+One');
+    expect(url).toContain('tutorId=TUTOR-1');
+    expect(url).not.toContain('tutor=');
     expect(init?.method).toBeUndefined();
   });
+  it('loads canonical choices and saved assignments through the authenticated client', async () => {
+    const options = { tutors: [{ id: 'TUTOR-1', name: 'Tutor One' }], assignments: [{ moduleId: 'MOD-A', tutorId: 'TUTOR-1' }] };
+    coachFetchMock.mockResolvedValue(jsonResponse(options));
+    const controller = new AbortController();
+    await expect(fetchTutorNotificationOptions(['MOD-A'], controller.signal)).resolves.toEqual(options);
+    const [url, init] = coachFetchMock.mock.calls[0];
+    expect(url).toContain('options=1');
+    expect(url).toContain('moduleIds=MOD-A');
+    expect(init.signal).toBe(controller.signal);
+  });
+
 });

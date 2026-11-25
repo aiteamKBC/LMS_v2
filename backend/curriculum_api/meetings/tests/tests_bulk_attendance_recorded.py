@@ -106,12 +106,12 @@ class RecordedSourceIdentityTests(SimpleTestCase):
         self.addCleanup(self.database.close)
         self.database.execute("ATTACH DATABASE ':memory:' AS Learner")
         self.database.executescript('''
-            CREATE TABLE "Learner".learners (id INTEGER, enrolment_id INTEGER, attendance_preference_id INTEGER);
+            CREATE TABLE "Learner".learners (id INTEGER, enrolment_id INTEGER);
             CREATE TABLE "Learner".attendance_preferences (learner_id INTEGER PRIMARY KEY, mode TEXT, requested_mode TEXT);
-            INSERT INTO "Learner".learners VALUES (1,17,41), (2,18,42), (3,19,NULL);
+            INSERT INTO "Learner".learners VALUES (1,17), (2,18), (3,19);
             INSERT INTO "Learner".attendance_preferences VALUES
                 (17,'lazy',NULL), (18,'live',NULL), (19,'lazy',NULL),
-                (41,'live','lazy'), (42,'lazy',NULL);
+                (1,'live','lazy'), (2,'lazy',NULL);
         ''')
         self.profiles = [SimpleNamespace(id=1, enrolment_id=17, aptem_id=301, learner_type='commercial'),
                          SimpleNamespace(id=2, enrolment_id=18, aptem_id=302, learner_type='apprenticeship'),

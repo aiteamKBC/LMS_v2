@@ -381,7 +381,7 @@ def _ksb_code(ksb_id):
 
     The stored id is a catalogue key, not something to show a coach. The trailing
     segment is the KSB code from the standard, which is what the panel wants.
-    curriculum.ksb_mappings holds full descriptions but covers only a fraction of
+    curriculum.ksb_component_mappings holds full descriptions but covers only a fraction of
     these ids, so joining it would label some rows and not others.
     """
     text = _s(ksb_id)

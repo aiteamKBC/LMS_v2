@@ -634,13 +634,10 @@ def coaching_events_for_learner(learner, mirror, *, month=None, only_sources=Non
     review_source = source_for_learner(learner, mirror)
     emails = {_s(getattr(learner, 'email', '')).strip().casefold(),
               _s(getattr(mirror, 'email', '')).strip().casefold()} - {''}
-    match = Q()
-    for email in emails:
-        match |= Q(learner_email__iexact=email)
-    if mirror is not None:
-        match |= Q(learner_profile_id=mirror.id) | Q(learner_profile_id=learner.pk)
-    if not match:
+    profile_id = getattr(mirror, 'id', None) or _profile_id_for_enrolment(learner.pk)
+    if profile_id is None:
         return []
+    match = Q(learner_profile_id=profile_id)
     records = []
     query = CoachCalendarEvent.objects.filter(match)
     if header_only:
@@ -1001,34 +998,8 @@ def _resolve_assignment_month_progress_review_occurrence(learner, mirror):
 
 
 def _record_owner_ids(record, *, created_user_id, profile_id):
-    """The learner ids this learner may be stored under on ``record``.
-
-    Created_users.id and the Learner profile id are independent sequences, so
-    a number only means something in the id space its row was written in:
-
-    * Review rows -- linked to a Review Instance, or a coach-generated
-      programme-cycle slot -- carry the profile id, the same id as
-      curriculum.review_instances.learner_id. Only that id is compared.
-    * Onboarding reviews are always written with Created_users.id
-      (calendar_learner_id in learner_calendar_book), so only that id is
-      compared.
-    * Rows written by the learner's own booking flow (``learner-book:`` keys)
-      and first-session rows have no single id space: bookings stored
-      Created_users.id before 2026-09-08 and the profile id since, and
-      first_session.py still stores Created_users.id. They keep both ids until
-      the stored rows are checked.
-    """
-    event_type = _s(record.event_type)
-    booked_by_learner = _s(getattr(record, "idempotency_key", "")).startswith("learner-book:")
-    if _s(getattr(record, "review_instance_id", "")) or (
-        event_type in ("mcr", "progress-review", "review") and not booked_by_learner
-    ):
-        ids = {profile_id}
-    elif event_type in ONBOARDING_REVIEW_TYPES:
-        ids = {created_user_id}
-    else:
-        ids = {created_user_id, profile_id}
-    return {str(value) for value in ids if value is not None}
+    """Calendar rows always reference the canonical Learner profile."""
+    return {str(profile_id)} if profile_id is not None else set()
 
 
 def _profile_id_for_enrolment(enrolment_id):
@@ -1109,8 +1080,6 @@ def _learner_calendar_record(kind, pk, event_key):
     if not record or (review_source.kind == "aptem"
                       and record.event_type in {"mcr", "progress-review", "review"}):
         return None
-    if _s(record.learner_email).strip().casefold() in emails:
-        return record
     owner_ids = _record_owner_ids(record, created_user_id=pk, profile_id=mirror.id if mirror else None)
     if str(record.learner_profile_id or "") in owner_ids and not _email_names_another_learner(record, emails):
         return record
@@ -1700,7 +1669,6 @@ def learner_calendar(request, kind, pk):
 
     match = Q()
     if mirror is not None:
-        match |= Q(learner_profile_id=pk)
         match |= Q(learner_profile_id=mirror.id)
     for candidate in {mirror_email, source_email} - {""}:
         match |= Q(learner_email__iexact=candidate)
@@ -1900,10 +1868,9 @@ def learner_calendar_book(request, kind, pk):
             # meetings, two invitations and a start date that follows whichever
             # was written last -- moving it is what reschedule is for.
             try:
-                # Rows written before 2026-11-12 may carry Created_users.id; the
-                # email keeps that number from naming another learner's profile.
-                owner = Q(learner_profile_id=pk, learner_email__iexact=_s(learner.email).strip())
-                profile_id = mirror.id if mirror is not None else _profile_id_for_enrolment(pk)
+                # Every persisted row is now keyed by the canonical profile.
+                owner = Q(pk__in=[])
+                profile_id = getattr(mirror, "id", None) if mirror is not None else _profile_id_for_enrolment(pk)
                 if profile_id is not None:
                     owner |= Q(learner_profile_id=profile_id)
                 existing = (
@@ -2090,18 +2057,11 @@ def learner_calendar_book(request, kind, pk):
             message, status_code = resolution_error
             return _error(message, status_code)
         payload = {**payload, "eventKey": resolved_event_key}
-    requires_coach_approval = session_type in COACH_APPROVAL_TYPES and not is_onboarding_review
-    # Onboarding reviews stay under Created_users.id (see _record_owner_ids).
-    # Everything else is filed under the profile id -- the first session too,
-    # which is booked before the profile is Active -- so the stored number
-    # names one learner. Created_users.id remains only for a learner with no
-    # profile yet.
-    if is_onboarding_review:
-        calendar_learner_id = pk
-    elif mirror is not None:
-        calendar_learner_id = int(mirror.id)
-    else:
-        calendar_learner_id = _profile_id_for_enrolment(pk) or pk
+    # The normalized calendar FK never accepts Created_users.id.
+    calendar_learner_id = getattr(mirror, 'id', None) or _profile_id_for_enrolment(pk)
+    if calendar_learner_id is None:
+        return _error("A canonical learner profile is required before booking.", 409)
+    calendar_learner_id = int(calendar_learner_id)
 
     if assignment_month:
         if not imported_review_id and not assignment_booking:
@@ -2194,7 +2154,7 @@ def learner_calendar_book(request, kind, pk):
             review_booking = session_type in REVIEW_BOOKING_TYPES
             existing_booking = (CoachCalendarEvent.objects.filter(
                 event_key=event_key, owner_email__iexact=owner_email,
-                learner_profile_id=int(getattr(mirror, "id", pk) or pk),
+                learner_profile_id=calendar_learner_id,
             ).first() if review_booking else None)
             unchanged_review_replay = bool(
                 existing_booking and existing_booking.status == CoachCalendarEvent.STATUS_SCHEDULED
@@ -2276,12 +2236,8 @@ def learner_calendar_book(request, kind, pk):
                 except (ReviewTemplateUnavailableError, ReviewCreationBlocked) as exc:
                     return _error(str(exc), 409, code=getattr(exc, "code", None))
 
-            record.owner_email = owner_email
-            record.owner_name = owner_name or _s(mirror.coach_name) or record.owner_name or "Coach"
             if aptem_target is None or created:
                 record.learner_id = int(mirror.id)
-            record.learner_name = _s(base_event.get("learner")) or learner_name
-            record.learner_email = _s(base_event.get("email")) or learner_email
             record.event_type = session_type
             record.sequence = int(base_event.get("sequence") or 1)
             record.target_date = target_date
@@ -2344,7 +2300,7 @@ def learner_calendar_book(request, kind, pk):
             # owner a second invite for the same meeting. Returning the existing
             # booking makes the request idempotent instead.
             existing = (
-                CoachCalendarEvent.objects.filter(learner_profile_id=pk, event_type=session_type)
+                CoachCalendarEvent.objects.filter(learner_profile_id=calendar_learner_id, event_type=session_type)
                 .exclude(status=CoachCalendarEvent.STATUS_CANCELLED)
                 .order_by("-sequence")
                 .first()
@@ -2386,7 +2342,7 @@ def learner_calendar_book(request, kind, pk):
             # slot because each review type is a one-time logical operation.
             if is_onboarding_review:
                 cancelled_count = CoachCalendarEvent.objects.filter(
-                    learner_profile_id=pk,
+                    learner_profile_id=calendar_learner_id,
                     event_type=session_type,
                     status=CoachCalendarEvent.STATUS_CANCELLED,
                 ).count()
@@ -2867,7 +2823,7 @@ def learner_onboarding_reviews(request, kind, pk):
         booked = {
             record.event_type: record
             for record in CoachCalendarEvent.objects.filter(
-                learner_profile_id=pk, event_type__in=ONBOARDING_REVIEW_TYPES
+                learner_profile_id=_profile_id_for_enrolment(pk), event_type__in=ONBOARDING_REVIEW_TYPES
             )
             .exclude(status=CoachCalendarEvent.STATUS_CANCELLED)
             .order_by("scheduled_date")
@@ -3023,7 +2979,7 @@ def learner_first_session(request, kind, pk):
         if learner is None:
             return _error("Learner not found.", 404)
         record = (
-            CoachCalendarEvent.objects.filter(learner_profile_id=pk, event_type=FIRST_SESSION_TYPE)
+            CoachCalendarEvent.objects.filter(learner_profile_id=_profile_id_for_enrolment(pk), event_type=FIRST_SESSION_TYPE)
             .exclude(status=CoachCalendarEvent.STATUS_CANCELLED)
             .order_by("-sequence")
             .first()

@@ -47,7 +47,9 @@ def teams_non_delivery_reason(targets, time_zone='Europe/London', holiday_rows=N
         england_non_delivery_reason=england_non_delivery_reason, get_holiday_rows_safe=get_holiday_rows_safe,
         load_module_policy=load_module_policy, load_non_delivery_reason=load_non_delivery_reason,
         parse_graph_datetime=parse_graph_datetime, parse_int=parse_int, timezone=timezone,
+        module_cohort_selected_holidays=module_cohort_selected_holidays,
     )
+
 
 
 def module_expected_teams_occurrence_keys(module_row, holidays=None, group_row=None, live_sessions=None):
@@ -114,3 +116,5 @@ def teams_calendar_sync_verdicts(module_catalogue_ids, occurrences_by_module, oc
         logger=logger,
         teams_calendar_sync_verdict=teams_calendar_sync_verdict,
     )
+
+from curriculum_api.catalogue.infrastructure.cohort_calendar_composition import module_cohort_selected_holidays

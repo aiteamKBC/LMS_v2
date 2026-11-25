@@ -12,6 +12,17 @@ from learner_api.calendar import _serialize_event
 
 
 class CalendarSyncVisibilityTests(SimpleTestCase):
+    def setUp(self):
+        # Synthetic live profiles have no Aptem identity; replace only DB reads.
+        for target, value in (
+            ('coach_api.views.fetch_caseload_aptem_ids', {}),
+            ('coach_api.review_sources._deleted_profile_ids', set()),
+            ('curriculum_api.review_instances.programme_review_template_identifiers', ['T1']),
+        ):
+            boundary = patch(target, return_value=value)
+            boundary.start()
+            self.addCleanup(boundary.stop)
+
     def record(self, event_type="mcr", **overrides):
         values = dict(
             event_key=f"{event_type}:211:1:2026-10-31", event_type=event_type,
@@ -86,6 +97,7 @@ class CalendarSyncVisibilityTests(SimpleTestCase):
             with self.subTest(event_type=event_type), ExitStack() as stack:
                 record = self.record(event_type)
                 responses = {
+                    "fetch_caseload_timetable_profiles": [learner],
                     "fetch_owner_active_learner_profiles": [learner],
                     "coach_staff_display_name": "Coach",
                     "fetch_source_schedule_rows": ({}, {}),
@@ -118,6 +130,7 @@ class CalendarSyncVisibilityTests(SimpleTestCase):
         records = [self.record(event_type) for event_type in ("mcr", "progress-review")]
         with ExitStack() as stack:
             for name, result in {
+                "fetch_caseload_timetable_profiles": [],
                 "fetch_owner_active_learner_profiles": [],
                 "coach_staff_display_name": "Coach",
                 "fetch_source_schedule_rows": ({}, {}),
@@ -150,7 +163,7 @@ class CalendarSyncVisibilityTests(SimpleTestCase):
                              sync_state='synced', last_graph_sync_error='')
         with ExitStack() as stack:
             for name, result in {
-                'fetch_owner_active_learner_profiles': [], 'coach_staff_display_name': 'Coach',
+                'fetch_caseload_timetable_profiles': [], 'fetch_owner_active_learner_profiles': [], 'coach_staff_display_name': 'Coach',
                 'fetch_source_schedule_rows': ({}, {}), 'fetch_standalone_event_records': [record],
                 'fetch_calendar_event_records': {},
             }.items():
@@ -167,11 +180,12 @@ class CalendarSyncVisibilityTests(SimpleTestCase):
     def test_saved_booking_is_not_duplicated_when_generated_key_matches(self):
         record = self.record(meeting_link='https://teams.example/booked', sync_state='synced', last_graph_sync_error='')
         learner = SimpleNamespace(id=211, username='Learner', email='learner@example.test', programme='Programme')
-        event = {'eventKey': record.event_key, 'source': 'mcr', 'status': 'scheduled', 'date': '2026-10-02',
+        event = {'eventKey': record.event_key, 'learnerId': '211', 'sequence': 1,
+                 'targetDate': record.target_date.isoformat(), 'source': 'mcr', 'status': 'scheduled', 'date': '2026-10-02',
                  'meetingLink': record.meeting_link, 'learner': 'Learner', 'startHour': 9, 'endHour': 10, 'type': 'coaching', 'isTimeEstimated': False}
         with ExitStack() as stack:
             for name, result in {
-                'fetch_owner_active_learner_profiles': [learner], 'coach_staff_display_name': 'Coach',
+                'fetch_caseload_timetable_profiles': [learner], 'fetch_owner_active_learner_profiles': [learner], 'coach_staff_display_name': 'Coach',
                 'fetch_source_schedule_rows': ({}, {}), 'resolve_curriculum_programme_id': 'P1',
                 'resolve_review_anchor_date': (date(2026, 1, 1), ''),
                 'resolve_schedule_window': (date(2026, 1, 1), date(2027, 1, 1)),

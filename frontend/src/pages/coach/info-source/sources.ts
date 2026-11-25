@@ -46,7 +46,7 @@ export const coachInfoSources: InfoSource[] = [
     description: 'Completed and total activities, progress percentage and supporting KSB evidence.',
     sources: [
       { table: '"Learner".learner_progress_entries', fields: 'id, learner_id, activity_status, accepted, component_ref, source_system, reporting_month, deleted_at', purpose: 'Canonical activity records for the learner.' },
-      { table: '"Learner".learner_progress_ksbs', fields: 'progress_id, ksb_code, ksb_description', purpose: 'KSB evidence attached to each progress record.' },
+      { table: '"Learner".ksb_learner_progress', fields: 'progress_id, ksb_code, ksb_description', purpose: 'KSB evidence attached to each progress record.' },
       { table: '"Learner".learner_activity_sources', fields: 'canonical_progress_id, activity_status, completed', purpose: 'Retained source evidence used by completion resolution.' },
     ],
     explanation: 'The Dashboard uses the canonical learner metrics. Completion is resolved from each activity and its source evidence; accepted evidence controls credited hours and KSB points. An activity completion percentage is calculated, rather than read from a single stored percentage column.',

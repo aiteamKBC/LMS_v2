@@ -334,6 +334,7 @@ export default function AuditTrailView({ scope }: { scope: AuditTrailScope }) {
   const [collapsedDays, setCollapsedDays] = useState<ReadonlySet<string>>(() => new Set<string>());
 
   const [trail, setTrail] = useState<CurriculumAuditTrail | null>(null);
+  const [historyUnavailable, setHistoryUnavailable] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [reloadToken, setReloadToken] = useState(0);
@@ -461,6 +462,13 @@ export default function AuditTrailView({ scope }: { scope: AuditTrailScope }) {
     })
       .then(result => {
         if (controller.signal.aborted) return;
+        if (result.available === false) {
+          setTrail(null);
+          setHistoryUnavailable(result.reason || 'Saved change history is not available.');
+          setError(null);
+          return;
+        }
+        setHistoryUnavailable(null);
         setTrail(result);
         if (result.page && result.page !== changesPage) setChangesPage(result.page);
         setError(null);
@@ -751,6 +759,14 @@ export default function AuditTrailView({ scope }: { scope: AuditTrailScope }) {
 
         {error && <InlineError message={error} onRetry={() => setReloadToken(token => token + 1)} />}
 
+        {historyUnavailable !== null ? (
+          <div role="status" className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-amber-900">
+            <h2 className="font-bold">Change history unavailable</h2>
+            <p>{historyUnavailable}</p>
+            <button type="button" onClick={() => setReloadToken(token => token + 1)}>Retry history</button>
+          </div>
+        ) : (<>
+
         {/* The reading half covers every workspace; the writing half does not
             yet. Which workspaces can name a change is something the server
             reports, and this says it plainly rather than letting an empty feed
@@ -950,6 +966,7 @@ export default function AuditTrailView({ scope }: { scope: AuditTrailScope }) {
             onPage={setChangesPage}
           />
         )}
+        </>)}
         </>)}
       </div>
     </WorkspaceShell>

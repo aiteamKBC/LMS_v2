@@ -166,17 +166,15 @@ def _recording_rows(ids):
     missing = [value for value in ids if shared is None or value not in shared]
     by_occurrence = {}
     if missing:
-        # Recordings only. A transcript row's metadata carries its whole
-        # timeline (up to ~200 KB) and nothing here reads transcripts: a
-        # recording's hidden flag is its own, and the transcripts
-        # hidden_artifact_ids adds are never recordings. Reading every
-        # artifact made the Bulk register ~40 s.
-        for row in read('''SELECT a.*, r.status AS archive_status, r.updated_at AS archive_updated_at, o.scheduled_start
+        # Retain transcript identity for unready transcript-only occurrences,
+        # but never transfer transcript bodies, timelines or archive payloads.
+        for row in read('''SELECT a.id,a.occurrence_id,a.artifact_type,a.created_at,
+            CASE WHEN a.artifact_type='recording' THEN a.metadata ELSE NULL END AS metadata,
+            r.status AS archive_status,r.updated_at AS archive_updated_at,o.scheduled_start
             FROM curriculum.live_session_artifacts a
             JOIN curriculum.live_session_occurrences o ON o.id=a.occurrence_id
             LEFT JOIN curriculum.session_result_archive r ON r.artifact_id=a.id
             WHERE a.occurrence_id = ANY(%s)
-              AND a.artifact_type = 'recording'
             ''', [missing]):
             by_occurrence.setdefault(row['occurrence_id'], []).append(row)
     if shared is None:

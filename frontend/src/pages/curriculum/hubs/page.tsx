@@ -257,6 +257,7 @@ function hubCards(kind: HubKind, counts: {
       { title: 'Quiz Workspace', description: 'Create and edit quizzes connected to curriculum components.', href: '/curriculum/quiz-xml', icon: 'ri-question-answer-line', tone: 'amber' },
       { title: 'Knowledge Base', description: 'Upload programme books once and use them to generate questions from the right chapters.', href: '/curriculum/knowledge-base', icon: 'ri-book-2-line', tone: 'primary' },
       { title: 'Question Bank', description: 'Reuse assessment questions across quizzes and modules.', href: '/curriculum/question-bank', icon: 'ri-questionnaire-line', tone: 'sky' },
+      { title: 'Module Hours', description: 'Preview module targets, configure defaults and review operation history.', href: '/curriculum/module-hours', icon: 'ri-time-line', tone: 'primary' },
     ];
   }
   if (kind === 'delivery') {

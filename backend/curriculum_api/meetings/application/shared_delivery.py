@@ -96,6 +96,31 @@ def apply_shared_teams_settings_to_weeks(
                 merged['teamsCalendarBinding'] = 'matched'
             component['settings'] = merged
             index += 1
+        # Projection happens after the alias's own plan was stamped. Its heading
+        # must describe the confirmed main meeting it now opens, without moving
+        # the alias's week/component rows or changing the source booking.
+        main = next((item for item in week.get('components') or []
+                     if normalise_component_type(item.get('type')) == 'live_session'
+                     and not (item.get('settings') or {}).get('extraTeamsMeetingUrl')
+                     and clean_str((item.get('settings') or {}).get('teamsMeetingScope')).lower() != 'additional'), None)
+        settings = (main or {}).get('settings') or {}
+        confirmed = clean_str(settings.get('sessionDate'))[:10]
+        start = clean_str(module.get('start_date') or module.get('startDate'))[:10]
+        end = clean_str(module.get('end_date') or module.get('endDate'))[:10]
+        if (settings.get('teamsOccurrenceId') and settings.get('teamsLiveSessionId')
+                and settings.get('teamsCalendarBinding') not in ('unverified', 'missing', 'ambiguous')
+                and confirmed and (not start or confirmed >= start) and (not end or confirmed <= end)):
+            from datetime import date as calendar_date
+            try:
+                day = calendar_date.fromisoformat(confirmed)
+            except ValueError:
+                continue
+            week['sessionDate'] = confirmed
+            week['sessionDay'] = day.strftime('%A')
+            if settings.get('sessionTime'):
+                week['sessionStartTime'] = settings['sessionTime']
+            if settings.get('durationMinutes'):
+                week['sessionDurationMinutes'] = settings['durationMinutes']
     return weeks
 
 

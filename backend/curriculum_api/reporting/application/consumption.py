@@ -53,7 +53,7 @@ def learner_progress_ksb_consumption(learner_ids, programme_ksb_codes, component
     says which of the two placed the row: ``component`` (it is in the scope's live
     content) or ``lineage`` (the row's own stamped reference).
 
-    The join to ``learner_progress_ksbs`` is a LEFT join, and that is the point:
+    The join to ``ksb_learner_progress`` is a LEFT join, and that is the point:
     most completed components carry no KSB snapshot at all, and an inner join
     made every one of them invisible — taking their off-the-job hours and their
     place in the activity feed with them. A row with no KSB comes back with an
@@ -225,7 +225,7 @@ def reflection_submission_ksb_consumption(learners, programme_ksb_codes, compone
     Returns ``(declared_totals, rows, excluded_rows, unlinked_rows)``.
 
     ``declared_totals`` is *declared* weight, never achieved weight. The
-    Component Progress snapshot (``learner_progress_ksbs``) is the canonical
+    Component Progress snapshot (``ksb_learner_progress``) is the canonical
     achievement source — see ``learner_progress_ksb_consumption`` — so a
     reflection's KSB declaration is supplementary evidence *about the same
     activity*. Adding it to achieved totals would count one activity's KSBs

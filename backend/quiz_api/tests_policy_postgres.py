@@ -1,4 +1,4 @@
-"""Submission rules, shared defaults and retained best scores on real PostgreSQL."""
+"""Submission rules, per-quiz settings and retained best scores on real PostgreSQL."""
 from copy import deepcopy
 from importlib import import_module
 import json
@@ -8,14 +8,13 @@ import unittest
 from unittest.mock import patch
 
 from django.conf import settings
-from django.db import connections
+from django.db import connections, transaction
 from django.test import RequestFactory
 
 from learner_api import quizzes
 from learner_api.models import LearnerProgressEntry
 from . import views
-from .defaults_views import quiz_defaults
-from .models import QuizDefaults, QuizPackage, QuizAnswer
+from .models import QuizPackage, QuizAnswer
 from .policy import attempt_stats, default_settings, visible_learner_attempts
 from .tests_history_postgres import QuizHistoryPostgresTests as History, execute
 
@@ -30,15 +29,49 @@ class QuizPolicyPostgresTests(unittest.TestCase):
     submit = History.submit
     concurrent = History.concurrent
 
+    def test_forward_removal_with_present_and_absent_table_preserves_all_quiz_data(self):
+        from django.db.migrations.loader import MigrationLoader
+        connection = connections['default']
+        loader = MigrationLoader(connection)
+        before = list(QuizPackage.objects.order_by('pk').values())
+        old = import_module('quiz_api.migrations.0006_quiz_policies')
+        new = import_module('quiz_api.migrations.0007_remove_quiz_defaults')
+        for present in (True, False):
+            with self.subTest(present=present), transaction.atomic():
+                with connection.schema_editor() as editor:
+                    if present:
+                        editor.execute('''CREATE TABLE curriculum.quiz_defaults (
+                            id integer PRIMARY KEY, general jsonb, grades jsonb)''')
+                        editor.execute("INSERT INTO curriculum.quiz_defaults VALUES(1,'{}','{}')")
+                    state = loader.project_state([('quiz_api', '0006_quiz_policies')])
+                    state = new.Migration('0007_remove_quiz_defaults', 'quiz_api').apply(state, editor)
+                self.assertNotIn(('quiz_api', 'quizdefaults'), state.models)
+                self.assertIsNone(execute("SELECT to_regclass('curriculum.quiz_defaults')")[0][0])
+                self.assertEqual(list(QuizPackage.objects.order_by('pk').values()), before)
+
+    def test_fresh_policy_install_followed_by_removal_keeps_per_quiz_columns(self):
+        from django.db.migrations.loader import MigrationLoader
+        connection = connections['default']
+        state = MigrationLoader(connection).project_state([('quiz_api', '0005_learner_question_foreign_key')])
+        with transaction.atomic():
+            execute('ALTER TABLE curriculum.quizzes DROP COLUMN policy_enabled, DROP COLUMN attempt_limit, DROP COLUMN grade_settings')
+            with connection.schema_editor() as editor:
+                for name in ('0006_quiz_policies', '0007_remove_quiz_defaults'):
+                    migration = import_module('quiz_api.migrations.' + name).Migration(name, 'quiz_api')
+                    state = migration.apply(state, editor)
+                    self.assertIsNone(execute("SELECT to_regclass('curriculum.quiz_defaults')")[0][0])
+            self.assertNotIn(('quiz_api', 'quizdefaults'), state.models)
+            self.assertIsNone(execute("SELECT to_regclass('curriculum.quiz_defaults')")[0][0])
+            self.assertEqual(execute('SELECT policy_enabled,attempt_limit,grade_settings FROM curriculum.quizzes WHERE id=%s', [self.quiz.pk]), [(False, 3, None)])
+            transaction.set_rollback(True)
+
+    def test_retired_api_is_not_routable(self):
+        from django.urls import Resolver404, resolve
+        with self.assertRaises(Resolver404):
+            resolve('/defaults/', urlconf='quiz_api.urls')
+
     def enable(self, **values):
         QuizPackage.objects.filter(pk=self.quiz.pk).update(policy_enabled=True, **values)
-
-    def defaults_request(self, method='get', payload=None, role='staff'):
-        request = getattr(RequestFactory(), method)('/quiz_api/defaults/',
-            json.dumps(payload) if payload is not None else {}, content_type='application/json')
-        request.login_account = SimpleNamespace(role=role)
-        request._dont_enforce_csrf_checks = True
-        return quiz_defaults(request)
 
     def test_one_remaining_attempt_is_enforced_inside_the_learner_lock(self):
         self.enable(limit_attempts=True, attempt_limit=1, retake_after_pass=True)
@@ -121,25 +154,6 @@ class QuizPolicyPostgresTests(unittest.TestCase):
         self.assertNotIn('correctAnswerId', reply['attempt']['questions'][0])
         self.assertEqual(self.learner.training_plan_progress[0]['questions'][0]['correctText'], 'Four')
 
-    def test_defaults_persist_across_staff_and_stale_save_is_rejected(self):
-        original = QuizDefaults.objects.filter(pk=1).values('general', 'grades', 'revision').get()
-        self.addCleanup(lambda: QuizDefaults.objects.filter(pk=1).update(**original))
-        initial = json.loads(self.defaults_request().content)
-        initial.pop('csrfToken')
-        changed = deepcopy(initial)
-        changed['general']['attemptMode'] = 'limited'
-        changed['general']['attemptLimit'] = 2
-        first = self.defaults_request('put', changed)
-        self.assertEqual(first.status_code, 200)
-        self.assertEqual(json.loads(self.defaults_request(role='admin').content)['general']['attemptLimit'], 2)
-        self.assertEqual(self.defaults_request('put', initial).status_code, 409)
-        for role in ('learner', 'employer', 'coach'):
-            self.assertEqual(self.defaults_request('put', changed, role=role).status_code, 403)
-        loaded, saved = json.loads(self.defaults_request().content), json.loads(first.content)
-        loaded.pop('csrfToken')
-        saved.pop('csrfToken')
-        self.assertEqual(loaded, saved)
-
     def test_manual_creation_saves_settings_questions_and_creator_together(self):
         payload = {'title': 'New configured quiz', 'status': 'published', 'duration': 15,
                    'passingGrade': 0, 'limitAttempts': True, 'attemptLimit': 2, 'retakeAfterPass': True,
@@ -158,14 +172,6 @@ class QuizPolicyPostgresTests(unittest.TestCase):
         self.assertEqual(saved.retake_points_cut, 0)
         self.assertEqual(saved.author, 'Synthetic creator')
         self.assertEqual(saved.quiz_questions.count(), 1)
-
-    def test_migration_retry_preserves_existing_quizzes_and_defaults(self):
-        before = list(QuizPackage.objects.order_by('pk').values())
-        shared = QuizDefaults.objects.values().get(pk=1)
-        with connections['default'].schema_editor() as editor:
-            import_module('quiz_api.migrations.0006_quiz_policies').install(None, editor)
-        self.assertEqual(list(QuizPackage.objects.order_by('pk').values()), before)
-        self.assertEqual(QuizDefaults.objects.values().get(pk=1), shared)
 
     def test_invalid_settings_are_rejected_without_partial_updates(self):
         before = QuizPackage.objects.values().get(pk=self.quiz.pk)
@@ -200,29 +206,11 @@ class QuizPolicyPostgresTests(unittest.TestCase):
         self.assertEqual(attempt_stats(self.learner, self.quiz.pk)['best'], .9)
         self.assertEqual(self.snapshot(), before)
 
-    def test_new_draft_cannot_be_submitted_and_anonymous_cannot_save_defaults(self):
+    def test_new_draft_cannot_be_submitted(self):
         self.enable(status='draft')
         status, reply = self.submit(self.submission_context())
         self.assertEqual((status, reply['code']), (409, 'quiz_not_published'))
         self.assertFalse(LearnerProgressEntry.objects.filter(learner=self.learner).exists())
-        response = quiz_defaults(RequestFactory().put('/defaults/', '{}', content_type='application/json'))
-        self.assertEqual(response.status_code, 401)
-
-    def test_defaults_require_csrf_even_for_an_authenticated_staff_member(self):
-        before = QuizDefaults.objects.values().get(pk=1)
-        read = RequestFactory().get('/quiz_api/defaults/')
-        read.login_account = SimpleNamespace(role='staff')
-        response = quiz_defaults(read)
-        data = json.loads(response.content)
-        token = data.pop('csrfToken')
-        request = RequestFactory().put('/quiz_api/defaults/', json.dumps(data), content_type='application/json')
-        request.login_account = read.login_account
-        self.assertEqual(quiz_defaults(request).status_code, 403)
-        self.assertEqual(QuizDefaults.objects.values().get(pk=1), before)
-        self.addCleanup(lambda: QuizDefaults.objects.filter(pk=1).update(**{key: value for key, value in before.items() if key != 'id'}))
-        request.COOKIES['csrftoken'] = response.cookies['csrftoken'].value
-        request.META['HTTP_X_CSRFTOKEN'] = token
-        self.assertEqual(quiz_defaults(request).status_code, 200)
 
     def test_configured_answer_order_is_preserved_without_exposing_the_key(self):
         quiz = {'policyEnabled': True, 'randomizeAnswers': False, 'questions': [
@@ -234,20 +222,19 @@ class QuizPolicyPostgresTests(unittest.TestCase):
         self.assertEqual(safe['questions'][0]['answers'], [{'id': 11, 'text': 'First'}, {'id': 12, 'text': 'Second'}])
         shuffle.assert_not_called()
 
-    def test_new_quiz_inherits_shared_defaults_once_and_keeps_its_customisation(self):
-        original = QuizDefaults.objects.values().get(pk=1)
-        self.addCleanup(lambda: QuizDefaults.objects.filter(pk=1).update(**{key: value for key, value in original.items() if key != 'id'}))
-        general = {**original['general'], 'attemptMode': 'limited', 'attemptLimit': 2, 'retakeAfterPass': False}
-        QuizDefaults.objects.filter(pk=1).update(general=general)
-        request = RequestFactory().post('/quiz/', json.dumps({'title': 'Inherited settings'}), content_type='application/json')
+    def test_new_quiz_uses_local_initial_settings_without_global_table(self):
+        self.assertIsNone(execute("SELECT to_regclass('curriculum.quiz_defaults')")[0][0])
+        request = RequestFactory().post('/quiz/', json.dumps({'title': 'Local settings', 'attemptLimit': 2}), content_type='application/json')
         request.login_account = SimpleNamespace(role='admin', display_name='Synthetic admin', email='admin@example.invalid')
         with patch.object(views, '_match_programme_catalogue_id', return_value=''), \
              patch.object(views, '_sync_quiz_assignment_count', side_effect=lambda quiz: quiz):
             response = views.quizzes(request)
         self.assertEqual(response.status_code, 201, response.content)
         created = QuizPackage.objects.get(pk=json.loads(response.content)['id'])
-        self.assertEqual((created.policy_enabled, created.limit_attempts, created.attempt_limit, created.retake_after_pass), (True, True, 2, False))
-        QuizDefaults.objects.filter(pk=1).update(general={**general, 'attemptLimit': 5})
+        self.assertEqual((created.policy_enabled, created.limit_attempts, created.attempt_limit, created.retake_after_pass), (True, False, 2, True))
+        self.assertEqual(created.grade_settings, default_settings()['grades'])
+        response = views.quiz_detail(RequestFactory().patch('/quiz/', json.dumps({'title': 'Renamed'}), content_type='application/json'), created.pk)
+        self.assertEqual(response.status_code, 200)
         created.refresh_from_db()
         self.assertEqual(created.attempt_limit, 2)
         self.quiz.refresh_from_db()

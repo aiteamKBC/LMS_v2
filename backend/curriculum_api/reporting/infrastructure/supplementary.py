@@ -9,7 +9,7 @@ def progress_total_rows(learner_ids, code_filter, *, and_not_excluded, connectio
                        p.component_ref, p.passed, p.submitted_at,
                        k.ksb_code, coalesce(max(k.weight), 0) as weight
                 from "Learner"."learner_progress_entries" p
-                join "Learner"."learner_progress_ksbs" k on k.progress_id = p.id''' + and_not_excluded('k', connection) + '''
+                join ''' + official_progress_relation() + ''' k on k.progress_id = p.id''' + and_not_excluded('k', connection) + '''
                 where p.learner_id = any(%s)
                   -- KSB snapshots are normalised to upper-case on every write.
                   -- Keep the indexed column bare so PostgreSQL can use
@@ -106,3 +106,5 @@ def evidence_rows(
         logger.warning('Could not load evidence for progress entries: %s', exc)
         return None
     return rows
+
+from learner_api.ksb_domain import official_progress_relation

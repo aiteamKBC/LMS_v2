@@ -2,12 +2,14 @@
 
 
 def _qualified(table, *, connection):
+    table = ksb_physical_table(table)
     if connection.vendor != 'postgresql':
         return f'"{table}"'
     return f'"curriculum"."{table}"'
 
 
 def _internal(table, *, connection):
+    table = ksb_physical_table(table)
     """A table reference adapt_sql never rewrites (``ONLY`` -- these tables have
     no inheritance, so it reads exactly the same rows). Used inside the read
     relation and this module's own queries, so a statement is adapted once."""
@@ -106,11 +108,16 @@ def read_relation(
 
     if table == 'ksb_mappings':
         joins.append(f'left join {q("components")} cc on cc.id = {t}.component_id')
-        joins.append(f'left join {q("standard_ksbs")} sk on sk.id = {t}.standard_ksb_id')
+        joins.append(f'left join {q("ksb_standard_definitions")} sk on sk.id = {t}.standard_ksb_id')
         add('module_catalogue_id', "coalesce(cc.module_catalogue_id, '')::varchar")
         add('week_id', 'cc.week_id')
+        add('ksb_id', standard_ksb_compatibility_id_sql('sk'))
         add('ksb_code', "coalesce(sk.ksb_code, '')::varchar")
         add('ksb_description', 'sk.ksb_description')
+    elif table == 'programmes':
+        add('ksb_profile_source_id', standard_source_sql('t'))
+    elif table == 'modules':
+        add('ksb_profile_source_id', f"(select {standard_source_sql('sp')} from {q('programmes')} sp where sp.programme_id=t.programme_id)")
     elif table in {'weeks', 'components'}:
         if table == 'weeks':
             # Canonical weeks always belong to a normal module. Free Course
@@ -125,5 +132,8 @@ def read_relation(
         add('origin_week_label', "''::text")
     if not extra:
         return None
-    body = f'(select {t}.*, ' + ', '.join(extra) + f' from {q(table)} {t} ' + ' '.join(joins) + ')'
+    owner_filter = f' where {t}.component_id is not null' if table == 'ksb_mappings' else ''
+    body = f'(select {t}.*, ' + ', '.join(extra) + f' from {q(table)} {t} ' + ' '.join(joins) + owner_filter + ')'
     return f'{body} as "{table}"' if alias else body
+
+from curriculum_api.canonical_read_sql import standard_ksb_compatibility_id_sql, standard_source_sql, ksb_physical_table

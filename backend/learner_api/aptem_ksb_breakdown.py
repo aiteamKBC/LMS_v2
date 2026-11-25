@@ -1,5 +1,6 @@
 """Read-only KSB coverage from a learner's non-deleted progress rows."""
 from .ksb_points import point_ratio
+from .ksb_domain import official_progress_relation
 from .ksb_exclusions import and_not_excluded
 
 
@@ -49,7 +50,7 @@ def read_breakdown(connection, learner_id, *, code=None):
                 p.accepted,p.deleted_at,p.source_system,k.ksb_code,k.ksb_description,
                 p.component_type,p.kind,p.module_title,p.submitted_at,p.reporting_ended_at
             FROM "Learner".learner_progress_entries p
-            JOIN "Learner".learner_progress_ksbs k ON k.progress_id=p.id''' + and_not_excluded('k', connection) + '''
+            JOIN ''' + official_progress_relation() + ''' k ON k.progress_id=p.id''' + and_not_excluded('k', connection) + '''
             WHERE p.learner_id=%s AND p.deleted_at IS NULL
             ''' + code_filter + ' ORDER BY p.id,k.position')
         from .progress_cache import rows as cached_rows

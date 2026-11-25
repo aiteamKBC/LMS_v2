@@ -130,6 +130,21 @@ describe('compact My Learning route', () => {
     expect(urls().filter(url => url.includes('/certificates/')), requestDiagnostics()).toHaveLength(1);
   });
 
+  it.each(['quizzes', 'assignments'])('loads the %s list without requesting dashboard hour totals', async tab => {
+    vi.mocked(fetch).mockImplementation(async input => {
+      const url = String(input);
+      if (url.includes('/learner-detail/') && url.includes('content=quiz')) return reply({
+        id: '7', name: 'Synthetic learner', programme: 'Programme', components: [],
+        quizAttempts: [], componentProgress: [], retiredQuizComponents: [] });
+      if (url.includes('/reflection/submissions/')) return reply({ assignments: [], statuses: [] });
+      throw new Error(`Unexpected assessment request: ${url}`);
+    });
+    route(`/learner/my-learning/commercial/7?tab=${tab}`);
+    expect(await screen.findByText(tab === 'quizzes' ? 'No quizzes linked yet' : 'No assignments linked yet')).toBeVisible();
+    expect(urls().some(url => url.includes('content=quiz'))).toBe(true);
+    expect(urls().some(url => url.includes('content=summary'))).toBe(false);
+  });
+
   it.each(['commercial', 'apprenticeship'] as const)('shows certificates for an old course and inside an assigned builder free course (%s)', async kind => {
     const catalogue = makeCatalogue(kind);
     catalogue.modules = [{ ...catalogue.modules[1], completedActivityCount: 3, requiredActivityCount: 1, completedRequiredActivityCount: 1, progress: 100, status: 'Completed' }];
@@ -475,7 +490,7 @@ describe('compact activity search', () => {
     await act(async () => pending[0].finish(reply({matches:[{id:'current:FOREIGN'}],nextOffset:null})));
     expect(hook.result.current.ids).toEqual([]);
     await act(async () => pending[1].finish(reply({matches:[{id:'current:OWN'}],nextOffset:null})));
-    expect(hook.result.current.ids).toEqual(['current:OWN']);
+    await waitFor(() => expect(hook.result.current.ids).toEqual(['current:OWN']));
     hook.rerender({id:'8',query:''});
     expect(hook.result.current.ids).toEqual([]);
   });
@@ -485,7 +500,10 @@ describe('compact activity search', () => {
       ? { matches:[{id:'current:M1'}],nextOffset:50 } : { matches:[{id:'legacy:50'}],nextOffset:null }));
     const hook=renderHook(({ query }) => useMyLearningSearch('apprenticeship','7',query,true),{ initialProps:{query:'lesson'} });
     await waitFor(() => expect(hook.result.current.ids).toEqual(['current:M1','legacy:50']));
-    expect(fetch).toHaveBeenCalledTimes(2);
+    expect(urls()).toEqual([
+      '/learner_api/my-learning/apprenticeship/7/search/?q=lesson&offset=0',
+      '/learner_api/my-learning/apprenticeship/7/search/?q=lesson&offset=50',
+    ]);
     vi.mocked(fetch).mockResolvedValue(new Response('{}',{status:503}));
     hook.rerender({query:'different'});
     await waitFor(() => expect(hook.result.current.error).toMatch(/Could not search/));

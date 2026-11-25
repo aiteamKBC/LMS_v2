@@ -1,8 +1,8 @@
 """KSB mapping writes against the new ksb_mappings constraints, without a database.
 
 ksb_mappings on the normalised schema: standard_ksb_id NOT NULL (FK
-standard_ksbs) and weight > 0. Pins that a mapping's own standard picks its
-standard_ksbs row before the module's profile does, and that the component
+ksb_standard_definitions) and weight > 0. Pins that a mapping's own standard picks its
+ksb_standard_definitions row before the module's profile does, and that the component
 builder refuses a weightless mapping instead of failing at the insert.
 """
 from curriculum_api.catalogue.tests.parity.composition_test_support import composition_fixture
@@ -45,9 +45,12 @@ class FakeCursor:
     def fetchone(self):
         return self._next
 
+    def fetchall(self):
+        return [self._next] if self._next else []
+
 
 def standard_lookup(reference):
-    return lambda sql, params: 'standard_ksbs' in sql and params and params[0] == reference
+    return lambda sql, params: 'ksb_standard_definitions' in sql and params and params[0] == reference
 
 
 class StandardKsbIdTests(SimpleTestCase):
@@ -58,33 +61,40 @@ class StandardKsbIdTests(SimpleTestCase):
         with mock.patch.object(ksb_mapping_placement, 'connection', connection):
             return ksb_mapping_placement.standard_ksb_id_for(**kwargs), cursor.queries
 
-    def test_the_mappings_own_standard_decides_before_the_module_profile(self):
+    def test_cross_standard_mapping_is_refused(self):
         resolved, queries = self._resolve(
             [(standard_lookup('ST0596'), (596,)), (standard_lookup('ST0612'), (612,)),
              (lambda sql, params: 'from' in sql and 'modules' in sql, ('standard:st0612-v1-0', 'PROG-MM-L6'))],
             ksb_code='K1', module_catalogue_id='MOD-MM', source_type='standard', source_id='st0596-v1-0',
         )
-        self.assertEqual(resolved, 596)
-        self.assertEqual(queries[-1][1], ['ST0596', 'K1', '1.0'])
-        self.assertFalse(any('modules' in sql for sql, _ in queries))
+        self.assertIsNone(resolved)
+        self.assertTrue(any('modules' in sql for sql, _ in queries))
 
-    def test_a_framework_source_falls_back_to_the_module_profile(self):
+    def test_retired_framework_source_is_refused(self):
         resolved, queries = self._resolve(
             [(lambda sql, params: 'modules' in sql, ('standard:st0596-v1-0', 'PROG-ME-L4')),
              (standard_lookup('ST0596'), (596,))],
             ksb_code='K1', module_catalogue_id='MOD-ME', source_type='framework', source_id='KSBP-1',
         )
-        self.assertEqual(resolved, 596)
-        self.assertTrue(any('modules' in sql for sql, _ in queries))
+        self.assertIsNone(resolved)
+        self.assertEqual(queries, [])
 
-    def test_a_code_missing_from_its_standard_falls_back_to_the_profile(self):
+    def test_missing_official_code_never_falls_back_to_another_standard(self):
         resolved, _ = self._resolve(
             [(standard_lookup('ST0596'), None),
              (lambda sql, params: 'modules' in sql, ('standard:st0612-v1-0', 'PROG-MM-L6')),
              (standard_lookup('ST0612'), (612,))],
             ksb_code='K1', module_catalogue_id='MOD-MM', source_type='standard', source_id='st0596-v1-0',
         )
-        self.assertEqual(resolved, 612)
+        self.assertIsNone(resolved)
+
+    def test_exact_destination_standard_resolves_official_id(self):
+        resolved, queries = self._resolve(
+            [(lambda sql, params: 'select p.standard_ref,p.standard_version' in sql, ('ST0596','1.0')),
+             (standard_lookup('ST0596'), (596,))],
+            ksb_code='K1', module_catalogue_id='MOD-ME', source_type='standard', source_id='st0596-v1-0')
+        self.assertEqual(resolved,596)
+        self.assertEqual(queries[-1][1],['ST0596','1.0','K1'])
 
 
 class ComponentBuilderWeightTests(SimpleTestCase):

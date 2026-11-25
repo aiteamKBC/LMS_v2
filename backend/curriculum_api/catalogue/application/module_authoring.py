@@ -379,6 +379,24 @@ def save_module_authoring_structure(
             calendar_update = policy_write(payload, existing_module_row, AUTHORING_MODULES_TABLE)
         except ValueError as exc:
             raise ModuleAuthoringValidationError([{'path': 'calendarPolicy', 'message': str(exc)}]) from exc
+    # A stale builder or copied week must not introduce Live components into
+    # closed weeks. Only stored Live identities in the same week are historical.
+    from curriculum_api.calendar_policy import merge_policy
+    from curriculum_api.live_holiday_policy import without_new_closed_live
+    closure_module = {**existing_module_row, 'module_catalogue_id': module_catalogue_id,
+        'cohort_id': cohort_id, 'group_id': group_id, 'schedule_mode': schedule_mode,
+        'session_week_day': session_week_day, 'weekly_schedule': weekly_schedule,
+        'week_boundary_mode': week_boundary_mode, 'week_starts_on': week_starts_on,
+        'weeks_number': authored_week_count, 'sessions_number': stored_sessions_number,
+        'start_date': payload.get('startDate', payload.get('start_date', existing_module_row.get('start_date'))),
+        'end_date': payload.get('endDate', payload.get('end_date', existing_module_row.get('end_date'))),
+        'calendar_policy': merge_policy(payload, existing_module_row)}
+    stored_live_rows = (list(stored_rows.get(AUTHORING_COMPONENTS_TABLE) or []) if light else
+        authoring_fetch_all(AUTHORING_COMPONENTS_TABLE, 'module_catalogue_id = %s', [module_catalogue_id]))
+    weeks = without_new_closed_live(closure_module, weeks, stored_live_rows)
+    checklist, quality_score = module_authoring_quality_check({**payload, 'weekStructure': weeks})
+    declared_total = otjh_hours_from_minutes(sum(component_expected_otjh_minutes(component)
+        for week in weeks for component in week.get('components') or []))
     saved_module_row = None
     with transaction.atomic():
         saved_module_row = authoring_upsert(AUTHORING_MODULES_TABLE, ['module_catalogue_id'], {
@@ -587,13 +605,16 @@ def save_module_authoring_structure(
         # Learner progress carries a snapshot of each component's KSBs. A light
         # save re-syncs only the components whose mappings it changed: the rest
         # already match, and each one costs a read of learner progress.
-        sync_progress_ksbs({
-            component['id']: as_json_value(component.get('ksb_mappings'), [])
+        changed_mapping_components = [
+            component['id']
             for component in component_payloads
             if not light or authoring_comparable('ksb_mappings', component.get('ksb_mappings')) != authoring_comparable(
                 'ksb_mappings', (stored_components_by_id.get(component['id']) or {}).get('ksb_mappings'))
             or not authoring_row_is_active(stored_components_by_id.get(component['id']) or {})
-        }, actor='curriculum-module-save')
+        ]
+        persisted_mappings = ksb_mapping_placement.component_items(changed_mapping_components)
+        sync_progress_ksbs({component_id: persisted_mappings.get(component_id, [])
+                            for component_id in changed_mapping_components}, actor='curriculum-module-save')
 
         criteria = payload.get('completionCriteria') or {}
         defaults = default_completion_payload()

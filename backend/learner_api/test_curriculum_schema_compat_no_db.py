@@ -57,9 +57,9 @@ class CanonicalKsbReadTests(SimpleTestCase):
         ])
         sql, params = cursor.execute.call_args.args
         self.assertEqual(params, ['COMP-1'])
-        self.assertIn('FROM curriculum.ksb_mappings mapping', sql)
+        self.assertIn('FROM curriculum.ksb_component_mappings mapping', sql)
         self.assertIn(
-            'JOIN curriculum.standard_ksbs standard_ksb '
+            'JOIN curriculum.ksb_standard_definitions standard_ksb '
             'ON standard_ksb.id = mapping.standard_ksb_id',
             sql,
         )
@@ -76,16 +76,17 @@ class CanonicalKsbReadTests(SimpleTestCase):
         sql = component_ksb_mappings_sql('c')
         self.assertIn('mapping.component_id=c.id', sql)
         self.assertIn(
-            'JOIN curriculum.standard_ksbs standard_ksb '
+            'JOIN curriculum.ksb_standard_definitions standard_ksb '
             'ON standard_ksb.id = mapping.standard_ksb_id',
             sql,
         )
         self.assertIn("'code',standard_ksb.ksb_code", sql)
         self.assertIn("'description',standard_ksb.ksb_description", sql)
-        self.assertIn("'ksbId',mapping.ksb_id", sql)
+        self.assertIn("'ksbId',lower(standard_ksb.standard_ref)", sql)
+        self.assertNotIn("mapping.ksb_id", sql)
         self.assertIn("'sourceType',mapping.source_type", sql)
         self.assertIn("'sourceId',mapping.source_id", sql)
-        self.assertIn(current_status_sql('mapping'), sql)
+        self.assertIn("mapping.status='active'", sql)
         for removed in ('c.ksb_mappings', 'mapping.ksb_code', 'mapping.ksb_description',
                         'mapping.module_catalogue_id', 'mapping.week_id',
                         'mapping.deleted_at', 'mapping.deleted_via_parent'):
@@ -96,7 +97,7 @@ class CanonicalKsbReadTests(SimpleTestCase):
         self.assertIn('mapping.component_id=c.id', sql)
         self.assertIn('standard_ksb.id = mapping.standard_ksb_id', sql)
         self.assertIn("'code',standard_ksb.ksb_code", sql)
-        self.assertIn(current_status_sql('mapping'), sql)
+        self.assertIn("mapping.status='active'", sql)
         self.assertNotIn('description', sql)
         for removed in ('c.ksb_mappings', 'mapping.ksb_code',
                         'mapping.module_catalogue_id', 'mapping.week_id',

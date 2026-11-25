@@ -19,8 +19,8 @@ What is remapped, and what is deliberately left alone
 -----------------------------------------------------
 Remapped: the columns that hold ``learners.id`` -- the FK children, the
 attendance tables, ``reviews``, and Progress Review runs. The attendance tables
-carry no FK, so they were confirmed by their own ``learner_name`` column
-matching ``learners.full_name`` rather than ``Created_users."Username"``.
+now use canonical learner FKs. The verified attendance JOIN view is derived
+from those keys and must not be remapped independently.
 
 ``evidence_files.learner_profile_id`` is a canonical ``learners.id`` child and
 is remapped with the other child keys. Left alone: ``learner_monthly_reports``,
@@ -48,12 +48,9 @@ CHILD_COLUMNS = [
     ("Learner", "evidence_files", "learner_profile_id"),
     ("Learner", "learner_progress_entries", "learner_id"),
     ("Learner", "learner_training_plan_modules", "learner_id"),
-    ("Learner", "learner_ksb_assignments", "learner_id"),
+    ("Learner", "ksb_learner_activity_mappings", "learner_id"),
     ("Learner", "reviews", "learner_id"),
     ("Learner", "learner_attendance_details", "learner_id"),
-    ("Learner", "learner_attendance_details", "learner_profile_id"),
-    ("Learner", "verified_teams_attendance", "learner_id"),
-    ("Learner", "verified_teams_attendance", "learner_profile_id"),
     ("Learner", "progress_review_runs", "learner_id"),
 ]
 
@@ -68,7 +65,7 @@ CHILD_COLUMNS = [
 #: hard way -- the first run rolled back on
 #: ``learner_training_plan_modules_learner_id_position_key``.
 DEFERRABLE_CONSTRAINTS = [
-    ("Learner", "learner_ksb_assignments", "learner_ksb_assignments_learner_id_fkey"),
+    ("Learner", "ksb_learner_activity_mappings", "learner_activity_ksbs_owner_fk"),
     ("Learner", "learner_progress_entries", "learner_progress_entries_learner_id_fkey"),
     ("Learner", "learner_training_plan_modules", "learner_training_plan_modules_learner_id_fkey"),
 ]
@@ -258,7 +255,7 @@ class Command(BaseCommand):
                     # the same reason. A straight update collides wherever a
                     # child's target id is another child's current id -- and on
                     # a table whose PRIMARY KEY is the learner id
-                    # (learner_ksb_assignments), that cannot be deferred away,
+                    # (ksb_learner_activity_mappings), that cannot be deferred away,
                     # so parking first is the only thing that works. Set-based
                     # from pre-change values, so each row moves exactly once.
                     for schema, table, column in CHILD_COLUMNS:

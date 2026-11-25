@@ -8,7 +8,7 @@ from . import free_course_hours as hours
 
 
 class FreeCourseHoursTests(unittest.TestCase):
-    def test_empty_assignments_do_not_read_migration_bridge(self):
+    def test_empty_assignments_do_not_read_ledger(self):
         with patch.object(hours, 'connections', {}) as connections:
             self.assertEqual(hours.accepted_activity_seconds(12, []), {})
             self.assertEqual(connections, {})
@@ -64,27 +64,23 @@ class FreeCourseHoursSQLTests(unittest.TestCase):
 
     def synthetic(self, *, accepted=True, enrolled=True, duplicate_enrollment=False,
                   deleted=False, owner=12, course='FREE', seconds=90, archived_component=False,
-                  bridge='original'):
+                  identity='canonical'):
         from psycopg.types.json import Jsonb
+        ledger = [dict(id=1,learner_id=owner,accepted=accepted,actual_seconds=seconds,
+                       free_course_ref='FREE',free_component_ref='C1',
+                       deleted_at='2026-01-01T00:00:00Z' if deleted else None)]
+        if identity == 'conflicting':
+            # Impossible with the real PK, but exercise the reader's fail-closed
+            # identity-count guard with an explicitly malformed synthetic source.
+            ledger.append(dict(ledger[0], free_component_ref='C2'))
+        elif identity == 'missing':
+            ledger[0].update(free_course_ref=None, free_component_ref=None)
         tables = [
-            ('"Learner".free_course_hours_migration', [dict(old_progress_id=1,learner_id=12,free_course_id='FREE',free_component_id='C1',actual_seconds=99999)]),
-            ('"Learner".learner_progress_entries', [dict(id=1,learner_id=owner,accepted=accepted,actual_seconds=seconds,deleted_at='2026-01-01T00:00:00Z' if deleted else None)]),
-            ('"Learner".free_course_hours_migration_additional', []),
-            ('"Learner".free_course_hours_migration_remaining', []),
+            ('"Learner".learner_progress_entries', ledger),
             ('curriculum.free_programme_components', [dict(id='C1',free_module_id='W1',deleted_at='2026-01-01T00:00:00Z' if archived_component else None)]),
             ('curriculum.free_course_weeks', [dict(id='W1',course_id=course,status='active')]),
             ('"Learner".learner_free_courses', [dict(id=i,learner_id=12,free_course_ref='FREE') for i in range(1, 3 if duplicate_enrollment else 2)] if enrolled else []),
         ]
-        original = tables[0][1]
-        if bridge in ('additional', 'both', 'conflicting'):
-            tables[2] = (tables[2][0], [dict(original[0], free_component_id='C2')]
-                         if bridge == 'conflicting' else original)
-        if bridge in ('remaining', 'all'):
-            tables[3] = (tables[3][0], original)
-        if bridge == 'all':
-            tables[2] = (tables[2][0], original)
-        if bridge in ('additional', 'remaining'):
-            tables[0] = (tables[0][0], [])
         sql = hours.HOURS_SQL
         ctes, params = [], []
         for index, (table, rows) in enumerate(sorted(tables, key=lambda item: -len(item[0]))):
@@ -94,15 +90,15 @@ class FreeCourseHoursSQLTests(unittest.TestCase):
             params.append(Jsonb(rows))
         return self.connection.execute('WITH ' + ','.join(ctes) + ' ' + sql, params + [12, ['FREE']]).fetchall()
 
-    def test_additional_and_overlapping_bridges_count_one_ledger_row(self):
-        for bridge in ('additional', 'both', 'remaining', 'all'):
-            self.assertEqual(self.synthetic(bridge=bridge), [('FREE', 'C1', 90, 1, 1)])
-            self.assertEqual(self.synthetic(bridge=bridge, deleted=True), [])
-            self.assertEqual(self.synthetic(bridge=bridge, enrolled=False), [])
+    def test_canonical_identity_keeps_consumer_eligibility_filters(self):
+        self.assertEqual(self.synthetic(), [('FREE', 'C1', 90, 1, 1)])
+        self.assertEqual(self.synthetic(deleted=True), [])
+        self.assertEqual(self.synthetic(enrolled=False), [])
+        self.assertEqual(self.synthetic(identity='missing'), [])
 
-    def test_conflict_across_bridges_is_rejected(self):
+    def test_malformed_duplicate_ledger_identity_is_rejected(self):
         with self.assertRaises(DatabaseError):
-            hours.activity_seconds(self.synthetic(bridge='conflicting'))
+            hours.activity_seconds(self.synthetic(identity='conflicting'))
 
     def test_current_attempt_identity_constraint_preserves_legacy_and_canonical_paths(self):
         definitions = self.connection.execute("SELECT pg_get_constraintdef(oid) FROM pg_constraint WHERE conrelid='\"Learner\".subject_activity_attempts'::regclass AND conname='subject_attempt_identity_required'").fetchone()

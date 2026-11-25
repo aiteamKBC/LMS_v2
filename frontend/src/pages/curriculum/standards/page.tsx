@@ -152,14 +152,14 @@ export default function CurriculumStandards() {
   }, [standards]);
 
   return (
-    <WorkspaceShell role="curriculum" roleLabel="Curriculum Designer" navItems={curriculumNavItems} workspaceLabel="Curriculum Studio" pageTitle="Skills England Standards" pageSubtitle={`${numberText(totals.standards)} standards from standard_ksbs`} userName="Rachel Myers" userRole="Curriculum Designer">
+    <WorkspaceShell role="curriculum" roleLabel="Curriculum Designer" navItems={curriculumNavItems} workspaceLabel="Curriculum Studio" pageTitle="Skills England Standards" pageSubtitle={`${numberText(totals.standards)} standards from ksb_standard_definitions`} userName="Rachel Myers" userRole="Curriculum Designer">
       <div className="curriculum-library-page min-h-full bg-background-100 p-4 sm:p-5 lg:p-6 space-y-4">
         <WorkspaceHeroBanner
           className="curriculum-library-hero"
           decorative
           eyebrow="Learning resources"
           title="Government standard library"
-          description="Live KSB definitions grouped by apprenticeship standard, version, funding, route and delivery status. Source table: curriculum.standard_ksbs."
+          description="Live KSB definitions grouped by apprenticeship standard, version, funding, route and delivery status. Source table: curriculum.ksb_standard_definitions."
           icon="ri-database-2-line"
           statIconPosition="leading"
           stats={[

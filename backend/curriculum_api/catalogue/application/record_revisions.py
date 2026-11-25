@@ -93,6 +93,7 @@ def week_template_revision(
     record_revision,
     WEEK_TEMPLATES_TABLE,
     WEEK_TEMPLATE_COMPONENTS_TABLE,
+    read_template_mapping_revision,
 ):
     """Fingerprint of the week template and the components it owns.
 
@@ -105,10 +106,14 @@ def week_template_revision(
     if not ident:
         return ''
     ensure_week_template_tables()
-    return record_revision((
+    revision = record_revision((
         ('template', WEEK_TEMPLATES_TABLE, 'id = %s', [ident], 'id'),
         ('components', WEEK_TEMPLATE_COMPONENTS_TABLE, 'week_template_id = %s', [ident], 'id'),
     ))
+    if not revision:
+        return ''
+    mappings = read_template_mapping_revision(ident)
+    return hashlib.sha256(json.dumps([revision,mappings],default=str).encode()).hexdigest()[:32]
 
 
 def module_record_revision(
@@ -184,3 +189,6 @@ def read_record_revisions(
             for identifier in wanted
         }
     return {'revisions': revisions}
+
+import hashlib
+import json

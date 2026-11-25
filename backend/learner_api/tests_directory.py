@@ -21,6 +21,9 @@ def directory_learner(pk=1, has_plan=False, learner_type="commercial"):
         "programme_id": "P1", "cohort_id": "C1", "group_id": "G1",
         "organization": "REF-1", "learner_type": learner_type,
         "case_owner": "Example Owner",
+        "learner_start_date": None, "learner_end_date": None,
+        "start_date": None, "end_date": None, "apprenticeship_end_date": None,
+        "coach_name": "", "coach_email": "", "reference_number": "",
     }
     loaded_fields = [
         field.attname
@@ -157,6 +160,24 @@ class LearnerDirectoryTests(SimpleTestCase):
     def setUp(self):
         self.enterContext(patch.object(views, 'with_placements', side_effect=lambda rows: rows))
         self.factory = RequestFactory()
+
+    def test_similar_names_with_different_emails_keep_their_own_records(self):
+        learners = [directory_learner(1), directory_learner(2)]
+        learners[0].username, learners[0].email = "Example Learner", "example.one@example.test"
+        learners[1].username, learners[1].email = "Example Learner Two", "example.two@example.test"
+        for role in ("staff", "admin"):
+            with self.subTest(role=role), \
+                    patch("login.permissions.authenticate_request", return_value=SimpleNamespace(role=role)), \
+                    patch.object(views, "learner_directory_queryset", return_value=learners), \
+                    patch.object(views, "_annotate_account_state"):
+                response = views.enrolment_users(self.factory.get("/learner_api/enrolment-users/"))
+            self.assertEqual(response.status_code, 200)
+            data = json.loads(response.content)
+            self.assertEqual(data["count"], 2)
+            self.assertEqual([row["id"] for row in data["results"]], ["1", "2"])
+            self.assertEqual([row["email"] for row in data["results"]], [
+                "example.one@example.test", "example.two@example.test",
+            ])
 
     def test_get_preserves_rows_and_account_flags_without_advancing_statuses(self):
         learners = [directory_learner(1, True), directory_learner(2, False)]

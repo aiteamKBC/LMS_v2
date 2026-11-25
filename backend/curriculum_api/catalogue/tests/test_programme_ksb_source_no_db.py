@@ -44,7 +44,9 @@ def find_standard(identifier):
 
 
 def config(programme_id, name, source=''):
-    return {'programme_id': programme_id, 'name': name, 'ksb_profile_source_id': source,
+    from curriculum_api.ksb_mapping_placement import standard_reference
+    reference, version = standard_reference(source)
+    return {'standard_ref': reference, 'standard_version': version, 'programme_id': programme_id, 'name': name, 'ksb_profile_source_id': source,
             'is_active': True, 'is_archived': False, 'status': 'active'}
 
 
@@ -65,9 +67,9 @@ def build(configs, profiles=PROFILES):
 
 class StoredSourceReaderTests(SimpleTestCase):
     def test_reads_every_stored_form(self):
-        self.assertEqual(views.programme_config_ksb_source({'ksb_profile_source_id': 'standard:st0845-v1-1'}), ('standard', 'st0845-v1-1'))
-        self.assertEqual(views.programme_config_ksb_source({'ksb_profile_source_id': 'profile:KSBP-1'}), ('framework', 'KSBP-1'))
-        self.assertEqual(views.programme_config_ksb_source({'ksb_profile_source_id': 'KSBP-1'}), ('framework', 'KSBP-1'))
+        self.assertEqual(views.programme_config_ksb_source({'standard_ref': 'ST0845', 'standard_version': '1.1'}), ('standard', 'st0845-v1-1'))
+        self.assertEqual(views.programme_config_ksb_source({'ksb_profile_source_id': 'profile:KSBP-1'}), ('', ''))
+        self.assertEqual(views.programme_config_ksb_source({'ksb_profile_source_id': 'KSBP-1'}), ('', ''))
         self.assertEqual(views.programme_config_ksb_source({'ksb_profile_source_id': ''}), ('', ''))
         self.assertEqual(views.programme_config_ksb_source(None), ('', ''))
 
@@ -87,27 +89,27 @@ class AppliedProfileTests(SimpleTestCase):
         listed = {**ACTIVE_BESPOKE, 'programme_ids': ['PROG-PCP-L6', row['name']]}
         self.assertIsNone(views.programme_applied_ksb_profile(row, [listed], row['name']))
 
-    def test_an_applied_active_manual_profile_is_honoured(self):
+    def test_retired_manual_profiles_do_not_assign_official_ksbs(self):
         row = config('PROG-BESPOKE', 'Bespoke Programme', 'KSBP-BESPOKE')
-        self.assertIs(views.programme_applied_ksb_profile(row, PROFILES, row['name']), ACTIVE_BESPOKE)
+        self.assertIsNone(views.programme_applied_ksb_profile(row, PROFILES, row['name']))
         prefixed = config('PROG-BESPOKE', 'Bespoke Programme', 'profile:KSBP-BESPOKE')
-        self.assertIs(views.programme_applied_ksb_profile(prefixed, PROFILES, row['name']), ACTIVE_BESPOKE)
+        self.assertIsNone(views.programme_applied_ksb_profile(prefixed, PROFILES, row['name']))
         coverage_form = config('PROG-BESPOKE', 'Bespoke Programme', 'ksb-KSBP-BESPOKE')
-        self.assertIs(views.programme_applied_ksb_profile(coverage_form, PROFILES, row['name']), ACTIVE_BESPOKE)
+        self.assertIsNone(views.programme_applied_ksb_profile(coverage_form, PROFILES, row['name']))
 
     def test_the_stored_profile_beats_another_profile_matching_the_name(self):
         row = config('PROG-X', 'Bespoke Programme', 'KSBP-EMPTY')
-        self.assertIs(views.programme_applied_ksb_profile(row, PROFILES, row['name']), ARCHIVED_EMPTY)
+        self.assertIsNone(views.programme_applied_ksb_profile(row, PROFILES, row['name']))
 
     def test_an_explicitly_applied_archived_profile_is_still_the_programmes_source(self):
         row = config('PROG-PARKED', 'Parked Programme', 'KSBP-EMPTY')
-        self.assertIs(views.programme_applied_ksb_profile(row, PROFILES, row['name']), ARCHIVED_EMPTY)
+        self.assertIsNone(views.programme_applied_ksb_profile(row, PROFILES, row['name']))
 
     def test_with_nothing_stored_only_an_active_profile_matches_by_name(self):
         bare = config('PROG-BARE', 'Bare Programme')
         self.assertIsNone(views.programme_applied_ksb_profile(bare, PROFILES, bare['name']))
         named = config('PROG-NAMED', 'Named Only Programme')
-        self.assertIs(views.programme_applied_ksb_profile(named, PROFILES, named['name']), ACTIVE_BESPOKE)
+        self.assertIsNone(views.programme_applied_ksb_profile(named, PROFILES, named['name']))
 
     def test_a_stored_profile_that_no_longer_exists_does_not_fall_back_to_a_name(self):
         row = config('PROG-NAMED', 'Named Only Programme', 'KSBP-GONE')
@@ -122,16 +124,16 @@ class ProgrammeCardLabelTests(SimpleTestCase):
         self.assertEqual(card['ksbProfileSourceId'], 'standard:st0845-v1-1')
         self.assertEqual(card['ksbTotal'], 2)
 
-    def test_an_active_manual_profile_still_names_its_programme(self):
+    def test_retired_profile_cannot_supply_programme_totals(self):
         programmes = build([config('PROG-BESPOKE', 'Bespoke Programme', 'KSBP-BESPOKE')])
-        self.assertEqual(programmes['PROG-BESPOKE']['standard'], 'Bespoke data profile')
-        self.assertEqual(programmes['PROG-BESPOKE']['ksbTotal'], 3)
+        self.assertEqual(programmes['PROG-BESPOKE']['standard'], 'Bespoke Programme')
+        self.assertEqual(programmes['PROG-BESPOKE']['ksbTotal'], 0)
 
     def test_with_nothing_stored_an_archived_profile_does_not_name_the_programme(self):
         programmes = build([config('PROG-BARE', 'Bare Programme'), config('PROG-NAMED', 'Named Only Programme')])
         self.assertEqual(programmes['PROG-BARE']['standard'], 'Bare Programme')
         self.assertEqual(programmes['PROG-BARE']['ksbTotal'], 0)
-        self.assertEqual(programmes['PROG-NAMED']['standard'], 'Bespoke data profile')
+        self.assertEqual(programmes['PROG-NAMED']['standard'], 'Named Only Programme')
 
     def test_changing_the_applied_source_changes_the_label(self):
         name = 'Project Controls Professional Level 6'
@@ -141,9 +143,9 @@ class ProgrammeCardLabelTests(SimpleTestCase):
         unapplied = build([config('PROG-PCP-L6', name, '')])['PROG-PCP-L6']
         self.assertEqual(
             [before['standard'], after_standard['standard'], after_profile['standard'], unapplied['standard']],
-            ['Associate project manager', 'Project controls professional', 'Bespoke data profile', name],
+            ['Associate project manager', 'Project controls professional', name, name],
         )
-        self.assertEqual([before['ksbTotal'], after_standard['ksbTotal'], after_profile['ksbTotal'], unapplied['ksbTotal']], [1, 2, 3, 0])
+        self.assertEqual([before['ksbTotal'], after_standard['ksbTotal'], after_profile['ksbTotal'], unapplied['ksbTotal']], [1, 2, 0, 0])
 
     def test_an_unknown_standard_falls_back_to_the_programme_name(self):
         programmes = build([config('PROG-ODD', 'Odd Programme', 'standard:st9999-v1-0')])

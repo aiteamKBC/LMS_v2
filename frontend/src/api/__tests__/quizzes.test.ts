@@ -1,8 +1,45 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { generateQuizReading, submitQuizAttempt } from '../quizzes';
+import { startTimeTracking } from '../timeTracking';
 import { ActivityTimeConflictError } from '@/lib/activityTimeConflict';
 
 afterEach(() => vi.unstubAllGlobals());
+
+describe('personal learning quiz transport', () => {
+  it.each(['preview', 'all', 'study'] as const)('starts quiz timing and submits answers in %s mode', async mode => {
+    const learnerId = `pl.7.${mode}.MOD-A`;
+    const session = { sessionId: 'synthetic-session', trackingToken: 'synthetic-token',
+      startedAt: '2026-11-24T10:00:00Z', countingMode: 'active_quiz', rewardTracking: false };
+    const result = { preview: mode !== 'study', passed: true, grade: 1 };
+    const request = vi.fn(async (input: string, options?: RequestInit) => {
+      const headers = new Headers(options?.headers);
+      // Mirror the gateway's exact-value check after browser normalization.
+      if (headers.get('X-Requested-With') !== 'XMLHttpRequest') {
+        return new Response(JSON.stringify({ error: 'Request verification is required.' }), { status: 403 });
+      }
+      const url = new URL(input, window.location.origin);
+      expect(url.pathname).toBe(`/learner_api/personal-learning/${learnerId}/request/`);
+      expect(options?.method).toBe('POST');
+      expect(options?.credentials).toBe('include');
+      expect(headers.get('Content-Type')).toBe('application/json');
+      return new Response(JSON.stringify(url.searchParams.get('path')?.startsWith('/learner_api/time-tracking/') ? session : result));
+    });
+    vi.stubGlobal('fetch', request);
+
+    const timing = await startTimeTracking('quiz', 7, 'commercial', learnerId, 'active_quiz');
+    expect(timing).toEqual(session);
+    const submission = { componentId: 'PROGRAMME-Q1', answers: { '1': [10, 11] }, timeTakenSeconds: 33,
+      startedAt: timing.startedAt, trackingToken: timing.trackingToken };
+    await expect(submitQuizAttempt(7, 'commercial', learnerId, submission)).resolves.toEqual(result);
+    expect(request).toHaveBeenCalledTimes(2);
+    expect(JSON.parse(request.mock.calls[0][1]!.body as string)).toEqual({
+      activityKind: 'quiz', activityId: '7', countingMode: 'active_quiz', persistent: true,
+    });
+    expect(JSON.parse(request.mock.calls[1][1]!.body as string)).toEqual(submission);
+    expect(new URL(request.mock.calls[1][0], window.location.origin).searchParams.get('path'))
+      .toBe(`/learner_api/quizzes/7/submit/?kind=commercial&learnerId=${learnerId}`);
+  });
+});
 
 describe('quiz time conflicts', () => {
   const submission = { componentId: 'PROGRAMME-Q1', answers: { '1': 1 }, timeTakenSeconds: 120, startedAt: '2026-11-01T10:00:00Z', trackingToken: 'synthetic' };
