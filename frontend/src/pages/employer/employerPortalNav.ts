@@ -1,6 +1,7 @@
 import type { SidebarNavItem } from '@/components/feature/Sidebar';
 import { useAuth } from "@/hooks/useAuth";
 import { useLocation } from 'react-router-dom';
+import { useEmployerPointerFocus } from './useEmployerPointerFocus';
 
 /**
  * One destination per menu item, so the sidebar's highlight and the content
@@ -26,6 +27,7 @@ export function employerPortalNav(employerId: string): SidebarNavItem[] {
  * learner workspace's look; only the name in the header follows the session.
  */
 export function useEmployerPortalChrome(employerId: string, employerName?: string) {
+  useEmployerPointerFocus();
   const { auth } = useAuth();
   const { pathname, search, state } = useLocation();
   const root = `/employers/${employerId}`;
