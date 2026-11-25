@@ -1,18 +1,18 @@
 @import './employer-palette.css';
 
 .cards { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 14px; }
-.card { --tone: var(--employer-primary); --tint: var(--employer-soft); display: flex; flex-direction: column; align-items: flex-start; min-width: 0; min-height: 170px; gap: 10px; padding: 18px; color: var(--ink); border: 1px solid var(--line); border-radius: 16px; background: linear-gradient(135deg, var(--surface) 25%, var(--tint)); box-shadow: inset 0 3px var(--tone), 0 4px 16px #32136d06; text-align: left; }
+.card { --tone: var(--employer-primary); display: flex; flex-direction: column; align-items: flex-start; min-width: 0; min-height: 170px; gap: 10px; padding: 18px; color: var(--ink); border: 1px solid var(--line); border-radius: 16px; background: var(--surface); box-shadow: 0 4px 16px #32136d06; text-align: left; }
 .card:hover { border-color: var(--tone); }
 .card:focus-visible { outline: 3px solid var(--tone); outline-offset: 3px; }
 .icon { display: grid; place-items: center; width: 36px; height: 36px; border-radius: 11px; color: var(--tone); background: color-mix(in srgb, var(--tone) 9%, var(--surface)); }
 .label { font-size: 12px; font-weight: 600; line-height: 1.5; }
 .card strong { margin-top: auto; font-size: clamp(20px, 2vw, 29px); font-weight: 750; line-height: 1.2; overflow-wrap: anywhere; }
 .card small { font-size: 11px; line-height: 1.5; color: var(--muted); }
-.card[data-tone='green'] { --tone: var(--employer-success); --tint: var(--employer-success-soft); }
-.card[data-tone='blue'] { --tone: var(--employer-teal); --tint: var(--employer-teal-soft); }
-.card[data-tone='amber'] { --tone: var(--employer-gold-ink); --tint: var(--employer-gold-soft); }
+.card[data-tone='green'] { --tone: var(--employer-success); }
+.card[data-tone='blue'] { --tone: var(--employer-primary); }
+.card[data-tone='amber'] { --tone: var(--employer-gold-ink); }
 .card[data-tone='amber'] .icon { background: var(--employer-gold); color: var(--employer-on-gold); }
-.card[data-tone='rose'] { --tone: var(--employer-blue); --tint: var(--employer-blue-soft); }
+.card[data-tone='rose'] { --tone: var(--employer-primary); }
 .card[data-tone='overall'] { background: color-mix(in srgb, var(--purple) 7%, var(--surface)); border-color: color-mix(in srgb, var(--purple) 30%, var(--line)); }
 .chartPanel { padding: 22px; border: 1px solid var(--line); border-radius: 16px; color: var(--ink); background: var(--surface); }
 .chartHeader { display: flex; justify-content: space-between; align-items: flex-start; gap: 20px; }
@@ -21,23 +21,23 @@
 .chartHeader p, .chartNote { margin-top: 8px !important; color: var(--muted); font-size: 12px; line-height: 1.6; }
 .chartHeader label { display: flex; flex-direction: column; gap: 5px; max-width: 300px; min-width: 180px; color: var(--muted); font-size: 12px; }
 .chartHeader select { width: 100%; padding: 9px 12px; border: 1px solid var(--line); border-radius: 10px; color: var(--ink); background: var(--surface); }
-.columnCanvas { --plot-height: 240px; display: grid; grid-template-columns: 42px minmax(0, 1fr); gap: 12px; }
-.columnAxis { position: relative; height: var(--plot-height); margin-top: 36px; color: var(--muted); font-size: 11px; }
+.columnCanvas { --plot-height: 140px; display: grid; grid-template-columns: 36px minmax(0, 1fr); gap: 12px; margin-top: 12px; }
+.columnAxis { position: relative; height: var(--plot-height); margin-top: 28px; color: var(--muted); font-size: 11px; }
 .columnAxis span { position: absolute; right: 0; transform: translateY(50%); }
-.columnScroll { min-width: 0; overflow-x: auto; padding-top: 36px; padding-bottom: 12px; overscroll-behavior-x: contain; }
+.columnScroll { min-width: 0; overflow-x: auto; padding-top: 28px; padding-bottom: 4px; overscroll-behavior-x: contain; }
 .columnScroll:focus-visible { outline: 2px solid var(--purple); outline-offset: 3px; }
 .columnPlot { position: relative; min-width: 0; }
-.columnGroups { display: grid; gap: 48px; position: relative; }
+.columnGroups { display: grid; gap: 24px; position: relative; }
 .columnModule { min-width: 0; text-align: center; }
-.columnModuleTitle { margin: 16px 6px 0; font-size: 13px; font-weight: 650; line-height: 1.5; overflow-wrap: anywhere; }
+.columnModuleTitle { margin: 12px 6px 0; font-size: 13px; font-weight: 650; line-height: 1.5; overflow-wrap: anywhere; }
 .columnLegend { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 10px 18px; margin: 0; padding: 0; list-style: none; max-width: 600px; }
 .columnLegend li { display: inline-flex; align-items: center; gap: 7px; font-size: 12px; color: var(--muted); }
 .columnLegend span { width: 10px; height: 10px; border-radius: 3px; background: var(--employer-series-1); }
 .columnLegend [data-series='1'] span { background: var(--employer-series-2); }
 .columnLegend [data-series='2'] span { background: var(--employer-series-3); }
 .columnLegend [data-series='3'] span { background: var(--employer-series-4); }
-.columnGuides { position: absolute; inset: 0 0 auto; height: var(--plot-height); border-bottom: 1px solid var(--line); background: repeating-linear-gradient(to top, var(--line) 0, var(--line) 1px, transparent 1px, transparent 25%); pointer-events: none; }
-.columns { position: relative; display: grid; grid-template-columns: repeat(4, 32px); justify-content: center; gap: 0; }
+.columnGuides { position: absolute; inset: 0 0 auto; height: var(--plot-height); border-bottom: 1px solid var(--line); background: repeating-linear-gradient(to top, var(--line) 0, var(--line) 1px, transparent 1px, transparent 50%); pointer-events: none; }
+.columns { position: relative; display: grid; grid-template-columns: repeat(4, 36px); justify-content: center; gap: 8px; }
 .columnSeries { --bar: var(--employer-series-1); min-width: 0; text-align: center; }
 .columnSeries[data-series='1'] { --bar: var(--employer-series-2); }
 .columnSeries[data-series='2'] { --bar: var(--employer-series-3); }
@@ -45,15 +45,10 @@
 .columnWell { position: relative; display: flex; justify-content: center; height: var(--plot-height); }
 .columnBar, .columnZero { position: absolute; bottom: 0; width: 100%; background: var(--bar); border-radius: 3px 3px 0 0; }
 .columnZero { height: 2px; }
-.columnValue, .columnOutsideValue { position: absolute; font-size: 10px; font-weight: 700; line-height: 1; white-space: nowrap; font-variant-numeric: tabular-nums; }
-.columnValue { top: 50%; left: 50%; transform: translate(-50%, -50%) rotate(-90deg); color: var(--employer-on-primary); }
-.columnSeries[data-series='1'] .columnValue { color: var(--employer-on-gold); }
-.columnOutsideValue { color: var(--ink); }
+.columnOutsideValue { position: absolute; color: var(--ink); font-size: 11px; font-weight: 650; line-height: 1; white-space: nowrap; font-variant-numeric: tabular-nums; }
 .columnMissing { position: absolute; bottom: 10px; color: var(--muted); font-size: 12px; }
-.columnCoverage { display: block; margin: 10px 3px 0; color: var(--muted); font-size: 9px; line-height: 1.5; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
 @container (max-width: 560px) {
-  .columnCanvas { --plot-height: 200px; grid-template-columns: 32px minmax(0, 1fr); gap: 8px; }
-  .columnValue, .columnMissing { font-size: 10px; }
+  .columnCanvas { grid-template-columns: 30px minmax(0, 1fr); gap: 8px; }
   .columnLegend { justify-content: flex-start; }
 }
 .moduleCards { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px; margin-top: 20px; }

@@ -125,13 +125,13 @@ describe('employer home dashboard', () => {
     showPage();
     const performance = within(await screen.findByRole('region', { name: 'Learning performance' }));
     expect(performance.getAllByRole('button')).toHaveLength(5);
-    expect(performance.getByRole('article', { name: 'Average performance: calculation pending' })).toBeVisible();
-    expect(await performance.findByRole('button', { name: 'Average off-the-job hours: 80 h' })).toBeVisible();
+    expect(await performance.findByRole('article', { name: 'Average performance: 51.5%' })).toBeVisible();
+    expect(await performance.findByRole('button', { name: 'Average off-the-job hours: 31.3%' })).toBeVisible();
     expect(screen.queryByRole('region', { name: /^Contracts/ })).not.toBeInTheDocument();
     expect(fetchEmployerContracts).not.toHaveBeenCalled();
     const modules = within(await screen.findByRole('region', { name: 'Modules' }));
     const second = within(await modules.findByRole('article', { name: 'Second module' }));
-    expect(second.getByRole('progressbar')).toHaveAttribute('aria-valuenow', '0');
+    expect(second.getByRole('group', { name: 'Module timeline' })).toBeVisible();
     expect(performance.queryByRole('img')).not.toBeInTheDocument();
     const columns = within(screen.getByRole('region', { name: 'Module performance' }));
     expect(columns.getByRole('group', { name: 'Module performance column chart' })).toBeVisible();
@@ -171,16 +171,16 @@ describe('employer home dashboard', () => {
     expect(chart.getByRole('meter', { name: 'Attendance' })).toHaveAttribute('aria-valuenow', '70');
     expect(chart.queryByRole('meter', { name: 'Reviews' })).not.toBeInTheDocument();
     expect(summary.queryByRole('img')).not.toBeInTheDocument();
-    expect(summary.getByRole('button', { name: 'Average off-the-job hours: 80 h' })).toBeVisible();
+    expect(summary.getByRole('button', { name: 'Average off-the-job hours: 31.3%' })).toBeVisible();
     await userEvent.selectOptions(screen.getByRole('combobox', { name: 'Cohort' }), 'Cohort A');
     for (const meter of chart.getAllByRole('meter')) expect(meter).toHaveAttribute('aria-valuenow', '50');
-    const assignments = summary.getByRole('button', { name: 'Assignment submission: 50%' });
+    const assignments = summary.getByRole('button', { name: 'Assignment submission: 1' });
     assignments.focus();
     await userEvent.keyboard('{Enter}');
     const dialog = within(screen.getByRole('dialog', { name: 'Assignment submission' }));
     expect(dialog.getByText('Alex Learner')).toBeVisible();
     expect(dialog.queryByText('Morgan Learner')).not.toBeInTheDocument();
-    expect(dialog.getByText('50%')).toBeVisible();
+    expect(dialog.getByText('1 submitted')).toBeVisible();
   });
 
   it('updates all calculated performance cards and their details for combined filters and Clear filters', async () => {
@@ -196,27 +196,27 @@ describe('employer home dashboard', () => {
       : [makeReview('morgan-review'), makeReview('morgan-completed', { status: 'completed' })] }));
     showPage();
     const cards = within(await screen.findByRole('region', { name: 'Learning performance' }));
-    const expectCards = (attendance: string, assignments: string, hours: string, ksb: string, reviews: string) => {
+    const expectCards = (attendance: string, assignments: string, hours: string, ksb: string, reviews: string, performance: string) => {
       for (const name of [`Average attendance: ${attendance}`, `Assignment submission: ${assignments}`,
         `Average off-the-job hours: ${hours}`, `Average KSBs: ${ksb}`, `Reviews: ${reviews}`]) {
         expect(cards.getByRole('button', { name })).toBeVisible();
       }
-      expect(cards.getByRole('article', { name: 'Average performance: calculation pending' })).toBeVisible();
+      expect(cards.getByRole('article', { name: `Average performance: ${performance}` })).toBeVisible();
     };
-    await waitFor(() => expectCards('73.3%', '75%', '80 h', '50%', '3'));
+    await waitFor(() => expectCards('73.3%', '3', '31.3%', '50%', '3', '51.5%'));
     await userEvent.selectOptions(screen.getByRole('combobox', { name: 'Cohort' }), 'Cohort A');
-    expectCards('80%', '50%', '90 h', '25%', '1');
+    expectCards('80%', '1', '45%', '25%', '1', '50%');
     await userEvent.click(cards.getByRole('button', { name: 'Average KSBs: 25%' }));
     const details = within(screen.getByRole('dialog', { name: 'Average KSBs' }));
     expect(details.getByText('Alex Learner')).toBeVisible();
     expect(details.queryByText('Morgan Learner')).not.toBeInTheDocument();
     await userEvent.click(details.getByRole('button', { name: 'Close' }));
     await userEvent.selectOptions(screen.getByRole('combobox', { name: 'Module' }), 'legacy:B');
-    expectCards('Unavailable', 'Unavailable', 'Unavailable', 'Unavailable', '0');
+    expectCards('Unavailable', 'Unavailable', 'Unavailable', 'Unavailable', '0', 'Unavailable');
     await userEvent.click(screen.getAllByRole('button', { name: 'Clear filters' })[0]);
-    expectCards('73.3%', '75%', '80 h', '50%', '3');
+    expectCards('73.3%', '3', '31.3%', '50%', '3', '51.5%');
     await userEvent.selectOptions(screen.getByRole('combobox', { name: 'Module' }), 'legacy:B');
-    expectCards('66.7%', '100%', '70 h', '75%', '2');
+    expectCards('66.7%', '2', '17.5%', '75%', '2', '53.1%');
     expect(api.overview).toHaveBeenCalledTimes(2);
   });
 
@@ -247,6 +247,7 @@ describe('employer home dashboard', () => {
     showPage();
     const chart = within(await screen.findByRole('region', { name: 'Module performance' }));
     expect(await chart.findByRole('status', { name: 'Loading module chart' })).toBeVisible();
+    expect(screen.getByRole('article', { name: 'Average performance: Loading' })).toHaveAttribute('aria-busy', 'true');
     expect(chart.queryByRole('meter')).not.toBeInTheDocument();
   });
 
@@ -258,8 +259,10 @@ describe('employer home dashboard', () => {
     showPage();
     const modules = within(await screen.findByRole('region', { name: 'Modules' }));
     const shared = within(await modules.findByRole('article', { name: 'Shared module' }));
-    expect(shared.getByRole('progressbar')).toHaveAttribute('aria-valuenow', '50');
-    expect(shared.getByText('2 of 2 learners have progress data')).toBeVisible();
+    expect(shared.getByRole('group', { name: 'Module timeline' })).toBeVisible();
+    expect(shared.queryByRole('progressbar')).not.toBeInTheDocument();
+    expect(shared.queryByText('Average progress')).not.toBeInTheDocument();
+    expect(shared.queryByText(/learners have progress data/)).not.toBeInTheDocument();
     expect(modules.getAllByRole('article', { name: 'Individual module' })).toHaveLength(2);
     expect(screen.queryByRole('region', { name: 'Employer learners' })).not.toBeInTheDocument();
     expect(screen.queryByRole('region', { name: 'Learner progress overview' })).not.toBeInTheDocument();
@@ -282,14 +285,16 @@ describe('employer home dashboard', () => {
     await userEvent.keyboard(' ');
     expect(learnerToggle).toHaveAttribute('aria-expanded', 'true');
     await userEvent.selectOptions(screen.getByRole('combobox', { name: 'Cohort' }), 'Cohort A');
-    expect(shared.getByRole('progressbar')).toHaveAttribute('aria-valuenow', '80');
-    expect(shared.getByText('1 of 1 learners have progress data')).toBeVisible();
+    expect(shared.getByRole('button', { name: 'View learners (1)' })).toBeVisible();
+    expect(shared.getByText('80%')).toBeVisible();
+    expect(shared.queryByRole('link', { name: 'Morgan Learner' })).not.toBeInTheDocument();
     expect(api.overview).toHaveBeenCalledTimes(2);
     await userEvent.click(screen.getByRole('button', { name: 'Clear filters' }));
-    expect(shared.getByRole('progressbar')).toHaveAttribute('aria-valuenow', '50');
+    expect(shared.getByRole('button', { name: 'View learners (2)' })).toBeVisible();
+    expect(shared.getByRole('link', { name: 'Morgan Learner' })).toBeVisible();
   });
 
-  it('shows every review on Overview and filters learners by module identity using the existing filters', async () => {
+  it('keeps review journeys off Overview while module identity and combined filters update module learners', async () => {
     api.overview.mockImplementation(async (_employer, _kind, id) => ({ programme: [
       { id: 'current:shared', title: 'Shared module', percent: 0 },
       { id: id === '11' ? 'current:individual' : 'legacy:individual', title: 'Individual module', percent: null },
@@ -303,34 +308,31 @@ describe('employer home dashboard', () => {
     const filters = within(await screen.findByRole('form', { name: 'Filter learners' }));
     const selector = filters.getByRole('combobox', { name: 'Module' });
     await waitFor(() => expect(selector).toBeEnabled());
-    const journeys = within(screen.getByRole('region', { name: 'Progress review journey' }));
-    const alex = within(await journeys.findByRole('article', { name: 'Alex Learner reviews' }));
-    expect(alex.getByRole('link', { name: 'View reviews for Alex Learner' })).toHaveTextContent('View reviews (3)');
-    expect(alex.getByText('1 awaiting your signature')).toBeVisible();
-    expect(alex.getByRole('link', { name: /^Alex Learner: Gateway Review,/ })).toHaveAttribute('href', '/employers/8/learner/apprenticeship/11?tab=reviews&reviewId=11-gateway');
+    expect(screen.queryByRole('region', { name: 'Progress review journey' })).not.toBeInTheDocument();
+    const matrix = within(screen.getByRole('region', { name: 'Learner-by-module progress' }));
+    expect(matrix.getAllByRole('rowheader')).toHaveLength(2);
 
     await userEvent.selectOptions(selector, 'legacy:individual');
-    expect(journeys.queryByRole('article', { name: 'Alex Learner reviews' })).not.toBeInTheDocument();
-    const morgan = within(journeys.getByRole('article', { name: 'Morgan Learner reviews' }));
-    expect(morgan.getByRole('link', { name: 'View reviews for Morgan Learner' })).toHaveTextContent('View reviews (3)');
-    expect(morgan.getByRole('link', { name: /^Morgan Learner: Review 2,/ })).toHaveAttribute('href', '/employers/8/learner/commercial/12?tab=reviews&reviewId=12-signature');
-    expect(journeys.getByText('1 of 2 learners')).toBeVisible();
+    expect(matrix.queryByRole('link', { name: 'Alex Learner' })).not.toBeInTheDocument();
+    expect(matrix.getByRole('link', { name: 'Morgan Learner' })).toHaveAttribute('href', '/employers/8/learner/commercial/12');
+    expect(matrix.getAllByRole('rowheader')).toHaveLength(1);
     expect(within(screen.getByRole('region', { name: 'Modules' })).getAllByRole('article')).toHaveLength(1);
     expect(within(screen.getByRole('region', { name: 'Module performance' })).getAllByRole('group', { name: 'Individual module' })).toHaveLength(1);
 
     await userEvent.selectOptions(selector, 'current:shared');
-    expect(journeys.getAllByRole('article')).toHaveLength(2);
+    expect(matrix.getAllByRole('rowheader')).toHaveLength(2);
     await userEvent.selectOptions(filters.getByRole('combobox', { name: 'Cohort' }), 'Cohort A');
-    expect(journeys.getAllByRole('article')).toHaveLength(1);
-    expect(journeys.getByRole('article', { name: 'Alex Learner reviews' })).toBeVisible();
+    expect(matrix.getAllByRole('rowheader')).toHaveLength(1);
+    expect(matrix.getByRole('link', { name: 'Alex Learner' })).toBeVisible();
     await userEvent.selectOptions(selector, 'legacy:individual');
-    expect(journeys.getByRole('heading', { name: 'No matching learners' })).toBeVisible();
-    await userEvent.click(journeys.getByRole('button', { name: 'Clear filters' }));
+    expect(matrix.queryByRole('rowheader')).not.toBeInTheDocument();
+    await userEvent.click(filters.getByRole('button', { name: 'Clear filters' }));
     expect(selector).toHaveValue('');
-    expect(journeys.getAllByRole('article')).toHaveLength(2);
+    expect(matrix.getAllByRole('rowheader')).toHaveLength(2);
     await userEvent.type(filters.getByRole('searchbox', { name: 'Search learners' }), 'morgan');
-    expect(journeys.getAllByRole('article')).toHaveLength(1);
-    expect(journeys.getByRole('article', { name: 'Morgan Learner reviews' })).toBeVisible();
+    expect(matrix.getAllByRole('rowheader')).toHaveLength(1);
+    expect(matrix.getByRole('link', { name: 'Morgan Learner' })).toBeVisible();
+    expect(screen.queryByRole('region', { name: 'Progress review journey' })).not.toBeInTheDocument();
     expect(api.overview).toHaveBeenCalledTimes(2);
     expect(api.reviews).toHaveBeenCalledTimes(2);
   });
@@ -347,9 +349,9 @@ describe('employer home dashboard', () => {
     await waitFor(() => expect(api.overview).toHaveBeenCalledTimes(2));
     await act(async () => resolveAlex(moduleData));
     await userEvent.selectOptions(selector, 'current:A');
-    let journeys = within(screen.getByRole('region', { name: 'Progress review journey' }));
-    expect(journeys.getByRole('article', { name: 'Alex Learner reviews' })).toBeVisible();
-    expect(journeys.queryByRole('article', { name: 'Morgan Learner reviews' })).not.toBeInTheDocument();
+    const matrix = within(screen.getByRole('region', { name: 'Learner-by-module progress' }));
+    expect(matrix.getByRole('link', { name: 'Alex Learner' })).toBeVisible();
+    expect(matrix.queryByRole('link', { name: 'Morgan Learner' })).not.toBeInTheDocument();
     const retry = screen.getByRole('button', { name: 'Retry module membership' });
     expect(retry.closest('[role="alert"]')).toHaveTextContent('Only learners confirmed in the selected module are shown');
     api.overview.mockImplementation((_employer, _kind, id) => id === '11'
@@ -357,15 +359,15 @@ describe('employer home dashboard', () => {
     await userEvent.click(retry);
     expect(selector).toHaveValue('current:A');
     expect(selector).toBeDisabled();
-    expect(screen.getByRole('status', { name: 'Loading module learners' })).toBeVisible();
+    expect(matrix.queryByRole('rowheader')).not.toBeInTheDocument();
     expect(screen.queryByRole('region', { name: 'Progress review journey' })).not.toBeInTheDocument();
     await act(async () => resolveAlex(moduleData));
-    journeys = within(await screen.findByRole('region', { name: 'Progress review journey' }));
-    expect(journeys.getAllByRole('article')).toHaveLength(2);
+    expect(matrix.getAllByRole('rowheader')).toHaveLength(2);
+    expect(screen.queryByRole('region', { name: 'Progress review journey' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Retry module membership' })).not.toBeInTheDocument();
   });
 
-  it('shows module date ranges by identity and updates them with cohort filters', async () => {
+  it('shows module timelines by identity and updates their date ranges with cohort filters', async () => {
     api.overview.mockImplementation(async (_employer, _kind, id) => {
       const payload = dashboardOverviewFixture();
       payload.modules[0].start = id === '11' ? '2026-09-01' : '2026-10-01';
@@ -377,12 +379,23 @@ describe('employer home dashboard', () => {
     });
     showPage();
     const modules = within(await screen.findByRole('region', { name: 'Modules' }));
-    await waitFor(() => expect(modules.getAllByText('2 of 2 learners have progress data')).toHaveLength(2));
+    await waitFor(() => expect(modules.getAllByRole('group', { name: 'Module timeline' })).toHaveLength(2));
+    await modules.findByText('31 Dec 2026');
     const cards = modules.getAllByRole('article', { name: 'Module' });
     const current = within(cards.find(card => card.textContent?.includes('1 Sept 2026'))!);
     const historical = within(cards.find(card => card.textContent?.includes('10 Jan 2025'))!);
     expect(current.getByText('31 Dec 2026')).toHaveAttribute('datetime', '2026-12-31');
+    expect(current.getByRole('group', { name: 'Module timeline' })).toHaveTextContent('Start date1 Sept 2026End date31 Dec 2026');
     expect(historical.getByText('20 Mar 2025')).toHaveAttribute('datetime', '2025-03-20');
+    await userEvent.click(current.getByRole('button', { name: 'View learners (2)' }));
+    const learnerRows = within(current.getByRole('list', { name: 'Module learners' })).getAllByRole('listitem');
+    const alexTimeline = within(learnerRows.find(row => row.textContent?.includes('Alex Learner'))!).getByRole('group', { name: 'Module timeline' });
+    const morganTimeline = within(learnerRows.find(row => row.textContent?.includes('Morgan Learner'))!).getByRole('group', { name: 'Module timeline' });
+    expect(within(alexTimeline).getByText('30 Nov 2026')).toBeVisible();
+    expect(within(morganTimeline).getByText('31 Dec 2026')).toBeVisible();
+    expect(within(alexTimeline).getByRole('img', { name: 'Alex Learner progress: 50%' })).toBeVisible();
+    expect(within(morganTimeline).getByRole('img', { name: 'Morgan Learner progress: 50%' })).toBeVisible();
+    await userEvent.click(current.getByRole('button', { name: 'View learners (2)' }));
     await userEvent.selectOptions(screen.getByRole('combobox', { name: 'Cohort' }), 'Cohort A');
     expect(current.getByText('1 Sept 2026')).toBeVisible();
     expect(current.getByText('30 Nov 2026')).toBeVisible();
@@ -428,15 +441,19 @@ describe('employer home dashboard', () => {
     expect(module.getByText('30 Nov 2026')).toHaveAttribute('datetime', '2026-11-30');
   });
 
-  it('excludes unavailable module progress from the average and counts each learner once', async () => {
+  it('keeps individual learner progress and counts each learner once beneath the timeline', async () => {
     api.overview.mockImplementation(async (_employer, _kind, id) => ({ programme: [
       { id: 'current:100', title: 'Shared module', percent: id === '11' ? 0 : null },
       { id: 'current:100', title: 'Shared module', percent: 100 },
     ] }));
     showPage();
     const module = within(await screen.findByRole('article', { name: 'Shared module' }));
-    expect(module.getByRole('progressbar')).toHaveAttribute('aria-valuenow', '0');
-    expect(module.getByText('1 of 2 learners have progress data')).toBeVisible();
+    expect(module.getByRole('group', { name: 'Module timeline' })).toBeVisible();
+    await userEvent.click(module.getByRole('button', { name: 'View learners (2)' }));
+    const learners = within(module.getByRole('list', { name: 'Shared module learners' }));
+    expect(learners.getAllByRole('listitem')).toHaveLength(2);
+    expect(learners.getByText('0%')).toBeVisible();
+    expect(learners.getByText('Unavailable')).toBeVisible();
   });
 
   it('retains successful module records on a partial failure and retries the failed source', async () => {
@@ -446,13 +463,14 @@ describe('employer home dashboard', () => {
     });
     showPage();
     const modules = within(await screen.findByRole('region', { name: 'Modules' }));
-    expect(await modules.findByRole('alert')).toHaveTextContent('Counts and averages include available records only');
-    expect(modules.getByRole('progressbar')).toHaveAttribute('aria-valuenow', '75');
+    expect(await modules.findByRole('alert')).toHaveTextContent('Timelines and learner counts include available records only');
+    await userEvent.click(modules.getByRole('button', { name: 'View learners (1)' }));
+    expect(modules.getByText('75%')).toBeVisible();
     api.overview.mockResolvedValue({ programme: [{ id: 'legacy:100', title: 'Historical module', percent: 25 }] });
     await userEvent.click(modules.getByRole('button', { name: 'Retry modules' }));
     await waitFor(() => expect(modules.queryByRole('alert')).not.toBeInTheDocument());
-    expect(modules.getByText('2 of 2 learners have progress data')).toBeVisible();
-    expect(modules.getByRole('progressbar')).toHaveAttribute('aria-valuenow', '25');
+    expect(modules.getByRole('button', { name: 'View learners (2)' })).toBeVisible();
+    expect(modules.getAllByText('25%')).toHaveLength(2);
   });
 
   it('combines Progress and Cohort in My learners for both the chart and table, and clears them', async () => {
@@ -478,7 +496,7 @@ describe('employer home dashboard', () => {
     await userEvent.click(screen.getByRole('link', { name: 'Back to overview' }));
     expect(await screen.findByRole('region', { name: 'Modules' })).toBeVisible();
     expect(screen.queryByRole('region', { name: 'Learner progress overview' })).not.toBeInTheDocument();
-    expect(screen.getByRole('region', { name: 'Progress review journey' })).toBeVisible();
+    expect(screen.queryByRole('region', { name: 'Progress review journey' })).not.toBeInTheDocument();
     expect(screen.queryByRole('combobox', { name: 'Progress' })).not.toBeInTheDocument();
     await waitFor(() => expect(api.overview).toHaveBeenCalledTimes(2));
   });
@@ -624,14 +642,16 @@ describe('employer home dashboard', () => {
     expect(table().getAllByRole('link', { name: '1 / 2 submitted' })).toHaveLength(2);
   });
 
-  it('shows the monthly review count without waiting for full review details', async () => {
+  it('keeps review loading on Reviews and the journey off Overview without a duplicate monthly summary', async () => {
     api.reviews.mockImplementation(() => new Promise(() => undefined));
     api.reviewSummary.mockResolvedValue({ events: [makeReview('due-this-month')] });
 
     showPage();
 
-    expect(await screen.findByRole('button', { name: /Reviews due this month: 2/ })).toBeInTheDocument();
-    expect(screen.getByRole('region', { name: 'Progress review journey' })).toBeVisible();
+    await screen.findByRole('region', { name: 'Learner summary' });
+    expect(screen.queryByRole('region', { name: 'Progress review journey' })).not.toBeInTheDocument();
+    await waitFor(() => expect(within(screen.getByRole('region', { name: 'Learner summary' })).getAllByRole('button')).toHaveLength(4));
+    expect(screen.queryByText('Reviews due this month')).not.toBeInTheDocument();
     cleanup();
     showPage('/employers/8/reviews');
     await screen.findByRole('region', { name: 'Progress review journey' });
@@ -839,13 +859,12 @@ describe('employer home dashboard', () => {
     expect(screen.queryByRole('img', { name: /Morgan Learner OTJ target today:/ })).not.toBeInTheDocument();
   });
 
-  it('combines search, programme, cohort and status filters and clears them', async () => {
+  it('combines search, programme and cohort filters and clears them', async () => {
     showPage('/employers/8/learners');
     await screen.findByRole('heading', { name: 'Your learners (2)' });
     await userEvent.type(screen.getByRole('searchbox', { name: 'Search learners' }), 'morgan');
     await userEvent.selectOptions(screen.getByRole('combobox', { name: 'Programme' }), 'Marketing');
     await userEvent.selectOptions(screen.getByRole('combobox', { name: 'Cohort' }), 'Cohort B');
-    await userEvent.selectOptions(screen.getByRole('combobox', { name: 'Status' }), 'inactive');
     expect(table().queryByRole('link', { name: 'View Alex Learner' })).not.toBeInTheDocument();
     expect(table().getByRole('link', { name: 'View Morgan Learner' })).toBeVisible();
     await userEvent.click(screen.getByRole('button', { name: 'Clear filters' }));
@@ -999,25 +1018,23 @@ describe('employer home dashboard', () => {
     expect(panel.getByText('Meeting link not available yet.')).toBeVisible();
   });
 
-  it('counts Progress and Gateway reviews this month while excluding unrelated support plans', async () => {
+  it('keeps Progress and Gateway reviews in the lower meetings panel without a duplicate summary', async () => {
     showPage();
-    const due = await screen.findByRole('button', { name: /Reviews due this month: 3\. Open progress reviews/ });
+    const panel = within(await screen.findByRole('region', { name: 'Meetings to attend (4)' }));
+    expect(screen.queryByText('Reviews due this month')).not.toBeInTheDocument();
     expect(screen.queryByText('Personal Support Plan')).not.toBeInTheDocument();
-    await userEvent.click(due);
-    const panel = within(await screen.findByRole('dialog', { name: 'Reviews due this month' }));
-    const listed = panel.getAllByRole('listitem');
-    expect(listed).toHaveLength(3);
-    expect(listed[0]).toHaveTextContent('Alex Learner');
-    expect(listed[1]).toHaveTextContent('Alex Learner');
-    expect(listed[2]).toHaveTextContent('Morgan Learner');
+    const listed = panel.getAllByRole('article');
+    expect(listed).toHaveLength(4);
+    expect(listed.filter(row => row.textContent?.includes('Alex Learner'))).toHaveLength(2);
+    expect(listed.filter(row => row.textContent?.includes('Morgan Learner'))).toHaveLength(2);
     expect(panel.getAllByRole('link', { name: 'View review' }).map(link => link.getAttribute('href'))).toEqual([
       '/employers/8/learner/apprenticeship/11?tab=reviews&reviewId=pr-11',
       '/employers/8/learner/apprenticeship/11?tab=reviews&reviewId=gateway-11',
       '/employers/8/learner/commercial/12?tab=reviews&reviewId=gateway-12',
+      '/employers/8/learner/commercial/12?tab=reviews&reviewId=pr-12',
     ]);
     expect(panel.queryByRole('link', { name: /^Join / })).not.toBeInTheDocument();
-    expect(panel.getAllByText('Meeting link not available yet.')).toHaveLength(3);
-    // The card reads in place now; it must not leave the overview.
+    expect(panel.getAllByText('Meeting link not available yet.')).toHaveLength(4);
     expect(screen.getByTestId('path')).toHaveTextContent(/^\/employers\/8$/);
   });
 
@@ -1044,7 +1061,7 @@ describe('employer home dashboard', () => {
   it('keeps a section filter in the address so a reload still shows it', async () => {
     showPage('/employers/8/learners?status=inactive');
     expect(await screen.findByRole('heading', { name: 'Your learners (1)' })).toBeVisible();
-    expect(screen.getByRole('combobox', { name: 'Status' })).toHaveValue('inactive');
+    expect(screen.queryByRole('combobox', { name: 'Status' })).not.toBeInTheDocument();
     expect(table().getByRole('link', { name: 'View Morgan Learner' })).toBeVisible();
     await userEvent.click(screen.getByRole('button', { name: 'Clear filters' }));
     expect(screen.getByRole('heading', { name: 'Your learners (2)' })).toBeVisible();
@@ -1130,9 +1147,9 @@ describe('employer home dashboard', () => {
     expect(screen.getByText('2 of 2 learners')).toBeVisible();
   });
 
-  it.each(['/employers/8', '/employers/8/reviews'])('keeps review loading and failure distinct from an empty timeline and retries failed reads on %s', async path => {
+  it('keeps review loading and failure distinct from an empty timeline and retries failed reads on Reviews', async () => {
     api.reviews.mockRejectedValueOnce(new Error('temporary'));
-    showPage(path);
+    showPage('/employers/8/reviews');
     const alex = within(await screen.findByRole('article', { name: 'Alex Learner reviews' }));
     expect(await alex.findByRole('alert')).toHaveTextContent('Reviews could not be loaded for this learner.');
     expect(alex.queryByText('No progress reviews planned yet.')).not.toBeInTheDocument();
@@ -1142,7 +1159,7 @@ describe('employer home dashboard', () => {
 
     cleanup();
     api.reviews.mockImplementation(() => new Promise(() => undefined));
-    showPage(path);
+    showPage('/employers/8/reviews');
     const loading = within(await screen.findByRole('article', { name: 'Alex Learner reviews' }));
     expect(loading.getByRole('status')).toHaveAccessibleName(expect.stringContaining('Loading progress reviews'));
     expect(loading.queryByText('No progress reviews planned yet.')).not.toBeInTheDocument();
@@ -1156,7 +1173,7 @@ describe('employer home dashboard', () => {
     expect(screen.queryByText('No signatures needed for these learners.')).not.toBeInTheDocument();
   });
 
-  // The join link follows the meetings panel's rule: the employer is only sent
+  // The meetings panel only sends the employer
   // to a meeting Microsoft has confirmed. A local booking is not that proof.
   it('offers the review join link only once the invitation is confirmed', async () => {
     api.reviews.mockImplementation(async (_employer: unknown, _kind: unknown, id: unknown) => ({
@@ -1164,8 +1181,7 @@ describe('employer home dashboard', () => {
       definitions: {},
     }));
     showPage();
-    await userEvent.click(await screen.findByRole('button', { name: /^Reviews due this month: 2\./ }));
-    const join = within(await screen.findByRole('dialog', { name: 'Reviews due this month' }))
+    const join = within(await screen.findByRole('region', { name: 'Meetings to attend (2)' }))
       .getAllByRole('link', { name: /^Join / });
     expect(join).toHaveLength(2);
     expect(join[0]).toHaveAttribute('href', 'https://teams.example.test/meet/1');
@@ -1179,8 +1195,7 @@ describe('employer home dashboard', () => {
       definitions: {},
     }));
     showPage();
-    await userEvent.click(await screen.findByRole('button', { name: /^Reviews due this month: 2\./ }));
-    const panel = within(await screen.findByRole('dialog', { name: 'Reviews due this month' }));
+    const panel = within(await screen.findByRole('region', { name: 'Meetings to attend (2)' }));
     expect(panel.queryByRole('link', { name: /^Join / })).not.toBeInTheDocument();
     expect(panel.getAllByText('Invitation not confirmed. Contact your coach.')).toHaveLength(2);
     expect(panel.getAllByRole('link', { name: 'View review' })).toHaveLength(2);
@@ -1194,9 +1209,8 @@ describe('employer home dashboard', () => {
     metrics.learners['12'].risk = 'at-risk';
     const cards: [RegExp, string, string[]][] = [
       [/^Total learners: 2\./, 'Total learners', ['Alex Learner', 'Morgan Learner']],
-      [/^Active on programme: 2\./, 'Active on programme', ['Alex Learner', 'Morgan Learner']],
-      [/^Reviews due this month: 3\./, 'Reviews due this month', ['Alex Learner', 'Alex Learner', 'Morgan Learner']],
       [/^Needs attention: 2\./, 'Needs attention', ['Alex Learner', 'Morgan Learner']],
+      [/^AT RISK: 1\./, 'AT RISK', ['Morgan Learner']],
     ];
     showPage();
     for (const [name, title, expected] of cards) {
@@ -1205,13 +1219,73 @@ describe('employer home dashboard', () => {
       const listed = panel.getAllByRole('listitem');
       expect(listed).toHaveLength(expected.length);
       expected.forEach((learner, index) => expect(listed[index]).toHaveTextContent(learner));
-      // Only a review row has actions of its own; the learner lists stay read-only.
-      if (title === 'Reviews due this month') expect(panel.getAllByRole('link', { name: 'View review' })).toHaveLength(3);
-      else expect(panel.queryByRole('link')).not.toBeInTheDocument();
+      expect(panel.queryByRole('link')).not.toBeInTheDocument();
       await userEvent.click(panel.getByRole('button', { name: 'Close' }));
       expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
     }
     expect(screen.getByTestId('path')).toHaveTextContent(/^\/employers\/8$/);
+  });
+
+  it('counts and lists only active learners with a saved on-track OTJ status', async () => {
+    portal.learners.push({ ...portal.learners[0], id: '13', name: 'Casey Learner' });
+    metrics.learners['13'] = { ...metrics.learners['11'], risk: 'at-risk' };
+    metrics.learners['12'].risk = 'on-track'; // Inactive learners are still excluded.
+    showPage();
+    await userEvent.click(await screen.findByRole('button', { name: /^ON TRACK: 1\. Saved learner OTJ status/ }));
+    const panel = within(await screen.findByRole('dialog', { name: 'ON TRACK' }));
+    const listed = panel.getAllByRole('listitem');
+    expect(listed).toHaveLength(1);
+    expect(listed[0]).toHaveTextContent('Alex Learner');
+    expect(listed[0]).toHaveTextContent('On track');
+    expect(panel.queryByText('Morgan Learner')).not.toBeInTheDocument();
+    expect(panel.queryByText('Casey Learner')).not.toBeInTheDocument();
+    await userEvent.click(panel.getByRole('button', { name: 'Close' }));
+    expect(screen.getByTestId('path')).toHaveTextContent(/^\/employers\/8$/);
+  });
+
+  it('shows an empty on-track list when all active learners need attention', async () => {
+    metrics.learners['11'].risk = 'need-attention';
+    showPage();
+    await userEvent.click(await screen.findByRole('button', { name: /^ON TRACK: 0\./ }));
+    const panel = within(await screen.findByRole('dialog', { name: 'ON TRACK' }));
+    expect(panel.queryByRole('listitem')).not.toBeInTheDocument();
+    expect(panel.getByText('No learner is on track on their saved OTJ status.')).toBeVisible();
+  });
+
+  it('keeps ON TRACK unavailable while OTJ metrics are loading', async () => {
+    api.metrics.mockImplementation(() => new Promise(() => undefined));
+    showPage();
+    const summary = within(await screen.findByRole('region', { name: 'Learner summary' }));
+    expect(summary.getByText('ON TRACK').closest('div')).toHaveTextContent('ON TRACK…');
+    expect(summary.queryByRole('button', { name: /^ON TRACK:/ })).not.toBeInTheDocument();
+    expect(summary.getByText('AT RISK').closest('div')).toHaveTextContent('AT RISK…');
+    expect(summary.queryByRole('button', { name: /^AT RISK:/ })).not.toBeInTheDocument();
+  });
+
+  it('counts and lists only active at-risk learners without including needs-attention learners', async () => {
+    portal.learners.push({ ...portal.learners[0], id: '13', name: 'Casey Learner' });
+    metrics.learners['11'].risk = 'need-attention';
+    metrics.learners['12'].risk = 'at-risk';
+    metrics.learners['13'] = { ...metrics.learners['11'], risk: 'at-risk' };
+    showPage();
+    await userEvent.click(await screen.findByRole('button', { name: /^AT RISK: 1\. Saved learner OTJ status/ }));
+    const panel = within(await screen.findByRole('dialog', { name: 'AT RISK' }));
+    expect(panel.getAllByRole('listitem')).toHaveLength(1);
+    expect(panel.getByRole('listitem')).toHaveTextContent('Casey Learner');
+    expect(panel.getByRole('listitem')).toHaveTextContent('At risk');
+    expect(panel.queryByText('Alex Learner')).not.toBeInTheDocument();
+    expect(panel.queryByText('Morgan Learner')).not.toBeInTheDocument();
+    await userEvent.click(panel.getByRole('button', { name: 'Close' }));
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    expect(screen.getByTestId('path')).toHaveTextContent(/^\/employers\/8$/);
+  });
+
+  it('shows an empty AT RISK list when no active learner is at risk', async () => {
+    showPage();
+    await userEvent.click(await screen.findByRole('button', { name: /^AT RISK: 0\./ }));
+    const panel = within(await screen.findByRole('dialog', { name: 'AT RISK' }));
+    expect(panel.queryByRole('listitem')).not.toBeInTheDocument();
+    expect(panel.getByText('No learner is at risk on their saved OTJ status.')).toBeVisible();
   });
 
   it('uses the same OTJ statuses for the overview, table, filters and Needs attention', async () => {
@@ -1235,11 +1309,11 @@ describe('employer home dashboard', () => {
     expect(table().getByText('Needs attention')).toBeVisible();
     expect(table().getByText('At risk')).toBeVisible();
     expect(table().queryByText('OTJ status unavailable')).not.toBeInTheDocument();
-    await userEvent.selectOptions(screen.getByRole('combobox', { name: 'Status' }), 'at-risk');
+    await userEvent.selectOptions(screen.getByRole('combobox', { name: 'Progress' }), 'at-risk');
     expect(table().getByRole('link', { name: 'View Morgan Learner' })).toBeVisible();
     expect(table().queryByRole('link', { name: 'View Alex Learner' })).not.toBeInTheDocument();
     expect(overview.getByRole('img')).toHaveAccessibleName('On track: 0, Needs attention: 0, At risk: 1, Not available: 0');
-    await userEvent.selectOptions(screen.getByRole('combobox', { name: 'Status' }), 'need-attention');
+    await userEvent.selectOptions(screen.getByRole('combobox', { name: 'Progress' }), 'need-attention');
     expect(table().getByRole('link', { name: 'View Alex Learner' })).toBeVisible();
     expect(table().queryByRole('link', { name: 'View Morgan Learner' })).not.toBeInTheDocument();
 
@@ -1250,6 +1324,11 @@ describe('employer home dashboard', () => {
     portal.learners.forEach(learner => { learner.otjhProgress = null; });
     showPage();
     await waitFor(() => expect(screen.getByRole('region', { name: 'Learner summary' })).toHaveTextContent('Needs attentionUnavailable'));
+    const summary = within(screen.getByRole('region', { name: 'Learner summary' }));
+    expect(summary.getByText('ON TRACK').closest('div')).toHaveTextContent('ON TRACKUnavailable');
+    expect(summary.queryByRole('button', { name: /^ON TRACK:/ })).not.toBeInTheDocument();
+    expect(summary.getByText('AT RISK').closest('div')).toHaveTextContent('AT RISKUnavailable');
+    expect(summary.queryByRole('button', { name: /^AT RISK:/ })).not.toBeInTheDocument();
     expect(screen.queryByRole('progressbar')).not.toBeInTheDocument();
     expect(within(screen.getByRole('region', { name: 'Learning performance' })).queryByText('0%')).not.toBeInTheDocument();
     expect(screen.queryByRole('meter')).not.toBeInTheDocument();
@@ -1281,10 +1360,13 @@ describe('employer home dashboard', () => {
     portal.learners = [];
     portal.outstandingTotal = 0;
     showPage();
-    for (const name of ['Modules', 'Progress review journey']) {
-      const section = within(await screen.findByRole('region', { name }));
-      expect(section.getByRole('heading', { name: 'No learners linked yet' })).toBeVisible();
-    }
+    const modules = within(await screen.findByRole('region', { name: 'Modules' }));
+    expect(modules.getByRole('heading', { name: 'No learners linked yet' })).toBeVisible();
+    expect(screen.queryByRole('region', { name: 'Progress review journey' })).not.toBeInTheDocument();
+    cleanup();
+    showPage('/employers/8/reviews');
+    const journey = within(await screen.findByRole('region', { name: 'Progress review journey' }));
+    expect(journey.getByRole('heading', { name: 'No learners linked yet' })).toBeVisible();
     expect(api.metrics).not.toHaveBeenCalled();
     expect(api.reviews).not.toHaveBeenCalled();
   });

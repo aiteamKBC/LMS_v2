@@ -51,7 +51,7 @@ try {
     expect(await alex.getByRole('listitem').first().locator('strong').evaluate(element => parseFloat(getComputedStyle(element).fontSize))).toBeGreaterThanOrEqual(13);
     await page.screenshot({ path: join(output, `${width}-zoom${zoom}.png`), fullPage: true });
 
-    await page.getByRole('combobox', { name: 'Upcoming review', exact: true }).selectOption('signature');
+    await page.getByRole('combobox', { name: 'Cohort', exact: true }).selectOption('October 2026');
     await expect(page.getByText('1 of 2 learners')).toBeVisible();
     await expect(alex).toHaveCount(0);
     await page.getByRole('form', { name: 'Filter learners' }).getByRole('button', { name: 'Clear filters' }).click();

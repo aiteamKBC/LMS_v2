@@ -62,13 +62,12 @@ export const MetricCard = memo(function MetricCard({
   );
 
   if (!onClick) {
-    return <div className={surface} data-metric-tone={tone}>{body}</div>;
+    return <div className={surface}>{body}</div>;
   }
 
   return (
     <button
       type="button"
-      data-metric-tone={tone}
       onClick={onClick}
       aria-pressed={active}
       className={cn(surface, 'transition focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-300')}

@@ -21,11 +21,10 @@ export function EmployerModuleColumnChart({ learners, records, moduleId }: Props
       <p>{moduleId ? 'Selected module' : 'All modules'} · Average learner progress</p></div>
       <ul className={styles.columnLegend} aria-label="Performance measures">{labels.map((label, index) => <li key={label} data-series={index}><span />{label}</li>)}</ul>
     </header>
-    <p className={styles.chartNote}>Progress against each target (0–100%). N/A means data unavailable. Counts below each bar show learners with data.</p>
     {modules.length > 0 ? <div className={styles.columnCanvas} role="group" aria-label="Module performance column chart">
-      <div className={styles.columnAxis} aria-hidden="true">{[0, 25, 50, 75, 100].map(value => <span key={value} style={{ bottom: `${value}%` }}>{value}%</span>)}</div>
+      <div className={styles.columnAxis} aria-hidden="true">{[0, 50, 100].map(value => <span key={value} style={{ bottom: `${value}%` }}>{value}%</span>)}</div>
       <div className={styles.columnScroll} role="region" aria-label={moduleId ? 'Selected module chart' : 'All modules chart'} tabIndex={0}>
-        <div className={styles.columnPlot} style={{ minWidth: `${modules.length * 260}px` }}>
+        <div className={styles.columnPlot} style={{ minWidth: `${modules.length * 220}px` }}>
           <div className={styles.columnGuides} aria-hidden="true" />
           <div className={styles.columnGroups} style={{ gridTemplateColumns: `repeat(${modules.length}, minmax(0, 1fr))` }}>
             {modules.map(module => {
@@ -35,20 +34,17 @@ export function EmployerModuleColumnChart({ learners, records, moduleId }: Props
                 <div className={styles.columns}>{result.measures.map((measure, index) => {
                   const missing = measure.value == null;
                   const state = missing ? loading ? 'Loading…' : 'Unavailable' : percent(measure.value!);
-                  // Leave short/zero bars at their true height and keep their labels readable.
-                  const inside = measure.value != null && measure.value >= 20;
+                  const detail = `${measure.label}: ${state}; ${measure.available} of ${assigned} learners have data`;
                   return <div className={styles.columnSeries} data-series={index} key={measure.label}>
                     <div className={styles.columnWell} role={missing ? 'img' : 'meter'} aria-label={missing ? `${measure.label}: ${state}` : measure.label}
+                      title={detail}
                       aria-valuemin={missing ? undefined : 0} aria-valuemax={missing ? undefined : 100}
                       aria-valuenow={measure.value ?? undefined} aria-valuetext={missing ? undefined : `${state}; ${measure.available} of ${assigned} learners have data`}>
                       {missing ? <span className={styles.columnMissing} title={state}>{loading ? 'Loading…' : 'N/A'}</span> : <>
-                        {!inside && <span className={styles.columnOutsideValue} style={{ bottom: `calc(${measure.value}% + 8px)` }} aria-hidden="true">{state}</span>}
-                        <span className={measure.value === 0 ? styles.columnZero : styles.columnBar} style={measure.value === 0 ? undefined : { height: `${measure.value}%` }}>
-                          {inside && <span className={styles.columnValue} aria-hidden="true">{state}</span>}
-                        </span>
+                        <span className={styles.columnOutsideValue} style={{ bottom: `calc(${measure.value}% + 8px)` }} aria-hidden="true">{state}</span>
+                        <span className={measure.value === 0 ? styles.columnZero : styles.columnBar} style={measure.value === 0 ? undefined : { height: `${measure.value}%` }} />
                       </>}
                     </div>
-                    <small className={styles.columnCoverage}>{measure.available} of {assigned}</small>
                   </div>;
                 })}</div>
                 <h3 className={styles.columnModuleTitle}>{module.title}</h3>

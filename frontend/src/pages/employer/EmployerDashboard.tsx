@@ -2,9 +2,9 @@ import { LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
 import { useEffect, useId, useRef, useState, type CSSProperties, type ReactNode, type SyntheticEvent } from 'react';
 import { createPortal } from 'react-dom';
 import { Link, useLocation, useSearchParams } from 'react-router-dom';
-import { ArrowRight, BarChart3, BriefcaseBusiness, CalendarDays, Video, ChevronLeft, ChevronRight, CircleAlert, ClipboardPenLine, Eye, PlayCircle, RotateCcw, Search, Users, Workflow } from 'lucide-react';
+import { ArrowRight, BarChart3, BriefcaseBusiness, CalendarDays, ChevronLeft, ChevronRight, CircleAlert, CircleCheck, Eye, RotateCcw, Search, TriangleAlert, Users, Workflow } from 'lucide-react';
 import type { EmployerDashboardMetrics, EmployerLearnerCard, EmployerPortal } from '@/api/employerPortal';
-import { formatReviewDate, isOpenReview, learnerHref, learnerReviewHref, learnerKey, londonToday, nextReview, relativeReviewDate, reviewDate, reviewMatches, reviewState, riskLabels, riskOf, type DashboardAttendance, type DashboardReviews, type DashboardReviewSummaries, type Loadable } from './employerDashboardData';
+import { formatReviewDate, learnerHref, learnerKey, londonToday, nextReview, relativeReviewDate, reviewDate, reviewMatches, reviewState, riskLabels, riskOf, type DashboardAttendance, type DashboardReviews, type DashboardReviewSummaries, type Loadable } from './employerDashboardData';
 import styles from './EmployerPortalPage.module.css';
 import { EmployerReviewJourneys } from './EmployerReviewJourneys';
 import { EmployerMeetings } from './EmployerMeetings';
@@ -17,7 +17,6 @@ import { EmployerPerformanceCards } from './EmployerPerformance';
 import { EmployerModuleColumnChart } from './EmployerModuleColumnChart';
 import { EmployerModuleProgressTable } from './EmployerModuleProgressTable';
 import { EmployerStatDialog, type StatDialogRow } from './EmployerStatDialog';
-import { presentReview } from '@/pages/learner/progress-reviews/reviewPresentation';
 
 /**
  * `home` is the whole overview. The other two are the sidebar's own sections,
@@ -25,7 +24,7 @@ import { presentReview } from '@/pages/learner/progress-reviews/reviewPresentati
  */
 export type EmployerPortalView = 'home' | 'learners' | 'reviews';
 /** The summary card whose records are open in the overview's dialog. */
-type StatKey = 'learners' | 'active' | 'reviews' | 'attention';
+type StatKey = 'learners' | 'on-track' | 'attention' | 'at-risk';
 
 type Props = {
   data: EmployerPortal;
@@ -94,7 +93,7 @@ function PanelHeader({ icon, title, action }: { icon: ReactNode; title: string; 
   return <header className={styles.panelHeader}><h2>{icon}{title}</h2>{action}</header>;
 }
 
-export function EmployerDashboard({ data, metrics, attendance: attendanceByLearner, reviews, reviewSummaries, onRetry, view = 'home', today = londonToday(), backAction }: Props) {
+export function EmployerDashboard({ data, metrics, attendance: attendanceByLearner, reviews, onRetry, view = 'home', today = londonToday(), backAction }: Props) {
   const employerId = data.employer.id;
   const learners = data.learners;
   const learning = useEmployerLearningSummary(employerId, learners, view === 'home' || view === 'learners');
@@ -153,14 +152,13 @@ export function EmployerDashboard({ data, metrics, attendance: attendanceByLearn
   const currentPage = Math.min(page, pages);
   const rows = tableFiltered.slice((currentPage - 1) * 8, currentPage * 8);
   const active = learners.filter(learner => learner.isActive).length;
-  const reviewSummaryReady = learners.every(learner => reviewSummaries[learnerKey(learner)]?.status === 'ready');
-  const reviewSummaryFailed = learners.some(learner => reviewSummaries[learnerKey(learner)]?.status === 'error');
   const reviewsFailed = learners.some(learner => reviews[learnerKey(learner)]?.status === 'error');
   const attendanceFailed = learners.some(learner => attendanceByLearner[learnerKey(learner)]?.status === 'error');
-  const due = learners.reduce((total, learner) => total + (reviewSummaries[learnerKey(learner)]?.data || []).filter(event => isOpenReview(event) && reviewDate(event)?.slice(0, 7) === today.slice(0, 7)).length, 0);
   const knownRisks = learners.filter(learner => learner.isActive && riskOf(metrics.data, learner) !== 'unavailable');
+  const onTrack = knownRisks.filter(learner => riskOf(metrics.data, learner) === 'on-track');
+  const atRisk = knownRisks.filter(learner => riskOf(metrics.data, learner) === 'at-risk');
   const attention = knownRisks.filter(learner => ['need-attention', 'at-risk'].includes(riskOf(metrics.data, learner))).length;
-  const attentionAvailable = metrics.status === 'ready' && knownRisks.length === active;
+  const riskAvailable = metrics.status === 'ready' && knownRisks.length === active;
   const buckets = [
     { key: 'on-track', label: 'On track', color: 'var(--employer-primary)' },
     { key: 'need-attention', label: 'Needs attention', color: 'var(--employer-warning)' },
@@ -184,25 +182,6 @@ export function EmployerDashboard({ data, metrics, attendance: attendanceByLearn
     secondary: [learner.programme, learner.cohort].filter(Boolean).join(' · '),
     meta,
   });
-  // The summary read behind the card carries dates and status only, so the
-  // join link comes from the full review this dashboard already loads for the
-  // meetings panel. Same rule as there: Microsoft has to have confirmed the
-  // invitation before a join link is offered.
-  const reviewRowActions = (learner: EmployerLearnerCard, eventKey: string) => {
-    const full = (reviews[learnerKey(learner)]?.data || []).find(event => event.eventKey === eventKey);
-    const presentation = full && presentReview(full, undefined, today, undefined, 'employer');
-    const syncPending = Boolean(full && (full.invited === false || (full.syncState && full.syncState !== 'synced')));
-    const joinUrl = presentation && !syncPending ? presentation.joinUrl : null;
-    return <>
-      {joinUrl
-        ? <a className={styles.viewButton} href={joinUrl} target="_blank" rel="noopener noreferrer"
-          aria-label={`Join ${learner.name}: ${full?.title || 'progress review'}`}><Video size={15} />Join meeting</a>
-        : <span className={styles.unavailable}>{syncPending ? 'Invitation not confirmed. Contact your coach.'
-          : !full ? 'Meeting details still loading.' : 'Meeting link not available yet.'}</span>}
-      <Link className={`${styles.textButton} ${styles.reviewActionLink}`} to={learnerReviewHref(employerId, learner, eventKey)}
-        state={location.state} onClick={() => setOpenStat(null)}>View review</Link>
-    </>;
-  };
   const statDialogs: Record<StatKey, { title: string; caption: string; emptyMessage: string; rows: StatDialogRow[] }> = {
     learners: {
       title: 'Total learners',
@@ -210,26 +189,17 @@ export function EmployerDashboard({ data, metrics, attendance: attendanceByLearn
       emptyMessage: 'No learners are linked to your organisation yet.',
       rows: learners.map(learner => learnerRow(learner, learner.programmeStatus || 'No status recorded')),
     },
-    active: {
-      title: 'Active on programme',
-      caption: 'Learners currently active on their programme',
-      emptyMessage: 'None of your learners are active on programme right now.',
-      rows: learners.filter(learner => learner.isActive)
-        .map(learner => learnerRow(learner, learner.programmeStatus || 'Active')),
+    'on-track': {
+      title: 'ON TRACK',
+      caption: 'Learners whose saved OTJ status is on track',
+      emptyMessage: 'No learner is on track on their saved OTJ status.',
+      rows: onTrack.map(learner => learnerRow(learner, riskLabels['on-track'])),
     },
-    reviews: {
-      title: 'Reviews due this month',
-      caption: 'Open progress reviews dated this month',
-      emptyMessage: 'No progress reviews are due this month.',
-      rows: learners.flatMap(learner => (reviewSummaries[learnerKey(learner)]?.data || [])
-        .filter(event => isOpenReview(event) && reviewDate(event)?.slice(0, 7) === today.slice(0, 7))
-        .map(event => ({
-          id: `${learnerKey(learner)}-${event.eventKey || event.id}`,
-          primary: learner.name,
-          secondary: event.title,
-          meta: formatReviewDate(reviewDate(event)),
-          action: reviewRowActions(learner, event.eventKey),
-        }))),
+    'at-risk': {
+      title: 'AT RISK',
+      caption: 'Learners whose saved OTJ status is at risk',
+      emptyMessage: 'No learner is at risk on their saved OTJ status.',
+      rows: atRisk.map(learner => learnerRow(learner, riskLabels['at-risk'])),
     },
     attention: {
       title: 'Needs attention',
@@ -302,7 +272,22 @@ export function EmployerDashboard({ data, metrics, attendance: attendanceByLearn
       })}</tbody></table></div>{pages > 1 && <nav className={styles.pagination} aria-label="Learner pages"><span>Page {currentPage} of {pages}</span><button type="button" aria-label="Previous learner page" disabled={currentPage === 1} onClick={() => setPage(currentPage - 1)}><ChevronLeft size={17} /></button><button type="button" aria-label="Next learner page" disabled={currentPage === pages} onClick={() => setPage(currentPage + 1)}><ChevronRight size={17} /></button></nav>}</>}
   </section>;
 
-  const progressPanel = <section className={styles.panel} aria-label="Learner progress overview"><PanelHeader icon={<BarChart3 size={21} />} title="Learner progress overview" /><p className={styles.chartCaption}>OTJ hours against the current target</p><div className={styles.donutContent}><div className={styles.donut} style={{ '--donut-gradient': filtered.length ? `conic-gradient(${gradient})` : 'var(--employer-soft)' } as CSSProperties} role="img" aria-label={buckets.map(bucket => `${bucket.label}: ${bucket.count}`).join(', ')}><div><strong>{filtered.length}</strong><span>learners</span></div></div><ul className={styles.legend}>{buckets.map(bucket => <li key={bucket.key}><span className={styles.legendDot} style={{ backgroundColor: bucket.color }} /><span>{bucket.label}</span><strong>{bucket.count} <span>({filtered.length ? Math.round(bucket.count / filtered.length * 100) : 0}%)</span></strong></li>)}</ul></div></section>;
+  const progressPanel = <section className={`${styles.panel} ${styles.progressPanel}`} aria-label="Learner progress overview">
+    <div className={styles.progressIntro}>
+      <PanelHeader icon={<BarChart3 size={21} />} title="Learner progress overview" />
+      <p className={styles.chartCaption}>OTJ hours against the current target</p>
+    </div>
+    <div className={styles.donutContent}>
+      <div className={styles.donut} style={{ '--donut-gradient': filtered.length ? `conic-gradient(${gradient})` : 'var(--employer-soft)' } as CSSProperties} role="img" aria-label={buckets.map(bucket => `${bucket.label}: ${bucket.count}`).join(', ')}>
+        <div><strong>{filtered.length}</strong><span>{filtered.length === 1 ? 'learner' : 'learners'}</span></div>
+      </div>
+      <ul className={styles.legend}>{buckets.map(bucket => <li key={bucket.key}>
+        <span className={styles.legendDot} style={{ backgroundColor: bucket.color }} />
+        <span>{bucket.label}</span>
+        <strong>{bucket.count} <span>({filtered.length ? Math.round(bucket.count / filtered.length * 100) : 0}%)</span></strong>
+      </li>)}</ul>
+    </div>
+  </section>;
 
   const learnerFilters = <form className={styles.filters} aria-label="Filter learners" onSubmit={event => event.preventDefault()}>
       <label data-search-field className={styles.searchBox}><Search size={22} /><span className="sr-only">Search learners</span><input type="search" value={query} onChange={event => setQuery(event.target.value)} placeholder="Search learners by name or email..." /></label>
@@ -314,8 +299,6 @@ export function EmployerDashboard({ data, metrics, attendance: attendanceByLearn
         {moduleOptions.map(module => <option key={module.id} value={module.id}>{module.title}</option>)}
       </select></label>}
       {view === 'learners' && <label className={styles.filterLabel}>Progress<select value={progress} onChange={event => setProgress(event.target.value)}><option value="">All progress</option><option value="on-track">On track</option><option value="need-attention">Needs attention</option><option value="at-risk">At risk</option><option value="unavailable">Not available</option></select></label>}
-      <label className={styles.filterLabel}>Status<select value={status} onChange={event => setStatus(event.target.value)}><option value="">All statuses</option><option value="active">Active on programme</option><option value="inactive">Not active</option><option value="on-track">On track</option><option value="attention">Needs attention or at risk</option><option value="need-attention">Needs attention</option><option value="at-risk">At risk</option><option value="unavailable">OTJ status unavailable</option></select></label>
-      <label className={styles.filterLabel}>Upcoming review<select value={upcoming} onChange={event => setUpcoming(event.target.value)}><option value="any">Any time</option><option value="month">This month</option><option value="30">Next 30 days</option><option value="overdue">Overdue</option><option value="signature">Needs my signature</option><option value="none">No date scheduled</option></select></label>
       <button type="button" className={styles.clearButton} onClick={clearFilters}><RotateCcw size={18} />Clear filters</button>
     </form>;
 
@@ -339,23 +322,21 @@ export function EmployerDashboard({ data, metrics, attendance: attendanceByLearn
     {openStat && <EmployerStatDialog {...statDialogs[openStat]} onClose={() => setOpenStat(null)} />}
     {isHome && <section className={styles.statsGrid} aria-label="Learner summary">
       <Stat icon={<Users />} label="Total learners" value={learners.length} help="Linked to your organisation" tone="purple" onClick={() => setOpenStat('learners')} />
-      <Stat icon={<PlayCircle />} label="Active on programme" value={active} help={learners.length ? `${Math.round(active / learners.length * 100)}% of all your learners` : 'No learners linked yet'} tone="green" onClick={() => setOpenStat('active')} />
-      <Stat icon={<ClipboardPenLine />} label="Reviews due this month" value={reviewSummaryReady ? due : reviewSummaryFailed ? 'Unavailable' : '…'} help={reviewSummaryReady ? 'Open progress reviews' : reviewSummaryFailed ? 'Review data could not be loaded' : <LoadingSkeleton label={'Loading review dates'} />} tone="amber" onClick={reviewSummaryReady ? () => setOpenStat('reviews') : undefined} />
-      <Stat icon={<CircleAlert />} label="Needs attention" value={attentionAvailable ? attention : metrics.status === 'loading' ? '…' : 'Unavailable'} help={attentionAvailable ? 'Saved learner OTJ status' : metrics.status === 'loading' ? <LoadingSkeleton label={'Loading learner OTJ status'} /> : 'OTJ status not available for all learners'} tone="rose" onClick={attentionAvailable ? () => setOpenStat('attention') : undefined} />
+      <Stat icon={<CircleCheck />} label="ON TRACK" value={riskAvailable ? onTrack.length : metrics.status === 'loading' ? '…' : 'Unavailable'} help={riskAvailable ? 'Saved learner OTJ status' : metrics.status === 'loading' ? <LoadingSkeleton label={'Loading learner OTJ status'} /> : 'OTJ status not available for all learners'} tone="green" onClick={riskAvailable ? () => setOpenStat('on-track') : undefined} />
+      <Stat icon={<CircleAlert />} label="Needs attention" value={riskAvailable ? attention : metrics.status === 'loading' ? '…' : 'Unavailable'} help={riskAvailable ? 'Saved learner OTJ status' : metrics.status === 'loading' ? <LoadingSkeleton label={'Loading learner OTJ status'} /> : 'OTJ status not available for all learners'} tone="rose" onClick={riskAvailable ? () => setOpenStat('attention') : undefined} />
+      <Stat icon={<TriangleAlert />} label="AT RISK" value={riskAvailable ? atRisk.length : metrics.status === 'loading' ? '…' : 'Unavailable'} help={riskAvailable ? 'Saved learner OTJ status' : metrics.status === 'loading' ? <LoadingSkeleton label={'Loading learner OTJ status'} /> : 'OTJ status not available for all learners'} tone="rose" onClick={riskAvailable ? () => setOpenStat('at-risk') : undefined} />
     </section>}
 
     {isHome && <>{learnerFilters}<EmployerPerformanceCards employerId={employerId} learners={filtered} records={learning.records} attendance={attendanceByLearner} reviews={reviews} /></>}
 
     {(metrics.status === 'error' || reviewsFailed || attendanceFailed) && <div className={styles.dataNotice} role="alert"><CircleAlert size={18} /><p>{metrics.status === 'error' && 'Learner status could not be loaded. '}{attendanceFailed && 'Some attendance records could not be loaded. '}{reviewsFailed && 'Some progress reviews could not be loaded. '}Available records are still shown.</p><button type="button" onClick={onRetry}>Try again</button></div>}
     {(isHome || view === 'reviews') && <EmployerMeetings employerId={employerId} learners={learners} reviews={reviews} today={today} returnState={location.state} />}
-    {isHome ? <EmployerModuleOverview employerId={employerId} learners={learners} filtered={filtered} records={learning.records} onRetry={learning.retry} moduleId={moduleFilter} /> : learnerFilters}
+    {isHome ? <EmployerModuleOverview employerId={employerId} learners={learners} filtered={filtered} records={learning.records} onRetry={learning.retry} moduleId={moduleFilter} today={today} /> : learnerFilters}
     {isHome && moduleFilter && learners.some(learner => learning.records[learnerKey(learner)]?.status === 'error') && <div className={styles.dataNotice} role="alert"><CircleAlert size={18} /><p>Some module records could not be loaded. Only learners confirmed in the selected module are shown.</p><button type="button" onClick={learning.retry}>Retry module membership</button></div>}
     {isHome && <EmployerModuleColumnChart learners={filtered} records={learning.records} moduleId={moduleFilter} />}
     {isHome && <EmployerModuleProgressTable employerId={employerId} learners={filtered} records={learning.records} moduleId={moduleFilter} onRetry={learning.retry} />}
     {view === 'learners' && <>{progressPanel}{learnersPanel}</>}
-    {(isHome || view === 'reviews') && (isHome && moduleFilter && modulesLoading
-      ? <LoadingSkeleton label="Loading module learners" variant="cards" />
-      : <EmployerReviewJourneys employerId={employerId} learners={filtered}
-        totalLearners={learners.length} reviews={reviews} onRetry={onRetry} onClearFilters={clearFilters} />)}
+    {view === 'reviews' && <EmployerReviewJourneys employerId={employerId} learners={filtered}
+      totalLearners={learners.length} reviews={reviews} onRetry={onRetry} onClearFilters={clearFilters} />}
   </div>;
 }

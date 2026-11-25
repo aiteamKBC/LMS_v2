@@ -18,6 +18,11 @@ function assignmentRate(modules: OverviewModule[]) {
     modules.reduce((sum, module) => sum + module.assignments!.total, 0));
 }
 
+function submittedAssignments(modules: OverviewModule[]) {
+  if (!modules.length || modules.some(module => !finite(module.assignments?.submitted))) return null;
+  return modules.reduce((sum, module) => sum + module.assignments!.submitted, 0);
+}
+
 export function employerPerformance(learners: EmployerLearnerCard[], records: EmployerLearningRecords,
   attendance: DashboardAttendance, reviews: DashboardReviews) {
   const rows = learners.map(learner => {
@@ -25,7 +30,8 @@ export function employerPerformance(learners: EmployerLearnerCard[], records: Em
     const payload = records[key]?.data;
     const register = attendance[key]?.data;
     return { learner, attendance: register ? ratio(register.present, register.sessions) : null,
-      assignments: assignmentRate(payload?.modules || []), hours: finite(learner.otjhProgress?.actual) ? learner.otjhProgress.actual : null,
+      assignments: assignmentRate(payload?.modules || []), submittedAssignments: submittedAssignments(payload?.modules || []),
+      hours: finite(learner.otjhProgress?.actual) ? learner.otjhProgress.actual : null,
       otj: ratio(learner.otjhProgress?.actual, learner.otjhProgress?.planned),
       ksb: ratio(payload?.metrics?.ksb?.completed, payload?.metrics?.ksb?.total),
       reviews: payload?.reviews?.percent ?? null };
@@ -36,7 +42,11 @@ export function employerPerformance(learners: EmployerLearnerCard[], records: Em
     const resource = reviews[learnerKey(learner)];
     return resource?.status === 'ready' ? resource.data || [] : [];
   });
-  return { rows, rates, hours: mean(rows.map(row => row.hours)),
+  const submissions = rows.map(row => row.submittedAssignments).filter(finite);
+  // Only the percentage cards contribute; assignment and review cards show counts.
+  const performance = mean([rates[0].value, rates[2].value, rates[3].value]);
+  return { rows, rates, performance, hours: mean(rows.map(row => row.hours)),
+    submissions: { value: submissions.length ? submissions.reduce((sum, value) => sum + value, 0) : null, available: submissions.length },
     reviewCount: events.length, completedReviews: events.filter(event => reviewState(event) === 'completed').length,
     reviewsAvailable: learners.filter(learner => reviews[learnerKey(learner)]?.status === 'ready').length };
 }

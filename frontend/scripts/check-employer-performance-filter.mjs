@@ -49,33 +49,33 @@ try {
     await page.goto(base + '/__performance_filter');
     const filters = page.getByRole('form', { name: 'Filter learners', exact: true });
     const cards = page.getByRole('region', { name: 'Learning performance', exact: true });
-    const expectCards = async (values) => {
+    const expectCards = async (values, performance) => {
       const labels = ['Average attendance', 'Assignment submission', 'Average off-the-job hours', 'Average KSBs', 'Reviews'];
       for (let index = 0; index < labels.length; index++) {
         await expect(cards.getByRole('button', { name: `${labels[index]}: ${values[index]}`, exact: true })).toBeVisible();
       }
       await expect(cards.getByRole('button')).toHaveCount(5);
-      await expect(cards.getByRole('article', { name: 'Average performance: calculation pending' })).toBeVisible();
+      await expect(cards.getByRole('article', { name: `Average performance: ${performance}`, exact: true })).toBeVisible();
     };
     await expect(filters).toHaveCount(1);
-    await expectCards(['70%', '75%', '80 h', '50%', '8']);
+    await expectCards(['70%', '3', '31.3%', '50%', '8'], '50.4%');
     const filterBounds = await filters.boundingBox();
     const cardBounds = await cards.boundingBox();
     expect(filterBounds.y + filterBounds.height).toBeLessThanOrEqual(cardBounds.y);
     const module = filters.getByRole('combobox', { name: 'Module', exact: true });
     await expect(module).toBeEnabled();
     await module.selectOption('legacy:morgan');
-    await expectCards(['60%', '100%', '70 h', '75%', '4']);
+    await expectCards(['60%', '2', '17.5%', '75%', '4'], '50.8%');
     await cards.getByRole('button', { name: 'Average KSBs: 75%', exact: true }).click();
     const dialog = page.getByRole('dialog', { name: 'Average KSBs', exact: true });
     await expect(dialog.getByText('Morgan Learner', { exact: true })).toBeVisible();
     await expect(dialog.getByText('Alex Learner', { exact: true })).toHaveCount(0);
     await dialog.getByRole('button', { name: 'Close', exact: true }).click();
     await filters.getByRole('combobox', { name: 'Cohort', exact: true }).selectOption('Cohort A');
-    await expectCards(['Unavailable', 'Unavailable', 'Unavailable', 'Unavailable', '0']);
+    await expectCards(['Unavailable', 'Unavailable', 'Unavailable', 'Unavailable', '0'], 'Unavailable');
     await filters.getByRole('button', { name: 'Clear filters', exact: true }).click();
     await expect(module).toHaveValue('');
-    await expectCards(['70%', '75%', '80 h', '50%', '8']);
+    await expectCards(['70%', '3', '31.3%', '50%', '8'], '50.4%');
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
     await page.screenshot({ path: join(output, `${width}-zoom${zoom}.png`), fullPage: true });
     if (width === 1440 && zoom === 1) {

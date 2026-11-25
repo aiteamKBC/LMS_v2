@@ -1,6 +1,6 @@
 import { useId, useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
-import { ArrowUpRight, BookOpen, Check, Search, Table2, Users } from 'lucide-react';
+import { Check, Search } from 'lucide-react';
 import type { EmployerLearnerCard } from '@/api/employerPortal';
 import { learnerHref, learnerKey } from './employerDashboardData';
 import type { EmployerLearningRecords } from './useEmployerLearningSummary';
@@ -43,17 +43,12 @@ export function EmployerModuleProgressTable({ employerId, learners, records, mod
 
   return <section id="employer-module-progress" className={styles.panel} aria-labelledby={headingId}>
     <header className={styles.header}>
-      <div className={styles.identity}><span className={styles.headingIcon}><Table2 size={22} aria-hidden="true" /></span>
-        <div><h2 id={headingId}>Learner-by-module progress</h2>
-          <p>A clear view of every learner’s module progress.</p></div></div>
-      <div className={styles.counts}><span className={styles.count}><Users size={15} aria-hidden="true" />{learners.length} learner{learners.length === 1 ? '' : 's'}</span>
-        <span className={styles.count}><BookOpen size={15} aria-hidden="true" />{columns.length} module{columns.length === 1 ? '' : 's'}</span></div>
+      <div className={styles.identity}><h2 id={headingId}>Learner-by-module progress</h2>
+        <div className={styles.counts}><span>{learners.length} learner{learners.length === 1 ? '' : 's'}</span>
+          <span aria-hidden="true">·</span><span>{columns.length} module{columns.length === 1 ? '' : 's'}</span></div></div>
+      <label className={styles.search} data-search-field><Search size={16} aria-hidden="true" /><span className="sr-only">Filter progress learners</span>
+        <input type="search" value={query} onChange={event => setQuery(event.target.value)} placeholder="Search name or email…" /></label>
     </header>
-    <div className={styles.toolbar}>
-      <label className={styles.search} data-search-field><Search size={18} aria-hidden="true" /><span className="sr-only">Filter progress learners</span>
-        <input type="search" value={query} onChange={event => setQuery(event.target.value)} placeholder="Filter learners by name or email…" /></label>
-      <div className={styles.scale} aria-label="Progress colour scale from 0 to 100 percent"><span>Module progress</span><span>0%</span><span className={styles.swatches} aria-hidden="true"><i title="0–19%" /><i title="20–49%" /><i title="50–79%" /><i title="80–99%" /><i title="100% complete" /></span><span>100%</span></div>
-    </div>
     {failed > 0 && <div className={styles.notice} role="alert"><p>Module progress unavailable for {failed} learner{failed === 1 ? '' : 's'}.</p><button type="button" onClick={onRetry}>Retry progress</button></div>}
     {loading && <p className={styles.status} role="status">Loading learner module progress…</p>}
     {learners.length === 0 ? <p className={styles.empty}>No learners to show. Linked learners appear here when they match the overview filters.</p>
@@ -66,7 +61,7 @@ export function EmployerModuleProgressTable({ employerId, learners, records, mod
             const pending = !resource || resource.status === 'loading';
             const unavailable = resource?.status === 'error' || (resource?.status === 'ready' && !resource.data);
             return <tr key={learnerKey(learner)}>
-              <th scope="row"><div className={styles.learnerIdentity}><span className={styles.avatar} aria-hidden="true">{learner.name.trim().split(/\s+/).slice(0, 2).map(word => word[0]).join('').toUpperCase()}</span><div>
+              <th scope="row"><div className={styles.learnerIdentity}><div>
                 <Link to={learnerHref(employerId, learner)} state={location.state}>{learner.name}</Link>{' '}<small>{learner.programme || 'Programme not assigned'}</small>
               </div></div></th>
               {pending || unavailable || !columns.length ? <td className={styles.rowStatus} colSpan={Math.max(1, columns.length)}>{pending ? 'Loading…' : unavailable ? 'Unavailable' : 'No assigned modules'}</td>
@@ -81,14 +76,16 @@ export function EmployerModuleProgressTable({ employerId, learners, records, mod
                   return <td key={module.id}><Link className={styles.cell} data-tone={tone} to={learnerHref(employerId, learner, 'plan')} state={location.state}
                     aria-label={`${label}: ${percentLabel(percent)}. Open training plan`} title={`${label}: ${percentLabel(percent)}`}>
                     <span className={styles.value}>{percent === 100 && <Check size={14} aria-hidden="true" />}{percentLabel(percent)}</span>
-                    <ArrowUpRight className={styles.cellArrow} size={14} aria-hidden="true" />
-                    <span className={styles.rail} aria-hidden="true"><span style={{ width: `${percent}%` }} /></span>
                   </Link></td>;
                 })}
             </tr>;
           })}</tbody>
         </table>
       </div>}
-    <footer className={styles.footer} id={helpId}><p>Select a percentage to open the learner’s training plan.</p><p><span>—</span> Not enrolled <span className={styles.footerDivider}>·</span> N/A Progress unavailable</p></footer>
+    <footer className={styles.footer} id={helpId}>
+      <p className="sr-only">Select a percentage to open the learner’s training plan.</p>
+      <div className={styles.scale} aria-label="Progress colour scale from 0 to 100 percent"><span>0%</span><span className={styles.swatches} aria-hidden="true"><i title="0–19%" /><i title="20–49%" /><i title="50–79%" /><i title="80–99%" /><i title="100% complete" /></span><span>100%</span></div>
+      <p><span>—</span> Not enrolled <span className={styles.footerDivider}>·</span> N/A Progress unavailable</p>
+    </footer>
   </section>;
 }
