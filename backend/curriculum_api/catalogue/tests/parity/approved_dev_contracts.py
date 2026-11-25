@@ -30,6 +30,8 @@ def restore_tree(tree, relative):
     """Reverse only fixed, reviewed edits after validating the current source."""
     if getattr(tree, '_catalogue_approved_dev_restored', False):
         return tree
+    from .composition_merge_contracts import restore_tree as restore_composition_merge
+    tree = restore_composition_merge(tree, relative)
     tree = restore_review_readiness(tree, relative)
     entry = REFERENCE['files'].get(relative)
     if entry is None:

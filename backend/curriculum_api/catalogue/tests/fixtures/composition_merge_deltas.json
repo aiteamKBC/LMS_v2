@@ -1,0 +1,189 @@
+{
+  "historical_commit": "2d06b0de038955f7ce68f4c9abdc336731c82d78",
+  "reviewed_commit": "b31354e0e503e8a908a019782a9c2fea2fff3e89",
+  "purpose": "Reviewed composition deltas for historical source comparisons only; runtime tests use current owners.",
+  "files": {
+    "curriculum_api/catalogue/api/authoring_composition.py": {
+      "current_sha256": "a504cd2d7bdfbfe54ff2a06f1580d9d8174dfe41e5451a1993511ea2c18c4431",
+      "historical_sha256": "16a6e629fda6381ddc5d3af763756c17bdf7910fd79e14111361d2de3a86131d",
+      "edits": [
+        {
+          "start": 6,
+          "current": [
+            "from curriculum_api.catalogue.infrastructure import free_course_pricing as free_course_pricing"
+          ],
+          "historical": [
+            "from curriculum_api import free_course_pricing"
+          ]
+        },
+        {
+          "start": 132,
+          "current": [
+            "        from curriculum_api.catalogue.application.free_course_policy import free_course_errors as operation",
+            "        from curriculum_api.catalogue.infrastructure.free_course_policy_reads import retained_live_component_ids",
+            "        return operation(*args, retained_live_component_ids=retained_live_component_ids, **kwargs)"
+          ],
+          "historical": [
+            "        from curriculum_api.free_course_policy import free_course_errors as operation",
+            "        return operation(*args, **kwargs)"
+          ]
+        },
+        {
+          "start": 137,
+          "current": [
+            "        from curriculum_api.catalogue.infrastructure.free_course_policy_reads import retained_live_component_ids as operation"
+          ],
+          "historical": [
+            "        from curriculum_api.free_course_policy import retained_live_component_ids as operation"
+          ]
+        }
+      ]
+    },
+    "curriculum_api/catalogue/api/free_course_composition.py": {
+      "current_sha256": "edfe4a81051ce9af5697a9c3b7df1f5ff90e1b66ae15e0da8719dfeba2852ebb",
+      "historical_sha256": "8b4fd791670118dba1d6cf6450e6b66487a46b06a1f96bb964c67af56c209582",
+      "edits": [
+        {
+          "start": 5,
+          "current": [
+            "from curriculum_api.catalogue.infrastructure import free_course_rows as free_course_catalogue"
+          ],
+          "historical": [
+            "from curriculum_api import free_course_catalogue"
+          ]
+        },
+        {
+          "start": 55,
+          "current": [
+            "from curriculum_api.catalogue.infrastructure.free_course_catalogue_store import FreeCourseInUse",
+            "from curriculum_api.catalogue.infrastructure.free_course_writer_mode import LEGACY",
+            "from curriculum_api.catalogue.infrastructure.free_course_writer_mode import require_mode"
+          ],
+          "historical": [
+            "from curriculum_api.free_course_catalogue_store import FreeCourseInUse",
+            "from curriculum_api.free_course_writer_mode import LEGACY",
+            "from curriculum_api.free_course_writer_mode import require_mode"
+          ]
+        },
+        {
+          "start": 94,
+          "current": [
+            "        from curriculum_api.catalogue.infrastructure import free_course_catalogue_store as operation"
+          ],
+          "historical": [
+            "        from curriculum_api import free_course_catalogue_store as operation"
+          ]
+        },
+        {
+          "start": 112,
+          "current": [
+            "        from curriculum_api.catalogue.infrastructure import free_course_catalogue_store as operation"
+          ],
+          "historical": [
+            "        from curriculum_api import free_course_catalogue_store as operation"
+          ]
+        }
+      ]
+    },
+    "curriculum_api/catalogue/api/module_command_composition.py": {
+      "current_sha256": "f5146eb4c174c09745490900afc24127841cf1c05d9ad3d97e859a66fc4d949e",
+      "historical_sha256": "d034d17b80c091970955f1524e57aee88139ea0d4cc79d00ea96795095738eda",
+      "edits": [
+        {
+          "start": 226,
+          "current": [
+            "        from curriculum_api.catalogue.application.free_course_policy import free_course_errors as operation",
+            "        from curriculum_api.catalogue.infrastructure.free_course_policy_reads import retained_live_component_ids",
+            "        return operation(*args, retained_live_component_ids=retained_live_component_ids, **kwargs)"
+          ],
+          "historical": [
+            "        from curriculum_api.free_course_policy import free_course_errors as operation",
+            "        return operation(*args, **kwargs)"
+          ]
+        }
+      ]
+    },
+    "curriculum_api/catalogue/api/week_template_composition.py": {
+      "current_sha256": "a3236b084b89fc069463f7914f22527474627295f713a1b759231976302bc6f6",
+      "historical_sha256": "c7a66436e86ba607d4396376ecc5fcf1a797b25890bf3826464382a3ec753274",
+      "edits": [
+        {
+          "start": 5,
+          "current": [
+            "from curriculum_api.template_ksbs import authoring_transaction as template_authoring_transaction"
+          ],
+          "historical": []
+        },
+        {
+          "start": 37,
+          "current": [
+            "@template_authoring_transaction"
+          ],
+          "historical": []
+        },
+        {
+          "start": 43,
+          "current": [
+            "@template_authoring_transaction"
+          ],
+          "historical": []
+        }
+      ]
+    },
+    "curriculum_api/catalogue/api/ksb_mapping_composition.py": {
+      "current_sha256": "f05b68aeb24375145d01a2a3cc9f4875478579e4c8610b8b06f6d86956493fbc",
+      "historical_sha256": "6a1867340b9ec969eb2fb12dd16bc43236ec0c2874c4325532d653b734cd22a5",
+      "edits": [
+        {
+          "start": 43,
+          "current": [
+            "    return implementation(component_id, component_row, module_row, week_id, deleted_by, AUTHORING_COMPONENTS_TABLE=AUTHORING_COMPONENTS_TABLE, AUTHORING_KSB_MAPPINGS_TABLE=AUTHORING_KSB_MAPPINGS_TABLE, AUTHORING_MODULES_TABLE=AUTHORING_MODULES_TABLE, authoring_bulk_upsert=authoring_bulk_upsert, authoring_fetch_all=authoring_fetch_all, authoring_soft_delete=authoring_soft_delete, component_ksb_mappings_from_row=component_ksb_mappings_from_row, has_column=has_column, json_db_value=json_db_value, normalise_component_ksb_mappings=normalise_component_ksb_mappings, sync_progress_ksbs=sync_progress_ksbs, update_authoring_rows=update_authoring_rows, read_component_items=read_component_items)"
+          ],
+          "historical": [
+            "    return implementation(component_id, component_row, module_row, week_id, deleted_by, AUTHORING_COMPONENTS_TABLE=AUTHORING_COMPONENTS_TABLE, AUTHORING_KSB_MAPPINGS_TABLE=AUTHORING_KSB_MAPPINGS_TABLE, AUTHORING_MODULES_TABLE=AUTHORING_MODULES_TABLE, authoring_bulk_upsert=authoring_bulk_upsert, authoring_fetch_all=authoring_fetch_all, authoring_soft_delete=authoring_soft_delete, component_ksb_mappings_from_row=component_ksb_mappings_from_row, has_column=has_column, json_db_value=json_db_value, normalise_component_ksb_mappings=normalise_component_ksb_mappings, sync_progress_ksbs=sync_progress_ksbs, update_authoring_rows=update_authoring_rows)"
+          ]
+        },
+        {
+          "start": 53,
+          "current": [
+            "from curriculum_api.catalogue.infrastructure.ksb_read_store import component_items as read_component_items"
+          ],
+          "historical": []
+        }
+      ]
+    },
+    "curriculum_api/meetings/api/module_link_composition.py": {
+      "current_sha256": "115a8d530246a179c8af303d2216a86130af3cdf3407b1909b7eaf74d4dc392e",
+      "historical_sha256": "7c1243a9df60e29d7cbb53de98a2cc6a51e7790875df46fdb7d68619984a264f",
+      "edits": [
+        {
+          "start": 81,
+          "current": [
+            "def attach_teams_meeting_to_module_weeks(module_catalogue_id, series_row, series_settings, occurrence_rows, *, create_missing=False, dry_run=False, unresolved_components=None, align_to_week_plan=False):"
+          ],
+          "historical": [
+            "def attach_teams_meeting_to_module_weeks(module_catalogue_id, series_row, series_settings, occurrence_rows, *, create_missing=False, dry_run=False, unresolved_components=None):"
+          ]
+        },
+        {
+          "start": 85,
+          "current": [
+            "    return implementation(module_catalogue_id, series_row, series_settings, occurrence_rows, create_missing=create_missing, dry_run=dry_run, unresolved_components=unresolved_components, AUTHORING_COMPONENTS_TABLE=AUTHORING_COMPONENTS_TABLE, AUTHORING_MODULES_TABLE=AUTHORING_MODULES_TABLE, AUTHORING_WEEKS_TABLE=AUTHORING_WEEKS_TABLE, GROUPS_TABLE=GROUPS_TABLE, LIVE_SESSION_MEETING_SCOPE_KEY=LIVE_SESSION_MEETING_SCOPE_KEY, ZoneInfo=ZoneInfo, active_component_rows=active_component_rows, active_week_rows=active_week_rows, archive_state=archive_state, authoring_fetch_all=authoring_fetch_all, authoring_upsert=authoring_upsert, calendar_clock_to_utc_iso=calendar_clock_to_utc_iso, clean_str=clean_str, component_builder_settings=component_builder_settings, datetime=datetime, defaultdict=defaultdict, delivery_days_per_week=delivery_days_per_week, external_calendar_settings=external_calendar_settings, format_date=format_date, frontend_component_type=frontend_component_type, graph_timezone_iana=graph_timezone_iana, invalidate_curriculum_cache=invalidate_curriculum_cache, json_db_value=json_db_value, live_occurrence_component_settings=live_occurrence_component_settings, live_session_component_points=live_session_component_points, live_session_meeting_scope=live_session_meeting_scope, module_has_booked_series=module_has_booked_series, module_session_clock=module_session_clock, module_stored_session_count=module_stored_session_count, module_structure_uses_session_rows=module_structure_uses_session_rows, module_week_delivery_slots=module_week_delivery_slots, module_week_session_plan=module_week_session_plan, occurrence_local_date=occurrence_local_date, parse_graph_datetime=parse_graph_datetime, parse_int=parse_int, stored_calendar_series=stored_calendar_series, timezone=timezone, update_authoring_rows=update_authoring_rows, uuid=uuid, align_to_week_plan=align_to_week_plan, TEAMS_OFF_CALENDAR_OCCURRENCE_STATUSES=TEAMS_OFF_CALENDAR_OCCURRENCE_STATUSES, occurrence_local_start=occurrence_local_start, live_session_booked_on_module_calendar=live_session_booked_on_module_calendar)"
+          ],
+          "historical": [
+            "    return implementation(module_catalogue_id, series_row, series_settings, occurrence_rows, create_missing=create_missing, dry_run=dry_run, unresolved_components=unresolved_components, AUTHORING_COMPONENTS_TABLE=AUTHORING_COMPONENTS_TABLE, AUTHORING_MODULES_TABLE=AUTHORING_MODULES_TABLE, AUTHORING_WEEKS_TABLE=AUTHORING_WEEKS_TABLE, GROUPS_TABLE=GROUPS_TABLE, LIVE_SESSION_MEETING_SCOPE_KEY=LIVE_SESSION_MEETING_SCOPE_KEY, ZoneInfo=ZoneInfo, active_component_rows=active_component_rows, active_week_rows=active_week_rows, archive_state=archive_state, authoring_fetch_all=authoring_fetch_all, authoring_upsert=authoring_upsert, calendar_clock_to_utc_iso=calendar_clock_to_utc_iso, clean_str=clean_str, component_builder_settings=component_builder_settings, datetime=datetime, defaultdict=defaultdict, delivery_days_per_week=delivery_days_per_week, external_calendar_settings=external_calendar_settings, format_date=format_date, frontend_component_type=frontend_component_type, graph_timezone_iana=graph_timezone_iana, invalidate_curriculum_cache=invalidate_curriculum_cache, json_db_value=json_db_value, live_occurrence_component_settings=live_occurrence_component_settings, live_session_component_points=live_session_component_points, live_session_meeting_scope=live_session_meeting_scope, module_has_booked_series=module_has_booked_series, module_session_clock=module_session_clock, module_stored_session_count=module_stored_session_count, module_structure_uses_session_rows=module_structure_uses_session_rows, module_week_delivery_slots=module_week_delivery_slots, module_week_session_plan=module_week_session_plan, occurrence_local_date=occurrence_local_date, parse_graph_datetime=parse_graph_datetime, parse_int=parse_int, stored_calendar_series=stored_calendar_series, timezone=timezone, update_authoring_rows=update_authoring_rows, uuid=uuid)"
+          ]
+        },
+        {
+          "start": 113,
+          "current": [
+            "from curriculum_api.meetings.domain.read_contracts import TEAMS_OFF_CALENDAR_OCCURRENCE_STATUSES",
+            "from curriculum_api.meetings.api.adapters import occurrence_local_start",
+            "from curriculum_api.meetings.infrastructure.calendar_runtime import live_session_booked_on_module_calendar"
+          ],
+          "historical": []
+        }
+      ]
+    }
+  }
+}
