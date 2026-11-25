@@ -1,4 +1,4 @@
-﻿"""Learner calendar: source-owned Reviews with local coaching bookings.
+"""Learner calendar: source-owned Reviews with local coaching bookings.
 
 Native Reviews use Curriculum occurrences and native instances. Aptem Reviews
 use Learner.reviews with their existing calendar/form continuations. Stable
@@ -339,7 +339,7 @@ def _generated_cycle_events(learner, mirror, stored_by_key, *, month=None):
         review_event_type_for_type_code,
         review_type_event_fields,
     )
-    from curriculum_api.review_instances import review_calendar_event_key
+    from curriculum_api.review_management.domain.occurrence_identity import review_calendar_event_key
 
     if mirror is None or source_for_learner(learner, mirror).kind != "curriculum":
         return []
@@ -425,14 +425,15 @@ def _generated_cycle_events(learner, mirror, stored_by_key, *, month=None):
 
 
 def review_type_rows_by_template(template_ids):
-    from curriculum_api import reviews, review_types
+    import curriculum_api.review_management.infrastructure.template_rows as review_infrastructure_template_rows
+    import curriculum_api.review_management.infrastructure.type_rows as review_infrastructure_type_rows
     wanted = sorted({_s(value) for value in template_ids if _s(value)})
     if not wanted:
         return {}
-    rows = reviews.get_review_template_rows(
+    rows = review_infrastructure_template_rows.get_review_template_rows(
         f"id in ({', '.join(['%s'] * len(wanted))})", wanted, include_deleted=True,
     )
-    types = review_types.review_type_index()
+    types = review_infrastructure_type_rows.review_type_index()
     return {row['id']: types[row['review_type_id']] for row in rows if row.get('review_type_id') in types}
 
 
@@ -444,7 +445,7 @@ def _serialize_event(record, *, review_types_by_template=None, templates_by_id=N
     """
     event_type = _s(record.event_type) or "mcr"
     from coach_api.views import review_event_type_for_type_code, review_type_event_fields
-    from curriculum_api import reviews
+    import curriculum_api.review_management.infrastructure.template_rows as review_infrastructure_template_rows
     template_id = _s(getattr(record, 'review_template_id', ''))
     if review_types_by_template is None:
         review_types_by_template = review_type_rows_by_template([template_id])
@@ -453,7 +454,7 @@ def _serialize_event(record, *, review_types_by_template=None, templates_by_id=N
         event_type = review_event_type_for_type_code(type_row.get('code'))
     template = (templates_by_id or {}).get(template_id)
     if template_id and templates_by_id is None:
-        template = reviews.get_review_template_row(template_id, include_deleted=True)
+        template = review_infrastructure_template_rows.get_review_template_row(template_id, include_deleted=True)
     from coach_api.booking_reservations import review_occupies_slot
     display_date = record.scheduled_date or record.target_date
     if compact:
@@ -658,7 +659,7 @@ def coaching_events_for_learner(learner, mirror, *, month=None, only_sources=Non
     if (review_source.kind == "curriculum" and mirror is not None
             and any(record.event_type in {"mcr", "progress-review", "review"}
                     and _s(getattr(record, "review_instance_id", "")) for record in stored)):
-        from curriculum_api.review_instances import list_review_instances_for_learner
+        from curriculum_api.review_management.infrastructure.instance_rows import list_review_instances_for_learner
         native_instances = {
             str(instance['id']): instance
             for instance in list_review_instances_for_learner(mirror.id)
@@ -719,10 +720,11 @@ def coaching_events_for_learner(learner, mirror, *, month=None, only_sources=Non
 
 def _curriculum_cycle_events(learner, mirror, records, *, month=None, compact=False):
     """Generated Curriculum occurrences reconciled with their saved bookings."""
-    from curriculum_api import reviews, review_instances
+    import curriculum_api.review_management.domain.occurrence_identity as review_domain_occurrence_identity
+    import curriculum_api.review_management.infrastructure.template_rows as review_infrastructure_template_rows
     generated = (_generated_cycle_events(learner, mirror, set(), month=month)
                  if month else _generated_cycle_events(learner, mirror, set()))
-    matched = review_instances.reconcile_review_event_keys(generated, records)
+    matched = review_domain_occurrence_identity.reconcile_review_event_keys(generated, records)
     # Generated occurrences already carry the current template title and Review
     # Type metadata. Reuse it for stored rows from the same templates instead
     # of reading review_templates and review_types again.
@@ -745,7 +747,7 @@ def _curriculum_cycle_events(learner, mirror, records, *, month=None, compact=Fa
     template_ids = sorted({_s(getattr(record, 'review_template_id', '')) for record in records} - {''})
     unresolved_template_ids = [template_id for template_id in template_ids if template_id not in templates]
     if unresolved_template_ids:
-        templates.update({row['id']: row for row in reviews.get_review_template_rows(
+        templates.update({row['id']: row for row in review_infrastructure_template_rows.get_review_template_rows(
             f"id in ({', '.join(['%s'] * len(unresolved_template_ids))})",
             unresolved_template_ids, include_deleted=True,
         )})
@@ -893,8 +895,9 @@ def _resolve_assignment_month_mcm_occurrence(learner, mirror):
     error response rather than falling back to an unlinked booking.
     """
     from coach_api.views import resolve_curriculum_programme_id, resolve_review_anchor_date
-    from curriculum_api import review_types as curriculum_review_types
-    from curriculum_api.review_instances import list_enabled_review_templates
+    import curriculum_api.review_management.domain.classification as review_domain_classification
+    import curriculum_api.review_management.infrastructure.type_rows as review_infrastructure_type_rows
+    from curriculum_api.review_management.application.learner_occurrences import list_enabled_review_templates
 
     if mirror is None:
         return None, ("Only Active learners can book programme-cycle sessions.", 400)
@@ -905,7 +908,7 @@ def _resolve_assignment_month_mcm_occurrence(learner, mirror):
     if not programme_id:
         return None, ("No Monthly Coaching Meeting is configured for this learner's programme.", 422)
 
-    mcm_type = curriculum_review_types.get_review_type_by_code(curriculum_review_types.REVIEW_TYPE_CODE_MCM)
+    mcm_type = review_infrastructure_type_rows.get_review_type_by_code(review_domain_classification.REVIEW_TYPE_CODE_MCM)
     mcm_type_id = _s((mcm_type or {}).get('id'))
     mcm_templates = [
         template for template in list_enabled_review_templates(programme_id)
@@ -954,8 +957,9 @@ def _resolve_assignment_month_progress_review_occurrence(learner, mirror):
     error response rather than falling back to an unlinked booking.
     """
     from coach_api.views import resolve_curriculum_programme_id, resolve_review_anchor_date
-    from curriculum_api import review_types as curriculum_review_types
-    from curriculum_api.review_instances import list_enabled_review_templates
+    import curriculum_api.review_management.domain.classification as review_domain_classification
+    import curriculum_api.review_management.infrastructure.type_rows as review_infrastructure_type_rows
+    from curriculum_api.review_management.application.learner_occurrences import list_enabled_review_templates
 
     if mirror is None:
         return None, ("Only Active learners can book programme-cycle sessions.", 400)
@@ -966,7 +970,7 @@ def _resolve_assignment_month_progress_review_occurrence(learner, mirror):
     if not programme_id:
         return None, ("No Progress Review is configured for this learner's programme.", 422)
 
-    pr_type = curriculum_review_types.get_review_type_by_code(curriculum_review_types.REVIEW_TYPE_CODE_PROGRESS_REVIEW)
+    pr_type = review_infrastructure_type_rows.get_review_type_by_code(review_domain_classification.REVIEW_TYPE_CODE_PROGRESS_REVIEW)
     pr_type_id = _s((pr_type or {}).get('id'))
     pr_templates = [
         template for template in list_enabled_review_templates(programme_id)
@@ -1077,7 +1081,7 @@ def _learner_calendar_record(kind, pk, event_key):
     if (existing and review_source.kind == "curriculum"
             and existing.event_type in {"mcr", "progress-review", "review"}
             and _s(getattr(existing, "review_instance_id", ""))):
-        from curriculum_api.review_instances import get_review_instance
+        from curriculum_api.review_management.infrastructure.instance_rows import get_review_instance
         emails = {_s(getattr(learner, "email", "")).strip().casefold(),
                   _s(getattr(mirror, "email", "")).strip().casefold()} - {""}
         instance = get_review_instance(existing.review_instance_id)
@@ -1174,7 +1178,10 @@ def learner_calendar_event_review(request, kind, pk, event_key):
     if request.method == "POST":
         return _save_learner_review_answers(request, kind, pk, event_key)
     record = _learner_calendar_record(kind, pk, event_key)
-    from curriculum_api import review_instances, reviews
+    import curriculum_api.review_management.application.instance_definitions as review_application_instance_definitions
+    import curriculum_api.review_management.domain.instance_rules as review_domain_instance_rules
+    import curriculum_api.review_management.infrastructure.instance_rows as review_infrastructure_instance_rows
+    import curriculum_api.review_management.infrastructure.template_rows as review_infrastructure_template_rows
     if record and isinstance(getattr(record, '_imported_review_event', None), dict):
         return _error("Open this imported Review through its migrated form.", 409)
     instance_id = _s(getattr(record, "review_instance_id", ""))
@@ -1207,33 +1214,33 @@ def learner_calendar_event_review(request, kind, pk, event_key):
         learner = model.all_learners.filter(pk=pk).first() if model else None
         mirror = _calendar_profile(learner, pk) if learner is not None else None
         if mirror is not None:
-            existing = review_instances.find_review_instance(template_id, str(mirror.pk), occurrence_number)
+            existing = review_infrastructure_instance_rows.find_review_instance(template_id, str(mirror.pk), occurrence_number)
             if existing:
                 instance_id = _s(existing.get('id'))
         if instance_id:
-            instance = review_instances.get_review_instance(instance_id)
+            instance = review_infrastructure_instance_rows.get_review_instance(instance_id)
             if not instance:
                 return _error("Review instance not found.", 404)
-            definition = review_instances.review_instance_form_definition(instance)
+            definition = review_application_instance_definitions.review_instance_form_definition(instance)
             if not definition['template']['visibleTo'].get('participant', True):
                 return _error('This review is not visible to the learner.', 403)
             return JsonResponse(_learner_visible_review_definition(definition, pk))
-        template = reviews.get_review_template_row(template_id, include_deleted=bool(record))
+        template = review_infrastructure_template_rows.get_review_template_row(template_id, include_deleted=bool(record))
         if template is None:
             return _error('Review template not found.', 404)
-        snapshot = review_instances.build_definition_snapshot(template)
+        snapshot = review_application_instance_definitions.build_definition_snapshot(template)
         if not snapshot.get('visibleTo', {}).get('participant', True):
             return _error('This review is not visible to the learner.', 403)
         return JsonResponse(_learner_visible_review_definition({
             'instance': None, 'occurrenceNumber': occurrence_number,
             'template': snapshot, 'sections': snapshot['sections'],
             'signatures': {role: {'required': bool(snapshot['signatures'].get(role)), 'signed': False}
-                           for role in review_instances.SIGNATURE_ROLES},
+                           for role in review_domain_instance_rules.SIGNATURE_ROLES},
         }, pk))
-    instance = review_instances.get_review_instance(instance_id)
+    instance = review_infrastructure_instance_rows.get_review_instance(instance_id)
     if not instance:
         return _error("Review instance not found.", 404)
-    definition = review_instances.review_instance_form_definition(instance)
+    definition = review_application_instance_definitions.review_instance_form_definition(instance)
     if not definition['template']['visibleTo'].get('participant', True):
         return _error('This review is not visible to the learner.', 403)
     return JsonResponse(_learner_visible_review_definition(definition, pk))
@@ -1246,7 +1253,9 @@ def _save_learner_review_answers(request, kind, pk, event_key):
     Learner ('participant') into answering -- every other field stays the
     coach's/Curriculum's, exactly as before this endpoint accepted writes.
     """
-    from curriculum_api import review_instances
+    import curriculum_api.review_management.application.instance_answers as review_application_instance_answers
+    import curriculum_api.review_management.application.instance_definitions as review_application_instance_definitions
+    import curriculum_api.review_management.infrastructure.instance_rows as review_infrastructure_instance_rows
 
     record = _learner_calendar_record(kind, pk, event_key)
     if record and isinstance(getattr(record, '_imported_review_event', None), dict):
@@ -1254,10 +1263,10 @@ def _save_learner_review_answers(request, kind, pk, event_key):
     instance_id = _s(getattr(record, "review_instance_id", ""))
     if not instance_id:
         return _error("This review has not been booked yet.", 404)
-    instance = review_instances.get_review_instance(instance_id)
+    instance = review_infrastructure_instance_rows.get_review_instance(instance_id)
     if not instance:
         return _error("Review instance not found.", 404)
-    definition = review_instances.review_instance_form_definition(instance)
+    definition = review_application_instance_definitions.review_instance_form_definition(instance)
     if not definition['template']['visibleTo'].get('participant', True):
         return _error('This review is not visible to the learner.', 403)
 
@@ -1272,7 +1281,7 @@ def _save_learner_review_answers(request, kind, pk, event_key):
     account = authenticate_request(request)
     actor = _s(getattr(account, "email", "")) or f"learner:{pk}"
     try:
-        updated = review_instances.save_review_instance_answers_for_role(
+        updated = review_application_instance_answers.save_review_instance_answers_for_role(
             instance, answers, "participant", actor=actor,
         )
     except PermissionError as exc:
@@ -1318,7 +1327,7 @@ def _learner_visible_review_definition(definition, learner_id=None):
         is_mcm
         and (definition.get('instance') or {}).get('status') not in {'awaiting-signature', 'completed'}
     ):
-        from curriculum_api.review_instances import meeting_summary_field
+        from curriculum_api.review_management.domain.instance_definitions import meeting_summary_field
         field = meeting_summary_field(definition)
         if field:
             field['answer'] = None
@@ -1333,7 +1342,8 @@ def _learner_visible_review_definition(definition, learner_id=None):
 def learner_calendar_event_review_pdf(request, kind, pk, event_key):
     """Download a PDF for a learner-visible current or imported review."""
     if event_key.startswith('imported-review:'):
-        from curriculum_api.review_pdf import historical_pdf_response, learner_information
+        from curriculum_api.review_management.api.pdf_responses import historical_pdf_response
+        from curriculum_api.review_management.application.pdf_export import learner_information
         from .aptem_review_pdf import imported_review_for_source, original_review_pdf
 
         model = SOURCE_MODELS.get(kind)
@@ -1360,7 +1370,9 @@ def learner_calendar_event_review_pdf(request, kind, pk, event_key):
     except (AttributeError, UnicodeDecodeError, ValueError):
         return _error("Review definition could not be read.", 502)
 
-    from curriculum_api.review_pdf import learner_information, mcm_pdf_response, pdf_availability
+    from curriculum_api.review_management.application.pdf_export import learner_information
+    from curriculum_api.review_management.api.pdf_responses import mcm_pdf_response
+    from curriculum_api.review_management.domain.pdf_policy import pdf_availability
 
     if not (pdf_availability(definition) or {}).get("available"):
         return mcm_pdf_response(definition, {})
@@ -1462,7 +1474,8 @@ def learner_progress_review_sign(request, kind, pk, event_key):
     # Curriculum Review instances are the canonical form/signature record.
     # Keep the old calendar blob only for rows created before instances existed.
     if _s(getattr(record, 'review_instance_id', '')):
-        from curriculum_api import review_instances
+        import curriculum_api.review_management.application.instance_signatures as review_application_instance_signatures
+        import curriculum_api.review_management.infrastructure.instance_rows as review_infrastructure_instance_rows
         try:
             payload = json.loads(request.body or b"{}")
         except (TypeError, ValueError):
@@ -1472,11 +1485,11 @@ def learner_progress_review_sign(request, kind, pk, event_key):
             return _error("A valid learner signature is required.", 400)
         if record.status not in {CoachCalendarEvent.STATUS_AWAITING_SIGNATURE, CoachCalendarEvent.STATUS_COMPLETED}:
             return _error("The coach must submit the review before the learner can sign it.", 409)
-        instance = review_instances.get_review_instance(record.review_instance_id)
+        instance = review_infrastructure_instance_rows.get_review_instance(record.review_instance_id)
         if not instance:
             return _error("Review instance not found.", 404)
         try:
-            definition = review_instances.record_review_instance_signature(
+            definition = review_application_instance_signatures.record_review_instance_signature(
                 instance, "participant", signed_by=_s(record.learner_email),
                 signed_name=_s(payload.get("name")) or _s(record.learner_name),
                 signature=signature, actor=_s(record.learner_email) or "learner",

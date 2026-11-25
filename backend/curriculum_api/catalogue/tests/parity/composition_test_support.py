@@ -35,6 +35,19 @@ OWNERS += tuple(dict.fromkeys(
      for entry in _READ_CONSUMERS] +
     [binding['owner'] for entry in _READ_CONSUMERS for binding in entry['bindings']
      if binding['owner'] != 'django.db']))
+# Same capabilities, now imported directly by the Free Course owners.
+OWNERS += (
+    'curriculum_api.catalogue.infrastructure.free_course_pricing',
+    'curriculum_api.catalogue.infrastructure.free_course_catalogue_store',
+    'curriculum_api.catalogue.infrastructure.free_course_commands',
+    'curriculum_api.catalogue.infrastructure.free_course_policy_reads',
+    'curriculum_api.catalogue.api.free_course_conversion',
+    'curriculum_api.catalogue.infrastructure.free_course_conversion',
+    'curriculum_api.catalogue.api.free_course_import',
+    'curriculum_api.catalogue.infrastructure.free_course_import_storage',
+    'curriculum_api.catalogue.infrastructure.free_course_structure_reads',
+    'curriculum_api.catalogue.api.free_course_authoring',
+)
 _MISSING = object()
 
 

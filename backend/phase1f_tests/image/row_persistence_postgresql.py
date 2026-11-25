@@ -7,8 +7,8 @@ from django.db import connection, transaction, IntegrityError
 from curriculum_api import views
 from curriculum_api.catalogue.infrastructure import row_persistence
 from curriculum_api.catalogue.application import programme_configuration
-from curriculum_api.test_row_persistence_boundary_no_db import persistence_scope, write_ports
-from curriculum_api.test_module_commands_boundary_no_db import recording
+from curriculum_api.catalogue.tests.test_row_persistence_boundary_no_db import persistence_scope, write_ports
+from curriculum_api.catalogue.tests.test_module_commands_boundary_no_db import recording
 
 SCHEMA = 'phase1f_row_persistence'
 

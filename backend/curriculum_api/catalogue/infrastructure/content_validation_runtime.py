@@ -58,7 +58,7 @@ def component_context_for_payload(payload):
     from curriculum_api.catalogue.application.component_authoring import component_context_for_payload as implementation
 
     def retained_live_component_ids(*args, **kwargs):
-        from curriculum_api.free_course_policy import retained_live_component_ids as operation
+        from curriculum_api.catalogue.infrastructure.free_course_policy_reads import retained_live_component_ids as operation
         return operation(*args, **kwargs)
     return implementation(
         payload,

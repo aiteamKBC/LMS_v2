@@ -11,7 +11,9 @@ from django.test import RequestFactory, SimpleTestCase
 
 from learner_api.review_live_inputs import UnavailableReviewProgress
 from . import views
-from curriculum_api import review_instances as engine, review_types
+import curriculum_api.review_management.application.instance_progress as review_application_instance_progress
+import curriculum_api.review_management.domain.classification as review_domain_classification
+import curriculum_api.review_management.domain.instance_rules as review_domain_instance_rules
 
 
 class NativeLiveProgressEndpointTests(SimpleTestCase):
@@ -28,17 +30,17 @@ class NativeLiveProgressEndpointTests(SimpleTestCase):
             return self.stack.enter_context(patch(target, **kwargs))
         stub('coach_api.views.authenticated_coach_email', return_value='coach@example.test')
         stub('coach_api.reconciliation_links.for_native', return_value=None)
-        stub('curriculum_api.review_instances.get_review_instance', return_value=self.row)
-        stub('curriculum_api.review_instances.review_instance_form_definition', return_value={
-            'template': {'reviewTypeCode': review_types.REVIEW_TYPE_CODE_PROGRESS_REVIEW}})
+        stub('curriculum_api.review_management.infrastructure.instance_rows.get_review_instance', return_value=self.row)
+        stub('curriculum_api.review_management.application.instance_definitions.review_instance_form_definition', return_value={
+            'template': {'reviewTypeCode': review_domain_classification.REVIEW_TYPE_CODE_PROGRESS_REVIEW}})
         manager = stub('coach_api.views.LearnerProfile.objects.filter')
         manager.return_value.first.return_value = self.profile
         stub('coach_api.views.fetch_source_schedule_rows', return_value=({101: self.source}, {}))
         stub('coach_api.views.resolve_review_anchor_date', return_value=(date(2024, 1, 1), None))
         stub('coach_api.views.timezone.now', return_value=self.now)
         self.builder = stub('coach_api.views.build_progress_snapshot', return_value=self.snapshot)
-        self.real_save = unwrap(engine.save_review_instance_progress_snapshot)
-        self.save = stub('curriculum_api.review_instances.save_review_instance_progress_snapshot')
+        self.real_save = unwrap(review_application_instance_progress.save_review_instance_progress_snapshot)
+        self.save = stub('curriculum_api.review_management.application.instance_progress.save_review_instance_progress_snapshot')
         stub('coach_api.views._coach_review_instance_definition', return_value={'progressSnapshot': self.snapshot})
 
     def call(self):
@@ -67,7 +69,7 @@ class NativeLiveProgressEndpointTests(SimpleTestCase):
 
     def test_awaiting_signature_and_completed_results_cannot_be_overwritten(self):
         self.save.side_effect = lambda *a, **kw: self.real_save(*a, **kw)
-        for status in (engine.STATUS_AWAITING_SIGNATURE, engine.STATUS_COMPLETED):
+        for status in (review_domain_instance_rules.STATUS_AWAITING_SIGNATURE, review_domain_instance_rules.STATUS_COMPLETED):
             self.row['status'] = status
             before = deepcopy(self.row['progress_snapshot'])
             self.assertEqual(self.call().status_code, 409)

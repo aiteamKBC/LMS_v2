@@ -62,8 +62,9 @@ def namespace(original=False):
     exec(compile(ast.Module(body=kept, type_ignores=[]), str(path), 'exec'), env)
     if original:
         env['__package__'] = 'curriculum_api'
+        from curriculum_api.catalogue.tests.parity.authoring_storage_oracle import runtime_source
         for entry in SNAPSHOT['owned'].values():
-            exec(compile(entry['old'], '<original-views>', 'exec'), env)
+            exec(compile(runtime_source(entry['old']), '<original-views>', 'exec'), env)
     return env
 
 
@@ -75,7 +76,7 @@ class DatabaseReadSourceParity(unittest.TestCase):
         functions = {n.name: n for n in tree.body if isinstance(n, ast.FunctionDef)}
         for name, entry in SNAPSHOT['owned'].items():
             expected = entry['old'].replace('from .catalogue.infrastructure.schema_reads', 'from .schema_reads')
-            expected = expected.replace('from .free_course_contract', 'from curriculum_api.free_course_contract')
+            expected = expected.replace('from .free_course_contract', 'from curriculum_api.catalogue.infrastructure.free_course_contract')
             self.assertEqual(ast.dump(functions[name]), ast.dump(ast.parse(expected).body[0]), name)
         for rel, entry in SNAPSHOT['source_changes'].items():
             tree = ast.parse((ROOT / rel).read_text(encoding='utf-8-sig'))
@@ -130,7 +131,7 @@ class DatabaseReadSourceParity(unittest.TestCase):
             self.assertTrue(env['has_column']('modules', 'status'))
             with storage_context.native_authoring_scope():
                 # The native contract is pure data; no schema probe takes place.
-                from curriculum_api.free_course_contract import COLUMNS
+                from curriculum_api.catalogue.infrastructure.free_course_contract import COLUMNS
                 table = next(iter(COLUMNS))
                 count = len(db.calls)
                 self.assertEqual(env['column_names'](table), {n for n, _ in COLUMNS[table]})

@@ -61,7 +61,9 @@ with connection.cursor() as cursor:
     # the older read fixture's week_days column is a different contract.
     cursor.execute('ALTER TABLE curriculum.groups ADD COLUMN session_week_day varchar(255)')
     cursor.execute('ALTER TABLE "Learner".learner_progress_entries ADD COLUMN reporting_month varchar(7), ADD COLUMN curriculum_component_ref text')
-    cursor.execute('ALTER TABLE "Learner".learner_progress_ksbs ADD COLUMN ksb_description text, ADD COLUMN source_type text, ADD COLUMN source_id text, ADD COLUMN classification text')
+    # LearnerProgressKsb.ksb_definition is nullable; dev's sync reads its ID
+    # even when the synthetic progress table has no rows.
+    cursor.execute('ALTER TABLE "Learner".learner_progress_ksbs ADD COLUMN ksb_definition_id bigint, ADD COLUMN ksb_description text, ADD COLUMN source_type text, ADD COLUMN source_id text, ADD COLUMN classification text')
 views.provision_live_sessions_table()
 views.provision_live_session_tracking_tables()
 for name in ('session_results_archive.sql','teams_calendar_create_claims.sql','teams_calendar_create_drafts.sql',
@@ -71,10 +73,10 @@ for name in ('session_results_archive.sql','teams_calendar_create_claims.sql','t
 # No outside HTTP/Graph transport can escape the namespace. The tests provide
 # synthetic Graph responses; all six aliases still address this disposable DB.
 targets = ('curriculum_api.tests.CurriculumTeamsMeetingTests',
-           'curriculum_api.tests_study_weeks',
-           'curriculum_api.tests_module_weekly_schedule',
+           'curriculum_api.catalogue.tests.tests_study_weeks',
+           'curriculum_api.catalogue.tests.tests_module_weekly_schedule',
            'curriculum_api.tests.TeamsCalendarSyncVerdictTests',
-           'curriculum_api.test_teams_delivery_sync')
+           'curriculum_api.meetings.tests.test_teams_delivery_sync')
 suite = unittest.TestSuite(unittest.defaultTestLoader.loadTestsFromName(n) for n in targets)
 from curriculum_api.meetings.tests.invitees_postgresql import suite as invitee_suite
 suite.addTests(invitee_suite(fixture_namespace))
@@ -84,7 +86,7 @@ def permitted_tests(items):
     for test in items:
         if isinstance(test, unittest.TestSuite):
             selected.addTests(permitted_tests(test))
-        elif test.id() == 'curriculum_api.tests_study_weeks.StudyWeekPersistenceTests.test_migration_refreshes_existing_read_views_and_preserves_legacy_rows':
+        elif test.id() == 'curriculum_api.catalogue.tests.tests_study_weeks.StudyWeekPersistenceTests.test_migration_refreshes_existing_read_views_and_preserves_legacy_rows':
             blocked.append(test.id())
         else:
             selected.addTest(test)

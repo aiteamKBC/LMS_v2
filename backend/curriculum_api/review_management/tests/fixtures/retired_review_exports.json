@@ -1,0 +1,1092 @@
+{
+  "curriculum_api.reviews": {
+    "REVIEW_TEMPLATES_TABLE": [
+      "curriculum_api.review_management.infrastructure.relations",
+      "REVIEW_TEMPLATES_TABLE"
+    ],
+    "REVIEW_SECTIONS_TABLE": [
+      "curriculum_api.review_management.infrastructure.relations",
+      "REVIEW_SECTIONS_TABLE"
+    ],
+    "REVIEW_FIELDS_TABLE": [
+      "curriculum_api.review_management.infrastructure.relations",
+      "REVIEW_FIELDS_TABLE"
+    ],
+    "RECURRENCE_UNITS": [
+      "curriculum_api.review_management.domain.template_rules",
+      "RECURRENCE_UNITS"
+    ],
+    "FIELD_TYPES": [
+      "curriculum_api.review_management.domain.template_rules",
+      "FIELD_TYPES"
+    ],
+    "FIELD_TYPES_REQUIRING_TITLE": [
+      "curriculum_api.review_management.domain.template_rules",
+      "FIELD_TYPES_REQUIRING_TITLE"
+    ],
+    "DISPLAY_ONLY_FIELD_TYPES": [
+      "curriculum_api.review_management.domain.template_rules",
+      "DISPLAY_ONLY_FIELD_TYPES"
+    ],
+    "CONDITIONAL_FIELD_TYPE": [
+      "curriculum_api.review_management.domain.template_rules",
+      "CONDITIONAL_FIELD_TYPE"
+    ],
+    "CONDITION_VALUES": [
+      "curriculum_api.review_management.domain.template_rules",
+      "CONDITION_VALUES"
+    ],
+    "MEETING_SUMMARY_SEMANTIC_KEY": [
+      "curriculum_api.review_management.domain.template_rules",
+      "MEETING_SUMMARY_SEMANTIC_KEY"
+    ],
+    "PARTICIPANT_ROLES": [
+      "curriculum_api.review_management.domain.template_rules",
+      "PARTICIPANT_ROLES"
+    ],
+    "FIELD_RESPONDENT_ROLES": [
+      "curriculum_api.review_management.domain.template_rules",
+      "FIELD_RESPONDENT_ROLES"
+    ],
+    "ensure_review_tables": [
+      "curriculum_api.review_management.infrastructure.template_schema",
+      "ensure_review_tables"
+    ],
+    "provision_review_template_tables": [
+      "curriculum_api.review_management.infrastructure.template_schema",
+      "provision_review_template_tables"
+    ],
+    "get_review_template_rows": [
+      "curriculum_api.review_management.infrastructure.template_rows",
+      "get_review_template_rows"
+    ],
+    "get_review_template_row": [
+      "curriculum_api.review_management.infrastructure.template_rows",
+      "get_review_template_row"
+    ],
+    "get_review_section_rows": [
+      "curriculum_api.review_management.infrastructure.template_rows",
+      "get_review_section_rows"
+    ],
+    "get_review_field_rows": [
+      "curriculum_api.review_management.infrastructure.template_rows",
+      "get_review_field_rows"
+    ],
+    "review_field_payload": [
+      "curriculum_api.review_management.application.template_queries",
+      "review_field_payload"
+    ],
+    "assemble_review_sections": [
+      "curriculum_api.review_management.application.template_queries",
+      "assemble_review_sections"
+    ],
+    "flatten_fields": [
+      "curriculum_api.review_management.application.template_queries",
+      "flatten_fields"
+    ],
+    "review_template_summary_payload": [
+      "curriculum_api.review_management.application.template_queries",
+      "review_template_summary_payload"
+    ],
+    "review_template_detail_payload": [
+      "curriculum_api.review_management.application.template_queries",
+      "review_template_detail_payload"
+    ],
+    "review_detail_response": [
+      "curriculum_api.review_management.api.templates",
+      "review_detail_response"
+    ],
+    "_programme_exists": [
+      "curriculum_api.review_management.api.templates",
+      "_programme_exists"
+    ],
+    "validate_recurrence": [
+      "curriculum_api.review_management.domain.template_rules",
+      "validate_recurrence"
+    ],
+    "validate_schedule_anchor_date": [
+      "curriculum_api.review_management.application.template_validation",
+      "validate_schedule_anchor_date"
+    ],
+    "_resolve_review_type": [
+      "curriculum_api.review_management.application.template_queries",
+      "_resolve_review_type"
+    ],
+    "validate_review_type_id": [
+      "curriculum_api.review_management.application.template_validation",
+      "validate_review_type_id"
+    ],
+    "validate_occurrence_count": [
+      "curriculum_api.review_management.domain.template_rules",
+      "validate_occurrence_count"
+    ],
+    "validate_expected_otjh": [
+      "curriculum_api.review_management.domain.template_rules",
+      "validate_expected_otjh"
+    ],
+    "validate_statuses": [
+      "curriculum_api.review_management.domain.template_rules",
+      "validate_statuses"
+    ],
+    "_validate_field_configuration": [
+      "curriculum_api.review_management.domain.template_rules",
+      "_validate_field_configuration"
+    ],
+    "MAX_FIELD_NESTING_DEPTH": [
+      "curriculum_api.review_management.domain.template_rules",
+      "MAX_FIELD_NESTING_DEPTH"
+    ],
+    "validate_field_payload": [
+      "curriculum_api.review_management.domain.template_rules",
+      "validate_field_payload"
+    ],
+    "validate_section_payload": [
+      "curriculum_api.review_management.domain.template_rules",
+      "validate_section_payload"
+    ],
+    "_sections_payload_from": [
+      "curriculum_api.review_management.domain.template_rules",
+      "_sections_payload_from"
+    ],
+    "validate_applicability": [
+      "curriculum_api.review_management.application.template_validation",
+      "validate_applicability"
+    ],
+    "validate_review_payload": [
+      "curriculum_api.review_management.application.template_validation",
+      "validate_review_payload"
+    ],
+    "_insert_field_row": [
+      "curriculum_api.review_management.infrastructure.template_rows",
+      "_insert_field_row"
+    ],
+    "save_section_fields": [
+      "curriculum_api.review_management.infrastructure.template_rows",
+      "save_section_fields"
+    ],
+    "save_review_sections": [
+      "curriculum_api.review_management.infrastructure.template_rows",
+      "save_review_sections"
+    ],
+    "existing_review_ids": [
+      "curriculum_api.review_management.infrastructure.template_rows",
+      "existing_review_ids"
+    ],
+    "create_review": [
+      "curriculum_api.review_management.api.commands",
+      "create_review"
+    ],
+    "update_review": [
+      "curriculum_api.review_management.api.commands",
+      "update_review"
+    ],
+    "archive_review": [
+      "curriculum_api.review_management.api.commands",
+      "archive_review"
+    ],
+    "clone_review": [
+      "curriculum_api.review_management.application.template_commands",
+      "clone_review"
+    ],
+    "_actor": [
+      "curriculum_api.review_management.api.templates",
+      "_actor"
+    ],
+    "curriculum_programme_review_collection": [
+      "curriculum_api.review_management.api.templates",
+      "curriculum_programme_review_collection"
+    ],
+    "curriculum_review_detail": [
+      "curriculum_api.review_management.api.templates",
+      "curriculum_review_detail"
+    ],
+    "curriculum_review_clone": [
+      "curriculum_api.review_management.api.templates",
+      "curriculum_review_clone"
+    ],
+    "reset_review_tables_ready": [
+      "curriculum_api.review_management.infrastructure.template_schema",
+      "reset_review_tables_ready"
+    ]
+  },
+  "curriculum_api.review_schedule": {
+    "OCCURRENCE_OVERRIDES_TABLE": [
+      "curriculum_api.review_management.infrastructure.relations",
+      "OCCURRENCE_OVERRIDES_TABLE"
+    ],
+    "CLASH_RESOLUTIONS_TABLE": [
+      "curriculum_api.review_management.infrastructure.relations",
+      "CLASH_RESOLUTIONS_TABLE"
+    ],
+    "DEFAULT_PREVIEW_MONTHS": [
+      "curriculum_api.review_management.domain.recurrence",
+      "DEFAULT_PREVIEW_MONTHS"
+    ],
+    "MAX_PREVIEW_MONTHS": [
+      "curriculum_api.review_management.domain.recurrence",
+      "MAX_PREVIEW_MONTHS"
+    ],
+    "RECURRENCE_UNIT_NOUNS": [
+      "curriculum_api.review_management.domain.recurrence",
+      "RECURRENCE_UNIT_NOUNS"
+    ],
+    "ensure_review_schedule_tables": [
+      "curriculum_api.review_management.infrastructure.schedule_schema",
+      "ensure_review_schedule_tables"
+    ],
+    "provision_review_schedule_tables": [
+      "curriculum_api.review_management.infrastructure.schedule_schema",
+      "provision_review_schedule_tables"
+    ],
+    "add_calendar_months": [
+      "curriculum_api.review_management.domain.recurrence",
+      "add_calendar_months"
+    ],
+    "_month_length": [
+      "curriculum_api.review_management.domain.recurrence",
+      "_month_length"
+    ],
+    "_month_bounds": [
+      "curriculum_api.review_management.domain.recurrence",
+      "_month_bounds"
+    ],
+    "recurrence_label": [
+      "curriculum_api.review_management.domain.recurrence",
+      "recurrence_label"
+    ],
+    "generate_occurrence_steps": [
+      "curriculum_api.review_management.domain.recurrence",
+      "generate_occurrence_steps"
+    ],
+    "generate_occurrences": [
+      "curriculum_api.review_management.domain.recurrence",
+      "generate_occurrences"
+    ],
+    "clash_signature": [
+      "curriculum_api.review_management.domain.recurrence",
+      "clash_signature"
+    ],
+    "_raw_occurrences_for_programme": [
+      "curriculum_api.review_management.application.scheduling",
+      "_raw_occurrences_for_programme"
+    ],
+    "_fetch_active_overrides": [
+      "curriculum_api.review_management.infrastructure.schedule_rows",
+      "_fetch_active_overrides"
+    ],
+    "_fetch_active_clash_resolutions": [
+      "curriculum_api.review_management.infrastructure.schedule_rows",
+      "_fetch_active_clash_resolutions"
+    ],
+    "_find_active_override": [
+      "curriculum_api.review_management.infrastructure.schedule_rows",
+      "_find_active_override"
+    ],
+    "build_programme_schedule": [
+      "curriculum_api.review_management.application.scheduling",
+      "build_programme_schedule"
+    ],
+    "skip_occurrence": [
+      "curriculum_api.review_management.infrastructure.schedule_rows",
+      "skip_occurrence"
+    ],
+    "restore_occurrence": [
+      "curriculum_api.review_management.infrastructure.schedule_rows",
+      "restore_occurrence"
+    ],
+    "_upsert_keep_all_resolution": [
+      "curriculum_api.review_management.infrastructure.schedule_rows",
+      "_upsert_keep_all_resolution"
+    ],
+    "_MONTH_RE": [
+      "curriculum_api.review_management.domain.recurrence",
+      "_MONTH_RE"
+    ],
+    "_ACTIONS": [
+      "curriculum_api.review_management.domain.recurrence",
+      "_ACTIONS"
+    ],
+    "validate_clash_resolution_payload": [
+      "curriculum_api.review_management.application.scheduling",
+      "validate_clash_resolution_payload"
+    ],
+    "resolve_clash_decision": [
+      "curriculum_api.review_management.api.commands",
+      "resolve_clash_decision"
+    ],
+    "curriculum_programme_review_schedule": [
+      "curriculum_api.review_management.api.schedule",
+      "curriculum_programme_review_schedule"
+    ],
+    "curriculum_programme_review_clash_resolve": [
+      "curriculum_api.review_management.api.schedule",
+      "curriculum_programme_review_clash_resolve"
+    ],
+    "reset_review_schedule_ready": [
+      "curriculum_api.review_management.infrastructure.schedule_schema",
+      "reset_review_schedule_ready"
+    ]
+  },
+  "curriculum_api.review_types": {
+    "REVIEW_TYPES_TABLE": [
+      "curriculum_api.review_management.infrastructure.relations",
+      "REVIEW_TYPES_TABLE"
+    ],
+    "REVIEW_TYPE_CODE_MCM": [
+      "curriculum_api.review_management.domain.classification",
+      "REVIEW_TYPE_CODE_MCM"
+    ],
+    "REVIEW_TYPE_CODE_PROGRESS_REVIEW": [
+      "curriculum_api.review_management.domain.classification",
+      "REVIEW_TYPE_CODE_PROGRESS_REVIEW"
+    ],
+    "SYSTEM_REVIEW_TYPES": [
+      "curriculum_api.review_management.domain.classification",
+      "SYSTEM_REVIEW_TYPES"
+    ],
+    "SYSTEM_REVIEW_TYPE_CODES": [
+      "curriculum_api.review_management.domain.classification",
+      "SYSTEM_REVIEW_TYPE_CODES"
+    ],
+    "COACH_SURFACE_LEGACY_CODES": [
+      "curriculum_api.review_management.domain.classification",
+      "COACH_SURFACE_LEGACY_CODES"
+    ],
+    "DUPLICATE_NAME_ERROR": [
+      "curriculum_api.review_management.domain.classification",
+      "DUPLICATE_NAME_ERROR"
+    ],
+    "reset_ready_flag": [
+      "curriculum_api.review_management.infrastructure.type_schema",
+      "reset_ready_flag"
+    ],
+    "ensure_review_types_table": [
+      "curriculum_api.review_management.infrastructure.type_schema",
+      "ensure_review_types_table"
+    ],
+    "provision_review_types_table": [
+      "curriculum_api.review_management.infrastructure.type_schema",
+      "provision_review_types_table"
+    ],
+    "seed_system_review_types": [
+      "curriculum_api.review_management.infrastructure.type_schema",
+      "seed_system_review_types"
+    ],
+    "get_review_type_rows": [
+      "curriculum_api.review_management.infrastructure.type_rows",
+      "get_review_type_rows"
+    ],
+    "list_review_types": [
+      "curriculum_api.review_management.infrastructure.type_rows",
+      "list_review_types"
+    ],
+    "get_review_type": [
+      "curriculum_api.review_management.infrastructure.type_rows",
+      "get_review_type"
+    ],
+    "get_review_type_by_code": [
+      "curriculum_api.review_management.infrastructure.type_rows",
+      "get_review_type_by_code"
+    ],
+    "review_type_index": [
+      "curriculum_api.review_management.infrastructure.type_rows",
+      "review_type_index"
+    ],
+    "review_type_payload": [
+      "curriculum_api.review_management.domain.classification",
+      "review_type_payload"
+    ],
+    "generate_review_type_code": [
+      "curriculum_api.review_management.domain.classification",
+      "generate_review_type_code"
+    ],
+    "_normalised_name": [
+      "curriculum_api.review_management.domain.classification",
+      "_normalised_name"
+    ],
+    "duplicate_active_name_exists": [
+      "curriculum_api.review_management.application.classification",
+      "duplicate_active_name_exists"
+    ],
+    "create_review_type": [
+      "curriculum_api.review_management.api.commands",
+      "create_review_type"
+    ],
+    "rename_review_type": [
+      "curriculum_api.review_management.api.commands",
+      "rename_review_type"
+    ],
+    "archive_review_type": [
+      "curriculum_api.review_management.api.commands",
+      "archive_review_type"
+    ],
+    "_actor": [
+      "curriculum_api.review_management.api.types",
+      "_actor"
+    ],
+    "curriculum_review_type_collection": [
+      "curriculum_api.review_management.api.types",
+      "curriculum_review_type_collection"
+    ],
+    "curriculum_review_type_detail": [
+      "curriculum_api.review_management.api.types",
+      "curriculum_review_type_detail"
+    ]
+  },
+  "curriculum_api.review_instances": {
+    "STATUS_NOT_SCHEDULED": [
+      "curriculum_api.review_management.domain.instance_rules",
+      "STATUS_NOT_SCHEDULED"
+    ],
+    "STATUS_SCHEDULED": [
+      "curriculum_api.review_management.domain.instance_rules",
+      "STATUS_SCHEDULED"
+    ],
+    "STATUS_IN_PROGRESS": [
+      "curriculum_api.review_management.domain.instance_rules",
+      "STATUS_IN_PROGRESS"
+    ],
+    "STATUS_AWAITING_SIGNATURE": [
+      "curriculum_api.review_management.domain.instance_rules",
+      "STATUS_AWAITING_SIGNATURE"
+    ],
+    "STATUS_COMPLETED": [
+      "curriculum_api.review_management.domain.instance_rules",
+      "STATUS_COMPLETED"
+    ],
+    "EDITABLE_DEFINITION_STATUSES": [
+      "curriculum_api.review_management.domain.instance_rules",
+      "EDITABLE_DEFINITION_STATUSES"
+    ],
+    "OCCURRENCE_SOURCE_GENERATED": [
+      "curriculum_api.review_management.domain.instance_rules",
+      "OCCURRENCE_SOURCE_GENERATED"
+    ],
+    "OCCURRENCE_SOURCE_MANUAL": [
+      "curriculum_api.review_management.domain.instance_rules",
+      "OCCURRENCE_SOURCE_MANUAL"
+    ],
+    "LEARNER_REVIEW_ADDITION_REASON_CODES": [
+      "curriculum_api.review_management.domain.instance_rules",
+      "LEARNER_REVIEW_ADDITION_REASON_CODES"
+    ],
+    "SIGNATURE_ROLES": [
+      "curriculum_api.review_management.domain.instance_rules",
+      "SIGNATURE_ROLES"
+    ],
+    "required_signature_roles": [
+      "curriculum_api.review_management.domain.instance_rules",
+      "required_signature_roles"
+    ],
+    "learner_is_eligible": [
+      "curriculum_api.review_management.domain.instance_rules",
+      "learner_is_eligible"
+    ],
+    "template_recurrence_config": [
+      "curriculum_api.review_management.domain.instance_rules",
+      "template_recurrence_config"
+    ],
+    "MANUAL_OVERRIDE_REASON_CODES": [
+      "curriculum_api.review_management.domain.instance_rules",
+      "MANUAL_OVERRIDE_REASON_CODES"
+    ],
+    "REOPEN_REASON_CODES": [
+      "curriculum_api.review_management.domain.instance_rules",
+      "REOPEN_REASON_CODES"
+    ],
+    "REOPENABLE_STATUSES": [
+      "curriculum_api.review_management.domain.instance_rules",
+      "REOPENABLE_STATUSES"
+    ],
+    "_manual_override_status_rejection": [
+      "curriculum_api.review_management.domain.instance_rules",
+      "_manual_override_status_rejection"
+    ],
+    "_complete_review_instance_status_rejection": [
+      "curriculum_api.review_management.domain.instance_rules",
+      "_complete_review_instance_status_rejection"
+    ],
+    "_reopen_review_instance_status_rejection": [
+      "curriculum_api.review_management.domain.instance_rules",
+      "_reopen_review_instance_status_rejection"
+    ],
+    "json_safe": [
+      "curriculum_api.review_management.domain.instance_definitions",
+      "json_safe"
+    ],
+    "_flatten_snapshot_fields": [
+      "curriculum_api.review_management.domain.instance_definitions",
+      "_flatten_snapshot_fields"
+    ],
+    "semantic_review_fields": [
+      "curriculum_api.review_management.domain.instance_definitions",
+      "semantic_review_fields"
+    ],
+    "meeting_summary_field": [
+      "curriculum_api.review_management.domain.instance_definitions",
+      "meeting_summary_field"
+    ],
+    "_field_index": [
+      "curriculum_api.review_management.domain.instance_definitions",
+      "_field_index"
+    ],
+    "_field_tree_has_answer": [
+      "curriculum_api.review_management.domain.instance_definitions",
+      "_field_tree_has_answer"
+    ],
+    "_retained_removed_field": [
+      "curriculum_api.review_management.domain.instance_definitions",
+      "_retained_removed_field"
+    ],
+    "_merge_answer_safe_fields": [
+      "curriculum_api.review_management.domain.instance_definitions",
+      "_merge_answer_safe_fields"
+    ],
+    "merge_editable_definition_sections": [
+      "curriculum_api.review_management.domain.instance_definitions",
+      "merge_editable_definition_sections"
+    ],
+    "_visible_required_unanswered_fields": [
+      "curriculum_api.review_management.domain.instance_definitions",
+      "_visible_required_unanswered_fields"
+    ],
+    "writable_field_ids_for_role": [
+      "curriculum_api.review_management.domain.instance_definitions",
+      "writable_field_ids_for_role"
+    ],
+    "PROGRESS_SNAPSHOT_COLUMN": [
+      "curriculum_api.review_management.domain.instance_definitions",
+      "PROGRESS_SNAPSHOT_COLUMN"
+    ],
+    "LEGACY_PROGRESS_SNAPSHOT_SCHEMA_VERSION": [
+      "curriculum_api.review_management.domain.instance_definitions",
+      "LEGACY_PROGRESS_SNAPSHOT_SCHEMA_VERSION"
+    ],
+    "LEGACY_PROGRESS_SNAPSHOT_FORMULA_VERSION": [
+      "curriculum_api.review_management.domain.instance_definitions",
+      "LEGACY_PROGRESS_SNAPSHOT_FORMULA_VERSION"
+    ],
+    "RAG_SEMANTIC_KEY": [
+      "curriculum_api.review_management.domain.instance_definitions",
+      "RAG_SEMANTIC_KEY"
+    ],
+    "review_instance_progress_snapshot": [
+      "curriculum_api.review_management.domain.instance_definitions",
+      "review_instance_progress_snapshot"
+    ],
+    "_rag_field_ids": [
+      "curriculum_api.review_management.domain.instance_definitions",
+      "_rag_field_ids"
+    ],
+    "review_calendar_event_key": [
+      "curriculum_api.review_management.domain.occurrence_identity",
+      "review_calendar_event_key"
+    ],
+    "review_calendar_event_key_manual": [
+      "curriculum_api.review_management.domain.occurrence_identity",
+      "review_calendar_event_key_manual"
+    ],
+    "reconcile_review_event_keys": [
+      "curriculum_api.review_management.domain.occurrence_identity",
+      "reconcile_review_event_keys"
+    ],
+    "REVIEW_INSTANCES_TABLE": [
+      "curriculum_api.review_management.infrastructure.instance_relations",
+      "REVIEW_INSTANCES_TABLE"
+    ],
+    "REVIEW_INSTANCE_ANSWERS_TABLE": [
+      "curriculum_api.review_management.infrastructure.instance_relations",
+      "REVIEW_INSTANCE_ANSWERS_TABLE"
+    ],
+    "REVIEW_INSTANCE_SIGNATURES_TABLE": [
+      "curriculum_api.review_management.infrastructure.instance_relations",
+      "REVIEW_INSTANCE_SIGNATURES_TABLE"
+    ],
+    "REVIEW_INSTANCE_MANUAL_OVERRIDES_TABLE": [
+      "curriculum_api.review_management.infrastructure.instance_relations",
+      "REVIEW_INSTANCE_MANUAL_OVERRIDES_TABLE"
+    ],
+    "REVIEW_INSTANCE_REOPENS_TABLE": [
+      "curriculum_api.review_management.infrastructure.instance_relations",
+      "REVIEW_INSTANCE_REOPENS_TABLE"
+    ],
+    "LEARNER_REVIEW_ADDITIONS_TABLE": [
+      "curriculum_api.review_management.infrastructure.instance_relations",
+      "LEARNER_REVIEW_ADDITIONS_TABLE"
+    ],
+    "OVERRIDES_TABLE": [
+      "curriculum_api.review_management.infrastructure.instance_relations",
+      "OVERRIDES_TABLE"
+    ],
+    "ensure_review_instance_tables": [
+      "curriculum_api.review_management.infrastructure.instance_schema",
+      "ensure_review_instance_tables"
+    ],
+    "provision_review_instance_tables": [
+      "curriculum_api.review_management.infrastructure.instance_schema",
+      "provision_review_instance_tables"
+    ],
+    "ensure_review_instance_manual_overrides_table": [
+      "curriculum_api.review_management.infrastructure.instance_schema",
+      "ensure_review_instance_manual_overrides_table"
+    ],
+    "_provision_review_instance_manual_overrides_table": [
+      "curriculum_api.review_management.infrastructure.instance_schema",
+      "_provision_review_instance_manual_overrides_table"
+    ],
+    "ensure_review_instance_reopens_table": [
+      "curriculum_api.review_management.infrastructure.instance_schema",
+      "ensure_review_instance_reopens_table"
+    ],
+    "_provision_review_instance_reopens_table": [
+      "curriculum_api.review_management.infrastructure.instance_schema",
+      "_provision_review_instance_reopens_table"
+    ],
+    "ensure_learner_review_additions_table": [
+      "curriculum_api.review_management.infrastructure.instance_schema",
+      "ensure_learner_review_additions_table"
+    ],
+    "_provision_learner_review_additions_table": [
+      "curriculum_api.review_management.infrastructure.instance_schema",
+      "_provision_learner_review_additions_table"
+    ],
+    "find_active_learner_review_addition": [
+      "curriculum_api.review_management.infrastructure.instance_rows",
+      "find_active_learner_review_addition"
+    ],
+    "get_learner_review_addition": [
+      "curriculum_api.review_management.infrastructure.instance_rows",
+      "get_learner_review_addition"
+    ],
+    "list_active_learner_review_additions": [
+      "curriculum_api.review_management.infrastructure.instance_rows",
+      "list_active_learner_review_additions"
+    ],
+    "_fetch_learner_scoped_overrides": [
+      "curriculum_api.review_management.infrastructure.instance_rows",
+      "_fetch_learner_scoped_overrides"
+    ],
+    "_fetch_learner_scoped_overrides_for_reviews": [
+      "curriculum_api.review_management.infrastructure.instance_rows",
+      "_fetch_learner_scoped_overrides_for_reviews"
+    ],
+    "existing_review_instance_ids": [
+      "curriculum_api.review_management.infrastructure.instance_rows",
+      "existing_review_instance_ids"
+    ],
+    "get_review_instance": [
+      "curriculum_api.review_management.infrastructure.instance_rows",
+      "get_review_instance"
+    ],
+    "find_review_instance": [
+      "curriculum_api.review_management.infrastructure.instance_rows",
+      "find_review_instance"
+    ],
+    "find_review_instance_by_ref": [
+      "curriculum_api.review_management.infrastructure.instance_rows",
+      "find_review_instance_by_ref"
+    ],
+    "list_review_instances_for_learner": [
+      "curriculum_api.review_management.infrastructure.instance_rows",
+      "list_review_instances_for_learner"
+    ],
+    "force_review_instance_status_for_tests": [
+      "curriculum_api.review_management.infrastructure.instance_rows",
+      "force_review_instance_status_for_tests"
+    ],
+    "record_review_instance_manual_override": [
+      "curriculum_api.review_management.infrastructure.instance_rows",
+      "record_review_instance_manual_override"
+    ],
+    "list_review_instance_manual_overrides": [
+      "curriculum_api.review_management.infrastructure.instance_rows",
+      "list_review_instance_manual_overrides"
+    ],
+    "latest_review_instance_manual_override": [
+      "curriculum_api.review_management.infrastructure.instance_rows",
+      "latest_review_instance_manual_override"
+    ],
+    "get_review_instance_answers": [
+      "curriculum_api.review_management.infrastructure.instance_rows",
+      "get_review_instance_answers"
+    ],
+    "get_review_instance_signatures": [
+      "curriculum_api.review_management.infrastructure.instance_rows",
+      "get_review_instance_signatures"
+    ],
+    "_fetch_rows_in": [
+      "curriculum_api.review_management.infrastructure.instance_rows",
+      "_fetch_rows_in"
+    ],
+    "list_review_instances_for_learners": [
+      "curriculum_api.review_management.infrastructure.instance_rows",
+      "list_review_instances_for_learners"
+    ],
+    "_rows_by_instance": [
+      "curriculum_api.review_management.infrastructure.instance_rows",
+      "_rows_by_instance"
+    ],
+    "list_learner_review_instances": [
+      "curriculum_api.review_management.infrastructure.instance_rows",
+      "list_learner_review_instances"
+    ],
+    "record_review_instance_reopen": [
+      "curriculum_api.review_management.infrastructure.instance_rows",
+      "record_review_instance_reopen"
+    ],
+    "list_review_instance_reopens": [
+      "curriculum_api.review_management.infrastructure.instance_rows",
+      "list_review_instance_reopens"
+    ],
+    "_clear_review_instance_signatures": [
+      "curriculum_api.review_management.infrastructure.instance_rows",
+      "_clear_review_instance_signatures"
+    ],
+    "_locked_linked_calendar_for_mirror": [
+      "curriculum_api.review_management.infrastructure.instance_calendar",
+      "_locked_linked_calendar_for_mirror"
+    ],
+    "_mirror_linked_calendar_after_signature": [
+      "curriculum_api.review_management.infrastructure.instance_calendar",
+      "_mirror_linked_calendar_after_signature"
+    ],
+    "_mirror_linked_calendar_after_reopen": [
+      "curriculum_api.review_management.infrastructure.instance_calendar",
+      "_mirror_linked_calendar_after_reopen"
+    ],
+    "get_review_type_template": [
+      "curriculum_api.review_management.application.learner_occurrences",
+      "get_review_type_template"
+    ],
+    "list_enabled_review_templates": [
+      "curriculum_api.review_management.application.learner_occurrences",
+      "list_enabled_review_templates"
+    ],
+    "resolve_programme_review_occurrences": [
+      "curriculum_api.review_management.application.learner_occurrences",
+      "resolve_programme_review_occurrences"
+    ],
+    "resolve_learner_manual_occurrences": [
+      "curriculum_api.review_management.application.learner_occurrences",
+      "resolve_learner_manual_occurrences"
+    ],
+    "_resolve_learner_manual_occurrences": [
+      "curriculum_api.review_management.application.learner_occurrences",
+      "_resolve_learner_manual_occurrences"
+    ],
+    "review_applies_to_placement": [
+      "curriculum_api.review_management.application.learner_occurrences",
+      "review_applies_to_placement"
+    ],
+    "programme_review_template_identifiers": [
+      "curriculum_api.review_management.application.learner_occurrences",
+      "programme_review_template_identifiers"
+    ],
+    "resolve_learner_occurrences": [
+      "curriculum_api.review_management.application.learner_occurrences",
+      "resolve_learner_occurrences"
+    ],
+    "create_learner_review_addition": [
+      "curriculum_api.review_management.application.instance_creation",
+      "create_learner_review_addition"
+    ],
+    "ensure_review_instance": [
+      "curriculum_api.review_management.application.instance_creation",
+      "ensure_review_instance"
+    ],
+    "build_definition_snapshot": [
+      "curriculum_api.review_management.application.instance_definitions",
+      "build_definition_snapshot"
+    ],
+    "review_instance_signing_definitions": [
+      "curriculum_api.review_management.application.instance_definitions",
+      "review_instance_signing_definitions"
+    ],
+    "_signature_payload": [
+      "curriculum_api.review_management.application.instance_definitions",
+      "_signature_payload"
+    ],
+    "effective_review_definition_snapshot": [
+      "curriculum_api.review_management.application.instance_definitions",
+      "effective_review_definition_snapshot"
+    ],
+    "review_instance_form_definition": [
+      "curriculum_api.review_management.application.instance_definitions",
+      "review_instance_form_definition"
+    ],
+    "_serialize_manual_override": [
+      "curriculum_api.review_management.application.instance_definitions",
+      "_serialize_manual_override"
+    ],
+    "_refresh_locked_editable_definition_snapshot": [
+      "curriculum_api.review_management.application.instance_answers",
+      "_refresh_locked_editable_definition_snapshot"
+    ],
+    "save_review_instance_answers_for_role": [
+      "curriculum_api.review_management.application.instance_answers",
+      "save_review_instance_answers_for_role"
+    ],
+    "save_review_instance_answers": [
+      "curriculum_api.review_management.application.instance_answers",
+      "save_review_instance_answers"
+    ],
+    "_save_review_instance_answers_locked": [
+      "curriculum_api.review_management.application.instance_answers",
+      "_save_review_instance_answers_locked"
+    ],
+    "save_review_instance_progress_snapshot": [
+      "curriculum_api.review_management.application.instance_progress",
+      "save_review_instance_progress_snapshot"
+    ],
+    "review_instance_rag_value": [
+      "curriculum_api.review_management.application.instance_progress",
+      "review_instance_rag_value"
+    ],
+    "progress_review_rag_history": [
+      "curriculum_api.review_management.application.instance_progress",
+      "progress_review_rag_history"
+    ],
+    "mark_review_instance_scheduled": [
+      "curriculum_api.review_management.application.instance_lifecycle",
+      "mark_review_instance_scheduled"
+    ],
+    "mark_review_instance_not_scheduled": [
+      "curriculum_api.review_management.application.instance_lifecycle",
+      "mark_review_instance_not_scheduled"
+    ],
+    "mark_review_instance_in_progress_from_attendance": [
+      "curriculum_api.review_management.application.instance_lifecycle",
+      "mark_review_instance_in_progress_from_attendance"
+    ],
+    "_log_manual_in_progress_override": [
+      "curriculum_api.review_management.application.instance_lifecycle",
+      "_log_manual_in_progress_override"
+    ],
+    "mark_review_instance_in_progress_manually": [
+      "curriculum_api.review_management.application.instance_lifecycle",
+      "mark_review_instance_in_progress_manually"
+    ],
+    "link_calendar_event": [
+      "curriculum_api.review_management.application.instance_lifecycle",
+      "link_calendar_event"
+    ],
+    "complete_review_instance": [
+      "curriculum_api.review_management.application.instance_lifecycle",
+      "complete_review_instance"
+    ],
+    "record_review_instance_signature": [
+      "curriculum_api.review_management.application.instance_signatures",
+      "record_review_instance_signature"
+    ],
+    "_all_required_signatures_present": [
+      "curriculum_api.review_management.application.instance_signatures",
+      "_all_required_signatures_present"
+    ],
+    "_reopen_state_snapshot": [
+      "curriculum_api.review_management.application.instance_reopening",
+      "_reopen_state_snapshot"
+    ],
+    "reopen_review_instance_for_editing": [
+      "curriculum_api.review_management.application.instance_reopening",
+      "reopen_review_instance_for_editing"
+    ],
+    "reset_review_instance_readiness": [
+      "curriculum_api.review_management.infrastructure.instance_schema",
+      "reset_review_instance_readiness"
+    ]
+  },
+  "curriculum_api.review_otjh": {
+    "STATUS_COMPLETED": [
+      "curriculum_api.review_management.domain.instance_rules",
+      "STATUS_COMPLETED"
+    ],
+    "template_otjh_hours": [
+      "curriculum_api.review_management.domain.otjh_rules",
+      "template_otjh_hours"
+    ],
+    "otjh_template_rows": [
+      "curriculum_api.review_management.application.otjh_queries",
+      "otjh_template_rows"
+    ],
+    "planned_hours": [
+      "curriculum_api.review_management.application.otjh_queries",
+      "planned_hours"
+    ],
+    "planned_meetings": [
+      "curriculum_api.review_management.application.otjh_queries",
+      "planned_meetings"
+    ],
+    "completed_hours": [
+      "curriculum_api.review_management.application.otjh_queries",
+      "completed_hours"
+    ]
+  },
+  "curriculum_api.review_pdf": {
+    "SIGNATURE_ROLES": [
+      "curriculum_api.review_management.domain.instance_rules",
+      "SIGNATURE_ROLES"
+    ],
+    "required_signature_roles": [
+      "curriculum_api.review_management.domain.instance_rules",
+      "required_signature_roles"
+    ],
+    "meeting_summary_field": [
+      "curriculum_api.review_management.domain.instance_definitions",
+      "meeting_summary_field"
+    ],
+    "EXPORTABLE_REVIEW_TYPES": [
+      "curriculum_api.review_management.domain.pdf_policy",
+      "EXPORTABLE_REVIEW_TYPES"
+    ],
+    "IMAGE_PATTERN": [
+      "curriculum_api.review_management.domain.pdf_policy",
+      "IMAGE_PATTERN"
+    ],
+    "REVIEW_TYPE_MCM": [
+      "curriculum_api.review_management.domain.pdf_policy",
+      "REVIEW_TYPE_MCM"
+    ],
+    "REVIEW_TYPE_APTEM_MCM": [
+      "curriculum_api.review_management.domain.pdf_policy",
+      "REVIEW_TYPE_APTEM_MCM"
+    ],
+    "REVIEW_TYPE_PROGRESS_REVIEW": [
+      "curriculum_api.review_management.domain.pdf_policy",
+      "REVIEW_TYPE_PROGRESS_REVIEW"
+    ],
+    "is_mcm_review": [
+      "curriculum_api.review_management.domain.pdf_policy",
+      "is_mcm_review"
+    ],
+    "programme_dates": [
+      "curriculum_api.review_management.domain.pdf_policy",
+      "programme_dates"
+    ],
+    "review_type_code": [
+      "curriculum_api.review_management.domain.pdf_policy",
+      "review_type_code"
+    ],
+    "pdf_availability": [
+      "curriculum_api.review_management.domain.pdf_policy",
+      "pdf_availability"
+    ],
+    "ROLE_LABELS": [
+      "curriculum_api.review_management.infrastructure.pdf_renderer",
+      "ROLE_LABELS"
+    ],
+    "display_date": [
+      "curriculum_api.review_management.infrastructure.pdf_renderer",
+      "display_date"
+    ],
+    "imported_table_rows": [
+      "curriculum_api.review_management.infrastructure.pdf_renderer",
+      "imported_table_rows"
+    ],
+    "percent_text": [
+      "curriculum_api.review_management.infrastructure.pdf_renderer",
+      "percent_text"
+    ],
+    "render_review_pdf": [
+      "curriculum_api.review_management.infrastructure.pdf_renderer",
+      "render_review_pdf"
+    ],
+    "variance_text": [
+      "curriculum_api.review_management.infrastructure.pdf_renderer",
+      "variance_text"
+    ],
+    "visible_fields": [
+      "curriculum_api.review_management.infrastructure.pdf_renderer",
+      "visible_fields"
+    ],
+    "_signature_image": [
+      "curriculum_api.review_management.infrastructure.pdf_renderer",
+      "_signature_image"
+    ],
+    "learner_information": [
+      "curriculum_api.review_management.application.pdf_export",
+      "learner_information"
+    ],
+    "build_mcm_pdf": [
+      "curriculum_api.review_management.application.pdf_export",
+      "build_mcm_pdf"
+    ],
+    "mcm_pdf_response": [
+      "curriculum_api.review_management.api.pdf_responses",
+      "mcm_pdf_response"
+    ],
+    "historical_pdf_response": [
+      "curriculum_api.review_management.api.pdf_responses",
+      "historical_pdf_response"
+    ]
+  },
+  "curriculum_api.review_pdf_presentation": {
+    "IMAGE_PATTERN": [
+      "curriculum_api.review_management.domain.pdf_policy",
+      "IMAGE_PATTERN"
+    ],
+    "REVIEW_TYPE_MCM": [
+      "curriculum_api.review_management.domain.pdf_policy",
+      "REVIEW_TYPE_MCM"
+    ],
+    "REVIEW_TYPE_APTEM_MCM": [
+      "curriculum_api.review_management.domain.pdf_policy",
+      "REVIEW_TYPE_APTEM_MCM"
+    ],
+    "REVIEW_TYPE_PROGRESS_REVIEW": [
+      "curriculum_api.review_management.domain.pdf_policy",
+      "REVIEW_TYPE_PROGRESS_REVIEW"
+    ],
+    "EXPORTABLE_REVIEW_TYPES": [
+      "curriculum_api.review_management.domain.pdf_policy",
+      "EXPORTABLE_REVIEW_TYPES"
+    ],
+    "review_type_code": [
+      "curriculum_api.review_management.domain.pdf_policy",
+      "review_type_code"
+    ],
+    "is_mcm_review": [
+      "curriculum_api.review_management.domain.pdf_policy",
+      "is_mcm_review"
+    ],
+    "programme_dates": [
+      "curriculum_api.review_management.domain.pdf_policy",
+      "programme_dates"
+    ],
+    "ROLE_LABELS": [
+      "curriculum_api.review_management.infrastructure.pdf_renderer",
+      "ROLE_LABELS"
+    ],
+    "imported_table_rows": [
+      "curriculum_api.review_management.infrastructure.pdf_renderer",
+      "imported_table_rows"
+    ],
+    "percent_text": [
+      "curriculum_api.review_management.infrastructure.pdf_renderer",
+      "percent_text"
+    ],
+    "variance_text": [
+      "curriculum_api.review_management.infrastructure.pdf_renderer",
+      "variance_text"
+    ],
+    "display_date": [
+      "curriculum_api.review_management.infrastructure.pdf_renderer",
+      "display_date"
+    ],
+    "answer_text": [
+      "curriculum_api.review_management.infrastructure.pdf_renderer",
+      "answer_text"
+    ],
+    "visible_fields": [
+      "curriculum_api.review_management.infrastructure.pdf_renderer",
+      "visible_fields"
+    ],
+    "_signature_image": [
+      "curriculum_api.review_management.infrastructure.pdf_renderer",
+      "_signature_image"
+    ],
+    "render_review_pdf": [
+      "curriculum_api.review_management.infrastructure.pdf_renderer",
+      "render_review_pdf"
+    ]
+  }
+}

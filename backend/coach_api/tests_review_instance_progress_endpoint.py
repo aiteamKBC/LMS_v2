@@ -20,7 +20,19 @@ from django.db import connection
 from django.test import RequestFactory, TestCase
 from django.utils import timezone
 
-from curriculum_api import review_instances, review_types, reviews
+import curriculum_api.review_management.api.commands as review_api_commands
+import curriculum_api.review_management.application.instance_creation as review_application_instance_creation
+import curriculum_api.review_management.domain.classification as review_domain_classification
+import curriculum_api.review_management.domain.instance_definitions as review_domain_instance_definitions
+import curriculum_api.review_management.domain.instance_rules as review_domain_instance_rules
+import curriculum_api.review_management.infrastructure.instance_relations as review_infrastructure_instance_relations
+import curriculum_api.review_management.infrastructure.instance_rows as review_infrastructure_instance_rows
+import curriculum_api.review_management.infrastructure.instance_schema as review_infrastructure_instance_schema
+import curriculum_api.review_management.infrastructure.relations as review_infrastructure_relations
+import curriculum_api.review_management.infrastructure.template_rows as review_infrastructure_template_rows
+import curriculum_api.review_management.infrastructure.template_schema as review_infrastructure_template_schema
+import curriculum_api.review_management.infrastructure.type_rows as review_infrastructure_type_rows
+import curriculum_api.review_management.infrastructure.type_schema as review_infrastructure_type_schema
 from curriculum_api import views as curriculum_views
 
 from . import views as coach_views
@@ -67,9 +79,9 @@ class ReviewProgressEndpointTestCase(TestCase):
         curriculum_views.reset_schema_ready_flags()
         curriculum_views.invalidate_curriculum_cache()
         self._ensure_programmes_table()
-        reviews.provision_review_template_tables()
-        review_types.provision_review_types_table()
-        review_instances.provision_review_instance_tables()
+        review_infrastructure_template_schema.provision_review_template_tables()
+        review_infrastructure_type_schema.provision_review_types_table()
+        review_infrastructure_instance_schema.provision_review_instance_tables()
         self._clear()
         self._programme()
 
@@ -92,15 +104,15 @@ class ReviewProgressEndpointTestCase(TestCase):
 
     def _clear(self):
         for table in (
-            review_instances.REVIEW_INSTANCE_SIGNATURES_TABLE,
-            review_instances.REVIEW_INSTANCE_ANSWERS_TABLE,
-            review_instances.REVIEW_INSTANCES_TABLE,
-            reviews.REVIEW_FIELDS_TABLE, reviews.REVIEW_SECTIONS_TABLE,
-            reviews.REVIEW_TEMPLATES_TABLE, review_types.REVIEW_TYPES_TABLE, 'programmes',
+            review_infrastructure_instance_relations.REVIEW_INSTANCE_SIGNATURES_TABLE,
+            review_infrastructure_instance_relations.REVIEW_INSTANCE_ANSWERS_TABLE,
+            review_infrastructure_instance_relations.REVIEW_INSTANCES_TABLE,
+            review_infrastructure_relations.REVIEW_FIELDS_TABLE, review_infrastructure_relations.REVIEW_SECTIONS_TABLE,
+            review_infrastructure_relations.REVIEW_TEMPLATES_TABLE, review_infrastructure_relations.REVIEW_TYPES_TABLE, 'programmes',
         ):
             with connection.cursor() as cursor:
                 cursor.execute(f'delete from {curriculum_views.authoring_table_name(table)}')
-        review_types.seed_system_review_types()
+        review_infrastructure_type_schema.seed_system_review_types()
 
     def _programme(self):
         curriculum_views.insert_row('programmes', {
@@ -111,10 +123,10 @@ class ReviewProgressEndpointTestCase(TestCase):
         curriculum_views.invalidate_curriculum_cache()
 
     def _instance(self, *, type_code=None, coach_email=COACH_EMAIL, occurrence_number=1):
-        type_code = type_code or review_types.REVIEW_TYPE_CODE_PROGRESS_REVIEW
-        review_id, errors = reviews.create_review('PROG-PR', {
+        type_code = type_code or review_domain_classification.REVIEW_TYPE_CODE_PROGRESS_REVIEW
+        review_id, errors = review_api_commands.create_review('PROG-PR', {
             'name': 'Progress Review' if type_code != 'mcm' else 'Monthly Coaching Meeting',
-            'enabled': True, 'reviewTypeId': review_types.get_review_type_by_code(type_code)['id'],
+            'enabled': True, 'reviewTypeId': review_infrastructure_type_rows.get_review_type_by_code(type_code)['id'],
             'recurrence': {'interval': 3, 'unit': 'months'}, 'scheduleAnchorDate': '2026-01-01',
             'applicableStatuses': [],
             'signatures': {'advisor': True, 'employer': False, 'participant': False, 'referrer': False},
@@ -123,8 +135,8 @@ class ReviewProgressEndpointTestCase(TestCase):
             'sections': [{'title': 'Review', 'fields': [{'title': 'Notes', 'fieldType': 'text', 'required': False}]}],
         }, actor='test')
         self.assertIsNone(errors, errors)
-        return review_instances.ensure_review_instance(
-            reviews.get_review_template_row(review_id),
+        return review_application_instance_creation.ensure_review_instance(
+            review_infrastructure_template_rows.get_review_template_row(review_id),
             learner_id=LEARNER_PROFILE_ID, learner_kind='apprenticeship', programme_id='PROG-PR',
             occurrence_number=occurrence_number, target_date=date(2026, 1, 3),
             coach_email=coach_email, actor='test',
@@ -151,8 +163,8 @@ class ReviewProgressEndpointTestCase(TestCase):
         return response, builder
 
     def _stored(self, instance_id):
-        return review_instances.review_instance_progress_snapshot(
-            review_instances.get_review_instance(instance_id))
+        return review_domain_instance_definitions.review_instance_progress_snapshot(
+            review_infrastructure_instance_rows.get_review_instance(instance_id))
 
     # --------------------------------------------------------- permissions
 
@@ -177,7 +189,7 @@ class ReviewProgressEndpointTestCase(TestCase):
     # ---------------------------------------------------- the type it is for
 
     def test_another_review_type_has_no_progress_calculation(self):
-        instance = self._instance(type_code=review_types.REVIEW_TYPE_CODE_MCM)
+        instance = self._instance(type_code=review_domain_classification.REVIEW_TYPE_CODE_MCM)
         response, builder = self._calculate(instance['id'])
         self.assertEqual(response.status_code, 404)
         self.assertIn('only available on a Progress Review', json.loads(response.content)['detail'])
@@ -232,11 +244,11 @@ class ReviewProgressEndpointTestCase(TestCase):
         self.assertEqual(self._stored(instance['id'])['calculatedAt'], '2026-10-02T08:00:00')
 
     def test_it_is_refused_once_the_review_reaches_the_signature_step(self):
-        for status in (review_instances.STATUS_AWAITING_SIGNATURE, review_instances.STATUS_COMPLETED):
+        for status in (review_domain_instance_rules.STATUS_AWAITING_SIGNATURE, review_domain_instance_rules.STATUS_COMPLETED):
             with self.subTest(status=status):
                 instance = self._instance(occurrence_number=10 + len(status))
                 self._calculate(instance['id'])
-                review_instances.force_review_instance_status_for_tests(instance['id'], status, actor='test')
+                review_infrastructure_instance_rows.force_review_instance_status_for_tests(instance['id'], status, actor='test')
 
                 response, _builder = self._calculate(
                     instance['id'], snapshot={**CANNED_SNAPSHOT, 'calculatedAt': '2027-01-01T00:00:00'})

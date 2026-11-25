@@ -87,7 +87,7 @@ def native_write(func):
     """Serialize Native writers with reconciliation on the same parent row."""
     @wraps(func)
     def guarded(instance, *args, **kwargs):
-        from curriculum_api.review_instances import get_review_instance
+        from curriculum_api.review_management.infrastructure.instance_rows import get_review_instance
         identity = instance.get("id") if isinstance(instance, dict) else instance
         with transaction.atomic():
             get_review_instance(identity, for_update=True)

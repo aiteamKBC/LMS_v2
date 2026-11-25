@@ -16,7 +16,7 @@ from django.db import connection
 
 from curriculum_api import versioning
 from curriculum_api import views as curriculum_views
-from curriculum_api.tests_audit_trail import AuditHarness
+from curriculum_api.reporting.tests.tests_audit_trail import AuditHarness
 from system_audit import derived
 
 ATTACHED = ('enrolment', 'Coach', 'Engagement')

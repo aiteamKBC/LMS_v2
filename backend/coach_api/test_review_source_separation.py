@@ -135,7 +135,7 @@ class ReviewSourceSeparationTests(SimpleTestCase):
         with patch.object(calendar.CoachCalendarEvent.objects, "filter") as records, \
              patch("learner_api.imported_review_calendar.imported_events_for_learner", return_value=[]), \
              patch("coach_api.views.fetch_aptem_mcm_profile_ids", return_value=set()), \
-             patch("curriculum_api.review_instances.reconcile_review_event_keys", return_value={}), \
+             patch('curriculum_api.review_management.domain.occurrence_identity.reconcile_review_event_keys', return_value={}), \
              patch.object(calendar, "_generated_cycle_events", return_value=[mcm]) as native:
             records.return_value.order_by.return_value = []
             self.assertEqual(calendar.coaching_events_for_learner(source(), profile()), [])
@@ -382,7 +382,7 @@ class ImportedContinuationIdentityTests(TestCase):
                 stack.enter_context(patch('learner_api.imported_review_calendar.connection'))
                 stack.enter_context(patch('learner_api.imported_review_calendar._review_rows', return_value=[row]))
                 stack.enter_context(patch('learner_api.imported_review_calendar._sections_by_review', return_value={}))
-                native = stack.enter_context(patch('curriculum_api.review_instances.ensure_review_instance', side_effect=AssertionError('Native write')))
+                native = stack.enter_context(patch('curriculum_api.review_management.application.instance_creation.ensure_review_instance', side_effect=AssertionError('Native write')))
                 graph = stack.enter_context(patch.object(views, 'sync_calendar_event_to_graph', side_effect=AssertionError('External mutation')))
                 with CaptureQueriesContext(connection) as queries:
                     coach_base, _ = views.fetch_aptem_review_events([profile()], {21: 6301}, owner_email=local.owner_email, owner_name='Synthetic coach')
@@ -491,7 +491,7 @@ class ImportedContinuationIdentityTests(TestCase):
         record = booking(review_instance_id='legacy-native-instance')
         record._imported_review_event = base_event()
         with patch.object(calendar, '_learner_calendar_record', return_value=record), \
-             patch('curriculum_api.review_instances.get_review_instance', side_effect=AssertionError('Native form')) as native:
+             patch('curriculum_api.review_management.infrastructure.instance_rows.get_review_instance', side_effect=AssertionError('Native form')) as native:
             get = RequestFactory().get('/')
             post = RequestFactory().post('/', '{}', content_type='application/json')
             self.assertEqual(unwrap(calendar.learner_calendar_event_review)(get, 'commercial', 121, record.event_key).status_code, 409)

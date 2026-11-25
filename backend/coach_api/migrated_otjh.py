@@ -80,9 +80,9 @@ def record_completion(overlay):
     # Only explicit reconciliations establish Native equivalence. Never match
     # unrelated learners or meetings by dates, names or duration.
     from .reconciliation_links import active_links
-    from curriculum_api.review_instances import get_review_instance
-    from curriculum_api.review_otjh import template_otjh_hours
-    from curriculum_api.reviews import get_review_template_row
+    from curriculum_api.review_management.infrastructure.instance_rows import get_review_instance
+    from curriculum_api.review_management.domain.otjh_rules import template_otjh_hours
+    from curriculum_api.review_management.infrastructure.template_rows import get_review_template_row
     for link in active_links(learner_id=overlay.learner_profile_id, overlay_id=overlay.pk):
         native = get_review_instance(link.native_review_instance_id)
         if native and native.get("status") == "completed" and template_otjh_hours(get_review_template_row(link.native_template_id, include_deleted=True)):

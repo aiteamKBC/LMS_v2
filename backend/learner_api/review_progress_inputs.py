@@ -59,12 +59,12 @@ def review_planned_target_hours(
         due = sum(row["hours"] for row in planned_meetings(learner_profile, start_date, cutoff)) if cutoff >= start_date else 0
         return planned, due
 
-    from curriculum_api import review_otjh
+    import curriculum_api.review_management.application.otjh_queries as review_application_otjh_queries
 
     programme_id = _text(getattr(learner_profile, "programme_id", ""))
     programme_status = _text(getattr(learner_profile, "programme_status", ""))
     template_cache = {}
-    planned = review_otjh.planned_hours(
+    planned = review_application_otjh_queries.planned_hours(
         programme_id,
         learner_id,
         programme_status,
@@ -77,7 +77,7 @@ def review_planned_target_hours(
     due = 0.0
     due_through = as_of_date(as_of)
     if due_through >= start_date:
-        due = review_otjh.planned_hours(
+        due = review_application_otjh_queries.planned_hours(
             programme_id,
             learner_id,
             programme_status,

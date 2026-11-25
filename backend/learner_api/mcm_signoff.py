@@ -126,13 +126,14 @@ def mcm_signoff_response(request, record, learner_id):
         return _error("The coach must submit the review before the learner can sign it.", 409)
 
     if str(getattr(record, "review_instance_id", "") or "").strip():
-        from curriculum_api import review_instances
+        import curriculum_api.review_management.application.instance_signatures as review_application_instance_signatures
+        import curriculum_api.review_management.infrastructure.instance_rows as review_infrastructure_instance_rows
 
-        instance = review_instances.get_review_instance(record.review_instance_id)
+        instance = review_infrastructure_instance_rows.get_review_instance(record.review_instance_id)
         if not instance:
             return _error("Review instance not found.", 404)
         try:
-            definition = review_instances.record_review_instance_signature(
+            definition = review_application_instance_signatures.record_review_instance_signature(
                 instance,
                 "participant",
                 signed_by=str(getattr(record, "learner_email", "") or ""),

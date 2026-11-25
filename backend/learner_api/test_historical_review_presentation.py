@@ -1,4 +1,6 @@
 """Synthetic captures: no database access, PDFs, current metrics or external IO."""
+import curriculum_api.review_management.application.instance_definitions as review_application_instance_definitions
+
 from copy import deepcopy
 from datetime import date
 from types import SimpleNamespace
@@ -212,7 +214,7 @@ class HistoricalFormContractTests(SimpleTestCase):
              patch.object(views, "_sections_by_review", return_value=sections), \
              patch.object(views.ImportedReviewInstance.objects, "filter") as overlays, \
              patch.object(views, "resolve_migrated_template", side_effect=AssertionError("template lookup")), \
-             patch.object(views.curriculum_review_instances, "review_instance_form_definition", side_effect=AssertionError("Native lookup")), \
+             patch.object(review_application_instance_definitions, "review_instance_form_definition", side_effect=AssertionError("Native lookup")), \
              patch.object(views, "build_progress_snapshot", side_effect=AssertionError("live metrics")):
             connections["default"].cursor.return_value.__enter__.return_value = cursor
             overlays.return_value.first.return_value = None

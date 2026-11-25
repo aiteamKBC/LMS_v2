@@ -1,3 +1,5 @@
+import curriculum_api.review_management.application.learner_occurrences as review_application_learner_occurrences
+
 from contextlib import ExitStack
 from datetime import date
 from unittest.mock import patch
@@ -24,7 +26,7 @@ class TimetableIdentityIsolationTests(SimpleTestCase):
         self.imported.return_value = (self.source_events, {1})
         self.stack.enter_context(patch.object(views, "fetch_source_schedule_rows", return_value=({}, {})))
         self.stack.enter_context(patch.object(views, "resolve_curriculum_programme_id", return_value="P1"))
-        self.stack.enter_context(patch.object(views.curriculum_review_instances, "programme_review_template_identifiers", return_value=[("T1", "mcr")]))
+        self.stack.enter_context(patch.object(review_application_learner_occurrences, "programme_review_template_identifiers", return_value=[("T1", "mcr")]))
         self.stack.enter_context(patch.object(views, "resolve_review_anchor_date", return_value=(date(2026, 1, 1), None)))
         self.stack.enter_context(patch.object(views, "resolve_schedule_window", return_value=(date(2026, 1, 1), date(2027, 1, 1))))
         self.stack.enter_context(patch.object(views, "resolve_caseload_source_row", return_value=None))

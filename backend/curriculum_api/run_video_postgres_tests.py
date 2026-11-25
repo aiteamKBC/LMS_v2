@@ -81,12 +81,12 @@ def main():
         assert not CurriculumVideoChange.objects.exists(), 'Migration unexpectedly backfilled historical video sources.'
         print('Verified empty local PostgreSQL; applied migrations 0077/0078 to synthetic authoring tables.', flush=True)
         suite = unittest.defaultTestLoader.loadTestsFromNames([
-            'curriculum_api.test_bunny_stream', 'curriculum_api.test_video_imports',
-            'curriculum_api.test_youtube_download', 'curriculum_api.test_video_changes',
-            'curriculum_api.test_video_change_postgres',
-            'curriculum_api.tests_upload_storage.LocalBackendTests',
-            'curriculum_api.tests_upload_storage.AzureBackendTests',
-            'curriculum_api.tests_upload_storage.RangeServingTests',
+            'curriculum_api.catalogue.tests.test_bunny_stream', 'curriculum_api.catalogue.tests.test_video_imports',
+            'curriculum_api.catalogue.tests.test_youtube_download', 'curriculum_api.catalogue.tests.test_video_changes',
+            'curriculum_api.catalogue.tests.test_video_change_postgres',
+            'curriculum_api.catalogue.tests.tests_upload_storage.LocalBackendTests',
+            'curriculum_api.catalogue.tests.tests_upload_storage.AzureBackendTests',
+            'curriculum_api.catalogue.tests.tests_upload_storage.RangeServingTests',
         ])
         from django.test.utils import setup_test_environment, teardown_test_environment
         setup_test_environment()

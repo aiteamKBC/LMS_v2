@@ -1,4 +1,7 @@
 """D03 regression tests: persisted evidence, never Graph/AI/live databases."""
+import curriculum_api.review_management.application.instance_definitions as review_application_instance_definitions
+import curriculum_api.review_management.infrastructure.instance_rows as review_infrastructure_instance_rows
+
 from contextlib import ExitStack
 from datetime import date, time
 import hashlib
@@ -125,8 +128,8 @@ class SessionConsumerTests(SimpleTestCase):
                        occurrence_number=2, coach_email=self.record.owner_email)
         previous = {**current, 'id': 'previous-review', 'occurrence_number': 1, 'status': 'completed'}
         with patch.object(views, '_authorized_review_instance', return_value=(current, None)), \
-                patch.object(views.curriculum_review_instances, 'find_review_instance', return_value=previous), \
-                patch.object(views.curriculum_review_instances, 'review_instance_form_definition', return_value={'sections': [], 'template': {}}), \
+                patch.object(review_infrastructure_instance_rows, 'find_review_instance', return_value=previous), \
+                patch.object(review_application_instance_definitions, 'review_instance_form_definition', return_value={'sections': [], 'template': {}}), \
                 patch.object(views, '_review_instance_calendar_record', return_value=self.record), \
                 patch.object(views, 'stored_coach_meeting_summary', return_value=None), \
                 patch.object(views, 'fetch_coach_meeting_graph_snapshot') as graph, patch.object(views, 'openai_meeting_summary') as ai:

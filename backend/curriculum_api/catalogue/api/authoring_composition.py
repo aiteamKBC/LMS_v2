@@ -4,7 +4,7 @@ Owns HTTP/decorator and runtime capability composition. Application operations,
 domain policies, SQL and transaction behavior remain in their existing owners.
 Public signatures and response contracts are unchanged."""
 from curriculum_api import archive_state
-from curriculum_api import free_course_pricing
+from curriculum_api.catalogue.infrastructure import free_course_pricing as free_course_pricing
 from curriculum_api import ksb_mapping_placement
 from curriculum_api.catalogue.api.cache_lifecycle import invalidate_curriculum_cache
 from curriculum_api.catalogue.api.structure_composition import get_authoring_structure_payload
@@ -180,10 +180,11 @@ def save_module_authoring_structure(module_catalogue_id, payload, *, repair_link
         from curriculum_api.catalogue.infrastructure.course_storage_writes import refresh_totals as operation
         return operation(*args, **kwargs)
     def free_course_errors(*args, **kwargs):
-        from curriculum_api.free_course_policy import free_course_errors as operation
-        return operation(*args, **kwargs)
+        from curriculum_api.catalogue.application.free_course_policy import free_course_errors as operation
+        from curriculum_api.catalogue.infrastructure.free_course_policy_reads import retained_live_component_ids
+        return operation(*args, retained_live_component_ids=retained_live_component_ids, **kwargs)
     def retained_live_component_ids(*args, **kwargs):
-        from curriculum_api.free_course_policy import retained_live_component_ids as operation
+        from curriculum_api.catalogue.infrastructure.free_course_policy_reads import retained_live_component_ids as operation
         return operation(*args, **kwargs)
     def policy_write(*args, **kwargs):
         from curriculum_api.catalogue.infrastructure.delivery_calendar_runtime import policy_write as operation

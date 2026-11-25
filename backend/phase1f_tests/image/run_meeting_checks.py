@@ -10,50 +10,50 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import run_import_smoke as bundler
 
 STANDALONE = (
-    'test_calendar_checks_no_db', 'test_teams_attachment_no_db',
-    'test_teams_notification_rules_no_db',
-    'test_teams_update_preservation', 'test_teams_external_calendar_no_db',
-    'test_teams_create_guard_no_db', 'test_teams_endpoint_guard_no_db',
-    'test_teams_imported_meeting_edit_no_db', 'test_teams_imported_calendar_update_no_db',
-    'test_teams_presenter_roles_no_db', 'test_teams_meeting_options_no_db',
-    'test_session_results_no_db', 'test_schedule_email_no_db',
+    'meetings.tests.test_calendar_checks_no_db', 'meetings.tests.test_teams_attachment_no_db',
+    'meetings.tests.test_teams_notification_rules_no_db',
+    'meetings.tests.test_teams_update_preservation', 'meetings.tests.test_teams_external_calendar_no_db',
+    'meetings.tests.test_teams_create_guard_no_db', 'meetings.tests.test_teams_endpoint_guard_no_db',
+    'meetings.tests.test_teams_imported_meeting_edit_no_db', 'meetings.tests.test_teams_imported_calendar_update_no_db',
+    'meetings.tests.test_teams_presenter_roles_no_db', 'meetings.tests.test_teams_meeting_options_no_db',
+    'meetings.tests.test_session_results_no_db', 'meetings.tests.test_schedule_email_no_db',
     'meetings.tests.test_lifecycle_contracts_standalone',
     'meetings.tests.test_lifecycle_behavior_parity',
     'meetings.tests.test_policy_composition_standalone',
-    'test_attendee_compare_no_db', 'test_occurrence_pairing_no_db',
-    'test_occurrence_deletion_no_db', 'test_no_auto_cancel_no_db',
-    'test_session_sync_runtime_no_db',
-    'test_session_content_provider_no_db', 'test_session_media_no_db',
+    'meetings.tests.test_attendee_compare_no_db', 'meetings.tests.test_occurrence_pairing_no_db',
+    'meetings.tests.test_occurrence_deletion_no_db', 'meetings.tests.test_no_auto_cancel_no_db',
+    'meetings.tests.test_session_sync_runtime_no_db',
+    'meetings.tests.test_session_content_provider_no_db', 'meetings.tests.test_session_media_no_db',
     'meetings.tests.test_behavior_parity', 'meetings.tests.test_contracts_standalone',
     'meetings.tests.test_delivery_contracts_standalone',
     'meetings.tests.test_delivery_behavior_parity',
     'meetings.tests.test_calendar_contracts_standalone',
-    'meetings.tests.test_calendar_behavior_parity', 'test_live_session_meeting_scope_no_db',
+    'meetings.tests.test_calendar_behavior_parity', 'meetings.tests.test_live_session_meeting_scope_no_db',
 )
 DJANGO = (
-    'curriculum_api.test_study_weeks_no_db',
-    'curriculum_api.test_study_calendar_limits_no_db',
-    'curriculum_api.test_study_week_teams_no_db',
-    'curriculum_api.test_module_week_start_no_db',
-    'curriculum_api.test_module_week_count_patch_no_db',
-    'curriculum_api.test_custom_weekly_schedule_no_db',
-    'curriculum_api.test_session_downloads_no_db',
-    'curriculum_api.test_teams_options_retry_no_db',
+    'curriculum_api.catalogue.tests.test_study_weeks_no_db',
+    'curriculum_api.meetings.tests.test_study_calendar_limits_no_db',
+    'curriculum_api.meetings.tests.test_study_week_teams_no_db',
+    'curriculum_api.catalogue.tests.test_module_week_start_no_db',
+    'curriculum_api.catalogue.tests.test_module_week_count_patch_no_db',
+    'curriculum_api.catalogue.tests.test_custom_weekly_schedule_no_db',
+    'curriculum_api.meetings.tests.test_session_downloads_no_db',
+    'curriculum_api.meetings.tests.test_teams_options_retry_no_db',
     'curriculum_api.tests.TeamsMultiDayRecurrenceTests',
     'curriculum_api.tests.TeamsAttendanceRosterTests',
-    'curriculum_api.test_teams_original_calendar',
-    'curriculum_api.test_teams_imported_meeting_edit_http',
-    'curriculum_api.test_teams_people_refresh_no_db',
+    'curriculum_api.meetings.tests.test_teams_original_calendar',
+    'curriculum_api.meetings.tests.test_teams_imported_meeting_edit_http',
+    'curriculum_api.meetings.tests.test_teams_people_refresh_no_db',
 )
 
 def meeting_bundle():
     bundler.TARGETS += ['curriculum_api.' + n for n in STANDALONE] + [n.rsplit('.',1)[0] if n.endswith('Tests') else n for n in DJANGO]
-    bundler.TARGETS += ['curriculum_api.test_schedule_email_no_db']
-    bundler.TARGETS += ['curriculum_api.tests_study_weeks', 'curriculum_api.tests_module_weekly_schedule']
+    bundler.TARGETS += ['curriculum_api.meetings.tests.test_schedule_email_no_db']
+    bundler.TARGETS += ['curriculum_api.catalogue.tests.tests_study_weeks', 'curriculum_api.catalogue.tests.tests_module_weekly_schedule']
     bundler.TARGETS += ['curriculum_api.meetings.tests.invitees_postgresql']
-    bundler.TARGETS += ['curriculum_api.test_calendar_state_no_db',
-                        'curriculum_api.test_calendar_actions_no_db']
-    bundler.TARGETS += ['curriculum_api.test_teams_delivery_sync',
+    bundler.TARGETS += ['curriculum_api.meetings.tests.test_calendar_state_no_db',
+                        'curriculum_api.meetings.tests.test_calendar_actions_no_db']
+    bundler.TARGETS += ['curriculum_api.meetings.tests.test_teams_delivery_sync',
         'curriculum_api.management.commands.sync_teams_meeting_artifacts',
         'learner_api.personal_learning_reads']
     # Include statically reachable lazy imports as source, without executing them.

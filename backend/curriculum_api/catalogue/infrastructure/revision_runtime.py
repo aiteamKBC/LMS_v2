@@ -106,7 +106,7 @@ def lock_record_row(table, where_sql, params):
         return
     if native_only():
         from curriculum_api.catalogue.infrastructure.course_storage_reads import course, free_rows
-        from curriculum_api.free_course_contract import COLUMNS
+        from curriculum_api.catalogue.infrastructure.free_course_contract import COLUMNS
         if table in COLUMNS:
             for row in free_rows(table, where_sql, params):
                 course(row['module_catalogue_id'], lock=True)

@@ -5,12 +5,13 @@ from coach_api import migrated_template_views
 from system_audit import activity as system_activity
 
 from . import calendar_endpoints
-from . import activity, learner_assignments, programme_audit, quality, review_schedule, review_types, reviews, views
+from . import activity, learner_assignments, programme_audit, quality, views
+from .review_management.api import schedule as review_schedule, types as review_types, templates as reviews
 from .archive_index import curriculum_archive_index
 from .programme_ksb_stats_batch import curriculum_programmes_ksb_stats
 from .record_snapshots import curriculum_record_snapshot
-from .free_course_conversion import convert_free_course
-from . import free_course_authoring
+from curriculum_api.catalogue.api.free_course_conversion import convert_free_course
+from curriculum_api.catalogue.api import free_course_authoring as free_course_authoring
 from .module_live import curriculum_live, curriculum_module_changes
 from .module_collaboration import collaboration_configuration
 from .module_uploads import module_uploaded_files
@@ -57,7 +58,9 @@ from .teaching_quality import teaching_review
 from .recordings_transcript_pdf import lecture_transcript
 from .module_hours import module_target
 from .catalogue_activity import catalogue_activity
-from . import delivery_dashboard, free_course_authoring_views, free_course_quiz_views
+from curriculum_api import delivery_dashboard
+from curriculum_api.catalogue.api import free_course_authoring_views as free_course_authoring_views
+from curriculum_api.catalogue.api import free_course_quiz_views as free_course_quiz_views
 
 
 urlpatterns = [

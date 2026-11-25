@@ -4,6 +4,7 @@ from collections import Counter, defaultdict
 from curriculum_api.catalogue.domain.component_types import is_retired_component_type as _default_is_retired_component_type
 from curriculum_api.catalogue.domain.values import clean_str as _default_clean_str
 from curriculum_api.catalogue.domain.values import parse_int as _default_parse_int
+from .component_count_sql import component_count_source
 
 
 def authoring_module_content_counts(
@@ -25,6 +26,9 @@ def authoring_module_content_counts(
 
     lesson_counts = Counter()
     where_sql, params = live_authoring_rows_sql(database_reads.AUTHORING_COMPONENTS_TABLE)
+    source, where_sql = component_count_source(
+        learning_read_table(database_reads.AUTHORING_COMPONENTS_TABLE), where_sql,
+    )
     group_columns = [
         database_reads.quote_ident(column)
         for column in ('module_catalogue_id', 'type')
@@ -32,7 +36,7 @@ def authoring_module_content_counts(
     ]
     query = (
         f'select {", ".join(group_columns)}, count(*) as {database_reads.quote_ident("row_count")} '
-        f'from {learning_read_table(database_reads.AUTHORING_COMPONENTS_TABLE)}'
+        f'from {source}'
         + (f' where {where_sql}' if where_sql else '')
         + f' group by {", ".join(group_columns)}'
     )

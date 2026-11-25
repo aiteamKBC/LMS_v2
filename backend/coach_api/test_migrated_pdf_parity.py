@@ -1,4 +1,6 @@
 """Synthetic PDF layout, frozen-data and authoritative-download regressions."""
+import curriculum_api.review_management.application.instance_progress as review_application_instance_progress
+
 from copy import deepcopy
 import base64
 from datetime import datetime, timezone
@@ -14,8 +16,8 @@ import fitz
 from PIL import Image
 from django.test import RequestFactory, SimpleTestCase, TestCase
 
-from curriculum_api.review_pdf import build_mcm_pdf
-from curriculum_api.tests_review_pdf import progress_review_definition, saved_snapshot, SAMPLE_INFORMATION
+from curriculum_api.review_management.application.pdf_export import build_mcm_pdf
+from curriculum_api.review_management.tests.tests_review_pdf import progress_review_definition, saved_snapshot, SAMPLE_INFORMATION
 from . import migrated_completion_views as endpoints
 from .migrated_completion import build_pdf, ensure_document, requirements_for_family, validate_signature_image
 from .migrated_review_pdf import PROVENANCE, pdf_family, review_pdf_data, stored_pdf_response
@@ -568,7 +570,7 @@ class MigratedPdfAccessTests(SimpleTestCase):
              patch.object(views.ImportedReviewInstance.objects, "filter") as overlays, \
              patch.object(views, "resolve_migrated_template", side_effect=AssertionError("Master resolution")), \
              patch.object(views, "_imported_review_progress_snapshot", side_effect=AssertionError("Live progress")), \
-             patch.object(views.curriculum_review_instances, "progress_review_rag_history", side_effect=AssertionError("RAG lookup")), \
+             patch.object(review_application_instance_progress, "progress_review_rag_history", side_effect=AssertionError("RAG lookup")), \
              patch("requests.sessions.Session.request", side_effect=AssertionError("Network call")):
             cursor = connections["default"].cursor.return_value.__enter__.return_value
             cursor.description = [(column,) for column in columns]

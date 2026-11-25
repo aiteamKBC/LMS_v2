@@ -6,6 +6,8 @@ group name properties). Raw SQL is captured through a fake cursor. Names keep
 coming from the profile's own placement ids; enrolment placement is never
 substituted, and the coach_rag projections are not touched here.
 """
+import curriculum_api.review_management.application.instance_definitions as review_application_instance_definitions
+
 import ast
 import re
 import json
@@ -62,7 +64,7 @@ class CoachProfileProjectionTests(SimpleTestCase):
         self.assert_projection(lambda: support_tickets.caseload_learners('coach@example.test'))
 
     def test_review_instance_definition_identity(self):
-        with patch.object(views.curriculum_review_instances, 'review_instance_form_definition', return_value={}), \
+        with patch.object(review_application_instance_definitions, 'review_instance_form_definition', return_value={}), \
                 patch.object(views, '_review_learner_identity', return_value={}) as identity, \
                 patch.object(views, '_review_instance_meeting_summary_source', return_value=None):
             recorder, _ = run_recorded(lambda: views._coach_review_instance_definition({'learner_id': 5}))

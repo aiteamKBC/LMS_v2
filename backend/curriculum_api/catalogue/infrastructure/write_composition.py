@@ -18,8 +18,8 @@ from curriculum_api.catalogue.infrastructure.database_reads import table_name
 from curriculum_api.catalogue.infrastructure.row_queries import execute_returning
 from curriculum_api.catalogue.infrastructure.runtime_config import logger
 from curriculum_api.catalogue.infrastructure.structure_runtime import written_rows
-from curriculum_api.free_course_writer_mode import LEGACY
-from curriculum_api.free_course_writer_mode import require_mode
+from curriculum_api.catalogue.infrastructure.free_course_writer_mode import LEGACY
+from curriculum_api.catalogue.infrastructure.free_course_writer_mode import require_mode
 from django.db import connection
 
 

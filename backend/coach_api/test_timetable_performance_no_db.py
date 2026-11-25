@@ -1,4 +1,7 @@
 """Calendar query budgets with synthetic records; real database access is forbidden."""
+import curriculum_api.review_management.domain.occurrence_identity as review_domain_occurrence_identity
+import curriculum_api.review_management.infrastructure.template_rows as review_infrastructure_template_rows
+
 from contextlib import ExitStack
 from datetime import date, time
 from types import SimpleNamespace
@@ -26,8 +29,8 @@ class TimetableBatchMetadataTests(SimpleTestCase):
         type_row = {'id': 'MCM', 'code': 'mcm', 'name': 'Monthly Coaching Meeting', 'is_system': True}
         template = {'id': 'template', 'review_type_id': 'MCM', 'name': 'Renamed monthly conversation'}
         with ExitStack() as stack:
-            templates = stack.enter_context(patch.object(views.curriculum_reviews, 'get_review_template_rows', return_value=[template]))
-            types = stack.enter_context(patch('curriculum_api.review_types.review_type_index', return_value={'MCM': type_row}))
+            templates = stack.enter_context(patch.object(review_infrastructure_template_rows, 'get_review_template_rows', return_value=[template]))
+            types = stack.enter_context(patch('curriculum_api.review_management.infrastructure.type_rows.review_type_index', return_value={'MCM': type_row}))
             expected = views.build_catchup_calendar_event(records[0], owner_name='Coach', learner=owner)
             templates.reset_mock(); types.reset_mock()
             for name, result in {
@@ -40,7 +43,7 @@ class TimetableBatchMetadataTests(SimpleTestCase):
                 'build_timetable_summary': {},
             }.items():
                 stack.enter_context(patch.object(views, name, return_value=result))
-            stack.enter_context(patch.object(views.curriculum_review_instances, 'reconcile_review_event_keys', return_value={}))
+            stack.enter_context(patch.object(review_domain_occurrence_identity, 'reconcile_review_event_keys', return_value={}))
             stack.enter_context(patch('coach_api.review_sources.standalone_review_records', return_value=[]))
             stack.enter_context(patch('coach_api.calendar_booking_only.unlinked_review_bookings', return_value=[(record, owner) for record in records]))
             stack.enter_context(patch.object(views, 'assign_timetable_slots', side_effect=lambda events: events))
@@ -57,7 +60,7 @@ class TimetableBatchMetadataTests(SimpleTestCase):
             self.assertTrue(all(event['bookingOnly'] and event['reviewId'] is None for event in result['events']))
 
     def test_empty_and_missing_template_names_do_not_fall_back_to_per_booking_reads(self):
-        with patch.object(views.curriculum_reviews, 'get_review_template_rows', return_value=[]) as read:
+        with patch.object(review_infrastructure_template_rows, 'get_review_template_rows', return_value=[]) as read:
             self.assertEqual(views.review_titles_by_template([]), {})
             read.assert_not_called()
             titles = views.review_titles_by_template(['missing', 'missing', '', None])

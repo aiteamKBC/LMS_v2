@@ -49,7 +49,11 @@ from .views import _error, _parse_body
 from coach_api.models import CoachAbsenceReport, CoachCalendarEvent, ImportedReviewInstance
 from coach_api.migrated_completion import is_personal_support_form, signature_states
 from coach_api.review_categories import review_event_category
-from curriculum_api import review_instances
+import curriculum_api.review_management.application.instance_answers as review_application_instance_answers
+import curriculum_api.review_management.application.instance_definitions as review_application_instance_definitions
+import curriculum_api.review_management.application.instance_signatures as review_application_instance_signatures
+import curriculum_api.review_management.domain.instance_rules as review_domain_instance_rules
+import curriculum_api.review_management.infrastructure.instance_rows as review_infrastructure_instance_rows
 
 logger = logging.getLogger(__name__)
 
@@ -186,7 +190,7 @@ def _review_signing_rows_for(learners, *, employer_only=True):
     all_identity_ids = list(dict.fromkeys(i for ids in identity_ids.values() for i in ids))
 
     try:
-        instances_by_identity = review_instances.list_review_instances_for_learners(all_identity_ids)
+        instances_by_identity = review_infrastructure_instance_rows.list_review_instances_for_learners(all_identity_ids)
     except DatabaseError:
         instances_by_identity = {}
     instances_by_learner = {}
@@ -204,7 +208,7 @@ def _review_signing_rows_for(learners, *, employer_only=True):
                 instance_rows.append(instance)
                 unique_instances.setdefault(instance.get('id'), instance)
         instances_by_learner[key] = instance_rows
-    definitions = review_instances.review_instance_signing_definitions(list(unique_instances.values()))
+    definitions = review_application_instance_definitions.review_instance_signing_definitions(list(unique_instances.values()))
 
     wanted = []
     for key, instance_rows in instances_by_learner.items():
@@ -1014,17 +1018,18 @@ def employer_review_instance(request, employer_id, kind, learner_id, event_key, 
     record = CoachCalendarEvent.objects.filter(event_key=event_key).first()
     if record and str(record.learner_profile_id or '') not in {str(learner_id), str(owner_id)} and _s(record.learner_email).casefold() != _s(learner.email).casefold():
         record = None
-    instance = review_instances.get_review_instance(getattr(record, 'review_instance_id', '')) if record else review_instances.get_review_instance(event_key)
+    instance = review_infrastructure_instance_rows.get_review_instance(getattr(record, 'review_instance_id', '')) if record else review_infrastructure_instance_rows.get_review_instance(event_key)
     if not instance:
         return _error("Review instance not found.", 404)
     if str(instance.get('learner_id')) != str(owner_id):
         return _error("Review instance not found for this learner.", 404)
-    definition = review_instances.review_instance_form_definition(instance)
+    definition = review_application_instance_definitions.review_instance_form_definition(instance)
     if not definition['template']['visibleTo'].get('employer', False):
         return _error("This review is not visible to the employer.", 403)
     if request.method == "GET":
         if as_pdf:
-            from curriculum_api.review_pdf import learner_information, mcm_pdf_response
+            from curriculum_api.review_management.application.pdf_export import learner_information
+            from curriculum_api.review_management.api.pdf_responses import mcm_pdf_response
             return mcm_pdf_response(definition, learner_information(learner))
         response = JsonResponse(definition)
         response["Cache-Control"] = "private, no-store"
@@ -1040,7 +1045,7 @@ def employer_review_instance(request, employer_id, kind, learner_id, event_key, 
     # (which never sends `answers`) is unaffected.
     if isinstance(payload.get('answers'), dict):
         try:
-            updated = review_instances.save_review_instance_answers_for_role(
+            updated = review_application_instance_answers.save_review_instance_answers_for_role(
                 instance, payload['answers'], 'employer',
                 actor=_s(getattr(request.login_account, 'email', '')) or 'employer',
             )
@@ -1057,7 +1062,7 @@ def employer_review_instance(request, employer_id, kind, learner_id, event_key, 
     if not name:
         return _error("Name is required when signing.", 400)
     try:
-        updated = review_instances.record_review_instance_signature(
+        updated = review_application_instance_signatures.record_review_instance_signature(
             instance, 'employer', signed_by=_s(getattr(request.login_account, 'email', '')),
             signed_name=name, signature=signature,
             actor=_s(getattr(request.login_account, 'email', '')) or 'employer',
@@ -1353,23 +1358,23 @@ def employer_document_preview(request, employer_id, kind, learner_id, document_k
 
 def _employer_progress_definition(event, learner, profile, template_cache):
     """Read an owned occurrence or its template preview without creating it."""
-    from curriculum_api import reviews
+    import curriculum_api.review_management.infrastructure.template_rows as review_infrastructure_template_rows
 
     instance_id = _s(event.get("reviewInstanceId"))
     template_id = _s(event.get("reviewTemplateId"))
-    instance = review_instances.get_review_instance(instance_id) if instance_id else None
+    instance = review_infrastructure_instance_rows.get_review_instance(instance_id) if instance_id else None
     if instance is None and template_id and profile is not None:
         occurrence = event.get("occurrenceNumber") or event.get("sequence")
-        instance = review_instances.find_review_instance(template_id, str(profile.pk), occurrence)
+        instance = review_infrastructure_instance_rows.find_review_instance(template_id, str(profile.pk), occurrence)
     if instance is not None:
         owner_id = profile.pk if profile is not None else learner.pk
         if str(instance.get("learner_id")) != str(owner_id):
             return None
-        definition = review_instances.review_instance_form_definition(instance)
+        definition = review_application_instance_definitions.review_instance_form_definition(instance)
     elif template_id:
         if template_id not in template_cache:
-            template = reviews.get_review_template_row(template_id, include_deleted=True)
-            template_cache[template_id] = review_instances.build_definition_snapshot(template) if template else None
+            template = review_infrastructure_template_rows.get_review_template_row(template_id, include_deleted=True)
+            template_cache[template_id] = review_application_instance_definitions.build_definition_snapshot(template) if template else None
         snapshot = template_cache[template_id]
         if snapshot is None:
             return None
@@ -1377,7 +1382,7 @@ def _employer_progress_definition(event, learner, profile, template_cache):
             "instance": None, "occurrenceNumber": event.get("occurrenceNumber") or event.get("sequence"),
             "template": snapshot, "sections": snapshot["sections"],
             "signatures": {role: {"required": bool(snapshot["signatures"].get(role)), "signed": False}
-                           for role in review_instances.SIGNATURE_ROLES},
+                           for role in review_domain_instance_rules.SIGNATURE_ROLES},
         }
     else:
         return None
@@ -1491,7 +1496,9 @@ def employer_portal_progress_reviews(request, employer_id, kind, learner_id, eve
             return _error("Progress review not found for this learner.", 404)
         definition = definitions.get(rows[0]["eventKey"])
         if as_pdf:
-            from curriculum_api.review_pdf import learner_information, mcm_pdf_response, historical_pdf_response
+            from curriculum_api.review_management.application.pdf_export import learner_information
+            from curriculum_api.review_management.api.pdf_responses import mcm_pdf_response
+            from curriculum_api.review_management.api.pdf_responses import historical_pdf_response
             information = learner_information(learner)
             if definition is not None:
                 response = mcm_pdf_response(definition, information)

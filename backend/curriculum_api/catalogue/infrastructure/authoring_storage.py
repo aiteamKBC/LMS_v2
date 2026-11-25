@@ -58,7 +58,7 @@ def insert_row(table, payload):
 def update_rows(table, where_sql, where_params, payload, allow_null_columns=None):
     from curriculum_api.catalogue.infrastructure.row_persistence import update_rows as implementation
     def load_free_course_columns():
-        from curriculum_api.free_course_contract import COLUMNS as operation
+        from curriculum_api.catalogue.infrastructure.free_course_contract import COLUMNS as operation
         return operation
     return implementation(
         table, where_sql, where_params, payload, allow_null_columns,
@@ -140,7 +140,7 @@ def update_authoring_rows(table, where_sql, where_params, payload):
         from curriculum_api.catalogue.infrastructure.course_storage_writes import update as operation
         return operation(*args, **kwargs)
     def load_free_course_columns():
-        from curriculum_api.free_course_contract import COLUMNS as operation
+        from curriculum_api.catalogue.infrastructure.free_course_contract import COLUMNS as operation
         return operation
     return implementation(
         table, where_sql, where_params, payload,

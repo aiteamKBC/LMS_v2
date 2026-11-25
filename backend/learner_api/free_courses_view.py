@@ -19,7 +19,7 @@ from login.permissions import learner_self_only, learner_self_or_staff
 from login import permissions
 from login.errors import safe_sqlstate
 
-from curriculum_api import free_course_catalogue
+from curriculum_api.catalogue.infrastructure import free_course_rows as free_course_catalogue
 from curriculum_api.catalogue.domain.content_values import active_component_rows
 from curriculum_api.catalogue.domain.archive_policy import active_week_rows, programme_deleted_row
 from curriculum_api.catalogue.infrastructure.database_reads import authoring_table_name

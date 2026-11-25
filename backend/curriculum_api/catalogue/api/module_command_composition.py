@@ -343,8 +343,9 @@ def curriculum_module_detail(request, identifier):
         from curriculum_api.module_collaboration import check_removal as operation
         return operation(*args, **kwargs)
     def free_course_errors(*args, **kwargs):
-        from curriculum_api.free_course_policy import free_course_errors as operation
-        return operation(*args, **kwargs)
+        from curriculum_api.catalogue.application.free_course_policy import free_course_errors as operation
+        from curriculum_api.catalogue.infrastructure.free_course_policy_reads import retained_live_component_ids
+        return operation(*args, retained_live_component_ids=retained_live_component_ids, **kwargs)
     return implementation(
         request, identifier,
         AUTHORING_MODULES_TABLE=AUTHORING_MODULES_TABLE,

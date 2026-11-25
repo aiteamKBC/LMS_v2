@@ -63,7 +63,7 @@ def table_name(table):
 
 def column_names(table):
     def free_course_columns():
-        from curriculum_api.free_course_contract import COLUMNS
+        from curriculum_api.catalogue.infrastructure.free_course_contract import COLUMNS
         return COLUMNS
     def mark_columns_listed():
         global _TABLE_COLUMNS_LISTED

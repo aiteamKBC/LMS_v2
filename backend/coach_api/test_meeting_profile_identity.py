@@ -1,4 +1,6 @@
 """D01 namespace collisions; synthetic rows and no permitted database access."""
+import curriculum_api.review_management.infrastructure.instance_rows as review_infrastructure_instance_rows
+
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -86,10 +88,10 @@ class MeetingProfileIdentityTests(SimpleTestCase):
         self.record.review_instance_id, self.record.review_template_id = 'REVI-synthetic', 'REV-template'
         self.profile.coach_email = 'new-coach@example.invalid'
         instance = dict(calendar_event_id=7, learner_id=800, coach_email=self.record.owner_email, review_template_id='REV-template')
-        with patch.object(views.curriculum_review_instances, 'get_review_instance', return_value=instance):
+        with patch.object(review_infrastructure_instance_rows, 'get_review_instance', return_value=instance):
             self.assertIs(views.coach_meeting_record_learner(self.record), self.profile)
             for key, value in [('learner_id', 999), ('calendar_event_id', 123), ('coach_email', 'other@example.invalid')]:
-                with patch.object(views.curriculum_review_instances, 'get_review_instance', return_value={**instance, key: value}):
+                with patch.object(review_infrastructure_instance_rows, 'get_review_instance', return_value={**instance, key: value}):
                     self.assertIsNone(views.coach_meeting_record_learner(self.record))
 
     def test_duplicate_stable_bridges_fail_closed(self):

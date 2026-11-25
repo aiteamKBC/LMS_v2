@@ -159,16 +159,16 @@ class Command(BaseCommand):
     # ---------------------------------------------------------------- loading
 
     def _load_native(self, instance_id):
-        from curriculum_api import review_instances as native_reviews
+        import curriculum_api.review_management.infrastructure.instance_rows as review_infrastructure_instance_rows
         from curriculum_api import views as curriculum_views
 
-        instance = native_reviews.get_review_instance(instance_id)
+        instance = review_infrastructure_instance_rows.get_review_instance(instance_id)
         if not instance:
             raise CommandError(f"Native review instance {instance_id} was not found.")
         snapshot = curriculum_views.as_json_value(instance.get("definition_snapshot"), {})
         if not snapshot.get("sections"):
             raise CommandError("The native instance has no frozen form definition to read.")
-        rows = native_reviews.get_review_instance_answers(instance_id)
+        rows = review_infrastructure_instance_rows.get_review_instance_answers(instance_id)
         answers = {}
         for field_id, row in rows.items():
             value = _decoded(row.get("answer"))
@@ -264,7 +264,7 @@ class Command(BaseCommand):
         'Summary' in Curriculum and 'Meeting Summary' in the imported form, and
         both sides already expose a resolver for it."""
         from coach_api.migrated_reviews import meeting_summary_field as imported_summary_field
-        from curriculum_api.review_instances import meeting_summary_field as native_summary_field
+        from curriculum_api.review_management.domain.instance_definitions import meeting_summary_field as native_summary_field
 
         native_field = native_summary_field(native_snapshot) or {}
         imported_field = imported_summary_field(target_snapshot) or {}

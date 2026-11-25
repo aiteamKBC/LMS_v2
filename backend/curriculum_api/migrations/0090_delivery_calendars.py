@@ -14,7 +14,7 @@ def add_delivery_calendars(apps, schema_editor):
                 cursor.execute(f'ALTER TABLE curriculum.{table} ADD COLUMN IF NOT EXISTS calendar_policy jsonb')
             cursor.execute("select to_regclass('curriculum.learning_courses')")
             if cursor.fetchone()[0] is not None:
-                from curriculum_api.free_course_native_schema import create_read_views
+                from curriculum_api.catalogue.infrastructure.free_course_native_schema import create_read_views
                 create_read_views(db, tables={'modules'})
         else:
             cursor.execute('''CREATE TABLE IF NOT EXISTS country_holiday_calendars (

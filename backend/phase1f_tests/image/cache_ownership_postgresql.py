@@ -11,7 +11,7 @@ from unittest.mock import patch
 from django.db import connection, transaction
 from curriculum_api import views, cache_scope, read_model
 from curriculum_api.catalogue.infrastructure import cache_epochs
-from curriculum_api.test_cache_ownership_boundary_no_db import original_cache_ownership
+from curriculum_api.catalogue.tests.test_cache_ownership_boundary_no_db import original_cache_ownership
 
 
 class CacheOwnershipPostgreSQL(unittest.TestCase):

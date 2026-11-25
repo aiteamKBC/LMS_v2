@@ -4,8 +4,11 @@ import hashlib
 import json
 from pathlib import Path
 import unittest
+import sys
 
 BACKEND = Path(__file__).resolve().parents[4]
+sys.path.insert(0, str(BACKEND))
+from curriculum_api.catalogue.tests.parity.approved_dev_contracts import source_tree
 MANIFEST = json.loads((Path(__file__).parents[1] /
     'fixtures/read_consumer_imports.json').read_text(encoding='utf-8'))
 
@@ -28,7 +31,7 @@ class ReadConsumerImportsTests(unittest.TestCase):
         self.assertEqual(len(MANIFEST), 12)
         for entry in MANIFEST:
             with self.subTest(file=entry['file']):
-                tree = ast.parse((BACKEND.parent / entry['file']).read_text(encoding='utf-8-sig'))
+                tree = source_tree(BACKEND.parent / entry['file'])
                 actual = hashlib.sha256(ast.dump(NormalizeLookup().visit(tree)).encode()).hexdigest()
                 self.assertEqual(actual, entry['normalized_body_sha256'])
 

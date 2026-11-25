@@ -26,6 +26,7 @@ the established pattern in coach_api's Review suites.
 
 All data here is synthetic.
 """
+from curriculum_api.review_management.infrastructure import instance_schema
 import json
 from contextlib import ExitStack
 from datetime import date, time
@@ -41,9 +42,21 @@ from django.test import RequestFactory, TestCase
 
 from coach_api import views as coach_views
 from coach_api.models import CoachCalendarEvent
-from curriculum_api import review_instances, review_types, reviews
+import curriculum_api.review_management.api.commands as review_api_commands
+import curriculum_api.review_management.application.instance_creation as review_application_instance_creation
+import curriculum_api.review_management.application.instance_definitions as review_application_instance_definitions
+import curriculum_api.review_management.application.instance_reopening as review_application_instance_reopening
+import curriculum_api.review_management.application.instance_signatures as review_application_instance_signatures
+import curriculum_api.review_management.domain.instance_rules as review_domain_instance_rules
+import curriculum_api.review_management.infrastructure.instance_rows as review_infrastructure_instance_rows
+import curriculum_api.review_management.infrastructure.instance_schema as review_infrastructure_instance_schema
+import curriculum_api.review_management.infrastructure.relations as review_infrastructure_relations
+import curriculum_api.review_management.infrastructure.template_rows as review_infrastructure_template_rows
+import curriculum_api.review_management.infrastructure.template_schema as review_infrastructure_template_schema
+import curriculum_api.review_management.infrastructure.type_rows as review_infrastructure_type_rows
+import curriculum_api.review_management.infrastructure.type_schema as review_infrastructure_type_schema
 from curriculum_api import views as curriculum_views
-from curriculum_api.review_pdf import pdf_availability
+from curriculum_api.review_management.domain.pdf_policy import pdf_availability
 
 from . import calendar as learner_calendar
 from . import employer_portal
@@ -76,17 +89,17 @@ class Phase0ReviewTestCase(TestCase):
         curriculum_views.reset_schema_ready_flags()
         curriculum_views.invalidate_curriculum_cache()
         self._ensure_programmes_table()
-        reviews.provision_review_template_tables()
-        review_types.provision_review_types_table()
-        review_instances.provision_review_instance_tables()
+        review_infrastructure_template_schema.provision_review_template_tables()
+        review_infrastructure_type_schema.provision_review_types_table()
+        review_infrastructure_instance_schema.provision_review_instance_tables()
         # Same as coach_api.tests_review_instance_reopen: provision up front and
         # mark the gate satisfied so no CREATE TABLE runs inside a test.
-        review_instances._provision_review_instance_reopens_table()
-        self.stack.enter_context(patch.object(review_instances, '_REOPENS_TABLE_READY', True))
+        review_infrastructure_instance_schema._provision_review_instance_reopens_table()
+        self.stack.enter_context(patch.object(instance_schema, '_REOPENS_TABLE_READY', True))
         with connection.cursor() as cursor:
-            cursor.execute(f'delete from {curriculum_views.authoring_table_name(review_types.REVIEW_TYPES_TABLE)}')
+            cursor.execute(f'delete from {curriculum_views.authoring_table_name(review_infrastructure_relations.REVIEW_TYPES_TABLE)}')
             cursor.execute('delete from programmes')
-        review_types.seed_system_review_types()
+        review_infrastructure_type_schema.seed_system_review_types()
         curriculum_views.insert_row('programmes', {
             'id': PROGRAMME_ID, 'programme_id': PROGRAMME_ID, 'program_id': PROGRAMME_ID,
             'name': PROGRAMME_NAME, 'status': 'active', 'is_active': True, 'is_archived': False,
@@ -146,10 +159,10 @@ class Phase0ReviewTestCase(TestCase):
         return source, profile
 
     def _template(self, *, signatures=None, visible_to=None, type_code='mcm'):
-        review_id, errors = reviews.create_review(PROGRAMME_ID, {
+        review_id, errors = review_api_commands.create_review(PROGRAMME_ID, {
             'name': 'Phase 0 Review',
             'enabled': True,
-            'reviewTypeId': review_types.get_review_type_by_code(type_code)['id'],
+            'reviewTypeId': review_infrastructure_type_rows.get_review_type_by_code(type_code)['id'],
             'recurrence': {'interval': 4, 'unit': 'weeks'}, 'scheduleAnchorDate': '2026-01-01',
             'applicableStatuses': [],
             'signatures': signatures or ALL_SIGNERS,
@@ -190,10 +203,10 @@ class Phase0ReviewTestCase(TestCase):
         return record
 
     def _instance(self, record):
-        return review_instances.get_review_instance(record.review_instance_id)
+        return review_infrastructure_instance_rows.get_review_instance(record.review_instance_id)
 
     def _field_ids(self, record):
-        definition = review_instances.review_instance_form_definition(self._instance(record))
+        definition = review_application_instance_definitions.review_instance_form_definition(self._instance(record))
         return {field['title']: field['id'] for field in definition['sections'][0]['fields']}
 
     def _to_in_progress(self, record):
@@ -204,7 +217,7 @@ class Phase0ReviewTestCase(TestCase):
         }])
         self.assertTrue(changed)
         record.refresh_from_db()
-        self.assertEqual(self._instance(record)['status'], review_instances.STATUS_IN_PROGRESS)
+        self.assertEqual(self._instance(record)['status'], review_domain_instance_rules.STATUS_IN_PROGRESS)
 
     def _coach_complete(self, record):
         """The real coach complete endpoint: saves the coach's answer, moves the
@@ -219,11 +232,11 @@ class Phase0ReviewTestCase(TestCase):
     def _to_awaiting_signature(self, record):
         self._to_in_progress(record)
         self._coach_complete(record)
-        self.assertEqual(self._instance(record)['status'], review_instances.STATUS_AWAITING_SIGNATURE)
+        self.assertEqual(self._instance(record)['status'], review_domain_instance_rules.STATUS_AWAITING_SIGNATURE)
         self.assertEqual(record.status, CoachCalendarEvent.STATUS_AWAITING_SIGNATURE)
 
     def _signature_rows(self, record):
-        return review_instances.get_review_instance_signatures(record.review_instance_id)
+        return review_infrastructure_instance_rows.get_review_instance_signatures(record.review_instance_id)
 
     # -------------------------------------------------------- request helpers
 
@@ -322,7 +335,7 @@ class F1EmployerAuthorizationTests(Phase0ReviewTestCase):
             event_key=self.review_b.review_instance_id, body={'answers': {field_id: 'Written by Employer A'}},
         )
         self.assertRefused(status, payload, 'F1 answer Review B as Employer A')
-        answers = review_instances.review_instance_form_definition(self._instance(self.review_b))
+        answers = review_application_instance_definitions.review_instance_form_definition(self._instance(self.review_b))
         stored = [f.get('answer') for f in answers['sections'][0]['fields'] if f['id'] == field_id]
         self.assertNotIn('Written by Employer A', stored)
 
@@ -426,13 +439,13 @@ class F2StaffSigningAsLearnerTests(Phase0ReviewTestCase):
         row = self._signature_rows(self.review)['participant']
         self.assertTrue(row['signed_at'])
         self.assertEqual(row['signed_by'], self.learner.email)
-        self.assertEqual(self._instance(self.review)['status'], review_instances.STATUS_COMPLETED)
+        self.assertEqual(self._instance(self.review)['status'], review_domain_instance_rules.STATUS_COMPLETED)
 
     def test_f2_staff_cannot_submit_participant_signature_characterization(self):
         status, payload = self._learner_sign_call(self.staff, pk=self.learner.id, event_key=self.review.event_key)
         self.assertRefused(status, payload, 'F2 staff signing as participant')
         self.assertFalse(self._signature_rows(self.review).get('participant', {}).get('signed_at'))
-        self.assertEqual(self._instance(self.review)['status'], review_instances.STATUS_AWAITING_SIGNATURE)
+        self.assertEqual(self._instance(self.review)['status'], review_domain_instance_rules.STATUS_AWAITING_SIGNATURE)
 
     def test_f2_persisted_signature_distinguishes_actor_from_learner_characterization(self):
         """If a staff-submitted participant signature is persisted at all, the
@@ -527,8 +540,8 @@ class F3IdentityCollisionTests(Phase0ReviewTestCase):
         candidate_ids = [str(pk), str(mirror.pk)]. An instance for Learner A
         (learner_id = A's profile id = 5301) is found for Learner B's pk 5301."""
         template_id = self.review_a.review_template_id
-        template = reviews.get_review_template_row(template_id)
-        instance_a = review_instances.ensure_review_instance(
+        template = review_infrastructure_template_rows.get_review_template_row(template_id)
+        instance_a = review_application_instance_creation.ensure_review_instance(
             template, learner_id=self.profile_a.id, learner_kind='', programme_id=PROGRAMME_ID,
             occurrence_number=99, target_date=date(2026, 12, 1), coach_email=COACH_EMAIL,
         )
@@ -627,7 +640,7 @@ class F4CompletedSignatureImmutabilityTests(Phase0ReviewTestCase):
         self.employer_account = self._account('employer', 7101, 'employer-f4@example.test')
         self._sign_all()
         self.review.refresh_from_db()
-        self.assertEqual(self._instance(self.review)['status'], review_instances.STATUS_COMPLETED)
+        self.assertEqual(self._instance(self.review)['status'], review_domain_instance_rules.STATUS_COMPLETED)
         self.before = self._signature_rows(self.review)
 
     def _sign_all(self):
@@ -652,10 +665,10 @@ class F4CompletedSignatureImmutabilityTests(Phase0ReviewTestCase):
             f'F4 {what}: completed {role} signature was changed (HTTP {status})',
         )
         self.assertGreaterEqual(status, 400, f'F4 {what}: expected rejection, got {status} {payload}')
-        self.assertEqual(self._instance(self.review)['status'], review_instances.STATUS_COMPLETED)
+        self.assertEqual(self._instance(self.review)['status'], review_domain_instance_rules.STATUS_COMPLETED)
 
     def _definition(self):
-        return review_instances.review_instance_form_definition(self._instance(self.review))
+        return review_application_instance_definitions.review_instance_form_definition(self._instance(self.review))
 
     # -- advisor (coach endpoint) -------------------------------------------
 
@@ -713,7 +726,7 @@ class F4CompletedSignatureImmutabilityTests(Phase0ReviewTestCase):
 
     def test_valid_path_completed_review_is_readable_and_pdf_available(self):
         definition = self._definition()
-        self.assertEqual(definition['instance']['status'], review_instances.STATUS_COMPLETED)
+        self.assertEqual(definition['instance']['status'], review_domain_instance_rules.STATUS_COMPLETED)
         self.assertTrue(pdf_availability(definition)['available'])
         status, payload = self._learner_review_call(self.learner_account, 'GET', pk=self.learner.id, event_key=self.review.event_key)
         self.assertEqual(status, 200, payload)
@@ -754,17 +767,17 @@ class F5SignReopenTests(Phase0ReviewTestCase):
 
     def test_f5_stale_sign_after_committed_reopen_leaves_no_signature_characterization(self):
         stale_read_by_request_a = self._instance(self.review)
-        self.assertEqual(stale_read_by_request_a['status'], review_instances.STATUS_AWAITING_SIGNATURE)
+        self.assertEqual(stale_read_by_request_a['status'], review_domain_instance_rules.STATUS_AWAITING_SIGNATURE)
 
-        ok, result = review_instances.reopen_review_instance_for_editing(
+        ok, result = review_application_instance_reopening.reopen_review_instance_for_editing(
             self._instance(self.review), reason_code='correction-required', note='Phase 0 correction', actor=COACH_EMAIL,
         )
         self.assertTrue(ok, result)
-        self.assertEqual(self._instance(self.review)['status'], review_instances.STATUS_IN_PROGRESS)
+        self.assertEqual(self._instance(self.review)['status'], review_domain_instance_rules.STATUS_IN_PROGRESS)
 
         error = None
         try:
-            review_instances.record_review_instance_signature(
+            review_application_instance_signatures.record_review_instance_signature(
                 stale_read_by_request_a, 'participant',
                 signed_by=self.learner.email, signed_name='Synthetic Learner', signature=SIGNATURE,
                 actor=self.learner.email,
@@ -777,26 +790,26 @@ class F5SignReopenTests(Phase0ReviewTestCase):
         self.review.refresh_from_db()
         observed = (instance['status'], self.review.status, signed)
         self.assertEqual(
-            observed, (review_instances.STATUS_IN_PROGRESS, CoachCalendarEvent.STATUS_IN_PROGRESS, []),
+            observed, (review_domain_instance_rules.STATUS_IN_PROGRESS, CoachCalendarEvent.STATUS_IN_PROGRESS, []),
             f'F5 after a committed reopen, a sign request that read the review earlier left '
             f'(instance status, calendar status, signed roles) = {observed} (raised={error!r})',
         )
 
     def test_valid_path_reopen_clears_signatures_and_allows_recompletion(self):
-        ok, result = review_instances.reopen_review_instance_for_editing(
+        ok, result = review_application_instance_reopening.reopen_review_instance_for_editing(
             self._instance(self.review), reason_code='correction-required', note='Phase 0 correction', actor=COACH_EMAIL,
         )
         self.assertTrue(ok, result)
         self.assertFalse(any(row.get('signed_at') for row in self._signature_rows(self.review).values()))
         self._coach_complete(self.review)
-        self.assertEqual(self._instance(self.review)['status'], review_instances.STATUS_AWAITING_SIGNATURE)
+        self.assertEqual(self._instance(self.review)['status'], review_domain_instance_rules.STATUS_AWAITING_SIGNATURE)
 
     def test_valid_path_fresh_sign_after_reopen_is_rejected(self):
-        review_instances.reopen_review_instance_for_editing(
+        review_application_instance_reopening.reopen_review_instance_for_editing(
             self._instance(self.review), reason_code='correction-required', note='Phase 0 correction', actor=COACH_EMAIL,
         )
         with self.assertRaises(ValueError):
-            review_instances.record_review_instance_signature(
+            review_application_instance_signatures.record_review_instance_signature(
                 self._instance(self.review), 'participant',
                 signed_by=self.learner.email, signed_name='Synthetic Learner', signature=SIGNATURE,
             )
@@ -808,7 +821,7 @@ class F5SignReopenTests(Phase0ReviewTestCase):
 
 class F12SignatureConfigurationTests(Phase0ReviewTestCase):
     """A role that must sign but cannot see the Review. The Referrer-only guard
-    from the previous change is covered by curriculum_api.tests_reviews
+    from the previous change is covered by curriculum_api.review_management.tests.tests_reviews
     .ReviewReferrerSignatureGuardTests; it is re-asserted here only as a
     regression anchor, not re-implemented."""
 
@@ -817,7 +830,7 @@ class F12SignatureConfigurationTests(Phase0ReviewTestCase):
         visible_to = dict(ALL_VISIBLE, **{role: visible})
         return {
             'name': f'F12 {role}', 'enabled': True,
-            'reviewTypeId': review_types.get_review_type_by_code('progress_review')['id'],
+            'reviewTypeId': review_infrastructure_type_rows.get_review_type_by_code('progress_review')['id'],
             'recurrence': {'interval': 12, 'unit': 'weeks'}, 'scheduleAnchorDate': '2026-01-01',
             'applicableStatuses': [], 'signatures': signatures, 'visibleTo': visible_to,
             'sections': [{'title': 'General', 'fields': [{'title': 'Notes', 'fieldType': 'text', 'required': False}]}],
@@ -856,10 +869,10 @@ class F12SignatureConfigurationTests(Phase0ReviewTestCase):
         self._employer(7201, 'employer-f12@example.test')
         learner, profile = self._learner(created_users_id=5141, profile_id=6141, email='learner-f12@example.test', employer_id=7201)
         payload = self._payload('employer', signature=True, visible=False)
-        payload['reviewTypeId'] = review_types.get_review_type_by_code('mcm')['id']
+        payload['reviewTypeId'] = review_infrastructure_type_rows.get_review_type_by_code('mcm')['id']
         payload['sections'] = [{'title': 'General', 'fields': [
             {'title': 'Coach notes', 'fieldType': 'text_multiline', 'required': True}]}]
-        template_id, errors = reviews.create_review(PROGRAMME_ID, payload, actor='test')
+        template_id, errors = review_api_commands.create_review(PROGRAMME_ID, payload, actor='test')
         if errors:
             return  # target behaviour: the impossible template never exists
         review = self._scheduled_review(profile, template_id=template_id)
@@ -908,7 +921,7 @@ class CoachOwnershipValidPathTests(Phase0ReviewTestCase):
         self._to_awaiting_signature(self.review)
         status, payload = self._coach_sign(self.review.review_instance_id)
         self.assertEqual(status, 200, payload)
-        self.assertEqual(self._instance(self.review)['status'], review_instances.STATUS_COMPLETED)
+        self.assertEqual(self._instance(self.review)['status'], review_domain_instance_rules.STATUS_COMPLETED)
 
     def test_other_coach_cannot_read_or_sign(self):
         status, payload = self._coach_call(

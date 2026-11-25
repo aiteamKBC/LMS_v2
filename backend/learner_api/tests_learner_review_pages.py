@@ -19,7 +19,14 @@ from types import SimpleNamespace
 from django.db import connection
 from django.test import TestCase
 
-from curriculum_api import review_instances, review_schedule, review_types, reviews
+import curriculum_api.review_management.api.commands as review_api_commands
+import curriculum_api.review_management.domain.classification as review_domain_classification
+import curriculum_api.review_management.infrastructure.instance_schema as review_infrastructure_instance_schema
+import curriculum_api.review_management.infrastructure.relations as review_infrastructure_relations
+import curriculum_api.review_management.infrastructure.schedule_schema as review_infrastructure_schedule_schema
+import curriculum_api.review_management.infrastructure.template_schema as review_infrastructure_template_schema
+import curriculum_api.review_management.infrastructure.type_rows as review_infrastructure_type_rows
+import curriculum_api.review_management.infrastructure.type_schema as review_infrastructure_type_schema
 from curriculum_api import views as curriculum_views
 
 from .calendar import _generated_cycle_events
@@ -35,10 +42,10 @@ class LearnerReviewPageTestCase(TestCase):
         curriculum_views.reset_schema_ready_flags()
         curriculum_views.invalidate_curriculum_cache()
         self._ensure_programmes_table()
-        reviews.provision_review_template_tables()
-        review_types.provision_review_types_table()
-        review_schedule.provision_review_schedule_tables()
-        review_instances.provision_review_instance_tables()
+        review_infrastructure_template_schema.provision_review_template_tables()
+        review_infrastructure_type_schema.provision_review_types_table()
+        review_infrastructure_schedule_schema.provision_review_schedule_tables()
+        review_infrastructure_instance_schema.provision_review_instance_tables()
         self._clear()
         self._programme()
 
@@ -65,12 +72,12 @@ class LearnerReviewPageTestCase(TestCase):
 
     def _clear(self):
         for table in (
-            reviews.REVIEW_FIELDS_TABLE, reviews.REVIEW_SECTIONS_TABLE,
-            reviews.REVIEW_TEMPLATES_TABLE, review_types.REVIEW_TYPES_TABLE, 'programmes',
+            review_infrastructure_relations.REVIEW_FIELDS_TABLE, review_infrastructure_relations.REVIEW_SECTIONS_TABLE,
+            review_infrastructure_relations.REVIEW_TEMPLATES_TABLE, review_infrastructure_relations.REVIEW_TYPES_TABLE, 'programmes',
         ):
             with connection.cursor() as cursor:
                 cursor.execute(f'delete from {curriculum_views.authoring_table_name(table)}')
-        review_types.seed_system_review_types()
+        review_infrastructure_type_schema.seed_system_review_types()
 
     def _programme(self):
         curriculum_views.insert_row('programmes', {
@@ -82,10 +89,10 @@ class LearnerReviewPageTestCase(TestCase):
         curriculum_views.invalidate_curriculum_cache()
 
     def _template(self, *, name, type_code, interval, unit):
-        review_id, errors = reviews.create_review(PROGRAMME_ID, {
+        review_id, errors = review_api_commands.create_review(PROGRAMME_ID, {
             'name': name,
             'enabled': True,
-            'reviewTypeId': review_types.get_review_type_by_code(type_code)['id'],
+            'reviewTypeId': review_infrastructure_type_rows.get_review_type_by_code(type_code)['id'],
             'recurrence': {'interval': interval, 'unit': unit},
             # Deliberately not the learner's date: the template anchor drives
             # Curriculum's programme-level preview, never a learner's own
@@ -140,7 +147,7 @@ class MonthlyCoachingPageRecurrenceTests(LearnerReviewPageTestCase):
         TIMETABLE_MCR_INTERVAL.
         """
         self._template(
-            name='Monthly Coaching Meeting', type_code=review_types.REVIEW_TYPE_CODE_MCM,
+            name='Monthly Coaching Meeting', type_code=review_domain_classification.REVIEW_TYPE_CODE_MCM,
             interval=6, unit='weeks',
         )
 
@@ -174,7 +181,7 @@ class ProgressReviewPageRecurrenceTests(LearnerReviewPageTestCase):
         TIMETABLE_PROGRESS_REVIEW_INTERVAL.
         """
         self._template(
-            name='Progress Review', type_code=review_types.REVIEW_TYPE_CODE_PROGRESS_REVIEW,
+            name='Progress Review', type_code=review_domain_classification.REVIEW_TYPE_CODE_PROGRESS_REVIEW,
             interval=8, unit='weeks',
         )
 

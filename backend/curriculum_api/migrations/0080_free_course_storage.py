@@ -7,7 +7,7 @@ from django.db import migrations
 
 
 def apply_schema(apps, schema_editor):
-    from curriculum_api.free_course_storage_schema import provision
+    from curriculum_api.catalogue.infrastructure.free_course_storage_schema import provision
     provision(schema_editor.connection)
 
 

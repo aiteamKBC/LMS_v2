@@ -11,8 +11,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from run_import_smoke import BACKEND, TARGETS, bundle
 
 TARGETS += ['curriculum_api.' + name for name in (
-    'tests_pptx_slides', 'tests_slide_fallback', 'tests_office_preview', 'tests_upload_storage',
-    'test_media_delivery_boundary_no_db', 'tests_ai_material',
+    'catalogue.tests.tests_pptx_slides', 'catalogue.tests.tests_slide_fallback', 'catalogue.tests.tests_office_preview', 'catalogue.tests.tests_upload_storage',
+    'catalogue.tests.test_media_delivery_boundary_no_db', 'catalogue.tests.tests_ai_material',
 )]
 
 

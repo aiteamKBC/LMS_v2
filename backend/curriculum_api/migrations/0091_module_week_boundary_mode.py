@@ -9,7 +9,7 @@ def add_week_boundary_mode(apps, schema_editor):
             cursor.execute('ALTER TABLE curriculum.modules ADD COLUMN IF NOT EXISTS week_boundary_mode varchar(16)')
             cursor.execute("SELECT to_regclass('curriculum.learning_courses')")
             if cursor.fetchone()[0] is not None:
-                from curriculum_api.free_course_native_schema import create_read_views
+                from curriculum_api.catalogue.infrastructure.free_course_native_schema import create_read_views
                 create_read_views(db, tables={'modules'})
         else:
             cursor.execute('pragma table_info(modules)')

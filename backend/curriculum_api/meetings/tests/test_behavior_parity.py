@@ -13,8 +13,8 @@ import unittest
 import uuid
 from unittest.mock import patch
 from curriculum_api.meetings.tests import source_loader
-from curriculum_api import test_calendar_checks_no_db as calendars
-from curriculum_api import test_teams_attachment_no_db as attachments
+from curriculum_api.meetings.tests import test_calendar_checks_no_db as calendars
+from curriculum_api.meetings.tests import test_teams_attachment_no_db as attachments
 
 
 class FixedClock(datetime):

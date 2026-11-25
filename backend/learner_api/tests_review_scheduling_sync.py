@@ -24,7 +24,12 @@ from django.utils import timezone
 
 from coach_api import views as coach_views
 from coach_api.models import CoachCalendarEvent
-from curriculum_api import review_instances, review_types, reviews
+import curriculum_api.review_management.api.commands as review_api_commands
+import curriculum_api.review_management.domain.classification as review_domain_classification
+import curriculum_api.review_management.infrastructure.instance_rows as review_infrastructure_instance_rows
+import curriculum_api.review_management.infrastructure.instance_schema as review_infrastructure_instance_schema
+import curriculum_api.review_management.infrastructure.template_rows as review_infrastructure_template_rows
+import curriculum_api.review_management.infrastructure.type_rows as review_infrastructure_type_rows
 
 from . import calendar as learner_calendar
 from .booking_calendar import booking_date_restriction
@@ -98,7 +103,7 @@ class ReviewSchedulingSyncTestCase(LearnerReviewPageTestCase):
 
     def setUp(self):
         super().setUp()
-        review_instances.provision_review_instance_tables()
+        review_infrastructure_instance_schema.provision_review_instance_tables()
         CoachCalendarEvent.objects.all().delete()
         self.factory = RequestFactory()
         self.learner = enrolment_row()
@@ -120,12 +125,12 @@ class ReviewSchedulingSyncTestCase(LearnerReviewPageTestCase):
 
     def template(self, *, name, type_code=None, type_name=None, interval=4, unit='weeks'):
         if type_code:
-            review_type_id = review_types.get_review_type_by_code(type_code)['id']
+            review_type_id = review_infrastructure_type_rows.get_review_type_by_code(type_code)['id']
         else:
-            type_row, errors = review_types.create_review_type(type_name, actor='test')
+            type_row, errors = review_api_commands.create_review_type(type_name, actor='test')
             self.assertIsNone(errors, errors)
             review_type_id = type_row['id']
-        review_id, errors = reviews.create_review(PROGRAMME_ID, {
+        review_id, errors = review_api_commands.create_review(PROGRAMME_ID, {
             'name': name, 'enabled': True, 'reviewTypeId': review_type_id,
             'recurrence': {'interval': interval, 'unit': unit},
             'scheduleAnchorDate': '2026-01-01', 'applicableStatuses': [],
@@ -135,7 +140,7 @@ class ReviewSchedulingSyncTestCase(LearnerReviewPageTestCase):
             'sections': [],
         }, actor='test')
         self.assertIsNone(errors, errors)
-        return reviews.get_review_template_row(review_id)
+        return review_infrastructure_template_rows.get_review_template_row(review_id)
 
     # -------------------------------------------------------------- patches
 
@@ -353,7 +358,7 @@ class ReviewSchedulingSyncTestCase(LearnerReviewPageTestCase):
 
 class CoachToLearnerTests(ReviewSchedulingSyncTestCase):
     def test_1_coach_schedules_mcm_learner_sees_the_same_event(self):
-        template = self.template(name='Monthly Learner Catch-up', type_code=review_types.REVIEW_TYPE_CODE_MCM)
+        template = self.template(name='Monthly Learner Catch-up', type_code=review_domain_classification.REVIEW_TYPE_CODE_MCM)
         occurrence = self.coach_occurrence('mcr')
         day = bookable_day(20)
 
@@ -379,7 +384,7 @@ class CoachToLearnerTests(ReviewSchedulingSyncTestCase):
 
     def test_3_coach_schedules_progress_review_learner_sees_it(self):
         self.template(name='Quarterly Progress Conversation',
-                      type_code=review_types.REVIEW_TYPE_CODE_PROGRESS_REVIEW, interval=8)
+                      type_code=review_domain_classification.REVIEW_TYPE_CODE_PROGRESS_REVIEW, interval=8)
         occurrence = self.coach_occurrence('progress-review')
         day = bookable_day(25)
         self.coach_schedules(occurrence['eventKey'], day, '09:30')
@@ -398,7 +403,7 @@ class CoachToLearnerTests(ReviewSchedulingSyncTestCase):
 
 class LearnerToCoachTests(ReviewSchedulingSyncTestCase):
     def test_2_learner_schedules_mcm_coach_sees_the_same_event(self):
-        template = self.template(name='Monthly Learner Catch-up', type_code=review_types.REVIEW_TYPE_CODE_MCM)
+        template = self.template(name='Monthly Learner Catch-up', type_code=review_domain_classification.REVIEW_TYPE_CODE_MCM)
         occurrence = self.coach_occurrence('mcr')
         day = bookable_day(20)
 
@@ -420,7 +425,7 @@ class LearnerToCoachTests(ReviewSchedulingSyncTestCase):
 
     def test_4_learner_schedules_progress_review_coach_sees_it(self):
         self.template(name='Quarterly Progress Conversation',
-                      type_code=review_types.REVIEW_TYPE_CODE_PROGRESS_REVIEW, interval=8)
+                      type_code=review_domain_classification.REVIEW_TYPE_CODE_PROGRESS_REVIEW, interval=8)
         occurrence = self.coach_occurrence('progress-review')
         day = bookable_day(25)
         self.learner_schedules(occurrence['eventKey'], 'progress-review', day, '14:00')
@@ -439,7 +444,7 @@ class LearnerToCoachTests(ReviewSchedulingSyncTestCase):
 
 class RescheduleSyncTests(ReviewSchedulingSyncTestCase):
     def test_7_coach_reschedules_learner_sees_the_new_slot(self):
-        self.template(name='Monthly Learner Catch-up', type_code=review_types.REVIEW_TYPE_CODE_MCM)
+        self.template(name='Monthly Learner Catch-up', type_code=review_domain_classification.REVIEW_TYPE_CODE_MCM)
         occurrence = self.coach_occurrence('mcr')
         first, second = bookable_day(20), bookable_day(40)
 
@@ -451,7 +456,7 @@ class RescheduleSyncTests(ReviewSchedulingSyncTestCase):
         self.assert_one_occurrence(occurrence['eventKey'], 'mcr')
 
     def test_8_learner_reschedules_coach_sees_the_new_slot(self):
-        self.template(name='Monthly Learner Catch-up', type_code=review_types.REVIEW_TYPE_CODE_MCM)
+        self.template(name='Monthly Learner Catch-up', type_code=review_domain_classification.REVIEW_TYPE_CODE_MCM)
         occurrence = self.coach_occurrence('mcr')
         first, second = bookable_day(20), bookable_day(45)
 
@@ -464,7 +469,7 @@ class RescheduleSyncTests(ReviewSchedulingSyncTestCase):
 
 class CancelSyncTests(ReviewSchedulingSyncTestCase):
     def test_9_coach_cancels_learner_state_matches(self):
-        self.template(name='Monthly Learner Catch-up', type_code=review_types.REVIEW_TYPE_CODE_MCM)
+        self.template(name='Monthly Learner Catch-up', type_code=review_domain_classification.REVIEW_TYPE_CODE_MCM)
         occurrence = self.coach_occurrence('mcr')
         day = bookable_day(20)
         self.coach_schedules(occurrence['eventKey'], day)
@@ -478,7 +483,7 @@ class CancelSyncTests(ReviewSchedulingSyncTestCase):
         self.assertIsNone(record.scheduled_time)
         # The Review itself survives: the programme still owes it.
         self.assertEqual(record.review_instance_id, instance_id)
-        self.assertTrue(review_instances.get_review_instance(instance_id))
+        self.assertTrue(review_infrastructure_instance_rows.get_review_instance(instance_id))
 
         self.assert_both_sides_agree(
             occurrence['eventKey'], status='not-scheduled', day=None, clock=None,
@@ -486,7 +491,7 @@ class CancelSyncTests(ReviewSchedulingSyncTestCase):
         self.assert_one_occurrence(occurrence['eventKey'], 'mcr')
 
     def test_10_learner_cancels_coach_state_matches(self):
-        self.template(name='Monthly Learner Catch-up', type_code=review_types.REVIEW_TYPE_CODE_MCM)
+        self.template(name='Monthly Learner Catch-up', type_code=review_domain_classification.REVIEW_TYPE_CODE_MCM)
         occurrence = self.coach_occurrence('mcr')
         day = bookable_day(20)
         self.learner_schedules(occurrence['eventKey'], 'mcr', day, '10:00')
@@ -506,7 +511,7 @@ class CancelSyncTests(ReviewSchedulingSyncTestCase):
         self.assert_one_occurrence(occurrence['eventKey'], 'mcr')
 
     def test_a_cancelled_review_can_be_scheduled_again_from_either_side(self):
-        self.template(name='Monthly Learner Catch-up', type_code=review_types.REVIEW_TYPE_CODE_MCM)
+        self.template(name='Monthly Learner Catch-up', type_code=review_domain_classification.REVIEW_TYPE_CODE_MCM)
         occurrence = self.coach_occurrence('mcr')
         self.coach_schedules(occurrence['eventKey'], bookable_day(20))
         self.learner_cancels(occurrence['eventKey'])
@@ -518,7 +523,7 @@ class CancelSyncTests(ReviewSchedulingSyncTestCase):
 
 class ReviewInstanceIdentityTests(ReviewSchedulingSyncTestCase):
     def test_12_13_scheduling_from_both_sides_yields_one_instance(self):
-        template = self.template(name='Monthly Learner Catch-up', type_code=review_types.REVIEW_TYPE_CODE_MCM)
+        template = self.template(name='Monthly Learner Catch-up', type_code=review_domain_classification.REVIEW_TYPE_CODE_MCM)
         occurrence = self.coach_occurrence('mcr')
 
         self.coach_schedules(occurrence['eventKey'], bookable_day(20))
@@ -539,13 +544,13 @@ class ReviewInstanceIdentityTests(ReviewSchedulingSyncTestCase):
         self.assertEqual(learner_event['reviewInstanceId'], first)
 
         # The documented identity: (template, learner, occurrence number).
-        found = review_instances.find_review_instance(
+        found = review_infrastructure_instance_rows.find_review_instance(
             template['id'], MIRROR_ID, occurrence['occurrenceNumber'],
         )
         self.assertEqual(found['id'], first)
 
     def test_12_a_learner_booking_after_a_coach_booking_reuses_the_instance(self):
-        self.template(name='Monthly Learner Catch-up', type_code=review_types.REVIEW_TYPE_CODE_MCM)
+        self.template(name='Monthly Learner Catch-up', type_code=review_domain_classification.REVIEW_TYPE_CODE_MCM)
         occurrence = self.coach_occurrence('mcr')
 
         self.coach_schedules(occurrence['eventKey'], bookable_day(20))
@@ -557,7 +562,7 @@ class ReviewInstanceIdentityTests(ReviewSchedulingSyncTestCase):
         self.assertEqual(CoachCalendarEvent.objects.filter(event_key=occurrence['eventKey']).count(), 1)
 
     def test_14_template_and_occurrence_number_survive_every_write(self):
-        template = self.template(name='Monthly Learner Catch-up', type_code=review_types.REVIEW_TYPE_CODE_MCM)
+        template = self.template(name='Monthly Learner Catch-up', type_code=review_domain_classification.REVIEW_TYPE_CODE_MCM)
         occurrence = self.coach_occurrence('mcr')
 
         for action in (
@@ -576,7 +581,7 @@ class ReviewInstanceIdentityTests(ReviewSchedulingSyncTestCase):
 class GraphParityTests(ReviewSchedulingSyncTestCase):
     def test_15_both_scheduling_paths_send_the_same_graph_event(self):
         self.template(name='Quarterly Progress Conversation',
-                      type_code=review_types.REVIEW_TYPE_CODE_PROGRESS_REVIEW, interval=8)
+                      type_code=review_domain_classification.REVIEW_TYPE_CODE_PROGRESS_REVIEW, interval=8)
         occurrence = self.coach_occurrence('progress-review')
         day = bookable_day(20)
 
@@ -616,12 +621,12 @@ class GraphParityTests(ReviewSchedulingSyncTestCase):
     def test_17_the_graph_subject_follows_a_template_rename(self):
         """No title matching: the Teams subject is whatever Curriculum calls
         the Review now, not a name any code recognises."""
-        template = self.template(name='Monthly Learner Catch-up', type_code=review_types.REVIEW_TYPE_CODE_MCM)
+        template = self.template(name='Monthly Learner Catch-up', type_code=review_domain_classification.REVIEW_TYPE_CODE_MCM)
         occurrence = self.coach_occurrence('mcr')
         self.coach_schedules(occurrence['eventKey'], bookable_day(20))
         self.assertIn('Monthly Learner Catch-up', self.graph_payloads()[-1]['subject'])
 
-        _id, errors = reviews.update_review(template['id'], {'name': 'Renamed Review'}, actor='test')
+        _id, errors = review_api_commands.update_review(template['id'], {'name': 'Renamed Review'}, actor='test')
         self.assertIsNone(errors, errors)
 
         self.graph_calls = []
@@ -635,7 +640,7 @@ class StrictAnchorAndOwnershipTests(ReviewSchedulingSyncTestCase):
     def test_16_scheduling_never_recomputes_the_target_date(self):
         """J: the occurrence date came from Created_users.Start_date. Scheduling
         persists it; it must not be re-derived from the cohort-stamped mirror."""
-        self.template(name='Monthly Learner Catch-up', type_code=review_types.REVIEW_TYPE_CODE_MCM)
+        self.template(name='Monthly Learner Catch-up', type_code=review_domain_classification.REVIEW_TYPE_CODE_MCM)
         occurrence = self.coach_occurrence('mcr')
         expected_target = (LEARNER_START + timedelta(weeks=4)).isoformat()
         self.assertEqual(occurrence['targetDate'], expected_target)
@@ -649,11 +654,11 @@ class StrictAnchorAndOwnershipTests(ReviewSchedulingSyncTestCase):
         self.assertEqual(self.coach_events()[occurrence['eventKey']]['targetDate'], expected_target)
         self.assertEqual(self.learner_events()[occurrence['eventKey']]['targetDate'], expected_target)
 
-        instance = review_instances.get_review_instance(record.review_instance_id)
+        instance = review_infrastructure_instance_rows.get_review_instance(record.review_instance_id)
         self.assertEqual(str(instance['target_date']), expected_target)
 
     def test_11_scheduling_does_not_leave_a_generated_duplicate(self):
-        self.template(name='Monthly Learner Catch-up', type_code=review_types.REVIEW_TYPE_CODE_MCM)
+        self.template(name='Monthly Learner Catch-up', type_code=review_domain_classification.REVIEW_TYPE_CODE_MCM)
         occurrence = self.coach_occurrence('mcr')
         before = len([e for e in self.coach_events().values() if e['source'] == 'mcr'])
 
@@ -667,7 +672,7 @@ class StrictAnchorAndOwnershipTests(ReviewSchedulingSyncTestCase):
         self.assertEqual(len(keys), len(set(keys)), 'the learner calendar duplicated an occurrence')
 
     def test_18_another_coach_cannot_schedule_this_learners_review(self):
-        self.template(name='Monthly Learner Catch-up', type_code=review_types.REVIEW_TYPE_CODE_MCM)
+        self.template(name='Monthly Learner Catch-up', type_code=review_domain_classification.REVIEW_TYPE_CODE_MCM)
         occurrence = self.coach_occurrence('mcr')
         request = self.factory.post(
             '/coach_api/coach/timetable/events/schedule',
@@ -686,7 +691,7 @@ class StrictAnchorAndOwnershipTests(ReviewSchedulingSyncTestCase):
         self.assertFalse(CoachCalendarEvent.objects.filter(event_key=occurrence['eventKey']).exists())
 
     def test_18_a_learner_cannot_reach_another_learners_row_by_event_key(self):
-        self.template(name='Monthly Learner Catch-up', type_code=review_types.REVIEW_TYPE_CODE_MCM)
+        self.template(name='Monthly Learner Catch-up', type_code=review_domain_classification.REVIEW_TYPE_CODE_MCM)
         occurrence = self.coach_occurrence('mcr')
         self.coach_schedules(occurrence['eventKey'], bookable_day(20))
 

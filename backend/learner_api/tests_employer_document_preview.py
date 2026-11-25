@@ -27,8 +27,8 @@ class EmployerDocumentPreviewTests(SimpleTestCase):
             ("employer", "learner_api.employer_portal._employer_or_404", (SimpleNamespace(pk=9), None)),
             ("profile", "learner_api.calendar._calendar_profile", SimpleNamespace(pk=201)),
             ("event", "learner_api.employer_portal.CoachCalendarEvent.objects.filter", MagicMock()),
-            ("instance_reader", "curriculum_api.review_instances.get_review_instance", self.instance),
-            ("definition_reader", "curriculum_api.review_instances.review_instance_form_definition", self.definition),
+            ("instance_reader", 'curriculum_api.review_management.infrastructure.instance_rows.get_review_instance', self.instance),
+            ("definition_reader", 'curriculum_api.review_management.application.instance_definitions.review_instance_form_definition', self.definition),
         ]:
             mock = self.enterContext(patch(target, return_value=value))
             setattr(self, name, mock)
@@ -95,8 +95,8 @@ class EmployerDocumentPreviewTests(SimpleTestCase):
         self.assertEqual(self.review(as_pdf=True, method="post").status_code, 405)
 
     def test_native_review_preview_returns_existing_definition_without_mutation(self):
-        with patch("curriculum_api.review_instances.save_review_instance_answers_for_role") as save, \
-                patch("curriculum_api.review_instances.record_review_instance_signature") as sign:
+        with patch('curriculum_api.review_management.application.instance_answers.save_review_instance_answers_for_role') as save, \
+                patch('curriculum_api.review_management.application.instance_signatures.record_review_instance_signature') as sign:
             for kind in ("commercial", "apprenticeship"):
                 response = self.review(kind=kind)
                 self.assertEqual(json.loads(response.content), self.definition)
@@ -106,7 +106,7 @@ class EmployerDocumentPreviewTests(SimpleTestCase):
 
     def test_native_pdf_uses_existing_export_and_signature_rules(self):
         expected = HttpResponse(b"%PDF-1.7 example", content_type="application/pdf")
-        with patch("curriculum_api.review_pdf.mcm_pdf_response", return_value=expected) as render:
+        with patch('curriculum_api.review_management.api.pdf_responses.mcm_pdf_response', return_value=expected) as render:
             for kind in ("commercial", "apprenticeship"):
                 self.assertIs(self.review(as_pdf=True, kind=kind), expected)
                 self.assertEqual(render.call_args.args[0], self.definition)
@@ -136,7 +136,7 @@ class EmployerDocumentPreviewTests(SimpleTestCase):
         payload = {"name": "Synthetic Manager", "signature": "data:image/png;base64,SYNTHETIC"}
         request = RequestFactory().post("/review/", data=json.dumps(payload), content_type="application/json")
         request.login_account = self.account
-        with patch("curriculum_api.review_instances.record_review_instance_signature", return_value=self.definition) as sign:
+        with patch('curriculum_api.review_management.application.instance_signatures.record_review_instance_signature', return_value=self.definition) as sign:
             response = employer_portal.employer_review_instance(
                 request,
                 employer_id=9, kind="commercial", learner_id=101, event_key="ri-1",

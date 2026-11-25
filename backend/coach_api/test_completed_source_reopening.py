@@ -40,7 +40,7 @@ class CompletedSourceReopeningTests(TestCase):
         self.patch("coach_api.views.get_learner_db_alias", return_value="enrolment")
         self.patch("coach_api.views._sections_by_review", return_value={})
         self.patch("coach_api.views.lock_learner_calendar")
-        self.patch("coach_api.views.curriculum_review_instances.progress_review_rag_history", return_value=[])
+        self.patch('curriculum_api.review_management.application.instance_progress.progress_review_rag_history', return_value=[])
         self.patch("coach_api.migrated_completion_views.LearnerProfile.objects.filter").return_value.first.return_value = self.profile
         self.patch("coach_api.review_sources.enrolment_for_review_profile", return_value=self.learner)
         self.patch("coach_api.review_sources.booking_for_overlay", return_value=None)

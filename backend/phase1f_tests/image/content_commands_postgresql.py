@@ -5,8 +5,8 @@ import unittest
 from unittest.mock import Mock, patch
 from django.db import connection, transaction
 from curriculum_api import views, content_cache, learning_storage
-from curriculum_api.test_content_commands_boundary_no_db import content_scope
-from curriculum_api.test_module_commands_boundary_no_db import recording, request, response_value
+from curriculum_api.catalogue.tests.test_content_commands_boundary_no_db import content_scope
+from curriculum_api.catalogue.tests.test_module_commands_boundary_no_db import recording, request, response_value
 
 SCHEMA = 'phase1f_content_commands'
 

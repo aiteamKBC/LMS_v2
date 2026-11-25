@@ -42,7 +42,7 @@ class AutoReconciliationPolicyTests(SimpleTestCase):
         self.patch("links.for_calendar", return_value=None)
         self.patch("canonical._source_event", return_value={})
         self.inspect = self.patch("canonical._inspect", return_value=())
-        p = patch("curriculum_api.review_instances.get_review_instance", return_value=self.instance)
+        p = patch('curriculum_api.review_management.infrastructure.instance_rows.get_review_instance', return_value=self.instance)
         self.native = p.start()
         self.addCleanup(p.stop)
         p = patch("coach_api.views.fetch_caseload_dashboard_profiles", return_value=[self.profile])

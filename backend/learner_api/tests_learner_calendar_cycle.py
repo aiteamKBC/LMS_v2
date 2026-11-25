@@ -6,7 +6,7 @@ from unittest.mock import Mock, patch
 
 from django.test import SimpleTestCase
 
-from curriculum_api.review_instances import review_calendar_event_key
+from curriculum_api.review_management.domain.occurrence_identity import review_calendar_event_key
 
 
 from .calendar import _belongs_to_current_cycle, _generated_cycle_events, coaching_events_for_learner
@@ -98,7 +98,7 @@ class GeneratedCycleTests(CurriculumCycleFixture, SimpleTestCase):
         }]
         with patch('learner_api.calendar.CoachCalendarEvent.objects.filter', return_value=queryset), \
              patch('learner_api.calendar._generated_cycle_events', return_value=generated), \
-             patch('curriculum_api.reviews.get_review_template_rows') as read_templates, \
+             patch('curriculum_api.review_management.infrastructure.template_rows.get_review_template_rows') as read_templates, \
              patch('learner_api.calendar.review_type_rows_by_template') as read_types, \
              patch('learner_api.calendar._serialize_event', return_value={'eventKey': key}) as serialize:
             events = coaching_events_for_learner(_learner(), _mirror())

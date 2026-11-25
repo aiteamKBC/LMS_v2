@@ -21,7 +21,17 @@ from unittest.mock import patch
 
 from coach_api.models import CoachCalendarEvent
 from coach_api.views import ensure_review_instance_for_calendar_record
-from curriculum_api import review_instances, review_types, reviews
+import curriculum_api.review_management.api.commands as review_api_commands
+import curriculum_api.review_management.application.instance_answers as review_application_instance_answers
+import curriculum_api.review_management.application.instance_creation as review_application_instance_creation
+import curriculum_api.review_management.application.instance_definitions as review_application_instance_definitions
+import curriculum_api.review_management.application.instance_lifecycle as review_application_instance_lifecycle
+import curriculum_api.review_management.application.instance_signatures as review_application_instance_signatures
+import curriculum_api.review_management.domain.classification as review_domain_classification
+import curriculum_api.review_management.domain.instance_rules as review_domain_instance_rules
+import curriculum_api.review_management.infrastructure.instance_rows as review_infrastructure_instance_rows
+import curriculum_api.review_management.infrastructure.template_rows as review_infrastructure_template_rows
+import curriculum_api.review_management.infrastructure.type_rows as review_infrastructure_type_rows
 
 from .calendar import _generated_cycle_events, _serialize_event, learner_calendar_event_review, learner_progress_review_sign
 from .tests_learner_review_pages import LearnerReviewPageTestCase, PROGRAMME_ID
@@ -52,7 +62,7 @@ class LearnerReviewFormAccessTestCase(LearnerReviewPageTestCase):
     def _authored_template(self, *, name, review_type_id, interval=4, unit='weeks'):
         """A Review the way Curriculum authors one: named, classified, and
         carrying real sections and fields."""
-        review_id, errors = reviews.create_review(PROGRAMME_ID, {
+        review_id, errors = review_api_commands.create_review(PROGRAMME_ID, {
             'name': name,
             'enabled': True,
             'reviewTypeId': review_type_id,
@@ -67,13 +77,13 @@ class LearnerReviewFormAccessTestCase(LearnerReviewPageTestCase):
             'sections': CURRICULUM_SECTIONS,
         }, actor='test')
         self.assertIsNone(errors, errors)
-        return reviews.get_review_template_row(review_id)
+        return review_infrastructure_template_rows.get_review_template_row(review_id)
 
     def _system_type_id(self, code):
-        return review_types.get_review_type_by_code(code)['id']
+        return review_infrastructure_type_rows.get_review_type_by_code(code)['id']
 
     def _custom_type(self, name):
-        row, errors = review_types.create_review_type(name, actor='test')
+        row, errors = review_api_commands.create_review_type(name, actor='test')
         self.assertIsNone(errors, errors)
         return row
 
@@ -131,23 +141,23 @@ class LearnerReviewSigningTests(LearnerReviewFormAccessTestCase):
     def _finished_meeting(self):
         template = self._authored_template(
             name='Monthly Learner Catch-up',
-            review_type_id=self._system_type_id(review_types.REVIEW_TYPE_CODE_MCM),
+            review_type_id=self._system_type_id(review_domain_classification.REVIEW_TYPE_CODE_MCM),
         )
         record = self._schedule(self._occurrence('mcr'), template)
-        instance = review_instances.get_review_instance(record.review_instance_id)
+        instance = review_infrastructure_instance_rows.get_review_instance(record.review_instance_id)
         # These cases exercise signing an already held meeting. Attendance
         # transitions are covered separately by the lifecycle state-machine suite.
-        review_instances.force_review_instance_status_for_tests(
-            instance['id'], review_instances.STATUS_IN_PROGRESS, actor='test-fixture',
+        review_infrastructure_instance_rows.force_review_instance_status_for_tests(
+            instance['id'], review_domain_instance_rules.STATUS_IN_PROGRESS, actor='test-fixture',
         )
-        instance = review_instances.get_review_instance(instance['id'])
-        definition = review_instances.review_instance_form_definition(instance)
+        instance = review_infrastructure_instance_rows.get_review_instance(instance['id'])
+        definition = review_application_instance_definitions.review_instance_form_definition(instance)
         fields = definition['sections'][0]['fields']
-        review_instances.save_review_instance_answers(instance, {
+        review_application_instance_answers.save_review_instance_answers(instance, {
             fields[0]['id']: 'We reviewed this month together.', fields[1]['id']: 'no',
         }, actor=record.owner_email)
-        ok, errors = review_instances.complete_review_instance(
-            review_instances.get_review_instance(record.review_instance_id), actor=record.owner_email,
+        ok, errors = review_application_instance_lifecycle.complete_review_instance(
+            review_infrastructure_instance_rows.get_review_instance(record.review_instance_id), actor=record.owner_email,
         )
         self.assertTrue(ok, errors)
         record.status = CoachCalendarEvent.STATUS_AWAITING_SIGNATURE
@@ -177,8 +187,8 @@ class LearnerReviewSigningTests(LearnerReviewFormAccessTestCase):
         record = self._finished_meeting()
         coach_mark = 'data:image/png;base64,Y29hY2g='
         learner_mark = 'data:image/png;base64,bGVhcm5lcg=='
-        review_instances.record_review_instance_signature(
-            review_instances.get_review_instance(record.review_instance_id), 'advisor',
+        review_application_instance_signatures.record_review_instance_signature(
+            review_infrastructure_instance_rows.get_review_instance(record.review_instance_id), 'advisor',
             signed_by=record.owner_email, signed_name='Coach One', signature=coach_mark,
         )
 
@@ -186,7 +196,7 @@ class LearnerReviewSigningTests(LearnerReviewFormAccessTestCase):
 
         self.assertEqual(status, 200, payload)
         self.assertEqual(payload['event']['status'], CoachCalendarEvent.STATUS_COMPLETED)
-        self.assertEqual(payload['review']['instance']['status'], review_instances.STATUS_COMPLETED)
+        self.assertEqual(payload['review']['instance']['status'], review_domain_instance_rules.STATUS_COMPLETED)
         self.assertEqual(payload['monthlyLogSync']['status'], 'synced')
         record.refresh_from_db()
         self.assertEqual(record.status, CoachCalendarEvent.STATUS_COMPLETED)
@@ -202,7 +212,7 @@ class LearnerReviewSigningTests(LearnerReviewFormAccessTestCase):
 
         self.assertEqual(status, 200, payload)
         self.assertEqual(payload['event']['status'], CoachCalendarEvent.STATUS_AWAITING_SIGNATURE)
-        self.assertEqual(payload['review']['instance']['status'], review_instances.STATUS_AWAITING_SIGNATURE)
+        self.assertEqual(payload['review']['instance']['status'], review_domain_instance_rules.STATUS_AWAITING_SIGNATURE)
         self.assertTrue(payload['review']['signatures']['participant']['signed'])
         self.assertFalse(payload['review']['signatures']['advisor']['signed'])
         self.assertIsNone(payload['review']['signatures']['advisor']['signature'])
@@ -221,7 +231,7 @@ class UnscheduledOccurrenceTests(LearnerReviewFormAccessTestCase):
     def test_a_generated_occurrence_carries_no_review_instance_id(self):
         self._authored_template(
             name='Monthly Learner Catch-up',
-            review_type_id=self._system_type_id(review_types.REVIEW_TYPE_CODE_MCM),
+            review_type_id=self._system_type_id(review_domain_classification.REVIEW_TYPE_CODE_MCM),
         )
         occurrence = self._occurrence('mcr')
         # A generated occurrence is a projection of the Curriculum recurrence;
@@ -239,11 +249,11 @@ class UnscheduledOccurrenceTests(LearnerReviewFormAccessTestCase):
         """
         template = self._authored_template(
             name='Monthly Learner Catch-up',
-            review_type_id=self._system_type_id(review_types.REVIEW_TYPE_CODE_MCM),
+            review_type_id=self._system_type_id(review_domain_classification.REVIEW_TYPE_CODE_MCM),
         )
         occurrence = self._occurrence('mcr')
         self.assertIsNone(
-            review_instances.find_review_instance(
+            review_infrastructure_instance_rows.find_review_instance(
                 template['id'], LEARNER_MIRROR_ID, occurrence['occurrenceNumber'],
             ),
         )
@@ -266,7 +276,7 @@ class UnscheduledOccurrenceTests(LearnerReviewFormAccessTestCase):
         self.assertIsNone(_serialize_event(record)['reviewInstanceId'])
 
         self.assertIsNone(
-            review_instances.find_review_instance(
+            review_infrastructure_instance_rows.find_review_instance(
                 template['id'], LEARNER_MIRROR_ID, occurrence['occurrenceNumber'],
             ),
             'reading an unscheduled occurrence created a durable review_instance',
@@ -277,10 +287,10 @@ class ScheduledOccurrenceTests(LearnerReviewFormAccessTestCase):
     def test_learner_finds_coach_draft_when_no_calendar_row_is_linked_yet(self):
         template = self._authored_template(
             name='Progress Review Draft',
-            review_type_id=self._system_type_id(review_types.REVIEW_TYPE_CODE_PROGRESS_REVIEW),
+            review_type_id=self._system_type_id(review_domain_classification.REVIEW_TYPE_CODE_PROGRESS_REVIEW),
         )
         occurrence = self._occurrence('progress-review')
-        instance = review_instances.ensure_review_instance(
+        instance = review_application_instance_creation.ensure_review_instance(
             template,
             learner_id=LEARNER_MIRROR_ID,
             learner_kind='commercial',
@@ -289,8 +299,8 @@ class ScheduledOccurrenceTests(LearnerReviewFormAccessTestCase):
             target_date=date.fromisoformat(occurrence['targetDate']),
             coach_email='coach@example.com',
         )
-        field_id = reviews.get_review_field_rows(template['id'])[0]['id']
-        review_instances.save_review_instance_answers(instance, {field_id: 'Saved by coach'}, actor='coach@example.com')
+        field_id = review_infrastructure_template_rows.get_review_field_rows(template['id'])[0]['id']
+        review_application_instance_answers.save_review_instance_answers(instance, {field_id: 'Saved by coach'}, actor='coach@example.com')
 
         # The coach opened a generated occurrence, so no CoachCalendarEvent
         # exists to carry review_instance_id. The learner must still resolve
@@ -308,14 +318,14 @@ class ScheduledOccurrenceTests(LearnerReviewFormAccessTestCase):
     def test_scheduled_mcm_view_opens_the_generic_review_instance_form(self):
         template = self._authored_template(
             name='Monthly Learner Catch-up',
-            review_type_id=self._system_type_id(review_types.REVIEW_TYPE_CODE_MCM),
+            review_type_id=self._system_type_id(review_domain_classification.REVIEW_TYPE_CODE_MCM),
         )
         occurrence = self._occurrence('mcr')
         record = self._schedule(occurrence, template)
 
         # Scheduling creates the instance and links the calendar event both ways.
         self.assertTrue(record.review_instance_id)
-        instance = review_instances.get_review_instance(record.review_instance_id)
+        instance = review_infrastructure_instance_rows.get_review_instance(record.review_instance_id)
         self.assertEqual(instance['calendar_event_id'], record.pk)
 
         # The learner calendar payload carries it -- the flag that routes View
@@ -331,7 +341,7 @@ class ScheduledOccurrenceTests(LearnerReviewFormAccessTestCase):
     def test_scheduled_progress_review_view_opens_the_same_generic_form(self):
         template = self._authored_template(
             name='Quarterly Progress Conversation',
-            review_type_id=self._system_type_id(review_types.REVIEW_TYPE_CODE_PROGRESS_REVIEW),
+            review_type_id=self._system_type_id(review_domain_classification.REVIEW_TYPE_CODE_PROGRESS_REVIEW),
         )
         occurrence = self._occurrence('progress-review')
         record = self._schedule(occurrence, template)
@@ -363,7 +373,7 @@ class ScheduledOccurrenceTests(LearnerReviewFormAccessTestCase):
         classifies. The questions come from Curriculum, whole."""
         template = self._authored_template(
             name='Monthly Learner Catch-up',
-            review_type_id=self._system_type_id(review_types.REVIEW_TYPE_CODE_MCM),
+            review_type_id=self._system_type_id(review_domain_classification.REVIEW_TYPE_CODE_MCM),
         )
         record = self._schedule(self._occurrence('mcr'), template)
 
@@ -394,11 +404,11 @@ class ScheduledOccurrenceTests(LearnerReviewFormAccessTestCase):
         """No Review Template name matching anywhere on this path."""
         template = self._authored_template(
             name='Monthly Coaching Meeting',
-            review_type_id=self._system_type_id(review_types.REVIEW_TYPE_CODE_MCM),
+            review_type_id=self._system_type_id(review_domain_classification.REVIEW_TYPE_CODE_MCM),
         )
         record = self._schedule(self._occurrence('mcr'), template)
 
-        _review_id, errors = reviews.update_review(
+        _review_id, errors = review_api_commands.update_review(
             template['id'], {'name': 'Renamed Coaching Conversation'}, actor='test',
         )
         self.assertIsNone(errors, errors)

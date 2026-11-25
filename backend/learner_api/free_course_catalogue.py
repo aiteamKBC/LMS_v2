@@ -1,5 +1,5 @@
 """Learner/API compatibility projection of the canonical Free Course catalogue."""
-from curriculum_api import free_course_catalogue
+from curriculum_api.catalogue.infrastructure import free_course_rows as free_course_catalogue
 
 
 def builder_free_courses(course_ids=None, *, include_content=True):

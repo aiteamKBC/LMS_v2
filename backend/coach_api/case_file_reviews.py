@@ -1,4 +1,6 @@
 """Coach Case File review projections. All readers are stored-only."""
+import curriculum_api.review_management.domain.occurrence_identity as review_domain_occurrence_identity
+
 from datetime import date, datetime
 
 from django.db.models import Q
@@ -41,7 +43,7 @@ def review_events(context):
     candidates.sort(key=lambda row: (str(row.scheduled_date or ''), str(row.target_date or ''), str(row.scheduled_time or '')))
     standalone = standalone_review_records(candidates, [profile], resolved['aptemProfileIds'],
                                           linked_keys={event['eventKey'] for event in events})
-    native_records = views.curriculum_review_instances.reconcile_review_event_keys(
+    native_records = review_domain_occurrence_identity.reconcile_review_event_keys(
         curriculum, [record for record in records if record.learner_id == profile.id and record.owner_email.casefold() == owner.casefold()])
     shaped = [views.overlay_calendar_record(event, native_records.get(event['eventKey']), compact=True)
               for event in curriculum]

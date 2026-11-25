@@ -18,7 +18,8 @@ MANIFEST = oracle.SNAPSHOT['manifest']
 
 
 def tree(relative):
-    return ast.parse((ROOT / relative).read_text(encoding='utf-8'))
+    from curriculum_api.catalogue.tests.parity.approved_dev_contracts import source_tree
+    return source_tree(ROOT / relative)
 
 
 class AbsoluteImports(ast.NodeTransformer):

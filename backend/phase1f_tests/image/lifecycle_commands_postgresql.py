@@ -11,9 +11,9 @@ from unittest.mock import Mock, patch
 from django.db import connection, transaction
 from curriculum_api import views
 from curriculum_api.catalogue.infrastructure import lifecycle_writes, quiz_lifecycle
-from curriculum_api.test_lifecycle_commands_boundary_no_db import lifecycle_scope
-from curriculum_api.test_module_commands_boundary_no_db import recording, response_value
-from curriculum_api.test_hierarchy_commands_boundary_no_db import FrozenClock
+from curriculum_api.catalogue.tests.test_lifecycle_commands_boundary_no_db import lifecycle_scope
+from curriculum_api.catalogue.tests.test_module_commands_boundary_no_db import recording, response_value
+from curriculum_api.catalogue.tests.test_hierarchy_commands_boundary_no_db import FrozenClock
 
 SCHEMA = 'phase1f_lifecycle'
 TABLES = {

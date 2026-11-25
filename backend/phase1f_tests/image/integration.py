@@ -106,7 +106,7 @@ legacy_modules = {'views.py': views, 'home_summary.py': views, 'programme_list.p
 legacy_envs = {name: dict(vars(module)) for name, module in legacy_modules.items()}
 from curriculum_api.catalogue.infrastructure import projection_sources as projection_fields
 from curriculum_api import curriculum_names
-from curriculum_api.test_projection_consumer_boundary_no_db import original as frozen_projection_consumer
+from curriculum_api.catalogue.tests.test_projection_consumer_boundary_no_db import original as frozen_projection_consumer
 module_authoring_facts = frozen_projection_consumer("home_summary.py")
 legacy_projection_globals = {
     **{name: value for name, value in vars(projection_fields).items() if name.endswith('_FIELDS')},
@@ -245,7 +245,7 @@ class MembershipIntegration(unittest.TestCase):
         return '/modules/'+mid+'/learners/'
 
     def test_hierarchy_preparation_reads_stored_dates_without_persisting(self):
-        from curriculum_api.test_hierarchy_preparation_boundary_no_db import original_hierarchy_preparation
+        from curriculum_api.catalogue.tests.test_hierarchy_preparation_boundary_no_db import original_hierarchy_preparation
         from curriculum_api.catalogue.application import hierarchy_preparation
         with connection.cursor() as cursor:
             cursor.execute("UPDATE curriculum.cohorts SET epa_months=3, apprenticeship_end_override='2028-02-20', excluded_holiday_ids='[]' WHERE cohort_id='C'")
@@ -270,7 +270,7 @@ class MembershipIntegration(unittest.TestCase):
             self.assertEqual(cursor.fetchone(), before)
 
     def test_hierarchy_delete_plan_and_restore_candidates_real_sql_parity(self):
-        from curriculum_api.test_hierarchy_preparation_boundary_no_db import original_hierarchy_preparation
+        from curriculum_api.catalogue.tests.test_hierarchy_preparation_boundary_no_db import original_hierarchy_preparation
         from curriculum_api.catalogue.infrastructure import lifecycle_reads
         cm.ModuleAuthoringWeek.objects.create(id='H-W', module_catalogue_id='MOD-TEST', week_number=1)
         cm.ModuleAuthoringComponent.objects.create(id='H-C', module_catalogue_id='MOD-TEST', week_id='H-W', type='reading', status='inactive')
@@ -292,7 +292,7 @@ class MembershipIntegration(unittest.TestCase):
         self.assertTrue(cm.ModuleAuthoringComponent.objects.filter(pk='H-C').exists())
 
     def test_attachment_component_aggregate_real_postgresql_parity(self):
-        from curriculum_api.test_attachment_preparation_boundary_no_db import original_attachment_preparation
+        from curriculum_api.catalogue.tests.test_attachment_preparation_boundary_no_db import original_attachment_preparation
         from curriculum_api.catalogue.infrastructure import attachment_reads
         cm.ModuleAuthoringWeek.objects.create(id='ATT-W', module_catalogue_id='MOD-TEST', week_number=1)
         for identifier, kind, status, module in (
@@ -314,7 +314,7 @@ class MembershipIntegration(unittest.TestCase):
         self.assertEqual(dict(actual), {'MOD-TEST': 2})
 
     def test_attachment_catalogue_selection_real_reads_and_existing_structure_parity(self):
-        from curriculum_api.test_attachment_preparation_boundary_no_db import original_attachment_preparation
+        from curriculum_api.catalogue.tests.test_attachment_preparation_boundary_no_db import original_attachment_preparation
         from curriculum_api.catalogue.application import attachment_preparation
         cm.ModuleAuthoringModule.objects.filter(module_catalogue_id__in=['MOD-TEST', 'MOD-SIBLING']).update(title='Attachment')
         for module, amount in (('MOD-TEST', 2), ('MOD-SIBLING', 1)):
@@ -345,7 +345,7 @@ class MembershipIntegration(unittest.TestCase):
 
     def test_progress_membership_plan_guards_counts_and_null_plan_rows(self):
         from curriculum_api import module_plan_rows
-        from curriculum_api.test_progress_membership_boundary_no_db import original_progress_membership
+        from curriculum_api.directory.tests.test_progress_membership_boundary_no_db import original_progress_membership
         from curriculum_api.directory.infrastructure import assignment_reads
         lm.LearnerTrainingPlanModule.objects.create(learner_id=1, position=1, curriculum_module_id=None)
         source = lm.EnrolmentUser.all_learners.get(pk=102)
@@ -369,7 +369,7 @@ class MembershipIntegration(unittest.TestCase):
         self.assertNotIn('101', counts.module_member_enrolment_ids('MOD-TEST'))
 
     def test_progress_membership_shared_count_and_batch_policy_real_sql(self):
-        from curriculum_api.test_progress_membership_boundary_no_db import original_progress_membership
+        from curriculum_api.directory.tests.test_progress_membership_boundary_no_db import original_progress_membership
         from learner_api.learning_plans.domain import membership_policy
         ids = ['MOD-TEST', 'MOD-EMPTY', 'MOD-MISSING']
         with original_progress_membership():
@@ -385,7 +385,7 @@ class MembershipIntegration(unittest.TestCase):
         self.assertEqual(expected_members['MOD-MISSING'], set())
 
     def test_progress_membership_assignment_http_full_and_compact_owner_parity(self):
-        from curriculum_api.test_progress_membership_boundary_no_db import original_progress_membership
+        from curriculum_api.directory.tests.test_progress_membership_boundary_no_db import original_progress_membership
         from curriculum_api.directory.application import assignment_queries
         for query, symbol in (({}, '_module_payload'), ({'assignedOnly': '1'}, '_module_assigned_payload')):
             with original_progress_membership(http=True):
@@ -399,7 +399,7 @@ class MembershipIntegration(unittest.TestCase):
             self.assertTrue(all(int(row['id']) >= 101 for row in actual.json()['learners']))
 
     def test_progress_membership_progress_http_real_source_bridge_and_journal(self):
-        from curriculum_api.test_progress_membership_boundary_no_db import original_progress_membership
+        from curriculum_api.directory.tests.test_progress_membership_boundary_no_db import original_progress_membership
         from curriculum_api.directory.infrastructure import registration_reads
         from learner_api import journal_sources
         from datetime import datetime, timezone
@@ -429,7 +429,7 @@ class MembershipIntegration(unittest.TestCase):
                 self.assertFalse(journal_sources.enabled())
 
     def test_directory_programme_real_sql_projection_and_lifecycle_parity(self):
-        from curriculum_api.test_directory_workspace_boundary_no_db import original_directory_workspace
+        from curriculum_api.directory.tests.test_directory_workspace_boundary_no_db import original_directory_workspace
         from curriculum_api.directory.infrastructure import assigned_reads
         with original_directory_workspace():
             expected = views.assigned_learners_for_programme('P', strict=True)
@@ -445,7 +445,7 @@ class MembershipIntegration(unittest.TestCase):
             self.assertEqual(views.assigned_learners_for_programme('P', status, strict=True), expected)
 
     def test_directory_scope_actual_orm_membership_manual_and_missing_bridge(self):
-        from curriculum_api.test_directory_workspace_boundary_no_db import original_directory_workspace
+        from curriculum_api.directory.tests.test_directory_workspace_boundary_no_db import original_directory_workspace
         # Synthetic only: a direct member with no registration remains a profile member.
         lm.LearnerProfile.objects.filter(pk=4).update(enrolment_id=None)
         for scope, identifier in (('programme', 'P'), ('cohort', 'C'), ('group', 'G'),
@@ -462,7 +462,7 @@ class MembershipIntegration(unittest.TestCase):
                     self.assertEqual(actual, [])
 
     def test_directory_http_real_auth_pagination_status_and_missing_target(self):
-        from curriculum_api.test_directory_workspace_boundary_no_db import original_directory_workspace
+        from curriculum_api.directory.tests.test_directory_workspace_boundary_no_db import original_directory_workspace
         url = '/curriculum/learner-directory/learners/'
         for query, code in (({'scope': 'module', 'id': 'MOD-TEST'}, 200),
                             ({'scope': 'module', 'id': 'MOD-TEST', 'status': 'all', 'q': '6'}, 200),
@@ -482,7 +482,7 @@ class MembershipIntegration(unittest.TestCase):
         self.assertEqual(Client().get(url, {'scope': 'module', 'id': 'MOD-TEST'}).status_code, 401)
 
     def test_workspace_real_module_sql_payload_parity_with_session_port_stubbed(self):
-        from curriculum_api.test_directory_workspace_boundary_no_db import original_directory_workspace
+        from curriculum_api.directory.tests.test_directory_workspace_boundary_no_db import original_directory_workspace
         from curriculum_api.catalogue.infrastructure import workspace_reads
         self.seed_reporting()
         # This verifies the changed catalogue reader; it never invokes meeting readers.
@@ -531,7 +531,7 @@ class MembershipIntegration(unittest.TestCase):
                 ('R3',NULL,'{"K1":20}','101','C-R1','C-R1','Unlinked','3','1','submitted','2028-01-01')''')
 
     def test_read_runtime_schema_metadata_postgresql_parity(self):
-        from curriculum_api.test_read_runtime_boundary_no_db import original_read_runtime
+        from curriculum_api.catalogue.tests.test_read_runtime_boundary_no_db import original_read_runtime
         from curriculum_api.catalogue.infrastructure import schema_reads
         with transaction.atomic():
             with connection.cursor() as cursor:
@@ -553,7 +553,7 @@ class MembershipIntegration(unittest.TestCase):
             self.assertTrue({'id', 'enrolment_id', 'programme_id', 'cohort_id', 'group_id'} <= actual[3])
 
     def test_archive_component_count_postgresql_parity(self):
-        from curriculum_api.test_read_runtime_boundary_no_db import original_read_runtime
+        from curriculum_api.catalogue.tests.test_read_runtime_boundary_no_db import original_read_runtime
         from curriculum_api.catalogue.infrastructure import archive_reads
         for identifier, module_id in (('ARCH-C1', 'MOD-TEST'), ('ARCH-C2', 'MOD-TEST'), ('OTHER-C', 'MOD-SIBLING')):
             cm.ModuleAuthoringComponent.objects.create(id=identifier, module_catalogue_id=module_id, type='reading')
@@ -571,7 +571,7 @@ class MembershipIntegration(unittest.TestCase):
             self.assertEqual(dict(views.archived_module_component_counts([])), {})
 
     def test_scope_lineage_sql_and_archive_http_guards_parity(self):
-        from curriculum_api.test_read_runtime_boundary_no_db import original_read_runtime
+        from curriculum_api.catalogue.tests.test_read_runtime_boundary_no_db import original_read_runtime
         from curriculum_api.catalogue.application import placement_lineage
         from django.test import RequestFactory
         cm.ModuleAuthoringWeek.objects.create(id='LINEAGE-W', module_catalogue_id='MOD-TEST', title='Week')
@@ -599,7 +599,7 @@ class MembershipIntegration(unittest.TestCase):
 
     def test_module_structure_get_real_sql_http_and_legacy_alias_parity(self):
         from django.test import RequestFactory
-        from curriculum_api.test_module_get_boundary_no_db import original_module_gets
+        from curriculum_api.catalogue.tests.test_module_get_boundary_no_db import original_module_gets
         from curriculum_api.catalogue.application import structure_payloads
         cm.ModuleAuthoringWeek.objects.create(id='GET-W', module_catalogue_id='MOD-TEST', week_number=1)
         cm.ModuleAuthoringComponent.objects.create(id='GET-C', module_catalogue_id='MOD-TEST', week_id='GET-W',
@@ -644,7 +644,7 @@ class MembershipIntegration(unittest.TestCase):
             self.assertNotEqual(before.json()['itemFingerprints']['components'], after.json()['itemFingerprints']['components'])
 
     def test_ksb_programme_source_identity_real_postgresql(self):
-        from curriculum_api.test_ksb_identity_boundary_no_db import old_owner
+        from curriculum_api.reporting.tests.test_ksb_identity_boundary_no_db import old_owner
         from curriculum_api.reporting.application import source_catalogue
         # Name sorting deliberately puts the misleading name before the real ID.
         with connection.cursor() as cursor:
@@ -663,7 +663,7 @@ class MembershipIntegration(unittest.TestCase):
         self.assertEqual(views.programme_row_ksb_source('PROG-WRONG'), ('standard', 'wrong'))
 
     def test_ksb_standard_reference_real_sql_and_http_parity(self):
-        from curriculum_api.test_ksb_identity_boundary_no_db import original_views
+        from curriculum_api.reporting.tests.test_ksb_identity_boundary_no_db import original_views
         from curriculum_api.catalogue.api import ksb_sources
         with connection.cursor() as cursor:
             cursor.execute('INSERT INTO curriculum.standard_ksbs (standard_ref, standard_version, standard_title, ksb_type, ksb_code, ksb_description) VALUES (%s,%s,%s,%s,%s,%s)',
@@ -687,7 +687,7 @@ class MembershipIntegration(unittest.TestCase):
         self.assertEqual((conditional.status_code, conditional.content), (304, b''))
 
     def test_programme_source_convergence_real_postgresql_parity(self):
-        from curriculum_api.test_programme_sources_no_db import original
+        from curriculum_api.catalogue.tests.test_programme_sources_no_db import original
         from curriculum_api.catalogue.application import programme_modules
         from curriculum_api import programme_workspace_reads
         programme = {'id': 'P', 'sourceId': 'P', 'name': 'Synthetic programme'}
@@ -772,7 +772,7 @@ class MembershipIntegration(unittest.TestCase):
     def test_workspace_resolution_real_postgresql_and_http_parity(self):
         from types import ModuleType
         from django.test import override_settings
-        from curriculum_api.test_module_workspace_boundary_no_db import original_workspace
+        from curriculum_api.catalogue.tests.test_module_workspace_boundary_no_db import original_workspace
         from curriculum_api.catalogue.application import structure_resolution
         from curriculum_api.catalogue.infrastructure import resolution_candidates
         cm.ModuleAuthoringWeek.objects.create(id='W-WS', module_catalogue_id='MOD-TEST', title='Week')
@@ -802,7 +802,7 @@ class MembershipIntegration(unittest.TestCase):
         self.assertTrue(result[2]['missing'])
 
     def test_workspace_scope_sql_and_hydration_postgresql_parity(self):
-        from curriculum_api.test_module_workspace_boundary_no_db import original_workspace
+        from curriculum_api.catalogue.tests.test_module_workspace_boundary_no_db import original_workspace
         from curriculum_api.catalogue.application import scope_queries
         from curriculum_api.catalogue.infrastructure import scope_reads
         cm.ModuleAuthoringWeek.objects.create(id='W-WS', module_catalogue_id='MOD-TEST', title='Week')
@@ -827,7 +827,7 @@ class MembershipIntegration(unittest.TestCase):
 
     def test_reporting_progress_sql_and_scope_parity_postgresql(self):
         from django.db import transaction
-        from curriculum_api.test_reporting_boundary_no_db import original_reporting
+        from curriculum_api.reporting.tests.test_reporting_boundary_no_db import original_reporting
         from curriculum_api.reporting.infrastructure import progress
         self.seed_reporting()
         predicate = views.progress_scope_predicate({'C-R1','C-R2'}, 'module_ref', 'MOD-TEST')
@@ -863,7 +863,7 @@ class MembershipIntegration(unittest.TestCase):
 
     def test_reporting_reflection_identity_and_sql_parity_postgresql(self):
         from django.db import transaction
-        from curriculum_api.test_reporting_boundary_no_db import original_reporting
+        from curriculum_api.reporting.tests.test_reporting_boundary_no_db import original_reporting
         from curriculum_api.reporting.infrastructure import reflections
         self.seed_reporting()
         learners = [{'id':1,'sourceId':1,'sourceKind':'learner'}]
@@ -888,7 +888,7 @@ class MembershipIntegration(unittest.TestCase):
     def test_reporting_end_to_end_projection_parity_postgresql(self):
         from copy import deepcopy
         from django.db import transaction
-        from curriculum_api.test_reporting_boundary_no_db import original_reporting
+        from curriculum_api.reporting.tests.test_reporting_boundary_no_db import original_reporting
         self.seed_reporting()
         def read():
             learners = [{'id':1,'group':'G','sourceId':1,'sourceKind':'learner'}, {'id':2,'group':'G'}]
@@ -932,7 +932,7 @@ class MembershipIntegration(unittest.TestCase):
                 ('OTHER',9999,'888','unrelated.pdf','submitted','clean','S','OTHER','2028-01-04','application/pdf',40)''')
 
     def test_report_delivery_supplementary_read_parity_postgresql(self):
-        from curriculum_api.test_report_delivery_boundary_no_db import original_delivery
+        from curriculum_api.reporting.tests.test_report_delivery_boundary_no_db import original_delivery
         from curriculum_api.reporting.infrastructure import supplementary
         self.seed_report_delivery()
         with transaction.atomic():
@@ -954,7 +954,7 @@ class MembershipIntegration(unittest.TestCase):
             self.assertNotIn('learnerId',actual['6'][0])
 
     def test_report_delivery_fingerprint_sql_parity_postgresql(self):
-        from curriculum_api.test_report_delivery_boundary_no_db import original_delivery
+        from curriculum_api.reporting.tests.test_report_delivery_boundary_no_db import original_delivery
         from curriculum_api.reporting.infrastructure import achievement_cache
         self.seed_report_delivery()
         with patch.dict(views._ACHIEVEMENT_LEARNER_IDS,{'synthetic-key':{'1'}}), \
@@ -970,7 +970,7 @@ class MembershipIntegration(unittest.TestCase):
             self.assertEqual(len(actual[0]),4)
 
     def test_report_delivery_real_http_results_and_get_contract_match(self):
-        from curriculum_api.test_report_delivery_boundary_no_db import original_delivery
+        from curriculum_api.reporting.tests.test_report_delivery_boundary_no_db import original_delivery
         self.seed_report_delivery()
         modules=[{'module_catalogue_id':'MOD-TEST','group_name':'G'}]
         components=[{'id':'C-R1','module_catalogue_id':'MOD-TEST','expected_otjh':3}]
@@ -1000,7 +1000,7 @@ class MembershipIntegration(unittest.TestCase):
 
     def test_statistics_grouped_normalized_catalogue_sql_parity(self):
         from curriculum_api import ksb_stats_reads
-        from curriculum_api.test_statistics_boundary_no_db import original_statistics
+        from curriculum_api.reporting.tests.test_statistics_boundary_no_db import original_statistics
         from curriculum_api.reporting.infrastructure import statistics_reads
         cm.ModuleAuthoringWeek.objects.create(id='W-ST', module_catalogue_id='MOD-TEST', title='Synthetic week')
         cm.ModuleAuthoringComponent.objects.create(id='C-ST', week_id='W-ST', module_catalogue_id='MOD-TEST', type='reading', title='Synthetic component')
@@ -1039,7 +1039,7 @@ class MembershipIntegration(unittest.TestCase):
 
     def test_statistics_compact_sql_and_programme_caps_parity(self):
         from curriculum_api import ksb_stats_reads
-        from curriculum_api.test_statistics_boundary_no_db import original_statistics
+        from curriculum_api.reporting.tests.test_statistics_boundary_no_db import original_statistics
         from curriculum_api.reporting.infrastructure import statistics_reads
         self.seed_report_delivery()
         with self.statistics_inputs(), \
@@ -1064,7 +1064,7 @@ class MembershipIntegration(unittest.TestCase):
             self.assertEqual(actual['learnerKsbTargetCount'], 6)
 
     def test_statistics_real_http_cache_force_and_missing_contracts(self):
-        from curriculum_api.test_statistics_boundary_no_db import original_statistics
+        from curriculum_api.reporting.tests.test_statistics_boundary_no_db import original_statistics
         from curriculum_api.reporting.api import statistics
         self.seed_report_delivery()
         def build(identifier, visibility):
@@ -1109,7 +1109,7 @@ class MembershipIntegration(unittest.TestCase):
             cursor.execute("UPDATE curriculum.modules SET tutor_name='Tutor Busy',session_week_day='Monday',end_date='2028-02-01' WHERE module_catalogue_id='MOD-TEST'")
 
     def test_staff_directory_real_sql_role_status_and_identity_parity(self):
-        from curriculum_api.test_staff_profiles_boundary_no_db import original_staff_profiles
+        from curriculum_api.catalogue.tests.test_staff_profiles_boundary_no_db import original_staff_profiles
         from curriculum_api.catalogue.infrastructure import staff_directory
         tutor = lm.StaffUser.objects.create(username='Tutor One', email='one@example.invalid', access='tutor')
         lm.StaffUser.objects.create(username='Tutor Gone', email='gone@example.invalid', access='tutor', status='disabled')
@@ -1195,7 +1195,7 @@ class MembershipIntegration(unittest.TestCase):
         self.assertNotIn('sessions:authored-v2:all', views.cache_state._CURRICULUM_CACHE)
 
     def test_session_enrichment_real_sql_and_planning_parity(self):
-        from curriculum_api.test_session_enrichment_boundary_no_db import original_sessions
+        from curriculum_api.catalogue.tests.test_session_enrichment_boundary_no_db import original_sessions
         from curriculum_api.catalogue.application import session_links
         self.seed_authored_session_links()
         with composition_fixture(views, 'ensure_module_authoring_tables', return_value=None), transaction.atomic():
@@ -1249,7 +1249,7 @@ class MembershipIntegration(unittest.TestCase):
         self.assertNotIn('overview-required:v2:operational:full', views.cache_state._CURRICULUM_CACHE)
 
     def test_overview_required_rows_match_original_on_normalized_postgresql(self):
-        from curriculum_api.test_overview_boundary_no_db import original_overview
+        from curriculum_api.catalogue.tests.test_overview_boundary_no_db import original_overview
         from curriculum_api.catalogue.infrastructure import overview_reads
         self.seed_tutor_schedules()
         with connection.cursor() as cursor:
@@ -1306,7 +1306,7 @@ class MembershipIntegration(unittest.TestCase):
 
     def test_staff_profiles_real_assignments_collection_detail_http_parity(self):
         from django.test import RequestFactory
-        from curriculum_api.test_staff_profiles_boundary_no_db import original_staff_profiles
+        from curriculum_api.catalogue.tests.test_staff_profiles_boundary_no_db import original_staff_profiles
         from curriculum_api.catalogue.application import staff_profiles
         self.seed_tutor_schedules()
         lm.StaffUser.objects.create(username='Coach One', email='coach@example.invalid', access='coach')
@@ -1397,7 +1397,7 @@ class MembershipIntegration(unittest.TestCase):
 
     def test_tutor_availability_real_directory_roster_and_single_http_parity(self):
         from django.test import RequestFactory
-        from curriculum_api.test_tutor_availability_boundary_no_db import original_tutor_availability
+        from curriculum_api.catalogue.tests.test_tutor_availability_boundary_no_db import original_tutor_availability
         from curriculum_api.catalogue.application import tutor_availability
         self.seed_tutor_schedules()
         url='/curriculum/preview/tutor-availability/'
@@ -1446,7 +1446,7 @@ class MembershipIntegration(unittest.TestCase):
         self.assertEqual([row['name'] for row in staff],['Tutor Busy','Tutor Free'])
 
     def test_tutor_guard_new_vs_inherited_clash_parity_on_real_rows(self):
-        from curriculum_api.test_tutor_availability_boundary_no_db import original_tutor_availability
+        from curriculum_api.catalogue.tests.test_tutor_availability_boundary_no_db import original_tutor_availability
         from curriculum_api.catalogue.application import tutor_availability
         self.seed_tutor_schedules()
         row=views.authoring_fetch_all(views.AUTHORING_MODULES_TABLE,'module_catalogue_id = %s',['MOD-TEST'],ensure_tables=False)[0]
@@ -1463,7 +1463,7 @@ class MembershipIntegration(unittest.TestCase):
 
     def test_delivery_schedule_stored_http_group_and_custom_parity_postgresql(self):
         from django.test import RequestFactory
-        from curriculum_api.test_delivery_schedule_boundary_no_db import original_delivery_schedules
+        from curriculum_api.catalogue.tests.test_delivery_schedule_boundary_no_db import original_delivery_schedules
         from curriculum_api.catalogue.application import delivery_schedules
         self.seed_module_plan()
         url='/curriculum/modules/MOD-TEST/session-plan/'
@@ -1488,7 +1488,7 @@ class MembershipIntegration(unittest.TestCase):
 
     def test_delivery_preview_http_valid_and_invalid_payload_parity(self):
         from django.test import RequestFactory
-        from curriculum_api.test_delivery_schedule_boundary_no_db import original_delivery_schedules
+        from curriculum_api.catalogue.tests.test_delivery_schedule_boundary_no_db import original_delivery_schedules
         from curriculum_api.catalogue.application import delivery_schedules
         url='/curriculum/preview/module-session-plan/'
         for payload,status in (({'startDate':'2028-01-03','weekDays':'Monday','sessionsNumber':3,'startTime':'09:00','endTime':'11:00'},200),
@@ -1503,7 +1503,7 @@ class MembershipIntegration(unittest.TestCase):
             self.assertEqual(owner.call_count,1 if status==200 else 0)
 
     def test_delivery_calendar_real_rows_preserve_explicit_dates_clock_and_projection(self):
-        from curriculum_api.test_delivery_schedule_boundary_no_db import original_delivery_schedules
+        from curriculum_api.catalogue.tests.test_delivery_schedule_boundary_no_db import original_delivery_schedules
         from curriculum_api.catalogue.application import session_calendar
         self.seed_module_plan()
         with connection.cursor() as cursor:
@@ -1525,7 +1525,7 @@ class MembershipIntegration(unittest.TestCase):
         self.assertEqual([s['skippedHolidays'] for s in actual],[['2028-01-03'],[]])
 
     def test_delivery_group_read_and_payload_normalization_postgresql(self):
-        from curriculum_api.test_delivery_schedule_boundary_no_db import original_delivery_schedules
+        from curriculum_api.catalogue.tests.test_delivery_schedule_boundary_no_db import original_delivery_schedules
         from curriculum_api.catalogue.application import delivery_schedules
         self.seed_module_plan()
         with connection.cursor() as cursor:
@@ -1548,7 +1548,7 @@ class MembershipIntegration(unittest.TestCase):
 
     def test_session_plan_real_calendar_count_weeks_and_cache_parity(self):
         from django.test.utils import CaptureQueriesContext
-        from curriculum_api.test_session_plan_boundary_no_db import original_session_plans
+        from curriculum_api.catalogue.tests.test_session_plan_boundary_no_db import original_session_plans
         from curriculum_api.catalogue.application import session_plans
         self.seed_module_plan()
         row=views.authoring_fetch_all(views.AUTHORING_MODULES_TABLE,'module_catalogue_id = %s',['MOD-TEST'],ensure_tables=False)[0]
@@ -1570,7 +1570,7 @@ class MembershipIntegration(unittest.TestCase):
         self.assertEqual(len(queries),0)
 
     def test_session_plan_custom_json_overrides_and_date_clipping_postgresql(self):
-        from curriculum_api.test_session_plan_boundary_no_db import original_session_plans
+        from curriculum_api.catalogue.tests.test_session_plan_boundary_no_db import original_session_plans
         self.seed_module_plan()
         weekly=[{'day':'Tuesday','startTime':'10:00','endTime':'11:00'}, {'day':'Thursday','startTime':'14:00','endTime':'16:00'}]
         overrides={'2':{'date':'2028-01-12','startTime':'12:00','endTime':'13:00','durationMinutes':60}}
@@ -1586,7 +1586,7 @@ class MembershipIntegration(unittest.TestCase):
         self.assertEqual(actual['sessions'][1]['durationMinutes'],60)
 
     def test_session_plan_http_payload_and_missing_module_parity(self):
-        from curriculum_api.test_session_plan_boundary_no_db import original_session_plans
+        from curriculum_api.catalogue.tests.test_session_plan_boundary_no_db import original_session_plans
         from curriculum_api.catalogue.application import session_plans
         self.seed_module_plan()
         url='/curriculum/modules/MOD-TEST/session-plan/'
@@ -1610,7 +1610,7 @@ class MembershipIntegration(unittest.TestCase):
 
     def test_inherited_calendar_bulk_real_reads_match_original_and_keep_open_end(self):
         from django.test.utils import CaptureQueriesContext
-        from curriculum_api.test_inherited_calendar_boundary_no_db import original_inherited_calendar
+        from curriculum_api.catalogue.tests.test_inherited_calendar_boundary_no_db import original_inherited_calendar
         from curriculum_api.catalogue.application import inherited_calendar
         self.seed_cohort_calendar()
         with connection.cursor() as cursor:
@@ -1632,7 +1632,7 @@ class MembershipIntegration(unittest.TestCase):
         self.assertTrue(all(q['sql'].lstrip().lower().startswith('select') for q in queries.captured_queries))
 
     def test_inherited_calendar_module_preview_and_cache_use_real_cohort_once(self):
-        from curriculum_api.test_inherited_calendar_boundary_no_db import original_inherited_calendar
+        from curriculum_api.catalogue.tests.test_inherited_calendar_boundary_no_db import original_inherited_calendar
         self.seed_cohort_calendar()
         def scenario():
             cache = {}
@@ -1652,7 +1652,7 @@ class MembershipIntegration(unittest.TestCase):
 
     def test_inherited_calendar_saved_foreign_rows_and_failure_contracts(self):
         from curriculum_api import country_calendars
-        from curriculum_api.test_inherited_calendar_boundary_no_db import original_inherited_calendar
+        from curriculum_api.catalogue.tests.test_inherited_calendar_boundary_no_db import original_inherited_calendar
         self.seed_cohort_calendar()
         with connection.cursor() as cursor:
             cursor.execute("UPDATE curriculum.cohorts SET calendar_policy=%s::jsonb,excluded_holiday_ids='[]' WHERE cohort_id='C'", [json.dumps({'country':'US'})])
@@ -1675,7 +1675,7 @@ class MembershipIntegration(unittest.TestCase):
             self.assertEqual([h['id'] for h in expected['C']], ['US:SYNTHETIC'])
 
     def test_inherited_calendar_new_call_observes_updated_synthetic_exclusions(self):
-        from curriculum_api.test_inherited_calendar_boundary_no_db import original_inherited_calendar
+        from curriculum_api.catalogue.tests.test_inherited_calendar_boundary_no_db import original_inherited_calendar
         self.seed_cohort_calendar()
         first = views.module_cohort_selected_holidays({'cohort_id':'C'})
         with connection.cursor() as cursor:
@@ -1688,7 +1688,7 @@ class MembershipIntegration(unittest.TestCase):
         self.assertEqual([h['id'] for h in actual], ['B','OUT'])
 
     def test_normalized_calendar_reader_schema_archive_and_projection_postgresql(self):
-        from curriculum_api.test_cohort_calendar_boundary_no_db import original_cohort_calendar
+        from curriculum_api.catalogue.tests.test_cohort_calendar_boundary_no_db import original_cohort_calendar
         from curriculum_api.catalogue.infrastructure import holiday_reads
         from curriculum_api import calendar_holidays
         self.seed_cohort_calendar()
@@ -1705,7 +1705,7 @@ class MembershipIntegration(unittest.TestCase):
             self.assertEqual(actual[0]['notes'], 'Substitute day')
 
     def test_separate_calendar_table_queries_and_order_postgresql_parity(self):
-        from curriculum_api.test_cohort_calendar_boundary_no_db import original_cohort_calendar
+        from curriculum_api.catalogue.tests.test_cohort_calendar_boundary_no_db import original_cohort_calendar
         from curriculum_api import calendar_holidays
         with connection.cursor() as cursor:
             cursor.execute("INSERT INTO curriculum.fixture_england_holidays VALUES ('B','2028-01-01','Bank','england-and-wales','Substitute day',false)")
@@ -1723,7 +1723,7 @@ class MembershipIntegration(unittest.TestCase):
                 self.assertEqual([row['id'] for row in actual], ids)
 
     def test_cohort_detail_real_rows_recomputed_holidays_and_one_calendar_read(self):
-        from curriculum_api.test_cohort_calendar_boundary_no_db import original_cohort_calendar
+        from curriculum_api.catalogue.tests.test_cohort_calendar_boundary_no_db import original_cohort_calendar
         from curriculum_api.catalogue.application import cohort_calendar
         from curriculum_api import calendar_holidays
         self.seed_cohort_calendar()
@@ -1746,7 +1746,7 @@ class MembershipIntegration(unittest.TestCase):
         self.assertEqual(by_id['C']['holidaySummary'], {'global':3,'inRange':2,'selected':1})
 
     def test_saved_country_calendar_success_expiry_and_missing_never_sync(self):
-        from curriculum_api.test_cohort_calendar_boundary_no_db import original_cohort_calendar
+        from curriculum_api.catalogue.tests.test_cohort_calendar_boundary_no_db import original_cohort_calendar
         from curriculum_api import country_calendars
         self.seed_cohort_calendar()
         with connection.cursor() as cursor:
@@ -1772,7 +1772,7 @@ class MembershipIntegration(unittest.TestCase):
             fetch.assert_not_called()
 
     def test_holiday_http_visibility_payload_and_method_parity(self):
-        from curriculum_api.test_cohort_calendar_boundary_no_db import original_cohort_calendar
+        from curriculum_api.catalogue.tests.test_cohort_calendar_boundary_no_db import original_cohort_calendar
         from curriculum_api import england_holidays
         self.seed_cohort_calendar()
         # The GET's existing refresh notification is stubbed, never executed.
@@ -1792,7 +1792,7 @@ class MembershipIntegration(unittest.TestCase):
             self.assertEqual(self.client.post('/curriculum/holidays/').status_code,405)
 
     def test_calendar_scope_memo_and_external_fixture_edit_postgresql(self):
-        from curriculum_api.test_cohort_calendar_boundary_no_db import original_cohort_calendar
+        from curriculum_api.catalogue.tests.test_cohort_calendar_boundary_no_db import original_cohort_calendar
         from curriculum_api import calendar_holidays
         self.seed_cohort_calendar()
         def scenario():
@@ -1823,7 +1823,7 @@ class MembershipIntegration(unittest.TestCase):
             cursor.execute("UPDATE curriculum.groups SET start_date='2026-02-01',end_date='2028-01-31',schedule='Tuesday 09:30-11:45',week_days='Monday',session_start_time='08:00',session_end_time='10:00',coach_name='Ada, ada, Bea',module_ids='[\"MOD-SIBLING\",\"MOD-TEST\"]' WHERE group_id='G'")
 
     def test_placement_canonical_and_alias_readers_real_sql_parity(self):
-        from curriculum_api.test_placement_record_boundary_no_db import original_placement_records
+        from curriculum_api.catalogue.tests.test_placement_record_boundary_no_db import original_placement_records
         from curriculum_api.catalogue.infrastructure import placement_records as readers
         from curriculum_api.catalogue.application import placement_records as records
         self.seed_placement_records()
@@ -1840,7 +1840,7 @@ class MembershipIntegration(unittest.TestCase):
                         self.assertEqual(actual[kind+'_id'], ident)
 
     def test_placement_name_resolution_archive_and_group_ambiguity_postgresql(self):
-        from curriculum_api.test_placement_record_boundary_no_db import original_placement_records
+        from curriculum_api.catalogue.tests.test_placement_record_boundary_no_db import original_placement_records
         self.seed_placement_records()
         for kind, model, ident, label in [('cohort', lm.PlacementCohort, 'C', 'Synthetic cohort'),
                                           ('group', lm.PlacementGroup, 'G', 'Synthetic group')]:
@@ -1863,7 +1863,7 @@ class MembershipIntegration(unittest.TestCase):
         self.assertEqual(views.resolve_group_row('G')['group_id'], 'G')
 
     def test_cohort_record_http_native_dates_json_and_epa_parity(self):
-        from curriculum_api.test_placement_record_boundary_no_db import original_placement_records
+        from curriculum_api.catalogue.tests.test_placement_record_boundary_no_db import original_placement_records
         from curriculum_api.catalogue.application import placement_records
         self.seed_placement_records()
         url = '/curriculum/record-snapshot/?kind=cohort&id=C'
@@ -1886,7 +1886,7 @@ class MembershipIntegration(unittest.TestCase):
             self.assertEqual(json.loads(response.content)['cohort'], record)
 
     def test_group_record_http_delivery_columns_schedule_and_order_parity(self):
-        from curriculum_api.test_placement_record_boundary_no_db import original_placement_records
+        from curriculum_api.catalogue.tests.test_placement_record_boundary_no_db import original_placement_records
         from curriculum_api.catalogue.application import placement_records
         self.seed_placement_records()
         url = '/curriculum/record-snapshot/?kind=group&id=G'
@@ -1913,7 +1913,7 @@ class MembershipIntegration(unittest.TestCase):
             self.assertEqual(json.loads(response.content)['group'], record)
 
     def test_placement_snapshot_missing_and_read_failure_are_distinct_postgresql(self):
-        from curriculum_api.test_placement_record_boundary_no_db import original_placement_records
+        from curriculum_api.catalogue.tests.test_placement_record_boundary_no_db import original_placement_records
         self.seed_placement_records()
         for kind in ('cohort', 'group'):
             url = '/curriculum/record-snapshot/?kind='+kind+'&id=MISSING'
@@ -1945,7 +1945,7 @@ class MembershipIntegration(unittest.TestCase):
                 cursor.execute("INSERT INTO curriculum.week_template_components(id,week_template_id,type,title,display_order,expected_otjh,points,reflection_required,reflection_question,settings_json,ksb_mappings) VALUES (%s,%s,'reading',%s,%s,1.25,3,true,%s,%s,'[\"K1\"]')", [cid,template,'Synthetic '+cid,order,direct,json.dumps(settings)])
 
     def test_week_template_queries_archive_scope_and_order_postgresql(self):
-        from curriculum_api.test_week_template_read_boundary_no_db import original_week_template_reads
+        from curriculum_api.catalogue.tests.test_week_template_read_boundary_no_db import original_week_template_reads
         from curriculum_api.catalogue.infrastructure import week_templates
         self.seed_week_template_reads()
         def capture():
@@ -1966,7 +1966,7 @@ class MembershipIntegration(unittest.TestCase):
         self.assertEqual([r['id'] for r in actual[5]], ['A', 'B'])
 
     def test_week_template_collection_http_filters_and_payload_parity(self):
-        from curriculum_api.test_week_template_read_boundary_no_db import original_week_template_reads
+        from curriculum_api.catalogue.tests.test_week_template_read_boundary_no_db import original_week_template_reads
         from curriculum_api.catalogue.application import week_templates
         from django.test import RequestFactory
         self.seed_week_template_reads()
@@ -1986,7 +1986,7 @@ class MembershipIntegration(unittest.TestCase):
         self.assertEqual(self.client.put('/curriculum/week-templates/').status_code, 405)
 
     def test_week_template_detail_serialization_revision_and_missing_postgresql(self):
-        from curriculum_api.test_week_template_read_boundary_no_db import original_week_template_reads
+        from curriculum_api.catalogue.tests.test_week_template_read_boundary_no_db import original_week_template_reads
         from curriculum_api.catalogue.application import week_templates
         self.seed_week_template_reads()
         for ident in ('WT', 'FREE', 'ARCHIVED', 'STAMP', 'MISSING'):
@@ -2008,7 +2008,7 @@ class MembershipIntegration(unittest.TestCase):
         self.assertEqual(self.client.post('/curriculum/week-templates/WT/').status_code, 405)
 
     def test_week_template_record_fresh_revision_and_after_write_response_parity(self):
-        from curriculum_api.test_week_template_read_boundary_no_db import original_week_template_reads
+        from curriculum_api.catalogue.tests.test_week_template_read_boundary_no_db import original_week_template_reads
         self.seed_week_template_reads()
         before = views.week_template_record('WT')
         with connection.cursor() as cursor:
@@ -2028,7 +2028,7 @@ class MembershipIntegration(unittest.TestCase):
             self.assertEqual(response.json()['weekTemplate']['revision'], 'unverified')
 
     def test_record_revisions_real_sql_and_entity_scope_postgresql(self):
-        from curriculum_api.test_record_revision_boundary_no_db import original_record_reads
+        from curriculum_api.catalogue.tests.test_record_revision_boundary_no_db import original_record_reads
         from curriculum_api.catalogue.infrastructure import record_revisions
         def capture():
             return {kind: views.curriculum_record_revision(kind, ident) for kind, ident in
@@ -2056,7 +2056,7 @@ class MembershipIntegration(unittest.TestCase):
         self.assertEqual(views.cohort_record_revision('MISSING'), '')
 
     def test_template_header_component_and_missing_revision_postgresql(self):
-        from curriculum_api.test_record_revision_boundary_no_db import original_record_reads
+        from curriculum_api.catalogue.tests.test_record_revision_boundary_no_db import original_record_reads
         with connection.cursor() as cursor:
             cursor.execute("INSERT INTO curriculum.week_templates(id,title) VALUES ('T','Synthetic template'),('OTHER','Other')")
             cursor.execute("INSERT INTO curriculum.week_template_components(id,week_template_id,type,title,settings_json) VALUES ('TC','T','reading','Synthetic text','{}'),('OTHER-C','OTHER','reading','Other','{}')")
@@ -2079,7 +2079,7 @@ class MembershipIntegration(unittest.TestCase):
         self.assertEqual(views.week_template_revision('T'), '')
 
     def test_record_revision_http_query_contract_postgresql(self):
-        from curriculum_api.test_record_revision_boundary_no_db import original_record_reads
+        from curriculum_api.catalogue.tests.test_record_revision_boundary_no_db import original_record_reads
         url = '/curriculum/revisions/?cohort=C&cohort=C&cohort=&cohort=MISSING&programme=P&group=G&module=MOD-TEST&unknown=ignored'
         with original_record_reads():
             # URL resolver captures the current handler, so call the immutable
@@ -2095,7 +2095,7 @@ class MembershipIntegration(unittest.TestCase):
         self.assertEqual(self.client.post('/curriculum/revisions/').status_code, 405)
 
     def test_record_snapshot_and_conflict_payload_postgresql(self):
-        from curriculum_api.test_record_revision_boundary_no_db import original_record_reads
+        from curriculum_api.catalogue.tests.test_record_revision_boundary_no_db import original_record_reads
         from curriculum_api.catalogue.application import conflict_records
         for kind, ident, symbol in [('programme', 'P', 'programme_conflict_record'),
                                      ('cohort', 'C', 'cohort_conflict_record'),
@@ -2116,7 +2116,7 @@ class MembershipIntegration(unittest.TestCase):
             self.assertEqual(json.loads(refusal.content)[kind], data['record'])
 
     def test_structure_revision_fresh_shared_and_external_changes_postgresql(self):
-        from curriculum_api.test_revision_boundary_no_db import original_revisions
+        from curriculum_api.catalogue.tests.test_revision_boundary_no_db import original_revisions
         from curriculum_api.catalogue.application import structure_revisions
         from curriculum_api.catalogue.domain import structure_revision
         cm.ModuleAuthoringWeek.objects.create(id='REV-W', module_catalogue_id='MOD-TEST', week_number=1)
@@ -2150,7 +2150,7 @@ class MembershipIntegration(unittest.TestCase):
             self.assertEqual(changed, capture())
 
     def test_structure_payload_revision_and_item_fingerprints_postgresql_parity(self):
-        from curriculum_api.test_revision_boundary_no_db import original_revisions
+        from curriculum_api.catalogue.tests.test_revision_boundary_no_db import original_revisions
         from curriculum_api.catalogue.infrastructure import structure_sources
         cm.ModuleAuthoringWeek.objects.create(id='REV-W', module_catalogue_id='MOD-TEST', week_number=1)
         cm.ModuleAuthoringComponent.objects.create(id='REV-C', module_catalogue_id='MOD-TEST', week_id='REV-W',
@@ -2174,7 +2174,7 @@ class MembershipIntegration(unittest.TestCase):
 
     def test_compact_transport_native_values_and_verified_changes_postgresql(self):
         from curriculum_api import authoring_read_transport as transport
-        from curriculum_api.test_transport_boundary_no_db import original_transport
+        from curriculum_api.catalogue.tests.test_transport_boundary_no_db import original_transport
         from curriculum_api.catalogue.infrastructure import authoring_transport as core, authoring_row_snapshots as snapshots
         self.addCleanup(snapshots._SNAPSHOTS.clear)
         snapshots._SNAPSHOTS.clear()
@@ -2217,7 +2217,7 @@ class MembershipIntegration(unittest.TestCase):
 
     def test_normalized_ksb_transport_cold_warm_and_joined_changes_postgresql(self):
         from curriculum_api import authoring_read_transport as transport
-        from curriculum_api.test_transport_boundary_no_db import original_transport
+        from curriculum_api.catalogue.tests.test_transport_boundary_no_db import original_transport
         from curriculum_api.catalogue.infrastructure import authoring_transport as core, authoring_row_snapshots as snapshots
         from django.db import ProgrammingError
         snapshots._SNAPSHOTS.clear()
@@ -2259,7 +2259,7 @@ class MembershipIntegration(unittest.TestCase):
         self.assertTrue(views.module_structure_revision('MOD-TEST'))
 
     def test_summary_read_adapters_grouped_and_string_json_postgresql_parity(self):
-        from curriculum_api.test_read_adapters_boundary_no_db import original_read_adapters
+        from curriculum_api.catalogue.tests.test_read_adapters_boundary_no_db import original_read_adapters
         from curriculum_api.catalogue.infrastructure import component_summary_reads
         cm.ModuleAuthoringWeek.objects.create(id='SUM-W', module_catalogue_id='MOD-TEST', week_number=2)
         for cid, settings, status in (
@@ -2295,7 +2295,7 @@ class MembershipIntegration(unittest.TestCase):
         self.assertEqual(sum(row['status'] == 'published' for row in full), 2)
 
     def test_authoring_direct_and_prefetched_postgresql_completion_parity(self):
-        from curriculum_api.test_read_adapters_boundary_no_db import original_read_adapters
+        from curriculum_api.catalogue.tests.test_read_adapters_boundary_no_db import original_read_adapters
         from curriculum_api.catalogue.infrastructure import authoring_reads
         cm.ModuleAuthoringWeek.objects.create(id='READ-W', module_catalogue_id='MOD-TEST', week_number=1)
         cm.ModuleAuthoringComponent.objects.create(id='READ-C', module_catalogue_id='MOD-TEST', week_id='READ-W', type='reading')
@@ -2334,7 +2334,7 @@ class MembershipIntegration(unittest.TestCase):
         self.assertEqual(actual[1][0]['ksb_description'], 'Synthetic standard text')
 
     def test_delivery_count_reader_postgresql_parity(self):
-        from curriculum_api.test_delivery_read_boundary_no_db import original_delivery_reads
+        from curriculum_api.catalogue.tests.test_delivery_read_boundary_no_db import original_delivery_reads
         from curriculum_api.catalogue.infrastructure import delivery_counts
         with original_delivery_reads():
             expected = views.active_learner_delivery_counts()
@@ -2347,7 +2347,7 @@ class MembershipIntegration(unittest.TestCase):
         self.assertEqual(actual, ({'C': 3}, {'G': 3}))
 
     def test_authoring_summary_and_grouped_sql_postgresql_parity(self):
-        from curriculum_api.test_authoring_read_boundary_no_db import original_authoring_reads
+        from curriculum_api.catalogue.tests.test_authoring_read_boundary_no_db import original_authoring_reads
         from curriculum_api.catalogue.infrastructure import grouped_content
         self.test_normalized_ksb_counts_and_legacy_source_alias()
         for content, compact in ((True, False), (True, True), (False, False)):
@@ -2364,7 +2364,7 @@ class MembershipIntegration(unittest.TestCase):
             self.assertEqual(called.call_count, 1 if compact and content else 0)
 
     def test_structure_payload_and_component_sql_postgresql_parity(self):
-        from curriculum_api.test_structure_read_boundary_no_db import original_structure_reads
+        from curriculum_api.catalogue.tests.test_structure_read_boundary_no_db import original_structure_reads
         from curriculum_api.catalogue.application import structure_payloads
         from curriculum_api.catalogue.infrastructure import component_reads
         cm.ModuleAuthoringWeek.objects.create(id='STRUCT-W', module_catalogue_id='MOD-TEST', week_number=1)
@@ -2407,7 +2407,7 @@ class MembershipIntegration(unittest.TestCase):
             self.assertEqual(views.parse_json_value(actual[4][0]['settings_json'], {}), {'videoUrl': 'synthetic'})
 
     def test_component_catalogue_real_postgresql_parity_and_missing_week_label(self):
-        from curriculum_api.test_component_catalogue_boundary_no_db import original_component_catalogue
+        from curriculum_api.catalogue.tests.test_component_catalogue_boundary_no_db import original_component_catalogue
         from curriculum_api.catalogue.application import component_catalogue
         cm.ModuleAuthoringWeek.objects.create(id='CAT-W', module_catalogue_id='MOD-TEST', week_number=4, title='Fourth')
         cm.ModuleAuthoringComponent.objects.create(id='CAT-C', module_catalogue_id='MOD-TEST', week_id='CAT-W',
@@ -2431,7 +2431,7 @@ class MembershipIntegration(unittest.TestCase):
         self.assertEqual(views.component_summary_rows(['MOD-TEST'])[0]['week'], '')
 
     def test_library_programme_paging_and_normalized_ksb_postgresql_regressions(self):
-        from curriculum_api.test_component_catalogue_boundary_no_db import original_component_catalogue
+        from curriculum_api.catalogue.tests.test_component_catalogue_boundary_no_db import original_component_catalogue
         from curriculum_api.catalogue.infrastructure import library_reads
         lm.PlacementProgramme.objects.create(programme_id='Q', name='Other synthetic programme')
         cm.ModuleAuthoringModule.objects.create(module_catalogue_id='MOD-Q', title='Other module', programme_id='Q')
@@ -2731,149 +2731,149 @@ if __name__=='__main__':
         suite.addTests(unittest.defaultTestLoader.loadTestsFromTestCase(assignment_checks['AssignmentReadsPostgreSQL']))
         result = unittest.TextTestRunner(verbosity=2).run(suite)
         fixture_suite = unittest.TestSuite()
-        for module in ('curriculum_api.test_read_consumer_imports_no_db', 'learner_api.test_assignment_read_boundary_no_db', 'learner_api.test_group_preset_relations_no_db'):
+        for module in ('curriculum_api.catalogue.tests.test_read_consumer_imports_no_db', 'learner_api.test_assignment_read_boundary_no_db', 'learner_api.test_group_preset_relations_no_db'):
             fixture_suite.addTests(unittest.defaultTestLoader.loadTestsFromName(module))
-        fixture_suite.addTests(unittest.defaultTestLoader.loadTestsFromName('curriculum_api.test_cache_composition_no_db'))
-        fixture_suite.addTests(unittest.defaultTestLoader.loadTestsFromName('curriculum_api.test_overview_composition_no_db'))
+        fixture_suite.addTests(unittest.defaultTestLoader.loadTestsFromName('curriculum_api.catalogue.tests.test_cache_composition_no_db'))
+        fixture_suite.addTests(unittest.defaultTestLoader.loadTestsFromName('curriculum_api.catalogue.tests.test_overview_composition_no_db'))
         fixture_suite.addTests(unittest.defaultTestLoader.loadTestsFromName('curriculum_api.test_read_entry_no_db'))
-        fixture_suite.addTests(unittest.defaultTestLoader.loadTestsFromName('curriculum_api.test_calendar_composition_no_db'))
-        fixture_suite.addTests(unittest.defaultTestLoader.loadTestsFromName('curriculum_api.test_registry_composition_no_db'))
-        fixture_suite.addTests(unittest.defaultTestLoader.loadTestsFromName('curriculum_api.test_runtime_ownership_no_db'))
+        fixture_suite.addTests(unittest.defaultTestLoader.loadTestsFromName('curriculum_api.catalogue.tests.test_calendar_composition_no_db'))
+        fixture_suite.addTests(unittest.defaultTestLoader.loadTestsFromName('curriculum_api.catalogue.tests.test_registry_composition_no_db'))
+        fixture_suite.addTests(unittest.defaultTestLoader.loadTestsFromName('curriculum_api.catalogue.tests.test_runtime_ownership_no_db'))
         fixture_suite.addTests(unittest.defaultTestLoader.loadTestsFromName(
-            'curriculum_api.test_entry_composition_no_db'))
+            'curriculum_api.catalogue.tests.test_entry_composition_no_db'))
         fixture_suite.addTests(unittest.defaultTestLoader.loadTestsFromName(
-            'curriculum_api.test_placement_names_composition_no_db'))
+            'curriculum_api.catalogue.tests.test_placement_names_composition_no_db'))
         fixture_suite.addTests(unittest.defaultTestLoader.loadTestsFromName(
-            'curriculum_api.test_curriculum_names_no_db'))
+            'curriculum_api.catalogue.tests.test_curriculum_names_no_db'))
         fixture_suite.addTests(unittest.defaultTestLoader.loadTestsFromName(
-            'curriculum_api.test_catalogue_content_composition_no_db'))
+            'curriculum_api.catalogue.tests.test_catalogue_content_composition_no_db'))
         fixture_suite.addTests(unittest.defaultTestLoader.loadTestsFromName(
-            'curriculum_api.test_authoring_workspace_composition_no_db'))
-        fixture_suite.addTests(unittest.defaultTestLoader.loadTestsFromName('curriculum_api.test_database_read_composition_no_db'))
-        fixture_suite.addTests(unittest.defaultTestLoader.loadTestsFromName('curriculum_api.test_schema_read_boundary_no_db'))
-        for module in ('curriculum_api.test_session_editing_boundary_no_db', 'curriculum_api.test_numbered_session_headers_no_db'):
+            'curriculum_api.catalogue.tests.test_authoring_workspace_composition_no_db'))
+        fixture_suite.addTests(unittest.defaultTestLoader.loadTestsFromName('curriculum_api.catalogue.tests.test_database_read_composition_no_db'))
+        fixture_suite.addTests(unittest.defaultTestLoader.loadTestsFromName('curriculum_api.catalogue.tests.test_schema_read_boundary_no_db'))
+        for module in ('curriculum_api.catalogue.tests.test_session_editing_boundary_no_db', 'curriculum_api.catalogue.tests.test_numbered_session_headers_no_db'):
             fixture_suite.addTests(unittest.defaultTestLoader.loadTestsFromName(module))
-        for module in ('curriculum_api.test_holiday_boundary_no_db',
-                       'curriculum_api.test_calendar_holidays_no_db'):
+        for module in ('curriculum_api.catalogue.tests.test_holiday_boundary_no_db',
+                       'curriculum_api.catalogue.tests.test_calendar_holidays_no_db'):
             fixture_suite.addTests(unittest.defaultTestLoader.loadTestsFromName(module))
-        for module in ('curriculum_api.test_row_persistence_boundary_no_db',
-                       'curriculum_api.test_content_cache_no_db.MovePreReadTests'):
+        for module in ('curriculum_api.catalogue.tests.test_row_persistence_boundary_no_db',
+                       'curriculum_api.catalogue.tests.test_content_cache_no_db.MovePreReadTests'):
             fixture_suite.addTests(unittest.defaultTestLoader.loadTestsFromName(module))
-        for module in ('curriculum_api.test_content_commands_boundary_no_db', 'curriculum_api.test_ksb_mapping_writes_no_db'):
+        for module in ('curriculum_api.catalogue.tests.test_content_commands_boundary_no_db', 'curriculum_api.catalogue.tests.test_ksb_mapping_writes_no_db'):
             fixture_suite.addTests(unittest.defaultTestLoader.loadTestsFromName(module))
-        for module in ('curriculum_api.test_authoring_storage_boundary_no_db',
-                       'curriculum_api.test_free_course_catalogue_store_no_db',
+        for module in ('curriculum_api.catalogue.tests.test_authoring_storage_boundary_no_db',
+                       'curriculum_api.catalogue.tests.test_free_course_catalogue_store_no_db',
                        'curriculum_api.test_schema_gate_no_db'):
             fixture_suite.addTests(unittest.defaultTestLoader.loadTestsFromName(module))
-        fixture_suite.addTests(unittest.defaultTestLoader.loadTestsFromName('curriculum_api.test_lifecycle_commands_boundary_no_db'))
-        fixture_suite.addTests(unittest.defaultTestLoader.loadTestsFromName('curriculum_api.tests_module_delete_flags.ModuleQuizArchiveTests'))
-        fixture_suite.addTests(unittest.defaultTestLoader.loadTestsFromName('curriculum_api.test_module_commands_boundary_no_db'))
-        for module in ('curriculum_api.test_hierarchy_commands_boundary_no_db', 'curriculum_api.test_entity_rename_no_db', 'curriculum_api.test_group_coaches_no_db', 'curriculum_api.test_group_list_reads_no_db'):
+        fixture_suite.addTests(unittest.defaultTestLoader.loadTestsFromName('curriculum_api.catalogue.tests.test_lifecycle_commands_boundary_no_db'))
+        fixture_suite.addTests(unittest.defaultTestLoader.loadTestsFromName('curriculum_api.catalogue.tests.tests_module_delete_flags.ModuleQuizArchiveTests'))
+        fixture_suite.addTests(unittest.defaultTestLoader.loadTestsFromName('curriculum_api.catalogue.tests.test_module_commands_boundary_no_db'))
+        for module in ('curriculum_api.catalogue.tests.test_hierarchy_commands_boundary_no_db', 'curriculum_api.catalogue.tests.test_entity_rename_no_db', 'curriculum_api.catalogue.tests.test_group_coaches_no_db', 'curriculum_api.catalogue.tests.test_group_list_reads_no_db'):
             fixture_suite.addTests(unittest.defaultTestLoader.loadTestsFromName(module))
-        fixture_suite.addTests(unittest.defaultTestLoader.loadTestsFromName('curriculum_api.test_projection_consumer_boundary_no_db'))
-        for module in ('curriculum_api.test_revision_history_boundary_no_db', 'curriculum_api.tests_versioning.SnapshotShapeTests'):
+        fixture_suite.addTests(unittest.defaultTestLoader.loadTestsFromName('curriculum_api.catalogue.tests.test_projection_consumer_boundary_no_db'))
+        for module in ('curriculum_api.reporting.tests.test_revision_history_boundary_no_db', 'curriculum_api.reporting.tests.tests_versioning.SnapshotShapeTests'):
             fixture_suite.addTests(unittest.defaultTestLoader.loadTestsFromName(module))
-        for module in ('curriculum_api.test_quality_assets_boundary_no_db', 'curriculum_api.tests_programme_audit_ui_materials', 'curriculum_api.tests_lean_log.WindowTests'):
+        for module in ('curriculum_api.reporting.tests.test_quality_assets_boundary_no_db', 'curriculum_api.reporting.tests.tests_programme_audit_ui_materials', 'curriculum_api.reporting.tests.tests_lean_log.WindowTests'):
             fixture_suite.addTests(unittest.defaultTestLoader.loadTestsFromName(module))
-        for module in ('curriculum_api.test_home_summary_no_db', 'curriculum_api.test_home_source_no_db',
-                       'curriculum_api.test_programme_list_no_db', 'curriculum_api.test_catalogue_reads_no_db',
-                       'curriculum_api.test_programme_ksb_source_no_db.StoredSourceReaderTests',
-                       'curriculum_api.test_programme_ksb_source_no_db.AppliedProfileTests',
-                       'curriculum_api.test_programme_ksb_source_no_db.ProgrammeCardLabelTests',
-                       'curriculum_api.test_programme_read_boundary_no_db',
-                       'curriculum_api.tests_programme_detail_sections',
-                       'curriculum_api.test_programme_modules_workspace_no_db',
-                       'curriculum_api.test_programme_workspace_latency_no_db',
-                       'curriculum_api.test_programme_workspace_text_no_db',
-                       'curriculum_api.test_module_read_boundary_no_db',
-                       'curriculum_api.test_curriculum_projection_performance_no_db.CurriculumProjectionPerformanceTests.test_programme_detail_enrichment_omits_heavy_component_content',
-                       'curriculum_api.test_curriculum_projection_performance_no_db.CurriculumProjectionPerformanceTests.test_programme_authoring_modules_omits_heavy_component_content',
-                       'curriculum_api.test_module_builder_latency_no_db.GroupedCatalogueTests',
-                       'curriculum_api.test_module_builder_latency_no_db.ModuleListVisibilityTests',
-                       'curriculum_api.test_http_cache_no_db.WeekOutlineTests',
-                       'curriculum_api.test_delivery_read_boundary_no_db',
-                       'curriculum_api.test_shared_reads_no_db.SharedParentReadTests',
-                       'curriculum_api.test_shared_reads_no_db.SharedWeekIndexTests',
-                       'curriculum_api.test_authoring_read_boundary_no_db',
-                       'curriculum_api.test_structure_read_boundary_no_db',
-                       'curriculum_api.test_structure_transport_no_db',
-                       'curriculum_api.test_http_cache_no_db.PagedComponentReadTests',
-                       'curriculum_api.test_component_programme_view_no_db.ProgrammeViewSqlTests.test_content_mode_is_unchanged',
-                       'curriculum_api.test_component_catalogue_boundary_no_db',
-                       'curriculum_api.test_read_adapters_boundary_no_db',
-                       'curriculum_api.test_authoring_row_cache_no_db',
-                       'curriculum_api.test_transport_boundary_no_db',
-                       'curriculum_api.test_revision_boundary_no_db',
-                       'curriculum_api.test_record_revision_boundary_no_db',
-                       'curriculum_api.test_week_template_read_boundary_no_db',
-                       'curriculum_api.test_placement_record_boundary_no_db',
-                       'curriculum_api.test_cohort_calendar_boundary_no_db',
-                       'curriculum_api.test_inherited_calendar_boundary_no_db',
-                       'curriculum_api.tests_holiday_reading_weeks',
-                       'curriculum_api.test_session_plan_boundary_no_db',
-                       'curriculum_api.test_delivery_schedule_boundary_no_db',
-                       'curriculum_api.test_tutor_availability_roster_no_db',
-                       'curriculum_api.test_tutor_availability_boundary_no_db',
-                       'curriculum_api.test_staff_profiles_boundary_no_db',
-                       'curriculum_api.test_staff_assignment_reads_no_db',
-                       'curriculum_api.test_statistics_boundary_no_db',
-                       'curriculum_api.test_programme_ksb_source_no_db.CoverageSourceTests',
-                       'curriculum_api.test_programme_ksb_source_no_db.AchievementSourceTests',
-                       'curriculum_api.test_ksb_mapping_placement_no_db.StatsReadTests',
-                       'curriculum_api.test_report_delivery_boundary_no_db',
-                       'curriculum_api.test_ksb_coverage_parts_no_db',
-                       'curriculum_api.test_coverage_summary_no_db',
-                       'curriculum_api.test_coverage_mapped_components_no_db',
-                       'curriculum_api.test_ksb_stats_latency_no_db',
-                       'curriculum_api.test_programme_ksb_design_cache_no_db',
-                       'curriculum_api.test_reporting_boundary_no_db',
-                       'curriculum_api.tests_ksb_achievement',
-                       'curriculum_api.tests_scope_achievement',
-                       'curriculum_api.test_achievement_performance_no_db',
-                       'curriculum_api.test_session_enrichment_boundary_no_db',
-                       'curriculum_api.test_module_workspace_boundary_no_db',
-                       'curriculum_api.test_programme_sources_no_db',
-                       'curriculum_api.test_ksb_identity_boundary_no_db',
-                       'curriculum_api.test_module_get_boundary_no_db',
-                       'curriculum_api.test_assignment_settings_schema_no_db',
-                       'curriculum_api.test_calendar_convergence_no_db',
-                       'curriculum_api.test_delivery_dashboard_no_db',
-                       'curriculum_api.tests_delivery_calendar_projection',
-                       'curriculum_api.tests_authored_live_sessions.AuthoredSourceOnlyTests',
-                       'curriculum_api.test_overview_boundary_no_db',
-                       'curriculum_api.test_bulk_attendance_overview_no_db',
-                       'curriculum_api.test_curriculum_read_model_no_db',
-                       'curriculum_api.test_session_plan_first_delivery_week_no_db',
-                       'curriculum_api.test_custom_weekly_schedule_no_db.CustomWeeklyScheduleTests.test_custom_week_begins_with_its_first_live_session_across_sunday',
-                       'curriculum_api.test_custom_weekly_schedule_no_db.CustomWeeklyScheduleTests.test_custom_components_stop_at_the_explicit_end_date',
-                       'curriculum_api.test_custom_weekly_schedule_no_db.CustomWeeklyScheduleTests.test_custom_tutor_dates_stay_within_the_authored_weeks',
-                       'curriculum_api.test_custom_weekly_schedule_no_db.CustomWeeklyScheduleTests.test_existing_custom_modules_without_the_new_marker_keep_their_calendar_weeks',
-                       'curriculum_api.test_shared_reads_no_db.HolidayReadScopeTests',
-                       'curriculum_api.test_authoring_placement_names_no_db.DerivedPlacementNamesSqlTests',
-                       'curriculum_api.test_authoring_placement_names_no_db.DerivedPlacementNamesExecutionTests',
-                       'curriculum_api.test_programme_modules_read_path_no_db.PrefetchTests',
-                       'curriculum_api.test_programme_modules_read_path_no_db.PrefetchMatchesTheReadsTests',
-                       'curriculum_api.test_ksb_description_deferred_no_db.DeferredRelationTests.test_curriculum_select_defers_it_and_keeps_the_key_it_is_looked_up_by',
-                       'curriculum_api.test_unified_reader_no_db',
-                       'curriculum_api.test_component_programme_view_no_db.ComponentSummaryKsbCodesTests',
-                       'curriculum_api.test_component_summary_no_db.ComponentSummaryTests',
-                       'curriculum_api.test_component_summary_no_db.ComponentSummaryViewTests',
-                       'curriculum_api.test_component_programme_view_no_db.ProgrammeViewEndpointTests',
-                       'curriculum_api.test_component_programme_view_no_db.ProgrammeViewExcludedColumnsSqlTests',
-                       'curriculum_api.test_component_programme_view_no_db.ProgrammePageProjectionTests.test_keeps_only_the_page_settings_including_empty_ones_and_marks_the_row',
-                       'curriculum_api.test_component_programme_view_no_db.ProgrammePageProjectionTests.test_a_row_that_loses_nothing_is_returned_as_it_is',
-                       'curriculum_api.test_component_programme_view_no_db.ProgrammePageProjectionTests.test_what_the_database_stripped_marks_the_row_even_if_nothing_is_left_to_trim',
-                       'curriculum_api.test_component_programme_view_no_db.ProgrammePageProjectionTests.test_never_edits_the_cached_row',
-                       'curriculum_api.test_component_programme_view_no_db.ProgrammePageProjectionTests.test_a_marked_row_is_refused_on_save_before_any_database_read',
+        for module in ('curriculum_api.catalogue.tests.test_home_summary_no_db', 'curriculum_api.catalogue.tests.test_home_source_no_db',
+                       'curriculum_api.catalogue.tests.test_programme_list_no_db', 'curriculum_api.catalogue.tests.test_catalogue_reads_no_db',
+                       'curriculum_api.catalogue.tests.test_programme_ksb_source_no_db.StoredSourceReaderTests',
+                       'curriculum_api.catalogue.tests.test_programme_ksb_source_no_db.AppliedProfileTests',
+                       'curriculum_api.catalogue.tests.test_programme_ksb_source_no_db.ProgrammeCardLabelTests',
+                       'curriculum_api.catalogue.tests.test_programme_read_boundary_no_db',
+                       'curriculum_api.catalogue.tests.tests_programme_detail_sections',
+                       'curriculum_api.catalogue.tests.test_programme_modules_workspace_no_db',
+                       'curriculum_api.catalogue.tests.test_programme_workspace_latency_no_db',
+                       'curriculum_api.catalogue.tests.test_programme_workspace_text_no_db',
+                       'curriculum_api.catalogue.tests.test_module_read_boundary_no_db',
+                       'curriculum_api.catalogue.tests.test_curriculum_projection_performance_no_db.CurriculumProjectionPerformanceTests.test_programme_detail_enrichment_omits_heavy_component_content',
+                       'curriculum_api.catalogue.tests.test_curriculum_projection_performance_no_db.CurriculumProjectionPerformanceTests.test_programme_authoring_modules_omits_heavy_component_content',
+                       'curriculum_api.catalogue.tests.test_module_builder_latency_no_db.GroupedCatalogueTests',
+                       'curriculum_api.catalogue.tests.test_module_builder_latency_no_db.ModuleListVisibilityTests',
+                       'curriculum_api.catalogue.tests.test_http_cache_no_db.WeekOutlineTests',
+                       'curriculum_api.catalogue.tests.test_delivery_read_boundary_no_db',
+                       'curriculum_api.catalogue.tests.test_shared_reads_no_db.SharedParentReadTests',
+                       'curriculum_api.catalogue.tests.test_shared_reads_no_db.SharedWeekIndexTests',
+                       'curriculum_api.catalogue.tests.test_authoring_read_boundary_no_db',
+                       'curriculum_api.catalogue.tests.test_structure_read_boundary_no_db',
+                       'curriculum_api.catalogue.tests.test_structure_transport_no_db',
+                       'curriculum_api.catalogue.tests.test_http_cache_no_db.PagedComponentReadTests',
+                       'curriculum_api.catalogue.tests.test_component_programme_view_no_db.ProgrammeViewSqlTests.test_content_mode_is_unchanged',
+                       'curriculum_api.catalogue.tests.test_component_catalogue_boundary_no_db',
+                       'curriculum_api.catalogue.tests.test_read_adapters_boundary_no_db',
+                       'curriculum_api.catalogue.tests.test_authoring_row_cache_no_db',
+                       'curriculum_api.catalogue.tests.test_transport_boundary_no_db',
+                       'curriculum_api.catalogue.tests.test_revision_boundary_no_db',
+                       'curriculum_api.catalogue.tests.test_record_revision_boundary_no_db',
+                       'curriculum_api.catalogue.tests.test_week_template_read_boundary_no_db',
+                       'curriculum_api.catalogue.tests.test_placement_record_boundary_no_db',
+                       'curriculum_api.catalogue.tests.test_cohort_calendar_boundary_no_db',
+                       'curriculum_api.catalogue.tests.test_inherited_calendar_boundary_no_db',
+                       'curriculum_api.catalogue.tests.tests_holiday_reading_weeks',
+                       'curriculum_api.catalogue.tests.test_session_plan_boundary_no_db',
+                       'curriculum_api.catalogue.tests.test_delivery_schedule_boundary_no_db',
+                       'curriculum_api.catalogue.tests.test_tutor_availability_roster_no_db',
+                       'curriculum_api.catalogue.tests.test_tutor_availability_boundary_no_db',
+                       'curriculum_api.catalogue.tests.test_staff_profiles_boundary_no_db',
+                       'curriculum_api.catalogue.tests.test_staff_assignment_reads_no_db',
+                       'curriculum_api.reporting.tests.test_statistics_boundary_no_db',
+                       'curriculum_api.catalogue.tests.test_programme_ksb_source_no_db.CoverageSourceTests',
+                       'curriculum_api.catalogue.tests.test_programme_ksb_source_no_db.AchievementSourceTests',
+                       'curriculum_api.catalogue.tests.test_ksb_mapping_placement_no_db.StatsReadTests',
+                       'curriculum_api.reporting.tests.test_report_delivery_boundary_no_db',
+                       'curriculum_api.reporting.tests.test_ksb_coverage_parts_no_db',
+                       'curriculum_api.reporting.tests.test_coverage_summary_no_db',
+                       'curriculum_api.reporting.tests.test_coverage_mapped_components_no_db',
+                       'curriculum_api.reporting.tests.test_ksb_stats_latency_no_db',
+                       'curriculum_api.catalogue.tests.test_programme_ksb_design_cache_no_db',
+                       'curriculum_api.reporting.tests.test_reporting_boundary_no_db',
+                       'curriculum_api.reporting.tests.tests_ksb_achievement',
+                       'curriculum_api.reporting.tests.tests_scope_achievement',
+                       'curriculum_api.reporting.tests.test_achievement_performance_no_db',
+                       'curriculum_api.catalogue.tests.test_session_enrichment_boundary_no_db',
+                       'curriculum_api.catalogue.tests.test_module_workspace_boundary_no_db',
+                       'curriculum_api.catalogue.tests.test_programme_sources_no_db',
+                       'curriculum_api.reporting.tests.test_ksb_identity_boundary_no_db',
+                       'curriculum_api.catalogue.tests.test_module_get_boundary_no_db',
+                       'curriculum_api.catalogue.tests.test_assignment_settings_schema_no_db',
+                       'curriculum_api.catalogue.tests.test_calendar_convergence_no_db',
+                       'curriculum_api.catalogue.tests.test_delivery_dashboard_no_db',
+                       'curriculum_api.catalogue.tests.tests_delivery_calendar_projection',
+                       'curriculum_api.catalogue.tests.tests_authored_live_sessions.AuthoredSourceOnlyTests',
+                       'curriculum_api.catalogue.tests.test_overview_boundary_no_db',
+                       'curriculum_api.meetings.tests.test_bulk_attendance_overview_no_db',
+                       'curriculum_api.catalogue.tests.test_curriculum_read_model_no_db',
+                       'curriculum_api.catalogue.tests.test_session_plan_first_delivery_week_no_db',
+                       'curriculum_api.catalogue.tests.test_custom_weekly_schedule_no_db.CustomWeeklyScheduleTests.test_custom_week_begins_with_its_first_live_session_across_sunday',
+                       'curriculum_api.catalogue.tests.test_custom_weekly_schedule_no_db.CustomWeeklyScheduleTests.test_custom_components_stop_at_the_explicit_end_date',
+                       'curriculum_api.catalogue.tests.test_custom_weekly_schedule_no_db.CustomWeeklyScheduleTests.test_custom_tutor_dates_stay_within_the_authored_weeks',
+                       'curriculum_api.catalogue.tests.test_custom_weekly_schedule_no_db.CustomWeeklyScheduleTests.test_existing_custom_modules_without_the_new_marker_keep_their_calendar_weeks',
+                       'curriculum_api.catalogue.tests.test_shared_reads_no_db.HolidayReadScopeTests',
+                       'curriculum_api.catalogue.tests.test_authoring_placement_names_no_db.DerivedPlacementNamesSqlTests',
+                       'curriculum_api.catalogue.tests.test_authoring_placement_names_no_db.DerivedPlacementNamesExecutionTests',
+                       'curriculum_api.catalogue.tests.test_programme_modules_read_path_no_db.PrefetchTests',
+                       'curriculum_api.catalogue.tests.test_programme_modules_read_path_no_db.PrefetchMatchesTheReadsTests',
+                       'curriculum_api.catalogue.tests.test_ksb_description_deferred_no_db.DeferredRelationTests.test_curriculum_select_defers_it_and_keeps_the_key_it_is_looked_up_by',
+                       'curriculum_api.catalogue.tests.test_unified_reader_no_db',
+                       'curriculum_api.catalogue.tests.test_component_programme_view_no_db.ComponentSummaryKsbCodesTests',
+                       'curriculum_api.catalogue.tests.test_component_summary_no_db.ComponentSummaryTests',
+                       'curriculum_api.catalogue.tests.test_component_summary_no_db.ComponentSummaryViewTests',
+                       'curriculum_api.catalogue.tests.test_component_programme_view_no_db.ProgrammeViewEndpointTests',
+                       'curriculum_api.catalogue.tests.test_component_programme_view_no_db.ProgrammeViewExcludedColumnsSqlTests',
+                       'curriculum_api.catalogue.tests.test_component_programme_view_no_db.ProgrammePageProjectionTests.test_keeps_only_the_page_settings_including_empty_ones_and_marks_the_row',
+                       'curriculum_api.catalogue.tests.test_component_programme_view_no_db.ProgrammePageProjectionTests.test_a_row_that_loses_nothing_is_returned_as_it_is',
+                       'curriculum_api.catalogue.tests.test_component_programme_view_no_db.ProgrammePageProjectionTests.test_what_the_database_stripped_marks_the_row_even_if_nothing_is_left_to_trim',
+                       'curriculum_api.catalogue.tests.test_component_programme_view_no_db.ProgrammePageProjectionTests.test_never_edits_the_cached_row',
+                       'curriculum_api.catalogue.tests.test_component_programme_view_no_db.ProgrammePageProjectionTests.test_a_marked_row_is_refused_on_save_before_any_database_read',
                        ):
             fixture_suite.addTests(unittest.defaultTestLoader.loadTestsFromName(module))
-        for module in ('curriculum_api.test_cache_ownership_boundary_no_db', 'curriculum_api.test_cache_scope_no_db.ProgrammeGenerationTests', 'curriculum_api.test_cache_scope_no_db.MiddlewareScopeTests', 'curriculum_api.test_cache_scope_no_db.BumpTests', 'curriculum_api.test_cache_scope_no_db.BumpFailureTests', 'curriculum_api.test_cache_scope_no_db.WriteOutsideRequestTests', 'curriculum_api.test_read_runtime_boundary_no_db', 'curriculum_api.test_cache_latency_no_db', 'curriculum_api.test_cache_scope_no_db.ScopedCacheTests', 'curriculum_api.test_cache_scope_no_db.TwoWorkerTests', 'curriculum_api.test_cache_scope_no_db.LearnerFreshnessTests', 'curriculum_api.test_http_cache_no_db.CachedValueSingleFlightTests', 'curriculum_api.test_programme_modules_read_path_no_db.ForcedReadSharingTests', 'curriculum_api.test_shared_reads_no_db.LearnerSchemaCacheTests', 'curriculum_api.test_component_summary_no_db.ArchivedCohortsTests', 'curriculum_api.test_component_summary_no_db.ArchivedModuleComponentCountTests', 'curriculum_api.test_archive_index_no_db'):
+        for module in ('curriculum_api.catalogue.tests.test_cache_ownership_boundary_no_db', 'curriculum_api.catalogue.tests.test_cache_scope_no_db.ProgrammeGenerationTests', 'curriculum_api.catalogue.tests.test_cache_scope_no_db.MiddlewareScopeTests', 'curriculum_api.catalogue.tests.test_cache_scope_no_db.BumpTests', 'curriculum_api.catalogue.tests.test_cache_scope_no_db.BumpFailureTests', 'curriculum_api.catalogue.tests.test_cache_scope_no_db.WriteOutsideRequestTests', 'curriculum_api.catalogue.tests.test_read_runtime_boundary_no_db', 'curriculum_api.catalogue.tests.test_cache_latency_no_db', 'curriculum_api.catalogue.tests.test_cache_scope_no_db.ScopedCacheTests', 'curriculum_api.catalogue.tests.test_cache_scope_no_db.TwoWorkerTests', 'curriculum_api.catalogue.tests.test_cache_scope_no_db.LearnerFreshnessTests', 'curriculum_api.catalogue.tests.test_http_cache_no_db.CachedValueSingleFlightTests', 'curriculum_api.catalogue.tests.test_programme_modules_read_path_no_db.ForcedReadSharingTests', 'curriculum_api.catalogue.tests.test_shared_reads_no_db.LearnerSchemaCacheTests', 'curriculum_api.catalogue.tests.test_component_summary_no_db.ArchivedCohortsTests', 'curriculum_api.catalogue.tests.test_component_summary_no_db.ArchivedModuleComponentCountTests', 'curriculum_api.catalogue.tests.test_archive_index_no_db'):
             fixture_suite.addTests(unittest.defaultTestLoader.loadTestsFromName(module))
-        for module in ('curriculum_api.test_directory_workspace_boundary_no_db', 'curriculum_api.tests_learner_directory', 'curriculum_api.test_learner_directory_details_no_db.DirectoryDetailsEndpointTests', 'curriculum_api.test_learner_directory_details_no_db.DirectoryActivitySummaryTests.test_future_completion_does_not_mask_overdue_work_and_each_denominator_is_independent', 'curriculum_api.test_learner_directory_details_no_db.DirectoryActivitySummaryTests.test_explicit_end_of_week_deadlines_and_real_delivery_week_dates', 'curriculum_api.test_learner_directory_details_no_db.DirectoryActivitySummaryTests.test_missing_or_ambiguous_dates_are_not_reported_as_a_complete_or_zero_target', 'curriculum_api.test_learner_directory_details_no_db.DirectoryActivitySummaryTests.test_empty_future_and_explicitly_unscheduled_content_have_no_false_percentage', 'curriculum_api.test_learner_directory_details_no_db.DirectoryActivitySummaryTests.test_exact_module_links_include_imports_and_exclude_other_groups'):
+        for module in ('curriculum_api.directory.tests.test_directory_workspace_boundary_no_db', 'curriculum_api.directory.tests.tests_learner_directory', 'curriculum_api.directory.tests.test_learner_directory_details_no_db.DirectoryDetailsEndpointTests', 'curriculum_api.directory.tests.test_learner_directory_details_no_db.DirectoryActivitySummaryTests.test_future_completion_does_not_mask_overdue_work_and_each_denominator_is_independent', 'curriculum_api.directory.tests.test_learner_directory_details_no_db.DirectoryActivitySummaryTests.test_explicit_end_of_week_deadlines_and_real_delivery_week_dates', 'curriculum_api.directory.tests.test_learner_directory_details_no_db.DirectoryActivitySummaryTests.test_missing_or_ambiguous_dates_are_not_reported_as_a_complete_or_zero_target', 'curriculum_api.directory.tests.test_learner_directory_details_no_db.DirectoryActivitySummaryTests.test_empty_future_and_explicitly_unscheduled_content_have_no_false_percentage', 'curriculum_api.directory.tests.test_learner_directory_details_no_db.DirectoryActivitySummaryTests.test_exact_module_links_include_imports_and_exclude_other_groups'):
             fixture_suite.addTests(unittest.defaultTestLoader.loadTestsFromName(module))
-        for module in ('curriculum_api.test_hierarchy_preparation_boundary_no_db', 'curriculum_api.test_attachment_preparation_boundary_no_db', 'curriculum_api.test_content_validation_boundary_no_db', 'curriculum_api.test_http_cache_no_db.PartialReadSaveGuardTests', 'curriculum_api.test_progress_membership_boundary_no_db', 'curriculum_api.test_learner_status_counts_no_db', 'curriculum_api.test_learner_status_count_performance_no_db', 'curriculum_api.test_learner_placement_joins_no_db', 'learner_api.test_manual_roster_mode_no_db', 'curriculum_api.tests_learner_assignments.AssignmentTests', 'curriculum_api.tests_learner_assignments.AssignmentEndpointTests', 'curriculum_api.tests_learner_assignments.ModuleRosterTests'):
+        for module in ('curriculum_api.catalogue.tests.test_hierarchy_preparation_boundary_no_db', 'curriculum_api.catalogue.tests.test_attachment_preparation_boundary_no_db', 'curriculum_api.catalogue.tests.test_content_validation_boundary_no_db', 'curriculum_api.catalogue.tests.test_http_cache_no_db.PartialReadSaveGuardTests', 'curriculum_api.directory.tests.test_progress_membership_boundary_no_db', 'curriculum_api.directory.tests.test_learner_status_counts_no_db', 'curriculum_api.directory.tests.test_learner_status_count_performance_no_db', 'curriculum_api.directory.tests.test_learner_placement_joins_no_db', 'learner_api.test_manual_roster_mode_no_db', 'curriculum_api.directory.tests.tests_learner_assignments.AssignmentTests', 'curriculum_api.directory.tests.tests_learner_assignments.AssignmentEndpointTests', 'curriculum_api.directory.tests.tests_learner_assignments.ModuleRosterTests'):
             fixture_suite.addTests(unittest.defaultTestLoader.loadTestsFromName(module))
-        fixture_suite.addTests(unittest.defaultTestLoader.loadTestsFromName('curriculum_api.test_required_read_failures_no_db'))
+        fixture_suite.addTests(unittest.defaultTestLoader.loadTestsFromName('curriculum_api.catalogue.tests.test_required_read_failures_no_db'))
         # Existing DB-free fixtures mock generic authoring reads. Individual
         # PostgreSQL-specific cases still select their own vendor explicitly.
         # SimpleTestCase continues to forbid every database operation.
@@ -2883,50 +2883,50 @@ if __name__=='__main__':
             # Diagnose against frozen pre-extraction implementations without
             # weakening any existing assertion or hiding a failing result.
             original_suite = unittest.TestSuite()
-            for module in ('curriculum_api.test_home_summary_no_db', 'curriculum_api.test_home_source_no_db',
-                           'curriculum_api.test_programme_list_no_db', 'curriculum_api.test_catalogue_reads_no_db',
-                       'curriculum_api.test_programme_ksb_source_no_db.StoredSourceReaderTests',
-                       'curriculum_api.test_programme_ksb_source_no_db.AppliedProfileTests',
-                       'curriculum_api.test_programme_ksb_source_no_db.ProgrammeCardLabelTests',
-                       'curriculum_api.test_programme_read_boundary_no_db',
-                       'curriculum_api.tests_programme_detail_sections',
-                       'curriculum_api.test_programme_modules_workspace_no_db',
-                       'curriculum_api.test_programme_workspace_latency_no_db',
-                       'curriculum_api.test_programme_workspace_text_no_db',
-                       'curriculum_api.test_module_read_boundary_no_db',
-                       'curriculum_api.test_curriculum_projection_performance_no_db.CurriculumProjectionPerformanceTests.test_programme_detail_enrichment_omits_heavy_component_content',
-                       'curriculum_api.test_curriculum_projection_performance_no_db.CurriculumProjectionPerformanceTests.test_programme_authoring_modules_omits_heavy_component_content',
-                       'curriculum_api.test_module_builder_latency_no_db.GroupedCatalogueTests',
-                       'curriculum_api.test_module_builder_latency_no_db.ModuleListVisibilityTests',
-                       'curriculum_api.test_http_cache_no_db.WeekOutlineTests',
-                       'curriculum_api.test_delivery_read_boundary_no_db',
-                       'curriculum_api.test_shared_reads_no_db.SharedParentReadTests',
-                       'curriculum_api.test_shared_reads_no_db.SharedWeekIndexTests',
-                       'curriculum_api.test_authoring_read_boundary_no_db',
-                       'curriculum_api.test_structure_read_boundary_no_db',
-                       'curriculum_api.test_structure_transport_no_db',
-                       'curriculum_api.test_http_cache_no_db.PagedComponentReadTests',
-                       'curriculum_api.test_component_programme_view_no_db.ProgrammeViewSqlTests.test_content_mode_is_unchanged',
-                       'curriculum_api.test_component_catalogue_boundary_no_db',
-                       'curriculum_api.test_read_adapters_boundary_no_db',
-                       'curriculum_api.test_authoring_row_cache_no_db',
-                       'curriculum_api.test_transport_boundary_no_db',
-                       'curriculum_api.test_authoring_placement_names_no_db.DerivedPlacementNamesSqlTests',
-                       'curriculum_api.test_authoring_placement_names_no_db.DerivedPlacementNamesExecutionTests',
-                       'curriculum_api.test_programme_modules_read_path_no_db.PrefetchTests',
-                       'curriculum_api.test_programme_modules_read_path_no_db.PrefetchMatchesTheReadsTests',
-                       'curriculum_api.test_ksb_description_deferred_no_db.DeferredRelationTests.test_curriculum_select_defers_it_and_keeps_the_key_it_is_looked_up_by',
-                       'curriculum_api.test_unified_reader_no_db',
-                       'curriculum_api.test_component_programme_view_no_db.ComponentSummaryKsbCodesTests',
-                       'curriculum_api.test_component_summary_no_db.ComponentSummaryTests',
-                       'curriculum_api.test_component_summary_no_db.ComponentSummaryViewTests',
-                       'curriculum_api.test_component_programme_view_no_db.ProgrammeViewEndpointTests',
-                       'curriculum_api.test_component_programme_view_no_db.ProgrammeViewExcludedColumnsSqlTests',
-                       'curriculum_api.test_component_programme_view_no_db.ProgrammePageProjectionTests.test_keeps_only_the_page_settings_including_empty_ones_and_marks_the_row',
-                       'curriculum_api.test_component_programme_view_no_db.ProgrammePageProjectionTests.test_a_row_that_loses_nothing_is_returned_as_it_is',
-                       'curriculum_api.test_component_programme_view_no_db.ProgrammePageProjectionTests.test_what_the_database_stripped_marks_the_row_even_if_nothing_is_left_to_trim',
-                       'curriculum_api.test_component_programme_view_no_db.ProgrammePageProjectionTests.test_never_edits_the_cached_row',
-                       'curriculum_api.test_component_programme_view_no_db.ProgrammePageProjectionTests.test_a_marked_row_is_refused_on_save_before_any_database_read',
+            for module in ('curriculum_api.catalogue.tests.test_home_summary_no_db', 'curriculum_api.catalogue.tests.test_home_source_no_db',
+                           'curriculum_api.catalogue.tests.test_programme_list_no_db', 'curriculum_api.catalogue.tests.test_catalogue_reads_no_db',
+                       'curriculum_api.catalogue.tests.test_programme_ksb_source_no_db.StoredSourceReaderTests',
+                       'curriculum_api.catalogue.tests.test_programme_ksb_source_no_db.AppliedProfileTests',
+                       'curriculum_api.catalogue.tests.test_programme_ksb_source_no_db.ProgrammeCardLabelTests',
+                       'curriculum_api.catalogue.tests.test_programme_read_boundary_no_db',
+                       'curriculum_api.catalogue.tests.tests_programme_detail_sections',
+                       'curriculum_api.catalogue.tests.test_programme_modules_workspace_no_db',
+                       'curriculum_api.catalogue.tests.test_programme_workspace_latency_no_db',
+                       'curriculum_api.catalogue.tests.test_programme_workspace_text_no_db',
+                       'curriculum_api.catalogue.tests.test_module_read_boundary_no_db',
+                       'curriculum_api.catalogue.tests.test_curriculum_projection_performance_no_db.CurriculumProjectionPerformanceTests.test_programme_detail_enrichment_omits_heavy_component_content',
+                       'curriculum_api.catalogue.tests.test_curriculum_projection_performance_no_db.CurriculumProjectionPerformanceTests.test_programme_authoring_modules_omits_heavy_component_content',
+                       'curriculum_api.catalogue.tests.test_module_builder_latency_no_db.GroupedCatalogueTests',
+                       'curriculum_api.catalogue.tests.test_module_builder_latency_no_db.ModuleListVisibilityTests',
+                       'curriculum_api.catalogue.tests.test_http_cache_no_db.WeekOutlineTests',
+                       'curriculum_api.catalogue.tests.test_delivery_read_boundary_no_db',
+                       'curriculum_api.catalogue.tests.test_shared_reads_no_db.SharedParentReadTests',
+                       'curriculum_api.catalogue.tests.test_shared_reads_no_db.SharedWeekIndexTests',
+                       'curriculum_api.catalogue.tests.test_authoring_read_boundary_no_db',
+                       'curriculum_api.catalogue.tests.test_structure_read_boundary_no_db',
+                       'curriculum_api.catalogue.tests.test_structure_transport_no_db',
+                       'curriculum_api.catalogue.tests.test_http_cache_no_db.PagedComponentReadTests',
+                       'curriculum_api.catalogue.tests.test_component_programme_view_no_db.ProgrammeViewSqlTests.test_content_mode_is_unchanged',
+                       'curriculum_api.catalogue.tests.test_component_catalogue_boundary_no_db',
+                       'curriculum_api.catalogue.tests.test_read_adapters_boundary_no_db',
+                       'curriculum_api.catalogue.tests.test_authoring_row_cache_no_db',
+                       'curriculum_api.catalogue.tests.test_transport_boundary_no_db',
+                       'curriculum_api.catalogue.tests.test_authoring_placement_names_no_db.DerivedPlacementNamesSqlTests',
+                       'curriculum_api.catalogue.tests.test_authoring_placement_names_no_db.DerivedPlacementNamesExecutionTests',
+                       'curriculum_api.catalogue.tests.test_programme_modules_read_path_no_db.PrefetchTests',
+                       'curriculum_api.catalogue.tests.test_programme_modules_read_path_no_db.PrefetchMatchesTheReadsTests',
+                       'curriculum_api.catalogue.tests.test_ksb_description_deferred_no_db.DeferredRelationTests.test_curriculum_select_defers_it_and_keeps_the_key_it_is_looked_up_by',
+                       'curriculum_api.catalogue.tests.test_unified_reader_no_db',
+                       'curriculum_api.catalogue.tests.test_component_programme_view_no_db.ComponentSummaryKsbCodesTests',
+                       'curriculum_api.catalogue.tests.test_component_summary_no_db.ComponentSummaryTests',
+                       'curriculum_api.catalogue.tests.test_component_summary_no_db.ComponentSummaryViewTests',
+                       'curriculum_api.catalogue.tests.test_component_programme_view_no_db.ProgrammeViewEndpointTests',
+                       'curriculum_api.catalogue.tests.test_component_programme_view_no_db.ProgrammeViewExcludedColumnsSqlTests',
+                       'curriculum_api.catalogue.tests.test_component_programme_view_no_db.ProgrammePageProjectionTests.test_keeps_only_the_page_settings_including_empty_ones_and_marks_the_row',
+                       'curriculum_api.catalogue.tests.test_component_programme_view_no_db.ProgrammePageProjectionTests.test_a_row_that_loses_nothing_is_returned_as_it_is',
+                       'curriculum_api.catalogue.tests.test_component_programme_view_no_db.ProgrammePageProjectionTests.test_what_the_database_stripped_marks_the_row_even_if_nothing_is_left_to_trim',
+                       'curriculum_api.catalogue.tests.test_component_programme_view_no_db.ProgrammePageProjectionTests.test_never_edits_the_cached_row',
+                       'curriculum_api.catalogue.tests.test_component_programme_view_no_db.ProgrammePageProjectionTests.test_a_marked_row_is_refused_on_save_before_any_database_read',
                        ):
                 original_suite.addTests(unittest.defaultTestLoader.loadTestsFromName(module))
             print('PRE-BATCH03 ORACLE: existing fixture suite', flush=True)
@@ -2937,7 +2937,7 @@ if __name__=='__main__':
                               for test, trace in result.failures + result.errors)
             print('PRE/POST failure signatures equal:', failures(original_result) == failures(fixture_result), flush=True)
             # Current batch oracle: restore exactly the 13 pre-module-read bodies.
-            from curriculum_api.test_module_read_boundary_no_db import original_module_reads
+            from curriculum_api.catalogue.tests.test_module_read_boundary_no_db import original_module_reads
             failed_names = [test.id() for test, _trace in fixture_result.failures + fixture_result.errors
                             if '.test_module_read_boundary_no_db.' not in test.id()]
             pre_module_suite = unittest.TestSuite(

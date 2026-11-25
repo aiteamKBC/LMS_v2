@@ -9,8 +9,8 @@ import unittest
 from django.db import connection, transaction
 from curriculum_api import views, learning_storage
 from curriculum_api.catalogue.infrastructure import authoring_writes
-from curriculum_api.test_authoring_storage_boundary_no_db import storage_scope, free_ports
-from curriculum_api.test_module_commands_boundary_no_db import recording
+from curriculum_api.catalogue.tests.test_authoring_storage_boundary_no_db import storage_scope, free_ports
+from curriculum_api.catalogue.tests.test_module_commands_boundary_no_db import recording
 
 TABLE = 'phase1f_authoring_storage.rows'
 

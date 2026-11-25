@@ -1,4 +1,6 @@
 """Native review meeting context uses the exact authorized calendar association."""
+import curriculum_api.review_management.application.instance_definitions as review_application_instance_definitions
+
 from unittest.mock import patch
 
 from django.test import SimpleTestCase
@@ -21,7 +23,7 @@ class NativeReviewMeetingContextTests(SimpleTestCase):
     def test_form_exposes_only_linked_teams_booking(self):
         meeting = CoachCalendarEvent(event_key='native:1', event_type='review', status='scheduled',
             meeting_link='https://example.invalid/meeting', graph_web_link='')
-        with patch.object(views.curriculum_review_instances, 'review_instance_form_definition',
+        with patch.object(review_application_instance_definitions, 'review_instance_form_definition',
                           return_value={'template': {}, 'sections': []}), \
              patch.object(views.LearnerProfile.objects, 'filter') as profiles, \
              patch.object(views, '_review_instance_calendar_record', return_value=meeting), \
@@ -34,7 +36,7 @@ class NativeReviewMeetingContextTests(SimpleTestCase):
     def test_unlinked_or_no_link_does_not_expose_meeting(self):
         for meeting in (None, CoachCalendarEvent(event_key='native:1', meeting_link='', graph_web_link='')):
             with self.subTest(meeting=meeting), \
-                 patch.object(views.curriculum_review_instances, 'review_instance_form_definition',
+                 patch.object(review_application_instance_definitions, 'review_instance_form_definition',
                               return_value={'template': {}, 'sections': []}), \
                  patch.object(views.LearnerProfile.objects, 'filter') as profiles, \
                  patch.object(views, '_review_instance_calendar_record', return_value=meeting), \

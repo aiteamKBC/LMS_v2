@@ -16,7 +16,17 @@ from unittest.mock import patch
 from django.db import connection
 from django.test import RequestFactory, TestCase
 
-from curriculum_api import review_instances, review_types, reviews
+import curriculum_api.review_management.api.commands as review_api_commands
+import curriculum_api.review_management.application.instance_answers as review_application_instance_answers
+import curriculum_api.review_management.application.instance_definitions as review_application_instance_definitions
+import curriculum_api.review_management.domain.instance_rules as review_domain_instance_rules
+import curriculum_api.review_management.infrastructure.instance_relations as review_infrastructure_instance_relations
+import curriculum_api.review_management.infrastructure.instance_rows as review_infrastructure_instance_rows
+import curriculum_api.review_management.infrastructure.instance_schema as review_infrastructure_instance_schema
+import curriculum_api.review_management.infrastructure.relations as review_infrastructure_relations
+import curriculum_api.review_management.infrastructure.template_schema as review_infrastructure_template_schema
+import curriculum_api.review_management.infrastructure.type_rows as review_infrastructure_type_rows
+import curriculum_api.review_management.infrastructure.type_schema as review_infrastructure_type_schema
 from curriculum_api import views as curriculum_views
 
 from . import views as coach_views
@@ -41,9 +51,9 @@ class AttendanceInProgressTestCase(TestCase):
         curriculum_views.reset_schema_ready_flags()
         curriculum_views.invalidate_curriculum_cache()
         self._ensure_programmes_table()
-        reviews.provision_review_template_tables()
-        review_types.provision_review_types_table()
-        review_instances.provision_review_instance_tables()
+        review_infrastructure_template_schema.provision_review_template_tables()
+        review_infrastructure_type_schema.provision_review_types_table()
+        review_infrastructure_instance_schema.provision_review_instance_tables()
         self._clear()
         self._programme()
 
@@ -66,15 +76,15 @@ class AttendanceInProgressTestCase(TestCase):
 
     def _clear(self):
         for table in (
-            review_instances.REVIEW_INSTANCE_SIGNATURES_TABLE,
-            review_instances.REVIEW_INSTANCE_ANSWERS_TABLE,
-            review_instances.REVIEW_INSTANCES_TABLE,
-            reviews.REVIEW_FIELDS_TABLE, reviews.REVIEW_SECTIONS_TABLE,
-            reviews.REVIEW_TEMPLATES_TABLE, review_types.REVIEW_TYPES_TABLE, 'programmes',
+            review_infrastructure_instance_relations.REVIEW_INSTANCE_SIGNATURES_TABLE,
+            review_infrastructure_instance_relations.REVIEW_INSTANCE_ANSWERS_TABLE,
+            review_infrastructure_instance_relations.REVIEW_INSTANCES_TABLE,
+            review_infrastructure_relations.REVIEW_FIELDS_TABLE, review_infrastructure_relations.REVIEW_SECTIONS_TABLE,
+            review_infrastructure_relations.REVIEW_TEMPLATES_TABLE, review_infrastructure_relations.REVIEW_TYPES_TABLE, 'programmes',
         ):
             with connection.cursor() as cursor:
                 cursor.execute(f'delete from {curriculum_views.authoring_table_name(table)}')
-        review_types.seed_system_review_types()
+        review_infrastructure_type_schema.seed_system_review_types()
 
     def _programme(self):
         curriculum_views.insert_row('programmes', {
@@ -85,8 +95,8 @@ class AttendanceInProgressTestCase(TestCase):
         curriculum_views.invalidate_curriculum_cache()
 
     def _template(self, *, type_code='mcm', signatures=True):
-        type_id = review_types.get_review_type_by_code(type_code)['id']
-        review_id, errors = reviews.create_review(PROGRAMME_ID, {
+        type_id = review_infrastructure_type_rows.get_review_type_by_code(type_code)['id']
+        review_id, errors = review_api_commands.create_review(PROGRAMME_ID, {
             'name': 'Monthly Coaching Meeting' if type_code == 'mcm' else 'Progress Review',
             'enabled': True, 'reviewTypeId': type_id,
             'recurrence': {'interval': 4, 'unit': 'weeks'}, 'scheduleAnchorDate': '2026-01-01',
@@ -123,14 +133,14 @@ class AttendanceInProgressTestCase(TestCase):
         return record
 
     def _instance(self, record):
-        return review_instances.get_review_instance(record.review_instance_id)
+        return review_infrastructure_instance_rows.get_review_instance(record.review_instance_id)
 
     # -- prerequisite: scheduling actually reaches review_instances 'scheduled' -----
 
     def test_scheduling_moves_the_linked_instance_to_scheduled(self):
         record = self._scheduled_linked_row()
         self.assertTrue(record.review_instance_id)
-        self.assertEqual(self._instance(record)['status'], review_instances.STATUS_SCHEDULED)
+        self.assertEqual(self._instance(record)['status'], review_domain_instance_rules.STATUS_SCHEDULED)
 
     # -- 1/2/3: who joins ------------------------------------------------------
 
@@ -142,7 +152,7 @@ class AttendanceInProgressTestCase(TestCase):
         }]
         changed = coach_views.apply_teams_attendance_status_transition(record, records)
         self.assertTrue(changed)
-        self.assertEqual(self._instance(record)['status'], review_instances.STATUS_IN_PROGRESS)
+        self.assertEqual(self._instance(record)['status'], review_domain_instance_rules.STATUS_IN_PROGRESS)
 
     def test_learner_joins_first_moves_to_in_progress(self):
         record = self._scheduled_linked_row()
@@ -152,7 +162,7 @@ class AttendanceInProgressTestCase(TestCase):
         }]
         changed = coach_views.apply_teams_attendance_status_transition(record, records)
         self.assertTrue(changed)
-        self.assertEqual(self._instance(record)['status'], review_instances.STATUS_IN_PROGRESS)
+        self.assertEqual(self._instance(record)['status'], review_domain_instance_rules.STATUS_IN_PROGRESS)
 
     def test_both_join_is_a_single_idempotent_transition(self):
         record = self._scheduled_linked_row()
@@ -166,7 +176,7 @@ class AttendanceInProgressTestCase(TestCase):
         second = coach_views.apply_teams_attendance_status_transition(record, records)
         self.assertTrue(first)
         self.assertFalse(second)  # already in-progress -- no-op, not a re-transition
-        self.assertEqual(self._instance(record)['status'], review_instances.STATUS_IN_PROGRESS)
+        self.assertEqual(self._instance(record)['status'], review_domain_instance_rules.STATUS_IN_PROGRESS)
 
     # -- 4/5/8: nobody joins ----------------------------------------------------
 
@@ -174,7 +184,7 @@ class AttendanceInProgressTestCase(TestCase):
         record = self._scheduled_linked_row()
         changed = coach_views.apply_teams_attendance_status_transition(record, [])
         self.assertFalse(changed)
-        self.assertEqual(self._instance(record)['status'], review_instances.STATUS_SCHEDULED)
+        self.assertEqual(self._instance(record)['status'], review_domain_instance_rules.STATUS_SCHEDULED)
 
     def test_scheduled_time_passing_with_no_attendance_stays_scheduled(self):
         record = self._scheduled_linked_row()
@@ -182,14 +192,14 @@ class AttendanceInProgressTestCase(TestCase):
         record.save(update_fields=['scheduled_date'])
         changed = coach_views.apply_teams_attendance_status_transition(record, [])
         self.assertFalse(changed)
-        self.assertEqual(self._instance(record)['status'], review_instances.STATUS_SCHEDULED)
+        self.assertEqual(self._instance(record)['status'], review_domain_instance_rules.STATUS_SCHEDULED)
 
     def test_teams_url_exists_but_no_attendance_record_stays_scheduled(self):
         record = self._scheduled_linked_row()
         self.assertTrue(record.meeting_link)
         changed = coach_views.apply_teams_attendance_status_transition(record, [])
         self.assertFalse(changed)
-        self.assertEqual(self._instance(record)['status'], review_instances.STATUS_SCHEDULED)
+        self.assertEqual(self._instance(record)['status'], review_domain_instance_rules.STATUS_SCHEDULED)
 
     def test_zero_duration_interval_stays_scheduled(self):
         record = self._scheduled_linked_row()
@@ -200,7 +210,7 @@ class AttendanceInProgressTestCase(TestCase):
         }]
         changed = coach_views.apply_teams_attendance_status_transition(record, records)
         self.assertFalse(changed)
-        self.assertEqual(self._instance(record)['status'], review_instances.STATUS_SCHEDULED)
+        self.assertEqual(self._instance(record)['status'], review_domain_instance_rules.STATUS_SCHEDULED)
 
     def test_positive_short_interval_moves_to_in_progress(self):
         record = self._scheduled_linked_row()
@@ -211,7 +221,7 @@ class AttendanceInProgressTestCase(TestCase):
         }]
         changed = coach_views.apply_teams_attendance_status_transition(record, records)
         self.assertTrue(changed)
-        self.assertEqual(self._instance(record)['status'], review_instances.STATUS_IN_PROGRESS)
+        self.assertEqual(self._instance(record)['status'], review_domain_instance_rules.STATUS_IN_PROGRESS)
 
     def test_attendance_tracker_does_not_mark_zero_duration_as_attended(self):
         serialized = coach_views.serialize_coach_meeting_attendance_record('report-1', {
@@ -229,7 +239,7 @@ class AttendanceInProgressTestCase(TestCase):
         request.coach_email = COACH_EMAIL
         response = unwrap(coach_views.coach_review_instance_detail)(request, record.review_instance_id)
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(self._instance(record)['status'], review_instances.STATUS_SCHEDULED)
+        self.assertEqual(self._instance(record)['status'], review_domain_instance_rules.STATUS_SCHEDULED)
 
     def test_opening_a_scheduled_unlinked_review_recovers_scheduled_instance(self):
         review_id = self._template()
@@ -265,15 +275,15 @@ class AttendanceInProgressTestCase(TestCase):
         instance_id = json.loads(response.content)['instanceId']
         record.refresh_from_db()
         self.assertEqual(record.review_instance_id, instance_id)
-        self.assertEqual(review_instances.get_review_instance(instance_id)['status'], review_instances.STATUS_SCHEDULED)
+        self.assertEqual(review_infrastructure_instance_rows.get_review_instance(instance_id)['status'], review_domain_instance_rules.STATUS_SCHEDULED)
 
     def test_saving_a_draft_answer_does_not_move_status(self):
         record = self._scheduled_linked_row()
         instance = self._instance(record)
-        definition = review_instances.review_instance_form_definition(instance)
+        definition = review_application_instance_definitions.review_instance_form_definition(instance)
         field_id = definition['sections'][0]['fields'][0]['id']
-        review_instances.save_review_instance_answers(instance, {field_id: 'Going well.'}, actor=COACH_EMAIL)
-        self.assertEqual(self._instance(record)['status'], review_instances.STATUS_SCHEDULED)
+        review_application_instance_answers.save_review_instance_answers(instance, {field_id: 'Going well.'}, actor=COACH_EMAIL)
+        self.assertEqual(self._instance(record)['status'], review_domain_instance_rules.STATUS_SCHEDULED)
 
     # -- 9/10: identity matching --------------------------------------------------
 
@@ -285,7 +295,7 @@ class AttendanceInProgressTestCase(TestCase):
         }]
         changed = coach_views.apply_teams_attendance_status_transition(record, records)
         self.assertFalse(changed)
-        self.assertEqual(self._instance(record)['status'], review_instances.STATUS_SCHEDULED)
+        self.assertEqual(self._instance(record)['status'], review_domain_instance_rules.STATUS_SCHEDULED)
 
     def test_identical_display_name_different_email_is_not_credited(self):
         record = self._scheduled_linked_row()
@@ -297,14 +307,14 @@ class AttendanceInProgressTestCase(TestCase):
         }]
         changed = coach_views.apply_teams_attendance_status_transition(record, records)
         self.assertFalse(changed)
-        self.assertEqual(self._instance(record)['status'], review_instances.STATUS_SCHEDULED)
+        self.assertEqual(self._instance(record)['status'], review_domain_instance_rules.STATUS_SCHEDULED)
 
     # -- 11/12: monotonic, never regress -----------------------------------------
 
     def test_awaiting_signature_is_never_moved_back_to_in_progress(self):
         record = self._scheduled_linked_row()
-        review_instances.force_review_instance_status_for_tests(
-            record.review_instance_id, review_instances.STATUS_AWAITING_SIGNATURE, actor='test',
+        review_infrastructure_instance_rows.force_review_instance_status_for_tests(
+            record.review_instance_id, review_domain_instance_rules.STATUS_AWAITING_SIGNATURE, actor='test',
         )
         records = [{
             'email': COACH_EMAIL, 'displayName': 'Coach One',
@@ -312,12 +322,12 @@ class AttendanceInProgressTestCase(TestCase):
         }]
         changed = coach_views.apply_teams_attendance_status_transition(record, records)
         self.assertFalse(changed)
-        self.assertEqual(self._instance(record)['status'], review_instances.STATUS_AWAITING_SIGNATURE)
+        self.assertEqual(self._instance(record)['status'], review_domain_instance_rules.STATUS_AWAITING_SIGNATURE)
 
     def test_completed_is_never_moved_back_to_in_progress(self):
         record = self._scheduled_linked_row()
-        review_instances.force_review_instance_status_for_tests(
-            record.review_instance_id, review_instances.STATUS_COMPLETED, actor='test',
+        review_infrastructure_instance_rows.force_review_instance_status_for_tests(
+            record.review_instance_id, review_domain_instance_rules.STATUS_COMPLETED, actor='test',
             extra={'completed_at': curriculum_views.datetime.utcnow()},
         )
         records = [{
@@ -326,7 +336,7 @@ class AttendanceInProgressTestCase(TestCase):
         }]
         changed = coach_views.apply_teams_attendance_status_transition(record, records)
         self.assertFalse(changed)
-        self.assertEqual(self._instance(record)['status'], review_instances.STATUS_COMPLETED)
+        self.assertEqual(self._instance(record)['status'], review_domain_instance_rules.STATUS_COMPLETED)
 
     # -- 13: idempotent, started_at not rewritten --------------------------------
 
@@ -355,7 +365,7 @@ class AttendanceInProgressTestCase(TestCase):
         )
         changed_before = coach_views.apply_teams_attendance_status_transition(record, [])
         self.assertFalse(changed_before)
-        self.assertEqual(self._instance(record)['status'], review_instances.STATUS_SCHEDULED)
+        self.assertEqual(self._instance(record)['status'], review_domain_instance_rules.STATUS_SCHEDULED)
 
         records = [{
             'email': LEARNER_EMAIL, 'displayName': 'Learner One',
@@ -363,7 +373,7 @@ class AttendanceInProgressTestCase(TestCase):
         }]
         changed = coach_views.apply_teams_attendance_status_transition(record, records)
         self.assertTrue(changed)
-        self.assertEqual(self._instance(record)['status'], review_instances.STATUS_IN_PROGRESS)
+        self.assertEqual(self._instance(record)['status'], review_domain_instance_rules.STATUS_IN_PROGRESS)
 
     # -- 15: unlinked historical row never gets a review_instance created --------
 
@@ -385,7 +395,7 @@ class AttendanceInProgressTestCase(TestCase):
         self.assertFalse(changed)
         # No review_instances row was ever created for this row.
         rows = curriculum_views.fetch_all(
-            f'select id from {curriculum_views.table_name(review_instances.REVIEW_INSTANCES_TABLE)} '
+            f'select id from {curriculum_views.table_name(review_infrastructure_instance_relations.REVIEW_INSTANCES_TABLE)} '
             f'where learner_id = %s', [9999],
         )
         self.assertEqual(rows, [])

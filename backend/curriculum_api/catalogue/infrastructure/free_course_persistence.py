@@ -12,8 +12,8 @@ from curriculum_api.catalogue.infrastructure.course_schema_runtime import ensure
 from curriculum_api.catalogue.infrastructure.database_reads import quote_ident
 from curriculum_api.catalogue.infrastructure.database_reads import rows_as_dicts
 from curriculum_api.catalogue.infrastructure.record_identity import unique_timestamp_prefixed_id
-from curriculum_api.free_course_writer_mode import LEGACY
-from curriculum_api.free_course_writer_mode import require_mode
+from curriculum_api.catalogue.infrastructure.free_course_writer_mode import LEGACY
+from curriculum_api.catalogue.infrastructure.free_course_writer_mode import require_mode
 from django.db import DatabaseError
 from django.db import connection
 import re

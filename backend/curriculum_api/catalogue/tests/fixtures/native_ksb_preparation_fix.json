@@ -1,0 +1,52 @@
+{
+  "reason": "Normalized KSB preparation and mixed-view projection use the existing component/standard read contract, without copied physical placement/code columns. Runtime tests use the actual current implementation.",
+  "file": "free_course_native_schema.py",
+  "before_sha256": "67ad61f6a0590f0acb6e621808693f34014650ee6f40951f2b09499787d0d1f6",
+  "after_sha256": "9d47860096458ecf6559ed66c6d05005cfbf3c60cd9a0bad6b2556830a533d8a",
+  "edits": [
+    {
+      "start": 10,
+      "before": [],
+      "after": [
+        "from .catalogue.infrastructure.ksb_placement_reads import relation as ksb_placement_relation",
+        "KSB_DERIVED_COLUMNS = frozenset({'module_catalogue_id', 'week_id', 'ksb_code', 'ksb_description'})",
+        "",
+        "def _ksb_read_source():",
+        "    \"\"\"Use the same normalized placement/code projection as catalogue reads.",
+        "",
+        "    SQL construction only: migrations supply their own connection and must not",
+        "    initialize the runtime reader, schema caches or application settings.",
+        "    \"\"\"",
+        "    return ksb_placement_relation(include_description=True, AUTHORING_COMPONENTS_TABLE='components', AUTHORING_KSB_MAPPINGS_TABLE='ksb_mappings', _only=lambda: 'only ', authoring_table_name=lambda table: f'\"curriculum\".\"{table}\"')"
+      ]
+    },
+    {
+      "start": 58,
+      "before": [
+        "        cursor.execute(\"UPDATE curriculum.free_courses f SET\\n            content_ref=m.module_catalogue_id, authoring_data=to_jsonb(m),\\n            details_json=coalesce((SELECT to_jsonb(d) FROM curriculum.module_details d\\n                WHERE d.module_catalogue_id=m.module_catalogue_id), '{}'::jsonb),\\n            completion_json=coalesce((SELECT to_jsonb(c) FROM curriculum.module_completion_criteria c\\n                WHERE c.module_catalogue_id=m.module_catalogue_id), '{}'::jsonb),\\n            ksb_mappings=coalesce((SELECT jsonb_agg(to_jsonb(k) ORDER BY k.id)\\n                FROM curriculum.ksb_mappings k WHERE k.module_catalogue_id=m.module_catalogue_id), '[]'::jsonb)\\n            FROM curriculum.modules m WHERE f.module_catalogue_id=m.module_catalogue_id\\n              AND m.source_type='free_course' AND f.storage_version=1\")"
+      ],
+      "after": [
+        "        cursor.execute(sql.SQL(\"UPDATE curriculum.free_courses f SET\\n            content_ref=m.module_catalogue_id, authoring_data=to_jsonb(m),\\n            details_json=coalesce((SELECT to_jsonb(d) FROM curriculum.module_details d\\n                WHERE d.module_catalogue_id=m.module_catalogue_id), '{{}}'::jsonb),\\n            completion_json=coalesce((SELECT to_jsonb(c) FROM curriculum.module_completion_criteria c\\n                WHERE c.module_catalogue_id=m.module_catalogue_id), '{{}}'::jsonb),\\n            ksb_mappings=coalesce((SELECT jsonb_agg(to_jsonb(ksb_mappings.*) ORDER BY ksb_mappings.id)\\n                FROM {} WHERE ksb_mappings.module_catalogue_id=m.module_catalogue_id), '[]'::jsonb)\\n            FROM curriculum.modules m WHERE f.module_catalogue_id=m.module_catalogue_id\\n              AND m.source_type='free_course' AND f.storage_version=1\").format(sql.SQL(_ksb_read_source())))"
+      ]
+    },
+    {
+      "start": 93,
+      "before": [],
+      "after": [
+        "            source = sql.Identifier('curriculum', table)",
+        "            if table == 'ksb_mappings':",
+        "                source = sql.SQL(_ksb_read_source())",
+        "                available |= KSB_DERIVED_COLUMNS"
+      ]
+    },
+    {
+      "start": 98,
+      "before": [
+        "            cursor.execute(sql.SQL('CREATE OR REPLACE VIEW curriculum.{} AS SELECT {} FROM curriculum.{} UNION ALL SELECT * FROM curriculum.{}').format(sql.Identifier(view), ordinary, sql.Identifier(table), sql.Identifier(NATIVE_VIEWS[table])))"
+      ],
+      "after": [
+        "            cursor.execute(sql.SQL('CREATE OR REPLACE VIEW curriculum.{} AS SELECT {} FROM {} UNION ALL SELECT * FROM curriculum.{}').format(sql.Identifier(view), ordinary, source, sql.Identifier(NATIVE_VIEWS[table])))"
+      ]
+    }
+  ]
+}

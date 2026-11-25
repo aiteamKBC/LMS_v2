@@ -22,7 +22,13 @@ from types import SimpleNamespace
 from django.db import connection
 from django.test import TestCase
 
-from curriculum_api import review_instances, review_schedule, review_types, reviews
+import curriculum_api.review_management.api.commands as review_api_commands
+import curriculum_api.review_management.infrastructure.instance_schema as review_infrastructure_instance_schema
+import curriculum_api.review_management.infrastructure.relations as review_infrastructure_relations
+import curriculum_api.review_management.infrastructure.schedule_schema as review_infrastructure_schedule_schema
+import curriculum_api.review_management.infrastructure.template_schema as review_infrastructure_template_schema
+import curriculum_api.review_management.infrastructure.type_rows as review_infrastructure_type_rows
+import curriculum_api.review_management.infrastructure.type_schema as review_infrastructure_type_schema
 from curriculum_api import views as curriculum_views
 
 from .calendar import _generated_cycle_events, _serialize_event, review_type_rows_by_template
@@ -37,10 +43,10 @@ class ReviewTypeCalendarMetadataTestCase(TestCase):
         curriculum_views.reset_schema_ready_flags()
         curriculum_views.invalidate_curriculum_cache()
         self._ensure_programmes_table()
-        reviews.provision_review_template_tables()
-        review_types.provision_review_types_table()
-        review_schedule.provision_review_schedule_tables()
-        review_instances.provision_review_instance_tables()
+        review_infrastructure_template_schema.provision_review_template_tables()
+        review_infrastructure_type_schema.provision_review_types_table()
+        review_infrastructure_schedule_schema.provision_review_schedule_tables()
+        review_infrastructure_instance_schema.provision_review_instance_tables()
         self._clear()
         self._programme()
 
@@ -67,12 +73,12 @@ class ReviewTypeCalendarMetadataTestCase(TestCase):
 
     def _clear(self):
         for table in (
-            reviews.REVIEW_FIELDS_TABLE, reviews.REVIEW_SECTIONS_TABLE,
-            reviews.REVIEW_TEMPLATES_TABLE, review_types.REVIEW_TYPES_TABLE, 'programmes',
+            review_infrastructure_relations.REVIEW_FIELDS_TABLE, review_infrastructure_relations.REVIEW_SECTIONS_TABLE,
+            review_infrastructure_relations.REVIEW_TEMPLATES_TABLE, review_infrastructure_relations.REVIEW_TYPES_TABLE, 'programmes',
         ):
             with connection.cursor() as cursor:
                 cursor.execute(f'delete from {curriculum_views.authoring_table_name(table)}')
-        review_types.seed_system_review_types()
+        review_infrastructure_type_schema.seed_system_review_types()
 
     def _programme(self):
         curriculum_views.insert_row('programmes', {
@@ -84,7 +90,7 @@ class ReviewTypeCalendarMetadataTestCase(TestCase):
         curriculum_views.invalidate_curriculum_cache()
 
     def _review(self, *, name, type_id, interval=1, unit='months'):
-        review_id, errors = reviews.create_review(PROGRAMME_ID, {
+        review_id, errors = review_api_commands.create_review(PROGRAMME_ID, {
             'name': name,
             'enabled': True,
             'reviewTypeId': type_id,
@@ -100,10 +106,10 @@ class ReviewTypeCalendarMetadataTestCase(TestCase):
         return review_id
 
     def _system(self, code):
-        return review_types.get_review_type_by_code(code)['id']
+        return review_infrastructure_type_rows.get_review_type_by_code(code)['id']
 
     def _custom(self, name):
-        row, errors = review_types.create_review_type(name)
+        row, errors = review_api_commands.create_review_type(name)
         self.assertIsNone(errors, errors)
         return row['id']
 
@@ -182,7 +188,7 @@ class GeneratedEventMetadataTests(ReviewTypeCalendarMetadataTestCase):
         review_id = self._review(name='Monthly Coaching Meeting', type_id=self._system('mcm'))
         before = self._events()[0]['reviewTypeId']
 
-        reviews.update_review(review_id, {'name': 'Monthly Learner Catch-up'}, actor='test')
+        review_api_commands.update_review(review_id, {'name': 'Monthly Learner Catch-up'}, actor='test')
         after = self._events()[0]
 
         self.assertEqual(after['reviewTypeId'], before)
@@ -202,7 +208,7 @@ class GeneratedEventMetadataTests(ReviewTypeCalendarMetadataTestCase):
     def test_an_unclassified_template_reports_no_type_rather_than_guessing(self):
         review_id = self._review(name='Legacy review', type_id=self._system('mcm'))
         curriculum_views.update_rows(
-            reviews.REVIEW_TEMPLATES_TABLE, 'id = %s', [review_id], {'review_type_id': ''},
+            review_infrastructure_relations.REVIEW_TEMPLATES_TABLE, 'id = %s', [review_id], {'review_type_id': ''},
         )
         event = self._events()[0]
         self.assertIsNone(event['reviewTypeId'])
@@ -280,7 +286,7 @@ class StoredEventMetadataTests(ReviewTypeCalendarMetadataTestCase):
         # record -- a booked event follows its template's current type.
         review_id = self._review(name='Career Planning Session', type_id=self._custom('Career Review'))
         gateway = self._custom('Gateway Review')
-        reviews.update_review(review_id, {'reviewTypeId': gateway}, actor='test')
+        review_api_commands.update_review(review_id, {'reviewTypeId': gateway}, actor='test')
 
         event = _serialize_event(self._record(review_id))
         self.assertEqual(event['reviewTypeCode'], 'gateway_review')

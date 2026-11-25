@@ -33,17 +33,17 @@ def main():
                 migration = importlib.import_module('curriculum_api.migrations.' + name).Migration(name, 'curriculum_api')
                 state = migration.apply(state, editor)
         suite = unittest.defaultTestLoader.loadTestsFromNames([
-            'curriculum_api.test_bunny_stream', 'curriculum_api.test_video_imports',
-            'curriculum_api.test_video_uploads',
-            'curriculum_api.test_session_bunny',
-            'curriculum_api.test_session_captions',
-            'curriculum_api.test_youtube_download',
-            'curriculum_api.test_video_changes',
-            'curriculum_api.test_video_dedup',
-            'curriculum_api.test_free_course_video_worker',
-            'curriculum_api.tests_upload_storage.LocalBackendTests',
-            'curriculum_api.tests_upload_storage.AzureBackendTests',
-            'curriculum_api.tests_upload_storage.RangeServingTests',
+            'curriculum_api.catalogue.tests.test_bunny_stream', 'curriculum_api.catalogue.tests.test_video_imports',
+            'curriculum_api.catalogue.tests.test_video_uploads',
+            'curriculum_api.meetings.tests.test_session_bunny',
+            'curriculum_api.meetings.tests.test_session_captions',
+            'curriculum_api.catalogue.tests.test_youtube_download',
+            'curriculum_api.catalogue.tests.test_video_changes',
+            'curriculum_api.catalogue.tests.test_video_dedup',
+            'curriculum_api.catalogue.tests.test_free_course_video_worker',
+            'curriculum_api.catalogue.tests.tests_upload_storage.LocalBackendTests',
+            'curriculum_api.catalogue.tests.tests_upload_storage.AzureBackendTests',
+            'curriculum_api.catalogue.tests.tests_upload_storage.RangeServingTests',
         ])
         from django.test.utils import setup_test_environment, teardown_test_environment
         setup_test_environment()

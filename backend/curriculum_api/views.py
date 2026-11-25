@@ -402,15 +402,19 @@ from login.permissions import require_role, require_access, require_all_access
 from . import archive_state
 from .canonical_read_sql import module_expected_otjh_sql
 from . import curriculum_names
-from . import calendar_holidays, free_course_catalogue, ksb_mapping_placement, schema_compat, write_shape
+from curriculum_api import calendar_holidays
+from curriculum_api.catalogue.infrastructure import free_course_rows as free_course_catalogue
+from curriculum_api import ksb_mapping_placement
+from curriculum_api import schema_compat
+from curriculum_api import write_shape
 from . import group_coaches
-from .free_course_catalogue_store import FreeCourseInUse
+from curriculum_api.catalogue.infrastructure.free_course_catalogue_store import FreeCourseInUse
 from .weekly_schedule import module_weekly_schedule, merged_weekly_schedule, module_week_starts_on, merged_week_starts_on, first_weekly_session_day
 from .catalogue.infrastructure import runtime_state as cache_state
 from .catalogue.infrastructure.storage_context import native_only
 from .catalogue.infrastructure.course_storage_reads import with_course_storage
 from .course_pricing import API_FIELDS as COURSE_PRICING_FIELDS, pricing_payload, pricing_values
-from . import free_course_pricing
+from curriculum_api.catalogue.infrastructure import free_course_pricing as free_course_pricing
 from .teams_weekly_calendar import calendar_groups, save_weekday_calendar, stored_calendar_series, graph_event_utc
 from .teams_options_retry import microsoft_update_summary
 from .session_overrides import apply_session_overrides, override_clock, session_overrides
@@ -432,7 +436,9 @@ from learner_api.constants import (
     ACCESS_FREE_COURSE_AUTHORING,
     PROGRAMME_STATUS_CHOICES,
 )
-from .free_course_writer_mode import LEGACY, current_mode, require_mode
+from curriculum_api.catalogue.infrastructure.free_course_writer_mode import LEGACY
+from curriculum_api.catalogue.infrastructure.free_course_writer_mode import current_mode
+from curriculum_api.catalogue.infrastructure.free_course_writer_mode import require_mode
 from . import pptx_slides
 from . import schema_gate
 from . import shared_build
@@ -1168,19 +1174,17 @@ def reset_schema_ready_flags():
     # The notification ledger keeps its own latch, in its own module, for the
     # same reason as the ones above.
     tutor_notifications._TABLE_READY = False
-    # Review templates likewise -- reviews.py is a sibling module with its own
-    # latch, deferred-imported here to avoid a module-load-time circular import
-    # (reviews.py imports this module).
-    from . import reviews as _reviews
-    _reviews._REVIEW_TABLES_READY = False
-    from . import review_schedule as _review_schedule
-    _review_schedule._REVIEW_SCHEDULE_TABLES_READY = False
-    from . import review_types as _review_types
-    _review_types.reset_ready_flag()
-    from . import review_instances as _review_instances
-    _review_instances._TABLES_READY = False
-    _review_instances._MANUAL_OVERRIDES_TABLE_READY = False
-    _review_instances._LEARNER_REVIEW_ADDITIONS_TABLE_READY = False
+    # Review readiness belongs to feature infrastructure. Delegate resets
+    # explicitly so compatibility exports never become a second copy of
+    # these process-local flags.
+    import curriculum_api.review_management.infrastructure.template_schema as review_infrastructure_template_schema
+    review_infrastructure_template_schema.reset_review_tables_ready()
+    import curriculum_api.review_management.infrastructure.schedule_schema as review_infrastructure_schedule_schema
+    review_infrastructure_schedule_schema.reset_review_schedule_ready()
+    import curriculum_api.review_management.infrastructure.type_schema as review_infrastructure_type_schema
+    review_infrastructure_type_schema.reset_ready_flag()
+    import curriculum_api.review_management.infrastructure.instance_schema as review_infrastructure_instance_schema
+    review_infrastructure_instance_schema.reset_review_instance_readiness()
     _TABLE_COLUMNS_CACHE.clear()
     from .catalogue.infrastructure import database_reads
     database_reads._TABLE_COLUMNS_LISTED = False

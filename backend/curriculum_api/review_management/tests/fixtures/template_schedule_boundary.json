@@ -1,0 +1,657 @@
+{
+  "sources": {
+    "reviews": "\"\"\"Programme Review Templates (\"Reviews ID\" tab).\n\nA Review here is a reusable *template* belonging to one Programme -- its\nrecurrence, eligibility, participant/signature/visibility settings, and a\nForm Builder made of Sections, each holding Fields (questions). A Field of\ntype ``boolean_case_block`` may itself carry conditional child Fields, shown\nonly when the parent is answered \"yes\" or \"no\":\n\n    Review\n      Section (\"Meeting & Close\")\n        Field: boolean_case_block \"Please confirm the next session is booked\"\n          yesFields: [ Field: date \"The date for the next session is\" ]\n          noFields:  [ Field: text \"Why?\" ]\n\nIt is deliberately not a learner's completed review: that domain\n(``learner_review_instances`` / ``learner_review_answers``) does not exist yet\nand can be added later, referencing ``review_templates.id`` /\n``review_sections.id`` / ``review_fields.id``, without touching this module.\n\nStorage mirrors week_templates / week_template_components (see\n``views.provision_week_template_tables``): three tables in the ``curriculum``\nschema, provisioned by ``sql/2026-09-10_curriculum_review_templates.sql`` and\n``sql/2026-09-10_curriculum_review_sections_and_advanced_fields.sql`` on\nNeon, or created in-process for sqlite tests / local dev via\n``provision_review_template_tables`` -- see ``schema_gate`` for why request\npaths never provision schema themselves in production.\n\nEvery id is generated with ``views.unique_prefixed_id(...)``, the same\ngenerator every other curriculum entity (MOD-, PROG-, KSBP-, WT-) uses:\nReviews get ``REV-``, Sections get ``REVS-``, Fields (top-level and\nconditional children alike) get ``REVF-``.\n\nBackward compatibility: a write payload may send either the new\n``sections: [{ title, estimatedMinutes, fields: [...] }]`` shape, or the\noriginal flat ``fields: [...]`` shape from the first implementation -- the\nlatter is treated as sugar for one implicit section titled \"General\". Every\nread response includes both the canonical nested ``sections`` and a\nflattened ``fields`` convenience array (every field across every section,\nexcluding conditional children) so a caller written against the first\nversion keeps working unmodified.\n\"\"\"\nfrom __future__ import annotations\n\nimport logging\nfrom collections import defaultdict\nfrom datetime import datetime\n\nfrom django.db import connection, transaction\nfrom django.http import JsonResponse\nfrom django.views.decorators.csrf import csrf_exempt\n\nfrom . import review_types\nfrom . import schema_gate\nfrom . import views as curriculum_views\n\nlogger = logging.getLogger(__name__)\n\nREVIEW_TEMPLATES_TABLE = 'review_templates'\nREVIEW_SECTIONS_TABLE = 'review_sections'\nREVIEW_FIELDS_TABLE = 'review_fields'\n\nRECURRENCE_UNITS = ('days', 'weeks', 'months')\n\nFIELD_TYPES = (\n    'text', 'boolean', 'numeric', 'date', 'list_item', 'boolean_case_block',\n    'email', 'phone', 'postcode_address', 'title_description', 'text_multiline',\n    'action_button',\n)\n\n# Every field type carries a title/question, including title_description\n# (\"Title & Description\" is a display block whose own Title is that title)\n# and action_button (its Title is the text shown on the button itself, e.g.\n# \"Take snapshot\" -- chosen by whoever builds the form).\nFIELD_TYPES_REQUIRING_TITLE = FIELD_TYPES\n\n# Field types that never expect a learner-entered answer -- Required/Optional\n# is not a meaningful control for these in the Form Builder UI.\nDISPLAY_ONLY_FIELD_TYPES = ('title_description', 'action_button')\n\n# Only a boolean_case_block field may own conditional yes/no children, and\n# only these two condition values are valid on a child.\nCONDITIONAL_FIELD_TYPE = 'boolean_case_block'\nCONDITION_VALUES = ('yes', 'no')\n\n# Stable field meaning used by the canonical MCM integration. It lives in the\n# existing JSON field configuration and is frozen into each Review Instance.\nMEETING_SUMMARY_SEMANTIC_KEY = 'meeting_summary'\n\nPARTICIPANT_ROLES = ('advisor', 'employer', 'participant', 'referrer')\n\n# Non-advisor roles a Field's own configuration may opt into answering it.\n# The advisor (coach) can always answer every field regardless of this list --\n# it only ever widens who *else* may write an answer, never who may read one\n# (see visible_advisor/visible_employer/visible_participant on the template).\n# Stored in the field's existing JSON `configuration`, like semanticKey and\n# placeholder, rather than a new column -- see the module docstring for why\n# Review schema changes are avoided when the JSON configuration already fits.\nFIELD_RESPONDENT_ROLES = ('participant', 'employer')\n\n# Every Review carries a Review Type -- its classification, chosen in the\n# General tab next to the Review's name. The catalogue of types lives in\n# review_types.py; this module only stores which one a template points at.\n# Type never implies recurrence, questions, signatures or eligibility: a\n# \"Monthly Coaching Meeting\" scheduled every 6 weeks is valid and supported.\n\n_REVIEW_TABLES_READY = False\n\n\ndef ensure_review_tables():\n    \"\"\"Verify Review tables exist; provision only outside production.\"\"\"\n    global _REVIEW_TABLES_READY\n    if _REVIEW_TABLES_READY:\n        return\n    if not schema_gate.runtime_bootstrap_allowed():\n        schema_gate.require_tables(\n            REVIEW_TEMPLATES_TABLE, REVIEW_SECTIONS_TABLE, REVIEW_FIELDS_TABLE,\n            review_types.REVIEW_TYPES_TABLE,\n        )\n        _REVIEW_TABLES_READY = True\n        return\n    provision_review_template_tables()\n\n\ndef provision_review_template_tables():\n    \"\"\"Mirrors the two Review SQL files for sqlite/local dev.\n\n    NOT for production request paths -- schema there is owned by the SQL\n    files applied to Neon directly. See schema_gate module docstring.\n    \"\"\"\n    global _REVIEW_TABLES_READY\n    if _REVIEW_TABLES_READY:\n        return\n    json_type = curriculum_views.authoring_json_type()\n    with connection.cursor() as cursor:\n        if connection.vendor == 'postgresql':\n            cursor.execute(f'create schema if not exists {curriculum_views.quote_ident(curriculum_views.CURRICULUM_SCHEMA)}')\n        cursor.execute(f'''\n            create table if not exists {curriculum_views.authoring_table_name(REVIEW_TEMPLATES_TABLE)} (\n                id varchar(128) primary key,\n                programme_id varchar(255) not null,\n                name varchar(500) not null default '',\n                enabled boolean not null default true,\n                recurrence_interval integer not null default 1,\n                recurrence_unit varchar(16) not null default 'weeks',\n                schedule_anchor_date date not null default current_date,\n                occurrence_count integer,\n                review_type_id varchar(128),\n                applicable_statuses {json_type},\n                applicability {json_type},\n                signature_advisor boolean not null default false,\n                signature_employer boolean not null default false,\n                signature_participant boolean not null default false,\n                signature_referrer boolean not null default false,\n                visible_advisor boolean not null default true,\n                visible_employer boolean not null default true,\n                visible_participant boolean not null default true,\n                visible_referrer boolean not null default true,\n                record_time_spent boolean not null default false,\n                expected_otjh numeric(8, 2) not null default 0,\n                counts_towards_otjh boolean not null default false,\n                allow_editing_prior_days integer not null default 0,\n                notify_employer boolean not null default false,\n                notify_participant boolean not null default false,\n                incomplete_marker varchar(255) not null default '',\n                field_count integer not null default 0,\n                deleted_at timestamp,\n                deleted_by varchar(255),\n                deleted_via_parent varchar(255),\n                created_by varchar(255) not null default '',\n                updated_by varchar(255) not null default '',\n                created_at timestamp not null default current_timestamp,\n                updated_at timestamp not null default current_timestamp\n            )\n        ''')\n        cursor.execute(f'''\n            create table if not exists {curriculum_views.authoring_table_name(REVIEW_SECTIONS_TABLE)} (\n                id varchar(128) primary key,\n                review_id varchar(128) not null,\n                title varchar(500) not null default '',\n                estimated_minutes integer not null default 0,\n                display_order integer not null default 0,\n                enabled boolean not null default true,\n                deleted_at timestamp,\n                deleted_by varchar(255),\n                deleted_via_parent varchar(255),\n                created_by varchar(255) not null default '',\n                updated_by varchar(255) not null default '',\n                created_at timestamp not null default current_timestamp,\n                updated_at timestamp not null default current_timestamp\n            )\n        ''')\n        if connection.vendor == 'postgresql':\n            cursor.execute(f'alter table {curriculum_views.authoring_table_name(REVIEW_TEMPLATES_TABLE)} add column if not exists applicability {json_type}')\n        else:\n            cursor.execute(f'pragma table_info({curriculum_views.quote_ident(REVIEW_TEMPLATES_TABLE)})')\n            if 'applicability' not in {row[1] for row in cursor.fetchall()}:\n                cursor.execute(f'alter table {curriculum_views.authoring_table_name(REVIEW_TEMPLATES_TABLE)} add column applicability {json_type}')\n        cursor.execute(f'''\n            create table if not exists {curriculum_views.authoring_table_name(REVIEW_FIELDS_TABLE)} (\n                id varchar(128) primary key,\n                review_id varchar(128) not null,\n                section_id varchar(128) not null,\n                parent_field_id varchar(128),\n                condition_value varchar(16),\n                title varchar(500) not null default '',\n                field_type varchar(32) not null default 'text',\n                required boolean not null default false,\n                display_order integer not null default 0,\n                configuration {json_type},\n                created_at timestamp not null default current_timestamp,\n                updated_at timestamp not null default current_timestamp\n            )\n        ''')\n    # A Review cannot be saved without a Review Type, so the type catalogue is\n    # part of the same provisioning step rather than a separate opt-in.\n    review_types.provision_review_types_table()\n    _REVIEW_TABLES_READY = True\n\n\n# --------------------------------------------------------------------- reads\n\ndef get_review_template_rows(where_sql='', params=None, *, include_deleted=False):\n    conditions = [where_sql] if where_sql else []\n    if not include_deleted:\n        conditions.append('deleted_at is null')\n    where = ' and '.join(conditions) or '1 = 1'\n    return curriculum_views.fetch_all(\n        f'select * from {curriculum_views.table_name(REVIEW_TEMPLATES_TABLE)} '\n        f'where {where} order by updated_at desc',\n        params or [],\n    )\n\n\ndef get_review_template_row(review_id, *, include_deleted=False):\n    rows = get_review_template_rows('id = %s', [review_id], include_deleted=include_deleted)\n    return rows[0] if rows else None\n\n\ndef get_review_section_rows(review_id):\n    return curriculum_views.fetch_all(\n        f'select * from {curriculum_views.table_name(REVIEW_SECTIONS_TABLE)} '\n        f'where review_id = %s and deleted_at is null order by display_order asc',\n        [review_id],\n    )\n\n\ndef get_review_field_rows(review_id):\n    \"\"\"All fields (top-level and conditional children alike), one query.\"\"\"\n    return curriculum_views.fetch_all(\n        f'select * from {curriculum_views.table_name(REVIEW_FIELDS_TABLE)} '\n        f'where review_id = %s order by display_order asc',\n        [review_id],\n    )\n\n\n# ------------------------------------------------------------------ payload\n\ndef review_field_payload(row, children_of):\n    \"\"\"``children_of(parent_id, condition)`` looks up a field's direct\n    yes/no children within its own section. Recurses to any depth -- a\n    conditional child may itself be a ``boolean_case_block`` with its own\n    yesFields/noFields, and so on.\n    \"\"\"\n    payload = {\n        'id': row.get('id'),\n        'reviewId': row.get('review_id'),\n        'sectionId': row.get('section_id'),\n        'parentFieldId': row.get('parent_field_id'),\n        'conditionValue': row.get('condition_value'),\n        'title': row.get('title') or '',\n        'fieldType': row.get('field_type') or 'text',\n        'required': bool(row.get('required')),\n        'displayOrder': curriculum_views.parse_int(row.get('display_order'), 0),\n        'configuration': curriculum_views.as_json_value(row.get('configuration'), {}),\n        'createdAt': row.get('created_at'),\n        'updatedAt': row.get('updated_at'),\n    }\n    if row.get('field_type') == CONDITIONAL_FIELD_TYPE:\n        payload['yesFields'] = [review_field_payload(f, children_of) for f in children_of(row.get('id'), 'yes')]\n        payload['noFields'] = [review_field_payload(f, children_of) for f in children_of(row.get('id'), 'no')]\n    return payload\n\n\ndef assemble_review_sections(review_id, *, section_rows=None, field_rows=None):\n    \"\"\"Build the nested sections[].fields[].(yesFields|noFields) tree in memory.\n\n    Exactly two queries regardless of how many sections/fields/children a\n    Review has -- callers with 10 sections and 100 fields never issue more\n    than get_review_section_rows + get_review_field_rows. The tree can be\n    arbitrarily deep (a case block nested inside a case block, and so on);\n    every level is resolved from the same two in-memory lists.\n    \"\"\"\n    section_rows = get_review_section_rows(review_id) if section_rows is None else section_rows\n    field_rows = get_review_field_rows(review_id) if field_rows is None else field_rows\n\n    fields_by_section = defaultdict(list)\n    for row in field_rows:\n        fields_by_section[row.get('section_id')].append(row)\n\n    sections = []\n    for section in section_rows:\n        section_id = section.get('id')\n        section_rows_list = fields_by_section.get(section_id, [])\n\n        def children_of(parent_id, condition, _rows=section_rows_list):\n            return [\n                row for row in _rows\n                if row.get('parent_field_id') == parent_id and row.get('condition_value') == condition\n            ]\n\n        top_fields = [row for row in section_rows_list if not row.get('parent_field_id')]\n        field_payloads = [review_field_payload(field_row, children_of) for field_row in top_fields]\n        sections.append({\n            'id': section.get('id'),\n            'reviewId': section.get('review_id'),\n            'title': section.get('title') or '',\n            'estimatedMinutes': curriculum_views.parse_int(section.get('estimated_minutes'), 0),\n            'displayOrder': curriculum_views.parse_int(section.get('display_order'), 0),\n            'enabled': bool(section.get('enabled')),\n            'fields': field_payloads,\n        })\n    return sections\n\n\ndef flatten_fields(sections):\n    \"\"\"Every top-level field across every section, in section then field order.\n\n    A convenience view for callers of the first implementation, which only\n    ever knew a single flat field list. Conditional children are deliberately\n    excluded here -- they only exist nested under their parent.\n    \"\"\"\n    flattened = []\n    for section in sections:\n        for field in section['fields']:\n            flattened.append({k: v for k, v in field.items() if k not in ('yesFields', 'noFields')})\n    return flattened\n\n\ndef review_template_summary_payload(row, *, type_index=None):\n    \"\"\"``type_index`` is review_types.review_type_index()'s {id: row} map --\n    pass it when serialising a list so the type catalogue is read once for the\n    whole response instead of once per Review.\"\"\"\n    type_row = _resolve_review_type(row.get('review_type_id'), type_index)\n    return {\n        'id': row.get('id'),\n        'programmeId': row.get('programme_id') or '',\n        'name': row.get('name') or '',\n        'enabled': bool(row.get('enabled')),\n        'recurrence': {\n            'interval': curriculum_views.parse_int(row.get('recurrence_interval'), 1),\n            'unit': row.get('recurrence_unit') or 'weeks',\n        },\n        # The date the first occurrence is calculated from -- see\n        # review_schedule.py, which is the only other reader of this column.\n        'scheduleAnchorDate': curriculum_views.format_date(row.get('schedule_anchor_date')),\n        # None/unset means unlimited -- the review keeps recurring indefinitely.\n        'occurrenceCount': row.get('occurrence_count'),\n        # The Review's classification. ``reviewTypeId`` is the stable\n        # identity everything downstream keys on; the code/name are echoed\n        # for display and for Coach's calendar routing. Nothing anywhere\n        # classifies a Review by ``name`` -- \"Monthly Learner Catch-up\" of\n        # type Monthly Coaching Meeting still routes as MCM.\n        'reviewTypeId': row.get('review_type_id') or '',\n        'reviewTypeCode': (type_row or {}).get('code') or '',\n        'reviewTypeName': (type_row or {}).get('name') or '',\n        'applicableStatuses': curriculum_views.as_json_value(row.get('applicable_statuses'), []),\n        'applicability': curriculum_views.as_json_value(row.get('applicability'), {'scope': 'programme', 'ids': []}),\n        'fieldCount': curriculum_views.parse_int(row.get('field_count'), 0),\n        'createdAt': row.get('created_at'),\n        'updatedAt': row.get('updated_at'),\n    }\n\n\ndef review_template_detail_payload(row, sections=None, *, type_index=None):\n    sections = assemble_review_sections(row.get('id')) if sections is None else sections\n    return {\n        **review_template_summary_payload(row, type_index=type_index),\n        'signatures': {\n            'advisor': bool(row.get('signature_advisor')),\n            'employer': bool(row.get('signature_employer')),\n            'participant': bool(row.get('signature_participant')),\n            'referrer': bool(row.get('signature_referrer')),\n        },\n        'visibleTo': {\n            'advisor': bool(row.get('visible_advisor')),\n            'employer': bool(row.get('visible_employer')),\n            'participant': bool(row.get('visible_participant')),\n            'referrer': bool(row.get('visible_referrer')),\n        },\n        'recordTimeSpent': bool(row.get('record_time_spent')),\n        'expectedOtjh': float(row.get('expected_otjh') or 0),\n        # Whether completing an occurrence of this review adds expectedOtjh\n        # hours to the learner's total OTJH.\n        'countsTowardsOtjh': bool(row.get('counts_towards_otjh')),\n        'allowEditingPriorDays': curriculum_views.parse_int(row.get('allow_editing_prior_days'), 0),\n        'notifications': {\n            'employer': bool(row.get('notify_employer')),\n            'participant': bool(row.get('notify_participant')),\n        },\n        'incompleteMarker': row.get('incomplete_marker') or '',\n        'createdBy': row.get('created_by') or '',\n        'updatedBy': row.get('updated_by') or '',\n        'sections': sections,\n        # Flattened convenience view -- see module docstring.\n        'fields': flatten_fields(sections),\n    }\n\n\ndef review_detail_response(review_id, **extra):\n    row = get_review_template_row(review_id)\n    if not row:\n        return curriculum_views.json_error('Review not found.', status=404)\n    payload = {'schema': curriculum_views.CURRICULUM_SCHEMA, 'review': review_template_detail_payload(row)}\n    payload.update(extra)\n    return JsonResponse(payload)\n\n\n# -------------------------------------------------------------- validation\n\ndef _programme_exists(programme_id):\n    return bool(curriculum_views.programme_config_by_identifier(programme_id) or curriculum_views.programme_response(programme_id))\n\n\ndef validate_recurrence(payload, errors, *, required=True):\n    interval_raw = payload.get('recurrence', {}) if isinstance(payload.get('recurrence'), dict) else {}\n    interval = interval_raw.get('interval', payload.get('recurrenceInterval'))\n    unit = curriculum_views.clean_str(interval_raw.get('unit', payload.get('recurrenceUnit'))).lower()\n\n    if interval is None and not required:\n        return None, None\n    try:\n        interval = int(interval)\n    except (TypeError, ValueError):\n        errors['recurrenceInterval'] = 'Repeat interval must be a whole number.'\n        return None, None\n    if interval <= 0:\n        errors['recurrenceInterval'] = 'Repeat interval must be a positive number.'\n    if not unit:\n        unit = 'weeks'\n    if unit not in RECURRENCE_UNITS:\n        errors['recurrenceUnit'] = f'Repeat unit must be one of: {\", \".join(RECURRENCE_UNITS)}.'\n    return interval, unit\n\n\ndef validate_schedule_anchor_date(payload, errors, *, required=True):\n    \"\"\"The date recurrence is calculated from -- see review_schedule.py.\n\n    A canonical ISO date string ('2027-01-15') is required whenever the field\n    is present at all; an unparseable value is an error rather than silently\n    falling back, since a wrong anchor silently produces a wrong occurrence\n    schedule with no error ever surfacing to the user.\n    \"\"\"\n    raw = payload.get('scheduleAnchorDate')\n    if raw is None:\n        if required:\n            return datetime.utcnow().date()\n        return None\n    parsed = curriculum_views.parse_date(raw)\n    if not parsed:\n        errors['scheduleAnchorDate'] = 'Schedule anchor date must be a valid date.'\n        return None\n    return parsed\n\n\ndef _resolve_review_type(review_type_id, type_index=None):\n    review_type_id = curriculum_views.clean_str(review_type_id)\n    if not review_type_id:\n        return None\n    if type_index is not None:\n        return type_index.get(review_type_id)\n    return review_types.get_review_type(review_type_id)\n\n\ndef validate_review_type_id(payload, errors):\n    \"\"\"The Review's classification -- required, and always a review_types.id.\n\n    Never a name: the type is what Coach routes on, so it has to survive the\n    Review being renamed. An archived (inactive) type is still accepted on an\n    existing Review so that deactivating a type never blocks editing the\n    Reviews already classified with it.\n    \"\"\"\n    raw = curriculum_views.clean_str(payload.get('reviewTypeId'))\n    if not raw:\n        errors['reviewTypeId'] = 'Review type is required.'\n        return None\n    if not review_types.get_review_type(raw):\n        errors['reviewTypeId'] = 'Choose a valid review type.'\n        return None\n    return raw\n\n\ndef validate_occurrence_count(payload, errors):\n    \"\"\"How many times a Review recurs before it stops -- optional; blank/None\n    means unlimited (the field's existing, still-default behaviour).\n    \"\"\"\n    raw = payload.get('occurrenceCount')\n    if raw is None or raw == '':\n        return None\n    try:\n        count = int(raw)\n    except (TypeError, ValueError):\n        errors['occurrenceCount'] = 'Number of occurrences must be a whole number.'\n        return None\n    if count <= 0:\n        errors['occurrenceCount'] = 'Number of occurrences must be a positive number.'\n        return None\n    return count\n\n\ndef validate_expected_otjh(payload, errors):\n    \"\"\"Expected OTJH hours for one occurrence of this review -- see\n    ``validate_review_payload``'s ``countsTowardsOtjh`` handling for whether\n    completing it actually adds that many hours to the learner's total (the\n    module docstring's future ``learner_review_instances`` is where that flag\n    gets acted on).\"\"\"\n    try:\n        expected_otjh = float(payload.get('expectedOtjh', 0) or 0)\n    except (TypeError, ValueError):\n        errors['expectedOtjh'] = 'Expected OTJH must be a number.'\n        return 0\n    if expected_otjh < 0:\n        errors['expectedOtjh'] = 'Expected OTJH must be zero or a positive number.'\n        return 0\n    return expected_otjh\n\n\ndef validate_statuses(payload, errors):\n    statuses = payload.get('applicableStatuses')\n    if statuses is None:\n        return []\n    if not isinstance(statuses, list):\n        errors['applicableStatuses'] = 'applicableStatuses must be a list.'\n        return []\n    canonical = set(curriculum_views.PROGRAMME_STATUS_CHOICES)\n    cleaned = []\n    invalid = []\n    for value in statuses:\n        text = curriculum_views.clean_str(value)\n        if not text:\n            continue\n        if text not in canonical:\n            invalid.append(text)\n            continue\n        if text not in cleaned:\n            cleaned.append(text)\n    if invalid:\n        errors['applicableStatuses'] = f'Unknown programme status: {\", \".join(invalid)}.'\n    return cleaned\n\n\ndef _validate_field_configuration(field_type, configuration, path, errors):\n    \"\"\"Returns the cleaned configuration for this field type.\"\"\"\n    if field_type == 'list_item':\n        options = configuration.get('options')\n        cleaned_options = [curriculum_views.clean_str(o) for o in options if curriculum_views.clean_str(o)] if isinstance(options, list) else []\n        if not cleaned_options:\n            errors[f'{path}.configuration.options'] = 'List item fields need at least one option.'\n        # De-duplicate while preserving order -- accidental duplicate options\n        # (e.g. pasted twice) are silently folded rather than rejected.\n        seen = set()\n        deduped = []\n        for option in cleaned_options:\n            if option in seen:\n                continue\n            seen.add(option)\n            deduped.append(option)\n        return {**configuration, 'options': deduped}\n\n    if field_type == 'title_description':\n        return {**configuration, 'description': curriculum_views.clean_str(configuration.get('description'))}\n\n    return configuration if isinstance(configuration, dict) else {}\n\n\n# Case blocks may nest inside case blocks to any depth, but a payload is\n# still attacker/mistake-controlled input -- cap recursion so a malformed or\n# malicious deeply-nested body can't blow the stack or produce a runaway tree.\nMAX_FIELD_NESTING_DEPTH = 8\n\n\ndef validate_field_payload(field, path, errors, *, depth=0):\n    \"\"\"Validate one Field (top-level or a conditional child, at any depth).\n    Returns cleaned dict.\n\n    ``path`` is the dotted/bracketed location used in error keys, e.g.\n    ``sections[0].fields[1]`` or ``sections[0].fields[1].yesFields[0].yesFields[2]``.\n    \"\"\"\n    if not isinstance(field, dict):\n        field = {}\n\n    field_type = curriculum_views.clean_str(field.get('fieldType')).lower() or 'text'\n    if field_type not in FIELD_TYPES:\n        errors[f'{path}.fieldType'] = f'Unknown field type \"{field_type}\".'\n        field_type = 'text'\n\n    title = curriculum_views.clean_str(field.get('title'))\n    if not title:\n        errors[f'{path}.title'] = \"Title can't be empty.\"\n\n    required = bool(field.get('required')) if field_type not in DISPLAY_ONLY_FIELD_TYPES else False\n    configuration = field.get('configuration') if isinstance(field.get('configuration'), dict) else {}\n    configuration = _validate_field_configuration(field_type, configuration, path, errors)\n\n    # Who besides the advisor (coach) may answer this field, e.g. so a\n    # Learner or Employer can complete their own part of the meeting record.\n    # A display-only block (title_description/action_button) never collects\n    # an answer, so it never carries a respondent list.\n    if field_type in DISPLAY_ONLY_FIELD_TYPES:\n        configuration = {k: v for k, v in configuration.items() if k != 'respondentRoles'}\n    else:\n        posted_roles = configuration.get('respondentRoles')\n        respondent_roles = sorted({\n            role for role in (posted_roles if isinstance(posted_roles, list) else [])\n            if role in FIELD_RESPONDENT_ROLES\n        })\n        configuration = {**configuration, 'respondentRoles': respondent_roles}\n\n    cleaned = {\n        'id': curriculum_views.clean_str(field.get('id')),\n        'title': title,\n        'field_type': field_type,\n        'required': required,\n        'configuration': configuration,\n        'yes_fields': [],\n        'no_fields': [],\n    }\n\n    yes_fields_payload = field.get('yesFields')\n    no_fields_payload = field.get('noFields')\n    has_conditional_payload = bool(yes_fields_payload) or bool(no_fields_payload)\n\n    if field_type != CONDITIONAL_FIELD_TYPE:\n        if has_conditional_payload:\n            errors[f'{path}.yesFields'] = 'Only \"Boolean with case block\" fields may have conditional fields.'\n        return cleaned\n\n    if depth >= MAX_FIELD_NESTING_DEPTH:\n        errors[f'{path}.fieldType'] = f'\"Boolean with case block\" fields cannot nest more than {MAX_FIELD_NESTING_DEPTH} levels deep.'\n        return cleaned\n\n    for branch_key, branch_payload in (('yes_fields', yes_fields_payload), ('no_fields', no_fields_payload)):\n        branch_name = 'yesFields' if branch_key == 'yes_fields' else 'noFields'\n        if branch_payload is None:\n            continue\n        if not isinstance(branch_payload, list):\n            errors[f'{path}.{branch_name}'] = f'{branch_name} must be a list.'\n            continue\n        cleaned[branch_key] = [\n            validate_field_payload(child, f'{path}.{branch_name}[{index}]', errors, depth=depth + 1)\n            for index, child in enumerate(branch_payload)\n        ]\n\n    return cleaned\n\n\ndef validate_section_payload(section, index, errors):\n    if not isinstance(section, dict):\n        section = {}\n\n    path = f'sections[{index}]'\n    title = curriculum_views.clean_str(section.get('title'))\n    if not title:\n        errors[f'{path}.title'] = \"Section title can't be empty.\"\n\n    try:\n        estimated_minutes = int(section.get('estimatedMinutes', 0) or 0)\n    except (TypeError, ValueError):\n        estimated_minutes = -1\n    if estimated_minutes < 0:\n        errors[f'{path}.estimatedMinutes'] = 'Estimated time must be zero or a positive number of minutes.'\n        estimated_minutes = 0\n\n    fields_payload = section.get('fields')\n    cleaned_fields = []\n    if fields_payload is not None:\n        if not isinstance(fields_payload, list):\n            errors[f'{path}.fields'] = 'fields must be a list.'\n        else:\n            cleaned_fields = [\n                validate_field_payload(field, f'{path}.fields[{i}]', errors)\n                for i, field in enumerate(fields_payload)\n            ]\n\n    return {\n        'id': curriculum_views.clean_str(section.get('id')),\n        'title': title,\n        'estimated_minutes': estimated_minutes,\n        'enabled': bool(section.get('enabled', True)),\n        'fields': cleaned_fields,\n    }\n\n\ndef _sections_payload_from(payload):\n    \"\"\"Accepts either the new ``sections`` shape or the legacy flat ``fields`` shape.\"\"\"\n    if payload.get('sections') is not None:\n        return payload.get('sections')\n    if payload.get('fields') is not None:\n        return [{'title': 'General', 'estimatedMinutes': 0, 'enabled': True, 'fields': payload.get('fields')}]\n    return None\n\n\ndef validate_applicability(value, programme_id, errors):\n    if not isinstance(value, dict) or value.get('scope') not in ('programme', 'cohort', 'group'):\n        errors['applicability'] = 'Choose programme, cohort or group applicability.'\n        return None\n    scope, identifiers = value['scope'], value.get('ids', [])\n    if not isinstance(identifiers, list) or any(not isinstance(item, str) or not item.strip() for item in identifiers):\n        errors['applicability'] = 'Select valid cohort or group identifiers.'\n        return None\n    identifiers = list(dict.fromkeys(item.strip() for item in identifiers))\n    if scope == 'programme':\n        if identifiers:\n            errors['applicability'] = 'Programme applicability cannot include cohort or group identifiers.'\n        return {'scope': scope, 'ids': []}\n    if not identifiers:\n        errors['applicability'] = 'Select at least one cohort or group.'\n        return None\n    table = curriculum_views.COHORT_AUTHORING_DETAILS_TABLE if scope == 'cohort' else curriculum_views.GROUPS_TABLE\n    rows = curriculum_views.authoring_fetch_all(table, 'programme_id = %s', [programme_id])\n    allowed = {curriculum_views.clean_str(row.get(f'{scope}_id')) for row in rows}\n    if not set(identifiers).issubset(allowed):\n        errors['applicability'] = 'Selected cohorts or groups must belong to this programme.'\n    return {'scope': scope, 'ids': identifiers}\n\n\ndef validate_review_payload(\n    payload, *, partial=False, programme_id=None, current_review_type_id=None,\n    current_signature_referrer=False,\n):\n    \"\"\"Returns (cleaned, errors). ``partial`` allows PATCH to omit unset fields.\n\n    ``current_signature_referrer`` is the stored template's value on update, so\n    a legacy template already requiring a Referrer signature can still be saved\n    unchanged while no new Referrer requirement can be introduced.\"\"\"\n    errors = {}\n    cleaned = {}\n\n    if not partial or 'name' in payload:\n        name = curriculum_views.clean_str(payload.get('name'))\n        if not name:\n            errors['name'] = 'Review name is required.'\n        cleaned['name'] = name\n\n    if not partial or 'enabled' in payload:\n        cleaned['enabled'] = bool(payload.get('enabled', True))\n\n    if not partial or 'recurrence' in payload or 'recurrenceInterval' in payload or 'recurrenceUnit' in payload:\n        interval, unit = validate_recurrence(payload, errors, required=not partial)\n        if interval is not None:\n            cleaned['recurrence_interval'] = interval\n            cleaned['recurrence_unit'] = unit\n\n    if not partial or 'scheduleAnchorDate' in payload:\n        anchor = validate_schedule_anchor_date(payload, errors, required=not partial)\n        if anchor is not None:\n            cleaned['schedule_anchor_date'] = anchor\n\n    if not partial or 'reviewTypeId' in payload:\n        review_type_id = validate_review_type_id(payload, errors)\n        if review_type_id is not None:\n            cleaned['review_type_id'] = review_type_id\n\n    if not partial or 'occurrenceCount' in payload:\n        cleaned['occurrence_count'] = validate_occurrence_count(payload, errors)\n\n    if not partial or 'applicableStatuses' in payload:\n        cleaned['applicable_statuses'] = validate_statuses(payload, errors)\n\n    if not partial or 'applicability' in payload:\n        cleaned['applicability'] = validate_applicability(\n            payload.get('applicability', {'scope': 'programme', 'ids': []}), programme_id, errors,\n        )\n\n    signatures = payload.get('signatures') if isinstance(payload.get('signatures'), dict) else {}\n    if not partial or 'signatures' in payload:\n        for role in PARTICIPANT_ROLES:\n            cleaned[f'signature_{role}'] = bool(signatures.get(role))\n        # Referrer stays a structural role, but nobody can sign as one yet, so a\n        # new Referrer requirement would leave its Reviews stuck awaiting signature.\n        if cleaned['signature_referrer'] and not current_signature_referrer:\n            errors['signatures'] = 'Referrer signatures are not currently supported.'\n\n    visible_to = payload.get('visibleTo') if isinstance(payload.get('visibleTo'), dict) else {}\n    if not partial or 'visibleTo' in payload:\n        for role in PARTICIPANT_ROLES:\n            cleaned[f'visible_{role}'] = bool(visible_to.get(role, True))\n\n    if not partial or 'recordTimeSpent' in payload:\n        cleaned['record_time_spent'] = bool(payload.get('recordTimeSpent'))\n\n    if not partial or 'expectedOtjh' in payload:\n        cleaned['expected_otjh'] = validate_expected_otjh(payload, errors)\n\n    if not partial or 'countsTowardsOtjh' in payload:\n        cleaned['counts_towards_otjh'] = bool(payload.get('countsTowardsOtjh'))\n\n    if not partial or 'allowEditingPriorDays' in payload:\n        try:\n            prior_days = int(payload.get('allowEditingPriorDays', 0) or 0)\n        except (TypeError, ValueError):\n            prior_days = -1\n        if prior_days < 0:\n            errors['allowEditingPriorDays'] = 'Allow editing prior days must be zero or a positive number.'\n            prior_days = 0\n        cleaned['allow_editing_prior_days'] = prior_days\n\n    notifications = payload.get('notifications') if isinstance(payload.get('notifications'), dict) else {}\n    if not partial or 'notifications' in payload:\n        cleaned['notify_employer'] = bool(notifications.get('employer'))\n        cleaned['notify_participant'] = bool(notifications.get('participant'))\n\n    if not partial or 'incompleteMarker' in payload:\n        cleaned['incomplete_marker'] = curriculum_views.clean_str(payload.get('incompleteMarker'))\n\n    sections_payload = _sections_payload_from(payload)\n    cleaned_sections = None\n    if sections_payload is not None:\n        if not isinstance(sections_payload, list):\n            errors['sections'] = 'sections must be a list.'\n        else:\n            cleaned_sections = [validate_section_payload(section, index, errors) for index, section in enumerate(sections_payload)]\n            semantic_fields = []\n\n            def _collect_semantic_fields(fields):\n                for field in fields or []:\n                    if (field.get('configuration') or {}).get('semanticKey') == MEETING_SUMMARY_SEMANTIC_KEY:\n                        semantic_fields.append(field)\n                    _collect_semantic_fields(field.get('yes_fields'))\n                    _collect_semantic_fields(field.get('no_fields'))\n\n            for section in cleaned_sections:\n                _collect_semantic_fields(section.get('fields'))\n            if semantic_fields:\n                review_type_id = (\n                    cleaned.get('review_type_id')\n                    or curriculum_views.clean_str(payload.get('reviewTypeId'))\n                    or curriculum_views.clean_str(current_review_type_id)\n                )\n                type_row = review_types.get_review_type(review_type_id) if review_type_id else None\n                if (type_row or {}).get('code') not in {\n                    review_types.REVIEW_TYPE_CODE_MCM,\n                    review_types.REVIEW_TYPE_CODE_PROGRESS_REVIEW,\n                }:\n                    errors['sections'] = 'Only a Monthly Coaching Meeting or Progress Review may define a Meeting Summary field.'\n                elif len(semantic_fields) > 1:\n                    errors['sections'] = 'A Review can define only one Meeting Summary field.'\n                elif semantic_fields[0].get('field_type') not in ('text', 'text_multiline'):\n                    errors['sections'] = 'The Meeting Summary field must be a text field.'\n    cleaned['_sections'] = cleaned_sections\n\n    return cleaned, errors\n\n\n# ---------------------------------------------------------------- mutation\n\ndef _insert_field_row(review_id, section_id, field, index, *, parent_field_id=None, condition_value=None):\n    field_id = field.get('id') or curriculum_views.unique_prefixed_id('REVF')\n    payload = {\n        'id': field_id,\n        'review_id': review_id,\n        'section_id': section_id,\n        'title': field['title'],\n        'field_type': field['field_type'],\n        'required': field['required'],\n        'display_order': index,\n        'configuration': curriculum_views.json_db_value(field['configuration']),\n        'created_at': datetime.utcnow(),\n        'updated_at': datetime.utcnow(),\n    }\n    if parent_field_id:\n        payload['parent_field_id'] = parent_field_id\n        payload['condition_value'] = condition_value\n    curriculum_views.insert_row(REVIEW_FIELDS_TABLE, payload)\n    return field_id\n\n\ndef save_section_fields(review_id, section_id, fields, *, parent_field_id=None, condition_value=None):\n    \"\"\"Insert one level of fields and recurse into their yes/no children --\n    a case block's children may themselves be case blocks, to any depth.\"\"\"\n    count = 0\n    for index, field in enumerate(fields or []):\n        field_id = _insert_field_row(review_id, section_id, field, index, parent_field_id=parent_field_id, condition_value=condition_value)\n        count += 1\n        if field['field_type'] == CONDITIONAL_FIELD_TYPE:\n            count += save_section_fields(review_id, section_id, field.get('yes_fields'), parent_field_id=field_id, condition_value='yes')\n            count += save_section_fields(review_id, section_id, field.get('no_fields'), parent_field_id=field_id, condition_value='no')\n    return count\n\n\ndef save_review_sections(review_id, sections):\n    \"\"\"Delete-then-reinsert the whole section/field tree, same replace approach\n    the first implementation used for its flat field list.\"\"\"\n    curriculum_views.delete_rows(REVIEW_FIELDS_TABLE, 'review_id = %s', [review_id])\n    curriculum_views.delete_rows(REVIEW_SECTIONS_TABLE, 'review_id = %s', [review_id])\n    total_fields = 0\n    for index, section in enumerate(sections or []):\n        section_id = section.get('id') or curriculum_views.unique_prefixed_id('REVS')\n        curriculum_views.insert_row(REVIEW_SECTIONS_TABLE, {\n            'id': section_id,\n            'review_id': review_id,\n            'title': section['title'],\n            'estimated_minutes': section['estimated_minutes'],\n            'display_order': index,\n            'enabled': section['enabled'],\n            'created_at': datetime.utcnow(),\n            'updated_at': datetime.utcnow(),\n        })\n        total_fields += save_section_fields(review_id, section_id, section['fields'])\n    return total_fields\n\n\ndef existing_review_ids():\n    return [row.get('id') for row in get_review_template_rows(include_deleted=True)]\n\n\ndef create_review(programme_id, payload, *, actor='system'):\n    cleaned, errors = validate_review_payload(payload, partial=False, programme_id=programme_id)\n    if errors:\n        return None, errors\n\n    review_id = curriculum_views.unique_prefixed_id('REV', payload.get('id'), existing_review_ids)\n    sections = cleaned.pop('_sections') or []\n\n    with transaction.atomic():\n        curriculum_views.insert_row(REVIEW_TEMPLATES_TABLE, {\n            'id': review_id,\n            'programme_id': programme_id,\n            **{k: v for k, v in cleaned.items()},\n            'applicable_statuses': curriculum_views.json_db_value(cleaned['applicable_statuses']),\n            'applicability': curriculum_views.json_db_value(cleaned['applicability']),\n            'field_count': 0,\n            'created_by': actor,\n            'updated_by': actor,\n            'created_at': datetime.utcnow(),\n            'updated_at': datetime.utcnow(),\n        })\n        field_count = save_review_sections(review_id, sections)\n        curriculum_views.update_rows(REVIEW_TEMPLATES_TABLE, 'id = %s', [review_id], {\n            'field_count': field_count, 'updated_at': datetime.utcnow(),\n        })\n\n    curriculum_views.invalidate_curriculum_cache()\n    return review_id, None\n\n\ndef update_review(review_id, payload, *, actor='system'):\n    row = get_review_template_row(review_id)\n    if not row:\n        return None, {'_': 'Review not found.'}\n\n    cleaned, errors = validate_review_payload(\n        payload,\n        partial=True,\n        programme_id=row['programme_id'],\n        current_review_type_id=row.get('review_type_id'),\n        current_signature_referrer=bool(row.get('signature_referrer')),\n    )\n    if errors:\n        return None, errors\n\n    sections = cleaned.pop('_sections')\n    updates = dict(cleaned)\n    if 'applicable_statuses' in updates:\n        updates['applicable_statuses'] = curriculum_views.json_db_value(updates['applicable_statuses'])\n    if 'applicability' in updates:\n        updates['applicability'] = curriculum_views.json_db_value(updates['applicability'])\n    updates['updated_by'] = actor\n    updates['updated_at'] = datetime.utcnow()\n\n    with transaction.atomic():\n        if updates:\n            curriculum_views.update_rows(REVIEW_TEMPLATES_TABLE, 'id = %s', [review_id], updates)\n        if sections is not None:\n            field_count = save_review_sections(review_id, sections)\n            curriculum_views.update_rows(REVIEW_TEMPLATES_TABLE, 'id = %s', [review_id], {\n                'field_count': field_count, 'updated_at': datetime.utcnow(),\n            })\n\n    curriculum_views.invalidate_curriculum_cache()\n    return review_id, None\n\n\ndef archive_review(review_id, *, actor='review-delete'):\n    row = get_review_template_row(review_id)\n    if not row:\n        return False\n    curriculum_views.soft_delete_rows(\n        REVIEW_TEMPLATES_TABLE, 'id = %s', [review_id], deleted_by=actor,\n    )\n    # Sections follow the Review: no orphan active section for an archived\n    # Review, even though its fields (and the sections themselves) are left\n    # in the database rather than hard-deleted, matching how fields already\n    # survive a Review archive.\n    curriculum_views.soft_delete_rows(\n        REVIEW_SECTIONS_TABLE, 'review_id = %s', [review_id], deleted_by=actor, via_parent=review_id,\n    )\n    curriculum_views.invalidate_curriculum_cache()\n    return True\n\n\ndef clone_review(source_row, destination_programme_id, *, actor='review-clone'):\n    \"\"\"Deep-copy one Review -- every Section, Field and conditional child --\n    into another Programme, with fresh ids throughout. Parent ids on cloned\n    conditional children are remapped to the *new* parent Field id; the\n    source Review is never touched.\n\n    Deliberately does not touch review_schedule.py's tables: a clone starts\n    with no occurrence overrides and no clash-resolution acknowledgements --\n    those are schedule *history* for the source Programme, not part of the\n    template definition.\"\"\"\n    new_id = curriculum_views.unique_prefixed_id('REV', '', existing_review_ids)\n    copy_columns = (\n        'name', 'enabled', 'recurrence_interval', 'recurrence_unit', 'schedule_anchor_date', 'occurrence_count', 'applicable_statuses',\n        'review_type_id',\n        'signature_advisor', 'signature_employer', 'signature_participant', 'signature_referrer',\n        'visible_advisor', 'visible_employer', 'visible_participant', 'visible_referrer',\n        'record_time_spent', 'expected_otjh', 'counts_towards_otjh', 'allow_editing_prior_days', 'notify_employer', 'notify_participant',\n        'incomplete_marker', 'field_count',\n    )\n    insert_payload = {column: source_row.get(column) for column in copy_columns}\n    applicability = curriculum_views.as_json_value(source_row.get('applicability'), {'scope': 'programme', 'ids': []})\n    if source_row.get('programme_id') == destination_programme_id:\n        insert_payload['applicability'] = curriculum_views.json_db_value(applicability)\n    elif applicability.get('scope') != 'programme':\n        # The destination has different placement IDs. Require an explicit\n        # applicability choice before a restricted clone starts generating.\n        insert_payload['enabled'] = False\n        insert_payload['applicability'] = curriculum_views.json_db_value({'scope': 'programme', 'ids': []})\n    curriculum_views.insert_row(REVIEW_TEMPLATES_TABLE, {\n        'id': new_id,\n        'programme_id': destination_programme_id,\n        **insert_payload,\n        'created_by': actor,\n        'updated_by': actor,\n        'created_at': datetime.utcnow(),\n        'updated_at': datetime.utcnow(),\n    })\n\n    for section in get_review_section_rows(source_row.get('id')):\n        new_section_id = curriculum_views.unique_prefixed_id('REVS')\n        curriculum_views.insert_row(REVIEW_SECTIONS_TABLE, {\n            'id': new_section_id,\n            'review_id': new_id,\n            'title': section.get('title'),\n            'estimated_minutes': section.get('estimated_minutes'),\n            'display_order': section.get('display_order'),\n            'enabled': section.get('enabled'),\n            'created_by': actor,\n            'updated_by': actor,\n            'created_at': datetime.utcnow(),\n            'updated_at': datetime.utcnow(),\n        })\n\n        section_fields = [f for f in get_review_field_rows(source_row.get('id')) if f.get('section_id') == section.get('id')]\n        # Grouped by parent so a case block nested inside a case block (to any\n        # depth) clones parent-before-child at every level, not just two.\n        children_by_parent = defaultdict(list)\n        for field_row in section_fields:\n            children_by_parent[field_row.get('parent_field_id') or None].append(field_row)\n\n        def _clone_field_row(field_row, parent_field_id=None):\n            new_field_id = curriculum_views.unique_prefixed_id('REVF')\n            payload = {\n                'id': new_field_id,\n                'review_id': new_id,\n                'section_id': new_section_id,\n                'title': field_row.get('title'),\n                'field_type': field_row.get('field_type'),\n                'required': field_row.get('required'),\n                'display_order': field_row.get('display_order'),\n                'configuration': curriculum_views.json_db_value(curriculum_views.as_json_value(field_row.get('configuration'), {})),\n                'created_at': datetime.utcnow(),\n                'updated_at': datetime.utcnow(),\n            }\n            if parent_field_id:\n                payload['parent_field_id'] = parent_field_id\n                payload['condition_value'] = field_row.get('condition_value')\n            curriculum_views.insert_row(REVIEW_FIELDS_TABLE, payload)\n            return new_field_id\n\n        def _clone_subtree(field_row, parent_field_id=None):\n            new_field_id = _clone_field_row(field_row, parent_field_id=parent_field_id)\n            for child_row in children_by_parent.get(field_row.get('id'), []):\n                _clone_subtree(child_row, parent_field_id=new_field_id)\n\n        for field_row in children_by_parent.get(None, []):\n            _clone_subtree(field_row)\n\n    return new_id\n\n\n# --------------------------------------------------------------------- views\n\ndef _actor(request):\n    # No per-request account is threaded into curriculum_api writes anywhere\n    # else in this module (see week_template deletes, which hardcode a reason\n    # string); Reviews follows the same convention rather than inventing one.\n    return 'staff'\n\n\n@csrf_exempt\ndef curriculum_programme_review_collection(request, programme_id):\n    ensure_review_tables()\n    programme_id = curriculum_views.clean_str(programme_id)\n\n    if request.method == 'GET':\n        if not _programme_exists(programme_id):\n            return curriculum_views.json_error('Programme not found.', status=404)\n        rows = get_review_template_rows('programme_id = %s', [programme_id])\n        type_index = review_types.review_type_index()\n        return curriculum_views.curriculum_results_response(\n            [review_template_summary_payload(row, type_index=type_index) for row in rows]\n        )\n\n    if request.method != 'POST':\n        return curriculum_views.json_error('Method not allowed.', status=405)\n\n    if not _programme_exists(programme_id):\n        return curriculum_views.json_error('Programme not found.', status=404)\n\n    payload = curriculum_views.json_body(request)\n    if payload is None:\n        return curriculum_views.json_error('Invalid JSON body.')\n\n    review_id, errors = create_review(programme_id, payload, actor=_actor(request))\n    if errors:\n        return curriculum_views.json_error('Please fix the highlighted fields.', fields=errors)\n\n    curriculum_views.log_curriculum_decision('review.create', outcome='created', entity_id=review_id)\n    return review_detail_response(review_id, created=True)\n\n\n@csrf_exempt\ndef curriculum_review_detail(request, review_id):\n    ensure_review_tables()\n    review_id = curriculum_views.clean_str(review_id)\n    row = get_review_template_row(review_id)\n    if not row:\n        return curriculum_views.json_error('Review not found.', status=404)\n\n    if request.method == 'GET':\n        return review_detail_response(review_id)\n\n    if request.method == 'DELETE':\n        archive_review(review_id, actor=_actor(request))\n        curriculum_views.log_curriculum_decision('review.archive', outcome='archived', entity_id=review_id)\n        return JsonResponse({'deleted': True, 'permanent': False, 'archived': True, 'id': review_id})\n\n    if request.method not in {'PATCH', 'PUT'}:\n        return curriculum_views.json_error('Method not allowed.', status=405)\n\n    payload = curriculum_views.json_body(request)\n    if payload is None:\n        return curriculum_views.json_error('Invalid JSON body.')\n\n    _, errors = update_review(review_id, payload, actor=_actor(request))\n    if errors:\n        status = 404 if errors.get('_') == 'Review not found.' else 400\n        return curriculum_views.json_error(errors.get('_') or 'Please fix the highlighted fields.', status=status, fields=errors)\n\n    curriculum_views.log_curriculum_decision('review.update', outcome='updated', entity_id=review_id)\n    return review_detail_response(review_id, updated=True)\n\n\n@csrf_exempt\ndef curriculum_review_clone(request, programme_id):\n    \"\"\"Clone one or more Reviews from another Programme into this one.\n\n    POST body: {\"sourceProgrammeId\": \"...\", \"reviewIds\": [\"REV-...\", ...]}\n    \"\"\"\n    ensure_review_tables()\n    if request.method != 'POST':\n        return curriculum_views.json_error('Method not allowed.', status=405)\n\n    destination_programme_id = curriculum_views.clean_str(programme_id)\n    if not _programme_exists(destination_programme_id):\n        return curriculum_views.json_error('Programme not found.', status=404)\n\n    payload = curriculum_views.json_body(request)\n    if payload is None:\n        return curriculum_views.json_error('Invalid JSON body.')\n\n    source_programme_id = curriculum_views.clean_str(payload.get('sourceProgrammeId'))\n    if not source_programme_id:\n        return curriculum_views.json_error('Choose a source Programme.', fields=['sourceProgrammeId'])\n    if not _programme_exists(source_programme_id):\n        return curriculum_views.json_error('Source Programme not found.', status=404, fields=['sourceProgrammeId'])\n\n    review_ids = payload.get('reviewIds')\n    if not isinstance(review_ids, list) or not [r for r in review_ids if curriculum_views.clean_str(r)]:\n        return curriculum_views.json_error('Please choose one or more types.', fields=['reviewIds'])\n    review_ids = [curriculum_views.clean_str(r) for r in review_ids if curriculum_views.clean_str(r)]\n\n    source_rows = get_review_template_rows(\n        'programme_id = %s and id = any(%s)' if connection.vendor == 'postgresql' else 'programme_id = %s',\n        [source_programme_id, review_ids] if connection.vendor == 'postgresql' else [source_programme_id],\n    )\n    if connection.vendor != 'postgresql':\n        source_rows = [row for row in source_rows if row.get('id') in review_ids]\n    found_ids = {row.get('id') for row in source_rows}\n    missing = [r for r in review_ids if r not in found_ids]\n    if missing:\n        return curriculum_views.json_error(\n            f'Some selected reviews were not found in the source Programme: {\", \".join(missing)}.',\n            status=404, fields=['reviewIds'],\n        )\n\n    actor = _actor(request)\n    new_ids = []\n    with transaction.atomic():\n        for row in source_rows:\n            new_ids.append(clone_review(row, destination_programme_id, actor=actor))\n\n    curriculum_views.invalidate_curriculum_cache()\n    curriculum_views.log_curriculum_decision(\n        'review.clone', outcome='cloned', entity_id=destination_programme_id,\n        reason=f'from={source_programme_id} count={len(new_ids)}',\n    )\n\n    rows = get_review_template_rows('programme_id = %s', [destination_programme_id])\n    type_index = review_types.review_type_index()\n    return JsonResponse({\n        'cloned': True,\n        'sourceProgrammeId': source_programme_id,\n        'programmeId': destination_programme_id,\n        'reviewIds': new_ids,\n        'reviews': [review_template_summary_payload(row, type_index=type_index) for row in rows],\n    })\n",
+    "review_schedule": "\"\"\"Programme Review schedule preview and clash resolution.\n\nA Programme can have several recurring Review templates (``reviews.py``) --\ne.g. a Progress Review every 12 weeks and a Monthly Coaching Meeting every\nmonth. Projected forward, two or more of those recurring templates can land\nin the same calendar month. This module:\n\n  * Projects each enabled Review template's RAW occurrence dates from its\n    ``schedule_anchor_date`` (reviews.py), over a bounded preview window.\n  * Groups raw occurrences by Programme + calendar month -- the clash unit is\n    the month, not the exact date, so an 8 Mar review and a 20 Mar review are\n    still \"a March clash\" even though they land on different days.\n  * Applies persisted occurrence-level decisions (skip / keep) to turn RAW\n    occurrences into the EFFECTIVE schedule a learner-review-instance\n    generator would eventually consume.\n\nTwo small tables carry the decisions, both idempotent and additive so a\nskip/restore cycle stays fully auditable rather than overwriting history:\n\n  * ``review_occurrence_overrides`` -- one Review's one occurrence is\n    skipped. Restoring it soft-deletes the override row (the standard\n    curriculum soft-delete convention); it does not delete the audit trail.\n    A skip is looked up by the exact (review_id, occurrence_date) pair, so\n    if a template's recurrence is edited and that date is no longer produced\n    by the raw projection, the old override simply never matches anything\n    again -- it goes stale on its own, with nothing to clean up.\n\n  * ``review_clash_resolutions`` -- \"keep both/all\" for a whole month's\n    clash. Its identity is (programme_id, month, clash_signature), where\n    ``clash_signature`` is a deterministic digest of exactly which raw\n    occurrences made up that clash. If the raw set for that month changes\n    later (a template edit, a new Review added), the signature changes and\n    the old acknowledgement stops applying -- the month goes back to\n    \"unresolved\" automatically, rather than a stale \"keep all\" silently\n    surviving a different set of Reviews.\n\nRecurrence math deliberately never shifts because of a skip: every\noccurrence is generated straight from the template's fixed anchor date, so\nskipping March does not move April. See ``generate_occurrences``.\n\nSkipping/restoring/keeping-all never touches ``reviews.py``'s tables: a\nReview template, its Sections and Fields are untouched by any decision made\nhere.\n\"\"\"\nfrom __future__ import annotations\n\nimport re\nfrom collections import defaultdict\nfrom datetime import date, datetime, timedelta\n\nfrom django.db import connection, transaction\nfrom django.http import JsonResponse\nfrom django.views.decorators.csrf import csrf_exempt\n\nfrom . import reviews\nfrom . import schema_gate\nfrom . import views as curriculum_views\n\nOCCURRENCE_OVERRIDES_TABLE = 'review_occurrence_overrides'\nCLASH_RESOLUTIONS_TABLE = 'review_clash_resolutions'\n\nDEFAULT_PREVIEW_MONTHS = 12\nMAX_PREVIEW_MONTHS = 24\nRECURRENCE_UNIT_NOUNS = {'days': 'day', 'weeks': 'week', 'months': 'month'}\n\n_REVIEW_SCHEDULE_TABLES_READY = False\n\n\ndef ensure_review_schedule_tables():\n    global _REVIEW_SCHEDULE_TABLES_READY\n    if _REVIEW_SCHEDULE_TABLES_READY:\n        return\n    if not schema_gate.runtime_bootstrap_allowed():\n        schema_gate.require_tables(OCCURRENCE_OVERRIDES_TABLE, CLASH_RESOLUTIONS_TABLE)\n        _REVIEW_SCHEDULE_TABLES_READY = True\n        return\n    provision_review_schedule_tables()\n\n\ndef provision_review_schedule_tables():\n    \"\"\"Mirrors sql/2026-09-10_curriculum_review_schedule_clash_resolution.sql\n    for sqlite/local dev. NOT for production request paths -- see reviews.py\n    and schema_gate for why.\"\"\"\n    global _REVIEW_SCHEDULE_TABLES_READY\n    if _REVIEW_SCHEDULE_TABLES_READY:\n        return\n    with connection.cursor() as cursor:\n        if connection.vendor == 'postgresql':\n            cursor.execute(f'create schema if not exists {curriculum_views.quote_ident(curriculum_views.CURRICULUM_SCHEMA)}')\n        cursor.execute(f'''\n            create table if not exists {curriculum_views.authoring_table_name(OCCURRENCE_OVERRIDES_TABLE)} (\n                id varchar(128) primary key,\n                review_id varchar(128) not null,\n                programme_id varchar(255) not null,\n                occurrence_date date not null,\n                -- NULL keeps the programme-wide skip; a set value scopes the\n                -- override to one learner (see review_instances.py). Mirrors\n                -- sql/2026-09-13_curriculum_review_instances.sql.\n                learner_id integer,\n                action varchar(16) not null default 'skip',\n                reason varchar(1000) not null default '',\n                deleted_at timestamp,\n                deleted_by varchar(255),\n                deleted_via_parent varchar(255),\n                created_by varchar(255) not null default '',\n                updated_by varchar(255) not null default '',\n                created_at timestamp not null default current_timestamp,\n                updated_at timestamp not null default current_timestamp\n            )\n        ''')\n        cursor.execute(f'''\n            create table if not exists {curriculum_views.authoring_table_name(CLASH_RESOLUTIONS_TABLE)} (\n                id varchar(128) primary key,\n                programme_id varchar(255) not null,\n                clash_month varchar(7) not null,\n                clash_signature varchar(2000) not null default '',\n                resolution varchar(16) not null default 'keep_all',\n                note varchar(1000) not null default '',\n                deleted_at timestamp,\n                deleted_by varchar(255),\n                created_by varchar(255) not null default '',\n                updated_by varchar(255) not null default '',\n                created_at timestamp not null default current_timestamp,\n                updated_at timestamp not null default current_timestamp\n            )\n        ''')\n    _REVIEW_SCHEDULE_TABLES_READY = True\n\n\n# --------------------------------------------------------------- date maths\n\ndef add_calendar_months(base, months):\n    \"\"\"Calendar-month arithmetic, day clamped to the target month's length.\n\n    The exact rule already used for cohort end dates (views.calculate_cohort_end_date):\n    31 Jan + 1 month lands on 28/29 Feb, never rolls into March. \"every 12\n    weeks\" and \"every 3 months\" are intentionally NOT the same thing -- weeks\n    stays pure +84 days, months always goes through this function.\n\n    Every occurrence clamps against the ANCHOR's own day-of-month, not a\n    drifting previous occurrence -- generate_occurrences always calls this as\n    ``add_calendar_months(anchor, interval * step)``, so a 31 Jan anchor\n    produces Jan 31, Feb 28, Mar 31, Apr 30: March is not stuck at 28 just\n    because February clamped.\n    \"\"\"\n    month_index = base.month - 1 + months\n    year = base.year + month_index // 12\n    month = month_index % 12 + 1\n    day = min(base.day, _month_length(year, month))\n    return date(year, month, day)\n\n\ndef _month_length(year, month):\n    if month == 12:\n        return (date(year + 1, 1, 1) - date(year, 12, 1)).days\n    return (date(year, month + 1, 1) - date(year, month, 1)).days\n\n\ndef _month_bounds(month_key):\n    \"\"\"('2027-03') -> (date(2027,3,1), date(2027,3,31)).\"\"\"\n    year, month = int(month_key[:4]), int(month_key[5:7])\n    start = date(year, month, 1)\n    end = add_calendar_months(start, 1) - timedelta(days=1)\n    return start, end\n\n\ndef recurrence_label(interval, unit):\n    noun = RECURRENCE_UNIT_NOUNS.get(unit, unit)\n    return f'Every {interval} {noun}{\"\" if interval == 1 else \"s\"}'\n\n\ndef generate_occurrence_steps(anchor, interval, unit, window_start, window_end, *, max_count=500, occurrence_limit=None):\n    \"\"\"(occurrence_number, date) pairs for one recurrence rule, bounded to a window.\n\n    ``occurrence_number`` is 1-based, counted from ``anchor`` itself as\n    occurrence #1 -- the same numbering ``occurrence_limit`` counts against.\n    ``generate_occurrences`` is a thin wrapper around this that keeps its\n    original dates-only return shape; anything that also needs the occurrence\n    number (e.g. a learner-specific Review instance's identity) calls this\n    directly rather than re-deriving it, so there is exactly one place the\n    recurrence math lives.\n\n    Never an infinite sequence: capped both by the window and by max_count.\n    Jumps close to window_start first rather than iterating from the anchor\n    one step at a time, so an old anchor date does not cost one loop\n    iteration per elapsed interval.\n    \"\"\"\n    if not anchor or interval <= 0 or window_start > window_end:\n        return []\n\n    if unit in ('days', 'weeks'):\n        step_days = interval * (7 if unit == 'weeks' else 1)\n        delta = (window_start - anchor).days\n        start_step = max(0, delta // step_days - 1)\n        steps = []\n        step = start_step\n        while len(steps) < max_count:\n            if occurrence_limit is not None and step >= occurrence_limit:\n                break\n            occ = anchor + timedelta(days=step_days * step)\n            if occ > window_end:\n                break\n            if occ >= window_start:\n                steps.append((step + 1, occ))\n            step += 1\n        return steps\n\n    # months: calendar arithmetic, not \"interval * 30 days\".\n    months_between = (window_start.year - anchor.year) * 12 + (window_start.month - anchor.month)\n    start_step = max(0, months_between // interval - 1)\n    steps = []\n    step = start_step\n    while len(steps) < max_count:\n        if occurrence_limit is not None and step >= occurrence_limit:\n            break\n        occ = add_calendar_months(anchor, interval * step)\n        if occ > window_end:\n            break\n        if occ >= window_start:\n            steps.append((step + 1, occ))\n        step += 1\n    return steps\n\n\ndef generate_occurrences(anchor, interval, unit, window_start, window_end, *, max_count=500, occurrence_limit=None):\n    \"\"\"RAW occurrence dates for one recurrence rule, bounded to a window.\n\n    ``occurrence_limit``, when given, is the total number of occurrences the\n    template ever produces (counted from ``anchor`` as occurrence #1) -- the\n    Nth-and-later occurrence is never projected, even if the window would\n    otherwise include it. See ``generate_occurrence_steps`` for the\n    occurrence-numbered variant.\n    \"\"\"\n    return [\n        occ for _, occ in generate_occurrence_steps(\n            anchor, interval, unit, window_start, window_end,\n            max_count=max_count, occurrence_limit=occurrence_limit,\n        )\n    ]\n\n\ndef clash_signature(pairs):\n    \"\"\"Deterministic identity for one month's raw clash set.\n\n    ``pairs`` is an iterable of (review_id, occurrence_date_iso). Sorted so\n    the signature does not depend on projection order, then joined -- if the\n    underlying set of raw occurrences ever changes (a template's anchor or\n    recurrence edited, a Review added/removed), the signature changes with\n    it, and any \"keep all\" acknowledgement keyed to the old signature stops\n    applying on its own.\n    \"\"\"\n    return '|'.join(f'{review_id}:{occurrence_date}' for review_id, occurrence_date in sorted(pairs))\n\n\n# ------------------------------------------------------------------- reads\n\ndef _raw_occurrences_for_programme(programme_id, window_start, window_end):\n    \"\"\"Every enabled, non-deleted Review template's raw occurrences in the window.\n\n    One query (the Review rows already carry recurrence + anchor); the\n    date projection itself is pure in-memory arithmetic.\n    \"\"\"\n    rows = reviews.get_review_template_rows('programme_id = %s and enabled = true', [programme_id])\n    items = []\n    for row in rows:\n        anchor = curriculum_views.parse_date(row.get('schedule_anchor_date')) or curriculum_views.parse_date(row.get('created_at'))\n        interval = curriculum_views.parse_int(row.get('recurrence_interval'), 1)\n        unit = row.get('recurrence_unit') or 'weeks'\n        occurrence_limit = row.get('occurrence_count')\n        for occ in generate_occurrences(anchor, interval, unit, window_start, window_end, occurrence_limit=occurrence_limit):\n            items.append({\n                'reviewId': row.get('id'),\n                'reviewName': row.get('name') or '',\n                'recurrenceLabel': recurrence_label(interval, unit),\n                'occurrenceDate': occ,\n            })\n    return items, [row.get('id') for row in rows]\n\n\ndef _fetch_active_overrides(review_ids):\n    if not review_ids:\n        return {}\n    if connection.vendor == 'postgresql':\n        rows = curriculum_views.fetch_all(\n            f'select * from {curriculum_views.table_name(OCCURRENCE_OVERRIDES_TABLE)} '\n            f'where review_id = any(%s) and deleted_at is null',\n            [review_ids],\n        )\n    else:\n        placeholders = ', '.join(['%s'] * len(review_ids))\n        rows = curriculum_views.fetch_all(\n            f'select * from {curriculum_views.table_name(OCCURRENCE_OVERRIDES_TABLE)} '\n            f'where review_id in ({placeholders}) and deleted_at is null',\n            review_ids,\n        )\n    return {(row.get('review_id'), curriculum_views.format_date(row.get('occurrence_date'))): row for row in rows}\n\n\ndef _fetch_active_clash_resolutions(programme_id):\n    rows = curriculum_views.fetch_all(\n        f'select * from {curriculum_views.table_name(CLASH_RESOLUTIONS_TABLE)} '\n        f'where programme_id = %s and deleted_at is null',\n        [programme_id],\n    )\n    return {(row.get('clash_month'), row.get('clash_signature')): row for row in rows}\n\n\ndef _find_active_override(review_id, occurrence_date_iso):\n    rows = curriculum_views.fetch_all(\n        f'select * from {curriculum_views.table_name(OCCURRENCE_OVERRIDES_TABLE)} '\n        f'where review_id = %s and occurrence_date = %s and deleted_at is null',\n        [review_id, occurrence_date_iso],\n    )\n    return rows[0] if rows else None\n\n\ndef build_programme_schedule(programme_id, *, months=DEFAULT_PREVIEW_MONTHS, today=None):\n    \"\"\"Raw + effective Review occurrence schedule for a Programme, grouped by month.\n\n    Exactly three queries regardless of how many Reviews/occurrences/months\n    are involved: the Review template rows, the active occurrence overrides\n    for those Reviews, and the active clash resolutions for this Programme.\n    \"\"\"\n    today = today or date.today()\n    window_start = date(today.year, today.month, 1)\n    window_end = add_calendar_months(window_start, months) - timedelta(days=1)\n\n    raw_items, review_ids = _raw_occurrences_for_programme(programme_id, window_start, window_end)\n    overrides_by_key = _fetch_active_overrides(review_ids)\n    resolutions_by_key = _fetch_active_clash_resolutions(programme_id)\n\n    by_month = defaultdict(list)\n    for item in raw_items:\n        by_month[item['occurrenceDate'].strftime('%Y-%m')].append(item)\n\n    months_payload = []\n    for month_key in sorted(by_month.keys()):\n        items = sorted(by_month[month_key], key=lambda i: (i['occurrenceDate'], i['reviewId']))\n        signature = clash_signature([(i['reviewId'], i['occurrenceDate'].isoformat()) for i in items])\n        occurrence_payloads = []\n        skipped_count = 0\n        for item in items:\n            date_iso = item['occurrenceDate'].isoformat()\n            override = overrides_by_key.get((item['reviewId'], date_iso))\n            status = 'skipped' if override else 'scheduled'\n            if override:\n                skipped_count += 1\n            occurrence_payloads.append({\n                'reviewId': item['reviewId'],\n                'reviewName': item['reviewName'],\n                'occurrenceDate': date_iso,\n                'recurrenceLabel': item['recurrenceLabel'],\n                'status': status,\n                'skippedBy': override.get('updated_by') if override else None,\n                'skippedAt': curriculum_views.format_created_at(override.get('updated_at')) if override else None,\n                'reason': (override.get('reason') or None) if override else None,\n            })\n\n        has_clash = len(items) >= 2\n        if not has_clash:\n            resolution_status = 'none'\n        elif skipped_count > 0:\n            resolution_status = 'resolved'\n        elif (month_key, signature) in resolutions_by_key:\n            resolution_status = 'kept_all'\n        else:\n            resolution_status = 'unresolved'\n\n        months_payload.append({\n            'month': month_key,\n            'hasClash': has_clash,\n            'resolutionStatus': resolution_status,\n            'clashSignature': signature if has_clash else None,\n            'occurrences': occurrence_payloads,\n        })\n\n    return {\n        'programmeId': programme_id,\n        'windowStart': window_start.isoformat(),\n        'windowEnd': window_end.isoformat(),\n        'monthsPreviewed': months,\n        'months': months_payload,\n    }\n\n\n# --------------------------------------------------------------- mutations\n\ndef skip_occurrence(review_id, occurrence_date_iso, programme_id, *, actor='staff', reason=''):\n    existing = _find_active_override(review_id, occurrence_date_iso)\n    if existing:\n        curriculum_views.update_rows(OCCURRENCE_OVERRIDES_TABLE, 'id = %s', [existing['id']], {\n            'reason': reason, 'updated_by': actor, 'updated_at': datetime.utcnow(),\n        })\n        return existing['id']\n    override_id = curriculum_views.unique_prefixed_id('REVO')\n    curriculum_views.insert_row(OCCURRENCE_OVERRIDES_TABLE, {\n        'id': override_id,\n        'review_id': review_id,\n        'programme_id': programme_id,\n        'occurrence_date': occurrence_date_iso,\n        'action': 'skip',\n        'reason': reason,\n        'created_by': actor,\n        'updated_by': actor,\n        'created_at': datetime.utcnow(),\n        'updated_at': datetime.utcnow(),\n    })\n    return override_id\n\n\ndef restore_occurrence(review_id, occurrence_date_iso, *, actor='staff'):\n    \"\"\"Undo a skip. The override row is soft-deleted, not hard-deleted -- it\n    stays as an auditable \"this was skipped, then restored by X\" record.\"\"\"\n    existing = _find_active_override(review_id, occurrence_date_iso)\n    if not existing:\n        return False\n    curriculum_views.soft_delete_rows(OCCURRENCE_OVERRIDES_TABLE, 'id = %s', [existing['id']], deleted_by=actor)\n    return True\n\n\ndef _upsert_keep_all_resolution(programme_id, month, signature, *, actor='staff', note=''):\n    existing = curriculum_views.fetch_all(\n        f'select * from {curriculum_views.table_name(CLASH_RESOLUTIONS_TABLE)} '\n        f'where programme_id = %s and clash_month = %s and clash_signature = %s and deleted_at is null',\n        [programme_id, month, signature],\n    )\n    if existing:\n        return existing[0]['id']\n    resolution_id = curriculum_views.unique_prefixed_id('REVOC')\n    curriculum_views.insert_row(CLASH_RESOLUTIONS_TABLE, {\n        'id': resolution_id,\n        'programme_id': programme_id,\n        'clash_month': month,\n        'clash_signature': signature,\n        'resolution': 'keep_all',\n        'note': note,\n        'created_by': actor,\n        'updated_by': actor,\n        'created_at': datetime.utcnow(),\n        'updated_at': datetime.utcnow(),\n    })\n    return resolution_id\n\n\n# -------------------------------------------------------------- validation\n\n_MONTH_RE = re.compile(r'^\\d{4}-(0[1-9]|1[0-2])$')\n_ACTIONS = ('skip', 'keep')\n\n\ndef validate_clash_resolution_payload(programme_id, payload):\n    \"\"\"Returns (month, cleaned_items, errors).\n\n    Every submitted (reviewId, occurrenceDate) pair must be a RAW occurrence\n    this Programme's Reviews actually produce for that month -- this is what\n    keeps the decision scoped to the correct Programme and rejects stale or\n    fabricated dates rather than trusting the client.\n    \"\"\"\n    errors = {}\n    month = curriculum_views.clean_str(payload.get('month'))\n    if not _MONTH_RE.match(month):\n        errors['month'] = 'A valid month (YYYY-MM) is required.'\n        return month, [], errors\n\n    month_start, _ = _month_bounds(month)\n    raw_items, _ = _raw_occurrences_for_programme(programme_id, month_start, _month_bounds(month)[1])\n    raw_keys = {(i['reviewId'], i['occurrenceDate'].isoformat()) for i in raw_items}\n\n    items = payload.get('occurrences')\n    if not isinstance(items, list) or not items:\n        errors['occurrences'] = 'Select at least one review occurrence.'\n        return month, [], errors\n\n    cleaned_items = []\n    for index, item in enumerate(items):\n        if not isinstance(item, dict):\n            item = {}\n        path = f'occurrences[{index}]'\n        review_id = curriculum_views.clean_str(item.get('reviewId'))\n        occurrence_date = curriculum_views.clean_str(item.get('occurrenceDate'))\n        action = curriculum_views.clean_str(item.get('action')).lower()\n\n        if (review_id, occurrence_date) not in raw_keys:\n            errors[path] = 'This review occurrence is not currently scheduled for this Programme in this month.'\n            continue\n        if action not in _ACTIONS:\n            errors[f'{path}.action'] = 'action must be \"skip\" or \"keep\".'\n            continue\n        cleaned_items.append({\n            'review_id': review_id,\n            'occurrence_date': occurrence_date,\n            'action': action,\n            'reason': curriculum_views.clean_str(item.get('reason')),\n        })\n\n    return month, cleaned_items, errors\n\n\ndef resolve_clash_decision(programme_id, month, items, *, actor='staff'):\n    \"\"\"Applies a set of skip/keep decisions, then -- if every raw occurrence\n    in the month is still effective (nothing was skipped) -- persists an\n    explicit \"keep all\" acknowledgement so the month stops reading as an\n    unresolved clash. Returns the recomputed single-month schedule payload.\"\"\"\n    with transaction.atomic():\n        for item in items:\n            if item['action'] == 'skip':\n                skip_occurrence(item['review_id'], item['occurrence_date'], programme_id, actor=actor, reason=item['reason'])\n            else:\n                restore_occurrence(item['review_id'], item['occurrence_date'], actor=actor)\n\n        month_start, _ = _month_bounds(month)\n        result = build_programme_schedule(programme_id, months=1, today=month_start)\n        month_payload = result['months'][0] if result['months'] else None\n\n        if month_payload and month_payload['hasClash'] and month_payload['resolutionStatus'] == 'unresolved':\n            _upsert_keep_all_resolution(programme_id, month, month_payload['clashSignature'], actor=actor)\n            result = build_programme_schedule(programme_id, months=1, today=month_start)\n            month_payload = result['months'][0]\n\n    curriculum_views.invalidate_curriculum_cache()\n    return month_payload or {'month': month, 'hasClash': False, 'resolutionStatus': 'none', 'clashSignature': None, 'occurrences': []}\n\n\n# --------------------------------------------------------------------- views\n\n@csrf_exempt\ndef curriculum_programme_review_schedule(request, programme_id):\n    reviews.ensure_review_tables()\n    ensure_review_schedule_tables()\n    programme_id = curriculum_views.clean_str(programme_id)\n\n    if request.method != 'GET':\n        return curriculum_views.json_error('Method not allowed.', status=405)\n    if not reviews._programme_exists(programme_id):\n        return curriculum_views.json_error('Programme not found.', status=404)\n\n    months = curriculum_views.parse_int(request.GET.get('months'), DEFAULT_PREVIEW_MONTHS)\n    months = max(1, min(months, MAX_PREVIEW_MONTHS))\n\n    payload = build_programme_schedule(programme_id, months=months)\n    return JsonResponse({'schema': curriculum_views.CURRICULUM_SCHEMA, **payload})\n\n\n@csrf_exempt\ndef curriculum_programme_review_clash_resolve(request, programme_id):\n    \"\"\"POST body: {\"month\": \"2027-03\", \"occurrences\": [{\"reviewId\", \"occurrenceDate\", \"action\": \"skip\"|\"keep\"}]}\n\n    \"skip\" removes one occurrence from the effective schedule without\n    touching the recurring template; \"keep\" restores a previously skipped\n    occurrence (or is a no-op if it was already scheduled). Selecting \"keep\"\n    for every occurrence in a clash persists an explicit \"kept both/all\"\n    acknowledgement so the same clash does not keep reappearing as\n    unresolved.\n    \"\"\"\n    reviews.ensure_review_tables()\n    ensure_review_schedule_tables()\n    programme_id = curriculum_views.clean_str(programme_id)\n\n    if request.method != 'POST':\n        return curriculum_views.json_error('Method not allowed.', status=405)\n    if not reviews._programme_exists(programme_id):\n        return curriculum_views.json_error('Programme not found.', status=404)\n\n    payload = curriculum_views.json_body(request)\n    if payload is None:\n        return curriculum_views.json_error('Invalid JSON body.')\n\n    month, items, errors = validate_clash_resolution_payload(programme_id, payload)\n    if errors:\n        return curriculum_views.json_error('Please fix the highlighted fields.', fields=errors)\n\n    actor = reviews._actor(request)\n    month_payload = resolve_clash_decision(programme_id, month, items, actor=actor)\n\n    curriculum_views.log_curriculum_decision(\n        'review.clash_resolve', outcome='resolved', entity_id=programme_id, reason=f'month={month}',\n    )\n    return JsonResponse({'resolved': True, 'programmeId': programme_id, 'month': month_payload})\n",
+    "review_types": "\"\"\"Review Types -- the configurable classification a Review Template carries.\n\nA Review Type answers \"what KIND of review is this\", and nothing else. It is\ndeliberately NOT:\n\n  * a schedule -- recurrence lives on the template (\"Monthly Coaching Meeting\"\n    every 6 weeks is a perfectly valid, supported configuration);\n  * a form -- sections/fields/signatures/eligibility/participants all stay on\n    the template;\n  * a name -- \"Monthly Learner Catch-up\" (name) can be of type \"Monthly\n    Coaching Meeting\", and renaming it changes nothing about its routing.\n\nIt exists so Coach can route a Review's occurrences to the right calendar\nbucket by a STABLE code rather than by a display string, and so a new kind of\nReview (\"Career Review\", \"Six Week Review\") can be introduced from the\nCurriculum UI without a code change or a migration.\n\nIdentity and stability\n----------------------\n``id`` is the only thing ``review_templates.review_type_id`` ever stores, and\nfollows the same generator every other Curriculum entity uses\n(``views.unique_prefixed_id``) with the ``REVT-`` prefix. ``code`` is derived\nonce from the name at creation time and then frozen -- renaming the type later\nmust not change how anything routes, so nothing ever regenerates it.\n\nOnly two types are system types, seeded here and by\n``sql/2026-09-13_curriculum_review_types.sql``:\n\n    Monthly Coaching Meeting   code 'mcm'                is_system\n    Progress Review            code 'progress_review'    is_system\n\nThese replace the old ``review_templates.coach_surface`` enum, which could\nonly ever hold those same two values and had no identity of its own. See\n``COACH_SURFACE_LEGACY_CODES`` for the one-time mapping the backfill uses.\n\"\"\"\nfrom __future__ import annotations\n\nimport logging\nimport re\nfrom datetime import datetime\n\nfrom django.db import connection\nfrom django.http import JsonResponse\nfrom django.views.decorators.csrf import csrf_exempt\n\nfrom . import schema_gate\nfrom . import views as curriculum_views\n\nlogger = logging.getLogger(__name__)\n\nREVIEW_TYPES_TABLE = 'review_types'\n\n# The two system types, with fixed ids so every environment -- production,\n# a local sqlite test run, a developer's Postgres -- agrees on the same\n# review_type_id for the same type, and the backfill is deterministic.\nREVIEW_TYPE_CODE_MCM = 'mcm'\nREVIEW_TYPE_CODE_PROGRESS_REVIEW = 'progress_review'\n\nSYSTEM_REVIEW_TYPES = (\n    {'id': 'REVT-MCM', 'name': 'Monthly Coaching Meeting', 'code': REVIEW_TYPE_CODE_MCM},\n    {'id': 'REVT-PROGRESS_REVIEW', 'name': 'Progress Review', 'code': REVIEW_TYPE_CODE_PROGRESS_REVIEW},\n)\n\nSYSTEM_REVIEW_TYPE_CODES = tuple(entry['code'] for entry in SYSTEM_REVIEW_TYPES)\n\n# The retired review_templates.coach_surface value -> the Review Type code that\n# replaced it. Used ONLY by the one-time backfill; no runtime path reads\n# coach_surface any more.\nCOACH_SURFACE_LEGACY_CODES = {\n    'mcr': REVIEW_TYPE_CODE_MCM,\n    'progress_review': REVIEW_TYPE_CODE_PROGRESS_REVIEW,\n}\n\nDUPLICATE_NAME_ERROR = 'A review type with this name already exists.'\n\n_TABLE_READY = False\n\n\ndef reset_ready_flag():\n    \"\"\"Test hook -- mirrors views.reset_schema_ready_flags().\"\"\"\n    global _TABLE_READY\n    _TABLE_READY = False\n\n\ndef ensure_review_types_table():\n    \"\"\"Verify the table exists; provision + seed only outside production.\"\"\"\n    global _TABLE_READY\n    if _TABLE_READY:\n        return\n    if not schema_gate.runtime_bootstrap_allowed():\n        schema_gate.require_tables(REVIEW_TYPES_TABLE)\n        _TABLE_READY = True\n        return\n    provision_review_types_table()\n\n\ndef provision_review_types_table():\n    \"\"\"Mirrors sql/2026-09-13_curriculum_review_types.sql for sqlite/local dev.\n\n    NOT for production request paths -- schema there is owned by the SQL file\n    applied to Neon directly. See schema_gate's module docstring.\n    \"\"\"\n    global _TABLE_READY\n    if _TABLE_READY:\n        return\n    with connection.cursor() as cursor:\n        if connection.vendor == 'postgresql':\n            cursor.execute(f'create schema if not exists {curriculum_views.quote_ident(curriculum_views.CURRICULUM_SCHEMA)}')\n        cursor.execute(f'''\n            create table if not exists {curriculum_views.authoring_table_name(REVIEW_TYPES_TABLE)} (\n                id varchar(128) primary key,\n                name varchar(255) not null default '',\n                code varchar(64) not null,\n                is_system boolean not null default false,\n                is_active boolean not null default true,\n                created_by varchar(255) not null default '',\n                updated_by varchar(255) not null default '',\n                created_at timestamp not null default current_timestamp,\n                updated_at timestamp not null default current_timestamp\n            )\n        ''')\n    _TABLE_READY = True\n    seed_system_review_types()\n\n\ndef seed_system_review_types():\n    \"\"\"Insert any missing system type. Idempotent: matched on ``code``, so a\n    row someone renamed in the UI is left exactly as it is.\"\"\"\n    existing = {\n        curriculum_views.clean_str(row.get('code')).lower()\n        for row in curriculum_views.fetch_all(\n            f'select code from {curriculum_views.table_name(REVIEW_TYPES_TABLE)}'\n        )\n    }\n    seeded = []\n    for entry in SYSTEM_REVIEW_TYPES:\n        if entry['code'] in existing:\n            continue\n        curriculum_views.insert_row(REVIEW_TYPES_TABLE, {\n            'id': entry['id'],\n            'name': entry['name'],\n            'code': entry['code'],\n            'is_system': True,\n            'is_active': True,\n            'created_by': 'system',\n            'updated_by': 'system',\n            'created_at': datetime.utcnow(),\n            'updated_at': datetime.utcnow(),\n        })\n        seeded.append(entry['code'])\n    return seeded\n\n\n# --------------------------------------------------------------------- reads\n\ndef get_review_type_rows(where_sql='', params=None):\n    where = where_sql or '1 = 1'\n    return curriculum_views.fetch_all(\n        f'select * from {curriculum_views.table_name(REVIEW_TYPES_TABLE)} '\n        f'where {where} order by is_system desc, name asc',\n        params or [],\n    )\n\n\ndef list_review_types(*, include_inactive=False):\n    if include_inactive:\n        return get_review_type_rows()\n    return get_review_type_rows('is_active = true')\n\n\ndef get_review_type(type_id):\n    type_id = curriculum_views.clean_str(type_id)\n    if not type_id:\n        return None\n    rows = get_review_type_rows('id = %s', [type_id])\n    return rows[0] if rows else None\n\n\ndef get_review_type_by_code(code):\n    code = curriculum_views.clean_str(code).lower()\n    if not code:\n        return None\n    rows = get_review_type_rows('lower(code) = %s', [code])\n    return rows[0] if rows else None\n\n\ndef review_type_index():\n    \"\"\"{id: row} for every type, active or not.\n\n    One query, handed to loops that would otherwise ask per Review row. Not\n    cached: production runs nine two-worker services off one process-local\n    Django cache, so a cached lookup table would serve a type created in\n    another worker as \"unknown\" until that worker restarted -- and this is a\n    handful of rows.\n    \"\"\"\n    return {row.get('id'): row for row in get_review_type_rows()}\n\n\ndef review_type_payload(row):\n    return {\n        'id': row.get('id'),\n        'name': row.get('name') or '',\n        'code': row.get('code') or '',\n        'isSystem': bool(row.get('is_system')),\n        'isActive': bool(row.get('is_active')),\n    }\n\n\n# ---------------------------------------------------------------- code minting\n\ndef generate_review_type_code(name, existing_codes=None):\n    \"\"\"A stable snake_case code for a display name.\n\n    Frozen at creation: a later rename keeps the original code, because every\n    calendar/routing decision downstream is keyed on it.\n    \"\"\"\n    base = re.sub(r'[^a-z0-9]+', '_', curriculum_views.clean_str(name).lower()).strip('_')\n    base = base or 'review_type'\n    taken = {curriculum_views.clean_str(code).lower() for code in (existing_codes or [])}\n    if base not in taken:\n        return base\n    suffix = 2\n    while f'{base}_{suffix}' in taken:\n        suffix += 1\n    return f'{base}_{suffix}'\n\n\ndef _normalised_name(value):\n    \"\"\"Trimmed and case-folded -- how duplicate names are compared.\"\"\"\n    return ' '.join(curriculum_views.clean_str(value).split()).lower()\n\n\ndef duplicate_active_name_exists(name, *, exclude_id=None):\n    target = _normalised_name(name)\n    if not target:\n        return False\n    for row in list_review_types():\n        if exclude_id and row.get('id') == exclude_id:\n            continue\n        if _normalised_name(row.get('name')) == target:\n            return True\n    return False\n\n\n# -------------------------------------------------------------------- writes\n\ndef create_review_type(name, *, actor='staff'):\n    \"\"\"Create a custom type from the ONE field a user supplies: its name.\n\n    Everything else -- id, code, is_system, is_active -- is generated here;\n    none of it is accepted from the payload, so the create UI stays a single\n    text box.\n    \"\"\"\n    ensure_review_types_table()\n    clean_name = ' '.join(curriculum_views.clean_str(name).split())\n    if not clean_name:\n        return None, {'name': 'Review type name is required.'}\n    if len(clean_name) > 255:\n        return None, {'name': 'Review type name must be 255 characters or fewer.'}\n    if duplicate_active_name_exists(clean_name):\n        return None, {'name': DUPLICATE_NAME_ERROR}\n\n    existing_rows = get_review_type_rows()\n    code = generate_review_type_code(clean_name, [row.get('code') for row in existing_rows])\n    type_id = curriculum_views.unique_prefixed_id(\n        'REVT', '', [row.get('id') for row in existing_rows],\n    )\n    row = curriculum_views.insert_row(REVIEW_TYPES_TABLE, {\n        'id': type_id,\n        'name': clean_name,\n        'code': code,\n        'is_system': False,\n        'is_active': True,\n        'created_by': actor,\n        'updated_by': actor,\n        'created_at': datetime.utcnow(),\n        'updated_at': datetime.utcnow(),\n    })\n    curriculum_views.invalidate_curriculum_cache()\n    return row, None\n\n\ndef rename_review_type(type_id, name, *, actor='staff'):\n    \"\"\"Rename a custom type. ``code`` is deliberately untouched: routing must\n    survive a rename (a Review Type is classification, not a label).\"\"\"\n    ensure_review_types_table()\n    row = get_review_type(type_id)\n    if not row:\n        return None, {'_': 'Review type not found.'}\n    if bool(row.get('is_system')):\n        return None, {'_': 'System review types cannot be renamed.'}\n    clean_name = ' '.join(curriculum_views.clean_str(name).split())\n    if not clean_name:\n        return None, {'name': 'Review type name is required.'}\n    if duplicate_active_name_exists(clean_name, exclude_id=type_id):\n        return None, {'name': DUPLICATE_NAME_ERROR}\n    rows = curriculum_views.update_rows(REVIEW_TYPES_TABLE, 'id = %s', [type_id], {\n        'name': clean_name, 'updated_by': actor, 'updated_at': datetime.utcnow(),\n    })\n    curriculum_views.invalidate_curriculum_cache()\n    return (rows[0] if rows else get_review_type(type_id)), None\n\n\ndef archive_review_type(type_id, *, actor='staff'):\n    \"\"\"Deactivate a custom type -- never a hard delete.\n\n    Templates already classified with it keep working and keep classifying\n    exactly as before; the type simply stops being offered for new Reviews.\n    System types cannot be archived.\n    \"\"\"\n    ensure_review_types_table()\n    row = get_review_type(type_id)\n    if not row:\n        return None, {'_': 'Review type not found.'}\n    if bool(row.get('is_system')):\n        return None, {'_': 'Monthly Coaching Meeting and Progress Review are system review types and cannot be deleted.'}\n    rows = curriculum_views.update_rows(REVIEW_TYPES_TABLE, 'id = %s', [type_id], {\n        'is_active': False, 'updated_by': actor, 'updated_at': datetime.utcnow(),\n    })\n    curriculum_views.invalidate_curriculum_cache()\n    return (rows[0] if rows else get_review_type(type_id)), None\n\n\n# --------------------------------------------------------------------- views\n\ndef _actor(request):\n    # Matches reviews.py: curriculum_api writes are not per-account today.\n    return 'staff'\n\n\n@csrf_exempt\ndef curriculum_review_type_collection(request):\n    \"\"\"GET  -- every active Review Type (add ?includeInactive=1 for archived).\n    POST -- create a custom type from {\"name\": \"Career Review\"} alone. Every\n            other column (id, code, is_system, is_active) is generated here,\n            so the create UI stays a single text box.\n    \"\"\"\n    ensure_review_types_table()\n\n    if request.method == 'GET':\n        include_inactive = curriculum_views.clean_str(request.GET.get('includeInactive')).lower() in ('1', 'true', 'yes')\n        rows = list_review_types(include_inactive=include_inactive)\n        return curriculum_views.curriculum_results_response([review_type_payload(row) for row in rows])\n\n    if request.method != 'POST':\n        return curriculum_views.json_error('Method not allowed.', status=405)\n\n    payload = curriculum_views.json_body(request)\n    if payload is None:\n        return curriculum_views.json_error('Invalid JSON body.')\n\n    row, errors = create_review_type(payload.get('name'), actor=_actor(request))\n    if errors:\n        return curriculum_views.json_error(\n            errors.get('name') or 'Please fix the highlighted fields.', fields=errors,\n        )\n\n    curriculum_views.log_curriculum_decision('review-type.create', outcome='created', entity_id=row.get('id'))\n    return JsonResponse({'created': True, 'reviewType': review_type_payload(row)}, status=201)\n\n\n@csrf_exempt\ndef curriculum_review_type_detail(request, review_type_id):\n    \"\"\"PATCH  -- rename a custom type (its code, and therefore its routing,\n                 is untouched).\n    DELETE -- archive a custom type: deactivated, never hard-deleted, so the\n              Reviews already classified with it keep working. A system type\n              is refused.\n    \"\"\"\n    ensure_review_types_table()\n    review_type_id = curriculum_views.clean_str(review_type_id)\n    row = get_review_type(review_type_id)\n    if not row:\n        return curriculum_views.json_error('Review type not found.', status=404)\n\n    if request.method == 'GET':\n        return JsonResponse({'reviewType': review_type_payload(row)})\n\n    if request.method == 'DELETE':\n        archived, errors = archive_review_type(review_type_id, actor=_actor(request))\n        if errors:\n            return curriculum_views.json_error(errors.get('_') or 'Unable to delete this review type.', status=400, fields=errors)\n        curriculum_views.log_curriculum_decision('review-type.archive', outcome='archived', entity_id=review_type_id)\n        return JsonResponse({\n            'deleted': True, 'permanent': False, 'archived': True,\n            'id': review_type_id, 'reviewType': review_type_payload(archived),\n        })\n\n    if request.method not in {'PATCH', 'PUT'}:\n        return curriculum_views.json_error('Method not allowed.', status=405)\n\n    payload = curriculum_views.json_body(request)\n    if payload is None:\n        return curriculum_views.json_error('Invalid JSON body.')\n\n    renamed, errors = rename_review_type(review_type_id, payload.get('name'), actor=_actor(request))\n    if errors:\n        return curriculum_views.json_error(\n            errors.get('_') or errors.get('name') or 'Please fix the highlighted fields.', fields=errors,\n        )\n    curriculum_views.log_curriculum_decision('review-type.update', outcome='updated', entity_id=review_type_id)\n    return JsonResponse({'updated': True, 'reviewType': review_type_payload(renamed)})\n"
+  },
+  "symbols": [
+    {
+      "old": "reviews",
+      "name": "REVIEW_TEMPLATES_TABLE",
+      "owner": "infrastructure.relations",
+      "kind": "Assign"
+    },
+    {
+      "old": "reviews",
+      "name": "REVIEW_SECTIONS_TABLE",
+      "owner": "infrastructure.relations",
+      "kind": "Assign"
+    },
+    {
+      "old": "reviews",
+      "name": "REVIEW_FIELDS_TABLE",
+      "owner": "infrastructure.relations",
+      "kind": "Assign"
+    },
+    {
+      "old": "reviews",
+      "name": "RECURRENCE_UNITS",
+      "owner": "domain.template_rules",
+      "kind": "Assign"
+    },
+    {
+      "old": "reviews",
+      "name": "FIELD_TYPES",
+      "owner": "domain.template_rules",
+      "kind": "Assign"
+    },
+    {
+      "old": "reviews",
+      "name": "FIELD_TYPES_REQUIRING_TITLE",
+      "owner": "domain.template_rules",
+      "kind": "Assign"
+    },
+    {
+      "old": "reviews",
+      "name": "DISPLAY_ONLY_FIELD_TYPES",
+      "owner": "domain.template_rules",
+      "kind": "Assign"
+    },
+    {
+      "old": "reviews",
+      "name": "CONDITIONAL_FIELD_TYPE",
+      "owner": "domain.template_rules",
+      "kind": "Assign"
+    },
+    {
+      "old": "reviews",
+      "name": "CONDITION_VALUES",
+      "owner": "domain.template_rules",
+      "kind": "Assign"
+    },
+    {
+      "old": "reviews",
+      "name": "MEETING_SUMMARY_SEMANTIC_KEY",
+      "owner": "domain.template_rules",
+      "kind": "Assign"
+    },
+    {
+      "old": "reviews",
+      "name": "PARTICIPANT_ROLES",
+      "owner": "domain.template_rules",
+      "kind": "Assign"
+    },
+    {
+      "old": "reviews",
+      "name": "FIELD_RESPONDENT_ROLES",
+      "owner": "domain.template_rules",
+      "kind": "Assign"
+    },
+    {
+      "old": "reviews",
+      "name": "_REVIEW_TABLES_READY",
+      "owner": "infrastructure.template_schema",
+      "kind": "Assign"
+    },
+    {
+      "old": "reviews",
+      "name": "ensure_review_tables",
+      "owner": "infrastructure.template_schema",
+      "kind": "FunctionDef"
+    },
+    {
+      "old": "reviews",
+      "name": "provision_review_template_tables",
+      "owner": "infrastructure.template_schema",
+      "kind": "FunctionDef"
+    },
+    {
+      "old": "reviews",
+      "name": "get_review_template_rows",
+      "owner": "infrastructure.template_rows",
+      "kind": "FunctionDef"
+    },
+    {
+      "old": "reviews",
+      "name": "get_review_template_row",
+      "owner": "infrastructure.template_rows",
+      "kind": "FunctionDef"
+    },
+    {
+      "old": "reviews",
+      "name": "get_review_section_rows",
+      "owner": "infrastructure.template_rows",
+      "kind": "FunctionDef"
+    },
+    {
+      "old": "reviews",
+      "name": "get_review_field_rows",
+      "owner": "infrastructure.template_rows",
+      "kind": "FunctionDef"
+    },
+    {
+      "old": "reviews",
+      "name": "review_field_payload",
+      "owner": "application.template_queries",
+      "kind": "FunctionDef"
+    },
+    {
+      "old": "reviews",
+      "name": "assemble_review_sections",
+      "owner": "application.template_queries",
+      "kind": "FunctionDef"
+    },
+    {
+      "old": "reviews",
+      "name": "flatten_fields",
+      "owner": "application.template_queries",
+      "kind": "FunctionDef"
+    },
+    {
+      "old": "reviews",
+      "name": "review_template_summary_payload",
+      "owner": "application.template_queries",
+      "kind": "FunctionDef"
+    },
+    {
+      "old": "reviews",
+      "name": "review_template_detail_payload",
+      "owner": "application.template_queries",
+      "kind": "FunctionDef"
+    },
+    {
+      "old": "reviews",
+      "name": "review_detail_response",
+      "owner": "api.templates",
+      "kind": "FunctionDef"
+    },
+    {
+      "old": "reviews",
+      "name": "_programme_exists",
+      "owner": "api.templates",
+      "kind": "FunctionDef"
+    },
+    {
+      "old": "reviews",
+      "name": "validate_recurrence",
+      "owner": "domain.template_rules",
+      "kind": "FunctionDef"
+    },
+    {
+      "old": "reviews",
+      "name": "validate_schedule_anchor_date",
+      "owner": "application.template_validation",
+      "kind": "FunctionDef"
+    },
+    {
+      "old": "reviews",
+      "name": "_resolve_review_type",
+      "owner": "application.template_queries",
+      "kind": "FunctionDef"
+    },
+    {
+      "old": "reviews",
+      "name": "validate_review_type_id",
+      "owner": "application.template_validation",
+      "kind": "FunctionDef"
+    },
+    {
+      "old": "reviews",
+      "name": "validate_occurrence_count",
+      "owner": "domain.template_rules",
+      "kind": "FunctionDef"
+    },
+    {
+      "old": "reviews",
+      "name": "validate_expected_otjh",
+      "owner": "domain.template_rules",
+      "kind": "FunctionDef"
+    },
+    {
+      "old": "reviews",
+      "name": "validate_statuses",
+      "owner": "domain.template_rules",
+      "kind": "FunctionDef"
+    },
+    {
+      "old": "reviews",
+      "name": "_validate_field_configuration",
+      "owner": "domain.template_rules",
+      "kind": "FunctionDef"
+    },
+    {
+      "old": "reviews",
+      "name": "MAX_FIELD_NESTING_DEPTH",
+      "owner": "domain.template_rules",
+      "kind": "Assign"
+    },
+    {
+      "old": "reviews",
+      "name": "validate_field_payload",
+      "owner": "domain.template_rules",
+      "kind": "FunctionDef"
+    },
+    {
+      "old": "reviews",
+      "name": "validate_section_payload",
+      "owner": "domain.template_rules",
+      "kind": "FunctionDef"
+    },
+    {
+      "old": "reviews",
+      "name": "_sections_payload_from",
+      "owner": "domain.template_rules",
+      "kind": "FunctionDef"
+    },
+    {
+      "old": "reviews",
+      "name": "validate_applicability",
+      "owner": "application.template_validation",
+      "kind": "FunctionDef"
+    },
+    {
+      "old": "reviews",
+      "name": "validate_review_payload",
+      "owner": "application.template_validation",
+      "kind": "FunctionDef"
+    },
+    {
+      "old": "reviews",
+      "name": "_insert_field_row",
+      "owner": "infrastructure.template_rows",
+      "kind": "FunctionDef"
+    },
+    {
+      "old": "reviews",
+      "name": "save_section_fields",
+      "owner": "infrastructure.template_rows",
+      "kind": "FunctionDef"
+    },
+    {
+      "old": "reviews",
+      "name": "save_review_sections",
+      "owner": "infrastructure.template_rows",
+      "kind": "FunctionDef"
+    },
+    {
+      "old": "reviews",
+      "name": "existing_review_ids",
+      "owner": "infrastructure.template_rows",
+      "kind": "FunctionDef"
+    },
+    {
+      "old": "reviews",
+      "name": "create_review",
+      "owner": "application.template_commands",
+      "kind": "FunctionDef"
+    },
+    {
+      "old": "reviews",
+      "name": "update_review",
+      "owner": "application.template_commands",
+      "kind": "FunctionDef"
+    },
+    {
+      "old": "reviews",
+      "name": "archive_review",
+      "owner": "application.template_commands",
+      "kind": "FunctionDef"
+    },
+    {
+      "old": "reviews",
+      "name": "clone_review",
+      "owner": "application.template_commands",
+      "kind": "FunctionDef"
+    },
+    {
+      "old": "reviews",
+      "name": "_actor",
+      "owner": "api.templates",
+      "kind": "FunctionDef"
+    },
+    {
+      "old": "reviews",
+      "name": "curriculum_programme_review_collection",
+      "owner": "api.templates",
+      "kind": "FunctionDef"
+    },
+    {
+      "old": "reviews",
+      "name": "curriculum_review_detail",
+      "owner": "api.templates",
+      "kind": "FunctionDef"
+    },
+    {
+      "old": "reviews",
+      "name": "curriculum_review_clone",
+      "owner": "api.templates",
+      "kind": "FunctionDef"
+    },
+    {
+      "old": "review_schedule",
+      "name": "OCCURRENCE_OVERRIDES_TABLE",
+      "owner": "infrastructure.relations",
+      "kind": "Assign"
+    },
+    {
+      "old": "review_schedule",
+      "name": "CLASH_RESOLUTIONS_TABLE",
+      "owner": "infrastructure.relations",
+      "kind": "Assign"
+    },
+    {
+      "old": "review_schedule",
+      "name": "DEFAULT_PREVIEW_MONTHS",
+      "owner": "domain.recurrence",
+      "kind": "Assign"
+    },
+    {
+      "old": "review_schedule",
+      "name": "MAX_PREVIEW_MONTHS",
+      "owner": "domain.recurrence",
+      "kind": "Assign"
+    },
+    {
+      "old": "review_schedule",
+      "name": "RECURRENCE_UNIT_NOUNS",
+      "owner": "domain.recurrence",
+      "kind": "Assign"
+    },
+    {
+      "old": "review_schedule",
+      "name": "_REVIEW_SCHEDULE_TABLES_READY",
+      "owner": "infrastructure.schedule_schema",
+      "kind": "Assign"
+    },
+    {
+      "old": "review_schedule",
+      "name": "ensure_review_schedule_tables",
+      "owner": "infrastructure.schedule_schema",
+      "kind": "FunctionDef"
+    },
+    {
+      "old": "review_schedule",
+      "name": "provision_review_schedule_tables",
+      "owner": "infrastructure.schedule_schema",
+      "kind": "FunctionDef"
+    },
+    {
+      "old": "review_schedule",
+      "name": "add_calendar_months",
+      "owner": "domain.recurrence",
+      "kind": "FunctionDef"
+    },
+    {
+      "old": "review_schedule",
+      "name": "_month_length",
+      "owner": "domain.recurrence",
+      "kind": "FunctionDef"
+    },
+    {
+      "old": "review_schedule",
+      "name": "_month_bounds",
+      "owner": "domain.recurrence",
+      "kind": "FunctionDef"
+    },
+    {
+      "old": "review_schedule",
+      "name": "recurrence_label",
+      "owner": "domain.recurrence",
+      "kind": "FunctionDef"
+    },
+    {
+      "old": "review_schedule",
+      "name": "generate_occurrence_steps",
+      "owner": "domain.recurrence",
+      "kind": "FunctionDef"
+    },
+    {
+      "old": "review_schedule",
+      "name": "generate_occurrences",
+      "owner": "domain.recurrence",
+      "kind": "FunctionDef"
+    },
+    {
+      "old": "review_schedule",
+      "name": "clash_signature",
+      "owner": "domain.recurrence",
+      "kind": "FunctionDef"
+    },
+    {
+      "old": "review_schedule",
+      "name": "_raw_occurrences_for_programme",
+      "owner": "application.scheduling",
+      "kind": "FunctionDef"
+    },
+    {
+      "old": "review_schedule",
+      "name": "_fetch_active_overrides",
+      "owner": "infrastructure.schedule_rows",
+      "kind": "FunctionDef"
+    },
+    {
+      "old": "review_schedule",
+      "name": "_fetch_active_clash_resolutions",
+      "owner": "infrastructure.schedule_rows",
+      "kind": "FunctionDef"
+    },
+    {
+      "old": "review_schedule",
+      "name": "_find_active_override",
+      "owner": "infrastructure.schedule_rows",
+      "kind": "FunctionDef"
+    },
+    {
+      "old": "review_schedule",
+      "name": "build_programme_schedule",
+      "owner": "application.scheduling",
+      "kind": "FunctionDef"
+    },
+    {
+      "old": "review_schedule",
+      "name": "skip_occurrence",
+      "owner": "infrastructure.schedule_rows",
+      "kind": "FunctionDef"
+    },
+    {
+      "old": "review_schedule",
+      "name": "restore_occurrence",
+      "owner": "infrastructure.schedule_rows",
+      "kind": "FunctionDef"
+    },
+    {
+      "old": "review_schedule",
+      "name": "_upsert_keep_all_resolution",
+      "owner": "infrastructure.schedule_rows",
+      "kind": "FunctionDef"
+    },
+    {
+      "old": "review_schedule",
+      "name": "_MONTH_RE",
+      "owner": "domain.recurrence",
+      "kind": "Assign"
+    },
+    {
+      "old": "review_schedule",
+      "name": "_ACTIONS",
+      "owner": "domain.recurrence",
+      "kind": "Assign"
+    },
+    {
+      "old": "review_schedule",
+      "name": "validate_clash_resolution_payload",
+      "owner": "application.scheduling",
+      "kind": "FunctionDef"
+    },
+    {
+      "old": "review_schedule",
+      "name": "resolve_clash_decision",
+      "owner": "application.scheduling",
+      "kind": "FunctionDef"
+    },
+    {
+      "old": "review_schedule",
+      "name": "curriculum_programme_review_schedule",
+      "owner": "api.schedule",
+      "kind": "FunctionDef"
+    },
+    {
+      "old": "review_schedule",
+      "name": "curriculum_programme_review_clash_resolve",
+      "owner": "api.schedule",
+      "kind": "FunctionDef"
+    },
+    {
+      "old": "review_types",
+      "name": "REVIEW_TYPES_TABLE",
+      "owner": "infrastructure.relations",
+      "kind": "Assign"
+    },
+    {
+      "old": "review_types",
+      "name": "REVIEW_TYPE_CODE_MCM",
+      "owner": "domain.classification",
+      "kind": "Assign"
+    },
+    {
+      "old": "review_types",
+      "name": "REVIEW_TYPE_CODE_PROGRESS_REVIEW",
+      "owner": "domain.classification",
+      "kind": "Assign"
+    },
+    {
+      "old": "review_types",
+      "name": "SYSTEM_REVIEW_TYPES",
+      "owner": "domain.classification",
+      "kind": "Assign"
+    },
+    {
+      "old": "review_types",
+      "name": "SYSTEM_REVIEW_TYPE_CODES",
+      "owner": "domain.classification",
+      "kind": "Assign"
+    },
+    {
+      "old": "review_types",
+      "name": "COACH_SURFACE_LEGACY_CODES",
+      "owner": "domain.classification",
+      "kind": "Assign"
+    },
+    {
+      "old": "review_types",
+      "name": "DUPLICATE_NAME_ERROR",
+      "owner": "domain.classification",
+      "kind": "Assign"
+    },
+    {
+      "old": "review_types",
+      "name": "_TABLE_READY",
+      "owner": "infrastructure.type_schema",
+      "kind": "Assign"
+    },
+    {
+      "old": "review_types",
+      "name": "reset_ready_flag",
+      "owner": "infrastructure.type_schema",
+      "kind": "FunctionDef"
+    },
+    {
+      "old": "review_types",
+      "name": "ensure_review_types_table",
+      "owner": "infrastructure.type_schema",
+      "kind": "FunctionDef"
+    },
+    {
+      "old": "review_types",
+      "name": "provision_review_types_table",
+      "owner": "infrastructure.type_schema",
+      "kind": "FunctionDef"
+    },
+    {
+      "old": "review_types",
+      "name": "seed_system_review_types",
+      "owner": "infrastructure.type_schema",
+      "kind": "FunctionDef"
+    },
+    {
+      "old": "review_types",
+      "name": "get_review_type_rows",
+      "owner": "infrastructure.type_rows",
+      "kind": "FunctionDef"
+    },
+    {
+      "old": "review_types",
+      "name": "list_review_types",
+      "owner": "infrastructure.type_rows",
+      "kind": "FunctionDef"
+    },
+    {
+      "old": "review_types",
+      "name": "get_review_type",
+      "owner": "infrastructure.type_rows",
+      "kind": "FunctionDef"
+    },
+    {
+      "old": "review_types",
+      "name": "get_review_type_by_code",
+      "owner": "infrastructure.type_rows",
+      "kind": "FunctionDef"
+    },
+    {
+      "old": "review_types",
+      "name": "review_type_index",
+      "owner": "infrastructure.type_rows",
+      "kind": "FunctionDef"
+    },
+    {
+      "old": "review_types",
+      "name": "review_type_payload",
+      "owner": "domain.classification",
+      "kind": "FunctionDef"
+    },
+    {
+      "old": "review_types",
+      "name": "generate_review_type_code",
+      "owner": "domain.classification",
+      "kind": "FunctionDef"
+    },
+    {
+      "old": "review_types",
+      "name": "_normalised_name",
+      "owner": "domain.classification",
+      "kind": "FunctionDef"
+    },
+    {
+      "old": "review_types",
+      "name": "duplicate_active_name_exists",
+      "owner": "application.classification",
+      "kind": "FunctionDef"
+    },
+    {
+      "old": "review_types",
+      "name": "create_review_type",
+      "owner": "application.classification",
+      "kind": "FunctionDef"
+    },
+    {
+      "old": "review_types",
+      "name": "rename_review_type",
+      "owner": "application.classification",
+      "kind": "FunctionDef"
+    },
+    {
+      "old": "review_types",
+      "name": "archive_review_type",
+      "owner": "application.classification",
+      "kind": "FunctionDef"
+    },
+    {
+      "old": "review_types",
+      "name": "_actor",
+      "owner": "api.types",
+      "kind": "FunctionDef"
+    },
+    {
+      "old": "review_types",
+      "name": "curriculum_review_type_collection",
+      "owner": "api.types",
+      "kind": "FunctionDef"
+    },
+    {
+      "old": "review_types",
+      "name": "curriculum_review_type_detail",
+      "owner": "api.types",
+      "kind": "FunctionDef"
+    }
+  ]
+}

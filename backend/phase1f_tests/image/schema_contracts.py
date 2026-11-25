@@ -52,10 +52,10 @@ targets = [
     'curriculum_api.test_schema_compat_no_db.ReadRelationTests',
     'curriculum_api.test_schema_compat_no_db.AdaptSqlTests',
     'curriculum_api.test_schema_compat_no_db.ProjectionTests',
-    'curriculum_api.test_ksb_mapping_placement_no_db',
-    'curriculum_api.test_ksb_description_deferred_no_db',
-    'curriculum_api.test_ksb_mapping_writes_no_db',
-    'curriculum_api.test_schema_read_boundary_no_db',
+    'curriculum_api.catalogue.tests.test_ksb_mapping_placement_no_db',
+    'curriculum_api.catalogue.tests.test_ksb_description_deferred_no_db',
+    'curriculum_api.catalogue.tests.test_ksb_mapping_writes_no_db',
+    'curriculum_api.catalogue.tests.test_schema_read_boundary_no_db',
 ]
 suite = unittest.TestSuite(unittest.defaultTestLoader.loadTestsFromName(name) for name in targets)
 result = unittest.TextTestRunner(verbosity=2).run(suite)

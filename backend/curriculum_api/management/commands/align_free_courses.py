@@ -6,7 +6,10 @@ import psycopg
 from django.core.management.base import BaseCommand, CommandError
 from django.db import DatabaseError, connection, transaction
 
-from curriculum_api.free_course_alignment import apply_plan, build_plan, rows, snapshot
+from curriculum_api.catalogue.infrastructure.free_course_alignment import apply_plan
+from curriculum_api.catalogue.infrastructure.free_course_alignment import build_plan
+from curriculum_api.catalogue.infrastructure.free_course_alignment import rows
+from curriculum_api.catalogue.infrastructure.free_course_alignment import snapshot
 
 
 def verify(database, branch_id):
