@@ -232,6 +232,19 @@ button.statCard:hover { border-color: var(--tone); box-shadow: 0 7px 22px #45208
 .identity small, .journeyIdentity small { display: block; margin-top: 4px; color: var(--muted); font-size: 9px; line-height: 1.35; overflow-wrap: anywhere; }
 .progressCell { min-width: 70px; }
 .learnerDate { white-space: nowrap; }
+.learnerTable td.learnerModulesCell { min-width: 130px; }
+.page .learnerModulesTrigger { display: inline-flex; align-items: center; gap: 7px; min-height: 36px; padding: 6px 10px 6px 7px; border: 1px solid var(--employer-line); border-radius: var(--lms-radius, 16px); background: var(--employer-soft); color: var(--employer-primary); white-space: nowrap; transition: background-color 150ms ease, border-color 150ms ease; }
+.page .learnerModulesTrigger:hover, .page .learnerModulesTrigger[aria-expanded='true'] { border-color: var(--employer-primary); background: var(--employer-surface); }
+.learnerModuleCount { display: grid; place-items: center; min-width: 23px; height: 23px; padding: 0 4px; border-radius: 50%; background: var(--employer-surface); font-weight: 750; }
+.learnerModulesTrigger[aria-expanded='true'] > svg { transform: rotate(180deg); }
+.learnerModulesTrigger:focus-visible, .learnerModules:focus-visible { outline: 2px solid var(--employer-primary); outline-offset: 3px; }
+.learnerModulesPanel[role='group'] { width: 320px; max-width: calc(100vw - 24px); padding: 14px; border-color: var(--employer-line); background: var(--employer-surface); color: var(--employer-ink); box-shadow: 0 10px 30px color-mix(in srgb, var(--employer-primary-strong) 18%, transparent); font-family: var(--font-body, Arial, sans-serif); font-size: 13px; line-height: 1.45; }
+.learnerModulesHeading { display: flex; align-items: center; justify-content: space-between; gap: 12px; color: var(--employer-primary); }
+.learnerModulesHeading > span { display: inline-flex; align-items: center; gap: 7px; font-weight: 700; }
+.learnerModulesHeading > strong { padding: 2px 8px; border-radius: var(--lms-radius, 16px); background: var(--employer-soft); }
+.learnerModulesName { margin: 2px 0 10px; color: var(--employer-muted); font-size: 12px; }
+.learnerModules { display: grid; gap: 6px; margin: 0; padding: 0; list-style: none; border-radius: 8px; }
+.learnerModules li { padding: 8px 10px; border: 1px solid var(--employer-line); border-radius: var(--lms-radius, 16px); background: var(--employer-soft); line-height: 1.45; overflow-wrap: anywhere; }
 .assessmentLink { display: inline-block; margin-top: 6px; color: var(--purple); font-size: .85em; }
 .progressCell strong { display: block; margin-bottom: 6px; font-size: 12px; }
 .progressCell > small + small { display: block; margin-top: 2px; }

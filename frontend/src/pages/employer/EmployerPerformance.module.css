@@ -13,7 +13,9 @@
 .card[data-tone='amber'] { --tone: var(--employer-gold-ink); }
 .card[data-tone='amber'] .icon { background: var(--employer-gold); color: var(--employer-on-gold); }
 .card[data-tone='rose'] { --tone: var(--employer-primary); }
-.card[data-tone='overall'] { background: color-mix(in srgb, var(--purple) 7%, var(--surface)); border-color: color-mix(in srgb, var(--purple) 30%, var(--line)); }
+.card[data-tone='overall'] { color: var(--employer-on-primary); background: linear-gradient(135deg, var(--employer-primary-strong), var(--employer-primary)); border-color: var(--employer-primary); }
+.card[data-tone='overall'] .icon { color: inherit; background: color-mix(in srgb, var(--employer-on-primary) 16%, transparent); }
+.card[data-tone='overall'] small { color: color-mix(in srgb, var(--employer-on-primary) 85%, transparent); }
 .chartPanel { padding: 12px; border: 1px solid var(--line); border-radius: 16px; color: var(--ink); background: var(--surface); }
 .chartHeader { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; }
 .chartPanel header.chartHeader h2 { display: flex; align-items: center; gap: 6px; font-size: 14px; line-height: 1.3; }

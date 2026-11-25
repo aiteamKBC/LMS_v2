@@ -2,13 +2,15 @@ import { LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
 import { useEffect, useId, useRef, useState, type CSSProperties, type ReactNode, type SyntheticEvent } from 'react';
 import { createPortal } from 'react-dom';
 import { Link, useLocation, useSearchParams } from 'react-router-dom';
-import { ArrowRight, BarChart3, BriefcaseBusiness, CalendarDays, ChevronLeft, ChevronRight, CircleAlert, CircleCheck, Eye, RotateCcw, Search, TriangleAlert, Users, Workflow } from 'lucide-react';
+import { ArrowRight, BarChart3, BookOpen, BriefcaseBusiness, CalendarDays, ChevronDown, ChevronLeft, ChevronRight, CircleAlert, CircleCheck, Eye, RotateCcw, Search, TriangleAlert, Users, Workflow } from 'lucide-react';
+import { FloatingMenu } from '@/components/ui/FloatingMenu';
 import type { EmployerDashboardMetrics, EmployerLearnerCard, EmployerPortal } from '@/api/employerPortal';
 import { formatReviewDate, learnerHref, learnerKey, londonToday, nextReview, relativeReviewDate, reviewDate, reviewMatches, reviewState, riskLabels, riskOf, type DashboardAttendance, type DashboardReviews, type DashboardReviewSummaries, type Loadable } from './employerDashboardData';
 import styles from './EmployerPortalPage.module.css';
 import { EmployerReviewJourneys } from './EmployerReviewJourneys';
 import { EmployerMeetings } from './EmployerMeetings';
 import { EmployerModuleOverview } from './EmployerModuleOverview';
+import { EmployerJourneyTimeline } from './EmployerJourneyTimeline';
 import { EmployerLearnerAssessmentCell } from './EmployerLearnerAssessmentCell';
 import { learnerRecordedDates } from '@/lib/learnerRecordedDates';
 import { formatProgrammeStartDate } from '@/pages/workspace/learner/learnerHeaderPlan';
@@ -220,10 +222,12 @@ export function EmployerDashboard({ data, metrics, attendance: attendanceByLearn
     </header>
     {learners.some(learner => learning.records[learnerKey(learner)]?.status === 'error') && <div className={styles.dataNotice} role="alert"><CircleAlert size={18} /><p>Some module and assessment records could not be loaded. Available learner details are still shown.</p><button type="button" onClick={learning.retry}>Retry learning data</button></div>}
     {!tableFiltered.length && moduleFilter && modulesLoading ? <LoadingSkeleton label="Loading module learners" variant="cards" /> : !tableFiltered.length ? <div className={styles.emptyState}><Users size={30} /><h3>{tableNameFilter && filtered.length ? 'No learners match that name' : learners.length ? 'No matching learners' : 'No learners linked yet'}</h3><p>{tableNameFilter && filtered.length ? 'Try another name or clear this filter.' : learners.length ? 'Try another search or clear your filters.' : 'Linked learners and their progress will appear here.'}</p>{tableNameFilter && filtered.length ? <button type="button" className={styles.textButton} onClick={() => setTableNameFilter('')}>Clear name filter</button> : learners.length > 0 && <button type="button" className={styles.textButton} onClick={clearFilters}>Clear filters</button>}</div>
-      : <><div className={styles.tableScroll} role="region" aria-label="Employer learners" tabIndex={0}><table className={styles.learnerTable}><thead><tr>{['Learner', 'Programme', 'Cohort', 'Start date', 'End date', 'Assessment', 'OTJ Progress', 'Attendance', 'Next review', 'Status', 'Actions'].map(label => <th key={label} scope="col">{label}</th>)}</tr></thead><tbody>{rows.map(learner => {
+      : <><div className={styles.tableScroll} role="region" aria-label="Employer learners" tabIndex={0}><table className={styles.learnerTable}><thead><tr>{['Learner', 'Programme', 'Modules', 'Cohort', 'Start date', 'End date', 'Assignment', 'OTJ Progress', 'Attendance', 'Next review', 'Status', 'Actions'].map(label => <th key={label} scope="col">{label}</th>)}</tr></thead><tbody>{rows.map(learner => {
         const dates = learnerRecordedDates(learner);
+        const learningResource = learning.records[learnerKey(learner)];
+        const modules = [...new Map((learningResource?.data?.programme || []).map(module => [module.id, module])).values()];
         const resource = reviews[learnerKey(learner)];
-        const event = nextReview(resource?.data);
+        const event = nextReview(resource?.data, today);
         const date = event ? reviewDate(event) : null;
         const otjh = learner.otjhProgress;
         const percent = otjh?.percent != null && Number.isFinite(otjh.percent) ? otjh.percent : null;
@@ -249,7 +253,20 @@ export function EmployerDashboard({ data, metrics, attendance: attendanceByLearn
         const risk = riskOf(metrics.data, learner);
         return <tr key={learnerKey(learner)}>
           <td><div className={styles.identity}><Avatar learner={learner} /><div><Link to={learnerHref(employerId, learner)} state={location.state} className={styles.learnerName}>{learner.name}</Link><small>{learner.email}</small></div></div></td>
-          <td>{learner.programme || 'Not assigned'}</td><td>{learner.cohort || 'Not assigned'}</td>
+          <td>{learner.programme || 'Not assigned'}</td>
+          <td className={styles.learnerModulesCell}>{!learningResource || learningResource.status === 'loading'
+            ? <LoadingSkeleton label={`Loading ${learner.name} modules`} variant="text" />
+            : learningResource.status === 'error' || !learningResource.data
+              ? <span className={styles.unavailable}>Not available</span>
+              : modules.length ? <FloatingMenu label={`View ${learner.name} modules (${modules.length})`} panelLabel={`${learner.name} modules`}
+                trigger={<><span className={styles.learnerModuleCount}>{modules.length}</span><span>{modules.length === 1 ? 'module' : 'modules'}</span><ChevronDown size={15} aria-hidden="true" /></>}
+                triggerClassName={styles.learnerModulesTrigger} panelClassName={styles.learnerModulesPanel} align="start" maxHeight={360}>
+                <div className={styles.learnerModulesHeading}><span><BookOpen size={17} aria-hidden="true" />Modules</span><strong>{modules.length}</strong></div>
+                <p className={styles.learnerModulesName}>{learner.name}</p>
+                <ul className={styles.learnerModules} aria-label={`${learner.name} modules`} tabIndex={0}>{modules.map(module => <li key={module.id}>{module.title}</li>)}</ul>
+              </FloatingMenu>
+                : <span className={styles.unavailable} title="No modules assigned">0 modules</span>}</td>
+          <td>{learner.cohort || 'Not assigned'}</td>
           <td className={styles.learnerDate}>{dates.start ? formatProgrammeStartDate(dates.start) : <span className={styles.unavailable}>Not recorded</span>}</td>
           <td className={styles.learnerDate}>{dates.end ? formatProgrammeStartDate(dates.end) : <span className={styles.unavailable}>Not recorded</span>}</td>
           <EmployerLearnerAssessmentCell employerId={employerId} learner={learner} resource={learning.records[learnerKey(learner)]} />
@@ -331,6 +348,7 @@ export function EmployerDashboard({ data, metrics, attendance: attendanceByLearn
 
     {(metrics.status === 'error' || reviewsFailed || attendanceFailed) && <div className={styles.dataNotice} role="alert"><CircleAlert size={18} /><p>{metrics.status === 'error' && 'Learner status could not be loaded. '}{attendanceFailed && 'Some attendance records could not be loaded. '}{reviewsFailed && 'Some progress reviews could not be loaded. '}Available records are still shown.</p><button type="button" onClick={onRetry}>Try again</button></div>}
     {(isHome || view === 'reviews') && <EmployerMeetings employerId={employerId} learners={learners} reviews={reviews} today={today} returnState={location.state} />}
+    {isHome && <EmployerJourneyTimeline employerId={employerId} learners={learners} filtered={filtered} records={learning.records} onRetry={learning.retry} moduleId={moduleFilter} />}
     {isHome ? <EmployerModuleOverview employerId={employerId} learners={learners} filtered={filtered} records={learning.records} onRetry={learning.retry} moduleId={moduleFilter} today={today} /> : learnerFilters}
     {isHome && moduleFilter && learners.some(learner => learning.records[learnerKey(learner)]?.status === 'error') && <div className={styles.dataNotice} role="alert"><CircleAlert size={18} /><p>Some module records could not be loaded. Only learners confirmed in the selected module are shown.</p><button type="button" onClick={learning.retry}>Retry module membership</button></div>}
     {isHome && <EmployerModuleColumnChart learners={filtered} records={learning.records} moduleId={moduleFilter} />}

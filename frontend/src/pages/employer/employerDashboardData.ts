@@ -63,12 +63,13 @@ export function orderReviewJourney(events: readonly LearnerCalendarEvent[]) {
     || (a.occurrenceNumber ?? a.sequence) - (b.occurrenceNumber ?? b.sequence));
 }
 
-export function nextReview(events: LearnerCalendarEvent[] = []) {
+export function nextReview(events: LearnerCalendarEvent[] = [], today = londonToday()) {
   const journey = orderReviewJourney(events);
   const attended = (event: LearnerCalendarEvent) => reviewAttendanceResult(event) === 'attended';
   const available = (event: LearnerCalendarEvent) => isOpenReview(event) && !attended(event);
-  // An actual appointment takes priority over earlier unbooked plan dates.
-  const booked = journey.filter(event => available(event) && event.scheduledDate
+  // The next actual appointment takes priority over earlier plan dates and
+  // stale scheduled bookings whose appointment date has already passed.
+  const booked = journey.filter(event => available(event) && event.scheduledDate && event.scheduledDate >= today
     && ['scheduled', 'in-progress'].includes(reviewState(event)))
     .sort((a, b) => a.scheduledDate!.localeCompare(b.scheduledDate!)
       || (a.scheduledTime || '').localeCompare(b.scheduledTime || ''));

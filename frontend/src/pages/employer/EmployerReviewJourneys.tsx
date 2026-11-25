@@ -115,6 +115,27 @@ export function EmployerReviewJourneys({ employerId, learners, totalLearners, re
                     })}
                   </ol>
                 </div>
+                <div className={styles.attendanceGuide}>
+                  <h4><Users size={16} aria-hidden />Who should attend?</h4>
+                  <div className={styles.attendanceTables}>
+                    {[{ title: 'Monthly coaching meeting (MCM)', employerRequired: false },
+                      { title: 'Progress review (PR)', employerRequired: true }].map(meeting => (
+                      <div key={meeting.title} className={styles.attendanceTable}>
+                        <table>
+                          <caption>{meeting.title}</caption>
+                          <thead><tr><th scope="col">Attendee</th><th scope="col">Attendance</th></tr></thead>
+                          <tbody>
+                            <tr><th scope="row">Learner (employee)</th><td><span className={styles.requiredAttendance}><Check size={13} aria-hidden />Required</span></td></tr>
+                            <tr><th scope="row">Coach</th><td><span className={styles.requiredAttendance}><Check size={13} aria-hidden />Required</span></td></tr>
+                            <tr><th scope="row">Employer / line manager</th><td>{meeting.employerRequired
+                              ? <span className={styles.requiredAttendance}><Check size={13} aria-hidden />Required</span>
+                              : <span className={styles.optionalAttendance}>Not required</span>}</td></tr>
+                          </tbody>
+                        </table>
+                      </div>
+                    ))}
+                  </div>
+                </div>
               </>
             ) : <p className={styles.notice}><CalendarDays size={19} aria-hidden />No progress reviews planned yet.</p>
               : resource?.status === 'error' ? <div className={styles.error} role="alert"><CircleAlert size={20} aria-hidden /><p>Reviews could not be loaded for this learner.</p><button type="button" className={styles.retry} onClick={onRetry}>Retry reviews</button></div>

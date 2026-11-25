@@ -62,6 +62,23 @@
 .date { display: block; width: 100%; min-height: 22px; padding: 2px 3px; border-radius: var(--lms-radius, 16px); background: var(--tone); color: var(--tone-ink); font-size: 10px; font-weight: 700; line-height: 18px; white-space: nowrap; }
 .marker { display: grid; place-items: center; width: 30px; height: 30px; flex-shrink: 0; margin-top: 6px; border: 3px solid var(--employer-surface); border-radius: 50%; background: var(--tone); box-shadow: 0 0 0 2px var(--tone-ring), 0 2px 5px #19314e24; color: var(--tone-ink); transition: transform 150ms, box-shadow 150ms; }
 .title { display: block; max-width: 100%; margin-top: 6px; color: var(--employer-ink); font-size: 10px; font-weight: 700; line-height: 1.2; }
+.attendanceGuide { padding: 16px 20px 20px; border-top: 1px solid var(--employer-line); }
+.attendanceGuide h4 { display: flex; align-items: center; gap: 7px; margin: 0 0 12px; color: var(--employer-ink); font-size: 13px; font-weight: 700; }
+.attendanceGuide h4 svg { color: var(--employer-primary); }
+.attendanceTables { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+.attendanceTable { min-width: 0; overflow: hidden; border: 1px solid var(--employer-line); border-radius: 12px; }
+.attendanceTable table { width: 100%; border-collapse: collapse; text-align: left; font-size: 12px; line-height: 1.5; }
+.attendanceTable caption { padding: 10px 12px; background: var(--employer-soft); color: var(--employer-primary); text-align: left; font-size: 12px; font-weight: 700; }
+.attendanceTable th, .attendanceTable td { padding: 9px 12px; border-top: 1px solid var(--employer-line); vertical-align: middle; }
+.attendanceTable thead th { color: var(--employer-muted); font-size: 11px; font-weight: 600; }
+.attendanceTable tbody th { color: var(--employer-ink); font-weight: 500; }
+.requiredAttendance { display: inline-flex; align-items: center; gap: 4px; color: var(--employer-success); white-space: nowrap; font-weight: 600; }
+.requiredAttendance svg { flex-shrink: 0; }
+.optionalAttendance { color: var(--employer-muted); white-space: nowrap; }
+/* Keep the attendance guide readable under the shared workspace table skin. */
+:root .journeys .attendanceTable thead th { background: var(--employer-background) !important; color: var(--employer-muted) !important; border-color: var(--employer-line) !important; letter-spacing: normal; }
+:root .journeys .attendanceTable tbody tr:nth-child(n) { background: var(--employer-surface) !important; }
+:root .journeys .attendanceTable tbody tr > :is(th, td) { background: transparent !important; color: var(--employer-ink); border-color: var(--employer-line) !important; }
 .notice, .error { display: flex; align-items: center; gap: 10px; padding: 22px 20px; color: var(--employer-muted); font-size: 13px; line-height: 1.6; }
 .error { flex-wrap: wrap; color: var(--employer-danger); }
 .error p { flex: 1 1 200px; }
@@ -77,4 +94,6 @@
   .actions { flex: 1 1 100%; justify-content: flex-start; }
   .timelineHeader { padding: 12px 14px 0; }
   .timelineScroll { margin: 4px 10px 8px; }
+  .attendanceGuide { padding: 14px; }
+  .attendanceTables { grid-template-columns: minmax(0, 1fr); gap: 12px; }
 }
