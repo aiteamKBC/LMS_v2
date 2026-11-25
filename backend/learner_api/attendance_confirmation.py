@@ -11,7 +11,7 @@ from django.utils import timezone
 from django.views.decorators.http import require_POST
 from django.views.decorators.csrf import csrf_protect
 
-from login.permissions import learner_self_or_admin
+from learner_api.identity_placement.public import learner_self_or_admin
 from .learner_detail import SOURCE_MODELS
 from .models import LearnerProfile, LearnerProgressEntry
 from .training_plan_dashboard import rows as dict_rows

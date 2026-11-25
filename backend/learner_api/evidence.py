@@ -36,7 +36,7 @@ from .evidence_storage import (
     azure_configured, upload_to_quarantine, move_blob, blob_url, get_download_sas,
     delete_blob,
 )
-from login.permissions import learner_self_or_admin, learner_self_or_staff
+from learner_api.identity_placement.public import learner_self_or_admin, learner_self_or_staff
 
 logger = logging.getLogger(__name__)
 

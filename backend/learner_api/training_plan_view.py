@@ -16,7 +16,7 @@ from django.db import DatabaseError, connections
 from django.http import JsonResponse
 from django.views.decorators.http import require_GET
 
-from login.permissions import learner_self_or_staff
+from learner_api.identity_placement.public import learner_self_or_staff
 
 from .learner_detail import SOURCE_MODELS
 

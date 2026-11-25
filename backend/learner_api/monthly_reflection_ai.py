@@ -7,7 +7,7 @@ from django.conf import settings
 from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_POST
-from login.permissions import learner_self_or_admin
+from learner_api.identity_placement.public import learner_self_or_admin
 from .reflection_ai import _openai_client, _moderation_flagged
 
 logger = logging.getLogger(__name__)

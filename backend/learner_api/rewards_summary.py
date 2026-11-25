@@ -8,7 +8,7 @@ from django.views.decorators.http import require_GET
 
 from engagement_api.models import Reward
 from engagement_api.services import points_summary
-from login.permissions import learner_self_or_staff
+from learner_api.identity_placement.public import learner_self_or_staff
 from .learner_detail import SOURCE_MODELS
 
 log = logging.getLogger(__name__)

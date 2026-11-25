@@ -10,7 +10,7 @@ from xml.etree import ElementTree as ET
 from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_POST
-from login.permissions import learner_self_or_admin
+from learner_api.identity_placement.public import learner_self_or_admin
 
 DEFAULT = {'accent': '51258B', 'font': 'Aptos', 'ratio': 16 / 9}
 

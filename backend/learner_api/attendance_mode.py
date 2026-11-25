@@ -17,7 +17,8 @@ from django.views.decorators.csrf import csrf_exempt, csrf_protect
 from django.views.decorators.http import require_http_methods
 
 from login.email_azure import is_configured, send_mail
-from login.permissions import learner_self_or_admin, require_role
+from learner_api.identity_placement.public import learner_self_or_admin
+from login.permissions import require_role
 from .learner_detail import SOURCE_MODELS
 from .models import Employer, LearnerProfile
 from .training_plan_dashboard import rows

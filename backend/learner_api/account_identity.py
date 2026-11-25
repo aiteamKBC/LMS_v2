@@ -6,7 +6,7 @@ from django.utils import timezone
 from login.identity import AccountError, ensure_account
 from login.models import Invitation, LoginAccount, PasswordReset
 
-from .identity import learner_profile_for_source
+from .identity_placement.public import learner_profile_for_source
 from .mappers import ValidationError
 from .models import EnrolmentUser, LearnerProfile
 

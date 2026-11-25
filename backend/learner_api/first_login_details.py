@@ -48,7 +48,7 @@ from django.utils import timezone
 from django.views.decorators.csrf import csrf_protect
 from django.views.decorators.http import require_http_methods
 
-from login.permissions import learner_self_only
+from learner_api.identity_placement.public import learner_self_only
 
 from .aptem_status import programme_status
 from .constants import DEFAULT_PROGRAMME_STATUS

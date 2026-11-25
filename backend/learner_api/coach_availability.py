@@ -4,7 +4,8 @@ from urllib.parse import quote
 from zoneinfo import ZoneInfo
 from django.http import JsonResponse
 from django.views.decorators.http import require_GET
-from login.permissions import learner_self_or_staff, staff_only
+from learner_api.identity_placement.public import learner_self_or_staff
+from login.permissions import staff_only
 
 
 class AvailabilityUnavailable(Exception):

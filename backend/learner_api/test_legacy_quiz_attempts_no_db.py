@@ -99,15 +99,23 @@ class LegacyAttemptEndpointTests(unittest.TestCase):
                                      StoreUnavailable=subject_store.StoreUnavailable)
         self.scope = dict(__package__='learner_api', functools=functools, json=json, UUID=UUID,
             JsonResponse=JsonResponse, require_POST=require_POST,
+            login_permissions=SimpleNamespace(
+                _auth_gate_enabled=lambda: True,
+                authenticate_request=lambda request: request.account,
+                _unauthenticated=lambda _: JsonResponse({}, status=401),
+            ),
             authenticate_request=lambda request: request.account, _auth_gate_enabled=lambda: True,
             _target_learner_id=lambda request, kwargs, **_: kwargs['pk'],
             _unauthenticated=lambda _: JsonResponse({}, status=401),
             _read_only_learner_view=lambda: JsonResponse({}, status=403),
+            learner_owns_target=lambda account, target: (
+                account.role == 'learner' and account.subject_id == target
+            ),
             coach_owns_learner=lambda *_: False, staff_owns_learner=lambda *_: False, audit_admin_learner_action=Mock(),
             subject_store=self.store, ContentUnavailable=ContentUnavailable, DatabaseError=RuntimeError,
             _owned_quiz=self.owned, _owned_material=Mock(side_effect=AssertionError('Wrong catalogue route')),
             public_quiz=public_quiz, _local_pdf_urls=lambda value, *_: value)
-        load(ROOT.parent / 'login/permissions.py', {'_learner_progress_gate', 'learner_self_or_admin'}, self.scope)
+        load(ROOT / 'identity_placement/api/authorization.py', {'_learner_progress_gate', 'learner_self_or_admin'}, self.scope)
         load(ROOT / 'student_activity.py', {'_error', '_private'}, self.scope)
         load(ROOT / 'student_activity.py', {'start_subject_attempt', 'submit_subject_attempt'}, self.scope, decorated=True)
 

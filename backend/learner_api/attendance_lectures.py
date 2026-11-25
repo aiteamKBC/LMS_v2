@@ -17,7 +17,7 @@ from audit_api.last_audit_ledger_views import _is_completed
 from curriculum_api.canonical_read_sql import (component_ksb_codes_sql,
                                                 component_ksb_mappings_sql)
 from curriculum_api.week_visibility import visible_child_sql, visible_week_sql
-from login.permissions import learner_self_or_staff
+from learner_api.identity_placement.public import learner_self_or_staff
 from old_otjh.repository import ksb_codes
 from .attendance import combined_attendance_rows, _summarize_attendance
 from .attendance_rules import attendance_outcome

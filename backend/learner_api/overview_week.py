@@ -10,7 +10,7 @@ from django.conf import settings
 from django.http import JsonResponse
 from django.views.decorators.http import require_GET
 
-from login.permissions import learner_self_or_staff
+from learner_api.identity_placement.public import learner_self_or_staff
 from audit_api.last_audit_ledger_views import _is_completed
 from .builder_activity_dates import COMPONENT_ORDER, COMPONENT_SCHEDULE_SETTINGS, read_builder_activity_dates
 from .dashboard_metrics import metrics_from_loaded, point_codes, ratio

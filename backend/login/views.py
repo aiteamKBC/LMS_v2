@@ -280,11 +280,15 @@ def learner_action_access(request):
     """May the signed-in account act for ``?learnerId=``? Read-only.
 
     The learner workspace asks this to decide between its working and read-only
-    views. It answers with the rule ``permissions.learner_self_or_admin``
+    views. It answers with the Identity & Placement learner-action rule
     enforces on every write: the learner, an administrator, or the learner's
     own coach, or a staff account studying its own linked enrolment.
     """
-    from .permissions import coach_owns_learner, staff_owns_learner
+    from learner_api.identity_placement.public import (
+        coach_owns_learner,
+        learner_owns_target,
+        staff_owns_learner,
+    )
 
     account = authenticate_request(request)
     if account is None:
@@ -295,7 +299,7 @@ def learner_action_access(request):
         return _error("learnerId is required.", 400)
     can_act = learner_id > 0 and (
         account.role == "admin"
-        or (account.role == "learner" and account.subject_id == learner_id)
+        or learner_owns_target(account, learner_id)
         or coach_owns_learner(account, learner_id)
         or staff_owns_learner(account, learner_id)
     )

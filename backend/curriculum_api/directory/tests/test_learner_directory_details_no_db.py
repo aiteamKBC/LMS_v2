@@ -144,7 +144,7 @@ class DirectoryDetailsEndpointTests(SimpleTestCase):
     def test_progress_only_reads_bounded_visible_learners_and_uses_uk_cutoff(self):
         self.enrolments.all_learners.only.return_value.filter.return_value = [self.source]
         with patch('curriculum_api.views.authoring_scope_module_rows', return_value=[{'module_catalogue_id': 'M1'}]), \
-             patch('learner_api.placement_links.with_placements', side_effect=lambda rows: rows) as placements, \
+             patch('learner_api.identity_placement.public.with_placements', side_effect=lambda rows: rows) as placements, \
              patch.object(details, 'learner_progress', return_value={'available': {}}) as read, \
              patch.object(details.timezone, 'now', return_value=datetime(2026, 7, 1, 23, 30, tzinfo=timezone.utc)):
             response = details.progress(self.factory.get('/', {'scope': 'group', 'id': 'G1', 'learnerIds': '7'}))

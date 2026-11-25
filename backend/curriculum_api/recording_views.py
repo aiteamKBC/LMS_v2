@@ -20,7 +20,7 @@ from django.http import JsonResponse
 from django.middleware.csrf import get_token
 from django.views.decorators.csrf import csrf_protect, ensure_csrf_cookie
 from django.views.decorators.http import require_http_methods
-from login.permissions import learner_self_or_admin
+from learner_api.identity_placement.public import learner_self_or_admin
 
 from .session_media_policy import artifact_metadata, hidden_artifact_ids
 from .session_results import learner_series, read, unavailable

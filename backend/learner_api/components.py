@@ -35,7 +35,7 @@ from .working_rules import (
     resolve_completion_instants,
     validation_response_payload,
 )
-from login.permissions import learner_self_or_admin
+from learner_api.identity_placement.public import learner_self_or_admin
 
 from .marking_queue_entry import queue_for_marking, requires_tutor_validation
 

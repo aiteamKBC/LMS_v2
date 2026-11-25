@@ -50,7 +50,7 @@ from django.views.decorators.csrf import csrf_exempt
 
 from curriculum_api.week_visibility import visible_child_sql, visible_week_sql
 from curriculum_api.canonical_read_sql import module_expected_otjh_sql
-from login.permissions import learner_self_or_staff
+from learner_api.identity_placement.public import learner_self_or_staff
 
 from .active_users import (
     _component_learning_context,

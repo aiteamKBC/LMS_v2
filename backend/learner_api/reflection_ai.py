@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 @csrf_exempt
 @require_POST
 def generate_learning_statements(request):
-    from login.permissions import learner_self_or_admin
+    from learner_api.identity_placement.public import learner_self_or_admin
     return learner_self_or_admin(body_field="learnerId")(_generate_learning_statements)(request)
 
 

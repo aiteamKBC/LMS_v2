@@ -315,7 +315,7 @@ def read_module_request(request, kind, pk, module_id):
 
 
 from django.views.decorators.http import require_GET
-from login.permissions import learner_self_or_staff
+from learner_api.identity_placement.public import learner_self_or_staff
 from .journal_sources import learner_journal_view
 
 training_module = require_GET(learner_self_or_staff(kwarg='pk')(learner_journal_view(read_module_request)))

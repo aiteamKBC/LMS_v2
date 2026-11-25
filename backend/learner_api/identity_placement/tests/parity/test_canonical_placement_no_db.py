@@ -1,22 +1,22 @@
 """Offline ORM/consumer regression tests. No app startup hooks or database I/O.
 
-Run: PYTHONPATH=backend python -m learner_api.test_canonical_placement_no_db
+Run: PYTHONPATH=backend python -m learner_api.identity_placement.tests.parity.test_canonical_placement_no_db
 The direct runner registers only the models using a bare AppConfig, never the
 production settings, signals, schema helpers or database test runner.
 """
 import ast
-import importlib
 from pathlib import Path
+import sys
 from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
 
-if __name__ == '__main__':
-    from django.conf import settings
-    settings.configure(SECRET_KEY='offline-placement-check', INSTALLED_APPS=[],
-                       DATABASES={'default': {'ENGINE': 'django.db.backends.sqlite3', 'NAME': ':memory:'}})
-    from django.apps import apps, AppConfig
-    apps.populate([AppConfig('learner_api', importlib.import_module('learner_api'))])
+BACKEND = Path(__file__).resolve().parents[4]
+sys.path.insert(0, str(BACKEND))
+
+from learner_api.identity_placement.tests.django_bootstrap import configure
+
+configure()
 
 from django.db import models
 from django.db.backends.base.base import BaseDatabaseWrapper
@@ -25,9 +25,15 @@ from learner_api.models import (
     EnrolmentUser, CommercialUser, LearnerProfile,
     PlacementProgramme, PlacementCohort, PlacementGroup,
 )
-from learner_api.placement_links import placement_ids, placement_profile, with_placements, RELATIONS, CACHE
-
-BACKEND = Path(__file__).resolve().parents[1]
+from learner_api.identity_placement.public import (
+    CACHE,
+    RELATIONS,
+    placement_ids,
+    placement_input,
+    placement_profile,
+    validate_placement,
+    with_placements,
+)
 
 
 def function(relative, name, **namespace):
@@ -55,7 +61,7 @@ class CanonicalPlacementTests(unittest.TestCase):
                                       side_effect=AssertionError('Database I/O forbidden')))
 
     def query(self, row):
-        manager = self.enterContext(patch('learner_api.placement_links.LearnerProfile.objects'))
+        manager = self.enterContext(patch.object(LearnerProfile, 'objects'))
         query = manager.using.return_value.select_related.return_value.only.return_value
         query.get.return_value = row
         return manager, query
@@ -180,7 +186,7 @@ class CanonicalPlacementTests(unittest.TestCase):
         namespace = dict(placement_ids=placement_ids, _programme_modules=catalogue, _group_module_ids=groups)
         for name in ('learner_programme_modules', 'learner_group_module_ids'):
             self.assertEqual(function('learner_api/learning_plan.py', name, **namespace)(source), [])
-        preset = function('learner_api/learning_plan.py', '_preset_ids_for', **namespace,
+        preset = function('learner_api/learning_plans/infrastructure/assignment_reads.py', '_preset_ids_for', **namespace,
                           projection_call=lambda key, callback, value: callback(value))
         self.assertEqual(preset(source, {}), [])
         catalogue.assert_not_called()
@@ -202,19 +208,29 @@ class CanonicalPlacementTests(unittest.TestCase):
             self.assertNotIn('learner_compat.only', text)
 
     def test_assignment_directory_payload_keeps_display_contract(self):
-        import sys
-        import types
+        from curriculum_api.directory.application.assignment_queries import _payload
+        from curriculum_api.directory.infrastructure.registration_reads import _row
+
         source = EnrolmentUser(pk=7, username='Synthetic', email='learner@example.invalid',
                                employer='', organization='', programme_status='Active', learner_type='commercial')
         source.__dict__[CACHE] = profile()
-        facts = types.ModuleType('curriculum_api.learner_assignment_counts_sql')
-        facts.assignment_directory_facts = lambda ids: ({7: {'effective': {'M'}, 'moduleCount': 1}}, [])
         same = function('curriculum_api/learner_assignments.py', '_same_cohort', placement_ids=placement_ids)
-        payload = function('curriculum_api/learner_assignments.py', '_payload',
-                           plans=SimpleNamespace(_s=lambda value: str(value or '').strip()), _same_cohort=same)
         target = dict(id='C', name='Cohort', scope='cohort', programmeId='P', programmeName='Programme', moduleIds=['M'])
-        with patch.dict(sys.modules, {facts.__name__: facts}):
-            result = payload(target, [source])
+        clean = lambda value: str(value or '').strip()
+        result = _payload(
+            target,
+            [source],
+            _module_payload=Mock(side_effect=AssertionError('unexpected module payload')),
+            _plan_row_counts=lambda: {'7': 1},
+            _row=lambda learner, assigned, count: _row(
+                learner,
+                assigned,
+                count,
+                placement_profile=placement_profile,
+                clean_str=clean,
+            ),
+            _assigned=lambda learner, selected, cache: same(learner, selected),
+        )
         self.assertEqual(result['learners'][0]['id'], '7')
         self.assertEqual(result['learners'][0]['programme'], 'Programme')
         self.assertEqual(result['learners'][0]['cohort'], 'Cohort')
@@ -238,10 +254,17 @@ class CanonicalPlacementTests(unittest.TestCase):
         self.assertNotIn('u.programme_id', sql)
 
     def test_assignment_count_reader_does_not_lookup_a_namesake_when_group_fk_missing(self):
-        plans = SimpleNamespace(_s=lambda value: str(value or '').strip(), _group_module_ids=Mock())
-        preset = function('curriculum_api/learner_assignment_counts_sql.py', '_preset_ids', plans=plans)
+        plans = SimpleNamespace(clean_text=lambda value: str(value or '').strip())
+        groups = Mock()
+        preset = function(
+            'curriculum_api/learner_assignment_counts_sql.py',
+            '_preset_ids',
+            learner_plans=plans,
+            _group_module_ids=groups,
+            _group_source=Mock(),
+        )
         self.assertEqual(preset('Legacy programme', 'Legacy group', {}), [])
-        plans._group_module_ids.assert_not_called()
+        groups.assert_not_called()
 
     def test_cohort_access_with_missing_fk_never_queries_by_name(self):
         from datetime import date
@@ -255,22 +278,19 @@ class CanonicalPlacementTests(unittest.TestCase):
         connection.cursor.assert_not_called()
 
     def test_placement_input_preserves_omitted_and_explicitly_cleared_fields(self):
-        from learner_api.placement_links import placement_input
         self.assertEqual(placement_input({'programmeId': ' P ', 'cohort_id': 'C', 'groupId': None}),
                          {'programme_id': 'P', 'cohort_id': 'C', 'group_id': None})
         self.assertEqual(placement_input({'phone': '123'}), {})
 
     def test_legacy_label_only_edits_are_rejected(self):
-        from learner_api.placement_links import placement_input
-        from learner_api.mappers import ValidationError
+        from learner_api.validation import ValidationError
         for payload in ({'programme': 'Legacy'}, {'cohort': 'Legacy'}, {'group': 'Legacy'},
                         {'groupId': 99}, {'groupId': 'G', 'group_id': 'OTHER'}):
             with self.subTest(payload=payload), self.assertRaises(ValidationError):
                 placement_input(payload)
 
     def test_id_validation_checks_parent_relationships_and_preserves_omitted_values(self):
-        from learner_api.placement_links import validate_placement
-        from learner_api.mappers import ValidationError
+        from learner_api.validation import ValidationError
         with patch.object(PlacementProgramme, 'objects') as programmes, \
                 patch.object(PlacementCohort, 'objects') as cohorts, \
                 patch.object(PlacementGroup, 'objects') as groups:
@@ -331,12 +351,14 @@ class CanonicalPlacementTests(unittest.TestCase):
         registration = Mock(return_value={'reviewHandover': 'preserved'})
         save = function('learner_api/learner_dates.py', 'save_enrolment_fields',
                         transaction=SimpleNamespace(atomic=lambda **kw: nullcontext()),
-                        _save_enrolment_fields=registration)
-        with patch('learner_api.placement_links.validate_placement') as validate, \
-                patch.object(learner, 'save') as persist:
+                        _save_enrolment_fields=registration,
+                        validate_placement=Mock())
+        with patch.object(learner, 'save') as persist:
             result = save(source, {'group_id': 'G2', 'phone_number': '123'})
         registration.assert_called_once_with(source, {'phone_number': '123'})
-        validate.assert_called_once_with({'group_id': 'G2'}, learner, using='enrolment')
+        save.__globals__['validate_placement'].assert_called_once_with(
+            {'group_id': 'G2'}, learner, using='enrolment'
+        )
         persist.assert_called_once_with(using='enrolment', update_fields=['group_id', 'updated_at'])
         self.assertEqual(learner.group_id, 'G2')
         self.assertEqual((source.programme_id, source.cohort_id, source.group_id), ('REG-P', 'REG-C', 'REG-G'))
@@ -374,61 +396,85 @@ class CanonicalPlacementTests(unittest.TestCase):
         row = profile()
         source.__dict__[CACHE] = row
         save = function('learner_api/learner_dates.py', 'save_enrolment_fields',
-                        transaction=SimpleNamespace(atomic=atomic), _save_enrolment_fields=Mock())
-        with patch('learner_api.placement_links.validate_placement'), \
-                patch.object(row, 'save', side_effect=RuntimeError('write failure')), \
+                        transaction=SimpleNamespace(atomic=atomic), _save_enrolment_fields=Mock(),
+                        validate_placement=Mock())
+        with patch.object(row, 'save', side_effect=RuntimeError('write failure')), \
                 self.assertRaisesRegex(RuntimeError, 'write failure'):
             save(source, {'group_id': 'G2'})
         self.assertEqual(events, [('begin', {'using': 'enrolment'}), 'rollback'])
 
     def test_authoring_reader_preserves_name_filters_order_and_ksb_compatibility(self):
+        import re
         from curriculum_api import schema_compat
         physical = {'group_id', 'group_name', 'programme_id', 'cohort_id', 'status', 'updated_at'}
-        namespace = dict(schema_compat=schema_compat, CURRICULUM_SCHEMA='curriculum',
-                         ensure_module_authoring_tables=Mock(), column_names=lambda table: physical,
-                         derived_placement_names_sql=Mock(side_effect=AssertionError('duplicate derived fields')),
-                         quote_ident=lambda name: '"' + name + '"',
-                         archive_state=SimpleNamespace(uses_status=lambda table: True),
-                         LEGACY_LIFECYCLE_READ_COLUMNS={'deleted_at'},
-                         authoring_table_name=lambda table: 'curriculum.' + table)
-        reader = function('curriculum_api/views.py', 'authoring_select_sql', **namespace)
+        database_reads = SimpleNamespace(
+            AUTHORING_KSB_MAPPINGS_TABLE='ksb_mappings',
+            authoring_table_name=lambda table: 'curriculum.' + table,
+            column_names=lambda table: physical,
+            quote_ident=lambda name: '"' + name + '"',
+        )
+        ksb_store = SimpleNamespace(
+            PLACEMENT_FIELDS=(),
+            relation=lambda **kwargs: 'curriculum.ksb_mappings',
+        )
+        reader = function(
+            'curriculum_api/catalogue/infrastructure/authoring_sql.py',
+            'authoring_select_sql',
+            database_reads=database_reads,
+            derived_placement_names_sql=lambda table: {
+                'cohort_name': 'cohort_name AS cohort_name',
+                'programme_name': 'programme_name AS programme_name',
+                'group_name': 'group_name AS group_name',
+            },
+            ksb_read_store=ksb_store,
+            learning_read_table=lambda table: 'curriculum.' + table,
+            re=re,
+        )
         with patch.object(schema_compat, 'connection', Mock(vendor='postgresql')), \
                 patch.object(schema_compat, 'columns_of', return_value=physical):
             sql = reader('groups', 'cohort_name = %s', 'programme_name, group_name',
-                         ensure_tables=False, columns=['group_id', 'cohort_name'])
+                         columns=['group_id', 'cohort_name'],
+                         learning_read_table=lambda table: 'curriculum.' + table)
             self.assertIn('"cohort_name"', sql)
             self.assertTrue(sql.endswith('where cohort_name = %s order by programme_name, group_name'))
             ksb = schema_compat.read_relation('ksb_mappings', {'id', 'component_id', 'standard_ksb_id', 'status'})
-            self.assertIn('standard_ksbs', ksb)
+            self.assertIn('ksb_standard_definitions', ksb)
+            self.assertIn('standard_ksb_id', ksb)
             self.assertIn('ksb_code', ksb)
 
     def test_status_counters_preserve_explicit_module_memberships_and_deduplicate(self):
-        import sys
-        import types
-        from collections import Counter, defaultdict
-        import curriculum_api
-        views = types.ModuleType('curriculum_api.views')
-        views.scope_programme_identifier = lambda lineage: lineage['programmeId']
-        views.normalise = lambda value: str(value or '').lower()
-        counters = function('curriculum_api/learner_status_counts.py', 'counts_for_lineages',
-                            Counter=Counter, defaultdict=defaultdict, status_key=lambda value: value.lower())
+        from curriculum_api.directory.application.status_queries import counts_for_lineages
+        from learner_api.learning_plans.domain.membership_policy import members_for_lineages
+
         base = dict(programme_id='P', cohort_id='C', group_id='G', status='Active', module_ids=[])
         facts = [dict(base, id=1), dict(base, id=1), dict(base, id=2, explicit=True),
                  dict(base, id=3, programme_id='OTHER', group_id='H', module_ids=['M'], explicit=True)]
         lineages = {'G': dict(found=True, programmeId='P', cohortId='C', groupId='G'),
                     'M': dict(found=True, programmeId='P', cohortId='C', groupId='G', moduleCatalogueId='M')}
-        with patch.dict(sys.modules, {views.__name__: views}), patch.object(curriculum_api, 'views', views, create=True):
-            result = counters(lineages, facts, {})
+        result = counts_for_lineages(
+            lineages,
+            facts,
+            {},
+            members_for_lineages=members_for_lineages,
+            status_key=lambda value: value.lower(),
+        )
         self.assertEqual(result, {'G': {'total': 2, 'statuses': {'active': 2}},
                                   'M': {'total': 2, 'statuses': {'active': 2}}})
 
     def test_roster_never_admits_missing_fk_by_matching_label(self):
-        narrow = function('curriculum_api/views.py', 'narrow_learners_to_placement',
-                          clean_str=lambda value: str(value or '').strip())
+        from curriculum_api.directory.domain.placement import narrow_learners_to_placement
+
         rows = [{'id': 1, 'cohortId': 'C', 'cohort': 'Old name'},
                 {'id': 2, 'cohortId': '', 'cohort': 'Renamed'},
                 {'id': 3, 'cohortId': 'OTHER', 'cohort': 'Renamed'}]
-        self.assertEqual(narrow(rows, 'cohortId', 'C', 'cohort', 'Renamed'), [rows[0]])
+        self.assertEqual(narrow_learners_to_placement(
+            rows,
+            'cohortId',
+            'C',
+            'cohort',
+            'Renamed',
+            clean_str=lambda value: str(value or '').strip(),
+        ), [rows[0]])
 
 
 if __name__ == '__main__':

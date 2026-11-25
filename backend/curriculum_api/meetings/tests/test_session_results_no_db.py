@@ -574,10 +574,18 @@ class EndpointTests(unittest.TestCase):
             'JsonResponse': Response, 'HttpResponse': Response, 'HttpResponseRedirect': lambda url: Response({'location': url}, 302),
             'DatabaseError': type('DatabaseError', (Exception,), {}), 'defaultdict': defaultdict,
             'log': logging.getLogger('test'), 'require_GET': lambda f: f, 'require_POST': lambda f: f,
+            'login_permissions': types.SimpleNamespace(
+                _auth_gate_enabled=lambda: True,
+                authenticate_request=lambda req: req.account,
+                _unauthenticated=lambda req: Response(status=401),
+            ),
             'csrf_protect': lambda f: f, '_auth_gate_enabled': lambda: True,
             'authenticate_request': lambda req: req.account, '_unauthenticated': lambda req: Response(status=401),
             '_forbidden': lambda roles: Response(status=403), '_read_only_learner_view': lambda: Response(status=403),
             '_target_learner_id': lambda req, kwargs, **opts: kwargs.get('learner_id'),
+            'learner_owns_target': lambda account, target: account.role == 'learner' and account.subject_id == target,
+            'coach_owns_learner': lambda *_: False, 'staff_owns_learner': lambda *_: False,
+            'audit_admin_learner_action': Mock(),
             'instant': instant, 'session_roster': session_roster, 'attendance_csv': attendance_csv,
             'session_runs': session_runs, 'evidence_seconds': evidence_seconds, 'attendance_name_key': attendance_name_key,
             'attendance_display_name': attendance_display_name,
@@ -591,7 +599,9 @@ class EndpointTests(unittest.TestCase):
             'hidden_artifact_ids': hidden_artifact_ids, 'recording_transcript_links': recording_transcript_links,
             'transcript_timing_ready': transcript_timing_ready, 'artifact_metadata': artifact_metadata,
             'timezone': types.SimpleNamespace(now=lambda: datetime(2026, 9, 16, 12, tzinfo=timezone.utc))}
-        functions(ROOT.parent / 'login/permissions.py', {'require_role', '_learner_progress_gate', 'learner_self_or_staff'}, self.ns)
+        functions(ROOT.parent / 'login/permissions.py', {'require_role'}, self.ns)
+        functions(ROOT.parent / 'learner_api/identity_placement/api/authorization.py',
+                  {'_learner_progress_gate', 'learner_self_or_staff'}, self.ns)
         functions(ROOT / 'session_results.py', {'json_value', 'merge_session_register_rows', 'replaced_module_register_rows', 'result_rows', 'admin_session', 'learner_results', 'learner_content',
             'module_results', 'stored_content', 'queue_sync', 'learner_join', 'apply_recovery', 'unavailable', 'archive_schema_missing',
             'attendance_alias_rows', 'attendance_identity_link_rows', 'learner_series', 'join_url_for', 'learner_join_failure',

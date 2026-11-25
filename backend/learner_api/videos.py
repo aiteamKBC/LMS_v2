@@ -31,7 +31,7 @@ from .working_rules import (
     resolve_completion_instants,
     validation_response_payload,
 )
-from login.permissions import learner_self_or_admin
+from learner_api.identity_placement.public import learner_self_or_admin
 
 SOURCE_MODELS = {
     "commercial": CommercialUser,

@@ -9,14 +9,11 @@ import json
 
 from django.utils.crypto import salted_hmac
 
-from .identity_placement.public import VALID_LEARNER_KINDS, canonical_learner
 from .models import LearnerFreeCourse
 
 __all__ = (
-    "VALID_LEARNER_KINDS",
     "assigned_course_ids",
     "assignment_version",
-    "canonical_learner",
 )
 
 

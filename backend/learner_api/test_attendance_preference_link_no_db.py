@@ -94,8 +94,8 @@ class AttendancePreferenceLinkTests(SimpleTestCase):
         request.login_account = SimpleNamespace(role=role, subject_id=12)
         with patch('login.permissions._auth_gate_enabled', return_value=True), \
              patch('login.permissions.authenticate_request', return_value=request.login_account), \
-             patch('login.permissions.audit_admin_learner_action'), \
-             patch('login.permissions.staff_owns_learner', return_value=role == 'staff'), \
+             patch('learner_api.identity_placement.api.authorization.audit_admin_learner_action'), \
+             patch('learner_api.identity_placement.api.authorization.staff_owns_learner', return_value=role == 'staff'), \
              patch.object(mode, 'SOURCE_MODELS', {kind: self.source_model}), \
              patch.object(mode, 'connections', {'enrolment': self.connection}), \
              patch.object(mode.transaction, 'atomic', side_effect=self.atomic), \

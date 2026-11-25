@@ -185,8 +185,8 @@ class TimingDraftTests(unittest.TestCase):
                 patch('login.permissions.session_unreadable', return_value=False):
             self.assertEqual(timing.checkpoint_time_tracking(request).status_code, 401)
         with patch('login.permissions.authenticate_request', return_value=SimpleNamespace(role='staff')), \
-                patch('login.permissions.coach_owns_learner', return_value=False), \
-                patch('login.permissions.staff_owns_learner', return_value=False):
+                patch('learner_api.identity_placement.api.authorization.coach_owns_learner', return_value=False), \
+                patch('learner_api.identity_placement.api.authorization.staff_owns_learner', return_value=False):
             self.assertEqual(timing.checkpoint_time_tracking(request).status_code, 403)
 
     def test_renewed_reward_upload_accepts_original_offsets_and_keeps_duplicate_receipt(self):

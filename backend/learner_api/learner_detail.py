@@ -27,7 +27,7 @@ from .projection_performance import measure_projection
 from django.utils import timezone
 
 from login.errors import DATABASE_ERRORS, database_unavailable
-from login.permissions import learner_self_or_staff
+from learner_api.identity_placement.public import learner_self_or_staff
 from old_otjh.service import ServiceError
 from old_otjh.repository import request_read_scope
 from curriculum_api import content_cache

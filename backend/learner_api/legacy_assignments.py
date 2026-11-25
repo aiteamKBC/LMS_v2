@@ -6,7 +6,7 @@ from django.db import DatabaseError, connections
 from django.http import HttpResponse, JsonResponse
 from django.utils.http import content_disposition_header
 from django.views.decorators.http import require_GET
-from login.permissions import learner_self_or_staff
+from learner_api.identity_placement.public import learner_self_or_staff
 from . import evidence_storage
 
 

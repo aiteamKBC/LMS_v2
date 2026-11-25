@@ -1,6 +1,10 @@
 """Identity resolution orchestration over explicit read capabilities."""
 
 from ..domain.identifiers import source_email, source_primary_key
+from ..domain.resolution import (
+    has_ambiguous_email_matches,
+    should_repair_enrolment_link,
+)
 
 
 def resolve_profile_for_source(
@@ -30,10 +34,10 @@ def resolve_profile_for_source(
         profile = read_unlinked_email(email, active_only=active_only, fields=fields)
         if profile is not None:
             twins = duplicate_enrolment_ids(email, source_pk)
-            if twins:
+            if has_ambiguous_email_matches(twins):
                 warn_ambiguous_email(email, source_pk, twins)
                 return None
-            if heal and source_pk is not None and profile.enrolment_id != source_pk:
+            if should_repair_enrolment_link(profile, source_pk, heal=heal):
                 try:
                     repair_link(profile, source_pk)
                 except Exception:  # noqa: BLE001, S110 - preserve opportunistic legacy repair

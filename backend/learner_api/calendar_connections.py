@@ -25,7 +25,8 @@ from django.db import connections, transaction
 from django.http import HttpResponseRedirect, JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 
-from login.permissions import _auth_gate_enabled, learner_self_only
+from learner_api.identity_placement.public import learner_self_only
+from login.permissions import _auth_gate_enabled
 from login.sessions import authenticate_request
 
 from .learner_detail import SOURCE_MODELS

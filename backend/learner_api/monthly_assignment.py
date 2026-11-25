@@ -15,7 +15,7 @@ from django.core import signing
 from django.db import connections, DatabaseError, transaction
 from django.http import HttpResponse, JsonResponse
 from django.views.decorators.csrf import csrf_exempt
-from login.permissions import learner_self_or_admin
+from learner_api.identity_placement.public import learner_self_or_admin
 from .booking_calendar import booking_date_restriction
 from .evidence_ownership import profile_id_for_source
 

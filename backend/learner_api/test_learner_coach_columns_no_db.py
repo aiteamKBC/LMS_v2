@@ -257,7 +257,7 @@ class _ScopingBase:
 
     # -- production readers ------------------------------------------------
     def owns(self, staff_id, enrolment_id):
-        from login.permissions import coach_owns_learner
+        from learner_api.identity_placement.public import coach_owns_learner
         account = SimpleNamespace(role='staff', subject_type='staff', subject_id=staff_id)
         return coach_owns_learner(account, enrolment_id)
 

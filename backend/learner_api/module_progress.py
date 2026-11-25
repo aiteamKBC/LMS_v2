@@ -9,7 +9,7 @@ from math import floor
 from django.db import DatabaseError
 from django.http import JsonResponse
 from django.views.decorators.http import require_GET
-from login.permissions import learner_self_or_staff
+from learner_api.identity_placement.public import learner_self_or_staff
 
 from .journal_sources import learner_journal_view
 from .progress_rules import progress_counts_as_achieved

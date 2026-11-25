@@ -19,14 +19,25 @@ def module_imports(relative):
 
 class BoundaryTests(unittest.TestCase):
     def test_domain_has_no_framework_or_persistence_dependency(self):
-        for path in ("domain/identifiers.py", "domain/placement.py"):
+        for path in (
+            "domain/identifiers.py",
+            "domain/placement.py",
+            "domain/placement_validation.py",
+            "domain/resolution.py",
+            "domain/ownership.py",
+        ):
             joined = "\n".join(imports(path))
             self.assertNotIn("django", joined)
             self.assertNotIn("models", joined)
             self.assertNotIn("infrastructure", joined)
 
     def test_application_depends_only_on_domain(self):
-        for path in ("application/resolve_identity.py", "application/read_placement.py"):
+        for path in (
+            "application/resolve_identity.py",
+            "application/read_placement.py",
+            "application/validate_placement.py",
+            "application/authorize_ownership.py",
+        ):
             joined = "\n".join(imports(path))
             self.assertNotIn("django", joined)
             self.assertNotIn("learner_api.models", joined)
@@ -38,22 +49,34 @@ class BoundaryTests(unittest.TestCase):
         self.assertNotIn("django", joined)
         self.assertNotIn("learner_api.models", joined)
 
-    def test_legacy_modules_do_not_reimplement_read_contracts(self):
+    def test_obsolete_modules_are_deleted_and_free_course_keeps_only_its_rules(self):
         backend = ROOT.parents[1]
-        identity = ast.parse((backend / "learner_api/identity.py").read_text(encoding="utf-8"))
-        placement = ast.parse((backend / "learner_api/placement_links.py").read_text(encoding="utf-8"))
+        self.assertFalse((backend / "learner_api/identity.py").exists())
+        self.assertFalse((backend / "learner_api/placement_links.py").exists())
         free = ast.parse((backend / "learner_api/free_course_selectors.py").read_text(encoding="utf-8"))
-        self.assertFalse(any(isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) for node in identity.body))
-        placement_names = {node.name for node in placement.body if isinstance(node, ast.FunctionDef)}
-        self.assertEqual(placement_names, {"validate_placement", "placement_input"})
         free_names = {node.name for node in free.body if isinstance(node, ast.FunctionDef)}
         self.assertEqual(free_names, {"assigned_course_ids", "assignment_version"})
+
+    def test_login_no_longer_owns_learner_authorization_implementations(self):
+        backend = ROOT.parents[1]
+        tree = ast.parse((backend / "login/permissions.py").read_text(encoding="utf-8"))
+        names = {node.name for node in tree.body if isinstance(node, ast.FunctionDef)}
+        self.assertTrue({
+            "staff_owns_learner",
+            "coach_owns_learner",
+            "learner_self_only",
+            "learner_self_or_staff",
+            "learner_self_or_admin",
+        }.isdisjoint(names))
 
     def test_production_consumers_use_only_the_public_read_owner(self):
         backend = ROOT.parents[1]
         legacy_reads = {
             "identity": {"learner_profile_for_source"},
-            "placement_links": {"placement_profile", "with_placements", "placement_ids", "placement_payload"},
+            "placement_links": {
+                "placement_profile", "with_placements", "placement_ids",
+                "placement_payload", "placement_input", "validate_placement",
+            },
             "free_course_selectors": {"canonical_learner", "VALID_LEARNER_KINDS"},
         }
         violations = []
@@ -84,6 +107,28 @@ class BoundaryTests(unittest.TestCase):
                     internal_imports.append((str(relative), module))
         self.assertEqual(violations, [])
         self.assertEqual(internal_imports, [])
+
+    def test_executable_consumers_do_not_import_the_old_authorization_owner(self):
+        backend = ROOT.parents[1]
+        migrated = {
+            "staff_owns_learner",
+            "coach_owns_learner",
+            "audit_admin_learner_action",
+            "learner_self_only",
+            "learner_self_or_staff",
+            "learner_self_or_admin",
+        }
+        violations = []
+        for path in backend.rglob("*.py"):
+            if "migrations" in path.parts or "identity_placement" in path.parts:
+                continue
+            tree = ast.parse(path.read_text(encoding="utf-8-sig"))
+            for node in ast.walk(tree):
+                if isinstance(node, ast.ImportFrom) and node.module == "login.permissions":
+                    names = migrated & {alias.name for alias in node.names}
+                    if names:
+                        violations.append((str(path.relative_to(backend)), sorted(names)))
+        self.assertEqual(violations, [])
 
     def test_capability_dependency_graph_is_acyclic(self):
         modules = {

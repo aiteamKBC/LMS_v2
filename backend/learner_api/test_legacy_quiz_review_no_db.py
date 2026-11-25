@@ -214,14 +214,22 @@ class QuizReviewEndpointTests(unittest.TestCase):
         scope = dict(__package__='learner_api', functools=functools, JsonResponse=JsonResponse,
             require_GET=require_GET, learner_journal_view=lambda view: view,
             cached_learner_read=lambda _name: lambda view: view,
+            login_permissions=SimpleNamespace(
+                _auth_gate_enabled=lambda: True,
+                authenticate_request=lambda request: request.account,
+                _unauthenticated=lambda _: JsonResponse({}, status=401),
+            ),
             authenticate_request=lambda request: request.account, _auth_gate_enabled=lambda: True,
             _target_learner_id=lambda request, kwargs, **_: kwargs['pk'],
             _unauthenticated=lambda _: JsonResponse({}, status=401),
             _read_only_learner_view=lambda: JsonResponse({}, status=403),
+            learner_owns_target=lambda account, target: (
+                account.role == 'learner' and account.subject_id == target
+            ),
             SOURCE_MODELS={'commercial': model, 'apprenticeship': model},
             student_activity_available=lambda _: True, DatabaseError=RuntimeError, get_token=lambda _: 'synthetic-csrf',
             coach_owns_learner=lambda *_: False, staff_owns_learner=self.staff_owns)
-        load(ROOT.parent / 'login/permissions.py', {'_learner_progress_gate', 'learner_self_or_staff'}, scope)
+        load(ROOT / 'identity_placement/api/authorization.py', {'_learner_progress_gate', 'learner_self_or_staff'}, scope)
         load(ROOT / 'student_activity.py', {'_error', '_private', '_emails_match'}, scope)
         load(ROOT / 'student_activity.py', {'student_activity'}, scope, decorated=True)
         self.view = scope['student_activity']

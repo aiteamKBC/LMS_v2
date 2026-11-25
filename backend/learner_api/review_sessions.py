@@ -5,7 +5,7 @@ from django.db import DatabaseError
 from django.http import JsonResponse
 
 from coach_api.meeting_outcomes import annotate_meeting_outcomes
-from login.permissions import learner_self_or_staff
+from learner_api.identity_placement.public import learner_self_or_staff
 
 from .booking_calendar import booking_calendar_payload
 from .calendar import _calendar_profile, coaching_events_for_learner

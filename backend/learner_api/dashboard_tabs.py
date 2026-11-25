@@ -6,7 +6,7 @@ from django.db import DatabaseError, connections
 from django.http import JsonResponse
 from django.utils import timezone
 from django.views.decorators.http import require_GET
-from login.permissions import learner_self_or_staff
+from learner_api.identity_placement.public import learner_self_or_staff
 from old_otjh.service import ServiceError
 
 from .response_cache import cached_learner_read

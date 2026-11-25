@@ -16,7 +16,7 @@ from django.views.decorators.http import require_GET
 from .projection_performance import measure_projection
 
 from audit_api.last_audit_ledger_views import _is_completed
-from login.permissions import learner_self_or_staff
+from learner_api.identity_placement.public import learner_self_or_staff
 from .learner_detail import SOURCE_MODELS
 from .models import TrainingPlanDocument
 from .progress_rules import progress_counts_as_achieved

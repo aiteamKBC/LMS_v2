@@ -10,7 +10,7 @@ from django.db import DatabaseError
 from django.http import JsonResponse
 from django.utils import timezone
 
-from login.permissions import learner_self_or_staff
+from learner_api.identity_placement.public import learner_self_or_staff
 
 from .learner_detail import SOURCE_MODELS
 from .projection_performance import projection_call, projection_operation

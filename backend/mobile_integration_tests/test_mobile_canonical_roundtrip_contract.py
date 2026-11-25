@@ -160,10 +160,10 @@ class CanonicalRoundTripTests(unittest.TestCase):
         fixture(PACKAGE + ".marking_queue_entry", requires_tutor_validation=lambda cid: False,
                 queue_for_marking=Mock(side_effect=AssertionError("No provider/marking writes in this fixture")))
         fixture(PACKAGE + ".assignment_topics", topic_id=lambda value: "" if value is None else value)
-        permission_patch = patch.object(sys.modules["login.permissions"], "learner_self_or_admin",
-                                        lambda **kwargs: lambda view: view, create=True)
-        permission_patch.start()
-        self.addCleanup(permission_patch.stop)
+        fixture(
+            "learner_api.identity_placement.public",
+            learner_self_or_admin=lambda **kwargs: lambda view: view,
+        )
         self.timer = source_module(PACKAGE + ".time_tracking", "learner_api/time_tracking.py")
         self.timer.tracking_session_already_used = self.repo.used
         self.audio_writer = source_module(PACKAGE + ".components", "learner_api/components.py")

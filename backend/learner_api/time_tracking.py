@@ -15,7 +15,7 @@ from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 from django.views.decorators.csrf import csrf_exempt
 
-from login.permissions import learner_self_or_admin
+from learner_api.identity_placement.public import learner_self_or_admin
 from .working_hours_holidays import is_working_hours_holiday
 from config.working_hours import UK, WORKING_DAY_START, WORKING_DAY_END, WORKING_WEEKDAYS
 

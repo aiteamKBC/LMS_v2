@@ -5249,6 +5249,46 @@ Follow-up: the remaining consumer reverse imports were closed by the 2026-11-22 
 - Next recommended Identity & Placement batch: separately decide and migrate the
   legacy email/PK resolver and optional write-on-read repair, with DB/identity-owner
   approval and data evidence. Phase 2.2 was not started.
+
+### 2026-11-25 - Identity & Placement Phase 2.2 physical migration - PASS
+
+- Physically removed the obsolete `learner_api/identity.py` and
+  `learner_api/placement_links.py` compatibility modules after migrating every
+  executable production import, test patch and isolated-runtime stub. The only
+  old dotted path left is inside an immutable historical source snapshot; its
+  parity test supplies a test-only in-memory module and no production wrapper.
+- Identity resolution decisions now belong to Domain, orchestration to
+  Application, exact ORM reads and optional link repair to separate
+  Infrastructure adapters, and wiring to Composition/Public. Placement input
+  interpretation and hierarchy validation follow the same layers. A dependency-
+  free shared validation exception prevents the Public/mapper import cycle.
+- Free Course keeps only `assigned_course_ids` and `assignment_version`; its
+  assignment logic was not moved. The obsolete identity constants/resolver
+  re-exports were removed. No Identity & Placement compatibility file remains.
+- Moved the three root capability suites into
+  `identity_placement/tests/parity/`, extracted the nine identity-resolution
+  cases from `learner_api/tests.py` and `tests_weekly_learning.py`, added package
+  discovery markers, and deleted the original root suites/classes. Workflow-
+  specific consumer tests remain with their real owners and import/patch Public.
+- Root `learner_api` Python files changed from 698 to 694: five obsolete root
+  files were removed and one dependency-free validation leaf was added. The
+  capability owns ten discovered test files. No duplicate capability class or
+  business implementation remains.
+- Final capability discovery: 104/104 PASS, including canonical placement 34/34
+  (pre-change 28 pass/six extraction errors), identity resolution 9/9, relocated
+  ORM/consumer parity 30/30 and architecture/public/domain/validation contracts.
+  Updated external consumer cases are 15/15; isolated membership is 8/8 under
+  Docker `network=none`; read-only import smoke PASS with 899 bundled files.
+- Learning Plans reproduces its pre-change 98/99 result: only the unrelated
+  `active_users.standard_required_ksbs` redirect assertion fails. The disposable
+  PostgreSQL harness was already blocked before tests by missing unrelated
+  `curriculum.week_template_components`; no database/schema workaround was made.
+  Focused Ruff, changed-file AST syntax and `git diff --check` pass.
+- Whole-backend cyclic-group count remains nine; the largest observed component
+  reduced from 452 to 439 and Identity & Placement participates in zero cycles.
+  No database, schema, Neon, Teams/provider, branch, commit, push, merge or
+  deployment operation occurred.
+
 ### 2026-11-24 - Pinned dev meeting acceptance; remaining curriculum contracts OPEN
 
 - Started on Architecture at 2d06b0de038955f7ce68f4c9abdc336731c82d78 with a clean
@@ -5960,3 +6000,50 @@ Follow-up: the remaining consumer reverse imports were closed by the 2026-11-22 
   existing cross-context Quiz API dependency and import cycles remain. Other
   root feature families, previous Review failures and deferred Teams validation
   remain; this batch does not close full Curriculum acceptance or G01-G05.
+
+### 2026-11-25 - Identity & Placement Phase 2.3 ownership/authorization: implemented; verification PARTIAL
+
+- The learner-self, linked-staff and scoped-Coach ownership decisions moved from
+  `login.permissions` into Identity & Placement Domain/Application/Infrastructure.
+  The learner-scoped HTTP target parsing, 401/400/404/403 response adaptation and
+  admin/Coach audit integration moved to the capability API. Login retains session
+  authentication, generic roles and account lifecycle; `account_identity` retains
+  transactional identity writes. No permission, fallback, repair, alias or audit
+  rule changed and no second authentication policy was introduced.
+- `login.permissions` lost the obsolete 267-line ownership/decorator implementation
+  with no compatibility aliases. Fifty-five modified runtime consumers (52 Learner,
+  two Curriculum, one Login) now import the supported Public owner; a five-app
+  offline import smoke loaded all 59 production Public consumers. Repository scans
+  found zero old executable imports, mock targets, dotted references or duplicate
+  Login definitions. No production compatibility file remains.
+- Four complete Login suites moved physically to
+  `learner_api/identity_placement/tests/authorization`; their originals were deleted.
+  Capability production Python files increased 17 -> 22 and discovered test files
+  10 -> 15. Learner root Python files remain 694 -> 694; Login root Python files
+  decrease 80 -> 76. No production source file was deleted in this phase.
+- Pre/post ownership parity is exact: the same 48 cases report 45 PASS, one FAIL
+  and two ERROR. The unchanged failure expects an older `subject_store.finish`
+  signature; the unchanged errors require the absent isolated `enrolment` alias in
+  live-session access. Excluding only those three recorded baseline blockers, the
+  remaining ownership selection is 45/45 PASS. Full capability discovery runs 161
+  tests: 158 PASS with exactly those same one failure/two errors; the Phase 2.2 core
+  plus new ownership/architecture coverage is 113/113 PASS; canonical placement is
+  34/34 PASS. Focused Domain/Public/
+  Application/architecture selection is 23/23 PASS. No assertion was weakened,
+  skipped or rewritten.
+- Static verification: 3,623 backend Python files parse with zero syntax errors;
+  focused Ruff on the new ownership boundaries passes; `git diff --check` passes.
+  The accepted Phase 2.2 reference had nine broader cyclic groups (largest 439) and
+  zero Identity & Placement cycles. The final explicit-import scan still has nine
+  groups (largest 449) and zero Identity & Placement cycles; no capability cycle was
+  introduced. Existing broader backend cycles remain an open repository issue.
+- Retained neighboring rules are not compatibility wrappers: account identity email
+  conflict/lifecycle writes (`account_identity.py:34,46`), Enrolment route/employer
+  policy (`enrolment_api/auth.py:138,180`) and Engagement reward ownership
+  (`engagement_api/permissions.py:141`) remain with their owning capabilities.
+- No database, schema, migration, Neon, existing database, real-data, provider,
+  branch, commit, push, merge, PR or deployment action ran. `attendance.py` and
+  `calendar_connections.py` received import-only owner changes, but the assignment
+  explicitly prohibits Teams tests. Teams baseline and expanded checks are therefore
+  NOT RUN / BLOCKED BY TASK RESTRICTION, so repository-level Phase 2.3 verification
+  is PARTIAL even though the cohesive migration and scoped parity checks pass.

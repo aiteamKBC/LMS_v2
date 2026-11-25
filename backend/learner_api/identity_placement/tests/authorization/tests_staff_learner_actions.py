@@ -7,7 +7,9 @@ from django.db import DatabaseError
 from django.http import JsonResponse
 from django.test import RequestFactory, SimpleTestCase
 
-from . import permissions, views
+from learner_api.identity_placement import public as ownership
+from learner_api.identity_placement.api import authorization
+from login import views
 
 
 def staff(**overrides):
@@ -27,14 +29,14 @@ class StaffOwnsLearnerTests(SimpleTestCase):
         for kind in ('commercial', 'apprenticeship'):
             with self.subTest(kind=kind):
                 self.rows.filter.return_value.first.return_value = SimpleNamespace(pk=56, learner_type=kind)
-                self.assertTrue(permissions.staff_owns_learner(staff(email=' Student.Staff@Example.TEST '), 56))
+                self.assertTrue(ownership.staff_owns_learner(staff(email=' Student.Staff@Example.TEST '), 56))
                 self.rows.filter.assert_called_with(email__iexact='student.staff@example.test')
                 self.rows.filter.return_value.only.assert_called_with('id', 'learner_type')
 
     def test_missing_or_different_link_never_matches_even_if_staff_ids_collide(self):
         for linked in (None, SimpleNamespace(pk=19)):
             self.rows.filter.return_value.first.return_value = linked
-            self.assertFalse(permissions.staff_owns_learner(staff(subject_id=56), 56))
+            self.assertFalse(ownership.staff_owns_learner(staff(subject_id=56), 56))
 
     def test_invalid_identity_and_target_do_not_query(self):
         for account, target in (
@@ -43,12 +45,12 @@ class StaffOwnsLearnerTests(SimpleTestCase):
             (staff(email=''), 56), (staff(), None), (staff(), 0), (staff(), -1),
         ):
             with self.subTest(account=account, target=target):
-                self.assertFalse(permissions.staff_owns_learner(account, target))
+                self.assertFalse(ownership.staff_owns_learner(account, target))
         self.rows.filter.assert_not_called()
 
     def test_an_unreadable_link_fails_closed(self):
         self.rows.filter.side_effect = DatabaseError('unavailable')
-        self.assertFalse(permissions.staff_owns_learner(staff(), 56))
+        self.assertFalse(ownership.staff_owns_learner(staff(), 56))
 
 
 class StaffLearnerActionTests(SimpleTestCase):
@@ -56,10 +58,13 @@ class StaffLearnerActionTests(SimpleTestCase):
         self.factory = RequestFactory()
         self.account = staff()
         self.enterContext(patch.dict('os.environ', {'LEARNER_API_REQUIRE_AUTH': '1'}))
-        self.authenticate = self.enterContext(patch.object(permissions, 'authenticate_request', return_value=self.account))
+        self.authenticate = self.enterContext(patch.object(authorization.login_permissions, 'authenticate_request', return_value=self.account))
         self.enterContext(patch.object(views, 'authenticate_request', side_effect=lambda _: self.authenticate.return_value))
-        self.enterContext(patch.object(permissions, 'coach_owns_learner', return_value=False))
-        self.link = self.enterContext(patch('login.learner_enrolment.existing_learner_record', return_value=SimpleNamespace(pk=56)))
+        self.enterContext(patch.object(authorization, 'coach_owns_learner', return_value=False))
+        self.enterContext(patch.object(ownership, 'coach_owns_learner', return_value=False))
+        self.rows = self.enterContext(patch('learner_api.models.EnrolmentUser.all_learners'))
+        self.link = self.rows.filter.return_value.only.return_value.first
+        self.link.return_value = SimpleNamespace(pk=56)
         self.audit = self.enterContext(patch('login.invitations.record'))
 
     def test_own_activity_allows_all_target_shapes_and_preserves_staff_identity(self):
@@ -71,18 +76,18 @@ class StaffLearnerActionTests(SimpleTestCase):
                     seen.append(request.login_account)
                     return JsonResponse({'saved': True})
 
-                wrapped = permissions.learner_self_or_admin(**{shape: 'learnerId'})(save)
+                wrapped = ownership.learner_self_or_admin(**{shape: 'learnerId'})(save)
                 path = '/?learnerId=56' if shape == 'query_param' else '/'
                 request = self.factory.post(path, data=json.dumps({'learnerId': 56}), content_type='application/json')
                 self.assertEqual(wrapped(request, **({'learnerId': 56} if shape == 'kwarg' else {})).status_code, 200)
                 self.assertIs(seen[0], self.account)
                 self.assertEqual((self.account.role, self.account.subject_type, self.account.subject_id), ('staff', 'staff', 31))
-                self.link.assert_called_with(self.account.email)
+                self.rows.filter.assert_called_with(email__iexact='student.staff@example.test')
         self.audit.assert_not_called()
 
     def test_read_and_write_deny_other_learners_and_client_supplied_ownership(self):
         save = Mock(return_value=JsonResponse({'saved': True}))
-        wrapped = permissions.learner_self_or_admin(kwarg='pk')(save)
+        wrapped = ownership.learner_self_or_admin(kwarg='pk')(save)
         for method in ('get', 'post'):
             request = getattr(self.factory, method)('/', {'learnerRecordId': 19, 'email': self.account.email})
             self.assertEqual(wrapped(request, pk=19).status_code, 403)
@@ -90,7 +95,7 @@ class StaffLearnerActionTests(SimpleTestCase):
 
     def test_missing_and_unreadable_links_cannot_write(self):
         save = Mock()
-        wrapped = permissions.learner_self_or_admin(kwarg='pk')(save)
+        wrapped = ownership.learner_self_or_admin(kwarg='pk')(save)
         self.link.return_value = None
         self.assertEqual(wrapped(self.factory.post('/'), pk=56).status_code, 403)
         self.link.side_effect = DatabaseError('unavailable')
@@ -99,7 +104,7 @@ class StaffLearnerActionTests(SimpleTestCase):
 
     def test_invalid_target_never_reaches_the_view(self):
         save = Mock()
-        wrapped = permissions.learner_self_or_admin(body_field='learnerId')(save)
+        wrapped = ownership.learner_self_or_admin(body_field='learnerId')(save)
         for body in ('{}', 'null', '{', '{"learnerId":0}', '{"learnerId":-1}', '{"learnerId":"bad"}'):
             response = wrapped(self.factory.post('/', data=body, content_type='application/json'))
             self.assertEqual(response.status_code, 403)
@@ -108,7 +113,7 @@ class StaffLearnerActionTests(SimpleTestCase):
 
     def test_unrelated_roles_and_anonymous_cannot_use_the_staff_link(self):
         save = Mock()
-        wrapped = permissions.learner_self_or_admin(kwarg='pk')(save)
+        wrapped = ownership.learner_self_or_admin(kwarg='pk')(save)
         for account, expected in ((staff(role='employer'), 403), (staff(role='learner'), 404), (None, 401)):
             self.authenticate.return_value = account
             self.assertEqual(wrapped(self.factory.post('/'), pk=56).status_code, expected)
@@ -124,11 +129,11 @@ class StaffLearnerActionTests(SimpleTestCase):
 
     def test_private_calendar_and_staff_booking_rules_stay_unchanged(self):
         save = Mock(return_value=JsonResponse({'saved': True}))
-        private = permissions.learner_self_only(kwarg='pk')(save)
+        private = ownership.learner_self_only(kwarg='pk')(save)
         for method in ('get', 'post'):
             self.assertEqual(private(getattr(self.factory, method)('/'), pk=56).status_code, 403)
         save.assert_not_called()
-        booking = permissions.learner_self_or_staff(kwarg='pk')(save)
+        booking = ownership.learner_self_or_staff(kwarg='pk')(save)
         self.assertEqual(booking(self.factory.post('/'), pk=19).status_code, 200)
         self.link.assert_not_called()
 

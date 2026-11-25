@@ -18,7 +18,7 @@ from django.db import connections
 from django.http import JsonResponse
 
 from login.errors import DATABASE_ERRORS, database_unavailable
-from login.permissions import learner_self_or_staff
+from learner_api.identity_placement.public import learner_self_or_staff
 
 from .identity_placement.public import learner_profile_for_source
 from .learner_detail import (

@@ -180,8 +180,8 @@ class CoachExtraActivitiesBoundaryTests(SimpleTestCase):
 
     def test_coach_cannot_bypass_the_removed_form_using_learner_upload_or_submission(self):
         from learner_api import evidence, reflection_submissions
-        self.enterContext(patch('login.permissions.coach_owns_learner', return_value=True))
-        self.enterContext(patch('login.permissions.audit_admin_learner_action'))
+        self.enterContext(patch('learner_api.identity_placement.api.authorization.coach_owns_learner', return_value=True))
+        self.enterContext(patch('learner_api.identity_placement.api.authorization.audit_admin_learner_action'))
         for kind in ('apprenticeship', 'commercial'):
             with self.subTest(kind=kind):
                 upload = self.factory.post('/learner_api/evidence/upload/', {'section_ref': 'extra:existing'})
@@ -192,9 +192,9 @@ class CoachExtraActivitiesBoundaryTests(SimpleTestCase):
 
     def test_learner_admin_and_staff_learning_on_own_record_keep_extra_upload_access(self):
         from learner_api import evidence
-        self.enterContext(patch('login.permissions.coach_owns_learner', return_value=False))
-        self.enterContext(patch('login.permissions.staff_owns_learner', return_value=True))
-        self.enterContext(patch('login.permissions.audit_admin_learner_action'))
+        self.enterContext(patch('learner_api.identity_placement.api.authorization.coach_owns_learner', return_value=False))
+        self.enterContext(patch('learner_api.identity_placement.api.authorization.staff_owns_learner', return_value=True))
+        self.enterContext(patch('learner_api.identity_placement.api.authorization.audit_admin_learner_action'))
         for role in ('learner', 'admin', 'staff'):
             with self.subTest(role=role), patch.object(evidence, 'azure_configured', return_value=False) as storage:
                 self.account.role = role
@@ -205,8 +205,8 @@ class CoachExtraActivitiesBoundaryTests(SimpleTestCase):
 
     def test_coach_upload_for_other_learning_keeps_existing_permission(self):
         from learner_api import evidence
-        self.enterContext(patch('login.permissions.coach_owns_learner', return_value=True))
-        self.enterContext(patch('login.permissions.audit_admin_learner_action'))
+        self.enterContext(patch('learner_api.identity_placement.api.authorization.coach_owns_learner', return_value=True))
+        self.enterContext(patch('learner_api.identity_placement.api.authorization.audit_admin_learner_action'))
         with patch.object(evidence, 'azure_configured', return_value=False) as storage:
             request = self.factory.post('/learner_api/evidence/upload/', {'section_ref': 'existing-curriculum-component'})
             self.assertEqual(evidence.upload_evidence(request, kind='apprenticeship', pk=7).status_code, 503)

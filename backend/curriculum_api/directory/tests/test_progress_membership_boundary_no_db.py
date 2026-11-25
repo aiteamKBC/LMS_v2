@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 import importlib
 import json
 from pathlib import Path
+import sys
 from types import FunctionType, ModuleType, SimpleNamespace
 from unittest.mock import MagicMock, Mock, patch
 
@@ -206,8 +207,15 @@ class ProgressMembershipParity(SimpleTestCase):
         source = SimpleNamespace(pk=91)
         model.all_learners.only.return_value.filter.return_value = [source]
         placements = MagicMock(side_effect=lambda records: records)
-        self.enterContext(patch('learner_api.placement_links.with_placements', new=placements))
         self.enterContext(patch('learner_api.identity_placement.public.with_placements', new=placements))
+        # The immutable pre-extraction snapshot imports its historical dotted
+        # owner. Supply that name only inside this parity test; production no
+        # longer retains a compatibility module for a migratable test import.
+        legacy_placement = ModuleType('learner_api.placement_links')
+        legacy_placement.with_placements = placements
+        self.enterContext(patch.dict(sys.modules, {
+            'learner_api.placement_links': legacy_placement,
+        }))
         modules = self.enterContext(composition_fixture(views, 'authoring_scope_module_rows', return_value=[{'module_catalogue_id': 'M'}]))
         self.enterContext(patch.object(details.timezone, 'now', return_value=datetime(2028, 7, 1, 23, 30, tzinfo=timezone.utc)))
         return target, model, source, placements, modules

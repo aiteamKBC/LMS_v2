@@ -128,8 +128,6 @@ view_strings['scope_programme_identifier'] = lambda lineage: scope_programme_ide
 sessions = stub('login.sessions', authenticate_request=lambda r: r.account,
                 session_unreadable=lambda r: getattr(r, 'unreadable', False))
 plans = stub('learner_api.learning_plan', _s=strings['_s'])
-stub('learner_api.placement_links', with_placements=lambda rows: rows, placement_ids=deny,
-     placement_profile=lambda row: row.profile, RELATIONS=(), CACHE='synthetic')
 stub('learner_api.identity_placement.public', with_placements=lambda rows: rows,
      placement_ids=deny, placement_profile=lambda row: row.profile,
      RELATIONS=(), CACHE='synthetic')

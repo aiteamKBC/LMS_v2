@@ -11,7 +11,8 @@ from django.http import HttpResponse, HttpResponseRedirect, JsonResponse
 from django.utils import timezone
 from django.views.decorators.csrf import csrf_protect
 from django.views.decorators.http import require_GET, require_POST
-from login.permissions import require_role, learner_self_or_staff
+from learner_api.identity_placement.public import learner_self_or_staff
+from login.permissions import require_role
 
 from .attendance_identity import identity_check, staff_roles
 from .attendance_link_policy import apply_reviewed_identities, identity_key, link_specs, record_key, unmatched_roster, attendance_bot, series_identity_emails

@@ -14,7 +14,7 @@ from django.http import JsonResponse
 from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
 
-from login.permissions import learner_self_only
+from learner_api.identity_placement.public import learner_self_only
 
 from .active_users import save_progress_record
 from .identity_placement.public import learner_profile_for_source

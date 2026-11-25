@@ -279,7 +279,7 @@ def _roles_from_decorators(view):
         # gate is recognised by its code object instead.
         code_name = getattr(getattr(current, '__code__', None), 'co_qualname', '')
         if '_learner_progress_gate' in code_name:
-            # login.permissions.learner_self_only / _or_staff / _or_admin:
+            # identity_placement.public learner_self_only / _or_staff / _or_admin:
             # the learner who owns the record, plus staff or admin when allowed.
             names = getattr(getattr(current, '__code__', None), 'co_freevars', ())
             cells = dict(zip(names, getattr(current, '__closure__', None) or ()))

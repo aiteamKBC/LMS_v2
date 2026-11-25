@@ -7,7 +7,7 @@ from django.core.exceptions import ObjectDoesNotExist
 from django.db import DatabaseError, connections
 from django.http import JsonResponse
 from django.views.decorators.http import require_GET
-from login.permissions import learner_self_or_staff
+from learner_api.identity_placement.public import learner_self_or_staff
 from old_otjh.service import ServiceError
 from curriculum_api.web_week_points import read_configurations
 from curriculum_api.week_visibility import visible_child_sql, visible_week_sql

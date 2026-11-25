@@ -7,7 +7,7 @@ from types import SimpleNamespace
 from django.db import DatabaseError
 from django.http import JsonResponse
 from django.views.decorators.http import require_GET
-from login.permissions import learner_self_or_staff
+from learner_api.identity_placement.public import learner_self_or_staff
 from old_otjh.service import ServiceError
 
 from coach_api.weekly_learning import read_weekly_learning

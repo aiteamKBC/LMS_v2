@@ -15,9 +15,9 @@ from django.test import RequestFactory, SimpleTestCase
 
 from . import canonical_learning as canonical
 from . import my_learning as learning
-from .models import EnrolmentUser
-from .placement_links import placement_ids
-from .test_orm_placement_fields_no_db import CompilingGet
+from .models import EnrolmentUser, LearnerProfile
+from .identity_placement.public import CACHE, placement_ids
+from .identity_placement.tests.parity.test_orm_placement_fields_no_db import CompilingGet
 
 PK = 285
 CONCRETE = {f.attname for f in EnrolmentUser._meta.concrete_fields} | {
@@ -138,16 +138,26 @@ class PlacementTests(SimpleTestCase):
         row = loaded_row()
         self.assertTrue({'programme_id', 'cohort_id', 'group_id'}.isdisjoint(row.get_deferred_fields()))
 
-    def test_valid_ids_resolve_without_a_profile_lookup(self):
-        with patch('learner_api.placement_links.LearnerProfile.objects') as profiles:
-            self.assertEqual(placement_ids(loaded_row()),
+    def test_cached_profile_ids_resolve_without_another_lookup(self):
+        row = loaded_row()
+        row.__dict__[CACHE] = SimpleNamespace(
+            programme_id='PROG-1', cohort_id='COH-1', group_id='GRP-1'
+        )
+        with patch('learner_api.models.LearnerProfile.objects') as profiles:
+            self.assertEqual(placement_ids(row),
                              {'programme_id': 'PROG-1', 'cohort_id': 'COH-1', 'group_id': 'GRP-1'})
         profiles.using.assert_not_called()
 
     def test_null_ids_use_only_an_agreeing_linked_profile(self):
         for rows, expected in (([('PROG-1', 'COH-2', 'GRP-2')], ('COH-2', 'GRP-2')), ([], ('', ''))):
-            with self.subTest(rows=rows), patch('learner_api.placement_links.LearnerProfile.objects') as profiles:
-                profiles.using.return_value.filter.return_value.values_list.return_value.__getitem__.return_value = rows
+            with self.subTest(rows=rows), patch('learner_api.models.LearnerProfile.objects') as profiles:
+                query = profiles.using.return_value.select_related.return_value.only.return_value
+                if rows:
+                    query.get.return_value = SimpleNamespace(
+                        programme_id=rows[0][0], cohort_id=rows[0][1], group_id=rows[0][2]
+                    )
+                else:
+                    query.get.side_effect = LearnerProfile.DoesNotExist
                 ids = placement_ids(loaded_row(cohort_id=None, group_id=None))
             self.assertEqual((ids['cohort_id'], ids['group_id']), expected)
 

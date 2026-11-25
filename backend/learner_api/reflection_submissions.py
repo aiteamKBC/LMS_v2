@@ -10,7 +10,7 @@ from django.db import DatabaseError, connections, transaction
 from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 
-from login.permissions import learner_self_or_admin, learner_self_or_staff
+from learner_api.identity_placement.public import learner_self_or_admin, learner_self_or_staff
 from old_otjh.service import ServiceError
 from .assignment_attempts import HISTORY_KEY, preserve_attempts, submission_attempts
 from .submission_audit import SUBMISSION_AUDIT_SQL, record_submission_row

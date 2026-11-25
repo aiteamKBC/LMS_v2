@@ -24,7 +24,8 @@ from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
 
 from coach_api.models import CoachCalendarEvent
-from login.permissions import _auth_gate_enabled, learner_self_or_staff, staff_only
+from learner_api.identity_placement.public import learner_self_or_staff
+from login.permissions import _auth_gate_enabled, staff_only
 from login.sessions import authenticate_request
 
 from .calendar import ONBOARDING_REVIEW_LABELS, ONBOARDING_REVIEW_TYPES, _case_owner_record

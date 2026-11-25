@@ -7,7 +7,7 @@ from functools import wraps
 from django.db import DatabaseError, connections
 from django.http import JsonResponse
 from django.views.decorators.http import require_GET
-from login.permissions import learner_self_or_staff
+from learner_api.identity_placement.public import learner_self_or_staff
 from audit_api.evidence_explorer_views import (
     EVIDENCE_ITEMS,
     evidence_payload, classify_by_hints,

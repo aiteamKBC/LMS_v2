@@ -13,8 +13,8 @@ import re
 
 from .student_activity_access import student_activity_available
 from .aptem_status import programme_status
-from .identity_placement.public import placement_payload
-from .placement_links import placement_input
+from .identity_placement.public import placement_input, placement_payload
+from .validation import ValidationError
 from .constants import (
     ACCESS_CHOICES,
     ACCESS_SUPER_ADMIN,
@@ -631,10 +631,6 @@ def get_training_plan(source):
     if plan is not None:
         return plan
     return _legacy_plan_from_csv(source)
-
-
-class ValidationError(Exception):
-    """Raised with a user-facing message when a payload fails validation."""
 
 
 def validate_choices(payload):

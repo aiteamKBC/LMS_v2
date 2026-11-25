@@ -1223,9 +1223,9 @@ class AttendanceModeTests(SimpleTestCase):
         request.login_account = SimpleNamespace(role=role, subject_id=12) if role else None
         with patch('login.permissions._auth_gate_enabled', return_value=True), \
              patch('login.permissions.authenticate_request', return_value=request.login_account), \
-             patch('login.permissions.audit_admin_learner_action'), \
-             patch('login.permissions.coach_owns_learner', return_value=False), \
-             patch('login.permissions.staff_owns_learner', return_value=role == 'staff'), \
+             patch('learner_api.identity_placement.api.authorization.audit_admin_learner_action'), \
+             patch('learner_api.identity_placement.api.authorization.coach_owns_learner', return_value=False), \
+             patch('learner_api.identity_placement.api.authorization.staff_owns_learner', return_value=role == 'staff'), \
              patch('learner_api.attendance_mode.SOURCE_MODELS', {'apprenticeship': model, 'commercial': model}), \
              patch('learner_api.attendance_mode.connections', {'enrolment': conn}), \
              patch('learner_api.attendance_mode.transaction.atomic', return_value=nullcontext()), \

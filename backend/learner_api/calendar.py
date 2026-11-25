@@ -37,7 +37,7 @@ from .first_session import (
     imported_from_aptem as first_session_imported_from_aptem,
     uk_today as first_session_uk_today,
 )
-from login.permissions import learner_self_or_staff
+from learner_api.identity_placement.public import learner_self_or_staff
 from .session_recovery import learner_change
 from login.sessions import authenticate_request
 

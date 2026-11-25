@@ -13,6 +13,11 @@ from learner_api.identity_placement.domain.identifiers import (
     source_email,
     source_primary_key,
 )
+from learner_api.identity_placement.domain.ownership import (
+    coach_identity_can_own_learner,
+    learner_owns_target,
+    staff_identity_can_own_learner,
+)
 from learner_api.identity_placement.domain.placement import (
     ids_from_profile,
     payload_from_ids,
@@ -50,6 +55,35 @@ class PlacementProjectionTests(unittest.TestCase):
         self.assertEqual(
             ids_from_profile(None),
             {"programme_id": "", "cohort_id": "", "group_id": ""},
+        )
+
+
+class OwnershipPolicyTests(unittest.TestCase):
+    def test_learner_self_is_an_exact_role_and_identifier_match(self):
+        learner = SimpleNamespace(role="learner", subject_id=56)
+        self.assertTrue(learner_owns_target(learner, 56))
+        self.assertFalse(learner_owns_target(learner, 19))
+        self.assertFalse(learner_owns_target(learner, 0))
+
+    def test_colliding_staff_identifier_is_not_learner_self_ownership(self):
+        staff = SimpleNamespace(
+            role="staff",
+            subject_type="staff",
+            subject_id=56,
+            email="staff@example.test",
+        )
+        self.assertFalse(learner_owns_target(staff, 56))
+        self.assertTrue(staff_identity_can_own_learner(staff, 56))
+
+    def test_coach_candidate_requires_staff_identity_but_not_client_email(self):
+        staff = SimpleNamespace(role="staff", subject_type="staff", subject_id=7)
+        self.assertTrue(coach_identity_can_own_learner(staff, 56))
+        self.assertFalse(coach_identity_can_own_learner(staff, -1))
+        self.assertFalse(
+            coach_identity_can_own_learner(
+                SimpleNamespace(role="learner", subject_type="learner"),
+                56,
+            )
         )
 
 

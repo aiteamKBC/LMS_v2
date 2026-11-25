@@ -40,6 +40,8 @@ from django.test import Client, RequestFactory, SimpleTestCase
 from django.utils import timezone
 
 from learner_api.models import Employer, EnrolmentReview, EnrolmentUser
+from learner_api.identity_placement import public as learner_authorization
+from learner_api.identity_placement.api import authorization
 
 from . import identity, permissions
 from .security import hash_password
@@ -614,7 +616,7 @@ class A7AbsenceReportsGuardTests(SimpleTestCase):
     def test_real_view_rejects_staff(self):
         # Staff who do not coach this learner. The learner's own coach may act
         # (see tests_coach_learner_actions); that is a caseload lookup.
-        with mock.patch.object(permissions, "coach_owns_learner", return_value=False) as owns:
+        with mock.patch.object(authorization, "coach_owns_learner", return_value=False) as owns:
             resp = self._call_real_view(_Account("staff", 3, subject_type="staff"))
         self.assertEqual(resp.status_code, 403)
         owns.assert_called_once()
@@ -626,10 +628,10 @@ class A7AbsenceReportsGuardTests(SimpleTestCase):
             calls.append(True)
             return JsonResponse({"ok": True})
 
-        gated = permissions.learner_self_only(kwarg="learner_id")(spy)
+        gated = learner_authorization.learner_self_only(kwarg="learner_id")(spy)
         request = self.factory.post(self.url)
         with mock.patch.object(
-            permissions, "authenticate_request", return_value=_Account("learner", 500)
+            authorization.login_permissions, "authenticate_request", return_value=_Account("learner", 500)
         ):
             resp = gated(request, kind="apprenticeship", learner_id=500)
         self.assertEqual(resp.status_code, 200)

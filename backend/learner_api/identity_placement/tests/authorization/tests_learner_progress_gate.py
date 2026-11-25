@@ -21,7 +21,8 @@ from unittest import mock
 from django.http import JsonResponse
 from django.test import RequestFactory, SimpleTestCase
 
-from . import permissions
+from learner_api.identity_placement import public as ownership
+from learner_api.identity_placement.api import authorization
 
 
 class _Account:
@@ -52,7 +53,7 @@ class LearnerProgressGateTests(SimpleTestCase):
     # ── helpers ──────────────────────────────────────────────────────────
 
     def _call(self, gated, request, account, **kwargs):
-        with mock.patch.object(permissions, "authenticate_request", return_value=account):
+        with mock.patch.object(authorization.login_permissions, "authenticate_request", return_value=account):
             return gated(request, **kwargs)
 
     def _post(self, path="/learner_api/videos/abc/complete/", **params):
@@ -62,41 +63,41 @@ class LearnerProgressGateTests(SimpleTestCase):
     # ── the query-param shape (quiz / video / component completion) ───────
 
     def test_the_learner_may_record_their_own_progress(self):
-        gated = permissions.learner_self_only(query_param="learnerId")(_view)
+        gated = ownership.learner_self_only(query_param="learnerId")(_view)
         response = self._call(gated, self._post(learnerId=56), LEARNER_56)
         self.assertEqual(response.status_code, 200)
 
     def test_staff_are_refused_and_told_why(self):
         """The inversion: staff read a learner's plan, they do not progress it."""
-        gated = permissions.learner_self_only(query_param="learnerId")(_view)
+        gated = ownership.learner_self_only(query_param="learnerId")(_view)
         response = self._call(gated, self._post(learnerId=56), STAFF)
         self.assertEqual(response.status_code, 403)
         self.assertEqual(json.loads(response.content)["code"], "read_only_learner_view")
 
     def test_admins_are_refused_too(self):
-        gated = permissions.learner_self_only(query_param="learnerId")(_view)
+        gated = ownership.learner_self_only(query_param="learnerId")(_view)
         response = self._call(gated, self._post(learnerId=56), ADMIN)
         self.assertEqual(response.status_code, 403)
 
     def test_an_employer_is_refused(self):
-        gated = permissions.learner_self_only(query_param="learnerId")(_view)
+        gated = ownership.learner_self_only(query_param="learnerId")(_view)
         response = self._call(gated, self._post(learnerId=56), EMPLOYER)
         self.assertEqual(response.status_code, 403)
 
     def test_another_learner_gets_404_not_403(self):
         """A 403 would confirm learner 56 exists; collapse it to 404."""
-        gated = permissions.learner_self_only(query_param="learnerId")(_view)
+        gated = ownership.learner_self_only(query_param="learnerId")(_view)
         response = self._call(gated, self._post(learnerId=56), LEARNER_19)
         self.assertEqual(response.status_code, 404)
 
     def test_no_session_is_401(self):
-        gated = permissions.learner_self_only(query_param="learnerId")(_view)
+        gated = ownership.learner_self_only(query_param="learnerId")(_view)
         response = self._call(gated, self._post(learnerId=56), None)
         self.assertEqual(response.status_code, 401)
         self.assertEqual(json.loads(response.content)["code"], "unauthenticated")
 
     def test_a_missing_learner_id_is_rejected_not_waved_through(self):
-        gated = permissions.learner_self_only(query_param="learnerId")(_view)
+        gated = ownership.learner_self_only(query_param="learnerId")(_view)
         response = self._call(gated, self._post(), LEARNER_56)
         self.assertEqual(response.status_code, 400)
 
@@ -104,7 +105,7 @@ class LearnerProgressGateTests(SimpleTestCase):
 
     def test_staff_may_still_read(self):
         """Staff review a learner's plan constantly; only writing is gated."""
-        gated = permissions.learner_self_or_staff(query_param="learnerId")(_view)
+        gated = ownership.learner_self_or_staff(query_param="learnerId")(_view)
         request = self.factory.get("/learner_api/reflection/submissions/?learnerId=56")
         response = self._call(gated, request, STAFF)
         self.assertEqual(response.status_code, 200)
@@ -112,7 +113,7 @@ class LearnerProgressGateTests(SimpleTestCase):
     # ── the URL-kwarg shape (evidence upload) ────────────────────────────
 
     def test_the_kwarg_shape_reads_the_url(self):
-        gated = permissions.learner_self_only(kwarg="pk")(_view)
+        gated = ownership.learner_self_only(kwarg="pk")(_view)
         request = self.factory.post("/learner_api/evidence/commercial/56/upload/")
         self.assertEqual(self._call(gated, request, LEARNER_56, kind="commercial", pk=56).status_code, 200)
         self.assertEqual(self._call(gated, request, LEARNER_19, kind="commercial", pk=56).status_code, 404)
@@ -121,7 +122,7 @@ class LearnerProgressGateTests(SimpleTestCase):
     # ── the body shape (reflection submissions) ──────────────────────────
 
     def test_the_body_shape_reads_the_json_payload(self):
-        gated = permissions.learner_self_only(body_field="learnerId")(_view)
+        gated = ownership.learner_self_only(body_field="learnerId")(_view)
         request = self.factory.post(
             "/learner_api/reflection/submissions/",
             data=json.dumps({"learnerId": "56", "learnerKind": "commercial"}),
@@ -143,7 +144,7 @@ class LearnerProgressGateTests(SimpleTestCase):
             seen["payload"] = json.loads(request.body)
             return JsonResponse({"ok": True})
 
-        gated = permissions.learner_self_only(body_field="learnerId")(view)
+        gated = ownership.learner_self_only(body_field="learnerId")(view)
         request = self.factory.post(
             "/learner_api/reflection/submissions/",
             data=json.dumps({"learnerId": 56, "learningReflection": "went well"}),
@@ -156,13 +157,13 @@ class LearnerProgressGateTests(SimpleTestCase):
 
     def test_staff_may_book_a_session_for_a_learner(self):
         """The one write a staff viewer keeps on a learner's page."""
-        gated = permissions.learner_self_or_staff(kwarg="pk")(_view)
+        gated = ownership.learner_self_or_staff(kwarg="pk")(_view)
         request = self.factory.post("/learner_api/calendar/commercial/56/book/")
         self.assertEqual(self._call(gated, request, STAFF, kind="commercial", pk=56).status_code, 200)
         self.assertEqual(self._call(gated, request, ADMIN, kind="commercial", pk=56).status_code, 200)
 
     def test_booking_still_refuses_another_learner_and_anonymous_callers(self):
-        gated = permissions.learner_self_or_staff(kwarg="pk")(_view)
+        gated = ownership.learner_self_or_staff(kwarg="pk")(_view)
         request = self.factory.post("/learner_api/calendar/commercial/56/book/")
         self.assertEqual(self._call(gated, request, LEARNER_56, kind="commercial", pk=56).status_code, 200)
         self.assertEqual(self._call(gated, request, LEARNER_19, kind="commercial", pk=56).status_code, 404)
@@ -176,7 +177,7 @@ class LearnerProgressGateTests(SimpleTestCase):
         Documented for local development and must never be set in a deployment:
         with it set, a staff viewer can write learner progress again.
         """
-        gated = permissions.learner_self_only(query_param="learnerId")(_view)
+        gated = ownership.learner_self_only(query_param="learnerId")(_view)
         with mock.patch.dict("os.environ", {"LEARNER_API_REQUIRE_AUTH": "0"}, clear=False):
             response = self._call(gated, self._post(learnerId=56), STAFF)
         self.assertEqual(response.status_code, 200)

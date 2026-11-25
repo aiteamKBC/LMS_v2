@@ -5,7 +5,7 @@ from zoneinfo import ZoneInfo
 from django.utils import timezone
 from django.db import DatabaseError
 from django.http import JsonResponse
-from login.permissions import learner_self_or_staff
+from learner_api.identity_placement.public import learner_self_or_staff
 from old_otjh.service import ServiceError
 from .monthly_assignment import assignment_checks, mapping, text
 from .extra_activity_month import valid_activity_month

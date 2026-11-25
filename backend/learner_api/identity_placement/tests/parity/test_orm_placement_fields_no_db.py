@@ -4,17 +4,26 @@ Database and network are prohibited. Each real queryset is compiled to SQL
 (``str(queryset.query)`` builds SQL without connecting); that compile step is
 where ``FieldDoesNotExist`` was raised. Rows are synthetic.
 """
+from pathlib import Path
+import sys
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
+
+BACKEND = Path(__file__).resolve().parents[4]
+sys.path.insert(0, str(BACKEND))
+
+from learner_api.identity_placement.tests.django_bootstrap import configure
+
+configure()
 
 from django.core.exceptions import FieldDoesNotExist
 from django.db import DatabaseError
 from django.db.models.query import QuerySet
 from django.test import SimpleTestCase
 
-from . import module_progress, programme_access, student_activity
-from .models import EnrolmentUser
-from .placement_links import placement_ids
+from learner_api import module_progress, programme_access, student_activity
+from learner_api.identity_placement.public import CACHE, placement_ids
+from learner_api.models import EnrolmentUser, LearnerProfile
 
 LEARNER_ID = 101
 
@@ -52,30 +61,25 @@ class StaleNameCharacterisationTests(SimpleTestCase):
 
 
 class EffectiveCurrentSubjectsTests(SimpleTestCase):
-    def read(self, kind='commercial', plan_ids=('M1',)):
-        get = CompilingGet(row=learner(kind))
+    def read(self, rows=(('M1', 'Module One'),)):
         cursor = MagicMock()
-        cursor.fetchall.return_value = [('M1', 'Module One')]
-        with patch.object(QuerySet, 'get', autospec=True, side_effect=get), \
-                patch.object(student_activity, '_effective_plan_ids', return_value=list(plan_ids)) as plan:
-            result = student_activity._effective_current_subjects(cursor, LEARNER_ID)
-        return result, get, cursor, plan
+        cursor.db = SimpleNamespace(vendor='sqlite')
+        cursor.fetchall.return_value = list(rows)
+        result = student_activity._effective_current_subjects(cursor, LEARNER_ID)
+        return result, cursor
 
-    def test_selects_only_concrete_columns_for_both_kinds(self):
-        for kind in ('commercial', 'apprenticeship'):
-            with self.subTest(kind=kind):
-                _, get, cursor, plan = self.read(kind)
-                self.assertEqual(get.loaded_fields(),
-                                 {'programme_id', 'group_id', 'learning_plan', 'training_plan'})
-                self.assertEqual(plan.call_args.args[0].learner_type, kind)
-                # Read-only: the only statement is the module-title SELECT.
-                self.assertTrue(all(call.args[0].strip().startswith('SELECT')
-                                    for call in cursor.execute.call_args_list))
+    def test_reads_the_normalized_plan_in_saved_order(self):
+        result, cursor = self.read()
+        self.assertEqual(result, [{'id': 'M1', 'title': 'Module One'}])
+        sql, params = cursor.execute.call_args.args
+        self.assertIn('learner_training_plan_modules', sql)
+        self.assertIn('ORDER BY plan.position,plan.id', sql)
+        self.assertEqual(params, [LEARNER_ID])
 
     def test_empty_effective_plan_still_returns_empty_without_querying_modules(self):
-        result, _, cursor, _ = self.read(plan_ids=())
+        result, cursor = self.read(rows=())
         self.assertEqual(result, [])
-        cursor.execute.assert_not_called()
+        cursor.execute.assert_called_once()
 
 
 class StartRefusalTests(SimpleTestCase):
@@ -110,27 +114,39 @@ class StartRefusalTests(SimpleTestCase):
 class PlacementResolutionTests(SimpleTestCase):
     """The loaded id columns feed placement_ids exactly as before; names stay properties."""
 
-    def test_loaded_ids_are_used_without_a_profile_lookup(self):
-        with patch('learner_api.placement_links.LearnerProfile.objects') as profiles:
-            ids = placement_ids(learner())
+    def test_cached_profile_ids_are_used_without_a_profile_lookup(self):
+        source = learner()
+        source.__dict__[CACHE] = SimpleNamespace(
+            programme_id='PROG-1', cohort_id='COH-1', group_id='GRP-1'
+        )
+        with patch.object(LearnerProfile, 'objects') as profiles:
+            ids = placement_ids(source)
         self.assertEqual(ids, {'programme_id': 'PROG-1', 'cohort_id': 'COH-1', 'group_id': 'GRP-1'})
         profiles.using.assert_not_called()
 
     def test_null_ids_fall_back_only_to_an_agreeing_linked_profile(self):
         source = learner(cohort_id=None, group_id=None)
-        with patch('learner_api.placement_links.LearnerProfile.objects') as profiles:
-            profiles.using.return_value.filter.return_value.values_list.return_value.__getitem__.return_value = [
-                ('PROG-1', 'COH-9', 'GRP-9')]
+        with patch.object(LearnerProfile, 'objects') as profiles:
+            profiles.using.return_value.select_related.return_value.only.return_value.get.return_value = SimpleNamespace(
+                programme_id='PROG-1', cohort_id='COH-9', group_id='GRP-9')
             ids = placement_ids(source)
         self.assertEqual(ids, {'programme_id': 'PROG-1', 'cohort_id': 'COH-9', 'group_id': 'GRP-9'})
-        profiles.using.return_value.filter.assert_called_once_with(enrolment_id=LEARNER_ID)
+        profiles.using.return_value.select_related.return_value.only.return_value.get.assert_called_once_with(
+            enrolment_id=LEARNER_ID)
 
-    def test_missing_or_conflicting_placements_stay_blank(self):
-        for rows in ([], [('PROG-1', 'COH-1', 'GRP-1'), ('PROG-1', 'COH-2', 'GRP-2')]):
-            with self.subTest(rows=rows), patch('learner_api.placement_links.LearnerProfile.objects') as profiles:
-                profiles.using.return_value.filter.return_value.values_list.return_value.__getitem__.return_value = rows
-                ids = placement_ids(learner(cohort_id=None, group_id=None))
-            self.assertEqual((ids['cohort_id'], ids['group_id']), ('', ''))
+    def test_missing_placement_stays_blank(self):
+        with patch.object(LearnerProfile, 'objects') as profiles:
+            query = profiles.using.return_value.select_related.return_value.only.return_value
+            query.get.side_effect = LearnerProfile.DoesNotExist
+            ids = placement_ids(learner(cohort_id=None, group_id=None))
+        self.assertEqual((ids['cohort_id'], ids['group_id']), ('', ''))
+
+    def test_conflicting_placements_fail_closed(self):
+        with patch.object(LearnerProfile, 'objects') as profiles:
+            query = profiles.using.return_value.select_related.return_value.only.return_value
+            query.get.side_effect = LearnerProfile.MultipleObjectsReturned
+            with self.assertRaises(LearnerProfile.MultipleObjectsReturned):
+                placement_ids(learner(cohort_id=None, group_id=None))
 
     def test_programme_and_group_names_still_resolve_through_the_property(self):
         with patch('learner_api.models._learner_placement_names', return_value=('Programme', 'Cohort', 'Group')) as names:
@@ -167,7 +183,8 @@ class ModuleProgressReachesCompletionTests(SimpleTestCase):
                         patch('learner_api.learner_detail._append_week_quizzes', return_value=([], [])), \
                         patch('learner_api.teams_attendance.annotate_attendance_completion', side_effect=lambda c, p: c), \
                         patch('learner_api.retained_quiz_progress.retain_quiz_progress'), \
-                        patch.object(student_activity, '_effective_plan_ids', return_value=['M1']), \
+                        patch.object(student_activity, '_effective_current_subjects',
+                                     return_value=[{'id': 'M1', 'title': 'Module One'}]), \
                         patch.object(student_activity, '_builder_subject_metadata', return_value=(None, {})), \
                         patch('learner_api.models._learner_placement_names',
                               return_value=('Programme', 'Cohort', 'Group')), \
@@ -175,5 +192,5 @@ class ModuleProgressReachesCompletionTests(SimpleTestCase):
                     detail, current, progress, titles = module_progress.read_native_progress(source, profile)
                 # Reached past _effective_current_subjects: the current module came back.
                 self.assertEqual(len(current), 1)
-                self.assertEqual(get.loaded_fields(), {'programme_id', 'group_id', 'learning_plan', 'training_plan'})
+                self.assertEqual(get.querysets, [])
                 self.assertEqual(progress, [])

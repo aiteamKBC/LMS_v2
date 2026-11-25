@@ -10,7 +10,7 @@ from django.utils import timezone
 from django.views.decorators.csrf import csrf_protect
 from django.views.decorators.http import require_GET, require_POST
 
-from login.permissions import learner_self_or_admin, learner_self_or_staff
+from learner_api.identity_placement.public import learner_self_or_admin, learner_self_or_staff
 from .attendance_confirmation import read_confirmations, save_confirmation
 from .calendar import _calendar_profile, coaching_events_for_learner
 from .learner_detail import SOURCE_MODELS

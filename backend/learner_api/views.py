@@ -27,7 +27,7 @@ from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET
 
 from login.permissions import staff_only
-from login.permissions import learner_self_or_staff
+from learner_api.identity_placement.public import learner_self_or_staff
 from login.permissions import require_access
 from login.models import LoginAccount
 
@@ -42,8 +42,10 @@ from .active_users import (
 )
 from .identity_placement.public import (
     learner_profile_for_source,
+    placement_input,
     placement_payload,
     placement_profile,
+    validate_placement,
     with_placements,
 )
 from .account_deletion import delete_learner_account
@@ -51,7 +53,6 @@ from .account_identity import LearnerEmailConflict, email_owner, save_learner_id
 from .learner_dates import save_enrolment_fields
 from .coach_assignment import case_owner_coach, current_coach
 from .directory import learner_directory_queryset, to_directory_row
-from .placement_links import placement_input, validate_placement
 from .learner_progression import ACTIVE_STATUS, advance_learner
 from login.services import sync_account
 

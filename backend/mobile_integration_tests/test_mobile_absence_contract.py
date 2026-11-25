@@ -91,6 +91,13 @@ class MobileAbsenceTests(unittest.TestCase):
         fixture(PACKAGE + ".models", CommercialUser=canonical_source, EnrolmentUser=canonical_source)
         self.profile_lookup = Mock(return_value=self.profile)
         fixture(PACKAGE + ".identity", learner_profile_for_source=self.profile_lookup)
+        scoped_identity = fixture(PACKAGE + ".identity_placement")
+        scoped_identity.__path__ = [str(SOURCE_ROOT / "learner_api/identity_placement")]
+        scoped_public = fixture(
+            PACKAGE + ".identity_placement.public",
+            learner_profile_for_source=self.profile_lookup,
+        )
+        setattr(scoped_identity, "public", scoped_public)
         self.reports = Reports()
         report_model = SimpleNamespace(objects=self.reports, STATUS_PENDING="pending", STATUS_APPROVED="approved",
                                        STATUS_DECLINED="declined")
@@ -104,6 +111,32 @@ class MobileAbsenceTests(unittest.TestCase):
         permissions = source_module("login._mobile_absence_permissions", "login/permissions.py")
         permissions._auth_gate_enabled = lambda: True
         sys.modules["login.permissions"] = permissions
+        setattr(sys.modules["login"], "permissions", permissions)
+        identity_placement = fixture("learner_api.identity_placement")
+        identity_placement.__path__ = [str(SOURCE_ROOT / "learner_api/identity_placement")]
+        setattr(sys.modules["learner_api"], "identity_placement", identity_placement)
+        identity_api = fixture("learner_api.identity_placement.api")
+        identity_api.__path__ = [str(SOURCE_ROOT / "learner_api/identity_placement/api")]
+        setattr(identity_placement, "api", identity_api)
+        composition = fixture(
+            "learner_api.identity_placement.composition",
+            coach_owns_learner=lambda *_: False,
+            learner_owns_target=lambda account, learner_id: (
+                account.role == "learner" and account.subject_id == learner_id
+            ),
+            staff_owns_learner=lambda *_: False,
+        )
+        setattr(identity_placement, "composition", composition)
+        authorization = source_module(
+            "learner_api.identity_placement.api.authorization",
+            "learner_api/identity_placement/api/authorization.py",
+        )
+        public = fixture(
+            "learner_api.identity_placement.public",
+            learner_profile_for_source=self.profile_lookup,
+            learner_self_or_admin=authorization.learner_self_or_admin,
+        )
+        setattr(identity_placement, "public", public)
 
         self.lecture = {"session_id": "teams:lecture-1", "session_date": date(2026, 10, 20),
                         "session_title": "Synthetic lecture", "session_type": "live-session",

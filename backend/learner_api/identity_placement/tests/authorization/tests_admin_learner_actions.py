@@ -7,7 +7,8 @@ from unittest.mock import Mock, patch
 from django.http import JsonResponse
 from django.test import RequestFactory, SimpleTestCase
 
-from . import permissions
+from learner_api.identity_placement import public as ownership
+from learner_api.identity_placement.api import authorization
 
 
 class AdminLearnerActionTests(SimpleTestCase):
@@ -16,7 +17,7 @@ class AdminLearnerActionTests(SimpleTestCase):
         self.admin = SimpleNamespace(id=1, role='admin', subject_type='staff',
                                      subject_id=3, email='admin@example.test', display_name='Administrator')
         self.enterContext(patch.dict('os.environ', {'LEARNER_API_REQUIRE_AUTH': '1'}))
-        self.authenticate = self.enterContext(patch.object(permissions, 'authenticate_request', return_value=self.admin))
+        self.authenticate = self.enterContext(patch.object(authorization.login_permissions, 'authenticate_request', return_value=self.admin))
         self.audit = self.enterContext(patch('login.invitations.record'))
 
     def test_all_target_shapes_allow_admin_and_preserve_the_actor(self):
@@ -28,7 +29,7 @@ class AdminLearnerActionTests(SimpleTestCase):
                     seen.append(request.login_account)
                     return JsonResponse({'saved': True})
 
-                wrapped = permissions.learner_self_or_admin(**{shape: 'learnerId'})(save)
+                wrapped = ownership.learner_self_or_admin(**{shape: 'learnerId'})(save)
                 path = '/learner_api/example/?learnerId=56' if shape == 'query_param' else '/learner_api/example/'
                 request = self.factory.post(path, data=json.dumps({'learnerId': 56}), content_type='application/json')
                 response = wrapped(request, **({'learnerId': 56} if shape == 'kwarg' else {}))
@@ -44,7 +45,7 @@ class AdminLearnerActionTests(SimpleTestCase):
 
     def test_malformed_or_missing_target_never_reaches_the_write(self):
         save = Mock(return_value=JsonResponse({'saved': True}))
-        wrapped = permissions.learner_self_or_admin(body_field='learnerId')(save)
+        wrapped = ownership.learner_self_or_admin(body_field='learnerId')(save)
         for body in ('{}', '[]', 'null', '{', '{"learnerId": 0}', '{"learnerId": -1}', '{"learnerId": "abc"}'):
             request = self.factory.post('/', data=body, content_type='application/json')
             self.assertEqual(wrapped(request).status_code, 400)
@@ -53,7 +54,7 @@ class AdminLearnerActionTests(SimpleTestCase):
 
     def test_staff_employers_other_learners_and_anonymous_cannot_write(self):
         save = Mock(return_value=JsonResponse({'saved': True}))
-        wrapped = permissions.learner_self_or_admin(kwarg='pk')(save)
+        wrapped = ownership.learner_self_or_admin(kwarg='pk')(save)
         for account, expected in (
             (SimpleNamespace(role='staff'), 403), (SimpleNamespace(role='employer'), 403),
             (SimpleNamespace(role='learner', subject_id=19), 404), (None, 401),
@@ -65,18 +66,18 @@ class AdminLearnerActionTests(SimpleTestCase):
 
     def test_owner_actions_still_work_without_an_admin_audit_record(self):
         self.authenticate.return_value = SimpleNamespace(role='learner', subject_id=56)
-        wrapped = permissions.learner_self_or_admin(kwarg='pk')(lambda request, **kwargs: JsonResponse({'saved': True}))
+        wrapped = ownership.learner_self_or_admin(kwarg='pk')(lambda request, **kwargs: JsonResponse({'saved': True}))
         self.assertEqual(wrapped(self.factory.post('/'), pk=56).status_code, 200)
         self.audit.assert_not_called()
 
     def test_admin_read_does_not_create_a_write_audit_record(self):
-        wrapped = permissions.learner_self_or_admin(kwarg='pk')(lambda request, **kwargs: JsonResponse({'ready': True}))
+        wrapped = ownership.learner_self_or_admin(kwarg='pk')(lambda request, **kwargs: JsonResponse({'ready': True}))
         self.assertEqual(wrapped(self.factory.get('/'), pk=56).status_code, 200)
         self.audit.assert_not_called()
 
     def test_private_calendar_connections_remain_owner_only(self):
         save = Mock()
-        wrapped = permissions.learner_self_only(kwarg='learner_id')(save)
+        wrapped = ownership.learner_self_only(kwarg='learner_id')(save)
         for method in ('get', 'post'):
             self.assertEqual(wrapped(getattr(self.factory, method)('/'), learner_id=56).status_code, 403)
         save.assert_not_called()

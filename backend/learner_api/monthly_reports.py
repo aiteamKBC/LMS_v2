@@ -21,7 +21,7 @@ from django.http import HttpResponse, JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 
 from .evidence_storage import azure_configured, download_blob_bytes
-from login.permissions import learner_self_or_admin, learner_self_or_staff
+from learner_api.identity_placement.public import learner_self_or_admin, learner_self_or_staff
 
 logger = logging.getLogger(__name__)
 

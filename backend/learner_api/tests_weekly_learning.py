@@ -158,34 +158,6 @@ class BuildWeeklyLearningTests(SimpleTestCase):
             self.assertEqual(weekly_learning._progress(None), ([], [], []))
 
 
-class ReadOnlyIdentityTests(SimpleTestCase):
-    """heal=False resolves the same legacy profile without repairing its link."""
-
-    def resolve(self, heal):
-        from . import identity
-        legacy = MagicMock(enrolment_id=None)
-        profiles = MagicMock()
-        profiles.filter.side_effect = [MagicMock(first=MagicMock(return_value=None)),
-                                       MagicMock(first=MagicMock(return_value=legacy))]
-        no_twins = MagicMock()
-        no_twins.filter.return_value.exclude.return_value.values_list.return_value = []
-        with patch.object(identity.LearnerProfile, 'objects', profiles),              patch.object(identity.EnrolmentUser, 'all_learners', no_twins):
-            found = identity.learner_profile_for_source(SimpleNamespace(pk=265, email='a@example.test'), 265, heal=heal)
-        return found, legacy
-
-    def test_read_only_lookup_never_saves(self):
-        found, legacy = self.resolve(heal=False)
-        self.assertIs(found, legacy)
-        legacy.save.assert_not_called()
-        self.assertIsNone(legacy.enrolment_id)
-
-    def test_default_lookup_still_heals_the_link(self):
-        found, legacy = self.resolve(heal=True)
-        self.assertIs(found, legacy)
-        legacy.save.assert_called_once_with(update_fields=['enrolment_id'])
-        self.assertEqual(legacy.enrolment_id, 265)
-
-
 class WeeklyLearningEndpointTests(SimpleTestCase):
     def call(self, view, account, *, kind='commercial', method='get', error=None, missing=False):
         # Each call installs a different database fixture; it must not inherit a

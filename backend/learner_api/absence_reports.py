@@ -18,7 +18,7 @@ from coach_api.models import CoachAbsenceReport, CoachCalendarEvent
 from curriculum_api.live_session_absences import record_reported_absence
 from curriculum_api.models import LiveSessionAbsence
 from login import email_azure
-from login.permissions import learner_self_or_admin
+from learner_api.identity_placement.public import learner_self_or_admin
 
 from .attendance_lectures import can_report_absence_status, lecture_register, session_key, report_id
 from .evidence_storage import (

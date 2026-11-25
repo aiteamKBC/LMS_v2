@@ -56,7 +56,8 @@ from .module_placement_sql import module_placement_names_sql
 
 from audit_api.last_audit_ledger_views import _connection as _audit_connection
 from curriculum_api.catalogue.infrastructure.course_storage_reads import read_sql
-from login.permissions import learner_self_or_staff, staff_only
+from learner_api.identity_placement.public import learner_self_or_staff
+from login.permissions import staff_only
 
 from .constants import DELIVERY_PROGRAMME_STATUS
 from .free_course_selectors import assignment_version, assigned_course_ids

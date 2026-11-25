@@ -17,7 +17,7 @@ def assignment_ai_check(request):
         response = JsonResponse({'csrfToken': get_token(request)})
         response['Cache-Control'] = 'no-store'
         return response
-    from login.permissions import learner_self_or_admin
+    from learner_api.identity_placement.public import learner_self_or_admin
     return learner_self_or_admin(body_field='learnerId')(_check)(request)
 
 

@@ -15,7 +15,7 @@ from django.http import HttpResponse, JsonResponse
 from django.views.decorators.http import require_http_methods
 from PIL import Image, ImageOps, UnidentifiedImageError
 
-from login.permissions import learner_self_or_staff
+from learner_api.identity_placement.public import learner_self_or_staff
 from . import evidence_storage
 from .learner_detail import SOURCE_MODELS
 

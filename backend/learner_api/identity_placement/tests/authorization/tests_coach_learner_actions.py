@@ -8,7 +8,9 @@ from django.db import DatabaseError
 from django.http import JsonResponse
 from django.test import RequestFactory, SimpleTestCase
 
-from . import permissions, views
+from learner_api.identity_placement import public as ownership
+from learner_api.identity_placement.api import authorization
+from login import views
 
 COACH = SimpleNamespace(id=7, role='staff', subject_type='staff', subject_id=31,
                         email='coach@example.test', display_name='A Coach')
@@ -18,9 +20,10 @@ class CoachLearnerActionTests(SimpleTestCase):
     def setUp(self):
         self.factory = RequestFactory()
         self.enterContext(patch.dict('os.environ', {'LEARNER_API_REQUIRE_AUTH': '1'}))
-        self.authenticate = self.enterContext(patch.object(permissions, 'authenticate_request', return_value=COACH))
-        self.owns = self.enterContext(patch.object(permissions, 'coach_owns_learner', return_value=True))
-        self.enterContext(patch('login.learner_enrolment.existing_learner_record', return_value=None))
+        self.authenticate = self.enterContext(patch.object(authorization.login_permissions, 'authenticate_request', return_value=COACH))
+        self.owns = self.enterContext(patch.object(authorization, 'coach_owns_learner', return_value=True))
+        rows = self.enterContext(patch('learner_api.models.EnrolmentUser.all_learners'))
+        rows.filter.return_value.only.return_value.first.return_value = None
         self.audit = self.enterContext(patch('login.invitations.record'))
 
     def test_own_coach_writes_as_themselves_and_is_audited_as_a_coach(self):
@@ -30,7 +33,7 @@ class CoachLearnerActionTests(SimpleTestCase):
             seen.append(request.login_account)
             return JsonResponse({'saved': True})
 
-        wrapped = permissions.learner_self_or_admin(kwarg='pk')(save)
+        wrapped = ownership.learner_self_or_admin(kwarg='pk')(save)
         response = wrapped(self.factory.post('/learner_api/example/'), pk=56)
         self.assertEqual(response.status_code, 200)
         self.assertIs(seen[0], COACH)
@@ -43,14 +46,14 @@ class CoachLearnerActionTests(SimpleTestCase):
         self.assertEqual(json.loads(event.kwargs['reason'])['learnerId'], 56)
 
     def test_own_coach_reads_without_a_write_audit_record(self):
-        wrapped = permissions.learner_self_or_admin(kwarg='pk')(lambda request, **kwargs: JsonResponse({'ready': True}))
+        wrapped = ownership.learner_self_or_admin(kwarg='pk')(lambda request, **kwargs: JsonResponse({'ready': True}))
         self.assertEqual(wrapped(self.factory.get('/'), pk=56).status_code, 200)
         self.audit.assert_not_called()
 
     def test_another_coachs_learner_stays_read_only(self):
         self.owns.return_value = False
         save = Mock(return_value=JsonResponse({'saved': True}))
-        wrapped = permissions.learner_self_or_admin(kwarg='pk')(save)
+        wrapped = ownership.learner_self_or_admin(kwarg='pk')(save)
         for method in ('get', 'post'):
             response = wrapped(getattr(self.factory, method)('/'), pk=56)
             self.assertEqual(response.status_code, 403)
@@ -60,7 +63,7 @@ class CoachLearnerActionTests(SimpleTestCase):
 
     def test_learner_only_and_staff_preview_gates_are_unchanged(self):
         save = Mock(return_value=JsonResponse({'saved': True}))
-        self.assertEqual(permissions.learner_self_only(kwarg='pk')(save)(self.factory.post('/'), pk=56).status_code, 403)
+        self.assertEqual(ownership.learner_self_only(kwarg='pk')(save)(self.factory.post('/'), pk=56).status_code, 403)
         save.assert_not_called()
         self.owns.assert_not_called()
 
@@ -88,7 +91,7 @@ class CoachOwnsLearnerTests(SimpleTestCase):
              patch('learner_api.models.LearnerProfile.objects') as profiles:
             staff_rows.filter.return_value.only.return_value.first.return_value = staff
             profiles.annotate.return_value.filter.return_value.exists.return_value = profile_exists
-            return permissions.coach_owns_learner(account, learner_id), profiles
+            return ownership.coach_owns_learner(account, learner_id), profiles
 
     def test_matches_the_caseload_rule_on_the_coachs_normalised_email(self):
         staff = SimpleNamespace(email=' Coach@Example.TEST ', access='coach', access_extra='')
@@ -114,15 +117,16 @@ class CoachOwnsLearnerTests(SimpleTestCase):
     def test_an_unreadable_caseload_fails_closed(self):
         with patch('learner_api.models.StaffUser.objects') as staff_rows:
             staff_rows.filter.side_effect = DatabaseError('offline')
-            self.assertFalse(permissions.coach_owns_learner(COACH, 56))
+            self.assertFalse(ownership.coach_owns_learner(COACH, 56))
 
 
 class LearnerActionAccessEndpointTests(SimpleTestCase):
     def setUp(self):
         self.factory = RequestFactory()
         self.authenticate = self.enterContext(patch.object(views, 'authenticate_request'))
-        self.owns = self.enterContext(patch.object(permissions, 'coach_owns_learner', return_value=False))
-        self.enterContext(patch('login.learner_enrolment.existing_learner_record', return_value=None))
+        self.owns = self.enterContext(patch.object(ownership, 'coach_owns_learner', return_value=False))
+        rows = self.enterContext(patch('learner_api.models.EnrolmentUser.all_learners'))
+        rows.filter.return_value.only.return_value.first.return_value = None
 
     def answer(self, account, query='?learnerId=56'):
         self.authenticate.return_value = account

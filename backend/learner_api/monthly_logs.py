@@ -19,7 +19,8 @@ from django.utils import timezone
 from django.middleware.csrf import get_token
 from django.views.decorators.csrf import csrf_protect
 
-from login.permissions import audit_admin_learner_action, login_required
+from learner_api.identity_placement.public import audit_admin_learner_action
+from login.permissions import login_required
 from old_otjh import repository as old_repo, service as old, storage
 from old_otjh.views import public_detail, public_state
 from . import monthly_log_sources as sources

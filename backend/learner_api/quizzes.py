@@ -41,7 +41,7 @@ from .working_rules import (
     resolve_completion_instants,
     validation_response_payload,
 )
-from login.permissions import learner_self_or_admin, learner_self_or_staff
+from learner_api.identity_placement.public import learner_self_or_admin, learner_self_or_staff
 from quiz_api.answer_keys import choice_label, quiz_submission_error
 from quiz_api.policy import QuizPolicyConflict, attempt_stats, learner_policy
 

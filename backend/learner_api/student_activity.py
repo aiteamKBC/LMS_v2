@@ -15,7 +15,13 @@ from django.views.decorators.http import require_GET, require_POST
 
 from audit_api.last_audit_ledger_views import _connection, _is_completed
 from audit_api.learner_exclusions import is_excluded_learner
-from login.permissions import coach_owns_learner, learner_self_or_staff, learner_self_or_admin, staff_only, staff_owns_learner
+from learner_api.identity_placement.public import (
+    coach_owns_learner,
+    learner_self_or_admin,
+    learner_self_or_staff,
+    staff_owns_learner,
+)
+from login.permissions import staff_only
 from login.sessions import authenticate_request
 
 from .learner_detail import SOURCE_MODELS

@@ -15,7 +15,7 @@ from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET, require_POST
 
-from login.permissions import learner_self_only, learner_self_or_staff
+from learner_api.identity_placement.public import learner_self_only, learner_self_or_staff
 from login import permissions
 from login.errors import safe_sqlstate
 

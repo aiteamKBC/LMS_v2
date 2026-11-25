@@ -39,11 +39,6 @@ def duplicate_enrolment_ids(email, source_pk):
     )
 
 
-def repair_enrolment_link(profile, source_pk):
-    profile.enrolment_id = source_pk
-    profile.save(update_fields=["enrolment_id"])
-
-
 def unlinked_profile_by_id(source_pk, *, active_only=False, fields=None):
     filters = {"lifecycle_status": "active"} if active_only else {}
     return _profiles(fields).filter(
