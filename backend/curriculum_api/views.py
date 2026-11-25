@@ -4614,7 +4614,8 @@ def curriculum_teams_meeting_schedule(request, live_session_id):
     if repeat != 'none':
         pruned, holiday_warnings = prune_study_week_fillers(
             microsoft_graph_request, owner_key, event_id, clean_str(series.get('module_catalogue_id')),
-            targets, graph_settings, current_occurrences, allow_delete=not people_only,
+            targets, graph_settings, current_occurrences, allow_delete=not people_only and notify_attendees,
+            allow_uninvited_delete=not people_only,
         )
         stale_deletions = [item for item in stale_deletions if item.get('instance_id') not in pruned]
         warnings.extend(holiday_warnings)
@@ -5844,6 +5845,14 @@ def note_live_rows(table, rows):
         note_rows(table, rows)
     except Exception:
         logger.debug('Unable to note a write for live sync.', exc_info=True)
+    if str(table or '').split('.')[-1].strip('"') == 'modules':
+        try:
+            from .bunny_module_collections import queue_module
+            for row in rows:
+                queue_module(row)
+        except Exception as failure:
+            # The scheduled collection scanner recovers an interrupted save hook.
+            logger.warning('Module live collection queue needs recovery (%s).', type(failure).__name__)
     # Learner content entries of these rows' modules (never raises; on any
     # doubt it retires all modules).
     from . import content_cache
@@ -6748,7 +6757,8 @@ def build_module_session_plan(start_value, number_of_sessions, delivery_days, ho
     if week_limit is None and len(sessions) < session_count:
         warnings.append('Could not generate the full session plan from the supplied delivery pattern.')
 
-    return {
+    from curriculum_api.live_holiday_policy import with_closed_weeks
+    return with_closed_weeks({
         'sessions': sessions,
         'slots': curriculum_slots,
         'skippedHolidays': skipped,
@@ -6758,7 +6768,7 @@ def build_module_session_plan(start_value, number_of_sessions, delivery_days, ho
         # Stated rather than dropped, because callers render the pair.
         'originalEndDate': sessions[-1]['date'] if sessions else '',
         'warnings': warnings,
-    }
+    }, holidays_by_date, start, first_weekday=first_weekday)
 
 
 def module_calendar_end_date(start_value, week_count, module=None):
@@ -9163,11 +9173,18 @@ def teams_non_delivery_reason(targets, time_zone='Europe/London', holiday_rows=N
         zone = ZoneInfo('Europe/London')
     holidays = get_holiday_rows_safe() if holiday_rows is None else (holiday_rows or [])
     policy = None
+    closure_plan = {}
     if module_catalogue_id:
         from curriculum_api.delivery_calendar import module_policy, policy_holidays
         module = authoring_module_exists(module_catalogue_id) or {}
+        if module:
+            from curriculum_api.live_holiday_policy import module_closure_plan
+            closure_plan = module_closure_plan(module)
         policy = module_policy(module)
-        if policy is not None:
+        if module.get('cohort_id'):
+            from curriculum_api.delivery_calendar import module_holidays
+            holidays = module_holidays(module, module_cohort_selected_holidays(module))
+        elif policy is not None:
             holidays = policy_holidays(policy, module.get('start_date'), module.get('end_date'), holidays)
     for target in targets or []:
         instant = (
@@ -9184,6 +9201,8 @@ def teams_non_delivery_reason(targets, time_zone='Europe/London', holiday_rows=N
         else:
             from curriculum_api.calendar_policy import non_delivery_reason
             reason = non_delivery_reason(local.date(), policy, holidays)
+        from curriculum_api.live_holiday_policy import closed_date_reason
+        reason = closed_date_reason(closure_plan, local.date()) or reason
         if reason:
             session_number = parse_int(
                 target.get('session_number') or target.get('sessionNumber'), 0,
@@ -10981,6 +11000,7 @@ def delivery_slots_by_catalogue(
                 groups.get(clean_str(module_row.get('group_id'))) or {},
                 week_count,
                 holidays=holidays,
+                weeks=weeks_by_catalogue.get(catalogue_id),
             )
         except (Exception, AssertionError):
             # One module's plan failing leaves that module on its stored dates;
@@ -11074,7 +11094,9 @@ def authoring_session_links_by_catalogue(
     # which is the index its planned slot is numbered by.
     weeks_by_catalogue = defaultdict(list)
     for week_row in week_rows:
-        weeks_by_catalogue[clean_str(week_row.get('module_catalogue_id'))].append(week_row)
+        weeks_by_catalogue[clean_str(week_row.get('module_catalogue_id'))].append({
+            **week_row, 'components': live_components_by_week.get(clean_str(week_row.get('id')), []),
+        })
     plans_by_catalogue = delivery_slots_by_catalogue(
         weeks_by_catalogue,
         modules_by_catalogue=modules_by_catalogue,
@@ -11508,6 +11530,19 @@ def module_delivery_session_plan(module, session_count, start, holidays=None, we
         from curriculum_api.delivery_calendar import module_holidays
         holidays = module_holidays(module, holidays)
     applied_holidays = [*(holidays or []), *(own_holidays if isinstance(own_holidays, list) else [])]
+    from curriculum_api.live_holiday_policy import with_closed_weeks
+
+    def finish_plan(plan):
+        # Keep candidate slots and their numbers stable. Live creation and Teams
+        # booking consume the same explicit closure windows, without catch-up.
+        first_day = (first_weekly_session_day(start, weekly)
+                     if clean_str(module.get('schedule_mode') or module.get('scheduleMode')) == 'custom'
+                     and len(weekly) > 1 and module_week_starts_on(module) else None)
+        weekday = WEEKDAY_INDEX[str(first_day).lower()] if first_day else (0 if delivery_days else start.weekday() if start else 0)
+        result = with_closed_weeks(plan, holiday_details_by_date(applied_holidays), start,
+                                   module.get('end_date') or module.get('endDate'), weekday)
+        return apply_session_overrides(result, module)
+
     if calendar_weeks:
         from .study_weeks import build_study_week_plan
         if not start or week_count <= 0:
@@ -11518,7 +11553,7 @@ def module_delivery_session_plan(module, session_count, start, holidays=None, we
         for session in plan['sessions']:
             clock, end, duration = module_session_clock({**module, 'session_overrides': {}}, session_date=session['date'])
             session.update(startTime=clock, endTime=end, durationMinutes=duration)
-        return apply_session_overrides(plan, module)
+        return finish_plan(plan)
     plan = build_module_session_plan(
         start, session_count, delivery_days, applied_holidays, week_count=week_count,
         week_starts_on=first_weekly_session_day(start, weekly)
@@ -11536,7 +11571,7 @@ def module_delivery_session_plan(module, session_count, start, holidays=None, we
         for session in plan['sessions']:
             clock, end, duration = module_session_clock({**module, 'session_overrides': {}}, session_date=session.get('date'))
             session.update(startTime=clock, endTime=end, durationMinutes=duration)
-        return apply_session_overrides(plan, module)
+        return finish_plan(plan)
     warnings = plan.get('warnings') or []
     if not start:
         return {'sessions': [], 'slots': [], 'skippedHolidays': [], 'finalEndDate': '', 'originalEndDate': '', 'warnings': warnings}
@@ -11560,7 +11595,7 @@ def module_delivery_session_plan(module, session_count, start, holidays=None, we
         }
         for index in range(fallback_count)
     ]
-    return apply_session_overrides({
+    return finish_plan({
         'sessions': sessions,
         # No weekday to skip onto means no slot can ever be closed, so the
         # curriculum spine is the session list: one open slot each, no reading
@@ -11582,7 +11617,7 @@ def module_delivery_session_plan(module, session_count, start, holidays=None, we
         'finalEndDate': sessions[-1]['date'] if sessions else '',
         'originalEndDate': sessions[-1]['date'] if sessions else '',
         'warnings': warnings,
-    }, module)
+    })
 
 
 def module_delivery_plan(module, session_count, start, holidays=None):
@@ -12113,7 +12148,7 @@ def module_week_session_plan(module_row, week_count=0):
     ).get('sessions') or []
 
 
-def module_week_delivery_slots(module_row, group_row, week_count, *, holidays=None):
+def module_week_delivery_slots(module_row, group_row, week_count, *, holidays=None, weeks=None):
     """Every planned delivery slot of each authored week, in delivery order.
 
     **A week owns one planned slot per delivery day its group runs.** A group
@@ -12148,7 +12183,9 @@ def module_week_delivery_slots(module_row, group_row, week_count, *, holidays=No
     slots_by_week_number = defaultdict(list)
     for planned_session in session_plan:
         slots_by_week_number[parse_int(planned_session.get('weekNumber'), 0)].append(planned_session)
-    slots_by_week = [list(slots_by_week_number.get(index + 1) or []) for index in range(week_count)]
+    from curriculum_api.week_plan_alignment import week_plan_offset
+    offset = 0 if module_week_boundary_mode(delivery_module) == 'calendar' else week_plan_offset(weeks, session_plan)
+    slots_by_week = [list(slots_by_week_number.get(index + 1 - offset) or []) for index in range(week_count)]
     return slots_by_week, session_plan
 
 
@@ -18532,6 +18569,19 @@ def save_component_builder_payload(payload, component_id=None):
         sibling_rows = authoring_fetch_all(AUTHORING_COMPONENTS_TABLE, 'module_catalogue_id = %s and week_id = %s', [module_catalogue_id, week_id])
         display_order = len(sibling_rows)
     module_row = (authoring_fetch_all(AUTHORING_MODULES_TABLE, 'module_catalogue_id = %s', [module_catalogue_id]) or [{}])[0]
+    if stored_component_type(payload.get('type')) == 'live_session':
+        from curriculum_api.live_holiday_policy import module_closure_plan, closed_week_ids, closed_date_reason
+        retained = (frontend_component_type(existing_row.get('type')) == 'live-session'
+                    and not existing_row.get('deleted_at')
+                    and clean_str(existing_row.get('week_id')) == week_id
+                    and clean_str(existing_row.get('module_catalogue_id')) == module_catalogue_id)
+        if not retained:
+            week_rows = active_week_rows(authoring_fetch_all(
+                AUTHORING_WEEKS_TABLE, 'module_catalogue_id = %s', [module_catalogue_id], 'display_order, week_number, id'))
+            plan = module_closure_plan(module_row, week_rows)
+            if week_id in closed_week_ids(module_row, week_rows, plan) or closed_date_reason(plan, settings.get('sessionDate')):
+                raise ModuleAuthoringValidationError([{'path': 'type', 'message':
+                    'This is a holiday week. Add reading, quizzes or other content instead of a Live session.'}])
     incoming_mappings = payload.get('ksbMappings') if isinstance(payload.get('ksbMappings'), list) else None
     if incoming_mappings is None and 'ksbRefs' in payload:
         incoming_mappings = [
@@ -18824,6 +18874,31 @@ def apply_shared_teams_settings_to_weeks(module, weeks):
                 merged['teamsCalendarBinding'] = 'matched'
             component['settings'] = merged
             index += 1
+        # Projection happens after the alias's own plan was stamped. Its heading
+        # must describe the confirmed main meeting it now opens, without moving
+        # the alias's week/component rows or changing the source booking.
+        main = next((item for item in week.get('components') or []
+                     if normalise_component_type(item.get('type')) == 'live_session'
+                     and not (item.get('settings') or {}).get('extraTeamsMeetingUrl')
+                     and clean_str((item.get('settings') or {}).get('teamsMeetingScope')).lower() != 'additional'), None)
+        settings = (main or {}).get('settings') or {}
+        confirmed = clean_str(settings.get('sessionDate'))[:10]
+        start = clean_str(module.get('start_date') or module.get('startDate'))[:10]
+        end = clean_str(module.get('end_date') or module.get('endDate'))[:10]
+        if (settings.get('teamsOccurrenceId') and settings.get('teamsLiveSessionId')
+                and settings.get('teamsCalendarBinding') not in ('unverified', 'missing', 'ambiguous')
+                and confirmed and (not start or confirmed >= start) and (not end or confirmed <= end)):
+            from datetime import date as calendar_date
+            try:
+                day = calendar_date.fromisoformat(confirmed)
+            except ValueError:
+                continue
+            week['sessionDate'] = confirmed
+            week['sessionDay'] = day.strftime('%A')
+            if settings.get('sessionTime'):
+                week['sessionStartTime'] = settings['sessionTime']
+            if settings.get('durationMinutes'):
+                week['sessionDurationMinutes'] = settings['durationMinutes']
     return weeks
 
 
@@ -19141,15 +19216,22 @@ def attach_teams_meeting_to_module_weeks(module_catalogue_id, series_row, series
     structure_rows = [{**week, 'components': components_by_week.get(clean_str(week.get('id')), [])} for week in week_rows]
     session_rows = module_structure_uses_session_rows(structure_rows, module_stored_session_count(module_row), delivery_days_per_week(module_row))
     session_plan = module_week_session_plan(module_row, 0 if session_rows else len(week_rows))
+    from curriculum_api.week_plan_alignment import week_plan_offset
+    from curriculum_api.weekly_schedule import module_week_boundary_mode
+    week_offset = 0 if session_rows or module_week_boundary_mode(module_row) == 'calendar' else week_plan_offset(structure_rows, session_plan)
     external_calendar = clean_str(series_row.get('meeting_type')) == 'linked-external'
     external_slots = []
     if external_calendar or align_to_week_plan:
         # Imported occurrences already exist in Microsoft. Moving curriculum
         # content changes which occurrence delivers it, not that occurrence's
         # date, attendance or recordings.
-        external_slots, _external_plan = module_week_delivery_slots(module_row, group_row, len(week_rows))
+        external_slots, _external_plan = module_week_delivery_slots(module_row, group_row, len(week_rows), weeks=structure_rows)
     if align_to_week_plan:
         create_missing = False
+    closed_week_identifiers = set()
+    if create_missing:
+        from curriculum_api.live_holiday_policy import module_closure_plan, closed_week_ids
+        closed_week_identifiers = closed_week_ids(module_row, structure_rows, module_closure_plan(module_row, structure_rows))
     session_start_time, _session_end_time, session_duration = module_session_clock(module_row, group_row)
     default_points = live_session_component_points() if create_missing else 0
     now = datetime.utcnow()
@@ -19325,6 +19407,7 @@ def attach_teams_meeting_to_module_weeks(module_catalogue_id, series_row, series
             sessions_by_week[parse_int(session['weekNumber'], 0)].append(session)
     for week_index, week_row in enumerate(week_rows):
         week_id = clean_str(week_row.get('id'))
+        week_slots = sessions_by_week.get(week_index + 1 - week_offset, [])
         live_rows = [row for row in components_by_week.get(week_id, []) if frontend_component_type(row.get('type')) == 'live-session']
         for live_index, row in enumerate(live_rows):
             existing_settings = component_builder_settings(row)
@@ -19396,7 +19479,6 @@ def attach_teams_meeting_to_module_weeks(module_catalogue_id, series_row, series
                 planned = slots[live_index] if live_index < len(slots) else {}
                 occurrence, binding = occurrence_on_planned_slot(planned)
             else:
-                week_slots = sessions_by_week.get(week_index + 1, [])
                 planned = (week_slots[live_index] if live_index < len(week_slots) else {}) if sessions_by_week else None
                 occurrence = occurrence_for_component(existing_settings, session_index, planned)
                 binding = 'matched' if occurrence else 'missing'
@@ -19426,11 +19508,19 @@ def attach_teams_meeting_to_module_weeks(module_catalogue_id, series_row, series
                 # structure payload's backward-compatible week-header walk.
                 session_index += 1
             continue
-        missing_count = 0 if session_rows else max(0, sessions_per_week - len(live_rows))
+        # Restore links only for verified bookings in this week's open slots.
+        # Reading/holiday weeks and leading general materials must not acquire
+        # a Live component just because the recurring master has a join URL.
+        closed_week = week_id in closed_week_identifiers or (bool(session_plan) and (not week_slots or any(slot.get('skippedHolidays') for slot in week_slots)))
+        capacity = len(week_slots) if session_plan else sessions_per_week
+        missing_count = 0 if session_rows or closed_week else max(0, capacity - len(live_rows))
         for offset in range(missing_count):
-            occurrence = occurrence_for_component({}, session_index)
-            if occurrence:
-                claimed_occurrence_ids.add(clean_str(occurrence.get('id')))
+            slot = week_slots[len(live_rows) + offset] if week_slots else None
+            occurrence = occurrence_for_component({}, session_index, slot)
+            if not occurrence:
+                session_index += 1
+                continue
+            claimed_occurrence_ids.add(clean_str(occurrence.get('id')))
             settings_for_week = settings_for_session(session_index, occurrence)
             session_index += 1
             join_url = clean_str(settings_for_week.get('liveSessionUrl') or settings_for_week.get('teamsMeetingUrl'))
@@ -20520,6 +20610,7 @@ def apply_module_session_plan_to_weeks(module, group_row, weeks, *, holidays=Non
         else:
             slots_by_week, session_plan = module_week_delivery_slots(
                 module, group_row, len(weeks), holidays=holidays,
+                weeks=weeks,
             )
     except ValueError as exc:
         from curriculum_api.country_calendars import CalendarUnavailable
@@ -20622,26 +20713,36 @@ def apply_module_session_plan_to_weeks(module, group_row, weeks, *, holidays=Non
                 if planned_rescheduled:
                     planned_settings['sessionRescheduled'] = True
                 component['settings'] = planned_settings
-            first_settings = live_components[0].get('settings')
+            first_main = next((component for component in live_components
+                               if not clean_str((component.get('settings') or {}).get('extraTeamsMeetingUrl'))
+                               and clean_str((component.get('settings') or {}).get('teamsMeetingScope')).lower() != 'additional'), None)
+            first_settings = (first_main or {}).get('settings')
             first_settings = first_settings if isinstance(first_settings, dict) else {}
             first_number = parse_int(first_settings.get('teamsSessionNumber'), 0)
             first_numbered = next(
                 (item for item in session_plan if first_number > 0 and item.get('sessionNumber') == first_number),
                 None,
             )
-            if first_numbered:
-                # Teams numbering can omit orientation and additional events.
-                # Keep a confirmed date that already fits this authored week's
-                # slots; a changed plan still moves the header when it no
-                # longer fits. Mirrors applyModuleWeekSessionPlan.
-                confirmed_date = (
-                    format_date(first_settings.get('sessionDate'))
-                    if clean_str(first_settings.get('teamsLiveSessionId')) else ''
-                )
-                first_planned = next(
-                    (slot for slot in slots if slot.get('date') == confirmed_date),
-                    first_numbered,
-                )
+            confirmed_date = (
+                format_date(first_settings.get('sessionDate'))
+                if clean_str(first_settings.get('teamsLiveSessionId')) and first_number > 0
+                and first_settings.get('teamsCalendarBinding') not in {'missing', 'ambiguous', 'unverified'} else ''
+            )
+            delivery_start = format_date(module.get('start_date') or module.get('startDate'))
+            delivery_end = format_date(module.get('end_date') or module.get('endDate'))
+            confirmed_in_delivery = (confirmed_date
+                                     and (not delivery_start or confirmed_date >= delivery_start)
+                                     and (not delivery_end or confirmed_date <= delivery_end))
+            if confirmed_in_delivery:
+                # Occurrence numbers omit orientation and reading weeks. The
+                # heading describes the meeting this card actually opens;
+                # schedule drift is reported by the calendar sync verdict. A
+                # booking outside a newly edited module window keeps the
+                # existing planned-heading drift behavior.
+                first_planned = {'date': confirmed_date, 'day': parse_date(confirmed_date).strftime('%A'),
+                                 'rescheduled': bool(first_settings.get('sessionRescheduled'))}
+            elif first_numbered:
+                first_planned = first_numbered
         # The week runs on the day its live session is delivered on. A closed
         # delivery slot is not this week -- it is a reading week of its own,
         # which the plan's `slots` spine keeps in the curriculum at the closed
@@ -23862,6 +23963,24 @@ def save_module_authoring_structure(
             calendar_update = policy_write(payload, existing_module_row, AUTHORING_MODULES_TABLE)
         except ValueError as exc:
             raise ModuleAuthoringValidationError([{'path': 'calendarPolicy', 'message': str(exc)}]) from exc
+    # A stale builder or copied week must not introduce Live components into
+    # closed weeks. Only stored Live identities in the same week are historical.
+    from curriculum_api.calendar_policy import merge_policy
+    from curriculum_api.live_holiday_policy import without_new_closed_live
+    closure_module = {**existing_module_row, 'module_catalogue_id': module_catalogue_id,
+        'cohort_id': cohort_id, 'group_id': group_id, 'schedule_mode': schedule_mode,
+        'session_week_day': session_week_day, 'weekly_schedule': weekly_schedule,
+        'week_boundary_mode': week_boundary_mode, 'week_starts_on': week_starts_on,
+        'weeks_number': authored_week_count, 'sessions_number': stored_sessions_number,
+        'start_date': payload.get('startDate', payload.get('start_date', existing_module_row.get('start_date'))),
+        'end_date': payload.get('endDate', payload.get('end_date', existing_module_row.get('end_date'))),
+        'calendar_policy': merge_policy(payload, existing_module_row)}
+    stored_live_rows = (list(stored_rows.get(AUTHORING_COMPONENTS_TABLE) or []) if light else
+        authoring_fetch_all(AUTHORING_COMPONENTS_TABLE, 'module_catalogue_id = %s', [module_catalogue_id]))
+    weeks = without_new_closed_live(closure_module, weeks, stored_live_rows)
+    checklist, quality_score = module_authoring_quality_check({**payload, 'weekStructure': weeks})
+    declared_total = otjh_hours_from_minutes(sum(component_expected_otjh_minutes(component)
+        for week in weeks for component in week.get('components') or []))
     saved_module_row = None
     with transaction.atomic():
         saved_module_row = authoring_upsert(AUTHORING_MODULES_TABLE, ['module_catalogue_id'], {

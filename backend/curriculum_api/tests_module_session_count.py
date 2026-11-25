@@ -3,10 +3,15 @@ from datetime import date
 from unittest.mock import patch
 
 from curriculum_api import views
-from curriculum_api.tests import CurriculumPersistenceHarness
+from curriculum_api.tests import CurriculumPersistenceTransactionHarness
 
 
-class ImportedModuleSessionCountTests(CurriculumPersistenceHarness):
+class ImportedModuleSessionCountTests(CurriculumPersistenceTransactionHarness):
+    def setUp(self):
+        super().setUp()
+        from coach_api.tests_support.persisted_fixtures import curriculum_session
+        curriculum_session(self, self.client)
+
     def test_module_closure_skips_saudi_day_and_workshop_without_changing_other_modules(self):
         module = {'sessions_number': 16, 'start_date': '2026-09-16', 'session_week_day': 'Monday, Wednesday',
                   'session_holidays': [{'id': 'saudi', 'label': 'Saudi National Day', 'startDate': '2026-09-23', 'endDate': '2026-09-23'}]}
@@ -44,11 +49,25 @@ class ImportedModuleSessionCountTests(CurriculumPersistenceHarness):
         live = [c for w in saved['weekStructure'] for c in w['components'] if c['type'] == 'live-session']
         self.assertEqual(len(live), 16)
         self.assertEqual(len({c['settings']['sessionDate'] for c in live}), 16)
-        self.assertEqual(saved['weekStructure'][2]['sessionDate'], '')
-        for query in ('', '?weeks=17', '?sessions=16'):
+        # A reading week keeps its calendar header date. A header is not a
+        # Live slot and must not create a session or inflate the Live count.
+        reading_week = saved['weekStructure'][2]
+        self.assertEqual(reading_week['sessionDate'], '2026-09-28')
+        self.assertEqual([component['type'] for component in reading_week['components']], ['reading'])
+        self.assertFalse(any(component['settings'].get('teamsLiveSessionId')
+                             or component['settings'].get('teamsOccurrenceId')
+                             for component in reading_week['components']))
+        stored_components = views.authoring_fetch_all(views.AUTHORING_COMPONENTS_TABLE,
+            'module_catalogue_id = %s', [module_id], 'id')
+        # The existing weeks contract previews delivery slots, including empty
+        # ones: Wed in the first partial week, then 16 Mon/Wed windows = 33.
+        # Previewing slots must never turn them into authored Live components.
+        for query, preview_count in (('', 33), ('?weeks=17', 33), ('?sessions=16', 16)):
             response = self.client.get(f'/curriculum_api/curriculum/modules/{module_id}/session-plan/{query}')
             self.assertEqual(response.status_code, 200, response.content)
-            self.assertEqual(len(response.json()['sessions']), 16)
+            self.assertEqual(len(response.json()['sessions']), preview_count)
+            self.assertEqual(views.authoring_fetch_all(views.AUTHORING_COMPONENTS_TABLE,
+                'module_catalogue_id = %s', [module_id], 'id'), stored_components)
         with patch.object(views, 'live_session_component_points', return_value=0):
             updated, created = views.attach_teams_meeting_to_module_weeks(module_id, {}, {}, [], create_missing=True, dry_run=True)
         self.assertEqual((updated, created), (16, 0))

@@ -1036,7 +1036,8 @@ class CurriculumTeamsMeetingTests(CurriculumTeamsRequestTestCase):
             )
         self.assertEqual(queued.status_code, 202, queued.content)
         dispatch.assert_called_once_with(live_session_id)
-        with patch('curriculum_api.management.commands.process_session_results.archive_series', return_value=[]):
+        with patch('curriculum_api.management.commands.process_session_results.archive_series', return_value=[]), \
+                patch('curriculum_api.management.commands.process_session_results.archive_runtime_preflight', return_value='synthetic:instance:1:s3'):
             call_command('process_session_results', limit=1, live_session_ids=[live_session_id], stdout=StringIO())
         response = self.client.get(f'/curriculum_api/curriculum/teams-meetings/{live_session_id}/artifacts/')
         self.assertEqual(response.status_code, 200, response.content)
@@ -1660,10 +1661,9 @@ class CurriculumTeamsMeetingTests(CurriculumTeamsRequestTestCase):
         self.assertEqual(payload['weekStructure'][0]['sessionDurationMinutes'], 120)
 
     @patch('curriculum_api.views.get_holiday_rows', return_value=CURRICULUM_HOLIDAY_ROWS)
-    def test_restore_can_give_every_week_its_own_live_session(self, _holidays):
-        # Re-attaching is the one action that finishes the job: a created series
-        # is only in front of the learner once every week has a session to open,
-        # on that week's own date.
+    def test_restore_creates_live_only_in_open_weeks_without_shifting_the_run(self, _holidays):
+        # Restoring links must respect the author's closed weeks even when an
+        # older series still contains a tracked occurrence on those dates.
         self._module_with_six_saturday_weeks()
         views.authoring_upsert(views.AUTHORING_COMPONENTS_TABLE, ['id'], {
             'id': 'COMP-EXISTING',
@@ -1681,9 +1681,8 @@ class CurriculumTeamsMeetingTests(CurriculumTeamsRequestTestCase):
         )
         self.assertEqual(response.status_code, 200, response.content)
         result = response.json()
-        # Week 1 already had one; the other five were created rather than left
-        # without a session.
-        self.assertEqual(result['createdComponents'], 5)
+        # Week 1 has Live; weeks 2-4 close for Christmas and New Year holidays.
+        self.assertEqual(result['createdComponents'], 2)
         self.assertEqual(result['updatedComponents'], 1)
 
         weeks = result['module']['weekStructure']
@@ -1691,27 +1690,27 @@ class CurriculumTeamsMeetingTests(CurriculumTeamsRequestTestCase):
             [component for component in week['components'] if component['type'] == 'live-session']
             for week in weeks
         ]
-        self.assertEqual([len(items) for items in live_sessions], [1, 1, 1, 1, 1, 1])
-        # A ticked holiday no longer displaces the session -- every week keeps
-        # its own Saturday, closed or not.
+        self.assertEqual([len(items) for items in live_sessions], [1, 0, 0, 0, 1, 1])
+        # Later sessions retain their own dates; no compensation or extension.
         self.assertEqual(
-            [items[0]['settings']['sessionDate'] for items in live_sessions],
-            ['2026-12-12', '2026-12-19', '2026-12-26', '2027-01-02', '2027-01-09', '2027-01-16'],
+            [items[0]['settings']['sessionDate'] for items in live_sessions if items],
+            ['2026-12-12', '2027-01-09', '2027-01-16'],
         )
         # Every one of them can be joined, and the created ones say when they
         # start and how long they run.
         self.assertTrue(all(
             items[0]['settings']['liveSessionUrl'] == 'https://teams.microsoft.com/l/meetup-join/series'
-            for items in live_sessions
+            for items in live_sessions if items
         ))
-        created = live_sessions[1][0]
+        self.assertEqual(len(views.authoring_fetch_all(views.LIVE_SESSION_OCCURRENCES_TABLE, 'live_session_id = %s', ['LIVE-WEEKS'])), 6)
+        created = live_sessions[4][0]
         self.assertEqual(created['settings']['sessionTime'], '09:00')
         self.assertEqual(created['settings']['durationMinutes'], 120)
         self.assertEqual(created['expectedOtjh'], 2.0)
         # Titled after the session, never after the week: a live session named
-        # "Week 2" is read as a generated placeholder and hidden by the authoring
+        # "Week 4" is read as a generated placeholder and hidden by the authoring
         # model.
-        self.assertNotIn(created['title'], {'Week 2', ''})
+        self.assertNotIn(created['title'], {'Week 4', ''})
 
     @patch('curriculum_api.views.get_holiday_rows', return_value=CURRICULUM_HOLIDAY_ROWS)
     def test_session_plan_dates_a_week_that_is_not_saved_yet(self, _holidays):

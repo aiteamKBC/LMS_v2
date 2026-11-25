@@ -105,6 +105,7 @@ class CalendarChecksTests(unittest.TestCase):
                               ensure_live_session_tracking_tables=lambda: None,
                               resolve_authoring_catalogue_id=lambda value: value,
                               authoring_module_exists=lambda module_id: {'module_catalogue_id': module_id, 'source_type': 'authoring'},
+                              authoring_session_links_by_catalogue=lambda module_ids: {},
                               resolve_stored_module_catalogue_id=lambda value: value,
                               authoring_fetch_all=self.fetch_rows, has_column=lambda *args: True,
                               module_has_external_teams_calendar=lambda _module, series=None: (series or {}).get('meeting_type') == 'linked-external',
@@ -1217,6 +1218,25 @@ class CalendarChecksTests(unittest.TestCase):
         self.assertTrue(result['partial'])
         self.assertEqual(result['optionsPending'], ['settings'])
         self.assertFalse([item for item in self.calls if item[0] == 'DELETE' or item[1].endswith('/cancel')])
+
+    def test_silent_shared_calendar_update_never_allows_holiday_cancellation(self):
+        self.assertEqual(self.create().status_code, 201)
+        probe = Mock(return_value=(set(), []))
+        self.v.prune_study_week_fillers = probe
+        self.assertEqual(self.save(notifyAttendees=False).status_code, 200)
+        self.assertFalse(probe.call_args.kwargs['allow_delete'])
+        self.assertEqual(self.save(notifyAttendees=True).status_code, 200)
+        self.assertTrue(probe.call_args.kwargs['allow_delete'])
+
+    def test_silent_weekday_calendar_update_never_allows_holiday_cancellation(self):
+        self.prepare_weekday_path()
+        self.assertEqual(self.create().status_code, 201)
+        self.v.stored_calendar_series = lambda series: series.get('calendar_series') or []
+        probe = Mock(return_value=(set(), []))
+        self.v.prune_study_week_fillers = probe
+        self.assertEqual(self.save(notifyAttendees=False).status_code, 200)
+        self.assertTrue(probe.called)
+        self.assertTrue(all(not call.kwargs['allow_delete'] for call in probe.call_args_list))
 
     def test_a_refused_options_write_on_a_new_calendar_still_invites_nobody(self):
         """Creating a meeting keeps the old rule: no invitations to a meeting at tenant defaults."""
