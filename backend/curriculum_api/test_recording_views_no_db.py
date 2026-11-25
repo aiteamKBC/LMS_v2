@@ -59,6 +59,15 @@ class RecordingWatchTests(SimpleTestCase):
 
 
 class FullyWatchedTests(SimpleTestCase):
+    def test_transcript_only_occurrence_stays_unready_without_its_body_or_metadata(self):
+        transcript = {'id': 'T1', 'occurrence_id': 'OCC-1', 'artifact_type': 'transcript',
+                      'metadata': None, 'created_at': None, 'scheduled_start': None,
+                      'archive_status': 'ready', 'archive_updated_at': None}
+        with patch.object(recording_views, 'read', side_effect=[[transcript], []]):
+            evidence = recording_views.recording_completion_evidence('commercial', 101, ['OCC-1'])
+        self.assertEqual(evidence, {'OCC-1': {'ready': False, 'completed': False,
+                                            'availableAt': None, 'completedAt': None}})
+
     def test_completion_evidence_separates_ready_recordings_from_completed_watching(self):
         available = datetime(2026, 11, 9, 12, tzinfo=timezone.utc)
         watched_at = datetime(2026, 11, 10, 12, tzinfo=timezone.utc)

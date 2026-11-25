@@ -67,16 +67,19 @@ describe('explicit study weeks', () => {
     expect(screen.getByText('Holiday week · materials remain available')).toBeInTheDocument();
   });
 
-  it('retains manually authored material and live sessions without another capacity warning', () => {
+  it('keeps reading and quizzes while refusing new manual Live in a holiday week', () => {
     const draft = moduleDraft();
     const week = draft.weekStructure[1];
     const reading = createEmptyComponent(week.id, 'reading', 1);
-    const live = { ...createEmptyComponent(week.id, 'live-session', 2), settings: { sessionDate: '2026-11-26', sessionTime: '14:00', durationMinutes: 60 } };
-    week.components = [reading, live];
+    const quiz = createEmptyComponent(week.id, 'quiz', 2);
+    const live = { ...createEmptyComponent(week.id, 'live-session', 3), settings: { sessionDate: '2026-11-26', sessionTime: '14:00', durationMinutes: 60 } };
+    week.components = [reading, quiz, live];
     const module = applyModuleWeekSessionPlan(draft, plan);
-    expect(module.weekStructure[1].components).toEqual([reading, live]);
+    expect(module.weekStructure[1].components).toEqual([reading, quiz]);
+    expect(draft.weekStructure[1].components).toEqual([reading, quiz, live]);
     expect(liveSessionSlotOverflow(module, 1, 1, plan.sessions)).toBeNull();
-    expect(moduleTeamsPlannedSessions(module, plan)).toMatchObject([{ date: '2026-11-26', startTime: '14:00' }]);
+    expect(moduleTeamsPlannedSessions(module, plan)).toEqual([]);
+    expect(module.endDate).toBe(draft.endDate);
   });
 
   it('still enriches holiday weeks when every automatic live session is paused', () => {

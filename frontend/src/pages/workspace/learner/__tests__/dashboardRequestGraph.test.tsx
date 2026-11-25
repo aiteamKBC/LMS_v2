@@ -118,7 +118,18 @@ function body(url: string): unknown {
     const weekId = decodeURIComponent(parsed.pathname.split('/')[7]);
     return weeklyContractFixture({ ...compactWeekly(id), schedule: weeklySchedule(id), selectedWeekId: weekId });
   }
-  if (/\/dashboard\/.*\/weekly\/plan\/$/.test(new URL(url, 'https://example.test').pathname)) return weeklyContractFixture({ ...compactWeekly(id), schedule: weeklySchedule(id) });
+  if (/\/dashboard\/.*\/weekly\/plan\/$/.test(new URL(url, 'https://example.test').pathname)) {
+    const parsed = new URL(url, 'https://example.test');
+    const selectedModule = parsed.searchParams.get('moduleId');
+    const fixture = { ...compactWeekly(id), schedule: weeklySchedule(id) };
+    const full = weeklyContractFixture(fixture);
+    if (parsed.searchParams.get('navigation') !== 'module') return full;
+    const manual = parsed.searchParams.get('preferCurrent') === '0';
+    const selected = manual && selectedModule ? full.weeks.find(week => week.moduleId === selectedModule) : undefined;
+    const result = selected ? weeklyContractFixture({ ...fixture, selectedWeekId: `slot:${selected.moduleId}:${selected.slotNumber}` }) : full;
+    const moduleId = result.weeks.find(week => week.id === result.selectedWeek?.weekId)?.moduleId;
+    return { ...result, weeks: result.weeks.filter(week => week.moduleId === moduleId) };
+  }
   if (url.includes('/training-plan-dashboard/')) return schedule(id);
   if (url.includes('/overview-week/')) return { weekStart: '2026-10-12', weekEnd: '2026-10-18', timezone: 'Europe/London',
     planSubjects: [], modules: [], deadlines: [], undatedActivities: 0, expectedHours: null, missingExpectedHours: 0,
@@ -302,7 +313,7 @@ describe('Student Dashboard request graph', () => {
     await waitForDashboard();
     await waitFor(() => expect(screen.getByText('Kick-off session')).toBeInTheDocument());
     await settle();
-    expect(urls().filter(url => WEEKLY.test(url))).toEqual(['/learner_api/dashboard/commercial/265/weekly/plan/?moduleId=mod-265']);
+    expect(urls().filter(url => WEEKLY.test(url))).toEqual(['/learner_api/dashboard/commercial/265/weekly/plan/?moduleId=mod-265&navigation=module&preferCurrent=1']);
     expect(count(HEADER)).toBe(1);
     expect(dashboardUrls().filter(url => url.includes('/dashboard/'))).toHaveLength(2);
   });
@@ -381,7 +392,7 @@ describe('Student Dashboard request graph', () => {
     console.info(`[${role}] Weekly cold-load requests:\n  ${dashboardUrls().join('\n  ')}`);
     expect(count(DETAIL)).toBe(0);
     expect(count(WEEKLY)).toBe(1);
-    expect(urls().filter(url => WEEKLY.test(url))).toEqual(['/learner_api/dashboard/commercial/265/weekly/plan/']);
+    expect(urls().filter(url => WEEKLY.test(url))).toEqual(['/learner_api/dashboard/commercial/265/weekly/plan/?navigation=module&preferCurrent=1']);
     expect(count(SUMMARY)).toBe(0);
     expect(count(HEADER)).toBe(1);
     expect(count(SCHEDULE)).toBe(0);

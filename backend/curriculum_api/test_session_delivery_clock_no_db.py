@@ -106,6 +106,15 @@ class SessionDeliveryClockTests(unittest.TestCase):
     def stamp(self, module=None, group=None):
         return self.n['apply_module_session_plan_to_weeks'](module or self.module, group, self.weeks, holidays=[])
 
+    def test_general_materials_do_not_consume_the_first_delivery_week(self):
+        for index, week in enumerate(self.weeks):
+            week['components'][0]['settings'].update(teamsLiveSessionId='SERIES', teamsSessionNumber=index+1)
+        self.weeks.insert(0, {'id': 'GENERAL', 'components': [{'id': 'READING', 'type': 'reading', 'settings': {}}]})
+        booked = copy.deepcopy([w['components'] for w in self.weeks])
+        weeks = self.stamp()
+        self.assertEqual([w.get('sessionDate', '') for w in weeks], ['', '2026-10-23', '2026-10-30'])
+        self.assertEqual([w['components'] for w in weeks], booked)
+
     def test_unbooked_components_inherit_two_hours_and_correct_utc_across_dst(self):
         weeks = self.stamp()
         for week in weeks:
@@ -201,6 +210,38 @@ class SessionDeliveryClockTests(unittest.TestCase):
         self.assertEqual(self.weeks[0]['components'][0], before)
         self.assertEqual(self.module, untouched)
         self.assertEqual(self.weeks[1]['components'][0]['settings']['durationMinutes'], 120)
+
+    def test_header_uses_confirmed_date_when_calendar_numbering_omits_weeks(self):
+        settings = self.weeks[0]['components'][0]['settings']
+        settings.update(sessionDate='2026-11-06', teamsLiveSessionId='LIVE-1', teamsSessionNumber=1,
+                        teamsOccurrenceId='OCC-1', liveSessionUrl='https://example.invalid/confirmed')
+        original = copy.deepcopy(self.weeks[0]['components'])
+        result = self.stamp()[0]
+        self.assertEqual((result['sessionDate'], result['sessionDay']), ('2026-11-06', 'Friday'))
+        self.assertEqual(result['components'], original)
+
+    def test_unverified_binding_cannot_replace_planned_header(self):
+        self.weeks[0]['components'][0]['settings'].update(
+            sessionDate='2026-11-06', teamsLiveSessionId='LIVE-1', teamsSessionNumber=1,
+            teamsCalendarBinding='unverified')
+        self.assertEqual(self.stamp()[0]['sessionDate'], '2026-10-23')
+
+    def test_booking_outside_edited_module_window_keeps_planned_heading_drift(self):
+        self.module.update(start_date='2026-10-01', end_date='2026-10-31')
+        self.weeks[0]['components'][0]['settings'].update(
+            sessionDate='2026-11-06', teamsLiveSessionId='LIVE-1', teamsSessionNumber=1)
+        original = copy.deepcopy(self.weeks[0]['components'])
+        self.assertEqual(self.stamp()[0]['sessionDate'], '2026-10-23')
+        self.assertEqual(self.weeks[0]['components'], original)
+
+    def test_additional_meeting_does_not_supply_the_main_week_header(self):
+        main = self.weeks[0]['components'][0]
+        main['settings'].update(sessionDate='2026-11-06', teamsLiveSessionId='LIVE-1', teamsSessionNumber=1)
+        extra = copy.deepcopy(main)
+        extra['id'] = 'EXTRA'
+        extra['settings'].update(sessionDate='2026-11-07', extraTeamsMeetingUrl='https://example.invalid/additional')
+        self.weeks[0]['components'].insert(0, extra)
+        self.assertEqual(self.stamp()[0]['sessionDate'], '2026-11-06')
 
     def test_per_day_clock_does_not_reuse_the_first_day_in_a_week(self):
         self.module['weekly_schedule'] = [

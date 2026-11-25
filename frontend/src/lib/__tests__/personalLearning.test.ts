@@ -58,9 +58,35 @@ describe('personal course identity and transport', () => {
     await learningFetch(url as string, init as globalThis.RequestInit | undefined);
     const [target, options] = fetch.mock.calls[0];
     expect(target).toContain(`/personal-learning/${id}/request/?path=`);
-    expect(options.headers['X-Requested-With']).toBe('XMLHttpRequest');
+    expect(new Headers(options.headers).get('X-Requested-With')).toBe('XMLHttpRequest');
     expect(options.body).toBe(init?.body);
   });
+  it.each(['object', 'lowercase object', 'Headers', 'tuples'] as const)(
+    'sends one verification value when the caller supplies %s headers', async format => {
+      const original = {
+        'Content-Type': 'application/json', 'X-CSRFToken': 'synthetic-csrf',
+        [format === 'lowercase object' ? 'x-requested-with' : 'X-Requested-With']: 'XMLHttpRequest',
+      };
+      const headers = format === 'Headers' ? new Headers(original)
+        : format === 'tuples' ? Object.entries(original) : original;
+      const fetch = vi.fn().mockResolvedValue(new Response('{}'));
+      vi.stubGlobal('fetch', fetch);
+      const controller = new AbortController();
+      const body = JSON.stringify({ activityKind: 'quiz', activityId: '7' });
+      await learningFetch(`/learner_api/time-tracking/start/?kind=commercial&learnerId=${id}`, {
+        method: 'POST', headers, body, signal: controller.signal, cache: 'no-store',
+      });
+      const [target, options] = fetch.mock.calls[0];
+      // Fetch normalizes header names and joins differently cased duplicates.
+      const request = new Request(new URL(target, window.location.origin), options);
+      expect(request.headers.get('X-Requested-With')).toBe('XMLHttpRequest');
+      expect(request.headers.get('Content-Type')).toBe('application/json');
+      expect(request.headers.get('X-CSRFToken')).toBe('synthetic-csrf');
+      expect(options).toMatchObject({ method: 'POST', body, credentials: 'include', cache: 'no-store' });
+      expect(options.signal).toBe(controller.signal);
+      expect(new Headers(headers).get('X-Requested-With')).toBe('XMLHttpRequest');
+    },
+  );
   it('leaves ordinary learners, curriculum calls and external URLs unchanged', async () => {
     const fetch = vi.fn().mockResolvedValue(new Response('{}'));
     vi.stubGlobal('fetch', fetch);

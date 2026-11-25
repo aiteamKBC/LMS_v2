@@ -9,6 +9,9 @@ Employer Progress Review feedback is documented in
 `0010_employer_review_feedback`; the learner-only schema notes below predate it.
 
 `feedback._sync_review_feedback_deliveries` delegates to `review_feedback`.
+The explicit, local-test-only outbox consumer and its stricter opt-in Aptem
+completion policy are documented in [REVIEW_FEEDBACK_OUTBOX.md](REVIEW_FEEDBACK_OUTBOX.md).
+It has no production target support, scheduler, or HTTP startup hook.
 The previous implementation read only `"Learner".reviews`, required exact
 `Completed` status and matched only two exact type labels.
 

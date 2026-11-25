@@ -187,6 +187,9 @@ def enqueue_recording(series, occurrence, artifact, module):
         'id': uuid.uuid5(uuid.NAMESPACE_URL, 'lms-live-recording:' + identity),
         'target_kind': 'live_session', 'target_id': series['id'], 'component_id': artifact['id'],
         'title': title, 'source_url': source, 'source_at_start': source, 'scope': scope,
+        # Preserve the existing LMS transfer/playback pipeline. The separate
+        # KBC LiveSessions ingester owns its videos; the module collection
+        # worker organizes them by their canonical occurrence metadata.
         'library_id': os.environ.get('BUNNY_STREAM_LIBRARY_ID', '798153'), 'status': 'queued',
     })
     if not created and asset.status == 'failed':
@@ -220,9 +223,8 @@ def transfer_recording(asset, *, lease_id=None):
     if source != asset.source_at_start or source != asset.source_url:
         raise VideoImportError('The Microsoft recording identity changed; refresh the session before retrying.')
     client = BunnyStream(asset.library_id)
-    if not asset.collection_id:
-        asset.collection_id = client.collection(asset.scope['programme_id'], asset.scope['programme_name'])
-        asset.save(update_fields=['collection_id', 'updated_at'])
+    from .bunny_module_collections import recording_collection
+    recording_collection(asset, client)
     if not asset.video_id:
         recovered = _find_import(asset, client)
         if recovered:

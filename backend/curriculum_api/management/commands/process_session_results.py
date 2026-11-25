@@ -10,6 +10,7 @@ from django.test import RequestFactory
 
 from curriculum_api.session_archive import archive_series, provision_container
 from curriculum_api.session_component_identity import reconcile_component_links
+from curriculum_api.session_worker_preflight import archive_runtime_preflight
 
 
 def sync_post_lecture_feedback(series_id):
@@ -51,6 +52,10 @@ class Command(BaseCommand):
                             help='Process only this series. May be supplied more than once.')
 
     def handle(self, *args, **options):
+        origin = archive_runtime_preflight()
+        run_id = uuid.uuid4().hex
+        logger = logging.getLogger(__name__)
+        logger.info('Session worker started runtime=%s run=%s.', origin, run_id)
         if options['provision_container']:
             provision_container()
             self.stdout.write('Private recording container is available.')
@@ -58,6 +63,13 @@ class Command(BaseCommand):
         requested_ids = list(dict.fromkeys(value.strip() for value in options.get('live_session_ids', []) if value.strip()))
         scope_params = [requested_ids] if requested_ids else []
         if options['scheduled']:
+            if not requested_ids:
+                try:
+                    from curriculum_api.bunny_module_collections import run_pending_collections
+                    run_pending_collections(limit=options['limit'])
+                except Exception as collection_failure:
+                    logging.getLogger(__name__).warning('Module live collections need retry (%s).',
+                                                        type(collection_failure).__name__)
             scheduled_scope = ' AND o.live_session_id=ANY(%s)' if requested_ids else ''
             with connections['default'].cursor() as cursor:
                 # A series can exhaust its attempts before its next lecture. Reopen
@@ -119,6 +131,8 @@ class Command(BaseCommand):
                 series_id = row[0]
                 cursor.execute("UPDATE curriculum.session_result_jobs SET state='running',started_at=now(),next_attempt_at=now(),lease_id=%s,attempts=attempts+1 WHERE live_session_id=%s", [lease, series_id])
             error = ''
+            phase = 'graph_sync'
+            logger.info('Session worker claimed series=%s lease=%s run=%s runtime=%s.', series_id, lease, run_id, origin)
             try:
                 from curriculum_api.views import curriculum_teams_meeting_artifacts
                 request = RequestFactory().post('/internal/session-result-worker/')
@@ -132,18 +146,24 @@ class Command(BaseCommand):
                 errors = self._sync_error_summary(result)
                 if response.status_code >= 300:
                     errors.append('Teams sync could not complete.')
+                phase = 'archive'
                 errors.extend(archive_series(series_id, lease_id=lease))
                 try:
+                    phase = 'component_links'
                     reconcile_component_links(series_id)
                 except Exception as link_failure:
                     logging.getLogger(__name__).warning('Session component link repair failed: %s', type(link_failure).__name__)
                     errors.append('Curriculum recording link repair failed.')
                 error = '; '.join(errors)
                 if not error:
+                    phase = 'feedback'
                     sync_post_lecture_feedback(series_id)
             except Exception as failure:
-                logging.getLogger(__name__).warning('Session job %s failed: %s', series_id, type(failure).__name__)
-                error = 'Session processing failed. Check Graph, database and Azure configuration.'
+                status = getattr(failure, 'status_code', None) or getattr(getattr(failure, 'response', None), 'status_code', None)
+                status_label = f', HTTP {status}' if type(status) is int and 400 <= status < 600 else ''
+                logger.warning('Session job failed series=%s lease=%s run=%s runtime=%s phase=%s error_type=%s%s.',
+                               series_id, lease, run_id, origin, phase, type(failure).__name__, status_label)
+                error = f'Session processing failed during {phase} ({type(failure).__name__}{status_label}). Check worker logs.'
             with connections['default'].cursor() as cursor:
                 cursor.execute('''UPDATE curriculum.session_result_jobs SET state=CASE WHEN requested_at>started_at THEN 'queued' ELSE %s END,finished_at=now(),last_error=%s,
                     next_attempt_at=CASE WHEN requested_at>started_at THEN now()
@@ -151,6 +171,8 @@ class Command(BaseCommand):
                     WHERE live_session_id=%s AND lease_id=%s''', ['failed' if error else 'complete', error[:1500], series_id, lease])
             processed += 1
             failed += bool(error)
+            logger.info('Session worker finished series=%s lease=%s run=%s runtime=%s outcome=%s.',
+                        series_id, lease, run_id, origin, 'failed' if error else 'complete')
         # Captions may arrive after a recording is ready, including older lectures
         # whose normal Graph discovery is no longer due on this pass.
         try:
