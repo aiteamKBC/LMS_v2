@@ -17,6 +17,11 @@ from curriculum_api.catalogue.tests.parity import final_bindings_oracle as oracl
 MANIFEST = oracle.SNAPSHOT['manifest']
 
 
+def current_tree(relative):
+    """Inspect live owner dependencies without reversing historical source deltas."""
+    return ast.parse((ROOT / relative).read_text(encoding="utf-8-sig"))
+
+
 def tree(relative):
     from curriculum_api.catalogue.tests.parity.approved_dev_contracts import source_tree
     return source_tree(ROOT / relative)
@@ -70,7 +75,7 @@ class FinalBindingsContracts(unittest.TestCase):
 
     def test_new_owners_have_no_views_or_dynamic_module_lookup(self):
         for owner in MANIFEST['modules']:
-            for node in ast.walk(tree(owner.replace('.', '/') + '.py')):
+            for node in ast.walk(current_tree(owner.replace('.', '/') + '.py')):
                 if isinstance(node, ast.ImportFrom):
                     self.assertNotEqual(node.module, 'curriculum_api.views', owner)
                     self.assertFalse(node.module == 'curriculum_api' and any(a.name == 'views' for a in node.names), owner)
@@ -81,7 +86,7 @@ class FinalBindingsContracts(unittest.TestCase):
         owners = {'curriculum_api.' + name for name in MANIFEST['modules']}
         graph = {owner: set() for owner in owners}
         for owner in owners:
-            for n in ast.walk(tree(owner.removeprefix('curriculum_api.').replace('.', '/') + '.py')):
+            for n in ast.walk(current_tree(owner.removeprefix('curriculum_api.').replace('.', '/') + '.py')):
                 if isinstance(n, ast.ImportFrom) and n.module in owners:
                     graph[owner].add(n.module)
         def visit(name, active, done):
