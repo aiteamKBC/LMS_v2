@@ -183,6 +183,43 @@ describe('employer home dashboard', () => {
     expect(dialog.getByText('50%')).toBeVisible();
   });
 
+  it('updates all calculated performance cards and their details for combined filters and Clear filters', async () => {
+    api.overview.mockImplementation(async (_employer, _kind, id) => {
+      const payload = dashboardOverviewFixture();
+      payload.modules[0].assignments = { submitted: id === '11' ? 1 : 2, total: 2 };
+      payload.metrics.ksb = { completed: id === '11' ? 1 : 3, total: 4, percent: id === '11' ? 25 : 75 };
+      payload.programme = [{ id: id === '11' ? 'current:A' : 'legacy:B', title: 'Assigned module', percent: 50 }];
+      return payload;
+    });
+    api.reviews.mockImplementation(async (_employer, _kind, id) => ({ events: id === '11'
+      ? [makeReview('alex-review')]
+      : [makeReview('morgan-review'), makeReview('morgan-completed', { status: 'completed' })] }));
+    showPage();
+    const cards = within(await screen.findByRole('region', { name: 'Learning performance' }));
+    const expectCards = (attendance: string, assignments: string, hours: string, ksb: string, reviews: string) => {
+      for (const name of [`Average attendance: ${attendance}`, `Assignment submission: ${assignments}`,
+        `Average off-the-job hours: ${hours}`, `Average KSBs: ${ksb}`, `Reviews: ${reviews}`]) {
+        expect(cards.getByRole('button', { name })).toBeVisible();
+      }
+      expect(cards.getByRole('article', { name: 'Average performance: calculation pending' })).toBeVisible();
+    };
+    await waitFor(() => expectCards('73.3%', '75%', '80 h', '50%', '3'));
+    await userEvent.selectOptions(screen.getByRole('combobox', { name: 'Cohort' }), 'Cohort A');
+    expectCards('80%', '50%', '90 h', '25%', '1');
+    await userEvent.click(cards.getByRole('button', { name: 'Average KSBs: 25%' }));
+    const details = within(screen.getByRole('dialog', { name: 'Average KSBs' }));
+    expect(details.getByText('Alex Learner')).toBeVisible();
+    expect(details.queryByText('Morgan Learner')).not.toBeInTheDocument();
+    await userEvent.click(details.getByRole('button', { name: 'Close' }));
+    await userEvent.selectOptions(screen.getByRole('combobox', { name: 'Module' }), 'legacy:B');
+    expectCards('Unavailable', 'Unavailable', 'Unavailable', 'Unavailable', '0');
+    await userEvent.click(screen.getAllByRole('button', { name: 'Clear filters' })[0]);
+    expectCards('73.3%', '75%', '80 h', '50%', '3');
+    await userEvent.selectOptions(screen.getByRole('combobox', { name: 'Module' }), 'legacy:B');
+    expectCards('66.7%', '100%', '70 h', '75%', '2');
+    expect(api.overview).toHaveBeenCalledTimes(2);
+  });
+
   it('distinguishes zero columns from unavailable module measures', async () => {
     api.overview.mockImplementation(async () => {
       const payload = dashboardOverviewFixture();
@@ -213,7 +250,7 @@ describe('employer home dashboard', () => {
     expect(chart.queryByRole('meter')).not.toBeInTheDocument();
   });
 
-  it('groups Overview filters and module cards in one section and keeps the learner directory in My learners', async () => {
+  it('places Overview filters above the six performance cards and keeps the learner directory in My learners', async () => {
     api.overview.mockImplementation(async (_employer, _kind, id) => ({ programme: [
       { id: 'current:100', title: 'Shared module', percent: id === '11' ? 80 : 20 },
       { id: `current:${id}`, title: 'Individual module', percent: null },
@@ -226,7 +263,12 @@ describe('employer home dashboard', () => {
     expect(modules.getAllByRole('article', { name: 'Individual module' })).toHaveLength(2);
     expect(screen.queryByRole('region', { name: 'Employer learners' })).not.toBeInTheDocument();
     expect(screen.queryByRole('region', { name: 'Learner progress overview' })).not.toBeInTheDocument();
-    expect(modules.getByRole('form', { name: 'Filter learners' })).toBeVisible();
+    const filters = screen.getByRole('form', { name: 'Filter learners' });
+    const performance = screen.getByRole('region', { name: 'Learning performance' });
+    expect(screen.getAllByRole('form', { name: 'Filter learners' })).toHaveLength(1);
+    expect(filters).toBeVisible();
+    expect(filters.compareDocumentPosition(performance) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(modules.queryByRole('form', { name: 'Filter learners' })).not.toBeInTheDocument();
     const learnerToggle = shared.getByRole('button', { name: 'View learners (2)' });
     expect(learnerToggle).toHaveAttribute('aria-expanded', 'false');
     expect(shared.queryByRole('link', { name: 'Alex Learner' })).not.toBeInTheDocument();

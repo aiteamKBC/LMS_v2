@@ -762,25 +762,16 @@ button.statCard:hover { border-color: var(--tone); box-shadow: 0 7px 22px #45208
 .page[data-view='home'] .hero h1 { margin-top: 3px; font-size: 19px; letter-spacing: -.3px; }
 .page[data-view='home'] .hero .greeting { font-size: 11px; color: var(--muted); }
 .page[data-view='home'] .hero .organisation { margin-top: 4px; font-size: 12px; }
-.page[data-view='home'] .statsGrid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
-.page[data-view='home'] .statCard { min-height: 96px; width: 100%; flex-direction: row; align-items: center; gap: 12px; padding: 16px; border: 1px solid var(--line); border-radius: 14px; background: linear-gradient(115deg, var(--surface) 45%, var(--tint)); box-shadow: 0 2px 6px #32136d04; text-decoration: none; }
+.page[data-view='home'] .statsGrid { display: flex; flex-wrap: wrap; gap: 8px; }
+.page[data-view='home'] .statCard { min-height: 40px; width: auto; max-width: 100%; flex-direction: row; align-items: center; gap: 8px; padding: 7px 10px; border: 1px solid var(--line); border-radius: 10px; background: linear-gradient(115deg, var(--surface) 45%, var(--tint)); box-shadow: 0 2px 6px #32136d04; text-decoration: none; }
 .page[data-view='home'] .statCard::after { content: none; }
-.page[data-view='home'] .statIcon { width: 40px; height: 40px; border-radius: 12px; background: var(--tint); }
-.page[data-view='home'] .statIcon svg { width: 21px; height: 21px; }
-.page[data-view='home'] .statCopy { flex: 1; flex-direction: column; align-items: flex-start; gap: 6px; }
+.page[data-view='home'] .statIcon { width: 24px; height: 24px; border-radius: 7px; background: var(--tint); }
+.page[data-view='home'] .statIcon svg { width: 16px; height: 16px; }
+.page[data-view='home'] .statCopy { flex-direction: row; align-items: center; gap: 7px; }
 .page[data-view='home'] .statLabel { color: var(--muted); font-size: 12px; font-weight: 600; line-height: 1.4; }
-.page[data-view='home'] .statCopy strong { color: var(--ink); font-size: 26px; font-variant-numeric: tabular-nums; line-height: 1.1; letter-spacing: -.5px; }
-.page[data-view='home'] .statArrow { display: grid; width: 24px; height: 24px; border: 0; background: transparent; color: var(--tone); }
+.page[data-view='home'] .statCopy strong { color: var(--ink); font-size: 14px; font-variant-numeric: tabular-nums; line-height: 1.2; letter-spacing: 0; }
+.page[data-view='home'] .statArrow { display: grid; width: 16px; height: 16px; border: 0; background: transparent; color: var(--tone); }
 .page[data-view='home'] button.statCard:hover { color: var(--ink); border-color: var(--tone); box-shadow: 0 4px 14px color-mix(in srgb, var(--tone) 12%, transparent); text-decoration: none; }
-@container (max-width: 960px) {
-  .page[data-view='home'] .statsGrid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-}
-@container (max-width: 420px) {
-  .page[data-view='home'] .statsGrid { grid-template-columns: minmax(0, 1fr); gap: 8px; }
-  .page[data-view='home'] .statCard { min-height: 80px; padding: 12px 14px; }
-  .page[data-view='home'] .statCopy { gap: 4px; }
-  .page[data-view='home'] .statCopy strong { font-size: 24px; }
-}
 
 
 .hero, .sectionHero { border-top-color: var(--employer-gold); }

@@ -1,5 +1,33 @@
-"""Compact assignment counts for the employer overview; no evidence or writes."""
+"""Read-only assignment and learner KSB counts for the employer overview."""
+from copy import copy
+
 from django.db import connections
+
+
+def module_ksbs(source, kind, owner, modules):
+    """Reuse My Learning's assigned points, completion and historical lineage."""
+    from .my_learning import read_catalogue
+
+    if not modules:
+        return {}
+    # The catalogue installs request caches; keep the outer Overview snapshot.
+    cards = read_catalogue(copy(source), kind, owner, ksb_only=True)['modules']
+    by_id = {card['id']: card for card in cards}
+    by_module = {}
+    for card in cards:
+        module_id = card.get('moduleId') or (card['id'][8:] if card['id'].startswith('current:') else None)
+        if module_id:
+            by_module.setdefault(str(module_id), []).append(card)
+    result = {}
+    for module in modules:
+        card = by_id.get(module['id'])
+        if card is None and module.get('moduleId'):
+            matches = by_module.get(str(module['moduleId']), [])
+            card = matches[0] if len(matches) == 1 else None
+        metric = (card or {}).get('ksbProgress') or {}
+        result[module['id']] = ({key: metric[key] for key in ('completed', 'total')}
+                                if metric.get('status') in ('ready', 'empty') else None)
+    return result
 
 
 def module_assignments(source, kind, modules, *, components=()):

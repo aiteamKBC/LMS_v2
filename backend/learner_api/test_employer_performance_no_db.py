@@ -86,7 +86,8 @@ class EmployerPerformanceTests(SimpleTestCase):
         from .test_employer_learning_no_db import EmployerLearningParityTests
         from . import dashboard_tabs, dashboard_overview
         with EmployerLearningParityTests().fixture(planned=100) as (source, *_), \
-                patch.object(dashboard_overview, 'saved_attendance_hours', return_value=[]):
+                patch.object(dashboard_overview, 'saved_attendance_hours', return_value=[]), \
+                patch.object(employer_performance, 'module_ksbs', return_value={'legacy:8': None, 'current:M2': None}):
             facts = dashboard_tabs.learning_projection.side_effect
 
             def imported(*args, **kwargs):
@@ -125,7 +126,9 @@ class EmployerPerformanceTests(SimpleTestCase):
         from . import dashboard_tabs, dashboard_overview
         from copy import deepcopy
         with EmployerLearningParityTests().fixture(planned=100) as (source, *_), \
-                patch.object(dashboard_overview, 'saved_attendance_hours', return_value=[]):
+                patch.object(dashboard_overview, 'saved_attendance_hours', return_value=[]), \
+                patch.object(employer_performance, 'module_ksbs', return_value={
+                    'current:M1': {'completed': 0, 'total': 0}, 'current:M2': {'completed': 0, 'total': 0}}):
             facts = dashboard_tabs.learning_projection.side_effect
 
             def assignments(*args, **kwargs):

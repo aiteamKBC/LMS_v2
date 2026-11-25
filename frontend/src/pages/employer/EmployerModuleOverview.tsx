@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { BookOpen, ChevronDown, ChevronLeft, ChevronRight, CircleAlert, Users } from 'lucide-react';
 import type { EmployerLearnerCard } from '@/api/employerPortal';
@@ -8,7 +8,7 @@ import { overviewModulesForDisplay } from '@/pages/workspace/learner/overviewFac
 import { formatReviewDate, learnerHref, learnerKey } from './employerDashboardData';
 import styles from './EmployerPortalPage.module.css';
 
-type Props = { employerId: string; learners: EmployerLearnerCard[]; filtered: EmployerLearnerCard[]; filters?: ReactNode; records: EmployerLearningRecords; onRetry: () => void; moduleId?: string };
+type Props = { employerId: string; learners: EmployerLearnerCard[]; filtered: EmployerLearnerCard[]; records: EmployerLearningRecords; onRetry: () => void; moduleId?: string };
 const percentLabel = (value: number) => `${new Intl.NumberFormat('en-GB', { maximumFractionDigits: 2 }).format(value)}%`;
 const moduleDate = (value?: string) => {
   if (!value || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return '';
@@ -44,7 +44,7 @@ function ModuleLearners({ employerId, title, learners }: {
 }
 
 /** Uses the learner's canonical module percentages, including historical modules. */
-export function EmployerModuleOverview({ employerId, learners, filtered, filters, records, onRetry, moduleId }: Props) {
+export function EmployerModuleOverview({ employerId, learners, filtered, records, onRetry, moduleId }: Props) {
   const track = useRef<HTMLDivElement>(null);
   const carouselId = useId();
   const [scroll, setScroll] = useState({ previous: false, next: false, overflowing: false });
@@ -100,7 +100,6 @@ export function EmployerModuleOverview({ employerId, learners, filtered, filters
 
   return <section className={styles.moduleSection} aria-labelledby="employer-modules">
     <header className={styles.moduleSectionHeader}><div><h2 id="employer-modules"><span className={styles.moduleHeadingIcon}><BookOpen size={23} /></span>Modules</h2><p>Learners and their average module progress</p></div><div className={styles.moduleControls}><span className={styles.moduleCount}>{modules.size} module{modules.size === 1 ? '' : 's'}</span>{scroll.overflowing && <div className={styles.moduleArrows} aria-label="Module navigation"><button type="button" aria-label="Previous modules" aria-controls={carouselId} disabled={!scroll.previous} onClick={() => move(-1)}><ChevronLeft size={19} /></button><button type="button" aria-label="Next modules" aria-controls={carouselId} disabled={!scroll.next} onClick={() => move(1)}><ChevronRight size={19} /></button></div>}</div></header>
-    {filters}
     {failed > 0 && <div className={styles.dataNotice} role="alert"><CircleAlert size={18} /><p>Module progress could not be loaded for {failed} learner{failed === 1 ? '' : 's'}. Counts and averages include available records only.</p><button type="button" onClick={onRetry}>Retry modules</button></div>}
     {loading && <LoadingSkeleton label="Loading modules" variant="cards" />}
     <div ref={track} id={carouselId} className={styles.moduleGrid} role="region" aria-label="Module cards" aria-roledescription="carousel" tabIndex={scroll.overflowing ? 0 : undefined} onScroll={measureScroll}
