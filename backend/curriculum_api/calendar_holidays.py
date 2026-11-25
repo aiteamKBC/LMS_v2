@@ -251,9 +251,26 @@ def last_fetched():
 
 # --- a cohort's choices ---------------------------------------------------------
 
+def choice_flag_sql(alias, decision, legacy_column):
+    """One holiday-choice boolean across both supported physical schemas.
+
+    The normalized database stores one ``decision`` (include/exclude). Older
+    isolated databases retain the two boolean columns. ``to_jsonb`` keeps the
+    statement parseable when either physical column set is absent, while the
+    fallback preserves the legacy state where both booleans were false (or,
+    historically, both true).
+    """
+    return (
+        f"coalesce(nullif(to_jsonb({alias})->>'decision', '') = '{decision}', "
+        f"coalesce((to_jsonb({alias})->>'{legacy_column}')::boolean, false))"
+    )
+
+
 def cohort_choices(cohort_ids=None):
     """``{cohort_id: {'selected': [holiday id, ...], 'excluded': [...]}}`` (the holidays' own ids)."""
-    sql = (f'select h.cohort_id::text, ch.source_record_id::text, h.is_selected, h.is_excluded '
+    sql = (f'select h.cohort_id::text, ch.source_record_id::text, '
+           f'{choice_flag_sql("h", "include", "is_selected")}, '
+           f'{choice_flag_sql("h", "exclude", "is_excluded")} '
            f'from {_ref(CHOICES_TABLE)} h join {_ref(TABLE)} ch on ch.id = h.calendar_holiday_id')
     params = []
     if cohort_ids is not None:

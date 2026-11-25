@@ -196,7 +196,12 @@ class LookupChoicesTests(SimpleTestCase):
         with mock.patch.object(cn, 'connections', {'default': db}), mock.patch.object(cn, '_optional_tables', return_value={'choices': True, 'standards': True}):
             data = cn.lookups()
         cn.invalidate()
-        self.assertIn("union all select 'h'", cursor.execute.call_args[0][0])
+        lookup_sql = cursor.execute.call_args[0][0]
+        self.assertIn("union all select 'h'", lookup_sql)
+        self.assertIn("nullif(to_jsonb(h)->>'decision', '') = 'include'", lookup_sql)
+        self.assertIn("nullif(to_jsonb(h)->>'decision', '') = 'exclude'", lookup_sql)
+        self.assertNotIn('h.is_selected', lookup_sql)
+        self.assertNotIn('h.is_excluded', lookup_sql)
         self.assertEqual(data['cohort_holidays']['C-1'], {'selected': ['1200', '1113'], 'excluded': ['1101']})
         self.assertEqual(data['programmes']['PROG-1']['name'], 'Programme One')
         self.assertEqual(data['standards_digest'], '0123456789abcdef0123456789abcdef')
