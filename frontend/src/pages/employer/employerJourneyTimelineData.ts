@@ -9,8 +9,8 @@ export type JourneyEntry = {
   id: string; title: string; percent: number | null; start: string; end: string; facts?: OverviewModule;
 };
 export type JourneyPin = JourneyEntry & {
-  state: 'current' | 'next' | 'skipped' | 'complete' | 'unplaced';
-  label: string; ahead?: string;
+  state: 'current' | 'next' | 'skipped' | 'complete' | 'unplaced' | 'parallel';
+  label: string; ahead?: string; parallelWith?: JourneyEntry[];
 };
 export type JourneyModule = {
   id: string; title: string; start: string; end: string; hue: number;
@@ -19,6 +19,9 @@ export type JourneyModule = {
 
 const progressLabel = (entry: JourneyEntry) => entry.percent == null ? 'Progress unavailable'
   : entry.percent >= 100 ? 'Completed' : entry.percent > 0 ? 'In progress' : 'Not started';
+const inProgress = (entry: JourneyEntry) => entry.percent != null && entry.percent > 0 && entry.percent < 100;
+const overlaps = (a: JourneyEntry, b: JourneyEntry) => a.start && a.end && b.start && b.end
+  && a.start <= a.end && b.start <= b.end && a.start <= b.end && b.start <= a.end;
 
 /** Schedule dates establish sequence. Percentages never establish an activity timestamp. */
 export function journeyPins(entries: JourneyEntry[]): JourneyPin[] {
@@ -36,17 +39,34 @@ export function journeyPins(entries: JourneyEntry[]): JourneyPin[] {
   if (!last && unplaced?.percent != null && unplaced.percent > 0) {
     return [{ ...unplaced, state: 'unplaced', label: progressLabel(unplaced) }];
   }
-  const frontier = last?.percent === 100 ? Math.min(lastProgress + 1, dated.length - 1) : Math.max(0, lastProgress);
+  // Completing one parallel module must not move the learner past a partner
+  // module that is still in progress during the same scheduled period.
+  const ongoing = last?.percent === 100 ? dated.filter(entry => inProgress(entry) && overlaps(entry, last)).at(-1) : undefined;
+  const frontier = ongoing ? dated.indexOf(ongoing)
+    : last?.percent === 100 ? Math.min(lastProgress + 1, dated.length - 1) : Math.max(0, lastProgress);
   const current = dated[frontier];
   // Equal/overlapping schedules cannot prove that a learner has skipped a module.
   for (const entry of dated.slice(0, Math.max(0, lastProgress))) {
-    if (entry.percent != null && entry.percent < 100 && entry.end && entry.end < last.start) {
-      pins.push({ ...entry, state: 'skipped', label: 'Skipped ahead', ahead: last.title });
+    if (entry.id !== current.id && entry.percent != null && entry.percent < 100 && entry.end && entry.end < current.start) {
+      pins.push({ ...entry, state: 'skipped', label: 'Skipped ahead', ahead: current.title });
     }
   }
   pins.push({ ...current, state: current.percent === 100 ? 'complete' : frontier > lastProgress && lastProgress >= 0 ? 'next' : 'current',
     label: current.percent === 100 ? 'Completed' : frontier > lastProgress && lastProgress >= 0 ? 'Next module' : progressLabel(current) });
   return pins;
+}
+
+/** Extra lanes represent independently progressing modules with known overlapping schedules. */
+export function journeyParallelPins(entries: JourneyEntry[], pins: JourneyPin[]): JourneyPin[] {
+  const primary = pins.find(pin => pin.state !== 'skipped' && inProgress(pin));
+  if (!primary) return [];
+  const partners = entries.filter(entry => entry.id !== primary.id && inProgress(entry) && overlaps(entry, primary))
+    .sort((a, b) => a.start.localeCompare(b.start) || a.id.localeCompare(b.id));
+  return partners.map(entry => ({ ...entry, state: 'parallel', label: 'In progress · parallel study',
+    parallelWith: [primary, ...partners.filter(partner => partner.id !== entry.id)].map(partner => {
+      const { id, title, percent, start, end } = partner;
+      return { id, title, percent, start, end };
+    }) }));
 }
 
 export function buildJourneyTimeline(allLearners: EmployerLearnerCard[], learners: EmployerLearnerCard[], records: EmployerLearningRecords) {
@@ -71,7 +91,10 @@ export function buildJourneyTimeline(allLearners: EmployerLearnerCard[], learner
       modules.set(row.id, group);
       return entry;
     });
-    return { learner, status: resource?.status || 'loading', entries, pins: journeyPins(entries) };
+    const pins = journeyPins(entries);
+    const parallelPins = journeyParallelPins(entries, pins);
+    if (parallelPins.length) pins.find(pin => pin.state !== 'skipped')!.parallelWith = parallelPins;
+    return { learner, status: resource?.status || 'loading', entries, pins, parallelPins };
   });
   const compare = (a: JourneyModule, b: JourneyModule) => (a.start || '9999').localeCompare(b.start || '9999')
     || a.title.localeCompare(b.title) || a.id.localeCompare(b.id);

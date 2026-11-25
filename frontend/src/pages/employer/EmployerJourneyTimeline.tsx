@@ -1,7 +1,7 @@
 import { useEffect, useId, useRef, useState, type CSSProperties } from 'react';
 import { createPortal } from 'react-dom';
 import { Link, useLocation } from 'react-router-dom';
-import { BookOpen, Check, ChevronLeft, ChevronRight, CircleAlert, MapPin, Route, SkipForward, Users } from 'lucide-react';
+import { BookOpen, Check, ChevronLeft, ChevronRight, CircleAlert, GitFork, MapPin, Route, SkipForward, Users } from 'lucide-react';
 import type { EmployerLearnerCard } from '@/api/employerPortal';
 import { LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
 import { formatReviewDate, learnerHref, learnerKey } from './employerDashboardData';
@@ -18,6 +18,17 @@ const percent = (value: number | null) => value == null ? 'Unavailable' : `${num
 const dateRange = (start: string, end: string) => start && end ? `${formatReviewDate(start)} – ${formatReviewDate(end)}`
   : start ? `From ${formatReviewDate(start)}` : end ? `Until ${formatReviewDate(end)}` : 'Schedule unavailable';
 const initials = (name: string) => name.trim().split(/\s+/).slice(0, 2).map(part => part[0]).join('').toUpperCase();
+type LearnerPosition = { pin: JourneyPin; learner: EmployerLearnerCard };
+const sortPins = (a: LearnerPosition, b: LearnerPosition) => (a.pin.percent ?? 0) - (b.pin.percent ?? 0)
+  || a.learner.name.localeCompare(b.learner.name) || learnerKey(a.learner).localeCompare(learnerKey(b.learner));
+function pinPositions(pins: LearnerPosition[], width: number) {
+  const positions = pins.map(({ pin }, index) => Math.max(48 + (pin.percent ?? 0) / 100 * (width - 96), 48 + index * 96));
+  for (let index = positions.length - 1; index >= 0; index--) {
+    positions[index] = Math.min(positions[index], width - 48 - (positions.length - 1 - index) * 96);
+    if (index < positions.length - 1) positions[index] = Math.min(positions[index], positions[index + 1] - 96);
+  }
+  return positions;
+}
 
 function LearnerPin({ pin, learner, left }: { pin: JourneyPin; learner: EmployerLearnerCard; left: number }) {
   const id = useId();
@@ -63,7 +74,7 @@ function LearnerPin({ pin, learner, left }: { pin: JourneyPin; learner: Employer
       <span className={styles.pinHead}><span>{initials(learner.name) || '?'}</span></span>
       <span className={styles.pinName}>{learner.name}</span>
       <span className={styles.pinCaption}>{pin.state === 'skipped' && <SkipForward size={10} aria-hidden="true" />}
-        {pin.percent == null ? '?' : `${number(pin.percent)}%`}{pin.state === 'skipped' ? ' · Skip' : pin.state === 'next' ? ' · Next' : ''}</span>
+        {pin.percent == null ? '?' : `${number(pin.percent)}%`}{pin.state === 'skipped' ? ' · Skip' : pin.state === 'next' ? ' · Next' : pin.state === 'parallel' ? ' · Parallel' : ''}</span>
     </button>
     {position && createPortal(<div id={id} role="tooltip" className={styles.tooltip}
       style={{ left: position.left, top: position.top, maxHeight: position.maxHeight, transform: position.above ? 'translateY(-100%)' : undefined }}
@@ -81,11 +92,29 @@ function LearnerPin({ pin, learner, left }: { pin: JourneyPin; learner: Employer
       {pin.ahead && <p className={styles.skipNote}><SkipForward size={14} />This module is unfinished; progress is recorded in {pin.ahead}. A pause or skip event has not been recorded.</p>}
       {!pin.start && <p className={styles.skipNote}>No start date is available to place this module in the learner’s sequence.</p>}
       {pin.state === 'next' && <p className={styles.skipNote}>Previous module completed. This is the next scheduled module; its recorded progress is shown above.</p>}
+      {!!pin.parallelWith?.length && <div className={styles.parallelDetails}><strong><GitFork size={13} />Studying alongside</strong>
+        <ul>{pin.parallelWith.map(module => <li key={module.id}><span>{module.title}</span><b>{percent(module.percent)}</b></li>)}</ul>
+        <p>Each module has its own recorded progress. These percentages are not combined.</p></div>}
     </div>, document.body)}
   </>;
 }
 
-/** One shared route: one main pin per learner, plus unfinished skipped modules. */
+function JourneyPinField({ title, pins, width, positions, parallel = false }: {
+  title: string; pins: LearnerPosition[]; width: number; positions: number[]; parallel?: boolean;
+}) {
+  return <div className={styles.pinField} role="group" aria-label={`${title} ${parallel ? 'parallel learner' : 'learner'} pins`}>
+    <div className={styles.sharedRail} aria-hidden="true" />
+    <div className={styles.scale} aria-hidden="true"><span>0%</span><span>50%</span><span>100%</span></div>
+    <svg className={styles.connectors} aria-hidden="true" width="100%" height="100%">
+      {pins.map(({ pin, learner }, index) => <line key={learnerKey(learner)}
+        x1={`${positions[index] / width * 100}%`} y1="58" x2={`${(48 + (pin.percent ?? 0) / 100 * (width - 96)) / width * 100}%`} y2="75" />)}
+    </svg>
+    {pins.map(({ pin, learner }, index) => <LearnerPin key={learnerKey(learner)} pin={pin} learner={learner} left={positions[index] / width * 100} />)}
+    {!pins.length && <p className={styles.noPins}>{parallel ? 'No parallel learners here' : 'No learners positioned here'}</p>}
+  </div>;
+}
+
+/** One main route with extra pins for skips and a second route for parallel study. */
 export function EmployerJourneyTimeline({ employerId, learners, filtered, records, moduleId, onRetry }: Props) {
   const titleId = useId();
   const scrollId = useId();
@@ -98,17 +127,15 @@ export function EmployerJourneyTimeline({ employerId, learners, filtered, record
   const skipped = model.rows.filter(row => row.pins.some(pin => pin.state === 'skipped' && (!moduleId || pin.id === moduleId))).length;
   const segments = modules.map(module => {
     const pins = model.rows.flatMap(row => row.pins.filter(pin => pin.id === module.id).map(pin => ({ pin, learner: row.learner })))
-      .sort((a, b) => (a.pin.percent ?? 0) - (b.pin.percent ?? 0) || a.learner.name.localeCompare(b.learner.name) || learnerKey(a.learner).localeCompare(learnerKey(b.learner)));
-    const width = Math.max(300, pins.length * 96 + 48);
+      .sort(sortPins);
+    const parallelPins = model.rows.flatMap(row => row.parallelPins.filter(pin => pin.id === module.id).map(pin => ({ pin, learner: row.learner })))
+      .sort(sortPins);
+    const width = Math.max(300, Math.max(pins.length, parallelPins.length) * 96 + 48);
     // Keep everyone side by side. Short connectors preserve the exact progress
     // position when equal/nearby percentages need more room for their names.
-    const positions = pins.map(({ pin }, index) => Math.max(48 + (pin.percent ?? 0) / 100 * (width - 96), 48 + index * 96));
-    for (let index = positions.length - 1; index >= 0; index--) {
-      positions[index] = Math.min(positions[index], width - 48 - (positions.length - 1 - index) * 96);
-      if (index < positions.length - 1) positions[index] = Math.min(positions[index], positions[index + 1] - 96);
-    }
-    return { module, pins, width, positions };
+    return { module, pins, parallelPins, width, positions: pinPositions(pins, width), parallelPositions: pinPositions(parallelPins, width) };
   });
+  const hasParallel = segments.some(segment => segment.parallelPins.length);
   const unplacedLearners = model.rows.filter(row => row.status !== 'ready' || !row.entries.length);
   const [scroll, setScroll] = useState({ previous: false, next: false });
   const measure = () => {
@@ -153,23 +180,22 @@ export function EmployerJourneyTimeline({ employerId, learners, filtered, record
               <p className={styles.dates}>{dateRange(module.start, module.end)}</p>
               <div className={styles.moduleStats}><span><strong>{percent(average)}</strong> average{known.length !== module.entries.length && ` (${known.length}/${module.entries.length})`}</span><span><Check size={12} />{module.entries.filter(entry => entry.percent === 100).length} complete</span></div>
               </div>
-              <div className={styles.pinField} role="group" aria-label={`${module.title} learner pins`}>
-                <div className={styles.sharedRail} aria-hidden="true" />
-                <div className={styles.scale} aria-hidden="true"><span>0%</span><span>50%</span><span>100%</span></div>
-                <svg className={styles.connectors} aria-hidden="true" width="100%" height="100%">
-                  {pins.map(({ pin, learner }, pinIndex) => <line key={learnerKey(learner)}
-                    x1={`${positions[pinIndex] / width * 100}%`} y1="58" x2={`${(48 + (pin.percent ?? 0) / 100 * (width - 96)) / width * 100}%`} y2="75" />)}
-                </svg>
-                {pins.map(({ pin, learner }, pinIndex) => <LearnerPin key={learnerKey(learner)} pin={pin} learner={learner} left={positions[pinIndex] / width * 100} />)}
-                {!pins.length && <p className={styles.noPins}>No learners positioned here</p>}
-              </div>
+              <JourneyPinField title={module.title} pins={pins} width={width} positions={positions} />
             </article>;
           })}
+          {hasParallel && <>
+            <div className={styles.parallelHeading}><GitFork size={18} aria-hidden="true" /><div><h3>Parallel study timeline</h3><p>Overlapping modules in progress · Each module keeps its own progress</p></div></div>
+            {segments.map(({ module, parallelPins, width, parallelPositions }) => <article key={`parallel:${module.id}`} className={styles.moduleSegment}
+              style={{ '--module-hue': module.hue } as CSSProperties} aria-label={`${module.title} parallel journey segment`}>
+              <div className={styles.parallelModuleHeader}><h4 title={module.title}>{module.title}</h4><span>{parallelPins.length} learner{parallelPins.length === 1 ? '' : 's'}</span></div>
+              <JourneyPinField title={module.title} pins={parallelPins} width={width} positions={parallelPositions} parallel />
+            </article>)}
+          </>}
       </div>
     </div> : !loading && <div className={styles.empty}><Route size={32} /><h3>{failed ? 'Journey data unavailable' : 'No modules to show'}</h3><p>{failed ? 'Retry to load learner journeys.' : 'Assigned modules will appear here. Try clearing your filters.'}</p></div>}
     {unplacedLearners.length > 0 && <div className={styles.unplacedLearners} aria-label="Learners awaiting journey data">{unplacedLearners.map(({ learner, status }) =>
       <Link key={learnerKey(learner)} to={learnerHref(employerId, learner, 'plan')} state={location.state}><strong>{learner.name}</strong><span>{status === 'error' ? 'Progress unavailable' : status === 'loading' ? 'Loading progress…' : 'No assigned modules'}</span></Link>)}</div>}
-    <footer className={styles.footer}><div className={styles.legend}><span><MapPin size={16} />One position per learner</span><span><SkipForward size={15} />Extra pins for skipped modules only</span></div>
-      <p>Pins sit side by side; connectors point to recorded progress. Skipped ahead means an earlier scheduled module is unfinished while a later one has progress. Overlapping or undated modules do not imply a skip.</p></footer>
+    <footer className={styles.footer}><div className={styles.legend}><span><MapPin size={16} />One main position per learner</span><span><SkipForward size={15} />Skipped modules</span><span><GitFork size={15} />Parallel study below</span></div>
+      <p>Pins sit side by side; connectors point to recorded progress. Overlapping unfinished modules with progress appear on the parallel route with independent percentages. Earlier unfinished modules with later progress show as skipped. Undated modules do not imply either.</p></footer>
   </section>;
 }

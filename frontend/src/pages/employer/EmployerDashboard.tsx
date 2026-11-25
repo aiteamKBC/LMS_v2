@@ -9,7 +9,6 @@ import { formatReviewDate, learnerHref, learnerKey, londonToday, nextReview, rel
 import styles from './EmployerPortalPage.module.css';
 import { EmployerReviewJourneys } from './EmployerReviewJourneys';
 import { EmployerMeetings } from './EmployerMeetings';
-import { EmployerModuleOverview } from './EmployerModuleOverview';
 import { EmployerJourneyTimeline } from './EmployerJourneyTimeline';
 import { EmployerLearnerAssessmentCell } from './EmployerLearnerAssessmentCell';
 import { learnerRecordedDates } from '@/lib/learnerRecordedDates';
@@ -349,7 +348,7 @@ export function EmployerDashboard({ data, metrics, attendance: attendanceByLearn
     {(metrics.status === 'error' || reviewsFailed || attendanceFailed) && <div className={styles.dataNotice} role="alert"><CircleAlert size={18} /><p>{metrics.status === 'error' && 'Learner status could not be loaded. '}{attendanceFailed && 'Some attendance records could not be loaded. '}{reviewsFailed && 'Some progress reviews could not be loaded. '}Available records are still shown.</p><button type="button" onClick={onRetry}>Try again</button></div>}
     {(isHome || view === 'reviews') && <EmployerMeetings employerId={employerId} learners={learners} reviews={reviews} today={today} returnState={location.state} />}
     {isHome && <EmployerJourneyTimeline employerId={employerId} learners={learners} filtered={filtered} records={learning.records} onRetry={learning.retry} moduleId={moduleFilter} />}
-    {isHome ? <EmployerModuleOverview employerId={employerId} learners={learners} filtered={filtered} records={learning.records} onRetry={learning.retry} moduleId={moduleFilter} today={today} /> : learnerFilters}
+    {!isHome && learnerFilters}
     {isHome && moduleFilter && learners.some(learner => learning.records[learnerKey(learner)]?.status === 'error') && <div className={styles.dataNotice} role="alert"><CircleAlert size={18} /><p>Some module records could not be loaded. Only learners confirmed in the selected module are shown.</p><button type="button" onClick={learning.retry}>Retry module membership</button></div>}
     {isHome && <EmployerModuleColumnChart learners={filtered} records={learning.records} moduleId={moduleFilter} />}
     {isHome && <EmployerModuleProgressTable employerId={employerId} learners={filtered} records={learning.records} moduleId={moduleFilter} onRetry={learning.retry} />}
