@@ -70,6 +70,14 @@ class Command(BaseCommand):
                 except Exception as collection_failure:
                     logging.getLogger(__name__).warning('Module live collections need retry (%s).',
                                                         type(collection_failure).__name__)
+                try:
+                    from curriculum_api.live_recording_migration import run_pending_migrations
+                    migrated = run_pending_migrations(limit=options['limit'])
+                    if migrated:
+                        self.stdout.write(f'Checked {migrated} live recording migrations.')
+                except Exception as migration_failure:
+                    logging.getLogger(__name__).warning('Live recording migrations need retry (%s).',
+                                                        type(migration_failure).__name__)
             scheduled_scope = ' AND o.live_session_id=ANY(%s)' if requested_ids else ''
             with connections['default'].cursor() as cursor:
                 # A series can exhaust its attempts before its next lecture. Reopen

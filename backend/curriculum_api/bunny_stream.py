@@ -237,9 +237,16 @@ class BunnyStream:
             raise VideoImportError('The recording media changed during collection verification. Review the saved identity.')
         return after
 
-    def metadata(self, video_id, scope, title):
-        tags = [{'property': 'lms.' + key, 'value': str(value or '')}
-                for key, value in {**scope, 'title': title}.items()]
+    def metadata(self, video_id, scope, title, *, existing_tags=None):
+        values = {'lms.' + key: str(value or '') for key, value in {**scope, 'title': title}.items()}
+        if scope.get('occurrence_id') and scope.get('series_id'):
+            values['kbc_lms_occurrence_id'] = str(scope['occurrence_id'])
+        if existing_tags is not None:
+            if not isinstance(existing_tags, list) or any(not isinstance(row, dict)
+                    or not isinstance(row.get('property'), str) for row in existing_tags):
+                raise VideoImportError('The recording metadata could not be preserved.')
+            values = {**{row['property']: row.get('value', '') for row in existing_tags}, **values}
+        tags = [{'property': key, 'value': value} for key, value in values.items()]
         self.request('POST', f'/videos/{video_id}', json={'metaTags': tags})
 
     def upload(self, video_id, file_obj):
